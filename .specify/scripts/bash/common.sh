@@ -41,7 +41,8 @@ get_repo_root() {
     fi
 
     # Final fallback to script location for non-git repos
-    local script_dir="$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local script_dir
+    script_dir="$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     (cd "$script_dir/../../.." && pwd)
 }
 
@@ -54,7 +55,8 @@ get_current_branch() {
     fi
 
     # Then check git if available at the spec-kit root (not parent)
-    local repo_root=$(get_repo_root)
+    local repo_root
+    repo_root=$(get_repo_root)
     if has_git; then
         git -C "$repo_root" rev-parse --abbrev-ref HEAD
         return
@@ -67,19 +69,20 @@ get_current_branch() {
         local latest_feature=""
         local highest=0
         local latest_timestamp=""
+        local dirname ts number
 
         for dir in "$specs_dir"/*; do
             if [[ -d "$dir" ]]; then
-                local dirname=$(basename "$dir")
+                dirname=$(basename "$dir")
                 if [[ "$dirname" =~ ^([0-9]{8}-[0-9]{6})- ]]; then
                     # Timestamp-based branch: compare lexicographically
-                    local ts="${BASH_REMATCH[1]}"
+                    ts="${BASH_REMATCH[1]}"
                     if [[ "$ts" > "$latest_timestamp" ]]; then
                         latest_timestamp="$ts"
                         latest_feature=$dirname
                     fi
                 elif [[ "$dirname" =~ ^([0-9]{3})- ]]; then
-                    local number=${BASH_REMATCH[1]}
+                    number=${BASH_REMATCH[1]}
                     number=$((10#$number))
                     if [[ "$number" -gt "$highest" ]]; then
                         highest=$number

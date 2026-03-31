@@ -134,7 +134,7 @@
 **Independent Test**: Generate an ad with known inputs → retrieve trace from Firestore → verify all fields populated.
 
 - [ ] T023 [US5] Write `buildResolutionTrace(inputs: AdInputs, resolved: ResolverOutput): ResolutionTrace` in `functions/src/creativeResolver.ts` — per contracts/resolution-trace.md. Populate all fields from `ResolutionTrace` schema: resolvedCampaignType, resolvedAdMode, resolvedCreativeModes, resolvedStyleFamily, resolvedSubStyle, referenceAdOverrideActive, overriddenUniverse/SubStyle, artDirectionCleared + reason, hookAngle + nullReason, objectionId, effectiveObjectionText, modeCompatibilityResult + reason, slideCountOverride data, valueStackEmptyFieldsSkipped, autoSwitchEvents (from visual precedence), perSlide (from carouselSlideCountPlan if carousel), launchMatrixCheckPassed. Handle partial trace on failure (populate available fields).
-- [ ] T024 [US5] Wire `buildResolutionTrace()` into generation Cloud Function in `functions/src/index.ts` — call after generation completes (success or failure). Write trace as `resolutionTrace` field on existing `generations/{genId}` document using Firestore `update()`. Wrap in try/catch: trace write failure is logged with `console.warn` but does NOT fail the generation.
+- [ ] T024 [US5] Wire `buildResolutionTrace()` into generation Cloud Function in `functions/src/index.ts` — call after generation completes (success or failure). Write trace as `resolutionTrace` field on the `generations/{genId}` document: attempt `update()` first, fall back to `set({ resolutionTrace }, { merge: true })` if the document doesn't exist yet. Wrap the entire write in try/catch: trace write failure is logged with `console.warn` but does NOT fail the generation.
 
 **Checkpoint**: Run `cd functions && npm run build`. Generate a test ad and verify the `resolutionTrace` field exists on the generation document in Firestore.
 
@@ -163,7 +163,7 @@
 
 ## Dependencies
 
-```
+```text
 Phase 1 (Setup)
   └── Phase 2 (Foundational) — depends on T001
         ├── Phase 3: US1 (Launch Surface Validation)
