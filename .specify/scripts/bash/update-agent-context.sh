@@ -315,9 +315,10 @@ create_new_agent_file() {
     
     # Perform substitutions with error checking using safer approach
     # Escape special characters for sed by using a different delimiter or escaping
-    local escaped_lang=$(printf '%s\n' "$NEW_LANG" | sed 's/[\[\.*^$()+{}|]/\\&/g')
-    local escaped_framework=$(printf '%s\n' "$NEW_FRAMEWORK" | sed 's/[\[\.*^$()+{}|]/\\&/g')
-    local escaped_branch=$(printf '%s\n' "$CURRENT_BRANCH" | sed 's/[\[\.*^$()+{}|]/\\&/g')
+    local escaped_lang escaped_framework escaped_branch
+    escaped_lang=$(printf '%s\n' "$NEW_LANG" | sed 's/[\[\.*^$()+{}|]/\\&/g')
+    escaped_framework=$(printf '%s\n' "$NEW_FRAMEWORK" | sed 's/[\[\.*^$()+{}|]/\\&/g')
+    escaped_branch=$(printf '%s\n' "$CURRENT_BRANCH" | sed 's/[\[\.*^$()+{}|]/\\&/g')
     
     # Build technology stack and recent change strings conditionally
     local tech_stack
@@ -396,7 +397,8 @@ update_existing_agent_file() {
     }
     
     # Process the file in one pass
-    local tech_stack=$(format_technology_stack "$NEW_LANG" "$NEW_FRAMEWORK")
+    local tech_stack
+    tech_stack=$(format_technology_stack "$NEW_LANG" "$NEW_FRAMEWORK")
     local new_tech_entries=()
     local new_change_entry=""
     
@@ -434,7 +436,6 @@ update_existing_agent_file() {
     local tech_entries_added=false
     local changes_entries_added=false
     local existing_changes_count=0
-    local file_ended=false
     
     while IFS= read -r line || [[ -n "$line" ]]; do
         # Handle Active Technologies section

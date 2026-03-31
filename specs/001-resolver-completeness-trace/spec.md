@@ -214,7 +214,8 @@ As a user who uploads a reference ad while also selecting an art direction and u
 - **SC-002**: Carousel ads at every supported slide count (2–9) for both cold and retargeting campaigns follow the exact narrative angle sequence defined in the slide plans — every slide's role is predictable and correct.
 - **SC-003**: Value stack carousel slide count auto-adjusts to match gift count + 2 in 100% of cases, and the user sees a notification confirming the adjustment.
 - **SC-004**: Zero empty value_stack fields appear in any generated output across all test cases — no blank rows, no placeholders, no "N/A" labels.
-- **SC-005**: A resolution trace is produced and persisted for 100% of generation runs, containing all mandatory fields with no missing entries.
+- **SC-005a**: A resolution trace is produced (built in memory) for 100% of generation runs, containing all mandatory fields with no missing entries.
+- **SC-005b**: Resolution trace persistence uses fire-and-forget semantics — write failures are logged but do not fail the generation. Persistence failures should be monitored via server logs (console.warn). Target: >99% successful writes under normal operation.
 - **SC-006**: Users cannot discover, select, or generate with "limited_access", "module_preview", or "day_strip" through any user interaction path — zero references in user-facing surfaces.
 - **SC-007**: Minimal family ads contain no environmental scene rendering in 100% of test cases while the universe dropdown remains visible and interactive in the input form.
 - **SC-008**: All deleted mode cleanup is complete with zero remaining references in pairing rules, compatibility tables, or mode catalogs.

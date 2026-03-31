@@ -5,7 +5,7 @@
 
 ## Signature
 
-```
+```typescript
 carouselSlideCountPlan(campaignType: 'cold' | 'retargeting', slideCount: number): SlideRole[]
 ```
 
@@ -17,13 +17,13 @@ carouselSlideCountPlan(campaignType: 'cold' | 'retargeting', slideCount: number)
 ## Output
 
 Array of `SlideRole` objects, one per slide:
-```
+```typescript
 { slide: number, role: 'hook'|'middle'|'close', angle: string, hasCTA: boolean, photoInjection: boolean }
 ```
 
 ## Cold Angle Pool (7 angles)
 
-```
+```text
 A = Direct value / transformation benefit
 B = Curiosity / open loop
 C = Social proof / real result
@@ -35,7 +35,7 @@ G = Identity / who this is for
 
 ## Retargeting Angle Pool (7 angles)
 
-```
+```text
 P = Proof (testimonials, results, data)
 M = Mechanism (how/why it works)
 R = Risk reversal (guarantee, ease)

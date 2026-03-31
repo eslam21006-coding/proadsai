@@ -7,7 +7,7 @@
 
 ### Signature
 
-```
+```typescript
 buildResolutionTrace(inputs: AdInputs, resolved: ResolverOutput): ResolutionTrace
 ```
 
@@ -27,7 +27,7 @@ Complete `ResolutionTrace` object (see data-model.md for full schema).
 - `autoSwitchEvents`: collected during resolution (family switch clearing, retargeting hookAngle null, etc.)
 - `perSlide`: from `carouselSlideCountPlan()` if adFormat is carousel
 - `valueStackEmptyFieldsSkipped`: from `filterEmptyValueStackFields()` if value_stack active
-- Partial trace on failure: populate whatever fields were resolved before the failure point
+- Partial trace on failure: populate whatever fields were resolved before the failure point. At minimum, the trace must contain `resolvedCampaignType`, `resolvedAdMode`, `resolvedCreativeModes`, and `launchMatrixCheckPassed` even on early failure.
 
 ## Persistence
 
@@ -46,7 +46,7 @@ Field `resolutionTrace` on `generations/{genId}` Firestore document.
 
 ### Signature
 
-```
+```typescript
 resolveVisualPrecedence(inputs: ResolverInput): AutoSwitchEvent[]
 ```
 

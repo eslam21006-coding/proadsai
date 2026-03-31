@@ -7,7 +7,7 @@
 
 ### Signature
 
-```
+```typescript
 resolveValueStackSlideCount(gifts: string[]): ValueStackAdjustment
 ```
 
@@ -17,7 +17,7 @@ Array of gift strings (may include empty/whitespace values).
 
 ### Output
 
-```
+```typescript
 {
   giftCount: number,           // Non-empty gifts after filtering
   originalSlideCount: number,  // User's selection (passed separately or inferred)
@@ -38,7 +38,7 @@ Array of gift strings (may include empty/whitespace values).
 
 ### Signature
 
-```
+```typescript
 filterEmptyValueStackFields(inputs: AdInputs): { filtered: AdInputs, skippedFields: string[] }
 ```
 
@@ -53,7 +53,7 @@ Full `AdInputs` object.
 
 ### Target Fields
 
-```
+```text
 valueStackTitle, valueStackItems, valueStackBonuses, valueStackPrice,
 valueStackOriginalValue, valueStackSavings, valueStackGuarantee,
 valueStackDeliveryFormat, valueStackProofStatement

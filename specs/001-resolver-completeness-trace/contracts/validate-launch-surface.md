@@ -5,7 +5,7 @@
 
 ## Signature
 
-```
+```typescript
 validateLaunchSurface(inputs: ResolverInput): LaunchSurfaceResult
 ```
 
@@ -15,9 +15,9 @@ Extended `ResolverInput` with `selectedModes`, `campaignType`, `adFormat`, `hook
 
 ## Output
 
-```
+```typescript
 { allowed: true }
-or
+// or
 { allowed: false, reason: "Human-readable block reason" }
 ```
 

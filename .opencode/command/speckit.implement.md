@@ -132,7 +132,7 @@ You **MUST** consider the user input before proceeding (if not empty).
    - **Kubernetes/k8s**: `*.secret.yaml`, `secrets/`, `.kube/`, `kubeconfig*`, `*.key`, `*.crt`
 
 5. Parse tasks.md structure and extract:
-   - **Task phases**: Setup, Tests, Core, Integration, Polish
+   - **Task phases**: Treat any `## Phase N:` or `## Phase N —` top-level heading as a phase identifier. Preserve original heading text and ordering. Derive execution order from document order and explicit dependency markers, not a fixed list.
    - **Task dependencies**: Sequential vs parallel execution rules
    - **Task details**: ID, description, file paths, parallel markers [P]
    - **Execution flow**: Order and dependency requirements

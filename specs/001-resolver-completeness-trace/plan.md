@@ -50,7 +50,7 @@ specs/001-resolver-completeness-trace/
 ├── data-model.md        # Phase 1 output
 ├── contracts/           # Phase 1 output
 │   ├── validate-launch-surface.md
-│   ├── carousel-slide-plan.md
+│   ├── carousel-slide-count-plan.md
 │   ├── value-stack-functions.md
 │   └── resolution-trace.md
 ├── checklists/

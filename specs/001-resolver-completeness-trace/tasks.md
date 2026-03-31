@@ -60,7 +60,7 @@
 **Independent Test**: Call `validateLaunchSurface()` with every approved combination → all pass. Call with every deleted/invalid combination → all blocked with reason string.
 
 - [ ] T015 [US1] Write `validateLaunchSurface(inputs: ResolverInput): LaunchSurfaceResult` in `functions/src/creativeResolver.ts` — pure function implementing 7 validation rules in order (per contracts/validate-launch-surface.md): (1) deleted mode check, (2) mode-to-tab check, (3) solo-only check, (4) mode pair check, (5) campaign×format×plan check, (6) retargeting objection check, (7) before_after+carousel check. Returns `{ allowed: boolean, reason?: string }`.
-- [ ] T016 [US1] Add server-side launch surface guard in `functions/src/index.ts` — at the top of the `generateCreative` handler, after auth check and credit owner resolution but BEFORE the credit deduction transaction (before line ~108), call `validateLaunchSurface(inputs)`. If `allowed: false`, throw `HttpsError("permission-denied", reason)`. Import from `"./creativeResolver.js"`.
+- [ ] T016 [US1] Add server-side launch surface guard in `functions/src/index.ts` — immediately after the auth check in the `generateCreative` handler, BEFORE credit owner resolution and BEFORE the credit deduction transaction, call `validateLaunchSurface(inputs)`. If `allowed: false`, throw `HttpsError("permission-denied", reason)`. This ensures no database work or entitlement resolution runs for invalid combinations. Import from `"./creativeResolver.js"`.
 
 **Checkpoint**: Run `cd functions && npm run build`. Test with an invalid combination (e.g., `limited_access` mode) — should be rejected before credit deduction.
 
@@ -144,7 +144,7 @@
 
 **Purpose**: Final build verification, contract test baseline, codebase cleanup.
 
-- [ ] T025 Rebuild functions lib: `Remove-Item -Recurse -Force functions/lib; cd functions && npm run build` — verify clean compile with all changes (per AGENTS.md FIREBASE LIB SYNC rule)
+- [ ] T025 Rebuild functions lib: `rm -rf functions/lib && cd functions && npm run build` (or PowerShell: `Remove-Item -Recurse -Force functions/lib; cd functions; npm run build`) — verify clean compile with all changes (per AGENTS.md FIREBASE LIB SYNC rule)
 - [ ] T026 Run `cd functions && npm run test:contracts` — verify all existing contract fixture tests pass with the updated resolver
 - [ ] T027 Grep entire `functions/src/` for remaining references to `limited_access`, `module_preview`, `day_strip` — verify zero matches. Also grep for `before_after` in hook angle arrays — verify zero matches (it should only appear in `CREATIVE_MODE_CATALOG` and related mode logic).
 - [ ] T028 Verify `validateLaunchSurface()` is exported and importable from both `functions/src/creativeResolver.ts` (backend, `.js` extension import) and accessible pattern for `src/creativeResolver.ts` (frontend, bundler import). Confirm the function is a pure function with no Firebase/server dependencies so it can run in both environments.

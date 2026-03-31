@@ -74,7 +74,8 @@ if [ -z "$FEATURE_DESCRIPTION" ]; then
 fi
 
 # Trim whitespace and validate description is not empty (e.g., user passed only whitespace)
-FEATURE_DESCRIPTION=$(echo "$FEATURE_DESCRIPTION" | xargs)
+FEATURE_DESCRIPTION="${FEATURE_DESCRIPTION#"${FEATURE_DESCRIPTION%%[![:space:]]*}"}"
+FEATURE_DESCRIPTION="${FEATURE_DESCRIPTION%"${FEATURE_DESCRIPTION##*[![:space:]]}"}"
 if [ -z "$FEATURE_DESCRIPTION" ]; then
     echo "Error: Feature description cannot be empty or contain only whitespace" >&2
     exit 1
@@ -137,10 +138,11 @@ check_existing_branches() {
     git fetch --all --prune >/dev/null 2>&1 || true
 
     # Get highest number from ALL branches (not just matching short name)
-    local highest_branch=$(get_highest_from_branches)
+    local highest_branch highest_spec
+    highest_branch=$(get_highest_from_branches)
 
     # Get highest number from ALL specs (not just matching short name)
-    local highest_spec=$(get_highest_from_specs "$specs_dir")
+    highest_spec=$(get_highest_from_specs "$specs_dir")
 
     # Take the maximum of both
     local max_num=$highest_branch

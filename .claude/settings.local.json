@@ -74,7 +74,18 @@
       "Bash(powershell.exe -File .specify/scripts/powershell/setup-plan.ps1 -Json)",
       "Bash(powershell.exe -File .specify/scripts/powershell/update-agent-context.ps1 -AgentType claude)",
       "Bash(powershell.exe -File .specify/scripts/powershell/check-prerequisites.ps1 -Json)",
-      "Bash(powershell.exe -File .specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks)"
+      "Bash(powershell.exe -File .specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks)",
+      "Bash(xxd -l 16 \"D:\\\\Pro Ads AI - SaaS - FAL\\\\AGENTS.md\")",
+      "Bash(xxd -l 16 \"D:\\\\Pro Ads AI - SaaS - FAL\\\\CLAUDE.md\")",
+      "Bash(grep -n \"^\\\\`\\\\`\\\\`\" D:Pro Ads AI - SaaS - FAL/specs/001-resolver-completeness-trace/contracts/*.md)",
+      "Bash(grep -nE '```[a-z]*$' specs/001-resolver-completeness-trace/contracts/*.md)",
+      "Bash(sed -i '1s/^\\\\xEF\\\\xBB\\\\xBF//' AGENTS.md)",
+      "Bash(sed -i '1s/^\\\\xEF\\\\xBB\\\\xBF//' CLAUDE.md)",
+      "Bash(for f:*)",
+      "Bash(do sed:*)",
+      "Bash(echo \"Fixed $f\")",
+      "Bash(xxd AGENTS.md)",
+      "Bash(xxd CLAUDE.md)"
     ]
   }
 }
