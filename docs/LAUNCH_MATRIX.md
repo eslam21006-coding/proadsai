@@ -904,4 +904,121 @@ Launch is complete when all of the following pass:
 
 ---
 
+## SECTION 14 — BUILD ORDER
+
+Tasks are numbered by phase. Complete each phase before starting the next. Within a phase, tasks are ordered — earlier tasks unblock later ones.
+
+---
+
+### Phase 1: Resolver Foundation
+*Everything else depends on this phase. Do not start Phase 2 or 3 until all Phase 1 tasks are complete.*
+
+| Task | Description |
+|---|---|
+| 1.1 | Delete `functions/src/step3point5.ts` — confirmed dead code, not imported anywhere |
+| 1.2 | Delete `limited_access`, `module_preview`, `day_strip` from `CREATIVE_MODE_CATALOG` in `creativeResolver.ts` |
+| 1.3 | Delete all `ALLOWED_PAIRS` entries that reference `limited_access`, `module_preview`, or `day_strip` in `creativeResolver.ts` |
+| 1.4 | Delete `SUBSTYLE_MODE_COMPAT` entries for `limited_access`, `module_preview`, `day_strip` in `creativeResolver.ts` |
+| 1.5 | Add `campaignType: 'cold' | 'retargeting'` as an input field to `ResolverInput` in `creativeResolver.ts` |
+| 1.6 | Add `adFormat: 'single' | 'carousel' | 'batch'` as an input field to `ResolverInput` in `creativeResolver.ts` |
+| 1.7 | Add `universeStyle: 'realistic' | 'fantasy' | 'minimal'` as an input field to `ResolverInput` in `creativeResolver.ts` |
+| 1.8 | Add `minimal` handling to `resolveStyleFamily()` in `generators.ts` — when minimal is active, suppress environment rendering regardless of universe field value |
+| 1.9 | Write `validateLaunchSurface(inputs): { allowed: boolean, reason?: string }` in `creativeResolver.ts` — consumes the approved combination tables from Section 2 of this file. This is the shared gate used by both frontend and backend. |
+| 1.10 | Write `carouselSlideCountPlan(campaignType, slideCount, mode): SlideRole[]` in `creativeResolver.ts` — returns exact per-slide role and angle for every count 2–9, cold and retargeting, per Section 5.A tables |
+| 1.11 | Write `resolveValueStackSlideCount(gifts: string[]): number` in `creativeResolver.ts` — implements the N+2 auto-adjust formula with 9-slide cap |
+| 1.12 | Write `filterEmptyValueStackFields(inputs: AdInputs): AdInputs` in `creativeResolver.ts` — strips any empty value_stack fields before they reach any prompt. Empty = whitespace-only or undefined. |
+| 1.13 | Write `ResolutionTrace` interface (exact schema from Section 8) in `functions/src/types.ts` or a new `resolutionTrace.ts` file |
+| 1.14 | Write `buildResolutionTrace(inputs, resolved): ResolutionTrace` in `creativeResolver.ts` — populates all trace fields from resolved inputs |
+| 1.15 | Wire `buildResolutionTrace()` into the generation Cloud Function in `functions/src/index.ts` — write the trace as a sub-document to `generations/{genId}/resolutionTrace` after every generation run |
+| 1.16 | Add server-side launch surface guard to `functions/src/index.ts` — call `validateLaunchSurface(inputs)` at the top of every generation handler, reject with 400 if `allowed: false`, log `launchMatrixBlockReason` |
+| 1.17 | Centralize the retargeting `effectiveColdHookAngle = undefined` rule from `generators.ts` into `resolveCreativeSpec()` — it should come from the resolver, not be scattered inline |
+
+---
+
+### Phase 2: Frontend Enforcement
+*Requires Phase 1 complete. Tasks 2.1–2.5 can run in parallel. Tasks 2.6–2.10 depend on 2.1–2.5.*
+
+| Task | Description |
+|---|---|
+| 2.1 | Remove `limited_access`, `module_preview`, `day_strip` from all UI components in `src/components/InputForm.tsx` — mode cards, mode selectors, mode field sections |
+| 2.2 | Remove `limited_access`, `module_preview`, `day_strip` from `OFFER_CREATIVE_MODES`, `CREATIVE_MODE_CONFLICTS`, `HOOK_ANGLE_MODE_CONFLICTS` in `src/constants.ts` |
+| 2.3 | Move `before_after` from the hook angle selector to the Creative Mode card grid in `InputForm.tsx` — it is now a Creative Mode, not a hook angle |
+| 2.4 | Remove `before_after` from `COLD_HOOK_ANGLES` in `src/constants.ts` |
+| 2.5 | Slice `AD_LANGUAGES` to 7 launch languages — remove `fr`, `es`, `de`, `tr`, `pt` from the selector in `InputForm.tsx` |
+| 2.6 | Consume `validateLaunchSurface()` from Phase 1 in `InputForm.tsx` — on any mode/format/campaign combination change, call the validator and show an inline message below the blocked element if `allowed: false` |
+| 2.7 | Update Visual Style Family selector: all 3 families (Realistic, Fantasy, Minimal) always show the universe dropdown. When Minimal is active, add a silent flag `minimalActive: true` to state — do not hide the dropdown |
+| 2.8 | Rename the art direction / sub-style card section label to **"Art Direction"** in `InputForm.tsx`. Ensure Fantasy family has its own art direction cards (same as Realistic — both filter from `ART_DIRECTION_CARDS` by family). |
+| 2.9 | Update the reference ad upload field: gate it behind Pro plan check. Hide for Starter and Creator plans. |
+| 2.10 | Add `slideCount` auto-override logic: when `value_stack` is in `offerCreativeMode` and `adMode` is `carousel`, call `resolveValueStackSlideCount()` and update `slideCount` in state. Show inline message: "Carousel adjusted to [N] slides — one gift per slide." |
+| 2.11 | Add `slideCount` auto-override for testimonial mode: same pattern as 2.10. Show inline message: "Carousel adjusted to [N] slides — one testimonial per slide." |
+| 2.12 | Add toast/inline signals for all remaining auto-switches listed in Section 7: retargeting clears hook angle, text_only collapses visual section, before_after + carousel blocked, testimonial format auto-switch, family switch clears art direction |
+
+---
+
+### Phase 3: QA Fixtures
+*Requires Phase 1 complete. Can run in parallel with Phase 2.*
+
+| Task | Description |
+|---|---|
+| 3.1 | Create canonical input fixture for Lane 1 (Retargeting + Carousel, 5 slides) in `contractFixtures.test.ts` — exact input JSON, expected `resolutionTrace`, CTA placement check per slide |
+| 3.2 | Create canonical input fixture for Lane 2 (Cold + Single + before_after) — input JSON, split-canvas visual contract checks |
+| 3.3 | Create canonical input fixture for Lane 3 (Cold + Carousel + value_stack, 4 gifts) — input JSON, slide count override check, empty field check |
+| 3.4 | Create canonical input fixture for Lane 4 (Cold + Carousel, 5 slides, standard_hero) — input JSON, per-slide angle assignment check |
+| 3.5 | Create canonical input fixture for Lane 5 (Cold + Batch + hero + value_stack) — input JSON, full stack in every image check |
+| 3.6 | Create canonical input fixture for Lane 6 (Cold + Single + value_stack) — input JSON, empty field suppression check |
+| 3.7 | Create canonical input fixture for Lane 7 (Retargeting + Single + value_stack) — input JSON, objection-connected copy check |
+| 3.8 | Create canonical input fixture for Lane 8 (Minimal + hero + Single) — input JSON, no-environment check |
+| 3.9 | Create canonical input fixture for Lane 9 (Minimal + hero + Batch) — input JSON, per-image minimal check |
+| 3.10 | Add `validateLaunchSurface()` unit tests — one passing combination per lane, one blocked combination per removed mode (`limited_access`, `module_preview`, `day_strip`), one cross-tab combination, one `before_after` + carousel attempt |
+| 3.11 | Add `carouselSlideCountPlan()` unit tests — cold 2/5/9 slides, retargeting 3/5/7 slides, verify exact angle arrays |
+| 3.12 | Add `resolveValueStackSlideCount()` unit tests — 3 gifts→5 slides, 7 gifts→9 slides, 9 gifts→9 slides (cap) |
+| 3.13 | Add `filterEmptyValueStackFields()` unit tests — some fields populated, some empty, confirm empty fields removed from output |
+
+---
+
+### Phase 4: Testimonial Carousel
+*Independent. Can start after Phase 1 completes. Does not block Phase 2 or 3.*
+
+| Task | Description |
+|---|---|
+| 4.1 | Add `testimonial_carousel` to `CREATIVE_MODE_CATALOG` in `creativeResolver.ts` — role: anchor, standalone: true, tabs: all three, compatible with carousel only |
+| 4.2 | Add testimonial screenshot upload field (Box D) to `InputForm.tsx` — multi-upload, visible when testimonial mode selected |
+| 4.3 | Write `detectTestimonialPlatform(screenshotBase64): Platform` in a new `testimonialMockup.ts` file — heuristic detection returning one of: `whatsapp`, `instagram_dm`, `facebook`, `email`, `google_review`, `telegram`, `unknown` |
+| 4.4 | Write per-platform mockup generator — wraps the screenshot in a platform-accurate UI frame (WhatsApp bubble, IG interface, etc.) using Sharp or CSS overlay |
+| 4.5 | Write hook slide generator for testimonial carousel — AI prompt to generate a curiosity hook for slide 1 that teases testimonials without quoting them |
+| 4.6 | Wire `resolveValueStackSlideCount()` equivalent for testimonials: testimonial count + 2, cap at 9 |
+| 4.7 | Wire the full testimonial carousel pipeline into `generators.ts` — hook slide (AI), N mockup slides (per-platform renderer), close slide (AI) |
+| 4.8 | Add retargeting variant of testimonial hook slide — slide 1 must name the objection AND tease testimonials as evidence |
+| 4.9 | Create canonical input fixtures for Lane 10 (Cold testimonial carousel) and Lane 11 (Retargeting testimonial carousel) in `contractFixtures.test.ts` |
+
+---
+
+### Phase 5: Language Quality Contracts
+*Independent. Can start any time. Does not block any other phase.*
+
+| Task | Description |
+|---|---|
+| 5.1 | Add `ar_fusha` quality checks to `captionValidator.ts` — headline max 8 words, subheadline max 12 words, no hanging conjunctions, Arabic Unicode >= 70%, weak opener detection |
+| 5.2 | Add `ar_egyptian` quality checks — dialect marker validation, warmth register, same word count rules |
+| 5.3 | Add `ar_gulf` quality checks — dialect markers, same word count rules |
+| 5.4 | Add `ar_levantine`, `ar_iraqi`, `ar_maghreb` minimum checks — word count + RTL + no LTR bleed |
+| 5.5 | Add `en` quality checks — grammar baseline, CTA clarity, no filler phrases |
+| 5.6 | Add unit tests per language — one passing caption, one failing (word count), one failing (hanging conjunction for Arabic) |
+
+---
+
+### Phase 6: Failure Classification
+*Independent. Can start any time. Does not block any other phase.*
+
+| Task | Description |
+|---|---|
+| 6.1 | Add `FailureClass` type to `functions/src/types.ts` — 7 values from Spec F |
+| 6.2 | Add `failureClass: FailureClass \| null` field to generation Firestore record schema |
+| 6.3 | Add `costEstimate: { modelTier, retryCount, estimatedTokens }` field to generation Firestore record schema |
+| 6.4 | Tag each existing error path in `generators.ts` with the correct `FailureClass` — map every `throw` and `catch` to one of the 7 values |
+| 6.5 | Write `failureClass` and `costEstimate` to Firestore on every failed generation in `functions/src/index.ts` |
+| 6.6 | Add a Firestore query index on `failureClass` to enable cost-per-failure-type analysis |
+
+---
+
 *Source: `creativeResolver.ts` · `generators.ts` · `entitlements.ts` · `artDirectionConfig.ts` · `retargetingObjections.ts` · `constants.ts` · `types.ts` · terminal session decisions · product owner decisions v3*
