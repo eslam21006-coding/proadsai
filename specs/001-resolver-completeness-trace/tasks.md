@@ -233,7 +233,7 @@ T023+T024: US5 — buildResolutionTrace + persistence
 5. Add US4 → Empty fields never appear in output → Deploy/Demo
 6. Add US7 → Minimal family properly handled → Deploy/Demo
 7. Add US9 → Visual precedence chain enforced → Deploy/Demo
-8. Add US5 → Full resolution trace persisted → Deploy/Demo (complete Phase 1)
+8. Add US5 → Full resolution trace persisted → Deploy/Demo (Spec B complete)
 9. Polish → Build clean, tests pass, no stale references
 
 ---
