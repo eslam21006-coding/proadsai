@@ -203,7 +203,7 @@ generate_branch_name() {
         if ! echo "$word" | grep -qiE "$stop_words"; then
             if [ ${#word} -ge 3 ]; then
                 meaningful_words+=("$word")
-            elif echo "$description" | grep -q "\b${word^^}\b"; then
+            elif echo "$description" | grep -qE "(^|[^A-Za-z])${word^^}([^A-Za-z]|$)"; then
                 # Keep short words if they appear as uppercase in original (likely acronyms)
                 meaningful_words+=("$word")
             fi
@@ -327,10 +327,8 @@ else
     touch "$SPEC_FILE"
 fi
 
-# Inform the user how to persist the feature variable in their own shell
-printf '# To persist: export SPECIFY_FEATURE=%q\n' "$BRANCH_NAME" >&2
-
 if $JSON_MODE; then
+    printf '# To persist: export SPECIFY_FEATURE=%q\n' "$BRANCH_NAME" >&2
     if command -v jq >/dev/null 2>&1; then
         jq -cn \
             --arg branch_name "$BRANCH_NAME" \
