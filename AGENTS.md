@@ -1,4 +1,4 @@
-# AGENTS.md — Pro Ads AI SaaS
+﻿# AGENTS.md — Pro Ads AI SaaS
 
 Guidance for agentic coding agents operating in this repository.
 
