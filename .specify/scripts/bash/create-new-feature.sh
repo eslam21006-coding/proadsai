@@ -39,8 +39,8 @@ while [ $i -le $# ]; do
                 echo 'Error: --number requires a value' >&2
                 exit 1
             fi
-            if ! [[ "$next_arg" =~ ^[0-9]+$ ]]; then
-                echo "Error: --number must be a positive integer, got '$next_arg'" >&2
+            if ! [[ "$next_arg" =~ ^[1-9][0-9]*$ ]]; then
+                echo "Error: --number must be a positive integer (>0), got '$next_arg'" >&2
                 exit 1
             fi
             BRANCH_NUMBER="$next_arg"
@@ -65,6 +65,11 @@ while [ $i -le $# ]; do
             exit 0
             ;;
         *)
+            if [[ "$arg" == --* ]]; then
+                echo "Error: Unknown option '$arg'" >&2
+                echo "Run '$0 --help' for usage information" >&2
+                exit 1
+            fi
             ARGS+=("$arg")
             ;;
     esac
@@ -294,6 +299,13 @@ if [ ${#BRANCH_NAME} -gt $MAX_BRANCH_LENGTH ]; then
     >&2 echo "[specify] Warning: Branch name exceeded GitHub's 244-byte limit"
     >&2 echo "[specify] Original: $ORIGINAL_BRANCH_NAME (${#ORIGINAL_BRANCH_NAME} bytes)"
     >&2 echo "[specify] Truncated to: $BRANCH_NAME (${#BRANCH_NAME} bytes)"
+fi
+
+# Preflight: check if spec directory already exists
+if [ -d "$SPECS_DIR/$BRANCH_NAME" ]; then
+    >&2 echo "Error: Spec directory '$SPECS_DIR/$BRANCH_NAME' already exists."
+    >&2 echo "Use a different feature name or delete the existing directory first."
+    exit 1
 fi
 
 if [ "$HAS_GIT" = true ]; then
