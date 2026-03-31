@@ -144,11 +144,19 @@ authoritative standard.
 
 ### Priority Lanes
 
-The highest-priority launch lanes are:
+The launch priority lanes are (per LAUNCH_MATRIX Section 5):
 
 1. Retargeting + Carousel
 2. Cold + Single + before_after
-3. value_stack + Carousel
+3. Cold + Carousel + value_stack
+4. Cold + Carousel (any approved mode)
+5. Cold + Batch + standard_hero + value_stack
+6. Cold + Single + value_stack
+7. Retargeting + Single + value_stack
+8. Minimal + standard_hero + Single
+9. Minimal + standard_hero + Batch
+10. Testimonial Carousel (Cold)
+11. Testimonial Carousel (Retargeting)
 
 ### Validation Rule
 
@@ -195,4 +203,4 @@ authority, or launch scope principles is a major (MAJOR) revision.
 New principles or materially expanded guidance are minor (MINOR)
 revisions.
 
-**Version**: 1.0.0 | **Ratified**: 2026-03-30 | **Last Amended**: 2026-03-30
+**Version**: 1.1.0 | **Ratified**: 2026-03-30 | **Last Amended**: 2026-03-31

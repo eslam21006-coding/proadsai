@@ -68,7 +68,24 @@
       "Bash(powershell -Command \"Remove-Item -Recurse -Force lib -ErrorAction SilentlyContinue\")",
       "Bash(find 'D:/Pro Ads AI - SaaS - FAL/functions/lib' -type f -name *.js)",
       "Bash(find 'D:/Pro Ads AI - SaaS - FAL/functions/src' -type f \\\\\\(-name *.ts -o -name *.js \\\\\\))",
-      "Bash(find 'D:/Pro Ads AI - SaaS - FAL/src' -type f \\\\\\(-name *.tsx -o -name *.ts -o -name *.css \\\\\\))"
+      "Bash(find 'D:/Pro Ads AI - SaaS - FAL/src' -type f \\\\\\(-name *.tsx -o -name *.ts -o -name *.css \\\\\\))",
+      "Bash(pwsh -File .specify/scripts/powershell/check-prerequisites.ps1 -Json -PathsOnly)",
+      "Bash(powershell.exe -File .specify/scripts/powershell/check-prerequisites.ps1 -Json -PathsOnly)",
+      "Bash(powershell.exe -File .specify/scripts/powershell/setup-plan.ps1 -Json)",
+      "Bash(powershell.exe -File .specify/scripts/powershell/update-agent-context.ps1 -AgentType claude)",
+      "Bash(powershell.exe -File .specify/scripts/powershell/check-prerequisites.ps1 -Json)",
+      "Bash(powershell.exe -File .specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks)",
+      "Bash(xxd -l 16 \"D:\\\\Pro Ads AI - SaaS - FAL\\\\AGENTS.md\")",
+      "Bash(xxd -l 16 \"D:\\\\Pro Ads AI - SaaS - FAL\\\\CLAUDE.md\")",
+      "Bash(grep -n \"^\\\\`\\\\`\\\\`\" D:Pro Ads AI - SaaS - FAL/specs/001-resolver-completeness-trace/contracts/*.md)",
+      "Bash(grep -nE '```[a-z]*$' specs/001-resolver-completeness-trace/contracts/*.md)",
+      "Bash(sed -i '1s/^\\\\xEF\\\\xBB\\\\xBF//' AGENTS.md)",
+      "Bash(sed -i '1s/^\\\\xEF\\\\xBB\\\\xBF//' CLAUDE.md)",
+      "Bash(for f:*)",
+      "Bash(do sed:*)",
+      "Bash(echo \"Fixed $f\")",
+      "Bash(xxd AGENTS.md)",
+      "Bash(xxd CLAUDE.md)"
     ]
   }
 }
