@@ -1,0 +1,16 @@
+# Compiled output (always rebuild before deploy — Constitution Principle I)
+lib/
+
+# TypeScript
+typings/
+
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Local config
+*.local

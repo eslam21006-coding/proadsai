@@ -1,0 +1,62 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+coverage/
+
+# Cloud Functions compiled output
+functions/lib/
+
+# Firebase
+.firebase/
+firebase-debug*.log
+firestore-debug*.log
+ui-debug*.log
+database-debug*.log
+pubsub-debug*.log
+storage-debug*.log
+functions/.runtimeconfig.json
+
+# Environment variables
+.env
+.env.*
+!.env.example
+functions/.env
+functions/.env.*
+!functions/.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+
+# Local config
+*.local
+
+# Archives
+*.zip
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini

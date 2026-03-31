@@ -1,0 +1,1277 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DESIGN TOKENS
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+    --page-bg: #020617;
+    --section-bg: #0a0f1e;
+    --panel-bg: #0f172a;
+    --card-bg: #1e293b;
+    --card-elevated: #283548;
+    --inset-bg: #0c1222;
+    --text-primary: #f1f5f9;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --text-faint: #475569;
+    --border-subtle: rgba(51, 65, 85, 0.4);
+    --border-strong: rgba(71, 85, 105, 0.6);
+    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.25);
+    --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.35);
+    --blue-surface-strong: rgba(59, 130, 246, 0.2);
+    --blue-surface-medium: rgba(59, 130, 246, 0.12);
+    --blue-surface-soft: rgba(59, 130, 246, 0.08);
+    --blue-text: #60a5fa;
+    --blue-border: rgba(59, 130, 246, 0.3);
+    --accent-emerald: rgba(16, 185, 129, 0.1);
+    --accent-amber: rgba(245, 158, 11, 0.1);
+    --accent-violet: rgba(139, 92, 246, 0.1);
+    --accent-red: rgba(239, 68, 68, 0.1);
+    /* Idle control surfaces (dark mode) */
+    --control-idle-bg: rgba(30, 41, 59, 0.5);
+    --control-idle-border: rgba(51, 65, 85, 0.3);
+    --control-idle-text: #94a3b8;
+    /* Amber tokens */
+    --amber-icon: #fbbf24;
+    --amber-text: #f59e0b;
+    --amber-bg: rgba(245, 158, 11, 0.1);
+    --amber-border: rgba(245, 158, 11, 0.2);
+    --hover-bg: rgba(255, 255, 255, 0.04);
+    --input-bg: #0f172a;
+    --input-border: rgba(51, 65, 85, 0.5);
+    --glass-bg: rgba(15, 23, 42, 0.85);
+    --progress-track: #1e293b;
+    --progress-fill: #3b82f6;
+    --scrollbar-track: #020617;
+    --scrollbar-thumb: #1e293b;
+    --scrollbar-thumb-hover: #334155;
+}
+
+html.light-mode {
+    --page-bg: #e8ebf0;
+    --section-bg: #dce0e8;
+    --panel-bg: #eef0f5;
+    --card-bg: #ffffff;
+    --card-elevated: #ffffff;
+    --inset-bg: #e1e5ec;
+    --text-primary: #111827;
+    --text-secondary: #374151;
+    --text-muted: #52525b;
+    --text-faint: #71717a;
+    --border-subtle: #c0c7d4;
+    --border-strong: #a3acbb;
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+    --shadow-elevated: 0 4px 14px rgba(0, 0, 0, 0.10), 0 2px 4px rgba(0, 0, 0, 0.06);
+    /* Blue scale — STRONG for light mode */
+    --blue-surface-strong: #bfdbfe;
+    --blue-surface-medium: #dbeafe;
+    --blue-surface-soft: #eff6ff;
+    --blue-text: #1d4ed8;
+    --blue-border: #93c5fd;
+    /* Accent surfaces — strong enough to read */
+    --accent-emerald: #a7f3d0;
+    --accent-amber: #fde68a;
+    --accent-violet: #ddd6fe;
+    --accent-red: #fecaca;
+    /* Idle control surfaces — visible, not ghosted */
+    --control-idle-bg: #e8ecf2;
+    --control-idle-border: #c0c7d4;
+    --control-idle-text: #4b5563;
+    /* Amber tokens — readable in light mode */
+    --amber-icon: #b45309;
+    --amber-text: #92400e;
+    --amber-bg: #fef3c7;
+    --amber-border: #fcd34d;
+    --hover-bg: rgba(0, 0, 0, 0.04);
+    --input-bg: #f3f5f9;
+    --input-border: #b0b8c8;
+    --glass-bg: rgba(255, 255, 255, 0.94);
+    --progress-track: #cbd5e1;
+    --progress-fill: #2563eb;
+    --scrollbar-track: #e8ebf0;
+    --scrollbar-thumb: #b4bcc9;
+    --scrollbar-thumb-hover: #94a3b8;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT MODE — SURFACES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* 1. App shell — gradient */
+html.light-mode {
+    background: linear-gradient(180deg, #eceef3 0%, #e2e5ec 40%, #dce0e8 100%) !important;
+    background-attachment: fixed !important;
+    color: var(--text-primary) !important;
+}
+
+html.light-mode body {
+    background: transparent !important;
+}
+
+/* 2. Solid dark surfaces → light */
+html.light-mode [class*="bg-slate-950"] {
+    background-color: transparent !important;
+}
+
+html.light-mode [class*="bg-slate-900"] {
+    background-color: var(--panel-bg) !important;
+}
+
+/* Mockup image container — always transparent, no border/box in any mode */
+.mockup-container {
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+html.light-mode [class*="bg-slate-800"] {
+    background-color: var(--inset-bg) !important;
+}
+
+/* 3. Alpha dark surfaces → cards (NON-button elements only) */
+html.light-mode [class*="bg-slate-900/"]:not(button) {
+    background-color: var(--card-bg) !important;
+    border: 1px solid var(--border-subtle) !important;
+    box-shadow: var(--shadow-card) !important;
+}
+
+html.light-mode [class*="bg-slate-950/"] {
+    background-color: var(--section-bg) !important;
+    border: 1px solid var(--border-subtle) !important;
+}
+
+/* ═══ 3b. IDLE CONTROL BUTTONS — distinct from cards ═══
+   Buttons using bg-slate-800/xx or bg-slate-900/xx are idle controls,
+   not cards. They need visible tinted surface + border, not white+shadow. */
+html.light-mode button[class*="bg-slate-800/"],
+html.light-mode button[class*="bg-slate-900/"] {
+    background-color: var(--control-idle-bg) !important;
+    border: 1px solid var(--control-idle-border) !important;
+    color: var(--control-idle-text) !important;
+    box-shadow: none !important;
+}
+
+html.light-mode button[class*="bg-slate-800/"]:hover,
+html.light-mode button[class*="bg-slate-900/"]:hover {
+    background-color: #dce0e8 !important;
+    border-color: var(--border-strong) !important;
+    color: var(--text-primary) !important;
+}
+
+/* Alpha white → hover */
+html.light-mode [class*="bg-white\\/"],
+html.light-mode [class*="bg-white/"] {
+    background-color: var(--hover-bg) !important;
+}
+
+/* ═══ 4. TEXT ═══ */
+html.light-mode [class*="text-white"] {
+    color: var(--text-primary) !important;
+}
+
+html.light-mode [class*="text-slate-1"],
+html.light-mode [class*="text-slate-2"] {
+    color: var(--text-primary) !important;
+}
+
+html.light-mode [class*="text-slate-3"] {
+    color: var(--text-secondary) !important;
+}
+
+html.light-mode [class*="text-slate-4"] {
+    color: var(--text-muted) !important;
+}
+
+html.light-mode [class*="text-slate-5"] {
+    color: var(--text-faint) !important;
+}
+
+html.light-mode [class*="text-slate-6"],
+html.light-mode [class*="text-slate-7"] {
+    color: #8b95a5 !important;
+}
+
+html.light-mode .arabic-text {
+    color: var(--text-primary) !important;
+}
+
+/* Blue text → dark blue (readable on light) */
+html.light-mode [class*="text-blue-400"] {
+    color: var(--blue-text) !important;
+}
+
+html.light-mode [class*="text-blue-300"] {
+    color: #2563eb !important;
+}
+
+html.light-mode [class*="text-blue-500"] {
+    color: #1d4ed8 !important;
+}
+
+html.light-mode [class*="text-blue-200"] {
+    color: #3b82f6 !important;
+}
+
+/* ═══ AMBER TEXT — dark amber for readability ═══ */
+html.light-mode [class*="text-amber-400"] {
+    color: var(--amber-text) !important;
+}
+
+html.light-mode [class*="text-amber-500"] {
+    color: var(--amber-icon) !important;
+}
+
+html.light-mode [class*="text-amber-300"] {
+    color: #a16207 !important;
+}
+
+html.light-mode [class*="text-amber-200"] {
+    color: #b45309 !important;
+}
+
+/* 5. Borders */
+html.light-mode [class*="border-slate"],
+html.light-mode [class*="border-white/"] {
+    border-color: var(--border-subtle) !important;
+}
+
+html.light-mode [class*="border-emerald"] {
+    border-color: #6ee7b7 !important;
+}
+
+html.light-mode [class*="border-blue-500"],
+html.light-mode [class*="border-blue-400"] {
+    border-color: var(--blue-border) !important;
+}
+
+html.light-mode [class*="border-amber-500"],
+html.light-mode [class*="border-amber-400"] {
+    border-color: var(--amber-border) !important;
+}
+
+/* ═══ 6. INPUTS ═══ */
+html.light-mode input,
+html.light-mode textarea,
+html.light-mode select {
+    background-color: var(--input-bg) !important;
+    color: var(--text-primary) !important;
+    border: 1.5px solid var(--input-border) !important;
+}
+
+html.light-mode input::placeholder,
+html.light-mode textarea::placeholder {
+    color: #9ca3af !important;
+    /* lighter gray — clearly distinct from entered text (#111827) */
+    font-style: italic !important;
+    font-weight: 300 !important;
+}
+
+/* Entered text should feel committed */
+html.light-mode input:not(:placeholder-shown),
+html.light-mode textarea:not(:placeholder-shown) {
+    color: var(--text-primary) !important;
+    font-weight: 500 !important;
+    font-style: normal !important;
+}
+
+html.light-mode input:focus,
+html.light-mode textarea:focus,
+html.light-mode select:focus {
+    border-color: #2563eb !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18) !important;
+    background-color: #ffffff !important;
+}
+
+/* Reference image upload zone — light mode */
+html.light-mode [class*="border-indigo-500/30"] {
+    border-color: #818cf8 !important;
+}
+
+html.light-mode [class*="border-indigo-500"][class*="bg-indigo-500/10"] {
+    background-color: #e0e7ff !important;
+    border-color: #818cf8 !important;
+}
+
+html.light-mode [class*="text-indigo-300"] {
+    color: #4f46e5 !important;
+}
+
+html.light-mode [class*="text-indigo-400"] {
+    color: #4338ca !important;
+}
+
+/* 7. Glass panels */
+html.light-mode .glass-panel {
+    background: var(--glass-bg) !important;
+    border-color: var(--border-subtle) !important;
+    box-shadow: var(--shadow-elevated) !important;
+}
+
+/* 8. Secondary buttons (solid dark bg, not alpha) */
+html.light-mode button[class*="bg-slate-900"]:not([class*="/"]),
+html.light-mode button[class*="bg-slate-800"]:not([class*="/"]) {
+    background-color: var(--panel-bg) !important;
+    color: var(--text-secondary) !important;
+    border: 1px solid var(--border-subtle) !important;
+}
+
+html.light-mode button[class*="bg-slate-900"]:not([class*="/"]):hover,
+html.light-mode button[class*="bg-slate-800"]:not([class*="/"]):hover {
+    background-color: var(--inset-bg) !important;
+    border-color: var(--border-strong) !important;
+}
+
+/* 9. Gradient dark buttons */
+html.light-mode [class*="from-slate-800"],
+html.light-mode [class*="from-slate-700"] {
+    background: var(--panel-bg) !important;
+    color: var(--text-secondary) !important;
+}
+
+/* ═══ 10. BLUE ACCENT SURFACES — three-tier ═══ */
+/* Strong selected: bg-blue-600/20, /25, /15 */
+html.light-mode [class*="bg-blue-600/20"],
+html.light-mode [class*="bg-blue-600/25"],
+html.light-mode [class*="bg-blue-600/15"] {
+    background-color: var(--blue-surface-strong) !important;
+    border-color: var(--blue-border) !important;
+}
+
+/* Medium: bg-blue-600/10, bg-blue-500/20, /15 */
+html.light-mode [class*="bg-blue-600/10"],
+html.light-mode [class*="bg-blue-500/20"],
+html.light-mode [class*="bg-blue-500/15"] {
+    background-color: var(--blue-surface-medium) !important;
+}
+
+/* Soft: bg-blue-500/10, /5, bg-blue-600/6, /8 */
+html.light-mode [class*="bg-blue-500/10"],
+html.light-mode [class*="bg-blue-500/5"],
+html.light-mode [class*="bg-blue-600/6"],
+html.light-mode [class*="bg-blue-600/8"] {
+    background-color: var(--blue-surface-soft) !important;
+}
+
+/* Dark blue surfaces */
+html.light-mode [class*="bg-blue-950"],
+html.light-mode [class*="bg-blue-950/"] {
+    background-color: var(--blue-surface-medium) !important;
+}
+
+/* ═══ AMBER ACCENT SURFACES — readable in light mode ═══ */
+html.light-mode [class*="bg-amber-500/10"],
+html.light-mode [class*="bg-amber-500/15"],
+html.light-mode [class*="bg-amber-500/20"] {
+    background-color: var(--amber-bg) !important;
+    border-color: var(--amber-border) !important;
+}
+
+/* Other accents */
+html.light-mode [class*="bg-violet-"][class*="/1"],
+html.light-mode [class*="bg-purple-"][class*="/1"],
+html.light-mode [class*="bg-violet-"][class*="/2"],
+html.light-mode [class*="bg-purple-"][class*="/2"] {
+    background-color: var(--accent-violet) !important;
+}
+
+html.light-mode [class*="bg-emerald-"][class*="/1"],
+html.light-mode [class*="bg-emerald-"][class*="/2"] {
+    background-color: var(--accent-emerald) !important;
+}
+
+html.light-mode [class*="bg-amber-"][class*="/1"],
+html.light-mode [class*="bg-amber-"][class*="/2"] {
+    background-color: var(--accent-amber) !important;
+}
+
+html.light-mode [class*="bg-red-"][class*="/1"] {
+    background-color: var(--accent-red) !important;
+}
+
+/* Selected blue pills with blue border — reinforce */
+html.light-mode [class*="bg-blue-600/20"][class*="border-blue"],
+html.light-mode [class*="bg-blue-600/15"][class*="border-blue"],
+html.light-mode [class*="bg-blue-600/10"][class*="border-blue"] {
+    border-color: #60a5fa !important;
+    border-width: 1.5px !important;
+}
+
+/* 11. Shadows */
+html.light-mode [class*="shadow-lg"],
+html.light-mode [class*="shadow-xl"],
+html.light-mode [class*="shadow-2xl"] {
+    box-shadow: var(--shadow-elevated) !important;
+}
+
+/* 12. Inline gradient styles */
+html.light-mode [style*="linear-gradient"][style*="rgba(15,23,42"],
+html.light-mode [style*="linear-gradient"][style*="rgba(30,41,59"] {
+    background: var(--card-bg) !important;
+    border: 1px solid var(--border-subtle) !important;
+}
+
+/* 13. Backdrop blur */
+html.light-mode [class*="backdrop-blur"] {
+    background-color: rgba(255, 255, 255, 0.93) !important;
+}
+
+/* 14. Overlays */
+html.light-mode [class*="bg-black/"] {
+    background-color: rgba(0, 0, 0, 0.2) !important;
+}
+
+/* 15. Focus rings */
+html.light-mode [class*="ring-slate"] {
+    --tw-ring-color: var(--border-subtle) !important;
+}
+
+html.light-mode [class*="ring-blue-500"] {
+    --tw-ring-color: rgba(37, 99, 235, 0.25) !important;
+}
+
+/* 16. Spinner */
+html.light-mode [class*="animate-spin"] {
+    border-color: #2563eb !important;
+    border-top-color: transparent !important;
+}
+
+/* ═══ 17. CTA BUTTONS — filled, shadowed, authoritative ═══ */
+html.light-mode .bg-blue-600 {
+    background-color: #2563eb !important;
+    color: white !important;
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3) !important;
+}
+
+html.light-mode .bg-blue-600:hover {
+    background-color: #1d4ed8 !important;
+}
+
+html.light-mode .bg-blue-500 {
+    background-color: #3b82f6 !important;
+    color: white !important;
+}
+
+html.light-mode [class*="bg-gradient-to-r"][class*="from-blue"] {
+    color: white !important;
+}
+
+html.light-mode .bg-emerald-600 {
+    background-color: #059669 !important;
+    color: white !important;
+    box-shadow: 0 2px 8px rgba(5, 150, 105, 0.25) !important;
+}
+
+html.light-mode .bg-emerald-600:hover {
+    background-color: #047857 !important;
+}
+
+html.light-mode [class*="bg-gradient-to-r"][class*="from-emerald"] {
+    color: white !important;
+}
+
+html.light-mode .bg-purple-600,
+html.light-mode .bg-violet-600 {
+    color: white !important;
+}
+
+html.light-mode .bg-red-600 {
+    color: white !important;
+}
+
+html.light-mode [class*="bg-blue-500/90"] {
+    background-color: #3b82f6 !important;
+    color: white !important;
+}
+
+/* 18. Hover states */
+html.light-mode [class*="hover\\:bg-slate"]:hover {
+    background-color: var(--inset-bg) !important;
+}
+
+html.light-mode [class*="hover\\:text-white"]:hover {
+    color: var(--text-primary) !important;
+}
+
+html.light-mode [class*="hover\\:bg-blue-600"]:hover {
+    background-color: #1d4ed8 !important;
+}
+
+html.light-mode [class*="hover\\:bg-blue-500"]:hover {
+    background-color: #2563eb !important;
+}
+
+html.light-mode [class*="hover\\:text-amber-400"]:hover {
+    color: var(--amber-icon) !important;
+}
+
+/* 19. Upload areas */
+html.light-mode [class*="border-dashed"] {
+    border-color: var(--border-strong) !important;
+    border-width: 2px !important;
+    background-color: var(--inset-bg) !important;
+}
+
+/* 20. Sidebar */
+html.light-mode .fixed[class*="bg-slate-900"][class*="w-80"],
+html.light-mode .fixed[class*="bg-slate-900"][class*="border-"] {
+    background: linear-gradient(180deg, #e8ebf2 0%, #e0e3eb 100%) !important;
+    border-color: var(--border-strong) !important;
+}
+
+/* 21. Toast / notifications */
+html.light-mode .fixed[class*="bg-green-600"],
+html.light-mode .fixed[class*="bg-emerald-600"] {
+    background-color: #059669 !important;
+    color: white !important;
+}
+
+html.light-mode .fixed[class*="bg-blue-600"][class*="bottom-"] {
+    background-color: #2563eb !important;
+    color: white !important;
+}
+
+html.light-mode .fixed[class*="bg-red-600"][class*="bottom-"] {
+    background-color: #dc2626 !important;
+    color: white !important;
+}
+
+/* 22. Progress bars */
+html.light-mode [class*="bg-slate-800"][class*="rounded-full"][class*="h-1"],
+html.light-mode [class*="bg-slate-800"][class*="rounded-full"][class*="h-2"] {
+    background-color: var(--progress-track) !important;
+}
+
+/* 23. Section gradient cards */
+html.light-mode [class*="bg-gradient-to-b"][class*="from-amber"],
+html.light-mode [class*="bg-gradient-to-b"][class*="from-blue"],
+html.light-mode [class*="bg-gradient-to-b"][class*="from-emerald"] {
+    border: 1px solid var(--border-subtle) !important;
+}
+
+/* 24. Stepper */
+html.light-mode [data-tour="stepper"] {
+    background-color: var(--panel-bg) !important;
+    border-bottom: 1px solid var(--border-subtle) !important;
+}
+
+/* ═══ 25. HEADER SPACING — prevent pill/button collision with divider ═══ */
+html.light-mode header[class*="sticky"],
+html.light-mode [class*="sticky"][class*="top-0"] {
+    padding-top: 0.75rem !important;
+    padding-bottom: 0.75rem !important;
+    border-bottom: 1px solid var(--border-subtle) !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06) !important;
+}
+
+/* ═══ 26. STEP 3 HOOK CARDS — stronger contrast in light mode ═══ */
+html.light-mode [class*="concept_review"] [class*="bg-slate-900/"],
+html.light-mode [class*="space-y-8"]>[class*="bg-slate-900/40"],
+html.light-mode [class*="space-y-8"]>div>[class*="bg-slate-900/40"] {
+    background-color: var(--card-bg) !important;
+    border: 1.5px solid var(--border-subtle) !important;
+    box-shadow: var(--shadow-card) !important;
+}
+
+/* Hook card elevated style (matching Step 2 hook-lab boxes) */
+html.light-mode [class*="bg-slate-900/50"][class*="rounded-2xl"],
+html.light-mode [class*="bg-slate-900/40"][class*="rounded-2xl"] {
+    background-color: var(--card-bg) !important;
+    border: 1.5px solid var(--border-subtle) !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+}
+
+/* ═══ 27. STEP 1 — Title/label visibility in light mode ═══ */
+html.light-mode [class*="text-white"][class*="font-black"],
+html.light-mode h2[class*="text-white"] {
+    color: var(--text-primary) !important;
+}
+
+html.light-mode [class*="SectionTitle"] [class*="text-white"],
+html.light-mode [class*="space-y-5"]>div>[class*="text-white"][class*="font-bold"] {
+    color: var(--text-primary) !important;
+}
+
+/* ═══ 28. GLOBAL CTA SYSTEM — unified gradient buttons in light mode ═══ */
+html.light-mode [class*="bg-gradient-to-r"][class*="from-emerald"][class*="to-blue"] {
+    background: linear-gradient(to right, #059669, #2563eb) !important;
+    color: white !important;
+    box-shadow: 0 2px 10px rgba(5, 150, 105, 0.25), 0 1px 4px rgba(37, 99, 235, 0.2) !important;
+}
+
+html.light-mode [class*="bg-gradient-to-r"][class*="from-emerald"][class*="to-blue"]:hover {
+    background: linear-gradient(to right, #047857, #1d4ed8) !important;
+    box-shadow: 0 4px 14px rgba(5, 150, 105, 0.3), 0 2px 6px rgba(37, 99, 235, 0.25) !important;
+}
+
+html.light-mode [class*="bg-gradient-to-r"][class*="from-blue-600"][class*="to-blue-500"] {
+    background: linear-gradient(to right, #2563eb, #3b82f6) !important;
+    color: white !important;
+    box-shadow: 0 2px 10px rgba(37, 99, 235, 0.25) !important;
+}
+
+/* ═══ 29. CREATIVE MODE CARDS — enhanced states in light mode ═══ */
+html.light-mode button[class*="bg-blue-600/15"][class*="border-blue-500"] {
+    background-color: #dbeafe !important;
+    border-color: #60a5fa !important;
+    color: #1e40af !important;
+    box-shadow: 0 1px 4px rgba(37, 99, 235, 0.15) !important;
+}
+
+html.light-mode button[class*="bg-slate-900/40"][class*="border-slate-800"] {
+    background-color: var(--control-idle-bg) !important;
+    border-color: var(--control-idle-border) !important;
+    color: var(--control-idle-text) !important;
+}
+
+/* ═══ 30. REALISTIC / FANTASY TOGGLE — enhanced active states ═══ */
+html.light-mode button.bg-emerald-600 {
+    background-color: #059669 !important;
+    color: white !important;
+    border-color: #059669 !important;
+    box-shadow: 0 2px 8px rgba(5, 150, 105, 0.3) !important;
+}
+
+html.light-mode button.bg-violet-600 {
+    background-color: #7c3aed !important;
+    color: white !important;
+    border-color: #7c3aed !important;
+    box-shadow: 0 2px 8px rgba(124, 58, 237, 0.3) !important;
+}
+
+/* Inactive toggle buttons — readable, not ghosted */
+html.light-mode button[class*="bg-slate-800/40"][class*="border-slate-700"] {
+    background-color: var(--control-idle-bg) !important;
+    border-color: var(--control-idle-border) !important;
+    color: var(--text-secondary) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT MODE — SEMANTIC BUTTON SYSTEM
+   Unified button tokens for all states across the app.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ─── PRIMARY PROCESS CTA (emerald→blue gradient) ─── */
+html.light-mode [class*="bg-gradient-to-r"][class*="from-emerald-600"][class*="to-blue-600"],
+html.light-mode [class*="bg-gradient-to-r"][class*="from-emerald-500"][class*="to-blue-500"] {
+    background: linear-gradient(to right, #059669, #2563eb) !important;
+    color: white !important;
+    box-shadow: 0 2px 10px rgba(5, 150, 105, 0.2), 0 1px 4px rgba(37, 99, 235, 0.15) !important;
+}
+
+html.light-mode [class*="bg-gradient-to-r"][class*="from-emerald-600"][class*="to-blue-600"]:hover,
+html.light-mode [class*="bg-gradient-to-r"][class*="from-emerald-500"][class*="to-blue-500"]:hover {
+    background: linear-gradient(to right, #047857, #1d4ed8) !important;
+    box-shadow: 0 4px 16px rgba(5, 150, 105, 0.3), 0 2px 6px rgba(37, 99, 235, 0.25) !important;
+}
+
+/* ─── SECONDARY PROCESS CTA (blue→blue gradient) ─── */
+html.light-mode [class*="bg-gradient-to-r"][class*="from-blue-600"][class*="to-blue-500"],
+html.light-mode [class*="bg-gradient-to-r"][class*="from-blue-600"][class*="via-blue"] {
+    background: linear-gradient(to right, #2563eb, #3b82f6) !important;
+    color: white !important;
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2) !important;
+}
+
+/* ─── SELECTED PILL / TAB ─── */
+html.light-mode [class*="bg-blue-600/20"][class*="text-blue-400"],
+html.light-mode [class*="bg-blue-600/15"][class*="text-blue-400"],
+html.light-mode [class*="bg-blue-600/25"][class*="text-blue-400"] {
+    background-color: #dbeafe !important;
+    color: #1d4ed8 !important;
+    border-color: #93c5fd !important;
+}
+
+/* ─── IDLE PILL / TAB ─── */
+html.light-mode button[class*="text-slate-500"][class*="hover:text-white"] {
+    color: var(--text-muted) !important;
+}
+
+html.light-mode button[class*="text-slate-500"][class*="hover:text-white"]:hover {
+    color: var(--text-primary) !important;
+    background-color: #e8ecf2 !important;
+}
+
+/* ─── ACCENT ACTION BUTTONS (violet, emerald, purple) ─── */
+html.light-mode button[class*="bg-violet-600/15"] {
+    background-color: #ede9fe !important;
+    color: #6d28d9 !important;
+    border: 1px solid #c4b5fd !important;
+}
+
+html.light-mode button[class*="bg-violet-600/15"]:hover {
+    background-color: #7c3aed !important;
+    color: white !important;
+    border-color: #7c3aed !important;
+}
+
+html.light-mode button[class*="bg-emerald-600/15"] {
+    background-color: #d1fae5 !important;
+    color: #047857 !important;
+    border: 1px solid #86efac !important;
+}
+
+html.light-mode button[class*="bg-emerald-600/15"]:hover {
+    background-color: #059669 !important;
+    color: white !important;
+    border-color: #059669 !important;
+}
+
+html.light-mode button[class*="bg-purple-600/15"] {
+    background-color: #f3e8ff !important;
+    color: #7e22ce !important;
+    border: 1px solid #d8b4fe !important;
+}
+
+html.light-mode button[class*="bg-purple-600/15"]:hover {
+    background-color: #9333ea !important;
+    color: white !important;
+    border-color: #9333ea !important;
+}
+
+html.light-mode button[class*="bg-blue-600/15"] {
+    background-color: #dbeafe !important;
+    color: #1d4ed8 !important;
+    border: 1px solid #93c5fd !important;
+}
+
+html.light-mode button[class*="bg-blue-600/15"]:hover {
+    background-color: #2563eb !important;
+    color: white !important;
+    border-color: #2563eb !important;
+}
+
+/* ─── FEEDBACK / APPROVAL BUTTONS ─── */
+html.light-mode button[class*="bg-emerald-600"][class*="text-white"]:not([class*="/"]) {
+    background-color: #059669 !important;
+    color: white !important;
+    box-shadow: 0 2px 6px rgba(5, 150, 105, 0.25) !important;
+}
+
+html.light-mode button[class*="bg-emerald-500"][class*="text-white"]:not([class*="/"]) {
+    background-color: #10b981 !important;
+    color: white !important;
+}
+
+/* ─── THUMBS / ICON BUTTONS (small feedback) ─── */
+html.light-mode button[class*="bg-green-500/10"],
+html.light-mode button[class*="bg-emerald-500/10"] {
+    background-color: #d1fae5 !important;
+    border: 1px solid #a7f3d0 !important;
+    color: #047857 !important;
+}
+
+html.light-mode button[class*="bg-red-500/10"] {
+    background-color: #fee2e2 !important;
+    border: 1px solid #fecaca !important;
+    color: #b91c1c !important;
+}
+
+html.light-mode button[class*="bg-amber-500/10"] {
+    background-color: #fef3c7 !important;
+    border: 1px solid #fde68a !important;
+    color: #92400e !important;
+}
+
+/* ─── DISABLED BUTTONS ─── */
+html.light-mode button:disabled,
+html.light-mode button[disabled] {
+    opacity: 0.5 !important;
+}
+
+/* ─── BATCH / DASHED BORDER BUTTONS ─── */
+html.light-mode button[class*="border-dashed"][class*="border-slate"] {
+    border-color: var(--border-strong) !important;
+    background-color: transparent !important;
+    color: var(--text-muted) !important;
+}
+
+html.light-mode button[class*="border-dashed"][class*="border-slate"]:hover {
+    border-color: #60a5fa !important;
+    color: #2563eb !important;
+    background-color: #eff6ff !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT MODE — MODALS & OVERLAYS (Favorites, Dashboard, Sidepanels)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Modal backdrop is handled in JSX via isDarkMode — no CSS override needed */
+
+/* Slate-950 modal shells → white */
+html.light-mode .fixed[class*="z-[200]"]>div[class*="bg-slate-950"],
+html.light-mode .fixed[class*="z-[200]"]>div[class*="bg-slate-900"] {
+    background-color: var(--card-bg) !important;
+    border-color: var(--border-subtle) !important;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
+}
+
+/* Modal headers */
+html.light-mode .fixed[class*="z-[200]"] [class*="border-b"][class*="border-slate"] {
+    border-color: var(--border-subtle) !important;
+}
+
+/* Modal content areas */
+html.light-mode .fixed[class*="z-[200]"] [class*="bg-slate-900/"],
+html.light-mode .fixed[class*="z-[200]"] [class*="bg-slate-950/"] {
+    background-color: var(--inset-bg) !important;
+    border-color: var(--border-subtle) !important;
+}
+
+/* ─── CARD SURFACES INSIDE MODALS ─── */
+html.light-mode .fixed[class*="z-[200]"] [class*="bg-slate-900/60"] {
+    background-color: var(--card-bg) !important;
+    border: 1px solid var(--border-subtle) !important;
+    box-shadow: var(--shadow-card) !important;
+}
+
+/* ─── PREVIEW BLOCKS (concept text, caption text) ─── */
+html.light-mode [class*="bg-slate-950/50"][class*="rounded-lg"][class*="border"] {
+    background-color: #f1f3f8 !important;
+    border-color: var(--border-subtle) !important;
+}
+
+/* ─── METADATA CHIPS ─── */
+html.light-mode [class*="bg-slate-800/40"][class*="rounded"] {
+    background-color: #e8ecf2 !important;
+    color: var(--text-muted) !important;
+    border: 1px solid var(--border-subtle) !important;
+}
+
+/* ─── PHASE PILLS (inside cards) ─── */
+html.light-mode [class*="bg-blue-500/15"][class*="text-blue-400"][class*="rounded-full"] {
+    background-color: #dbeafe !important;
+    color: #1d4ed8 !important;
+    border: 1px solid #bfdbfe !important;
+}
+
+html.light-mode [class*="bg-violet-500/15"][class*="text-violet-400"][class*="rounded-full"] {
+    background-color: #ede9fe !important;
+    color: #6d28d9 !important;
+    border: 1px solid #ddd6fe !important;
+}
+
+html.light-mode [class*="bg-emerald-500/15"][class*="text-emerald-400"][class*="rounded-full"] {
+    background-color: #d1fae5 !important;
+    color: #047857 !important;
+    border: 1px solid #a7f3d0 !important;
+}
+
+html.light-mode [class*="bg-purple-500/15"][class*="text-purple-400"][class*="rounded-full"] {
+    background-color: #f3e8ff !important;
+    color: #7e22ce !important;
+    border: 1px solid #e9d5ff !important;
+}
+
+/* ─── "USED" CHIP ─── */
+html.light-mode [class*="bg-blue-500/10"][class*="text-blue-400"][class*="rounded"] {
+    background-color: #dbeafe !important;
+    color: #1d4ed8 !important;
+    border: 1px solid #bfdbfe !important;
+}
+
+/* ─── REMOVE / DANGER BUTTON ─── */
+html.light-mode button[class*="bg-slate-800/40"][class*="hover:bg-red"] {
+    background-color: #f1f3f8 !important;
+    color: #9ca3af !important;
+    border: 1px solid var(--border-subtle) !important;
+}
+
+html.light-mode button[class*="bg-slate-800/40"][class*="hover:bg-red"]:hover {
+    background-color: #fef2f2 !important;
+    color: #dc2626 !important;
+    border-color: #fca5a5 !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT MODE — STEP 3 CONTROLS & HOOK CARDS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Hook cards in tov_review — white elevated surface */
+html.light-mode [class*="bg-slate-900/40"][class*="rounded-2xl"][class*="p-6"] {
+    background-color: var(--card-bg) !important;
+    border: 1.5px solid var(--border-subtle) !important;
+    box-shadow: var(--shadow-card) !important;
+}
+
+/* Inner hook content area */
+html.light-mode [class*="bg-slate-950/30"][class*="rounded-xl"] {
+    background-color: #f5f7fb !important;
+    border: 1px solid #e2e8f0 !important;
+}
+
+/* Hook type pill labels */
+html.light-mode [class*="bg-blue-500/20"][class*="text-blue-400"][class*="rounded-full"] {
+    background-color: #dbeafe !important;
+    color: #1d4ed8 !important;
+}
+
+html.light-mode [class*="bg-purple-500/20"][class*="text-purple-400"][class*="rounded-full"] {
+    background-color: #ede9fe !important;
+    color: #6d28d9 !important;
+}
+
+html.light-mode [class*="bg-green-500/20"][class*="text-green-400"][class*="rounded-full"] {
+    background-color: #d1fae5 !important;
+    color: #047857 !important;
+}
+
+html.light-mode [class*="bg-orange-500/20"][class*="text-orange-400"][class*="rounded-full"] {
+    background-color: #ffedd5 !important;
+    color: #c2410c !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT MODE — STEP 1 INPUT POLISH
+   Stronger text visibility, placeholder distinction, entered-text contrast
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Entered text: strong dark, easily distinguishable from placeholder */
+html.light-mode input:not(:placeholder-shown),
+html.light-mode textarea:not(:placeholder-shown),
+html.light-mode select {
+    color: #111827 !important;
+    font-weight: 500 !important;
+}
+
+/* Placeholder: clearly lighter than entered text */
+html.light-mode input::placeholder,
+html.light-mode textarea::placeholder {
+    color: #9ca3af !important;
+    font-weight: 400 !important;
+}
+
+/* Select option text */
+html.light-mode select option {
+    background-color: #ffffff !important;
+    color: #111827 !important;
+}
+
+/* Labels — ensure section header labels are visible */
+html.light-mode label[class*="text-slate-400"],
+html.light-mode label[class*="text-slate-500"] {
+    color: #4b5563 !important;
+}
+
+/* Section header tiny labels (mode-specific sections) */
+html.light-mode [class*="text-\\[9px\\]"][class*="font-black"][class*="uppercase"] {
+    font-weight: 900 !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT MODE — MODE-SPECIFIC FIELD SECTIONS
+   Blue/purple/emerald/amber/pink/cyan/rose themed sections
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Blue mode section (Value Stack) */
+html.light-mode [class*="bg-blue-950/20"] {
+    background-color: #eff6ff !important;
+    border-color: #bfdbfe !important;
+}
+
+html.light-mode [class*="bg-blue-950/20"] [class*="text-blue-400"] {
+    color: #1d4ed8 !important;
+}
+
+/* Purple mode section (Event) */
+html.light-mode [class*="bg-purple-950/20"] {
+    background-color: #faf5ff !important;
+    border-color: #e9d5ff !important;
+}
+
+html.light-mode [class*="bg-purple-950/20"] [class*="text-purple-400"] {
+    color: #7e22ce !important;
+}
+
+/* Emerald mode section (Features) */
+html.light-mode [class*="bg-emerald-950/20"] {
+    background-color: #ecfdf5 !important;
+    border-color: #a7f3d0 !important;
+}
+
+html.light-mode [class*="bg-emerald-950/20"] [class*="text-emerald-400"] {
+    color: #047857 !important;
+}
+
+/* Amber mode section (Offer) */
+html.light-mode [class*="bg-amber-950/20"] {
+    background-color: #fffbeb !important;
+    border-color: #fde68a !important;
+}
+
+html.light-mode [class*="bg-amber-950/20"] [class*="text-amber-400"] {
+    color: #92400e !important;
+}
+
+/* Pink mode section (Testimonial) */
+html.light-mode [class*="bg-pink-950/20"] {
+    background-color: #fdf2f8 !important;
+    border-color: #fbcfe8 !important;
+}
+
+html.light-mode [class*="bg-pink-950/20"] [class*="text-pink-400"] {
+    color: #be185d !important;
+}
+
+/* Cyan mode section (Dashboard) */
+html.light-mode [class*="bg-cyan-950/20"] {
+    background-color: #ecfeff !important;
+    border-color: #a5f3fc !important;
+}
+
+html.light-mode [class*="bg-cyan-950/20"] [class*="text-cyan-400"] {
+    color: #0e7490 !important;
+}
+
+/* Rose mode section (Authority) */
+html.light-mode [class*="bg-rose-950/20"] {
+    background-color: #fff1f2 !important;
+    border-color: #fecdd3 !important;
+}
+
+html.light-mode [class*="bg-rose-950/20"] [class*="text-rose-400"] {
+    color: #be123c !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT MODE — UPLOAD ZONES & DRAG-OVER
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Drag-over states — visible highlight */
+html.light-mode [class*="bg-blue-500/10"] {
+    background-color: #dbeafe !important;
+}
+
+html.light-mode [class*="bg-violet-500/10"] {
+    background-color: #ede9fe !important;
+}
+
+html.light-mode [class*="bg-pink-500/10"] {
+    background-color: #fce7f3 !important;
+}
+
+/* Upload zone idle — visible tint instead of transparent */
+html.light-mode [class*="border-dashed"][class*="border-blue-500/20"] {
+    border-color: #93c5fd !important;
+    background-color: #f8faff !important;
+}
+
+html.light-mode [class*="border-dashed"][class*="border-pink-500/20"],
+html.light-mode [class*="border-dashed"][class*="border-pink-500/30"] {
+    border-color: #f9a8d4 !important;
+}
+
+/* Small upload labels inside upload zones */
+html.light-mode [class*="text-slate-600"][class*="text-\\[7px\\]"],
+html.light-mode [class*="text-slate-600"][class*="text-xs"],
+html.light-mode [class*="text-slate-700"][class*="text-xl"] {
+    color: #6b7280 !important;
+}
+
+/* Thumbnail borders in upload previews */
+html.light-mode [class*="border-slate-700"][class*="rounded-lg"][class*="overflow-hidden"] {
+    border-color: #d1d5db !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT MODE — DRAGGABLE IMAGE HINTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+html.light-mode img[draggable="true"] {
+    cursor: grab !important;
+}
+
+html.light-mode img[draggable="true"]:active {
+    cursor: grabbing !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT MODE — BATCH CARD OVERRIDES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Batch card info badge — keep dark for contrast on image */
+html.light-mode [data-light-ctx="batch-badge"] {
+    background-color: rgba(0, 0, 0, 0.55) !important;
+    color: #ffffff !important;
+}
+
+/* Stories/Reels badge (amber) — keep visible on image */
+html.light-mode [class*="bg-amber-500/80"][class*="rounded"] {
+    background-color: #f59e0b !important;
+    color: #000000 !important;
+}
+
+/* Batch hover overlay — keep darker for button readability on image */
+html.light-mode .group:hover>[class*="group-hover:bg-black/50"] {
+    background-color: rgba(0, 0, 0, 0.45) !important;
+}
+
+/* Batch hover refinement input — keep dark bg for contrast on image */
+html.light-mode [data-light-ctx="batch-refine"] {
+    background-color: rgba(0, 0, 0, 0.65) !important;
+    color: #ffffff !important;
+    border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+html.light-mode [data-light-ctx="batch-refine"]::placeholder {
+    color: rgba(255, 255, 255, 0.5) !important;
+}
+
+/* Mobile action strip — keep dark for readability on image */
+html.light-mode [data-light-ctx="batch-mobile-strip"] button {
+    background-color: rgba(0, 0, 0, 0.55) !important;
+    color: #ffffff !important;
+}
+
+/* Batch card hover action buttons — keep white/colored text for readability */
+html.light-mode .group-hover\\:opacity-100 button[class*="bg-cyan-600"],
+html.light-mode .group-hover\\:opacity-100 button[class*="bg-blue-600"],
+html.light-mode .group-hover\\:opacity-100 button[class*="bg-violet-600"],
+html.light-mode .group-hover\\:opacity-100 button[class*="bg-emerald-600"],
+html.light-mode .group-hover\\:opacity-100 button[class*="bg-amber-500"],
+html.light-mode .group-hover\\:opacity-100 button[class*="bg-blue-500"],
+html.light-mode .group-hover\\:opacity-100 button[class*="bg-white/90"] {
+    color: initial;
+    /* preserve each button's own color, don't override to dark */
+}
+
+/* Style adaptation badge (reference ad thumbnail) */
+html.light-mode [class*="bg-black/50"][class*="rounded"][class*="text-amber-300"] {
+    background-color: rgba(0, 0, 0, 0.5) !important;
+    color: #fbbf24 !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT MODE — PERFORMANCE DASHBOARD POLISH
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Dashboard stat cards */
+html.light-mode [data-light-ctx="dash-stat"] {
+    background-color: var(--card-bg) !important;
+    border: 1px solid var(--border-subtle) !important;
+    box-shadow: var(--shadow-card) !important;
+}
+
+/* Dashboard breakdown bars */
+html.light-mode [class*="bg-slate-900/40"][class*="rounded-lg"][class*="px-3"] {
+    background-color: #f3f5fa !important;
+    border: 1px solid var(--border-subtle) !important;
+}
+
+/* Dashboard close button */
+html.light-mode button[class*="bg-slate-900"][class*="rounded-lg"][class*="text-slate-500"] {
+    background-color: var(--inset-bg) !important;
+    border: 1px solid var(--border-subtle) !important;
+}
+
+/* Dashboard tab selected */
+html.light-mode button[class*="bg-blue-600/20"][class*="text-blue-400"] {
+    background-color: #dbeafe !important;
+    color: #1d4ed8 !important;
+    border: 1px solid #93c5fd !important;
+}
+
+/* Dashboard text colors */
+html.light-mode [class*="text-emerald-400"] {
+    color: #059669 !important;
+}
+
+html.light-mode [class*="text-red-400"] {
+    color: #dc2626 !important;
+}
+
+html.light-mode [class*="text-violet-400"] {
+    color: #7c3aed !important;
+}
+
+html.light-mode [class*="text-purple-400"] {
+    color: #9333ea !important;
+}
+
+html.light-mode [class*="text-green-400"] {
+    color: #16a34a !important;
+}
+
+html.light-mode [class*="text-cyan-400"] {
+    color: #0891b2 !important;
+}
+
+html.light-mode [class*="text-pink-400"] {
+    color: #db2777 !important;
+}
+
+html.light-mode [class*="text-orange-400"] {
+    color: #ea580c !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT MODE — FAVORITES PANEL
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Dashboard & Favorites item cards */
+html.light-mode [data-light-ctx="dash-item"] {
+    background-color: var(--card-bg) !important;
+    border: 1px solid var(--border-subtle) !important;
+    box-shadow: var(--shadow-card) !important;
+}
+
+html.light-mode [data-light-ctx="dash-item"]:hover {
+    background-color: #f0f2f7 !important;
+    border-color: var(--border-strong) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCROLLBAR
+   ═══════════════════════════════════════════════════════════════════════════ */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ACCESSIBILITY & MOTION
+   ═══════════════════════════════════════════════════════════════════════════ */
+*:focus-visible {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+*,
+*::before,
+*::after {
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* ─── Ranking Recommendations Panel (light mode) ──────────────────────── */
+html.light-mode [data-light-ctx="ranking-panel"] {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}

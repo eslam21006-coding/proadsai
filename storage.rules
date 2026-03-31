@@ -1,0 +1,34 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Users can read/write their own files
+    match /users/{userId}/{allPaths=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Avatars — users can manage their own
+    match /avatars/{userId}/{allPaths=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Face photos for fal.ai Route A — users can manage their own, server can read all
+    match /facePhotos/{userId}/{allPaths=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Rendered images — written by Cloud Functions (admin SDK bypasses rules), readable by owner
+    match /renders/{userId}/{allPaths=**} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Public assets (logos, brand assets) — authenticated users can read all, write own
+    match /public/{allPaths=**} {
+      allow read: if request.auth != null;
+    }
+
+    // Deny everything else
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "functions",
+  "scripts": {
+    "lint": "eslint --ext .js,.ts .",
+    "build": "tsc && shx mkdir -p lib/assets && shx cp -r src/assets/* lib/assets/",
+    "test:contracts": "npm run build && node lib/contractFixtures.test.js",
+    "build:watch": "tsc --watch",
+    "serve": "npm run build && firebase emulators:start --only functions",
+    "shell": "npm run build && firebase functions:shell",
+    "start": "npm run shell",
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log"
+  },
+  "engines": {
+    "node": "24"
+  },
+  "main": "lib/index.js",
+  "dependencies": {
+    "@fal-ai/client": "^1.2.0",
+    "@google/genai": "^1.44.0",
+    "@google/generative-ai": "^0.24.1",
+    "firebase-admin": "^13.6.1",
+    "firebase-functions": "^7.2.2",
+    "sharp": "^0.33.5",
+    "stripe": "^20.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.11",
+    "@types/stripe": "^8.0.416",
+    "shx": "^0.3.4",
+    "@typescript-eslint/eslint-plugin": "^5.12.0",
+    "@typescript-eslint/parser": "^5.12.0",
+    "eslint": "^8.9.0",
+    "eslint-config-google": "^0.14.0",
+    "eslint-plugin-import": "^2.25.4",
+    "firebase-functions-test": "^3.4.1",
+    "typescript": "^5.7.3"
+  },
+  "private": true
+}

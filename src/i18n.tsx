@@ -1,0 +1,786 @@
+import React, { createContext, useContext, useState, useCallback } from 'react';
+
+export type UILanguage = 'en' | 'ar';
+
+// ─── TRANSLATIONS ────────────────────────────────────────────────────────────
+const translations: Record<UILanguage, Record<string, string>> = {
+    en: {
+        // ── Global / Nav ──
+        'app.name': 'Pro Ads AI',
+        'app.tagline': 'Scale with AI',
+        'loading': 'Loading...',
+        'cancel': 'Cancel',
+        'save': 'Save',
+        'delete': 'Delete',
+        'edit': 'Edit',
+        'back': 'Back',
+        'next': 'Next',
+        'finish': 'Finish',
+        'close': 'Close',
+        'search': 'Search...',
+        'skip': 'Skip',
+
+        // ── Auth / Login ──
+        'login.google': 'Sign in with Google',
+        'login.or_email': 'or continue with email',
+        'login.email_placeholder': 'Your email address...',
+        'login.password_placeholder': 'Password...',
+        'login.enter': 'Enter Studio',
+        'login.please_wait': 'Please wait...',
+        'login.forgot': 'Forgot Password?',
+        'login.no_account': "Don't have an account?",
+        'login.get_started': 'Get Started at ProAdsAI.com',
+
+        // ── Onboarding ──
+        'onboarding.personalize': "Let's personalize your experience",
+        'onboarding.step_of': 'Step {step} of {total}',
+        'onboarding.q1': "What's your biggest challenge?",
+        'onboarding.q1_sub': 'Help us understand how we can support you best',
+        'onboarding.q2': "What's your business model?",
+        'onboarding.q2_sub': 'This helps us customize ad strategies for you',
+        'onboarding.q3': "What's your niche?",
+        'onboarding.q3_sub': 'Tell us about your industry',
+        // Onboarding options — challenges
+        'onboarding.ideas': 'Lack of creative ad ideas',
+        'onboarding.time': 'Not enough time to create ads',
+        'onboarding.reach': 'Low reach & visibility',
+        'onboarding.sales': 'Low sales conversions',
+        'onboarding.strategy': 'No clear ad strategy',
+        'onboarding.engagement': 'Low engagement rates',
+        'onboarding.other': 'Other',
+        // Onboarding options — business types
+        'onboarding.coaching': 'Training & Consulting',
+        'onboarding.saas': 'SaaS / Software',
+        'onboarding.content': 'Content Creators & Influencers',
+        'onboarding.agency_type': 'Agencies & Freelancers',
+        'onboarding.ecommerce': 'E-commerce & Retail',
+        // Onboarding options — niches
+        'onboarding.marketing': 'Marketing & Sales',
+        'onboarding.personal_dev': 'Personal Development',
+        'onboarding.health': 'Health & Fitness',
+        'onboarding.business': 'Business & Entrepreneurship',
+        'onboarding.beauty': 'Beauty & Skincare',
+        'onboarding.therapy': 'Therapy & Mental Health',
+        'onboarding.spirituality': 'Energy & Spirituality',
+        'onboarding.finance': 'Finance & Investment',
+        'onboarding.tech': 'Technology',
+        'onboarding.design': 'Creativity & Design',
+
+        // ── Welcome Screen ──
+        'welcome.hi': 'Hi, {name}! 👋',
+        'welcome.headline': 'Let\'s create your next',
+        'welcome.headline_accent': 'high-performing ad',
+        'welcome.sub': 'Fill out a quick brief about your product, and our AI engine will craft hooks, visuals, and copy — all optimized for conversions.',
+        'welcome.start': 'Start Creating',
+        'welcome.how': 'How does it work?',
+        'welcome.card_title': 'Welcome to ProAds AI',
+        'welcome.card_headline': 'Create Your First Ad in 5 Steps',
+        'welcome.step1_desc': 'Tell us about your product & audience',
+        'welcome.step2_desc': 'AI generates 4 attention-grabbing angles',
+        'welcome.step3_desc': 'Choose a visual concept direction',
+        'welcome.step4_desc': 'AI renders your ad with your photos',
+        'welcome.step5_desc': 'Get ready-to-post caption text',
+        'welcome.card_sub': 'Fill in the form below to get started. The AI handles the rest.',
+        'welcome.time_single': '~3 min for single ad',
+        'welcome.time_carousel': '~6 min for carousel',
+        'welcome.upload_photos': 'Upload your own photos',
+        'welcome.trial_msg': 'You\'re on the <b>Free Trial</b>. Upgrade to unlock all features.',
+        'welcome.upgrade': 'Upgrade Now',
+
+        // ── Sign Out ──
+        'signout.title': 'See you soon!',
+        'signout.message': 'Thank you for using Pro Ads AI.<br />We look forward to helping you create amazing ads again soon.',
+        'signout.again': 'Sign in again',
+        'signout.thanks': 'Thanks for using Pro Ads AI!',
+
+        // ── Walkthrough ──
+        'walkthrough.skip': 'Skip tour',
+        'walkthrough.got_it': 'Got it!',
+        'walkthrough.s1_title': 'Fill in your brief',
+        'walkthrough.s1_desc': 'Start by telling us about your product, audience, and transformation. The more detail you give, the better your ads will be.',
+        'walkthrough.s2_title': 'Choose your hook',
+        'walkthrough.s2_desc': "We'll generate 4 powerful hook options. Pick the one that grabs attention best — or edit it to perfection.",
+        'walkthrough.s3_title': 'Pick a concept',
+        'walkthrough.s3_desc': 'See 3 visual blueprints with different universes and layouts. Choose the direction that matches your brand.',
+        'walkthrough.s4_title': 'Render & refine',
+        'walkthrough.s4_desc': "Your AI-generated ad appears here. Polish it, resize it, or request edits until it's perfect.",
+        'walkthrough.s5_title': 'Get your caption',
+        'walkthrough.s5_desc': "Finally, we'll write conversion-optimized copy that matches your visual — ready to paste into your ad manager.",
+
+        // ── Stepper ──
+        'step.brief': 'Brief',
+        'step.hooks': 'Hooks',
+        'step.blueprint': 'Visual Blueprint',
+        'step.studio': 'Studio',
+        'step.script': 'Script',
+
+        // ── Sidebar ──
+        'sidebar.history': 'Project History',
+        'sidebar.new': 'New Project',
+        'sidebar.no_history': 'No history yet.',
+        'sidebar.start_new': 'Start a brand new project?',
+
+        // ── Header / Account ──
+        'header.credits': 'Credits',
+        'header.plan': 'Plan',
+        'header.upgrade': 'Add More Credits',
+        'header.topup': 'Quick Top-Up',
+        'header.get_credits': 'Get More Credits',
+        'header.privacy': 'Privacy Policy',
+        'header.logout': 'Log Out',
+        'header.free_trial': 'Free Trial',
+
+        // ── InputForm ──
+        'form.progress': 'Brief progress',
+        'form.campaign_type': 'Campaign Type',
+        'form.cold': 'Cold',
+        'form.retargeting': 'Retargeting',
+        'form.retargeting_setup': 'Retargeting Setup',
+        'form.angle': 'Angle',
+        'form.objection': 'Objection',
+        'form.custom_objection': 'Type your custom objection...',
+        'form.objection_required': 'Select an objection or enter a custom objection.',
+        'form.objection_select_placeholder': '-- Select objection --',
+        'form.objection_custom_option': '✍️ Custom...',
+        'form.testimonial': 'Testimonial / proof line (optional)',
+        'form.testimonial_placeholder': 'e.g. Booked 18 calls in 10 days',
+        'form.ad_language': 'Ad Language',
+        'form.click_to_change': 'Click to change',
+        'form.arabic_dialects': 'Arabic Dialects',
+        'form.other_languages': 'Other Languages',
+        'form.brand': 'Brand',
+        'form.product_name': 'Product Name',
+        'form.product_placeholder': 'e.g. Agency Pro Suite',
+        'form.brand_website': 'Brand Website',
+        'form.unlocks_pro': 'Unlocks on Creator plan',
+        'form.audience': 'Audience',
+        'form.target_avatar': 'Target Avatar',
+        'form.target_placeholder': 'e.g. Freelancers under $5k/mo',
+        'form.challenge': 'Core Challenge',
+        'form.challenge_placeholder': "What's holding them back?",
+        'form.transformation': 'Transformation',
+        'form.transformation_placeholder': "What's the promised land?",
+        'form.offer': 'Offer',
+        'form.offer_type': 'Type',
+        'form.creative_mode': 'Creative Mode',
+        'form.cta': 'Call to Action (CTA)',
+        'form.cta_placeholder': 'e.g. Enroll Now',
+        'form.badge': 'Promo Badge (optional)',
+        'form.badge_placeholder': 'e.g. 50% OFF, For Coaches Only',
+        'form.visual': 'Visual Pipeline',
+        'form.ratio': 'Start Ratio',
+        'form.universe': 'Universe Style',
+        'form.realistic': 'Realistic',
+        'form.fantasy': 'Fantasy',
+        'form.location': 'Location / Setting',
+        'form.creative_universe': 'Creative Universe',
+        'form.photos': 'Photos & Branding',
+        'form.hero_photos': 'Hero Photos',
+        'form.brand_assets': 'Brand Assets',
+        'form.click_upload': 'Click to upload',
+        'form.submit': 'Start Design Engine',
+        'form.save_draft': 'Save Draft',
+        'form.get_example': 'Get example',
+        'form.no_matches': 'No matches',
+
+        // ── Avatars ──
+        'avatar.title': 'Audience Avatars',
+        'avatar.none': 'No avatars yet. Fill the form and click "Save as New".',
+        'avatar.save_new': 'Save as New',
+        'avatar.overwrite': 'Overwrite',
+        'avatar.name_placeholder': 'Avatar name...',
+
+        // ── Ad Tone & Hook Config ──
+        'tone.title': 'Ad Tone',
+        'tone.description': 'Optional — sets the emotional tone for your hooks and copy',
+        'hook.cold_strategy': 'Cold Ad Strategy',
+        'hook.angle_label': 'Hook Angle (optional)',
+        'hook.type_label': 'Hook Type / Delivery Style (optional)',
+        'hook.strategy_label': 'Copywriting Strategy (optional)',
+        'hook.strategy_hint': 'Select a psychological framework — controls how the argument is structured',
+        'hook.retargeting_setup': 'Retargeting Setup',
+        'hook.objection_label': 'What objection stopped them from buying?',
+        'hook.testimonial_label': 'Testimonial / proof line (optional)',
+        'hook.testimonial_hint': 'Real results make retargeting ads 3x more convincing. The AI will weave this into your hooks.',
+        'hook.retargeting_angle_label': 'Retargeting',
+
+        // ── Studio / Step 4 ──
+        'studio.download_packs': 'Download Creative Packs',
+        'studio.push_all_meta': 'Push All to Meta',
+        'studio.stories_warning': 'Story/Landscape images will be cropped on Feed. Use them for Stories/Reels placements.',
+        'studio.render_all': 'Render All',
+        'studio.images': 'images',
+        'studio.select_sizes': 'Select Render Sizes',
+
+        // ── Script / Step 5 ──
+        'script.download_packs': 'Download Creative Packs (Images + Copy)',
+        'script.paired': 'Images + Copy Paired',
+        'script.paired_hint': 'These images go with the ad copy on the left. Use "Download Creative Packs" to get them bundled together.',
+
+        // ── Batch ──
+        'batch.generate_blueprints': 'Generate Batch Blueprints',
+        'batch.hooks_selected': 'hooks selected for batch',
+        'batch.each_hook_gets': 'Each hook gets unique concepts tailored to its angle',
+        'batch.exit': 'Exit Batch Mode',
+
+        // ── Competitor ──
+        'competitor.title': 'Competitor Intelligence',
+        'competitor.research': 'Research',
+        'competitor.researching': 'Researching...',
+        'competitor.found': 'Competitors Found',
+        'competitor.angles': 'Differentiation Angles',
+        'competitor.hooks': 'Attack Hooks',
+        'competitor.use': 'Use',
+        'competitor.added': 'Added',
+        'competitor.fill_first': 'Fill in your product details and click "Research" to scan the market.',
+        'competitor.show': 'Show results',
+        'competitor.hide': 'Hide results',
+
+        // ── Step 2: Hooks ──
+        'hooks.title': 'Hook Lab',
+        'hooks.selected': 'Selected Hook Strategy',
+        'hooks.approve': 'Approve',
+        'hooks.update': 'Update Hook',
+        'hooks.regenerate': 'Regenerate All',
+        'hooks.refine_global': 'Global Hook Refinement (Tone & Keywords)',
+        'hooks.apply_global': 'Apply Global Refinement',
+        'hooks.surgical': 'Surgical Edit',
+
+        // ── Step 3: Concepts ──
+        'concepts.approve': 'Approve',
+        'concepts.environment': 'Environment',
+        'concepts.blueprint': 'Visual Blueprint',
+        'concepts.regenerate': 'Regenerate All',
+        'concepts.refine_all': 'Refine All Blueprints (Global)',
+        'concepts.update': 'Update Blueprint',
+        'concepts.design': 'Design This',
+
+        // ── Step 4: Studio ──
+        'studio.render': 'Reset & Regenerate Base Image',
+        'studio.rendering': 'Engaging Render Cores...',
+        'studio.render_wait': 'Usually takes 30-60 seconds',
+        'studio.manual': 'Manual Studio Tweak',
+        'studio.manual_engine': 'Manual Architect Engine',
+        'studio.polish': 'Auto-Optimized Creatives',
+        'studio.run_audit': 'Run AI Audit',
+        'studio.audit_hint': "Click 'Run AI Audit' to get suggestions, or use manual tweak below.",
+        'studio.audit_unavail': 'AI Visual Analysis and auto-polish suggestions are available on Pro plan and above.',
+        'studio.manual_hint': 'You can still use the manual tweak box below.',
+        'studio.regenerate_suggestions': 'Regenerate All AI Suggestions',
+        'studio.text_layout': 'Text Layout',
+        'studio.reflow': 'Reflow Rescaling',
+
+        // ── Step 5: Script ──
+        'script.title': 'Primary Script',
+        'script.generate': 'Write Copy',
+        'script.refine': 'Refine Script',
+        'script.writing': 'Writing Copy...',
+        'script.refining': 'Refining Script...',
+
+        // ── Privacy ──
+        'privacy.title': 'Privacy Policy',
+        'privacy.back': 'Back to App',
+        'privacy.intro': 'At <b>Pro Ads AI</b>, your privacy is our priority.',
+        'privacy.gemini_title': '1. Gemini Connection',
+        'privacy.gemini_text': 'We use the Google Gemini API (V18.0) through our secure Firebase proxy. Your credentials are encrypted and never shared.',
+
+        // ── Step Tips (contextual guidance) ──
+        'tip.dismiss': 'Got it',
+        'tip.step1': 'Fill in your product details, target audience, and the transformation you offer. The more specific you are, the better your ads will perform.',
+        'tip.step2': 'We generated 4 headline variations. Each uses a different psychological angle. Pick your favorite to move forward, or use Batch to render multiple at once.',
+        'tip.step3': 'These are 3 visual directions for your ad. Each has a different composition, mood, and environment. Click one to render it into a real image.',
+        'tip.step4': 'Your AI-generated ad is ready! Use the polish tools to refine it, resize for different platforms, or generate A/B variations to test.',
+        'tip.step5': 'Your ad caption is ready. Copy it into the "Primary Text" field in Meta Ads Manager when creating your ad.',
+
+        // ── InfoTip tooltips — Step 1 ──
+        'info.tone': 'Sets the emotional mood of your ad. "Authority" sounds like an expert. "Funny" uses humor. "Luxury CEO" feels premium. Optional — AI picks the best tone if you skip.',
+        'info.hook_angle': 'The psychological approach of your headline. "Before/After" shows transformation. "Urgency" creates time pressure. "Pain" amplifies frustration. Optional — AI varies angles if you skip.',
+        'info.hook_type': 'How the headline is formatted. "Question" asks something relatable. "Listicle" uses numbers like "3 secrets". "Personal Story" starts with "I was where you are..." Optional.',
+        'info.strategy': 'The psychological framework for the entire ad — hook, image, and caption. "Pattern Interrupt" breaks scroll autopilot. "Myth Busting" demolishes a belief. Optional — for advanced users.',
+        'info.creative_mode': 'The visual layout of your ad. "Standard Hero" shows you in a scene. "Event Ticket" looks like a ticket. "Book Mockup" shows a 3D book. Pick up to 2 to combine.',
+        'info.campaign_type': 'Cold = new audience who never heard of you. Lead with the problem, not the product. Retargeting = people who saw your offer but didn\'t buy. Address their specific objection.',
+        'info.universe': 'The visual world your ad lives in. "Executive Office" = professional. "Neon City" = futuristic. Affects background, props, and mood. "Surprise Me" picks randomly.',
+        'info.brand_colors': 'Enter your brand\'s hex color codes. The AI will use them for CTA buttons, accent text, and design elements. Leave empty for AI-picked colors.',
+        'info.photos': 'Upload clear photos of yourself or your client (face visible, good lighting). The AI places them into professional ad compositions. More photos = better face accuracy.',
+        'info.badges': 'Optional promotional text that appears as a badge/sticker on the image. e.g., "50% OFF", "Free Webinar", "Limited Seats".',
+
+        // ── InfoTip tooltips — Step 2 ──
+        'info.approve': 'Select this hook and move to the visual design step. The AI will create 3 image concepts based on this headline.',
+        'info.batch': 'Add this hook to a batch — you can select multiple hooks and render them all at once. Great for A/B testing.',
+        'info.edit_hook': 'Manually edit the hook text. Changes the headline, subheadline, or CTA directly.',
+        'info.ai_edit': 'Tell the AI what to change (e.g., "make it shorter", "add urgency") and it regenerates this specific hook.',
+        'info.generate_more': 'Generate 4 new hook variations with fresh angles. Useful if none of the current hooks feel right.',
+
+        // ── InfoTip tooltips — Step 3 ──
+        'info.concept': 'A visual blueprint describing how your ad will look: hero pose, environment, lighting, and text placement. Click to render it into a real image.',
+        'info.expand': 'See full details: environment description, mood & emotion, lighting direction, and text layout plan.',
+        'info.render_sizes': 'Choose which sizes to render. Square (1:1) = Feed. Portrait (4:5) = Feed. Story (9:16) = Stories. Landscape (16:9) = YouTube/Display.',
+
+        // ── InfoTip tooltips — Step 4 ──
+        'info.polish': 'Type instructions to modify the image. e.g., "Make background darker", "Move headline higher", "Change suit color to navy".',
+        'info.ai_audit': 'AI reviews your design for 7 quality criteria (text readability, composition, color harmony, etc.) and auto-fixes issues. Takes ~20 seconds.',
+        'info.reflow': 'Generate this same design in different sizes. The AI adapts the layout for each size while keeping the same hero and text.',
+        'info.ab_variations': 'Generate 3 different versions with subtle changes (different pose, lighting, or angle). Test which one performs best in your ads.',
+        'info.push_meta': 'Upload this image directly to your connected Meta (Facebook/Instagram) Ads account. It appears in your Ad Account\'s image library.',
+
+        // ── InfoTip tooltips — Step 5 ──
+        'info.caption': 'This is your Facebook/Instagram ad caption (Primary Text). Copy it into Meta Ads Manager when creating your ad. It\'s optimized for your hook and audience.',
+        'info.download_txt': 'Downloads the caption as a .txt file with the hook angle, headline, and placement instructions included.',
+
+        // ── Language Toggle ──
+        'lang.switch_label': 'العربية',
+        'lang.switch_short': 'ع',
+
+        // ── Dashboard ──
+        'dashboard.title': 'Performance Dashboard',
+        'dashboard.subtitle': 'Analytics, breakdowns & favorites',
+
+        // ── Concepts / Render ──
+        'concepts.render_btn': 'Render',
+        'concepts.render_all_count': 'Render All {count}',
+
+        // ── Demo Presets ──
+        'demo.weight_loss.nameAr': 'كوتش خسارة وزن',
+        'demo.weight_loss.product': 'برنامج تحول الجسم في 90 يوم',
+        'demo.weight_loss.audience': 'سيدات عاملات تعاني من خسارة الطاقة وزيادة الوزن بعد سن الـ 30',
+        'demo.weight_loss.challenges': 'جربت رجيمات كتير وفشلت، مش لاقية وقت، خايفة من الحرمان',
+        'demo.business.nameAr': 'مينتور بيزنس',
+        'demo.business.product': 'ماستر مايند رواد الأعمال',
+        'demo.business.audience': 'أصحاب مشاريع صغيرة يبيعون بأقل من 50 ألف شهرياً',
+        'demo.business.challenges': 'مش عارف يكبر البيزنس، مفيش سيستم، بيشتغل لوحده',
+        'demo.design.nameAr': 'كورس تصميم',
+        'demo.design.product': 'كورس احتراف التصميم بالـ AI',
+        'demo.design.audience': 'مصممين مبتدئين عايزين يشتغلوا فريلانس',
+        'demo.design.challenges': 'مش عارف يبدأ، خايف من المنافسة، مش فاهم التسعير',
+        'demo.realestate.nameAr': 'وكيل عقارات',
+        'demo.realestate.product': 'عروض شقق التجمع الخامس',
+        'demo.realestate.audience': 'عائلات مصرية تبحث عن شقق في الشيخ زايد',
+        'demo.realestate.challenges': 'الأسعار عالية، خايفين من النصب، مش لاقيين الموقع المناسب',
+
+        // ── Defaults ──
+        'default.cta': 'Join Now',
+
+        // ── Placeholders ──
+        'placeholder.copy_direction': 'I want the text in simple formal Arabic, focusing on these key points: 1- ...',
+    },
+
+    ar: {
+        // ── Global / Nav ──
+        'app.name': 'Pro Ads AI',
+        'app.tagline': 'مهندس الإعلانات المباشرة V6.0',
+        'loading': 'جارٍ التحميل...',
+        'cancel': 'إلغاء',
+        'save': 'حفظ',
+        'delete': 'حذف',
+        'edit': 'تعديل',
+        'back': 'رجوع',
+        'next': 'التالي',
+        'finish': 'إنهاء',
+        'close': 'إغلاق',
+        'search': 'بحث...',
+        'skip': 'تخطي',
+
+        // ── Auth / Login ──
+        'login.google': 'تسجيل الدخول بحساب Google',
+        'login.or_email': 'أو تابع بالبريد الإلكتروني',
+        'login.email_placeholder': 'بريدك الإلكتروني...',
+        'login.password_placeholder': 'كلمة المرور...',
+        'login.enter': 'دخول الاستوديو',
+        'login.please_wait': 'يرجى الانتظار...',
+        'login.forgot': 'نسيت كلمة المرور؟',
+        'login.no_account': 'ليس لديك حساب؟',
+        'login.get_started': 'ابدأ من ProAdsAI.com',
+
+        // ── Onboarding ──
+        'onboarding.personalize': 'لنخصص تجربتك',
+        'onboarding.step_of': 'الخطوة {step} من {total}',
+        'onboarding.q1': 'ما هو التحدي الرئيسي الذي تواجهه؟',
+        'onboarding.q1_sub': 'ساعدنا على فهم كيف يمكننا دعمك بشكل أفضل',
+        'onboarding.q2': 'ما هو نموذج عملك؟',
+        'onboarding.q2_sub': 'يساعدنا هذا في تخصيص استراتيجيات المحتوى لك',
+        'onboarding.q3': 'ما هو مجالك؟',
+        'onboarding.q3_sub': 'أخبرنا عن صناعتك',
+        // Onboarding options — challenges
+        'onboarding.ideas': 'نقص أفكار المحتوى (انسداد الإبداع)',
+        'onboarding.time': 'نقص الوقت',
+        'onboarding.reach': 'نقص الوصول',
+        'onboarding.sales': 'نقص المبيعات',
+        'onboarding.strategy': 'نقص الاستراتيجية',
+        'onboarding.engagement': 'نقص التفاعل',
+        'onboarding.other': 'أخرى',
+        // Onboarding options — business types
+        'onboarding.coaching': 'التدريب والاستشارات',
+        'onboarding.saas': 'برمجيات كخدمة (SaaS)',
+        'onboarding.content': 'منشئو المحتوى والمؤثرون',
+        'onboarding.agency_type': 'الوكالات والمستقلون',
+        'onboarding.ecommerce': 'التجارة الإلكترونية والتجزئة',
+        // Onboarding options — niches
+        'onboarding.marketing': 'التسويق والمبيعات',
+        'onboarding.personal_dev': 'التطوير الشخصي والعقلية',
+        'onboarding.health': 'الصحة واللياقة البدنية',
+        'onboarding.business': 'الأعمال وريادة الأعمال',
+        'onboarding.beauty': 'الجمال والعناية بالبشرة',
+        'onboarding.therapy': 'العلاج والصحة النفسية',
+        'onboarding.spirituality': 'الطاقة والروحانية',
+        'onboarding.finance': 'المالية والاستثمار',
+        'onboarding.tech': 'التكنولوجيا',
+        'onboarding.design': 'الإبداع والتصميم',
+
+        // ── Welcome Screen ──
+        'welcome.hi': 'أهلاً، {name}! 👋',
+        'welcome.headline': 'لنصنع إعلانك القادم',
+        'welcome.headline_accent': 'عالي الأداء',
+        'welcome.sub': 'أجب على بعض الأسئلة السريعة عن منتجك، وسيقوم محركنا الذكي بصناعة العناوين والتصاميم والنصوص — الكل مُحسّن للتحويلات.',
+        'welcome.start': 'ابدأ الإنشاء',
+        'welcome.how': 'كيف يعمل؟',
+        'welcome.card_title': 'مرحباً بك في Pro Ads AI',
+        'welcome.card_headline': 'أنشئ أول إعلان لك في 5 خطوات',
+        'welcome.step1_desc': 'أخبرنا عن منتجك وجمهورك',
+        'welcome.step2_desc': 'الذكاء الاصطناعي يولّد 4 عناوين جذابة',
+        'welcome.step3_desc': 'اختر اتجاهاً بصرياً للتصميم',
+        'welcome.step4_desc': 'الذكاء الاصطناعي يصمم إعلانك بصورك',
+        'welcome.step5_desc': 'احصل على نص إعلاني جاهز للنشر',
+        'welcome.card_sub': 'املأ النموذج أدناه للبدء. الذكاء الاصطناعي يتولى الباقي.',
+        'welcome.time_single': '~3 دقائق للإعلان الفردي',
+        'welcome.time_carousel': '~6 دقائق للكاروسل',
+        'welcome.upload_photos': 'ارفع صورك الخاصة',
+        'welcome.trial_msg': 'أنت على خطة <b>تجريبية</b>. قم بالترقية لفتح جميع الميزات.',
+        'welcome.upgrade': 'ترقية الآن',
+
+        // ── Sign Out ──
+        'signout.title': 'إلى اللقاء!',
+        'signout.message': 'شكراً لاستخدامك Pro Ads AI.<br />نتطلع لمساعدتك في إنشاء إعلانات مذهلة قريباً.',
+        'signout.again': 'تسجيل الدخول مرة أخرى',
+        'signout.thanks': 'شكراً لاستخدامك Pro Ads AI!',
+
+        // ── Walkthrough ──
+        'walkthrough.skip': 'تخطي الجولة',
+        'walkthrough.got_it': 'فهمت!',
+        'walkthrough.s1_title': 'أدخل بياناتك',
+        'walkthrough.s1_desc': 'ابدأ بإخبارنا عن منتجك وجمهورك والتحول المطلوب. كلما أعطيت تفاصيل أكثر، كانت إعلاناتك أفضل.',
+        'walkthrough.s2_title': 'اختر العنوان',
+        'walkthrough.s2_desc': 'سنولّد 4 خيارات لعناوين قوية. اختر الأفضل — أو عدّله للكمال.',
+        'walkthrough.s3_title': 'اختر المفهوم',
+        'walkthrough.s3_desc': 'شاهد 3 مخططات بصرية بعوالم مختلفة. اختر الاتجاه المناسب لعلامتك.',
+        'walkthrough.s4_title': 'أنشئ وحسّن',
+        'walkthrough.s4_desc': 'إعلانك المُولّد بالذكاء الاصطناعي يظهر هنا. حسّنه أو غيّر حجمه أو اطلب تعديلات.',
+        'walkthrough.s5_title': 'احصل على النص',
+        'walkthrough.s5_desc': 'أخيراً، سنكتب نصاً محسّناً للتحويلات يتطابق مع تصميمك — جاهز للنسخ.',
+
+        // ── Stepper ──
+        'step.brief': 'البيانات',
+        'step.hooks': 'العناوين',
+        'step.blueprint': 'المخطط البصري',
+        'step.studio': 'الاستوديو',
+        'step.script': 'النص',
+
+        // ── Sidebar ──
+        'sidebar.history': 'سجل المشاريع',
+        'sidebar.new': 'مشروع جديد',
+        'sidebar.no_history': 'لا يوجد سجل بعد.',
+        'sidebar.start_new': 'بدء مشروع جديد؟',
+
+        // ── Header / Account ──
+        'header.credits': 'الرصيد',
+        'header.plan': 'الخطة',
+        'header.upgrade': 'ترقية خطتك',
+        'header.topup': 'شحن سريع',
+        'header.get_credits': 'احصل على رصيد إضافي',
+        'header.privacy': 'سياسة الخصوصية',
+        'header.logout': 'تسجيل الخروج',
+        'header.free_trial': 'تجربة مجانية',
+
+        // ── InputForm ──
+        'form.progress': 'تقدم البيانات',
+        'form.campaign_type': 'نوع الحملة',
+        'form.cold': 'باردة',
+        'form.retargeting': 'إعادة استهداف',
+        'form.retargeting_setup': 'إعدادات إعادة الاستهداف',
+        'form.angle': 'الزاوية',
+        'form.objection': 'الاعتراض',
+        'form.custom_objection': 'اكتب اعتراضك المخصص...',
+        'form.objection_required': 'اختر اعتراضاً أو اكتب اعتراضاً مخصصاً.',
+        'form.objection_select_placeholder': '-- اختر الاعتراض --',
+        'form.objection_custom_option': '✍️ مخصص...',
+        'form.testimonial': 'شهادة / دليل (اختياري)',
+        'form.testimonial_placeholder': 'مثال: حجز 18 مكالمة في 10 أيام',
+        'form.ad_language': 'لغة الإعلان',
+        'form.click_to_change': 'اضغط للتغيير',
+        'form.arabic_dialects': 'اللهجات العربية',
+        'form.other_languages': 'لغات أخرى',
+        'form.brand': 'العلامة التجارية',
+        'form.product_name': 'اسم المنتج',
+        'form.product_placeholder': 'مثال: برنامج تدريب المحترفين',
+        'form.brand_website': 'موقع العلامة التجارية',
+        'form.unlocks_pro': 'يتوفر في خطة Creator',
+        'form.audience': 'الجمهور',
+        'form.target_avatar': 'الجمهور المستهدف',
+        'form.target_placeholder': 'مثال: المدربين ومقدمي الكورسات',
+        'form.challenge': 'التحدي الأساسي',
+        'form.challenge_placeholder': 'ما الذي يمنعهم من التقدم؟',
+        'form.transformation': 'التحول المطلوب',
+        'form.transformation_placeholder': 'ما هو الهدف النهائي؟',
+        'form.offer': 'العرض',
+        'form.offer_type': 'النوع',
+        'form.creative_mode': 'الوضع الإبداعي',
+        'form.cta': 'دعوة للإجراء (CTA)',
+        'form.cta_placeholder': 'مثال: انضم الآن',
+        'form.badge': 'شارة ترويجية (اختياري)',
+        'form.badge_placeholder': 'مثال: خصم 50%، للمدربين فقط',
+        'form.visual': 'خط الإنتاج البصري',
+        'form.ratio': 'نسبة البدء',
+        'form.universe': 'أسلوب العالم',
+        'form.realistic': 'واقعي',
+        'form.fantasy': 'خيالي',
+        'form.location': 'الموقع / المكان',
+        'form.creative_universe': 'العالم الإبداعي',
+        'form.photos': 'الصور والعلامة التجارية',
+        'form.hero_photos': 'صور البطل',
+        'form.brand_assets': 'أصول العلامة',
+        'form.click_upload': 'اضغط للرفع',
+        'form.submit': 'ابدأ محرك التصميم',
+        'form.save_draft': 'حفظ المسودة',
+        'form.get_example': 'احصل على مثال',
+        'form.no_matches': 'لا توجد نتائج',
+
+        // ── Avatars ──
+        'avatar.title': 'شخصيات الجمهور',
+        'avatar.none': 'لا توجد شخصيات بعد. أكمل النموذج واضغط "حفظ جديد".',
+        'avatar.save_new': 'حفظ جديد',
+        'avatar.overwrite': 'استبدال',
+        'avatar.name_placeholder': 'اسم الشخصية...',
+
+        // ── Ad Tone & Hook Config ──
+        'tone.title': 'نبرة الإعلان',
+        'tone.description': 'اختياري — يحدد النبرة العاطفية لعناوينك ونصوصك',
+        'hook.cold_strategy': 'استراتيجية الإعلان البارد',
+        'hook.angle_label': 'زاوية العنوان (اختياري)',
+        'hook.type_label': 'نوع / أسلوب العنوان (اختياري)',
+        'hook.strategy_label': 'استراتيجية الكتابة (اختياري)',
+        'hook.strategy_hint': 'اختر إطار نفسي — يتحكم في بنية الحجة والإقناع',
+        'hook.retargeting_setup': 'إعداد إعادة الاستهداف',
+        'hook.objection_label': 'ما الاعتراض الذي منعهم من الشراء؟',
+        'hook.testimonial_label': 'شهادة / دليل (اختياري)',
+        'hook.testimonial_hint': 'النتائج الحقيقية تجعل إعلانات إعادة الاستهداف أقوى 3 مرات. الذكاء الاصطناعي سينسجها في عناوينك.',
+        'hook.retargeting_angle_label': 'إعادة استهداف',
+
+        // ── Studio / Step 4 ──
+        'studio.download_packs': 'تحميل الحزم الإبداعية',
+        'studio.push_all_meta': 'نشر الكل على ميتا',
+        'studio.stories_warning': 'صور الستوري/الأفقية سيتم قصها في الفيد. استخدمها لمواضع الستوري/الريلز.',
+        'studio.render_all': 'تصميم الكل',
+        'studio.images': 'صور',
+        'studio.select_sizes': 'اختر أحجام التصميم',
+
+        // ── Script / Step 5 ──
+        'script.download_packs': 'تحميل الحزم الإبداعية (صور + نسخة)',
+        'script.paired': 'صور + نسخة مقترنة',
+        'script.paired_hint': 'هذه الصور مقترنة بالنسخة الإعلانية على اليسار. استخدم "تحميل الحزم الإبداعية" للحصول عليها معاً.',
+
+        // ── Batch ──
+        'batch.generate_blueprints': 'توليد المخططات البصرية',
+        'batch.hooks_selected': 'عناوين محددة للدفعة',
+        'batch.each_hook_gets': 'كل عنوان يحصل على مفاهيم فريدة مصممة لزاويته',
+        'batch.exit': 'إنهاء وضع الدفعة',
+
+        // ── Competitor ──
+        'competitor.title': 'ذكاء المنافسين',
+        'competitor.research': 'بحث',
+        'competitor.researching': 'جارٍ البحث...',
+        'competitor.found': 'منافسون تم العثور عليهم',
+        'competitor.angles': 'زوايا التمايز',
+        'competitor.hooks': 'عناوين هجومية',
+        'competitor.use': 'استخدم',
+        'competitor.added': 'تمت الإضافة',
+        'competitor.fill_first': 'أكمل بيانات منتجك واضغط "بحث" لمسح السوق.',
+        'competitor.show': 'إظهار النتائج',
+        'competitor.hide': 'إخفاء النتائج',
+
+        // ── Step 2: Hooks ──
+        'hooks.title': 'معمل العناوين',
+        'hooks.selected': 'استراتيجية العنوان المختارة',
+        'hooks.approve': 'اعتماد',
+        'hooks.update': 'تحديث العنوان',
+        'hooks.regenerate': 'إعادة توليد الكل',
+        'hooks.refine_global': 'تحسين شامل (النبرة والكلمات)',
+        'hooks.apply_global': 'تطبيق التحسين الشامل',
+        'hooks.surgical': 'تعديل دقيق',
+
+        // ── Step 3: Concepts ──
+        'concepts.approve': 'اعتماد',
+        'concepts.environment': 'البيئة',
+        'concepts.blueprint': 'المخطط البصري',
+        'concepts.regenerate': 'إعادة توليد الكل',
+        'concepts.refine_all': 'تحسين كل المخططات (شامل)',
+        'concepts.update': 'تحديث المخطط',
+        'concepts.design': 'صمم هذا',
+
+        // ── Step 4: Studio ──
+        'studio.render': 'إعادة توليد الصورة الأساسية',
+        'studio.rendering': 'جارٍ تشغيل محركات الإنشاء...',
+        'studio.render_wait': 'يستغرق عادةً 30-60 ثانية',
+        'studio.manual': 'تعديل يدوي في الاستوديو',
+        'studio.manual_engine': 'محرك التعديل اليدوي',
+        'studio.polish': 'محرك التلميع البصري',
+        'studio.run_audit': 'تشغيل التدقيق الذكي',
+        'studio.audit_hint': 'اضغط "تشغيل التدقيق" للحصول على اقتراحات، أو استخدم التعديل اليدوي أدناه.',
+        'studio.audit_unavail': 'التحليل البصري الذكي متاح في خطة Pro وما فوق.',
+        'studio.manual_hint': 'يمكنك استخدام صندوق التعديل اليدوي أدناه.',
+        'studio.regenerate_suggestions': 'إعادة توليد كل الاقتراحات',
+        'studio.text_layout': 'تخطيط النص',
+        'studio.reflow': 'إعادة تحجيم',
+
+        // ── Step 5: Script ──
+        'script.title': 'النص الأساسي',
+        'script.generate': 'اكتب النص',
+        'script.refine': 'حسّن النص',
+        'script.writing': 'جارٍ كتابة النص...',
+        'script.refining': 'جارٍ تحسين النص...',
+
+        // ── Privacy ──
+        'privacy.title': 'سياسة الخصوصية',
+        'privacy.back': 'العودة للتطبيق',
+        'privacy.intro': 'في <b>Pro Ads AI</b>، خصوصيتك هي أولويتنا.',
+        'privacy.gemini_title': '1. اتصال Gemini',
+        'privacy.gemini_text': 'نستخدم واجهة Google Gemini API (V2.0) عبر وكيل Firebase الآمن. بياناتك مشفرة ولا تُشارك أبداً.',
+
+        // ── Step Tips (contextual guidance) ──
+        'tip.dismiss': 'فهمت',
+        'tip.step1': 'أدخل تفاصيل منتجك وجمهورك المستهدف والتحول الذي تقدمه. كلما كنت أكثر تحديداً، كانت إعلاناتك أفضل.',
+        'tip.step2': 'أنشأنا 4 عناوين مختلفة. كل عنوان يستخدم زاوية نفسية مختلفة. اختر المفضل للمتابعة، أو استخدم "دفعة" لعرض عدة عناوين معاً.',
+        'tip.step3': 'هذه 3 اتجاهات بصرية لإعلانك. كل اتجاه له تكوين ومزاج وبيئة مختلفة. اضغط على أحدها لتحويله إلى صورة حقيقية.',
+        'tip.step4': 'إعلانك جاهز! استخدم أدوات التلميع لتحسينه، أو غيّر الحجم لمنصات مختلفة، أو أنشئ نسخ A/B للاختبار.',
+        'tip.step5': 'نص إعلانك جاهز. انسخه في خانة "النص الأساسي" في مدير إعلانات ميتا عند إنشاء إعلانك.',
+
+        // ── InfoTip tooltips — Step 1 ──
+        'info.tone': 'يحدد المزاج العاطفي لإعلانك. "سلطة" يبدو كخبير. "فكاهي" يستخدم المرح. "فاخر" يشعر بالفخامة. اختياري — الذكاء الاصطناعي يختار الأنسب إذا تخطيت.',
+        'info.hook_angle': 'المنهج النفسي لعنوانك. "قبل/بعد" يُظهر التحول. "استعجال" يخلق ضغط الوقت. "نقطة ألم" يضخّم الإحباط. اختياري — الذكاء الاصطناعي ينوّع الزوايا إذا تخطيت.',
+        'info.hook_type': 'شكل العنوان. "سؤال" يسأل شيئاً مألوفاً. "تعداد" يستخدم أرقام مثل "3 أسرار". "قصة شخصية" يبدأ بـ "كنت مكانك..." اختياري.',
+        'info.strategy': 'الإطار النفسي للإعلان كاملاً — العنوان والصورة والنص. "كسر النمط" يوقف التمرير. "هدم الأسطورة" يحطم معتقداً شائعاً. اختياري — للمستخدمين المتقدمين.',
+        'info.creative_mode': 'التخطيط البصري لإعلانك. "بطل كلاسيكي" يظهرك في مشهد. "تذكرة حدث" يبدو كتذكرة. "محاكاة كتاب" يُظهر كتاباً ثلاثي الأبعاد. اختر حتى 2 للدمج.',
+        'info.campaign_type': 'بارد = جمهور جديد لم يسمع بك. ابدأ بالمشكلة، لا المنتج. إعادة استهداف = أشخاص رأوا عرضك ولم يشتروا. عالج اعتراضهم المحدد.',
+        'info.universe': 'العالم البصري لإعلانك. "مكتب تنفيذي" = احترافي. "مدينة نيون" = مستقبلي. يؤثر على الخلفية والعناصر والمزاج. "فاجئني" يختار عشوائياً.',
+        'info.brand_colors': 'أدخل ألوان علامتك التجارية. سيستخدمها الذكاء الاصطناعي لأزرار CTA والنصوص البارزة وعناصر التصميم. اتركها فارغة لألوان يختارها الذكاء الاصطناعي.',
+        'info.photos': 'ارفع صوراً واضحة لنفسك أو عميلك (الوجه واضح، إضاءة جيدة). الذكاء الاصطناعي يضعها في تكوينات إعلانية احترافية. صور أكثر = دقة أعلى للوجه.',
+        'info.badges': 'نص ترويجي اختياري يظهر كملصق على الصورة. مثلاً: "خصم 50%"، "ويبينار مجاني"، "مقاعد محدودة".',
+
+        // ── InfoTip tooltips — Step 2 ──
+        'info.approve': 'اختر هذا العنوان وانتقل لخطوة التصميم البصري. الذكاء الاصطناعي سينشئ 3 مفاهيم صورية بناءً على هذا العنوان.',
+        'info.batch': 'أضف هذا العنوان لدفعة — يمكنك اختيار عدة عناوين وعرضها جميعاً مرة واحدة. ممتاز لاختبار A/B.',
+        'info.edit_hook': 'عدّل نص العنوان يدوياً. غيّر العنوان الرئيسي أو الفرعي أو زر الإجراء مباشرة.',
+        'info.ai_edit': 'أخبر الذكاء الاصطناعي ماذا يغيّر (مثلاً: "اجعله أقصر"، "أضف إلحاحاً") وسيعيد إنشاء هذا العنوان تحديداً.',
+        'info.generate_more': 'أنشئ 4 عناوين جديدة بزوايا مختلفة. مفيد إذا لم يعجبك أي من العناوين الحالية.',
+
+        // ── InfoTip tooltips — Step 3 ──
+        'info.concept': 'مخطط بصري يصف كيف سيبدو إعلانك: وضع البطل، البيئة، الإضاءة، وموضع النص. اضغط عليه لتحويله إلى صورة حقيقية.',
+        'info.expand': 'شاهد التفاصيل الكاملة: وصف البيئة، المزاج والمشاعر، اتجاه الإضاءة، وخطة تخطيط النص.',
+        'info.render_sizes': 'اختر الأحجام للعرض. مربع (1:1) = الخلاصة. عمودي (4:5) = الخلاصة. ستوري (9:16) = القصص. أفقي (16:9) = يوتيوب/عرض.',
+
+        // ── InfoTip tooltips — Step 4 ──
+        'info.polish': 'اكتب تعليمات لتعديل الصورة. مثلاً: "اجعل الخلفية أغمق"، "ارفع العنوان للأعلى"، "غيّر لون البدلة للأزرق".',
+        'info.ai_audit': 'الذكاء الاصطناعي يراجع تصميمك في 7 معايير جودة (وضوح النص، التكوين، تناسق الألوان...) ويصلح المشاكل تلقائياً. يستغرق ~20 ثانية.',
+        'info.reflow': 'أنشئ نفس التصميم بأحجام مختلفة. الذكاء الاصطناعي يكيّف التخطيط لكل حجم مع الحفاظ على نفس البطل والنص.',
+        'info.ab_variations': 'أنشئ 3 نسخ مختلفة بتغييرات دقيقة (وضع مختلف، إضاءة، أو زاوية). اختبر أيها يحقق أفضل أداء في إعلاناتك.',
+        'info.push_meta': 'ارفع هذه الصورة مباشرة لحساب إعلانات ميتا (فيسبوك/إنستغرام) المتصل. تظهر في مكتبة صور حسابك الإعلاني.',
+
+        // ── InfoTip tooltips — Step 5 ──
+        'info.caption': 'هذا نص إعلانك لفيسبوك/إنستغرام (النص الأساسي). انسخه في مدير إعلانات ميتا عند إنشاء إعلانك. محسّن لعنوانك وجمهورك.',
+        'info.download_txt': 'تحميل النص كملف .txt مع زاوية العنوان والعنوان الرئيسي وتعليمات المواضع.',
+
+        // ── Language Toggle ──
+        'lang.switch_label': 'English',
+        'lang.switch_short': 'En',
+
+        // ── Dashboard ──
+        'dashboard.title': 'لوحة الأداء',
+        'dashboard.subtitle': 'تحليل الإعلانات والمفضلة',
+
+        // ── Concepts / Render ──
+        'concepts.render_btn': 'صمّم',
+        'concepts.render_all_count': 'صمّم كل {count} تصاميم',
+
+        // ── Demo Presets ──
+        'demo.weight_loss.nameAr': 'كوتش خسارة وزن',
+        'demo.weight_loss.product': 'برنامج تحول الجسم في 90 يوم',
+        'demo.weight_loss.audience': 'سيدات عاملات تعاني من خسارة الطاقة وزيادة الوزن بعد سن الـ 30',
+        'demo.weight_loss.challenges': 'جربت رجيمات كتير وفشلت، مش لاقية وقت، خايفة من الحرمان',
+        'demo.business.nameAr': 'مينتور بيزنس',
+        'demo.business.product': 'ماستر مايند رواد الأعمال',
+        'demo.business.audience': 'أصحاب مشاريع صغيرة يبيعون بأقل من 50 ألف شهرياً',
+        'demo.business.challenges': 'مش عارف يكبر البيزنس، مفيش سيستم، بيشتغل لوحده',
+        'demo.design.nameAr': 'كورس تصميم',
+        'demo.design.product': 'كورس احتراف التصميم بالـ AI',
+        'demo.design.audience': 'مصممين مبتدئين عايزين يشتغلوا فريلانس',
+        'demo.design.challenges': 'مش عارف يبدأ، خايف من المنافسة، مش فاهم التسعير',
+        'demo.realestate.nameAr': 'وكيل عقارات',
+        'demo.realestate.product': 'عروض شقق التجمع الخامس',
+        'demo.realestate.audience': 'عائلات مصرية تبحث عن شقق في الشيخ زايد',
+        'demo.realestate.challenges': 'الأسعار عالية، خايفين من النصب، مش لاقيين الموقع المناسب',
+
+        // ── Defaults ──
+        'default.cta': 'انضم الآن',
+
+        // ── Placeholders ──
+        'placeholder.copy_direction': 'أريد أن يكون النص بالعربية الفصحى البسيطة، وأن يكون التركيز على هذه النقاط الأساسية: 1- ...',
+    },
+};
+
+// ─── CONTEXT ────────────────────────────────────────────────────────────────
+interface I18nContextType {
+    lang: UILanguage;
+    setLang: (lang: UILanguage) => void;
+    t: (key: string, params?: Record<string, string | number>) => string;
+    dir: 'ltr' | 'rtl';
+}
+
+const I18nContext = createContext<I18nContextType>({
+    lang: 'en',
+    setLang: () => { },
+    t: (key) => key,
+    dir: 'ltr',
+});
+
+// ─── PROVIDER ───────────────────────────────────────────────────────────────
+export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    const [lang, setLangState] = useState<UILanguage>(() => {
+        try {
+            const saved = localStorage.getItem('proads_ui_lang');
+            if (saved === 'ar' || saved === 'en') return saved;
+        } catch { }
+        return 'en';
+    });
+
+    const setLang = useCallback((newLang: UILanguage) => {
+        setLangState(newLang);
+        try { localStorage.setItem('proads_ui_lang', newLang); } catch { }
+        document.documentElement.dir = newLang === 'ar' ? 'rtl' : 'ltr';
+        document.documentElement.lang = newLang;
+    }, []);
+
+    // Set dir on mount
+    React.useEffect(() => {
+        document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+        document.documentElement.lang = lang;
+    }, [lang]);
+
+    const t = useCallback((key: string, params?: Record<string, string | number>): string => {
+        let text = translations[lang]?.[key] || translations['en']?.[key] || key;
+        if (params) {
+            Object.entries(params).forEach(([k, v]) => {
+                text = text.replace(`{${k}}`, String(v));
+            });
+        }
+        return text;
+    }, [lang]);
+
+    const dir = lang === 'ar' ? 'rtl' : 'ltr';
+
+    return (
+        <I18nContext.Provider value={{ lang, setLang, t, dir }}>
+            {children}
+        </I18nContext.Provider>
+    );
+};
+
+// ─── HOOK ───────────────────────────────────────────────────────────────────
+export const useT = () => useContext(I18nContext);

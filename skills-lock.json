@@ -1,0 +1,335 @@
+{
+  "version": 1,
+  "skills": {
+    "angular-architect": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "22612f3693ee5dec28370502d07ceceaed81f2856ba128ea4c0b06ab3ae4ad54"
+    },
+    "api-designer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "626b896a54e811bf95c1b0dac26021fddc6004f08fd3a747a0d3269c38f96ac0"
+    },
+    "architecture-designer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "ceb8ed4700727264339eae14508eca48a5ed0f0516e8a7f6a102b0c38aaaef04"
+    },
+    "atlassian-mcp": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "da9aa04b934c730960b49d7b8bd5d1ddd03c6389562659646da2c783bcd6ea32"
+    },
+    "chaos-engineer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "f4f7d544e2efa88dce3ebb8249ea59b09106858f419230f4f323beb112c21221"
+    },
+    "cli-developer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "323e5769ee136616fa28d944bdde34e82c1ae0a1c5e63a399daa4e9110c82c1f"
+    },
+    "cloud-architect": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "47ffa3de1c3b59c5191d0d67ac6026cde5c45e79ccb2fffb94184f7fd6f45924"
+    },
+    "code-documenter": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "60187087195b064d3be947aba29b0240eab0413b6c9172870618d34929bb28bb"
+    },
+    "code-reviewer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "018ca97b8ba8133fa3d4287164163bb87c037af758ebe3641d31547f6003cae1"
+    },
+    "cpp-pro": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "f4b23815d581f8e4cf180406f33609e537a11998190690b37296dc7eff2d44ea"
+    },
+    "csharp-developer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "4f5879f8ab6f0a8b767b7a362ed188650d072bc929eeda1d8692578acf4a876e"
+    },
+    "database-optimizer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "3cbf72db87879c9b827062be36ec055d2686a8abc7b511e167e0878c26a377c2"
+    },
+    "debugging-wizard": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "801f9a176a926ab0760fc76ae8809f2ee33faf5c4d36e44379f4baa957e32b00"
+    },
+    "devops-engineer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "3fb725f8deff173028574931b34f4293187a51a04aa9143f05d83516d650acca"
+    },
+    "django-expert": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "7137c8d72f2b6c9fd07b040402496f21386702d9eaface4c7b35dab4a0fa8577"
+    },
+    "dotnet-core-expert": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "600a39e427c027d55a9d566651475db063f1ff632f1b1e1ac2e5299940a0affb"
+    },
+    "embedded-systems": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "ec505411f743e775fc3854539142f6770fb28dbb04ca9e852430fae245c2e788"
+    },
+    "fastapi-expert": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "79ca799628334a9699838756571109d35e73701ef5a375b7f4e0da1e14b419a8"
+    },
+    "feature-forge": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "8f561c0641b517978c3d84c76fbf19c5f871ac51a44e74a7759ae1a39308c9e3"
+    },
+    "fine-tuning-expert": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "7f524f41b3ec1a3c1bf04f2deff5fe9ca5848a0a9dfb682a18ac118e26626283"
+    },
+    "flutter-expert": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "d260811d0d6d769174e0615ae06e189a67ee04c70e6cf57b19e9096be2d205f1"
+    },
+    "fullstack-guardian": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "c331d7561e99c1973df4f9f948ce0a78962a8c4d58f29a9ef4da16e6b40546d4"
+    },
+    "game-developer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "dc9eadc15076e0d13dd15d9a3c25fc10f7b15d14dc2ee1c877686bf6790b7a63"
+    },
+    "golang-pro": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "517209072b5cbeb7dfdb41f634ecff658e34e7c9e081e425d618378e9818a941"
+    },
+    "graphql-architect": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "296dbd1a226df7c373fca69f8ebd659ae33a602fb09aa836a0cd23ada7d736c8"
+    },
+    "java-architect": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "88a601632c7e1ce2788e31123fdf96050c8f45bcd2bf89b299a16965bb3e92df"
+    },
+    "javascript-pro": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "be8d710a5339d1435df48d059cff2a98ab4f13abd65be40ea3e4e03c336fab16"
+    },
+    "kotlin-specialist": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "3faa15c1439778f02de47429bffd7987acbb968482c9b1e9187c8a4e18aa364a"
+    },
+    "kubernetes-specialist": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "0caeba73f52b7b84eef3a3c05c415c5930b16a7c1947469dd8168a41bd0f4fea"
+    },
+    "laravel-specialist": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "3fb2841e7b0e05d64484970fdbb03063327d904c270b2e46b9217b18863132ca"
+    },
+    "legacy-modernizer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "9f46720de961bc6eb08ba60d936619ff017a3ccb7926de9d1bd8206f36d9bd2d"
+    },
+    "mcp-developer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "5a9ce87909c26967b948fef0700e471dc30eba1788991c348676287469243b72"
+    },
+    "microservices-architect": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "cde138470adaa161e6cb36fc29c468862d77a1d9c6e4943e5a13265d2138184c"
+    },
+    "ml-pipeline": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "83d815bd1c3489e99f1cbd8bec5dc2e71106dfee5f3e5b197865c0b60b54221c"
+    },
+    "monitoring-expert": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "43a84b741f2c968b95a500a7c6d15155bbaec8305fad577509c55da10ad5add3"
+    },
+    "nestjs-expert": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "28793a2c304b0932e1bc0e05dfc236ac453f4ec9692378f2ca46f53dd9afdb16"
+    },
+    "nextjs-developer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "e3c64eda5c1119ef707aeeca4efa40417ad8a3a2473895f1f37e1392405b881d"
+    },
+    "pandas-pro": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "c94776b24cc05b20286fd8fbfc80107afac2b25410c2e75102d9f52945d7e727"
+    },
+    "php-pro": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "fa7822289e90a1bc2f814b125574a43a18e5bf9a7b0615e266f7c5f656c67c4e"
+    },
+    "playwright-expert": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "47eb788d058c9832395d16b696b62cb2da118580ca598d2ba45cadfd8f01a668"
+    },
+    "postgres-pro": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "f932cd62b30ec4f18514fae84f3c826341d2f02e52e8536070599c75ff4c157f"
+    },
+    "prompt-engineer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "6fe96c6cf5eaaa7a4a61aa1f4f6ac346b4fd7d4d49fa6ebe35317ec59839f14a"
+    },
+    "python-pro": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "8d8f38505821c76cac7cbfb1d6dd84597fb46b9c4734ccb24bb4bf0d45d8634c"
+    },
+    "rag-architect": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "9e73a9440ca7f419a192901bf38e8c61e7449e0e9340b6f3507b85ca249dce42"
+    },
+    "rails-expert": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "6f7ea2f3c7851afebb3e2ec88b62507ee7839bb7d3296e83826b37469156bb43"
+    },
+    "react-expert": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "455a19a29228e1a098cb4735c6f35e881fa7d69fa20822b5d8a588c0182f6361"
+    },
+    "react-native-expert": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "1f00c36d3d4227cf7e0d49364c592ca26f8fd509399734c37a99fe2dcb007c98"
+    },
+    "rust-engineer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "3bc7367d913e710bc7c37f8cc33c60507210d334e2de821db09b39647acc0f8a"
+    },
+    "salesforce-developer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "8095a0f71a8650641770a835fd266d4ab14a74dbfc1c5fd69ac0b4ee663c9296"
+    },
+    "secure-code-guardian": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "3d36cca7164d07416f6fca8ba2c80a2ab2a38f33c72c3f5b48b8b2d7b2096f0c"
+    },
+    "security-reviewer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "a6d5847fbde8128ef60b5ac683a3f81dbafb8a4dac7207a4bd18d68e8a63d42a"
+    },
+    "shopify-expert": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "7c13cf1c0ecb6bbd9d6f79f3398b3903ca66977868566a10c862919dbe6ce967"
+    },
+    "spark-engineer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "f2715f572ab01dd77f3ebec1255c003fb1f969bac4c008e6a32dc47066cfc512"
+    },
+    "spec-miner": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "a00b6e7403de2012f6285423215ffa0845a27ecb9ee7826f9026f1be79771c40"
+    },
+    "spring-boot-engineer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "abe5bd736de0f047275ebdced3908c6113edf0f12b1a4fca72976d9f6c16be4e"
+    },
+    "sql-pro": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "ae524ad8c344cfc8536d96861a3fedbeb43b42e4374864fc8637113a3b614708"
+    },
+    "sre-engineer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "beca919194294e48278372de6ab7e48abfa1ccf7d27886c7a8dbcacb40640f51"
+    },
+    "swift-expert": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "9d3a7e7f466a839d016250fd561c661695f1622ada114ea200636d0ba5cbecb8"
+    },
+    "terraform-engineer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "1a0e1fb77a3a6c278d6ef456e1124ce48fe209eb2e8d90d5a3a4c3446af1d57c"
+    },
+    "test-master": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "6a46277cd7c805bec9f8676931c5a026a85ffea65a7dc81c330bd04b650ff8a2"
+    },
+    "the-fool": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "f44b9f349617b9a5846f1f96de607d9c82328bee650f1e4f66ff540a40a78102"
+    },
+    "typescript-pro": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "85f019724b8766a6814b5893af9299847d91ac40699c124b271e43465250e4fd"
+    },
+    "vue-expert": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "9b5e46a0367de1cc26d388490db08fa305934fff4b9dc8b8a614a708d8b5dbe8"
+    },
+    "vue-expert-js": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "61e74e4b37e9a569ffd066bd2e7446be33a3d4cdf0dedee4ecd7ef4be1188a02"
+    },
+    "websocket-engineer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "a90c56583db692bd98e0d1e1210a54b0427923970965676c6fe86101261c9ece"
+    },
+    "wordpress-pro": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "ffe9fc142b4af6d7b8afe27c12c5e7c94599e0a0e6819c1d0e75a1bb22fc3b0f"
+    }
+  }
+}
