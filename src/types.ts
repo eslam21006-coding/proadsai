@@ -3,9 +3,8 @@ export type CampaignType = "cold" | "retargeting";
 export type UniverseMode = "realistic" | "fantasy" | "minimal";
 export type AdMode = "single" | "carousel";
 
-// ─── COLD AD HOOK ANGLES ─────────────────────────────────────────────────
+// ─── COLD AD HOOK ANGLES (10 approved — before_after is now a creative mode) ──
 export type ColdHookAngle =
-  | "before_after"
   | "emotional"
   | "logic"
   | "urgency"
@@ -165,7 +164,7 @@ export interface AdInputs {
   campaignType: CampaignType;
 
   // Cold-only controls
-  coldHookAngle?: ColdHookAngle;   // before_after, emotional, logic, urgency, etc.
+  coldHookAngle?: ColdHookAngle;   // emotional, logic, urgency, etc. (10 approved angles)
   hookType?: HookType;             // comedic, controversial, curiosity_gap, etc.
   adTone?: AdTone;                 // formal, funny, inspiring, emotional, authority, friendly, bold, data_driven, mentor, soft, luxury_ceo
   copywritingStrategy?: CopywritingStrategy; // pattern_interrupt, beginner_awareness, solution_awareness, etc.

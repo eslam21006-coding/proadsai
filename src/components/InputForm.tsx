@@ -413,6 +413,17 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
     return () => timers.forEach(t => clearTimeout(t));
   }, [competitorLoading]);
 
+  // Auto-adjust slide count for value_stack carousel (one gift per slide)
+  React.useEffect(() => {
+    const modes = inputs.offerCreativeMode || [];
+    if (!modes.includes('value_stack' as any) || inputs.adMode !== 'carousel') return;
+    const items = ((inputs as any).valueStackItems || '').split('\n').filter((s: string) => s.trim());
+    const adj = resolveValueStackSlideCount(items);
+    if (adj.resolvedSlideCount > 0 && adj.resolvedSlideCount !== inputs.slideCount) {
+      setInputs(prev => ({ ...prev, slideCount: adj.resolvedSlideCount }));
+    }
+  }, [inputs.offerCreativeMode, inputs.adMode, (inputs as any).valueStackItems]);
+
   const allowedRatios = ASPECT_RATIOS.filter(r => canUseRatio(userPlan, r.value));
 
   const buildAvatarPayload = (name: string) => ({
@@ -1957,13 +1968,9 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                       const items = ((inputs as any).valueStackItems || '').split('\n').filter((s: string) => s.trim());
                       const adj = resolveValueStackSlideCount(items);
                       if (adj.resolvedSlideCount === 0 || adj.resolvedSlideCount === inputs.slideCount) return null;
-                      // Apply resolved count to state so submitted data matches
-                      if (inputs.slideCount !== adj.resolvedSlideCount) {
-                        setTimeout(() => setInputs(prev => ({ ...prev, slideCount: adj.resolvedSlideCount })), 0);
-                      }
                       return (
                         <div className="text-xs text-amber-400 mt-1">
-                          {t('override.carousel_adjusted_slides').replace('[N]', String(adj.resolvedSlideCount))}
+                          {t('override.carousel_adjusted_slides').replace('{count}', String(adj.resolvedSlideCount))}
                         </div>
                       );
                     })()}

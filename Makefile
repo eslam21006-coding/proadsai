@@ -1,6 +1,7 @@
-.PHONY: help install dev build lint test preview \
+.PHONY: help install dev build lint preview \
        functions-build functions-lint functions-test functions-watch functions-logs \
-       emulators deploy deploy-functions deploy-hosting deploy-rules \
+       emulators emulators-functions emulators-hosting \
+       deploy deploy-functions deploy-hosting deploy-rules \
        clean
 
 # ─── Defaults ────────────────────────────────────────────────────────
@@ -55,7 +56,7 @@ emulators-hosting: ## Start emulators (hosting only)
 	firebase emulators:start --only hosting
 
 # ─── Deploy ──────────────────────────────────────────────────────────
-deploy: ## Deploy everything (hosting + functions + rules)
+deploy: functions-build build ## Deploy everything (clean build first, then deploy)
 	firebase deploy
 
 deploy-functions: functions-build ## Deploy Cloud Functions only (clean build first)
