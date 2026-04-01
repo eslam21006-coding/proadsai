@@ -417,12 +417,15 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
   React.useEffect(() => {
     const modes = inputs.offerCreativeMode || [];
     if (!modes.includes('value_stack' as any) || inputs.adMode !== 'carousel') return;
-    const items = ((inputs as any).valueStackItems || '').split('\n').filter((s: string) => s.trim());
+    const raw = (inputs as any).valueStackItems || '';
+    const items = raw.split(/[,\n]/).map((s: string) => s.trim()).filter(Boolean);
     const adj = resolveValueStackSlideCount(items);
-    if (adj.resolvedSlideCount > 0 && adj.resolvedSlideCount !== inputs.slideCount) {
-      setInputs(prev => ({ ...prev, slideCount: adj.resolvedSlideCount }));
+    const maxSlides = getMaxSlides(userPlan);
+    const clamped = Math.min(adj.resolvedSlideCount, maxSlides);
+    if (clamped > 0 && clamped !== inputs.slideCount) {
+      setInputs(prev => ({ ...prev, slideCount: clamped }));
     }
-  }, [inputs.offerCreativeMode, inputs.adMode, (inputs as any).valueStackItems]);
+  }, [inputs.offerCreativeMode, inputs.adMode, (inputs as any).valueStackItems, userPlan]);
 
   const allowedRatios = ASPECT_RATIOS.filter(r => canUseRatio(userPlan, r.value));
 
@@ -650,6 +653,12 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
         if (hiddenLangs.includes(adjusted.adLanguage || '')) {
             adjusted.adLanguage = 'ar_fusha';
             adjustments.push('language');
+        }
+        // Normalize legacy offer types (e.g., "Free Webinar" → "Live Event")
+        const legacyOfferMap: Record<string, string> = { 'Free Webinar': 'Live Event', 'Paid Workshop': 'Live Event', 'Challenge': 'Live Event' };
+        if (adjusted.offerType && legacyOfferMap[adjusted.offerType]) {
+            adjusted.offerType = legacyOfferMap[adjusted.offerType];
+            adjustments.push('offerType');
         }
         if (adjustments.length > 0 && showToast) {
             showToast(appLang === 'ar' ? 'تم تعديل بعض الإعدادات للتوافق.' : 'Some settings were adjusted for compatibility.', 'info');
@@ -1965,12 +1974,15 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                     {(() => {
                       const modes = inputs.offerCreativeMode || [];
                       if (!modes.includes('value_stack' as any) || inputs.adMode !== 'carousel') return null;
-                      const items = ((inputs as any).valueStackItems || '').split('\n').filter((s: string) => s.trim());
+                      const raw = ((inputs as any).valueStackItems || '');
+                      const items = raw.split(/[,\n]/).map((s: string) => s.trim()).filter(Boolean);
                       const adj = resolveValueStackSlideCount(items);
-                      if (adj.resolvedSlideCount === 0 || adj.resolvedSlideCount === inputs.slideCount) return null;
+                      const maxSlides = getMaxSlides(userPlan);
+                      const clamped = Math.min(adj.resolvedSlideCount, maxSlides);
+                      if (clamped === 0 || clamped === inputs.slideCount) return null;
                       return (
                         <div className="text-xs text-amber-400 mt-1">
-                          {t('override.carousel_adjusted_slides').replace('{count}', String(adj.resolvedSlideCount))}
+                          {t('override.carousel_adjusted_slides').replace('{count}', String(clamped))}
                         </div>
                       );
                     })()}
