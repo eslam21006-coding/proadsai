@@ -427,6 +427,18 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
     }
   }, [inputs.offerCreativeMode, inputs.adMode, (inputs as any).valueStackItems, userPlan]);
 
+  React.useEffect(() => {
+    if (activeStyle !== 'fantasy' && activeStyle !== 'realistic') return;
+    if (isTextOnlyActive) return;
+    const currentSubStyle = (inputs as any).visualSubStyle;
+    if (!currentSubStyle) return;
+    const selectedModes = inputs.offerCreativeMode || ['standard_hero'];
+    const availableCards = getAvailableCards(activeStyle as 'realistic' | 'fantasy', selectedModes);
+    if (!availableCards.find((c: ArtDirectionCard) => c.id === currentSubStyle)) {
+      setInputs(prev => ({ ...prev, visualSubStyle: undefined as any }));
+    }
+  }, [activeStyle, inputs.offerCreativeMode, (inputs as any).visualSubStyle, isTextOnlyActive]);
+
   const allowedRatios = ASPECT_RATIOS.filter(r => canUseRatio(userPlan, r.value));
 
   const buildAvatarPayload = (name: string) => ({
