@@ -183,6 +183,14 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'form.get_example': 'Get example',
         'form.no_matches': 'No matches',
 
+        'override.reference_ad_active': 'Reference ad active — visual style follows the reference.',
+        'override.testimonial_requires_carousel': 'Testimonials require carousel — switched automatically.',
+        'override.before_after_single_only': 'Before/After is single-image only.',
+        'override.carousel_adjusted_slides': 'Carousel adjusted to {count} slides — one gift per slide.',
+        'override.carousel_adjusted_testimonials': 'Carousel adjusted to {count} slides — one testimonial per slide.',
+        'override.compatibility_adjusted': 'Some settings were adjusted for compatibility.',
+        'override.language_adjusted': 'Language adjusted — original language not available at launch.',
+
         // ── Avatars ──
         'avatar.title': 'Audience Avatars',
         'avatar.none': 'No avatars yet. Fill the form and click "Save as New".',
@@ -542,6 +550,14 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'form.save_draft': 'حفظ المسودة',
         'form.get_example': 'احصل على مثال',
         'form.no_matches': 'لا توجد نتائج',
+
+        'override.reference_ad_active': 'الإعلان المرجعي مفعّل — الأسلوب البصري يتبع المرجع.',
+        'override.testimonial_requires_carousel': 'الشهادات تحتاج كاروسيل — تم التبديل تلقائياً.',
+        'override.before_after_single_only': 'قبل/بعد للصور المفردة فقط.',
+        'override.carousel_adjusted_slides': 'تم ضبط الكاروسيل على {count} شرائح — هدية واحدة لكل شريحة.',
+        'override.carousel_adjusted_testimonials': 'تم ضبط الكاروسيل على {count} شرائح — شهادة واحدة لكل شريحة.',
+        'override.compatibility_adjusted': 'تم تعديل بعض الإعدادات للتوافق.',
+        'override.language_adjusted': 'تم تعديل اللغة — اللغة الأصلية غير متاحة عند الإطلاق.',
 
         // ── Avatars ──
         'avatar.title': 'شخصيات الجمهور',

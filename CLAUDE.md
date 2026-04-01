@@ -1,30 +1,33 @@
-# Pro Ads AI - SaaS - FAL Development Guidelines
+﻿# Pro Ads AI - SaaS - FAL Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-03-31
+Auto-generated from all feature plans. Last updated: 2026-04-01
 
-## Active Technologies
-
-- TypeScript 5.7 (functions/backend), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Firestore, React 19, Zustand (001-resolver-completeness-trace)
+## Active Features
+- 002-frontend-filter-qa: Frontend filtering & QA (React, Zustand, Tailwind, fixtures via Cloud Functions v2)
+- 001-resolver-completeness-trace: Resolver completeness tracing (Cloud Functions v2, Firestore)
 
 ## Project Structure
 
 ```text
-backend/
-frontend/
-tests/
+src/              # React frontend (Vite + Tailwind)
+functions/        # Firebase Cloud Functions v2 (backend)
+specs/            # Feature specs (speckit workflow)
+.specify/         # Speckit templates & constitution
 ```
 
 ## Commands
 
-npm test; npm run lint
+`npm run dev` — start Vite dev server
+`npm run build` — TypeScript compile + Vite build
+`npm run lint` — ESLint
+`cd functions && npm test` — run backend tests
 
-## Code Style
+## Platform
 
-TypeScript 5.7 (functions/backend), TypeScript 5.9 (frontend): Follow standard conventions
-
-## Recent Changes
-
-- 001-resolver-completeness-trace: Added TypeScript 5.7 (functions/backend), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Firestore, React 19, Zustand
+- Frontend: React 19 + Zustand + Tailwind CSS 3, bundled with Vite 7
+- Backend: Firebase Cloud Functions v2, Firestore, Storage
+- TypeScript 5.9 (frontend), 5.7 (functions)
+- Firebase project config: firebase.json, firestore.rules, storage.rules
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

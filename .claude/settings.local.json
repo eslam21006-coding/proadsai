@@ -85,7 +85,9 @@
       "Bash(do sed:*)",
       "Bash(echo \"Fixed $f\")",
       "Bash(xxd AGENTS.md)",
-      "Bash(xxd CLAUDE.md)"
+      "Bash(xxd CLAUDE.md)",
+      "Bash(powershell.exe -File .specify/scripts/powershell/create-new-feature.ps1 \"Frontend launch filter, override signals, and priority lane QA fixtures \\(Phase 2 from LAUNCH_MATRIX\\)\" -Json -ShortName \"frontend-filter-qa\")",
+      "Bash(bash -n .specify/scripts/bash/create-new-feature.sh)"
     ]
   }
 }
