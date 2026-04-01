@@ -297,11 +297,14 @@ export function getBlockedModes(selectedModes: string[], activeTab: CreativeTab,
         for (const b of blocked) { if (!selected.includes(b as CreativeModeId)) { blockedIds.add(b); reasons[b] = `Blocked by "${hookAngle}"`; } }
     }
 
-    if (selected.includes('before_after' as CreativeModeId)) {
-        for (const [id] of Object.entries(CREATIVE_MODE_CATALOG)) {
-            if (id !== 'before_after' && !blockedIds.has(id)) {
-                blockedIds.add(id);
-                reasons[id] = 'before_after is standalone-only';
+    // Block all other modes when a soloOnly mode is selected
+    for (const sel of selected) {
+        if (CREATIVE_MODE_CATALOG[sel]?.soloOnly) {
+            for (const [id] of Object.entries(CREATIVE_MODE_CATALOG)) {
+                if (id !== sel && !blockedIds.has(id)) {
+                    blockedIds.add(id);
+                    reasons[id] = `${CREATIVE_MODE_CATALOG[sel]?.labelEn || sel} is standalone-only`;
+                }
             }
         }
     }

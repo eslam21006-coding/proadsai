@@ -333,12 +333,9 @@ function testLane9MinimalHeroBatch() {
     assert.equal(spec.isValid, true);
     assert.equal(spec.primaryMode, 'standard_hero');
 
-    // Verify all realistic sub-styles allow standard_hero
-    const realisticSubStyles: string[] = ['luxury_magazine', 'documentary_gritty', 'neon_urban',
-        'dark_cinematic', 'bright_illustrated', 'mythic_epic', 'cinematic_film_still',
-        'clean_corporate', 'golden_hour_outdoor', 'street_photography', 'ugly_ad',
-        'glitch_digital', 'synthwave_80s'];
-    for (const sub of realisticSubStyles) {
+    // Verify all sub-styles allow standard_hero (use canonical list from SUBSTYLE_MODE_COMPAT)
+    const allSubStyles = Object.keys(SUBSTYLE_MODE_COMPAT);
+    for (const sub of allSubStyles) {
         const result = validateSubStyleModeCompat(sub, modes);
         assert.equal(result.compat, 'ok', `Lane 9: ${sub}+standard_hero should be ok`);
     }

@@ -28,7 +28,8 @@ preview: ## Preview the production build locally
 	npm run preview
 
 # ─── Functions (Backend) ─────────────────────────────────────────────
-functions-build: ## Build Cloud Functions
+functions-build: ## Build Cloud Functions (clean build per AGENTS.md rule #1)
+	rm -rf functions/lib
 	cd functions && npm run build
 
 functions-lint: ## Lint Cloud Functions
@@ -57,7 +58,7 @@ emulators-hosting: ## Start emulators (hosting only)
 deploy: ## Deploy everything (hosting + functions + rules)
 	firebase deploy
 
-deploy-functions: ## Deploy Cloud Functions only
+deploy-functions: functions-build ## Deploy Cloud Functions only (clean build first)
 	firebase deploy --only functions
 
 deploy-hosting: build ## Build then deploy hosting only

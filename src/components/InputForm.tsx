@@ -1956,10 +1956,14 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                       if (!modes.includes('value_stack' as any) || inputs.adMode !== 'carousel') return null;
                       const items = ((inputs as any).valueStackItems || '').split('\n').filter((s: string) => s.trim());
                       const adj = resolveValueStackSlideCount(items);
-                      if (adj.resolvedSlideCount === inputs.slideCount) return null;
+                      if (adj.resolvedSlideCount === 0 || adj.resolvedSlideCount === inputs.slideCount) return null;
+                      // Apply resolved count to state so submitted data matches
+                      if (inputs.slideCount !== adj.resolvedSlideCount) {
+                        setTimeout(() => setInputs(prev => ({ ...prev, slideCount: adj.resolvedSlideCount })), 0);
+                      }
                       return (
                         <div className="text-xs text-amber-400 mt-1">
-                          {appLang === 'ar' ? `تم ضبط الكاروسيل على ${adj.resolvedSlideCount} شرائح — هدية واحدة لكل شريحة.` : `Carousel adjusted to ${adj.resolvedSlideCount} slides — one gift per slide.`}
+                          {t('override.carousel_adjusted_slides').replace('[N]', String(adj.resolvedSlideCount))}
                         </div>
                       );
                     })()}
@@ -1971,7 +1975,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
               {inputs.referenceAd && (
                 <div className="mb-3 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-200 text-sm flex items-center gap-2">
                   <span className="text-amber-300">📋</span>
-                  {appLang === 'ar' ? 'الإعلان المرجعي مفعّل — الأسلوب البصري يتبع المرجع.' : 'Reference ad active — visual style follows the reference.'}
+                  {t('override.reference_ad_active')}
                 </div>
               )}
               {/* Visual Style Family — hidden in text_only mode */}

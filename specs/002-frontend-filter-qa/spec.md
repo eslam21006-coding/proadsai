@@ -117,7 +117,7 @@ As a user, the visual control fields (style family, universe, art direction, upl
 
 1. **Given** a user selects "minimal" family, **When** the UI updates, **Then** the universe dropdown remains visible but art direction cards are hidden.
 2. **Given** a user selects "text_only" mode, **When** the UI updates, **Then** universe, art direction, style family, and Box A are hidden.
-3. **Given** a user selects "realistic" family, **When** they view art direction, **Then** 10 realistic art direction cards appear (Creator+ to unlock).
+3. **Given** a user selects "realistic" family, **When** they view art direction, **Then** 10 realistic art direction cards appear (available to all plans).
 4. **Given** a user selects "fantasy" family, **When** they view art direction, **Then** 10 fantasy art direction cards appear.
 5. **Given** the art direction section, **When** rendered, **Then** the label reads "Art Direction" regardless of which family is selected.
 6. **Given** a user is on a Pro+ plan and uploads a reference ad, **When** the upload completes, **Then** a banner appears indicating the reference ad overrides visual style.
