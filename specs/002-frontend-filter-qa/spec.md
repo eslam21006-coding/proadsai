@@ -1,215 +1,174 @@
-# Feature Specification: Frontend Launch Filter, Override Signals & Priority Lane QA
+# Feature Specification: Frontend Enforcement
 
 **Feature Branch**: `002-frontend-filter-qa`
-**Created**: 2026-03-31
+**Created**: 2026-04-02
 **Status**: Draft
-**Input**: Phase 2 from LAUNCH_MATRIX.md — Spec C (Frontend Launch Filter + Override Signals) + Spec D (Priority Lane QA Fixtures)
+**Input**: Phase 2 from LAUNCH_MATRIX.md Section 14 — Frontend Enforcement (12 tasks: 2.1–2.12)
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 - Invalid Combination Blocking (Priority: P1)
+### User Story 1 - Deleted Modes Removed from UI (Priority: P1)
 
-As a user selecting creative options in the input form, any combination not approved for launch is immediately blocked with a clear inline message explaining why. I cannot proceed to generation with an invalid combination.
+As a user, I cannot see "limited_access", "module_preview", or "day_strip" anywhere in the application — no mode cards, no selectors, no field sections. These modes are gone from the frontend.
 
-**Why this priority**: Without frontend blocking, users waste time configuring invalid setups only to be rejected by the server. The frontend must enforce the same rules as the backend to prevent confusion and wasted effort.
+**Why this priority**: Deleted modes still visible in the UI create confusion and allow selection of modes the backend rejects. This is the first cleanup step.
 
-**Independent Test**: Attempt every non-launch combination (deleted modes, invalid pairs, plan-gated formats) and verify each is blocked with a specific inline reason. Attempt every approved combination and verify none are falsely blocked.
-
-**Acceptance Scenarios**:
-
-1. **Given** a user selects a creative mode that was deleted (limited_access, module_preview, day_strip), **When** the input form renders, **Then** these modes do not appear in the mode selector at all.
-2. **Given** a user on a Starter plan selects "carousel" as the ad format, **When** the system evaluates the combination, **Then** the carousel option is disabled or blocked with "Carousel requires Pro plan or higher."
-3. **Given** a user selects "before_after" and then attempts to add a second mode, **When** the system evaluates, **Then** the second mode is blocked with "Before/After is a standalone mode and cannot be paired."
-4. **Given** a user selects a valid combination, **When** they proceed to generation, **Then** no blocking message appears and generation starts normally.
-
----
-
-### User Story 2 - Deleted Modes Removed from UI (Priority: P2)
-
-As a user, I cannot see "limited_access", "module_preview", or "day_strip" anywhere in the application. These modes do not appear in any mode selector, card grid, prompt logic, or mode-related UI element.
-
-**Why this priority**: Deleted modes left in the UI confuse users and create the illusion of supported features. Complete removal prevents accidental selection and support requests.
-
-**Independent Test**: Search the entire frontend codebase for references to these three mode names and verify zero matches in any user-facing component, mode catalog, or prompt construction logic.
+**Independent Test**: Browse all offer type tabs and verify zero presence of deleted modes in mode selectors, constants, and conflict maps.
 
 **Acceptance Scenarios**:
 
-1. **Given** a user browses creative modes for any offer type, **When** they view the mode selector, **Then** "limited_access", "module_preview", and "day_strip" do not appear.
-2. **Given** any pairing rule, compatibility map, or prompt template in the frontend, **When** inspected, **Then** no reference to deleted modes exists.
+1. **Given** a user views creative mode options for any offer type, **When** they see the mode selector, **Then** "limited_access", "module_preview", and "day_strip" do not appear.
+2. **Given** any mode-related constant or conflict map in the frontend, **When** inspected, **Then** no reference to deleted modes exists.
 
 ---
 
-### User Story 3 - Before/After Reclassification in UI (Priority: P3)
+### User Story 2 - Before/After Reclassification in UI (Priority: P2)
 
-As a user creating a cold campaign, I find "before_after" in the creative mode grid (not the hook angle selector). The hook angle selector shows exactly 10 angles. Before/After appears as a creative mode available in all 3 offer type tabs.
+As a user creating a cold campaign, I find "before_after" in the creative mode card grid — not the hook angle selector. The hook angle selector shows exactly 10 angles.
 
-**Why this priority**: before_after was reclassified from hook angle to creative mode in Spec B (resolver). The frontend must match this reclassification so the UI and backend agree.
+**Why this priority**: before_after was reclassified from hook angle to creative mode in Phase 1 (backend). The frontend must match.
 
-**Independent Test**: Verify before_after does not appear in the hook angle dropdown. Verify it appears in the creative mode grid for all 3 tabs. Verify it is enforced as solo-only (cannot be paired).
+**Independent Test**: Verify before_after is absent from hook angle options and present in the creative mode grid for all 3 tabs.
 
 **Acceptance Scenarios**:
 
-1. **Given** a user opens the hook angle selector, **When** they view options, **Then** "before_after" is not listed — only the 10 approved cold hook angles appear.
-2. **Given** a user views creative modes for "Mini-Course", **When** they see the mode grid, **Then** "before_after" appears as a selectable mode.
-3. **Given** a user views creative modes for "Live Events" or "Free Guide", **When** they see the grid, **Then** "before_after" appears.
+1. **Given** a user opens the hook angle selector, **When** they view options, **Then** "before_after" is not listed.
+2. **Given** a user views creative modes for any tab, **When** they see the grid, **Then** "before_after" appears as a selectable creative mode.
 
 ---
 
-### User Story 4 - Offer Type Dropdown Consolidation (Priority: P4)
+### User Story 3 - Non-Launch Languages Hidden (Priority: P3)
 
-As a user, the offer type dropdown shows exactly 3 entries: "Live Event", "Free Guide", and "Mini-Course". The old entries "Free Webinar", "Paid Workshop", and "Challenge" no longer appear.
+As a user, the ad language selector shows only the 7 launch languages. French, Spanish, German, Turkish, and Portuguese do not appear.
 
-**Why this priority**: The product owner consolidated 5 offer types into 3 for launch clarity. The frontend must reflect this.
+**Why this priority**: Non-launch languages have no quality contracts. Showing them invites ungoverned output.
 
-**Independent Test**: Open the offer type dropdown and verify exactly 3 entries. Load a saved project with an old offer type name and verify it maps correctly to the new name.
-
-**Acceptance Scenarios**:
-
-1. **Given** a user opens the offer type dropdown, **When** they see the options, **Then** exactly 3 entries appear: "Live Event", "Free Guide", "Mini-Course".
-2. **Given** a user loads a saved project that used "Free Webinar", **When** the project loads, **Then** it maps to "Live Event" without error.
-
----
-
-### User Story 5 - Override Signals (Priority: P5)
-
-As a user, when the system automatically changes my selection (auto-clears, suppressions, overrides), I see a clear notification explaining what changed and why. I am never left wondering why a field disappeared or a value changed.
-
-**Why this priority**: Silent state changes cause confusion and bug reports. Users must understand when and why the system modified their selections.
-
-**Independent Test**: Trigger each override event from the Silent Overrides Registry (LAUNCH_MATRIX Section 7) and verify the correct UI signal appears each time.
-
-**Acceptance Scenarios**:
-
-1. **Given** a user uploads a reference ad, **When** the upload completes, **Then** a banner appears: "Reference ad active — visual style follows the reference."
-2. **Given** a user switches campaign type from cold to retargeting, **When** the switch occurs, **Then** the hook angle section is replaced by the objection section (no orphan hook angle state).
-3. **Given** a user selects "text_only" mode, **When** the mode activates, **Then** the universe, art direction, and Box A sections collapse/hide.
-4. **Given** a user selects "before_after" with carousel format, **When** the system detects the conflict, **Then** an inline message appears: "Before/After is single-image only."
-5. **Given** a value_stack carousel's slide count is auto-adjusted, **When** the override fires, **Then** the user sees: "Carousel adjusted to [N] slides — one gift per slide."
-6. **Given** a user switches from realistic to minimal style family, **When** the switch occurs, **Then** the art direction grid disappears (no cards available for minimal).
-7. **Given** a user switches from realistic to fantasy, **When** the switch occurs, **Then** art direction cards reset to the fantasy card set (non-fantasy cards cleared).
-
----
-
-### User Story 6 - Non-Launch Languages Hidden (Priority: P6)
-
-As a user, the ad language selector shows only the 7 launch languages (6 Arabic dialects + English). French, Spanish, German, Turkish, and Portuguese do not appear.
-
-**Why this priority**: Non-launch languages have no quality contracts. Showing them invites usage that produces ungoverned output quality.
-
-**Independent Test**: Open the language selector and verify exactly 7 entries. Verify the 5 hidden languages are not reachable through any UI path.
+**Independent Test**: Open the language selector and count — exactly 7 entries.
 
 **Acceptance Scenarios**:
 
 1. **Given** a user opens the ad language dropdown, **When** they see options, **Then** exactly 7 languages appear: Arabic Fusha, Egyptian, Gulf, Levantine, Iraqi, Maghrebi, and English.
-2. **Given** a saved project with French selected, **When** it loads, **Then** the language defaults to Arabic Fusha (or shows a warning) rather than displaying French.
 
 ---
 
-### User Story 7 - Visual Controls Behavior (Priority: P7)
+### User Story 4 - Launch Surface Validation in UI (Priority: P4)
 
-As a user, the visual control fields (style family, universe, art direction, upload boxes) show and hide correctly based on my current selections, following the approved behavior from the launch matrix.
+As a user, when I select an invalid combination (e.g., before_after + carousel, or a deleted mode somehow), an inline message appears below the blocked element explaining why. Generation is blocked until I fix the combination.
 
-**Why this priority**: Incorrect field visibility creates invalid input states that the backend must silently handle. Correct visibility prevents invalid states from forming.
+**Why this priority**: Without frontend validation, invalid combos reach the server and waste a round-trip before being rejected.
 
-**Independent Test**: For each style family (realistic, fantasy, minimal) and each special mode (text_only), verify the correct fields are visible/hidden per LAUNCH_MATRIX Section 6.4.
+**Independent Test**: Select various invalid combinations and verify each shows an inline blocking message. Select valid combinations and verify no blocking message appears.
 
 **Acceptance Scenarios**:
 
-1. **Given** a user selects "minimal" family, **When** the UI updates, **Then** the universe dropdown remains visible but art direction cards are hidden.
-2. **Given** a user selects "text_only" mode, **When** the UI updates, **Then** universe, art direction, style family, and Box A are hidden.
-3. **Given** a user selects "realistic" family, **When** they view art direction, **Then** 10 realistic art direction cards appear (available to all plans).
-4. **Given** a user selects "fantasy" family, **When** they view art direction, **Then** 10 fantasy art direction cards appear.
-5. **Given** the art direction section, **When** rendered, **Then** the label reads "Art Direction" regardless of which family is selected.
-6. **Given** a user is on a Pro+ plan and uploads a reference ad, **When** the upload completes, **Then** a banner appears indicating the reference ad overrides visual style.
-7. **Given** a user on Starter or Creator plan, **When** they view the reference ad upload area, **Then** it is hidden or disabled (Pro+ only).
+1. **Given** a user selects "before_after" and then tries to select carousel format, **When** the system validates, **Then** an inline message appears: "Before/After is single-image only."
+2. **Given** a user selects a valid combination, **When** they proceed, **Then** no blocking message appears and generation starts.
 
 ---
 
-### User Story 8 - Priority Lane QA Fixtures (Priority: P8)
+### User Story 5 - Visual Controls Behavior (Priority: P5)
 
-As a QA reviewer, I have a set of canonical test fixtures — one per priority lane (11 total) — each with exact input data, expected resolver output, and pass/fail checks. I can run these fixtures to verify each launch lane works correctly end-to-end.
+As a user, the visual control fields (style family, universe dropdown, art direction) behave correctly: the universe dropdown stays visible for all 3 families including Minimal, the art direction section is labeled "Art Direction" for all families, and Fantasy has its own card set.
 
-**Why this priority**: Without canonical fixtures, QA is subjective. Fixtures provide deterministic, repeatable validation for every launch lane.
+**Why this priority**: Incorrect visibility creates invalid states that the backend must handle.
 
-**Independent Test**: Run all 11 fixtures and verify each produces the expected resolution trace and passes all lane-specific checks.
+**Independent Test**: For each family (realistic, fantasy, minimal), verify universe dropdown visibility and art direction card filtering.
 
 **Acceptance Scenarios**:
 
-1. **Given** the Lane 1 fixture (Retargeting + Carousel), **When** executed, **Then** slide 1 names the objection, middle slides have no CTA, visual style is consistent, and the resolution trace matches expected values.
-2. **Given** the Lane 2 fixture (Cold + Single + before_after), **When** executed, **Then** the canvas has a before/after split, no text labels, same hero both halves, and CTA at bottom center.
-3. **Given** the Lane 3 fixture (Cold + Carousel + value_stack), **When** executed, **Then** slide count matches gift count + 2, no CTA on gift slides, and empty fields are absent.
-4. **Given** any of the 11 lane fixtures, **When** the fixture input is submitted, **Then** the resolution trace `launchMatrixCheckPassed` is `true` and per-slide structure matches the lane's behavior contract.
+1. **Given** a user selects "minimal" family, **When** the UI updates, **Then** the universe dropdown remains visible.
+2. **Given** a user selects "realistic" or "fantasy", **When** they view art direction, **Then** cards filter to that family's set.
+3. **Given** the art direction section, **When** rendered, **Then** the label reads "Art Direction" regardless of family.
 
 ---
 
-### User Story 9 - Evidence Workflow for Fixes (Priority: P9)
+### User Story 6 - Reference Ad Plan Gate (Priority: P6)
 
-As a developer closing an issue, I must provide a complete evidence pack before the issue can be marked as resolved. The evidence pack includes the failing rule, controlling code location, root cause, the fix, before/after resolution traces, before/after screenshots, and exact reproducible test inputs.
+As a user on Starter or Creator plan, I cannot see or access the reference ad upload. It is only available for Pro plan and above.
 
-**Why this priority**: Without mandatory evidence, fixes are accepted based on "it looks fine" — violating Constitution Principle IX. The evidence workflow ensures every fix is provable.
-
-**Independent Test**: Attempt to close an issue without a complete evidence pack and verify the process rejects it. Submit a complete evidence pack and verify the process accepts it.
+**Why this priority**: Reference ad is a Pro+ feature. Showing it to lower-tier users creates confusion.
 
 **Acceptance Scenarios**:
 
-1. **Given** a developer claims a fix for a Lane 1 issue, **When** the evidence is reviewed, **Then** it must contain: failing rule ID, controlling file/function, why the old behavior occurred, what changed, resolution trace before, resolution trace after, screenshot before, screenshot after, and exact test inputs.
-2. **Given** an incomplete evidence pack, **When** a reviewer checks it, **Then** the specific missing items are identified and the issue cannot be closed.
+1. **Given** a user on Starter plan, **When** they view the input form, **Then** the reference ad upload field is hidden.
+2. **Given** a user on Pro plan, **When** they view the input form, **Then** the reference ad upload field is visible.
+
+---
+
+### User Story 7 - Slide Count Auto-Override (Priority: P7)
+
+As a user creating a value_stack carousel, the slide count auto-adjusts to gift count + 2 (capped at plan max). I see an inline message: "Carousel adjusted to N slides — one gift per slide." The same pattern applies when testimonial mode is active (testimonial count + 2).
+
+**Why this priority**: Manual slide count management is error-prone. Auto-adjustment prevents empty or duplicate slides.
+
+**Acceptance Scenarios**:
+
+1. **Given** a user selects value_stack + carousel with 4 gifts, **When** the slide count resolves, **Then** it is set to 6 with the inline message.
+2. **Given** testimonial mode with 3 screenshots, **When** the slide count resolves, **Then** it is set to 5 with the inline message.
+
+---
+
+### User Story 8 - Override Signals (Priority: P8)
+
+As a user, when the system auto-changes my selection, I see a notification. These include: retargeting clearing hook angle, text_only collapsing visual section, before_after + carousel being blocked, testimonial auto-switching to carousel, and family switch clearing art direction.
+
+**Why this priority**: Silent changes confuse users and generate bug reports.
+
+**Acceptance Scenarios**:
+
+1. **Given** a user switches to retargeting, **When** the switch occurs, **Then** the hook angle section is replaced by the objection section.
+2. **Given** a user selects text_only, **When** the mode activates, **Then** visual controls collapse.
+3. **Given** a user switches style family, **When** the switch occurs, **Then** art direction resets and an inline signal appears.
 
 ---
 
 ### Edge Cases
 
-- What happens when a user loads a saved project created before the UI changes (old offer types, deleted modes, hidden languages)? The system maps old values to new equivalents or shows a warning.
-- What happens when a user on a free/none plan accesses the app? Only Starter-level options are visible; all plan-gated features are hidden or disabled.
-- What happens when multiple override signals fire simultaneously (e.g., switch to retargeting + text_only at the same time)? Each signal fires independently and the UI reflects all changes.
-- What happens when the frontend and backend launch surface validations disagree? The backend rejection is authoritative; the frontend should have caught it first, so this indicates a frontend bug.
-- What happens when a fixture test fails? The exact failure point, expected vs actual values, and the relevant resolution trace fields are reported.
-- What happens when a user switches offer type after selecting modes not valid for the new type? Invalid modes are auto-cleared with an inline notification.
+- What happens when a saved project references a deleted mode? The system resets modes to `['standard_hero']` and shows a compatibility toast.
+- What happens when a saved project has a non-launch language? Falls back to `ar_fusha` with a toast.
+- What happens when a saved project has an old offer type (e.g., "Free Webinar")? Maps to "Live Event" silently via `getTabForOfferType()` fallback.
+- What happens when multiple override signals fire simultaneously? Each fires independently; all changes reflect in the UI.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
-- **FR-001**: The frontend MUST consume the shared `validateLaunchSurface()` function to block invalid combinations with an inline message below the blocked control — generation MUST NOT proceed.
-- **FR-002**: The frontend MUST completely remove "limited_access", "module_preview", and "day_strip" from all mode catalogs, mode selectors, pairing rules, compatibility maps, and prompt logic.
-- **FR-003**: The frontend MUST display "before_after" in the creative mode grid (available in all 3 tabs) and remove it from the hook angle selector. The hook angle selector MUST show exactly 10 angles.
-- **FR-004**: The frontend MUST show exactly 3 offer type entries: "Live Event", "Free Guide", "Mini-Course". Old names MUST map silently when loading saved projects.
-- **FR-005**: The frontend MUST display a UI signal for every override event defined in LAUNCH_MATRIX Section 7 (9 user-facing events). Each signal MUST appear at the moment the override fires and be visible without scrolling to the affected area.
-- **FR-006**: The ad language selector MUST show exactly 7 launch languages. The 5 non-launch languages (French, Spanish, German, Turkish, Portuguese) MUST be removed from the selector entirely.
-- **FR-007**: The universe dropdown MUST remain visible when "minimal" family is selected. Art direction cards MUST be hidden for minimal and text_only.
-- **FR-008**: The art direction section MUST be labeled "Art Direction" across all families. Realistic and Fantasy MUST each show their own set of 10 cards.
-- **FR-009**: The reference ad upload MUST be gated to Pro plan and above. When active, a banner MUST indicate it overrides visual style.
-- **FR-010**: The slide count display MUST auto-update when value_stack or testimonial carousel overrides the user's selection, with an inline notification showing the new count and reason.
-- **FR-011**: A canonical QA fixture MUST exist for each of the 11 priority lanes, containing: exact input data, expected resolution trace values, and pass/fail checks derived from the lane's behavior contract.
-- **FR-012**: Every claimed fix MUST include a complete evidence pack (9 items per LAUNCH_MATRIX Section 10) before the issue can be closed. Incomplete evidence packs MUST be flagged with specific missing items.
+- **FR-001**: The frontend MUST remove "limited_access", "module_preview", and "day_strip" from all mode cards, mode selectors, and mode field sections in the input form.
+- **FR-002**: The frontend MUST remove these 3 modes from all mode-related constants and conflict maps.
+- **FR-003**: The frontend MUST move "before_after" from the hook angle selector to the creative mode card grid, available in all 3 offer type tabs.
+- **FR-004**: The frontend MUST remove "before_after" from the cold hook angle list, leaving exactly 10 angles.
+- **FR-005**: The frontend MUST filter the language selector to show only 7 launch languages — remove fr, es, de, tr, pt.
+- **FR-006**: The frontend MUST call `validateLaunchSurface()` on every mode/format/campaign selection change and display an inline blocking message when `allowed: false`.
+- **FR-007**: The universe dropdown MUST remain visible for all 3 style families including Minimal.
+- **FR-008**: The art direction section MUST be labeled "Art Direction" across all families. Fantasy and Realistic MUST each show their own card sets.
+- **FR-009**: The reference ad upload field MUST be hidden for Starter and Creator plans (Pro+ only).
+- **FR-010**: When value_stack is active in carousel mode, the slide count MUST auto-adjust to gift count + 2 (capped at plan max) with an inline notification.
+- **FR-011**: When testimonial mode is selected in carousel mode, the slide count MUST auto-adjust to testimonial count + 2 with an inline notification.
+- **FR-012**: The frontend MUST display signals for all auto-switch events: retargeting clears hook angle, text_only collapses visual section, before_after + carousel blocked, testimonial auto-switches to carousel, family switch clears art direction.
 
 ### Key Entities
 
-- **Launch Surface Filter**: A frontend enforcement layer that consumes the shared `validateLaunchSurface()` function and translates its results into inline blocking messages on the input form.
-- **Override Signal**: A user-facing notification (banner, toast, or inline message) that fires when the system automatically changes a user's selection. Each signal has a defined trigger event, message text, and affected UI area.
-- **QA Fixture**: A canonical test case for a priority lane containing exact input JSON, expected resolution trace, and pass/fail checks. 11 fixtures total, one per lane.
-- **Evidence Pack**: A structured proof-of-fix document containing 9 required items: failing rule ID, controlling file/function, root cause explanation, the change made, before/after resolution traces, before/after screenshots, and exact reproducible test inputs.
+- **Launch Surface Filter**: Frontend enforcement layer consuming the shared `validateLaunchSurface()` and displaying inline blocking messages.
+- **Override Signal**: A user-facing notification (inline text, section swap, or toast) that fires when the system auto-changes a selection.
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
-- **SC-001**: 100% of non-launch combinations are blocked by the frontend before the user can trigger generation — zero invalid requests reach the server from the UI.
-- **SC-002**: Zero references to "limited_access", "module_preview", or "day_strip" exist in any frontend file (mode catalogs, selectors, prompt logic, constants).
-- **SC-003**: "before_after" appears in the creative mode grid for all 3 tabs and does not appear in the hook angle selector.
-- **SC-004**: The offer type dropdown shows exactly 3 entries. Saved projects with old offer type names load without error.
-- **SC-005**: Every override event from LAUNCH_MATRIX Section 7 produces a visible UI signal when triggered — 9 out of 9 events have working signals.
-- **SC-006**: The ad language selector shows exactly 7 options. Zero non-launch languages are reachable.
-- **SC-007**: All 11 priority lane QA fixtures pass when run against the current codebase.
-- **SC-008**: The evidence workflow is documented and enforced — no issue can be closed without all 9 evidence items present.
+- **SC-001**: Zero references to deleted modes in any frontend file used for mode selection, constants, or conflict maps.
+- **SC-002**: "before_after" appears only in the creative mode grid, never in the hook angle selector.
+- **SC-003**: The language selector shows exactly 7 options.
+- **SC-004**: 100% of invalid combinations are blocked with an inline message before the user can trigger generation.
+- **SC-005**: Universe dropdown visible for all 3 families. Art direction labeled correctly.
+- **SC-006**: Reference ad upload hidden on Starter and Creator plans.
+- **SC-007**: Slide count auto-adjusts for value_stack and testimonial carousel with inline notification.
+- **SC-008**: All override signals fire at the correct trigger moments.
 
 ## Assumptions
 
-- Spec B (001-resolver-completeness-trace) is complete and deployed before this spec begins. The shared `validateLaunchSurface()` function, carousel slide plans, value stack auto-adjustment, and resolution trace are all available for the frontend to consume.
-- The backend server-side guard (T016 from Spec B) is already in place as defense-in-depth. This spec focuses on the frontend enforcement layer.
-- Override signal UI patterns (banners, toasts, inline messages) follow the existing toast notification system in the app. No new notification infrastructure is needed.
-- The 11 priority lane behavior contracts are fully defined in LAUNCH_MATRIX Section 5. Fixtures encode those contracts as executable tests.
-- The evidence workflow is a process/documentation standard, not a software feature. It is enforced via code review practice, not automated tooling.
-- Saved projects from before the UI changes may reference old offer types, deleted modes, or hidden languages. These are handled via silent mapping to valid equivalents, not by breaking the load.
-- The mode grid, hook angle selector, and language selector are all in `src/components/InputForm.tsx` or consume data from `src/constants.ts` and `src/creativeResolver.ts`.
-- Art direction cards are defined in `src/artDirectionConfig.ts` and filtered by the currently selected style family.
+- Phase 1 (Resolver Foundation) is complete. `validateLaunchSurface()`, `resolveValueStackSlideCount()`, `carouselSlideCountPlan()`, and `filterEmptyValueStackFields()` are available in the backend resolver.
+- The frontend `src/creativeResolver.ts` mirrors the backend resolver. Changes to the frontend resolver are part of this spec.
+- The existing toast notification system (`showToast`) is used for transient signals. Inline messages use conditional JSX rendering.
+- Saved projects with old data (deleted modes, old offer types, hidden languages) are handled with silent mapping and compatibility toasts.
+- Testimonial mode upload UI is a stub in this phase — full implementation is Phase 4 (Testimonial Carousel).
+- `src/types.ts` needs to be updated to remove deleted modes from the `OfferCreativeMode` type union and `before_after` from `ColdHookAngle` type.
