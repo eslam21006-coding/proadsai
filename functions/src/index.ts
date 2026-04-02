@@ -3301,6 +3301,7 @@ export const serverGenerateFinalAd = onCall({
     });
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setOpenAIKey(openaiApiKey.value());
+    generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
 
     // ═══ CREATIVE MODE VALIDATION: fail-closed for invalid combinations ═══
     if (!editInstruction && !base64ToEdit) {
@@ -3532,12 +3533,48 @@ export const serverGenerateCarouselSlideCopies = onCall({
         requireCarousel: true,
     });
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateCarouselSlideCopies(approvedTov, inputs, slideCount, resolvedUniverse, refinement);
         return { success: true, copies: result };
     } catch (error: any) {
         console.error("generateCarouselSlideCopies error:", error);
         throw new HttpsError("internal", "Carousel copy generation failed: " + error.message);
+    }
+});
+
+// ─── GENERATE TESTIMONIAL CAROUSEL ──────────────────────────────────────
+// Full pipeline: platform detection → mockup rendering → hook → close → assembly
+export const serverGenerateTestimonialCarousel = onCall({
+    region: "europe-west1",
+    secrets: [geminiApiKey],
+    timeoutSeconds: 300,
+    memory: "2GiB",
+    cors: true,
+    maxInstances: 20,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+    const { inputs, screenshots } = request.data;
+    if (!screenshots || !Array.isArray(screenshots) || screenshots.length === 0) {
+        throw new HttpsError("invalid-argument", "At least one testimonial screenshot is required.");
+    }
+    const selectedModes = inputs?.offerCreativeMode || [];
+    if (!selectedModes.includes('testimonial_carousel')) {
+        throw new HttpsError("invalid-argument", "testimonial_carousel mode must be selected.");
+    }
+    // ═══ ENTITLEMENT: Check carousel access ═══
+    const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
+        requireCarousel: true,
+    });
+    const maxSlides = entitlement.features.maxCarouselSlides || 5;
+    generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    try {
+        const result = await generators.generateTestimonialCarousel(inputs, screenshots, maxSlides);
+        return { success: true, ...result };
+    } catch (error: any) {
+        console.error("generateTestimonialCarousel error:", error);
+        throw new HttpsError("internal", "Testimonial carousel generation failed: " + error.message);
     }
 });
 

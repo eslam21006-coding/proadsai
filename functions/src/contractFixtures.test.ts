@@ -179,6 +179,11 @@ import {
     CREATIVE_MODE_CATALOG,
     SUBSTYLE_MODE_COMPAT,
     validateSubStyleModeCompat,
+    validateLaunchSurface,
+    carouselSlideCountPlan,
+    resolveValueStackSlideCount,
+    resolveTestimonialSlideCount,
+    filterEmptyValueStackFields,
     type CreativeModeId,
 } from "./creativeResolver.js";
 
@@ -341,16 +346,37 @@ function testLane9MinimalHeroBatch() {
     }
 }
 
-// ─── Lane 10 — Testimonial Carousel Cold (T030a) ─── STUB
+// ─── Lane 10 — Testimonial Carousel Cold (T030a) ───
 function testLane10TestimonialCarouselCold() {
-    // Spec G required — testimonial carousel not yet built
-    console.log('  ℹ️ Lane 10: Testimonial Carousel (Cold) — Spec G required, stub passes');
+    assert.ok('testimonial_carousel' in CREATIVE_MODE_CATALOG, 'Lane 10: testimonial_carousel must be in catalog');
+
+    const slideCount = resolveTestimonialSlideCount(3, 9);
+    assert.equal(slideCount, 5, 'Lane 10: 3 testimonials + 2 wrapper slides = 5');
+
+    const surfResult = validateLaunchSurface({ selectedModes: ['testimonial_carousel'], adFormat: 'carousel' });
+    assert.equal(surfResult.allowed, true, 'Lane 10: testimonial_carousel + carousel should be allowed');
+
+    const spec = resolveCreativeSpec({ selectedModes: ['testimonial_carousel'] });
+    assert.equal(spec.isValid, true);
+    assert.equal(spec.primaryMode, 'testimonial_carousel');
+    assert.ok(spec.mustShow.includes('cta_button'), 'Lane 10: must include CTA button');
 }
 
-// ─── Lane 11 — Testimonial Carousel Retargeting (T030b) ─── STUB
+// ─── Lane 11 — Testimonial Carousel Retargeting (T030b) ───
 function testLane11TestimonialCarouselRetargeting() {
-    // Spec G required — testimonial carousel not yet built
-    console.log('  ℹ️ Lane 11: Testimonial Carousel (Retargeting) — Spec G required, stub passes');
+    const slideCount = resolveTestimonialSlideCount(2, 9);
+    assert.equal(slideCount, 4, 'Lane 11: 2 testimonials + 2 wrapper slides = 4');
+
+    const surfResult = validateLaunchSurface({
+        selectedModes: ['testimonial_carousel'],
+        campaignType: 'retargeting',
+        adFormat: 'carousel',
+    });
+    assert.equal(surfResult.allowed, true, 'Lane 11: testimonial_carousel + retargeting + carousel should be allowed');
+
+    const spec = resolveCreativeSpec({ selectedModes: ['testimonial_carousel'] });
+    assert.equal(spec.isValid, true);
+    assert.equal(spec.primaryMode, 'testimonial_carousel');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -366,20 +392,13 @@ testLane6ColdSingleValueStack();    console.log('  ✅ Lane 6: Cold + Single + v
 testLane7RetargetingSingleValueStack(); console.log('  ✅ Lane 7: Retargeting + Single + value_stack');
 testLane8MinimalHeroSingle();       console.log('  ✅ Lane 8: Minimal + hero + Single');
 testLane9MinimalHeroBatch();        console.log('  ✅ Lane 9: Minimal + hero + Batch');
-testLane10TestimonialCarouselCold();console.log('  ✅ Lane 10: Testimonial Carousel (Cold) — stub');
-testLane11TestimonialCarouselRetargeting(); console.log('  ✅ Lane 11: Testimonial Carousel (Retargeting) — stub');
+testLane10TestimonialCarouselCold();console.log('  ✅ Lane 10: Testimonial Carousel (Cold)');
+testLane11TestimonialCarouselRetargeting(); console.log('  ✅ Lane 11: Testimonial Carousel (Retargeting)');
 console.log('═══ Spec 002 — All 11 lanes passed ═══\n');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Phase 3 — Resolver Function Unit Tests
 // ═══════════════════════════════════════════════════════════════════════════
-
-import {
-    validateLaunchSurface,
-    carouselSlideCountPlan,
-    resolveValueStackSlideCount,
-    filterEmptyValueStackFields,
-} from "./creativeResolver.js";
 
 // ─── T001: validateLaunchSurface ───
 function testValidateLaunchSurface() {

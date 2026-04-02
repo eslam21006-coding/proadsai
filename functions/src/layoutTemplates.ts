@@ -392,7 +392,7 @@ export function selectLayoutTemplate(
             case 'feature_highlight': return 'feature_grid';
             case 'certificate': return 'authority_proof';
             case 'community_card': return 'social_proof';
-            case 'testimonial_wall': return 'social_proof';
+            case 'testimonial_carousel': return 'social_proof';
             case 'inside_look': return 'dashboard_product';
             default: return 'hero_focus';
         }

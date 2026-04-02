@@ -3,7 +3,7 @@ import { useState, useRef } from 'react';
 import type { AdInputs, AdMode, AspectRatio, RetargetingAngle, RetargetingObjectionId, UniverseMode, AudienceAvatar, CompetitorResearch, ColdHookAngle, HookType, AdTone, CopywritingStrategy } from '../types';
 import { OFFER_TYPES, OFFER_CATEGORY_MAP, OFFER_CREATIVE_MODES, CREATIVE_MODE_CONFLICTS, HOOK_ANGLE_MODE_CONFLICTS, ASPECT_RATIOS, RETARGETING_OBJECTIONS, AD_LANGUAGES, FIELD_EXAMPLES, COLD_HOOK_ANGLES, HOOK_TYPES, AD_TONES, COPYWRITING_STRATEGIES, CREATIVE_TABS, getAvailableHookAngles, getAvailableHookStyles, getAvailableAdTones, getAvailableCopyStrategies } from '../constants';
 import { REALISTIC_UNIVERSES as DB_REALISTIC, FANTASY_UNIVERSES as DB_FANTASY } from '../universeDatabase';
-import { isStrongPair, getBlockedModes, CREATIVE_MODE_CATALOG, type CreativeTab, getBlockedModesForSubStyle, getBlockedSubStylesForModes, validateLaunchSurface, resolveValueStackSlideCount } from '../creativeResolver';
+import { isStrongPair, getBlockedModes, CREATIVE_MODE_CATALOG, type CreativeTab, getBlockedModesForSubStyle, getBlockedSubStylesForModes, validateLaunchSurface, resolveValueStackSlideCount, resolveTestimonialSlideCount } from '../creativeResolver';
 import { ART_DIRECTION_GROUPS, getAvailableCards, getCardById, isSubStyleInFamily, type ArtDirectionCard } from '../artDirectionConfig';
 import { getActiveSections, validateModeFields, type ModeFieldSection, isOfferModeAvailable } from '../modeFieldSchema';
 import { CREDIT_COSTS, type UserPlan, canUse, canUseRatio, requiredPlanFor, requiredPlanForRatio, getMaxSlides, getFeatureLimit } from '../planconfig';
@@ -426,6 +426,25 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
       setInputs(prev => ({ ...prev, slideCount: clamped }));
     }
   }, [inputs.offerCreativeMode, inputs.adMode, (inputs as any).valueStackItems, userPlan]);
+
+  // Auto-switch to carousel + adjust slide count for testimonial mode
+  React.useEffect(() => {
+    const modes = inputs.offerCreativeMode || [];
+    if (!modes.includes('testimonial_carousel' as any)) return;
+    const screenshots = (inputs as any).testimonialScreenshots || [];
+    const updates: Partial<AdInputs> = {};
+    if (inputs.adMode !== 'carousel') {
+      updates.adMode = 'carousel' as AdMode;
+    }
+    const maxSlides = getMaxSlides(userPlan);
+    const resolved = resolveTestimonialSlideCount(screenshots.length, maxSlides);
+    if (resolved > 0 && resolved !== inputs.slideCount) {
+      updates.slideCount = resolved;
+    }
+    if (Object.keys(updates).length > 0) {
+      setInputs(prev => ({ ...prev, ...updates }));
+    }
+  }, [inputs.offerCreativeMode, inputs.adMode, (inputs as any).testimonialScreenshots, userPlan]);
 
   React.useEffect(() => {
     if (activeStyle !== 'fantasy' && activeStyle !== 'realistic') return;
@@ -930,7 +949,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
 
           // Testimonial Wall: enforce carousel + require screenshots
           const hasMode = (id: string) => (inputs.offerCreativeMode || []).includes(id as any);
-          if (hasMode('testimonial_wall')) {
+          if (hasMode('testimonial_carousel')) {
             const screenshots = (inputs as any).testimonialScreenshots || [];
             if (screenshots.length === 0) {
               if (showToast) showToast(appLang === 'ar' ? 'ارفع لقطة شاشة واحدة على الأقل للشهادات' : 'Upload at least one testimonial screenshot.', 'error');
@@ -1747,7 +1766,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
 
                 // Filter out testimonial section — it has special UI below
                 const standardSections = activeSections.filter(
-                  s => !s.triggerModes.includes('testimonial_wall') || !hasMode('testimonial_wall')
+                  s => !s.triggerModes.includes('testimonial_carousel') || !hasMode('testimonial_carousel')
                 );
 
                 return (
@@ -1847,8 +1866,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                     })}
 
                     {/* Testimonial Wall: special upload UI (not schema-driven) */}
-                    {hasMode('testimonial_wall') && (
-                      <div {...dropZoneProps('testimonial')} className={`space-y-2.5 p-3.5 rounded-xl border animate-in fade-in slide-in-from-top-1 duration-200 transition-all ${dragOverZone === 'testimonial' ? 'border-pink-500 bg-pink-500/10 scale-[1.01]' : 'bg-pink-950/20 border-pink-500/10'}`}>
+                    {hasMode('testimonial_carousel') && (                      <div {...dropZoneProps('testimonial')} className={`space-y-2.5 p-3.5 rounded-xl border animate-in fade-in slide-in-from-top-1 duration-200 transition-all ${dragOverZone === 'testimonial' ? 'border-pink-500 bg-pink-500/10 scale-[1.01]' : 'bg-pink-950/20 border-pink-500/10'}`}>
                         <div className="text-[9px] font-black text-pink-400/70 uppercase tracking-widest flex items-center gap-1.5">
                           <i className={`fa-solid ${dragOverZone === 'testimonial' ? 'fa-cloud-arrow-down' : 'fa-comment-dots'} text-[8px]`}></i>
                           {dragOverZone === 'testimonial' ? (appLang === 'ar' ? 'أفلت هنا' : 'Drop here') : (appLang === 'ar' ? 'لقطات الشهادات' : 'Testimonial Screenshots')}
