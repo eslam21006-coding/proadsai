@@ -105,19 +105,14 @@ export const ASPECT_RATIOS: { label: string; value: any; icon: React.ReactNode }
 ];
 
 // ─── COLD AD HOOK ANGLES ─────────────────────────────────────────────────
-// Ordered by plan tier: Starter [0..3], Creator [0..7], Pro/Scaling [0..10]
 export const COLD_HOOK_ANGLES: { id: string; labelAr: string; labelEn: string; description: string; carouselRecommended?: boolean }[] = [
-  // ── Starter (first 4) ──
-  { id: 'before_after', labelAr: 'قبل / بعد', labelEn: 'Before/After', description: 'Split design showing transformation — great for visual proof' },
   { id: 'emotional', labelAr: 'عاطفي', labelEn: 'Emotional', description: 'Triggers feelings — fear, hope, desire, frustration' },
   { id: 'pain', labelAr: 'نقطة ألم', labelEn: 'Pain Amplification', description: 'Presses harder on the pain — "you know that feeling when..."' },
   { id: 'curiosity', labelAr: 'فضول', labelEn: 'Curiosity', description: '"The one thing you\'re missing" — an open loop that demands a click' },
-  // ── Creator adds (5–8) ──
   { id: 'logic', labelAr: 'منطقي', labelEn: 'Logic', description: 'Appeals to reason with clear arguments and proof points' },
   { id: 'social_proof', labelAr: 'إثبات اجتماعي', labelEn: 'Social Proof', description: 'Client results carousel, testimonials, case studies', carouselRecommended: true },
   { id: 'urgency', labelAr: 'عداد / استعجال', labelEn: 'Urgency', description: 'Countdown, seats filling — "act now or miss out"' },
   { id: 'statistics', labelAr: 'إحصائية صادمة', labelEn: 'Statistics', description: '"95% did X, only 5% succeeded — are you one of them?"' },
-  // ── Pro/Scaling adds (9–11) ──
   { id: 'scarcity', labelAr: 'ندرة', labelEn: 'Scarcity', description: 'Limited spots, exclusive access, closing soon' },
   { id: 'logical_authority', labelAr: 'سلطة منطقية', labelEn: 'Logical Authority', description: '"Helped X clients" / "First system of its kind"' },
   { id: 'future_based', labelAr: 'تخيل لو!', labelEn: 'Future-Based', description: '"Imagine if..." — paints a vivid picture of the desired outcome' },
@@ -620,20 +615,19 @@ export const getRandomUniverse = (mode?: 'realistic' | 'fantasy', context?: { ta
 
 // ─── OFFER TYPES (restructured with categories + creative modes) ─────────
 export const OFFER_TYPES = [
-  "Free Webinar",
-  "Paid Workshop",
-  "Challenge",
-  "Free Guide",
-  "Mini-Course",
+    "Live Event",
+    "Free Guide",
+    "Mini-Course",
 ];
 
 // Maps offer type → tab (new v2 system)
 export const OFFER_CATEGORY_MAP: Record<string, string> = {
-  'Free Webinar': 'live_events',
-  'Paid Workshop': 'live_events',
-  'Challenge': 'live_events',
-  'Free Guide': 'free_guide',
-  'Mini-Course': 'mini_course',
+    'Live Event': 'live_events',
+    'Free Webinar': 'live_events',
+    'Paid Workshop': 'live_events',
+    'Challenge': 'live_events',
+    'Free Guide': 'free_guide',
+    'Mini-Course': 'mini_course',
 };
 
 // Creative modes available per tab (new v2 system — replaces old category-based OFFER_CREATIVE_MODES)
@@ -687,11 +681,6 @@ export const AD_LANGUAGES = [
   { id: 'ar_iraqi', label: 'اللهجة العراقية', flag: '🇮🇶', group: 'ar', groupLabel: 'العربية' },
   { id: 'ar_maghreb', label: 'اللهجة المغاربية', flag: '🇲🇦', group: 'ar', groupLabel: 'العربية' },
   { id: 'en', label: 'English', flag: '🇺🇸', group: 'en', groupLabel: 'English' },
-  { id: 'fr', label: 'Français', flag: '🇫🇷', group: 'fr', groupLabel: 'Français' },
-  { id: 'es', label: 'Español', flag: '🇪🇸', group: 'es', groupLabel: 'Español' },
-  { id: 'de', label: 'Deutsch', flag: '🇩🇪', group: 'de', groupLabel: 'Deutsch' },
-  { id: 'tr', label: 'Türkçe', flag: '🇹🇷', group: 'tr', groupLabel: 'Türkçe' },
-  { id: 'pt', label: 'Português', flag: '🇧🇷', group: 'pt', groupLabel: 'Português' },
 ] as const;
 
 // Language prompt instructions for Gemini
@@ -704,11 +693,6 @@ export const getLanguageInstruction = (langId: string): string => {
     ar_iraqi: 'Write ALL text in Iraqi Arabic dialect (اللهجة العراقية). RTL text.',
     ar_maghreb: 'Write ALL text in Maghrebi Arabic dialect (اللهجة المغاربية). RTL text.',
     en: 'Write ALL text in English. Use professional marketing English.',
-    fr: 'Write ALL text in French. Use professional marketing French.',
-    es: 'Write ALL text in Spanish. Use professional marketing Spanish.',
-    de: 'Write ALL text in German. Use professional marketing German.',
-    tr: 'Write ALL text in Turkish. Use professional marketing Turkish.',
-    pt: 'Write ALL text in Portuguese. Use professional marketing Portuguese.',
   };
   return map[langId] || map['ar_fusha'];
 };
