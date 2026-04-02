@@ -6,6 +6,10 @@ import {
     parseBuildPlanEnvelope,
     serializeBuildPlanEnvelope,
     validateStructuredBuildPlan,
+    validateCopyFidelity,
+    stripTechnicalPrompt,
+    TECHNICAL_PROMPT_START,
+    TECHNICAL_PROMPT_END,
     type StructuredBuildPlanPayload,
 } from "./buildPlanSlotMap.js";
 
@@ -610,5 +614,115 @@ testCarouselSlideCountPlan();
 testResolveValueStackSlideCount();
 testFilterEmptyValueStackFields();
 console.log('═══ Phase 3 — All unit tests passed ═══\n');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Spec 005 — Render Prompt Pipeline Regression Guards (T024-T027)
+// ═══════════════════════════════════════════════════════════════════════════
+
+import {
+    buildFinalImagePrompt,
+    type BuildFinalImagePromptInput,
+} from "./generators.js";
+
+function makePromptInput(overrides: Partial<BuildFinalImagePromptInput> & { hookText?: string; subheadText?: string; ctaName?: string } = {}): BuildFinalImagePromptInput {
+    const contract = compileFullContract({
+        selectedModes: ["standard_hero"],
+        hookAngle: undefined,
+        aspectRatio: "1:1",
+        adLanguage: "ar_fusha",
+        visualStyleFamily: "realistic",
+    });
+    return {
+        technicalPrompt: "A photorealistic advertisement image with bold Arabic headline",
+        blueprint: "headline zone top: strong Arabic headline\nhero zone left: coach portrait\ncta zone bottom: reserve your seat button",
+        contract,
+        inputs: { visualSubStyle: "luxury_magazine", offerCreativeMode: ["standard_hero"] },
+        aspectRatio: "1:1" as any,
+        hookText: overrides.hookText ?? "عرض المدرب الرئيسي",
+        subheadText: overrides.subheadText ?? "كل ما تحتاجه لتغلق عملاء هاي تيكت",
+        ctaName: overrides.ctaName ?? "احجز مكانك",
+        benefitText: "ابدأ اليوم",
+        badges: undefined,
+        resolvedUniverse: "fitness_coach",
+        costumeRules: "Professional fitness coach wardrobe",
+        coreDesignRules: "Photorealistic studio lighting, high contrast",
+        carouselAnchorNote: "",
+        retargetingDesignHint: "",
+        imageParts: [],
+        ...overrides,
+    };
+}
+
+// ─── T024: hookText verbatim in output ───
+function testPromptAssemblyHookTextVerbatim() {
+    const hookText = "عرض خاص لفترة محدودة";
+    const input = makePromptInput({ hookText, subheadText: "وصف العرض", ctaName: "سجل الآن" });
+    const result = buildFinalImagePrompt(input);
+    assert.ok(result.textPrompt.includes(hookText), "T024: textPrompt must contain exact hookText");
+    assert.ok(result.textPrompt.includes("وصف العرض"), "T024: textPrompt must contain exact subheadText");
+    assert.ok(result.textPrompt.includes("سجل الآن"), "T024: textPrompt must contain exact ctaName");
+    assert.ok(result.trace.resolvedImagePrompt, "T024: trace must have resolvedImagePrompt");
+    assert.ok(result.trace.blueprintText, "T024: trace must have blueprintText");
+    console.log("  ✅ testPromptAssemblyHookTextVerbatim");
+}
+
+// ─── T025: visualSubStyle luxury_magazine constraint ───
+function testPromptAssemblySubStyleLuxuryMagazine() {
+    const input = makePromptInput({
+        inputs: { visualSubStyle: "luxury_magazine", offerCreativeMode: ["standard_hero"] },
+    });
+    const result = buildFinalImagePrompt(input);
+    assert.ok(typeof result.textPrompt === "string" && result.textPrompt.length > 100, "T025: textPrompt should be substantive");
+    assert.ok(result.textPrompt.includes("عرض المدرب الرئيسي"), "T025: luxury_magazine input must still contain hookText");
+    const trace = result.trace;
+    assert.ok(trace.resolvedImagePrompt!.length > 50, "T025: resolvedImagePrompt trace should capture prompt");
+    console.log("  ✅ testPromptAssemblySubStyleLuxuryMagazine");
+}
+
+// ─── T026: retargeting trust-resolution visual direction ───
+function testPromptAssemblyRetargetingDirection() {
+    const input = makePromptInput({
+        retargetingDesignHint: "Retargeting objection: dont_trust. Show trust signals: guarantee badge, verified reviews overlay, authority credentials.",
+    });
+    const result = buildFinalImagePrompt(input);
+    assert.ok(result.textPrompt.includes("dont_trust"), "T026: textPrompt must contain retargeting objection direction");
+    assert.ok(result.textPrompt.includes("trust signals"), "T026: textPrompt must contain trust-resolution visual direction");
+    console.log("  ✅ testPromptAssemblyRetargetingDirection");
+}
+
+// ─── T027: copy fidelity validation (4 cases) ───
+function testCopyFidelityValidation() {
+    const technicalPrompt = "Create a photorealistic ad showing عرض خاص لفترة محدودة with bold Arabic text overlay and dark cinematic lighting";
+
+    // (a) exact hookText present → true
+    assert.equal(validateCopyFidelity(technicalPrompt, "عرض خاص لفترة محدودة"), true, "T027a: exact hookText should pass");
+
+    // (b) hookText absent → false
+    assert.equal(validateCopyFidelity(technicalPrompt, "نص غير موجود"), false, "T027b: absent hookText should fail");
+
+    // (c) hookText paraphrased → false
+    assert.equal(validateCopyFidelity(technicalPrompt, "عرض مميز لمدة قصيرة"), false, "T027c: paraphrased hookText should fail");
+
+    // (d) Arabic hookText present → true
+    assert.equal(validateCopyFidelity("تصميم إعلاني يحتوي على احجز مقعدك الآن", "احجز مقعدك الآن"), true, "T027d: Arabic hookText should pass");
+
+    // Edge: null technicalPrompt
+    assert.equal(validateCopyFidelity(null, "any text"), false, "T027e: null technicalPrompt should fail");
+
+    // Edge: empty hookText
+    assert.equal(validateCopyFidelity(technicalPrompt, ""), false, "T027f: empty hookText should fail");
+
+    console.log("  ✅ testCopyFidelityValidation");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Run Spec 005 Fixtures
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Spec 005 — Render Prompt Pipeline Regression Guards ═══');
+testPromptAssemblyHookTextVerbatim();
+testPromptAssemblySubStyleLuxuryMagazine();
+testPromptAssemblyRetargetingDirection();
+testCopyFidelityValidation();
+console.log('═══ Spec 005 — All regression tests passed ═══\n');
 
 console.log('contractFixtures.test: PASS');

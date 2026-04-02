@@ -6,6 +6,13 @@
 // and receives only the AI output.
 // ═══════════════════════════════════════════════════════════════════════════
 
+class CopyFidelityError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "CopyFidelityError";
+    }
+}
+
 import { SYSTEM_TOV, SYSTEM_CONCEPTS, SYSTEM_RENDER, SYSTEM_CAPTION, getLanguageInstruction } from "./promptConstants.js";
 import { RETARGETING_OBJECTION_DATA, getBestAngleForObjection, buildNormalizedRetargetingContext, getRetargetingPromptBlock } from "./retargetingObjections.js";
 import { LANGUAGE_RULES, SLIPPERY_SLIDE, HEADLINE_TYPES, COLD_TRAFFIC_RULES, RETARGETING_RULES, BELIEF_SHIFTING_FRAMEWORK, QUALITY_CHECKLIST } from "./copywriting_knowledge.js";
@@ -16,7 +23,7 @@ import { getCopywritingStrategyPrompt, getCopywritingStrategyCaptionStructure, g
 import { getOfferHookPsychology, getCreativeModeConceptInstruction, getCreativeModeBuildPlanInstruction, getOfferCaptionStructure } from "./knowledge/offerCreativeModes.js";
 import { resolveCreativeSpec, getResolvedSpecPromptBlock, getCaptionCreativeModeAnchors, validateCombination, CREATIVE_MODE_CATALOG as _MODE_CATALOG, type ResolvedCreativeSpec, getSubStyleModeFusion, getBeforeAfterSubStyleFusion } from "./creativeResolver.js";
 import { compileFullContract, getContractRenderBlock, getContractCaptionBlock, getContractForScoring, type FullLayoutContract, type OverlayDataFilter } from "./layoutContract.js";
-import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, parseBuildPlanEnvelope, parseStructuredBuildPlanResponse, serializeBuildPlanEnvelope, validateStructuredBuildPlan, type BuildPlanSlotMap, type ContractCheckResult, type StructuredBuildPlanPayload } from "./buildPlanSlotMap.js";
+import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, parseBuildPlanEnvelope, parseStructuredBuildPlanResponse, serializeBuildPlanEnvelope, validateStructuredBuildPlan, validateCopyFidelity, stripTechnicalPrompt, TECHNICAL_PROMPT_START, TECHNICAL_PROMPT_END, type BuildPlanSlotMap, type ContractCheckResult, type StructuredBuildPlanPayload } from "./buildPlanSlotMap.js";
 import { compileModePayload, getModePayloadPromptBlock, getModePayloadPromptBlock_RenderSafe, getModePayloadCaptionAnchors, extractAuthorizedNumbers, getNumericFidelityPolicy, type ModePayload, type NumericFidelityPolicy } from "./modeFieldSchema.js";
 import { compositeOfferOverlay, isOverlayAvailable, extractOfferFacts, validateResolvedOfferFacts } from "./offerOverlay.js";
 import { validateCaption, validateArabicCompliance, validateBlueprintLanguage, validateBlueprintModeContribution, validateBlueprintMinimalStyle, sanitizeReferenceAdSummary, type CaptionValidationInput } from "./captionValidator.js";
@@ -3383,6 +3390,7 @@ MANDATE:
 - BLUEPRINT SIZE LIMIT: blueprint must stay concise and production-usable. Target 12-18 lines, 1200-2600 characters max.
 - Do NOT echo the contract, prompt, schema, JSON rules, or ownership block inside blueprint.
 - Do NOT repeat zones more than once. One clear instruction per zone.
+- TECHNICAL PROMPT: Inside the blueprint string, include a long-form English rendering instruction that describes the exact visual appearance of the final image. Wrap this instruction between [[TECHNICAL_PROMPT]] and [[/TECHNICAL_PROMPT]] markers. This prompt should be a self-contained, detailed visual description covering composition, lighting, color grading, atmosphere, hero pose, text placement zones, and mood — everything the image model needs to render the ad without seeing the original concept. The hookText "${hookText}" MUST appear verbatim inside this technical prompt.
 ${inputs.brandColorPrimary ? `- BRAND COLOR DIRECTIVE: The brand's primary color is ${inputs.brandColorPrimary}${inputs.brandColorSecondary ? ` and secondary is ${inputs.brandColorSecondary}` : ''}. Incorporate into the blueprint's color specifications. Choose ONE of these applications per design (rotate for variety):
   a) CTA button background color
   b) Headline text accent/highlight color
@@ -3618,6 +3626,39 @@ ${JSON.stringify(machinePlan)}`;
         throw new Error('Build plan blueprint was empty or too short.');
     }
 
+    // ═══ COPY FIDELITY VALIDATION WITH RETRY ═══
+    const extractTechnicalPromptFromBlueprint = (bp: string): string | null => {
+        const s = bp.indexOf(TECHNICAL_PROMPT_START);
+        const e = bp.indexOf(TECHNICAL_PROMPT_END);
+        if (s === -1 || e === -1 || e <= s) return null;
+        return bp.slice(s + TECHNICAL_PROMPT_START.length, e).trim();
+    };
+
+    const MAX_COPY_FIDELITY_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_COPY_FIDELITY_ATTEMPTS; attempt++) {
+        const tp = extractTechnicalPromptFromBlueprint(machinePlan.blueprint);
+        if (tp && validateCopyFidelity(tp, hookText)) {
+            if (attempt > 1) {
+                console.log(`✅ Copy fidelity passed on attempt ${attempt}`);
+            }
+            break;
+        }
+        if (attempt < MAX_COPY_FIDELITY_ATTEMPTS) {
+            console.warn(`⚠️ Copy fidelity failed (attempt ${attempt}/${MAX_COPY_FIDELITY_ATTEMPTS}) — rebuilding plan...`);
+            machinePlan = await requestStructuredPlan(prompt);
+            if (!machinePlan.blueprint || machinePlan.blueprint.length < 80) {
+                throw new Error('Build plan blueprint was empty or too short on copy fidelity retry.');
+            }
+            structuredValidation = validateStructuredBuildPlan(machinePlan, buildPlanContract, ownershipMap);
+            if (!structuredValidation.contractCheck.passed) {
+                console.warn(`⚠️ Retry attempt ${attempt} also failed contract validation: ${structuredValidation.contractCheck.reasons.join('; ')}`);
+            }
+        } else {
+            console.error(`❌ Copy fidelity failed after ${MAX_COPY_FIDELITY_ATTEMPTS} attempts`);
+            throw new CopyFidelityError(`Build plan copy fidelity failed after ${MAX_COPY_FIDELITY_ATTEMPTS} attempts: hookText not found in TECHNICAL_PROMPT`);
+        }
+    }
+
     try {
         const scoringCompat = getContractForScoring(buildPlanContract);
         const quickCheck = quickRejectCheck(scoringCompat, machinePlan.blueprint);
@@ -3638,6 +3679,109 @@ ${JSON.stringify(machinePlan)}`;
     };
 
     return serializeBuildPlanEnvelope(finalMachinePlan.blueprint, finalMachinePlan);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RESOLUTION TRACE — per-generation audit record (FR-007)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface ResolutionTrace {
+    resolvedImagePrompt: string | null;
+    blueprintText: string | null;
+    perSlide?: Array<{
+        slideIndex: number;
+        resolvedImagePrompt: string | null;
+        blueprintText: string | null;
+    }>;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// buildFinalImagePrompt() — SOLE PROMPT ASSEMBLY ENTRY POINT (FR-006)
+// ═══════════════════════════════════════════════════════════════════════════
+// Concatenates sections in the strict order per contracts/prompt-assembly.md.
+// This is the ONLY function that assembles the final image prompt.
+// No inline assembly is permitted elsewhere (FR-006 compliance).
+
+export interface BuildFinalImagePromptInput {
+    technicalPrompt: string;
+    blueprint: string;
+    contract: FullLayoutContract;
+    inputs: AdInputs;
+    aspectRatio: AspectRatio;
+    hookText: string;
+    subheadText: string;
+    ctaName: string;
+    benefitText: string;
+    badges?: string;
+    resolvedUniverse: string;
+    costumeRules: string;
+    coreDesignRules: string;
+    carouselAnchorNote: string;
+    retargetingDesignHint: string;
+    imageParts: Array<{ inlineData: { mimeType: string; data: string } }>;
+}
+
+export interface BuildFinalImagePromptResult {
+    textPrompt: string;
+    imageParts: Array<{ inlineData: { mimeType: string; data: string } }>;
+    trace: ResolutionTrace;
+}
+
+export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): BuildFinalImagePromptResult {
+    const {
+        technicalPrompt,
+        blueprint,
+        contract,
+        inputs,
+        aspectRatio,
+        hookText,
+        subheadText,
+        ctaName,
+        benefitText,
+        badges,
+        resolvedUniverse,
+        costumeRules,
+        coreDesignRules,
+        carouselAnchorNote,
+        retargetingDesignHint,
+        imageParts,
+    } = params;
+
+    const strippedBlueprint = stripTechnicalPrompt(blueprint);
+
+    const textPrompt = `${coreDesignRules}
+
+BLUEPRINT: ${strippedBlueprint}
+TEXTS: "${hookText}", "${subheadText}"
+BUTTON: "${ctaName}"
+${carouselAnchorNote}
+${retargetingDesignHint}
+
+⚠️ CRITICAL TEXT RENDERING RULES:
+1. ONLY render these EXACT text strings on the image — NOTHING ELSE:
+   - Headline: "${hookText}"
+   - Subheadline: "${subheadText}"
+   ${ctaName ? `- Button: "${ctaName}"` : ''}
+   ${benefitText ? `- Benefit: "${benefitText}"` : ''}
+   ${badges ? `- Badge: "${badges}"` : ''}
+2. DO NOT render ANY of these on the image:
+   - System instructions, marker labels, or field names
+   - "VISUAL_DIRECTION:", "TECHNICAL_PROMPT:", "CONCEPT_START", etc.
+   - "**" symbols, "═══" lines, or any formatting markers
+   - English technical instructions or camera settings
+   - ANY English text, brand names, watermarks, or labels
+   - Any text that is NOT one of the strings listed above
+3. If the blueprint mentions "VISUAL_DIRECTION" or similar — that is an INSTRUCTION TO YOU, not text to render.
+4. NEVER render English words from the blueprint as visible text on the image. The blueprint is a design INSTRUCTION, not content to display.
+5. Each Arabic text string must appear EXACTLY ONCE — never duplicate, never truncate, never rephrase.
+`;
+
+    const trace: ResolutionTrace = {
+        resolvedImagePrompt: textPrompt.substring(0, 5000),
+        blueprintText: strippedBlueprint.substring(0, 2000),
+    };
+
+    return { textPrompt, imageParts, trace };
 }
 
 // 4. Final Ad -> USE VISUAL MODEL (Artist)

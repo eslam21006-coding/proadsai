@@ -3284,6 +3284,32 @@ export const serverGenerateConcepts = onCall({
 });
 
 // ─── GENERATE BUILD PLAN ─────────────────────────────────────────────────
+export const serverGenerateBuildPlan = onCall({
+    region: "europe-west1",
+    secrets: [geminiApiKey],
+    timeoutSeconds: 300,
+    memory: "1GiB",
+    cors: true,
+    maxInstances: 30,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+    const { conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride } = request.data;
+    // ═══ ENTITLEMENT ═══
+    await enforceGenerationEntitlement(request.auth.uid, inputs);
+    generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    try {
+        const result = await generators.generateBuildPlan(conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride);
+        return { success: true, text: result, errorCode: null };
+    } catch (error: any) {
+        if (error?.name === 'CopyFidelityError') {
+            console.error(`❌ Copy fidelity exhausted for user ${request.auth.uid}: ${error.message}`);
+            return { success: false, text: null, errorCode: 'copy_fidelity_failed' };
+        }
+        console.error("generateBuildPlan error:", error);
+        throw new HttpsError("internal", "Build plan generation failed: " + error.message);
+    }
+});
+
 // ─── GENERATE FINAL AD (IMAGE) ───
 export const serverGenerateFinalAd = onCall({
     region: "europe-west1",
@@ -3343,6 +3369,8 @@ export const serverGenerateFinalAd = onCall({
                 niche: inputs?.productCategory || '',
                 brandName: inputs?.productName || '',
                 targetAudience: inputs?.targetAudience || '',
+                blueprintText: buildPlan?.substring(0, 2000) || null,
+                resolvedImagePrompt: buildPlan?.substring(0, 5000) || null,
             }).catch((err: any) => console.warn('Memory store failed (non-blocking):', err));
         }
 
