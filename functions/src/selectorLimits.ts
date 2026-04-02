@@ -39,7 +39,7 @@ export const COPY_STRATEGY_IDS = [
 // ── Offer Creative Modes (matches src/modeFieldSchema.ts ORDERED_CREATIVE_MODES order) ──
 export const OFFER_MODE_IDS = [
     'standard_hero', 'book_mockup', 'device_mockup', 'event_ticket', 'speaker_card', 'feature_highlight',  // Starter (0..5)
-    'value_stack', 'offer_card', 'community_card', 'testimonial_wall', 'module_preview', 'premium_package', // Creator (6..11)
+    'value_stack', 'offer_card', 'community_card', 'testimonial_carousel', 'module_preview', 'premium_package', // Creator (6..11)
     'webinar_screen', 'day_strip', 'platform_screenshot', 'certificate', 'limited_access', 'inside_look',  // Pro/Scaling (12..17)
     'mobile_app_card', 'dashboard_preview', 'preview_card',                                                 // Pro/Scaling (18..20)
 ] as const;

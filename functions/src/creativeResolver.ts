@@ -12,12 +12,13 @@ export type CreativeModeId =
     | 'value_stack' | 'limited_access' | 'module_preview'
     | 'event_ticket' | 'webinar_screen' | 'day_strip' | 'speaker_card'
     | 'book_mockup' | 'device_mockup'
+    | 'testimonial_carousel'
     | 'text_only';
 
 export type RemovedModeId =
     | 'preview_card' | 'premium_package' | 'platform_screenshot' | 'certificate'
     | 'dashboard_preview' | 'mobile_app_card' | 'feature_highlight'
-    | 'community_card' | 'inside_look' | 'testimonial_wall';
+    | 'community_card' | 'inside_look';
 
 export type CreativeTab = 'mini_course' | 'live_events' | 'free_guide';
 export type ModeRole = 'anchor' | 'support';
@@ -195,6 +196,18 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         captionAnchors: [],
         validity: { requiredElements: ['typography_layout', 'color_background'], invalidSubstitutes: ['hero_portrait', 'scene_environment'], minimumDescription: 'Typography-only design with no hero or environment.' },
         templateNeeds: [],
+    },
+    testimonial_carousel: {
+        id: 'testimonial_carousel', labelEn: 'Testimonial Carousel', labelAr: 'كاروسيل الشهادات', icon: '💬',
+        description: 'Carousel of testimonial screenshots rendered in platform mockup frames',
+        tabs: ['mini_course', 'live_events', 'free_guide'], role: 'anchor', standaloneAllowed: true,
+        visualHierarchy: ['testimonial_mockup', 'platform_frame', 'cta_button'],
+        mustShow: ['testimonial_mockup', 'platform_frame', 'cta_button'],
+        mustAvoid: ['raw_screenshot', 'testimonial_text_on_hook'],
+        textPlacementRules: ['hook_text_top', 'mockup_center', 'cta_bottom'],
+        captionAnchors: ['see what they said', 'real results', 'testimonials'],
+        validity: { requiredElements: ['testimonial_slides', 'platform_frame'], invalidSubstitutes: ['plain_screenshot_paste', 'text_only_testimonial'], minimumDescription: 'Testimonial screenshots inside platform mockup frames with hook and close slides.' },
+        templateNeeds: ['testimonial_carousel'],
     },
 };
 
@@ -1281,4 +1294,12 @@ export function getBeforeAfterSubStyleFusion(subStyle: string | null): string {
 - Divider: neon light beam transition — power surge from dim to full brightness.`,
     };
     return fusions[subStyle] || '';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TESTIMONIAL CAROUSEL HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+export function resolveTestimonialSlideCount(testimonialCount: number, maxPlanSlides: number): number {
+    return Math.min(testimonialCount + 2, maxPlanSlides);
 }

@@ -21,3 +21,21 @@ export type RetargetingObjectionId =
     | "need_approval"
     | "dont_want_call"
     | "dont_need_it";
+
+export type PlatformType = 'whatsapp' | 'instagram_dm' | 'facebook' | 'email' | 'google_review' | 'telegram' | 'unknown';
+
+export interface TestimonialSlideResult {
+    slideNumber: number;
+    role: 'hook' | 'testimonial' | 'close';
+    platform: PlatformType | null;
+    imageBase64: string;
+    hookText: string | null;
+    ctaText: string | null;
+    hasCTA: boolean;
+}
+
+export interface TestimonialCarouselResult {
+    slides: TestimonialSlideResult[];
+    detectedPlatforms: PlatformType[];
+    totalSlides: number;
+}

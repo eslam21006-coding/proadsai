@@ -2868,7 +2868,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     try {
       // ═══ TESTIMONIAL MODE: Extract text from screenshots before generation ═══
       const selectedModes = (formData as any).offerCreativeMode || ['standard_hero'];
-      if (selectedModes.includes('testimonial_wall') && (formData as any).testimonialScreenshots?.length > 0) {
+      if (selectedModes.includes('testimonial_carousel') && (formData as any).testimonialScreenshots?.length > 0) {
         try {
           setLoadingMsg('Extracting testimonial text...');
           const extractFn = httpsCallable(functions, 'extractTestimonialText');

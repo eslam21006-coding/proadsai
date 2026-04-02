@@ -5471,7 +5471,7 @@ ${(() => {
             // ═══ TESTIMONIAL MODE: Override carousel structure ═══
             const selectedModes = (inputs as any).offerCreativeMode || ['standard_hero'];
             const testimonialTexts = (inputs as any).testimonialTexts || [];
-            if (selectedModes.includes('testimonial_wall') && testimonialTexts.length > 0) {
+            if (selectedModes.includes('testimonial_carousel') && testimonialTexts.length > 0) {
                 const testimonialSlides = testimonialTexts.slice(0, slideCount - 1).map((t: any, i: number) =>
                     `Slide ${i + 2}: Testimonial from ${t.speakerName || 'Client'} (${t.platform || 'chat'}): "${t.text}"`
                 ).join('\n');
@@ -5702,7 +5702,7 @@ RETARGETING MODE — CRITICAL CONTEXT
     // ═══ TESTIMONIAL MODE: Return pre-built slide copies from extracted texts ═══
     const selectedModes = (inputs as any).offerCreativeMode || ['standard_hero'];
     const testimonialTexts = (inputs as any).testimonialTexts || [];
-    if (selectedModes.includes('testimonial_wall') && testimonialTexts.length > 0) {
+    if (selectedModes.includes('testimonial_carousel') && testimonialTexts.length > 0) {
         const testimonialSlides: CarouselSlideCopy[] = [];
         // Slide 1 is already the hook (handled by the caller)
         for (let i = 0; i < Math.min(testimonialTexts.length, slideCount - 1); i++) {
@@ -6393,4 +6393,217 @@ export async function generateVisualPolishes(currentRender: string, inputs: AdIn
         }
     });
     try { return JSON.parse(response.text || '[]'); } catch { return []; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TESTIMONIAL CAROUSEL FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+import { detectTestimonialPlatform, buildTestimonialMockup, setTestimonialGeminiCaller } from "./testimonialMockup.js";
+import type { PlatformType, TestimonialSlideResult, TestimonialCarouselResult } from "./types.js";
+import { resolveTestimonialSlideCount } from "./creativeResolver.js";
+
+export { setTestimonialGeminiCaller };
+
+export async function generateTestimonialHookSlide(
+    inputs: AdInputs,
+    testimonialCount: number,
+): Promise<{ hookText: string; subheadText: string }> {
+    const campaignType = (inputs as any).campaignType || 'cold';
+    const isRetargeting = campaignType === 'retargeting';
+    const ctaText = inputs.cta || '';
+    const lang = inputs.adLanguage || 'ar_fusha';
+    const langInstruction = getLanguageInstruction(lang);
+
+    let prompt: string;
+    if (isRetargeting) {
+        const objectionText = (inputs as any).retargetingObjection || (inputs as any).retargetingObjectionText || '';
+        prompt = `Write a RETARGETING carousel hook slide (slide 1) for a testimonial carousel.
+
+CAMPAIGN TYPE: Retargeting (warm traffic)
+OBJECTION: "${objectionText}"
+TESTIMONIAL COUNT: ${testimonialCount} testimonials available as evidence
+CTA BUTTON: "${ctaText}"
+
+${langInstruction}
+
+RULES:
+- The headline MUST name or reference the specific objection: "${objectionText}"
+- The headline MUST tease testimonials as proof/evidence
+- Create urgency to swipe — the viewer needs to see the proof
+- Do NOT quote any testimonial directly
+- Do NOT show any testimonial content on this slide
+- Max 10 words for headline
+- Subheadline: max 15 words, adds context
+- The tone should feel like "you had a doubt? let me show you something"
+
+OUTPUT FORMAT (STRICT):
+HEADLINE: [your hook text]
+SUBHEADLINE: [supporting text]`;
+    } else {
+        prompt = `Write a COLD carousel hook slide (slide 1) for a testimonial carousel.
+
+CAMPAIGN TYPE: Cold (new traffic)
+TESTIMONIAL COUNT: ${testimonialCount} testimonials available
+CTA BUTTON: "${ctaText}"
+
+${langInstruction}
+
+RULES:
+- Create curiosity to swipe by teasing social proof WITHOUT showing it
+- Reference testimonials indirectly (e.g. "see what people are saying" or similar)
+- Do NOT quote any testimonial directly
+- Do NOT show any testimonial content on this slide
+- Max 10 words for headline
+- Subheadline: max 15 words, adds curiosity
+- The tone should feel like "wait until you see this"
+
+OUTPUT FORMAT (STRICT):
+HEADLINE: [your hook text]
+SUBHEADLINE: [supporting text]`;
+    }
+
+    const response = await retry(() => callGemini({
+        model: CREATIVE_MODEL_PRO,
+        contents: { parts: [{ text: prompt }] },
+        config: { temperature: 0.9 },
+    }));
+
+    const text = response.text || '';
+    const hookText = text.match(/HEADLINE:\s*(.+)/)?.[1]?.trim() || '';
+    const subheadText = text.match(/SUBHEADLINE:\s*(.+)/)?.[1]?.trim() || '';
+
+    return { hookText, subheadText };
+}
+
+export async function generateTestimonialCloseSlide(
+    inputs: AdInputs,
+): Promise<{ closeText: string; subheadText: string }> {
+    const campaignType = (inputs as any).campaignType || 'cold';
+    const isRetargeting = campaignType === 'retargeting';
+    const ctaText = inputs.cta || '';
+    const lang = inputs.adLanguage || 'ar_fusha';
+    const langInstruction = getLanguageInstruction(lang);
+
+    let prompt: string;
+    if (isRetargeting) {
+        const objectionText = (inputs as any).retargetingObjection || (inputs as any).retargetingObjectionText || '';
+        prompt = `Write a RETARGETING close slide (last slide) for a testimonial carousel.
+
+CAMPAIGN TYPE: Retargeting (warm traffic)
+OBJECTION: "${objectionText}"
+CTA BUTTON: "${ctaText}"
+
+${langInstruction}
+
+RULES:
+- This is the FINAL slide after multiple testimonial slides
+- The close MUST connect back to the objection: "${objectionText}"
+- Frame the testimonials as the resolution to the objection
+- Do NOT be generic — specifically address why the objection is now resolved
+- Include a clear call to action referencing the CTA button
+- Max 10 words for headline
+- Subheadline: max 15 words, final push
+
+OUTPUT FORMAT (STRICT):
+HEADLINE: [your close text]
+SUBHEADLINE: [supporting text]`;
+    } else {
+        prompt = `Write a COLD close slide (last slide) for a testimonial carousel.
+
+CAMPAIGN TYPE: Cold (new traffic)
+CTA BUTTON: "${ctaText}"
+
+${langInstruction}
+
+RULES:
+- This is the FINAL slide after multiple testimonial slides
+- May reference a key result or stat from the testimonials
+- End with a strong call to action matching the CTA button
+- Do NOT be generic — make it feel like a natural conclusion to the testimonial journey
+- Max 10 words for headline
+- Subheadline: max 15 words, final push
+
+OUTPUT FORMAT (STRICT):
+HEADLINE: [your close text]
+SUBHEADLINE: [supporting text]`;
+    }
+
+    const response = await retry(() => callGemini({
+        model: CREATIVE_MODEL_PRO,
+        contents: { parts: [{ text: prompt }] },
+        config: { temperature: 0.9 },
+    }));
+
+    const text = response.text || '';
+    const closeText = text.match(/HEADLINE:\s*(.+)/)?.[1]?.trim() || '';
+    const subheadText = text.match(/SUBHEADLINE:\s*(.+)/)?.[1]?.trim() || '';
+
+    return { closeText, subheadText };
+}
+
+export async function generateTestimonialCarousel(
+    inputs: AdInputs,
+    screenshots: string[],
+    maxPlanSlides: number,
+): Promise<TestimonialCarouselResult> {
+    const ctaText = inputs.cta || '';
+
+    const totalSlides = resolveTestimonialSlideCount(screenshots.length, maxPlanSlides);
+    const testimonialCount = totalSlides - 2;
+
+    console.log(`💬 Testimonial carousel: ${screenshots.length} screenshots, ${totalSlides} slides (${testimonialCount} testimonials + hook + close)`);
+
+    const platforms = await Promise.all(
+        screenshots.slice(0, testimonialCount).map((s) => detectTestimonialPlatform(s))
+    );
+    console.log(`💬 Detected platforms: ${platforms.join(', ')}`);
+
+    const [hookResult, mockupResults, closeResult] = await Promise.all([
+        generateTestimonialHookSlide(inputs, testimonialCount),
+        Promise.all(
+            screenshots.slice(0, testimonialCount).map((s, i) => buildTestimonialMockup(s, platforms[i]))
+        ),
+        generateTestimonialCloseSlide(inputs),
+    ]);
+
+    const slides: TestimonialSlideResult[] = [];
+
+    slides.push({
+        slideNumber: 1,
+        role: 'hook',
+        platform: null,
+        imageBase64: '',
+        hookText: hookResult.hookText,
+        ctaText,
+        hasCTA: true,
+    });
+
+    for (let i = 0; i < testimonialCount; i++) {
+        slides.push({
+            slideNumber: i + 2,
+            role: 'testimonial',
+            platform: platforms[i],
+            imageBase64: mockupResults[i],
+            hookText: null,
+            ctaText: null,
+            hasCTA: false,
+        });
+    }
+
+    slides.push({
+        slideNumber: totalSlides,
+        role: 'close',
+        platform: null,
+        imageBase64: '',
+        hookText: closeResult.closeText,
+        ctaText,
+        hasCTA: true,
+    });
+
+    return {
+        slides,
+        detectedPlatforms: platforms,
+        totalSlides,
+    };
 }

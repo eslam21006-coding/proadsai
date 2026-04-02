@@ -92,7 +92,7 @@ export type OfferCreativeMode =
   // Membership
   | "community_card"
   | "inside_look"
-  | "testimonial_wall"
+  | "testimonial_carousel"
   // Typography-only (no hero, no universe)
   | "text_only";
 
