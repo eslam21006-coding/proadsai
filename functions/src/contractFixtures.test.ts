@@ -429,7 +429,7 @@ function testValidateLaunchSurface() {
 
 // ─── T002: carouselSlideCountPlan ───
 function testCarouselSlideCountPlan() {
-    const cold2 = carouselSlideCountPlan('cold' as 'cold', 2);
+    const cold2 = carouselSlideCountPlan('cold', 2);
     assert.equal(cold2.length, 2);
     assert.equal(cold2[0].role, 'hook');
     assert.equal(cold2[0].hasCTA, true);
@@ -438,7 +438,7 @@ function testCarouselSlideCountPlan() {
 
     // Note: The function assigns pool[0] to hook, pool[1..] to middle slides.
     // So cold-5 hook='A', middles='B','C','D', close uses next pool angle.
-    const cold5 = carouselSlideCountPlan('cold' as 'cold', 5);
+    const cold5 = carouselSlideCountPlan('cold', 5);
     assert.equal(cold5.length, 5);
     assert.equal(cold5[0].role, 'hook');
     assert.equal(cold5[0].hasCTA, true);
@@ -455,7 +455,7 @@ function testCarouselSlideCountPlan() {
     assert.equal(cold5[2].angle, 'C');
     assert.equal(cold5[3].angle, 'D');
 
-    const cold9 = carouselSlideCountPlan('cold' as 'cold', 9);
+    const cold9 = carouselSlideCountPlan('cold', 9);
     assert.equal(cold9.length, 9);
     assert.equal(cold9[0].role, 'hook');
     assert.equal(cold9[0].angle, 'A'); // hook gets pool[0]
@@ -468,7 +468,7 @@ function testCarouselSlideCountPlan() {
         assert.equal(cold9[i].angle, ['B', 'C', 'D', 'E', 'F', 'G', 'A'][i - 1]);
     }
 
-    const retargeting3 = carouselSlideCountPlan('retargeting' as 'retargeting', 3);
+    const retargeting3 = carouselSlideCountPlan('retargeting', 3);
     assert.equal(retargeting3.length, 3);
     assert.equal(retargeting3[0].role, 'hook');
     assert.equal(retargeting3[0].hasCTA, true);
@@ -477,7 +477,7 @@ function testCarouselSlideCountPlan() {
     assert.equal(retargeting3[2].role, 'close');
     assert.equal(retargeting3[2].hasCTA, true);
 
-    const retargeting5 = carouselSlideCountPlan('retargeting' as 'retargeting', 5);
+    const retargeting5 = carouselSlideCountPlan('retargeting', 5);
     assert.equal(retargeting5.length, 5);
     assert.equal(retargeting5[1].role, 'middle');
     assert.equal(retargeting5[1].angle, 'M');
@@ -488,7 +488,7 @@ function testCarouselSlideCountPlan() {
     assert.equal(retargeting5[4].role, 'close');
     assert.equal(retargeting5[4].hasCTA, true);
 
-    const retargeting7 = carouselSlideCountPlan('retargeting' as 'retargeting', 7);
+    const retargeting7 = carouselSlideCountPlan('retargeting', 7);
     assert.equal(retargeting7.length, 7);
     assert.equal(retargeting7[0].role, 'hook');
     for (let i = 1; i <= 5; i++) {
@@ -520,7 +520,7 @@ function testResolveValueStackSlideCount() {
 
     const r0 = resolveValueStackSlideCount([]);
     assert.equal(r0.giftCount, 0);
-    assert.equal(r0.resolvedSlideCount, 0); // 0 gifts = no carousel possible
+    assert.equal(r0.resolvedSlideCount, 2); // 0 gifts = hook + close only
 
     // Empty strings should be filtered
     const rFiltered = resolveValueStackSlideCount(['a', '', '  ', 'b']);

@@ -771,9 +771,6 @@ export interface ValueStackAdjustment {
 export function resolveValueStackSlideCount(gifts: string[]): ValueStackAdjustment {
     const nonEmpty = gifts.filter(g => g && g.trim().length > 0);
     const giftCount = nonEmpty.length;
-    if (giftCount === 0) {
-        return { giftCount: 0, originalSlideCount: 0, resolvedSlideCount: 0, capped: false };
-    }
     const raw = giftCount + 2;
     const capped = raw > 9;
     const resolvedSlideCount = Math.min(raw, 9);
