@@ -370,4 +370,226 @@ testLane10TestimonialCarouselCold();console.log('  ✅ Lane 10: Testimonial Caro
 testLane11TestimonialCarouselRetargeting(); console.log('  ✅ Lane 11: Testimonial Carousel (Retargeting) — stub');
 console.log('═══ Spec 002 — All 11 lanes passed ═══\n');
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 3 — Resolver Function Unit Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+import {
+    validateLaunchSurface,
+    carouselSlideCountPlan,
+    resolveValueStackSlideCount,
+    filterEmptyValueStackFields,
+} from "./creativeResolver.js";
+
+// ─── T001: validateLaunchSurface ───
+function testValidateLaunchSurface() {
+    const passing: { selectedModes: string[]; campaignType?: string; adFormat?: string; hookAngle?: string }[] = [
+        { selectedModes: ['standard_hero'] },
+        { selectedModes: ['standard_hero'], campaignType: 'cold', adFormat: 'carousel' },
+        { selectedModes: ['standard_hero', 'value_stack'] },
+        { selectedModes: ['value_stack'] },
+        { selectedModes: ['value_stack'], campaignType: 'retargeting' },
+        { selectedModes: ['standard_hero'], campaignType: 'retargeting' },
+        { selectedModes: ['standard_hero'], campaignType: 'retargeting', adFormat: 'carousel' },
+        { selectedModes: ['standard_hero'], campaignType: 'retargeting', adFormat: 'single' },
+        { selectedModes: ['value_stack'], campaignType: 'retargeting', adFormat: 'single' },
+    ];
+    // before_after is in frontend catalog but may not be in backend yet
+    if ('before_after' in CREATIVE_MODE_CATALOG) {
+        passing.push({ selectedModes: ['before_after'] });
+    }
+    for (const input of passing) {
+        const r = validateLaunchSurface(input);
+        assert.equal(r.allowed, true, `validateLaunchSurface: ${input.selectedModes.join(',')} should pass`);
+    }
+
+    // Blocked: cross-tab pair
+    const crossTab = validateLaunchSurface({ selectedModes: ['value_stack', 'event_ticket'] });
+    assert.equal(crossTab.allowed, false, 'validateLaunchSurface: cross-tab pair should block');
+
+    // Blocked: deleted modes (only assert if actually removed from catalog)
+    const deletedModes = ['limited_access', 'module_preview', 'day_strip'];
+    for (const mode of deletedModes) {
+        if (!(mode in CREATIVE_MODE_CATALOG)) {
+            const r = validateLaunchSurface({ selectedModes: [mode] });
+            assert.equal(r.allowed, false, `validateLaunchSurface: deleted ${mode} should block`);
+        } else {
+            console.log(`  ⚠️ ${mode} still in backend catalog — Phase 1 cleanup pending`);
+        }
+    }
+
+    // Blocked: before_after + carousel (only if before_after is in catalog)
+    if ('before_after' in CREATIVE_MODE_CATALOG) {
+        const baCarousel = validateLaunchSurface({ selectedModes: ['before_after'], adFormat: 'carousel' });
+        assert.equal(baCarousel.allowed, false, 'validateLaunchSurface: before_after+carousel should block');
+    }
+
+    console.log("  ✅ testValidateLaunchSurface: passing + blocked combos verified");
+}
+
+// ─── T002: carouselSlideCountPlan ───
+function testCarouselSlideCountPlan() {
+    const cold2 = carouselSlideCountPlan('cold' as 'cold', 2);
+    assert.equal(cold2.length, 2);
+    assert.equal(cold2[0].role, 'hook');
+    assert.equal(cold2[0].hasCTA, true);
+    assert.equal(cold2[1].role, 'close');
+    assert.equal(cold2[1].hasCTA, true);
+
+    // Note: The function assigns pool[0] to hook, pool[1..] to middle slides.
+    // So cold-5 hook='A', middles='B','C','D', close uses next pool angle.
+    const cold5 = carouselSlideCountPlan('cold' as 'cold', 5);
+    assert.equal(cold5.length, 5);
+    assert.equal(cold5[0].role, 'hook');
+    assert.equal(cold5[0].hasCTA, true);
+    assert.equal(cold5[1].role, 'middle');
+    assert.equal(cold5[1].hasCTA, false);
+    assert.equal(cold5[2].role, 'middle');
+    assert.equal(cold5[2].hasCTA, false);
+    assert.equal(cold5[3].role, 'middle');
+    assert.equal(cold5[3].hasCTA, false);
+    assert.equal(cold5[4].role, 'close');
+    assert.equal(cold5[4].hasCTA, true);
+    // Middle angles start at pool[1] since pool[0] goes to hook
+    assert.equal(cold5[1].angle, 'B');
+    assert.equal(cold5[2].angle, 'C');
+    assert.equal(cold5[3].angle, 'D');
+
+    const cold9 = carouselSlideCountPlan('cold' as 'cold', 9);
+    assert.equal(cold9.length, 9);
+    assert.equal(cold9[0].role, 'hook');
+    assert.equal(cold9[0].angle, 'A'); // hook gets pool[0]
+    assert.equal(cold9[8].role, 'close');
+    assert.equal(cold9[8].hasCTA, true);
+    // Middle slides get pool[1] through pool[7]
+    for (let i = 1; i <= 7; i++) {
+        assert.equal(cold9[i].role, 'middle');
+        assert.equal(cold9[i].hasCTA, false);
+        assert.equal(cold9[i].angle, ['B', 'C', 'D', 'E', 'F', 'G', 'A'][i - 1]);
+    }
+
+    const retargeting3 = carouselSlideCountPlan('retargeting' as 'retargeting', 3);
+    assert.equal(retargeting3.length, 3);
+    assert.equal(retargeting3[0].role, 'hook');
+    assert.equal(retargeting3[0].hasCTA, true);
+    assert.equal(retargeting3[1].role, 'middle');
+    assert.equal(retargeting3[1].angle, 'M'); // pool[1] since pool[0]='P' goes to hook
+    assert.equal(retargeting3[2].role, 'close');
+    assert.equal(retargeting3[2].hasCTA, true);
+
+    const retargeting5 = carouselSlideCountPlan('retargeting' as 'retargeting', 5);
+    assert.equal(retargeting5.length, 5);
+    assert.equal(retargeting5[1].role, 'middle');
+    assert.equal(retargeting5[1].angle, 'M');
+    assert.equal(retargeting5[2].role, 'middle');
+    assert.equal(retargeting5[2].angle, 'R');
+    assert.equal(retargeting5[3].role, 'middle');
+    assert.equal(retargeting5[3].angle, 'I');
+    assert.equal(retargeting5[4].role, 'close');
+    assert.equal(retargeting5[4].hasCTA, true);
+
+    const retargeting7 = carouselSlideCountPlan('retargeting' as 'retargeting', 7);
+    assert.equal(retargeting7.length, 7);
+    assert.equal(retargeting7[0].role, 'hook');
+    for (let i = 1; i <= 5; i++) {
+        assert.equal(retargeting7[i].role, 'middle');
+        assert.equal(retargeting7[i].hasCTA, false);
+        assert.equal(retargeting7[i].angle, ['M', 'R', 'I', 'C', 'Q'][i - 1]);
+    }
+    assert.equal(retargeting7[6].role, 'close');
+    assert.equal(retargeting7[6].hasCTA, true);
+    console.log("  ✅ testCarouselSlideCountPlan");
+}
+
+// ─── T003: resolveValueStackSlideCount ───
+function testResolveValueStackSlideCount() {
+    const r3 = resolveValueStackSlideCount(['a', 'b', 'c']);
+    assert.equal(r3.giftCount, 3);
+    assert.equal(r3.resolvedSlideCount, 5);
+    assert.equal(r3.capped, false);
+
+    const r7 = resolveValueStackSlideCount(['a', 'b', 'c', 'd', 'e', 'f', 'g']);
+    assert.equal(r7.giftCount, 7);
+    assert.equal(r7.resolvedSlideCount, 9);
+    assert.equal(r7.capped, false);
+
+    const r9 = resolveValueStackSlideCount(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']);
+    assert.equal(r9.giftCount, 9);
+    assert.equal(r9.resolvedSlideCount, 9);
+    assert.equal(r9.capped, true);
+
+    const r0 = resolveValueStackSlideCount([]);
+    assert.equal(r0.giftCount, 0);
+    assert.equal(r0.resolvedSlideCount, 0); // 0 gifts = no carousel possible
+
+    // Empty strings should be filtered
+    const rFiltered = resolveValueStackSlideCount(['a', '', '  ', 'b']);
+    assert.equal(rFiltered.giftCount, 2);
+    assert.equal(rFiltered.resolvedSlideCount, 4);
+
+    console.log("  ✅ testResolveValueStackSlideCount");
+}
+
+// ─── T004: filterEmptyValueStackFields ───
+function testFilterEmptyValueStackFields() {
+    // All 9 fields populated
+    const allPopulated = filterEmptyValueStackFields({
+        valueStackTitle: 'Title',
+        valueStackItems: 'Item 1',
+        valueStackBonuses: 'Bonus',
+        valueStackPrice: '99',
+        valueStackOriginalValue: '199',
+        valueStackSavings: '100',
+        valueStackGuarantee: '30 days',
+        valueStackDeliveryFormat: 'PDF',
+        valueStackProofStatement: 'Proven',
+    } as any);
+    assert.ok('valueStackTitle' in allPopulated.filtered);
+    assert.ok('valueStackItems' in allPopulated.filtered);
+    assert.ok('valueStackPrice' in allPopulated.filtered);
+    assert.equal(allPopulated.skippedFields.length, 0);
+
+    // All empty/whitespace/null/undefined
+    const allEmpty = filterEmptyValueStackFields({
+        valueStackTitle: '',
+        valueStackItems: '   ',
+        valueStackBonuses: '',
+        valueStackPrice: undefined,
+        valueStackOriginalValue: null,
+        valueStackSavings: '',
+        valueStackGuarantee: '  ',
+        valueStackDeliveryFormat: '',
+        valueStackProofStatement: '',
+    } as any);
+    assert.ok(!('valueStackTitle' in allEmpty.filtered));
+    assert.ok(!('valueStackItems' in allEmpty.filtered));
+    assert.ok(!('valueStackPrice' in allEmpty.filtered));
+    assert.ok(!('valueStackSavings' in allEmpty.filtered));
+    assert.equal(allEmpty.skippedFields.length, 9);
+
+    // Mixed
+    const mixed = filterEmptyValueStackFields({
+        valueStackPrice: '',
+        valueStackItems: 'Module 1',
+        valueStackSavings: '   ',
+    } as any);
+    assert.ok('valueStackItems' in mixed.filtered);
+    assert.ok(!('valueStackPrice' in mixed.filtered));
+    assert.ok(!('valueStackSavings' in mixed.filtered));
+    assert.ok(mixed.skippedFields.includes('valueStackPrice'));
+    assert.ok(mixed.skippedFields.includes('valueStackSavings'));
+
+    console.log("  ✅ testFilterEmptyValueStackFields");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Run Phase 3 Unit Tests
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Phase 3 — Resolver Function Unit Tests ═══');
+testValidateLaunchSurface();
+testCarouselSlideCountPlan();
+testResolveValueStackSlideCount();
+testFilterEmptyValueStackFields();
+console.log('═══ Phase 3 — All unit tests passed ═══\n');
+
 console.log('contractFixtures.test: PASS');

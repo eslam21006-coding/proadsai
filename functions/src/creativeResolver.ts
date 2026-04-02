@@ -667,6 +667,159 @@ export function getTabForOfferType(offerType: string): CreativeTab {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// LAUNCH SURFACE VALIDATOR (Phase 1 — Resolver Foundation)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface LaunchSurfaceResult {
+    allowed: boolean;
+    reason?: string;
+}
+
+export function validateLaunchSurface(inputs: {
+    selectedModes: string[];
+    campaignType?: string;
+    adFormat?: string;
+    hookAngle?: string;
+}): LaunchSurfaceResult {
+    const modes = (inputs.selectedModes || []).filter(Boolean) as CreativeModeId[];
+    if (modes.length === 0) return { allowed: true };
+
+    for (const m of modes) {
+        if (!CREATIVE_MODE_CATALOG[m]) {
+            return { allowed: false, reason: `"${m}" is not a launch-approved mode.` };
+        }
+    }
+
+    const combo = validateCombination(modes, inputs.hookAngle);
+    if (!combo.valid) {
+        return { allowed: false, reason: combo.errors[0] || "Invalid combination." };
+    }
+
+    return { allowed: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CAROUSEL SLIDE COUNT PLAN (Phase 1 — Resolver Foundation)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const COLD_ANGLES = ["A", "B", "C", "D", "E", "F", "G"] as const;
+const RETARGETING_ANGLES = ["P", "M", "R", "I", "C", "Q", "E"] as const;
+
+export interface SlideRole {
+    slide: number;
+    role: "hook" | "middle" | "close";
+    angle: string;
+    hasCTA: boolean;
+    photoInjection: boolean;
+}
+
+export function carouselSlideCountPlan(
+    campaignType: "cold" | "retargeting",
+    slideCount: number
+): SlideRole[] {
+    if (slideCount < 2 || slideCount > 9) {
+        throw new Error(`slideCount must be 2-9, got ${slideCount}`);
+    }
+
+    const pool = campaignType === "retargeting" ? RETARGETING_ANGLES : COLD_ANGLES;
+    const roles: SlideRole[] = [];
+
+    roles.push({
+        slide: 1,
+        role: "hook",
+        angle: pool[0],
+        hasCTA: true,
+        photoInjection: true,
+    });
+
+    let angleIdx = 1;
+    for (let i = 2; i <= slideCount - 1; i++) {
+        roles.push({
+            slide: i,
+            role: "middle",
+            angle: pool[angleIdx % pool.length],
+            hasCTA: false,
+            photoInjection: false,
+        });
+        angleIdx++;
+    }
+
+    if (slideCount > 1) {
+        roles.push({
+            slide: slideCount,
+            role: "close",
+            angle: pool[angleIdx % pool.length],
+            hasCTA: true,
+            photoInjection: false,
+        });
+    }
+
+    return roles;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VALUE STACK FUNCTIONS (Phase 1 — Resolver Foundation)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface ValueStackAdjustment {
+    giftCount: number;
+    originalSlideCount: number;
+    resolvedSlideCount: number;
+    capped: boolean;
+}
+
+export function resolveValueStackSlideCount(gifts: string[]): ValueStackAdjustment {
+    const nonEmpty = gifts.filter(g => g && g.trim().length > 0);
+    const giftCount = nonEmpty.length;
+    if (giftCount === 0) {
+        return { giftCount: 0, originalSlideCount: 0, resolvedSlideCount: 0, capped: false };
+    }
+    const raw = giftCount + 2;
+    const capped = raw > 9;
+    const resolvedSlideCount = Math.min(raw, 9);
+    return { giftCount, originalSlideCount: raw, resolvedSlideCount, capped };
+}
+
+const VALUE_STACK_FIELDS = [
+    "valueStackTitle", "valueStackItems", "valueStackBonuses", "valueStackPrice",
+    "valueStackOriginalValue", "valueStackSavings", "valueStackGuarantee",
+    "valueStackDeliveryFormat", "valueStackProofStatement",
+] as const;
+
+export function filterEmptyValueStackFields(inputs: Record<string, unknown>): {
+    filtered: Record<string, unknown>;
+    skippedFields: string[];
+} {
+    const filtered = { ...inputs };
+    const skippedFields: string[] = [];
+
+    for (const field of VALUE_STACK_FIELDS) {
+        const val = filtered[field];
+        if (val === undefined || val === null) {
+            delete filtered[field];
+            skippedFields.push(field);
+            continue;
+        }
+        if (typeof val === "string" && val.trim() === "") {
+            delete filtered[field];
+            skippedFields.push(field);
+            continue;
+        }
+        if (Array.isArray(val)) {
+            const cleaned = val.filter((v: unknown) => v != null && String(v).trim() !== "");
+            if (cleaned.length === 0) {
+                delete filtered[field];
+                skippedFields.push(field);
+            } else {
+                filtered[field] = cleaned;
+            }
+        }
+    }
+
+    return { filtered, skippedFields };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SUB-STYLE × MODE COMPATIBILITY MATRIX (Ticket 7)
 // ═══════════════════════════════════════════════════════════════════════════
 // 'ok'    = compatible as-is, no special handling
