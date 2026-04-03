@@ -2096,6 +2096,45 @@ export const revokeTeamInvite = onCall({
     return { success: true, message: 'Invite revoked.' };
 });
 
+// ─── GET INVITE DETAILS (unauthenticated — for /join page) ──────────────
+export const getInviteDetails = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    const { inviteId } = request.data;
+    if (!inviteId || typeof inviteId !== "string") {
+        return { success: false, status: "not_found", message: "Invite not found" };
+    }
+
+    const inviteSnap = await db.collection("team_invites").doc(inviteId).get();
+    if (!inviteSnap.exists) {
+        return { success: false, status: "not_found", message: "Invite not found" };
+    }
+
+    const invite = inviteSnap.data() as TeamInvite;
+
+    if (invite.status === "revoked") {
+        return { success: false, status: "revoked", message: "This invite is no longer valid" };
+    }
+    if (invite.status === "accepted") {
+        return { success: false, status: "accepted", message: "This invite has already been claimed" };
+    }
+    if (invite.expiresAt < Date.now()) {
+        return { success: false, status: "expired", message: "This invite has expired" };
+    }
+
+    return {
+        success: true,
+        ownerName: invite.ownerName,
+        inviteeEmail: invite.inviteeEmail,
+        inviteeName: invite.inviteeName,
+        teamPlan: invite.teamPlan,
+        role: invite.role,
+        status: invite.status,
+        expiresAt: invite.expiresAt,
+    };
+});
+
 // ─── CLAIM INVITE (auto-claim on login) ──────────────────────────────────
 export const claimTeamInvite = onCall({
     region: "europe-west1",
@@ -2395,6 +2434,41 @@ export const removeTeamMember = onCall({
 
     console.log(`👥 Team member removed: ${memberEmail} from owner ${ownerUid}`);
     return { success: true, message: `${memberData.name} has been removed from your team.` };
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TEAM MANAGEMENT: Update Team Member Role
+// ═══════════════════════════════════════════════════════════════════════════
+export const updateTeamMemberRole = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be logged in.");
+
+    const { memberId, role } = request.data;
+    const ownerUid = request.auth.uid;
+
+    if (!memberId) throw new HttpsError("invalid-argument", "Member ID required.");
+    if (!["editor", "viewer"].includes(role)) throw new HttpsError("invalid-argument", "Role must be 'editor' or 'viewer'.");
+
+    const memberDoc = await db.collection("users").doc(ownerUid).collection("team").doc(memberId).get();
+    if (!memberDoc.exists) throw new HttpsError("not-found", "Team member not found.");
+
+    const memberData = memberDoc.data()!;
+    const memberEmail = memberData.email;
+
+    await db.collection("users").doc(ownerUid).collection("team").doc(memberId).update({ role });
+
+    if (memberData.uid) {
+        await db.collection("users").doc(memberData.uid).update({ teamRole: role });
+    }
+
+    try {
+        await db.collection("teamMemberships").doc(memberEmail).update({ role });
+    } catch (e) { /* non-blocking */ }
+
+    console.log(`👥 Team member role updated: ${memberEmail} → ${role} by owner ${ownerUid}`);
+    return { success: true, message: `Role updated to ${role}.` };
 });
 // ═══════════════════════════════════════════════════════════════════════════
 // META ADS API INTEGRATION — PHASE 2

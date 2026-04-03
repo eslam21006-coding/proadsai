@@ -371,6 +371,31 @@ const translations: Record<UILanguage, Record<string, string>> = {
 
         // ── Placeholders ──
         'placeholder.copy_direction': 'I want the text in simple formal Arabic, focusing on these key points: 1- ...',
+
+        // ── Team ──
+        'team.title': 'Team',
+        'team.members': 'Members',
+        'team.pending_invites': 'Pending Invites',
+        'team.invite_form_title': 'Invite New Member',
+        'team.member_count': '{count} / {max} members on {plan}',
+        'team.role_member': 'Member',
+        'team.role_viewer': 'Viewer',
+        'team.remove_confirm': 'Remove {name}? They will lose access immediately.',
+        'team.revoke_confirm': 'This invite link will stop working.',
+        'team.limit_reached': 'Your {plan} plan allows {max} members. Upgrade to {nextPlan} for up to {nextMax}.',
+        'team.not_available': 'Team invites are available on Pro and above.',
+        'team.viewer_tooltip': 'Viewers cannot generate — ask your team owner.',
+        'team.credits_owner': 'Team credits — your account',
+        'team.credits_member': "Team credits — {name}'s account",
+        'team.removed_message': "You've been removed from this team. Contact your team owner.",
+
+        // ── Join ──
+        'join.title': 'Join Team',
+        'join.expired': 'This invite has expired. Ask your team owner to resend it.',
+        'join.revoked': 'This invite is no longer valid.',
+        'join.claimed': 'This invite has already been claimed.',
+        'join.create_account': 'Create Account',
+        'join.login': 'Log In to Join',
     },
 
     ar: {
@@ -740,6 +765,31 @@ const translations: Record<UILanguage, Record<string, string>> = {
 
         // ── Placeholders ──
         'placeholder.copy_direction': 'أريد أن يكون النص بالعربية الفصحى البسيطة، وأن يكون التركيز على هذه النقاط الأساسية: 1- ...',
+
+        // ── Team ──
+        'team.title': 'الفريق',
+        'team.members': 'الأعضاء',
+        'team.pending_invites': 'الدعوات المعلقة',
+        'team.invite_form_title': 'دعوة عضو جديد',
+        'team.member_count': '{count} / {max} عضو في خطة {plan}',
+        'team.role_member': 'عضو',
+        'team.role_viewer': 'مشاهد',
+        'team.remove_confirm': 'إزالة {name}؟ سيفقد الوصول فوراً.',
+        'team.revoke_confirm': 'رابط الدعوة سيتوقف عن العمل.',
+        'team.limit_reached': 'خطتك {plan} تسمح بـ {max} عضو. ترقّ إلى {nextPlan} لما يصل إلى {nextMax}.',
+        'team.not_available': 'دعوات الفريق متاحة في خطة Pro وأعلى.',
+        'team.viewer_tooltip': 'المشاهدون لا يمكنهم التوليد — تواصل مع مالك الفريق.',
+        'team.credits_owner': 'رصيد الفريق — حسابك',
+        'team.credits_member': 'رصيد الفريق — حساب {name}',
+        'team.removed_message': 'تمت إزالتك من الفريق. تواصل مع مالك الفريق.',
+
+        // ── Join ──
+        'join.title': 'انضم للفريق',
+        'join.expired': 'انتهت صلاحية الدعوة. اطلب من مالك الفريق إعادة إرسالها.',
+        'join.revoked': 'هذه الدعوة لم تعد صالحة.',
+        'join.claimed': 'تم قبول هذه الدعوة بالفعل.',
+        'join.create_account': 'إنشاء حساب',
+        'join.login': 'تسجيل الدخول للانضمام',
     },
 };
 
