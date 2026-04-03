@@ -101,16 +101,7 @@
       "Bash(bash .specify/scripts/bash/update-agent-context.sh --agent-type claude)",
       "Bash(bash .specify/scripts/bash/update-agent-context.sh claude)",
       "Bash(bash .specify/scripts/bash/check-prerequisites.sh --json)",
-      "Bash(bash .specify/scripts/bash/create-new-feature.sh \"Phase 9: Team Management\" --json --short-name \"team-management\")",
-      "Bash(bash .specify/scripts/powershell/create-new-feature.ps1 \"create the spec for Phase 7: Failure Classification inside docs/LAUNCH_MATRIX.md\" --json --short-name \"failure-classification\" \"Failure Classification\")",
-      "Bash(powershell -ExecutionPolicy Bypass -File .specify/scripts/powershell/create-new-feature.ps1 \"create the spec for Phase 7: Failure Classification inside docs/LAUNCH_MATRIX.md\" -Json -ShortName \"failure-classification\" \"Failure Classification\")",
-      "Bash(bash .specify/scripts/powershell/create-new-feature.ps1 \"create the spec for Phase 6: Language Quality Contracts inside docs/LAUNCH_MATRIX.md\" --json --short-name \"lang-quality-contracts\" \"Language Quality Contracts\")",
-      "Bash(bash .specify/scripts/bash/create-new-feature.sh \"create the spec for Phase 6: Language Quality Contracts inside docs/LAUNCH_MATRIX.md\" --json --short-name \"lang-quality-contracts\" \"Language Quality Contracts\")",
-      "Bash(bash .specify/scripts/powershell/create-new-feature.ps1 \"create the spec for Phase 8: Billing, Plan Access, Top-Up, Downgrade, and Cancellation inside docs/LAUNCH_MATRIX.md\" --json --short-name \"billing-plan-access\" \"Billing, Plan Access, Top-Up, Downgrade, and Cancellation\")",
-      "Bash(powershell -ExecutionPolicy Bypass -File .specify/scripts/powershell/create-new-feature.ps1 \"create the spec for Phase 8: Billing, Plan Access, Top-Up, Downgrade, and Cancellation inside docs/LAUNCH_MATRIX.md\" -Json -ShortName \"billing-plan-access\" \"Billing, Plan Access, Top-Up, Downgrade, and Cancellation\")",
-      "Bash(powershell -ExecutionPolicy Bypass -File .specify/scripts/powershell/check-prerequisites.ps1 -Json -PathsOnly)",
-      "Bash(powershell -ExecutionPolicy Bypass -File .specify/scripts/powershell/setup-plan.ps1 -Json)",
-      "Bash(grep:*)"
+      "Bash(bash .specify/scripts/bash/create-new-feature.sh \"Phase 9: Team Management\" --json --short-name \"team-management\")"
     ]
   }
 }
