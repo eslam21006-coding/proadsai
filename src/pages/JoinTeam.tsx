@@ -1,5 +1,5 @@
-// src/pages/JoinTeam.tsx
-import React, { useEffect, useState } from 'react';
+// JoinTeam.tsx — Invite acceptance page: handles team join via login or account creation
+import React, { useEffect, useState, useCallback } from 'react';
 import { auth } from '../firebase';
 import {
   signInWithEmailAndPassword,
@@ -9,8 +9,9 @@ import {
 } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
-import { getInviteDetails, type InviteDetailsResult } from '../services/teamService';
-import { LanguageProvider, useT, type UILanguage } from '../i18n';
+import { getInviteDetails } from '../services/teamService';
+import type { InviteDetailsResult } from '../services/teamService';
+import { LanguageProvider, useT } from '../i18n';
 
 const fnClaimTeamInvite = httpsCallable(functions, 'claimTeamInvite');
 
@@ -31,12 +32,23 @@ const JoinTeamInner: React.FC = () => {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  const checkAuthMode = useCallback(async (emailAddress: string) => {
+    try {
+      const methods = await fetchSignInMethodsForEmail(auth, emailAddress);
+      setAuthMode(methods.length > 0 ? 'login' : 'signup');
+    } catch {
+      setAuthMode('signup');
+    }
+  }, []);
+
   useEffect(() => {
     if (!inviteId) {
       setInviteStatus('not_found');
       return;
     }
+    let active = true;
     getInviteDetails(inviteId).then((result) => {
+      if (!active) return;
       if (result.success) {
         setInviteData(result);
         setInviteStatus('valid');
@@ -48,57 +60,54 @@ const JoinTeamInner: React.FC = () => {
         setInviteStatus(status || 'error');
       }
     }).catch(() => {
-      setInviteStatus('error');
+      if (active) setInviteStatus('error');
     });
-  }, [inviteId]);
+    return () => { active = false; };
+  }, [inviteId, checkAuthMode]);
 
-  const checkAuthMode = async (emailAddress: string) => {
+  const claimInvite = async () => {
     try {
-      const methods = await fetchSignInMethodsForEmail(auth, emailAddress);
-      setAuthMode(methods.length > 0 ? 'login' : 'signup');
+      await fnClaimTeamInvite({ inviteId });
+      window.location.href = '/';
     } catch {
-      setAuthMode('signup');
+      setError(t('join.claim_failed'));
     }
   };
 
   const handleLogin = async () => {
-    if (!email || !password) { setError('Email and password are required.'); return; }
+    if (!email || !password) { setError(t('errors.email_password_required')); return; }
     setSubmitting(true);
     setError('');
     try {
       await signInWithEmailAndPassword(auth, email, password);
       await claimInvite();
-    } catch (e: any) {
-      setError(e.message || 'Login failed. Please check your credentials.');
+    } catch {
+      setError(t('errors.login_failed'));
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleSignup = async () => {
-    if (!email || !password || !name) { setError('All fields are required.'); return; }
-    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
-    if (password !== confirmPassword) { setError('Passwords do not match.'); return; }
+    if (!email || !password || !name) { setError(t('errors.fields_required')); return; }
+    if (password.length < 6) { setError(t('errors.password_min_length')); return; }
+    if (password !== confirmPassword) { setError(t('errors.passwords_mismatch')); return; }
     setSubmitting(true);
     setError('');
     try {
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       await updateProfile(cred.user, { displayName: name });
       await claimInvite();
-    } catch (e: any) {
-      setError(e.message || 'Account creation failed.');
+    } catch (e: unknown) {
+      const code = e instanceof Error && 'code' in e ? (e as any).code : '';
+      if (code === 'auth/email-already-in-use') {
+        setError(t('errors.email_already_in_use'));
+        setAuthMode('login');
+      } else {
+        setError(t('errors.account_creation_failed'));
+      }
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const claimInvite = async () => {
-    try {
-      await fnClaimTeamInvite({ inviteId });
-      window.location.href = '/';
-    } catch (e: any) {
-      setError(e.message || 'Failed to join team.');
-      setAuthMode('login');
     }
   };
 
@@ -139,9 +148,9 @@ const JoinTeamInner: React.FC = () => {
         <h1 className="text-2xl font-bold text-white mb-1">{t('join.title')}</h1>
         {inviteData && (
           <div className="mb-6 text-sm text-slate-400 space-y-1">
-            <p>{lang === 'ar' ? 'مدعو من قبل' : 'Invited by'} <span className="text-white font-medium">{inviteData.ownerName}</span></p>
-            <p>{lang === 'ar' ? 'الدور' : 'Role'}: <span className="text-white font-medium">{inviteData.role === 'editor' ? t('team.role_member') : t('team.role_viewer')}</span></p>
-            <p>{lang === 'ar' ? 'الخطة' : 'Plan'}: <span className="text-white font-medium capitalize">{inviteData.teamPlan}</span></p>
+            <p>{t('join.invited_by')} <span className="text-white font-medium">{inviteData.ownerName}</span></p>
+            <p>{t('join.role_label')}: <span className="text-white font-medium">{inviteData.role === 'editor' ? t('team.role_member') : t('team.role_viewer')}</span></p>
+            <p>{t('join.plan_label')}: <span className="text-white font-medium capitalize">{inviteData.teamPlan}</span></p>
           </div>
         )}
 
@@ -150,7 +159,7 @@ const JoinTeamInner: React.FC = () => {
         ) : authMode === 'login' ? (
           <div className="space-y-4">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">{lang === 'ar' ? 'البريد الإلكتروني' : 'Email'}</label>
+              <label className="block text-xs text-slate-400 mb-1">{t('join.email_label')}</label>
               <input type="email" value={email} disabled className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm opacity-60 cursor-not-allowed" />
             </div>
             <div>
@@ -165,11 +174,11 @@ const JoinTeamInner: React.FC = () => {
         ) : authMode === 'signup' ? (
           <div className="space-y-4">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">{lang === 'ar' ? 'الاسم الكامل' : 'Full Name'}</label>
+              <label className="block text-xs text-slate-400 mb-1">{t('join.full_name')}</label>
               <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" />
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">{lang === 'ar' ? 'البريد الإلكتروني' : 'Email'}</label>
+              <label className="block text-xs text-slate-400 mb-1">{t('join.email_label')}</label>
               <input type="email" value={email} disabled className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm opacity-60 cursor-not-allowed" />
             </div>
             <div>
@@ -177,7 +186,7 @@ const JoinTeamInner: React.FC = () => {
               <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" />
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">{lang === 'ar' ? 'تأكيد كلمة المرور' : 'Confirm Password'}</label>
+              <label className="block text-xs text-slate-400 mb-1">{t('join.confirm_password')}</label>
               <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSignup()} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" />
             </div>
             {error && <p className="text-red-400 text-xs">{error}</p>}

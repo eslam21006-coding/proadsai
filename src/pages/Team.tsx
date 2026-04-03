@@ -109,7 +109,7 @@ const TeamPage: React.FC<TeamPageProps> = ({
 
   const handleInvite = async () => {
     if (!inviteName.trim() || !inviteEmail.trim()) {
-      showToast('Please enter name and email.', 'error');
+      showToast(t('invite.name_email_required'), 'error');
       return;
     }
     const openCount = invites.filter(i => ['pending', 'sent', 'failed'].includes(i.status)).length;
@@ -131,19 +131,20 @@ const TeamPage: React.FC<TeamPageProps> = ({
       });
       const data = result.data as any;
       showToast(
-        data.message || `Invite sent to ${inviteEmail.trim()}!`,
+        data.deliverySuccess !== false
+          ? t('invite.sent').replace('{email}', inviteEmail.trim())
+          : t('invite.failed'),
         data.deliverySuccess === false ? 'error' : 'success'
       );
       setInviteName('');
       setInviteEmail('');
       setInviteRole('editor');
       loadInvites();
-    } catch (e: any) {
-      const msg = e?.message || 'Failed to send invite.';
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '';
       setInviteError(
-        msg.includes('already') ? 'This person is already on your team.'
-          : msg.includes('plan') || msg.includes('seat') ? msg
-            : 'Failed to send invite.'
+        msg.includes('already') ? t('invite.already_member')
+          : t('invite.failed')
       );
     } finally {
       setInviting(false);
