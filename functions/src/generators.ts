@@ -6,13 +6,6 @@
 // and receives only the AI output.
 // ═══════════════════════════════════════════════════════════════════════════
 
-class CopyFidelityError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = "CopyFidelityError";
-    }
-}
-
 import { SYSTEM_TOV, SYSTEM_CONCEPTS, SYSTEM_RENDER, SYSTEM_CAPTION, getLanguageInstruction } from "./promptConstants.js";
 import { RETARGETING_OBJECTION_DATA, getBestAngleForObjection, buildNormalizedRetargetingContext, getRetargetingPromptBlock } from "./retargetingObjections.js";
 import { LANGUAGE_RULES, SLIPPERY_SLIDE, HEADLINE_TYPES, COLD_TRAFFIC_RULES, RETARGETING_RULES, BELIEF_SHIFTING_FRAMEWORK, QUALITY_CHECKLIST } from "./copywriting_knowledge.js";
@@ -3635,28 +3628,37 @@ ${JSON.stringify(machinePlan)}`;
     };
 
     const MAX_COPY_FIDELITY_ATTEMPTS = 3;
+    let bestMachinePlan = machinePlan;
+    let copyFidelityPassed = false;
     for (let attempt = 1; attempt <= MAX_COPY_FIDELITY_ATTEMPTS; attempt++) {
         const tp = extractTechnicalPromptFromBlueprint(machinePlan.blueprint);
-        if (tp && validateCopyFidelity(tp, hookText)) {
+        const fidelityOk = tp ? validateCopyFidelity(tp, hookText) : false;
+        const contractOk = structuredValidation.contractCheck.passed;
+        if (fidelityOk && contractOk) {
+            copyFidelityPassed = true;
+            bestMachinePlan = machinePlan;
             if (attempt > 1) {
-                console.log(`✅ Copy fidelity passed on attempt ${attempt}`);
+                console.log(`✅ Copy fidelity + contract passed on attempt ${attempt}`);
             }
             break;
         }
+        // Keep the best plan seen so far (prefer one that passes at least contract)
+        if (contractOk) bestMachinePlan = machinePlan;
         if (attempt < MAX_COPY_FIDELITY_ATTEMPTS) {
-            console.warn(`⚠️ Copy fidelity failed (attempt ${attempt}/${MAX_COPY_FIDELITY_ATTEMPTS}) — rebuilding plan...`);
+            console.warn(`⚠️ Copy fidelity ${fidelityOk ? 'passed' : 'failed'}, contract ${contractOk ? 'passed' : 'failed'} (attempt ${attempt}/${MAX_COPY_FIDELITY_ATTEMPTS}) — rebuilding plan...`);
             machinePlan = await requestStructuredPlan(prompt);
             if (!machinePlan.blueprint || machinePlan.blueprint.length < 80) {
                 throw new Error('Build plan blueprint was empty or too short on copy fidelity retry.');
             }
             structuredValidation = validateStructuredBuildPlan(machinePlan, buildPlanContract, ownershipMap);
-            if (!structuredValidation.contractCheck.passed) {
-                console.warn(`⚠️ Retry attempt ${attempt} also failed contract validation: ${structuredValidation.contractCheck.reasons.join('; ')}`);
-            }
         } else {
-            console.error(`❌ Copy fidelity failed after ${MAX_COPY_FIDELITY_ATTEMPTS} attempts`);
-            throw new CopyFidelityError(`Build plan copy fidelity failed after ${MAX_COPY_FIDELITY_ATTEMPTS} attempts: hookText not found in TECHNICAL_PROMPT`);
+            console.warn(`⚠️ Copy fidelity exhausted after ${MAX_COPY_FIDELITY_ATTEMPTS} attempts — proceeding with best available plan`);
         }
+    }
+    // Use the best plan even if fidelity didn't pass — soft warning, not hard rejection
+    machinePlan = bestMachinePlan;
+    if (!copyFidelityPassed) {
+        console.warn(`⚠️ Copy fidelity warning: hookText may not appear verbatim in TECHNICAL_PROMPT — using best available plan`);
     }
 
     try {
@@ -3688,6 +3690,7 @@ ${JSON.stringify(machinePlan)}`;
 export interface ResolutionTrace {
     resolvedImagePrompt: string | null;
     blueprintText: string | null;
+    technicalPrompt: string | null;
     perSlide?: Array<{
         slideIndex: number;
         resolvedImagePrompt: string | null;
@@ -3750,7 +3753,7 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
     const strippedBlueprint = stripTechnicalPrompt(blueprint);
 
     const textPrompt = `${coreDesignRules}
-
+${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}
 BLUEPRINT: ${strippedBlueprint}
 TEXTS: "${hookText}", "${subheadText}"
 BUTTON: "${ctaName}"
@@ -3779,6 +3782,7 @@ ${retargetingDesignHint}
     const trace: ResolutionTrace = {
         resolvedImagePrompt: textPrompt.substring(0, 5000),
         blueprintText: strippedBlueprint.substring(0, 2000),
+        technicalPrompt: technicalPrompt?.substring(0, 3000) || null,
     };
 
     return { textPrompt, imageParts, trace };

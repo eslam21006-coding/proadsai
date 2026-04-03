@@ -543,8 +543,9 @@ export function validateStructuredBuildPlan(
 }
 
 export function validateCopyFidelity(technicalPrompt: string | null, hookText: string): boolean {
-    if (!technicalPrompt || !hookText) return false;
-    return technicalPrompt.includes(hookText.trim());
+    if (!technicalPrompt || !hookText?.trim()) return false;
+    const normalizeText = (s: string) => s.normalize('NFC').trim().replace(/\s+/g, ' ');
+    return normalizeText(technicalPrompt).includes(normalizeText(hookText));
 }
 
 export function stripTechnicalPrompt(blueprint: string): string {

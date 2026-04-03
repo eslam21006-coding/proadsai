@@ -5,37 +5,54 @@
 
 ## Signature
 
-```
+```ts
 buildFinalImagePrompt(
-  blueprint: string,
-  technicalPrompt: string,
-  contract: FullLayoutContract,
-  inputs: AdInputs,
-  aspectRatio: AspectRatio
-): { textPrompt: string, imageParts: ImagePart[] }
+  input: BuildFinalImagePromptInput
+): BuildFinalImagePromptResult
 ```
+
+`BuildFinalImagePromptInput` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| technicalPrompt | string | Extracted TECHNICAL_PROMPT from blueprint |
+| blueprint | string | Full blueprint text (TECHNICAL_PROMPT will be stripped internally) |
+| contract | FullLayoutContract | Layout contract with zone rules |
+| inputs | AdInputs | All user inputs from Steps 1 and 2 |
+| aspectRatio | AspectRatio | Target aspect ratio |
+| hookText | string | Approved hook text for this slide |
+| subheadText | string | Approved subhead text |
+| ctaName | string | Approved CTA button text |
+| benefitText | string | Benefit text |
+| badges | string \| undefined | Badge text (optional) |
+| resolvedUniverse | string | Resolved universe setting |
+| costumeRules | string | Costume/wardrobe rules |
+| coreDesignRules | string | Pre-assembled design system rules (includes contract zones, sub-style constraints, mode structural rules, campaign direction) |
+| carouselAnchorNote | string | Carousel anchor slide reference note |
+| retargetingDesignHint | string | Retargeting visual direction hint |
+| imageParts | Array\<{ inlineData: { mimeType: string; data: string } }\> | Box A/B/C images and reference ad (only those provided) |
+
+`BuildFinalImagePromptResult` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| textPrompt | string | The concatenated text prompt for the image model |
+| imageParts | Array\<{ inlineData: { mimeType: string; data: string } }\> | Pass-through of input image parts |
+| trace | ResolutionTrace | Audit record with resolvedImagePrompt, blueprintText, and technicalPrompt |
 
 ## Assembly Order (strict)
 
 The function MUST concatenate prompt sections in this exact order:
 
-1. **TECHNICAL_PROMPT** — from blueprint extraction
-2. **Layout contract** — zone rules + aspect ratio from `compileFullContract()`
-3. **Sub-style visual constraints** — from `resolveVisualSubStyle()`
-4. **Creative mode structural rules** — from mode spec in `CREATIVE_MODE_CATALOG`
-5. **Campaign type + hook angle visual direction** — from `getHookAngleVisualDirection()` / retargeting context
-6. **Brand color hex directives** — `brandColorPrimary`, `brandColorSecondary` (when provided)
-7. **Face-consistency instructions** — referencing Box A personal photos (when provided)
-8. **Logo placement directives** — referencing Box B brand logos (when provided)
-9. **Mode-specific asset references** — Box C book covers, device screens, etc. (when provided)
-10. **Style reference** — from uploaded reference ad (when provided)
+1. **coreDesignRules** — pre-assembled design system rules (includes layout contract zone rules, aspect ratio, sub-style visual constraints, creative mode structural rules, campaign type + hook angle visual direction)
+2. **TECHNICAL_PROMPT** — from blueprint extraction (when present)
+3. **Stripped BLUEPRINT** — human-readable blueprint with TECHNICAL_PROMPT markers removed
+4. **TEXTS + BUTTON** — hookText, subheadText, ctaName verbatim
+5. **carouselAnchorNote** — carousel slide reference (when applicable)
+6. **retargetingDesignHint** — retargeting visual direction (when applicable)
+7. **CRITICAL TEXT RENDERING RULES** — immutable rules preventing marker/English text leakage
 
-Items 6–10 are omitted when the user has not provided the corresponding input. No placeholder text is injected for absent optional inputs.
-
-## Return Shape
-
-- `textPrompt`: The concatenated text string (sections 1–10 joined)
-- `imageParts`: Array of `{ mimeType, data }` objects for Box A/B/C images and reference ad (only those provided)
+Items in coreDesignRules include brand color hex directives, face-consistency instructions, logo placement, mode-specific asset references, and style reference — all conditional on user input presence.
 
 ## Invariants
 
@@ -49,5 +66,5 @@ Items 6–10 are omitted when the user has not provided the corresponding input.
 **Input**: `hookText` (string), `technicalPrompt` (string)
 **Check**: `technicalPrompt.includes(hookText.trim())`
 **Pass**: hookText found verbatim → proceed
-**Fail**: hookText absent → mark build plan failed, trigger rebuild (max 2 retries)
-**Exhausted**: After 3 total attempts → return error with retry affordance to user
+**Fail**: hookText absent → retry build plan generation (max 2 retries, advisory)
+**Exhausted**: After 3 total attempts → proceed with best available plan + emit warning (non-blocking)

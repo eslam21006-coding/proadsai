@@ -668,14 +668,17 @@ function testPromptAssemblyHookTextVerbatim() {
 
 // ─── T025: visualSubStyle luxury_magazine constraint ───
 function testPromptAssemblySubStyleLuxuryMagazine() {
+    const luxuryToken = "luxury_magazine";
     const input = makePromptInput({
-        inputs: { visualSubStyle: "luxury_magazine", offerCreativeMode: ["standard_hero"] },
+        inputs: { visualSubStyle: luxuryToken, offerCreativeMode: ["standard_hero"] },
+        coreDesignRules: "Photorealistic studio lighting, high contrast. SUB-STYLE: luxury_magazine — gold accents, editorial composition, premium serif typography.",
     });
     const result = buildFinalImagePrompt(input);
     assert.ok(typeof result.textPrompt === "string" && result.textPrompt.length > 100, "T025: textPrompt should be substantive");
     assert.ok(result.textPrompt.includes("عرض المدرب الرئيسي"), "T025: luxury_magazine input must still contain hookText");
+    assert.ok(result.textPrompt.includes(luxuryToken), "T025: textPrompt must include the luxury_magazine constraint token");
     const trace = result.trace;
-    assert.ok(trace.resolvedImagePrompt!.length > 50, "T025: resolvedImagePrompt trace should capture prompt");
+    assert.ok(trace.resolvedImagePrompt!.includes(luxuryToken), "T025: trace resolvedImagePrompt must include luxury_magazine constraint");
     console.log("  ✅ testPromptAssemblySubStyleLuxuryMagazine");
 }
 
@@ -718,11 +721,11 @@ function testCopyFidelityValidation() {
 // ═══════════════════════════════════════════════════════════════════════════
 // Run Spec 005 Fixtures
 // ═══════════════════════════════════════════════════════════════════════════
-console.log('\n═══ Spec 005 — Render Prompt Pipeline Regression Guards ═══');
+console.log("\n═══ Spec 005 — Render Prompt Pipeline Regression Guards ═══");
 testPromptAssemblyHookTextVerbatim();
 testPromptAssemblySubStyleLuxuryMagazine();
 testPromptAssemblyRetargetingDirection();
 testCopyFidelityValidation();
-console.log('═══ Spec 005 — All regression tests passed ═══\n');
+console.log("═══ Spec 005 — All regression tests passed ═══\n");
 
 console.log('contractFixtures.test: PASS');

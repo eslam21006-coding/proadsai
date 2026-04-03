@@ -5685,7 +5685,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                       <details className="mt-3">
                                         <summary className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider cursor-pointer hover:text-slate-200 transition-colors flex items-center gap-1.5">
                                           <i className="fa-solid fa-drafting-compass text-[8px]"></i>
-                                          {t('concepts.view_blueprint') || 'View Blueprint'}
+                                          {t('concepts.view_blueprint')}
                                         </summary>
                                         <pre className="mt-2 text-[10px] leading-relaxed text-slate-400 whitespace-pre-wrap font-mono bg-slate-950/80 border border-slate-800/40 rounded-xl p-3.5 max-h-64 overflow-y-auto">{stripped}</pre>
                                       </details>

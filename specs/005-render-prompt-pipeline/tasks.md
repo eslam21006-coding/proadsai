@@ -54,7 +54,7 @@
 
 **Goal**: Show the human-readable blueprint to the user in Step 3 via an expandable panel, with the TECHNICAL_PROMPT stripped.
 
-**Independent Test**: Generate an ad through Step 3. Verify the "View Blueprint" panel appears. Verify the TECHNICAL_PROMPT markers and content are not visible. Verify blueprint text is stored in the generation record.
+**Independent Test**: Generate an ad through Step 3. Verify the "View Blueprint" panel appears. Ensure the TECHNICAL_PROMPT markers and content are not visible. Confirm blueprint text is stored in the generation record.
 
 - [X] T014 [US3] Add `stripTechnicalPrompt(blueprint: string): string` utility function in `functions/src/buildPlanSlotMap.ts` — removes everything between `[[TECHNICAL_PROMPT]]` and `[[/TECHNICAL_PROMPT]]` markers (inclusive) from the blueprint string. Export it. Also add a mirrored copy in `src/utils/` or inline in `src/App.tsx` for frontend use.
 - [X] T015 [US3] Add "View Blueprint" expandable panel in `src/App.tsx` — inside the Step 3 concept card area (near existing environment/mood/lighting panels around line 5629). Show the stripped blueprint text in a collapsible panel. Default state: collapsed. Use existing accordion/chevron UI pattern. Label: "View Blueprint" (Arabic: "عرض المخطط").

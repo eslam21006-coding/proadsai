@@ -233,12 +233,7 @@ Use this information to better understand the brand's positioning, tone, and tar
       conceptRaw, selectedTov, inputs: sanitizeInputs(inputs),
       resolvedUniverse, currentAspectRatio, textOverride,
     });
-    const data = result.data as any;
-    if (data.errorCode === 'copy_fidelity_failed') {
-      const err = new Error('Blueprint text didn\'t match — please retry');
-      (err as any).code = 'copy_fidelity_failed';
-      throw err;
-    }
+    const data = result.data as { text?: string; success?: boolean; errorCode?: string | null };
     return data.text || '';
   }
 
