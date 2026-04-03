@@ -156,9 +156,9 @@ const TeamPage: React.FC<TeamPageProps> = ({
     try {
       const result = await fnRemoveTeamMember({ memberId });
       const data = result.data as any;
-      showToast(data.message || 'Team member removed.', 'success');
+      showToast(data.message || t('team.member_removed'), 'success');
     } catch {
-      showToast('Failed to remove member.', 'error');
+      showToast(t('team.remove_failed'), 'error');
     } finally {
       setConfirm(null);
       setProcessing(false);
@@ -169,10 +169,10 @@ const TeamPage: React.FC<TeamPageProps> = ({
     try {
       const result = await fnResendTeamInvite({ inviteId });
       const data = result.data as any;
-      showToast(data.message || 'Resent!', data.success ? 'success' : 'error');
+      showToast(data.message || t('invite.resent'), data.success ? 'success' : 'error');
       loadInvites();
     } catch {
-      showToast('Failed to resend.', 'error');
+      showToast(t('invite.resend_failed'), 'error');
     }
   };
 
@@ -181,10 +181,10 @@ const TeamPage: React.FC<TeamPageProps> = ({
     try {
       const result = await fnRevokeTeamInvite({ inviteId });
       const data = result.data as any;
-      showToast(data.message || 'Revoked.', 'success');
+      showToast(data.message || t('invite.revoked'), 'success');
       loadInvites();
     } catch {
-      showToast('Failed to revoke.', 'error');
+      showToast(t('invite.revoke_failed'), 'error');
     } finally {
       setConfirm(null);
       setProcessing(false);
@@ -196,17 +196,15 @@ const TeamPage: React.FC<TeamPageProps> = ({
     setRoleChanging(memberId);
     try {
       await fnUpdateTeamMemberRole({ memberId, role: newRole });
-      showToast(
-        newRole === 'editor' ? `${t('team.role_member')} role applied.` : `${t('team.role_viewer')} role applied.`,
-        'success'
-      );
+      const roleLabel = newRole === 'editor' ? t('team.role_member') : t('team.role_viewer');
+      showToast(t('team.role_applied').replace('{role}', roleLabel), 'success');
       setRoleOverride(prev => {
         const next = { ...prev };
         delete next[memberId];
         return next;
       });
-    } catch (e: any) {
-      showToast(e?.message || 'Failed to update role.', 'error');
+    } catch {
+      showToast(t('team.role_update_failed'), 'error');
       setRoleOverride(prev => {
         const next = { ...prev };
         delete next[memberId];
@@ -261,13 +259,13 @@ const TeamPage: React.FC<TeamPageProps> = ({
             </h1>
             {isTeamMember ? (
               <p className="text-[10px] text-slate-500 mt-0.5">
-                {lang === 'ar' ? `عضو في فريق ${teamOwnerName || 'Owner'}` : `Member of ${teamOwnerName || 'Owner'}'s team`}
+                {t('team.member_of').replace('{name}', teamOwnerName || 'Owner')}
               </p>
             ) : (
               <p className="text-[10px] text-slate-500 mt-0.5">
                 {unlimitedMembers
-                  ? `${lang === 'ar' ? 'أعضاء غير محدودين' : 'Unlimited members'} — ${PLANS[userPlan]?.name}`
-                  : `${seatsUsed}/${maxMembers} ${lang === 'ar' ? 'مقاعد مستخدمة' : 'seats used'} — ${PLANS[userPlan]?.name}`}
+                  ? t('team.unlimited_members').replace('{plan}', PLANS[userPlan]?.name || '')
+                  : t('team.seats_used').replace('{used}', String(seatsUsed)).replace('{max}', String(maxMembers)).replace('{plan}', PLANS[userPlan]?.name || '')}
               </p>
             )}
           </div>
@@ -386,9 +384,9 @@ const TeamPage: React.FC<TeamPageProps> = ({
                   {members.length === 0 && !isTeamMember && (
                     <div className="text-center py-8 text-slate-600">
                       <i className="fa-solid fa-user-plus text-2xl mb-2 block"></i>
-                      <p className="text-xs">{lang === 'ar' ? 'لا يوجد أعضاء بعد' : 'No team members yet'}</p>
+                      <p className="text-xs">{t('team.no_members_yet')}</p>
                       <p className="text-[10px] text-slate-700 mt-1">
-                        {lang === 'ar' ? 'ادعُ أعضاء للانضمام أدناه' : 'Invite members using the form below'}
+                        {t('team.invite_members_below')}
                       </p>
                     </div>
                   )}
@@ -424,12 +422,7 @@ const TeamPage: React.FC<TeamPageProps> = ({
                           </p>
                         </div>
                         <span className={`text-[8px] font-bold uppercase px-2.5 py-1 rounded-full ${statusStyle(inv.status)} tracking-wider shrink-0`}>
-                          {inv.status === 'sent' ? (lang === 'ar' ? 'أُرسلت' : 'Sent')
-                            : inv.status === 'failed' ? (lang === 'ar' ? 'فشلت' : 'Failed')
-                              : inv.status === 'expired' ? (lang === 'ar' ? 'منتهية' : 'Expired')
-                                : inv.status === 'revoked' ? (lang === 'ar' ? 'ملغاة' : 'Revoked')
-                                  : inv.status === 'pending' ? (lang === 'ar' ? 'معلقة' : 'Pending')
-                                    : inv.status}
+                          {t(`invite.status_${inv.status}`) || inv.status}
                         </span>
                         <span className={`text-[8px] font-bold uppercase px-2 py-0.5 rounded-full ${
                           inv.role === 'editor' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-500/10 text-slate-400'
@@ -475,19 +468,19 @@ const TeamPage: React.FC<TeamPageProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <label className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mb-1.5 block">
-                        {lang === 'ar' ? 'الاسم الكامل' : 'Full Name'}
+                        {t('join.full_name')}
                       </label>
                       <input
                         type="text"
                         value={inviteName}
                         onChange={e => setInviteName(e.target.value)}
-                        placeholder={lang === 'ar' ? 'الاسم الكامل' : 'Full name'}
+                        placeholder={t('join.full_name')}
                         className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-emerald-500/30 transition-colors placeholder:text-slate-700"
                       />
                     </div>
                     <div>
                       <label className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mb-1.5 block">
-                        {lang === 'ar' ? 'البريد الإلكتروني' : 'Email'}
+                        {t('join.email_label')}
                       </label>
                       <input
                         type="email"
@@ -502,12 +495,12 @@ const TeamPage: React.FC<TeamPageProps> = ({
 
                   <div>
                     <label className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mb-2 block">
-                      {lang === 'ar' ? 'الدور' : 'Role'}
+                      {t('team.role_label')}
                     </label>
                     <div className="flex gap-3">
                       {([
-                        { key: 'editor' as const, label: t('team.role_member'), icon: 'fa-pen', desc: lang === 'ar' ? 'إنشاء مشاريع وتوليد إعلانات' : 'Create projects & render ads' },
-                        { key: 'viewer' as const, label: t('team.role_viewer'), icon: 'fa-eye', desc: lang === 'ar' ? 'عرض المشاريع فقط' : 'View projects only' },
+                        { key: 'editor' as const, label: t('team.role_member'), icon: 'fa-pen', desc: t('team.role_editor_desc') },
+                        { key: 'viewer' as const, label: t('team.role_viewer'), icon: 'fa-eye', desc: t('team.role_viewer_desc') },
                       ]).map(opt => (
                         <button
                           key={opt.key}
@@ -545,12 +538,12 @@ const TeamPage: React.FC<TeamPageProps> = ({
                     {inviting ? (
                       <>
                         <div className="animate-spin w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full"></div>
-                        {lang === 'ar' ? 'جارٍ الإرسال...' : 'Sending...'}
+                        {t('team.sending')}
                       </>
                     ) : (
                       <>
                         <i className="fa-solid fa-paper-plane"></i>
-                        {lang === 'ar' ? 'إرسال الدعوة' : 'Send Invite'}
+                        {t('team.send_invite')}
                       </>
                     )}
                   </button>

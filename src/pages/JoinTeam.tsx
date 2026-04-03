@@ -99,7 +99,9 @@ const JoinTeamInner: React.FC = () => {
       await updateProfile(cred.user, { displayName: name });
       await claimInvite();
     } catch (e: unknown) {
-      const code = e instanceof Error && 'code' in e ? (e as any).code : '';
+      const isFirebaseError = (err: unknown): err is Error & { code: string } =>
+        err instanceof Error && typeof (err as any).code === 'string';
+      const code = isFirebaseError(e) ? e.code : '';
       if (code === 'auth/email-already-in-use') {
         setError(t('errors.email_already_in_use'));
         setAuthMode('login');
