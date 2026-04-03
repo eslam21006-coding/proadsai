@@ -31,3 +31,10 @@ specs/            # Feature specs (speckit workflow)
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
+
+## Active Technologies
+- TypeScript 5.7 (functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Gemini 3.1 (text + image), React 19 (005-render-prompt-pipeline)
+- Firestore (`generations/{genId}` documents, `creativeMemory` collection) (005-render-prompt-pipeline)
+
+## Recent Changes
+- 005-render-prompt-pipeline: Added TypeScript 5.7 (functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Gemini 3.1 (text + image), React 19

@@ -3363,6 +3363,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           'validation_failed': 'Creative mode combination is invalid. Go back and adjust your settings.',
           'quality_rejected': 'Blueprint quality check failed. Try regenerating the blueprint.',
           'generation_failed': 'Image generation failed during processing. Try again.',
+          'copy_fidelity_failed': 'Blueprint text didn\'t match the approved copy — please retry.',
         };
         const msg = errorMessages[mockupResult.errorCode || ''] || 'Image generation returned no result. Credits refunded.';
         showToast(msg, 'error');
@@ -5671,6 +5672,25 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                     </div>
                                   </div>
                                   {inputs?.badges && <div className="text-[9px] text-amber-500/80 font-medium"><i className="fa-solid fa-certificate mr-1"></i>Badge: {inputs.badges}</div>}
+
+                                  {/* ─── View Blueprint Panel ─── */}
+                                  {raw && (() => {
+                                    const tpStart = raw.indexOf('[[TECHNICAL_PROMPT]]');
+                                    const tpEnd = raw.indexOf('[[/TECHNICAL_PROMPT]]');
+                                    const stripped = (tpStart !== -1 && tpEnd !== -1)
+                                      ? (raw.slice(0, tpStart) + raw.slice(tpEnd + '[[/TECHNICAL_PROMPT]]'.length)).replace(/\n{2,}/g, '\n').trim()
+                                      : raw.replace(/TECHNICAL_PROMPT[\s\S]*/gi, '').replace(/CONCEPT_END[\s\S]*/gi, '').trim();
+                                    if (!stripped || stripped.length < 40) return null;
+                                    return (
+                                      <details className="mt-3">
+                                        <summary className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider cursor-pointer hover:text-slate-200 transition-colors flex items-center gap-1.5">
+                                          <i className="fa-solid fa-drafting-compass text-[8px]"></i>
+                                          {t('concepts.view_blueprint')}
+                                        </summary>
+                                        <pre className="mt-2 text-[10px] leading-relaxed text-slate-400 whitespace-pre-wrap font-mono bg-slate-950/80 border border-slate-800/40 rounded-xl p-3.5 max-h-64 overflow-y-auto">{stripped}</pre>
+                                      </details>
+                                    );
+                                  })()}
                                 </div>
                               )}
 
