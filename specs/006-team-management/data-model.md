@@ -20,14 +20,16 @@ No schema changes. Documenting existing fields for reference.
 | role | 'editor' \| 'viewer' | Assigned role (default: 'editor'). UI shows "Member" for editor. |
 | teamPlan | string | Owner's plan at time of invite |
 | status | string | 'pending' \| 'sent' \| 'failed' \| 'accepted' \| 'revoked' \| 'expired' |
-| createdAt | timestamp | Creation time |
-| updatedAt | timestamp | Last update time |
-| sentAt | timestamp \| null | When email was sent |
-| acceptedAt | timestamp \| null | When invite was claimed |
-| revokedAt | timestamp \| null | When invite was revoked |
-| expiresAt | timestamp | 7 days from creation. Reset on resend. |
+| createdAt | number | Creation time (epoch ms) |
+| updatedAt | number | Last update time (epoch ms) |
+| sentAt | number \| null | When email was sent (epoch ms) |
+| acceptedAt | number \| null | When invite was claimed (epoch ms) |
+| revokedAt | number \| null | When invite was revoked (epoch ms) |
+| expiresAt | number | 7 days from creation (epoch ms). Reset on resend. |
 | claimedByUserId | string \| null | UID of user who claimed |
 | deliveryAttemptCount | number | GHL delivery attempt count |
+
+**Storage**: Documents keyed by generated invite ID in root `team_invites` collection. Reverse lookup via `teamMemberships/{normalizedEmail}`.
 
 **Status transitions**:
 ```text
@@ -37,8 +39,9 @@ sent → accepted (invitee claims)
 sent → revoked (owner revokes)
 sent → expired (expiresAt passed)
 failed → sent (resend succeeds)
-expired → sent (resend resets expiry)
 ```
+
+Note: `resendTeamInvite` creates a NEW invite document rather than transitioning an expired invite. Expired invites remain expired.
 
 ---
 

@@ -239,7 +239,7 @@ const TeamPage: React.FC<TeamPageProps> = ({
     return map[status] || 'bg-slate-500/10 text-slate-400';
   };
 
-  const activeInvites = invites.filter(i => i.status !== 'accepted');
+  const activeInvites = invites.filter(i => ['pending', 'sent', 'failed'].includes(i.status));
   const seatsUsed = members.length + invites.filter(i => ['pending', 'sent', 'failed'].includes(i.status)).length;
 
   return (
@@ -307,8 +307,8 @@ const TeamPage: React.FC<TeamPageProps> = ({
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-white truncate">
                         {isTeamMember
-                          ? (teamOwnerName || lang === 'ar' ? 'مالك الفريق' : 'Team Owner')
-                          : (user?.displayName || user?.email?.split('@')[0] || lang === 'ar' ? 'أنت' : 'You')}
+                          ? (teamOwnerName || (lang === 'ar' ? 'مالك الفريق' : 'Team Owner'))
+                          : (user?.displayName || user?.email?.split('@')[0] || (lang === 'ar' ? 'أنت' : 'You'))}
                       </p>
                       <p className="text-[10px] text-slate-500">{isTeamMember ? '' : user?.email}</p>
                     </div>
@@ -599,12 +599,14 @@ const TeamPage: React.FC<TeamPageProps> = ({
                   <i className="fa-solid fa-circle-info text-blue-400/60 text-xl"></i>
                   <p className="text-sm text-slate-300">
                     {lang === 'ar'
-                      ? `أنت عضو في فريق ${teamOwnerName || 'Owner'}. دورك: ${roleLabel(teamRole || 'viewer')}.`
+                      ? `أنت عضو في فريق ${teamOwnerName || (lang === 'ar' ? 'مالك الفريق' : 'Owner')}. دورك: ${roleLabel(teamRole || 'viewer')}.`
                       : `You are a member of ${teamOwnerName || 'Owner'}'s team. Your role: ${roleLabel(teamRole || 'viewer')}.`}
                   </p>
-                  <p className="text-[10px] text-slate-500">
-                    {t('team.viewer_tooltip')}
-                  </p>
+                  {(teamRole || 'viewer') === 'viewer' && (
+                    <p className="text-[10px] text-slate-500">
+                      {t('team.viewer_tooltip')}
+                    </p>
+                  )}
                 </div>
               )}
             </>

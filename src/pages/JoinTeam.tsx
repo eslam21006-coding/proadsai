@@ -94,7 +94,7 @@ const JoinTeamInner: React.FC = () => {
 
   const claimInvite = async () => {
     try {
-      await fnClaimTeamInvite({});
+      await fnClaimTeamInvite({ inviteId });
       window.location.href = '/';
     } catch (e: any) {
       setError(e.message || 'Failed to join team.');

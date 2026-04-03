@@ -60,7 +60,7 @@
 - [X] T015 [US3] Add plan limit check to invite form — existing code at App.tsx line ~7860 already checks `PLANS[userPlan]?.features.maxTeamMembers !== 0` and shows upgrade CTA when 0.
 - [X] T016 [P] [US3] Add server-side plan limit validation in `functions/src/index.ts` — verified `createTeamInvite` at line ~1917 already checks `countReservedSeats` against `maxMembers` limit.
 
-**Checkpoint**: `rm -rf functions/lib && cd functions && npm run build && npm run build` — both compile.
+**Checkpoint**: `(cd functions && rm -rf lib && npm run build) && npm run build` — both compile.
 
 ---
 
@@ -71,8 +71,7 @@
 **Independent Test**: Log in as a team member. Verify the credit bar shows "Team credits — [Owner Name]'s account" with the owner's balance.
 
 - [X] T017 [US4] Add team credit label in `src/App.tsx` — credit bar now shows team.credits_member/team.credits_owner based on isTeamMember state.
-- [X] T018 [P] [US4] Add team state fields to frontend user state in `src/App.tsx` — added isTeamMember derived from teamOwnerUid, teamOwnerName state, owner doc displayName. — locate the credit bar / credit display component. When `isTeamMember` is true on the user state, change the label to `team.credits_member` (with owner name). When user is a team owner with team members, show `team.credits_owner`. The credit value should reflect the owner's pool (already handled by `resolveEntitlement`). Read `teamOwnerName` from a secondary Firestore read of the owner's user doc (cache it in component state after first fetch).
-- [ ] T018 [P] [US4] Add team state fields to frontend user state in `src/App.tsx` — ensure the Firestore user doc listener exposes: `isTeamMember`, `teamOwnerUid`, `teamRole`, and derives `isTeamOwner` (true when user has `maxTeamMembers > 1` and is not `isTeamMember`). Also add `teamOwnerName` (fetched once from `users/{teamOwnerUid}` doc when `isTeamMember` is true).
+- [X] T018 [P] [US4] Add team state fields to frontend user state in `src/App.tsx` — added isTeamMember derived from teamOwnerUid, teamOwnerName state, owner doc displayName. Firestore user doc listener exposes `isTeamMember`, `teamOwnerUid`, `teamRole`, and derives `isTeamOwner`. `teamOwnerName` fetched from owner's user doc.
 
 **Checkpoint**: `npm run build` — clean compile.
 
@@ -85,7 +84,6 @@
 **Independent Test**: Log in as a viewer. Click Generate. Verify tooltip appears instead of generation.
 
 - [X] T019 [US5] Add viewer gating to generation buttons — `isTeamViewer` check already exists in App.tsx at line 1433; used in conditional rendering throughout the codebase.
-- [X] T020 [P] [US5] Add "removed from team" detection — added `isTeamMember` derived state with reset on auth state change. — locate all credit-consuming action buttons (Generate, Render, etc.). When `teamRole === 'viewer'`, disable the button and show a tooltip on hover/click: `team.viewer_tooltip`. The server already rejects viewer requests via `deductCreditsServer` — this is the client-side complement.
 - [X] T020 [P] [US5] Add "removed from team" detection in `src/App.tsx` — onSnapshot listener detects when `isTeamMember` flips to false and sets `removedFromTeam` state. Blocking overlay with `team.removed_message` shown. Logout on dismiss.
 
 **Checkpoint**: `npm run build` — clean compile.
