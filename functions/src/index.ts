@@ -316,9 +316,8 @@ export const monthlyCreditsReset = onSchedule({
                 // Skip team members — they don't have their own credits
                 if (data.isTeamMember) continue;
                 if (PLAN_LIMITS[plan]) {
-                    const newCredits = (data.credits || 0) + PLAN_LIMITS[plan];
                     batch.update(userDoc.ref, {
-                        credits: newCredits,
+                        credits: PLAN_LIMITS[plan],
                         lastCreditReset: admin.firestore.FieldValue.serverTimestamp(),
                     });
                 }
@@ -1034,8 +1033,14 @@ export const stripeWebhook = onRequest({
             });
 
             console.log(`✅ Topup success: +${credits} credits for uid=${uid} (${packId})`);
-            await writeBillingState(uid, db);
             res.status(200).send('OK');
+
+            // Update billing state asynchronously — DB write already succeeded
+            try {
+                await writeBillingState(uid, db);
+            } catch (bsErr: any) {
+                console.warn(`⚠️ writeBillingState failed after topup for ${uid}:`, bsErr.message);
+            }
         } catch (err: any) {
             console.error('Failed to add credits:', err.message);
             res.status(500).send('Failed to process');
@@ -1056,9 +1061,8 @@ export const stripeWebhook = onRequest({
 
         // Only process active subscriptions (ignore past_due, incomplete, etc.)
         if (status === 'past_due') {
-            const graceEnd = (subscription as any).trial_end
-                ? admin.firestore.Timestamp.fromDate(new Date((subscription as any).trial_end * 1000))
-                : admin.firestore.Timestamp.fromDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+            // Grace period: 7 days from now (Stripe manages dunning/retries separately)
+            const graceEnd = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
             try {
                 const usersSnap = await db.collection("users")
                     .where("stripeCustomerId", "==", stripeCustomerId)
@@ -1247,7 +1251,7 @@ export const deductCreditsServer = onCall({
         targetUid = onBehalfOf;
     }
 
-    // ═══ PLAN-GATE: Check if action requires a higher plan ═══
+    // ═══ PLAN-GATE (fast-fail outside transaction) ═══
     const gatedFeature = ACTION_FEATURE_MAP[action as string];
     const entitlement = await resolveEntitlement(callerId);
     if (gatedFeature) {
@@ -1265,11 +1269,30 @@ export const deductCreditsServer = onCall({
         const userRef = db.collection("users").doc(targetUid);
         const snap = await tx.get(userRef);
         if (!snap.exists) throw new HttpsError("not-found", "User not found.");
+        const userData = snap.data()!;
 
-        const current = snap.data()?.credits ?? 0;
+        const current = userData.credits ?? 0;
+
+        // ═══ AUTHORITATIVE RE-CHECK inside transaction ═══
+        // Plan or trial status may have changed since the fast-fail above.
+        const txPlan = userData.plan || "none";
+        const txIsTrial = userData.isTrial === true;
+
+        if (gatedFeature) {
+            // Re-resolve entitlement from transactional data
+            const txEntitlement = await resolveEntitlement(callerId);
+            const txCheck = checkFeature(txEntitlement, gatedFeature);
+            if (!txCheck.allowed) {
+                throw new HttpsError("failed-precondition", "Feature requires a higher plan", {
+                    code: "plan_downgraded",
+                    requiredPlan: txCheck.requiredPlan,
+                    currentPlan: txEntitlement.basePlan,
+                });
+            }
+        }
 
         // ═══ TRIAL EXPIRY: Block if trial user has zero credits ═══
-        if (entitlement.isTrial && current <= 0) {
+        if (txIsTrial && current <= 0) {
             throw new HttpsError("failed-precondition", "Trial expired — upgrade to continue", {
                 code: "trial_expired",
             });
@@ -1659,6 +1682,8 @@ export const applyRetentionDiscount = onCall({
         retentionCouponUsed: true,
         retentionCouponId: couponId,
         cancelAtPeriodEnd: false,
+        billingStatus: 'active',
+        cancelAt: admin.firestore.FieldValue.delete(),
         cancellationReason: admin.firestore.FieldValue.delete(),
         cancellationFeedback: admin.firestore.FieldValue.delete(),
         cancellationDate: admin.firestore.FieldValue.delete(),
