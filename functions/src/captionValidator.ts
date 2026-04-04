@@ -1181,7 +1181,7 @@ const FILLER_PHRASES: RegExp[] = [
     /\bwhen all is said and done\b/gi,
     /\bfor what it's worth\b/gi,
     /\bthe fact of the matter is\b/gi,
-    /\bits worth noting that\b/gi,
+    /\bit's worth noting that\b/gi,
 ];
 
 function checkNoFillerPhrases(text: string): CaptionQualityCheck {
