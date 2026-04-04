@@ -19,7 +19,7 @@ import { compileFullContract, getContractRenderBlock, getContractCaptionBlock, g
 import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, parseBuildPlanEnvelope, parseStructuredBuildPlanResponse, serializeBuildPlanEnvelope, validateStructuredBuildPlan, validateCopyFidelity, stripTechnicalPrompt, TECHNICAL_PROMPT_START, TECHNICAL_PROMPT_END, type BuildPlanSlotMap, type ContractCheckResult, type StructuredBuildPlanPayload } from "./buildPlanSlotMap.js";
 import { compileModePayload, getModePayloadPromptBlock, getModePayloadPromptBlock_RenderSafe, getModePayloadCaptionAnchors, extractAuthorizedNumbers, getNumericFidelityPolicy, type ModePayload, type NumericFidelityPolicy } from "./modeFieldSchema.js";
 import { compositeOfferOverlay, isOverlayAvailable, extractOfferFacts, validateResolvedOfferFacts } from "./offerOverlay.js";
-import { validateCaption, validateArabicCompliance, validateBlueprintLanguage, validateBlueprintModeContribution, validateBlueprintMinimalStyle, sanitizeReferenceAdSummary, type CaptionValidationInput } from "./captionValidator.js";
+import { validateCaption, validateArabicCompliance, validateBlueprintLanguage, validateBlueprintModeContribution, validateBlueprintMinimalStyle, sanitizeReferenceAdSummary, validateLanguageQuality, type CaptionValidationInput, type CaptionQualityResult } from "./captionValidator.js";
 import { validateBuildPlanAgainstContract, buildScoringPrompt, parseScoringResponse, quickRejectCheck } from "./creativeScoringEngine.js";
 import { storeCreativeToMemory, retrieveCreativePatterns } from "./creativeMemory.js";
 import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.js";
@@ -6045,9 +6045,9 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
 
 // 5. Caption -> NEEDS GEMINI 3 (Creative)
 // Updated to accept 'refinement' and force Fusha
-export async function generateCaption(mockupUrl: string, inputs: AdInputs, visualMetaphor: string, approvedTov: string, refinement?: string, carouselContext?: string, buildPlanContext?: string): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
+export async function generateCaption(mockupUrl: string, inputs: AdInputs, visualMetaphor: string, approvedTov: string, refinement?: string, carouselContext?: string, buildPlanContext?: string): Promise<{ text: string; rankingGuidance: RankingLinkage | null; captionQuality: CaptionQualityResult | null }> {
     let _captionRankingLinkage: RankingLinkage | null = null;
-    async function _generateCaptionInner(): Promise<string> {
+    async function _generateCaptionInner(): Promise<{ text: string; captionQuality: CaptionQualityResult | null }> {
         // ═══ REFERENCE IMAGE ANALYSIS (optional, non-blocking) ═══
         let _captionRefInfluence: ReferenceInfluence | null = null;
         if (inputs.referenceImage) {
@@ -6396,6 +6396,8 @@ Position the offer as clearly superior without naming competitors directly. Use 
         let result = '';
         let attempt = 0;
         let captionRepairPrompt: string | null = null;
+        let captionQuality: CaptionQualityResult | null = null;
+        let langQualityRepairAttempted = false;
         const MAX_CAPTION_ATTEMPTS = 2;
 
         while (attempt < MAX_CAPTION_ATTEMPTS) {
@@ -6415,7 +6417,7 @@ Position the offer as clearly superior without naming competitors directly. Use 
             // ── Post-processing: Strip leaked step markers / scene descriptions ──
             result = cleanCaptionOutput(result);
 
-            // ── Validate ──
+            // ── Validate caption quality ──
             const validation = validateCaption({
                 caption: result,
                 locale,
@@ -6427,25 +6429,46 @@ Position the offer as clearly superior without naming competitors directly. Use 
                 visualStyleFamily: resolveStyleFamily(inputs),
             });
 
-            if (validation.passed) {
-                console.log(`✅ Caption validated on attempt ${attempt} (${validation.checks.filter(c => c.passed).length}/${validation.checks.length} checks passed)`);
+            // ── Validate language quality ──
+            const lines = result.split(/\n/).filter(Boolean);
+            const headline = lines[0] || "";
+            const subheadline = lines.slice(1).join(" ").trim() || "";
+            const langQuality = validateLanguageQuality({
+                headline,
+                subheadline,
+                locale,
+                fullCaption: result,
+            });
+            captionQuality = langQuality.result;
+
+            const allPassed = validation.passed && langQuality.result.passed;
+
+            if (allPassed) {
+                console.log(`✅ Caption validated on attempt ${attempt} (${validation.checks.filter(c => c.passed).length}/${validation.checks.length} caption checks, ${langQuality.result.checks.filter(c => c.passed).length}/${langQuality.result.checks.length} lang quality checks)`);
                 break;
             }
 
-            // Log failures
             const failedChecks = validation.checks.filter(c => !c.passed);
-            console.warn(`⚠️ Caption validation failed (attempt ${attempt}/${MAX_CAPTION_ATTEMPTS}): ${failedChecks.map(c => c.name).join(', ')}`);
+            const failedLangChecks = langQuality.result.checks.filter(c => !c.passed);
+            console.warn(`⚠️ Caption validation failed (attempt ${attempt}/${MAX_CAPTION_ATTEMPTS}): caption=[${failedChecks.map(c => c.name).join(', ')}] lang=[${failedLangChecks.map(c => c.rule).join(', ')}]`);
 
-            if (attempt < MAX_CAPTION_ATTEMPTS && validation.repairPrompt) {
-                captionRepairPrompt = validation.repairPrompt;
-                console.log(`🔄 Attempting caption repair...`);
+            if (attempt < MAX_CAPTION_ATTEMPTS) {
+                const repairParts: string[] = [];
+                if (validation.repairPrompt) repairParts.push(validation.repairPrompt);
+                if (langQuality.repairPrompt) repairParts.push(langQuality.repairPrompt);
+                captionRepairPrompt = repairParts.length > 0 ? repairParts.join('\n') : null;
+                if (langQuality.repairPrompt) langQualityRepairAttempted = true;
+                if (captionRepairPrompt) console.log(`🔄 Attempting caption repair...`);
             } else {
-                // Final attempt failed — return best effort with log
-                console.warn(`❌ Caption repair exhausted. Returning best-effort output. Failed: ${failedChecks.map(c => `${c.name}: ${c.detail}`).join(' | ')}`);
+                console.warn(`❌ Caption repair exhausted. Returning best-effort output.`);
             }
         }
 
-        return result;
+        if (captionQuality && langQualityRepairAttempted) {
+            captionQuality = { ...captionQuality, repairedAt: Date.now() };
+        }
+
+        return { text: result, captionQuality };
     }
 
     // ─── Caption cleanup helper (extracted from inline post-processing) ─────────
@@ -6504,8 +6527,8 @@ Position the offer as clearly superior without naming competitors directly. Use 
 
         return result;
     } // end _generateCaptionInner
-    const text = await _generateCaptionInner();
-    return { text, rankingGuidance: _captionRankingLinkage };
+    const { text, captionQuality } = await _generateCaptionInner();
+    return { text, rankingGuidance: _captionRankingLinkage, captionQuality };
 }
 
 // 6. Visual Polishes -> USE LOGIC MODEL
