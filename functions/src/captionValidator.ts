@@ -1033,6 +1033,10 @@ function checkWeakOpener(headline: string): CaptionQualityCheck {
     };
 }
 
+function escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function checkDialectMarkers(text: string, locale: string): CaptionQualityCheck {
     const markerSet = getDialectMarkers(locale);
     if (!markerSet || markerSet.wrongDialectMarkers.length === 0) {
@@ -1040,7 +1044,8 @@ function checkDialectMarkers(text: string, locale: string): CaptionQualityCheck 
     }
     const found: string[] = [];
     for (const marker of markerSet.wrongDialectMarkers) {
-        const regex = new RegExp(`(?:^|\\s)${marker}(?:\\s|$)`);
+        const escaped = escapeRegExp(marker);
+        const regex = new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`);
         if (regex.test(text)) {
             found.push(marker);
         }

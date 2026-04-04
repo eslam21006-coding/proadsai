@@ -6476,7 +6476,7 @@ Position the offer as clearly superior without naming competitors directly. Use 
             }
         }
 
-        if (captionQuality && repairAttempted) {
+        if (captionQuality && repairAttempted && captionQuality.passed) {
             captionQuality = { ...captionQuality, repairedAt: Date.now() };
         }
 

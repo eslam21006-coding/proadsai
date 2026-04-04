@@ -31,12 +31,13 @@ function makeInput(
         headline,
         subheadline,
         locale,
-        fullCaption: fullCaption || `${headline} ${subheadline}`,
+        fullCaption: fullCaption ?? `${headline} ${subheadline}`,
     };
 }
 
 function assertAllPass(locale: string, headline: string, subheadline: string, fullCaption?: string) {
     const result = validateLanguageQuality(makeInput(headline, subheadline, locale, fullCaption));
+    assert.ok(result.checks.length > 0, `${locale} pass: expected at least one check but got 0 — locale may be unsupported or misspelled`);
     assert.equal(result.passed, true, `${locale} pass: expected passed=true, got fails: ${result.checks.filter(c => !c.passed).map(c => c.rule).join(", ")}`);
     for (const check of result.checks) {
         assert.equal(check.passed, true, `${locale} check ${check.rule}: ${check.detail}`);
@@ -282,6 +283,25 @@ function testRegressionCtaCheckRequired() {
     console.log("  ✅ testRegressionCtaCheckRequired");
 }
 
+function testRegressionArabicRatioDenominator() {
+    // Text: 8 Arabic letters + 2 Latin letters + lots of spaces/digits/punctuation
+    // If denominator counted all chars: 8/30 = 27% → would fail
+    // With correct denominator (letters only): 8/10 = 80% → should pass
+    const text = "عرض خاص AB 123 !!! --- ... 456";
+    const result = validateLanguageQuality(makeInput(text, "نص", "ar_fusha", text));
+    const ratioCheck = result.checks.find(c => c.rule === "arabic_unicode_ratio");
+    assert.ok(ratioCheck, "arabic_unicode_ratio check should exist");
+    assert.equal(ratioCheck!.passed, true, "Arabic ratio should pass when denominator excludes spaces/digits/punctuation");
+
+    // Failing case: mostly Latin letters
+    const failText = "Hello World ABCDEFGH عرب";
+    const failResult = validateLanguageQuality(makeInput(failText, "نص", "ar_fusha", failText));
+    const failCheck = failResult.checks.find(c => c.rule === "arabic_unicode_ratio");
+    assert.ok(failCheck, "arabic_unicode_ratio check should exist");
+    assert.equal(failCheck!.passed, false, "Arabic ratio should fail when Arabic letters < 70% of script chars");
+    console.log("  ✅ testRegressionArabicRatioDenominator");
+}
+
 function testRegressionUnsupportedLocale() {
     const result = validateLanguageQuality(makeInput(
         "Un texte en français",
@@ -338,6 +358,7 @@ function main() {
     console.log("\n─── US6: Regression Guards ───");
     testRegressionArabicRatioRequired();
     testRegressionCtaCheckRequired();
+    testRegressionArabicRatioDenominator();
     testRegressionUnsupportedLocale();
 
     console.log("\n═══ Spec 008 — All language quality tests passed ═══\n");
