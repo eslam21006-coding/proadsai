@@ -68,3 +68,38 @@
 **Findings**: No workspace infrastructure exists. Generations are stored per-user in `users/{uid}/projects`. For workspace separation, generation records would need a `workspaceId` field, and the UI would need a workspace switcher in the nav that sets the active workspace context.
 
 **Rationale**: This is the lowest-priority story (P6). The core data model change (add `workspaceId` to generations) is straightforward. The workspace CRUD (create, rename, delete) can be kept minimal — just a name and ID.
+
+---
+
+## R7: Role Change Function (Existing)
+
+**Decision**: Use existing `updateTeamMemberRole` Cloud Function. No new backend work needed.
+
+**Findings**: `updateTeamMemberRole` exists at `functions/src/index.ts:2463`. It:
+- Accepts `memberId` and `role` ('editor' | 'viewer')
+- Updates role atomically in 3 locations via batch write: team subcollection doc, member's user doc, and `teamMemberships` reverse-lookup doc
+- Validates auth and role values
+
+**Rationale**: The spec's "role change action" on the Team page can call this function directly. No new backend work required.
+
+---
+
+## R8: Rate Limiting for `getInviteDetails`
+
+**Decision**: Add IP-based rate limiting (10 requests/minute/IP) to the `getInviteDetails` endpoint.
+
+**Findings**: No rate limiting currently exists in the Cloud Functions codebase. No Firebase App Check, no custom middleware, no throttling libraries. All functions use basic auth checks only.
+
+**Approach**: Since `getInviteDetails` is the only unauthenticated endpoint, implement rate limiting within the function itself using a Firestore-based counter keyed by IP address (from `request.rawRequest.ip`). Check count before processing; reject with `resource-exhausted` if over 10/min.
+
+**Alternatives rejected**: Firebase App Check — requires client-side SDK integration and doesn't work for unauthenticated new users who haven't loaded the app yet. External rate limiting service — over-engineered for a single endpoint.
+
+---
+
+## R9: Email Mismatch on Join Page
+
+**Decision**: Frontend-only check. Show friendly message when logged-in user's email doesn't match the invite.
+
+**Findings**: `claimTeamInvite` already enforces email matching server-side (line 2163 in index.ts): `inviteData.inviteeEmailNormalized !== callerEmail` returns `{ success: false, message: 'This invite is for a different email address.' }`. The frontend should detect the mismatch *before* attempting the claim and show: "This invite was sent to [email]. Log in with that email to accept."
+
+**Rationale**: The server-side check is the security boundary. The frontend check is a UX improvement to avoid a confusing failed claim attempt.

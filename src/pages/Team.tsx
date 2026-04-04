@@ -243,6 +243,16 @@ const TeamPage: React.FC<TeamPageProps> = ({
 
   return (
     <div dir={dir} className="fixed inset-0 z-[200] bg-slate-950 flex flex-col">
+      {/* ═══ OVER-LIMIT WARNING ═══ */}
+      {isOwner && !unlimitedMembers && members.length > maxMembers && maxMembers > 0 && (
+        <div className="px-6 py-3 bg-amber-500/10 border-b border-amber-500/20 flex items-center gap-3">
+          <i className="fa-solid fa-triangle-exclamation text-amber-400 text-sm"></i>
+          <p className="text-[11px] text-amber-300 flex-1">
+            {t('team.over_limit_warning')}
+          </p>
+        </div>
+      )}
+
       {/* ═══ HEADER ═══ */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950 shrink-0">
         <div className="flex items-center gap-4">
@@ -306,8 +316,8 @@ const TeamPage: React.FC<TeamPageProps> = ({
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-white truncate">
                         {isTeamMember
-                          ? (teamOwnerName || (lang === 'ar' ? 'مالك الفريق' : 'Team Owner'))
-                          : (user?.displayName || user?.email?.split('@')[0] || (lang === 'ar' ? 'أنت' : 'You'))}
+                          ? (teamOwnerName || t('team.owner_label'))
+                          : (user?.displayName || user?.email?.split('@')[0] || t('team.you_label'))}
                       </p>
                       <p className="text-[10px] text-slate-500">{isTeamMember ? '' : user?.email}</p>
                     </div>
@@ -333,7 +343,7 @@ const TeamPage: React.FC<TeamPageProps> = ({
                             {m.email}
                             {m.joinedAt && (
                               <span className="text-slate-600 ml-2">
-                                {lang === 'ar' ? 'انضم' : 'Joined'} {formatDate(m.joinedAt)}
+                                {t('team.joined_label')} {formatDate(m.joinedAt)}
                               </span>
                             )}
                           </p>
@@ -365,7 +375,7 @@ const TeamPage: React.FC<TeamPageProps> = ({
                                 targetName: m.name || m.email,
                               })}
                               className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 transition-all px-1 shrink-0"
-                              title={lang === 'ar' ? 'إزالة' : 'Remove'}
+                              title={t('team.remove_button')}
                             >
                               <i className="fa-solid fa-xmark text-sm"></i>
                             </button>
@@ -416,7 +426,7 @@ const TeamPage: React.FC<TeamPageProps> = ({
                             {inv.inviteeEmailNormalized || inv.inviteeEmail}
                             {inv.createdAt && (
                               <span className="text-slate-600 ml-2">
-                                {lang === 'ar' ? 'أُرسلت' : 'Sent'} {formatDate(inv.createdAt)}
+                                {t('team.sent_label')} {formatDate(inv.createdAt)}
                               </span>
                             )}
                           </p>
@@ -434,7 +444,7 @@ const TeamPage: React.FC<TeamPageProps> = ({
                             <button
                               onClick={() => handleResend(inv.inviteId)}
                               className="text-blue-500 hover:text-blue-300 transition-colors px-1.5 py-1 rounded-lg hover:bg-blue-500/10"
-                              title={lang === 'ar' ? 'إعادة إرسال' : 'Resend'}
+                              title={t('team.resend_button')}
                             >
                               <i className="fa-solid fa-rotate-right text-[10px]"></i>
                             </button>
@@ -445,7 +455,7 @@ const TeamPage: React.FC<TeamPageProps> = ({
                                 targetName: inv.inviteeName || inv.inviteeEmailNormalized,
                               })}
                               className="text-slate-600 hover:text-red-400 transition-colors px-1.5 py-1 rounded-lg hover:bg-red-500/10"
-                              title={lang === 'ar' ? 'إلغاء' : 'Revoke'}
+                              title={t('team.revoke_button')}
                             >
                               <i className="fa-solid fa-ban text-[10px]"></i>
                             </button>
@@ -562,7 +572,7 @@ const TeamPage: React.FC<TeamPageProps> = ({
                     className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all"
                   >
                     <i className="fa-solid fa-arrow-up mr-1.5"></i>
-                    {lang === 'ar' ? 'ترقية الخطة' : 'Upgrade Plan'}
+                    {t('team.upgrade_plan')}
                   </button>
                 </div>
               )}
@@ -570,13 +580,13 @@ const TeamPage: React.FC<TeamPageProps> = ({
               {/* ═══ ROLE LEGEND ═══ */}
               <section className="bg-slate-900/40 rounded-2xl border border-slate-800/60 p-5">
                 <h3 className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-4">
-                  {lang === 'ar' ? 'صلاحيات الأدوار' : 'Role Permissions'}
+                  {t('team.role_permissions')}
                 </h3>
                 <div className="space-y-3">
                   {[
-                    { role: 'Owner', perms: lang === 'ar' ? 'وصول كامل، الفوترة، دعوة أعضاء' : 'Full access, billing, invite members', icon: 'fa-crown', color: 'text-amber-400' },
-                    { role: t('team.role_member'), perms: lang === 'ar' ? 'إنشاء مشاريع، توليد إعلانات، كتابة نصوص' : 'Create projects, render ads, write scripts', icon: 'fa-pen', color: 'text-emerald-400' },
-                    { role: t('team.role_viewer'), perms: lang === 'ar' ? 'عرض المشاريع والتصميمات فقط' : 'View projects and designs only', icon: 'fa-eye', color: 'text-slate-400' },
+                    { role: 'Owner', perms: t('team.role_owner_perms'), icon: 'fa-crown', color: 'text-amber-400' },
+                    { role: t('team.role_member'), perms: t('team.role_editor_perms'), icon: 'fa-pen', color: 'text-emerald-400' },
+                    { role: t('team.role_viewer'), perms: t('team.role_viewer_perms'), icon: 'fa-eye', color: 'text-slate-400' },
                   ].map(r => (
                     <div key={r.role} className="flex items-center gap-3 text-[11px]">
                       <i className={`fa-solid ${r.icon} ${r.color} text-[10px] w-4 text-center`}></i>
@@ -592,9 +602,7 @@ const TeamPage: React.FC<TeamPageProps> = ({
                 <div className="bg-blue-500/5 border border-blue-500/20 rounded-2xl p-6 text-center space-y-3">
                   <i className="fa-solid fa-circle-info text-blue-400/60 text-xl"></i>
                   <p className="text-sm text-slate-300">
-                    {lang === 'ar'
-                      ? `أنت عضو في فريق ${teamOwnerName || (lang === 'ar' ? 'مالك الفريق' : 'Owner')}. دورك: ${roleLabel(teamRole || 'viewer')}.`
-                      : `You are a member of ${teamOwnerName || 'Owner'}'s team. Your role: ${roleLabel(teamRole || 'viewer')}.`}
+                    {t('team.member_info').replace('{name}', teamOwnerName || t('team.owner_label')).replace('{role}', roleLabel(teamRole || 'viewer'))}
                   </p>
                   {(teamRole || 'viewer') === 'viewer' && (
                     <p className="text-[10px] text-slate-500">
@@ -623,8 +631,8 @@ const TeamPage: React.FC<TeamPageProps> = ({
               <div>
                 <p className="text-sm font-bold text-white">
                   {confirm.type === 'remove'
-                    ? (lang === 'ar' ? 'إزالة عضو' : 'Remove Member')
-                    : (lang === 'ar' ? 'إلغاء الدعوة' : 'Revoke Invite')}
+                    ? t('team.remove_member_title')
+                    : t('team.revoke_invite_title')}
                 </p>
                 <p className="text-[10px] text-slate-500 mt-0.5">
                   {confirm.type === 'remove'
@@ -652,12 +660,12 @@ const TeamPage: React.FC<TeamPageProps> = ({
                 {processing ? (
                   <>
                     <div className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full"></div>
-                    {lang === 'ar' ? 'جارٍ المعالجة...' : 'Processing...'}
+                    {t('team.processing')}
                   </>
                 ) : (
                   confirm.type === 'remove'
-                    ? (lang === 'ar' ? 'إزالة' : 'Remove')
-                    : (lang === 'ar' ? 'إلغاء' : 'Revoke')
+                    ? t('team.remove_button')
+                    : t('team.revoke_button')
                 )}
               </button>
             </div>

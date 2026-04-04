@@ -2101,6 +2101,24 @@ export const getInviteDetails = onCall({
     region: "europe-west1",
     cors: true,
 }, async (request: CallableRequest) => {
+    // ─── IP-based rate limiting: 10 req/min/IP ───
+    const callerIp = request.rawRequest?.ip || "unknown";
+    const nowMs = Date.now();
+    const minuteKey = new Date(nowMs).toISOString().slice(0, 16);
+    const rateRef = db.collection("rateLimits").doc(`${callerIp}_${minuteKey}`);
+    try {
+        const rateSnap = await rateRef.get();
+        const currentCount = (rateSnap.exists ? (rateSnap.data()?.count || 0) : 0) as number;
+        if (currentCount >= 10) {
+            throw new HttpsError("resource-exhausted", "Too many requests. Try again shortly.");
+        }
+        await rateRef.set({ count: currentCount + 1, ip: callerIp, minute: minuteKey }, { merge: true });
+    } catch (e: any) {
+        if (e.code === "resource-exhausted") throw e;
+        // Non-blocking: if rate limit write fails, proceed
+        console.warn("⚠️ Rate limit check failed (non-blocking):", e.message);
+    }
+
     const { inviteId } = request.data;
     if (!inviteId || typeof inviteId !== "string") {
         return { success: false, status: "not_found", message: "Invite not found" };
@@ -2113,14 +2131,17 @@ export const getInviteDetails = onCall({
 
     const invite = inviteSnap.data() as TeamInvite;
 
+    if (invite.expiresAt < Date.now()) {
+        return { success: false, status: "expired", message: "This invite has expired" };
+    }
     if (invite.status === "revoked") {
         return { success: false, status: "revoked", message: "This invite is no longer valid" };
     }
     if (invite.status === "accepted") {
         return { success: false, status: "accepted", message: "This invite has already been claimed" };
     }
-    if (invite.expiresAt < Date.now()) {
-        return { success: false, status: "expired", message: "This invite has expired" };
+    if (!["pending", "sent"].includes(invite.status)) {
+        return { success: false, status: "not_found", message: "Invite not found" };
     }
 
     return {

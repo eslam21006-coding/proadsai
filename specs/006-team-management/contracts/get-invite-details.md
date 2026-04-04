@@ -38,7 +38,7 @@
 
 - Does NOT require authentication (invite link is the access token)
 - Does NOT expose: ownerId, ownerEmail, claimedByUserId, delivery details
-- Rate-limited by default Cloud Function rate limiting
+- Rate-limited to **10 requests per minute per IP** via Firestore-based counter (keyed by `request.rawRequest.ip`). Exceeding the limit returns `HttpsError('resource-exhausted', 'Too many requests. Try again shortly.')`
 - Returns `not_found` for non-existent invite IDs (no information leakage about existence vs. invalidity)
 
 ## Behavior

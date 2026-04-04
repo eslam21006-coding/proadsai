@@ -11,6 +11,13 @@
 
 - Q: How is the team member role (member vs viewer) assigned? → A: Owner selects role at invite time (default: member), and can change the role later from the Team page.
 
+### Session 2026-04-04
+
+- Q: Should the 3 scope additions beyond LAUNCH_MATRIX (role selector at invite, role change on existing members, extra `getInviteDetails` fields) be kept or removed? → A: Keep all 3. Role selection at invite time is a natural UX expectation, role changing for existing members avoids re-invite churn, and `inviteeName`/`role` in `getInviteDetails` are needed for the join page display.
+- Q: What happens when a logged-in user clicks an invite link meant for a different email? → A: Show invite details but block claim with message: "This invite was sent to [email]. Log in with that email to accept."
+- Q: Should the unauthenticated `getInviteDetails` endpoint have abuse protection? → A: Yes, rate limit by IP — max 10 requests/minute per IP to prevent invite ID enumeration.
+- Q: What should the Team page show when a new owner has zero members and zero invites? → A: Show the invite form prominently with empty-state message: "You haven't invited anyone yet. Add your first team member below."
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Invite Acceptance (Fix 404 + Account Setup) (Priority: P1)
@@ -28,6 +35,7 @@ As an invitee who receives a team invite link, I can click it and land on a work
 3. **Given** an invitee who does NOT have an account, **When** they fill in their name, password, and confirm password (email pre-filled and locked from the invite), **Then** an account is created and the invite is automatically claimed.
 4. **Given** an invite that has been revoked, **When** the invitee clicks the link, **Then** they see "This invite is no longer valid" — not a crash or 404.
 5. **Given** an invite that has expired (older than 7 days), **When** the invitee clicks the link, **Then** they see "This invite has expired. Ask your team owner to resend it."
+6. **Given** a user already logged in with a different email than the invite, **When** they visit the join page, **Then** they see the invite details but cannot claim it — the page shows "This invite was sent to [email]. Log in with that email to accept."
 
 ---
 
@@ -44,8 +52,9 @@ As a team owner, I can view a Team page that shows my current members, pending i
 1. **Given** a team owner on the Team page, **When** the page loads, **Then** they see: current members (name, email, role, join date) with a role change action, pending invites (email, role, sent date, status), an invite form with role selector, and a member count vs plan limit ("2 / 3 members on Pro").
 2. **Given** a team owner, **When** they enter an email, name, and role (member or viewer, default: member) in the invite form and submit, **Then** a new invite is created and appears in the pending invites list with status "Sent".
 3. **Given** a pending invite in the list, **When** the owner clicks "Resend", **Then** the invite email is resent, the expiry clock resets, and the status updates.
-4. **Given** a pending invite in the list, **When** the owner clicks "Revoke" and confirms, **Then** the invite is revoked and its link stops working.
+4. **Given** a pending invite in the list, **When** the owner clicks "Revoke" and confirms ("This invite link will stop working."), **Then** the invite is revoked and its link stops working.
 5. **Given** a team member in the list, **When** the owner clicks "Remove" and confirms ("Remove [Name]? They will lose access immediately."), **Then** the member is removed, loses access, and their account reverts to no plan or their own independent plan.
+6. **Given** a new team owner with zero members and zero pending invites, **When** they visit the Team page, **Then** they see "You haven't invited anyone yet. Add your first team member below." with the invite form prominently displayed.
 
 ---
 
@@ -153,6 +162,7 @@ As a QA reviewer, fixture tests verify the core team operations: invite creation
 - What happens when a removed member had in-progress work? Their in-progress projects remain accessible to the team owner's workspace. The member loses access.
 - What happens when the owner's account is deleted or suspended? All team members are automatically detached. They see "Your team is no longer active."
 - What happens when two people click the same invite link? Only the first claim succeeds. The second sees "This invite has already been claimed."
+- What happens when a logged-in user clicks an invite link for a different email? The join page shows invite details but blocks claiming with: "This invite was sent to [email]. Log in with that email to accept."
 
 ## Requirements *(mandatory)*
 
@@ -162,11 +172,11 @@ As a QA reviewer, fixture tests verify the core team operations: invite creation
 - **FR-002**: The invite acceptance page MUST detect whether the invitee has an existing account and show the appropriate flow: login (existing) or account creation (new).
 - **FR-003**: New account creation on the invite page MUST collect: full name, password, and password confirmation. The email MUST be pre-filled and locked from the invite record.
 - **FR-004**: After successful login or account creation, the invite MUST be automatically claimed and the user redirected to the main app as a team member.
-- **FR-005**: The system MUST provide an unauthenticated invite details endpoint that returns the owner name, invitee email, team plan, invite status, and expiry — without exposing sensitive data. Invalid invites return a status code (expired/revoked), not an error.
+- **FR-005**: The system MUST provide an unauthenticated invite details endpoint that returns the owner name, invitee email, team plan, invite status, and expiry — without exposing sensitive data. Invalid invites return a status code (expired/revoked), not an error. The endpoint MUST be rate-limited to 10 requests per minute per IP to prevent invite ID enumeration.
 - **FR-006**: Invites MUST expire 7 days after creation. Expired invites MUST NOT be claimable. Resending MUST reset the expiry clock.
-- **FR-007**: The system MUST provide a Team page accessible from account/settings showing: member list (name, email, role, join date), pending invites (email, sent date, status, resend/revoke actions), invite form, and member count vs plan limit.
+- **FR-007**: The system MUST provide a Team page accessible from account/settings showing: member list (name, email, role, join date), pending invites (email, sent date, status, resend/revoke actions), invite form, and member count vs plan limit. When no members or invites exist, the page MUST show an empty-state prompt ("You haven't invited anyone yet. Add your first team member below.") with the invite form prominently displayed.
 - **FR-008**: The invite form MUST enforce plan limits: count active members + open invites against `maxTeamMembers`. At limit, replace the form with an upgrade prompt.
-- **FR-009**: Member removal MUST clear the member's team association immediately, revert their plan, and show them a "You've been removed" message on their next action.
+- **FR-009**: Member removal MUST clear the member's team association immediately, revert their plan, and show them "You've been removed from this team. Contact your team owner." on their next action.
 - **FR-010**: Team members MUST see the team's shared credit pool labeled with the owner's name. The credit display MUST update in real time.
 - **FR-011**: Viewer-role members MUST be blocked from all credit-consuming actions, with a tooltip explanation on generation buttons.
 - **FR-012**: Scaling plan teams MUST have a workspace switcher in the nav, with each workspace maintaining its own generation history. Non-Scaling plans MUST NOT show the switcher.

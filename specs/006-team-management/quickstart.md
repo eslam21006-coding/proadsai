@@ -25,7 +25,10 @@ Builds the user-facing team management UI. Fixes the critical 404 on invite acce
 - The backend role is `'editor'` (not `'member'`). The UI shows "Member" as the label for the editor role.
 - No router library is used. The `/join` route is detected via `window.location.pathname` at the top of the App component tree.
 - Team state fields (`isTeamMember`, `teamOwnerUid`, `teamRole`) already exist on the user doc — surface them in the frontend state.
-- `getInviteDetails` is the only new Cloud Function. All other team functions already exist.
+- `getInviteDetails` is the only new Cloud Function. All other team functions already exist, including `updateTeamMemberRole` for changing a member's role post-invite.
+- `getInviteDetails` must be rate-limited to 10 requests/minute/IP (Firestore-based counter) since it's unauthenticated.
+- The join page must check if the logged-in user's email matches the invite email. If not, show "This invite was sent to [email]. Log in with that email to accept." (The backend already enforces this in `claimTeamInvite` — the frontend check is a UX improvement.)
+- Team page empty state: show "You haven't invited anyone yet. Add your first team member below." with the invite form.
 
 ## Build & Test
 
