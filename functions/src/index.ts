@@ -2199,6 +2199,66 @@ export const revokeTeamInvite = onCall({
     return { success: true, message: 'Invite revoked.' };
 });
 
+// ─── GET INVITE DETAILS (unauthenticated — for /join page) ──────────────
+export const getInviteDetails = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    // ─── IP-based rate limiting: 10 req/min/IP ───
+    const callerIp = request.rawRequest?.ip || "unknown";
+    const nowMs = Date.now();
+    const minuteKey = new Date(nowMs).toISOString().slice(0, 16);
+    const rateRef = db.collection("rateLimits").doc(`${callerIp}_${minuteKey}`);
+    try {
+        const rateSnap = await rateRef.get();
+        const currentCount = (rateSnap.exists ? (rateSnap.data()?.count || 0) : 0) as number;
+        if (currentCount >= 10) {
+            throw new HttpsError("resource-exhausted", "Too many requests. Try again shortly.");
+        }
+        await rateRef.set({ count: currentCount + 1, ip: callerIp, minute: minuteKey }, { merge: true });
+    } catch (e: any) {
+        if (e.code === "resource-exhausted") throw e;
+        // Non-blocking: if rate limit write fails, proceed
+        console.warn("⚠️ Rate limit check failed (non-blocking):", e.message);
+    }
+
+    const { inviteId } = request.data;
+    if (!inviteId || typeof inviteId !== "string") {
+        return { success: false, status: "not_found", message: "Invite not found" };
+    }
+
+    const inviteSnap = await db.collection("team_invites").doc(inviteId).get();
+    if (!inviteSnap.exists) {
+        return { success: false, status: "not_found", message: "Invite not found" };
+    }
+
+    const invite = inviteSnap.data() as TeamInvite;
+
+    if (invite.expiresAt < Date.now()) {
+        return { success: false, status: "expired", message: "This invite has expired" };
+    }
+    if (invite.status === "revoked") {
+        return { success: false, status: "revoked", message: "This invite is no longer valid" };
+    }
+    if (invite.status === "accepted") {
+        return { success: false, status: "accepted", message: "This invite has already been claimed" };
+    }
+    if (!["pending", "sent"].includes(invite.status)) {
+        return { success: false, status: "not_found", message: "Invite not found" };
+    }
+
+    return {
+        success: true,
+        ownerName: invite.ownerName,
+        inviteeEmail: invite.inviteeEmail,
+        inviteeName: invite.inviteeName,
+        teamPlan: invite.teamPlan,
+        role: invite.role,
+        status: invite.status,
+        expiresAt: invite.expiresAt,
+    };
+});
+
 // ─── CLAIM INVITE (auto-claim on login) ──────────────────────────────────
 export const claimTeamInvite = onCall({
     region: "europe-west1",
@@ -2215,32 +2275,54 @@ export const claimTeamInvite = onCall({
         return { success: false, claimed: 0, message: 'Already a member of a team.' };
     }
 
-    const invites = await db.collection("team_invites")
-        .where("inviteeEmailNormalized", "==", callerEmail)
-        .where("status", "in", OPEN_INVITE_STATUSES)
-        .get();
+    const { inviteId } = request.data || {};
+    let target: { doc: FirebaseFirestore.DocumentSnapshot; data: TeamInvite } | null = null;
+    let remainingInvites: Array<{ doc: FirebaseFirestore.DocumentSnapshot; data: TeamInvite }> = [];
 
-    if (invites.empty) return { success: false, claimed: 0, message: 'No open invites found.' };
-
-    // Sort by createdAt ascending — claim the earliest valid invite only
-    const sorted = invites.docs
-        .map(d => ({ doc: d, data: d.data() as TeamInvite }))
-        .sort((a, b) => a.data.createdAt - b.data.createdAt);
-
-    // Expire stale invites first
-    const valid: typeof sorted = [];
-    for (const entry of sorted) {
-        if (entry.data.expiresAt < Date.now()) {
-            await entry.doc.ref.update({ status: 'expired', updatedAt: Date.now() });
-        } else {
-            valid.push(entry);
+    if (inviteId && typeof inviteId === 'string') {
+        // Specific invite claim — used from /join page
+        const inviteSnap = await db.collection("team_invites").doc(inviteId).get();
+        if (!inviteSnap.exists) return { success: false, claimed: 0, message: 'Invite not found.' };
+        const inviteData = inviteSnap.data() as TeamInvite;
+        if (inviteData.inviteeEmailNormalized !== callerEmail) {
+            return { success: false, claimed: 0, message: 'This invite is for a different email address.' };
         }
+        if (!OPEN_INVITE_STATUSES.includes(inviteData.status)) {
+            return { success: false, claimed: 0, message: `Invite is ${inviteData.status}.` };
+        }
+        if (inviteData.expiresAt < Date.now()) {
+            await inviteSnap.ref.update({ status: 'expired', updatedAt: Date.now() });
+            return { success: false, claimed: 0, message: 'This invite has expired.' };
+        }
+        target = { doc: inviteSnap, data: inviteData };
+    } else {
+        // Fallback: auto-claim earliest open invite by email (legacy login flow)
+        const invites = await db.collection("team_invites")
+            .where("inviteeEmailNormalized", "==", callerEmail)
+            .where("status", "in", OPEN_INVITE_STATUSES)
+            .get();
+
+        if (invites.empty) return { success: false, claimed: 0, message: 'No open invites found.' };
+
+        const sorted = invites.docs
+            .map(d => ({ doc: d, data: d.data() as TeamInvite }))
+            .sort((a, b) => a.data.createdAt - b.data.createdAt);
+
+        // Expire stale invites first
+        const valid: typeof sorted = [];
+        for (const entry of sorted) {
+            if (entry.data.expiresAt < Date.now()) {
+                await entry.doc.ref.update({ status: 'expired', updatedAt: Date.now() });
+            } else {
+                valid.push(entry);
+            }
+        }
+
+        if (valid.length === 0) return { success: false, claimed: 0, message: 'All invites have expired.' };
+        target = valid[0];
+        remainingInvites = valid.slice(1);
     }
 
-    if (valid.length === 0) return { success: false, claimed: 0, message: 'All invites have expired.' };
-
-    // Claim exactly the first valid invite
-    const target = valid[0];
     let claimed = 0;
 
     try {
@@ -2318,9 +2400,8 @@ export const claimTeamInvite = onCall({
     }
 
     // Clean up remaining open invites from other owners to free their reserved seats
-    if (claimed > 0 && valid.length > 1) {
-        const remaining = valid.slice(1);
-        for (const entry of remaining) {
+    if (claimed > 0 && remainingInvites.length > 0) {
+        for (const entry of remainingInvites) {
             try {
                 await entry.doc.ref.update({
                     status: 'revoked',
@@ -2498,6 +2579,39 @@ export const removeTeamMember = onCall({
 
     console.log(`👥 Team member removed: ${memberEmail} from owner ${ownerUid}`);
     return { success: true, message: `${memberData.name} has been removed from your team.` };
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TEAM MANAGEMENT: Update Team Member Role
+// ═══════════════════════════════════════════════════════════════════════════
+export const updateTeamMemberRole = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be logged in.");
+
+    const { memberId, role } = request.data;
+    const ownerUid = request.auth.uid;
+
+    if (!memberId) throw new HttpsError("invalid-argument", "Member ID required.");
+    if (!["editor", "viewer"].includes(role)) throw new HttpsError("invalid-argument", "Role must be 'editor' or 'viewer'.");
+
+    const memberDoc = await db.collection("users").doc(ownerUid).collection("team").doc(memberId).get();
+    if (!memberDoc.exists) throw new HttpsError("not-found", "Team member not found.");
+
+    const memberData = memberDoc.data()!;
+    const memberEmail = memberData.email;
+
+    const batch = db.batch();
+    batch.update(db.collection("users").doc(ownerUid).collection("team").doc(memberId), { role });
+    if (memberData.uid) {
+        batch.update(db.collection("users").doc(memberData.uid), { teamRole: role });
+    }
+    batch.update(db.collection("teamMemberships").doc(memberEmail), { role });
+    await batch.commit();
+
+    console.log(`👥 Team member role updated: ${memberEmail} → ${role} by owner ${ownerUid}`);
+    return { success: true, message: `Role updated to ${role}.` };
 });
 // ═══════════════════════════════════════════════════════════════════════════
 // META ADS API INTEGRATION — PHASE 2

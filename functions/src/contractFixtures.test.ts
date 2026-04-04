@@ -728,4 +728,6 @@ testPromptAssemblyRetargetingDirection();
 testCopyFidelityValidation();
 console.log("═══ Spec 005 — All regression tests passed ═══\n");
 
+import "./teamFixtureTests.js";
+
 console.log('contractFixtures.test: PASS');
