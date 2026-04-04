@@ -15,8 +15,10 @@ import {
     checkAspectRatio, resolveCreditOwner,
     PLAN_CREDITS, TRIAL_CREDITS,
     type GatedFeature, type ResolvedEntitlement,
+    ACTION_FEATURE_MAP,
 } from "./entitlements.js";
 import { validateSelector } from "./selectorLimits.js";
+import { writeBillingState } from "./billing/billingState.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
@@ -242,6 +244,7 @@ export const ghlpaymentwebhook = onRequest({
                 if (stripeCustomerId) topupData.stripeCustomerId = stripeCustomerId;
                 await userRef.update(topupData);
                 console.log(`Top-up: +${finalCredits} credits for ${normalizedEmail}`);
+                await writeBillingState(existingUser.uid, db);
             } else {
                 await userRef.set({
                     plan: finalPlan,
@@ -253,6 +256,7 @@ export const ghlpaymentwebhook = onRequest({
                     ...(stripeCustomerId ? { stripeCustomerId } : {}),
                 }, { merge: true });
                 console.log(`Plan set: ${normalizedEmail} → ${finalPlan}${isTrial ? ' (trial)' : ''} (${finalCredits} credits)${stripeCustomerId ? ` [Stripe: ${stripeCustomerId}]` : ''}`);
+                await writeBillingState(existingUser.uid, db);
             }
         } else {
             // ═══ User hasn't signed into app yet → save to "pending_plans" ═══
@@ -312,14 +316,23 @@ export const monthlyCreditsReset = onSchedule({
                 // Skip team members — they don't have their own credits
                 if (data.isTeamMember) continue;
                 if (PLAN_LIMITS[plan]) {
+                    const newCredits = (data.credits || 0) + PLAN_LIMITS[plan];
                     batch.update(userDoc.ref, {
-                        credits: PLAN_LIMITS[plan],
+                        credits: newCredits,
                         lastCreditReset: admin.firestore.FieldValue.serverTimestamp(),
                     });
                 }
             }
 
             await batch.commit();
+            for (const userDoc of chunk) {
+                const data = userDoc.data();
+                if (!data.isTeamMember && PLAN_LIMITS[data.plan]) {
+                    await writeBillingState(userDoc.id, db).catch((e: any) =>
+                        console.warn(`⚠️ writeBillingState failed for ${userDoc.id}:`, e.message)
+                    );
+                }
+            }
             console.log(`Reset batch ${i / batchSize + 1}: ${chunk.length} users`);
         }
 
@@ -385,6 +398,7 @@ export const ghlCancellationWebhook = onRequest({
                 cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
             });
             console.log(`Cancelled ${normalizedEmail} → billingStatus: cancelled, plan: none.`);
+            await writeBillingState(existingUser.uid, db);
         } else {
             await db.collection("pending_plans").doc(normalizedEmail).delete();
             console.log(`Removed pending plan for ${normalizedEmail}`);
@@ -435,6 +449,7 @@ export const ghlPaymentFailedWebhook = onRequest({
                 gracePeriodEndsAt: admin.firestore.Timestamp.fromDate(gracePeriodEndsAt),
             });
             console.log(`Set ${normalizedEmail} → billingStatus: past_due, grace until ${gracePeriodEndsAt.toISOString()}`);
+            await writeBillingState(existingUser.uid, db);
         }
 
         res.status(200).json({ success: true, email: normalizedEmail, action: "past_due" });
@@ -482,6 +497,7 @@ export const ghlPaymentRecoveredWebhook = onRequest({
                 lastPaymentRecoveredAt: admin.firestore.FieldValue.serverTimestamp(),
             });
             console.log(`Restored ${normalizedEmail} → billingStatus: active`);
+            await writeBillingState(existingUser.uid, db);
         }
 
         res.status(200).json({ success: true, email: normalizedEmail, action: "recovered" });
@@ -1018,6 +1034,7 @@ export const stripeWebhook = onRequest({
             });
 
             console.log(`✅ Topup success: +${credits} credits for uid=${uid} (${packId})`);
+            await writeBillingState(uid, db);
             res.status(200).send('OK');
         } catch (err: any) {
             console.error('Failed to add credits:', err.message);
@@ -1038,6 +1055,29 @@ export const stripeWebhook = onRequest({
         }
 
         // Only process active subscriptions (ignore past_due, incomplete, etc.)
+        if (status === 'past_due') {
+            const graceEnd = (subscription as any).trial_end
+                ? admin.firestore.Timestamp.fromDate(new Date((subscription as any).trial_end * 1000))
+                : admin.firestore.Timestamp.fromDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+            try {
+                const usersSnap = await db.collection("users")
+                    .where("stripeCustomerId", "==", stripeCustomerId)
+                    .limit(1).get();
+                if (!usersSnap.empty) {
+                    const userDoc = usersSnap.docs[0];
+                    await userDoc.ref.update({
+                        billingStatus: 'past_due',
+                        gracePeriodEndsAt: graceEnd,
+                    });
+                    await writeBillingState(userDoc.id, db);
+                    console.log(`⚠️ Subscription past_due: ${userDoc.id}`);
+                }
+            } catch (e: any) {
+                console.error('Failed to handle past_due:', e.message);
+            }
+            res.status(200).send('OK');
+            return;
+        }
         if (status !== 'active') {
             console.log(`Subscription ${subscription.id} status is "${status}", skipping.`);
             res.status(200).send('OK');
@@ -1091,6 +1131,7 @@ export const stripeWebhook = onRequest({
                         planSource: 'stripe_portal',
                     });
                     console.log(`✅ Portal plan change (via email): ${customer.email} → ${planInfo.plan} (${planInfo.credits} credits)`);
+                    await writeBillingState(userRecord.uid, db);
                 } else {
                     console.error(`No user found for stripeCustomerId: ${stripeCustomerId}`);
                 }
@@ -1108,6 +1149,7 @@ export const stripeWebhook = onRequest({
                     planSource: 'stripe_portal',
                 });
                 console.log(`✅ Portal plan change: ${userDoc.id} → ${planInfo.plan} (${planInfo.credits} credits)`);
+                await writeBillingState(userDoc.id, db);
             }
             res.status(200).send('OK');
         } catch (err: any) {
@@ -1143,6 +1185,7 @@ export const stripeWebhook = onRequest({
                     planSource: 'stripe_cancellation',
                 });
                 console.log(`✅ Subscription cancelled: ${userDoc.id} → none (0 credits)`);
+                await writeBillingState(userDoc.id, db);
             } else {
                 // Fallback via email
                 const stripe = new Stripe(stripeSecretKey.value());
@@ -1160,6 +1203,7 @@ export const stripeWebhook = onRequest({
                             planSource: 'stripe_cancellation',
                         });
                         console.log(`✅ Subscription cancelled (via email): ${customer.email} → none`);
+                        await writeBillingState(userRecord.uid, db);
                     } catch { console.error(`No Firebase user for: ${customer.email}`); }
                 }
             }
@@ -1203,12 +1247,34 @@ export const deductCreditsServer = onCall({
         targetUid = onBehalfOf;
     }
 
+    // ═══ PLAN-GATE: Check if action requires a higher plan ═══
+    const gatedFeature = ACTION_FEATURE_MAP[action as string];
+    const entitlement = await resolveEntitlement(callerId);
+    if (gatedFeature) {
+        const featureCheck = checkFeature(entitlement, gatedFeature);
+        if (!featureCheck.allowed) {
+            throw new HttpsError("failed-precondition", "Feature requires a higher plan", {
+                code: "plan_downgraded",
+                requiredPlan: featureCheck.requiredPlan,
+                currentPlan: entitlement.basePlan,
+            });
+        }
+    }
+
     const newBalance = await db.runTransaction(async (tx) => {
         const userRef = db.collection("users").doc(targetUid);
         const snap = await tx.get(userRef);
         if (!snap.exists) throw new HttpsError("not-found", "User not found.");
 
         const current = snap.data()?.credits ?? 0;
+
+        // ═══ TRIAL EXPIRY: Block if trial user has zero credits ═══
+        if (entitlement.isTrial && current <= 0) {
+            throw new HttpsError("failed-precondition", "Trial expired — upgrade to continue", {
+                code: "trial_expired",
+            });
+        }
+
         if (current < cost) {
             throw new HttpsError("resource-exhausted", `Need ${cost} credits but only have ${current}.`);
         }
@@ -1217,6 +1283,7 @@ export const deductCreditsServer = onCall({
         return after;
     });
 
+    await writeBillingState(targetUid, db);
     return { success: true, creditsRemaining: newBalance, deducted: cost };
 });
 
@@ -1253,6 +1320,7 @@ export const refundCreditsServer = onCall({
         return after;
     });
 
+    await writeBillingState(targetUid, db);
     return { success: true, creditsRemaining: newBalance, refunded: cost };
 });
 
@@ -1305,6 +1373,9 @@ export const awardMilestoneServer = onCall({
         return { alreadyEarned: false, creditsRemaining: newCredits, reward: totalReward };
     });
 
+    if (!result.alreadyEarned) {
+        await writeBillingState(userId, db);
+    }
     return { success: true, ...result };
 });
 
@@ -1429,19 +1500,11 @@ export const cancelSubscription = onCall({
     // 3. Save cancellation data to Firestore
     await db.collection("users").doc(uid).update({
         cancelAtPeriodEnd: true,
+        billingStatus: 'cancelling',
+        cancelAt: admin.firestore.Timestamp.fromDate(new Date(updated.current_period_end * 1000)),
         cancellationReason: reason || '',
         cancellationFeedback: feedback || '',
         cancellationDate: admin.firestore.FieldValue.serverTimestamp(),
-    });
-
-    // 4. Save to cancellations collection for analytics
-    await db.collection("cancellations").add({
-        uid,
-        email: userData.email || '',
-        reason: reason || '',
-        feedback: feedback || '',
-        plan: userData.plan || '',
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
     });
 
     // 5. Notify GHL so CRM automations fire (emails, tags, pipeline)
@@ -1470,6 +1533,8 @@ export const cancelSubscription = onCall({
 
     console.log(`❌ Cancellation scheduled: ${userData.email} → ends ${new Date(updated.current_period_end * 1000).toISOString()}`);
 
+    await writeBillingState(uid, db);
+
     return {
         success: true,
         cancelAt: updated.current_period_end,
@@ -1488,6 +1553,17 @@ export const reactivateSubscription = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
 
     const uid = request.auth.uid;
+
+    const callerDoc = await db.collection("users").doc(uid).get();
+    const callerData = callerDoc.data();
+    if (callerData?.isTeamMember) {
+        throw new HttpsError("failed-precondition", "Team members cannot manage billing.");
+    }
+
+    if (!callerData?.cancelAtPeriodEnd && callerData?.billingStatus !== 'cancelling') {
+        throw new HttpsError("failed-precondition", "No pending cancellation to reactivate.");
+    }
+
     const stripe = new Stripe(stripeSecretKey.value());
     const customerId = await resolveStripeCustomerId(uid, stripe);
 
@@ -1520,6 +1596,7 @@ export const reactivateSubscription = onCall({
     });
 
     console.log(`✅ Reactivated subscription for uid=${uid}`);
+    await writeBillingState(uid, db);
     return { success: true };
 });
 
@@ -1587,6 +1664,7 @@ export const applyRetentionDiscount = onCall({
         cancellationDate: admin.firestore.FieldValue.delete(),
     });
 
+    await writeBillingState(uid, db);
     console.log(`💰 Retention coupon applied: ${couponId} for uid=${uid}`);
     return { success: true, couponApplied: couponId };
 });
