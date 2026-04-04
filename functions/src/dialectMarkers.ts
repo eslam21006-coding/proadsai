@@ -1,11 +1,11 @@
 // functions/src/dialectMarkers.ts — dialect marker exclusion lists per locale
 
 export interface DialectMarkerSet {
-    locale: string;
-    wrongDialectMarkers: string[];
+    readonly locale: string;
+    readonly wrongDialectMarkers: readonly string[];
 }
 
-export const EGYPTIAN_MARKERS: DialectMarkerSet = {
+export const EGYPTIAN_MARKERS = {
     locale: "ar_egyptian",
     wrongDialectMarkers: [
         // Gulf markers
@@ -35,9 +35,9 @@ export const EGYPTIAN_MARKERS: DialectMarkerSet = {
         "مزيان",
         "باش",
     ],
-};
+} as const satisfies DialectMarkerSet;
 
-export const GULF_MARKERS: DialectMarkerSet = {
+export const GULF_MARKERS = {
     locale: "ar_gulf",
     wrongDialectMarkers: [
         // Egyptian markers
@@ -72,7 +72,7 @@ export const GULF_MARKERS: DialectMarkerSet = {
         "ديما",
         "مزيان",
     ],
-};
+} as const satisfies DialectMarkerSet;
 
 export function getDialectMarkers(locale: string): DialectMarkerSet | null {
     if (locale === "ar_egyptian") return EGYPTIAN_MARKERS;

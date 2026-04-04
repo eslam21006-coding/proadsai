@@ -7,19 +7,25 @@
 
 ## Clarifications
 
+### Session 2026-04-04
+
+- Q: What is the shape of the `captionQuality` field persisted on the generation document? → A: Per-check results array — `{ passed: bool, checks: [{ rule: string, passed: bool, detail: string }], repairedAt?: number, locale: string }`.
+- Q: What is the LTR bleed threshold for lighter Arabic dialects? → A: All 6 Arabic dialects enforce RTL and the same 70% Arabic Unicode minimum (FR-003 applies universally). English enforces LTR. No separate LTR bleed threshold — FR-003 is the single rule for all Arabic.
+- Q: How is "word count" defined for Arabic? → A: Whitespace-separated tokens (simple split on spaces). Clitics attached to words count as part of that word, not separately.
+
 ### Session 2026-04-03
 
 - Q: Should English captions have the same word count limits as Arabic (8 headline / 12 subheadline)? → A: Yes, same 8/12 limits for English.
 - Q: What does the user see when repair fails after max 1 retry? → A: Caption delivered normally; quality failure logged internally only (no user-visible warning).
 - Q: Should dialect marker validation be presence-based, absence-based, or both? → A: Absence-based only — reject if wrong-dialect markers detected, no minimum for correct markers.
-- Q: Where should validation results be stored? → A: Append to existing resolution trace on `generations/{genId}` as a `captionQuality` field.
+- Q: Where should validation results be stored? → A: Top-level `captionQuality` field on `generations/{genId}` document, alongside the existing `resolutionTrace` field.
 - Q: What does "grammar baseline" mean for English validation? → A: Heuristic checks only — proper capitalization, no repeated consecutive words, subheadline must be a complete sentence.
 
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Arabic Fusha Caption Validation (Priority: P1)
 
-A user generates an ad in Arabic Fusha. After the AI produces the headline and subheadline, the system automatically validates the output: headline must not exceed 8 words, subheadline must not exceed 12 words, Arabic Unicode characters must be at least 70% of total text, no hanging conjunctions at line ends, and no weak openers. If any check fails, the system triggers a repair prompt and regenerates without user intervention. The user only sees the final, validated caption.
+A user generates an ad in Arabic Fusha. After the AI produces the headline and subheadline, the system automatically validates the output: headline must not exceed 8 words, subheadline must not exceed 12 words, Arabic script characters must constitute at least 70% of all script characters (Arabic + Latin letters only — spaces, digits, and punctuation are excluded from the denominator), no hanging conjunctions at line ends, and no weak openers. If any check fails, the system triggers a repair prompt and regenerates without user intervention. The user only sees the final, validated caption.
 
 **Why this priority**: Arabic Fusha is the primary UI language and the most commonly selected ad copy language. Quality failures here affect the largest share of users and brand credibility.
 
@@ -76,7 +82,7 @@ A user generates an ad in Levantine, Iraqi, or Maghreb Arabic. The system applie
 **Acceptance Scenarios**:
 
 1. **Given** a generated Levantine caption within word count limits and no LTR bleed, **When** validation runs, **Then** all checks pass.
-2. **Given** a generated Maghreb caption with 40% Latin characters, **When** validation runs, **Then** the LTR bleed check fails.
+2. **Given** a generated Maghreb caption with only 50% Arabic Unicode characters, **When** validation runs, **Then** the Arabic Unicode ratio check (FR-003) fails.
 3. **Given** a generated Iraqi caption with a headline of 10 words, **When** validation runs, **Then** the word count check fails.
 
 ---
@@ -127,24 +133,24 @@ A developer adds or modifies language quality rules. For every supported languag
 
 - **FR-001**: System MUST validate every generated caption against language-specific quality rules before delivering it to the user.
 - **FR-002**: System MUST enforce headline maximum of 8 words and subheadline maximum of 12 words for all 7 launch languages (all Arabic dialects and English).
-- **FR-003**: System MUST enforce a minimum 70% Arabic Unicode character ratio for all Arabic dialect captions.
+- **FR-003**: System MUST enforce a minimum 70% Arabic Unicode character ratio for all 6 Arabic dialect captions, where ratio = (Arabic script characters in ranges U+0600–U+06FF, U+0750–U+077F, U+FB50–U+FDFF, U+FE70–U+FEFF) / (Arabic script characters + Latin letters A–Z/a–z). Spaces, digits, and punctuation are excluded from the denominator. This is the single RTL compliance check for all Arabic — no separate LTR bleed threshold exists.
 - **FR-004**: System MUST detect and reject hanging conjunctions (e.g., "و", "ف", "ثم") at the end of headline or subheadline lines for Arabic Fusha.
 - **FR-005**: System MUST detect weak openers in Arabic Fusha captions (e.g., starting with generic phrases that lack impact).
-- **FR-006**: System MUST validate Egyptian Arabic captions using absence-based dialect checking — reject if wrong-dialect markers (Gulf, Levantine, etc.) are detected — and validate warmth register.
+- **FR-006**: System MUST validate Egyptian Arabic captions using absence-based dialect checking — reject if wrong-dialect markers (Gulf, Levantine, etc.) are detected — and validate warmth register. Register validation is scoped to Egyptian only at launch; other dialects do not have register-specific checks.
 - **FR-007**: System MUST validate Gulf Arabic captions using absence-based dialect checking — reject if wrong-dialect markers (Egyptian, Levantine, etc.) are detected.
-- **FR-008**: System MUST validate Levantine, Iraqi, and Maghreb Arabic captions for word count, RTL compliance, and absence of LTR character bleed.
+- **FR-008**: System MUST validate Levantine, Iraqi, and Maghreb Arabic captions for word count and the 70% Arabic Unicode ratio (FR-003). These three dialects receive lighter validation — no dialect-marker or register checks, only word count and script compliance.
 - **FR-009**: System MUST validate English captions for grammar heuristics (proper capitalization, no repeated consecutive words, subheadline is a complete sentence), CTA clarity, and absence of filler phrases.
 - **FR-010**: System MUST produce a structured repair prompt when any quality check fails, specifying exactly which rules were violated.
 - **FR-011**: System MUST support exactly 7 languages at launch: `ar_fusha`, `ar_egyptian`, `ar_gulf`, `ar_levantine`, `ar_iraqi`, `ar_maghreb`, and `en`.
 - **FR-012**: System MUST run all quality checks for a given language independently — a failure in one check does not skip other checks.
 - **FR-013**: System MUST include per-language unit tests with at minimum 3 test cases per language: one passing, one word-count failure, and one language-specific rule failure.
-- **FR-014**: System MUST persist caption validation results (pass/fail per check, detail messages) to the existing resolution trace on `generations/{genId}` as a `captionQuality` field.
+- **FR-014**: System MUST persist caption validation results (pass/fail per check, detail messages) as a top-level `captionQuality` field on the `generations/{genId}` Firestore document, alongside (not nested inside) the existing `resolutionTrace` field.
 - **FR-015**: When validation fails after max 1 repair retry, system MUST deliver the caption without any user-visible warning and log the quality failure internally for monitoring.
 
 ### Key Entities
 
 - **Language Quality Contract**: A set of validation rules specific to one language, including word count limits, character ratio requirements, dialect markers, register rules, and language-specific checks. Each of the 7 launch languages has exactly one contract.
-- **Caption Validation Result**: The outcome of running a language quality contract against a generated caption — includes pass/fail status per check, detail messages, and an optional repair prompt. Persisted as the `captionQuality` field on the generation's resolution trace.
+- **Caption Validation Result**: The outcome of running a language quality contract against a generated caption. Shape: `{ passed: bool, checks: [{ rule: string, passed: bool, detail: string }], repairedAt?: number, locale: string }`. The `checks` array contains one entry per rule evaluated, each with its own pass/fail and detail message. `repairedAt` is set only if a repair retry was attempted. Persisted as the `captionQuality` field on the generation's resolution trace.
 - **Repair Prompt**: A structured instruction generated when validation fails, describing the exact violations so the AI can regenerate a compliant caption.
 
 ## Success Criteria *(mandatory)*
@@ -165,8 +171,10 @@ A developer adds or modifies language quality rules. For every supported languag
 - The existing `captionValidator.ts` file already handles Arabic character ratio and basic language checks — this feature extends it with per-dialect and per-language granularity.
 - Dialect markers (lists of dialect-specific vocabulary/expressions) will be curated as static reference lists, not dynamically learned.
 - The max 1 retry architecture for repair is unchanged — if the repair also fails, the caption is delivered normally (no user-visible warning); the failure is logged internally.
-- Word count rules (8 headline / 12 subheadline) apply uniformly to all 7 launch languages (all Arabic dialects and English).
+- Word count rules (8 headline / 12 subheadline) apply uniformly to all 7 launch languages (all Arabic dialects and English). "Word" is defined as a whitespace-separated token — no clitic-aware tokenization.
 - Dialect marker validation is absence-based: the system checks for presence of wrong-dialect markers, not for presence of correct-dialect markers. This reduces false positives.
-- Validation results are persisted as a `captionQuality` field on the existing resolution trace (`generations/{genId}`), not in a separate collection.
+- Validation results are persisted as a top-level `captionQuality` field on the `generations/{genId}` document, alongside (not nested inside) the existing `resolutionTrace` field.
 - French, Spanish, German, Turkish, and Portuguese are explicitly excluded (deferred per LAUNCH_MATRIX Section 3) and will not have quality contracts at launch.
 - "Weak opener detection" for Fusha refers to headlines starting with low-impact words/phrases (e.g., equivalents of "Did you know..." or "It is important to...") — the specific list will be curated during implementation.
+- FR-014 (`captionQuality` persistence) and FR-010/FR-015 (repair prompt and retry behavior) extend beyond the LAUNCH_MATRIX Phase 6 task list — they make explicit what the matrix assumes implicitly via the existing repair loop architecture.
+- All 6 Arabic dialects enforce RTL via the same 70% Arabic Unicode ratio (FR-003). English enforces LTR. There is no separate "LTR bleed" threshold — FR-003 is the universal Arabic script compliance check.

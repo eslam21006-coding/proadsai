@@ -873,7 +873,8 @@ export interface CaptionQualityCheck {
 
 export interface CaptionQualityResult {
     passed: boolean;
-    checks: CaptionQualityCheck[];
+    captionChecks: CaptionQualityCheck[];
+    languageChecks: CaptionQualityCheck[];
     repairedAt: number | null;
     locale: string;
 }
@@ -941,15 +942,18 @@ function checkArabicUnicodeRatio(text: string, minRatio: number): CaptionQuality
 
 const LOCALE_CHECK_SETS: Record<string, QualityCheckFn[]> = {};
 
+export interface LanguageQualityValidation {
+    passed: boolean;
+    checks: CaptionQualityCheck[];
+    repairPrompt: string | null;
+}
+
 export function validateLanguageQuality(
     input: LanguageQualityInput,
-): { result: CaptionQualityResult; repairPrompt: string | null } {
+): LanguageQualityValidation {
     const checkFns = LOCALE_CHECK_SETS[input.locale];
     if (!checkFns || checkFns.length === 0) {
-        return {
-            result: { passed: true, checks: [], repairedAt: null, locale: input.locale },
-            repairPrompt: null,
-        };
+        return { passed: true, checks: [], repairPrompt: null };
     }
 
     const checks = checkFns.map((fn) => fn(input));
@@ -975,10 +979,7 @@ export function validateLanguageQuality(
         ].join("\n");
     }
 
-    return {
-        result: { passed, checks, repairedAt: null, locale: input.locale },
-        repairPrompt,
-    };
+    return { passed, checks, repairPrompt };
 }
 
 export function registerLocaleChecks(locale: string, checks: QualityCheckFn[]): void {

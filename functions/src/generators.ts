@@ -19,7 +19,7 @@ import { compileFullContract, getContractRenderBlock, getContractCaptionBlock, g
 import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, parseBuildPlanEnvelope, parseStructuredBuildPlanResponse, serializeBuildPlanEnvelope, validateStructuredBuildPlan, validateCopyFidelity, stripTechnicalPrompt, TECHNICAL_PROMPT_START, TECHNICAL_PROMPT_END, type BuildPlanSlotMap, type ContractCheckResult, type StructuredBuildPlanPayload } from "./buildPlanSlotMap.js";
 import { compileModePayload, getModePayloadPromptBlock, getModePayloadPromptBlock_RenderSafe, getModePayloadCaptionAnchors, extractAuthorizedNumbers, getNumericFidelityPolicy, type ModePayload, type NumericFidelityPolicy } from "./modeFieldSchema.js";
 import { compositeOfferOverlay, isOverlayAvailable, extractOfferFacts, validateResolvedOfferFacts } from "./offerOverlay.js";
-import { validateCaption, validateArabicCompliance, validateBlueprintLanguage, validateBlueprintModeContribution, validateBlueprintMinimalStyle, sanitizeReferenceAdSummary, validateLanguageQuality, type CaptionValidationInput, type CaptionQualityResult } from "./captionValidator.js";
+import { validateCaption, validateArabicCompliance, validateBlueprintLanguage, validateBlueprintModeContribution, validateBlueprintMinimalStyle, sanitizeReferenceAdSummary, validateLanguageQuality, type CaptionValidationInput, type CaptionQualityResult, type CaptionQualityCheck } from "./captionValidator.js";
 import { validateBuildPlanAgainstContract, buildScoringPrompt, parseScoringResponse, quickRejectCheck } from "./creativeScoringEngine.js";
 import { storeCreativeToMemory, retrieveCreativePatterns } from "./creativeMemory.js";
 import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.js";
@@ -6397,7 +6397,7 @@ Position the offer as clearly superior without naming competitors directly. Use 
         let attempt = 0;
         let captionRepairPrompt: string | null = null;
         let captionQuality: CaptionQualityResult | null = null;
-        let langQualityRepairAttempted = false;
+        let repairAttempted = false;
         const MAX_CAPTION_ATTEMPTS = 2;
 
         while (attempt < MAX_CAPTION_ATTEMPTS) {
@@ -6439,32 +6439,44 @@ Position the offer as clearly superior without naming competitors directly. Use 
                 locale,
                 fullCaption: result,
             });
-            captionQuality = langQuality.result;
 
-            const allPassed = validation.passed && langQuality.result.passed;
+            // Build aggregate captionQuality from both validators
+            const captionChecks: CaptionQualityCheck[] = validation.checks.map(c => ({
+                rule: c.name,
+                passed: c.passed,
+                detail: c.detail,
+            }));
+            const allPassed = validation.passed && langQuality.passed;
+            captionQuality = {
+                passed: allPassed,
+                captionChecks,
+                languageChecks: langQuality.checks,
+                repairedAt: null,
+                locale,
+            };
 
             if (allPassed) {
-                console.log(`✅ Caption validated on attempt ${attempt} (${validation.checks.filter(c => c.passed).length}/${validation.checks.length} caption checks, ${langQuality.result.checks.filter(c => c.passed).length}/${langQuality.result.checks.length} lang quality checks)`);
+                console.log(`✅ Caption validated on attempt ${attempt} (${captionChecks.filter(c => c.passed).length}/${captionChecks.length} caption checks, ${langQuality.checks.filter(c => c.passed).length}/${langQuality.checks.length} lang quality checks)`);
                 break;
             }
 
-            const failedChecks = validation.checks.filter(c => !c.passed);
-            const failedLangChecks = langQuality.result.checks.filter(c => !c.passed);
-            console.warn(`⚠️ Caption validation failed (attempt ${attempt}/${MAX_CAPTION_ATTEMPTS}): caption=[${failedChecks.map(c => c.name).join(', ')}] lang=[${failedLangChecks.map(c => c.rule).join(', ')}]`);
+            const failedChecks = captionChecks.filter(c => !c.passed);
+            const failedLangChecks = langQuality.checks.filter(c => !c.passed);
+            console.warn(`⚠️ Caption validation failed (attempt ${attempt}/${MAX_CAPTION_ATTEMPTS}): caption=[${failedChecks.map(c => c.rule).join(', ')}] lang=[${failedLangChecks.map(c => c.rule).join(', ')}]`);
 
             if (attempt < MAX_CAPTION_ATTEMPTS) {
                 const repairParts: string[] = [];
                 if (validation.repairPrompt) repairParts.push(validation.repairPrompt);
                 if (langQuality.repairPrompt) repairParts.push(langQuality.repairPrompt);
                 captionRepairPrompt = repairParts.length > 0 ? repairParts.join('\n') : null;
-                if (langQuality.repairPrompt) langQualityRepairAttempted = true;
+                if (captionRepairPrompt) repairAttempted = true;
                 if (captionRepairPrompt) console.log(`🔄 Attempting caption repair...`);
             } else {
                 console.warn(`❌ Caption repair exhausted. Returning best-effort output.`);
             }
         }
 
-        if (captionQuality && langQualityRepairAttempted) {
+        if (captionQuality && repairAttempted) {
             captionQuality = { ...captionQuality, repairedAt: Date.now() };
         }
 
