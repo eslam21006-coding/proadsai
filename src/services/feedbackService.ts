@@ -41,6 +41,8 @@ export type NegativeFeedbackTag =
     | 'too_long'
     | 'too_short';
 
+// Duplicated from functions/src/types.ts — frontend and backend are separate TS projects
+// with independent tsconfigs, so types cannot be shared via import. Keep in sync manually.
 export type FailureClass =
     | "prompt_malformed"
     | "model_error"

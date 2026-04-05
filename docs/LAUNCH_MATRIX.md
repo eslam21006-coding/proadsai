@@ -916,7 +916,7 @@ Launch is complete when all of the following pass:
 
 ### Dependency Map
 
-```
+```text
 Phase 1  ──► Phase 2  ──► Phase 8  ──► Phase 9
          ──► Phase 3             └──► Phase 10
          ──► Phase 4
@@ -995,14 +995,10 @@ If a task would require creating a sub-plan, the task description is wrong — f
 |---|---|---|---|
 | 3.1 | `functions/src/contractFixtures.test.ts` | Add fixture for retargeting + carousel, 5 slides. Input: `campaignType: 'retargeting'`, `adMode: 'carousel'`, `slideCount: 5`, `retargetingObjection: 'price_too_high'`, `offerCreativeMode: ['standard_hero']`. Assert: `resolutionTrace.perSlide[0].hasCTA === true`, `resolutionTrace.perSlide[1].hasCTA === false`, `resolutionTrace.perSlide[2].hasCTA === false`, `resolutionTrace.perSlide[3].hasCTA === false`, `resolutionTrace.perSlide[4].hasCTA === true`. Assert: `perSlide[1].narrativeAngle === 'P'`, `perSlide[2].narrativeAngle === 'M'`, `perSlide[3].narrativeAngle === 'R'`. | Test passes |
 | 3.2 | `functions/src/contractFixtures.test.ts` | Add fixture for cold + single + before_after. Input: `campaignType: 'cold'`, `adMode: 'single'`, `offerCreativeMode: ['before_after']`. Assert: `validateLaunchSurface(input).allowed === true`. Assert: `['before_after','standard_hero']` as modes returns `validateLaunchSurface(input).allowed === false`. | Test passes |
-| 3.3 | `functions/src/contractFixtures.test.ts` | Add fixture for cold + carousel + value_stack with 4 gifts. Input: `campaignType: 'cold'`, `adMode: 'carousel'`, `offerCreativeMode: ['value_stack']`, `valueStackItems: 'A
-B
-C
-D'`. Assert: `resolveValueStackSlideCount(['A','B','C','D']) === 6`. Assert: `resolutionTrace.slideCountOverride === true`, `resolutionTrace.resolvedSlideCount === 6`. | Test passes |
+| 3.3 | `functions/src/contractFixtures.test.ts` | Add fixture for cold + carousel + value_stack with 4 gifts. Input: `campaignType: 'cold'`, `adMode: 'carousel'`, `offerCreativeMode: ['value_stack']`, `valueStackItems: 'A\nB\nC\nD'`. Assert: `resolveValueStackSlideCount(['A','B','C','D']) === 6`. Assert: `resolutionTrace.slideCountOverride === true`, `resolutionTrace.resolvedSlideCount === 6`. | Test passes |
 | 3.4 | `functions/src/contractFixtures.test.ts` | Add fixture for cold + carousel + standard_hero, 5 slides. Assert: `carouselSlideCountPlan('cold', 5)` returns array of 5 items where index 0 and 4 have `hasCTA: true` and indices 1–3 have `hasCTA: false`. Assert angles at indices 1–3 are `'A'`, `'B'`, `'C'` in order. | Test passes |
 | 3.5 | `functions/src/contractFixtures.test.ts` | Add fixture for cold + batch + standard_hero + value_stack. Input: `campaignType: 'cold'`, `adMode: 'batch'`, `offerCreativeMode: ['standard_hero','value_stack']`. Assert: `validateLaunchSurface(input).allowed === true`. | Test passes |
-| 3.6 | `functions/src/contractFixtures.test.ts` | Add fixture for empty value_stack fields. Input: `{ valueStackPrice: '', valueStackItems: 'Module 1
-Module 2', valueStackSavings: '   ' }`. Assert: `filterEmptyValueStackFields(input)` returns object with `valueStackItems` present and `valueStackPrice` and `valueStackSavings` absent. | Test passes |
+| 3.6 | `functions/src/contractFixtures.test.ts` | Add fixture for empty value_stack fields. Input: `{ valueStackPrice: '', valueStackItems: 'Module 1\nModule 2', valueStackSavings: '   ' }`. Assert: `filterEmptyValueStackFields(input)` returns object with `valueStackItems` present and `valueStackPrice` and `valueStackSavings` absent. | Test passes |
 | 3.7 | `functions/src/contractFixtures.test.ts` | Add fixture for retargeting + single + value_stack. Input: `campaignType: 'retargeting'`, `adMode: 'single'`, `offerCreativeMode: ['value_stack']`, `retargetingObjection: 'price_too_high'`. Assert: `validateLaunchSurface(input).allowed === true`. Assert: same input without `retargetingObjection` — `validateLaunchSurface` still allows it (objection requirement is enforced at generation time, not by the surface validator). | Test passes |
 | 3.8 | `functions/src/contractFixtures.test.ts` | Add fixture for minimal + standard_hero + single. Input: `visualStyleFamily: 'minimal'`, `offerCreativeMode: ['standard_hero']`, `adMode: 'single'`. Assert: `validateLaunchSurface(input).allowed === true`. Assert: `resolveStyleFamily(input) === 'minimal'`. | Test passes |
 | 3.9 | `functions/src/contractFixtures.test.ts` | Add `validateLaunchSurface` blocked combinations test. Assert all of these return `allowed: false`: (a) `offerCreativeMode: ['before_after','standard_hero']`, (b) `offerCreativeMode: ['text_only','value_stack']`, (c) `offerCreativeMode: ['limited_access']`, (d) `offerCreativeMode: ['module_preview']`, (e) `offerCreativeMode: ['day_strip']`. | Test passes for all 5 blocked cases |

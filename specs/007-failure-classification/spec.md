@@ -85,7 +85,7 @@ An operator can query generation records filtered by failure class to analyze fa
 
 - **FailureClass**: An enumeration of exactly seven values representing the category of a generation failure. Each value maps to a specific error condition in the generation pipeline.
 - **CostEstimate**: A data structure recorded with every generation (success and failure), containing: the model tier used, the number of retries attempted (including intermediate retries that eventually led to success), and the estimated number of tokens consumed across all attempts.
-- **Generation Record**: The existing record for each generation attempt, extended with two new fields: `failureClass` (one of seven values or null for success) and `costEstimate` (cost breakdown for failed generations).
+- **Generation Record**: The existing record for each generation attempt, extended with two new fields: `failureClass` (one of seven values or null for success) and `costEstimate` (populated for all generations — both success and failure, per FR-003).
 
 ## Success Criteria *(mandatory)*
 

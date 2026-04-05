@@ -71,7 +71,8 @@ Generation Request
   ├─ Quality check ── SOFT FAIL ──> failureClass = numeric_hallucination (generation still succeeds)
   │                                 costEstimate = { modelTier: "<model>", retryCount: N, estimatedTokens: T }
   │                                 NO refund — user receives usable output
-  │                                 Frontend writes both fields to generation record
+  │                                 Backend computes failureClass + costEstimate and returns them;
+  │                                 frontend persists via feedbackService.saveGeneration
   │
   └─ SUCCESS ──> failureClass = null
                  costEstimate = { modelTier: "<model>", retryCount: N, estimatedTokens: T }
