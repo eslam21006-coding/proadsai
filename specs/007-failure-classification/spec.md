@@ -61,8 +61,9 @@ An operator can query generation records filtered by failure class to analyze fa
 ### Edge Cases
 
 - What happens when a generation fails but the failure does not match any of the seven predefined classes? The system MUST NOT leave `failureClass` empty — it should assign the closest matching class or use `model_error` as the catch-all.
-- What happens when a generation partially succeeds (e.g., 3 of 5 carousel slides generated)? The record should reflect the failure class for the failing portion; partial success is still a failure if the output is incomplete.
+- What happens when a generation partially succeeds (e.g., 3 of 5 carousel slides generated)? Partial success is still a failure if the output is incomplete. The `failureClass` is determined by the root cause of the failing portion (e.g., `model_error` if the model stopped producing output, `validation_reject` if remaining slides failed quality gates, `slot_repair_failed` if slots couldn't be filled).
 - What happens when cost estimation data is unavailable (e.g., the model call never completed)? The system records the best-effort estimate with available data and zeroes for unavailable fields.
+- What happens when the AI model's safety filter blocks a generation (content policy violation)? This is classified as `model_error` since the block originates from the model provider, not from the application's own validation rules.
 - What happens when multiple failure conditions apply simultaneously (e.g., invalid combination AND insufficient credits)? The system assigns the *first* failure encountered in the processing pipeline, since failures are caught at sequential checkpoints.
 - What happens when a generation fails after credits were already deducted? The system refunds the credits back to the user's balance as part of the failure recording flow. Pre-deduction failures (e.g., `credit_insufficient`, `combination_invalid`, `prompt_malformed`) skip the refund step since no credits were consumed.
 
@@ -76,14 +77,14 @@ An operator can query generation records filtered by failure class to analyze fa
 - **FR-004**: System MUST persist `failureClass` and `costEstimate` as part of the generation record so they are available for later querying.
 - **FR-005**: System MUST map every existing error path in the generation pipeline to one of the seven failure classes — no error path may be left unclassified.
 - **FR-006**: System MUST support querying generation records by failure class to enable cost-per-failure-type analysis.
-- **FR-007**: Successful generations MUST have `failureClass` set to null — the field is only populated on failure.
+- **FR-007**: Successful generations MUST have `failureClass` set to null. Soft-fail generations (e.g., `numeric_hallucination`) deliver output to the user but retain their `failureClass` value for tracking purposes. Soft-fails are a distinct state: the user receives output, no credit refund occurs, but the record is tagged for operational analysis.
 - **FR-008**: System MUST record cost estimates even when the failure occurs before any model call (e.g., `credit_insufficient` records 0 tokens and 0 retries).
-- **FR-009**: System MUST refund the user's credits when a generation fails *after* credits were already deducted (e.g., `model_error`, `validation_reject`, `slot_repair_failed`, `numeric_hallucination`). Pre-deduction failures (`credit_insufficient`, `combination_invalid`, `prompt_malformed`) require no refund since credits were never consumed.
+- **FR-009**: System MUST refund the user's credits when a generation hard-fails *after* credits were already deducted (e.g., `model_error`, `validation_reject`, `slot_repair_failed`). Pre-deduction failures (`credit_insufficient`, `combination_invalid`, `prompt_malformed`) require no refund since credits were never consumed. Soft-fail generations (`numeric_hallucination`) do NOT receive a refund because the user receives usable output.
 
 ### Key Entities
 
 - **FailureClass**: An enumeration of exactly seven values representing the category of a generation failure. Each value maps to a specific error condition in the generation pipeline.
-- **CostEstimate**: A data structure recorded with every generation (success and failure), containing: the model tier used, the number of retries attempted, and the estimated number of tokens consumed across all attempts.
+- **CostEstimate**: A data structure recorded with every generation (success and failure), containing: the model tier used, the number of retries attempted (including intermediate retries that eventually led to success), and the estimated number of tokens consumed across all attempts.
 - **Generation Record**: The existing record for each generation attempt, extended with two new fields: `failureClass` (one of seven values or null for success) and `costEstimate` (cost breakdown for failed generations).
 
 ## Success Criteria *(mandatory)*
@@ -103,6 +104,14 @@ An operator can query generation records filtered by failure class to analyze fa
 - Q: Should `costEstimate` be recorded on successful generations too? → A: Yes, record on ALL generations (success and failure). Additionally, refund credits to the user on failed generations.
 - Q: Should historical failed generations be backfilled with failure classes? → A: No, forward-only. Classify new failures only; leave old records as-is.
 - Q: Should credit refunds apply to all failure types or only post-deduction failures? → A: Refund only for failures that occur after credits were already deducted (e.g., model_error, validation_reject, slot_repair_failed). Pre-deduction failures (credit_insufficient, combination_invalid) have nothing to refund.
+
+### Session 2026-04-04
+
+- Q: How should AI safety/content-policy blocks (`safety_blocked`) be classified? → A: Map to `model_error`, since the block originates from the model provider, not from the application's own validation rules.
+- Q: Which `FailureClass` applies to partial generation failures (e.g., 3 of 5 slides)? → A: Classify by the root cause of the failing portion — not a blanket class. Could be any of the 7 depending on why the remaining slides failed.
+- Q: Should `retryCount` on successful generations include intermediate failed retries? → A: Yes. `retryCount` reflects total retry attempts before the final outcome (e.g., 2 failed retries + 1 success → retryCount=2). This captures true resource consumption.
+- Q: `numeric_hallucination` is a soft-fail (user gets output) — does FR-007 (success = null) apply? → A: No. Soft-fails are a third state: output delivered, no refund, but `failureClass` is set for tracking. FR-007 amended to acknowledge this.
+- Q: Should `numeric_hallucination` soft-fails trigger a credit refund? → A: No. The user received usable output. Refunds apply only to hard failures (`model_error`, `validation_reject`, `slot_repair_failed`). FR-009 amended.
 
 ## Assumptions
 

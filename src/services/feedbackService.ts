@@ -41,10 +41,27 @@ export type NegativeFeedbackTag =
     | 'too_long'
     | 'too_short';
 
+export type FailureClass =
+    | "prompt_malformed"
+    | "model_error"
+    | "validation_reject"
+    | "slot_repair_failed"
+    | "numeric_hallucination"
+    | "combination_invalid"
+    | "credit_insufficient";
+
+export interface CostEstimate {
+    modelTier: string | null;
+    retryCount: number;
+    estimatedTokens: number;
+}
+
 export interface GenerationRecord {
     id?: string;
     userId: string;
     timestamp: Timestamp;
+    failureClass: FailureClass | null;
+    costEstimate: CostEstimate | null;
     input: {
         productName: string;
         productCategory: string;
@@ -131,12 +148,16 @@ class FeedbackService {
         generationTimeMs: number = 0,
         aspectRatio?: AspectRatio,
         creativeIdentity?: GenerationRecord['creativeIdentity'],
-        workspaceId?: string | null
+        workspaceId?: string | null,
+        failureClass: FailureClass | null = null,
+        costEstimate: CostEstimate | null = null
     ): Promise<string> {
         const record: Omit<GenerationRecord, 'id'> & { workspaceId?: string | null } = {
             userId,
             workspaceId: workspaceId || null,
             timestamp: Timestamp.now(),
+            failureClass,
+            costEstimate,
             input: {
                 productName: inputs.productName || '',
                 productCategory: inputs.productCategory || '',

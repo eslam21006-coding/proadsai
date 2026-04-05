@@ -1,5 +1,42 @@
-// Server-side type definitions
+// functions/src/types.ts — server-side type definitions
 // Subset of frontend types needed by server-side modules
+
+// ─── Failure Classification ──────────────────────────────────────────────────
+
+export type FailureClass =
+    | "prompt_malformed"
+    | "model_error"
+    | "validation_reject"
+    | "slot_repair_failed"
+    | "numeric_hallucination"
+    | "combination_invalid"
+    | "credit_insufficient";
+
+export interface CostEstimate {
+    modelTier: string | null;
+    retryCount: number;
+    estimatedTokens: number;
+}
+
+// ─── Generation Error ────────────────────────────────────────────────────────
+
+export class GenerationError extends Error {
+    public readonly failureClass: FailureClass;
+    constructor(message: string, failureClass: FailureClass) {
+        super(message);
+        this.name = "GenerationError";
+        this.failureClass = failureClass;
+    }
+}
+
+export interface GenerationResult {
+    image: string | null;
+    errorCode?: string;
+    failureClass?: FailureClass;
+    costEstimate?: CostEstimate;
+    debug?: any;
+    [key: string]: any;
+}
 
 export type RetargetingAngle =
     | "proof"

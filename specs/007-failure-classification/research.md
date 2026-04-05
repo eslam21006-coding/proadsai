@@ -62,8 +62,11 @@
 - `combination_invalid` — validation happens before deduction in some paths
 - `prompt_malformed` — input validation before deduction in some paths
 
-**Post-deduction failures** (refund needed):
-- `model_error`, `validation_reject`, `slot_repair_failed`, `numeric_hallucination`
+**Post-deduction hard failures** (refund needed):
+- `model_error`, `validation_reject`, `slot_repair_failed`
+
+**Post-deduction soft failures** (no refund — user receives output):
+- `numeric_hallucination`
 
 **Alternatives considered**:
 - Deduct credits after success only — rejected because it would require restructuring the entire flow and introduces race conditions

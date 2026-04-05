@@ -29,7 +29,8 @@ Tags every failed generation with one of 7 failure categories and records cost e
 ## Credit Refund Rules
 
 - Pre-deduction failures (`credit_insufficient`, `combination_invalid`, `prompt_malformed`): no refund needed
-- Post-deduction failures (`model_error`, `validation_reject`, `slot_repair_failed`, `numeric_hallucination`): auto-refund
+- Post-deduction hard failures (`model_error`, `validation_reject`, `slot_repair_failed`): auto-refund
+- Soft-fail `numeric_hallucination`: NO refund — user receives usable output, record tagged for tracking only
 
 ## Testing Approach
 
