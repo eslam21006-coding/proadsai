@@ -17,6 +17,9 @@ import {
     type GatedFeature, type ResolvedEntitlement,
 } from "./entitlements.js";
 import { validateSelector } from "./selectorLimits.js";
+import type { FailureClass, CostEstimate } from "./types.js";
+import { GenerationError } from "./types.js";
+import { classifyError, buildCostEstimate, errorCodeToFailureClass, resetCostTracker, getCostEstimate } from "./generators.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
@@ -74,6 +77,75 @@ const COSTS: Record<string, number> = {
     competitorResearch: 5,
     brandUrlScraping: 3,
 };
+
+// ─── Failure Classification Helpers ─────────────────────────────────────────
+
+const POST_DEDUCTION_FAILURES: FailureClass[] = ["model_error", "validation_reject", "slot_repair_failed"];
+
+function isPostDeductionFailure(fc: FailureClass): boolean {
+    return POST_DEDUCTION_FAILURES.includes(fc);
+}
+
+async function writeFailureRecord(
+    userId: string,
+    failureClass: FailureClass,
+    costEstimate: CostEstimate,
+    inputMeta: Record<string, any>,
+    errorMessage: string,
+    phase: string
+): Promise<void> {
+    try {
+        await db.collection("generations").add({
+            userId,
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            failureClass,
+            costEstimate,
+            input: {
+                productName: inputMeta.productName || "",
+                productCategory: inputMeta.productCategory || "",
+                niche: inputMeta.targetAudience || "",
+                challenges: inputMeta.challenges || "",
+                transformation: inputMeta.transformation || "",
+                offer: inputMeta.offerType || "",
+                tone: "",
+                language: inputMeta.adLanguage || "ar_fusha",
+                adType: inputMeta.adMode || "single",
+                campaignType: inputMeta.campaignType || "cold",
+            },
+            output: {
+                phase,
+                fullResponse: errorMessage.substring(0, 5000),
+            },
+            feedback: {
+                rating: null,
+                tags: [],
+                freeText: "",
+                savedToFavorites: false,
+            },
+        });
+        console.log(`📝 Failure record written: ${failureClass} for user ${userId}`);
+    } catch (err) {
+        console.warn("⚠️ Failed to write failure record (non-blocking):", err);
+    }
+}
+
+async function inlineRefund(targetUid: string, action: string, count: number = 1): Promise<void> {
+    const unitCost = COSTS[action];
+    if (unitCost === undefined) return;
+    const cost = unitCost * count;
+    try {
+        await db.runTransaction(async (tx) => {
+            const userRef = db.collection("users").doc(targetUid);
+            const snap = await tx.get(userRef);
+            if (!snap.exists) return;
+            const current = snap.data()?.credits ?? 0;
+            tx.update(userRef, { credits: current + cost });
+        });
+        console.log(`💰 Inline refund: ${cost} credits restored to ${targetUid} for action=${action}`);
+    } catch (err) {
+        console.warn("⚠️ Inline refund failed (non-blocking):", err);
+    }
+}
 
 // ─── MODEL CONSTANTS (single source of truth) ───────────────────────────
 const CREATIVE_MODEL_PRO = "gemini-3.1-pro-preview"; // First generation
@@ -3056,7 +3128,9 @@ function createGeminiCaller(apiKey: string) {
                         return p;
                     })
                 }
-            }))
+            })),
+            usageMetadata: (response as any).usageMetadata || null,
+            modelVersion: params.model,
         };
     };
 }
@@ -3249,12 +3323,17 @@ export const serverGenerateTOV = onCall({
     // ═══ ENTITLEMENT: Check retargeting gate on hook generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    resetCostTracker();
     try {
         const result = await generators.generateTOV(inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, editIntent, rewriteScope, semanticLock);
         const rg = result.rankingGuidance;
         return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null };
     } catch (error: any) {
         console.error("generateTOV error:", error);
+        const fc = classifyError(error);
+        const ce = getCostEstimate();
+        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "hooks");
+        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateHooks");
         throw new HttpsError("internal", "Hook generation failed: " + error.message);
     }
 });
@@ -3273,12 +3352,17 @@ export const serverGenerateConcepts = onCall({
     // ═══ ENTITLEMENT: Check retargeting gate on concept generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    resetCostTracker();
     try {
         const result = await generators.generateConcepts(approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex);
         const rg = result.rankingGuidance;
         return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null };
     } catch (error: any) {
         console.error("generateConcepts error:", error);
+        const fc = classifyError(error);
+        const ce = getCostEstimate();
+        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "concepts");
+        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateConcepts");
         throw new HttpsError("internal", "Concept generation failed: " + error.message);
     }
 });
@@ -3297,11 +3381,16 @@ export const serverGenerateBuildPlan = onCall({
     // ═══ ENTITLEMENT ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    resetCostTracker();
     try {
         const result = await generators.generateBuildPlan(conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride);
-        return { success: true, text: result, errorCode: null };
+        return { success: true, text: result, errorCode: null, costEstimate: getCostEstimate() };
     } catch (error: any) {
         console.error("generateBuildPlan error:", error);
+        const fc = classifyError(error);
+        const ce = getCostEstimate();
+        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "buildPlan");
+        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "buildPlan");
         throw new HttpsError("internal", "Build plan generation failed: " + error.message);
     }
 });
@@ -3324,6 +3413,7 @@ export const serverGenerateFinalAd = onCall({
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setOpenAIKey(openaiApiKey.value());
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    resetCostTracker();
 
     // ═══ CREATIVE MODE VALIDATION: fail-closed for invalid combinations ═══
     if (!editInstruction && !base64ToEdit) {
@@ -3375,17 +3465,36 @@ export const serverGenerateFinalAd = onCall({
         }
 
         if (result.image) {
-            return { success: true, imageBase64: result.image, errorCode: null };
+            const _fc = (result as any).failureClass || undefined;
+            const ce = getCostEstimate();
+            return {
+                success: true,
+                imageBase64: result.image,
+                errorCode: null,
+                failureClass: _fc || null,
+                costEstimate: ce,
+            };
         } else {
+            const errorCode = (result as any).errorCode || "generation_failed";
+            const fc = (result as any).failureClass || errorCodeToFailureClass(errorCode);
+            const ce = getCostEstimate();
+            await writeFailureRecord(request.auth.uid, fc, ce, inputs, `${errorCode} - render phase`, "render");
+            if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateImage");
             return {
                 success: false,
                 imageBase64: null,
-                errorCode: (result as any).errorCode || "generation_failed",
-                debug: process.env.NODE_ENV !== 'production' ? ((result as any).debug || null) : undefined,
+                errorCode,
+                failureClass: fc,
+                costEstimate: ce,
+                debug: process.env.NODE_ENV !== "production" ? ((result as any).debug || null) : undefined,
             };
         }
     } catch (error: any) {
         console.error("generateFinalAd error:", error);
+        const fc = classifyError(error);
+        const ce = getCostEstimate();
+        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "render");
+        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateImage");
         throw new HttpsError("internal", "Image generation failed: " + error.message);
     }
 });
@@ -3467,6 +3576,7 @@ Rules:
     instruction += `\n\n⚠️ CRITICAL: The output image MUST have the EXACT SAME aspect ratio and dimensions as the input image. This is a ${ratio || '1:1'} image. Do NOT change it to square or any other ratio.`;
 
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    resetCostTracker();
 
     try {
         const rawB64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
@@ -3507,6 +3617,10 @@ Rules:
         return { success: false, imageBase64: null, errorCode: 'no_image_returned' };
     } catch (error: any) {
         console.error("editRegion error:", error);
+        const fc = classifyError(error);
+        const ce = getCostEstimate();
+        await writeFailureRecord(request.auth.uid, fc, ce, request.data, error.message, "editRegion");
+        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "editRegion");
         throw new HttpsError("internal", "Region edit failed: " + error.message);
     }
 });
@@ -3536,11 +3650,16 @@ export const serverGenerateCarouselAngles = onCall({
         }));
     }
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    resetCostTracker();
     try {
         const result = await generators.generateCarouselAngles(inputs, resolvedUniverse, slideCount, globalRefinement);
         return { success: true, text: result };
     } catch (error: any) {
         console.error("generateCarouselAngles error:", error);
+        const fc = classifyError(error);
+        const ce = getCostEstimate();
+        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "carousel_angles");
+        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateCarouselCopies");
         throw new HttpsError("internal", "Carousel angle generation failed: " + error.message);
     }
 });
@@ -3562,11 +3681,16 @@ export const serverGenerateCarouselSlideCopies = onCall({
     });
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    resetCostTracker();
     try {
         const result = await generators.generateCarouselSlideCopies(approvedTov, inputs, slideCount, resolvedUniverse, refinement);
         return { success: true, copies: result };
     } catch (error: any) {
         console.error("generateCarouselSlideCopies error:", error);
+        const fc = classifyError(error);
+        const ce = getCostEstimate();
+        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "carousel_copies");
+        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateCarouselCopies");
         throw new HttpsError("internal", "Carousel copy generation failed: " + error.message);
     }
 });
@@ -3597,11 +3721,16 @@ export const serverGenerateTestimonialCarousel = onCall({
     const maxSlides = entitlement.features.maxCarouselSlides || 5;
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    resetCostTracker();
     try {
         const result = await generators.generateTestimonialCarousel(inputs, screenshots, maxSlides);
         return { success: true, ...result };
     } catch (error: any) {
         console.error("generateTestimonialCarousel error:", error);
+        const fc = classifyError(error);
+        const ce = getCostEstimate();
+        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "testimonial");
+        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateCarouselCopies");
         throw new HttpsError("internal", "Testimonial carousel generation failed: " + error.message);
     }
 });
@@ -3618,12 +3747,17 @@ export const serverGenerateCaption = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan } = request.data;
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    resetCostTracker();
     try {
         const result = await generators.generateCaption(mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan);
         const rg = result.rankingGuidance;
         return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null };
     } catch (error: any) {
         console.error("generateCaption error:", error);
+        const fc = classifyError(error);
+        const ce = getCostEstimate();
+        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "caption");
+        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateCaption");
         throw new HttpsError("internal", "Caption generation failed: " + error.message);
     }
 });
@@ -3644,11 +3778,16 @@ export const serverGenerateVisualPolishes = onCall({
         requireVisualPolishes: true,
     });
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    resetCostTracker();
     try {
         const result = await generators.generateVisualPolishes(currentRender, inputs);
         return { success: true, polishes: result };
     } catch (error: any) {
         console.error("generateVisualPolishes error:", error);
+        const fc = classifyError(error);
+        const ce = getCostEstimate();
+        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "polish");
+        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "polishImage");
         throw new HttpsError("internal", "Polish generation failed: " + error.message);
     }
 });

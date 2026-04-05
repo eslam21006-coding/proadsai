@@ -25,6 +25,8 @@ import { storeCreativeToMemory, retrieveCreativePatterns } from "./creativeMemor
 import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.js";
 import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreservation, type SemanticLock } from "./utils/hookPayload.js";
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
+import type { FailureClass, CostEstimate } from "./types.js";
+import { GenerationError } from "./types.js";
 
 // ─── Ranking Guidance Builder ────────────────────────────────────────────
 // Converts Ticket 2 ranking output into a compact prompt-safe guidance block.
@@ -396,7 +398,12 @@ type GeminiCaller = (params: { model: string; contents: any; config?: any }) => 
 let callGemini: GeminiCaller;
 
 export function setGeminiCaller(fn: GeminiCaller) {
-    callGemini = fn;
+    // Wrap the caller to auto-accumulate cost tracking on every Gemini call
+    callGemini = async (params) => {
+        const response = await fn(params);
+        accumulateCost(response);
+        return response;
+    };
 }
 
 // ─── OpenAI Key (injected for design critique — different model catches Gemini blind spots) ────
@@ -464,11 +471,88 @@ async function retry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promis
     try { return await fn(); }
     catch (err: any) {
         if (retries > 0 && (err?.message?.includes("503") || err?.message?.includes("429") || err?.message?.includes("Quota") || err?.message?.includes("INTERNAL"))) {
+            _costTracker.retryCount++;
             await wait(delay);
             return retry(fn, retries - 1, delay * 2);
         }
         throw err;
     }
+}
+
+// ─── Cost Tracking Accumulator ────────────────────────────────────────────
+// Thread-local (per-request) cost accumulator. Call resetCostTracker() at the
+// start of each top-level generation pipeline, then accumulateCost() after each
+// Gemini call. At the end, getCostEstimate() returns the totals.
+
+interface CostTracker {
+    modelTier: string | null;
+    retryCount: number;
+    totalPromptTokens: number;
+    totalCandidateTokens: number;
+}
+
+let _costTracker: CostTracker = { modelTier: null, retryCount: 0, totalPromptTokens: 0, totalCandidateTokens: 0 };
+
+export function resetCostTracker(): void {
+    _costTracker = { modelTier: null, retryCount: 0, totalPromptTokens: 0, totalCandidateTokens: 0 };
+}
+
+export function accumulateCost(response: any): void {
+    if (response?.modelVersion) _costTracker.modelTier = response.modelVersion;
+    const usage = response?.usageMetadata;
+    if (usage) {
+        _costTracker.totalPromptTokens += (usage.promptTokenCount || 0);
+        _costTracker.totalCandidateTokens += (usage.candidatesTokenCount || 0);
+    }
+}
+
+export function getCostEstimate(): CostEstimate {
+    return {
+        modelTier: _costTracker.modelTier,
+        retryCount: _costTracker.retryCount,
+        estimatedTokens: _costTracker.totalPromptTokens + _costTracker.totalCandidateTokens,
+    };
+}
+
+// ─── Failure Classification Helpers ─────────────────────────────────────────
+
+export function classifyError(error: unknown, errorCode?: string): FailureClass {
+    if (error instanceof GenerationError) return error.failureClass;
+
+    if (errorCode === "safety_blocked") return "model_error";
+    if (errorCode === "validation_failed") return "combination_invalid";
+    if (errorCode === "quality_rejected") return "validation_reject";
+
+    if (error instanceof Error) {
+        const msg = error.message.toLowerCase();
+        if (msg.includes("invalid creative mode combination")) return "combination_invalid";
+        if (msg.includes("blueprint was empty") || msg.includes("blueprint too short")) return "prompt_malformed";
+        if (msg.includes("structured build plan returned empty")) return "model_error";
+        if (msg.includes("json parse failed after repair")) return "model_error";
+        if (msg.includes("structured contract validation")) return "validation_reject";
+        if (msg.includes("strict pair validation")) return "slot_repair_failed";
+        if (msg.includes("resource-exhausted") || msg.includes("insufficient credits")) return "credit_insufficient";
+    }
+
+    return "model_error";
+}
+
+export function buildCostEstimate(
+    modelTier: string | null,
+    retryCount: number,
+    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } | null
+): CostEstimate {
+    const tokens = usageMetadata
+        ? (usageMetadata.promptTokenCount || 0) + (usageMetadata.candidatesTokenCount || 0)
+        : 0;
+    return { modelTier, retryCount, estimatedTokens: tokens };
+}
+
+export function errorCodeToFailureClass(errorCode: string): FailureClass {
+    if (errorCode === "safety_blocked") return "model_error";
+    if (errorCode === "validation_failed") return "combination_invalid";
+    if (errorCode === "quality_rejected") return "validation_reject";
+    return "model_error";
 }
 
 // Use any-typed inputs to avoid duplicating the full AdInputs interface
@@ -1805,7 +1889,7 @@ ${hookQualityBlock}` }] },
         if (mode === 'precision') {
             if (!rawText.trim()) {
                 console.error('[generateTOV] Precision edit returned empty text');
-                throw new Error('Hook edit returned empty result. Please retry.');
+                throw new GenerationError('Hook edit returned empty result. Please retry.', 'model_error');
             }
             const semanticCheck = assertHookSemanticPreservation(previousOutput || '', rawText, semanticLock || null);
             if (!semanticCheck.ok && editIntent !== 'change_angle') {
@@ -1893,7 +1977,7 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
 
         // Both attempts failed — throw explicit error instead of returning garbage
         console.error(`[generateTOV] Both attempts returned invalid hook structure. First: ${validation.count}/4, Retry: ${retryValidation.count}/4`);
-        throw new Error('Hook generation failed: invalid structure after retry. Please try again.');
+        throw new GenerationError('Hook generation failed: invalid structure after retry. Please try again.', 'model_error');
     } // end _generateTOVInner
     const text = await _generateTOVInner();
     return { text, rankingGuidance: _tovRankingLinkage };
@@ -1912,7 +1996,7 @@ export async function generateConcepts(approvedTov: string, inputs: AdInputs, re
         console.log(`🎨 CREATIVE MODE AUDIT [generateConcepts]: modes=[${_selectedModes.join(',')}] tab=${_comboCheck.resolvedTab || 'none'} valid=${_comboCheck.valid}${_comboCheck.errors.length ? ' errors: ' + _comboCheck.errors.join('; ') : ''}`);
         if (!_comboCheck.valid) {
             console.error(`🛑 CREATIVE MODE REJECTED in generateConcepts: ${_comboCheck.errors.join('; ')}`);
-            throw new Error(`Invalid creative mode combination: ${_comboCheck.errors.join('; ')}`);
+            throw new GenerationError(`Invalid creative mode combination: ${_comboCheck.errors.join('; ')}`, "combination_invalid");
         }
 
         // ═══ REFERENCE IMAGE ANALYSIS (optional, non-blocking) ═══
@@ -3254,7 +3338,7 @@ Selected modes: [${modes.join(' + ')}]
                             const stillMissing = finalCheck.missingModes.filter(m => STRICT_PAIRS_SECONDARY.includes(m));
                             if (stillMissing.length > 0) {
                                 console.error(`🛑 STRICT PAIR FAIL-CLOSED: Blueprint still underrepresents [${stillMissing.join(', ')}] after repair. Modes=[${selectedModes.join(',')}]. Throwing.`);
-                                throw new Error(`Blueprint failed strict pair validation — secondary mode(s) [${stillMissing.join(', ')}] underrepresented after repair. User should retry.`);
+                                throw new GenerationError(`Blueprint failed strict pair validation — secondary mode(s) [${stillMissing.join(', ')}] underrepresented after repair. User should retry.`, "slot_repair_failed");
                             }
                         }
                     } catch (e) {
@@ -3265,7 +3349,7 @@ Selected modes: [${modes.join(' + ')}]
                         console.warn(`⚠️ Blueprint mode repair API failed: ${e}`);
                         if (isStrictPair && !repairSucceeded) {
                             console.error(`🛑 STRICT PAIR FAIL-CLOSED (repair API failed): Cannot guarantee [${modeContribCheck.missingModes.join(', ')}] are represented. Modes=[${selectedModes.join(',')}]. Throwing.`);
-                            throw new Error(`Blueprint failed strict pair validation — repair API failed and secondary mode(s) [${modeContribCheck.missingModes.join(', ')}] cannot be guaranteed. User should retry.`);
+                            throw new GenerationError(`Blueprint failed strict pair validation — repair API failed and secondary mode(s) [${modeContribCheck.missingModes.join(', ')}] cannot be guaranteed. User should retry.`, "slot_repair_failed");
                         }
                     }
                 }
@@ -3299,7 +3383,7 @@ export async function generateBuildPlan(conceptRaw: string, selectedTov: string,
     console.log(`🎨 CREATIVE MODE AUDIT [generateBuildPlan]: modes=[${_bpModes.join(',')}] tab=${_bpCheck.resolvedTab || 'none'} valid=${_bpCheck.valid}${_bpCheck.errors.length ? ' errors: ' + _bpCheck.errors.join('; ') : ''}`);
     if (!_bpCheck.valid) {
         console.error(`🛑 CREATIVE MODE REJECTED in generateBuildPlan: ${_bpCheck.errors.join('; ')}`);
-        throw new Error(`Invalid creative mode combination: ${_bpCheck.errors.join('; ')}`);
+        throw new GenerationError(`Invalid creative mode combination: ${_bpCheck.errors.join('; ')}`, "combination_invalid");
     }
 
     let _bpRefInfluence: ReferenceInfluence | null = null;
@@ -3549,7 +3633,7 @@ ${buildStructuredBuildPlanReturnBlock(buildPlanContract, ownershipMap)}
         } catch (parseError: any) {
             const malformedJson = (rawResponseText || '').trim();
             if (!malformedJson) {
-                throw new Error('Structured build plan returned empty JSON response.');
+                throw new GenerationError('Structured build plan returned empty JSON response.', "model_error");
             }
 
             const repairResponse = await retry(() => callGemini({
@@ -3576,7 +3660,7 @@ ${malformedJson.slice(0, 24000)}`
             try {
                 return parseStructuredBuildPlanResponse(repairResponse.text || '{}', ownershipMap);
             } catch (repairError: any) {
-                throw new Error(`Structured build plan JSON parse failed after repair. Initial error: ${parseError?.message || parseError}. Repair error: ${repairError?.message || repairError}`);
+                throw new GenerationError(`Structured build plan JSON parse failed after repair. Initial error: ${parseError?.message || parseError}. Repair error: ${repairError?.message || repairError}`, "model_error");
             }
         }
     };
@@ -3611,12 +3695,12 @@ ${JSON.stringify(machinePlan)}`;
         machinePlan = await requestStructuredPlan(repairPrompt);
         structuredValidation = validateStructuredBuildPlan(machinePlan, buildPlanContract, ownershipMap);
         if (!structuredValidation.contractCheck.passed) {
-            throw new Error(`Build plan failed structured contract validation: ${structuredValidation.contractCheck.reasons.join(' | ')}`);
+            throw new GenerationError(`Build plan failed structured contract validation: ${structuredValidation.contractCheck.reasons.join(' | ')}`, "validation_reject");
         }
     }
 
     if (!machinePlan.blueprint || machinePlan.blueprint.length < 80) {
-        throw new Error('Build plan blueprint was empty or too short.');
+        throw new GenerationError('Build plan blueprint was empty or too short.', "prompt_malformed");
     }
 
     // ═══ COPY FIDELITY VALIDATION WITH RETRY ═══
@@ -3648,7 +3732,7 @@ ${JSON.stringify(machinePlan)}`;
             console.warn(`⚠️ Copy fidelity ${fidelityOk ? 'passed' : 'failed'}, contract ${contractOk ? 'passed' : 'failed'} (attempt ${attempt}/${MAX_COPY_FIDELITY_ATTEMPTS}) — rebuilding plan...`);
             machinePlan = await requestStructuredPlan(prompt);
             if (!machinePlan.blueprint || machinePlan.blueprint.length < 80) {
-                throw new Error('Build plan blueprint was empty or too short on copy fidelity retry.');
+                throw new GenerationError('Build plan blueprint was empty or too short on copy fidelity retry.', "prompt_malformed");
             }
             structuredValidation = validateStructuredBuildPlan(machinePlan, buildPlanContract, ownershipMap);
         } else {
@@ -3799,7 +3883,7 @@ export async function generateFinalAd(
     base64ToEdit?: string,
     styleReference?: string,
     textOverride?: TextOverride
-): Promise<{ image: string } | { image: null; errorCode: string; debug?: FinalAdDebugInfo }> {
+): Promise<{ image: string; failureClass?: "numeric_hallucination"; costEstimate?: CostEstimate } | { image: null; errorCode: string; failureClass?: FailureClass; debug?: FinalAdDebugInfo }> {
     // ═══ RETARGETING CONTEXT (normalized) ═══
     const _renderRtCtx = buildNormalizedRetargetingContext(inputs as any);
     const _renderEffectiveAngle = _renderRtCtx.isRetargeting ? undefined : inputs.coldHookAngle;
@@ -3814,7 +3898,7 @@ export async function generateFinalAd(
         console.log(`🎨 CREATIVE MODE AUDIT [generateFinalAd]: modes=[${_renderModes.join(',')}] tab=${_renderCheck.resolvedTab || 'none'} valid=${_renderCheck.valid}${_renderCheck.errors.length ? ' errors: ' + _renderCheck.errors.join('; ') : ''}`);
         if (!_renderCheck.valid) {
             console.error(`🛑 CREATIVE MODE REJECTED in generateFinalAd: ${_renderCheck.errors.join('; ')}`);
-            return { image: null, errorCode: 'validation_failed', debug: { validator: 'creative_mode', reasons: _renderCheck.errors } };
+            return { image: null, errorCode: 'validation_failed', failureClass: 'combination_invalid' as const, debug: { validator: 'creative_mode', reasons: _renderCheck.errors } };
         }
         // Log validity criteria for active modes (consumed by zone gate and prompt system)
         for (const mId of _renderModes) {
@@ -3973,7 +4057,7 @@ If the uploaded photo shows a person in a blue suit, you must NOT default to a b
                 console.warn(`⚠️ RENDER GATE: quickRejectCheck flagged for minimal (non-blocking): ${gateQuickCheck.reason}`);
             } else {
                 console.error(`🛑 RENDER GATE HARD REJECT: ${gateQuickCheck.reason}. Aborting render.`);
-                return { image: null, errorCode: 'quality_rejected', debug: buildQualityRejectedDebug('quick_reject', undefined, [gateQuickCheck.reason || 'Forbidden build-plan element']) };
+                return { image: null, errorCode: 'quality_rejected', failureClass: 'validation_reject' as const, debug: buildQualityRejectedDebug('quick_reject', undefined, [gateQuickCheck.reason || 'Forbidden build-plan element']) };
             }
         }
 
@@ -4040,21 +4124,21 @@ ${JSON.stringify(parsedBuildPlan.machinePlan || {})}`;
                     console.log(`✅ RENDER SLOT GATE: Build plan regenerated (${repairedMachinePlan.blueprint.length} chars)`);
                 } else {
                     console.error(`🛑 RENDER SLOT GATE: Repair still fails slot check: ${repairedSlotValidation.contractCheck.reasons.join(' | ')}`);
-                    return { image: null, errorCode: 'quality_rejected', debug: buildQualityRejectedDebug('slot_map', repairedSlotValidation.slotMap) };
+                    return { image: null, errorCode: 'quality_rejected', failureClass: 'validation_reject' as const, debug: buildQualityRejectedDebug('slot_map', repairedSlotValidation.slotMap) };
                 }
             } catch (repairErr) {
                 console.error(`🛑 RENDER SLOT GATE: Repair call failed. Aborting render.`, repairErr);
-                return { image: null, errorCode: 'quality_rejected', debug: buildQualityRejectedDebug('slot_map', gateSlotMap, ['Repair call failed']) };
+                return { image: null, errorCode: 'quality_rejected', failureClass: 'validation_reject' as const, debug: buildQualityRejectedDebug('slot_map', gateSlotMap, ['Repair call failed']) };
             }
         } else if (!gateSlotValidation.contractCheck.passed && hasSecondaryZones && !base64ToEdit && !editInstruction) {
-            return { image: null, errorCode: 'quality_rejected', debug: buildQualityRejectedDebug('slot_map', gateSlotMap) };
+            return { image: null, errorCode: 'quality_rejected', failureClass: 'validation_reject' as const, debug: buildQualityRejectedDebug('slot_map', gateSlotMap) };
         }
     }
     // ═══ END HARD RENDER GATE ═══
 
     if (containsUnresolvedCommercialPlaceholders(gatedBlueprint)) {
         console.error('🛑 RENDER GATE HARD REJECT: unresolved commercial placeholder text detected in build plan.');
-        return { image: null, errorCode: 'quality_rejected', debug: buildQualityRejectedDebug('placeholder_leak', undefined, ['Build plan contains unresolved commercial placeholder text']) };
+        return { image: null, errorCode: 'quality_rejected', failureClass: 'validation_reject' as const, debug: buildQualityRejectedDebug('placeholder_leak', undefined, ['Build plan contains unresolved commercial placeholder text']) };
     }
 
     const preOverlayFacts = extractOfferFacts(inputs);
@@ -5198,6 +5282,7 @@ ${benefitText ? `- BENEFIT goes below CTA ONLY: "${benefitText}"` : ''}
                         const authorizedSet = new Set(allAuthorized.map(normalize));
 
                         let numericPass = false;
+                        let _numericHallucination = false;
 
                         for (let auditAttempt = 0; auditAttempt < 2; auditAttempt++) {
                             try {
@@ -5316,6 +5401,7 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                     // Second audit still found unauthorized numbers — warn but continue
                                     console.warn(`⚠️ Numeric fidelity: unauthorized numbers persist after retry [${unauthorized.join(', ')}]. Continuing with best-effort image.`);
                                     numericPass = true;
+                                    _numericHallucination = true;
                                 }
                             } catch (auditErr) {
                                 // Audit call itself failed — downgrade to warning, return the image
@@ -5328,6 +5414,7 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                         }
 
                         if (numericPass) {
+                            const _nhResult = _numericHallucination ? { failureClass: 'numeric_hallucination' as const, costEstimate: getCostEstimate() } : {};
                             // ═══ DETERMINISTIC OVERLAY: Composite exact numbers onto the image ═══
                             // For strict-fidelity templates, overlay is MANDATORY — fail if it can't run.
                             if (!base64ToEdit && !styleReference) {
@@ -5341,14 +5428,14 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                 if (overlayContract.overlaySlots.length > 0) {
                                     if (!isOverlayAvailable()) {
                                         console.warn('⚠️ OVERLAY: Sharp not installed — skipping overlay, returning image without price compositing.');
-                                        return { image: currentImage };
+                                        return { image: currentImage, ..._nhResult };
                                     }
 
                                     // Pre-check: extract facts to determine if overlay is structurally possible
                                     const preFacts = extractOfferFacts(inputs);
                                     if (!preFacts) {
                                         console.warn('⚠️ OVERLAY: facts extraction returned null — skipping overlay, returning image without price compositing.');
-                                        return { image: currentImage };
+                                        return { image: currentImage, ..._nhResult };
                                     }
 
                                     const ar = overlayContract.aspectRatioRules;
@@ -5365,7 +5452,7 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                         );
                                         if (!overlaid) {
                                             console.warn('⚠️ OVERLAY: compositor returned null — returning image without price compositing.');
-                                            return { image: currentImage };
+                                            return { image: currentImage, ..._nhResult };
                                         }
 
                                         // ═══ POST-OVERLAY VERIFICATION ═══
@@ -5420,17 +5507,17 @@ If no monetary numbers are visible, return: []` }
                                         }
 
                                         console.log('✅ Deterministic offer overlay applied and verified.');
-                                        return { image: overlaid };
+                                        return { image: overlaid, ..._nhResult };
                                     } catch (overlayErr) {
                                         console.warn('⚠️ Overlay compositing failed (non-blocking). Returning image without overlay.', overlayErr);
-                                        return { image: currentImage };
+                                        return { image: currentImage, ..._nhResult };
                                     }
                                 }
                             }
-                            return { image: currentImage };
+                            return { image: currentImage, ..._nhResult };
                         }
                         // Safety net — should not reach here, but return image if we have one
-                        return { image: currentImage || imageBase64 };
+                        return { image: currentImage || imageBase64, ...(_numericHallucination ? { failureClass: 'numeric_hallucination' as const, costEstimate: getCostEstimate() } : {}) };
                     }
 
                     // ═══ DETERMINISTIC OVERLAY for non-strict modes that still have overlay slots ═══
@@ -5470,7 +5557,7 @@ If no monetary numbers are visible, return: []` }
             }
         }
     }
-    return { image: null, errorCode: 'safety_blocked' };
+    return { image: null, errorCode: 'safety_blocked', failureClass: 'model_error' as const };
 }
 
 // ═══ DESIGN CRITIC LOOP — Internal quality gate before user sees the image ═══
