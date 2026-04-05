@@ -34,8 +34,8 @@ Every backend path that changes a user's plan or credits (payment webhook, cance
 **Acceptance Scenarios**:
 
 1. **Given** a new payment webhook fires for a Pro monthly plan, **When** processing completes, **Then** the user document contains a `billingState` field with plan 'pro', credits 2000, isTrial false, billingStatus 'active', and all other required fields populated.
-2. **Given** a cancellation webhook fires, **When** processing completes, **Then** `billingState` reflects plan 'none', credits 0, billingStatus 'cancelled'.
-3. **Given** the monthly credit reset runs, **When** a paid user's credits are reset, **Then** `billingState.credits` matches the plan's monthly allocation and `billingState.nextResetDate` is updated.
+2. **Given** a user confirms cancellation (initial cancel-at-period-end request), **When** processing completes, **Then** `billingState` reflects billingStatus 'cancelling' with `cancelAt` set to the period end date — plan, credits, and access remain unchanged. **Given** the user's paid period has ended and the final post-period-end cancellation webhook fires, **When** processing completes, **Then** `billingState` transitions to billingStatus 'cancelled', plan 'none', credits 0, and `nextResetDate` null.
+3. **Given** the monthly credit reset runs, **When** a paid user has 350 credits remaining, **Then** `billingState.credits` is set to the plan's monthly allocation (credits are reset to the plan allotment, not accumulated) and `billingState.nextResetDate` is updated.
 4. **Given** a top-up checkout completes, **When** the Stripe webhook fires, **Then** `billingState.credits` increases by the top-up amount.
 
 ---
@@ -166,8 +166,8 @@ When a user's payment fails, the Billing page displays a prominent "Payment fail
 
 ### Functional Requirements
 
-- **FR-001**: System MUST maintain a single derived `billingState` field on each user document containing: plan, isTrial, credits, creditsPerMonth, billingStatus, nextResetDate, stripeCustomerId, canUpgrade, canTopUp, isTeamMember, and teamOwnerUid.
-- **FR-002**: System MUST write `billingState` on every path that changes plan or credits: payment webhook, cancellation webhook, monthly reset, top-up completion, payment failure, payment recovery, and subscription reactivation.
+- **FR-001**: System MUST maintain a single derived `billingState` field on each user document containing: plan, isTrial, credits, creditsPerMonth, billingStatus, nextResetDate, cancelAt, gracePeriodEndsAt, stripeCustomerId, canUpgrade, canTopUp, isTeamMember, and teamOwnerUid. The `cancelAt` field holds the period end date when a subscription is set to cancel at period end (null when not pending cancellation).
+- **FR-002**: System MUST write `billingState` on every path that changes plan or credits: payment webhook, cancellation webhook, monthly reset, top-up completion, payment failure, payment recovery, and subscription reactivation. Monthly credit reset MUST overwrite the user's credits to the plan's monthly allocation (not additive). Top-up credits purchased mid-cycle are consumed from the current balance and do not carry over past the next reset.
 - **FR-003**: System MUST provide a real-time frontend hook that subscribes to `billingState` changes via a live database listener, replacing scattered user document reads.
 - **FR-004**: System MUST verify plan entitlement at credit-deduction time by checking whether the requested action is allowed under the user's current plan before deducting credits.
 - **FR-005**: System MUST reject credit-consuming actions with a clear error code (`plan_downgraded`) when the user's current plan does not permit the action, even if the frontend still displays the feature.
@@ -178,12 +178,12 @@ When a user's payment fails, the Billing page displays a prominent "Payment fail
 - **FR-010**: System MUST implement a two-step cancellation flow: first step confirms intent with the period end date displayed; second step collects a cancellation reason (dropdown) and optional free-text feedback before final submission. Subscription is set to cancel at period end (not immediately), reason/feedback are stored for analytics, and the UI reflects the pending cancellation with the access end date.
 - **FR-011**: System MUST display a low-credits warning banner with a top-up call-to-action when credits drop below 20% of the plan's monthly allocation.
 - **FR-012**: System MUST allow a cancelled user to reactivate their subscription before the billing period ends, restoring active status and clearing the cancellation.
-- **FR-013**: System MUST show team members a read-only view of the owner's billing state, labeled appropriately, and prevent team members from modifying billing settings.
-- **FR-014**: System MUST display a "Payment failed" alert on the Billing page when billing status is `past_due`, including an "Update payment method" button that opens the subscription management portal and a countdown showing the grace period expiry date.
+- **FR-013**: System MUST detect when the current user is a team member (`isTeamMember: true`) and prevent them from modifying billing settings (upgrade, top-up, cancel, manage subscription). Full team member billing UI (read-only owner credit display, team labeling) will be addressed in Phase 9 (task 9.10).
+- **FR-014**: System MUST display a "Payment failed" alert on the Billing page when billing status is `past_due`, including an "Update payment method" button that opens the subscription management portal and a countdown showing the grace period expiry date. The grace period duration and expiry date are read from the Stripe subscription data (Stripe-managed dunning) — the app does not define or override the grace period length.
 
 ### Key Entities
 
-- **Billing State**: A derived, denormalized snapshot of a user's billing context (plan, credits, status, capabilities) written by backend functions and consumed by the frontend in real time. Acts as the single source of truth for all plan-gating and billing UI decisions.
+- **Billing State**: A derived, denormalized snapshot of a user's billing context (plan, credits, status, capabilities) written by backend functions and consumed by the frontend in real time. Acts as the single source of truth for all plan-gating and billing UI decisions. The `billingStatus` field uses exactly five states: `active` (paid and current), `trialing` (on free trial with credits remaining), `past_due` (payment failed, in grace period), `cancelling` (user cancelled but access continues until period end), `cancelled` (access fully revoked, credits set to 0).
 - **Plan**: One of four subscription tiers (Starter, Creator, Pro, Scaling) or special states (trial, none/cancelled). Each plan defines credit allocation, feature access, and team limits.
 - **Top-Up Pack**: A one-time credit purchase (100, 300, or 800 credits) that adds to the user's existing balance without changing their plan.
 - **Cancellation Record**: A log of the user's cancellation event including reason, feedback, plan at time of cancellation, and timestamp — used for analytics and retention workflows.
@@ -203,6 +203,12 @@ When a user's payment fails, the Billing page displays a prominent "Payment fail
 
 ## Clarifications
 
+### Session 2026-04-04
+
+- Q: Do unused top-up credits survive the monthly credit reset, or are all credits reset to the plan allocation? → A: ~~Credits accumulate~~ **Revised**: Monthly reset overwrites credits to the plan allocation. Top-up credits do not carry over past the next reset.
+- Q: What are the complete valid `billingStatus` values? → A: Five states: `active`, `trialing`, `past_due`, `cancelling` (access until period end), `cancelled` (access revoked, credits 0).
+- Q: Is the payment failure grace period managed by Stripe or the app? → A: Stripe-managed — read grace period end date from Stripe subscription data; no app-level configuration or override.
+
 ### Session 2026-04-03
 
 - Q: Should the Billing page surface the payment failure (past_due) state to the user? → A: Yes — show a "Payment failed" alert with an "Update payment method" button and a grace period countdown.
@@ -217,3 +223,4 @@ When a user's payment fails, the Billing page displays a prominent "Payment fail
 - Team billing follows the existing shared-pool model: team members draw from the owner's credits, and billing management is restricted to the team owner.
 - Reactivation is only available while the subscription is in the "cancelled but access continues" state (before period end). After the period ends and the final cancellation webhook fires, the user must re-subscribe through the normal purchase flow.
 - The `pending_plans` collection mechanism for pre-signup users will continue to work as-is and does not need changes in this phase.
+- Phase 9 (task 9.14) will extend the `billingState` shape with additional team fields (`teamMemberCount`, `teamOpenInvites`, `maxTeamMembers`, `isTeamOwner`, `teamOwnerName`). Phase 8 includes only the minimal team-awareness fields (`isTeamMember`, `teamOwnerUid`) needed for billing action gating.
