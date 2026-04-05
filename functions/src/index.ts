@@ -3421,6 +3421,8 @@ export const serverGenerateFinalAd = onCall({
         const comboCheck = validateCombination(inputs?.offerCreativeMode || ['standard_hero'], inputs?.coldHookAngle);
         if (!comboCheck.valid) {
             console.error(`🛑 Backend combo validation failed: ${comboCheck.errors.join('; ')}`);
+            const ce = getCostEstimate();
+            await writeFailureRecord(request.auth.uid, 'combination_invalid', ce, inputs, `combination_invalid: ${comboCheck.errors.join('; ')}`, "render");
             throw new HttpsError("invalid-argument", `Invalid creative mode combination: ${comboCheck.errors.join('; ')}`);
         }
     }
@@ -3615,13 +3617,14 @@ Rules:
             }
         }
         return { success: false, imageBase64: null, errorCode: 'no_image_returned' };
-    } catch (error: any) {
-        console.error("editRegion error:", error);
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error("editRegion error:", msg, error);
         const fc = classifyError(error);
         const ce = getCostEstimate();
-        await writeFailureRecord(request.auth.uid, fc, ce, request.data, error.message, "editRegion");
+        await writeFailureRecord(request.auth.uid, fc, ce, request.data, msg, "editRegion");
         if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "editRegion");
-        throw new HttpsError("internal", "Region edit failed: " + error.message);
+        throw new HttpsError("internal", "Region edit failed: " + msg);
     }
 });
 
@@ -3659,7 +3662,7 @@ export const serverGenerateCarouselAngles = onCall({
         const fc = classifyError(error);
         const ce = getCostEstimate();
         await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "carousel_angles");
-        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateCarouselCopies");
+        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateCarouselCopies", slideCount || 1);
         throw new HttpsError("internal", "Carousel angle generation failed: " + error.message);
     }
 });
@@ -3690,7 +3693,7 @@ export const serverGenerateCarouselSlideCopies = onCall({
         const fc = classifyError(error);
         const ce = getCostEstimate();
         await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "carousel_copies");
-        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateCarouselCopies");
+        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateCarouselCopies", slideCount || 1);
         throw new HttpsError("internal", "Carousel copy generation failed: " + error.message);
     }
 });
@@ -3730,7 +3733,7 @@ export const serverGenerateTestimonialCarousel = onCall({
         const fc = classifyError(error);
         const ce = getCostEstimate();
         await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "testimonial");
-        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateCarouselCopies");
+        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateCarouselCopies", maxSlides || 1);
         throw new HttpsError("internal", "Testimonial carousel generation failed: " + error.message);
     }
 });

@@ -1,3 +1,4 @@
+// functions/src/failureClassification.test.ts — tests for classifyError and buildCostEstimate
 import assert from "node:assert/strict";
 import { classifyError, buildCostEstimate } from "./generators.js";
 import { GenerationError } from "./types.js";
@@ -60,11 +61,25 @@ function testClassifySlotRepairFailed() {
 }
 
 function testClassifyCreditInsufficient() {
-    const err1 = new Error("resource-exhausted: not enough credits");
-    assert.equal(classifyError(err1), "credit_insufficient");
-    const err2 = new Error("Insufficient credits for this action");
-    assert.equal(classifyError(err2), "credit_insufficient");
-    console.log("✅ classifyError: credit_insufficient from resource/credit errors");
+    const err = new Error("Insufficient credits for this action");
+    assert.equal(classifyError(err), "credit_insufficient");
+    console.log("✅ classifyError: credit_insufficient from insufficient credits message");
+}
+
+function testClassifyProviderQuotaIsModelError() {
+    // resource-exhausted is a provider quota issue, not a user billing issue
+    const err1 = new Error("resource-exhausted: rate limit exceeded");
+    assert.equal(classifyError(err1), "model_error");
+    const err2 = new Error("Quota exceeded for model");
+    assert.equal(classifyError(err2), "model_error");
+    console.log("✅ classifyError: resource-exhausted/quota maps to model_error (not credit_insufficient)");
+}
+
+function testClassifyNumericHallucination() {
+    // Via GenerationError (the primary path in generators.ts)
+    const err1 = new GenerationError("numeric hallucination detected", "numeric_hallucination");
+    assert.equal(classifyError(err1), "numeric_hallucination");
+    console.log("✅ classifyError: numeric_hallucination via GenerationError");
 }
 
 function testClassifyUnknownFallsBackToModelError() {
@@ -116,6 +131,17 @@ function testBuildCostEstimatePartialMetadata() {
     console.log("✅ buildCostEstimate: handles partial usageMetadata (missing candidatesTokenCount)");
 }
 
+function testBuildCostEstimateTotalTokenCountFallback() {
+    // When individual counts are 0 but totalTokenCount is available
+    const ce = buildCostEstimate("gemini-3.1-pro-preview", 1, {
+        promptTokenCount: 0,
+        candidatesTokenCount: 0,
+        totalTokenCount: 3500,
+    });
+    assert.equal(ce.estimatedTokens, 3500);
+    console.log("✅ buildCostEstimate: falls back to totalTokenCount when individual counts are 0");
+}
+
 // ═══ Run all tests ═════════════════════════════════════════════════════════
 
 testClassifyGenerationError();
@@ -127,10 +153,13 @@ testClassifySafetyBlocked();
 testClassifyValidationReject();
 testClassifySlotRepairFailed();
 testClassifyCreditInsufficient();
+testClassifyProviderQuotaIsModelError();
+testClassifyNumericHallucination();
 testClassifyUnknownFallsBackToModelError();
 testBuildCostEstimateWithUsageMetadata();
 testBuildCostEstimateWithNullMetadata();
 testBuildCostEstimatePreModelFailure();
 testBuildCostEstimatePartialMetadata();
+testBuildCostEstimateTotalTokenCountFallback();
 
-console.log("\n🎉 All failure classification tests passed (14/14)");
+console.log("\n🎉 All failure classification tests passed (17/17)");

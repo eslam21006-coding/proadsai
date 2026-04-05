@@ -497,12 +497,22 @@ export function resetCostTracker(): void {
     _costTracker = { modelTier: null, retryCount: 0, totalPromptTokens: 0, totalCandidateTokens: 0 };
 }
 
-export function accumulateCost(response: any): void {
+interface ResponseUsage {
+    modelVersion?: string;
+    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } | null;
+}
+
+export function accumulateCost(response: ResponseUsage): void {
     if (response?.modelVersion) _costTracker.modelTier = response.modelVersion;
     const usage = response?.usageMetadata;
     if (usage) {
-        _costTracker.totalPromptTokens += (usage.promptTokenCount || 0);
-        _costTracker.totalCandidateTokens += (usage.candidatesTokenCount || 0);
+        const prompt = usage.promptTokenCount || 0;
+        const candidate = usage.candidatesTokenCount || 0;
+        const computed = prompt + candidate;
+        // Use totalTokenCount from API if individual fields are zero but total is available
+        const total = computed > 0 ? computed : (usage.totalTokenCount || 0);
+        _costTracker.totalPromptTokens += prompt;
+        _costTracker.totalCandidateTokens += (total - prompt);
     }
 }
 
@@ -531,7 +541,8 @@ export function classifyError(error: unknown, errorCode?: string): FailureClass 
         if (msg.includes("json parse failed after repair")) return "model_error";
         if (msg.includes("structured contract validation")) return "validation_reject";
         if (msg.includes("strict pair validation")) return "slot_repair_failed";
-        if (msg.includes("resource-exhausted") || msg.includes("insufficient credits")) return "credit_insufficient";
+        if (msg.includes("insufficient credits")) return "credit_insufficient";
+        if (msg.includes("resource-exhausted") || msg.includes("quota")) return "model_error";
     }
 
     return "model_error";
@@ -542,9 +553,11 @@ export function buildCostEstimate(
     retryCount: number,
     usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } | null
 ): CostEstimate {
-    const tokens = usageMetadata
-        ? (usageMetadata.promptTokenCount || 0) + (usageMetadata.candidatesTokenCount || 0)
-        : 0;
+    if (!usageMetadata) return { modelTier, retryCount, estimatedTokens: 0 };
+    const prompt = usageMetadata.promptTokenCount || 0;
+    const candidate = usageMetadata.candidatesTokenCount || 0;
+    const computed = prompt + candidate;
+    const tokens = computed > 0 ? computed : (usageMetadata.totalTokenCount || 0);
     return { modelTier, retryCount, estimatedTokens: tokens };
 }
 
@@ -3732,6 +3745,11 @@ ${JSON.stringify(machinePlan)}`;
             console.warn(`⚠️ Copy fidelity ${fidelityOk ? 'passed' : 'failed'}, contract ${contractOk ? 'passed' : 'failed'} (attempt ${attempt}/${MAX_COPY_FIDELITY_ATTEMPTS}) — rebuilding plan...`);
             machinePlan = await requestStructuredPlan(prompt);
             if (!machinePlan.blueprint || machinePlan.blueprint.length < 80) {
+                if (bestMachinePlan.blueprint && bestMachinePlan.blueprint.length >= 80) {
+                    console.warn('⚠️ Copy fidelity retry produced empty/short blueprint — falling back to bestMachinePlan');
+                    machinePlan = bestMachinePlan;
+                    break;
+                }
                 throw new GenerationError('Build plan blueprint was empty or too short on copy fidelity retry.', "prompt_malformed");
             }
             structuredValidation = validateStructuredBuildPlan(machinePlan, buildPlanContract, ownershipMap);
@@ -5388,11 +5406,13 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                         }
                                         if (!eraseSuccess) {
                                             console.warn(`⚠️ Numeric erase re-render failed to produce image (non-blocking). Using pre-erase image.`);
+                                            _numericHallucination = true;
                                             numericPass = true;
                                             break;
                                         }
                                     } catch (eraseErr) {
                                         console.warn(`⚠️ Numeric erase re-render call failed (non-blocking). Using original image.`, eraseErr);
+                                        _numericHallucination = true;
                                         numericPass = true;
                                         break;
                                     }

@@ -66,6 +66,8 @@ Operator queries supported:
 |---|---|---|
 | All failures of a type | `failureClass == <value>` | `timestamp DESC` |
 | Failures in date range | `failureClass == <value>`, `timestamp >= start`, `timestamp <= end` | `timestamp DESC` |
-| All failures for a user | `userId == <uid>`, `failureClass != null` | `timestamp DESC` |
+| All failures for a user | `userId == <uid>`, `failureClass != null` | `failureClass ASC`, `timestamp DESC` |
 
-Requires composite index: `(failureClass ASC, timestamp DESC)`
+Requires composite indexes:
+- `(failureClass ASC, timestamp DESC)` — for type and date-range queries
+- `(userId ASC, failureClass ASC, timestamp DESC)` — for user-scoped queries (Firestore requires inequality field in orderBy)
