@@ -27,13 +27,13 @@ When a generation fails for any reason, the system categorizes the failure into 
 
 ---
 
-### User Story 2 - Record Cost Estimates on Failures (Priority: P2)
+### User Story 2 - Record Cost Estimates on All Generations (Priority: P2)
 
-When a generation fails, the system records a cost estimate alongside the failure class, capturing the model tier used, the number of retries attempted, and the estimated tokens consumed. This enables the team to understand the financial impact of each failure type.
+When a generation completes (success or failure), the system records a cost estimate capturing the model tier used, the number of retries attempted, and the estimated tokens consumed. This enables the team to understand the financial impact of each failure type and the total cost of successful generations.
 
-**Why this priority**: Classification alone tells you *what* failed; cost estimates tell you *how much it cost*. Together they enable cost-per-failure-type analysis.
+**Why this priority**: Classification alone tells you *what* failed; cost estimates tell you *how much it cost*. Together they enable cost-per-failure-type analysis, and tracking successful generation costs enables overall spend visibility.
 
-**Independent Test**: Trigger a failure and verify the generation record includes a cost estimate with model tier, retry count, and estimated token usage.
+**Independent Test**: Trigger a successful generation and a failed generation, and verify both generation records include a cost estimate with model tier, retry count, and estimated token usage.
 
 **Acceptance Scenarios**:
 
@@ -104,7 +104,7 @@ An operator can query generation records filtered by failure class to analyze fa
 
 - Q: Should `costEstimate` be recorded on successful generations too? → A: Yes, record on ALL generations (success and failure). Additionally, refund credits to the user on failed generations.
 - Q: Should historical failed generations be backfilled with failure classes? → A: No, forward-only. Classify new failures only; leave old records as-is.
-- Q: Should credit refunds apply to all failure types or only post-deduction failures? → A: Refund only for failures that occur after credits were already deducted (e.g., model_error, validation_reject, slot_repair_failed). Pre-deduction failures (credit_insufficient, combination_invalid) have nothing to refund.
+- Q: Should credit refunds apply to all failure types or only post-deduction failures? → A: Refund only for hard failures that occur after credits were already deducted (model_error, validation_reject, slot_repair_failed). Pre-deduction failures (credit_insufficient, combination_invalid, prompt_malformed) have nothing to refund.
 
 ### Session 2026-04-04
 

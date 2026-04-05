@@ -84,7 +84,7 @@ Generation Request
 - `costEstimate.retryCount` MUST be >= 0
 - `costEstimate.estimatedTokens` MUST be >= 0
 - If `failureClass` is not null, `costEstimate` MUST also be present
-- If `failureClass` is null (success), `costEstimate` SHOULD be present (for new records) but MAY be null (for historical records)
+- If `failureClass` is null (success), `costEstimate` MUST be present for new records (per FR-003: "every generation") but MAY be null for historical records created before this feature
 
 ## Data Volume Assumptions
 
