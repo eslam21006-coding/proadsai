@@ -9,7 +9,7 @@
 
 ### Session 2026-04-04
 
-- Q: What is the shape of the `captionQuality` field persisted on the generation document? → A: Per-check results array — `{ passed: bool, checks: [{ rule: string, passed: bool, detail: string }], repairedAt?: number, locale: string }`.
+- Q: What is the shape of the `captionQuality` field persisted on the generation document? → A: Aggregate result — `{ passed: bool, captionChecks: [{ rule, passed, detail }], languageChecks: [{ rule, passed, detail }], repairedAt?: number, locale: string }`. `captionChecks` from general caption validation, `languageChecks` from per-language quality rules.
 - Q: What is the LTR bleed threshold for lighter Arabic dialects? → A: All 6 Arabic dialects enforce RTL and the same 70% Arabic Unicode minimum (FR-003 applies universally). English enforces LTR. No separate LTR bleed threshold — FR-003 is the single rule for all Arabic.
 - Q: How is "word count" defined for Arabic? → A: Whitespace-separated tokens (simple split on spaces). Clitics attached to words count as part of that word, not separately.
 
@@ -150,7 +150,7 @@ A developer adds or modifies language quality rules. For every supported languag
 ### Key Entities
 
 - **Language Quality Contract**: A set of validation rules specific to one language, including word count limits, character ratio requirements, dialect markers, register rules, and language-specific checks. Each of the 7 launch languages has exactly one contract.
-- **Caption Validation Result**: The outcome of running a language quality contract against a generated caption. Shape: `{ passed: bool, checks: [{ rule: string, passed: bool, detail: string }], repairedAt?: number, locale: string }`. The `checks` array contains one entry per rule evaluated, each with its own pass/fail and detail message. `repairedAt` is set only if a repair retry was attempted. Persisted as the `captionQuality` field on the generation's resolution trace.
+- **Caption Validation Result**: The outcome of running both caption validation and language quality validation against a generated caption. Shape: `{ passed: bool, captionChecks: [{ rule: string, passed: bool, detail: string }], languageChecks: [{ rule: string, passed: bool, detail: string }], repairedAt?: number, locale: string }`. `captionChecks` contains entries from general caption validation (CTA presence, hook angle, mode alignment, etc.) and `languageChecks` contains entries from per-language quality rules (word count, Arabic ratio, dialect markers, etc.). `passed` is true only when both sets pass. `repairedAt` is set only if a repair retry was attempted and succeeded. Persisted as the `captionQuality` field on the generation document.
 - **Repair Prompt**: A structured instruction generated when validation fails, describing the exact violations so the AI can regenerate a compliant caption.
 
 ## Success Criteria *(mandatory)*
