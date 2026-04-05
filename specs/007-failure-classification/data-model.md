@@ -55,7 +55,7 @@ Two new top-level fields added:
 
 ## State Transitions
 
-```
+```text
 Generation Request
   │
   ├─ Pre-deduction check ── FAIL ──> failureClass = credit_insufficient | combination_invalid | prompt_malformed

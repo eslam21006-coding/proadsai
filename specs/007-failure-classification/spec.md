@@ -40,6 +40,7 @@ When a generation fails, the system records a cost estimate alongside the failur
 1. **Given** a generation that fails after one attempt, **When** the failure is recorded, **Then** the cost estimate shows `retryCount` of 0 and the correct `modelTier` and `estimatedTokens`.
 2. **Given** a generation that fails after multiple retries, **When** the failure is recorded, **Then** the cost estimate reflects the cumulative retry count and total estimated tokens across all attempts.
 3. **Given** a generation that fails before any model call (e.g., credit_insufficient), **When** the failure is recorded, **Then** the cost estimate shows 0 estimated tokens and 0 retries.
+4. **Given** a successful generation, **When** the generation completes, **Then** the generation record includes a `costEstimate` with `modelTier` set to the model used, `retryCount` reflecting any intermediate retries, and `estimatedTokens` reflecting total tokens consumed.
 
 ---
 
@@ -65,7 +66,7 @@ An operator can query generation records filtered by failure class to analyze fa
 - What happens when cost estimation data is unavailable (e.g., the model call never completed)? The system records the best-effort estimate with available data and zeroes for unavailable fields.
 - What happens when the AI model's safety filter blocks a generation (content policy violation)? This is classified as `model_error` since the block originates from the model provider, not from the application's own validation rules.
 - What happens when multiple failure conditions apply simultaneously (e.g., invalid combination AND insufficient credits)? The system assigns the *first* failure encountered in the processing pipeline, since failures are caught at sequential checkpoints.
-- What happens when a generation fails after credits were already deducted? The system refunds the credits back to the user's balance as part of the failure recording flow. Pre-deduction failures (e.g., `credit_insufficient`, `combination_invalid`, `prompt_malformed`) skip the refund step since no credits were consumed.
+- What happens when a generation hard-fails after credits were already deducted? The system refunds credits for hard failures only (`model_error`, `validation_reject`, `slot_repair_failed`). Pre-deduction failures (`credit_insufficient`, `combination_invalid`, `prompt_malformed`) skip the refund step since no credits were consumed. Soft-fail `numeric_hallucination` does NOT trigger a refund because the user receives usable output.
 
 ## Requirements *(mandatory)*
 
