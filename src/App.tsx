@@ -20,6 +20,8 @@ import { ALL_UNIVERSES, type UniverseEntry } from './universeDatabase';
 const InputForm = React.lazy(() => import('./components/InputForm'));
 const PerformanceDashboard = React.lazy(() => import('./components/PerformanceDashboard'));
 const PricingTableLazy = React.lazy(() => import('./components/PricingTable'));
+const JoinTeamLazy = React.lazy(() => import('./pages/JoinTeam'));
+const TeamLazy = React.lazy(() => import('./pages/Team'));
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import WorkspaceSettingsModal from './components/WorkspaceSettingsModal';
 
@@ -998,13 +1000,18 @@ const App: React.FC = () => {
               setIsTrialUser(ownerData.isTrial === true);
               setStripeCustomerId(ownerData.stripeCustomerId ?? null);
               setBillingStatus(ownerData.billingStatus || 'active');
+              setTeamOwnerName(ownerData.displayName || ownerData.email?.split('@')[0] || 'Owner');
             } else {
               setUserCredits(0);
               setUserPlan('none');
               setIsTrialUser(false);
               setBillingStatus('cancelled');
+              setTeamOwnerName(null);
             }
           } else {
+            setTeamOwnerUid(null);
+            setTeamRole(null);
+            setTeamOwnerName(null);
             setUserCredits(userData.credits ?? 0);
             // Plan is stored directly — isTrial just affects credit behavior, not features
             const effectivePlan = (userData.plan ?? 'none');
@@ -1175,7 +1182,8 @@ const App: React.FC = () => {
       if (snap.exists()) {
         const data = snap.data();
         if (data.isTeamMember && data.teamOwnerUid) {
-          // Team member: listen to owner doc for credits/plan/billing
+          setTeamOwnerUid(data.teamOwnerUid);
+          setTeamRole(data.teamRole || 'viewer');
           const ownerRef = doc(db, 'users', data.teamOwnerUid);
           getDoc(ownerRef).then(ownerSnap => {
             if (ownerSnap.exists()) {
@@ -1184,11 +1192,19 @@ const App: React.FC = () => {
               setUserPlan((ow.plan ?? 'none') as UserPlan);
               setIsTrialUser(ow.isTrial === true);
               setBillingStatus(ow.billingStatus || 'active');
+              setTeamOwnerName(ow.displayName || ow.email?.split('@')[0] || 'Owner');
             } else {
               setBillingStatus('cancelled');
+              setTeamOwnerName(null);
             }
           }).catch(() => { /* non-blocking */ });
           return;
+        }
+        if (isTeamMember && !data.isTeamMember && !removedFromTeam) {
+          setRemovedFromTeam(true);
+          setTeamOwnerUid(null);
+          setTeamRole(null);
+          setTeamOwnerName(null);
         }
         setUserCredits(data.credits ?? 0);
         const effectivePlan = ((data.plan ?? 'none') as UserPlan);
@@ -1427,13 +1443,16 @@ const App: React.FC = () => {
   const [isTrialUser, setIsTrialUser] = useState(false);
   const [hasVaultData, setHasVaultData] = useState(false);
   const [billingStatus, setBillingStatus] = useState<'active' | 'past_due' | 'cancelled'>('active');
+  const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
   const [teamOwnerUid, setTeamOwnerUid] = useState<string | null>(null);
   const [teamRole, setTeamRole] = useState<string | null>(null);
+  const [teamOwnerName, setTeamOwnerName] = useState<string | null>(null);
+  const [removedFromTeam, setRemovedFromTeam] = useState(false);
   const isTeamViewer = teamRole === 'viewer';
-  // For team members, use the owner's UID for all avatar/project Firestore operations
   const effectiveUid = teamOwnerUid || user?.uid || null;
   effectiveUidRef.current = effectiveUid;
-  const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
+  const isTeamMember = !!teamOwnerUid;
+  const isTeamOwner = !isTeamMember && !!user;
   const [avatars, setAvatars] = useState<AudienceAvatar[]>([]);
   const [competitorData, setCompetitorData] = useState<CompetitorResearch | null>(null);
   const [competitorLoading, setCompetitorLoading] = useState(false);
@@ -1675,7 +1694,6 @@ const App: React.FC = () => {
   };
 
   const handleRemoveTeamMember = async (memberId: string) => {
-    if (!user) return;
     try {
       const removeMember = httpsCallable(functions, 'removeTeamMember');
       const result = await removeMember({ memberId });
@@ -1683,6 +1701,17 @@ const App: React.FC = () => {
       showToast(data.message || 'Team member removed.', 'success');
       loadTeamMembers(); loadTeamInvites();
     } catch { showToast('Failed to remove member.', 'error'); }
+  };
+
+  const handleRoleChange = async (memberId: string, newRole: 'editor' | 'viewer') => {
+    try {
+      const changeRole = httpsCallable(functions, 'updateTeamMemberRole');
+      await changeRole({ memberId, role: newRole });
+      showToast(t('team.role_member') + ' updated.', 'success');
+      loadTeamMembers();
+    } catch (e) {
+      showToast('Failed to update role.', 'error');
+    }
   };
 
   const handleManageBilling = async () => {
@@ -2233,6 +2262,15 @@ const App: React.FC = () => {
   // Ranking linkage — stores the latest ranking metadata from generation responses
   // ⚠️ MUST be above all early returns to satisfy React hooks ordering rules
   const lastRankingLinkage = React.useRef<{ rankingRequestId?: string; rankingRequestFingerprint?: string; rankingAppliedSummary?: string } | null>(null);
+
+  // /join route — must be checked BEFORE auth so unauthenticated invitees see the join page
+  if (window.location.pathname === '/join') {
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-slate-950 flex items-center justify-center text-white">Loading...</div>}>
+        <JoinTeamLazy />
+      </Suspense>
+    );
+  }
 
   if (loadingAuth) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-500">{t('loading')}</div>;
 
@@ -4172,6 +4210,17 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   return (
     <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className={`min-h-screen bg-slate-950 text-slate-200 overflow-x-hidden flex flex-col transition-all duration-500 ${lang === 'ar' ? 'font-arabic' : ''}`} style={{ paddingLeft: showSidebar && lang !== 'ar' ? '320px' : '0', paddingRight: showSidebar && lang === 'ar' ? '320px' : '0' }}>
       <ToastNotification toast={toast} onClose={() => setToast(null)} />
+      {removedFromTeam && (
+        <div className="fixed inset-0 z-[200] bg-black/80 flex items-center justify-center">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl p-8 max-w-md text-center shadow-2xl">
+            <i className="fa-solid fa-user-slash text-4xl text-red-400 mb-4"></i>
+            <h2 className="text-xl font-bold text-white mb-3">{t('team.removed_message')}</h2>
+            <button onClick={() => { setRemovedFromTeam(false); handleLogout(); }} className="mt-4 px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors">
+              OK
+            </button>
+          </div>
+        </div>
+      )}
       {/* VIDEO POPUP — first-time tutorial */}
       {showVideoPopup && <VideoPopup onComplete={handleVideoComplete} onClose={handleVideoSkip} />}
       {/* WALKTHROUGH OVERLAY — first-time guide */}
@@ -4483,7 +4532,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               </button>
               <i className="fa-solid fa-coins text-amber-500 text-[10px]"></i>
               <span className="text-[11px] font-bold text-amber-400">{userCredits}</span>
-              <span className="text-[9px] text-slate-600 hidden sm:inline">{PLANS[userPlan]?.name}</span>
+              <span className="text-[9px] text-slate-600 hidden sm:inline">
+                {isTeamMember ? t('team.credits_member', { name: teamOwnerName || 'Owner' }) : (teamMembers.length > 0 ? t('team.credits_owner') : (PLANS[userPlan]?.name || ''))}
+              </span>
             </div>
             <button onClick={() => { setUpgradeReason(''); setShowUpgradeModal(true); }}
               className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500 hover:bg-amber-500/20 transition-colors">
@@ -7800,7 +7851,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         <p className="text-[10px] font-bold text-white truncate">{m.name}</p>
                         <p className="text-[8px] text-slate-500">{m.email}</p>
                       </div>
-                      <span className="text-[7px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">{m.role}</span>
+                      <span className="text-[7px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">{m.role === 'editor' ? t('team.role_member') : t('team.role_viewer')}</span>
                       <button onClick={() => handleRemoveTeamMember(m.id)} className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 transition-all px-1"><i className="fa-solid fa-xmark text-[10px]"></i></button>
                     </div>
                   ))}
