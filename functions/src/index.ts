@@ -3345,7 +3345,7 @@ export const serverGenerateFinalAd = onCall({
                 campaignType: inputs?.campaignType,
                 adFormat: inputs?.adFormat,
                 visualStyleFamily: inputs?.visualStyleFamily,
-                referenceAdUsed: inputs?.referenceAdUsed,
+                referenceAdUsed: !!styleReference || !!inputs?.referenceAdUsed,
                 selectedSubStyle: inputs?.selectedSubStyle,
                 selectedUniverse: resolvedUniverse,
             });
@@ -3358,7 +3358,7 @@ export const serverGenerateFinalAd = onCall({
                 copyStrategy: inputs?.copywritingStrategy || null,
                 adTone: inputs?.adTone || null,
                 aspectRatio: currentAspectRatio || '1:1',
-                adMode: inputs?.adMode || 'single',
+                adMode: inputs?.adFormat || inputs?.adMode || 'single',
                 language: inputs?.adLanguage || 'ar_fusha',
                 hookText: approvedTov?.substring(0, 200) || '',
                 subheadText: '',

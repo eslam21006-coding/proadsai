@@ -148,7 +148,7 @@ export async function persistTrace(genId: string, trace: ResolutionTrace): Promi
     try {
         const admin = await import("firebase-admin");
         const db = admin.firestore();
-        await db.collection("generations").doc(genId).update({ resolutionTrace: trace });
+        await db.collection("generations").doc(genId).set({ resolutionTrace: trace }, { merge: true });
     } catch (error) {
         console.warn(`⚠️ Trace persistence failed for ${genId}:`, error);
     }

@@ -13,14 +13,14 @@ import type {
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════
 
-export const DELETED_MODES: string[] = ["limited_access", "module_preview", "day_strip"];
+export const DELETED_MODES = ["limited_access", "module_preview", "day_strip"] as const;
 
-export const SOLO_ONLY_MODES: string[] = ["before_after", "text_only"];
+export const SOLO_ONLY_MODES = ["before_after", "text_only"] as const;
 
-export const APPROVED_HOOK_ANGLES: string[] = [
+export const APPROVED_HOOK_ANGLES = [
     "emotional", "logic", "urgency", "scarcity", "pain",
     "curiosity", "statistics", "social_proof", "logical_authority", "future_based",
-];
+] as const;
 
 export interface OfferTypeEntry {
     id: OfferTypeId;
@@ -119,7 +119,7 @@ export function validateLaunchSurface(input: LaunchSurfaceInput): LaunchSurfaceR
 
     // Rule 1: Deleted mode check
     for (const mode of creativeModes) {
-        if (DELETED_MODES.includes(mode)) {
+        if ((DELETED_MODES as readonly string[]).includes(mode)) {
             return { ...fallback, blockReason: `"${mode}" is no longer available.` };
         }
     }
@@ -152,11 +152,10 @@ export function validateLaunchSurface(input: LaunchSurfaceInput): LaunchSurfaceR
 
     // Rule 5: Solo-only check
     for (const mode of creativeModes) {
-        if (SOLO_ONLY_MODES.includes(mode) && creativeModes.length > 1) {
-            const label = mode === "before_after" ? "Before/After" : "Text Only";
+        if ((SOLO_ONLY_MODES as readonly string[]).includes(mode) && creativeModes.length > 1) {
             const msg = mode === "before_after"
-                ? "Before/After is single-image only."
-                : `${label} is a standalone mode and cannot be paired.`;
+                ? "Before/After cannot be paired with other creative modes."
+                : "Text Only is a standalone mode and cannot be paired.";
             return { ...base, blockReason: msg };
         }
     }
@@ -176,7 +175,7 @@ export function validateLaunchSurface(input: LaunchSurfaceInput): LaunchSurfaceR
 
     // Rule 7: Hook angle check
     if (campaignType === "cold" && hookAngle) {
-        if (!APPROVED_HOOK_ANGLES.includes(hookAngle)) {
+        if (!(APPROVED_HOOK_ANGLES as readonly string[]).includes(hookAngle)) {
             return { ...base, blockReason: `"${hookAngle}" is not an approved hook angle.` };
         }
     }

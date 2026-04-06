@@ -21,7 +21,14 @@ function buildSlidePlan(
 function resolveValueStackSlideCount(
   giftCount: number,
   userSelectedCount: number
-): { resolvedCount: number; wasOverridden: boolean; reason?: string };
+): ValueStackAdjustment;
+
+interface ValueStackAdjustment {
+  giftCount: number;
+  originalSlideCount: number;
+  resolvedSlideCount: number;
+  capped: boolean;              // true when giftCount + 2 > 9
+}
 ```
 
 ## Slide Plan Output

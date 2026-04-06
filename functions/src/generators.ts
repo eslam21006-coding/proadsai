@@ -95,6 +95,12 @@ function isTextOnlyMode(inputs: AdInputs): boolean {
     return modes.includes('text_only');
 }
 
+/** Centralized check: before_after can come from creative mode OR legacy hook angle path */
+function isBeforeAfterSelection(inputs: AdInputs): boolean {
+    const modes = (inputs as any).offerCreativeMode || [];
+    return modes.includes('before_after') || inputs.coldHookAngle === 'before_after';
+}
+
 function containsUnresolvedCommercialPlaceholders(value: string): boolean {
     return /\btotal\s*value\b|\bsavings\s*callout\b|\bprice\s*label\b|\bplaceholder\b|\blorem\b|^\s*سعر\s*$/im.test(value || '');
 }
@@ -1363,7 +1369,7 @@ inputs.coldHookAngle === 'urgency' ? `✅ URGENCY: HOOK_TEXT MUST contain a TIME
 inputs.coldHookAngle === 'scarcity' ? `✅ SCARCITY: HOOK_TEXT MUST contain a QUANTITY LIMIT — "فقط X مقاعد/آخر X أماكن/محدود/X فقط". The reader must feel supply is running out. No scarcity hook passes without a limit word.` :
 inputs.coldHookAngle === 'social_proof' ? `✅ SOCIAL PROOF: HOOK_TEXT MUST reference OTHER PEOPLE's results — a count of clients, a person's name, a group achievement ("X مدرب/عميل حقق"). No social proof hook passes without referencing others.` :
 inputs.coldHookAngle === 'logical_authority' ? `✅ LOGICAL AUTHORITY: HOOK_TEXT MUST contain a CREDENTIAL or TRACK RECORD — "X عميل/X سنة خبرة/أول نظام/ساعدنا X". Must establish WHY the speaker has authority. No authority hook passes without proof.` :
-inputs.coldHookAngle === 'before_after' ? `✅ BEFORE/AFTER: HOOK_TEXT MUST contain TWO contrasting states — a BEFORE state AND an AFTER state. Use transition markers: من...إلى, قبل...بعد, كان...أصبح, بدلاً من. Both states must be specific.` :
+isBeforeAfterSelection(inputs) ? `✅ BEFORE/AFTER: HOOK_TEXT MUST contain TWO contrasting states — a BEFORE state AND an AFTER state. Use transition markers: من...إلى, قبل...بعد, كان...أصبح, بدلاً من. Both states must be specific.` :
 inputs.coldHookAngle === 'emotional' ? `✅ EMOTIONAL: HOOK_TEXT MUST NAME an emotion explicitly or use a VISCERAL verb — يخاف, يحلم, يشعر, يتمنى, يكره, الخوف, الأمل, الإحباط. The reader must FEEL something, not just think.` :
 inputs.coldHookAngle === 'fear_of_missing_out' ? `✅ FOMO: HOOK_TEXT MUST make the reader feel LEFT BEHIND — reference what others are doing/gaining while they hesitate. Use "بينما أنت/غيرك/الآخرون/فاتك". Must create jealousy.` :
 inputs.coldHookAngle === 'future_based' || inputs.coldHookAngle === 'future_pacing' ? `✅ FUTURE PACING: HOOK_TEXT MUST paint a FUTURE SCENARIO — start with or contain "تخيل/بعد X أيام/ماذا لو/يوم ما" or describe a future state. The reader must SEE their desired future.` :
@@ -2046,7 +2052,7 @@ DO NOT return the other concepts.`;
           const pairMode = hasHero && secondary.length > 0 ? secondary[0] : null;
 
           // before_after is a solo mode but REQUIRES hero on both halves — handle separately
-          if (soloMode === 'before_after' || (inputs as any).coldHookAngle === 'before_after') {
+          if (isBeforeAfterSelection(inputs)) {
               return `
 ═══ CREATIVE MODE CONTRACT (TOP PRIORITY — READ FIRST) ═══
 MODE: BEFORE_AFTER (SPLIT-SCREEN — HERO REQUIRED ON BOTH HALVES)
@@ -2142,7 +2148,7 @@ ${getHookTypeVisualDirection(inputs.hookType)}` : ''}
 HOOK ANGLE VISUAL OVERRIDE: ${(_effectiveColdHookAngle || '').toUpperCase()}
 ${getHookAngleVisualDirection(_effectiveColdHookAngle || '')}
 
-${_effectiveColdHookAngle === 'before_after' ? `
+${isBeforeAfterSelection(inputs) ? `
 BEFORE/AFTER SPLIT COMPOSITION (MANDATORY):
 - SPLIT the canvas into TWO CLEAR HALVES (left vs right, or top vs bottom)
 - BOTH halves show the SAME HERO — same face, same person, different life chapter
@@ -2833,7 +2839,7 @@ ${fusionParts.join('\n\n')}
           // ── Ticket 9: Before/after + sub-style fusion ──
           const _sub9 = resolveVisualSubStyle(inputs);
           const _angle9 = inputs.coldHookAngle;
-          if (!_sub9 || _angle9 !== 'before_after') return '';
+          if (!_sub9 || !isBeforeAfterSelection(inputs)) return '';
           const fusion = getBeforeAfterSubStyleFusion(_sub9);
           if (!fusion) return '';
           return `
@@ -2967,7 +2973,7 @@ ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? '' : `- IMPORTANT: The ho
 - Do NOT skip or omit any field in any concept. ALL fields are MANDATORY for every concept.
 - Each field label must be on its own line, followed by a colon, then the content.
 
-  ${_effectiveColdHookAngle === 'before_after' ? (resolveStyleFamily(inputs) === 'minimal' ? `
+  ${isBeforeAfterSelection(inputs) ? (resolveStyleFamily(inputs) === 'minimal' ? `
   CONCEPT_START_[INDEX]
 SUBJECT_ACTION: [⚠️ BEFORE/AFTER SPLIT — describe BOTH halves${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? ' in Arabic' : ''}:
 ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? `"النصف الأيسر (قبل):" — البطل في حالة المعاناة. ملابس بسيطة، تعبير مُرهق. خلفية بلون واحد بارد (رمادي/أزرق فاتح).
@@ -3222,14 +3228,14 @@ Selected modes: [${modes.join(' + ')}]
                         if (!finalCheck.passed && isStrictPair) {
                             const stillMissing = finalCheck.missingModes.filter(m => STRICT_PAIRS_SECONDARY.includes(m));
                             if (stillMissing.length > 0) {
-                                console.error(`⚠️ STRICT PAIR WARNING: Blueprint still underrepresents [${stillMissing.join(', ')}] after repair. Modes=[${selectedModes.join(',')}]. Returning best-effort result.`);
+                                console.warn(`⚠️ STRICT PAIR WARNING: Blueprint still underrepresents [${stillMissing.join(', ')}] after repair. Modes=[${selectedModes.join(',')}]. Returning best-effort result.`);
                             }
                         }
                     } catch (e) {
                         // Repair API itself failed (Gemini error, timeout, etc.)
                         console.warn(`⚠️ Blueprint mode repair API failed: ${e}`);
                         if (isStrictPair && !repairSucceeded) {
-                            console.error(`⚠️ STRICT PAIR WARNING (repair API failed): Cannot guarantee [${modeContribCheck.missingModes.join(', ')}] are represented. Modes=[${selectedModes.join(',')}]. Returning best-effort result.`);
+                            console.warn(`⚠️ STRICT PAIR WARNING (repair API failed): Cannot guarantee [${modeContribCheck.missingModes.join(', ')}] are represented. Modes=[${selectedModes.join(',')}]. Returning best-effort result.`);
                         }
                     }
                 }
@@ -3992,7 +3998,7 @@ SUBHEADLINE VISIBILITY (CRITICAL):
 
             // ── Before/After is handled by the contract's before_after template ──
             // but we add connected-story rules since the contract only defines zones, not narrative
-            const beforeAfterNarrative = inputs.coldHookAngle === 'before_after' ? `
+            const beforeAfterNarrative = isBeforeAfterSelection(inputs) ? `
 BEFORE/AFTER CONNECTED STORY RULES:
 1. Hero MUST appear in BOTH halves — same face, different wardrobe and energy.
 2. BEFORE props must match the HEADLINE's specific pain (not generic sadness).
