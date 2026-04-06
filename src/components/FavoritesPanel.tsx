@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { useFavorites } from '../hooks/useFavorites';
-import { feedbackService, type GenerationRecord } from '../services/feedbackService';
+import { feedbackService } from '../services/feedbackService';
+import type { GenerationRecord } from '../services/feedbackService';
 
 type Phase = 'hooks' | 'concepts' | 'render' | 'caption';
 type SortMode = 'newest' | 'oldest' | 'alphabetical';
@@ -61,12 +62,13 @@ export default function FavoritesPanel({ phase, onLoad, isOpen, onClose, workspa
   const sorted = sortFavorites(favorites, sortMode);
   const phaseInfo = PHASE_LABELS[phase];
 
-  const handleRemove = async (id: string) => {
+  const handleRemove = async (id: string | undefined) => {
+    if (!id) return;
     setRemoving(id);
     try {
       await feedbackService.toggleFavorite(id, false);
-    } catch {
-      // Real-time subscription will remove it; log silently
+    } catch (err) {
+      console.warn('Failed to toggle favorite for id:', id, err);
     } finally {
       setRemoving(null);
     }
@@ -140,7 +142,7 @@ export default function FavoritesPanel({ phase, onLoad, isOpen, onClose, workspa
 
                   {/* Preview */}
                   {isImage ? (
-                    <img src={record.output.imageUrl} className="w-full max-h-40 object-contain rounded-lg border border-slate-800 mb-2" />
+                    <img src={record.output.imageUrl} alt={`Saved design ${record.id || ''}`} className="w-full max-h-40 object-contain rounded-lg border border-slate-800 mb-2" />
                   ) : (
                     <div dir="rtl" className="arabic-text text-[11px] text-slate-300 leading-relaxed line-clamp-3 mb-2">
                       {preview}
@@ -160,7 +162,7 @@ export default function FavoritesPanel({ phase, onLoad, isOpen, onClose, workspa
                       className="flex-1 py-1.5 rounded-lg bg-blue-600/15 text-blue-400 hover:bg-blue-600 hover:text-white text-[8px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1">
                       <i className="fa-solid fa-upload text-[7px]"></i> Load
                     </button>
-                    <button onClick={() => handleRemove(record.id!)}
+                    <button onClick={() => handleRemove(record.id)}
                       disabled={removing === record.id}
                       className="py-1.5 px-2.5 rounded-lg bg-slate-800/40 text-slate-600 hover:bg-red-600/20 hover:text-red-400 text-[8px] transition-all disabled:opacity-30">
                       <i className="fa-solid fa-trash-can text-[7px]"></i>

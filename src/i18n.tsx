@@ -456,6 +456,22 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'invite.status_expired': 'Expired',
         'invite.status_revoked': 'Revoked',
         'invite.status_pending': 'Pending',
+
+        // ── Favorites Panel ──
+        'fav.saved_hooks': 'Saved Hooks',
+        'fav.saved_concepts': 'Saved Concepts',
+        'fav.saved_renders': 'Saved Renders',
+        'fav.saved_scripts': 'Saved Scripts',
+        'fav.edit_regenerate': 'Edit & Re-generate',
+        'fav.update_title': 'Update Saved Favorite?',
+        'fav.update_desc': 'You regenerated from a saved favorite. What would you like to do?',
+        'fav.yes_update': 'Yes, Update',
+        'fav.keep_both': 'Keep Both',
+        'fav.skip': 'Skip',
+        'fav.updated': 'Favorite updated!',
+        'fav.update_failed': 'Failed to update favorite',
+        'fav.saved_new': 'Saved as new favorite!',
+        'fav.save_failed': 'Failed to save favorite',
     },
 
     ar: {
@@ -910,6 +926,22 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'invite.status_expired': 'منتهية',
         'invite.status_revoked': 'ملغاة',
         'invite.status_pending': 'معلقة',
+
+        // ── Favorites Panel ──
+        'fav.saved_hooks': 'الخطافات المحفوظة',
+        'fav.saved_concepts': 'المفاهيم المحفوظة',
+        'fav.saved_renders': 'التصاميم المحفوظة',
+        'fav.saved_scripts': 'النصوص المحفوظة',
+        'fav.edit_regenerate': 'تعديل وإعادة إنشاء',
+        'fav.update_title': 'تحديث المفضلة المحفوظة؟',
+        'fav.update_desc': 'لقد أعدت الإنشاء من مفضلة محفوظة. ماذا تريد أن تفعل؟',
+        'fav.yes_update': 'نعم، تحديث',
+        'fav.keep_both': 'الاحتفاظ بالاثنين',
+        'fav.skip': 'تخطي',
+        'fav.updated': 'تم تحديث المفضلة!',
+        'fav.update_failed': 'فشل تحديث المفضلة',
+        'fav.saved_new': 'تم الحفظ كمفضلة جديدة!',
+        'fav.save_failed': 'فشل حفظ المفضلة',
     },
 };
 

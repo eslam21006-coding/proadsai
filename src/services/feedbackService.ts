@@ -7,7 +7,7 @@
 import { db, functions } from '../firebase';
 import {
     doc, setDoc, getDoc, collection, addDoc, getDocs,
-    query, where, orderBy, limit, updateDoc, Timestamp, onSnapshot
+    query, where, orderBy, limit, updateDoc, Timestamp
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import type { AdInputs, AspectRatio } from '../types';
@@ -591,8 +591,14 @@ Use the above to guide creative direction. Match preferences while staying fresh
                 updates[`output.${key}`] = value;
             }
         }
-        const ref = doc(db, 'generations', generationId);
-        await updateDoc(ref, updates);
+        if (Object.keys(updates).length === 0) throw new Error('No output fields provided for update');
+        try {
+            const ref = doc(db, 'generations', generationId);
+            await updateDoc(ref, updates);
+        } catch (err) {
+            console.warn('Failed to update favorite record:', generationId, err);
+            throw err;
+        }
     }
 
     // ═══ 11. BUILD REGENERATION CONTEXT (for thumbs-down → retry) ═══

@@ -286,5 +286,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         captionText: '',
         batchResults: [],
         competitorData: null,
+        loadedFavoriteId: null,
     }),
 }));

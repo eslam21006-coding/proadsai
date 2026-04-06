@@ -23,8 +23,9 @@ getFavoriteIds(userId: string, workspaceId?: string) → Promise<Set<string>>
 **Output**: `Set<string>` — generation document IDs where `feedback.savedToFavorites === true`
 
 **Behavior**:
-- When `workspaceId` is absent: query `WHERE userId == userId AND feedback.savedToFavorites == true`
-- When `workspaceId` is present: query `WHERE workspaceId == workspaceId AND feedback.savedToFavorites == true`
+- When `workspaceId` is absent: query `WHERE userId == userId AND feedback.savedToFavorites == true ORDER BY timestamp DESC LIMIT 200`
+- When `workspaceId` is present: query `WHERE workspaceId == workspaceId AND feedback.savedToFavorites == true ORDER BY timestamp DESC LIMIT 200`
+- **MAX_FAVORITES = 200** — hard cap to prevent unbounded reads; both branches use the same ordering and limit
 - Returns empty set on error (logs to console)
 
 ---
@@ -47,6 +48,7 @@ updateFavoriteRecord(generationId: string, updatedFields: Partial<GenerationReco
 **Output**: `void` — throws on failure
 
 **Behavior**:
+- Validates that `updatedFields` contains at least one own property whose value is not `undefined`; throws `"No output fields provided for update"` if empty or all-undefined
 - Writes `updatedFields` nested under `output.*` on the Firestore document
 - Does not modify `feedback`, `input`, `metadata`, or `creativeIdentity` fields
 - Caller is responsible for ensuring the record is currently favorited

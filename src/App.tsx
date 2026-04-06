@@ -2691,6 +2691,10 @@ const App: React.FC = () => {
   // --- HISTORY ENGINE moved to before render gates ---
 
   const loadProject = (p: SavedProject) => {
+    // Clear stale favorites state from previous project
+    setLoadedFavoriteId(null);
+    setFavUpdatePrompt(null);
+    setLoadedRenderRecord(null);
     setCurrentProjectId(p.id);
     setCurrentProjectName(p.name || "Untitled Project");
     const migratedInputs = p.inputs
@@ -4858,7 +4862,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'hooks' ? null : 'hooks')}
                   className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all flex items-center gap-1.5"
                 >
-                  <i className="fa-solid fa-bookmark text-[8px]"></i> Saved Hooks{hooksFavs.length > 0 && ` (${hooksFavs.length})`}
+                  <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_hooks')}{hooksFavs.length > 0 && ` (${hooksFavs.length})`}
                 </button>
               </div>
               <div className="flex flex-col items-center gap-3">
@@ -5440,6 +5444,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 setTovText(record.output.fullResponse || reconstructed);
                 setSelectedTov(reconstructed);
               }
+              // Update generation ID so FeedbackButtons targets the loaded record
+              if (record.id && activeVariant) {
+                setHookGenerationIds(prev => ({ ...prev, [activeVariant]: record.id! }));
+              }
               setLoadedFavoriteId(record.id || null);
               setOpenFavoritesPhase(null);
             }}
@@ -5496,7 +5504,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'concepts' ? null : 'concepts')}
                     className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all inline-flex items-center gap-1.5"
                   >
-                    <i className="fa-solid fa-bookmark text-[8px]"></i> Saved Concepts{conceptsFavs.length > 0 && ` (${conceptsFavs.length})`}
+                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_concepts')}{conceptsFavs.length > 0 && ` (${conceptsFavs.length})`}
                   </button>
                 </div>
                 {/* Resolved Creative Spec Summary */}
@@ -6039,21 +6047,24 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'render' ? null : 'render')}
                     className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all flex items-center gap-1.5"
                   >
-                    <i className="fa-solid fa-bookmark text-[8px]"></i> Saved Renders{renderFavs.length > 0 && ` (${renderFavs.length})`}
+                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_renders')}{renderFavs.length > 0 && ` (${renderFavs.length})`}
                   </button>
                   {loadedRenderRecord && (
                     <button
                       onClick={() => {
-                        if (loadedRenderRecord.input) {
-                          setInputs(loadedRenderRecord.input);
+                        if (loadedRenderRecord.input) setInputs(loadedRenderRecord.input);
+                        if (loadedRenderRecord.output?.conceptText) {
+                          setConceptsText(loadedRenderRecord.output.conceptText);
+                          setSelectedConcept(loadedRenderRecord.output.conceptText);
                         }
+                        if (loadedRenderRecord.output?.buildPlan) setBuildPlan(loadedRenderRecord.output.buildPlan);
                         setLoadedRenderRecord(null);
                         setLoadedFavoriteId(null);
                         setPhase('concept_review');
                       }}
                       className="px-3 py-1.5 rounded-lg bg-violet-500/10 border border-violet-500/20 text-violet-400 text-[9px] font-bold uppercase tracking-wider hover:bg-violet-500/20 transition-all flex items-center gap-1.5"
                     >
-                      <i className="fa-solid fa-rotate-right text-[8px]"></i> Edit & Re-generate
+                      <i className="fa-solid fa-rotate-right text-[8px]"></i> {t('fav.edit_regenerate')}
                     </button>
                   )}
 
@@ -6914,6 +6925,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 await feedbackService.toggleFavorite(renderGenerationId, true).catch(() => {});
               }
               if (record.output?.imageUrl) pushMockup(record.output.imageUrl, (record.metadata?.aspectRatio || '1:1') as AspectRatio);
+              if (record.id) setRenderGenerationId(record.id);
               setLoadedFavoriteId(record.id || null);
               setLoadedRenderRecord(record);
               setOpenFavoritesPhase(null);
@@ -6939,7 +6951,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'caption' ? null : 'caption')}
                     className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all inline-flex items-center gap-1.5"
                   >
-                    <i className="fa-solid fa-bookmark text-[8px]"></i> Saved Scripts{captionFavs.length > 0 && ` (${captionFavs.length})`}
+                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_scripts')}{captionFavs.length > 0 && ` (${captionFavs.length})`}
                   </button>
                 </div>
 
@@ -7242,6 +7254,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 await feedbackService.toggleFavorite(captionGenerationId, true).catch(() => {});
               }
               if (record.output?.captionText) setCaptionText(record.output.captionText);
+              if (record.id) setCaptionGenerationId(record.id);
               setLoadedFavoriteId(record.id || null);
               setOpenFavoritesPhase(null);
             }}
@@ -7256,8 +7269,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           <div className="relative bg-slate-950 border border-amber-500/30 rounded-2xl shadow-2xl max-w-sm w-full mx-4 p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200">
             <div className="text-center space-y-2">
               <i className="fa-solid fa-bookmark text-amber-400 text-2xl"></i>
-              <h3 className="text-lg font-black text-white">Update Saved Favorite?</h3>
-              <p className="text-[11px] text-slate-400">You regenerated from a saved favorite. What would you like to do?</p>
+              <h3 className="text-lg font-black text-white">{t('fav.update_title')}</h3>
+              <p className="text-[11px] text-slate-400">{t('fav.update_desc')}</p>
             </div>
             <div className="flex gap-3">
               <button
@@ -7269,36 +7282,43 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       if (newDoc.exists()) {
                         const newOutput = (newDoc.data() as any).output || {};
                         await feedbackService.updateFavoriteRecord(loadedFavoriteId, newOutput);
-                        showToast('Favorite updated!', 'success');
+                        showToast(t('fav.updated'), 'success');
                       }
-                    } catch { showToast('Failed to update favorite', 'error'); }
+                    } catch { showToast(t('fav.update_failed'), 'error'); }
                   }
                   setFavUpdatePrompt(null);
                   setLoadedFavoriteId(null);
                 }}
                 className="flex-1 py-2.5 rounded-xl bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white text-[9px] font-bold uppercase tracking-wider transition-all"
               >
-                <i className="fa-solid fa-pen mr-1"></i> Yes, Update
+                <i className="fa-solid fa-pen mr-1"></i> {t('fav.yes_update')}
               </button>
               <button
                 onClick={async () => {
                   if (favUpdatePrompt.newGenId) {
-                    await feedbackService.toggleFavorite(favUpdatePrompt.newGenId, true).catch(() => {});
-                    showToast('Saved as new favorite!', 'success');
+                    try {
+                      await feedbackService.toggleFavorite(favUpdatePrompt.newGenId, true);
+                      showToast(t('fav.saved_new'), 'success');
+                      setFavUpdatePrompt(null);
+                      setLoadedFavoriteId(null);
+                    } catch {
+                      showToast(t('fav.save_failed'), 'error');
+                    }
+                    return;
                   }
                   setFavUpdatePrompt(null);
                   setLoadedFavoriteId(null);
                 }}
                 className="flex-1 py-2.5 rounded-xl bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white text-[9px] font-bold uppercase tracking-wider transition-all"
               >
-                <i className="fa-solid fa-copy mr-1"></i> Keep Both
+                <i className="fa-solid fa-copy mr-1"></i> {t('fav.keep_both')}
               </button>
             </div>
             <button
               onClick={() => { setFavUpdatePrompt(null); setLoadedFavoriteId(null); }}
               className="w-full py-2 text-[9px] text-slate-600 hover:text-slate-300 transition-all"
             >
-              Skip
+              {t('fav.skip')}
             </button>
           </div>
         </div>

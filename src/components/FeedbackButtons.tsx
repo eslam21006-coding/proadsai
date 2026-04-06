@@ -42,19 +42,16 @@ export default function FeedbackButtons({
     const [isFavorite, setIsFavorite] = useState(initialFavorite);
     const [submitted, setSubmitted] = useState(false);
 
-    useEffect(() => {
-        setIsFavorite(initialFavorite);
-    }, [initialFavorite]);
-
     // Reset UI state when the generation changes (new hook/render)
-    // but DON'T reset if generationId just becomes available for an already-rated item
+    // Re-sync favorite state and clear transient UI on new generationId
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- sync on generationId change
+        setIsFavorite(initialFavorite);
         setShowTagPanel(false);
         setSelectedTags(new Set());
         setFreeText('');
         setSubmitted(false);
-        // Keep currentRating and isFavorite — they persist per component instance
-    }, [generationId]);
+    }, [generationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleRate = async (rating: FeedbackRating) => {
         setCurrentRating(rating);
@@ -90,7 +87,12 @@ export default function FeedbackButtons({
         const newVal = !isFavorite;
         setIsFavorite(newVal);
         if (generationId) {
-            await feedbackService.toggleFavorite(generationId, newVal);
+            try {
+                await feedbackService.toggleFavorite(generationId, newVal);
+            } catch (err) {
+                console.warn('Failed to toggle favorite:', generationId, err);
+                setIsFavorite(!newVal);
+            }
         }
     };
 
