@@ -14,6 +14,7 @@ interface FeedbackButtonsProps {
     compact?: boolean;
     showUsedThis?: boolean;
     className?: string;
+    initialFavorite?: boolean;
 }
 
 const NEGATIVE_TAGS: { id: NegativeFeedbackTag; label: string; icon: string }[] = [
@@ -32,13 +33,18 @@ export default function FeedbackButtons({
     compact = false,
     showUsedThis = false,
     className = '',
+    initialFavorite = false,
 }: FeedbackButtonsProps) {
     const [currentRating, setCurrentRating] = useState<FeedbackRating>(null);
     const [showTagPanel, setShowTagPanel] = useState(false);
     const [selectedTags, setSelectedTags] = useState<Set<NegativeFeedbackTag>>(new Set());
     const [freeText, setFreeText] = useState('');
-    const [isFavorite, setIsFavorite] = useState(false);
+    const [isFavorite, setIsFavorite] = useState(initialFavorite);
     const [submitted, setSubmitted] = useState(false);
+
+    useEffect(() => {
+        setIsFavorite(initialFavorite);
+    }, [initialFavorite]);
 
     // Reset UI state when the generation changes (new hook/render)
     // but DON'T reset if generationId just becomes available for an already-rated item

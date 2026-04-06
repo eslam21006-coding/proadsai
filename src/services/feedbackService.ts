@@ -7,7 +7,7 @@
 import { db, functions } from '../firebase';
 import {
     doc, setDoc, getDoc, collection, addDoc, getDocs,
-    query, where, orderBy, limit, updateDoc, Timestamp
+    query, where, orderBy, limit, updateDoc, Timestamp, onSnapshot
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import type { AdInputs, AspectRatio } from '../types';
@@ -543,7 +543,59 @@ Use the above to guide creative direction. Match preferences while staying fresh
 `;
     }
 
-    // ═══ 9. BUILD REGENERATION CONTEXT (for thumbs-down → retry) ═══
+    // ═══ 9. GET FAVORITE IDS ═══
+    async getFavoriteIds(userId: string, workspaceId?: string): Promise<Set<string>> {
+        try {
+            const useWorkspace = !!workspaceId;
+            const scopeField = useWorkspace ? 'workspaceId' : 'userId';
+            const scopeValue = useWorkspace ? workspaceId! : userId;
+            try {
+                const q = query(
+                    collection(db, 'generations'),
+                    where(scopeField, '==', scopeValue),
+                    where('feedback.savedToFavorites', '==', true),
+                    orderBy('timestamp', 'desc'),
+                    limit(200)
+                );
+                const snap = await getDocs(q);
+                return new Set(snap.docs.map(d => d.id));
+            } catch {
+                const fallbackQ = query(
+                    collection(db, 'generations'),
+                    where(scopeField, '==', scopeValue),
+                    orderBy('timestamp', 'desc'),
+                    limit(200)
+                );
+                const snap = await getDocs(fallbackQ);
+                return new Set(
+                    snap.docs
+                        .filter(d => (d.data() as any)?.feedback?.savedToFavorites === true)
+                        .map(d => d.id)
+                );
+            }
+        } catch (err) {
+            console.error('Failed to get favorite IDs:', err);
+            return new Set();
+        }
+    }
+
+    // ═══ 10. UPDATE FAVORITE RECORD ═══
+    async updateFavoriteRecord(
+        generationId: string,
+        updatedFields: Partial<GenerationRecord['output']>
+    ): Promise<void> {
+        if (!generationId) throw new Error('generationId required');
+        const updates: Record<string, any> = {};
+        for (const [key, value] of Object.entries(updatedFields)) {
+            if (value !== undefined) {
+                updates[`output.${key}`] = value;
+            }
+        }
+        const ref = doc(db, 'generations', generationId);
+        await updateDoc(ref, updates);
+    }
+
+    // ═══ 11. BUILD REGENERATION CONTEXT (for thumbs-down → retry) ═══
     buildRegenerationContext(
         originalOutput: string,
         tags: NegativeFeedbackTag[],
