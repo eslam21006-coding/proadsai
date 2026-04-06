@@ -62,6 +62,15 @@ export function validateSelector(
 ): string | null {
     if (!value) return null; // No value to validate
 
+    // Reject deprecated IDs that were removed from the catalogs
+    const DEPRECATED_IDS: Record<string, string> = {
+        before_after: 'before_after is now a creative mode, not a hook angle.',
+        limited_access: 'limited_access has been removed.',
+        module_preview: 'module_preview has been removed.',
+        day_strip: 'day_strip has been removed.',
+    };
+    if (DEPRECATED_IDS[value]) return DEPRECATED_IDS[value];
+
     const config: Record<string, { ids: readonly string[]; limitKey: keyof ResolvedEntitlement['features']; label: string }> = {
         hookAngle:    { ids: HOOK_ANGLE_IDS,    limitKey: 'maxHookAngles',      label: 'hook angle' },
         hookStyle:    { ids: HOOK_STYLE_IDS,    limitKey: 'maxHookStyles',      label: 'hook style' },

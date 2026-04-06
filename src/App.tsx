@@ -856,8 +856,8 @@ function sanitizeProjectModes(inputs: any): any {
   }
   // Sanitize removed offer types
   if (clean.offerType && !OFFER_TYPES.includes(clean.offerType)) {
-    console.warn(`🧹 Legacy offer type: "${clean.offerType}" → "Mini-Course"`);
-    clean.offerType = 'Mini-Course';
+    console.warn(`🧹 Legacy offer type: "${clean.offerType}" → "Live Event"`);
+    clean.offerType = 'Live Event';
   }
   return clean;
 }

@@ -63,7 +63,8 @@ specs/001-resolver-completeness-trace/
 ```text
 functions/
 ├── src/
-│   ├── creativeResolver.ts        # MODIFY — extend resolver (SSoT)
+│   ├── types.ts                   # MODIFY — shared type definitions
+│   ��── creativeResolver.ts        # MODIFY — extend resolver (SSoT)
 │   ├── index.ts                   # MODIFY — add launch surface guard at entry
 │   ├── generators.ts              # MODIFY — consume trace, slide plans
 │   ├── layoutContract.ts          # MODIFY — consume resolved inputs
@@ -82,7 +83,7 @@ functions/
 │   └── contractFixtures.test.ts   # MODIFY — add resolver, trace, slide plan tests
 ```
 
-**Structure Decision**: Web application with `functions/` backend. All changes in `functions/src/`. No new top-level directories. 4 new files, 11 modified files.
+**Structure Decision**: Web application with `functions/` backend. All changes in `functions/src/`. No new top-level directories. 4 new files, 12 modified files.
 
 ## Complexity Tracking
 

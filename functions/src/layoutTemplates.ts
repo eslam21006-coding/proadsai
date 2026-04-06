@@ -377,7 +377,6 @@ export function selectLayoutTemplate(
             case 'event_ticket': return 'event_ticket';
             case 'speaker_card': return 'event_ticket';
             case 'webinar_screen': return 'dashboard_product';
-            case 'webinar_screen': return 'dashboard_product';
             case 'value_stack': return aspectRatio === '1:1' ? 'hero_value_stack_panel' : 'hero_value_stack_split';
             case 'book_mockup': return 'dashboard_product';
             case 'device_mockup': return 'dashboard_product';

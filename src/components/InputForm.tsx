@@ -292,10 +292,10 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
       }
       sanitized.offerCreativeMode = (cleaned.length > 0 ? cleaned : ['standard_hero']) as any;
     }
-    // Sanitize removed offer types → fall back to Mini-Course
+    // Sanitize removed offer types → fall back to Live Event (most legacy types were live_events tab)
     if (sanitized.offerType && !OFFER_TYPES.includes(sanitized.offerType)) {
-      console.warn(`🧹 Legacy offer type sanitization: "${sanitized.offerType}" → "Mini-Course"`);
-      sanitized.offerType = 'Mini-Course';
+      console.warn(`🧹 Legacy offer type sanitization: "${sanitized.offerType}" → "Live Event"`);
+      sanitized.offerType = 'Live Event';
     }
     // Normalize visual style family — ensure both fields are consistent
     const _normalizedStyle = ((sanitized as any).visualStyleFamily ?? (sanitized as any).universeMode ?? 'realistic') as 'realistic' | 'fantasy' | 'minimal';

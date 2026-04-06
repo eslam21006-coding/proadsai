@@ -84,6 +84,7 @@ const VALID_MODES = new Set([
     'standard_hero', 'value_stack',
     'event_ticket', 'webinar_screen', 'speaker_card',
     'book_mockup', 'device_mockup',
+    'text_only', 'before_after',
 ]);
 
 // ═══════════════════════════════════════════════════════════════════════════

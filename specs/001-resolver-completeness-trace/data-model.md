@@ -205,7 +205,7 @@ type CreativeModeId =
 
 ## Relationships
 
-```
+```text
 GenerationRequest
   └─▶ LaunchSurface.validate()  → pass/block
   └─▶ CreativeResolver.resolve()

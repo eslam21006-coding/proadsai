@@ -460,6 +460,8 @@ export interface ResolverInput {
     referenceAdUsed?: boolean;
     selectedSubStyle?: string | null;
     selectedUniverse?: string | null;
+    objectionId?: string | null;
+    effectiveObjectionText?: string | null;
 }
 
 export function resolveVisualPrecedence(input: ResolverInput): AutoSwitchEvent[] {
@@ -547,6 +549,7 @@ export function resolveCreativeSpec(input: ResolverInput): ResolvedCreativeSpec 
             subStyle: input.selectedSubStyle ?? null,
         })
         .setHookAngle(hookAngle, hookAngleNullReason)
+        .setObjection(input.objectionId ?? null, input.effectiveObjectionText ?? null)
         .setModeCompatibility(modeCompatResult, modeCompatReason)
         .setLaunchCheck(validation.valid, validation.valid ? undefined : validation.errors[0]);
 
@@ -564,6 +567,9 @@ export function resolveCreativeSpec(input: ResolverInput): ResolvedCreativeSpec 
     }
 
     const builtTrace = resolutionTrace.build();
+
+    const elapsed = performance.now() - start;
+    if (elapsed > 50) console.warn("⚠️ Resolver exceeded 50ms target:", elapsed);
 
     let primaryMode: CreativeModeId;
     let secondaryMode: CreativeModeId | null = null;
@@ -590,8 +596,6 @@ export function resolveCreativeSpec(input: ResolverInput): ResolvedCreativeSpec 
         ? ["environmental_scene", "worldbuilding", "location_rendering"] : [];
 
     if (pairSpec && secondaryMode) {
-        const elapsed = performance.now() - start;
-        if (elapsed > 50) console.warn("Resolver exceeded 50ms target:", elapsed);
         return {
             primaryMode, secondaryMode,
             resolvedLayoutKey: pairSpec.layoutKey, resolvedLabelEn: pairSpec.labelEn, resolvedLabelAr: pairSpec.labelAr,

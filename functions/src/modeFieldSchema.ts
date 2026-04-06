@@ -703,12 +703,12 @@ ${dm.deviceScreenLabels ? `Screen Labels: ${dm.deviceScreenLabels}` : ''}
     if (payload.speaker_card) {
         const sc = payload.speaker_card;
         blocks.push(`
-STRUCTured Data — Speaker Card:
+STRUCTURED DATA — Speaker Card:
 Speaker: "${sc.speakerName}"
 Role: "${sc.speakerRole}"
 ${sc.speakerCredentials ? `Credentials: ${sc.speakerCredentials}` : ''}
 ${sc.speakerAffiliation ? `Affiliation: ${sc.speakerAffiliation}` : ''}
-⚠⚠️ Render speaker name and role in the credentials lower-third bar.`);
+⚠️ Render speaker name and role in the credentials lower-third bar.`);
         }
 
     if (blocks.length === 0) return '';

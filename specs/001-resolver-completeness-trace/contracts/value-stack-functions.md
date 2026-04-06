@@ -41,7 +41,7 @@ A field is considered empty and will be suppressed if:
 | `undefined` | Always |
 | `null` | Always |
 | `string` | `''` or whitespace-only (`value.trim() === ''`) |
-| `Array` | `[]` or all elements are empty strings |
+| `Array` | `[]` or all elements are empty or whitespace-only (`element.trim() === ''`) |
 
 ## Behavior
 

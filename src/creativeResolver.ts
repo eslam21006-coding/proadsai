@@ -9,10 +9,11 @@
 
 export type CreativeModeId =
     | 'standard_hero'
-    | 'value_stack' | 'limited_access' | 'module_preview'
-    | 'event_ticket' | 'webinar_screen' | 'day_strip' | 'speaker_card'
+    | 'value_stack'
+    | 'event_ticket' | 'webinar_screen' | 'speaker_card'
     | 'book_mockup' | 'device_mockup'
-    | 'text_only';
+    | 'text_only'
+    | 'before_after';
 
 export type RemovedModeId =
     | 'preview_card' | 'premium_package' | 'platform_screenshot' | 'certificate'

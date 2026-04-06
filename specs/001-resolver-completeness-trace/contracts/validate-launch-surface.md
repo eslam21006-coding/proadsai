@@ -14,6 +14,7 @@ interface LaunchSurfaceInput {
   hookAngle?: string | null;
   visualStyleFamily?: 'realistic' | 'fantasy' | 'minimal';
   userPlan: 'starter' | 'creator' | 'pro' | 'scaling';
+  batchN?: number;               // Product of variation dimensions (hooks × concepts × sizes); required when adFormat === 'batch'
 }
 
 interface LaunchSurfaceResult {

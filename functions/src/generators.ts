@@ -2055,6 +2055,7 @@ DO NOT return the other concepts.`;
                   book_mockup: 'BOOK-ONLY design. 3D book as centerpiece, NO hero person holding it. Floating in thematic environment.',
                   device_mockup: 'DEVICE-ONLY design. Tablet/phone showing content, NO hero person. Device is the visual anchor.',
                   text_only: 'TYPOGRAPHY-ONLY design. NO hero person. NO universe environment. The COPY and TYPOGRAPHY ARE the entire visual. Background is color/gradient/texture only. All canvas space is used for typographic layout.',
+                  before_after: 'BEFORE/AFTER SPLIT — Canvas split into two halves. BEFORE half: hero in problem state with struggle expression. AFTER half: same hero in result state with confident expression. Visible divider between halves. NO "BEFORE"/"AFTER" text labels. Same face both halves.',
               };
               return `
 ═══ CREATIVE MODE CONTRACT (TOP PRIORITY — READ FIRST) ═══

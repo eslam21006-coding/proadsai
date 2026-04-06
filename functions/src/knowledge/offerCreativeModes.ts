@@ -1,4 +1,4 @@
-// src/knowledge/offerCreativeModes.ts
+// functions/src/knowledge/offerCreativeModes.ts
 // Deep prompt templates for each creative mode — controls visual layout, composition, and copy psychology
 
 // ─── OFFER TYPE HOOK PSYCHOLOGY ──────────────────────────────────────────

@@ -7,9 +7,9 @@ export type RetargetingAngle = | "proof" | "risk_reversal" | "mechanism" | "urge
 export type RetargetingObjectionId = | "price_too_high" | "no_budget_now" | "need_installments" | "dont_trust" | "will_it_work_for_me" | "tried_before_failed" | "no_time" | "overwhelmed" | "not_ready_yet" | "need_approval" | "dont_want_call" | "dont_need_it";
 
 export type OfferTypeId = "live_event" | "free_guide" | "mini_course";
-export type TabId = "live_events" | "free_guide" | "mini_course"
-export type LegacyOfferTypeId = "free_webinar" | "paid_workshop" | "challenge"
-export type VisualStyleFamily = "realistic" | "fantasy" | "minimal"
+export type TabId = "live_events" | "free_guide" | "mini_course";
+export type LegacyOfferTypeId = "free_webinar" | "paid_workshop" | "challenge";
+export type VisualStyleFamily = "realistic" | "fantasy" | "minimal";
 export interface SlideEntry {
     slide: number
     role: "hook" | "middle" | "close"
@@ -33,7 +33,7 @@ export interface ValueStackAdjustment {
 export interface ResolutionTrace {
     resolvedCampaignType: "cold" | "retargeting"
     resolvedAdMode: "single" | "carousel" | "batch"
-    resolvedCreativeModes: string[]
+    readonly resolvedCreativeModes: readonly string[]
     resolvedStyleFamily: VisualStyleFamily
     resolvedSubStyle: string | null
     referenceAdOverrideActive: boolean
@@ -51,9 +51,9 @@ export interface ResolutionTrace {
     originalSlideCount?: number
     resolvedSlideCount?: number
     slideCountOverrideReason?: string
-    valueStackEmptyFieldsSkipped?: string[]
-    autoSwitchEvents: AutoSwitchEvent[]
-    perSlide?: SlideEntry[]
+    readonly valueStackEmptyFieldsSkipped?: readonly string[]
+    readonly autoSwitchEvents: readonly AutoSwitchEvent[]
+    readonly perSlide?: readonly SlideEntry[]
     launchMatrixCheckPassed: boolean
     launchMatrixBlockReason?: string
 }

@@ -8,7 +8,6 @@
 ```typescript
 interface SlidePlanOptions {
   valueStackGiftCount?: number;    // For value_stack auto-adjustment
-  testimonialCount?: number;       // For testimonial auto-adjustment
   objectionId?: string;            // For retargeting slide 1 framing
 }
 

@@ -3346,7 +3346,7 @@ export const serverGenerateFinalAd = onCall({
                 visualStyleFamily: inputs?.visualStyleFamily,
                 referenceAdUsed: inputs?.referenceAdUsed,
                 selectedSubStyle: inputs?.selectedSubStyle,
-                selectedUniverse: inputs?.resolvedUniverse,
+                selectedUniverse: resolvedUniverse,
             });
             const templateId = selectLayoutTemplate(spec.primaryMode, spec.secondaryMode, inputs?.coldHookAngle, currentAspectRatio);
             storeCreativeToMemory(request.auth!.uid, {
@@ -3367,9 +3367,10 @@ export const serverGenerateFinalAd = onCall({
                 targetAudience: inputs?.targetAudience || '',
             }).catch((err: any) => console.warn('Memory store failed (non-blocking):', err));
 
-            const { persistTrace } = await import("./resolutionTrace.js");
-            const traceId = `trace_${request.auth.uid}_${Date.now()}`;
-            persistTrace(traceId, spec.resolutionTrace).catch((err: any) => console.warn('⚠️ Trace persist failed (non-blocking):', err));
+            import("./resolutionTrace.js").then(({ persistTrace }) => {
+                const traceId = `trace_${request.auth!.uid}_${Date.now()}`;
+                persistTrace(traceId, spec.resolutionTrace).catch((err: any) => console.warn('⚠️ Trace persist failed (non-blocking):', err));
+            }).catch((err: any) => console.warn('⚠️ Trace module import failed (non-blocking):', err));
         }
 
         if (result.image) {

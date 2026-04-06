@@ -3,7 +3,13 @@
 import type {
     ResolutionTrace,
     SlideEntry,
+    AutoSwitchEvent,
 } from "./types.js";
+
+type Mutable<T> = { -readonly [P in keyof T]: T[P] extends readonly (infer U)[] ? U[] : T[P] };
+type ResolutionTraceDraft = Partial<Mutable<ResolutionTrace>> & {
+    autoSwitchEvents: AutoSwitchEvent[];
+};
 
 // ═══════════════════════════════════════════════════════════
 // TRACE BUILDER
@@ -31,8 +37,7 @@ export interface TraceBuilder {
 }
 
 export function createTraceBuilder(): TraceBuilder {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const state: any = {
+    const state: ResolutionTraceDraft = {
         autoSwitchEvents: [],
     };
 
@@ -103,11 +108,11 @@ export function createTraceBuilder(): TraceBuilder {
             if (state.resolvedSubStyle === undefined) throw new Error("TraceBuilder: resolvedSubStyle not set");
 
             return Object.freeze({
-                resolvedCampaignType: state.resolvedCampaignType,
-                resolvedAdMode: state.resolvedAdMode,
-                resolvedCreativeModes: state.resolvedCreativeModes,
-                resolvedStyleFamily: state.resolvedStyleFamily,
-                resolvedSubStyle: state.resolvedSubStyle,
+                resolvedCampaignType: state.resolvedCampaignType!,
+                resolvedAdMode: state.resolvedAdMode!,
+                resolvedCreativeModes: [...(state.resolvedCreativeModes ?? [])],
+                resolvedStyleFamily: state.resolvedStyleFamily!,
+                resolvedSubStyle: state.resolvedSubStyle!,
                 referenceAdOverrideActive: state.referenceAdOverrideActive ?? false,
                 overriddenUniverse: state.overriddenUniverse,
                 overriddenSubStyle: state.overriddenSubStyle,
@@ -123,9 +128,9 @@ export function createTraceBuilder(): TraceBuilder {
                 originalSlideCount: state.originalSlideCount,
                 resolvedSlideCount: state.resolvedSlideCount,
                 slideCountOverrideReason: state.slideCountOverrideReason,
-                valueStackEmptyFieldsSkipped: state.valueStackEmptyFieldsSkipped,
-                autoSwitchEvents: state.autoSwitchEvents ?? [],
-                perSlide: state.perSlide,
+                valueStackEmptyFieldsSkipped: state.valueStackEmptyFieldsSkipped ? [...state.valueStackEmptyFieldsSkipped] : undefined,
+                autoSwitchEvents: [...(state.autoSwitchEvents ?? [])],
+                perSlide: state.perSlide ? [...state.perSlide] : undefined,
                 launchMatrixCheckPassed: state.launchMatrixCheckPassed ?? false,
                 launchMatrixBlockReason: state.launchMatrixBlockReason,
             });
