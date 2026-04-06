@@ -90,7 +90,6 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         templateNeeds: ['hero_value_stack_split', 'hero_value_stack_panel'],
     },
 
-
     event_ticket: {
         id: 'event_ticket', labelEn: 'Ticket', labelAr: 'تذكرة', icon: '🎫',
         description: 'Ticket-style with date, time, seats',
@@ -240,6 +239,9 @@ export function validateCombination(selectedModes: string[], hookAngle?: string)
     }
     if (errors.length > 0) return { valid: false, errors, warnings, resolvedTab, resolvedPair };
 
+    // Defense-in-depth: soloOnly is also checked by validateLaunchSurface (Rule 5),
+    // but we repeat it here so validateCombination remains self-contained for callers
+    // that bypass the launch surface guard (e.g., frontend preview, tests).
     for (const m of modes) {
         const meta = CREATIVE_MODE_CATALOG[m];
         if (meta?.soloOnly && modes.length > 1) {
@@ -342,10 +344,6 @@ const PAIR_SPECS: Record<string, PairSpec> = {
         captionAnchors: ['look at everything you get', 'total value', 'you pay only'],
     },
 
-
-
-
-
     // ═══ LIVE EVENTS PAIRS ═══════════════════════════════════════════════════
 
     'standard_hero+event_ticket': {
@@ -401,7 +399,6 @@ const PAIR_SPECS: Record<string, PairSpec> = {
         textPlacementRules: ['screen_center', 'speaker_left_or_right', 'credentials_below', 'cta_bottom'],
         captionAnchors: ['live with', 'presented by', 'webinar'],
     },
-
 
     // ═══ FREE GUIDE PAIRS ════════════════════════════════════════════════════
 
@@ -927,8 +924,6 @@ Hero still dominates 70%. Book is a supporting cover callout, not the centerpiec
 Device as COVER FEATURE ELEMENT — small device thumbnail in corner as "featured product."
 Hero still dominates 70%. Device is a supporting cover callout.`,
 
-
-
         // ── ANIME/MANGA fusions ──
         'anime_manga__value_stack': `ANIME/MANGA × VALUE STACK FUSION:
 Stack items rendered as MANGA INVENTORY PANELS — each item in its own mini-panel with bold outline border.
@@ -943,8 +938,6 @@ stat-block or character bio panel. Bold outlines, cel-shading. Think: anime trad
         'anime_manga__book_mockup': `ANIME/MANGA × BOOK MOCKUP FUSION:
 Book rendered as MANGA VOLUME — bold illustrated cover in anime style, thick spine, manga format proportions.
 Think: actual manga tankōbon volume. Cover art in cel-shaded anime style.`,
-
-
 
         // ── VINTAGE B&W fusions ──
         'vintage_bw__value_stack': `VINTAGE B&W × VALUE STACK FUSION:
@@ -961,8 +954,6 @@ illustration. Thick ink border around credentials block. Think: vintage newspape
 Book rendered as VINTAGE INK ILLUSTRATION of a bound volume. Cross-hatched cover detail.
 Bold typeset title on spine/cover. Think: classic 1940s book advertisement illustration.`,
 
-
-
         // ── VINTAGE SEPIA fusions (same as B&W but sepia-toned) ──
         'vintage_sepia__value_stack': `VINTAGE SEPIA × VALUE STACK FUSION:
 Same as Vintage B&W value stack — but all ink in warm sepia/amber tones on aged parchment background.`,
@@ -973,8 +964,6 @@ Same as Vintage B&W ticket — warm sepia broadsheet event notice on aged parchm
 Same as Vintage B&W speaker portrait — warm sepia ink on parchment.`,
         'vintage_sepia__book_mockup': `VINTAGE SEPIA × BOOK MOCKUP FUSION:
 Same as Vintage B&W book — warm sepia ink illustration of bound volume on aged paper.`,
-
-
 
         // ── COMIC BOOK fusions ──
         'comic_book__value_stack': `COMIC BOOK × VALUE STACK FUSION:
@@ -991,8 +980,6 @@ Credentials in comic lettering panel below. Think: comic character introduction 
 Book rendered as COMIC BOOK ISSUE — bold illustrated cover, thick spine, comic format.
 Cover art in 4-color comic style. Think: actual comic book or graphic novel cover.`,
 
-
-
         // ── WATERCOLOR fusions ──
         'watercolor_dreamscape__value_stack': `WATERCOLOR × VALUE STACK FUSION:
 Stack items rendered as SOFT PAINTED CARDS — each item on a watercolor wash card, bleeding edges.
@@ -1007,8 +994,6 @@ Credentials in delicate handwritten-feel type. Think: artist's self-portrait wit
         'watercolor_dreamscape__book_mockup': `WATERCOLOR × BOOK MOCKUP FUSION:
 Book rendered as PAINTED ILLUSTRATION of a book — soft watercolor cover art, painted paper texture.
 Think: hand-illustrated book cover for an artisan publication.`,
-
-
     };
 
     return fusions[key] || '';

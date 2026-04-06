@@ -3313,6 +3313,7 @@ export const serverGenerateFinalAd = onCall({
             hookAngle: inputs?.coldHookAngle ?? null,
             visualStyleFamily: inputs?.visualStyleFamily,
             userPlan: (entitlement.basePlan !== "none" ? entitlement.basePlan : "starter") as "starter" | "creator" | "pro" | "scaling",
+            batchN: inputs?.batchN,
         });
         if (!surfaceResult.passed) {
             throw new HttpsError("permission-denied", surfaceResult.blockReason ?? "Invalid combination.");

@@ -41,7 +41,7 @@ A field is considered empty and will be suppressed if:
 | `undefined` | Always |
 | `null` | Always |
 | `string` | `''` or whitespace-only (`value.trim() === ''`) |
-| `Array` | `[]` or all elements are empty or whitespace-only (`element.trim() === ''`) |
+| `Array` | `[]` or every element is a string and `element.trim() === ''`. Mixed-type arrays (e.g., `[0]`, `[null]`) are NOT considered empty. |
 
 ## Behavior
 

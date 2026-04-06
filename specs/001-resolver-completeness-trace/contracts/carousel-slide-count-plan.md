@@ -61,7 +61,7 @@ type SlidePlan = SlideEntry[];
 
 ## Value Stack Auto-Adjustment
 
-```
+```text
 resolvedSlideCount = min(giftCount + 2, 9)
 ```
 

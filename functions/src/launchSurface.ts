@@ -186,5 +186,10 @@ export function validateLaunchSurface(input: LaunchSurfaceInput): LaunchSurfaceR
         return { ...base, blockReason: "Before/After is single-image only." };
     }
 
+    // Rule 9: Batch N cap — product of variation dimensions must not exceed 30
+    if (adFormat === "batch" && input.batchN != null && input.batchN > 30) {
+        return { ...base, blockReason: `Batch count (${input.batchN}) exceeds maximum of 30 combinations.` };
+    }
+
     return { passed: true, resolvedOfferType, resolvedTab, layoutKey };
 }

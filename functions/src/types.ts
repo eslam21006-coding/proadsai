@@ -65,6 +65,7 @@ export interface LaunchSurfaceInput {
     hookAngle?: string | null
     visualStyleFamily?: VisualStyleFamily
     userPlan: "starter" | "creator" | "pro" | "scaling"
+    batchN?: number
 }
 export interface LaunchSurfaceResult {
     passed: boolean

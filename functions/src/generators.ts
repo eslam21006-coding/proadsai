@@ -2045,6 +2045,16 @@ DO NOT return the other concepts.`;
           const soloMode = isSolo ? modes[0] : null;
           const pairMode = hasHero && secondary.length > 0 ? secondary[0] : null;
 
+          // before_after is a solo mode but REQUIRES hero on both halves — handle separately
+          if (soloMode === 'before_after' || (inputs as any).coldHookAngle === 'before_after') {
+              return `
+═══ CREATIVE MODE CONTRACT (TOP PRIORITY — READ FIRST) ═══
+MODE: BEFORE_AFTER (SPLIT-SCREEN — HERO REQUIRED ON BOTH HALVES)
+BEFORE/AFTER SPLIT — Canvas split into two halves. BEFORE half: hero in problem state with struggle expression. AFTER half: same hero in result state with confident expression. Visible divider between halves. NO "BEFORE"/"AFTER" text labels. Same face both halves.
+⚠️ The SAME hero/person MUST appear in BOTH halves. Props transform logically (empty→full, cheap→premium, cluttered→organized).
+═══════════════════════════════════════════════════════════`;
+          }
+
           if (soloMode) {
               const soloLabels: Record<string, string> = {
                   value_stack: 'This ad has NO hero person. The value stack IS the entire design. Full-width layout with offer items as visual focus. Background is thematic only.',
@@ -2055,7 +2065,6 @@ DO NOT return the other concepts.`;
                   book_mockup: 'BOOK-ONLY design. 3D book as centerpiece, NO hero person holding it. Floating in thematic environment.',
                   device_mockup: 'DEVICE-ONLY design. Tablet/phone showing content, NO hero person. Device is the visual anchor.',
                   text_only: 'TYPOGRAPHY-ONLY design. NO hero person. NO universe environment. The COPY and TYPOGRAPHY ARE the entire visual. Background is color/gradient/texture only. All canvas space is used for typographic layout.',
-                  before_after: 'BEFORE/AFTER SPLIT — Canvas split into two halves. BEFORE half: hero in problem state with struggle expression. AFTER half: same hero in result state with confident expression. Visible divider between halves. NO "BEFORE"/"AFTER" text labels. Same face both halves.',
               };
               return `
 ═══ CREATIVE MODE CONTRACT (TOP PRIORITY — READ FIRST) ═══
@@ -3213,19 +3222,14 @@ Selected modes: [${modes.join(' + ')}]
                         if (!finalCheck.passed && isStrictPair) {
                             const stillMissing = finalCheck.missingModes.filter(m => STRICT_PAIRS_SECONDARY.includes(m));
                             if (stillMissing.length > 0) {
-                                console.error(`🛑 STRICT PAIR FAIL-CLOSED: Blueprint still underrepresents [${stillMissing.join(', ')}] after repair. Modes=[${selectedModes.join(',')}]. Throwing.`);
-                                throw new Error(`Blueprint failed strict pair validation — secondary mode(s) [${stillMissing.join(', ')}] underrepresented after repair. User should retry.`);
+                                console.error(`⚠️ STRICT PAIR WARNING: Blueprint still underrepresents [${stillMissing.join(', ')}] after repair. Modes=[${selectedModes.join(',')}]. Returning best-effort result.`);
                             }
                         }
                     } catch (e) {
-                        if (e instanceof Error && e.message.includes('strict pair validation')) {
-                            throw e; // Re-throw strict pair failures — NEVER swallow
-                        }
                         // Repair API itself failed (Gemini error, timeout, etc.)
                         console.warn(`⚠️ Blueprint mode repair API failed: ${e}`);
                         if (isStrictPair && !repairSucceeded) {
-                            console.error(`🛑 STRICT PAIR FAIL-CLOSED (repair API failed): Cannot guarantee [${modeContribCheck.missingModes.join(', ')}] are represented. Modes=[${selectedModes.join(',')}]. Throwing.`);
-                            throw new Error(`Blueprint failed strict pair validation — repair API failed and secondary mode(s) [${modeContribCheck.missingModes.join(', ')}] cannot be guaranteed. User should retry.`);
+                            console.error(`⚠️ STRICT PAIR WARNING (repair API failed): Cannot guarantee [${modeContribCheck.missingModes.join(', ')}] are represented. Modes=[${selectedModes.join(',')}]. Returning best-effort result.`);
                         }
                     }
                 }
