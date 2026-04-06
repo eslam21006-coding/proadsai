@@ -559,7 +559,10 @@ Use the above to guide creative direction. Match preferences while staying fresh
                 );
                 const snap = await getDocs(q);
                 return new Set(snap.docs.map(d => d.id));
-            } catch {
+            } catch (e: unknown) {
+                // Only fallback for missing composite index; rethrow other errors
+                const code = (e as { code?: string })?.code;
+                if (code !== 'failed-precondition') throw e;
                 const fallbackQ = query(
                     collection(db, 'generations'),
                     where(scopeField, '==', scopeValue),
@@ -569,12 +572,15 @@ Use the above to guide creative direction. Match preferences while staying fresh
                 const snap = await getDocs(fallbackQ);
                 return new Set(
                     snap.docs
-                        .filter(d => (d.data() as any)?.feedback?.savedToFavorites === true)
+                        .filter(d => {
+                            const data = d.data() as { feedback?: { savedToFavorites?: boolean } };
+                            return data.feedback?.savedToFavorites === true;
+                        })
                         .map(d => d.id)
                 );
             }
         } catch (err) {
-            console.error('Failed to get favorite IDs:', err);
+            console.warn('\u26A0\uFE0F Failed to get favorite IDs:', err);
             return new Set();
         }
     }

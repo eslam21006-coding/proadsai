@@ -10,11 +10,13 @@
 Returns the set of generation IDs that are currently favorited for the given scope.
 
 **Signature**:
-```
+
+```ts
 getFavoriteIds(userId: string, workspaceId?: string) → Promise<Set<string>>
 ```
 
 **Inputs**:
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | userId | string | yes | Current user's UID |
@@ -35,11 +37,13 @@ getFavoriteIds(userId: string, workspaceId?: string) → Promise<Set<string>>
 Updates output fields on an existing favorited generation record.
 
 **Signature**:
-```
+
+```ts
 updateFavoriteRecord(generationId: string, updatedFields: Partial<GenerationRecord['output']>) → Promise<void>
 ```
 
 **Inputs**:
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | generationId | string | yes | Document ID of the generation to update |
@@ -60,16 +64,19 @@ updateFavoriteRecord(generationId: string, updatedFields: Partial<GenerationReco
 ### Subscription interface
 
 **Signature**:
-```
+
+```ts
 useFavorites(phase: 'hooks' | 'concepts' | 'render' | 'caption') → { favorites: GenerationRecord[], loading: boolean }
 ```
 
 **Inputs**:
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | phase | string enum | yes | Filter favorites by content phase |
 
 **Output**:
+
 | Field | Type | Description |
 |-------|------|-------------|
 | favorites | GenerationRecord[] | Sorted by timestamp descending (default) |
@@ -88,7 +95,7 @@ useFavorites(phase: 'hooks' | 'concepts' | 'render' | 'caption') → { favorites
 
 ### Props interface
 
-```
+```ts
 interface FavoritesPanelProps {
   phase: 'hooks' | 'concepts' | 'render' | 'caption'
   onLoad: (record: GenerationRecord) => void
