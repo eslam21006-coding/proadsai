@@ -10,6 +10,8 @@ import { gemini, type GenerationResult } from './services/geminiService';
 import { resolveCreativeSpec, CREATIVE_MODE_CATALOG, type ResolvedCreativeSpec } from './creativeResolver';
 import { isValidHookPayload, validateCanonicalHooks, normalizeHooksToCanonical, getHookValidationSummary } from './utils/hookPayload';
 import FeedbackButtons from './components/FeedbackButtons';
+import FavoritesPanel from './components/FavoritesPanel';
+import { useFavorites } from './hooks/useFavorites';
 import MagicSelector, { type EditRequest } from './components/MagicSelector';
 import { feedbackService, type NegativeFeedbackTag } from './services/feedbackService';
 import { metaService, type MetaConnection } from './services/metaService';
@@ -1464,6 +1466,10 @@ const App: React.FC = () => {
   const [favoritesData, setFavoritesData] = useState<any[]>([]);
   const [favTab, setFavTab] = useState('all');
   const [favoritesLoading, setFavoritesLoading] = useState(false);
+  const [openFavoritesPhase, setOpenFavoritesPhase] = useState<'hooks' | 'concepts' | 'render' | 'caption' | null>(null);
+  const [loadedFavoriteId, setLoadedFavoriteId] = useState<string | null>(null);
+  const [favUpdatePrompt, setFavUpdatePrompt] = useState<{ phase: string; newGenId: string } | null>(null);
+  const [loadedRenderRecord, setLoadedRenderRecord] = useState<any>(null);
   const [upgradeReason, setUpgradeReason] = useState('');
   const [showAccountMenu, setShowAccountMenu] = useState(false);
 
@@ -2099,6 +2105,22 @@ const App: React.FC = () => {
   const [hookGenerationIds, setHookGenerationIds] = useState<Record<string, string>>({});
   const [renderGenerationId, setRenderGenerationId] = useState<string>('');
   const [captionGenerationId, setCaptionGenerationId] = useState<string>('');
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const uid = user?.uid;
+    if (!uid) return;
+    const wsId = canUseWorkspaces && activeWorkspaceId ? activeWorkspaceId : undefined;
+    feedbackService.getFavoriteIds(uid, wsId).then(ids => setFavoriteIds(ids)).catch(() => {});
+  }, [user?.uid, activeWorkspaceId]);
+
+  // ─── FAVORITES COUNT PER PHASE ──────────────────────────────
+  const favWsId = canUseWorkspaces ? activeWorkspaceId : null;
+  const { favorites: hooksFavs } = useFavorites({ phase: 'hooks', workspaceId: favWsId });
+  const { favorites: conceptsFavs } = useFavorites({ phase: 'concepts', workspaceId: favWsId });
+  const { favorites: renderFavs } = useFavorites({ phase: 'render', workspaceId: favWsId });
+  const { favorites: captionFavs } = useFavorites({ phase: 'caption', workspaceId: favWsId });
+
   // ─── META ADS CONNECTION ─────────────────────────────────────
   const [metaConnection, setMetaConnection] = useState<MetaConnection | null>(null);
   const [metaSyncing, setMetaSyncing] = useState(false);
@@ -2669,6 +2691,10 @@ const App: React.FC = () => {
   // --- HISTORY ENGINE moved to before render gates ---
 
   const loadProject = (p: SavedProject) => {
+    // Clear stale favorites state from previous project
+    setLoadedFavoriteId(null);
+    setFavUpdatePrompt(null);
+    setLoadedRenderRecord(null);
     setCurrentProjectId(p.id);
     setCurrentProjectName(p.name || "Untitled Project");
     const migratedInputs = p.inputs
@@ -2975,6 +3001,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             }
           }
           setHookGenerationIds(hookIds);
+          // T015: Show update/keep-both prompt if a favorite was loaded
+          const firstGenId = Object.values(hookIds)[0];
+          if (loadedFavoriteId && firstGenId) {
+            setFavUpdatePrompt({ phase: 'hooks', newGenId: firstGenId });
+          }
         } catch (saveErr) {
           console.error('Non-blocking: failed to save hook generation records:', saveErr);
         }
@@ -3371,6 +3402,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity()
             );
             setRenderGenerationId(genId);
+            if (loadedFavoriteId && genId) {
+              setFavUpdatePrompt({ phase: 'render', newGenId: genId });
+            }
           } catch (saveErr) {
             console.error('Non-blocking: failed to save render generation record:', saveErr);
           }
@@ -3887,7 +3921,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             { imageUrl: res, conceptText: (selectedConcept || '').substring(0, 500) },
             buildPlan, resolvedUniverse, 'gemini-3.1-flash-image', 0, editRatio, buildCreativeIdentity()
           );
-          if (genId) setRenderGenerationId(genId);
+          if (genId) {
+            setRenderGenerationId(genId);
+            if (loadedFavoriteId) setFavUpdatePrompt({ phase: 'render', newGenId: genId });
+          }
         } catch (saveErr) {
           console.error('Non-blocking: failed to save polish render record:', saveErr);
         }
@@ -3937,6 +3974,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               res, '', 'gemini-3-flash', 0, undefined, buildCreativeIdentity()
             );
             setCaptionGenerationId(genId);
+            if (loadedFavoriteId && genId) {
+              setFavUpdatePrompt({ phase: 'caption', newGenId: genId });
+            }
           } catch (e) { console.warn('Caption generation save failed (non-blocking):', e); }
         }
       }
@@ -4805,6 +4845,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         {phase === 'input' && <Suspense fallback={<div className="px-6 py-10 text-center text-sm text-slate-400">Loading workspace...</div>}><InputForm key={currentProjectId} onSubmit={handleStartDesign} onSaveDraft={handleSaveDraft} showToast={showToast} initialValues={inputs} userPlan={userPlan} avatars={avatars} onSaveAvatar={handleSaveAvatar} onUpdateAvatar={handleUpdateAvatar} onDeleteAvatar={handleDeleteAvatar} competitorData={competitorData} competitorLoading={competitorLoading} onRefreshResearch={(formData) => runCompetitorResearch(formData, true)} /></Suspense>}
 
         {phase === 'tov_review' && (
+          <>
           <div className="space-y-16 animate-in fade-in slide-in-from-bottom-12 duration-1000 max-w-5xl mx-auto relative">
             <button onClick={handleBack} className={`absolute -top-12 ${lang === 'ar' ? 'right-0' : 'left-0'} bg-slate-900/60 px-5 py-2.5 rounded-xl text-[10px] font-semibold text-slate-500 hover:text-white transition-all shadow-xl flex items-center ${lang === 'ar' ? 'flex-row-reverse' : ''} space-x-2`}>
               <i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'}`}></i><span>{lang === 'ar' ? 'رجوع' : 'Back'}</span>
@@ -4816,6 +4857,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               {inputs?.adMode === 'carousel' && (
                 <p className="text-sm text-blue-400/70 font-medium mt-2">Choose a story direction for your {inputs?.slideCount || 5}-slide carousel</p>
               )}
+              <div className="flex flex-col items-center gap-3">
+                <button
+                  onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'hooks' ? null : 'hooks')}
+                  className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all flex items-center gap-1.5"
+                >
+                  <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_hooks')}{hooksFavs.length > 0 && ` (${hooksFavs.length})`}
+                </button>
+              </div>
               <div className="flex flex-col items-center gap-3">
                 {((inputs?.visualStyleFamily ?? inputs?.universeMode) === 'minimal') ? (
                   <p className="text-slate-500 text-xs font-bold uppercase tracking-[0.5em] italic">
@@ -5172,6 +5221,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                             <FeedbackButtons
                               generationId={hookGenerationIds[v] || ''}
                               compact={true}
+                              initialFavorite={!!hookGenerationIds[v] && favoriteIds.has(hookGenerationIds[v])}
                               onRegenerate={(tags, freeText) => {
                                 const context = feedbackService.buildRegenerationContext(raw, tags, freeText);
                                 handlePrecisionHookEdit(v, context);
@@ -5377,9 +5427,36 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
               </button>
             </div>
           </div>
+
+          <FavoritesPanel
+            phase="hooks"
+            isOpen={openFavoritesPhase === 'hooks'}
+            onClose={() => setOpenFavoritesPhase(null)}
+            workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+            onLoad={async (record) => {
+              // Auto-save current hook variant if one is active (T014)
+              const activeVariant = Object.keys(hookGenerationIds).find(v => hookGenerationIds[v]);
+              if (activeVariant && hookGenerationIds[activeVariant]) {
+                await feedbackService.toggleFavorite(hookGenerationIds[activeVariant], true).catch(() => {});
+              }
+              if (record.output?.hookText) {
+                const reconstructed = `HOOK_START_A\nHOOK_TEXT: ${record.output.hookText}\nSUBHEADLINE: ${record.output.subhead || ''}\nCTA_BUTTON: ${record.output.ctaText || ''}\nHOOK_END_A`;
+                setTovText(record.output.fullResponse || reconstructed);
+                setSelectedTov(reconstructed);
+              }
+              // Update generation ID so FeedbackButtons targets the loaded record
+              if (record.id && activeVariant) {
+                setHookGenerationIds(prev => ({ ...prev, [activeVariant]: record.id! }));
+              }
+              setLoadedFavoriteId(record.id || null);
+              setOpenFavoritesPhase(null);
+            }}
+          />
+          </>
         )}
 
-        {phase === 'concept_review' && (() => {
+        {phase === 'concept_review' && (<>
+        {(() => {
           /* ─── Unified hook groups: always treat as batch-style layout ─── */
           const hookGroups: { hookKey: string; hookText: string; hookHeadline: string; conceptsSource: string; selectedConcepts: Set<number>; isBatch: boolean }[] =
             batchHookGroups.length > 0
@@ -5422,6 +5499,14 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 <p className="text-[11px] text-slate-400 mt-3 font-medium">
                   {hookGroups.length} hook{hookGroups.length > 1 ? 's' : ''} &middot; {totalSelectedConcepts} concept{totalSelectedConcepts !== 1 ? 's' : ''} &middot; {numSizes} size{numSizes > 1 ? 's' : ''} = {totalImages} image{totalImages !== 1 ? 's' : ''}
                 </p>
+                <div className="mt-3">
+                  <button
+                    onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'concepts' ? null : 'concepts')}
+                    className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all inline-flex items-center gap-1.5"
+                  >
+                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_concepts')}{conceptsFavs.length > 0 && ` (${conceptsFavs.length})`}
+                  </button>
+                </div>
                 {/* Resolved Creative Spec Summary */}
                 {(() => {
                   const spec = resolveCreativeSpec({
@@ -5895,7 +5980,23 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           );
         })()}
 
-        {phase === 'render_studio' && (() => {
+          <FavoritesPanel
+            phase="concepts"
+            isOpen={openFavoritesPhase === 'concepts'}
+            onClose={() => setOpenFavoritesPhase(null)}
+            workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+            onLoad={(record) => {
+              // No concept generation ID tracked — skip auto-save for concepts
+              if (record.output?.conceptText) setConceptsText(record.output.conceptText);
+              if (record.output?.buildPlan) setBuildPlan(record.output.buildPlan);
+              setLoadedFavoriteId(record.id || null);
+              setOpenFavoritesPhase(null);
+            }}
+          />
+        </>)}
+
+        {phase === 'render_studio' && (<>
+        {(() => {
           const hasAnyImage = currentMockup || batchResults.some((r: any) => r.status === 'done') || carouselSlides.some((s: any) => s.status === 'done');
           return (
             <div className="flex flex-col xl:flex-row gap-6 animate-in fade-in duration-700 max-w-[1500px] mx-auto relative">
@@ -5942,6 +6043,30 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   <h2 className="text-xl font-black text-white italic tracking-tight uppercase shrink-0">
                     <i className="fa-solid fa-paintbrush text-blue-500 mr-2 text-sm"></i>Master <span className="text-blue-500">Studio</span>
                   </h2>
+                  <button
+                    onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'render' ? null : 'render')}
+                    className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all flex items-center gap-1.5"
+                  >
+                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_renders')}{renderFavs.length > 0 && ` (${renderFavs.length})`}
+                  </button>
+                  {loadedRenderRecord && (
+                    <button
+                      onClick={() => {
+                        if (loadedRenderRecord.input) setInputs(loadedRenderRecord.input);
+                        if (loadedRenderRecord.output?.conceptText) {
+                          setConceptsText(loadedRenderRecord.output.conceptText);
+                          setSelectedConcept(loadedRenderRecord.output.conceptText);
+                        }
+                        if (loadedRenderRecord.output?.buildPlan) setBuildPlan(loadedRenderRecord.output.buildPlan);
+                        setLoadedRenderRecord(null);
+                        setLoadedFavoriteId(null);
+                        setPhase('concept_review');
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-violet-500/10 border border-violet-500/20 text-violet-400 text-[9px] font-bold uppercase tracking-wider hover:bg-violet-500/20 transition-all flex items-center gap-1.5"
+                    >
+                      <i className="fa-solid fa-rotate-right text-[8px]"></i> {t('fav.edit_regenerate')}
+                    </button>
+                  )}
 
                   {/* Size tabs + Version nav */}
                   {mockupHistory.length > 1 && (() => {
@@ -6475,6 +6600,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     <FeedbackButtons
                       generationId={renderGenerationId}
                       showUsedThis={true}
+                      initialFavorite={!!renderGenerationId && favoriteIds.has(renderGenerationId)}
                     />
                   </div>
                 )}
@@ -6788,7 +6914,27 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           );
         })()}
 
-        {phase === 'primary_text' && (() => {
+          <FavoritesPanel
+            phase="render"
+            isOpen={openFavoritesPhase === 'render'}
+            onClose={() => setOpenFavoritesPhase(null)}
+            workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+            onLoad={async (record) => {
+              // Auto-save current render if exists (T014)
+              if (renderGenerationId) {
+                await feedbackService.toggleFavorite(renderGenerationId, true).catch(() => {});
+              }
+              if (record.output?.imageUrl) pushMockup(record.output.imageUrl, (record.metadata?.aspectRatio || '1:1') as AspectRatio);
+              if (record.id) setRenderGenerationId(record.id);
+              setLoadedFavoriteId(record.id || null);
+              setLoadedRenderRecord(record);
+              setOpenFavoritesPhase(null);
+            }}
+          />
+        </>)}
+
+        {phase === 'primary_text' && (<>
+        {(() => {
           const wordCount = captionText ? captionText.split(/\s+/).filter(Boolean).length : 0;
           return (
             <div className="flex flex-col lg:flex-row gap-16 animate-in fade-in duration-1000 max-w-[1200px] mx-auto relative">
@@ -6800,6 +6946,14 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
               <div className="flex-1 space-y-8 pt-10">
                 <h2 className="text-5xl md:text-6xl font-black text-white italic tracking-tighter uppercase leading-none">{t('script.title')}</h2>
                 <p className="text-[10px] text-slate-500 max-w-lg">{t('tip.step5')}</p>
+                <div className="mt-3">
+                  <button
+                    onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'caption' ? null : 'caption')}
+                    className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all inline-flex items-center gap-1.5"
+                  >
+                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_scripts')}{captionFavs.length > 0 && ` (${captionFavs.length})`}
+                  </button>
+                </div>
 
                 {/* BATCH CAPTION TABS (shown when batch captions exist) */}
                 {batchCaptions.length > 1 && (
@@ -6845,6 +6999,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         generationId={captionGenerationId}
                         showUsedThis={true}
                         compact={true}
+                        initialFavorite={!!captionGenerationId && favoriteIds.has(captionGenerationId)}
                       />
                     </div>
                   )}
@@ -7087,7 +7242,87 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
             </div>
           );
         })()}
+
+          <FavoritesPanel
+            phase="caption"
+            isOpen={openFavoritesPhase === 'caption'}
+            onClose={() => setOpenFavoritesPhase(null)}
+            workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+            onLoad={async (record) => {
+              // Auto-save current caption if exists (T014)
+              if (captionGenerationId) {
+                await feedbackService.toggleFavorite(captionGenerationId, true).catch(() => {});
+              }
+              if (record.output?.captionText) setCaptionText(record.output.captionText);
+              if (record.id) setCaptionGenerationId(record.id);
+              setLoadedFavoriteId(record.id || null);
+              setOpenFavoritesPhase(null);
+            }}
+          />
+        </>)}
       </main>
+
+      {/* ═══ FAVORITE UPDATE/KEEP-BOTH PROMPT (T015-T018) ═══ */}
+      {favUpdatePrompt && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { setFavUpdatePrompt(null); setLoadedFavoriteId(null); }} />
+          <div className="relative bg-slate-950 border border-amber-500/30 rounded-2xl shadow-2xl max-w-sm w-full mx-4 p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="text-center space-y-2">
+              <i className="fa-solid fa-bookmark text-amber-400 text-2xl"></i>
+              <h3 className="text-lg font-black text-white">{t('fav.update_title')}</h3>
+              <p className="text-[11px] text-slate-400">{t('fav.update_desc')}</p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={async () => {
+                  if (loadedFavoriteId && favUpdatePrompt.newGenId) {
+                    try {
+                      // Get new output fields from the new generation
+                      const newDoc = await getDoc(doc(db, 'generations', favUpdatePrompt.newGenId));
+                      if (newDoc.exists()) {
+                        const newOutput = (newDoc.data() as any).output || {};
+                        await feedbackService.updateFavoriteRecord(loadedFavoriteId, newOutput);
+                        showToast(t('fav.updated'), 'success');
+                      }
+                    } catch { showToast(t('fav.update_failed'), 'error'); }
+                  }
+                  setFavUpdatePrompt(null);
+                  setLoadedFavoriteId(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white text-[9px] font-bold uppercase tracking-wider transition-all"
+              >
+                <i className="fa-solid fa-pen mr-1"></i> {t('fav.yes_update')}
+              </button>
+              <button
+                onClick={async () => {
+                  if (favUpdatePrompt.newGenId) {
+                    try {
+                      await feedbackService.toggleFavorite(favUpdatePrompt.newGenId, true);
+                      showToast(t('fav.saved_new'), 'success');
+                      setFavUpdatePrompt(null);
+                      setLoadedFavoriteId(null);
+                    } catch {
+                      showToast(t('fav.save_failed'), 'error');
+                    }
+                    return;
+                  }
+                  setFavUpdatePrompt(null);
+                  setLoadedFavoriteId(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white text-[9px] font-bold uppercase tracking-wider transition-all"
+              >
+                <i className="fa-solid fa-copy mr-1"></i> {t('fav.keep_both')}
+              </button>
+            </div>
+            <button
+              onClick={() => { setFavUpdatePrompt(null); setLoadedFavoriteId(null); }}
+              className="w-full py-2 text-[9px] text-slate-600 hover:text-slate-300 transition-all"
+            >
+              {t('fav.skip')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ═══ UPGRADE / TOP-UP MODAL ═══ */}
       {/* ═══ CAROUSEL COPY PREVIEW MODAL ═══ */}
