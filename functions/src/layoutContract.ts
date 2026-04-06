@@ -497,7 +497,7 @@ export function compileFullContract(input: CompileContractInput): FullLayoutCont
     const textPlacementRules = [...spec.textPlacementRules];
 
     // 10. Numeric fidelity policy — strict for modes that display commercial figures
-    const strictNumericModes = ['value_stack', 'premium_package', 'limited_access'];
+    const strictNumericModes = ['value_stack', 'premium_package'];
     const numericFidelity: 'strict' | 'warn' | 'none' =
         input.selectedModes.some(m => strictNumericModes.includes(m)) ? 'strict' : 'none';
 

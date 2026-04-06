@@ -108,7 +108,6 @@ export const ASPECT_RATIOS: { label: string; value: any; icon: React.ReactNode }
 // Ordered by plan tier: Starter [0..3], Creator [0..7], Pro/Scaling [0..10]
 export const COLD_HOOK_ANGLES: { id: string; labelAr: string; labelEn: string; description: string; carouselRecommended?: boolean }[] = [
   // ── Starter (first 4) ──
-  { id: 'before_after', labelAr: 'قبل / بعد', labelEn: 'Before/After', description: 'Split design showing transformation — great for visual proof' },
   { id: 'emotional', labelAr: 'عاطفي', labelEn: 'Emotional', description: 'Triggers feelings — fear, hope, desire, frustration' },
   { id: 'pain', labelAr: 'نقطة ألم', labelEn: 'Pain Amplification', description: 'Presses harder on the pain — "you know that feeling when..."' },
   { id: 'curiosity', labelAr: 'فضول', labelEn: 'Curiosity', description: '"The one thing you\'re missing" — an open loop that demands a click' },
@@ -620,15 +619,14 @@ export const getRandomUniverse = (mode?: 'realistic' | 'fantasy', context?: { ta
 
 // ─── OFFER TYPES (restructured with categories + creative modes) ─────────
 export const OFFER_TYPES = [
-  "Free Webinar",
-  "Paid Workshop",
-  "Challenge",
+  "Live Event",
   "Free Guide",
   "Mini-Course",
 ];
 
 // Maps offer type → tab (new v2 system)
 export const OFFER_CATEGORY_MAP: Record<string, string> = {
+  'Live Event': 'live_events',
   'Free Webinar': 'live_events',
   'Paid Workshop': 'live_events',
   'Challenge': 'live_events',

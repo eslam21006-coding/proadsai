@@ -161,44 +161,7 @@ INVALID SUBSTITUTES:
 - ❌ Plain text name without designed credentials bar IS NOT a speaker card`,
     },
 
-    day_strip: {
-        conceptInstruction: `CREATIVE MODE: DAY STRIP DESIGN (Challenge)
-A horizontal or vertical strip showing the challenge days progression.
-MANDATORY LAYOUT:
-- DAY MARKERS: Day 1 | Day 2 | Day 3 | Day 4 | Day 5 (or however many)
-- Each day has an ICON or SHORT LABEL (e.g., Day 1: Foundation, Day 2: Strategy...)
-- HERO: Centered or to one side, with days wrapping around them
-- PROGRESS VISUAL: Arrow or path connecting the days
-- CURRENT DAY: Day 1 highlighted/glowing — "Starts Monday" or "Join Now"
-- CTA: "Join Day 1 Free" or "Start the Challenge"
-The design should feel like a JOURNEY MAP or GAME PROGRESSION.
-PREMIUM EXECUTION:
-- Day markers should be DESIGNED NODES — circles, hexagons, or milestone badges, not just text
-- The connecting path should be a visible line, arrow trail, or dotted progression line
-- Day 1 should GLOW or have a highlight effect (pulse, aura, bright accent)
-- Each marker needs at minimum a number and a short keyword (Foundation, Launch, Scale...)
-INVALID:
-- ❌ A single "Starts Monday" text label = NOT a day strip
-- ❌ A generic calendar icon = NOT a day strip (needs multiple day nodes)
-- ❌ Just numbered text without visual node/path structure = NOT a day strip`,
-        buildPlanInstruction: `DAY STRIP: Design 3-5 DAY MARKERS as visual nodes (circles/hexagons/badges, NOT just text).
-Connect them with a visible progression path (arrow trail or dotted line).
-Day 1 highlighted with glow effect. Each marker: number + short keyword.
-Hero in center or to one side. Community count badge. "Join Day 1" CTA.
-For 9:16: vertical day progression using full height — markers stacked top to bottom.`,
-        renderInstruction: `DAY STRIP MODE — PREMIUM EXECUTION:
-- Render 3-5 DAY MARKER NODES — designed circles, hexagons, or milestone badges
-- Each node: day number + short label keyword (Foundation, Strategy, Launch...)
-- Connect nodes with visible PROGRESSION PATH — arrow trail, dotted line, or glowing path
-- Day 1: GLOW effect (bright accent, pulse aura, or highlight ring)
-- Hero: centered with day strip wrapping, or to one side
-- For 9:16: VERTICAL progression — stack day markers top to bottom using full height, path connecting them vertically
-- For 1:1: HORIZONTAL strip across center, hero above
-INVALID SUBSTITUTES:
-- ❌ A single date label IS NOT a day strip — needs 3+ visible nodes
-- ❌ A generic calendar icon IS NOT a day strip
-- ❌ Numbered text without designed node shapes IS NOT a day strip`,
-    },
+
 
     webinar_screen: {
         conceptInstruction: `CREATIVE MODE: WEBINAR SCREEN DESIGN
@@ -328,43 +291,6 @@ MANDATORY LAYOUT:
 Hero behind/beside it. One chapter highlighted. Value count badge.`,
     },
 
-    module_preview: {
-        conceptInstruction: `CREATIVE MODE: MODULE PREVIEW DESIGN
-Curriculum card showing the course modules.
-MANDATORY LAYOUT:
-- CARD: Floating course card with module progression
-- MODULES: 4-6 module titles listed vertically with checkmarks or numbers
-- PROGRESS BAR: Visual completion indicator
-- HERO: Teaching pose or beside the card
-- OUTCOME: "By Module 4, you'll have..." callout
-- CTA: "Start Learning" or "Enroll Now"
-PREMIUM EXECUTION:
-- Module card must be a STRUCTURED PANEL — not just floating text
-- Each module should be a distinct row with number/checkmark + title
-- Progress bar should show visual completion (40% filled, etc.)
-- The card should feel like a REAL course dashboard UI preview
-INVALID:
-- ❌ A single laptop showing a logo = NOT a module preview
-- ❌ Generic floating text without card structure = NOT a module preview
-- ❌ One book or device with no curriculum list = NOT a module preview`,
-        buildPlanInstruction: `MODULE PREVIEW: Design a STRUCTURED curriculum card with 4-6 module rows.
-Each row: number or checkmark + module title. Progress bar at top or bottom.
-Card floats beside hero with slight depth shadow. Hero in teaching pose.
-For 9:16: card can be taller with more module rows visible.`,
-        renderInstruction: `MODULE PREVIEW MODE — PREMIUM EXECUTION:
-- Render a STRUCTURED curriculum card panel (NOT just floating text)
-- Each module: numbered row or checkmark + title text, as distinct list items
-- Progress bar: visual completion indicator (partially filled bar, 40% etc.)
-- Card should look like a REAL course dashboard/UI preview with clean design
-- Hero: teaching pose beside the card, NOT blocking the module list
-- For 9:16: taller card panel with more module rows visible — use the height
-- For 1:1: compact card with 3-4 key modules, hero beside or above
-INVALID SUBSTITUTES:
-- ❌ A single laptop with logo IS NOT a module preview — needs visible module list
-- ❌ Floating text without card/panel structure IS NOT a module preview
-- ❌ One book or device without curriculum list IS NOT a module preview`,
-    },
-
     platform_screenshot: {
         conceptInstruction: `CREATIVE MODE: PLATFORM SCREENSHOT DESIGN
 Course dashboard shown on screen.
@@ -452,41 +378,6 @@ INVALID SUBSTITUTES (these FAIL the mode):
 - ❌ A single floating object IS NOT a value stack
 - ❌ A text-only bulleted list without card structure IS NOT a value stack
 - ❌ Hero taking 80%+ with a tiny corner decoration IS NOT a value stack`,
-    },
-
-    limited_access: {
-        conceptInstruction: `CREATIVE MODE: LIMITED ACCESS / VIP GATE DESIGN
-Exclusive, VIP-only feel with a gate or velvet rope metaphor.
-MANDATORY LAYOUT:
-- GATE: Velvet rope, door opening, exclusive entrance visual
-- INSIDE: Glimpse of what's behind (blurred luxury, success scene)
-- "INVITATION ONLY" or "LIMITED TO 20" badge
-- HERO: At the entrance, inviting gesture or holding a key
-- COUNTDOWN or SEATS: "7 Spots Remaining" urgency element
-- CTA: "Apply Now" or "Request Access"
-PREMIUM EXECUTION:
-- The gate/rope must be a REAL structural element — visible velvet rope, ornate door, or VIP barrier
-- Behind the gate: blurred but recognizable luxury (premium office, exclusive event, gold lighting)
-- The badge must be a designed UI element (ribbon, seal, or card), not just floating text
-- Urgency counter should look like a real countdown display or seats-remaining indicator
-INVALID (do NOT produce these):
-- ❌ A generic lock icon or padlock = NOT a VIP gate
-- ❌ Just the word "Exclusive" without visual gate structure = NOT limited access
-- ❌ A standard hero with a text overlay saying "limited" = NOT limited access`,
-        buildPlanInstruction: `LIMITED ACCESS: Design a real VIP gate/velvet rope/exclusive entrance.
-Blurred premium scene visible behind the gate. "Limited spots" badge as a designed element (ribbon/seal).
-Hero at entrance with inviting gesture. Urgency counter as a real display element.`,
-        renderInstruction: `LIMITED ACCESS MODE — PREMIUM EXECUTION:
-- The VIP gate/rope must be a STRUCTURAL visual element (velvet ropes, ornate door frame, exclusive barrier)
-- Behind the gate: blurred luxury scene (gold-lit office, exclusive lounge, premium event)
-- "Limited spots" indicator: render as a real designed badge/ribbon, not just floating text
-- Hero positioned at or near the entrance, inviting gesture
-- For 9:16: gate can be a full-height doorway with hero at threshold — uses vertical space well
-- For 1:1: gate horizontal across center with hero above, luxury scene below
-INVALID SUBSTITUTES:
-- ❌ A generic padlock icon IS NOT a VIP gate
-- ❌ Text-only "Exclusive" without structural gate IS NOT limited access
-- ❌ A standard hero photo with a "limited" label IS NOT limited access`,
     },
 
     dashboard_preview: {

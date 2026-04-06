@@ -617,18 +617,7 @@ ${isSquare ? '- 1:1 EXECUTION: Stack cards as a HORIZONTAL strip below the hero,
 ${isWide ? '- 16:9 EXECUTION: Hero left 45%, stack right 45% — generous horizontal space for wider cards with more detail per card.' : ''}`);
     }
 
-    if (secondaryMode === 'module_preview') {
-        parts.push(`
-PAIR EXECUTION — HERO + MODULE PREVIEW (PREMIUM):
-The curriculum card is the PROOF that this is a real structured course, not vague coaching.
-- Module card: render as a FLOATING UI PANEL with clean rounded corners, subtle shadow, and border
-- Each module row: numbered (01, 02, 03...) + title text — clearly separated rows with dividers
-- Progress bar: render at the top of the card as a partially-filled gradient bar (e.g., 40% filled)
-- Card should look like a REAL APP SCREEN or DASHBOARD — clean, modern, typographically precise
-- Hero teaching/presenting gesture beside the card — NOT blocking the module list
-${isTall ? '- 9:16 EXECUTION: Card can be TALLER with more module rows visible (5-6). Hero upper portion, card extending down the right half.' : ''}
-${isSquare ? '- 1:1 EXECUTION: Compact card with 3-4 key modules, hero to one side. Card occupies at least 35% of canvas.' : ''}`);
-    }
+
 
     if (secondaryMode === 'speaker_card' || primaryMode === 'speaker_card') {
         parts.push(`
@@ -656,15 +645,7 @@ ${isTall ? '- 9:16 EXECUTION: Larger ticket with MORE detail — extended perfor
 ${isSquare ? '- 1:1 EXECUTION: Compact ticket, tighter spacing. Portrait smaller. Focus on event title and metadata readability.' : ''}`);
     }
 
-    if ((primaryMode === 'webinar_screen' || secondaryMode === 'webinar_screen') && (primaryMode === 'day_strip' || secondaryMode === 'day_strip')) {
-        parts.push(`
-PAIR EXECUTION — WEBINAR SCREEN + DAY STRIP:
-Two distinct visual elements must BOTH be clearly visible:
-- Screen: realistic laptop/monitor showing session title with LIVE badge — occupies upper/left portion
-- Day strip: 3-5 day NODES as designed circles/hexagons with progression path — occupies lower/right portion
-- Both elements must have their own visual space — do NOT merge them into one
-${isTall ? '- 9:16 EXECUTION: Screen upper 40%, day strip lower 40%, with clear separation. Day nodes vertical progression.' : ''}`);
-    }
+
 
     if ((primaryMode === 'book_mockup' || secondaryMode === 'book_mockup') && (primaryMode === 'device_mockup' || secondaryMode === 'device_mockup')) {
         parts.push(`
@@ -678,31 +659,9 @@ Both products must be clearly visible as a BUNDLE — not one dominating and the
 ${isSquare ? '- 1:1 EXECUTION: Products centered with headline above and CTA below. Tight but balanced arrangement.' : ''}`);
     }
 
-    if (secondaryMode === 'day_strip' || primaryMode === 'day_strip') {
-        if (!parts.some(p => p.includes('DAY STRIP'))) {
-            parts.push(`
-PAIR EXECUTION — DAY STRIP (PREMIUM):
-Day progression nodes must be DESIGNED elements, not just text labels.
-- Each node: styled circle/hexagon/badge with day number and short keyword
-- Progression path: visible connecting line/arrow between nodes
-- Day 1: HIGHLIGHTED with glow, brighter accent, or pulsing effect
-${isTall ? '- 9:16 EXECUTION: VERTICAL day progression top-to-bottom using full height. Each node larger with more detail.' : ''}
-${isSquare ? '- 1:1 EXECUTION: Horizontal strip across the center. Compact but each node still individually distinct.' : ''}`);
-        }
-    }
 
-    if (secondaryMode === 'limited_access' || primaryMode === 'limited_access') {
-        parts.push(`
-PAIR EXECUTION — LIMITED ACCESS / VIP GATE (PREMIUM):
-The VIP/exclusive element must be a STRUCTURAL VISUAL ELEMENT — not just text saying "exclusive".
-- Gate/rope: render a REAL velvet rope, ornate door frame, or exclusive barrier with 3D depth
-- Behind the gate: a blurred but RECOGNIZABLE luxury scene (gold-lit space, premium lounge, exclusive event)
-- "Limited spots" badge: render as a DESIGNED UI ELEMENT — ribbon/seal/badge shape, NOT floating text
-- Urgency counter: render as a real COUNTDOWN DISPLAY or SEATS-REMAINING indicator panel
-- The hero stands AT or NEAR the entrance with an inviting gesture
-${isTall ? '- 9:16 EXECUTION: Gate as a FULL-HEIGHT doorway — hero at threshold, luxury scene visible through opening, badges along the side.' : ''}
-${isSquare ? '- 1:1 EXECUTION: Gate horizontal across center, hero above inviting, blurred luxury below.' : ''}`);
-    }
+
+
 
     if (secondaryMode === 'webinar_screen' || primaryMode === 'webinar_screen') {
         if (!parts.some(p => p.includes('WEBINAR SCREEN'))) {
@@ -2089,7 +2048,7 @@ DO NOT return the other concepts.`;
           if (soloMode) {
               const soloLabels: Record<string, string> = {
                   value_stack: 'This ad has NO hero person. The value stack IS the entire design. Full-width layout with offer items as visual focus. Background is thematic only.',
-                  module_preview: 'This ad shows ONLY the curriculum card. NO hero person. The card is the centerpiece filling 60%+ of canvas.',
+
                   event_ticket: 'TICKET-ONLY design. NO presenter visible. The ticket fills the canvas with premium details (date, time, title, seat count).',
                   webinar_screen: 'SCREEN-ONLY design. Laptop/monitor showing the webinar. NO presenter beside it.',
                   speaker_card: 'SPEAKER PORTRAIT — keynote stage environment mandatory. Dramatic lighting, credentials bar.',
@@ -2106,14 +2065,14 @@ ${soloLabels[soloMode] || 'This ad features ONLY this creative element without a
           } else if (pairMode) {
               const pairWeights: Record<string, string> = {
                   value_stack: 'VISUAL WEIGHT: Hero 45% | Value Stack 45% | Text 10%. Stack items must be INDIVIDUALLY READABLE cards.',
-                  module_preview: 'VISUAL WEIGHT: Hero 45% | Module Card 45% | Text 10%. Card must show 4+ module titles, each READABLE.',
+
                   event_ticket: 'VISUAL WEIGHT: Hero 40% | Ticket 50% | Text 10%. Ticket must show DATE, TIME, TITLE as READABLE text.',
                   speaker_card: 'VISUAL WEIGHT: Hero 50% | Stage/Credentials 40% | Text 10%. STAGE ENVIRONMENT + lower-third bar MANDATORY.',
-                  day_strip: 'VISUAL WEIGHT: Hero 50% | Day Strip 40% | Text 10%. Each day node INDIVIDUALLY LABELED with number + keyword.',
+
                   webinar_screen: 'VISUAL WEIGHT: Hero 40% | Screen 50% | Text 10%. Screen must show LEGIBLE title + LIVE badge.',
                   book_mockup: 'VISUAL WEIGHT: Hero 45% | Book 45% | Text 10%. 3D book with readable cover title.',
                   device_mockup: 'VISUAL WEIGHT: Hero 45% | Device 45% | Text 10%. Device screen shows content, not blank.',
-                  limited_access: 'VISUAL WEIGHT: Hero 40% | VIP Gate 50% | Text 10%. Gate/rope must be a REAL structural element.',
+
               };
               return `
 ═══ CREATIVE MODE CONTRACT (TOP PRIORITY — READ FIRST) ═══
@@ -3224,8 +3183,8 @@ Selected modes: [${modes.join(' + ')}]
 
                     // Determine if this is a strict pair BEFORE repair (so we know to fail-closed on any failure)
                     const STRICT_PAIRS_SECONDARY = [
-                        'value_stack', 'module_preview', 'speaker_card',
-                        'event_ticket', 'day_strip',
+                        'value_stack', 'speaker_card',
+                        'event_ticket',
                         'webinar_screen', 'book_mockup', 'device_mockup',
                     ];
                     const isStrictPair = modeContribCheck.missingModes.some(m => STRICT_PAIRS_SECONDARY.includes(m));

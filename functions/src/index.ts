@@ -3302,6 +3302,23 @@ export const serverGenerateFinalAd = onCall({
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setOpenAIKey(openaiApiKey.value());
 
+    // ═══ LAUNCH SURFACE GUARD: block invalid combos before credit deduction ═══
+    if (!editInstruction && !base64ToEdit) {
+        const { validateLaunchSurface } = await import("./launchSurface.js");
+        const surfaceResult = validateLaunchSurface({
+            offerType: inputs?.offerType ?? "mini_course",
+            campaignType: inputs?.campaignType ?? "cold",
+            adFormat: inputs?.adFormat ?? "single",
+            creativeModes: inputs?.offerCreativeMode || ["standard_hero"],
+            hookAngle: inputs?.coldHookAngle ?? null,
+            visualStyleFamily: inputs?.visualStyleFamily,
+            userPlan: (entitlement.basePlan !== "none" ? entitlement.basePlan : "starter") as "starter" | "creator" | "pro" | "scaling",
+        });
+        if (!surfaceResult.passed) {
+            throw new HttpsError("permission-denied", surfaceResult.blockReason ?? "Invalid combination.");
+        }
+    }
+
     // ═══ CREATIVE MODE VALIDATION: fail-closed for invalid combinations ═══
     if (!editInstruction && !base64ToEdit) {
         const { validateCombination } = await import("./creativeResolver.js");
@@ -3324,6 +3341,12 @@ export const serverGenerateFinalAd = onCall({
             const spec = resolveCreativeSpec({
                 selectedModes: inputs?.offerCreativeMode || ['standard_hero'],
                 hookAngle: inputs?.coldHookAngle || undefined,
+                campaignType: inputs?.campaignType,
+                adFormat: inputs?.adFormat,
+                visualStyleFamily: inputs?.visualStyleFamily,
+                referenceAdUsed: inputs?.referenceAdUsed,
+                selectedSubStyle: inputs?.selectedSubStyle,
+                selectedUniverse: inputs?.resolvedUniverse,
             });
             const templateId = selectLayoutTemplate(spec.primaryMode, spec.secondaryMode, inputs?.coldHookAngle, currentAspectRatio);
             storeCreativeToMemory(request.auth!.uid, {
@@ -3343,6 +3366,10 @@ export const serverGenerateFinalAd = onCall({
                 brandName: inputs?.productName || '',
                 targetAudience: inputs?.targetAudience || '',
             }).catch((err: any) => console.warn('Memory store failed (non-blocking):', err));
+
+            const { persistTrace } = await import("./resolutionTrace.js");
+            const traceId = `trace_${request.auth.uid}_${Date.now()}`;
+            persistTrace(traceId, spec.resolutionTrace).catch((err: any) => console.warn('⚠️ Trace persist failed (non-blocking):', err));
         }
 
         if (result.image) {

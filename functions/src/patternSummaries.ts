@@ -81,8 +81,8 @@ const CAPS = {
 
 // Known valid pair IDs (from creativeResolver active catalog)
 const VALID_MODES = new Set([
-    'standard_hero', 'value_stack', 'limited_access', 'module_preview',
-    'event_ticket', 'webinar_screen', 'day_strip', 'speaker_card',
+    'standard_hero', 'value_stack',
+    'event_ticket', 'webinar_screen', 'speaker_card',
     'book_mockup', 'device_mockup',
 ]);
 
