@@ -2036,7 +2036,7 @@ DO NOT return the other concepts.`;
         // ═══ RETARGETING CONTEXT (normalized, shared across steps) ═══
         const _rtCtx = buildNormalizedRetargetingContext(inputs as any);
         const _rtConceptBlock = getRetargetingPromptBlock(_rtCtx);
-        const _effectiveColdHookAngle = _rtCtx.isRetargeting ? undefined : inputs.coldHookAngle;
+        const _effectiveColdHookAngle = _rtCtx.isRetargeting ? null : inputs.coldHookAngle;
 
         const prompt = `
 [VISUAL ARCHITECT V5.0]
@@ -3288,7 +3288,7 @@ export async function generateBuildPlan(conceptRaw: string, selectedTov: string,
 
     const _bpRtCtx = buildNormalizedRetargetingContext(inputs as any);
     const _bpRtBlock = getRetargetingPromptBlock(_bpRtCtx);
-    const _bpEffectiveAngle = _bpRtCtx.isRetargeting ? undefined : inputs.coldHookAngle;
+    const _bpEffectiveAngle = _bpRtCtx.isRetargeting ? null : inputs.coldHookAngle;
     const buildPlanContract = compileFullContract({
         selectedModes: (inputs as any).offerCreativeMode || ['standard_hero'],
         hookAngle: _bpEffectiveAngle || undefined,
@@ -3627,7 +3627,7 @@ export async function generateFinalAd(
 ): Promise<{ image: string } | { image: null; errorCode: string; debug?: FinalAdDebugInfo }> {
     // ═══ RETARGETING CONTEXT (normalized) ═══
     const _renderRtCtx = buildNormalizedRetargetingContext(inputs as any);
-    const _renderEffectiveAngle = _renderRtCtx.isRetargeting ? undefined : inputs.coldHookAngle;
+    const _renderEffectiveAngle = _renderRtCtx.isRetargeting ? null : inputs.coldHookAngle;
     const renderStartedAt = Date.now();
     const renderSoftDeadlineMs = 270000;
     const hasTimeBudget = (reserveMs: number): boolean => (Date.now() - renderStartedAt) < (renderSoftDeadlineMs - reserveMs);

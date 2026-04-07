@@ -114,6 +114,14 @@ export function validateLaunchSurface(input: LaunchSurfaceInput): LaunchSurfaceR
 
     const fallback: LaunchSurfaceResult = { passed: false, blockReason: "Validation failed.", resolvedOfferType: "mini_course", resolvedTab: "mini_course" };
 
+    // Rule 0: Mode count guard
+    if (creativeModes.length === 0) {
+        return { ...fallback, blockReason: "At least one creative mode is required." };
+    }
+    if (creativeModes.length > 2) {
+        return { ...fallback, blockReason: "Only up to two creative modes are allowed." };
+    }
+
     // Rule 1: Deleted mode check
     for (const mode of creativeModes) {
         if ((DELETED_MODES as readonly string[]).includes(mode)) {

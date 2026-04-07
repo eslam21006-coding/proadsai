@@ -3350,11 +3350,12 @@ export const serverGenerateFinalAd = onCall({
                     selectedSubStyle: inputs?.selectedSubStyle,
                     selectedUniverse: resolvedUniverse,
                 });
-                const templateId = selectLayoutTemplate(spec.primaryMode, spec.secondaryMode, inputs?.coldHookAngle, currentAspectRatio);
+                const resolvedHookAngle = spec.resolutionTrace?.hookAngle ?? inputs?.coldHookAngle ?? null;
+                const templateId = selectLayoutTemplate(spec.primaryMode, spec.secondaryMode, resolvedHookAngle, currentAspectRatio);
                 storeCreativeToMemory(request.auth!.uid, {
                     layoutTemplate: templateId,
-                    creativeModes: inputs?.offerCreativeMode || ['standard_hero'],
-                    hookAngle: inputs?.coldHookAngle || null,
+                    creativeModes: [spec.primaryMode, ...(spec.secondaryMode ? [spec.secondaryMode] : [])],
+                    hookAngle: resolvedHookAngle,
                     hookType: inputs?.hookType || null,
                     copyStrategy: inputs?.copywritingStrategy || null,
                     adTone: inputs?.adTone || null,
@@ -3369,12 +3370,31 @@ export const serverGenerateFinalAd = onCall({
                     targetAudience: inputs?.targetAudience || '',
                 }).catch((err: any) => console.warn('Memory store failed (non-blocking):', err));
 
-                import("./resolutionTrace.js").then(({ persistTrace }) => {
-                    const traceId = `trace_${request.auth!.uid}_${Date.now()}`;
-                    persistTrace(traceId, spec.resolutionTrace).catch((err: any) => console.warn('⚠️ Trace persist failed (non-blocking):', err));
-                }).catch((err: any) => console.warn('⚠️ Trace module import failed (non-blocking):', err));
             } catch (bookkeepingErr: any) {
                 console.warn('⚠️ Post-render bookkeeping failed (non-blocking):', bookkeepingErr?.message || bookkeepingErr);
+            }
+        }
+
+        // ═══ RESOLUTION TRACE: persist for ALL successful renders (fire-and-forget) ═══
+        if (result?.image && !editInstruction && !base64ToEdit) {
+            try {
+                const { resolveCreativeSpec: resolveForTrace } = await import("./creativeResolver.js");
+                const traceSpec = resolveForTrace({
+                    selectedModes: inputs?.offerCreativeMode || ['standard_hero'],
+                    hookAngle: inputs?.coldHookAngle || undefined,
+                    campaignType: inputs?.campaignType,
+                    adFormat: inputs?.adFormat,
+                    visualStyleFamily: inputs?.visualStyleFamily,
+                    referenceAdUsed: !!styleReference || !!inputs?.referenceAdUsed,
+                    selectedSubStyle: inputs?.selectedSubStyle,
+                    selectedUniverse: resolvedUniverse,
+                });
+                import("./resolutionTrace.js").then(({ persistTrace }) => {
+                    const traceId = `trace_${request.auth!.uid}_${Date.now()}`;
+                    persistTrace(traceId, traceSpec.resolutionTrace).catch((err: any) => console.warn('⚠️ Trace persist failed (non-blocking):', err));
+                }).catch((err: any) => console.warn('⚠️ Trace module import failed (non-blocking):', err));
+            } catch (traceErr: any) {
+                console.warn('⚠️ Trace resolution failed (non-blocking):', traceErr?.message || traceErr);
             }
         }
 

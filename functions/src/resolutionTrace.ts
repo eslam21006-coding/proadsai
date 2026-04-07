@@ -97,7 +97,7 @@ export function createTraceBuilder(): TraceBuilder {
         },
         setLaunchCheck(passed, blockReason) {
             state.launchMatrixCheckPassed = passed;
-            if (blockReason) state.launchMatrixBlockReason = blockReason;
+            state.launchMatrixBlockReason = blockReason;
             return builder;
         },
         build(): ResolutionTrace {
