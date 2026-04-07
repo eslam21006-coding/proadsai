@@ -85,7 +85,23 @@
       "Bash(do sed:*)",
       "Bash(echo \"Fixed $f\")",
       "Bash(xxd AGENTS.md)",
-      "Bash(xxd CLAUDE.md)"
+      "Bash(xxd CLAUDE.md)",
+      "Bash(powershell.exe -File .specify/scripts/powershell/create-new-feature.ps1 \"Frontend launch filter, override signals, and priority lane QA fixtures \\(Phase 2 from LAUNCH_MATRIX\\)\" -Json -ShortName \"frontend-filter-qa\")",
+      "Bash(bash -n .specify/scripts/bash/create-new-feature.sh)",
+      "Bash(grep \"id: ''before_after''\" src/creativeResolver.ts)",
+      "Bash(grep \"''fr''\\\\|''es''\\\\|''de''\\\\|''tr''\\\\|''pt''\" src/constants.ts)",
+      "Bash(powershell.exe -File .specify/scripts/powershell/create-new-feature.ps1 \"Phase 3 QA Fixtures — canonical test fixtures for 9 priority lanes plus unit tests for resolver functions\" -Json -ShortName \"qa-fixtures\")",
+      "Bash(grep -n \"as ''cold''\\\\|as ''retargeting''\" functions/src/contractFixtures.test.ts)",
+      "Bash(powershell.exe -File .specify/scripts/powershell/create-new-feature.ps1 \"Phase 4 Testimonial Carousel — platform mockup rendering, hook generation, slide auto-count, cold and retargeting variants\" -Json -ShortName \"testimonial-carousel\")",
+      "Bash(npm test:*)",
+      "Bash(bash .specify/scripts/sh/create-new-feature.sh \"Phase 5: Blueprint to Long-Form Render Prompt Pipeline\" --json --short-name \"render-prompt-pipeline\")",
+      "Bash(bash .specify/scripts/bash/create-new-feature.sh \"Phase 5: Blueprint to Long-Form Render Prompt Pipeline\" --json --short-name \"render-prompt-pipeline\")",
+      "Bash(bash .specify/scripts/bash/check-prerequisites.sh --json --paths-only)",
+      "Bash(bash .specify/scripts/bash/setup-plan.sh --json)",
+      "Bash(bash .specify/scripts/bash/update-agent-context.sh --agent-type claude)",
+      "Bash(bash .specify/scripts/bash/update-agent-context.sh claude)",
+      "Bash(bash .specify/scripts/bash/check-prerequisites.sh --json)",
+      "Bash(bash .specify/scripts/bash/create-new-feature.sh \"Phase 9: Team Management\" --json --short-name \"team-management\")"
     ]
   }
 }

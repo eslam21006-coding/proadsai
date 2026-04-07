@@ -459,7 +459,7 @@ Box C as preview content. Parts blurred for mystery. "Members Only" watermark.`,
 Exclusive content preview. Blur effect for mystery. "Members Only" overlay.`,
     },
 
-    testimonial_wall: {
+    testimonial_carousel: {
         conceptInstruction: `CREATIVE MODE: TESTIMONIAL WALL DESIGN
 Multiple testimonials displayed as a social proof wall.
 MANDATORY LAYOUT:

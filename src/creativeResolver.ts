@@ -10,6 +10,7 @@
 export type CreativeModeId =
     | 'standard_hero'
     | 'value_stack'
+    | 'testimonial_carousel'
     | 'event_ticket' | 'webinar_screen' | 'speaker_card'
     | 'book_mockup' | 'device_mockup'
     | 'text_only'
@@ -18,7 +19,7 @@ export type CreativeModeId =
 export type RemovedModeId =
     | 'preview_card' | 'premium_package' | 'platform_screenshot' | 'certificate'
     | 'dashboard_preview' | 'mobile_app_card' | 'feature_highlight'
-    | 'community_card' | 'inside_look' | 'testimonial_wall';
+    | 'community_card' | 'inside_look';
 
 export type CreativeTab = 'mini_course' | 'live_events' | 'free_guide';
 export type ModeRole = 'anchor' | 'support';
@@ -57,6 +58,7 @@ export interface CreativeModeMeta {
     boxCLabel?: string;
     boxCHint?: string;
     templateNeeds: string[];
+    soloOnly?: boolean;
 }
 
 export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
@@ -83,31 +85,6 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         boxCLabel: 'Bonus graphics', boxCHint: 'Upload bonus images or product graphics (up to 3)',
         templateNeeds: ['hero_value_stack_split', 'hero_value_stack_panel'],
     },
-    limited_access: {
-        id: 'limited_access', labelEn: 'Limited Access', labelAr: 'وصول محدود', icon: '🔒',
-        description: 'Exclusive / VIP gate design',
-        tabs: ['mini_course'], role: 'support', standaloneAllowed: false,
-        visualHierarchy: ['gate_or_door', 'vip_rope', 'hero_behind_gate', 'exclusive_badge'],
-        mustShow: ['access_gate_visual', 'vip_indicator', 'countdown_or_limit'],
-        mustAvoid: ['before_after_split', 'value_stack_items'],
-        textPlacementRules: ['headline_above_gate', 'countdown_center', 'cta_unlock_style'],
-        captionAnchors: ['exclusive access', 'limited spots', 'unlock now'],
-        validity: { requiredElements: ['vip_gate_or_rope', 'countdown_or_limit_indicator'], invalidSubstitutes: ['generic_lock_icon', 'text_only_countdown'], minimumDescription: 'VIP gate/rope with countdown or spots-left indicator.' },
-        templateNeeds: ['hero_focus'],
-    },
-    module_preview: {
-        id: 'module_preview', labelEn: 'Module Preview', labelAr: 'معاينة الوحدات', icon: '🎓',
-        description: 'Curriculum card showing modules',
-        tabs: ['mini_course'], role: 'anchor', standaloneAllowed: true,
-        visualHierarchy: ['curriculum_cards', 'module_numbers', 'hero_as_instructor'],
-        mustShow: ['module_list_3_5', 'progress_indicators', 'course_thumbnail'],
-        mustAvoid: ['before_after_split'],
-        textPlacementRules: ['modules_center_stack', 'headline_top', 'cta_bottom'],
-        captionAnchors: ['start module 1', 'see the full curriculum', 'enroll now'],
-        validity: { requiredElements: ['visible_module_list', 'course_content_preview'], invalidSubstitutes: ['single_laptop_with_logo', 'generic_screen_prop'], minimumDescription: 'Visible course/module contents: 3-5 module cards or preview-board.' },
-        boxCLabel: 'Course thumbnail', boxCHint: 'Upload your course thumbnail or platform screenshot',
-        templateNeeds: ['dashboard_product'],
-    },
     event_ticket: {
         id: 'event_ticket', labelEn: 'Ticket', labelAr: 'تذكرة', icon: '🎫',
         description: 'Ticket-style with date, time, seats',
@@ -132,19 +109,6 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         captionAnchors: ['watch the webinar', 'join live', 'see what you will learn'],
         validity: { requiredElements: ['screen_or_device_frame', 'session_title_on_screen', 'live_broadcast_indicator'], invalidSubstitutes: ['generic_laptop_prop', 'hero_holding_phone'], minimumDescription: 'Clear event/session/broadcast screen framing with title and live indicator.' },
         templateNeeds: ['dashboard_product'],
-    },
-    day_strip: {
-        id: 'day_strip', labelEn: 'Day Strip', labelAr: 'شريط الأيام', icon: '📅',
-        description: 'Day-by-day schedule strip',
-        tabs: ['live_events'], role: 'support', standaloneAllowed: false,
-        visualHierarchy: ['day_progression', 'hero_center', 'progress_path', 'day1_highlight'],
-        mustShow: ['day_markers_3_5', 'progress_arrow_path', 'day1_glow', 'community_count'],
-        mustAvoid: ['ticket_frame', 'value_stack_items', 'before_after_split'],
-        textPlacementRules: ['days_horizontal_or_circular', 'hero_center', 'starts_date_bottom'],
-        captionAnchors: ['join day 1', 'start the challenge', 'day-by-day breakdown'],
-        validity: { requiredElements: ['day_sequence_strip', 'multiple_day_markers', 'progress_path'], invalidSubstitutes: ['single_day_label', 'generic_calendar_icon'], minimumDescription: 'Schedule/day sequence strip with 3+ day markers and progress path.' },
-        boxCLabel: 'Day content previews', boxCHint: 'Upload preview images for each challenge day',
-        templateNeeds: ['event_ticket'],
     },
     speaker_card: {
         id: 'speaker_card', labelEn: 'Speaker Card', labelAr: 'بطاقة متحدث', icon: '🎤',
@@ -185,6 +149,17 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         boxCLabel: 'Guide screenshot', boxCHint: 'Upload a screenshot of your guide content',
         templateNeeds: ['dashboard_product', 'device_stack'],
     },
+    before_after: {
+        id: 'before_after', labelEn: 'Before/After', labelAr: 'قبل/بعد', icon: '🔄',
+        description: 'Transformation split design',
+        tabs: ['mini_course', 'live_events', 'free_guide'], role: 'anchor', standaloneAllowed: true,
+        visualHierarchy: ['split_canvas', 'before_state', 'after_state'],
+        mustShow: ['before_state_visual', 'after_state_visual', 'transformation_indicator'], mustAvoid: ['generic_transformation_text'],
+        textPlacementRules: ['headline_spans_both', 'cta_bottom_center'], captionAnchors: [],
+        validity: { requiredElements: ['split_visual', 'clear_before_and_after'], invalidSubstitutes: ['single_image_no_split'], minimumDescription: 'Clear split-canvas showing before and after states.' },
+        soloOnly: true,
+        templateNeeds: ['split_canvas'],
+    },
     text_only: {
         id: 'text_only', labelEn: 'Text-Only Ad', labelAr: 'إعلان نصي فقط', icon: '✏️',
         description: 'Typography-focused ad — no hero, no universe',
@@ -194,7 +169,20 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         textPlacementRules: ['headline_fills_canvas', 'cta_anchored_bottom'],
         captionAnchors: [],
         validity: { requiredElements: ['headline', 'cta_button'], invalidSubstitutes: ['hero_portrait', 'environment_scene'], minimumDescription: 'Typography-only design with no hero or environment.' },
+        soloOnly: true,
         templateNeeds: ['typography_only'],
+    },
+    testimonial_carousel: {
+        id: 'testimonial_carousel', labelEn: 'Testimonial Carousel', labelAr: 'كاروسيل الشهادات', icon: '💬',
+        description: 'Carousel of testimonial screenshots rendered in platform mockup frames',
+        tabs: ['mini_course', 'live_events', 'free_guide'], role: 'anchor', standaloneAllowed: true,
+        visualHierarchy: ['testimonial_mockup', 'platform_frame', 'cta_button'],
+        mustShow: ['testimonial_mockup', 'platform_frame', 'cta_button'],
+        mustAvoid: ['raw_screenshot', 'testimonial_text_on_hook'],
+        textPlacementRules: ['hook_text_top', 'mockup_center', 'cta_bottom'],
+        captionAnchors: ['see what they said', 'real results', 'testimonials'],
+        validity: { requiredElements: ['testimonial_slides', 'platform_frame'], invalidSubstitutes: ['plain_screenshot_paste', 'text_only_testimonial'], minimumDescription: 'Testimonial screenshots inside platform mockup frames with hook and close slides.' },
+        templateNeeds: ['testimonial_carousel'],
     },
 };
 
@@ -208,30 +196,18 @@ export interface AllowedPair {
 }
 
 export const ALLOWED_PAIRS: AllowedPair[] = [
-    // Mini Course
     { a: 'standard_hero', b: 'value_stack', tab: 'mini_course', layoutKey: 'hero_value_stack', templateNeeds: ['hero_value_stack_split', 'hero_value_stack_panel'], pairValidity: 'Must contain real stack zone with multiple item rows.' },
-    { a: 'standard_hero', b: 'limited_access', tab: 'mini_course', layoutKey: 'hero_limited_access', templateNeeds: ['hero_focus'], pairValidity: 'Must show hero and VIP gate/countdown.' },
-    { a: 'standard_hero', b: 'module_preview', tab: 'mini_course', layoutKey: 'hero_module_preview', templateNeeds: ['dashboard_product'], pairValidity: 'Must show course/module preview alongside hero.' },
-    { a: 'value_stack', b: 'limited_access', tab: 'mini_course', layoutKey: 'value_stack_limited', templateNeeds: ['hero_value_stack_split', 'hero_value_stack_panel'], pairValidity: 'Must show value stack AND exclusive indicators.' },
-    { a: 'module_preview', b: 'limited_access', tab: 'mini_course', layoutKey: 'module_limited', templateNeeds: ['dashboard_product'], pairValidity: 'Must show module preview AND exclusive indicators.' },
-    // Live Events
     { a: 'standard_hero', b: 'event_ticket', tab: 'live_events', layoutKey: 'hero_ticket', templateNeeds: ['event_ticket'], pairValidity: 'Must show hero and ticket structure.' },
     { a: 'standard_hero', b: 'webinar_screen', tab: 'live_events', layoutKey: 'hero_screen', templateNeeds: ['dashboard_product'], pairValidity: 'Must show hero with screen framing.' },
-    { a: 'standard_hero', b: 'day_strip', tab: 'live_events', layoutKey: 'hero_day_strip', templateNeeds: ['event_ticket'], pairValidity: 'Must show hero with day sequence strip.' },
     { a: 'standard_hero', b: 'speaker_card', tab: 'live_events', layoutKey: 'hero_speaker', templateNeeds: ['authority_proof', 'event_ticket'], pairValidity: 'Must show hero and speaker identity block.' },
-    { a: 'event_ticket', b: 'day_strip', tab: 'live_events', layoutKey: 'ticket_day_strip', templateNeeds: ['event_ticket'], pairValidity: 'Must show ticket structure and day schedule.' },
     { a: 'event_ticket', b: 'speaker_card', tab: 'live_events', layoutKey: 'ticket_speaker', templateNeeds: ['event_ticket'], pairValidity: 'Must show ticket and speaker identity.' },
-    { a: 'webinar_screen', b: 'day_strip', tab: 'live_events', layoutKey: 'screen_day_strip', templateNeeds: ['dashboard_product'], pairValidity: 'Must show screen with day schedule.' },
     { a: 'webinar_screen', b: 'speaker_card', tab: 'live_events', layoutKey: 'screen_speaker', templateNeeds: ['dashboard_product'], pairValidity: 'Must show screen with speaker identity.' },
-    { a: 'day_strip', b: 'speaker_card', tab: 'live_events', layoutKey: 'day_strip_speaker', templateNeeds: ['event_ticket'], pairValidity: 'Must show day schedule and speaker identity.' },
-    // Free Guide
     { a: 'standard_hero', b: 'book_mockup', tab: 'free_guide', layoutKey: 'hero_book', templateNeeds: ['dashboard_product'], pairValidity: 'Must show hero with real book mockup.' },
     { a: 'standard_hero', b: 'device_mockup', tab: 'free_guide', layoutKey: 'hero_device', templateNeeds: ['dashboard_product', 'device_stack'], pairValidity: 'Must show hero with real device mockup.' },
     { a: 'book_mockup', b: 'device_mockup', tab: 'free_guide', layoutKey: 'book_device', templateNeeds: ['device_stack'], pairValidity: 'Must show both book and device packaging.' },
 ];
 
 export const DISALLOWED_PAIRS: { a: CreativeModeId; b: CreativeModeId; reason: string }[] = [
-    { a: 'value_stack', b: 'module_preview', reason: 'Two dense secondary structures compete and collapse the layout.' },
     { a: 'event_ticket', b: 'webinar_screen', reason: 'Two anchor structures compete and create clutter.' },
 ];
 
@@ -258,6 +234,14 @@ export function validateCombination(selectedModes: string[], hookAngle?: string)
         if (!CREATIVE_MODE_CATALOG[m]) { errors.push(`Unknown or removed mode: "${m}".`); }
     }
     if (errors.length > 0) return { valid: false, errors, warnings, resolvedTab, resolvedPair };
+
+    for (const m of modes) {
+        const meta = CREATIVE_MODE_CATALOG[m];
+        if (meta?.soloOnly && modes.length > 1) {
+            errors.push(`"${meta.labelEn}" is a standalone mode and cannot be paired.`);
+            return { valid: false, errors, warnings, resolvedTab, resolvedPair };
+        }
+    }
 
     // Tab check
     const tabSets = modes.map(m => new Set(CREATIVE_MODE_CATALOG[m].tabs));
@@ -302,9 +286,7 @@ export function validateCombination(selectedModes: string[], hookAngle?: string)
     return { valid: errors.length === 0, errors, warnings, resolvedTab, resolvedPair };
 }
 
-export const HOOK_ANGLE_CREATIVE_CONFLICTS: Record<string, CreativeModeId[]> = {
-    before_after: ['event_ticket', 'speaker_card', 'day_strip', 'webinar_screen', 'book_mockup', 'device_mockup', 'module_preview', 'value_stack', 'limited_access'],
-};
+export const HOOK_ANGLE_CREATIVE_CONFLICTS: Record<string, CreativeModeId[]> = {};
 
 export function getBlockedModes(selectedModes: string[], activeTab: CreativeTab, hookAngle?: string): { blockedIds: Set<string>; reasons: Record<string, string> } {
     const blockedIds = new Set<string>();
@@ -327,6 +309,18 @@ export function getBlockedModes(selectedModes: string[], activeTab: CreativeTab,
     if (hookAngle) {
         const blocked = HOOK_ANGLE_CREATIVE_CONFLICTS[hookAngle] || [];
         for (const b of blocked) { if (!selected.includes(b as CreativeModeId)) { blockedIds.add(b); reasons[b] = `Blocked by "${hookAngle}"`; } }
+    }
+
+    // Block all other modes when a soloOnly mode is selected
+    for (const sel of selected) {
+        if (CREATIVE_MODE_CATALOG[sel]?.soloOnly) {
+            for (const [id] of Object.entries(CREATIVE_MODE_CATALOG)) {
+                if (id !== sel && !blockedIds.has(id)) {
+                    blockedIds.add(id);
+                    reasons[id] = `${CREATIVE_MODE_CATALOG[sel]?.labelEn || sel} is standalone-only`;
+                }
+            }
+        }
     }
 
     return { blockedIds, reasons };
@@ -354,48 +348,6 @@ const PAIR_SPECS: Record<string, PairSpec> = {
         textPlacementRules: ['headline_top', 'stack_items_right_or_below', 'price_contrast_large_bottom'],
         captionAnchors: ['look at everything you get', 'total value', 'you pay only'],
     },
-    'standard_hero+limited_access': {
-        layoutKey: 'hero_limited_access', labelEn: 'Hero + Limited Access', labelAr: 'بطل + وصول محدود',
-        blueprintEn: 'Hero behind VIP gate/rope. Countdown or spots-left prominent.',
-        blueprintAr: 'بطل خلف بوابة VIP. عد تنازلي بارز.',
-        mustShow: ['hero_portrait', 'vip_gate_or_rope', 'countdown_or_limit', 'exclusive_badge'],
-        mustAvoid: ['value_stack_items', 'before_after_split'],
-        visualHierarchy: ['hero_behind_gate', 'gate_visual', 'countdown_overlay'],
-        textPlacementRules: ['headline_above_gate', 'countdown_center', 'cta_unlock_button'],
-        captionAnchors: ['exclusive access', 'limited spots', 'unlock now'],
-    },
-    'standard_hero+module_preview': {
-        layoutKey: 'hero_module_preview', labelEn: 'Hero + Module Preview', labelAr: 'بطل + معاينة الوحدات',
-        blueprintEn: 'Hero as instructor with module/curriculum cards visible.',
-        blueprintAr: 'بطل كمدرب مع بطاقات المنهج.',
-        mustShow: ['hero_as_instructor', 'module_list_3_5', 'progress_indicators'],
-        mustAvoid: ['before_after_split'],
-        visualHierarchy: ['hero_left', 'modules_right_or_below'],
-        textPlacementRules: ['headline_top', 'modules_beside_hero', 'cta_bottom'],
-        captionAnchors: ['see the modules', 'start learning'],
-    },
-    'value_stack+limited_access': {
-        layoutKey: 'value_stack_limited', labelEn: 'Value Stack + Limited', labelAr: 'تراكم القيمة + وصول محدود',
-        blueprintEn: 'Value stack with urgency/exclusive indicators.',
-        blueprintAr: 'تراكم القيمة مع مؤشرات حصرية.',
-        mustShow: ['value_items_3_5', 'total_value', 'actual_price', 'countdown_or_limit', 'exclusive_badge'],
-        mustAvoid: ['before_after_split'],
-        visualHierarchy: ['stack_dominant', 'urgency_overlay'],
-        textPlacementRules: ['stack_items_center', 'countdown_top_right', 'price_and_cta_bottom'],
-        captionAnchors: ['limited offer', 'everything you get', 'spots running out'],
-    },
-    'module_preview+limited_access': {
-        layoutKey: 'module_limited', labelEn: 'Modules + Limited', labelAr: 'وحدات + وصول محدود',
-        blueprintEn: 'Module preview with exclusive indicators.',
-        blueprintAr: 'معاينة الوحدات مع مؤشرات حصرية.',
-        mustShow: ['module_list_3_5', 'countdown_or_limit', 'exclusive_badge'],
-        mustAvoid: ['before_after_split'],
-        visualHierarchy: ['modules_center', 'urgency_badge'],
-        textPlacementRules: ['modules_center', 'countdown_top_right', 'cta_bottom'],
-        captionAnchors: ['limited enrollment', 'see the curriculum'],
-    },
-
-    // ═══ LIVE EVENTS PAIRS ═══════════════════════════════════════════════════
 
     'standard_hero+event_ticket': {
         layoutKey: 'hero_ticket', labelEn: 'Hero + Event Ticket', labelAr: 'بطل + تذكرة حدث',
@@ -417,16 +369,6 @@ const PAIR_SPECS: Record<string, PairSpec> = {
         textPlacementRules: ['headline_above', 'screen_center_right', 'date_below_screen', 'cta_bottom'],
         captionAnchors: ['join live', 'register free', 'webinar'],
     },
-    'standard_hero+day_strip': {
-        layoutKey: 'hero_day_strip', labelEn: 'Hero + Day Strip', labelAr: 'بطل + شريط الأيام',
-        blueprintEn: 'Hero centered with a visible day-by-day progression strip (3-5 days) wrapping around them.',
-        blueprintAr: 'بطل في المركز مع شريط تقدم يومي (3-5 أيام) يلتف حوله.',
-        mustShow: ['hero_centered', 'day_markers_3_5', 'progress_path_connecting_days', 'day1_highlighted', 'community_count'],
-        mustAvoid: ['single_date_label', 'generic_calendar_icon', 'before_after_split', 'value_stack_items'],
-        visualHierarchy: ['hero_center', 'day_strip_wrapping', 'day1_glow_accent', 'cta_bottom'],
-        textPlacementRules: ['headline_top', 'day_strip_around_hero', 'cta_bottom'],
-        captionAnchors: ['join day 1', 'challenge', 'daily progression'],
-    },
     'standard_hero+speaker_card': {
         layoutKey: 'hero_speaker', labelEn: 'Hero + Speaker Card', labelAr: 'بطل + بطاقة متحدث',
         blueprintEn: 'Hero as keynote speaker on stage with credentials bar, spotlight, and audience hints.',
@@ -436,16 +378,6 @@ const PAIR_SPECS: Record<string, PairSpec> = {
         visualHierarchy: ['stage_environment', 'hero_speaking_pose', 'lower_third_credentials', 'cta_bottom'],
         textPlacementRules: ['headline_top', 'credentials_lower_third', 'cta_bottom'],
         captionAnchors: ['keynote speaker', 'register', 'expert'],
-    },
-    'event_ticket+day_strip': {
-        layoutKey: 'ticket_day_strip', labelEn: 'Ticket + Day Strip', labelAr: 'تذكرة + شريط أيام',
-        blueprintEn: 'Event ticket structure with an integrated day-by-day schedule strip showing challenge/workshop progression.',
-        blueprintAr: 'هيكل تذكرة مع شريط جدول يومي يعرض تقدم الورشة.',
-        mustShow: ['ticket_frame', 'event_title', 'date_time_row', 'day_markers_3_5', 'progress_path', 'day1_highlighted', 'ticket_decorations'],
-        mustAvoid: ['standard_hero_environment', 'value_stack_items', 'before_after_split'],
-        visualHierarchy: ['ticket_structure', 'day_schedule_within_ticket', 'metadata_row', 'cta_bottom'],
-        textPlacementRules: ['event_title_top', 'day_strip_center', 'date_and_cta_bottom'],
-        captionAnchors: ['register for day 1', 'challenge schedule', 'event'],
     },
     'event_ticket+speaker_card': {
         layoutKey: 'ticket_speaker', labelEn: 'Ticket + Speaker', labelAr: 'تذكرة + متحدث',
@@ -457,16 +389,6 @@ const PAIR_SPECS: Record<string, PairSpec> = {
         textPlacementRules: ['event_title_top', 'speaker_center', 'credentials_below_speaker', 'cta_bottom'],
         captionAnchors: ['featuring speaker', 'register', 'event'],
     },
-    'webinar_screen+day_strip': {
-        layoutKey: 'screen_day_strip', labelEn: 'Screen + Day Strip', labelAr: 'شاشة + شريط أيام',
-        blueprintEn: 'Webinar screen showing session title with day-by-day schedule strip alongside or below.',
-        blueprintAr: 'شاشة ويبنار تعرض عنوان الجلسة مع شريط جدول يومي.',
-        mustShow: ['realistic_device_screen', 'webinar_title_on_screen', 'live_badge', 'day_markers_3_5', 'progress_path', 'day1_highlighted'],
-        mustAvoid: ['blank_screen', 'generic_laptop_prop', 'value_stack_items', 'before_after_split'],
-        visualHierarchy: ['screen_top_or_left', 'day_strip_below_or_right', 'cta_bottom'],
-        textPlacementRules: ['screen_with_title_top', 'day_strip_below', 'cta_bottom'],
-        captionAnchors: ['join the challenge', 'live sessions', 'daily schedule'],
-    },
     'webinar_screen+speaker_card': {
         layoutKey: 'screen_speaker', labelEn: 'Screen + Speaker', labelAr: 'شاشة + متحدث',
         blueprintEn: 'Webinar screen with speaker identity — hero presenting beside screen with credentials bar.',
@@ -477,18 +399,6 @@ const PAIR_SPECS: Record<string, PairSpec> = {
         textPlacementRules: ['screen_center', 'speaker_left_or_right', 'credentials_below', 'cta_bottom'],
         captionAnchors: ['live with', 'presented by', 'webinar'],
     },
-    'day_strip+speaker_card': {
-        layoutKey: 'day_strip_speaker', labelEn: 'Day Strip + Speaker', labelAr: 'شريط أيام + متحدث',
-        blueprintEn: 'Speaker on stage with day-by-day challenge schedule integrated — credentials and day progression visible.',
-        blueprintAr: 'متحدث على المسرح مع جدول يومي للتحدي — مؤهلات وتقدم يومي مرئي.',
-        mustShow: ['hero_on_stage', 'spotlight_lighting', 'credentials_bar', 'day_markers_3_5', 'progress_path', 'day1_highlighted'],
-        mustAvoid: ['generic_hero_portrait', 'single_date_label', 'value_stack_items', 'before_after_split'],
-        visualHierarchy: ['speaker_top_center', 'day_strip_below', 'credentials_bar', 'cta_bottom'],
-        textPlacementRules: ['speaker_name_top', 'day_strip_center', 'cta_bottom'],
-        captionAnchors: ['challenge with expert', 'daily sessions', 'start day 1'],
-    },
-
-    // ═══ FREE GUIDE PAIRS ════════════════════════════════════════════════════
 
     'standard_hero+book_mockup': {
         layoutKey: 'hero_book', labelEn: 'Hero + Book Mockup', labelAr: 'بطل + نموذج كتاب',
@@ -599,6 +509,60 @@ export function resolveCreativeSpec(input: ResolverInput): ResolvedCreativeSpec 
     };
 }
 
+export interface LaunchSurfaceResult {
+    allowed: boolean;
+    reason?: string;
+}
+
+export function validateLaunchSurface(inputs: {
+    selectedModes: string[];
+    campaignType?: string;
+    adFormat?: string;
+    hookAngle?: string;
+}): LaunchSurfaceResult {
+    const modes = (inputs.selectedModes || []).filter(Boolean) as CreativeModeId[];
+    if (modes.length === 0) return { allowed: true };
+
+    for (const m of modes) {
+        if (!CREATIVE_MODE_CATALOG[m]) {
+            return { allowed: false, reason: `"${m}" is not a launch-approved mode.` };
+        }
+    }
+
+    const combo = validateCombination(modes, inputs.hookAngle);
+    if (!combo.valid) {
+        return { allowed: false, reason: combo.errors[0] || 'Invalid combination.' };
+    }
+
+    if (inputs.adFormat === 'carousel') {
+        for (const m of modes) {
+            if (CREATIVE_MODE_CATALOG[m]?.soloOnly) {
+                return { allowed: false, reason: `${CREATIVE_MODE_CATALOG[m].labelEn} is single-image only.` };
+            }
+        }
+    }
+
+    return { allowed: true };
+}
+
+export interface ValueStackAdjustment {
+    giftCount: number;
+    resolvedSlideCount: number;
+    capped: boolean;
+}
+
+export function resolveValueStackSlideCount(gifts: string[]): ValueStackAdjustment {
+    const nonEmpty = gifts.filter(g => g && g.trim().length > 0);
+    const raw = nonEmpty.length + 2;
+    const capped = raw > 9;
+    const resolvedSlideCount = Math.min(raw, 9);
+    return { giftCount: nonEmpty.length, resolvedSlideCount, capped };
+}
+
+export function resolveTestimonialSlideCount(testimonialCount: number, maxPlanSlides: number): number {
+    return Math.min(testimonialCount + 2, maxPlanSlides);
+}
+
 // ─── PROMPT HELPERS ─────────────────────────────────────────────────────
 export function getResolvedSpecPromptBlock(spec: ResolvedCreativeSpec): string {
     if (spec.primaryMode === 'standard_hero' && !spec.secondaryMode) return '';
@@ -660,6 +624,7 @@ export function getModesForTab(tab: CreativeTab): CreativeModeMeta[] {
 
 export function getTabForOfferType(offerType: string): CreativeTab {
     const mapping: Record<string, CreativeTab> = {
+        'Live Event': 'live_events',
         'Free Webinar': 'live_events', 'Paid Workshop': 'live_events', 'Challenge': 'live_events',
         'Live Event': 'live_events',
         'Free Guide': 'free_guide', 'Mini-Course': 'mini_course',
@@ -684,104 +649,124 @@ export type VisualSubStyleId =
 
 export const SUBSTYLE_MODE_COMPAT: Record<VisualSubStyleId, Record<string, SubStyleCompat>> = {
     luxury_magazine: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'adapt', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'adapt', day_strip: 'adapt', speaker_card: 'adapt',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'adapt', speaker_card: 'adapt',
         book_mockup: 'adapt', device_mockup: 'adapt', text_only: 'block',
+        before_after: 'adapt',
     },
     documentary_gritty: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
+        before_after: 'adapt',
     },
     neon_urban: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
+        before_after: 'adapt',
     },
     dark_cinematic: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
+        before_after: 'adapt',
     },
     bright_illustrated: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
+        before_after: 'adapt',
     },
     mythic_epic: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
+        before_after: 'adapt',
     },
     anime_manga: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'adapt', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'block', day_strip: 'adapt', speaker_card: 'adapt',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'block', speaker_card: 'adapt',
         book_mockup: 'adapt', device_mockup: 'block', text_only: 'block',
+        before_after: 'adapt',
     },
     watercolor_dreamscape: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'adapt', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'block', day_strip: 'adapt', speaker_card: 'adapt',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'block', speaker_card: 'adapt',
         book_mockup: 'adapt', device_mockup: 'block', text_only: 'block',
+        before_after: 'adapt',
     },
     vintage_bw: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'adapt', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'block', day_strip: 'adapt', speaker_card: 'adapt',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'block', speaker_card: 'adapt',
         book_mockup: 'adapt', device_mockup: 'block', text_only: 'block',
+        before_after: 'adapt',
     },
     vintage_sepia: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'adapt', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'block', day_strip: 'adapt', speaker_card: 'adapt',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'block', speaker_card: 'adapt',
         book_mockup: 'adapt', device_mockup: 'block', text_only: 'block',
+        before_after: 'adapt',
     },
     comic_book: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'adapt', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'block', day_strip: 'adapt', speaker_card: 'adapt',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'block', speaker_card: 'adapt',
         book_mockup: 'adapt', device_mockup: 'block', text_only: 'block',
+        before_after: 'adapt',
     },
     ugly_ad: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
+        before_after: 'adapt',
     },
     cinematic_film_still: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'ok', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'adapt', day_strip: 'adapt', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'adapt', speaker_card: 'ok',
         book_mockup: 'adapt', device_mockup: 'adapt', text_only: 'block',
+        before_after: 'adapt',
     },
     clean_corporate: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
+        before_after: 'adapt',
     },
     golden_hour_outdoor: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'ok', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'adapt', day_strip: 'adapt', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'adapt', speaker_card: 'ok',
         book_mockup: 'adapt', device_mockup: 'adapt', text_only: 'block',
+        before_after: 'adapt',
     },
     street_photography: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'ok', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'adapt', day_strip: 'adapt', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'adapt', speaker_card: 'ok',
         book_mockup: 'adapt', device_mockup: 'adapt', text_only: 'block',
+        before_after: 'adapt',
     },
     pixel_retro_game: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'adapt', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'block', day_strip: 'adapt', speaker_card: 'adapt',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'block', speaker_card: 'adapt',
         book_mockup: 'adapt', device_mockup: 'block', text_only: 'block',
+        before_after: 'adapt',
     },
     stained_glass: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'adapt', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'block', day_strip: 'adapt', speaker_card: 'adapt',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'block', speaker_card: 'adapt',
         book_mockup: 'adapt', device_mockup: 'block', text_only: 'block',
+        before_after: 'adapt',
     },
     glitch_digital: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
+        before_after: 'adapt',
     },
     synthwave_80s: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
+        before_after: 'adapt',
     },
 };
 

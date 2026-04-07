@@ -23,6 +23,7 @@
  */
 
 import { type ModePayload, compileModePayload } from "./modeFieldSchema.js";
+import { getDialectMarkers } from "./dialectMarkers.js";
 
 // ─── UNICODE RANGES ─────────────────────────────────────────────────────────
 
@@ -821,3 +822,408 @@ export function validateBlueprintMinimalStyle(
         repairPrompt: `REPAIR REQUIRED: This is a MINIMAL visual style. The blueprint contains environment-heavy terms (${violations.join(', ')}) that must be removed. Replace ENVIRONMENT_DESC with a clean, plain backdrop: solid color, soft gradient, or simple branded background. Remove all location scenery, fantasy worldbuilding, and environmental details. Keep subject isolated against a clean background.`,
     };
 }
+
+export interface CaptionQualityCheck {
+    rule: string;
+    passed: boolean;
+    detail: string;
+}
+
+export interface CaptionQualityResult {
+    passed: boolean;
+    captionChecks: CaptionQualityCheck[];
+    languageChecks: CaptionQualityCheck[];
+    repairedAt: number | null;
+    locale: string;
+}
+
+export interface LanguageQualityInput {
+    headline: string;
+    subheadline: string;
+    locale: string;
+    fullCaption: string;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LANGUAGE QUALITY — PER-LOCALE CAPTION VALIDATION (Spec 008)
+// ═══════════════════════════════════════════════════════════════════════════
+
+type QualityCheckFn = (input: LanguageQualityInput) => CaptionQualityCheck;
+
+function checkHeadlineWordCount(headline: string, max: number): CaptionQualityCheck {
+    const words = headline.trim().split(/\s+/).filter(Boolean);
+    const count = words.length;
+    const passed = count <= max;
+    return {
+        rule: "headline_word_count",
+        passed,
+        detail: passed
+            ? `Headline: ${count} words (max ${max})`
+            : `Headline: ${count} words — exceeds max ${max}`,
+    };
+}
+
+function checkSubheadlineWordCount(subheadline: string, max: number): CaptionQualityCheck {
+    const words = subheadline.trim().split(/\s+/).filter(Boolean);
+    const count = words.length;
+    const passed = count <= max;
+    return {
+        rule: "subheadline_word_count",
+        passed,
+        detail: passed
+            ? `Subheadline: ${count} words (max ${max})`
+            : `Subheadline: ${count} words — exceeds max ${max}`,
+    };
+}
+
+function checkArabicUnicodeRatio(text: string, minRatio: number): CaptionQualityCheck {
+    const arabicCount = countArabicChars(text);
+    const latinCount = countLatinChars(text);
+    const totalScript = arabicCount + latinCount;
+    if (totalScript === 0) {
+        return {
+            rule: "arabic_unicode_ratio",
+            passed: false,
+            detail: "No script characters found — cannot compute Arabic ratio",
+        };
+    }
+    const ratio = arabicCount / totalScript;
+    const passed = ratio >= minRatio;
+    return {
+        rule: "arabic_unicode_ratio",
+        passed,
+        detail: passed
+            ? `Arabic ratio: ${(ratio * 100).toFixed(0)}% (min ${(minRatio * 100).toFixed(0)}%)`
+            : `Arabic ratio: ${(ratio * 100).toFixed(0)}% — below min ${(minRatio * 100).toFixed(0)}%`,
+    };
+}
+
+const LOCALE_CHECK_SETS: Record<string, QualityCheckFn[]> = {};
+
+export interface LanguageQualityValidation {
+    passed: boolean;
+    checks: CaptionQualityCheck[];
+    repairPrompt: string | null;
+}
+
+export function validateLanguageQuality(
+    input: LanguageQualityInput,
+): LanguageQualityValidation {
+    const checkFns = LOCALE_CHECK_SETS[input.locale];
+    if (!checkFns || checkFns.length === 0) {
+        return { passed: true, checks: [], repairPrompt: null };
+    }
+
+    const checks = checkFns.map((fn) => fn(input));
+    const passed = checks.every((c) => c.passed);
+
+    let repairPrompt: string | null = null;
+    if (!passed) {
+        const failedChecks = checks.filter((c) => !c.passed);
+        const lines = failedChecks.map((c) => `- [${c.rule}] ${c.detail}`);
+        repairPrompt = [
+            "",
+            "═══════════════════════════════════════════════════════════════════════════════",
+            "LANGUAGE QUALITY REPAIR — FIX THESE ISSUES",
+            "═══════════════════════════════════════════════════════════════════════════════",
+            ...lines,
+            "",
+            "RULES:",
+            "- Fix ALL listed language quality issues",
+            "- Keep the overall structure and flow",
+            "- Output ONLY the corrected ad caption — no headers, no metadata",
+            "═══════════════════════════════════════════════════════════════════════════════",
+            "",
+        ].join("\n");
+    }
+
+    return { passed, checks, repairPrompt };
+}
+
+export function registerLocaleChecks(locale: string, checks: QualityCheckFn[]): void {
+    LOCALE_CHECK_SETS[locale] = checks;
+}
+
+function checkHangingConjunction(headline: string, subheadline: string): CaptionQualityCheck {
+    const hTrimmed = headline.trim();
+    const sTrimmed = subheadline.trim();
+    const trailingPattern = /(?:و|ف|ثم)\s*$/;
+    const headlineFail = trailingPattern.test(hTrimmed);
+    const subheadlineFail = trailingPattern.test(sTrimmed);
+    const passed = !headlineFail && !subheadlineFail;
+    const parts: string[] = [];
+    if (headlineFail) parts.push("headline ends with hanging conjunction");
+    if (subheadlineFail) parts.push("subheadline ends with hanging conjunction");
+    return {
+        rule: "hanging_conjunction",
+        passed,
+        detail: passed
+            ? "No hanging conjunctions"
+            : parts.join("; "),
+    };
+}
+
+const WEAK_OPENER_PATTERNS: RegExp[] = [
+    /^هل تعلم/i,
+    /^من المهم/i,
+    /^نحن نقدم/i,
+    /^هل تبحث عن/i,
+    /^من المعروف/i,
+    /^لا شك أن/i,
+    /^من الواضح/i,
+    /^يجب أن تعلم/i,
+    /^من الضروري/i,
+    /^لا يخفى عليك/i,
+    /^من الجدير بالذكر/i,
+    /^من البديهي/i,
+    /^من المؤكد/i,
+];
+
+function checkWeakOpener(headline: string): CaptionQualityCheck {
+    const trimmed = headline.trim();
+    const matched = WEAK_OPENER_PATTERNS.find((p) => p.test(trimmed));
+    return {
+        rule: "weak_opener",
+        passed: !matched,
+        detail: matched
+            ? `Headline starts with weak opener pattern`
+            : "No weak opener detected",
+    };
+}
+
+function escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function checkDialectMarkers(text: string, locale: string): CaptionQualityCheck {
+    const markerSet = getDialectMarkers(locale);
+    if (!markerSet || markerSet.wrongDialectMarkers.length === 0) {
+        return { rule: "dialect_markers", passed: true, detail: "No dialect marker check for this locale" };
+    }
+    const found: string[] = [];
+    for (const marker of markerSet.wrongDialectMarkers) {
+        const escaped = escapeRegExp(marker);
+        const regex = new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`);
+        if (regex.test(text)) {
+            found.push(marker);
+        }
+    }
+    return {
+        rule: "dialect_markers",
+        passed: found.length === 0,
+        detail: found.length === 0
+            ? "No wrong-dialect markers detected"
+            : `Found non-${locale} markers: ${found.join(", ")}`,
+    };
+}
+
+const FORMAL_FUSHA_PATTERNS: RegExp[] = [
+    /\bإنّ?\b/,
+    /\bلذلك\b/,
+    /\bبناءً على\b/,
+    /\bوعليه\b/,
+    /\bبما أن\b/,
+    /\bنظراً ل\b/,
+    /\bحيث أن\b/,
+    /\bمن ناحية\b/,
+    /\bعلاوة على ذلك\b/,
+    /\bفي حين\b/,
+];
+
+function checkWarmthRegister(text: string): CaptionQualityCheck {
+    const found: string[] = [];
+    for (const pattern of FORMAL_FUSHA_PATTERNS) {
+        const match = text.match(pattern);
+        if (match) found.push(match[0]);
+    }
+    return {
+        rule: "warmth_register",
+        passed: found.length === 0,
+        detail: found.length === 0
+            ? "Tone is warm and conversational"
+            : `Overly formal tone detected: ${found.join(", ")}`,
+    };
+}
+
+function checkCapitalization(headline: string, subheadline: string): CaptionQualityCheck {
+    const hFirst = headline.trim()[0];
+    const sFirst = subheadline.trim()[0];
+    const hOk = !hFirst || /[A-Z]/.test(hFirst);
+    const sOk = !sFirst || /[A-Z]/.test(sFirst);
+    const passed = hOk && sOk;
+    const parts: string[] = [];
+    if (!hOk) parts.push("headline does not start with uppercase");
+    if (!sOk) parts.push("subheadline does not start with uppercase");
+    return {
+        rule: "capitalization",
+        passed,
+        detail: passed
+            ? "First words capitalized"
+            : parts.join("; "),
+    };
+}
+
+function checkNoRepeatedWords(text: string): CaptionQualityCheck {
+    const words = text.toLowerCase().split(/\s+/).filter(Boolean);
+    const repeated: string[] = [];
+    for (let i = 1; i < words.length; i++) {
+        if (words[i] === words[i - 1] && !repeated.includes(words[i])) {
+            repeated.push(words[i]);
+        }
+    }
+    return {
+        rule: "no_repeated_words",
+        passed: repeated.length === 0,
+        detail: repeated.length === 0
+            ? "No consecutive repeated words"
+            : `Consecutive duplicates found: ${repeated.join(", ")}`,
+    };
+}
+
+function checkCompleteSentence(subheadline: string): CaptionQualityCheck {
+    const trimmed = subheadline.trim();
+    const endsCorrectly = /[.!?]$/.test(trimmed);
+    return {
+        rule: "complete_sentence",
+        passed: endsCorrectly,
+        detail: endsCorrectly
+            ? "Subheadline ends with sentence-ending punctuation"
+            : "Subheadline must end with '.', '!', or '?'",
+    };
+}
+
+const CTA_PATTERNS: RegExp[] = [
+    /\bshop now\b/i,
+    /\bget yours\b/i,
+    /\bsign up\b/i,
+    /\border today\b/i,
+    /\btry it\b/i,
+    /\bbuy now\b/i,
+    /\bstart\b/i,
+    /\bjoin\b/i,
+    /\bclaim\b/i,
+    /\bdiscover\b/i,
+    /\bgrab\b/i,
+    /\bbook\b/i,
+    /\bschedule\b/i,
+    /\bdownload\b/i,
+    /\bsubscribe\b/i,
+    /\bregister\b/i,
+    /\bcontact\b/i,
+    /\bclick\b/i,
+    /\bapply\b/i,
+];
+
+function checkCtaClarity(text: string): CaptionQualityCheck {
+    const found = CTA_PATTERNS.find((p) => p.test(text));
+    return {
+        rule: "cta_clarity",
+        passed: !!found,
+        detail: found
+            ? "CTA action verb detected"
+            : "No clear CTA action verb or imperative found",
+    };
+}
+
+const FILLER_PHRASES: RegExp[] = [
+    /\bin order to\b/gi,
+    /\bit is important to note that\b/gi,
+    /\bas a matter of fact\b/gi,
+    /\bat the end of the day\b/gi,
+    /\bneedless to say\b/gi,
+    /\bfor all intents and purposes\b/gi,
+    /\bwith all due respect\b/gi,
+    /\bto be honest\b/gi,
+    /\bto tell you the truth\b/gi,
+    /\bin this day and age\b/gi,
+    /\bwhen all is said and done\b/gi,
+    /\bfor what it's worth\b/gi,
+    /\bthe fact of the matter is\b/gi,
+    /\bit's worth noting that\b/gi,
+];
+
+function checkNoFillerPhrases(text: string): CaptionQualityCheck {
+    const found: string[] = [];
+    for (const pattern of FILLER_PHRASES) {
+        pattern.lastIndex = 0;
+        const match = pattern.exec(text);
+        if (match) found.push(match[0]);
+    }
+    return {
+        rule: "no_filler_phrases",
+        passed: found.length === 0,
+        detail: found.length === 0
+            ? "No filler phrases detected"
+            : `Filler phrases found: ${found.join(", ")}`,
+    };
+}
+
+function initLocaleCheckSets(): void {
+    registerLocaleChecks("ar_fusha", [
+        (input) => checkHeadlineWordCount(input.headline, 8),
+        (input) => checkSubheadlineWordCount(input.subheadline, 12),
+        (input) => checkArabicUnicodeRatio(input.fullCaption, 0.70),
+        (input) => checkHangingConjunction(input.headline, input.subheadline),
+        (input) => checkWeakOpener(input.headline),
+    ]);
+
+    registerLocaleChecks("ar_egyptian", [
+        (input) => checkHeadlineWordCount(input.headline, 8),
+        (input) => checkSubheadlineWordCount(input.subheadline, 12),
+        (input) => checkArabicUnicodeRatio(input.fullCaption, 0.70),
+        (input) => checkDialectMarkers(input.fullCaption, "ar_egyptian"),
+        (input) => checkWarmthRegister(input.fullCaption),
+    ]);
+
+    registerLocaleChecks("ar_gulf", [
+        (input) => checkHeadlineWordCount(input.headline, 8),
+        (input) => checkSubheadlineWordCount(input.subheadline, 12),
+        (input) => checkArabicUnicodeRatio(input.fullCaption, 0.70),
+        (input) => checkDialectMarkers(input.fullCaption, "ar_gulf"),
+    ]);
+
+    registerLocaleChecks("ar_levantine", [
+        (input) => checkHeadlineWordCount(input.headline, 8),
+        (input) => checkSubheadlineWordCount(input.subheadline, 12),
+        (input) => checkArabicUnicodeRatio(input.fullCaption, 0.70),
+    ]);
+
+    registerLocaleChecks("ar_iraqi", [
+        (input) => checkHeadlineWordCount(input.headline, 8),
+        (input) => checkSubheadlineWordCount(input.subheadline, 12),
+        (input) => checkArabicUnicodeRatio(input.fullCaption, 0.70),
+    ]);
+
+    registerLocaleChecks("ar_maghreb", [
+        (input) => checkHeadlineWordCount(input.headline, 8),
+        (input) => checkSubheadlineWordCount(input.subheadline, 12),
+        (input) => checkArabicUnicodeRatio(input.fullCaption, 0.70),
+    ]);
+
+    registerLocaleChecks("en", [
+        (input) => checkHeadlineWordCount(input.headline, 8),
+        (input) => checkSubheadlineWordCount(input.subheadline, 12),
+        (input) => checkCapitalization(input.headline, input.subheadline),
+        (input) => checkNoRepeatedWords(input.fullCaption),
+        (input) => checkCompleteSentence(input.subheadline),
+        (input) => checkCtaClarity(input.fullCaption),
+        (input) => checkNoFillerPhrases(input.fullCaption),
+    ]);
+}
+
+initLocaleCheckSets();
+
+export {
+    checkHeadlineWordCount,
+    checkSubheadlineWordCount,
+    checkArabicUnicodeRatio,
+    checkHangingConjunction,
+    checkWeakOpener,
+    checkDialectMarkers,
+    checkWarmthRegister,
+    checkCapitalization,
+    checkNoRepeatedWords,
+    checkCompleteSentence,
+    checkCtaClarity,
+    checkNoFillerPhrases,
+};

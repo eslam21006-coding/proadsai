@@ -16,15 +16,17 @@ import { getCopywritingStrategyPrompt, getCopywritingStrategyCaptionStructure, g
 import { getOfferHookPsychology, getCreativeModeConceptInstruction, getCreativeModeBuildPlanInstruction, getOfferCaptionStructure } from "./knowledge/offerCreativeModes.js";
 import { resolveCreativeSpec, getResolvedSpecPromptBlock, getCaptionCreativeModeAnchors, validateCombination, CREATIVE_MODE_CATALOG as _MODE_CATALOG, type ResolvedCreativeSpec, getSubStyleModeFusion, getBeforeAfterSubStyleFusion } from "./creativeResolver.js";
 import { compileFullContract, getContractRenderBlock, getContractCaptionBlock, getContractForScoring, type FullLayoutContract, type OverlayDataFilter } from "./layoutContract.js";
-import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, parseBuildPlanEnvelope, parseStructuredBuildPlanResponse, serializeBuildPlanEnvelope, validateStructuredBuildPlan, type BuildPlanSlotMap, type ContractCheckResult, type StructuredBuildPlanPayload } from "./buildPlanSlotMap.js";
+import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, parseBuildPlanEnvelope, parseStructuredBuildPlanResponse, serializeBuildPlanEnvelope, validateStructuredBuildPlan, validateCopyFidelity, stripTechnicalPrompt, TECHNICAL_PROMPT_START, TECHNICAL_PROMPT_END, type BuildPlanSlotMap, type ContractCheckResult, type StructuredBuildPlanPayload } from "./buildPlanSlotMap.js";
 import { compileModePayload, getModePayloadPromptBlock, getModePayloadPromptBlock_RenderSafe, getModePayloadCaptionAnchors, extractAuthorizedNumbers, getNumericFidelityPolicy, type ModePayload, type NumericFidelityPolicy } from "./modeFieldSchema.js";
 import { compositeOfferOverlay, isOverlayAvailable, extractOfferFacts, validateResolvedOfferFacts } from "./offerOverlay.js";
-import { validateCaption, validateArabicCompliance, validateBlueprintLanguage, validateBlueprintModeContribution, validateBlueprintMinimalStyle, sanitizeReferenceAdSummary, type CaptionValidationInput } from "./captionValidator.js";
+import { validateCaption, validateArabicCompliance, validateBlueprintLanguage, validateBlueprintModeContribution, validateBlueprintMinimalStyle, sanitizeReferenceAdSummary, validateLanguageQuality, type CaptionValidationInput, type CaptionQualityResult, type CaptionQualityCheck } from "./captionValidator.js";
 import { validateBuildPlanAgainstContract, buildScoringPrompt, parseScoringResponse, quickRejectCheck } from "./creativeScoringEngine.js";
 import { storeCreativeToMemory, retrieveCreativePatterns } from "./creativeMemory.js";
 import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.js";
 import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreservation, type SemanticLock } from "./utils/hookPayload.js";
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
+import type { FailureClass, CostEstimate } from "./types.js";
+import { GenerationError } from "./types.js";
 
 // ─── Ranking Guidance Builder ────────────────────────────────────────────
 // Converts Ticket 2 ranking output into a compact prompt-safe guidance block.
@@ -404,7 +406,12 @@ type GeminiCaller = (params: { model: string; contents: any; config?: any }) => 
 let callGemini: GeminiCaller;
 
 export function setGeminiCaller(fn: GeminiCaller) {
-    callGemini = fn;
+    // Wrap the caller to auto-accumulate cost tracking on every Gemini call
+    callGemini = async (params) => {
+        const response = await fn(params);
+        accumulateCost(response);
+        return response;
+    };
 }
 
 // ─── OpenAI Key (injected for design critique — different model catches Gemini blind spots) ────
@@ -472,11 +479,101 @@ async function retry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promis
     try { return await fn(); }
     catch (err: any) {
         if (retries > 0 && (err?.message?.includes("503") || err?.message?.includes("429") || err?.message?.includes("Quota") || err?.message?.includes("INTERNAL"))) {
+            _costTracker.retryCount++;
             await wait(delay);
             return retry(fn, retries - 1, delay * 2);
         }
         throw err;
     }
+}
+
+// ─── Cost Tracking Accumulator ────────────────────────────────────────────
+// Thread-local (per-request) cost accumulator. Call resetCostTracker() at the
+// start of each top-level generation pipeline, then accumulateCost() after each
+// Gemini call. At the end, getCostEstimate() returns the totals.
+
+interface CostTracker {
+    modelTier: string | null;
+    retryCount: number;
+    totalPromptTokens: number;
+    totalCandidateTokens: number;
+}
+
+let _costTracker: CostTracker = { modelTier: null, retryCount: 0, totalPromptTokens: 0, totalCandidateTokens: 0 };
+
+export function resetCostTracker(): void {
+    _costTracker = { modelTier: null, retryCount: 0, totalPromptTokens: 0, totalCandidateTokens: 0 };
+}
+
+interface ResponseUsage {
+    modelVersion?: string;
+    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } | null;
+}
+
+export function accumulateCost(response: ResponseUsage): void {
+    if (response?.modelVersion) _costTracker.modelTier = response.modelVersion;
+    const usage = response?.usageMetadata;
+    if (usage) {
+        const prompt = usage.promptTokenCount || 0;
+        const candidate = usage.candidatesTokenCount || 0;
+        const computed = prompt + candidate;
+        // Use totalTokenCount from API if individual fields are zero but total is available
+        const total = computed > 0 ? computed : (usage.totalTokenCount || 0);
+        _costTracker.totalPromptTokens += prompt;
+        _costTracker.totalCandidateTokens += (total - prompt);
+    }
+}
+
+export function getCostEstimate(): CostEstimate {
+    return {
+        modelTier: _costTracker.modelTier,
+        retryCount: _costTracker.retryCount,
+        estimatedTokens: _costTracker.totalPromptTokens + _costTracker.totalCandidateTokens,
+    };
+}
+
+// ─── Failure Classification Helpers ─────────────────────────────────────────
+
+export function classifyError(error: unknown, errorCode?: string): FailureClass {
+    if (error instanceof GenerationError) return error.failureClass;
+
+    if (errorCode === "safety_blocked") return "model_error";
+    if (errorCode === "validation_failed") return "combination_invalid";
+    if (errorCode === "quality_rejected") return "validation_reject";
+
+    if (error instanceof Error) {
+        const msg = error.message.toLowerCase();
+        if (msg.includes("invalid creative mode combination")) return "combination_invalid";
+        if (msg.includes("blueprint was empty") || msg.includes("blueprint too short")) return "prompt_malformed";
+        if (msg.includes("structured build plan returned empty")) return "model_error";
+        if (msg.includes("json parse failed after repair")) return "model_error";
+        if (msg.includes("structured contract validation")) return "validation_reject";
+        if (msg.includes("strict pair validation")) return "slot_repair_failed";
+        if (msg.includes("insufficient credits")) return "credit_insufficient";
+        if (msg.includes("resource-exhausted") || msg.includes("quota")) return "model_error";
+    }
+
+    return "model_error";
+}
+
+export function buildCostEstimate(
+    modelTier: string | null,
+    retryCount: number,
+    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } | null
+): CostEstimate {
+    if (!usageMetadata) return { modelTier, retryCount, estimatedTokens: 0 };
+    const prompt = usageMetadata.promptTokenCount || 0;
+    const candidate = usageMetadata.candidatesTokenCount || 0;
+    const computed = prompt + candidate;
+    const tokens = computed > 0 ? computed : (usageMetadata.totalTokenCount || 0);
+    return { modelTier, retryCount, estimatedTokens: tokens };
+}
+
+export function errorCodeToFailureClass(errorCode: string): FailureClass {
+    if (errorCode === "safety_blocked") return "model_error";
+    if (errorCode === "validation_failed") return "combination_invalid";
+    if (errorCode === "quality_rejected") return "validation_reject";
+    return "model_error";
 }
 
 // Use any-typed inputs to avoid duplicating the full AdInputs interface
@@ -1772,7 +1869,7 @@ ${hookQualityBlock}` }] },
         if (mode === 'precision') {
             if (!rawText.trim()) {
                 console.error('[generateTOV] Precision edit returned empty text');
-                throw new Error('Hook edit returned empty result. Please retry.');
+                throw new GenerationError('Hook edit returned empty result. Please retry.', 'model_error');
             }
             const semanticCheck = assertHookSemanticPreservation(previousOutput || '', rawText, semanticLock || null);
             if (!semanticCheck.ok && editIntent !== 'change_angle') {
@@ -1860,7 +1957,7 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
 
         // Both attempts failed — throw explicit error instead of returning garbage
         console.error(`[generateTOV] Both attempts returned invalid hook structure. First: ${validation.count}/4, Retry: ${retryValidation.count}/4`);
-        throw new Error('Hook generation failed: invalid structure after retry. Please try again.');
+        throw new GenerationError('Hook generation failed: invalid structure after retry. Please try again.', 'model_error');
     } // end _generateTOVInner
     const text = await _generateTOVInner();
     return { text, rankingGuidance: _tovRankingLinkage };
@@ -1879,7 +1976,7 @@ export async function generateConcepts(approvedTov: string, inputs: AdInputs, re
         console.log(`🎨 CREATIVE MODE AUDIT [generateConcepts]: modes=[${_selectedModes.join(',')}] tab=${_comboCheck.resolvedTab || 'none'} valid=${_comboCheck.valid}${_comboCheck.errors.length ? ' errors: ' + _comboCheck.errors.join('; ') : ''}`);
         if (!_comboCheck.valid) {
             console.error(`🛑 CREATIVE MODE REJECTED in generateConcepts: ${_comboCheck.errors.join('; ')}`);
-            throw new Error(`Invalid creative mode combination: ${_comboCheck.errors.join('; ')}`);
+            throw new GenerationError(`Invalid creative mode combination: ${_comboCheck.errors.join('; ')}`, "combination_invalid");
         }
 
         // ═══ REFERENCE IMAGE ANALYSIS (optional, non-blocking) ═══
@@ -3231,14 +3328,16 @@ Selected modes: [${modes.join(' + ')}]
                         if (!finalCheck.passed && isStrictPair) {
                             const stillMissing = finalCheck.missingModes.filter(m => STRICT_PAIRS_SECONDARY.includes(m));
                             if (stillMissing.length > 0) {
-                                console.warn(`⚠️ STRICT PAIR WARNING: Blueprint still underrepresents [${stillMissing.join(', ')}] after repair. Modes=[${selectedModes.join(',')}]. Returning best-effort result.`);
+                                console.error(`🛑 STRICT PAIR FAIL-CLOSED: Blueprint still underrepresents [${stillMissing.join(', ')}] after repair. Modes=[${selectedModes.join(',')}]. Throwing.`);
+                                throw new GenerationError(`Blueprint failed strict pair validation — secondary mode(s) [${stillMissing.join(', ')}] underrepresented after repair. User should retry.`, "slot_repair_failed");
                             }
                         }
                     } catch (e) {
                         // Repair API itself failed (Gemini error, timeout, etc.)
                         console.warn(`⚠️ Blueprint mode repair API failed: ${e}`);
                         if (isStrictPair && !repairSucceeded) {
-                            console.warn(`⚠️ STRICT PAIR WARNING (repair API failed): Cannot guarantee [${modeContribCheck.missingModes.join(', ')}] are represented. Modes=[${selectedModes.join(',')}]. Returning best-effort result.`);
+                            console.error(`🛑 STRICT PAIR FAIL-CLOSED (repair API failed): Cannot guarantee [${modeContribCheck.missingModes.join(', ')}] are represented. Modes=[${selectedModes.join(',')}]. Throwing.`);
+                            throw new GenerationError(`Blueprint failed strict pair validation — repair API failed and secondary mode(s) [${modeContribCheck.missingModes.join(', ')}] cannot be guaranteed. User should retry.`, "slot_repair_failed");
                         }
                     }
                 }
@@ -3272,7 +3371,7 @@ export async function generateBuildPlan(conceptRaw: string, selectedTov: string,
     console.log(`🎨 CREATIVE MODE AUDIT [generateBuildPlan]: modes=[${_bpModes.join(',')}] tab=${_bpCheck.resolvedTab || 'none'} valid=${_bpCheck.valid}${_bpCheck.errors.length ? ' errors: ' + _bpCheck.errors.join('; ') : ''}`);
     if (!_bpCheck.valid) {
         console.error(`🛑 CREATIVE MODE REJECTED in generateBuildPlan: ${_bpCheck.errors.join('; ')}`);
-        throw new Error(`Invalid creative mode combination: ${_bpCheck.errors.join('; ')}`);
+        throw new GenerationError(`Invalid creative mode combination: ${_bpCheck.errors.join('; ')}`, "combination_invalid");
     }
 
     let _bpRefInfluence: ReferenceInfluence | null = null;
@@ -3356,6 +3455,7 @@ MANDATE:
 - BLUEPRINT SIZE LIMIT: blueprint must stay concise and production-usable. Target 12-18 lines, 1200-2600 characters max.
 - Do NOT echo the contract, prompt, schema, JSON rules, or ownership block inside blueprint.
 - Do NOT repeat zones more than once. One clear instruction per zone.
+- TECHNICAL PROMPT: Inside the blueprint string, include a long-form English rendering instruction that describes the exact visual appearance of the final image. Wrap this instruction between [[TECHNICAL_PROMPT]] and [[/TECHNICAL_PROMPT]] markers. This prompt should be a self-contained, detailed visual description covering composition, lighting, color grading, atmosphere, hero pose, text placement zones, and mood — everything the image model needs to render the ad without seeing the original concept. The hookText "${hookText}" MUST appear verbatim inside this technical prompt.
 ${inputs.brandColorPrimary ? `- BRAND COLOR DIRECTIVE: The brand's primary color is ${inputs.brandColorPrimary}${inputs.brandColorSecondary ? ` and secondary is ${inputs.brandColorSecondary}` : ''}. Incorporate into the blueprint's color specifications. Choose ONE of these applications per design (rotate for variety):
   a) CTA button background color
   b) Headline text accent/highlight color
@@ -3521,7 +3621,7 @@ ${buildStructuredBuildPlanReturnBlock(buildPlanContract, ownershipMap)}
         } catch (parseError: any) {
             const malformedJson = (rawResponseText || '').trim();
             if (!malformedJson) {
-                throw new Error('Structured build plan returned empty JSON response.');
+                throw new GenerationError('Structured build plan returned empty JSON response.', "model_error");
             }
 
             const repairResponse = await retry(() => callGemini({
@@ -3548,7 +3648,7 @@ ${malformedJson.slice(0, 24000)}`
             try {
                 return parseStructuredBuildPlanResponse(repairResponse.text || '{}', ownershipMap);
             } catch (repairError: any) {
-                throw new Error(`Structured build plan JSON parse failed after repair. Initial error: ${parseError?.message || parseError}. Repair error: ${repairError?.message || repairError}`);
+                throw new GenerationError(`Structured build plan JSON parse failed after repair. Initial error: ${parseError?.message || parseError}. Repair error: ${repairError?.message || repairError}`, "model_error");
             }
         }
     };
@@ -3583,12 +3683,59 @@ ${JSON.stringify(machinePlan)}`;
         machinePlan = await requestStructuredPlan(repairPrompt);
         structuredValidation = validateStructuredBuildPlan(machinePlan, buildPlanContract, ownershipMap);
         if (!structuredValidation.contractCheck.passed) {
-            throw new Error(`Build plan failed structured contract validation: ${structuredValidation.contractCheck.reasons.join(' | ')}`);
+            throw new GenerationError(`Build plan failed structured contract validation: ${structuredValidation.contractCheck.reasons.join(' | ')}`, "validation_reject");
         }
     }
 
     if (!machinePlan.blueprint || machinePlan.blueprint.length < 80) {
-        throw new Error('Build plan blueprint was empty or too short.');
+        throw new GenerationError('Build plan blueprint was empty or too short.', "prompt_malformed");
+    }
+
+    // ═══ COPY FIDELITY VALIDATION WITH RETRY ═══
+    const extractTechnicalPromptFromBlueprint = (bp: string): string | null => {
+        const s = bp.indexOf(TECHNICAL_PROMPT_START);
+        const e = bp.indexOf(TECHNICAL_PROMPT_END);
+        if (s === -1 || e === -1 || e <= s) return null;
+        return bp.slice(s + TECHNICAL_PROMPT_START.length, e).trim();
+    };
+
+    const MAX_COPY_FIDELITY_ATTEMPTS = 3;
+    let bestMachinePlan = machinePlan;
+    let copyFidelityPassed = false;
+    for (let attempt = 1; attempt <= MAX_COPY_FIDELITY_ATTEMPTS; attempt++) {
+        const tp = extractTechnicalPromptFromBlueprint(machinePlan.blueprint);
+        const fidelityOk = tp ? validateCopyFidelity(tp, hookText) : false;
+        const contractOk = structuredValidation.contractCheck.passed;
+        if (fidelityOk && contractOk) {
+            copyFidelityPassed = true;
+            bestMachinePlan = machinePlan;
+            if (attempt > 1) {
+                console.log(`✅ Copy fidelity + contract passed on attempt ${attempt}`);
+            }
+            break;
+        }
+        // Keep the best plan seen so far (prefer one that passes at least contract)
+        if (contractOk) bestMachinePlan = machinePlan;
+        if (attempt < MAX_COPY_FIDELITY_ATTEMPTS) {
+            console.warn(`⚠️ Copy fidelity ${fidelityOk ? 'passed' : 'failed'}, contract ${contractOk ? 'passed' : 'failed'} (attempt ${attempt}/${MAX_COPY_FIDELITY_ATTEMPTS}) — rebuilding plan...`);
+            machinePlan = await requestStructuredPlan(prompt);
+            if (!machinePlan.blueprint || machinePlan.blueprint.length < 80) {
+                if (bestMachinePlan.blueprint && bestMachinePlan.blueprint.length >= 80) {
+                    console.warn('⚠️ Copy fidelity retry produced empty/short blueprint — falling back to bestMachinePlan');
+                    machinePlan = bestMachinePlan;
+                    break;
+                }
+                throw new GenerationError('Build plan blueprint was empty or too short on copy fidelity retry.', "prompt_malformed");
+            }
+            structuredValidation = validateStructuredBuildPlan(machinePlan, buildPlanContract, ownershipMap);
+        } else {
+            console.warn(`⚠️ Copy fidelity exhausted after ${MAX_COPY_FIDELITY_ATTEMPTS} attempts — proceeding with best available plan`);
+        }
+    }
+    // Use the best plan even if fidelity didn't pass — soft warning, not hard rejection
+    machinePlan = bestMachinePlan;
+    if (!copyFidelityPassed) {
+        console.warn(`⚠️ Copy fidelity warning: hookText may not appear verbatim in TECHNICAL_PROMPT — using best available plan`);
     }
 
     try {
@@ -3613,6 +3760,111 @@ ${JSON.stringify(machinePlan)}`;
     return serializeBuildPlanEnvelope(finalMachinePlan.blueprint, finalMachinePlan);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// RESOLUTION TRACE — per-generation audit record (FR-007)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface ResolutionTrace {
+    resolvedImagePrompt: string | null;
+    blueprintText: string | null;
+    technicalPrompt: string | null;
+    perSlide?: Array<{
+        slideIndex: number;
+        resolvedImagePrompt: string | null;
+        blueprintText: string | null;
+    }>;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// buildFinalImagePrompt() — SOLE PROMPT ASSEMBLY ENTRY POINT (FR-006)
+// ═══════════════════════════════════════════════════════════════════════════
+// Concatenates sections in the strict order per contracts/prompt-assembly.md.
+// This is the ONLY function that assembles the final image prompt.
+// No inline assembly is permitted elsewhere (FR-006 compliance).
+
+export interface BuildFinalImagePromptInput {
+    technicalPrompt: string;
+    blueprint: string;
+    contract: FullLayoutContract;
+    inputs: AdInputs;
+    aspectRatio: AspectRatio;
+    hookText: string;
+    subheadText: string;
+    ctaName: string;
+    benefitText: string;
+    badges?: string;
+    resolvedUniverse: string;
+    costumeRules: string;
+    coreDesignRules: string;
+    carouselAnchorNote: string;
+    retargetingDesignHint: string;
+    imageParts: Array<{ inlineData: { mimeType: string; data: string } }>;
+}
+
+export interface BuildFinalImagePromptResult {
+    textPrompt: string;
+    imageParts: Array<{ inlineData: { mimeType: string; data: string } }>;
+    trace: ResolutionTrace;
+}
+
+export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): BuildFinalImagePromptResult {
+    const {
+        technicalPrompt,
+        blueprint,
+        contract,
+        inputs,
+        aspectRatio,
+        hookText,
+        subheadText,
+        ctaName,
+        benefitText,
+        badges,
+        resolvedUniverse,
+        costumeRules,
+        coreDesignRules,
+        carouselAnchorNote,
+        retargetingDesignHint,
+        imageParts,
+    } = params;
+
+    const strippedBlueprint = stripTechnicalPrompt(blueprint);
+
+    const textPrompt = `${coreDesignRules}
+${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}
+BLUEPRINT: ${strippedBlueprint}
+TEXTS: "${hookText}", "${subheadText}"
+BUTTON: "${ctaName}"
+${carouselAnchorNote}
+${retargetingDesignHint}
+
+⚠️ CRITICAL TEXT RENDERING RULES:
+1. ONLY render these EXACT text strings on the image — NOTHING ELSE:
+   - Headline: "${hookText}"
+   - Subheadline: "${subheadText}"
+   ${ctaName ? `- Button: "${ctaName}"` : ''}
+   ${benefitText ? `- Benefit: "${benefitText}"` : ''}
+   ${badges ? `- Badge: "${badges}"` : ''}
+2. DO NOT render ANY of these on the image:
+   - System instructions, marker labels, or field names
+   - "VISUAL_DIRECTION:", "TECHNICAL_PROMPT:", "CONCEPT_START", etc.
+   - "**" symbols, "═══" lines, or any formatting markers
+   - English technical instructions or camera settings
+   - ANY English text, brand names, watermarks, or labels
+   - Any text that is NOT one of the strings listed above
+3. If the blueprint mentions "VISUAL_DIRECTION" or similar — that is an INSTRUCTION TO YOU, not text to render.
+4. NEVER render English words from the blueprint as visible text on the image. The blueprint is a design INSTRUCTION, not content to display.
+5. Each Arabic text string must appear EXACTLY ONCE — never duplicate, never truncate, never rephrase.
+`;
+
+    const trace: ResolutionTrace = {
+        resolvedImagePrompt: textPrompt.substring(0, 5000),
+        blueprintText: strippedBlueprint.substring(0, 2000),
+        technicalPrompt: technicalPrompt?.substring(0, 3000) || null,
+    };
+
+    return { textPrompt, imageParts, trace };
+}
+
 // 4. Final Ad -> USE VISUAL MODEL (Artist)
 export async function generateFinalAd(
     buildPlan: string,
@@ -3624,7 +3876,7 @@ export async function generateFinalAd(
     base64ToEdit?: string,
     styleReference?: string,
     textOverride?: TextOverride
-): Promise<{ image: string } | { image: null; errorCode: string; debug?: FinalAdDebugInfo }> {
+): Promise<{ image: string; failureClass?: "numeric_hallucination"; costEstimate?: CostEstimate } | { image: null; errorCode: string; failureClass?: FailureClass; debug?: FinalAdDebugInfo }> {
     // ═══ RETARGETING CONTEXT (normalized) ═══
     const _renderRtCtx = buildNormalizedRetargetingContext(inputs as any);
     const _renderEffectiveAngle = _renderRtCtx.isRetargeting ? null : inputs.coldHookAngle;
@@ -3639,7 +3891,7 @@ export async function generateFinalAd(
         console.log(`🎨 CREATIVE MODE AUDIT [generateFinalAd]: modes=[${_renderModes.join(',')}] tab=${_renderCheck.resolvedTab || 'none'} valid=${_renderCheck.valid}${_renderCheck.errors.length ? ' errors: ' + _renderCheck.errors.join('; ') : ''}`);
         if (!_renderCheck.valid) {
             console.error(`🛑 CREATIVE MODE REJECTED in generateFinalAd: ${_renderCheck.errors.join('; ')}`);
-            return { image: null, errorCode: 'validation_failed', debug: { validator: 'creative_mode', reasons: _renderCheck.errors } };
+            return { image: null, errorCode: 'validation_failed', failureClass: 'combination_invalid' as const, debug: { validator: 'creative_mode', reasons: _renderCheck.errors } };
         }
         // Log validity criteria for active modes (consumed by zone gate and prompt system)
         for (const mId of _renderModes) {
@@ -3798,7 +4050,7 @@ If the uploaded photo shows a person in a blue suit, you must NOT default to a b
                 console.warn(`⚠️ RENDER GATE: quickRejectCheck flagged for minimal (non-blocking): ${gateQuickCheck.reason}`);
             } else {
                 console.error(`🛑 RENDER GATE HARD REJECT: ${gateQuickCheck.reason}. Aborting render.`);
-                return { image: null, errorCode: 'quality_rejected', debug: buildQualityRejectedDebug('quick_reject', undefined, [gateQuickCheck.reason || 'Forbidden build-plan element']) };
+                return { image: null, errorCode: 'quality_rejected', failureClass: 'validation_reject' as const, debug: buildQualityRejectedDebug('quick_reject', undefined, [gateQuickCheck.reason || 'Forbidden build-plan element']) };
             }
         }
 
@@ -3865,21 +4117,21 @@ ${JSON.stringify(parsedBuildPlan.machinePlan || {})}`;
                     console.log(`✅ RENDER SLOT GATE: Build plan regenerated (${repairedMachinePlan.blueprint.length} chars)`);
                 } else {
                     console.error(`🛑 RENDER SLOT GATE: Repair still fails slot check: ${repairedSlotValidation.contractCheck.reasons.join(' | ')}`);
-                    return { image: null, errorCode: 'quality_rejected', debug: buildQualityRejectedDebug('slot_map', repairedSlotValidation.slotMap) };
+                    return { image: null, errorCode: 'quality_rejected', failureClass: 'validation_reject' as const, debug: buildQualityRejectedDebug('slot_map', repairedSlotValidation.slotMap) };
                 }
             } catch (repairErr) {
                 console.error(`🛑 RENDER SLOT GATE: Repair call failed. Aborting render.`, repairErr);
-                return { image: null, errorCode: 'quality_rejected', debug: buildQualityRejectedDebug('slot_map', gateSlotMap, ['Repair call failed']) };
+                return { image: null, errorCode: 'quality_rejected', failureClass: 'validation_reject' as const, debug: buildQualityRejectedDebug('slot_map', gateSlotMap, ['Repair call failed']) };
             }
         } else if (!gateSlotValidation.contractCheck.passed && hasSecondaryZones && !base64ToEdit && !editInstruction) {
-            return { image: null, errorCode: 'quality_rejected', debug: buildQualityRejectedDebug('slot_map', gateSlotMap) };
+            return { image: null, errorCode: 'quality_rejected', failureClass: 'validation_reject' as const, debug: buildQualityRejectedDebug('slot_map', gateSlotMap) };
         }
     }
     // ═══ END HARD RENDER GATE ═══
 
     if (containsUnresolvedCommercialPlaceholders(gatedBlueprint)) {
         console.error('🛑 RENDER GATE HARD REJECT: unresolved commercial placeholder text detected in build plan.');
-        return { image: null, errorCode: 'quality_rejected', debug: buildQualityRejectedDebug('placeholder_leak', undefined, ['Build plan contains unresolved commercial placeholder text']) };
+        return { image: null, errorCode: 'quality_rejected', failureClass: 'validation_reject' as const, debug: buildQualityRejectedDebug('placeholder_leak', undefined, ['Build plan contains unresolved commercial placeholder text']) };
     }
 
     const preOverlayFacts = extractOfferFacts(inputs);
@@ -5023,6 +5275,7 @@ ${benefitText ? `- BENEFIT goes below CTA ONLY: "${benefitText}"` : ''}
                         const authorizedSet = new Set(allAuthorized.map(normalize));
 
                         let numericPass = false;
+                        let _numericHallucination = false;
 
                         for (let auditAttempt = 0; auditAttempt < 2; auditAttempt++) {
                             try {
@@ -5128,11 +5381,13 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                         }
                                         if (!eraseSuccess) {
                                             console.warn(`⚠️ Numeric erase re-render failed to produce image (non-blocking). Using pre-erase image.`);
+                                            _numericHallucination = true;
                                             numericPass = true;
                                             break;
                                         }
                                     } catch (eraseErr) {
                                         console.warn(`⚠️ Numeric erase re-render call failed (non-blocking). Using original image.`, eraseErr);
+                                        _numericHallucination = true;
                                         numericPass = true;
                                         break;
                                     }
@@ -5141,6 +5396,7 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                     // Second audit still found unauthorized numbers — warn but continue
                                     console.warn(`⚠️ Numeric fidelity: unauthorized numbers persist after retry [${unauthorized.join(', ')}]. Continuing with best-effort image.`);
                                     numericPass = true;
+                                    _numericHallucination = true;
                                 }
                             } catch (auditErr) {
                                 // Audit call itself failed — downgrade to warning, return the image
@@ -5153,6 +5409,7 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                         }
 
                         if (numericPass) {
+                            const _nhResult = _numericHallucination ? { failureClass: 'numeric_hallucination' as const, costEstimate: getCostEstimate() } : {};
                             // ═══ DETERMINISTIC OVERLAY: Composite exact numbers onto the image ═══
                             // For strict-fidelity templates, overlay is MANDATORY — fail if it can't run.
                             if (!base64ToEdit && !styleReference) {
@@ -5166,14 +5423,14 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                 if (overlayContract.overlaySlots.length > 0) {
                                     if (!isOverlayAvailable()) {
                                         console.warn('⚠️ OVERLAY: Sharp not installed — skipping overlay, returning image without price compositing.');
-                                        return { image: currentImage };
+                                        return { image: currentImage, ..._nhResult };
                                     }
 
                                     // Pre-check: extract facts to determine if overlay is structurally possible
                                     const preFacts = extractOfferFacts(inputs);
                                     if (!preFacts) {
                                         console.warn('⚠️ OVERLAY: facts extraction returned null — skipping overlay, returning image without price compositing.');
-                                        return { image: currentImage };
+                                        return { image: currentImage, ..._nhResult };
                                     }
 
                                     const ar = overlayContract.aspectRatioRules;
@@ -5190,7 +5447,7 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                         );
                                         if (!overlaid) {
                                             console.warn('⚠️ OVERLAY: compositor returned null — returning image without price compositing.');
-                                            return { image: currentImage };
+                                            return { image: currentImage, ..._nhResult };
                                         }
 
                                         // ═══ POST-OVERLAY VERIFICATION ═══
@@ -5245,17 +5502,17 @@ If no monetary numbers are visible, return: []` }
                                         }
 
                                         console.log('✅ Deterministic offer overlay applied and verified.');
-                                        return { image: overlaid };
+                                        return { image: overlaid, ..._nhResult };
                                     } catch (overlayErr) {
                                         console.warn('⚠️ Overlay compositing failed (non-blocking). Returning image without overlay.', overlayErr);
-                                        return { image: currentImage };
+                                        return { image: currentImage, ..._nhResult };
                                     }
                                 }
                             }
-                            return { image: currentImage };
+                            return { image: currentImage, ..._nhResult };
                         }
                         // Safety net — should not reach here, but return image if we have one
-                        return { image: currentImage || imageBase64 };
+                        return { image: currentImage || imageBase64, ...(_numericHallucination ? { failureClass: 'numeric_hallucination' as const, costEstimate: getCostEstimate() } : {}) };
                     }
 
                     // ═══ DETERMINISTIC OVERLAY for non-strict modes that still have overlay slots ═══
@@ -5295,7 +5552,7 @@ If no monetary numbers are visible, return: []` }
             }
         }
     }
-    return { image: null, errorCode: 'safety_blocked' };
+    return { image: null, errorCode: 'safety_blocked', failureClass: 'model_error' as const };
 }
 
 // ═══ DESIGN CRITIC LOOP — Internal quality gate before user sees the image ═══
@@ -5444,7 +5701,7 @@ ${(() => {
             // ═══ TESTIMONIAL MODE: Override carousel structure ═══
             const selectedModes = (inputs as any).offerCreativeMode || ['standard_hero'];
             const testimonialTexts = (inputs as any).testimonialTexts || [];
-            if (selectedModes.includes('testimonial_wall') && testimonialTexts.length > 0) {
+            if (selectedModes.includes('testimonial_carousel') && testimonialTexts.length > 0) {
                 const testimonialSlides = testimonialTexts.slice(0, slideCount - 1).map((t: any, i: number) =>
                     `Slide ${i + 2}: Testimonial from ${t.speakerName || 'Client'} (${t.platform || 'chat'}): "${t.text}"`
                 ).join('\n');
@@ -5675,7 +5932,7 @@ RETARGETING MODE — CRITICAL CONTEXT
     // ═══ TESTIMONIAL MODE: Return pre-built slide copies from extracted texts ═══
     const selectedModes = (inputs as any).offerCreativeMode || ['standard_hero'];
     const testimonialTexts = (inputs as any).testimonialTexts || [];
-    if (selectedModes.includes('testimonial_wall') && testimonialTexts.length > 0) {
+    if (selectedModes.includes('testimonial_carousel') && testimonialTexts.length > 0) {
         const testimonialSlides: CarouselSlideCopy[] = [];
         // Slide 1 is already the hook (handled by the caller)
         for (let i = 0; i < Math.min(testimonialTexts.length, slideCount - 1); i++) {
@@ -5870,9 +6127,9 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
 
 // 5. Caption -> NEEDS GEMINI 3 (Creative)
 // Updated to accept 'refinement' and force Fusha
-export async function generateCaption(mockupUrl: string, inputs: AdInputs, visualMetaphor: string, approvedTov: string, refinement?: string, carouselContext?: string, buildPlanContext?: string): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
+export async function generateCaption(mockupUrl: string, inputs: AdInputs, visualMetaphor: string, approvedTov: string, refinement?: string, carouselContext?: string, buildPlanContext?: string): Promise<{ text: string; rankingGuidance: RankingLinkage | null; captionQuality: CaptionQualityResult | null }> {
     let _captionRankingLinkage: RankingLinkage | null = null;
-    async function _generateCaptionInner(): Promise<string> {
+    async function _generateCaptionInner(): Promise<{ text: string; captionQuality: CaptionQualityResult | null }> {
         // ═══ REFERENCE IMAGE ANALYSIS (optional, non-blocking) ═══
         let _captionRefInfluence: ReferenceInfluence | null = null;
         if (inputs.referenceImage) {
@@ -6221,6 +6478,8 @@ Position the offer as clearly superior without naming competitors directly. Use 
         let result = '';
         let attempt = 0;
         let captionRepairPrompt: string | null = null;
+        let captionQuality: CaptionQualityResult | null = null;
+        let repairAttempted = false;
         const MAX_CAPTION_ATTEMPTS = 2;
 
         while (attempt < MAX_CAPTION_ATTEMPTS) {
@@ -6240,7 +6499,7 @@ Position the offer as clearly superior without naming competitors directly. Use 
             // ── Post-processing: Strip leaked step markers / scene descriptions ──
             result = cleanCaptionOutput(result);
 
-            // ── Validate ──
+            // ── Validate caption quality ──
             const validation = validateCaption({
                 caption: result,
                 locale,
@@ -6252,25 +6511,58 @@ Position the offer as clearly superior without naming competitors directly. Use 
                 visualStyleFamily: resolveStyleFamily(inputs),
             });
 
-            if (validation.passed) {
-                console.log(`✅ Caption validated on attempt ${attempt} (${validation.checks.filter(c => c.passed).length}/${validation.checks.length} checks passed)`);
+            // ── Validate language quality ──
+            const lines = result.split(/\n/).filter(Boolean);
+            const headline = lines[0] || "";
+            const subheadline = lines.slice(1).join(" ").trim() || "";
+            const langQuality = validateLanguageQuality({
+                headline,
+                subheadline,
+                locale,
+                fullCaption: result,
+            });
+
+            // Build aggregate captionQuality from both validators
+            const captionChecks: CaptionQualityCheck[] = validation.checks.map(c => ({
+                rule: c.name,
+                passed: c.passed,
+                detail: c.detail,
+            }));
+            const allPassed = validation.passed && langQuality.passed;
+            captionQuality = {
+                passed: allPassed,
+                captionChecks,
+                languageChecks: langQuality.checks,
+                repairedAt: null,
+                locale,
+            };
+
+            if (allPassed) {
+                console.log(`✅ Caption validated on attempt ${attempt} (${captionChecks.filter(c => c.passed).length}/${captionChecks.length} caption checks, ${langQuality.checks.filter(c => c.passed).length}/${langQuality.checks.length} lang quality checks)`);
                 break;
             }
 
-            // Log failures
-            const failedChecks = validation.checks.filter(c => !c.passed);
-            console.warn(`⚠️ Caption validation failed (attempt ${attempt}/${MAX_CAPTION_ATTEMPTS}): ${failedChecks.map(c => c.name).join(', ')}`);
+            const failedChecks = captionChecks.filter(c => !c.passed);
+            const failedLangChecks = langQuality.checks.filter(c => !c.passed);
+            console.warn(`⚠️ Caption validation failed (attempt ${attempt}/${MAX_CAPTION_ATTEMPTS}): caption=[${failedChecks.map(c => c.rule).join(', ')}] lang=[${failedLangChecks.map(c => c.rule).join(', ')}]`);
 
-            if (attempt < MAX_CAPTION_ATTEMPTS && validation.repairPrompt) {
-                captionRepairPrompt = validation.repairPrompt;
-                console.log(`🔄 Attempting caption repair...`);
+            if (attempt < MAX_CAPTION_ATTEMPTS) {
+                const repairParts: string[] = [];
+                if (validation.repairPrompt) repairParts.push(validation.repairPrompt);
+                if (langQuality.repairPrompt) repairParts.push(langQuality.repairPrompt);
+                captionRepairPrompt = repairParts.length > 0 ? repairParts.join('\n') : null;
+                if (captionRepairPrompt) repairAttempted = true;
+                if (captionRepairPrompt) console.log(`🔄 Attempting caption repair...`);
             } else {
-                // Final attempt failed — return best effort with log
-                console.warn(`❌ Caption repair exhausted. Returning best-effort output. Failed: ${failedChecks.map(c => `${c.name}: ${c.detail}`).join(' | ')}`);
+                console.warn(`❌ Caption repair exhausted. Returning best-effort output.`);
             }
         }
 
-        return result;
+        if (captionQuality && repairAttempted && captionQuality.passed) {
+            captionQuality = { ...captionQuality, repairedAt: Date.now() };
+        }
+
+        return { text: result, captionQuality };
     }
 
     // ─── Caption cleanup helper (extracted from inline post-processing) ─────────
@@ -6329,8 +6621,8 @@ Position the offer as clearly superior without naming competitors directly. Use 
 
         return result;
     } // end _generateCaptionInner
-    const text = await _generateCaptionInner();
-    return { text, rankingGuidance: _captionRankingLinkage };
+    const { text, captionQuality } = await _generateCaptionInner();
+    return { text, rankingGuidance: _captionRankingLinkage, captionQuality };
 }
 
 // 6. Visual Polishes -> USE LOGIC MODEL
@@ -6366,4 +6658,217 @@ export async function generateVisualPolishes(currentRender: string, inputs: AdIn
         }
     });
     try { return JSON.parse(response.text || '[]'); } catch { return []; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TESTIMONIAL CAROUSEL FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+import { detectTestimonialPlatform, buildTestimonialMockup, setTestimonialGeminiCaller } from "./testimonialMockup.js";
+import type { PlatformType, TestimonialSlideResult, TestimonialCarouselResult } from "./types.js";
+import { resolveTestimonialSlideCount } from "./creativeResolver.js";
+
+export { setTestimonialGeminiCaller };
+
+export async function generateTestimonialHookSlide(
+    inputs: AdInputs,
+    testimonialCount: number,
+): Promise<{ hookText: string; subheadText: string }> {
+    const campaignType = (inputs as any).campaignType || 'cold';
+    const isRetargeting = campaignType === 'retargeting';
+    const ctaText = inputs.cta || '';
+    const lang = inputs.adLanguage || 'ar_fusha';
+    const langInstruction = getLanguageInstruction(lang);
+
+    let prompt: string;
+    if (isRetargeting) {
+        const objectionText = (inputs as any).retargetingObjection || (inputs as any).retargetingObjectionText || '';
+        prompt = `Write a RETARGETING carousel hook slide (slide 1) for a testimonial carousel.
+
+CAMPAIGN TYPE: Retargeting (warm traffic)
+OBJECTION: "${objectionText}"
+TESTIMONIAL COUNT: ${testimonialCount} testimonials available as evidence
+CTA BUTTON: "${ctaText}"
+
+${langInstruction}
+
+RULES:
+- The headline MUST name or reference the specific objection: "${objectionText}"
+- The headline MUST tease testimonials as proof/evidence
+- Create urgency to swipe — the viewer needs to see the proof
+- Do NOT quote any testimonial directly
+- Do NOT show any testimonial content on this slide
+- Max 10 words for headline
+- Subheadline: max 15 words, adds context
+- The tone should feel like "you had a doubt? let me show you something"
+
+OUTPUT FORMAT (STRICT):
+HEADLINE: [your hook text]
+SUBHEADLINE: [supporting text]`;
+    } else {
+        prompt = `Write a COLD carousel hook slide (slide 1) for a testimonial carousel.
+
+CAMPAIGN TYPE: Cold (new traffic)
+TESTIMONIAL COUNT: ${testimonialCount} testimonials available
+CTA BUTTON: "${ctaText}"
+
+${langInstruction}
+
+RULES:
+- Create curiosity to swipe by teasing social proof WITHOUT showing it
+- Reference testimonials indirectly (e.g. "see what people are saying" or similar)
+- Do NOT quote any testimonial directly
+- Do NOT show any testimonial content on this slide
+- Max 10 words for headline
+- Subheadline: max 15 words, adds curiosity
+- The tone should feel like "wait until you see this"
+
+OUTPUT FORMAT (STRICT):
+HEADLINE: [your hook text]
+SUBHEADLINE: [supporting text]`;
+    }
+
+    const response = await retry(() => callGemini({
+        model: CREATIVE_MODEL_PRO,
+        contents: { parts: [{ text: prompt }] },
+        config: { temperature: 0.9 },
+    }));
+
+    const text = response.text || '';
+    const hookText = text.match(/HEADLINE:\s*(.+)/)?.[1]?.trim() || '';
+    const subheadText = text.match(/SUBHEADLINE:\s*(.+)/)?.[1]?.trim() || '';
+
+    return { hookText, subheadText };
+}
+
+export async function generateTestimonialCloseSlide(
+    inputs: AdInputs,
+): Promise<{ closeText: string; subheadText: string }> {
+    const campaignType = (inputs as any).campaignType || 'cold';
+    const isRetargeting = campaignType === 'retargeting';
+    const ctaText = inputs.cta || '';
+    const lang = inputs.adLanguage || 'ar_fusha';
+    const langInstruction = getLanguageInstruction(lang);
+
+    let prompt: string;
+    if (isRetargeting) {
+        const objectionText = (inputs as any).retargetingObjection || (inputs as any).retargetingObjectionText || '';
+        prompt = `Write a RETARGETING close slide (last slide) for a testimonial carousel.
+
+CAMPAIGN TYPE: Retargeting (warm traffic)
+OBJECTION: "${objectionText}"
+CTA BUTTON: "${ctaText}"
+
+${langInstruction}
+
+RULES:
+- This is the FINAL slide after multiple testimonial slides
+- The close MUST connect back to the objection: "${objectionText}"
+- Frame the testimonials as the resolution to the objection
+- Do NOT be generic — specifically address why the objection is now resolved
+- Include a clear call to action referencing the CTA button
+- Max 10 words for headline
+- Subheadline: max 15 words, final push
+
+OUTPUT FORMAT (STRICT):
+HEADLINE: [your close text]
+SUBHEADLINE: [supporting text]`;
+    } else {
+        prompt = `Write a COLD close slide (last slide) for a testimonial carousel.
+
+CAMPAIGN TYPE: Cold (new traffic)
+CTA BUTTON: "${ctaText}"
+
+${langInstruction}
+
+RULES:
+- This is the FINAL slide after multiple testimonial slides
+- May reference a key result or stat from the testimonials
+- End with a strong call to action matching the CTA button
+- Do NOT be generic — make it feel like a natural conclusion to the testimonial journey
+- Max 10 words for headline
+- Subheadline: max 15 words, final push
+
+OUTPUT FORMAT (STRICT):
+HEADLINE: [your close text]
+SUBHEADLINE: [supporting text]`;
+    }
+
+    const response = await retry(() => callGemini({
+        model: CREATIVE_MODEL_PRO,
+        contents: { parts: [{ text: prompt }] },
+        config: { temperature: 0.9 },
+    }));
+
+    const text = response.text || '';
+    const closeText = text.match(/HEADLINE:\s*(.+)/)?.[1]?.trim() || '';
+    const subheadText = text.match(/SUBHEADLINE:\s*(.+)/)?.[1]?.trim() || '';
+
+    return { closeText, subheadText };
+}
+
+export async function generateTestimonialCarousel(
+    inputs: AdInputs,
+    screenshots: string[],
+    maxPlanSlides: number,
+): Promise<TestimonialCarouselResult> {
+    const ctaText = inputs.cta || '';
+
+    const totalSlides = resolveTestimonialSlideCount(screenshots.length, maxPlanSlides);
+    const testimonialCount = totalSlides - 2;
+
+    console.log(`💬 Testimonial carousel: ${screenshots.length} screenshots, ${totalSlides} slides (${testimonialCount} testimonials + hook + close)`);
+
+    const platforms = await Promise.all(
+        screenshots.slice(0, testimonialCount).map((s) => detectTestimonialPlatform(s))
+    );
+    console.log(`💬 Detected platforms: ${platforms.join(', ')}`);
+
+    const [hookResult, mockupResults, closeResult] = await Promise.all([
+        generateTestimonialHookSlide(inputs, testimonialCount),
+        Promise.all(
+            screenshots.slice(0, testimonialCount).map((s, i) => buildTestimonialMockup(s, platforms[i]))
+        ),
+        generateTestimonialCloseSlide(inputs),
+    ]);
+
+    const slides: TestimonialSlideResult[] = [];
+
+    slides.push({
+        slideNumber: 1,
+        role: 'hook',
+        platform: null,
+        imageBase64: '',
+        hookText: hookResult.hookText,
+        ctaText,
+        hasCTA: true,
+    });
+
+    for (let i = 0; i < testimonialCount; i++) {
+        slides.push({
+            slideNumber: i + 2,
+            role: 'testimonial',
+            platform: platforms[i],
+            imageBase64: mockupResults[i],
+            hookText: null,
+            ctaText: null,
+            hasCTA: false,
+        });
+    }
+
+    slides.push({
+        slideNumber: totalSlides,
+        role: 'close',
+        platform: null,
+        imageBase64: '',
+        hookText: closeResult.closeText,
+        ctaText,
+        hasCTA: true,
+    });
+
+    return {
+        slides,
+        detectedPlatforms: platforms,
+        totalSlides,
+    };
 }

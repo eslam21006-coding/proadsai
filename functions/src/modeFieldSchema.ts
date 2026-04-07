@@ -161,7 +161,7 @@ export const MODE_FIELD_SECTIONS: ModeFieldSection[] = [
 
     // ─── TESTIMONIAL WALL (OPTIONAL TIER — screenshots required but in separate flow) ───
     {
-        triggerModes: ['testimonial_wall', 'community_card'],
+        triggerModes: ['testimonial_carousel', 'community_card'],
         titleEn: 'Testimonial / Social Proof',
         titleAr: 'شهادات / إثبات اجتماعي',
         icon: 'fa-solid fa-comment-dots',
@@ -520,7 +520,7 @@ export function compileModePayload(
     }
 
     // ── Testimonial ──
-    if (hasMode('testimonial_wall') || hasMode('community_card')) {
+    if (hasMode('testimonial_carousel') || hasMode('community_card')) {
         const texts = splitLines(inputs.testimonialManualText);
         if (texts.length > 0 || inputs.testimonialSpeakerName?.trim()) {
             payload.testimonial = {

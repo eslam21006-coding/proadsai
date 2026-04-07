@@ -49,6 +49,9 @@ export interface CreativeMemoryRecord {
     performance: CreativePerformance | null;
     // Computed score
     compositeScore: number;          // 0-100
+    // Debug / audit fields (truncated for storage efficiency)
+    blueprintText: string | null;    // Stripped blueprint, truncated to 2000 chars
+    resolvedImagePrompt: string | null; // Final assembled prompt, truncated to 5000 chars
     // Timestamps
     createdAt: FirebaseFirestore.FieldValue | number;
     lastPerformanceUpdate: FirebaseFirestore.FieldValue | number | null;
@@ -137,6 +140,8 @@ export async function storeCreativeToMemory(
         brandName: string;
         targetAudience: string;
         workspaceId?: string | null;
+        blueprintText?: string | null;
+        resolvedImagePrompt?: string | null;
     }
 ): Promise<string> {
     const creativeId = `cm_${userId.substring(0, 8)}_${Date.now()}`;
@@ -146,6 +151,8 @@ export async function storeCreativeToMemory(
         userId,
         workspaceId: data.workspaceId || null,
         ...data,
+        blueprintText: (data.blueprintText || '').substring(0, 2000) || null,
+        resolvedImagePrompt: (data.resolvedImagePrompt || '').substring(0, 5000) || null,
         performance: null,
         compositeScore: 0,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),

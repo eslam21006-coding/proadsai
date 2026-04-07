@@ -3,9 +3,8 @@ export type CampaignType = "cold" | "retargeting";
 export type UniverseMode = "realistic" | "fantasy" | "minimal";
 export type AdMode = "single" | "carousel";
 
-// ─── COLD AD HOOK ANGLES ─────────────────────────────────────────────────
+// ─── COLD AD HOOK ANGLES (10 approved — before_after is now a creative mode) ──
 export type ColdHookAngle =
-  | "before_after"
   | "emotional"
   | "logic"
   | "urgency"
@@ -72,21 +71,20 @@ export type OfferCreativeMode =
   // Event / Webinar / Challenge
   | "event_ticket"
   | "speaker_card"
-  | "day_strip"
   | "webinar_screen"
   // Guide
   | "book_mockup"
   | "device_mockup"
   | "preview_card"
   // Course
-  | "module_preview"
   | "platform_screenshot"
   | "certificate"
   // Direct Sale
   | "premium_package"
   | "value_stack"
   | "offer_card"
-  | "limited_access"
+  // Before/After (reclassified from hook angle to creative mode)
+  | "before_after"
   // SaaS
   | "dashboard_preview"
   | "mobile_app_card"
@@ -94,7 +92,7 @@ export type OfferCreativeMode =
   // Membership
   | "community_card"
   | "inside_look"
-  | "testimonial_wall"
+  | "testimonial_carousel"
   // Typography-only (no hero, no universe)
   | "text_only";
 
@@ -166,7 +164,7 @@ export interface AdInputs {
   campaignType: CampaignType;
 
   // Cold-only controls
-  coldHookAngle?: ColdHookAngle;   // before_after, emotional, logic, urgency, etc.
+  coldHookAngle?: ColdHookAngle;   // emotional, logic, urgency, etc. (10 approved angles)
   hookType?: HookType;             // comedic, controversial, curiosity_gap, etc.
   adTone?: AdTone;                 // formal, funny, inspiring, emotional, authority, friendly, bold, data_driven, mentor, soft, luxury_ceo
   copywritingStrategy?: CopywritingStrategy; // pattern_interrupt, beginner_awareness, solution_awareness, etc.
@@ -201,7 +199,7 @@ export interface AdInputs {
   featureGroupLabel?: string;          // e.g. "All-in-one platform" (optional)
 
   // Offer Card mode
-  offerCardTitle?: string;             // Offer title (required for premium_package / limited_access)
+  offerCardTitle?: string;             // Offer title (required for premium_package)
   offerCardPrice?: string;             // Price (optional)
   offerCardOldPrice?: string;          // Original/strikethrough price (optional)
   offerCardDiscount?: string;          // e.g. "50% OFF" (optional)
@@ -223,8 +221,8 @@ export interface AdInputs {
   authorityCredentials?: string;       // e.g. "7 years, 500+ clients" (optional)
   authorityNumbers?: string;           // e.g. "$2M revenue" (optional)
 
-  // Module Preview mode
-  moduleTitles?: string;               // Module names, newline-separated (required for module_preview)
+  // Module Preview mode (DELETED — fields kept for saved project compat)
+  moduleTitles?: string;               // Module names, newline-separated (legacy)
   moduleLabels?: string;               // Progression labels (optional)
 
   // Book Mockup mode
@@ -242,8 +240,8 @@ export interface AdInputs {
   speakerCredentials?: string;         // Credentials (optional)
   speakerAffiliation?: string;         // Affiliation (optional)
 
-  // Day Strip mode (dedicated)
-  dayNodes?: string;                   // Day labels, newline-separated (required for day_strip, min 2)
+  // Day Strip mode (DELETED — fields kept for saved project compat)
+  dayNodes?: string;                   // Day labels, newline-separated (legacy)
   dayDates?: string;                   // Date range (optional)
   dayMilestones?: string;              // Milestone labels (optional)
 

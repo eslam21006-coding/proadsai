@@ -107,10 +107,13 @@ export interface StructuredBuildPlanPayload {
 export interface BuildPlanEnvelope {
     blueprint: string;
     machinePlan: StructuredBuildPlanPayload | null;
+    technicalPrompt: string | null;
 }
 
 export const BUILD_PLAN_MACHINE_BLOCK_START = "[[PROADS_MACHINE_PLAN_V1]]";
 export const BUILD_PLAN_MACHINE_BLOCK_END = "[[/PROADS_MACHINE_PLAN_V1]]";
+export const TECHNICAL_PROMPT_START = "[[TECHNICAL_PROMPT]]";
+export const TECHNICAL_PROMPT_END = "[[/TECHNICAL_PROMPT]]";
 
 const normalize = (value: string): string => value
     .toLowerCase()
@@ -326,10 +329,18 @@ export function serializeBuildPlanEnvelope(blueprint: string, machinePlan: Struc
 
 export function parseBuildPlanEnvelope(rawBuildPlan: string): BuildPlanEnvelope {
     const raw = rawBuildPlan || '';
+
+    const tpStart = raw.indexOf(TECHNICAL_PROMPT_START);
+    const tpEnd = raw.indexOf(TECHNICAL_PROMPT_END);
+    let technicalPrompt: string | null = null;
+    if (tpStart !== -1 && tpEnd !== -1 && tpEnd > tpStart) {
+        technicalPrompt = raw.slice(tpStart + TECHNICAL_PROMPT_START.length, tpEnd).trim();
+    }
+
     const start = raw.indexOf(BUILD_PLAN_MACHINE_BLOCK_START);
     const end = raw.indexOf(BUILD_PLAN_MACHINE_BLOCK_END);
     if (start === -1 || end === -1 || end <= start) {
-        return { blueprint: raw.trim(), machinePlan: null };
+        return { blueprint: raw.trim(), machinePlan: null, technicalPrompt };
     }
 
     const blueprint = `${raw.slice(0, start)}${raw.slice(end + BUILD_PLAN_MACHINE_BLOCK_END.length)}`.trim();
@@ -340,9 +351,10 @@ export function parseBuildPlanEnvelope(rawBuildPlan: string): BuildPlanEnvelope 
         return {
             blueprint,
             machinePlan: normalizeMachinePlan(parsed, fallbackOwnership),
+            technicalPrompt,
         };
     } catch {
-        return { blueprint, machinePlan: null };
+        return { blueprint, machinePlan: null, technicalPrompt };
     }
 }
 
@@ -528,4 +540,18 @@ export function validateStructuredBuildPlan(
             reasons,
         },
     };
+}
+
+export function validateCopyFidelity(technicalPrompt: string | null, hookText: string): boolean {
+    if (!technicalPrompt || !hookText?.trim()) return false;
+    const normalizeText = (s: string) => s.normalize('NFC').trim().replace(/\s+/g, ' ');
+    return normalizeText(technicalPrompt).includes(normalizeText(hookText));
+}
+
+export function stripTechnicalPrompt(blueprint: string): string {
+    if (!blueprint) return '';
+    const start = blueprint.indexOf(TECHNICAL_PROMPT_START);
+    const end = blueprint.indexOf(TECHNICAL_PROMPT_END);
+    if (start === -1 || end === -1 || end <= start) return blueprint;
+    return `${blueprint.slice(0, start)}${blueprint.slice(end + TECHNICAL_PROMPT_END.length)}`.trim();
 }

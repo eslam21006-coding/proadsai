@@ -3,7 +3,7 @@ import { useState, useRef } from 'react';
 import type { AdInputs, AdMode, AspectRatio, RetargetingAngle, RetargetingObjectionId, UniverseMode, AudienceAvatar, CompetitorResearch, ColdHookAngle, HookType, AdTone, CopywritingStrategy } from '../types';
 import { OFFER_TYPES, OFFER_CATEGORY_MAP, OFFER_CREATIVE_MODES, CREATIVE_MODE_CONFLICTS, HOOK_ANGLE_MODE_CONFLICTS, ASPECT_RATIOS, RETARGETING_OBJECTIONS, AD_LANGUAGES, FIELD_EXAMPLES, COLD_HOOK_ANGLES, HOOK_TYPES, AD_TONES, COPYWRITING_STRATEGIES, CREATIVE_TABS, getAvailableHookAngles, getAvailableHookStyles, getAvailableAdTones, getAvailableCopyStrategies } from '../constants';
 import { REALISTIC_UNIVERSES as DB_REALISTIC, FANTASY_UNIVERSES as DB_FANTASY } from '../universeDatabase';
-import { isStrongPair, getBlockedModes, CREATIVE_MODE_CATALOG, type CreativeTab, getBlockedModesForSubStyle, getBlockedSubStylesForModes } from '../creativeResolver';
+import { isStrongPair, getBlockedModes, CREATIVE_MODE_CATALOG, type CreativeTab, getBlockedModesForSubStyle, getBlockedSubStylesForModes, validateLaunchSurface, resolveValueStackSlideCount, resolveTestimonialSlideCount } from '../creativeResolver';
 import { ART_DIRECTION_GROUPS, getAvailableCards, getCardById, isSubStyleInFamily, type ArtDirectionCard } from '../artDirectionConfig';
 import { getActiveSections, validateModeFields, type ModeFieldSection, isOfferModeAvailable } from '../modeFieldSchema';
 import { CREDIT_COSTS, type UserPlan, canUse, canUseRatio, requiredPlanFor, requiredPlanForRatio, getMaxSlides, getFeatureLimit } from '../planconfig';
@@ -301,6 +301,18 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
     const _normalizedStyle = ((sanitized as any).visualStyleFamily ?? (sanitized as any).universeMode ?? 'realistic') as 'realistic' | 'fantasy' | 'minimal';
     (sanitized as any).visualStyleFamily = _normalizedStyle;
     (sanitized as any).universeMode = _normalizedStyle;
+    (() => {
+        const modeCatalog = CREATIVE_MODE_CATALOG as Record<string, any>;
+        const currentModes = (sanitized.offerCreativeMode || []) as string[];
+        const validModes = currentModes.filter(m => modeCatalog[m]);
+        if (validModes.length !== currentModes.length) {
+            (sanitized as any).offerCreativeMode = ['standard_hero'];
+        }
+        const hiddenLangs = ['fr', 'es', 'de', 'tr', 'pt'];
+        if (hiddenLangs.includes(sanitized.adLanguage || '')) {
+            sanitized.adLanguage = 'ar_fusha';
+        }
+    })();
     return sanitized;
   });
   const [hasDraft] = useState(() => !!localStorage.getItem('adInputsDraft') && !initialValues);
@@ -309,6 +321,13 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
 
   /** text_only mode: hides universe selector and Box A photos */
   const isTextOnlyActive = (inputs.offerCreativeMode || []).includes('text_only' as any);
+
+  const launchSurfaceResult = React.useMemo(() => validateLaunchSurface({
+      selectedModes: inputs.offerCreativeMode || [],
+      campaignType: inputs.campaignType,
+      adFormat: inputs.adMode,
+      hookAngle: inputs.coldHookAngle,
+  }), [inputs.offerCreativeMode, inputs.campaignType, inputs.adMode, inputs.coldHookAngle]);
 
   const personalRef = useRef<HTMLInputElement>(null);
   const brandRef = useRef<HTMLInputElement>(null);
@@ -393,6 +412,51 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
     const timers = steps.map((s, i) => setTimeout(() => setResearchStep(i), s.delay));
     return () => timers.forEach(t => clearTimeout(t));
   }, [competitorLoading]);
+
+  // Auto-adjust slide count for value_stack carousel (one gift per slide)
+  React.useEffect(() => {
+    const modes = inputs.offerCreativeMode || [];
+    if (!modes.includes('value_stack' as any) || inputs.adMode !== 'carousel') return;
+    const raw = (inputs as any).valueStackItems || '';
+    const items = raw.split(/[,\n]/).map((s: string) => s.trim()).filter(Boolean);
+    const adj = resolveValueStackSlideCount(items);
+    const maxSlides = getMaxSlides(userPlan);
+    const clamped = Math.min(adj.resolvedSlideCount, maxSlides);
+    if (clamped > 0 && clamped !== inputs.slideCount) {
+      setInputs(prev => ({ ...prev, slideCount: clamped }));
+    }
+  }, [inputs.offerCreativeMode, inputs.adMode, (inputs as any).valueStackItems, userPlan]);
+
+  // Auto-switch to carousel + adjust slide count for testimonial mode
+  React.useEffect(() => {
+    const modes = inputs.offerCreativeMode || [];
+    if (!modes.includes('testimonial_carousel' as any)) return;
+    const screenshots = (inputs as any).testimonialScreenshots || [];
+    const updates: Partial<AdInputs> = {};
+    if (inputs.adMode !== 'carousel') {
+      updates.adMode = 'carousel' as AdMode;
+    }
+    const maxSlides = getMaxSlides(userPlan);
+    const resolved = resolveTestimonialSlideCount(screenshots.length, maxSlides);
+    if (resolved > 0 && resolved !== inputs.slideCount) {
+      updates.slideCount = resolved;
+    }
+    if (Object.keys(updates).length > 0) {
+      setInputs(prev => ({ ...prev, ...updates }));
+    }
+  }, [inputs.offerCreativeMode, inputs.adMode, (inputs as any).testimonialScreenshots, userPlan]);
+
+  React.useEffect(() => {
+    if (activeStyle !== 'fantasy' && activeStyle !== 'realistic') return;
+    if (isTextOnlyActive) return;
+    const currentSubStyle = (inputs as any).visualSubStyle;
+    if (!currentSubStyle) return;
+    const selectedModes = inputs.offerCreativeMode || ['standard_hero'];
+    const availableCards = getAvailableCards(activeStyle as 'realistic' | 'fantasy', selectedModes);
+    if (!availableCards.find((c: ArtDirectionCard) => c.id === currentSubStyle)) {
+      setInputs(prev => ({ ...prev, visualSubStyle: undefined as any }));
+    }
+  }, [activeStyle, inputs.offerCreativeMode, (inputs as any).visualSubStyle, isTextOnlyActive]);
 
   const allowedRatios = ASPECT_RATIOS.filter(r => canUseRatio(userPlan, r.value));
 
@@ -606,6 +670,32 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
       ...(avatar.authoritySignals && { authoritySignals: avatar.authoritySignals }),
       ...(avatar.storySeed && { storySeed: avatar.storySeed }),
     }));
+    setInputs(prev => {
+        const adjusted = { ...prev };
+        const adjustments: string[] = [];
+        const modeCatalog = CREATIVE_MODE_CATALOG as Record<string, any>;
+        const currentModes = (adjusted.offerCreativeMode || []) as string[];
+        const validModes = currentModes.filter(m => modeCatalog[m]);
+        if (validModes.length !== currentModes.length) {
+            adjusted.offerCreativeMode = ['standard_hero'] as any;
+            adjustments.push('modes');
+        }
+        const hiddenLangs = ['fr', 'es', 'de', 'tr', 'pt'];
+        if (hiddenLangs.includes(adjusted.adLanguage || '')) {
+            adjusted.adLanguage = 'ar_fusha';
+            adjustments.push('language');
+        }
+        // Normalize legacy offer types (e.g., "Free Webinar" → "Live Event")
+        const legacyOfferMap: Record<string, string> = { 'Free Webinar': 'Live Event', 'Paid Workshop': 'Live Event', 'Challenge': 'Live Event' };
+        if (adjusted.offerType && legacyOfferMap[adjusted.offerType]) {
+            adjusted.offerType = legacyOfferMap[adjusted.offerType];
+            adjustments.push('offerType');
+        }
+        if (adjustments.length > 0 && showToast) {
+            showToast(appLang === 'ar' ? 'تم تعديل بعض الإعدادات للتوافق.' : 'Some settings were adjusted for compatibility.', 'info');
+        }
+        return adjusted;
+    });
     if (showToast) showToast(`Loaded "${avatar.name}"`, 'info');
   };
 
@@ -859,7 +949,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
 
           // Testimonial Wall: enforce carousel + require screenshots
           const hasMode = (id: string) => (inputs.offerCreativeMode || []).includes(id as any);
-          if (hasMode('testimonial_wall')) {
+          if (hasMode('testimonial_carousel')) {
             const screenshots = (inputs as any).testimonialScreenshots || [];
             if (screenshots.length === 0) {
               if (showToast) showToast(appLang === 'ar' ? 'ارفع لقطة شاشة واحدة على الأقل للشهادات' : 'Upload at least one testimonial screenshot.', 'error');
@@ -871,6 +961,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
               inputs.slideCount = Math.min(screenshots.length + 1, 5); // +1 for hook slide
             }
           }
+          {/* Spec G: when testimonial screenshots are uploaded AND adMode === 'single', auto-switch to carousel: setInputs(prev => ({ ...prev, adMode: 'carousel', slideCount: Math.min(3, getMaxSlides(userPlan)) })); if (showToast) showToast(t('override.testimonial_requires_carousel'), 'info'); */}
           onSubmit(inputs);
         }}
         className="space-y-6 pb-32"
@@ -1675,7 +1766,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
 
                 // Filter out testimonial section — it has special UI below
                 const standardSections = activeSections.filter(
-                  s => !s.triggerModes.includes('testimonial_wall') || !hasMode('testimonial_wall')
+                  s => !s.triggerModes.includes('testimonial_carousel') || !hasMode('testimonial_carousel')
                 );
 
                 return (
@@ -1775,8 +1866,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                     })}
 
                     {/* Testimonial Wall: special upload UI (not schema-driven) */}
-                    {hasMode('testimonial_wall') && (
-                      <div {...dropZoneProps('testimonial')} className={`space-y-2.5 p-3.5 rounded-xl border animate-in fade-in slide-in-from-top-1 duration-200 transition-all ${dragOverZone === 'testimonial' ? 'border-pink-500 bg-pink-500/10 scale-[1.01]' : 'bg-pink-950/20 border-pink-500/10'}`}>
+                    {hasMode('testimonial_carousel') && (                      <div {...dropZoneProps('testimonial')} className={`space-y-2.5 p-3.5 rounded-xl border animate-in fade-in slide-in-from-top-1 duration-200 transition-all ${dragOverZone === 'testimonial' ? 'border-pink-500 bg-pink-500/10 scale-[1.01]' : 'bg-pink-950/20 border-pink-500/10'}`}>
                         <div className="text-[9px] font-black text-pink-400/70 uppercase tracking-widest flex items-center gap-1.5">
                           <i className={`fa-solid ${dragOverZone === 'testimonial' ? 'fa-cloud-arrow-down' : 'fa-comment-dots'} text-[8px]`}></i>
                           {dragOverZone === 'testimonial' ? (appLang === 'ar' ? 'أفلت هنا' : 'Drop here') : (appLang === 'ar' ? 'لقطات الشهادات' : 'Testimonial Screenshots')}
@@ -1911,11 +2001,32 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                         </button>
                       ))}
                     </div>
+                    {(() => {
+                      const modes = inputs.offerCreativeMode || [];
+                      if (!modes.includes('value_stack' as any) || inputs.adMode !== 'carousel') return null;
+                      const raw = ((inputs as any).valueStackItems || '');
+                      const items = raw.split(/[,\n]/).map((s: string) => s.trim()).filter(Boolean);
+                      const adj = resolveValueStackSlideCount(items);
+                      const maxSlides = getMaxSlides(userPlan);
+                      const clamped = Math.min(adj.resolvedSlideCount, maxSlides);
+                      if (clamped === 0 || clamped === inputs.slideCount) return null;
+                      return (
+                        <div className="text-xs text-amber-400 mt-1">
+                          {t('override.carousel_adjusted_slides').replace('{count}', String(clamped))}
+                        </div>
+                      );
+                    })()}
                     <p className="text-[9px] text-slate-600 italic">AI will create a narrative arc across all slides with consistent design.</p>
                   </div>
                 )}
               </div>
 
+              {inputs.referenceAd && (
+                <div className="mb-3 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-200 text-sm flex items-center gap-2">
+                  <span className="text-amber-300">📋</span>
+                  {t('override.reference_ad_active')}
+                </div>
+              )}
               {/* Visual Style Family — hidden in text_only mode */}
               {!isTextOnlyActive && <div className="space-y-1.5">
                 <Label>{t('form.universe')}</Label>
@@ -1948,8 +2059,8 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                 <p className="text-[10px] text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2"><i className="fa-solid fa-pen-fancy mr-1.5"></i>{appLang === 'ar' ? 'وضع إعلان نصي فقط — لا بطل، لا عالم. التصميم يعتمد على الخط والألوان فقط.' : 'Text-Only mode — no hero, no universe. Design relies on typography and color only.'}</p>
               )}
 
-              {/* Universe Dropdown — only for realistic/fantasy, hidden in text_only */}
-              {activeStyle !== 'minimal' && !isTextOnlyActive && (
+              {/* Universe Dropdown — hidden in text_only */}
+              {!isTextOnlyActive && (
                 <div className="space-y-1.5">
                   <Label>{activeStyle === 'realistic' ? 'Location / Setting' : 'Creative Universe'}</Label>
                   <UniverseDropdown
@@ -1969,7 +2080,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
               )}
 
               {/* Art Direction — dropdown selector */}
-              {(activeStyle === 'fantasy' || activeStyle === 'realistic') && (() => {
+              {(activeStyle === 'fantasy' || activeStyle === 'realistic') && !isTextOnlyActive && (() => {
                 const selectedModes = (inputs as any).offerCreativeMode || ['standard_hero'];
                 const availableCards = getAvailableCards(activeStyle as 'realistic' | 'fantasy', selectedModes);
                 const currentSubStyle = (inputs as any).visualSubStyle;
@@ -1987,13 +2098,13 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
 
                 return (
                 <div className="space-y-1.5">
-                  <Label>{appLang === 'ar' ? 'الإخراج الفني' : 'Art Direction'} <span className="text-[9px] text-slate-600 font-normal italic">{appLang === 'ar' ? '(اختياري)' : '(optional)'}</span></Label>
+                  <Label>{appLang === 'ar' ? 'اتجاه فني (اختياري)' : 'Art Direction (optional)'}</Label>
                   <select
                     value={inputs.visualSubStyle || ''}
                     onChange={e => setInputs({ ...inputs, visualSubStyle: (e.target.value || undefined) as any })}
                     className={inputCls}
                   >
-                    <option value="">{appLang === 'ar' ? '🎯 بدون إخراج فني (الافتراضي)' : '🎯 None — Default Style'}</option>
+                    <option value="">{appLang === 'ar' ? '🎯 بدون اتجاه فني (الافتراضي)' : '🎯 None — Default Style'}</option>
                     {visibleGroups.map(group => (
                       <optgroup key={group.id} label={`${group.icon} ${appLang === 'ar' ? group.labelAr : group.labelEn}`}>
                         {(groupedCards[group.id] || []).map(card => (
@@ -2203,7 +2314,12 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
             SUBMIT BUTTONS (not sticky — scrolls with page)
         ═══════════════════════════════════════════════════════════════════ */}
         <div className="max-w-lg mx-auto flex flex-col gap-2 pt-6 pb-10">
-          <button data-tour="submit" type="submit" className="w-full bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-black py-4 rounded-2xl shadow-xl shadow-emerald-600/20 hover:shadow-emerald-600/30 active:scale-[0.98] transition-all text-sm uppercase tracking-wider flex items-center justify-center gap-2">
+          {!launchSurfaceResult.allowed && launchSurfaceResult.reason && (
+            <div className="px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-200 text-sm text-center">
+              {launchSurfaceResult.reason}
+            </div>
+          )}
+          <button data-tour="submit" type="submit" disabled={!launchSurfaceResult.allowed} className={`w-full bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-black py-4 rounded-2xl shadow-xl shadow-emerald-600/20 hover:shadow-emerald-600/30 active:scale-[0.98] transition-all text-sm uppercase tracking-wider flex items-center justify-center gap-2 ${!launchSurfaceResult.allowed ? 'opacity-50 cursor-not-allowed' : ''}`}>
             <i className="fa-solid fa-bolt"></i> Start Design Engine
           </button>
           <button type="button" id="save-draft-btn" onClick={() => {

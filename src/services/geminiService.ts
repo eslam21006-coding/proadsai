@@ -233,7 +233,8 @@ Use this information to better understand the brand's positioning, tone, and tar
       conceptRaw, selectedTov, inputs: sanitizeInputs(inputs),
       resolvedUniverse, currentAspectRatio, textOverride,
     });
-    return (result.data as any).text || '';
+    const data = result.data as { text?: string; success?: boolean; errorCode?: string | null };
+    return data.text || '';
   }
 
   // ─── FINAL AD IMAGE GENERATION ─────────────────────────────────────────

@@ -98,7 +98,7 @@ export const MODE_FIELD_SECTIONS: ModeFieldSection[] = [
 
     // ─── EVENT TICKET (REQUIRED TIER) ───────────────────────────────────────
     {
-        triggerModes: ['event_ticket', 'speaker_card', 'day_strip', 'webinar_screen'],
+        triggerModes: ['event_ticket', 'speaker_card', 'webinar_screen'],
         titleEn: 'Event Details',
         titleAr: 'بيانات الحدث',
         icon: 'fa-solid fa-calendar-day',
@@ -139,7 +139,7 @@ export const MODE_FIELD_SECTIONS: ModeFieldSection[] = [
 
     // ─── OFFER / PRICING CARD (REQUIRED TIER) ──────────────────────────────
     {
-        triggerModes: ['premium_package', 'limited_access'],
+        triggerModes: [],
         titleEn: 'Offer Details',
         titleAr: 'بيانات العرض',
         icon: 'fa-solid fa-tag',
@@ -161,7 +161,7 @@ export const MODE_FIELD_SECTIONS: ModeFieldSection[] = [
 
     // ─── TESTIMONIAL WALL (OPTIONAL TIER — screenshots required but in separate flow) ───
     {
-        triggerModes: ['testimonial_wall', 'community_card'],
+        triggerModes: ['testimonial_carousel', 'community_card'],
         titleEn: 'Testimonial / Social Proof',
         titleAr: 'شهادات / إثبات اجتماعي',
         icon: 'fa-solid fa-comment-dots',
@@ -226,7 +226,7 @@ for (const section of MODE_FIELD_SECTIONS) {
 // Modes with no fields at all
 const NO_FIELD_MODES = [
     'standard_hero', 'book_mockup', 'device_mockup', 'preview_card',
-    'module_preview', 'inside_look',
+    'inside_look',
 ];
 for (const m of NO_FIELD_MODES) {
     MODE_TIER_MAP[m] = 'none';
@@ -448,7 +448,7 @@ export function compileModePayload(
     }
 
     // ── Event Ticket ──
-    if (hasMode('event_ticket') || hasMode('speaker_card') || hasMode('day_strip') || hasMode('webinar_screen')) {
+    if (hasMode('event_ticket') || hasMode('speaker_card') || hasMode('webinar_screen')) {
         if (inputs.eventTitle?.trim() && inputs.eventDate?.trim()) {
             payload.event_ticket = {
                 eventTitle: inputs.eventTitle.trim(),
@@ -479,8 +479,8 @@ export function compileModePayload(
         }
     }
 
-    // ── Offer Card ──
-    if (hasMode('premium_package') || hasMode('limited_access')) {
+    // ── Offer Card (legacy — no current modes trigger this) ──
+    if (false) {
         if (inputs.offerCardTitle?.trim()) {
             payload.offer_card = {
                 offerTitle: inputs.offerCardTitle.trim(),
@@ -497,7 +497,7 @@ export function compileModePayload(
     }
 
     // ── Testimonial ──
-    if (hasMode('testimonial_wall') || hasMode('community_card')) {
+    if (hasMode('testimonial_carousel') || hasMode('community_card')) {
         const texts = splitLines(inputs.testimonialManualText);
         if (texts.length > 0 || inputs.testimonialSpeakerName?.trim()) {
             payload.testimonial = {
@@ -666,15 +666,14 @@ import type { OfferCreativeMode } from './types';
 import { PLANS, type UserPlan } from './planconfig';
 
 // Master ordered list — determines slice order for plan gating.
-// Starter [0..5], Creator [0..11], Pro/Scaling [0..20]
+// Starter [0..5], Creator [0..7], Pro/Scaling [0..8]
 const ORDERED_CREATIVE_MODES: OfferCreativeMode[] = [
     // ── Starter (first 6) ──
-    'standard_hero', 'book_mockup', 'device_mockup', 'event_ticket', 'speaker_card', 'feature_highlight',
-    // ── Creator adds (7–12) ──
-    'value_stack', 'offer_card', 'community_card', 'testimonial_wall', 'module_preview', 'premium_package',
-    // ── Pro/Scaling adds (13–21) ──
-    'webinar_screen', 'day_strip', 'platform_screenshot', 'certificate', 'limited_access', 'inside_look',
-    'mobile_app_card', 'dashboard_preview', 'preview_card',
+    'standard_hero', 'book_mockup', 'device_mockup', 'event_ticket', 'speaker_card', 'value_stack',
+    // ── Creator adds (7–8) ──
+    'webinar_screen', 'before_after',
+    // ── Pro/Scaling adds (9) ──
+    'text_only',
 ];
 
 export { ORDERED_CREATIVE_MODES };

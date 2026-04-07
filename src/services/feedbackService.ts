@@ -41,10 +41,29 @@ export type NegativeFeedbackTag =
     | 'too_long'
     | 'too_short';
 
+// Duplicated from functions/src/types.ts — frontend and backend are separate TS projects
+// with independent tsconfigs, so types cannot be shared via import. Keep in sync manually.
+export type FailureClass =
+    | "prompt_malformed"
+    | "model_error"
+    | "validation_reject"
+    | "slot_repair_failed"
+    | "numeric_hallucination"
+    | "combination_invalid"
+    | "credit_insufficient";
+
+export interface CostEstimate {
+    modelTier: string | null;
+    retryCount: number;
+    estimatedTokens: number;
+}
+
 export interface GenerationRecord {
     id?: string;
     userId: string;
     timestamp: Timestamp;
+    failureClass: FailureClass | null;
+    costEstimate: CostEstimate | null;
     input: {
         productName: string;
         productCategory: string;
@@ -131,12 +150,16 @@ class FeedbackService {
         generationTimeMs: number = 0,
         aspectRatio?: AspectRatio,
         creativeIdentity?: GenerationRecord['creativeIdentity'],
-        workspaceId?: string | null
+        workspaceId?: string | null,
+        failureClass: FailureClass | null = null,
+        costEstimate: CostEstimate | null = null
     ): Promise<string> {
         const record: Omit<GenerationRecord, 'id'> & { workspaceId?: string | null } = {
             userId,
             workspaceId: workspaceId || null,
             timestamp: Timestamp.now(),
+            failureClass,
+            costEstimate,
             input: {
                 productName: inputs.productName || '',
                 productCategory: inputs.productCategory || '',
@@ -520,7 +543,71 @@ Use the above to guide creative direction. Match preferences while staying fresh
 `;
     }
 
-    // ═══ 9. BUILD REGENERATION CONTEXT (for thumbs-down → retry) ═══
+    // ═══ 9. GET FAVORITE IDS ═══
+    async getFavoriteIds(userId: string, workspaceId?: string): Promise<Set<string>> {
+        try {
+            const useWorkspace = !!workspaceId;
+            const scopeField = useWorkspace ? 'workspaceId' : 'userId';
+            const scopeValue = useWorkspace ? workspaceId! : userId;
+            try {
+                const q = query(
+                    collection(db, 'generations'),
+                    where(scopeField, '==', scopeValue),
+                    where('feedback.savedToFavorites', '==', true),
+                    orderBy('timestamp', 'desc'),
+                    limit(200)
+                );
+                const snap = await getDocs(q);
+                return new Set(snap.docs.map(d => d.id));
+            } catch (e: unknown) {
+                // Only fallback for missing composite index; rethrow other errors
+                const code = (e as { code?: string })?.code;
+                if (code !== 'failed-precondition') throw e;
+                const fallbackQ = query(
+                    collection(db, 'generations'),
+                    where(scopeField, '==', scopeValue),
+                    orderBy('timestamp', 'desc'),
+                    limit(200)
+                );
+                const snap = await getDocs(fallbackQ);
+                return new Set(
+                    snap.docs
+                        .filter(d => {
+                            const data = d.data() as { feedback?: { savedToFavorites?: boolean } };
+                            return data.feedback?.savedToFavorites === true;
+                        })
+                        .map(d => d.id)
+                );
+            }
+        } catch (err) {
+            console.warn('\u26A0\uFE0F Failed to get favorite IDs:', err);
+            return new Set();
+        }
+    }
+
+    // ═══ 10. UPDATE FAVORITE RECORD ═══
+    async updateFavoriteRecord(
+        generationId: string,
+        updatedFields: Partial<GenerationRecord['output']>
+    ): Promise<void> {
+        if (!generationId) throw new Error('generationId required');
+        const updates: Record<string, any> = {};
+        for (const [key, value] of Object.entries(updatedFields)) {
+            if (value !== undefined) {
+                updates[`output.${key}`] = value;
+            }
+        }
+        if (Object.keys(updates).length === 0) throw new Error('No output fields provided for update');
+        try {
+            const ref = doc(db, 'generations', generationId);
+            await updateDoc(ref, updates);
+        } catch (err) {
+            console.warn('Failed to update favorite record:', generationId, err);
+            throw err;
+        }
+    }
+
+    // ═══ 11. BUILD REGENERATION CONTEXT (for thumbs-down → retry) ═══
     buildRegenerationContext(
         originalOutput: string,
         tags: NegativeFeedbackTag[],
