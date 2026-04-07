@@ -1,67 +1,65 @@
-# Contract: Value Stack Functions
+# Contract: Empty Field Suppression (Value Stack)
 
 **Feature**: 001-resolver-completeness-trace
-**Location**: `functions/src/creativeResolver.ts`
+**Location**: `functions/src/emptyFieldFilter.ts` (new file)
 
-## resolveValueStackSlideCount
-
-### Signature
+## Function Signature
 
 ```typescript
-resolveValueStackSlideCount(gifts: string[]): ValueStackAdjustment
-```
-
-### Input
-
-Array of gift strings (may include empty/whitespace values).
-
-### Output
-
-```typescript
-{
-  giftCount: number,           // Non-empty gifts after filtering
-  originalSlideCount: number,  // User's selection (passed separately or inferred)
-  resolvedSlideCount: number,  // Math.min(giftCount + 2, 9)
-  capped: boolean              // true if giftCount + 2 > 9
+interface FilterResult {
+  filteredInput: Record<string, unknown>;  // Input with empty fields removed
+  skippedFields: string[];                  // Canonical field names that were suppressed
 }
+
+function filterEmptyValueStackFields(
+  input: Record<string, unknown>
+): FilterResult;
 ```
 
-### Rules
-
-- Filter out empty, null, undefined, and whitespace-only strings
-- Formula: `resolvedSlideCount = Math.min(nonEmptyCount + 2, 9)`
-- If `nonEmptyCount === 0`, return `resolvedSlideCount = 0` (no carousel possible)
-
----
-
-## filterEmptyValueStackFields
-
-### Signature
+## Canonical Fields
 
 ```typescript
-filterEmptyValueStackFields(inputs: AdInputs): { filtered: AdInputs, skippedFields: string[] }
+const VALUE_STACK_FIELDS = [
+  'valueStackTitle',
+  'valueStackItems',
+  'valueStackBonuses',
+  'valueStackPrice',
+  'valueStackOriginalValue',
+  'valueStackSavings',
+  'valueStackGuarantee',
+  'valueStackDeliveryFormat',
+  'valueStackProofStatement',
+] as const;
 ```
 
-### Input
+## Empty Definition
 
-Full `AdInputs` object.
+A field is considered empty and will be suppressed if:
 
-### Output
+| Type | Empty when |
+|------|-----------|
+| `undefined` | Always |
+| `null` | Always |
+| `string` | `''` or whitespace-only (`value.trim() === ''`) |
+| `Array` | `[]` or every element is a string and `element.trim() === ''`. Mixed-type arrays (e.g., `[0]`, `[null]`) are NOT considered empty. |
 
-- `filtered`: Shallow copy with empty value_stack fields removed
-- `skippedFields`: Array of field names that were removed
+## Behavior
 
-### Target Fields
+1. Iterate over `VALUE_STACK_FIELDS`
+2. For each field present in `input`: check if empty per rules above
+3. If empty: delete from `filteredInput`, add field name to `skippedFields`
+4. If not empty: keep in `filteredInput` as-is
+5. Non-value-stack fields in `input` are passed through unchanged
 
-```text
-valueStackTitle, valueStackItems, valueStackBonuses, valueStackPrice,
-valueStackOriginalValue, valueStackSavings, valueStackGuarantee,
-valueStackDeliveryFormat, valueStackProofStatement
-```
+## Integration Points
 
-### Rules
+- Called by `resolveCreativeSpec()` in `creativeResolver.ts` when value_stack mode is active
+- `skippedFields` written to `ResolutionTrace.valueStackEmptyFieldsSkipped`
+- Filtered input passed to generators — they never see empty fields
 
-- String fields: remove if undefined, null, empty, or whitespace-only
-- Array fields: filter empty entries; remove key if array becomes empty
-- Never mutate original input — return shallow copy
-- `skippedFields` feeds into `ResolutionTrace.valueStackEmptyFieldsSkipped`
+## Invariants
+
+- Pure function, no side effects
+- Only operates on the 9 canonical fields — never touches non-value-stack fields
+- `skippedFields` contains only canonical field names (never arbitrary keys)
+- Returns a new object — does not mutate the input

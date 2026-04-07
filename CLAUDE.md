@@ -1,10 +1,6 @@
 ﻿# Pro Ads AI - SaaS - FAL Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-05
 
-## Active Features
-- 002-frontend-filter-qa: Frontend filtering & QA (React, Zustand, Tailwind, fixtures via Cloud Functions v2)
-- 001-resolver-completeness-trace: Resolver completeness tracing (Cloud Functions v2, Firestore)
 
 ## Project Structure
 
@@ -22,7 +18,7 @@ specs/            # Feature specs (speckit workflow)
 `npm run lint` — ESLint
 `cd functions && npm test` — run backend tests
 
-## Platform
+
 
 - Frontend: React 19 + Zustand + Tailwind CSS 3, bundled with Vite 7
 - Backend: Firebase Cloud Functions v2, Firestore, Storage

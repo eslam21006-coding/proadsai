@@ -3633,6 +3633,24 @@ export const serverGenerateFinalAd = onCall({
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     resetCostTracker();
 
+    // ═══ LAUNCH SURFACE GUARD: block invalid combos before credit deduction ═══
+    if (!editInstruction && !base64ToEdit) {
+        const { validateLaunchSurface } = await import("./launchSurface.js");
+        const surfaceResult = validateLaunchSurface({
+            offerType: inputs?.offerType ?? "mini_course",
+            campaignType: inputs?.campaignType ?? "cold",
+            adFormat: inputs?.adFormat ?? "single",
+            creativeModes: inputs?.offerCreativeMode || ["standard_hero"],
+            hookAngle: inputs?.coldHookAngle ?? null,
+            visualStyleFamily: inputs?.visualStyleFamily,
+            userPlan: (entitlement.basePlan !== "none" ? entitlement.basePlan : "starter") as "starter" | "creator" | "pro" | "scaling",
+            batchN: inputs?.batchN,
+        });
+        if (!surfaceResult.passed) {
+            throw new HttpsError("permission-denied", surfaceResult.blockReason ?? "Invalid combination.");
+        }
+    }
+
     // ═══ CREATIVE MODE VALIDATION: fail-closed for invalid combinations ═══
     if (!editInstruction && !base64ToEdit) {
         const { validateCombination } = await import("./creativeResolver.js");
@@ -3649,39 +3667,110 @@ export const serverGenerateFinalAd = onCall({
         const result = await generators.generateFinalAd(buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride);
 
         // ═══ CREATIVE MEMORY: Store creative metadata (fire-and-forget) ═══
-        // Only store primary renders, not edits/reflows. Requires creativeMemory feature.
-        if (result && !editInstruction && !base64ToEdit && entitlement.features.creativeMemory) {
-            const { storeCreativeToMemory } = await import("./creativeMemory.js");
-            const { resolveCreativeSpec } = await import("./creativeResolver.js");
-            const { selectLayoutTemplate } = await import("./layoutTemplates.js");
-            const { parseBuildPlanEnvelope: parseBP, stripTechnicalPrompt: stripTP } = await import("./buildPlanSlotMap.js");
-            const spec = resolveCreativeSpec({
-                selectedModes: inputs?.offerCreativeMode || ['standard_hero'],
-                hookAngle: inputs?.coldHookAngle || undefined,
-            });
-            const templateId = selectLayoutTemplate(spec.primaryMode, spec.secondaryMode, inputs?.coldHookAngle, currentAspectRatio);
-            // Extract TECHNICAL_PROMPT for resolvedImagePrompt, strip it for blueprintText
-            const parsedForMemory = buildPlan ? parseBP(buildPlan) : null;
-            const strippedBlueprintForMemory = buildPlan ? stripTP(buildPlan) : null;
-            storeCreativeToMemory(request.auth!.uid, {
-                layoutTemplate: templateId,
-                creativeModes: inputs?.offerCreativeMode || ['standard_hero'],
-                hookAngle: inputs?.coldHookAngle || null,
-                hookType: inputs?.hookType || null,
-                copyStrategy: inputs?.copywritingStrategy || null,
-                adTone: inputs?.adTone || null,
-                aspectRatio: currentAspectRatio || '1:1',
-                adMode: inputs?.adMode || 'single',
-                language: inputs?.adLanguage || 'ar_fusha',
-                hookText: approvedTov?.substring(0, 200) || '',
-                subheadText: '',
-                caption: '',
-                niche: inputs?.productCategory || '',
-                brandName: inputs?.productName || '',
-                targetAudience: inputs?.targetAudience || '',
-                blueprintText: strippedBlueprintForMemory?.substring(0, 2000) || null,
-                resolvedImagePrompt: parsedForMemory?.technicalPrompt?.substring(0, 5000) || null,
-            }).catch((err: any) => console.warn('Memory store failed (non-blocking):', err));
+      // Only store primary renders, not edits/reflows. Requires creativeMemory feature.
+if (result?.image && !editInstruction && !base64ToEdit && entitlement.features.creativeMemory) {
+    try {
+        const { storeCreativeToMemory } = await import("./creativeMemory.js");
+        const { resolveCreativeSpec } = await import("./creativeResolver.js");
+        const { selectLayoutTemplate } = await import("./layoutTemplates.js");
+        const { parseBuildPlanEnvelope: parseBP, stripTechnicalPrompt: stripTP } = await import("./buildPlanSlotMap.js");
+
+        const spec = resolveCreativeSpec({
+            selectedModes: inputs?.offerCreativeMode || ['standard_hero'],
+            hookAngle: inputs?.coldHookAngle || undefined,
+            campaignType: inputs?.campaignType,
+            adFormat: inputs?.adFormat,
+            visualStyleFamily: inputs?.visualStyleFamily,
+            referenceAdUsed: !!styleReference || !!inputs?.referenceAdUsed,
+            selectedSubStyle: inputs?.selectedSubStyle,
+            selectedUniverse: resolvedUniverse,
+        });
+
+        const resolvedHookAngle = spec.resolutionTrace?.hookAngle ?? inputs?.coldHookAngle ?? null;
+        const templateId = selectLayoutTemplate(
+            spec.primaryMode,
+            spec.secondaryMode,
+            resolvedHookAngle,
+            currentAspectRatio
+        );
+
+        // Extract TECHNICAL_PROMPT for resolvedImagePrompt, strip it for blueprintText
+        const parsedForMemory = buildPlan ? parseBP(buildPlan) : null;
+        const strippedBlueprintForMemory = buildPlan ? stripTP(buildPlan) : null;
+
+        storeCreativeToMemory(request.auth!.uid, {
+            layoutTemplate: templateId,
+            creativeModes: [spec.primaryMode, ...(spec.secondaryMode ? [spec.secondaryMode] : [])],
+            hookAngle: resolvedHookAngle,
+            hookType: inputs?.hookType || null,
+            copyStrategy: inputs?.copywritingStrategy || null,
+            adTone: inputs?.adTone || null,
+            aspectRatio: currentAspectRatio || '1:1',
+            adMode: inputs?.adFormat || inputs?.adMode || 'single',
+            language: inputs?.adLanguage || 'ar_fusha',
+            hookText: approvedTov?.substring(0, 200) || '',
+            subheadText: '',
+            caption: '',
+            niche: inputs?.productCategory || '',
+            brandName: inputs?.productName || '',
+            targetAudience: inputs?.targetAudience || '',
+            blueprintText: strippedBlueprintForMemory?.substring(0, 2000) || null,
+            resolvedImagePrompt: parsedForMemory?.technicalPrompt?.substring(0, 5000) || null,
+        }).catch((err: any) => console.warn('Memory store failed (non-blocking):', err));
+
+    } catch (bookkeepingErr: any) {
+        console.warn('⚠️ Post-render bookkeeping failed (non-blocking):', bookkeepingErr?.message || bookkeepingErr);
+    }
+}
+
+// ═══ RESOLUTION TRACE: persist for ALL successful renders (fire-and-forget) ═══
+if (result?.image && !editInstruction && !base64ToEdit) {
+    try {
+        const { resolveCreativeSpec: resolveForTrace } = await import("./creativeResolver.js");
+        const traceSpec = resolveForTrace({
+            selectedModes: inputs?.offerCreativeMode || ['standard_hero'],
+            hookAngle: inputs?.coldHookAngle || undefined,
+            campaignType: inputs?.campaignType,
+            adFormat: inputs?.adFormat,
+            visualStyleFamily: inputs?.visualStyleFamily,
+            referenceAdUsed: !!styleReference || !!inputs?.referenceAdUsed,
+            selectedSubStyle: inputs?.selectedSubStyle,
+            selectedUniverse: resolvedUniverse,
+        });
+
+        import("./resolutionTrace.js")
+            .then(({ persistTrace }) => {
+                const traceId = `trace_${request.auth!.uid}_${Date.now()}`;
+                persistTrace(traceId, traceSpec.resolutionTrace)
+                    .catch((err: any) => console.warn('⚠️ Trace persist failed (non-blocking):', err));
+            })
+            .catch((err: any) => console.warn('⚠️ Trace module import failed (non-blocking):', err));
+    } catch (traceErr: any) {
+        console.warn('⚠️ Trace resolution failed (non-blocking):', traceErr?.message || traceErr);
+    }
+}
+
+        // ═══ RESOLUTION TRACE: persist for ALL successful renders (fire-and-forget) ═══
+        if (result?.image && !editInstruction && !base64ToEdit) {
+            try {
+                const { resolveCreativeSpec: resolveForTrace } = await import("./creativeResolver.js");
+                const traceSpec = resolveForTrace({
+                    selectedModes: inputs?.offerCreativeMode || ['standard_hero'],
+                    hookAngle: inputs?.coldHookAngle || undefined,
+                    campaignType: inputs?.campaignType,
+                    adFormat: inputs?.adFormat,
+                    visualStyleFamily: inputs?.visualStyleFamily,
+                    referenceAdUsed: !!styleReference || !!inputs?.referenceAdUsed,
+                    selectedSubStyle: inputs?.selectedSubStyle,
+                    selectedUniverse: resolvedUniverse,
+                });
+                import("./resolutionTrace.js").then(({ persistTrace }) => {
+                    const traceId = `trace_${request.auth!.uid}_${Date.now()}`;
+                    persistTrace(traceId, traceSpec.resolutionTrace).catch((err: any) => console.warn('⚠️ Trace persist failed (non-blocking):', err));
+                }).catch((err: any) => console.warn('⚠️ Trace module import failed (non-blocking):', err));
+            } catch (traceErr: any) {
+                console.warn('⚠️ Trace resolution failed (non-blocking):', traceErr?.message || traceErr);
+            }
         }
 
         if (result.image) {

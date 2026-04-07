@@ -85,7 +85,7 @@ As a system operator or support team member reviewing a generation run, I can ac
 
 **Acceptance Scenarios**:
 
-1. **Given** a generation completes successfully, **When** the resolution trace is retrieved, **Then** it contains: resolved campaign type, ad mode, creative modes, style family, sub-style, reference ad override status, slide count (original and resolved if different), empty fields skipped, and per-slide structure.
+1. **Given** a generation completes successfully, **When** the resolution trace is retrieved, **Then** it contains: resolved campaign type, creative mode(s), style family, art direction (trace field: `subStyle`), reference ad override status, slide count (original and resolved if different), empty fields skipped, and per-slide structure.
 2. **Given** a generation where the reference ad overrode the universe and art direction, **When** the trace is reviewed, **Then** it shows `referenceAdOverrideActive: true` along with the overridden universe and sub-style values.
 3. **Given** a carousel generation, **When** the trace is reviewed, **Then** the `perSlide` array shows each slide number, whether it has a CTA, its narrative angle, and whether photos were injected.
 
@@ -187,24 +187,24 @@ As a user who uploads a reference ad while also selecting an art direction and u
 - **FR-007**: The system MUST ensure CTA buttons appear only on slide 1 and the last slide of any carousel — never on middle slides.
 - **FR-008**: The system MUST auto-adjust carousel slide count when value_stack mode is active, using the formula: resolved slides = number of non-empty gifts + 2, capped at 9.
 - **FR-009**: The system MUST notify the user when their slide count selection is overridden, showing the new count and reason.
-- **FR-010**: The system MUST suppress any empty value_stack field so it never appears in the generation blueprint, prompt, or rendered output — an empty field does not exist.
+- **FR-010**: The system MUST suppress any empty value_stack field so it never appears in the generation blueprint, prompt, or rendered output — an empty field does not exist. The canonical fields subject to suppression are: `valueStackTitle`, `valueStackItems`, `valueStackBonuses`, `valueStackPrice`, `valueStackOriginalValue`, `valueStackSavings`, `valueStackGuarantee`, `valueStackDeliveryFormat`, `valueStackProofStatement`.
 - **FR-011**: The system MUST produce a complete resolution trace for every generation run, recording all resolved inputs, overrides, empty field suppressions, and per-slide structure.
 - **FR-012**: The system MUST persist the resolution trace alongside the generation record for auditing and debugging.
 - **FR-013**: The system MUST centralize the retargeting hook angle clearing rule (cold hook angle is null when retargeting is selected) into the resolver rather than scattering it inline.
-- **FR-014**: The system MUST delete the dead code file `step3point5.ts` that is not imported anywhere.
+- **FR-014**: ~~The system MUST delete the dead code file `step3point5.ts` that is not imported anywhere.~~ **Satisfied**: File does not exist in the codebase. Step 3.5 logic lives in `layoutContract.ts` and is actively used — NOT dead code.
 - **FR-015**: The system MUST clear art direction when the user switches visual style families, and log the reason in the resolution trace.
 - **FR-016**: The system MUST enforce the visual control precedence chain: (1) Reference Ad overrides universe and art direction but preserves mode layout, (2) Style Family controls which art direction cards are available, (3) Art Direction overrides universe rendering aesthetic, (4) Universe controls scene environment, (5) Creative Mode Layout is never overridden. The resolver MUST apply these priorities in order and record each override in the resolution trace.
-- **FR-017**: The system MUST validate "retargeting + batch" as an approved launch combination for Scaling plan users. Batch retargeting generates single-image retargeting × N using the same pipeline.
-- **FR-018**: The system MUST persist the resolution trace as a field on the generation document (not as a sub-collection), matching the schema defined in LAUNCH_MATRIX Section 8.
+- **FR-017**: The system MUST validate "retargeting + batch" as an approved launch combination for Scaling plan users. Batch retargeting generates single-image retargeting × N using the same pipeline. N is the product of selected variation dimensions (hooks × concepts × sizes). The resolver runs once; the pipeline instantiates one job per combination. N is capped at 30 to prevent runaway generation.
+- **FR-018**: The system MUST persist the resolution trace as a field on the generation document (not as a sub-collection), matching the schema defined in LAUNCH_MATRIX Section 8. The trace shares the generation document's lifecycle — it is retained as long as the generation document exists and requires no separate cleanup policy.
 
 ### Key Entities
 
 - **Launch Surface**: The authoritative registry of approved offer types, creative modes, mode pairings, campaign types, ad formats, and plan requirements. All validation decisions reference this single source of truth.
-- **Resolution Trace**: A structured record produced on every generation run, documenting: resolved campaign type, ad mode, creative modes, style family, sub-style, reference ad override status, hook angle, objection, mode compatibility result, slide count (original and resolved), empty fields skipped, auto-switch events, and per-slide breakdowns (CTA presence, narrative angle, photo injection).
+- **Resolution Trace**: A structured record produced on every generation run, documenting: resolved campaign type, creative modes (trace field: `resolvedCreativeModes`), style family, art direction (trace field: `resolvedSubStyle`), reference ad override status, hook angle, objection, mode compatibility result, slide count (original and resolved), empty fields skipped, auto-switch events, and per-slide breakdowns (CTA presence, narrative angle, photo injection). Terminology note: user-facing language uses "creative mode" and "art direction"; internal trace fields use `resolvedCreativeModes` and `resolvedSubStyle` respectively. The term "ad mode" is deprecated — use "creative mode" in all new code and documentation.
 - **Carousel Slide Plan**: A deterministic mapping from (campaign type, slide count) to a per-slide array of roles and narrative angles. Cold carousels use angles A–G (7 angles: Direct value, Curiosity, Social proof, Problem agitation, Mechanism, Objection pre-emption, Identity). Retargeting carousels use angles P, M, R, I, C, Q, E (7 angles: Proof, Mechanism, Risk reversal, Identity shift, Cost of inaction, Question reframe, Evidence comparison).
 - **Visual Precedence Chain**: A 5-level priority system that resolves conflicts between visual inputs. From highest to lowest: Reference Ad > Style Family > Art Direction > Universe > Creative Mode Layout. Each override is logged in the resolution trace.
 - **Value Stack Auto-Adjustment**: A rule that overrides the user's selected slide count to N+2 (gift count + hook + close), capped at 9, when value_stack mode is active in a carousel.
-- **Empty Field Suppression**: A filter that strips any value_stack field that is undefined or whitespace-only before it reaches any generation logic. Suppressed field names are recorded in the resolution trace.
+- **Empty Field Suppression**: A filter that strips any value_stack field that is undefined or whitespace-only before it reaches any generation logic. Suppressed field names are recorded in the resolution trace. The canonical value_stack fields subject to suppression are: `valueStackTitle`, `valueStackItems`, `valueStackBonuses`, `valueStackPrice`, `valueStackOriginalValue`, `valueStackSavings`, `valueStackGuarantee`, `valueStackDeliveryFormat`, `valueStackProofStatement`.
 
 ## Success Criteria *(mandatory)*
 
@@ -214,6 +214,7 @@ As a user who uploads a reference ad while also selecting an art direction and u
 - **SC-002**: Carousel ads at every supported slide count (2–9) for both cold and retargeting campaigns follow the exact narrative angle sequence defined in the slide plans — every slide's role is predictable and correct.
 - **SC-003**: Value stack carousel slide count auto-adjusts to match gift count + 2 in 100% of cases, and the user sees a notification confirming the adjustment.
 - **SC-004**: Zero empty value_stack fields appear in any generated output across all test cases — no blank rows, no placeholders, no "N/A" labels.
+- **SC-004a**: Resolver execution completes in < 50ms p95 — validated via benchmark tests. The resolver performs no async I/O; all logic is pure in-memory computation.
 - **SC-005a**: A resolution trace is produced (built in memory) for 100% of generation runs, containing all mandatory fields with no missing entries.
 - **SC-005b**: Resolution trace persistence uses fire-and-forget semantics — write failures are logged but do not fail the generation. Persistence failures should be monitored via server logs (console.warn). Target: >99% successful writes under normal operation.
 - **SC-006**: Users cannot discover, select, or generate with "limited_access", "module_preview", or "day_strip" through any user interaction path — zero references in user-facing surfaces.
@@ -222,6 +223,16 @@ As a user who uploads a reference ad while also selecting an art direction and u
 - **SC-009**: "before_after" does not appear in any hook angle list or selector — it appears only as a creative mode available in all 3 tabs, enforced as solo-only.
 - **SC-010**: The offer type dropdown contains exactly 3 entries (Live Event, Free Guide, Mini-Course) with correct tab mappings. No other offer types are selectable.
 - **SC-011**: Visual precedence chain is enforced deterministically — reference ad always overrides art direction and universe; mode layout is never overridden — verified across all conflict scenarios.
+
+## Clarifications
+
+### Session 2026-04-06
+
+- Q: What is the canonical set of value_stack fields subject to empty-field suppression? → A: valueStackTitle, valueStackItems, valueStackBonuses, valueStackPrice, valueStackOriginalValue, valueStackSavings, valueStackGuarantee, valueStackDeliveryFormat, valueStackProofStatement
+- Q: What is the acceptable resolver execution latency? → A: < 50ms p95 (hard real-time, requires benchmarks)
+- Q: How is the batch count N determined? → A: N = product of selected variation dimensions (hooks × concepts × sizes). Resolver runs once; pipeline instantiates one job per combination. Max cap = 30.
+- Q: Should the spec standardize terminology for "ad mode" vs "creative mode" and "sub-style" vs "art direction"? → A: User-facing: "creative mode" + "art direction"; internal/trace fields: `creativeMode` + `subStyle`. "Ad mode" is deprecated.
+- Q: What is the retention policy for resolution traces? → A: Retained as long as the generation document exists (no separate cleanup).
 
 ## Assumptions
 
