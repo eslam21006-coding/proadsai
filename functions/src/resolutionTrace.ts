@@ -52,7 +52,7 @@ export function createTraceBuilder(): TraceBuilder {
         },
         setHookAngle(angle, nullReason) {
             state.hookAngle = angle;
-            if (nullReason) state.hookAngleNullReason = nullReason;
+            state.hookAngleNullReason = nullReason;
             return builder;
         },
         setObjection(id, text) {
@@ -62,13 +62,13 @@ export function createTraceBuilder(): TraceBuilder {
         },
         setModeCompatibility(result, reason) {
             state.modeCompatibilityResult = result;
-            if (reason) state.modeCompatibilityReason = reason;
+            state.modeCompatibilityReason = reason;
             return builder;
         },
         setReferenceAdOverride(universe, subStyle) {
             state.referenceAdOverrideActive = true;
-            if (universe) state.overriddenUniverse = universe;
-            if (subStyle) state.overriddenSubStyle = subStyle;
+            state.overriddenUniverse = universe;
+            state.overriddenSubStyle = subStyle;
             return builder;
         },
         setArtDirectionCleared(reason) {

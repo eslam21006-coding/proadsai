@@ -90,13 +90,10 @@ const PLAN_ORDER: Record<string, number> = { starter: 0, creator: 1, pro: 2, sca
 // ═══════════════════════════════════════════════════════════
 
 function resolveOfferType(raw: string): { id: OfferTypeId; tab: TabId } | null {
+    const normalized = raw.toLowerCase().replace(/[-\s]+/g, "_");
     for (const entry of OFFER_TYPE_ENTRIES) {
-        if (entry.id === raw) return { id: entry.id, tab: entry.tab };
-        if (entry.legacyAliases?.includes(raw as LegacyOfferTypeId)) return { id: entry.id, tab: entry.tab };
-    }
-    const lower = raw.toLowerCase().replace(/[-\s]+/g, "_");
-    for (const entry of OFFER_TYPE_ENTRIES) {
-        if (entry.id === lower) return { id: entry.id, tab: entry.tab };
+        if (entry.id === raw || entry.id === normalized) return { id: entry.id, tab: entry.tab };
+        if (entry.legacyAliases?.some(a => a === raw || a === normalized)) return { id: entry.id, tab: entry.tab };
     }
     const labelMap: Record<string, OfferTypeEntry> = {};
     for (const entry of OFFER_TYPE_ENTRIES) {

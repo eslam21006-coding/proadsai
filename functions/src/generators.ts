@@ -95,10 +95,12 @@ function isTextOnlyMode(inputs: AdInputs): boolean {
     return modes.includes('text_only');
 }
 
-/** Centralized check: before_after can come from creative mode OR legacy hook angle path */
-function isBeforeAfterSelection(inputs: AdInputs): boolean {
+/** Centralized check: before_after can come from creative mode OR legacy hook angle path.
+ *  Pass effectiveAngle when available to use the resolved angle instead of raw inputs. */
+function isBeforeAfterSelection(inputs: AdInputs, effectiveAngle?: string | null): boolean {
     const modes = (inputs as any).offerCreativeMode || [];
-    return modes.includes('before_after') || inputs.coldHookAngle === 'before_after';
+    const angle = effectiveAngle !== undefined ? effectiveAngle : inputs.coldHookAngle;
+    return modes.includes('before_after') || angle === 'before_after';
 }
 
 function containsUnresolvedCommercialPlaceholders(value: string): boolean {
@@ -2052,7 +2054,7 @@ DO NOT return the other concepts.`;
           const pairMode = hasHero && secondary.length > 0 ? secondary[0] : null;
 
           // before_after is a solo mode but REQUIRES hero on both halves — handle separately
-          if (isBeforeAfterSelection(inputs)) {
+          if (isBeforeAfterSelection(inputs, _effectiveColdHookAngle)) {
               return `
 ═══ CREATIVE MODE CONTRACT (TOP PRIORITY — READ FIRST) ═══
 MODE: BEFORE_AFTER (SPLIT-SCREEN — HERO REQUIRED ON BOTH HALVES)
@@ -2147,8 +2149,8 @@ ${getHookTypeVisualDirection(inputs.hookType)}` : ''}
       ${_effectiveColdHookAngle ? `
 HOOK ANGLE VISUAL OVERRIDE: ${(_effectiveColdHookAngle || '').toUpperCase()}
 ${getHookAngleVisualDirection(_effectiveColdHookAngle || '')}
-
-${isBeforeAfterSelection(inputs) ? `
+` : ''}
+      ${isBeforeAfterSelection(inputs, _effectiveColdHookAngle) ? `
 BEFORE/AFTER SPLIT COMPOSITION (MANDATORY):
 - SPLIT the canvas into TWO CLEAR HALVES (left vs right, or top vs bottom)
 - BOTH halves show the SAME HERO — same face, same person, different life chapter
@@ -2162,7 +2164,6 @@ BEFORE/AFTER SPLIT COMPOSITION (MANDATORY):
 - VISIBLE DIVIDER: diagonal line, gradient split, torn edge
 - STRICT: Do NOT render any "BEFORE"/"AFTER" or "قبل"/"بعد" text labels on the image. The visual contrast alone tells the story.
 - This is NOT optional - the user specifically selected before/after split design
-` : ''}
 ` : ''}
       ${(() => {
                 // Concept generation uses resolver spec for creative mode instructions
@@ -2839,7 +2840,7 @@ ${fusionParts.join('\n\n')}
           // ── Ticket 9: Before/after + sub-style fusion ──
           const _sub9 = resolveVisualSubStyle(inputs);
           const _angle9 = inputs.coldHookAngle;
-          if (!_sub9 || !isBeforeAfterSelection(inputs)) return '';
+          if (!_sub9 || !isBeforeAfterSelection(inputs, _effectiveColdHookAngle)) return '';
           const fusion = getBeforeAfterSubStyleFusion(_sub9);
           if (!fusion) return '';
           return `
@@ -2973,36 +2974,38 @@ ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? '' : `- IMPORTANT: The ho
 - Do NOT skip or omit any field in any concept. ALL fields are MANDATORY for every concept.
 - Each field label must be on its own line, followed by a colon, then the content.
 
-  ${isBeforeAfterSelection(inputs) ? (resolveStyleFamily(inputs) === 'minimal' ? `
-  CONCEPT_START_[INDEX]
-SUBJECT_ACTION: [⚠️ BEFORE/AFTER SPLIT — describe BOTH halves${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? ' in Arabic' : ''}:
+  ${isBeforeAfterSelection(inputs, _effectiveColdHookAngle) ? (resolveStyleFamily(inputs) === 'minimal' ? `
+  CONCEPT_START
+SUBJECT_ACTION: ⚠️ BEFORE/AFTER SPLIT — describe BOTH halves${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? ' in Arabic' : ''}:
 ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? `"النصف الأيسر (قبل):" — البطل في حالة المعاناة. ملابس بسيطة، تعبير مُرهق. خلفية بلون واحد بارد (رمادي/أزرق فاتح).
 "النصف الأيمن (بعد):" — نفس البطل في حالة النجاح. ملابس مهنية أنيقة، تعبير واثق. خلفية بلون واحد دافئ (أبيض/بيج).
 "الفاصل:" — خط عمودي نظيف أو تدرج بسيط يفصل النصفين.` : `"Left half (Before):" — Hero in struggle state. Simple clothing, tired expression. Plain cool solid background (grey/light blue).
 "Right half (After):" — Same hero in success state. Professional polished attire, confident expression. Plain warm solid background (white/beige).
-"Divider:" — Clean vertical line or simple gradient separating the halves.`}]
-ENVIRONMENT_DESC: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'مينيمال: كلا النصفين بخلفية بلون واحد فقط. بدون مشاهد أو أجواء أو بيئات سينمائية أو مناظر. التباين عبر اللون والملابس والتعبير فقط. البطل معزول في كل نصف.' : 'MINIMAL: Both halves use plain solid color backgrounds only. No scenes, no atmosphere, no cinematic environments, no scenery. Contrast through color, clothing, and expression only. Subject isolated in each half.'}]
-MOOD_EMOTION: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إحباط هادئ. النصف الأيمن: ثقة هادئة.' : 'Left: quiet frustration. Right: quiet confidence.'}]
-LIGHTING_LOGIC: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إضاءة استوديو مسطحة باردة. النصف الأيمن: إضاءة استوديو ناعمة دافئة. ممنوع: تأثيرات درامية، إضاءة حجمية، الساعة الذهبية.' : 'Left: flat cool studio lighting. Right: soft warm studio lighting. FORBIDDEN: dramatic effects, volumetric light, golden hour, rim light.'}]
-TEXT_LAYOUT: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'العنوان يمتد فوق النصفين. فراغ سلبي واسع. الـ CTA في الأسفل.' : 'Headline spans both halves. Generous negative space. CTA at bottom.'}]
-BUTTON_POSITION: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'أسفل الصورة، كامل العرض.' : 'Bottom of image, full width.'}]
-BRANDING_LOGIC: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'شعار Box B إن وجد — في الوسط أو على الفاصل.' : 'Box B logo if present — centered or on divider.'}]
-TECHNICAL_PROMPT: [ENGLISH ONLY - SPLIT-SCREEN BEFORE/AFTER composition. MINIMAL STYLE: Both halves use plain solid color backgrounds — LEFT cool grey/blue, RIGHT warm white/beige. Split screen composition with clean vertical divider. Identical soft even studio lighting on both sides. Subject isolated on each side. NO environment scenes, NO cinematic environments, NO environmental storytelling, NO scenic environment, NO atmospheric effects, NO bokeh, NO volumetric light, NO golden hour, NO dramatic lighting, NO depth of field. Style: Premium clean ad (Apple/Nike aesthetic). STRICT: Do NOT render any "BEFORE"/"AFTER" text labels. NO TEXTURES ON FACE.]
-CONCEPT_END_[INDEX]
+"Divider:" — Clean vertical line or simple gradient separating the halves.`}
+ENVIRONMENT_DESC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'مينيمال: كلا النصفين بخلفية بلون واحد فقط. بدون مشاهد أو أجواء أو بيئات سينمائية أو مناظر. التباين عبر اللون والملابس والتعبير فقط. البطل معزول في كل نصف.' : 'MINIMAL: Both halves use plain solid color backgrounds only. No scenes, no atmosphere, no cinematic environments, no scenery. Contrast through color, clothing, and expression only. Subject isolated in each half.'}
+MOOD_EMOTION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إحباط هادئ. النصف الأيمن: ثقة هادئة.' : 'Left: quiet frustration. Right: quiet confidence.'}
+LIGHTING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إضاءة استوديو مسطحة باردة. النصف الأيمن: إضاءة استوديو ناعمة دافئة. ممنوع: تأثيرات درامية، إضاءة حجمية، الساعة الذهبية.' : 'Left: flat cool studio lighting. Right: soft warm studio lighting. FORBIDDEN: dramatic effects, volumetric light, golden hour, rim light.'}
+TEXT_LAYOUT: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'العنوان يمتد فوق النصفين. فراغ سلبي واسع. الـ CTA في الأسفل.' : 'Headline spans both halves. Generous negative space. CTA at bottom.'}
+BUTTON_POSITION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'أسفل الصورة، كامل العرض.' : 'Bottom of image, full width.'}
+BRANDING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'شعار Box B إن وجد — في الوسط أو على الفاصل.' : 'Box B logo if present — centered or on divider.'}
+TECHNICAL_PROMPT: ENGLISH ONLY - SPLIT-SCREEN BEFORE/AFTER composition. MINIMAL STYLE: Both halves use plain solid color backgrounds — LEFT cool grey/blue, RIGHT warm white/beige. Split screen composition with clean vertical divider. Identical soft even studio lighting on both sides. Subject isolated on each side. NO environment scenes, NO cinematic environments, NO atmospheric effects. Style: Premium clean ad. STRICT: Do NOT render any "BEFORE"/"AFTER" text labels.
+CONCEPT_END
   ` : `
-  CONCEPT_START_[INDEX]
-SUBJECT_ACTION: [⚠️ BEFORE/AFTER SPLIT — describe BOTH halves in Arabic:
-"النصف الأيسر (قبل):" — وصف البطل في حالة المعاناة المرتبطة بالعنوان. ملابس بسيطة، بيئة فوضوية، تعبير وجه مُرهق.
+  CONCEPT_START
+SUBJECT_ACTION: ⚠️ BEFORE/AFTER SPLIT — describe BOTH halves${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? ' in Arabic' : ''}:
+${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? `"النصف الأيسر (قبل):" — وصف البطل في حالة المعاناة المرتبطة بالعنوان. ملابس بسيطة، بيئة فوضوية، تعبير وجه مُرهق.
 "النصف الأيمن (بعد):" — نفس البطل في حالة النجاح المرتبطة بالمنتج. ملابس فاخرة، بيئة راقية، تعبير واثق.
-"الفاصل:" — خط مائل ذهبي أو تدرج لوني يفصل النصفين.]
-ENVIRONMENT_DESC: [صف بيئتين مختلفتين: بيئة "القبل" (مكتب فوضوي/غرفة ضيقة) وبيئة "البعد" (مكتب فاخر/بهو فندقي). التباين يجب أن يكون صارخاً.]
-MOOD_EMOTION: [النصف الأيسر: إحباط، إرهاق، هشاشة. النصف الأيمن: انتصار، سيطرة، سلطة.]
-LIGHTING_LOGIC: [النصف الأيسر: إضاءة قاسية، باردة، مسطحة. النصف الأيمن: إضاءة سينمائية ذهبية دافئة.]
-TEXT_LAYOUT: [العنوان يمتد فوق النصفين. الـ CTA في الأسفل يمتد على كامل العرض. الفاصل واضح بصرياً.]
-BUTTON_POSITION: [أسفل الصورة، يمتد على كامل العرض فوق خلفية داكنة.]
-BRANDING_LOGIC: [شعار Box B إن وجد — في الوسط أو على الفاصل.]
-TECHNICAL_PROMPT: [ENGLISH ONLY - SPLIT-SCREEN BEFORE/AFTER composition. LEFT=struggle scene with dim cold lighting. RIGHT=success scene with warm golden lighting. Same hero face in both. Diagonal gold divider. Camera: 85mm, f/1.8. Photorealistic. STRICT: Do NOT render any "BEFORE"/"AFTER" or "قبل"/"بعد" text labels on the image. The visual contrast alone tells the story.]
-CONCEPT_END_[INDEX]
+"الفاصل:" — خط مائل ذهبي أو تدرج لوني يفصل النصفين.` : `"Left half (Before):" — Hero in struggle state connected to headline pain. Simple clothing, chaotic environment, tired expression.
+"Right half (After):" — Same hero in success state connected to product promise. Premium clothing, upscale environment, confident expression.
+"Divider:" — Diagonal gold line or gradient split separating the halves.`}
+ENVIRONMENT_DESC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'صف بيئتين مختلفتين: بيئة "القبل" (مكتب فوضوي/غرفة ضيقة) وبيئة "البعد" (مكتب فاخر/بهو فندقي). التباين يجب أن يكون صارخاً.' : 'Two contrasting environments: "Before" (cluttered office/cramped room) and "After" (premium office/hotel lobby). Contrast must be dramatic.'}
+MOOD_EMOTION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إحباط، إرهاق، هشاشة. النصف الأيمن: انتصار، سيطرة، سلطة.' : 'Left: frustration, exhaustion, vulnerability. Right: triumph, control, authority.'}
+LIGHTING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إضاءة قاسية، باردة، مسطحة. النصف الأيمن: إضاءة سينمائية ذهبية دافئة.' : 'Left: harsh, cold, flat lighting. Right: cinematic warm golden lighting.'}
+TEXT_LAYOUT: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'العنوان يمتد فوق النصفين. الـ CTA في الأسفل يمتد على كامل العرض. الفاصل واضح بصرياً.' : 'Headline spans both halves. CTA at bottom full width. Divider visually clear.'}
+BUTTON_POSITION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'أسفل الصورة، يمتد على كامل العرض فوق خلفية داكنة.' : 'Bottom of image, full width over dark background.'}
+BRANDING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'شعار Box B إن وجد — في الوسط أو على الفاصل.' : 'Box B logo if present — centered or on divider.'}
+TECHNICAL_PROMPT: ENGLISH ONLY - SPLIT-SCREEN BEFORE/AFTER composition. LEFT half shows struggle scene with dim cold lighting. RIGHT half shows success scene with warm golden lighting. Same hero face in both halves. Diagonal divider separating halves. STRICT: Do NOT render any "BEFORE"/"AFTER" text labels on the image. The visual contrast alone tells the story.
+CONCEPT_END
   `) : `
   CONCEPT_START_[INDEX]
 SUBJECT_ACTION: [وصف وضعية البطل بالتفصيل.استخدم "البطل" أو "هم/لهم" فقط.صف الملابس والتفاعل مع عناصر المشهد.لا تصف ملامح الوجه - صور Box A ستُستخدم للوجه.]
@@ -3998,7 +4001,7 @@ SUBHEADLINE VISIBILITY (CRITICAL):
 
             // ── Before/After is handled by the contract's before_after template ──
             // but we add connected-story rules since the contract only defines zones, not narrative
-            const beforeAfterNarrative = isBeforeAfterSelection(inputs) ? `
+            const beforeAfterNarrative = isBeforeAfterSelection(inputs, _renderEffectiveAngle) ? `
 BEFORE/AFTER CONNECTED STORY RULES:
 1. Hero MUST appear in BOTH halves — same face, different wardrobe and energy.
 2. BEFORE props must match the HEADLINE's specific pain (not generic sadness).
