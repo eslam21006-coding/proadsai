@@ -4497,12 +4497,18 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             )}
           </div>
 
-          {/* ── CENTER: Billing label (desktop) ── */}
+          {/* ── CENTER: Billing label (desktop + mobile) ── */}
           {showBillingPage && (
-            <div className="hidden md:flex items-center gap-2">
-              <button onClick={() => setShowBillingPage(false)} className="text-slate-500 hover:text-white transition-colors"><i className="fa-solid fa-arrow-left text-xs"></i></button>
-              <span className="text-[11px] font-bold text-white">{t('billing.title')}</span>
-            </div>
+            <>
+              <div className="hidden md:flex items-center gap-2">
+                <button onClick={() => setShowBillingPage(false)} aria-label={t('back')} className="text-slate-500 hover:text-white transition-colors"><i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'} text-xs`}></i></button>
+                <span className="text-[11px] font-bold text-white">{t('billing.title')}</span>
+              </div>
+              <div className="flex md:hidden items-center gap-2">
+                <button onClick={() => setShowBillingPage(false)} aria-label={t('back')} className="text-slate-500 hover:text-white transition-colors"><i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'} text-xs`}></i></button>
+                <span className="text-[10px] font-bold text-blue-400">{t('billing.title')}</span>
+              </div>
+            </>
           )}
 
           {/* ── CENTER: Stepper (inline) — hidden when billing page is active ── */}
@@ -4545,11 +4551,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             <div className="flex md:hidden items-center gap-2">
               <span className="text-[10px] font-bold text-blue-400">{t(steps.find(s => s.id === phase)?.tKey || 'step.brief')}</span>
               <span className="text-[10px] text-slate-600">{steps.findIndex(s => s.id === phase) + 1}/{steps.length}</span>
-            </div>
-          )}
-          {showBillingPage && (
-            <div className="flex md:hidden items-center gap-2">
-              <span className="text-[10px] font-bold text-blue-400">{t('billing.title')}</span>
             </div>
           )}
 
@@ -4648,7 +4649,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       </nav>
 
       {/* Main Content Render Logic — hidden when billing page is active */}
-      <main className="flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative w-full" style={showBillingPage ? { display: 'none' } : undefined}>
+      <main className={`flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative w-full ${showBillingPage ? 'hidden' : ''}`}>
         {isLoading && (
           <div className="fixed inset-0 bg-slate-950/98 backdrop-blur-[40px] z-[100] flex flex-col items-center justify-center text-center">
             <div className="relative w-32 h-32 mb-12">
