@@ -413,7 +413,7 @@ export interface SavedProject {
   creatorEmail?: string;
 }
 
-export type AppPhase = 'input' | 'tov_review' | 'concept_review' | 'render_studio' | 'primary_text';
+export type AppPhase = 'input' | 'tov_review' | 'concept_review' | 'render_studio' | 'primary_text' | 'billing';
 
 // ─── AUDIENCE AVATAR ─────────────────────────────────────────────────────────
 // Stores reusable audience profiles that pre-populate the input form.
