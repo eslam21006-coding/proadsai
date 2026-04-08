@@ -60,11 +60,11 @@ npm run dev
 ### Phase 4: App-Wide Banners & Enforcement
 1. Verify `TrialBanner` and `LowCreditsBanner` components exist and work
 2. Add banners to `App.tsx` (rendered outside phase-specific content)
-3. Implement downgrade enforcement — `useBillingState()` drives `canUse()` checks in real time
+3. Implement downgrade enforcement — `useBillingState()` drives `canUse()` checks in real-time
 4. Handle `plan_downgraded` error in frontend credit-consuming actions
 
 ### Phase 5: Testing & Validation
-1. Fix existing test fixtures for `buildBillingState()` (tests exist but fail due to missing module)
+1. Verify test fixtures for `buildBillingState()` match the current contract in `functions/src/billing/billingState.ts` (31 assertions, all passing)
 2. Manual testing of all billing flows (Stripe test mode)
 
 ## Testing Approach

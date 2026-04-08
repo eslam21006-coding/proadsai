@@ -1476,6 +1476,7 @@ const App: React.FC = () => {
 
   // ─── BILLING MODAL STATE ───────────────────────────────────────────
   const [showBillingModal, setShowBillingModal] = useState(false);
+  const [showBillingPage, setShowBillingPage] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showTeamModal, setShowTeamModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
@@ -4313,7 +4314,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
           <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-3">Account</p>
           <div className="space-y-1">
-            <button onClick={() => { setShowSidebar(false); setPhase('billing'); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
+            <button onClick={() => { setShowSidebar(false); setShowBillingPage(true); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
               <span className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center"><i className="fa-solid fa-credit-card text-emerald-400 text-xs"></i></span>
               <div>
                 <p className="text-[11px] font-bold text-white group-hover:text-emerald-400 transition-colors">Manage Billing</p>
@@ -4496,8 +4497,16 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             )}
           </div>
 
-          {/* ── CENTER: Stepper (inline) ── */}
-          <div className="hidden md:flex items-center gap-1" data-tour="stepper">
+          {/* ── CENTER: Billing label (desktop) ── */}
+          {showBillingPage && (
+            <div className="hidden md:flex items-center gap-2">
+              <button onClick={() => setShowBillingPage(false)} className="text-slate-500 hover:text-white transition-colors"><i className="fa-solid fa-arrow-left text-xs"></i></button>
+              <span className="text-[11px] font-bold text-white">{t('billing.title')}</span>
+            </div>
+          )}
+
+          {/* ── CENTER: Stepper (inline) — hidden when billing page is active ── */}
+          <div className={`${showBillingPage ? 'hidden' : 'hidden md:flex'} items-center gap-1`} data-tour="stepper">
             {steps.map((s, idx) => {
               const active = phase === s.id;
               const completed = steps.findIndex(f => f.id === phase) > idx;
@@ -4531,11 +4540,18 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             })}
           </div>
 
-          {/* ── Mobile stepper (pill) ── */}
-          <div className="flex md:hidden items-center gap-2">
-            <span className="text-[10px] font-bold text-blue-400">{t(steps.find(s => s.id === phase)?.tKey || 'step.brief')}</span>
-            <span className="text-[10px] text-slate-600">{steps.findIndex(s => s.id === phase) + 1}/{steps.length}</span>
-          </div>
+          {/* ── Mobile stepper (pill) — hidden when billing page is active ── */}
+          {!showBillingPage && (
+            <div className="flex md:hidden items-center gap-2">
+              <span className="text-[10px] font-bold text-blue-400">{t(steps.find(s => s.id === phase)?.tKey || 'step.brief')}</span>
+              <span className="text-[10px] text-slate-600">{steps.findIndex(s => s.id === phase) + 1}/{steps.length}</span>
+            </div>
+          )}
+          {showBillingPage && (
+            <div className="flex md:hidden items-center gap-2">
+              <span className="text-[10px] font-bold text-blue-400">{t('billing.title')}</span>
+            </div>
+          )}
 
           {/* ── RIGHT: Credits + Actions ── */}
           <div className="flex items-center gap-2">
@@ -4631,8 +4647,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         </div>
       </nav>
 
-      {/* Main Content Render Logic */}
-      <main className="flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative w-full">
+      {/* Main Content Render Logic — hidden when billing page is active */}
+      <main className="flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative w-full" style={showBillingPage ? { display: 'none' } : undefined}>
         {isLoading && (
           <div className="fixed inset-0 bg-slate-950/98 backdrop-blur-[40px] z-[100] flex flex-col items-center justify-center text-center">
             <div className="relative w-32 h-32 mb-12">
@@ -7262,13 +7278,16 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           />
         </>)}
 
-        {/* ═══ BILLING PAGE (phase-based route) ═══ */}
-        {phase === 'billing' && (
+      </main>
+
+      {/* ═══ BILLING PAGE (transient overlay — not persisted to SavedProject) ═══ */}
+      {showBillingPage && (
+        <main className="flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 relative w-full">
           <Suspense fallback={<div className="flex items-center justify-center py-32"><div className="animate-pulse space-y-4 w-full max-w-2xl"><div className="h-8 bg-slate-800 rounded w-1/3" /><div className="h-32 bg-slate-800 rounded" /></div></div>}>
             <BillingPage />
           </Suspense>
-        )}
-      </main>
+        </main>
+      )}
 
       {/* ═══ FAVORITE UPDATE/KEEP-BOTH PROMPT (T015-T018) ═══ */}
       {favUpdatePrompt && (
