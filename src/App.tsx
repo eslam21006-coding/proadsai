@@ -7261,6 +7261,13 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
             }}
           />
         </>)}
+
+        {/* ═══ BILLING PAGE (phase-based route) ═══ */}
+        {phase === 'billing' && (
+          <Suspense fallback={<div className="flex items-center justify-center py-32"><div className="animate-pulse space-y-4 w-full max-w-2xl"><div className="h-8 bg-slate-800 rounded w-1/3" /><div className="h-32 bg-slate-800 rounded" /></div></div>}>
+            <BillingPage />
+          </Suspense>
+        )}
       </main>
 
       {/* ═══ FAVORITE UPDATE/KEEP-BOTH PROMPT (T015-T018) ═══ */}
@@ -7448,13 +7455,6 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         </div>
       )}
 
-
-      {/* ═══ BILLING PAGE (phase-based route) ═══ */}
-      {phase === 'billing' && (
-        <Suspense fallback={<div className="min-h-screen bg-slate-950 flex items-center justify-center"><div className="animate-pulse h-8 bg-slate-800 rounded w-1/3" /></div>}>
-          <BillingPage />
-        </Suspense>
-      )}
 
       {/* ═══ BILLING MODAL (in-app subscription management) ═══ */}
       {showBillingModal && (

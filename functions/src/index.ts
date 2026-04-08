@@ -1325,6 +1325,9 @@ export const deductCreditsServer = onCall({
     }
 
     // ═══ PLAN-GATE (fast-fail outside transaction) ═══
+    if (!(action as string in ACTION_FEATURE_MAP)) {
+        throw new HttpsError("invalid-argument", `Unknown action for plan gate: ${action}`);
+    }
     const gatedFeature = ACTION_FEATURE_MAP[action as string];
     const entitlement = await resolveEntitlement(callerId);
     if (gatedFeature) {

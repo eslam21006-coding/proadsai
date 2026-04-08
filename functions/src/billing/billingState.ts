@@ -56,11 +56,13 @@ export interface BuildBillingStateInput {
   billingStatus?: string;
   gracePeriodEndsAt?: admin.firestore.Timestamp | null;
   nextResetDate?: admin.firestore.Timestamp | null;
-  lastCreditReset?: admin.firestore.Timestamp | null;
 }
 
+const VALID_PLANS = new Set<string>(["starter", "creator", "pro", "scaling", "none"]);
+
 export function buildBillingState(data: BuildBillingStateInput): BillingState {
-  const plan = (data.plan || "none") as UserPlan;
+  const rawPlan = data.plan || "none";
+  const plan: UserPlan = VALID_PLANS.has(rawPlan) ? rawPlan as UserPlan : "none";
   const isTrial = data.isTrial === true;
   const credits = data.credits ?? 0;
   const isTeamMember = data.isTeamMember === true;
@@ -147,7 +149,6 @@ export async function writeBillingState(
     billingStatus: data.billingStatus,
     gracePeriodEndsAt: data.gracePeriodEndsAt,
     nextResetDate: data.nextResetDate,
-    lastCreditReset: data.lastCreditReset,
   });
   console.log(`💳 writeBillingState BUILT uid=${uid} plan=${state.plan} status=${state.billingStatus} credits=${state.credits}`);
 

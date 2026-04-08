@@ -65,15 +65,15 @@ functions/
 │   ├── index.ts              # EXISTING — extend with billingState writes on all billing paths
 │   ├── entitlements.ts       # EXISTING — add ACTION_FEATURE_MAP, used by plan-gate enforcement
 │   └── billing/
-│       ├── billingState.ts   # MISSING — buildBillingState() + writeBillingState() (imported but file doesn't exist)
+│       ├── billingState.ts   # EXISTING — exports buildBillingState() + writeBillingState()
 │       └── __tests__/
-│           └── billingState.test.ts  # EXISTING — tests exist but fail (no buildBillingState to test)
+│           └── billingState.test.ts  # EXISTING — 31 assertions, all passing
 
 src/
 ├── hooks/
-│   └── useBillingState.ts    # MISSING — Firestore real-time listener (imported by Billing.tsx but doesn't exist)
+│   └── useBillingState.ts    # EXISTING — exports useBillingState() hook (Firestore onSnapshot listener)
 ├── pages/
-│   └── Billing.tsx           # EXISTING — page scaffolded but crashes at runtime (missing hook)
+│   └── Billing.tsx           # EXISTING — fully wired with useBillingState() hook
 ├── components/
 │   ├── InputForm.tsx         # EXISTING — needs migration from userData.plan/credits to useBillingState() (FR-015)
 │   └── billing/
@@ -91,7 +91,7 @@ src/
 └── App.tsx                   # EXISTING — add billing route + app-wide banners
 ```
 
-**Structure Decision**: Extends the existing project structure. Most code is already scaffolded — the critical missing pieces are `functions/src/billing/billingState.ts` (backend) and `src/hooks/useBillingState.ts` (frontend hook). All UI components exist. The `InputForm.tsx` migration to `useBillingState()` (FR-015) is the remaining frontend integration work.
+**Structure Decision**: Extends the existing project structure. All billing files are implemented: backend `billingState.ts` (buildBillingState + writeBillingState), frontend `useBillingState.ts` hook, Billing page, and all billing components with i18n support.
 
 ## Complexity Tracking
 

@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { onSnapshot, doc } from "firebase/firestore";
 import { db } from "../firebase";
-import { getAuth } from "firebase/auth";
+import { getAuth, onAuthStateChanged } from "firebase/auth";
 import type { UserPlan } from "../planconfig";
 
 export type BillingStatus =
@@ -55,29 +55,43 @@ export function useBillingState(): {
 
   useEffect(() => {
     const auth = getAuth();
-    const uid = auth.currentUser?.uid;
-    if (!uid) {
-      setIsLoading(false);
-      return;
-    }
+    let unsubBilling: (() => void) | null = null;
 
-    const unsub = onSnapshot(
-      doc(db, "users", uid),
-      (snap) => {
-        const data = snap.data();
-        if (data?.billingState) {
-          setBillingState(data.billingState as BillingState);
-        } else {
-          setBillingState(null);
-        }
-        setIsLoading(false);
-      },
-      () => {
-        setIsLoading(false);
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      // Clean up previous billing listener if user changed
+      if (unsubBilling) {
+        unsubBilling();
+        unsubBilling = null;
       }
-    );
 
-    return () => unsub();
+      if (!user) {
+        setBillingState(null);
+        setIsLoading(false);
+        return;
+      }
+
+      unsubBilling = onSnapshot(
+        doc(db, "users", user.uid),
+        (snap) => {
+          const data = snap.data();
+          if (data?.billingState) {
+            setBillingState(data.billingState as BillingState);
+          } else {
+            setBillingState(null);
+          }
+          setIsLoading(false);
+        },
+        (err) => {
+          console.warn("billing snapshot listener error", err);
+          setIsLoading(false);
+        }
+      );
+    });
+
+    return () => {
+      unsubAuth();
+      if (unsubBilling) unsubBilling();
+    };
   }, []);
 
   return { billingState, isLoading };

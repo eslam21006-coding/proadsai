@@ -82,5 +82,5 @@ npm run dev
 | Navigation | New AppPhase, not React Router | Consistent with existing app architecture |
 | Credit reset | Overwrite (credits = plan allocation) | Product decision — top-up credits do not carry over past reset |
 | Grace period | Stripe-managed | No app-level configuration needed |
-| Plan-gate check | Outside Firestore transaction | Entitlement reads are stable, avoid transaction scope bloat |
+| Plan-gate check | Fast-fail outside transaction + re-check inside transaction | Fast-fail avoids unnecessary transaction; re-check inside transaction prevents TOCTOU race |
 | Reactivation | Separate function (not toggle on cancel) | Semantic clarity |

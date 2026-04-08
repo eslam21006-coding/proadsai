@@ -416,7 +416,7 @@ export async function resolveCreditOwner(callerUid: string): Promise<{
 // ─── ACTION → FEATURE GATE MAP ─────────────────────────────────────────────
 // Maps COSTS action keys to feature gate keys for plan-gate enforcement.
 // null = allowed on all paid plans (no feature gate needed).
-export const ACTION_FEATURE_MAP = {
+export const ACTION_FEATURE_MAP: Record<string, GatedFeature | null> = {
     generateHooks: null,
     refreshHooks: null,
     editOneHook: null,
@@ -433,7 +433,7 @@ export const ACTION_FEATURE_MAP = {
     competitorResearch: "competitorResearch",
     brandUrlScraping: "brandUrlScraping",
     editRegion: "regionEditing",
-} as const satisfies Record<string, GatedFeature | null>;
+};
 
 // ─── EXPORTS ────────────────────────────────────────────────────────────────
 export { PLAN_CREDITS, TRIAL_CREDITS };
