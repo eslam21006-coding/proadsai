@@ -36,11 +36,11 @@
 - [X] T006 Implement `writeBillingState(uid: string, db: Firestore)` helper in `functions/src/billing/billingState.ts` — reads user doc, calls `buildBillingState()`, writes the result to `users/{uid}.billingState` field. This is the single write function called by all billing paths
 - [X] T007 Wire `writeBillingState()` into `ghlpaymentwebhook` in `functions/src/index.ts` — call after plan/credits are written on new subscription or upgrade
 - [X] T008 [P] Wire `writeBillingState()` into `ghlCancellationWebhook` in `functions/src/index.ts` — call after setting plan='none', credits=0, billingStatus='cancelled'
-- [X] T009 [P] Modify `monthlyCreditsReset` in `functions/src/index.ts` — change credit update from `credits = creditsPerMonth` to `credits += creditsPerMonth` (additive accumulation). Then call `writeBillingState()` for each updated user
+- [X] T009 [P] Verify `monthlyCreditsReset` in `functions/src/index.ts` — confirm credit update uses `credits = creditsPerMonth` (overwrite to plan allocation, NOT additive). Top-up credits do not carry over past the next reset. Then call `writeBillingState()` for each updated user
 - [X] T010 Wire `writeBillingState()` into `stripeWebhook` handler for `checkout.session.completed` (top-up) in `functions/src/index.ts` — call after credits are incremented
 - [X] T011 Wire `writeBillingState()` into `stripeWebhook` handler for `customer.subscription.updated` in `functions/src/index.ts` — on `past_due` status, read `gracePeriodEndsAt` from Stripe subscription object and store on user doc before calling `writeBillingState()`. On payment recovery (status back to `active`), clear `gracePeriodEndsAt` and call `writeBillingState()`
 - [X] T012 Implement `useBillingState()` hook in `src/hooks/useBillingState.ts` — subscribe to `users/{uid}` document via Firestore `onSnapshot`, extract `billingState` field, return `{ billingState: BillingState | null, isLoading: boolean }`. Unsubscribe on unmount. Return null before first snapshot
-- [X] T013 Write unit test fixtures for `buildBillingState()` in `functions/src/billing/__tests__/billingState.test.ts` — assert: (1) `ghlpaymentwebhook` with pro_monthly sets plan='pro', credits=2000, billingStatus='active'; (2) `ghlCancellationWebhook` sets plan='none', credits=0, billingStatus='cancelled'; (3) monthly reset with 350 existing credits on Pro yields credits=2350; (4) trial user with 0 credits yields billingStatus='trialing', canTopUp=false; (5) team member yields canUpgrade=false, canTopUp=false
+- [X] T013 Write unit test fixtures for `buildBillingState()` in `functions/src/billing/__tests__/billingState.test.ts` — assert: (1) `ghlpaymentwebhook` with pro_monthly sets plan='pro', credits=2000, billingStatus='active'; (2) `ghlCancellationWebhook` sets plan='none', credits=0, billingStatus='cancelled'; (3) monthly reset on Pro overwrites credits to 2000 (not additive — top-ups do not carry over); (4) trial user with 0 credits yields billingStatus='trialing', canTopUp=false; (5) team member yields canUpgrade=false, canTopUp=false
 
 **Checkpoint**: billingState is written by all backend paths and readable in real time by the frontend. All downstream stories can now proceed.
 
@@ -141,8 +141,9 @@
 
 - [X] T034 [US7] Refactor feature gate checks in `src/App.tsx` and relevant components to read from `useBillingState()` hook instead of stale `userPlan` from store — ensure `canUse(billingState.plan, feature)` is called reactively so UI updates when `billingState.plan` changes via the real-time listener
 - [X] T035 [US7] Audit all feature-gated UI elements across the app — identify every place that uses `canUse()`, `getFeatureLimit()`, or checks `userPlan` directly. Replace with reactive checks sourced from `useBillingState()`. Key areas: carousel controls, competitor research button, batch generation toggle, workspace switcher, performance dashboard, region editing, reference ad upload, push to Meta, creative memory
+- [X] T035b [US7] Migrate `src/components/InputForm.tsx` from direct `userData.plan` and `userData.credits` reads to `useBillingState()` hook (FR-015) — ensure the generation input flow uses the unified billing state as its single data source, not scattered user document fields
 
-**Checkpoint**: Plan downgrade immediately hides/disables features via real-time billingState listener.
+**Checkpoint**: Plan downgrade immediately hides/disables features via real-time billingState listener. InputForm reads from unified billing state.
 
 ---
 
@@ -181,7 +182,8 @@
 **Purpose**: Improvements that affect multiple user stories
 
 - [X] T040 Verify Firestore security rules in `firestore.rules` — ensure `billingState` field is read-only from client (only Cloud Functions can write it). Users can read their own `billingState` but not others'
-- [ ] T041 Run full manual validation against `specs/009-billing-plan-access/quickstart.md` — test all billing flows in Stripe test mode: new subscription, top-up, cancellation, reactivation, payment failure, monthly reset accumulation, plan-gate rejection, trial expiry, downgrade enforcement, low credits warning
+- [ ] T041 Audit team member billing gating (FR-013) — verify that ALL billing actions are blocked for team members (`isTeamMember === true`): upgrade CTA hidden (`PlanCard.tsx`), top-up cards disabled (`TopUpSelector.tsx`), cancel button hidden (`Billing.tsx`), reactivate button hidden (`Billing.tsx`), manage subscription button hidden (`Billing.tsx`). Confirm read-only notice is shown. Test by setting `isTeamMember: true` on a user doc and navigating to the Billing page
+- [ ] T042 Run full manual validation against `specs/009-billing-plan-access/quickstart.md` — test all billing flows in Stripe test mode: new subscription, top-up, cancellation, reactivation, payment failure, monthly reset (overwrite, not additive), plan-gate rejection, trial expiry, downgrade enforcement, low credits warning, InputForm migration (FR-015)
 
 ---
 
@@ -285,7 +287,7 @@ Agent 3: T036-T037 (US9 — Payment failure alert)
 - [Story] label maps task to specific user story for traceability
 - billingState is the single source of truth — all UI reads from `useBillingState()` hook
 - `buildBillingState()` is a pure function for easy unit testing
-- Monthly credit reset is now additive (credits accumulate)
+- Monthly credit reset is overwrite (credits reset to plan allocation; top-ups do not carry over)
 - Grace period is Stripe-managed — no app-level configuration
 - Team member billing management is blocked in Phase 8; full team UI deferred to Phase 9
 - Top-up pack IDs: frontend uses `small`/`medium`/`large`, backend expects `topup_100`/`topup_300`/`topup_800` — mapping required in T024

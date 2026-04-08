@@ -12,14 +12,14 @@
 - Firestore trigger (`onDocumentUpdated`) that recomputes billingState whenever user doc changes — rejected because it adds latency (extra function invocation) and complexity (must filter non-billing writes).
 - Frontend-computed billing state — rejected because it violates constitution principle XI (frontend and backend must agree on truth).
 
-## R2: Monthly Credit Reset — Accumulation Model
+## R2: Monthly Credit Reset — Overwrite Model
 
-**Decision**: Change `monthlyCreditsReset` from `credits = creditsPerMonth` to `credits += creditsPerMonth`. The existing code resets credits to the plan allocation; this must be changed to additive.
+**Decision**: Keep `monthlyCreditsReset` as `credits = creditsPerMonth` (overwrite to plan allocation). Top-up credits purchased mid-cycle are consumed from the current balance and do not carry over past the next reset.
 
-**Rationale**: Product decision (clarification session 2026-04-04). Top-up credits and unused monthly credits carry over across billing cycles. This is a single-line change in the batch update within `monthlyCreditsReset`.
+**Rationale**: Product decision (clarification session 2026-04-04, **revised**). Monthly reset overwrites credits to the plan allocation — credits do not accumulate across cycles. This preserves the existing reset behavior.
 
 **Alternatives considered**:
-- Separate top-up balance field tracked independently — rejected as over-engineering; a single `credits` field with additive reset is simpler and sufficient.
+- Additive reset (`credits += creditsPerMonth`) — initially considered but rejected per revised product decision. Overwrite model is simpler and prevents unbounded credit accumulation.
 
 ## R3: billingStatus State Machine
 

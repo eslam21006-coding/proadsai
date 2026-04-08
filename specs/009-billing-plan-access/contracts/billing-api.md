@@ -87,7 +87,7 @@ throw HttpsError('failed-precondition', 'Team members cannot manage billing')
 
 ### `monthlyCreditsReset` (modified)
 
-**Change**: Additive credit reset (`credits += creditsPerMonth`) instead of replacement. Write `billingState` after reset.
+**Change**: Overwrite credit reset (`credits = creditsPerMonth`) — existing behavior preserved. Write `billingState` after reset. Top-up credits do not carry over past the next reset.
 
 ## Frontend Hook
 

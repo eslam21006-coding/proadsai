@@ -28,13 +28,13 @@ Build a unified `billingState` field on the Firestore user document, written by 
 | I. Reliability Over Feature Count | PASS | Phase adds billing surface only — no new generation modes or creative features |
 | II. The Selected Mode MUST Be Obeyed | PASS | Plan selection governs feature access; no silent drift |
 | III. Launch Surface Is Frozen | PASS | Billing is infrastructure — does not alter the creative launch surface |
-| IV. Behavior Contracts Beat Subjective Judgment | PASS | 5 billingStatus states with explicit transitions; 14 functional requirements with pass/fail rules |
+| IV. Behavior Contracts Beat Subjective Judgment | PASS | 5 billingStatus states with explicit transitions; 15 functional requirements with pass/fail rules |
 | V. Arabic Quality Is First-Class | N/A | Billing page uses plan names and numbers — no language-specific content generation |
 | VI. Hidden Machine Layers MUST Be Auditable | PASS | `billingState` is the auditable trace for all plan/credit changes; cancellation records stored |
 | VII. No Silent Override Without Rule, Signal, and Trace | PASS | Plan-gate rejection uses explicit `plan_downgraded` error code; downgrade enforcement is visible (features hidden/disabled); cancellation shows period end date |
 | VIII. Cost Discipline Is Mandatory | PASS | Plan-gate enforcement prevents invalid credit consumption; no wasteful generation |
 | IX. Proof Is Required for Every Claimed Fix | PASS | Unit test fixtures for billingState writes required (task 8.11 from LAUNCH_MATRIX) |
-| X. Spec Before Code | PASS | Full spec with 9 user stories, 14 FRs, 8 success criteria, 5 clarifications completed |
+| X. Spec Before Code | PASS | Full spec with 9 user stories, 15 FRs, 8 success criteria, 5 clarifications completed |
 | XI. Frontend and Backend MUST Agree on Truth | PASS | Server-side plan-gate in `deductCreditsServer` + frontend `useBillingState()` real-time listener — both layers enforce plan rules |
 | XII. Deferred Scope MUST Remain Deferred | PASS | Team billing UI deferred to Phase 9; Phase 8 includes only `isTeamMember`/`teamOwnerUid` gating |
 
@@ -62,34 +62,56 @@ specs/009-billing-plan-access/
 ```text
 functions/
 ├── src/
-│   ├── index.ts              # Existing — extend billing functions + add billingState writes
-│   ├── entitlements.ts       # Existing — used by plan-gate enforcement (read-only)
+│   ├── index.ts              # EXISTING — extend with billingState writes on all billing paths
+│   ├── entitlements.ts       # EXISTING — add ACTION_FEATURE_MAP, used by plan-gate enforcement
 │   └── billing/
-│       └── billingState.ts   # NEW — buildBillingState() helper + writeBillingState() 
+│       ├── billingState.ts   # EXISTING — exports buildBillingState() + writeBillingState()
+│       └── __tests__/
+│           └── billingState.test.ts  # EXISTING — 31 assertions, all passing
 
 src/
 ├── hooks/
-│   └── useBillingState.ts    # NEW — Firestore real-time listener for billingState
+│   └── useBillingState.ts    # EXISTING — exports useBillingState() hook (Firestore onSnapshot listener)
 ├── pages/
-│   └── Billing.tsx           # NEW — Billing page component
+│   └── Billing.tsx           # EXISTING — fully wired with useBillingState() hook
 ├── components/
+│   ├── InputForm.tsx         # EXISTING — needs migration from userData.plan/credits to useBillingState() (FR-015)
 │   └── billing/
-│       ├── CreditBar.tsx         # NEW — Credit usage bar
-│       ├── PlanCard.tsx          # NEW — Current plan display
-│       ├── TopUpSelector.tsx     # NEW — Top-up pack selection
-│       ├── CancelDialog.tsx      # NEW — Two-step cancellation dialog
-│       ├── PaymentFailedAlert.tsx # NEW — Payment failure alert with countdown
-│       ├── TrialBanner.tsx       # NEW — App-wide trial expiry banner
-│       ├── LowCreditsBanner.tsx  # NEW — App-wide low credits warning
-│       └── ReactivateButton.tsx  # NEW — Subscription reactivation
-├── planconfig.ts             # Existing — plan definitions (read-only)
-├── creditCost.ts             # Existing — credit cost helpers (read-only)
-├── store.ts                  # Existing — extend with billing navigation state
-└── App.tsx                   # Existing — add billing route + app-wide banners
+│       ├── CreditBar.tsx         # EXISTING — credit usage bar component
+│       ├── PlanCard.tsx          # EXISTING — current plan display
+│       ├── TopUpSelector.tsx     # EXISTING — top-up pack selection
+│       ├── CancelDialog.tsx      # EXISTING — two-step cancellation dialog
+│       ├── PaymentFailedAlert.tsx # EXISTING — payment failure alert with countdown
+│       ├── TrialBanner.tsx       # VERIFY — app-wide trial expiry banner
+│       ├── LowCreditsBanner.tsx  # VERIFY — app-wide low credits warning
+│       └── ReactivateButton.tsx  # EXISTING — subscription reactivation
+├── planconfig.ts             # EXISTING — plan definitions (read-only)
+├── creditCost.ts             # EXISTING — credit cost helpers (read-only)
+├── store.ts                  # EXISTING — extend with billing navigation state
+└── App.tsx                   # EXISTING — add billing route + app-wide banners
 ```
 
-**Structure Decision**: Extends the existing flat project structure. Backend billing logic is extracted to `functions/src/billing/` to keep `index.ts` manageable. Frontend adds a `hooks/` directory (first hook) and `components/billing/` for billing-specific UI. No new projects or packages.
+**Structure Decision**: Extends the existing project structure. All billing files are implemented: backend `billingState.ts` (buildBillingState + writeBillingState), frontend `useBillingState.ts` hook, Billing page, and all billing components with i18n support.
 
 ## Complexity Tracking
 
 > No constitution violations to justify.
+
+## Post-Design Constitution Re-Check (2026-04-08)
+
+| Principle | Status | Evidence |
+|-----------|--------|----------|
+| I. Reliability Over Feature Count | PASS | No new generation modes; billing infrastructure only |
+| II. The Selected Mode MUST Be Obeyed | PASS | Plan selection governs feature access; no silent drift |
+| III. Launch Surface Is Frozen | PASS | Billing is infrastructure — does not alter creative launch surface |
+| IV. Behavior Contracts Beat Subjective Judgment | PASS | 15 FRs with explicit pass/fail rules; 5 billingStatus states with defined transitions |
+| V. Arabic Quality Is First-Class | N/A | Billing page uses plan names and numbers — no language-specific content |
+| VI. Hidden Machine Layers MUST Be Auditable | PASS | `billingState` is the auditable trace; cancellation records stored |
+| VII. No Silent Override Without Rule, Signal, and Trace | PASS | `plan_downgraded` error code; downgrade enforcement visible; cancellation shows period end |
+| VIII. Cost Discipline Is Mandatory | PASS | Plan-gate prevents invalid credit consumption; overwrite reset prevents credit accumulation |
+| IX. Proof Is Required for Every Claimed Fix | PASS | Fixture tests for billingState writes (existing test file) |
+| X. Spec Before Code | PASS | Full spec: 9 user stories, 15 FRs, 8 success criteria, 5 clarifications |
+| XI. Frontend and Backend MUST Agree on Truth | PASS | Server-side plan-gate + frontend `useBillingState()` real-time listener; FR-015 ensures single data source |
+| XII. Deferred Scope MUST Remain Deferred | PASS | Team billing UI deferred to Phase 9; only `isTeamMember`/`teamOwnerUid` gating in Phase 8 |
+
+**Post-design gate: ALL PASS.**

@@ -35,35 +35,36 @@ npm run dev
 ## Implementation Order
 
 ### Phase 1: Backend Foundation
-1. Create `functions/src/billing/billingState.ts` — `buildBillingState()` + `writeBillingState()`
-2. Wire `writeBillingState()` into all 7 billing paths in `index.ts`
-3. Change `monthlyCreditsReset` to additive (`credits += creditsPerMonth`)
-4. Add plan-gate check in `deductCreditsServer` using `resolveEntitlement()` + `checkFeature()`
-5. Add `ACTION_FEATURE_MAP` to `entitlements.ts`
-6. Add `reactivateSubscription` callable
-7. Extend `cancelSubscription` with reason/feedback fields
+1. Verify `functions/src/billing/billingState.ts` — exports `buildBillingState()` (plan validation, derived fields) and `writeBillingState()` (reads user doc, builds state, writes to Firestore with observability logs)
+2. Verify `writeBillingState()` is called in all billing call sites in `functions/src/index.ts` (ghlpaymentwebhook, ghlCancellationWebhook, monthlyCreditsReset, stripeWebhook, cancelSubscription, reactivateSubscription, deductCreditsServer)
+3. Verify `monthlyCreditsReset` uses overwrite (`credits = creditsPerMonth`) — confirmed correct
+4. Verify plan-gate check in `deductCreditsServer` — uses `resolveEntitlement()` + `checkFeature()` with fail-closed `Object.hasOwn()` guard on ACTION_FEATURE_MAP + re-check inside transaction
+5. Verify `ACTION_FEATURE_MAP` in `entitlements.ts` — maps all COSTS action keys to feature gates
+6. Verify `reactivateSubscription` callable (exists in index.ts)
+7. Verify `cancelSubscription` reason/feedback fields (wired with CancellationReason enum)
 
 ### Phase 2: Frontend Foundation
-1. Create `src/hooks/useBillingState.ts` — Firestore real-time listener
-2. Add `'billing'` to `AppPhase` type in store
-3. Add billing nav link to header/sidebar
+1. Verify `src/hooks/useBillingState.ts` — uses `onAuthStateChanged` (not one-shot currentUser), Firestore `onSnapshot` listener, logs snapshot errors
+2. Verify `'billing'` in AppPhase type and sidebar navigation wires `setPhase('billing')`
+3. Verify billing nav link in header/sidebar
+4. Verify `InputForm.tsx` reads from `useBillingState()` instead of `userData.plan`/`userData.credits` (FR-015)
 
-### Phase 3: Billing Page
-1. Build `src/pages/Billing.tsx` with section layout
-2. Build components: `CreditBar`, `PlanCard`, `TopUpSelector`, `CancelDialog`, `PaymentFailedAlert`, `ReactivateButton`
+### Phase 3: Billing Page (components already scaffolded)
+1. Verify `src/pages/Billing.tsx` renders correctly once useBillingState hook exists
+2. Verify components work: `CreditBar`, `PlanCard`, `TopUpSelector`, `CancelDialog`, `PaymentFailedAlert`, `ReactivateButton`
 3. Wire top-up flow (calls `createTopupCheckout`)
 4. Wire cancellation flow (two-step dialog → `cancelSubscription`)
 5. Wire reactivation (calls `reactivateSubscription`)
 6. Wire "Manage subscription" button (calls `createStripePortalSession`)
 
 ### Phase 4: App-Wide Banners & Enforcement
-1. Build `TrialBanner` and `LowCreditsBanner` components
+1. Verify `TrialBanner` and `LowCreditsBanner` components exist and work
 2. Add banners to `App.tsx` (rendered outside phase-specific content)
-3. Implement downgrade enforcement — `useBillingState()` drives `canUse()` checks in real time
+3. Implement downgrade enforcement — `useBillingState()` drives `canUse()` checks in real-time
 4. Handle `plan_downgraded` error in frontend credit-consuming actions
 
 ### Phase 5: Testing & Validation
-1. Unit test fixtures for `buildBillingState()` with all billing events
+1. Verify test fixtures for `buildBillingState()` match the current contract in `functions/src/billing/billingState.ts` (31 assertions, all passing)
 2. Manual testing of all billing flows (Stripe test mode)
 
 ## Testing Approach
@@ -79,7 +80,7 @@ npm run dev
 |----------|--------|-----------|
 | billingState location | Derived field on user doc | Single read, real-time listener, no join needed |
 | Navigation | New AppPhase, not React Router | Consistent with existing app architecture |
-| Credit reset | Additive (credits accumulate) | Product decision — top-up credits carry over |
+| Credit reset | Overwrite (credits = plan allocation) | Product decision — top-up credits do not carry over past reset |
 | Grace period | Stripe-managed | No app-level configuration needed |
-| Plan-gate check | Outside Firestore transaction | Entitlement reads are stable, avoid transaction scope bloat |
+| Plan-gate check | Fast-fail outside transaction + re-check inside transaction | Fast-fail avoids unnecessary transaction; re-check inside transaction prevents TOCTOU race |
 | Reactivation | Separate function (not toggle on cancel) | Semantic clarity |

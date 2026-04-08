@@ -1306,8 +1306,10 @@ export const deductCreditsServer = onCall({
     const callerId = request.auth.uid;
     const { action, onBehalfOf, count: rawCount } = request.data;
     const count = Math.max(1, Math.floor(Number(rawCount) || 1));
+    if (!Object.hasOwn(COSTS, action as string)) {
+        throw new HttpsError("invalid-argument", `Unknown action: ${action}`);
+    }
     const unitCost = COSTS[action as string];
-    if (unitCost === undefined) throw new HttpsError("invalid-argument", `Unknown action: ${action}`);
     const cost = unitCost * count;
 
     // If team member, deduct from owner's account (verify membership first)
@@ -1325,6 +1327,9 @@ export const deductCreditsServer = onCall({
     }
 
     // ═══ PLAN-GATE (fast-fail outside transaction) ═══
+    if (!Object.hasOwn(ACTION_FEATURE_MAP, action as string)) {
+        throw new HttpsError("invalid-argument", `Unknown action for plan gate: ${action}`);
+    }
     const gatedFeature = ACTION_FEATURE_MAP[action as string];
     const entitlement = await resolveEntitlement(callerId);
     if (gatedFeature) {
