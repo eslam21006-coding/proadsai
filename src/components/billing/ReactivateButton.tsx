@@ -1,12 +1,14 @@
 // src/components/billing/ReactivateButton.tsx
 
 import React, { useState } from "react";
+import { useT } from "../../i18n";
 
 interface ReactivateButtonProps {
   onReactivate: () => Promise<void>;
 }
 
 export const ReactivateButton: React.FC<ReactivateButtonProps> = ({ onReactivate }) => {
+  const { t } = useT();
   const [loading, setLoading] = useState(false);
 
   const handleClick = async () => {
@@ -26,11 +28,11 @@ export const ReactivateButton: React.FC<ReactivateButtonProps> = ({ onReactivate
     >
       {loading ? (
         <span className="flex items-center justify-center gap-2">
-          <i className="fa-solid fa-spinner fa-spin" /> Reactivating...
+          <i className="fa-solid fa-spinner fa-spin" /> {t('billing.reactivating')}
         </span>
       ) : (
         <span className="flex items-center justify-center gap-2">
-          <i className="fa-solid fa-rotate-left" /> Reactivate Subscription
+          <i className="fa-solid fa-rotate-left" /> {t('billing.reactivateSubscription')}
         </span>
       )}
     </button>

@@ -1,6 +1,7 @@
 // src/components/billing/PaymentFailedAlert.tsx
 
 import React from "react";
+import { useT } from "../../i18n";
 
 interface PaymentFailedAlertProps {
   gracePeriodEndsAt: { seconds: number; nanoseconds: number } | null;
@@ -11,6 +12,7 @@ export const PaymentFailedAlert: React.FC<PaymentFailedAlertProps> = ({
   gracePeriodEndsAt,
   onUpdatePayment,
 }) => {
+  const { t } = useT();
   let countdown = "";
   if (gracePeriodEndsAt) {
     const endMs = gracePeriodEndsAt.seconds * 1000;
@@ -23,9 +25,9 @@ export const PaymentFailedAlert: React.FC<PaymentFailedAlertProps> = ({
       <div className="flex items-start gap-3">
         <i className="fa-solid fa-triangle-exclamation text-rose-400 mt-0.5" />
         <div className="flex-1 space-y-1">
-          <p className="text-sm font-semibold text-rose-300">Payment Failed</p>
+          <p className="text-sm font-semibold text-rose-300">{t('billing.paymentFailed')}</p>
           <p className="text-xs text-slate-400">
-            Your payment could not be processed. Update your payment method to avoid losing access.
+            {t('billing.paymentFailedDesc')}
             {countdown && <span className="text-rose-400 font-semibold ml-1">({countdown})</span>}
           </p>
         </div>
@@ -34,7 +36,7 @@ export const PaymentFailedAlert: React.FC<PaymentFailedAlertProps> = ({
         onClick={onUpdatePayment}
         className="w-full py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-sm font-semibold transition-all"
       >
-        Update Payment Method
+        {t('billing.updatePaymentBtn')}
       </button>
     </div>
   );

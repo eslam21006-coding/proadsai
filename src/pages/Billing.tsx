@@ -157,7 +157,6 @@ export const Billing: React.FC = () => {
         billingStatus={billingStatus}
         isTrial={isTrial}
         credits={credits}
-        creditsPerMonth={creditsPerMonth}
         nextResetDate={billingState.nextResetDate}
         cancelAt={cancelAt}
         canUpgrade={canUpgrade}

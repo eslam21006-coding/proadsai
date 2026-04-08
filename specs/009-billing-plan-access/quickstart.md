@@ -34,36 +34,37 @@ npm run dev
 
 ## Implementation Order
 
-### Phase 1: Backend Foundation
-1. Create `functions/src/billing/billingState.ts` — `buildBillingState()` + `writeBillingState()`
-2. Wire `writeBillingState()` into all 7 billing paths in `index.ts`
-3. Change `monthlyCreditsReset` to additive (`credits += creditsPerMonth`)
+### Phase 1: Backend Foundation (CRITICAL — 2 missing files block everything)
+1. **CREATE** `functions/src/billing/billingState.ts` — `buildBillingState()` + `writeBillingState()` (imported in index.ts but file doesn't exist — backend deploy will fail)
+2. Wire `writeBillingState()` into all 7 billing paths in `index.ts` (calls exist but resolve to missing module)
+3. Verify `monthlyCreditsReset` uses overwrite (`credits = creditsPerMonth`) — existing behavior is correct
 4. Add plan-gate check in `deductCreditsServer` using `resolveEntitlement()` + `checkFeature()`
 5. Add `ACTION_FEATURE_MAP` to `entitlements.ts`
-6. Add `reactivateSubscription` callable
-7. Extend `cancelSubscription` with reason/feedback fields
+6. Verify `reactivateSubscription` callable (already exists in index.ts)
+7. Verify `cancelSubscription` reason/feedback fields (may already be wired)
 
-### Phase 2: Frontend Foundation
-1. Create `src/hooks/useBillingState.ts` — Firestore real-time listener
-2. Add `'billing'` to `AppPhase` type in store
-3. Add billing nav link to header/sidebar
+### Phase 2: Frontend Foundation (CRITICAL — 1 missing file)
+1. **CREATE** `src/hooks/useBillingState.ts` — Firestore real-time listener (imported by Billing.tsx but doesn't exist — frontend crashes)
+2. Verify `'billing'` AppPhase in store
+3. Verify billing nav link in header/sidebar
+4. **Migrate** `InputForm.tsx` from `userData.plan`/`userData.credits` to `useBillingState()` (FR-015)
 
-### Phase 3: Billing Page
-1. Build `src/pages/Billing.tsx` with section layout
-2. Build components: `CreditBar`, `PlanCard`, `TopUpSelector`, `CancelDialog`, `PaymentFailedAlert`, `ReactivateButton`
+### Phase 3: Billing Page (components already scaffolded)
+1. Verify `src/pages/Billing.tsx` renders correctly once useBillingState hook exists
+2. Verify components work: `CreditBar`, `PlanCard`, `TopUpSelector`, `CancelDialog`, `PaymentFailedAlert`, `ReactivateButton`
 3. Wire top-up flow (calls `createTopupCheckout`)
 4. Wire cancellation flow (two-step dialog → `cancelSubscription`)
 5. Wire reactivation (calls `reactivateSubscription`)
 6. Wire "Manage subscription" button (calls `createStripePortalSession`)
 
 ### Phase 4: App-Wide Banners & Enforcement
-1. Build `TrialBanner` and `LowCreditsBanner` components
+1. Verify `TrialBanner` and `LowCreditsBanner` components exist and work
 2. Add banners to `App.tsx` (rendered outside phase-specific content)
 3. Implement downgrade enforcement — `useBillingState()` drives `canUse()` checks in real time
 4. Handle `plan_downgraded` error in frontend credit-consuming actions
 
 ### Phase 5: Testing & Validation
-1. Unit test fixtures for `buildBillingState()` with all billing events
+1. Fix existing test fixtures for `buildBillingState()` (tests exist but fail due to missing module)
 2. Manual testing of all billing flows (Stripe test mode)
 
 ## Testing Approach
@@ -79,7 +80,7 @@ npm run dev
 |----------|--------|-----------|
 | billingState location | Derived field on user doc | Single read, real-time listener, no join needed |
 | Navigation | New AppPhase, not React Router | Consistent with existing app architecture |
-| Credit reset | Additive (credits accumulate) | Product decision — top-up credits carry over |
+| Credit reset | Overwrite (credits = plan allocation) | Product decision — top-up credits do not carry over past reset |
 | Grace period | Stripe-managed | No app-level configuration needed |
 | Plan-gate check | Outside Firestore transaction | Entitlement reads are stable, avoid transaction scope bloat |
 | Reactivation | Separate function (not toggle on cancel) | Semantic clarity |

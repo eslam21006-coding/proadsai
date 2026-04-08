@@ -180,6 +180,7 @@ When a user's payment fails, the Billing page displays a prominent "Payment fail
 - **FR-012**: System MUST allow a cancelled user to reactivate their subscription before the billing period ends, restoring active status and clearing the cancellation.
 - **FR-013**: System MUST detect when the current user is a team member (`isTeamMember: true`) and prevent them from modifying billing settings (upgrade, top-up, cancel, manage subscription). Full team member billing UI (read-only owner credit display, team labeling) will be addressed in Phase 9 (task 9.10).
 - **FR-014**: System MUST display a "Payment failed" alert on the Billing page when billing status is `past_due`, including an "Update payment method" button that opens the subscription management portal and a countdown showing the grace period expiry date. The grace period duration and expiry date are read from the Stripe subscription data (Stripe-managed dunning) — the app does not define or override the grace period length.
+- **FR-015**: System MUST replace all direct `userData.plan` and `userData.credits` reads in the generation input flow with reads from the unified billing state hook, ensuring the frontend uses a single billing data source rather than assembling billing context from scattered user document fields.
 
 ### Key Entities
 

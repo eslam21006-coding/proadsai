@@ -13,6 +13,7 @@
 
 import * as admin from "firebase-admin";
 import type { Firestore } from "firebase-admin/firestore";
+import { PLAN_CREDITS, TRIAL_CREDITS } from "../entitlements.js";
 
 // ─── TYPES ─────────────────────────────────────────────────────────────────
 
@@ -40,17 +41,6 @@ export interface BillingState {
   teamOwnerUid: string | null;
   gracePeriodEndsAt: admin.firestore.Timestamp | null;
 }
-
-// ─── PLAN CREDITS (mirrors entitlements.ts PLAN_CREDITS) ───────────────────
-
-const PLAN_CREDITS: Record<string, number> = {
-  starter: 500,
-  creator: 1000,
-  pro: 2000,
-  scaling: 5000,
-};
-
-const TRIAL_CREDITS = 50;
 
 // ─── BUILD BILLING STATE (pure function) ───────────────────────────────────
 
@@ -136,9 +126,13 @@ export async function writeBillingState(
   uid: string,
   db: Firestore
 ): Promise<void> {
+  console.log(`💳 writeBillingState START uid=${uid}`);
   const userRef = db.collection("users").doc(uid);
   const snap = await userRef.get();
-  if (!snap.exists) return;
+  if (!snap.exists) {
+    console.log(`💳 writeBillingState SKIP uid=${uid} — user doc not found`);
+    return;
+  }
 
   const data = snap.data()!;
   const state = buildBillingState({
@@ -155,6 +149,13 @@ export async function writeBillingState(
     nextResetDate: data.nextResetDate,
     lastCreditReset: data.lastCreditReset,
   });
+  console.log(`💳 writeBillingState BUILT uid=${uid} plan=${state.plan} status=${state.billingStatus} credits=${state.credits}`);
 
-  await userRef.update({ billingState: state });
+  try {
+    await userRef.update({ billingState: state });
+    console.log(`💳 writeBillingState OK uid=${uid}`);
+  } catch (err) {
+    console.error(`💳 writeBillingState FAIL uid=${uid}`, err);
+    throw err;
+  }
 }

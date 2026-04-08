@@ -2,6 +2,7 @@
 
 import React from "react";
 import { TOPUP_PACKS } from "../../planconfig";
+import { useT } from "../../i18n";
 
 interface TopUpSelectorProps {
   canTopUp: boolean;
@@ -15,9 +16,10 @@ const PACK_ID_MAP: Record<string, string> = {
 };
 
 export const TopUpSelector: React.FC<TopUpSelectorProps> = ({ canTopUp, onBuy }) => {
+  const { t } = useT();
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-semibold text-slate-300">Top Up Credits</h3>
+      <h3 className="text-sm font-semibold text-slate-300">{t('billing.topUpCredits')}</h3>
       <div className="grid grid-cols-3 gap-3">
         {TOPUP_PACKS.map((pack) => (
           <button
@@ -29,7 +31,7 @@ export const TopUpSelector: React.FC<TopUpSelectorProps> = ({ canTopUp, onBuy })
             <p className="text-lg font-bold text-white group-hover:text-blue-400 transition-colors">
               {pack.credits}
             </p>
-            <p className="text-[10px] text-slate-500 uppercase tracking-wider">credits</p>
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider">{t('billing.creditsLabel')}</p>
             <p className="text-sm font-semibold text-slate-300 mt-2">${pack.price}</p>
           </button>
         ))}

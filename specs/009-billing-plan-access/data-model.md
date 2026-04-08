@@ -12,7 +12,7 @@ A denormalized snapshot written by backend functions, consumed by frontend via r
 |-------|------|-------------|
 | plan | `'starter' \| 'creator' \| 'pro' \| 'scaling' \| 'none'` | Current plan tier |
 | isTrial | `boolean` | Whether user is on a trial (full features, limited credits, no reset) |
-| credits | `number` | Current credit balance (accumulates across cycles) |
+| credits | `number` | Current credit balance (reset to plan allocation each cycle; top-ups do not carry over past reset) |
 | creditsPerMonth | `number` | Monthly allocation for the plan (0 for trial/none) |
 | billingStatus | `'active' \| 'trialing' \| 'past_due' \| 'cancelling' \| 'cancelled'` | Subscription lifecycle state |
 | nextResetDate | `Timestamp \| null` | Next monthly credit reset date (null for trial/cancelled) |
@@ -27,7 +27,7 @@ A denormalized snapshot written by backend functions, consumed by frontend via r
 **Write paths** (every path that touches plan/credits must also write billingState):
 1. `ghlpaymentwebhook` — new subscription or upgrade
 2. `ghlCancellationWebhook` — final cancellation (period end)
-3. `monthlyCreditsReset` — additive credit reset
+3. `monthlyCreditsReset` — overwrite credit reset to plan allocation
 4. `stripeWebhook` (checkout.session.completed) — top-up credit addition
 5. `stripeWebhook` (customer.subscription.updated) — payment failure / recovery
 6. `cancelSubscription` — user-initiated cancel (sets `cancelling`)
@@ -105,4 +105,4 @@ Maps credit action keys to feature gate keys for plan-gate enforcement.
 - `gracePeriodEndsAt` must be null unless `billingStatus === 'past_due'`
 - `canUpgrade` is false when `plan === 'scaling'` or `isTeamMember === true`
 - `canTopUp` is false when `isTrial === true` or `billingStatus === 'cancelled'` or `isTeamMember === true`
-- Monthly reset: `credits = credits + creditsPerMonth` (additive, not replacement)
+- Monthly reset: `credits = creditsPerMonth` (overwrite to plan allocation, not additive; top-up credits do not carry over)

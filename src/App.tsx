@@ -24,6 +24,7 @@ const PerformanceDashboard = React.lazy(() => import('./components/PerformanceDa
 const PricingTableLazy = React.lazy(() => import('./components/PricingTable'));
 const JoinTeamLazy = React.lazy(() => import('./pages/JoinTeam'));
 const TeamLazy = React.lazy(() => import('./pages/Team'));
+const BillingPage = React.lazy(() => import('./pages/Billing'));
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import WorkspaceSettingsModal from './components/WorkspaceSettingsModal';
 
@@ -7447,6 +7448,13 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         </div>
       )}
 
+
+      {/* ═══ BILLING PAGE (phase-based route) ═══ */}
+      {phase === 'billing' && (
+        <Suspense fallback={<div className="min-h-screen bg-slate-950 flex items-center justify-center"><div className="animate-pulse h-8 bg-slate-800 rounded w-1/3" /></div>}>
+          <BillingPage />
+        </Suspense>
+      )}
 
       {/* ═══ BILLING MODAL (in-app subscription management) ═══ */}
       {showBillingModal && (
