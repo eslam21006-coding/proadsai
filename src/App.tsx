@@ -4313,7 +4313,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
           <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-3">Account</p>
           <div className="space-y-1">
-            <button onClick={() => { setShowSidebar(false); handleManageBilling(); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
+            <button onClick={() => { setShowSidebar(false); setPhase('billing'); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
               <span className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center"><i className="fa-solid fa-credit-card text-emerald-400 text-xs"></i></span>
               <div>
                 <p className="text-[11px] font-bold text-white group-hover:text-emerald-400 transition-colors">Manage Billing</p>

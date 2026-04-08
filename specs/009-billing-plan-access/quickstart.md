@@ -34,20 +34,20 @@ npm run dev
 
 ## Implementation Order
 
-### Phase 1: Backend Foundation (CRITICAL — 2 missing files block everything)
-1. **CREATE** `functions/src/billing/billingState.ts` — `buildBillingState()` + `writeBillingState()` (imported in index.ts but file doesn't exist — backend deploy will fail)
-2. Wire `writeBillingState()` into all 7 billing paths in `index.ts` (calls exist but resolve to missing module)
-3. Verify `monthlyCreditsReset` uses overwrite (`credits = creditsPerMonth`) — existing behavior is correct
-4. Add plan-gate check in `deductCreditsServer` using `resolveEntitlement()` + `checkFeature()`
-5. Add `ACTION_FEATURE_MAP` to `entitlements.ts`
-6. Verify `reactivateSubscription` callable (already exists in index.ts)
-7. Verify `cancelSubscription` reason/feedback fields (may already be wired)
+### Phase 1: Backend Foundation
+1. Verify `functions/src/billing/billingState.ts` — exports `buildBillingState()` (plan validation, derived fields) and `writeBillingState()` (reads user doc, builds state, writes to Firestore with observability logs)
+2. Verify `writeBillingState()` is called in all billing call sites in `functions/src/index.ts` (ghlpaymentwebhook, ghlCancellationWebhook, monthlyCreditsReset, stripeWebhook, cancelSubscription, reactivateSubscription, deductCreditsServer)
+3. Verify `monthlyCreditsReset` uses overwrite (`credits = creditsPerMonth`) — confirmed correct
+4. Verify plan-gate check in `deductCreditsServer` — uses `resolveEntitlement()` + `checkFeature()` with fail-closed `Object.hasOwn()` guard on ACTION_FEATURE_MAP + re-check inside transaction
+5. Verify `ACTION_FEATURE_MAP` in `entitlements.ts` — maps all COSTS action keys to feature gates
+6. Verify `reactivateSubscription` callable (exists in index.ts)
+7. Verify `cancelSubscription` reason/feedback fields (wired with CancellationReason enum)
 
-### Phase 2: Frontend Foundation (CRITICAL — 1 missing file)
-1. **CREATE** `src/hooks/useBillingState.ts` — Firestore real-time listener (imported by Billing.tsx but doesn't exist — frontend crashes)
-2. Verify `'billing'` AppPhase in store
+### Phase 2: Frontend Foundation
+1. Verify `src/hooks/useBillingState.ts` — uses `onAuthStateChanged` (not one-shot currentUser), Firestore `onSnapshot` listener, logs snapshot errors
+2. Verify `'billing'` in AppPhase type and sidebar navigation wires `setPhase('billing')`
 3. Verify billing nav link in header/sidebar
-4. **Migrate** `InputForm.tsx` from `userData.plan`/`userData.credits` to `useBillingState()` (FR-015)
+4. Verify `InputForm.tsx` reads from `useBillingState()` instead of `userData.plan`/`userData.credits` (FR-015)
 
 ### Phase 3: Billing Page (components already scaffolded)
 1. Verify `src/pages/Billing.tsx` renders correctly once useBillingState hook exists
