@@ -556,6 +556,7 @@ function testResolveValueStackSlideCount() {
     const r1 = resolveValueStackSlideCount(['a']);
     assert.equal(r1.giftCount, 1);
     assert.equal(r1.resolvedSlideCount, 3);
+    assert.equal(r1.capped, false);
 
     const r10 = resolveValueStackSlideCount(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']);
     assert.equal(r10.giftCount, 10);
