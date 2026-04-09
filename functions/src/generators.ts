@@ -6400,7 +6400,7 @@ export async function generateVisualPolishes(currentRender: string, inputs: AdIn
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { detectTestimonialPlatform, buildTestimonialMockup, setTestimonialGeminiCaller } from "./testimonialMockup.js";
-import type { PlatformType, TestimonialSlideResult, TestimonialCarouselResult } from "./types.js";
+import type { PlatformType, TestimonialSlideResult, TestimonialCarouselResult, VisualStyleFamily } from "./types.js";
 import { resolveTestimonialSlideCount } from "./creativeResolver.js";
 
 export { setTestimonialGeminiCaller };
@@ -6408,14 +6408,14 @@ export { setTestimonialGeminiCaller };
 export async function generateTestimonialHookSlide(
     inputs: AdInputs,
     testimonialCount: number,
+    visualStyleFamily: VisualStyleFamily = "realistic",
 ): Promise<{ hookText: string; subheadText: string }> {
     const campaignType = (inputs as any).campaignType || 'cold';
     const isRetargeting = campaignType === 'retargeting';
     const ctaText = inputs.cta || '';
     const lang = inputs.adLanguage || 'ar_fusha';
     const langInstruction = getLanguageInstruction(lang);
-    const visualStyleFamily = resolveStyleFamily(inputs) || 'realistic';
-    const artDirectionClause = `\n\nART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
+    const artDirectionBlock = `\n\nART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
 
     let prompt: string;
     if (isRetargeting) {
@@ -6440,8 +6440,8 @@ RULES:
 - The tone should feel like "you had a doubt? let me show you something"
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your hook text]
-SUBHEADLINE: [supporting text]${artDirectionClause}`;
+HEADLINE: <your hook text on one line>
+SUBHEADLINE: <your supporting text on one line>${artDirectionBlock}`;
     } else {
         prompt = `Write a COLD carousel hook slide (slide 1) for a testimonial carousel.
 
@@ -6461,8 +6461,8 @@ RULES:
 - The tone should feel like "wait until you see this"
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your hook text]
-SUBHEADLINE: [supporting text]${artDirectionClause}`;
+HEADLINE: <your hook text on one line>
+SUBHEADLINE: <your supporting text on one line>${artDirectionBlock}`;
     }
 
     const response = await retry(() => callGemini({
@@ -6480,14 +6480,14 @@ SUBHEADLINE: [supporting text]${artDirectionClause}`;
 
 export async function generateTestimonialCloseSlide(
     inputs: AdInputs,
+    visualStyleFamily: VisualStyleFamily = "realistic",
 ): Promise<{ closeText: string; subheadText: string }> {
     const campaignType = (inputs as any).campaignType || 'cold';
     const isRetargeting = campaignType === 'retargeting';
     const ctaText = inputs.cta || '';
     const lang = inputs.adLanguage || 'ar_fusha';
     const langInstruction = getLanguageInstruction(lang);
-    const visualStyleFamily = resolveStyleFamily(inputs) || 'realistic';
-    const artDirectionClause = `\n\nART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
+    const artDirectionBlock = `\n\nART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
 
     let prompt: string;
     if (isRetargeting) {
@@ -6510,8 +6510,8 @@ RULES:
 - Subheadline: max 15 words, final push
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your close text]
-SUBHEADLINE: [supporting text]${artDirectionClause}`;
+HEADLINE: <your close text on one line>
+SUBHEADLINE: <your supporting text on one line>${artDirectionBlock}`;
     } else {
         prompt = `Write a COLD close slide (last slide) for a testimonial carousel.
 
@@ -6529,8 +6529,8 @@ RULES:
 - Subheadline: max 15 words, final push
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your close text]
-SUBHEADLINE: [supporting text]${artDirectionClause}`;
+HEADLINE: <your close text on one line>
+SUBHEADLINE: <your supporting text on one line>${artDirectionBlock}`;
     }
 
     const response = await retry(() => callGemini({
@@ -6565,11 +6565,11 @@ export async function generateTestimonialCarousel(
     console.log(`💬 Detected platforms: ${platforms.join(', ')}`);
 
     const [hookResult, mockupResults, closeResult] = await Promise.all([
-        generateTestimonialHookSlide(inputs, testimonialCount),
+        generateTestimonialHookSlide(inputs, testimonialCount, visualStyleFamily),
         Promise.all(
             screenshots.slice(0, testimonialCount).map((s, i) => buildTestimonialMockup(s, platforms[i], visualStyleFamily))
         ),
-        generateTestimonialCloseSlide(inputs),
+        generateTestimonialCloseSlide(inputs, visualStyleFamily),
     ]);
 
     const slides: TestimonialSlideResult[] = [];

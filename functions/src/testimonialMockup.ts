@@ -1,6 +1,6 @@
 // testimonialMockup.ts — Platform detection and mockup rendering for testimonial carousels
 
-import type { PlatformType } from "./types.js";
+import type { PlatformType, VisualStyleFamily } from "./types.js";
 
 type GeminiCaller = (params: { model: string; contents: any; config?: any }) => Promise<any>;
 let callGemini: GeminiCaller;
@@ -65,7 +65,7 @@ export async function detectTestimonialPlatform(screenshotBase64: string): Promi
 export async function buildTestimonialMockup(
     screenshotBase64: string,
     platform: PlatformType,
-    visualStyleFamily: 'realistic' | 'fantasy' | 'minimal' = 'realistic',
+    visualStyleFamily: VisualStyleFamily = "realistic",
 ): Promise<string> {
     try {
         const rawB64 = screenshotBase64.includes(",") ? screenshotBase64.split(",")[1] : screenshotBase64;
@@ -74,9 +74,9 @@ export async function buildTestimonialMockup(
             : "image/jpeg";
 
         const styleClause =
-            visualStyleFamily === 'minimal' ? 'Clean, minimal, commercial. No background scenes or decorative environments.'
-            : visualStyleFamily === 'fantasy' ? 'Stylized cinematic palette consistent with fantasy art direction.'
-            : 'Realistic, professional commercial style.';
+            visualStyleFamily === "minimal" ? "Clean, minimal, commercial. No background scenes or decorative environments."
+            : visualStyleFamily === "fantasy" ? "Stylized cinematic palette consistent with fantasy art direction."
+            : "Realistic, professional commercial style.";
         const mockupPrompt = `${MOCKUP_PROMPTS[platform]}\n\nVISUAL STYLE: ${styleClause} Maintain identical palette, lighting, and framing across all slides in this carousel for art-direction consistency.`;
 
         const response = await callGemini({

@@ -24,6 +24,8 @@ export type RetargetingObjectionId =
 
 export type PlatformType = 'whatsapp' | 'instagram_dm' | 'facebook' | 'email' | 'google_review' | 'telegram' | 'unknown';
 
+export type VisualStyleFamily = "realistic" | "fantasy" | "minimal";
+
 export interface TestimonialSlideResult {
     slideNumber: number;
     role: 'hook' | 'testimonial' | 'close';
@@ -38,5 +40,5 @@ export interface TestimonialCarouselResult {
     slides: TestimonialSlideResult[];
     detectedPlatforms: PlatformType[];
     totalSlides: number;
-    visualStyleFamily: 'realistic' | 'fantasy' | 'minimal';
+    visualStyleFamily: VisualStyleFamily;
 }

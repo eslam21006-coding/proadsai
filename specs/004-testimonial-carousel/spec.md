@@ -32,7 +32,7 @@ As a user creating a carousel ad, I can upload multiple testimonial screenshots 
 
 ### User Story 2 - Platform Detection (Priority: P2)
 
-As a user, the system automatically detects which messaging platform each screenshot came from and shows a platform badge. Supported platforms: WhatsApp, Instagram DM, Facebook, Email, Google Review, Telegram. Unrecognized screenshots fall back to "Unknown."
+As a user, the system automatically detects which messaging platform each screenshot came from and shows a platform badge. Supported platforms: WhatsApp, Instagram DM, Facebook, Email, Google Review, Telegram. Unrecognized screenshots fall back to "Other."
 
 **Why this priority**: Correct detection determines whether the mockup frame matches the source platform.
 
@@ -144,7 +144,7 @@ As a QA reviewer, the Lane 10 and Lane 11 stub fixtures in `contractFixtures.tes
 
 - What happens when a user uploads 0 testimonials and tries to generate? Blocked with "Upload at least one testimonial screenshot."
 - What happens when a user uploads more testimonials than the plan allows slides for? The system uses as many as fit (max slides - 2 for hook + close) and shows a notification.
-- What happens when platform detection is ambiguous? Falls back to "Unknown/Other" with a clean quote card.
+- What happens when platform detection is ambiguous? Falls back to "Other" (canonical display label for `PlatformType = unknown`) with a clean quote card.
 - What happens when a user switches from testimonial carousel to regular carousel? Testimonial screenshots preserved in state but not used. Regular slide plan takes over.
 - What happens when a retargeting testimonial carousel has no objection-relevant testimonials? All testimonials shown as-is. Framing connects them to the objection at the headline level.
 - What happens when a testimonial screenshot is very low resolution? Accepted and rendered at best available quality. No rejection for resolution.
