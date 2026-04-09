@@ -2,6 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-04-02
+**Last Validated**: 2026-04-08
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -31,8 +32,12 @@
 
 ## Notes
 
-- All items pass. Spec covers Phase 3 (QA Fixtures) only — 13 tasks from LAUNCH_MATRIX Section 14.
+- All items pass after 2026-04-08 review.
+- **Fixed**: FR-005 gift counts aligned to matrix (1→3, 7→9, 10→9 cap).
+- **Fixed**: Added `text_only + value_stack` blocked combo to User Story 2 and FR-003.
+- **Fixed**: Tightened cross-tab assertion to require "cross-tab" in reason.
+- **Fixed**: SC-002 updated to 16 assertions (was 14).
+- **Fixed**: SC-004 now lists specific gift counts (1, 7, 10).
+- **Fixed**: FR-008 removed Phase 4 reference (technology-agnostic).
+- Lane 9 (Minimal + Batch) is in spec but not explicitly in matrix — spec is forward-looking here.
 - Depends on Phase 1 (Resolver Foundation) being complete.
-- Can run in parallel with Phase 2 (Frontend Enforcement).
-- All tests use existing contract test infrastructure — no new frameworks.
-- 4 user stories, 8 functional requirements, 7 success criteria, 4 edge cases.

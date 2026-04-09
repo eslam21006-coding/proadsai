@@ -185,10 +185,11 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         captionAnchors: ['before and after', 'the transformation', 'from ... to'],
         validity: { requiredElements: ['before_half', 'after_half', 'visible_divider'], invalidSubstitutes: ['single_image_no_contrast', 'generic_hero'], minimumDescription: 'Split composition with before and after states separated by a visible divider.' },
         templateNeeds: ['before_after'],
+    },
     testimonial_carousel: {
         id: 'testimonial_carousel', labelEn: 'Testimonial Carousel', labelAr: 'كاروسيل الشهادات', icon: '💬',
         description: 'Carousel of testimonial screenshots rendered in platform mockup frames',
-        tabs: ['mini_course', 'live_events', 'free_guide'], role: 'anchor', standaloneAllowed: true,
+        tabs: ['mini_course', 'live_events', 'free_guide'], role: 'anchor', standaloneAllowed: true, soloOnly: false,
         visualHierarchy: ['testimonial_mockup', 'platform_frame', 'cta_button'],
         mustShow: ['testimonial_mockup', 'platform_frame', 'cta_button'],
         mustAvoid: ['raw_screenshot', 'testimonial_text_on_hook'],
@@ -737,6 +738,10 @@ export function validateLaunchSurface(inputs: {
     const combo = validateCombination(modes, inputs.hookAngle);
     if (!combo.valid) {
         return { allowed: false, reason: combo.errors[0] || "Invalid combination." };
+    }
+
+    if (inputs.adFormat === 'carousel' && modes.includes('before_after')) {
+        return { allowed: false, reason: 'before_after is not compatible with carousel format.' };
     }
 
     return { allowed: true };
