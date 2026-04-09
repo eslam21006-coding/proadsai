@@ -62,14 +62,22 @@ export async function detectTestimonialPlatform(screenshotBase64: string): Promi
     }
 }
 
-export async function buildTestimonialMockup(screenshotBase64: string, platform: PlatformType): Promise<string> {
+export async function buildTestimonialMockup(
+    screenshotBase64: string,
+    platform: PlatformType,
+    visualStyleFamily: 'realistic' | 'fantasy' | 'minimal' = 'realistic',
+): Promise<string> {
     try {
         const rawB64 = screenshotBase64.includes(",") ? screenshotBase64.split(",")[1] : screenshotBase64;
         const mime = screenshotBase64.startsWith("data:image/webp") ? "image/webp"
             : screenshotBase64.startsWith("data:image/png") ? "image/png"
             : "image/jpeg";
 
-        const mockupPrompt = MOCKUP_PROMPTS[platform];
+        const styleClause =
+            visualStyleFamily === 'minimal' ? 'Clean, minimal, commercial. No background scenes or decorative environments.'
+            : visualStyleFamily === 'fantasy' ? 'Stylized cinematic palette consistent with fantasy art direction.'
+            : 'Realistic, professional commercial style.';
+        const mockupPrompt = `${MOCKUP_PROMPTS[platform]}\n\nVISUAL STYLE: ${styleClause} Maintain identical palette, lighting, and framing across all slides in this carousel for art-direction consistency.`;
 
         const response = await callGemini({
             model: VISUAL_MODEL,

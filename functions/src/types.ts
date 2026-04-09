@@ -38,4 +38,5 @@ export interface TestimonialCarouselResult {
     slides: TestimonialSlideResult[];
     detectedPlatforms: PlatformType[];
     totalSlides: number;
+    visualStyleFamily: 'realistic' | 'fantasy' | 'minimal';
 }

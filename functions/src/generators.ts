@@ -6414,6 +6414,8 @@ export async function generateTestimonialHookSlide(
     const ctaText = inputs.cta || '';
     const lang = inputs.adLanguage || 'ar_fusha';
     const langInstruction = getLanguageInstruction(lang);
+    const visualStyleFamily = resolveStyleFamily(inputs) || 'realistic';
+    const artDirectionClause = `\n\nART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
 
     let prompt: string;
     if (isRetargeting) {
@@ -6439,7 +6441,7 @@ RULES:
 
 OUTPUT FORMAT (STRICT):
 HEADLINE: [your hook text]
-SUBHEADLINE: [supporting text]`;
+SUBHEADLINE: [supporting text]${artDirectionClause}`;
     } else {
         prompt = `Write a COLD carousel hook slide (slide 1) for a testimonial carousel.
 
@@ -6460,7 +6462,7 @@ RULES:
 
 OUTPUT FORMAT (STRICT):
 HEADLINE: [your hook text]
-SUBHEADLINE: [supporting text]`;
+SUBHEADLINE: [supporting text]${artDirectionClause}`;
     }
 
     const response = await retry(() => callGemini({
@@ -6484,6 +6486,8 @@ export async function generateTestimonialCloseSlide(
     const ctaText = inputs.cta || '';
     const lang = inputs.adLanguage || 'ar_fusha';
     const langInstruction = getLanguageInstruction(lang);
+    const visualStyleFamily = resolveStyleFamily(inputs) || 'realistic';
+    const artDirectionClause = `\n\nART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
 
     let prompt: string;
     if (isRetargeting) {
@@ -6507,7 +6511,7 @@ RULES:
 
 OUTPUT FORMAT (STRICT):
 HEADLINE: [your close text]
-SUBHEADLINE: [supporting text]`;
+SUBHEADLINE: [supporting text]${artDirectionClause}`;
     } else {
         prompt = `Write a COLD close slide (last slide) for a testimonial carousel.
 
@@ -6526,7 +6530,7 @@ RULES:
 
 OUTPUT FORMAT (STRICT):
 HEADLINE: [your close text]
-SUBHEADLINE: [supporting text]`;
+SUBHEADLINE: [supporting text]${artDirectionClause}`;
     }
 
     const response = await retry(() => callGemini({
@@ -6548,11 +6552,12 @@ export async function generateTestimonialCarousel(
     maxPlanSlides: number,
 ): Promise<TestimonialCarouselResult> {
     const ctaText = inputs.cta || '';
+    const visualStyleFamily = resolveStyleFamily(inputs) || 'realistic';
 
     const totalSlides = resolveTestimonialSlideCount(screenshots.length, maxPlanSlides);
     const testimonialCount = totalSlides - 2;
 
-    console.log(`💬 Testimonial carousel: ${screenshots.length} screenshots, ${totalSlides} slides (${testimonialCount} testimonials + hook + close)`);
+    console.log(`💬 Testimonial carousel: ${screenshots.length} screenshots, ${totalSlides} slides (${testimonialCount} testimonials + hook + close), style=${visualStyleFamily}`);
 
     const platforms = await Promise.all(
         screenshots.slice(0, testimonialCount).map((s) => detectTestimonialPlatform(s))
@@ -6562,7 +6567,7 @@ export async function generateTestimonialCarousel(
     const [hookResult, mockupResults, closeResult] = await Promise.all([
         generateTestimonialHookSlide(inputs, testimonialCount),
         Promise.all(
-            screenshots.slice(0, testimonialCount).map((s, i) => buildTestimonialMockup(s, platforms[i]))
+            screenshots.slice(0, testimonialCount).map((s, i) => buildTestimonialMockup(s, platforms[i], visualStyleFamily))
         ),
         generateTestimonialCloseSlide(inputs),
     ]);
@@ -6605,5 +6610,6 @@ export async function generateTestimonialCarousel(
         slides,
         detectedPlatforms: platforms,
         totalSlides,
+        visualStyleFamily,
     };
 }
