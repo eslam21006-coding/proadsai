@@ -429,6 +429,10 @@ function testValidateLaunchSurface() {
     // Blocked: cross-tab pair
     const crossTab = validateLaunchSurface({ selectedModes: ['value_stack', 'event_ticket'] });
     assert.equal(crossTab.allowed, false, 'validateLaunchSurface: cross-tab pair should block');
+    assert.ok(
+        crossTab.reason && crossTab.reason.toLowerCase().includes('cross-tab'),
+        `validateLaunchSurface: cross-tab reason should contain "cross-tab", got: ${crossTab.reason}`
+    );
 
     // Blocked: deleted modes (only assert if actually removed from catalog)
     const deletedModes = ['limited_access', 'module_preview', 'day_strip'];
@@ -446,6 +450,14 @@ function testValidateLaunchSurface() {
         const baCarousel = validateLaunchSurface({ selectedModes: ['before_after'], adFormat: 'carousel' });
         assert.equal(baCarousel.allowed, false, 'validateLaunchSurface: before_after+carousel should block');
     }
+
+    // Blocked: before_after + standard_hero (soloOnly mode cannot be paired)
+    const baHero = validateLaunchSurface({ selectedModes: ['before_after', 'standard_hero'] });
+    assert.equal(baHero.allowed, false, 'validateLaunchSurface: before_after+standard_hero should block');
+
+    // Blocked: text_only + value_stack (soloOnly mode cannot be paired)
+    const textOnlyValueStack = validateLaunchSurface({ selectedModes: ['text_only', 'value_stack'] });
+    assert.equal(textOnlyValueStack.allowed, false, 'validateLaunchSurface: text_only+value_stack should block');
 
     console.log("  ✅ testValidateLaunchSurface: passing + blocked combos verified");
 }
@@ -540,6 +552,15 @@ function testResolveValueStackSlideCount() {
     assert.equal(r9.giftCount, 9);
     assert.equal(r9.resolvedSlideCount, 9);
     assert.equal(r9.capped, true);
+
+    const r1 = resolveValueStackSlideCount(['a']);
+    assert.equal(r1.giftCount, 1);
+    assert.equal(r1.resolvedSlideCount, 3);
+
+    const r10 = resolveValueStackSlideCount(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']);
+    assert.equal(r10.giftCount, 10);
+    assert.equal(r10.resolvedSlideCount, 9);
+    assert.equal(r10.capped, true);
 
     const r0 = resolveValueStackSlideCount([]);
     assert.equal(r0.giftCount, 0);
