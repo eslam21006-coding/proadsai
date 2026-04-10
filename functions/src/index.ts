@@ -3299,7 +3299,12 @@ export const serverGenerateBuildPlan = onCall({
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateBuildPlan(conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride);
-        return { success: true, text: result, errorCode: null };
+        const response: Record<string, unknown> = { success: true, text: result.buildPlan, errorCode: null };
+        if (result.copyFidelityWarning && !result.copyFidelityWarning.passed) {
+            response.warningCode = "copy_fidelity_degraded";
+            response.failedFields = result.copyFidelityWarning.failedFields;
+        }
+        return response;
     } catch (error: any) {
         console.error("generateBuildPlan error:", error);
         throw new HttpsError("internal", "Build plan generation failed: " + error.message);

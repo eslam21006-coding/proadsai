@@ -1439,6 +1439,7 @@ const App: React.FC = () => {
   const [competitorLoading, setCompetitorLoading] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [upgradeAnnual, setUpgradeAnnual] = useState(false);
+  const [copyFidelityWarning, setCopyFidelityWarning] = useState<{ failedFields: string[]; onContinue: () => void; onRetry: () => void; onCancel: () => void } | null>(null);
   const [topupLoading, setTopupLoading] = useState<string | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
   const [showFavorites, setShowFavorites] = useState(false);
@@ -3327,9 +3328,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         // ─── SAVE RENDER FOR FEEDBACK (non-blocking — must not prevent phase transition) ─────────
         if (user) {
           try {
+            const _tpStart = conceptRaw.indexOf('[[TECHNICAL_PROMPT]]');
+            const _tpEnd = conceptRaw.indexOf('[[/TECHNICAL_PROMPT]]');
+            const _resolvedImagePrompt = (_tpStart !== -1 && _tpEnd !== -1) ? conceptRaw.slice(_tpStart + 20, _tpEnd).trim().substring(0, 5000) : undefined;
+            const _blueprintText = (_tpStart !== -1 && _tpEnd !== -1) ? (conceptRaw.slice(0, _tpStart) + conceptRaw.slice(_tpEnd + 21)).trim().substring(0, 2000) : undefined;
             const genId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
-              { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500) },
+              { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500), blueprintText: _blueprintText, resolvedImagePrompt: _resolvedImagePrompt },
               conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity()
             );
             setRenderGenerationId(genId);
@@ -7479,6 +7484,65 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ COPY FIDELITY WARNING BANNER ═══ */}
+      {copyFidelityWarning && (
+        <div className="fixed inset-0 z-[210] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+          <div className="relative bg-slate-950 border border-amber-500/50 rounded-3xl shadow-2xl shadow-black/80 max-w-lg w-full mx-4" onClick={(e) => e.stopPropagation()}>
+            <div className="px-8 py-6 space-y-5">
+              <div className="flex items-start gap-4">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+                  <i className="fa-solid fa-triangle-exclamation text-amber-500 text-lg"></i>
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">
+                    {lang === 'ar' ? 'تحقق من دقة النص' : 'Copy Fidelity Notice'}
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                    {lang === 'ar'
+                      ? `لم يتم التحقق من ظهور النصوص التالية حرفياً في التصميم: ${copyFidelityWarning.failedFields.join(', ')}. يمكنك المتابعة أو إعادة المحاولة.`
+                      : `The following copy fields could not be verified verbatim in the design prompt: ${copyFidelityWarning.failedFields.join(', ')}. You can continue or retry.`
+                    }
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => {
+                    const cb = copyFidelityWarning.onCancel;
+                    setCopyFidelityWarning(null);
+                    cb();
+                  }}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-400 bg-slate-900 border border-slate-800 hover:text-white hover:border-slate-700 transition-all"
+                >
+                  {lang === 'ar' ? 'إلغاء' : 'Cancel'}
+                </button>
+                <button
+                  onClick={() => {
+                    const cb = copyFidelityWarning.onRetry;
+                    setCopyFidelityWarning(null);
+                    cb();
+                  }}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 border border-blue-500 hover:bg-blue-500 transition-all"
+                >
+                  {lang === 'ar' ? 'إعادة المحاولة' : 'Retry'}
+                </button>
+                <button
+                  onClick={() => {
+                    const cb = copyFidelityWarning.onContinue;
+                    setCopyFidelityWarning(null);
+                    cb();
+                  }}
+                  className="px-5 py-2.5 rounded-xl text-xs font-black text-white bg-amber-500 hover:bg-amber-400 transition-all shadow-lg shadow-amber-500/20"
+                >
+                  {lang === 'ar' ? 'متابعة' : 'Continue'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

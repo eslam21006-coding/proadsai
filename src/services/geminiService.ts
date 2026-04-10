@@ -79,6 +79,12 @@ function parseGenerationResult(data: any): GenerationResult {
   };
 }
 
+export interface BuildPlanResult {
+  text: string;
+  warningCode?: string;
+  failedFields?: string[];
+}
+
 export class GeminiService {
 
   // ─── Website Context (runs client-side via CORS proxy — no secret needed) ───
@@ -228,13 +234,17 @@ Use this information to better understand the brand's positioning, tone, and tar
     conceptRaw: string, selectedTov: string, inputs: AdInputs,
     resolvedUniverse: string, currentAspectRatio: AspectRatio,
     textOverride?: TextOverride
-  ): Promise<string> {
+  ): Promise<BuildPlanResult> {
     const result = await fnBuildPlan({
       conceptRaw, selectedTov, inputs: sanitizeInputs(inputs),
       resolvedUniverse, currentAspectRatio, textOverride,
     });
-    const data = result.data as { text?: string; success?: boolean; errorCode?: string | null };
-    return data.text || '';
+    const data = result.data as { text?: string; success?: boolean; errorCode?: string | null; warningCode?: string; failedFields?: string[] };
+    return {
+      text: data.text || '',
+      warningCode: data.warningCode,
+      failedFields: data.failedFields,
+    };
   }
 
   // ─── FINAL AD IMAGE GENERATION ─────────────────────────────────────────

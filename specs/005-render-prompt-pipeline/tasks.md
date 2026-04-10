@@ -1,119 +1,107 @@
-# Tasks: Blueprint → Long-Form Render Prompt Pipeline
+# Tasks: Blueprint → Long-Form Render Prompt Pipeline (Phase 2)
 
 **Input**: Design documents from `/specs/005-render-prompt-pipeline/`
-**Prerequisites**: Phase 1 (Resolver Foundation) complete
-**Status**: Ready for implementation
+**Prerequisites**: Phase 1 tasks (T001–T031) complete. Pipeline is operational.
+**Status**: Ready for implementation — closing remaining gaps from spec clarifications (2026-04-10)
+
+**Context**: The original 31 tasks (T001–T031) are complete. This task list addresses gaps identified during the spec review and clarification session on 2026-04-10:
+1. `validateCopyFidelity()` checks only `hookText` — must expand to all 4 copy fields
+2. Retry exhaustion shows error toast — must show warning banner with cancel/retry before image generation
+3. Carousel `perSlide` trace population needs verification/wiring
+4. `blueprintText` in main generation document needs verification
+5. Test coverage needs expansion for 4-field fidelity and carousel copy isolation
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Can run in parallel (different files, no dependencies)
+- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
+- Include exact file paths in descriptions
 
 ---
 
-## Phase 1: Foundational (Blocking Prerequisites)
+## Phase 1: Foundational — Expand Copy Fidelity Signature
 
-**Purpose**: Extract TECHNICAL_PROMPT as a named field and add the copy fidelity validation. Must complete before any prompt assembly or UI work.
+**Purpose**: Update the core validation function to check all 4 unconditional copy fields per FR-003 (updated 2026-04-10)
 
-- [X] T001 Add `[[TECHNICAL_PROMPT]]..[[/TECHNICAL_PROMPT]]` marker injection to the build plan generation prompt in `functions/src/generators.ts` — inside `generateBuildPlan()`, instruct the model to wrap the long-form English render prompt in these markers. Add the instruction near the existing `[[PROADS_MACHINE_PLAN_V1]]` marker instruction so the model outputs both.
-- [X] T002 Add `technicalPrompt: string | null` field to the `parseBuildPlanEnvelope()` return type in `functions/src/buildPlanSlotMap.ts` — extract content between `[[TECHNICAL_PROMPT]]` and `[[/TECHNICAL_PROMPT]]` markers. Return `null` if markers absent. Expose on the parsed result alongside existing `blueprint` and `machinePlan` fields.
-- [X] T003 Add copy fidelity validation function `validateCopyFidelity(technicalPrompt: string, hookText: string): boolean` in `functions/src/buildPlanSlotMap.ts` — returns `true` if `technicalPrompt.includes(hookText.trim())`. Export it for use in generators and tests.
+- [x] T032 Expand `validateCopyFidelity()` in `functions/src/buildPlanSlotMap.ts` — change signature from `(technicalPrompt: string | null, hookText: string): boolean` to accept an object `{ hookText, subheadText, ctaName, benefitText }`. For each non-empty field, apply NFC normalization + whitespace collapse and check `normalizedPrompt.includes(normalizedField)`. Return `{ passed: boolean, failedFields: string[] }` so callers know which field(s) failed. Keep backward compatibility by also exporting or adapting the old signature if needed.
 
-**Checkpoint**: `rm -rf functions/lib && cd functions && npm run build` — clean compile.
+**Checkpoint**: `cd functions && rm -rf lib && npm run build` — clean compile.
 
 ---
 
-## Phase 2: US1 — Complete Input Injection Audit (Priority: P1) MVP
+## Phase 2: US2 — 4-Field Copy Fidelity Validation (Priority: P2) MVP
 
-**Goal**: Ensure every Step 1 and Step 2 input feeds into the build plan prompt — no silently dropped fields.
+**Goal**: Validate all 4 copy fields (hookText, subheadText, ctaName, benefitText) in the TECHNICAL_PROMPT. On retry exhaustion, show warning banner with cancel/retry option.
 
-**Independent Test**: Generate a build plan with all inputs filled. Grep the output for each input field. Verify zero gaps.
+**Independent Test**: Generate a build plan with known hookText + subheadText + ctaName + benefitText. Verify validation checks all 4. Mock a plan with paraphrased subheadText. Verify it triggers rebuild.
 
-- [X] T004 [US1] Audit `generateBuildPlan()` in `functions/src/generators.ts` — verify `offerCreativeMode` injects the mode spec block unconditionally. If conditional or missing, fix to always inject when the mode is present.
-- [X] T005 [US1] Audit `generateBuildPlan()` in `functions/src/generators.ts` — verify `visualSubStyle` injects the sub-style constraint block via `resolveVisualSubStyle()` unconditionally. Fix if conditional.
-- [X] T006 [P] [US1] Audit `generateBuildPlan()` in `functions/src/generators.ts` — verify `coldHookAngle` injects angle visual direction via `getHookAngleVisualDirection()` for cold campaigns. Verify `retargetingObjection` injects objection visual direction for retargeting campaigns. Fix if either is missing or conditional.
-- [X] T007 [P] [US1] Audit `generateBuildPlan()` in `functions/src/generators.ts` — verify `adTone` injects the tone mood block via `getAdToneVisualMood()` unconditionally. Fix if conditional.
-- [X] T008 [P] [US1] Audit `generateBuildPlan()` in `functions/src/generators.ts` — verify `brandColorPrimary` and `brandColorSecondary` are injected as exact hex values (not generic "brand color" placeholder). If absent when provided by user, add injection. If user has not provided colors, omit section entirely.
-- [X] T009 [US1] Audit `generateBuildPlan()` in `functions/src/generators.ts` — verify `hookText`, `subheadText`, and `ctaName` from Step 2 are injected under `TEXTS TO RENDER` and `CANONICAL CONTENT OWNERSHIP` unconditionally. If behind a conditional, make unconditional.
-- [X] T010 [US1] Audit `generateBuildPlan()` in `functions/src/generators.ts` — verify mode-specific data fields (`valueStackItems`, `eventTitle`, `eventDate`, `valueStackPrice`, `benefitText`, etc.) are injected via `buildContentOwnershipMap()` when provided by the user. If any field is silently dropped when present, fix it. If absent, ensure no placeholder is injected.
+- [x] T033 [US2] Update `validateCopyFidelity()` call site in `functions/src/generators.ts` — where `validateCopyFidelity()` is currently called after `parseBuildPlanEnvelope()`, pass all 4 copy fields: `{ hookText, subheadText, ctaName, benefitText }`. Check the `passed` result. If `!passed`, log which fields failed via `failedFields` and trigger retry as before (max 2 retries, 3 total attempts).
+- [x] T034 [US2] Update retry-exhausted handling in `functions/src/generators.ts` — when all 3 attempts fail copy fidelity, instead of throwing `CopyFidelityError`, return the best available build plan with a warning flag: `{ buildPlan, copyFidelityWarning: { failed: true, failedFields: string[] } }`. The caller should NOT block generation.
+- [x] T035 [US2] Update `functions/src/index.ts` — in the `serverGenerateBuildPlan` or `serverGenerateFinalAd` handler, when the returned result includes `copyFidelityWarning.failed === true`, return `{ success: true, warningCode: 'copy_fidelity_degraded', failedFields: [...] }` alongside the normal generation response. Do NOT return `success: false` — generation proceeds.
+- [x] T036 [US2] Update warning UX in `src/App.tsx` — when the generation response includes `warningCode: 'copy_fidelity_degraded'`, display a warning banner (not error toast) BEFORE image generation starts, with: (a) message explaining which copy fields couldn't be verified, (b) "Continue" button (prominent default — proceeds to image generation), (c) "Retry" button (re-triggers build plan generation with same inputs), (d) "Cancel" button (stops generation, returns user to Step 3). The banner blocks until the user clicks one of the three buttons — no auto-dismiss, no auto-timeout. "Continue" is the expected default action. Follow existing toast/banner styling patterns.
 
-**Checkpoint**: `rm -rf functions/lib && cd functions && npm run build` — clean compile.
+**Checkpoint**: `cd functions && rm -rf lib && npm run build && cd .. && npm run build` — both backend + frontend compile clean.
 
 ---
 
-## Phase 3: US2 — Copy Text Fidelity Validation (Priority: P2)
+## Phase 3: US4 — Carousel Per-Slide Trace Verification (Priority: P4)
 
-**Goal**: Validate that the build plan's TECHNICAL_PROMPT contains the exact approved hookText. Auto-retry on failure.
+**Goal**: Verify carousel per-slide prompts use correct per-slide copy text and populate the `perSlide` trace array.
 
-**Independent Test**: Generate a build plan with known hookText. Verify validation passes. Mock a build plan with paraphrased text. Verify validation fails and triggers rebuild.
+**Independent Test**: Generate a 3-slide carousel. Inspect `ResolutionTrace.perSlide` — each entry should have unique `resolvedImagePrompt` and `blueprintText` with that slide's specific copy.
 
-- [X] T011 [US2] Wire copy fidelity validation into `generateBuildPlan()` return path in `functions/src/generators.ts` — after `parseBuildPlanEnvelope()` extracts `technicalPrompt`, call `validateCopyFidelity(technicalPrompt, hookText)`. If it fails, log a warning and retry `generateBuildPlan()` (max 2 retries, 3 total attempts). Return the build plan on first passing attempt.
-- [X] T012 [US2] Add retry-exhausted error handling in `functions/src/generators.ts` — when all 3 attempts fail copy fidelity, throw a typed error (e.g., `CopyFidelityError`) with a clear message. The caller in `functions/src/index.ts` (`serverGenerateBuildPlan` or `serverGenerateFinalAd`) must catch this and return `{ success: false, errorCode: 'copy_fidelity_failed' }` to the frontend.
-- [X] T013 [US2] Handle `copy_fidelity_failed` error in `src/App.tsx` — when the generation returns this error code, show a user-visible error message ("Blueprint text didn't match — please retry") with a "Retry" button that re-triggers generation with the same inputs. Follow the existing error handling + toast pattern.
+- [x] T037 [US4] Audit carousel rendering path in `functions/src/generators.ts` — find where `buildFinalImagePrompt()` is called for carousel slides. Verify each slide's call receives that slide's specific `hookText`/`subheadText` from the carousel copies (not slide 1's text reused). If text is shared across slides, fix to use per-slide copy from the approved carousel hook data.
+- [x] T038 [US4] Verify `perSlide` trace population in `functions/src/generators.ts` — after each per-slide `buildFinalImagePrompt()` call, verify the returned `trace.resolvedImagePrompt` and `trace.blueprintText` are stored in the `ResolutionTrace.perSlide[i]` entry. If `perSlide` array is not being populated, wire it up.
 
-**Checkpoint**: `rm -rf functions/lib && cd functions && npm run build && npm run build` (both backend + frontend) — clean compile.
-
----
-
-## Phase 4: US3 — Blueprint Visibility in Step 3 (Priority: P3)
-
-**Goal**: Show the human-readable blueprint to the user in Step 3 via an expandable panel, with the TECHNICAL_PROMPT stripped.
-
-**Independent Test**: Generate an ad through Step 3. Verify the "View Blueprint" panel appears. Ensure the TECHNICAL_PROMPT markers and content are not visible. Confirm blueprint text is stored in the generation record.
-
-- [X] T014 [US3] Add `stripTechnicalPrompt(blueprint: string): string` utility function in `functions/src/buildPlanSlotMap.ts` — removes everything between `[[TECHNICAL_PROMPT]]` and `[[/TECHNICAL_PROMPT]]` markers (inclusive) from the blueprint string. Export it. Also add a mirrored copy in `src/utils/` or inline in `src/App.tsx` for frontend use.
-- [X] T015 [US3] Add "View Blueprint" expandable panel in `src/App.tsx` — inside the Step 3 concept card area (near existing environment/mood/lighting panels around line 5629). Show the stripped blueprint text in a collapsible panel. Default state: collapsed. Use existing accordion/chevron UI pattern. Label: "View Blueprint" (Arabic: "عرض المخطط").
-- [X] T016 [P] [US3] Add `blueprintText` and `resolvedImagePrompt` fields to `CreativeMemoryRecord` in `functions/src/creativeMemory.ts` — both `string | null`, truncated to 2000 and 5000 chars respectively on write. Update `storeCreativeToMemory()` to accept and store these fields.
-- [X] T017 [US3] Wire blueprint storage in `functions/src/index.ts` — in the `serverGenerateFinalAd` handler (after successful generation, in the `storeCreativeToMemory` call), pass the stripped blueprint text as `blueprintText` and the final assembled prompt as `resolvedImagePrompt`.
-
-**Checkpoint**: `npm run build` (frontend + backend) — clean compile.
+**Checkpoint**: `cd functions && rm -rf lib && npm run build` — clean compile.
 
 ---
 
-## Phase 5: US1+US5 — Prompt Assembly Function (Priority: P1/P5)
+## Phase 4: US3+US5 — Storage Verification (Priority: P3/P5)
 
-**Goal**: Extract inline prompt assembly from `generateFinalAd()` into a dedicated `buildFinalImagePrompt()` function. Store the resolved prompt in the resolution trace.
+**Goal**: Verify `blueprintText` and `resolvedImagePrompt` are stored in the main Firestore generation document, and that the frontend strips TECHNICAL_PROMPT from the blueprint display.
 
-**Independent Test**: Call `buildFinalImagePrompt()` with known inputs. Verify the output contains all 10 sections in the correct order. Verify hookText appears verbatim.
+**Independent Test**: Generate an ad. Query `generations/{genId}` document directly. Verify both fields exist. Check Step 3 UI — blueprint panel should show no `[[TECHNICAL_PROMPT]]` markers.
 
-- [X] T018 [US1] Extract `buildFinalImagePrompt()` function in `functions/src/generators.ts` — signature per `contracts/prompt-assembly.md`: `buildFinalImagePrompt(blueprint, technicalPrompt, contract, inputs, aspectRatio): { textPrompt, imageParts }`. Move the inline prompt assembly logic from `generateFinalAd()` (~line 4656+) into this function. Concatenate sections in the strict order: (1) technicalPrompt, (2) layout contract zone rules + aspect ratio, (3) sub-style visual constraints, (4) creative mode structural rules, (5) campaign type + hook angle direction, (6) brand color hex directives (when provided), (7) face-consistency for Box A (when provided), (8) logo placement for Box B (when provided), (9) mode-specific asset refs for Box C (when provided), (10) style reference for reference ad (when provided). Items 6–10 omitted when absent.
-- [X] T019 [US1] Replace inline assembly in `generateFinalAd()` in `functions/src/generators.ts` — call `buildFinalImagePrompt()` instead of the inline assembly. Use the returned `textPrompt` and `imageParts` to build the Gemini call's `parts[]` array. Remove the old inline assembly code. Verify no other function assembles prompts inline (FR-006).
-- [X] T020 [P] [US5] Add `resolvedImagePrompt` and `blueprintText` fields to the ResolutionTrace schema — update the trace type definition (in the resolution trace spec or `functions/src/types.ts` if the type lives there). Add the same fields to the `perSlide` array type for carousel support.
-- [X] T021 [US5] Wire trace storage in `generateFinalAd()` in `functions/src/generators.ts` — after calling `buildFinalImagePrompt()`, store `textPrompt` as `resolvedImagePrompt` and the stripped blueprint as `blueprintText` on the resolution trace object before it is persisted.
+- [x] T039 [P] [US5] Audit `functions/src/index.ts` — verify that the `generations/{genId}` Firestore document write includes `blueprintText` and `resolvedImagePrompt` fields from the resolution trace. If only stored in `creativeMemory` but not the main generation doc, add the fields to the generation doc write.
+- [x] T040 [P] [US3] Audit `src/App.tsx` "View Blueprint" panel (around line 5676) — verify the blueprint text displayed to the user has `[[TECHNICAL_PROMPT]]..[[/TECHNICAL_PROMPT]]` content stripped. If the stripping happens server-side (in the response), verify the backend strips it. If client-side, verify the frontend applies `stripTechnicalPrompt()` or equivalent before display.
 
-**Checkpoint**: `rm -rf functions/lib && cd functions && npm run build` — clean compile.
+**Checkpoint**: `npm run build` — frontend compiles clean.
 
 ---
 
-## Phase 6: US4 — Carousel Per-Slide Prompt Correctness (Priority: P4)
+## Phase 5: US6 — Expanded Regression Tests (Priority: P6)
 
-**Goal**: Each carousel slide gets its own `buildFinalImagePrompt()` call with correct per-slide copy text. Per-slide trace data stored.
+**Goal**: Expand regression tests to cover 4-field copy fidelity validation, carousel per-slide copy isolation, and campaign context field presence.
 
-**Independent Test**: Generate a 5-slide carousel. Inspect per-slide `resolvedImagePrompt` in the trace. Verify each slide contains its own unique hookText/subheadText.
+**Independent Test**: `cd functions && npm test` — all new tests pass.
 
-- [X] T022 [US4] Wire `buildFinalImagePrompt()` per-slide in carousel rendering in `functions/src/generators.ts` — in the carousel slide rendering loop (inside `generateFinalAd()` or the carousel-specific render path), call `buildFinalImagePrompt()` for each slide with that slide's specific `hookText` and `subheadText` from the carousel copies. Verify slide 1's text is NOT reused for other slides.
-- [X] T023 [US4] Store per-slide `blueprintText` and `resolvedImagePrompt` in the `perSlide` array of the ResolutionTrace in `functions/src/generators.ts` — for each carousel slide, after calling `buildFinalImagePrompt()`, store the result on the corresponding `perSlide[i]` entry.
+- [x] T041 [P] [US6] Add 4-field copy fidelity test in `functions/src/contractFixtures.test.ts` — test `validateCopyFidelity()` with the new multi-field signature: (a) all 4 fields present → `{ passed: true }`, (b) hookText present but subheadText paraphrased → `{ passed: false, failedFields: ['subheadText'] }`, (c) ctaName missing → `{ passed: false, failedFields: ['ctaName'] }`, (d) empty benefitText skipped → `{ passed: true }` (empty fields not validated), (e) Arabic text across all 4 fields → `{ passed: true }`.
+- [x] T042 [P] [US6] Add campaign context field presence test in `functions/src/contractFixtures.test.ts` — given a mock `buildFinalImagePrompt()` input with `productName: "FitPro"`, `targetAudience: "busy professionals"`, verify the assembled `textPrompt` or `coreDesignRules` contains these campaign context values. This guards FR-001 (campaign context fields added 2026-04-10).
+- [x] T043 [P] [US6] Add carousel per-slide copy isolation test in `functions/src/contractFixtures.test.ts` — call `buildFinalImagePrompt()` twice with different hookText values (slide 1: "عرض خاص", slide 2: "فرصة لا تتكرر"). Assert slide 1's `textPrompt` contains only slide 1's hookText. Assert slide 2's `textPrompt` contains only slide 2's hookText and NOT slide 1's.
 
-**Checkpoint**: `rm -rf functions/lib && cd functions && npm run build` — clean compile.
-
----
-
-## Phase 7: US6 — Regression Guards (Priority: P6)
-
-**Goal**: Unit tests verify prompt assembly includes all critical input categories.
-
-**Independent Test**: `cd functions && npm run test:contracts` — all new tests pass.
-
-- [X] T024 [US6] Add prompt assembly regression test (a) in `functions/src/contractFixtures.test.ts` — given a known `hookText` + mock blueprint + mock inputs, call `buildFinalImagePrompt()` and assert the output `textPrompt` contains the exact `hookText` string.
-- [X] T025 [P] [US6] Add prompt assembly regression test (b) in `functions/src/contractFixtures.test.ts` — given `visualSubStyle: "luxury_magazine"` in inputs, call `buildFinalImagePrompt()` and assert the output contains the luxury magazine constraint block (check for a known substring from the luxury magazine sub-style rules).
-- [X] T026 [P] [US6] Add prompt assembly regression test (c) in `functions/src/contractFixtures.test.ts` — given `campaignType: "retargeting"` + objection `dont_trust` in inputs, call `buildFinalImagePrompt()` and assert the output contains the retargeting trust-resolution visual direction (check for a known substring from the retargeting direction rules).
-- [X] T027 [US6] Add copy fidelity validation test in `functions/src/contractFixtures.test.ts` — test `validateCopyFidelity()` with: (a) exact hookText present → returns true, (b) hookText absent → returns false, (c) hookText paraphrased → returns false, (d) Arabic hookText present → returns true.
-
-**Checkpoint**: `rm -rf functions/lib && cd functions && npm run build && npm run test:contracts` — all tests pass.
+**Checkpoint**: `cd functions && rm -rf lib && npm run build && npm test` — all tests pass.
 
 ---
 
-## Phase 8: Polish & Verification
+## Phase 6: US1 — Input Injection Audit (Priority: P1)
 
-- [X] T028 Run `npm run build` (frontend) — clean compile
-- [X] T029 Run `rm -rf functions/lib && cd functions && npm run build && npm run test:contracts` — all pass
-- [X] T030 Grep `functions/src/generators.ts` for inline prompt assembly outside `buildFinalImagePrompt()` — verify none exists (FR-006 compliance)
-- [X] T031 Grep `functions/src/` for `resolvedImagePrompt` — verify it appears in generators.ts (trace storage), types or trace schema (field definition), creativeMemory.ts (record storage), contractFixtures.test.ts (tests)
+**Goal**: Walk all conditionals in `generateBuildPlan()` to verify no Step 1 input is silently dropped in any code path.
+
+**Independent Test**: Grep the build plan prompt template for each field name. Verify all 14 Step 1 fields (productName, targetAudience, challenges, transformation, offerType, offerCreativeMode, visualSubStyle, visualStyleFamily, preferredUniverse, campaignType, coldHookAngle, retargetingObjection, adTone, brandColorPrimary/Secondary) appear.
+
+- [x] T044 [US1] Audit all conditionals in `generateBuildPlan()` in `functions/src/generators.ts` — walk every `if` statement that guards input injection. For each conditional, verify: (a) the condition is correct (e.g., cold-only fields guarded by `campaignType === 'cold'`), (b) the field is not silently dropped when the condition is true and input is provided, (c) campaign context fields (`productName`, `targetAudience`, `challenges`, `transformation`, `offerType`) are injected unconditionally. Document any fixes applied.
+
+**Checkpoint**: `cd functions && rm -rf lib && npm run build` — clean compile.
+
+---
+
+## Phase 7: Polish & Verification
+
+- [x] T045 Run `npm run build` (frontend) — clean compile with no warnings
+- [x] T046 Run `cd functions && rm -rf lib && npm run build && npm test` — all backend tests pass
+- [x] T047 Grep `functions/src/generators.ts` for inline prompt assembly outside `buildFinalImagePrompt()` — verify none exists (FR-006 compliance check)
+- [x] T048 Grep `functions/src/` for `resolvedImagePrompt` — verify it appears in: generators.ts (trace storage), index.ts (generation doc write), creativeMemory.ts (record storage), contractFixtures.test.ts (tests)
 
 ---
 
@@ -122,56 +110,59 @@
 ### Phase Dependencies
 
 ```text
-Phase 1 (Foundational)
-  ├── Phase 2: US1 — Input Audit (depends on T001 marker injection)
-  ├── Phase 3: US2 — Copy Fidelity (depends on T002 extraction + T003 validation)
-  ├── Phase 4: US3 — Blueprint UI (depends on T002 extraction, T014 strip function)
-  └── Phase 5: US1+US5 — Prompt Assembly (depends on T002 extraction)
-        └── Phase 6: US4 — Carousel Per-Slide (depends on T018/T019 buildFinalImagePrompt)
-              └── Phase 7: US6 — Regression Tests (depends on T018 buildFinalImagePrompt)
-Phase 8 (Polish) — depends on all
+Phase 1 (Foundational — T032 expand validateCopyFidelity)
+  ├── Phase 2: US2 — 4-Field Fidelity (depends on T032)
+  ├── Phase 5: US6 — Tests (depends on T032 for new signature)
+  └── Independent of Phases 3, 4, 6
+
+Phase 3 (US4 — Carousel) — Independent, can start immediately
+Phase 4 (US3+US5 — Storage) — Independent, can start immediately
+Phase 6 (US1 — Audit) — Independent, can start immediately
+
+Phase 7 (Polish) — depends on all
 ```
 
 ### Parallel Opportunities
 
 ```text
-# After Phase 1:
-Phase 2 (input audit) + Phase 3 (copy fidelity) + Phase 4 (blueprint UI) — all independent
-# Within Phase 2:
-T006 + T007 + T008 — different input categories, no file conflicts
-# Within Phase 7:
-T025 + T026 — independent test functions
+# After Phase 1 (T032):
+Phase 2 (4-field fidelity) + Phase 3 (carousel) + Phase 4 (storage) + Phase 6 (audit) — all independent
+
+# Within Phase 4:
+T039 + T040 — different files (index.ts vs App.tsx)
+
+# Within Phase 5:
+T041 + T042 + T043 — independent test functions in same file
 ```
 
 ---
 
 ## Implementation Strategy
 
-### MVP First (Phase 1 + Phase 2 + Phase 5)
+### MVP First (Phase 1 + Phase 2)
 
-1. Complete Phase 1: TECHNICAL_PROMPT extraction + copy fidelity function
-2. Complete Phase 2: Audit and fix all input injection gaps
-3. Complete Phase 5: Extract `buildFinalImagePrompt()` + trace storage
-4. **STOP and VALIDATE**: Every input feeds the prompt, prompt is auditable
+1. Complete Phase 1: Expand `validateCopyFidelity()` signature
+2. Complete Phase 2: Wire 4-field validation + warning banner UX
+3. **STOP and VALIDATE**: All 4 copy fields validated, warning banner works
 
 ### Incremental Delivery
 
-1. Foundational → extraction works
-2. Input audit → all gaps fixed (MVP!)
-3. Copy fidelity → bad prompts caught and retried
-4. Blueprint UI → users see their rendering plan
-5. Prompt assembly → single entry point, fully auditable
-6. Carousel per-slide → carousel prompts correct
-7. Regression tests → guards in place
+1. Foundational (T032) → new signature ready
+2. 4-field fidelity (T033-T036) → all copy fields validated, UX updated (MVP!)
+3. Carousel verification (T037-T038) → per-slide prompts confirmed correct
+4. Storage verification (T039-T040) → blueprintText in generation doc confirmed
+5. Expanded tests (T041-T043) → regression guards for all new behavior
+6. Input audit (T044) → final completeness pass
+7. Polish (T045-T048) → full verification
 
 ---
 
 ## Notes
 
-- 31 total tasks across 8 phases
+- 17 new tasks (T032–T048) across 7 phases
+- Continues from completed tasks T001–T031
 - Backend imports use `.js` extension (NodeNext): `import { validateCopyFidelity } from "./buildPlanSlotMap.js"`
-- `buildFinalImagePrompt()` becomes the SOLE prompt assembly entry point — no inline assembly after T019
-- Copy fidelity is simple `includes()` — no fuzzy matching, no edit distance
-- Optional inputs (brand colors, logos, Box C, reference ad) omitted from prompt when absent — no placeholders
-- Resolution trace stores full untruncated prompts; CreativeMemoryRecord truncates for storage efficiency
-- Per-slide carousel prompts each get their own `buildFinalImagePrompt()` call with correct per-slide copy
+- `validateCopyFidelity()` returns `{ passed, failedFields }` — callers check `passed` and log `failedFields`
+- Warning banner is NOT an error — generation auto-proceeds unless user cancels
+- Carousel per-slide tasks are verification/audit — may require no code changes if already wired
+- Storage verification tasks are audit — may require no code changes if already stored

@@ -16,7 +16,7 @@ import { getCopywritingStrategyPrompt, getCopywritingStrategyCaptionStructure, g
 import { getOfferHookPsychology, getCreativeModeConceptInstruction, getCreativeModeBuildPlanInstruction, getOfferCaptionStructure } from "./knowledge/offerCreativeModes.js";
 import { resolveCreativeSpec, getResolvedSpecPromptBlock, getCaptionCreativeModeAnchors, validateCombination, CREATIVE_MODE_CATALOG as _MODE_CATALOG, type ResolvedCreativeSpec, getSubStyleModeFusion, getBeforeAfterSubStyleFusion } from "./creativeResolver.js";
 import { compileFullContract, getContractRenderBlock, getContractCaptionBlock, getContractForScoring, type FullLayoutContract, type OverlayDataFilter } from "./layoutContract.js";
-import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, parseBuildPlanEnvelope, parseStructuredBuildPlanResponse, serializeBuildPlanEnvelope, validateStructuredBuildPlan, validateCopyFidelity, stripTechnicalPrompt, TECHNICAL_PROMPT_START, TECHNICAL_PROMPT_END, type BuildPlanSlotMap, type ContractCheckResult, type StructuredBuildPlanPayload } from "./buildPlanSlotMap.js";
+import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, parseBuildPlanEnvelope, parseStructuredBuildPlanResponse, serializeBuildPlanEnvelope, validateStructuredBuildPlan, validateCopyFidelity, stripTechnicalPrompt, TECHNICAL_PROMPT_START, TECHNICAL_PROMPT_END, type BuildPlanSlotMap, type ContractCheckResult, type StructuredBuildPlanPayload, type CopyFidelityFields, type CopyFidelityResult } from "./buildPlanSlotMap.js";
 import { compileModePayload, getModePayloadPromptBlock, getModePayloadPromptBlock_RenderSafe, getModePayloadCaptionAnchors, extractAuthorizedNumbers, getNumericFidelityPolicy, type ModePayload, type NumericFidelityPolicy } from "./modeFieldSchema.js";
 import { compositeOfferOverlay, isOverlayAvailable, extractOfferFacts, validateResolvedOfferFacts } from "./offerOverlay.js";
 import { validateCaption, validateArabicCompliance, validateBlueprintLanguage, validateBlueprintModeContribution, validateBlueprintMinimalStyle, sanitizeReferenceAdSummary, type CaptionValidationInput } from "./captionValidator.js";
@@ -3293,7 +3293,12 @@ Selected modes: [${modes.join(' + ')}]
 }
 
 // 3. Build Plan -> USE LOGIC MODEL (Engineer)
-export async function generateBuildPlan(conceptRaw: string, selectedTov: string, inputs: AdInputs, resolvedUniverse: string, currentAspectRatio: AspectRatio, textOverride?: TextOverride): Promise<string> {
+export interface GenerateBuildPlanResult {
+    buildPlan: string;
+    copyFidelityWarning: CopyFidelityResult | null;
+}
+
+export async function generateBuildPlan(conceptRaw: string, selectedTov: string, inputs: AdInputs, resolvedUniverse: string, currentAspectRatio: AspectRatio, textOverride?: TextOverride): Promise<GenerateBuildPlanResult> {
     const _bpModes = (inputs as any).offerCreativeMode || ['standard_hero'];
     const _bpCheck = validateCombination(_bpModes, inputs.coldHookAngle);
     console.log(`🎨 CREATIVE MODE AUDIT [generateBuildPlan]: modes=[${_bpModes.join(',')}] tab=${_bpCheck.resolvedTab || 'none'} valid=${_bpCheck.valid}${_bpCheck.errors.length ? ' errors: ' + _bpCheck.errors.join('; ') : ''}`);
@@ -3349,7 +3354,12 @@ ${ctaName ? `3. Action Benefit: "${benefitText}"
 4. Button: "${ctaName}"` : `⚠️ NO BUTTON / NO CTA / NO BENEFIT on this slide. Do NOT render any button, CTA bar, or benefit text. This is a MIDDLE carousel slide — headline and subheadline ONLY.`
         }
       ${inputs.badges ? `5. Badge/Sticker: "${inputs.badges}"` : ''}
-      ${inputs.offerType ? `OFFER: ${inputs.offerType} — match CTA style to this offer type.` : ''}
+      OFFER: ${inputs.offerType || 'Not specified'} — match CTA style to this offer type.
+      CAMPAIGN CONTEXT:
+      - Product: "${inputs.productName || ''}"
+      - Target Audience: "${inputs.targetAudience || ''}"
+      - Core Challenge: "${inputs.challenges || ''}"
+      - Transformation: "${inputs.transformation || ''}"
       ${inputs.adTone ? `TONE MOOD: ${inputs.adTone.toUpperCase()}
 ${getAdToneVisualMood(inputs.adTone)}` : ''}
       ${_bpEffectiveAngle ? `HOOK ANGLE: ${(_bpEffectiveAngle || '').toUpperCase()}
@@ -3627,14 +3637,17 @@ ${JSON.stringify(machinePlan)}`;
         return bp.slice(s + TECHNICAL_PROMPT_START.length, e).trim();
     };
 
+    const copyFields: CopyFidelityFields = { hookText, subheadText, ctaName, benefitText };
     const MAX_COPY_FIDELITY_ATTEMPTS = 3;
     let bestMachinePlan = machinePlan;
     let copyFidelityPassed = false;
+    let lastFidelityResult: CopyFidelityResult | null = null;
     for (let attempt = 1; attempt <= MAX_COPY_FIDELITY_ATTEMPTS; attempt++) {
         const tp = extractTechnicalPromptFromBlueprint(machinePlan.blueprint);
-        const fidelityOk = tp ? validateCopyFidelity(tp, hookText) : false;
+        const fidelityResult = tp ? validateCopyFidelity(tp, copyFields) : { passed: false, failedFields: ['hookText', 'subheadText', 'ctaName', 'benefitText'] } as CopyFidelityResult;
+        lastFidelityResult = fidelityResult;
         const contractOk = structuredValidation.contractCheck.passed;
-        if (fidelityOk && contractOk) {
+        if (fidelityResult.passed && contractOk) {
             copyFidelityPassed = true;
             bestMachinePlan = machinePlan;
             if (attempt > 1) {
@@ -3645,7 +3658,7 @@ ${JSON.stringify(machinePlan)}`;
         // Keep the best plan seen so far (prefer one that passes at least contract)
         if (contractOk) bestMachinePlan = machinePlan;
         if (attempt < MAX_COPY_FIDELITY_ATTEMPTS) {
-            console.warn(`⚠️ Copy fidelity ${fidelityOk ? 'passed' : 'failed'}, contract ${contractOk ? 'passed' : 'failed'} (attempt ${attempt}/${MAX_COPY_FIDELITY_ATTEMPTS}) — rebuilding plan...`);
+            console.warn(`⚠️ Copy fidelity ${fidelityResult.passed ? 'passed' : 'failed (fields: ' + fidelityResult.failedFields.join(', ') + ')'}, contract ${contractOk ? 'passed' : 'failed'} (attempt ${attempt}/${MAX_COPY_FIDELITY_ATTEMPTS}) — rebuilding plan...`);
             machinePlan = await requestStructuredPlan(prompt);
             if (!machinePlan.blueprint || machinePlan.blueprint.length < 80) {
                 throw new Error('Build plan blueprint was empty or too short on copy fidelity retry.');
@@ -3657,8 +3670,11 @@ ${JSON.stringify(machinePlan)}`;
     }
     // Use the best plan even if fidelity didn't pass — soft warning, not hard rejection
     machinePlan = bestMachinePlan;
-    if (!copyFidelityPassed) {
-        console.warn(`⚠️ Copy fidelity warning: hookText may not appear verbatim in TECHNICAL_PROMPT — using best available plan`);
+    const copyFidelityWarning: CopyFidelityResult | null = !copyFidelityPassed && lastFidelityResult
+        ? { passed: false, failedFields: lastFidelityResult.failedFields }
+        : null;
+    if (copyFidelityWarning) {
+        console.warn(`⚠️ Copy fidelity warning: fields [${copyFidelityWarning.failedFields.join(', ')}] may not appear verbatim in TECHNICAL_PROMPT — using best available plan`);
     }
 
     try {
@@ -3680,7 +3696,10 @@ ${JSON.stringify(machinePlan)}`;
         ownership: mergeContentOwnership(ownershipMap, machinePlan.ownership),
     };
 
-    return serializeBuildPlanEnvelope(finalMachinePlan.blueprint, finalMachinePlan);
+    return {
+        buildPlan: serializeBuildPlanEnvelope(finalMachinePlan.blueprint, finalMachinePlan),
+        copyFidelityWarning,
+    };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

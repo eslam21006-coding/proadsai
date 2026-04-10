@@ -100,7 +100,10 @@
       "Bash(bash .specify/scripts/bash/setup-plan.sh --json)",
       "Bash(bash .specify/scripts/bash/update-agent-context.sh --agent-type claude)",
       "Bash(bash .specify/scripts/bash/update-agent-context.sh claude)",
-      "Bash(bash .specify/scripts/bash/check-prerequisites.sh --json)"
+      "Bash(bash .specify/scripts/bash/check-prerequisites.sh --json)",
+      "Bash(.specify/scripts/powershell/check-prerequisites.ps1 -Json -PathsOnly)",
+      "Bash(grep -r \"ResolutionTrace\\\\|interface.*Trace\" /d/proads-worktrees/005-render-prompt-pipeline/functions/src/*.ts)",
+      "Bash(grep -r \"firestore\\\\|Firestore\\\\|db.collection\\\\|generations\" /d/proads-worktrees/005-render-prompt-pipeline/functions/src/*.ts)"
     ]
   }
 }

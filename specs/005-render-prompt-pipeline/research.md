@@ -1,98 +1,104 @@
 # Research: Blueprint → Long-Form Render Prompt Pipeline
 
-**Date**: 2026-04-02 | **Branch**: `005-render-prompt-pipeline`
+**Date**: 2026-04-10 (updated) | **Branch**: `005-render-prompt-pipeline`
 
-## R1: Current Build Plan Input Injection Status
+## R1: Current Implementation State
 
-**Decision**: Audit existing `generateBuildPlan()` and fix gaps — do not replace the function.
+**Decision**: The pipeline is partially implemented. Focus work on gaps, not rewrites.
 
-**Findings**: `generateBuildPlan()` in `functions/src/generators.ts:3296` already injects most Step 1 inputs:
-- Creative mode (`offerCreativeMode`) — via `compileFullContract()` + mode spec block
-- Sub-style (`visualSubStyle`) — via `resolveVisualSubStyle()` constraint block
-- Hook angle (`coldHookAngle`) — via `getHookAngleVisualDirection()`
-- Ad tone (`adTone`) — via `getAdToneVisualMood()`
-- Brand colors (`brandColorPrimary`, `brandColorSecondary`) — injected as hex values
-- Campaign type + retargeting objection — via retargeting context block
-- Universe — passed as `resolvedUniverse` parameter
+**Findings**: Codebase research reveals significant existing infrastructure:
 
-Step 2 copy text (`hookText`, `subheadText`, `ctaName`, `benefitText`) is injected unconditionally via `TEXTS TO RENDER` and `buildContentOwnershipMap()`.
+| Component | File:Line | Status |
+|-----------|-----------|--------|
+| `generateBuildPlan()` | generators.ts:3296 | EXISTS — Step 1 inputs injected (productName:982, targetAudience:989, challenges:990, transformation:991, offerType:3352, creative mode, sub-style, hook angle, tone, brand colors:3393) |
+| `buildFinalImagePrompt()` | generators.ts:3733 | EXISTS — single assembly function returning `{ textPrompt, imageParts, trace }` |
+| `parseBuildPlanEnvelope()` | buildPlanSlotMap.ts:330 | EXISTS — extracts `technicalPrompt` via `[[TECHNICAL_PROMPT]]` markers as named field |
+| `validateCopyFidelity()` | buildPlanSlotMap.ts:545 | EXISTS — **checks hookText ONLY** via NFC normalization |
+| `stripTechnicalPrompt()` | buildPlanSlotMap.ts:551 | EXISTS — strips `[[TECHNICAL_PROMPT]]` markers for user-facing display |
+| `ResolutionTrace` | generators.ts:3782 | EXISTS — `resolvedImagePrompt` (5000 chars), `blueprintText` (2000 chars), `technicalPrompt` (3000 chars) |
+| `creativeMemory` storage | creativeMemory.ts:154-155 | EXISTS — stores `blueprintText` and `resolvedImagePrompt` |
+| "View Blueprint" UI panel | App.tsx:5676 | EXISTS — expandable panel in Step 3 |
+| Regression tests | contractFixtures.test.ts:670-729 | EXISTS — T024 (hookText verbatim), T025 (luxury_magazine), T026 (retargeting direction), T027 (copy fidelity) |
 
-Mode-specific data (`valueStackItems`, `eventTitle`, `eventDate`, `valueStackPrice`, etc.) is injected conditionally via `buildContentOwnershipMap()`.
+**Rationale**: Extending the existing architecture is lower-risk than rewriting. The `buildFinalImagePrompt()` function is already the single assembly point (FR-006 compliance).
 
-**Gap**: No systematic audit has verified ALL fields are present in ALL code paths. Some conditionals may skip fields silently. The audit (task 5.1/5.2) must walk every conditional and ensure no input is silently dropped.
-
-**Rationale**: Extending the existing function is lower-risk than rewriting it.
-
-**Alternatives rejected**: Full rewrite of `generateBuildPlan()` — too risky, too many dependent flows.
-
----
-
-## R2: TECHNICAL_PROMPT Extraction
-
-**Decision**: Add named extraction to `parseBuildPlanEnvelope()` in `buildPlanSlotMap.ts`.
-
-**Findings**: The build plan currently uses `[[PROADS_MACHINE_PLAN_V1]]..[[/PROADS_MACHINE_PLAN_V1]]` markers for the machine-readable portion. `parseBuildPlanEnvelope()` returns `{ blueprint: string, machinePlan: StructuredBuildPlanPayload | null }`. The `machinePlan` is the structured JSON portion — the `TECHNICAL_PROMPT` (the long-form English render prompt) is a separate concept embedded in the blueprint text, not yet extracted as a named field.
-
-**Rationale**: Named field extraction is safer and more maintainable than substring search. The existing marker pattern (`[[...]]`) can be extended with a new marker pair for `TECHNICAL_PROMPT`.
-
-**Alternatives rejected**: Regex substring search — fragile, breaks on prompt format changes.
+**Alternatives rejected**: Full rewrite — too risky, existing architecture is sound.
 
 ---
 
-## R3: Final Image Prompt Assembly
+## R2: Copy Fidelity Validation Gap (Critical)
 
-**Decision**: Extract inline prompt assembly from `generateFinalAd()` into a dedicated `buildFinalImagePrompt()` function.
+**Decision**: Expand `validateCopyFidelity()` to check all 4 copy fields (hookText, subheadText, ctaName, benefitText).
 
-**Findings**: In `generateFinalAd()` (~line 4656+), the final prompt is assembled inline as a `parts[]` array combining:
-1. `coreDesignRules` (large template literal with design system rules)
-2. Sanitized blueprint (TECHNICAL_PROMPT markers stripped for user display)
-3. Text directives (hookText, subheadText, ctaName)
-4. Image parts (Box A photos, Box B logos, Box C assets)
+**Findings**: Current implementation at buildPlanSlotMap.ts:545 only validates `hookText`:
+```typescript
+export function validateCopyFidelity(technicalPrompt: string | null, hookText: string): boolean {
+    if (!technicalPrompt || !hookText?.trim()) return false;
+    const normalizeText = (s: string) => s.normalize('NFC').trim().replace(/\s+/g, ' ');
+    return normalizeText(technicalPrompt).includes(normalizeText(hookText));
+}
+```
 
-This is ~200 lines of inline assembly with no single entry point. The new `buildFinalImagePrompt()` function will consolidate this into one callable function with a defined signature.
+Per spec clarification (2026-04-10), all four unconditional copy fields must be validated. The function signature needs to accept an object with all 4 fields and validate each non-empty field independently.
 
-**Rationale**: Single assembly point makes the prompt auditable (Constitution VI), testable (FR-011), and prevents inline assembly elsewhere (FR-006).
+**Rationale**: Per FR-003 — any absent/paraphrased field triggers retry. Checking only hookText misses subheadText, ctaName, and benefitText violations.
 
-**Alternatives rejected**: Keeping inline assembly + adding logging — still fragile, still untestable in isolation.
-
----
-
-## R4: Resolution Trace Schema Extension
-
-**Decision**: Add `resolvedImagePrompt` and `blueprintText` fields to the existing ResolutionTrace schema.
-
-**Findings**: ResolutionTrace already exists in `specs/001-resolver-completeness-trace/` with fields for resolved modes, styles, angles, objections, slide counts, auto-switch events, and per-slide data. It is persisted to Firestore on `generations/{genId}` documents fire-and-forget. The `perSlide` array exists but does not currently include per-slide prompt data.
-
-**Rationale**: Extending the existing schema is straightforward. The trace is already fire-and-forget, so adding string fields has minimal performance impact.
+**Alternatives rejected**:
+- Single combined string check — masks which field failed
+- Only hookText (matrix 5.3 literal scope) — rejected per clarification
 
 ---
 
-## R5: Step 3 Blueprint UI
+## R3: Prompt Assembly Order Verification
 
-**Decision**: Add expandable "View Blueprint" panel within existing Step 3 concept card UI.
+**Decision**: Current `buildFinalImagePrompt()` assembly order is correct but achieves FR-005 through delegation, not direct inclusion.
 
-**Findings**: Step 3 already uses expandable accordion cards for concept display (environment, mood, lighting, text layout panels). The existing UI pattern supports adding another expandable section. The blueprint text needs the TECHNICAL_PROMPT portion stripped before display.
+**Findings**: The function (generators.ts:3755-3780) assembles:
+1. `coreDesignRules` (param) — contains layout contract zone rules, aspect ratio, sub-style constraints, creative mode rules
+2. `technicalPrompt` — extracted from blueprint
+3. Stripped blueprint
+4. Copy texts (hookText, subheadText, ctaName, benefitText)
+5. `carouselAnchorNote` — carousel context
+6. `retargetingDesignHint` — campaign type visual direction
+7. Text rendering rules block
+8. `imageParts` (param) — Box A photos, Box B logos, Box C assets, style reference
 
-**Rationale**: Reuses existing UI patterns — no new component library needed.
+FR-005's 10-item list maps correctly:
+- Items 1-5: split between `coreDesignRules` param and `technicalPrompt`
+- Item 6 (brand colors): injected upstream in `generateBuildPlan()`, echoed in TECHNICAL_PROMPT
+- Items 7-10 (uploads): passed via `imageParts` multimodal array
+
+**Rationale**: The delegation pattern is correct for this architecture — Gemini needs these inputs at build plan generation time, not just at final assembly. No structural change needed.
 
 ---
 
-## R6: Carousel Per-Slide Handling
+## R4: Carousel Per-Slide Prompt Wiring
 
-**Decision**: Ensure `buildFinalImagePrompt()` is called per-slide with correct per-slide copy.
+**Decision**: Wire `buildFinalImagePrompt()` per-slide in carousel generation path with per-slide copy text. Populate `ResolutionTrace.perSlide`.
 
-**Findings**: The carousel flow generates per-slide build plans by appending `[CAROUSEL SLIDE N]: {slideInstruction}` to the base concept. Each slide gets its own `generateBuildPlan()` call. The final image render (`generateFinalAd()`) is called per-slide. The new `buildFinalImagePrompt()` must receive the correct per-slide `hookText`/`subheadText` — not slide 1's text reused.
+**Findings**: `ResolutionTrace.perSlide` type is defined (generators.ts:3786 area) but needs verification that it's populated during carousel runs. The carousel flow generates per-slide build plans, but each slide's `buildFinalImagePrompt()` call must use that slide's specific hookText/subheadText — not slide 1's text reused. The `perSlide` trace array must store per-slide `blueprintText` and `resolvedImagePrompt`.
 
-**Rationale**: The per-slide architecture already exists. The change is ensuring the new assembly function is called at each slide's render point with the right copy text.
+**Alternatives rejected**: Shared prompt with slide-number injection — violates FR-010 (per-slide copy correctness).
 
 ---
 
-## R7: Copy Fidelity Validation
+## R5: Warning Banner UX Pattern
 
-**Decision**: Add hookText presence check to `validateStructuredBuildPlan()` in `buildPlanSlotMap.ts`.
+**Decision**: Use existing toast/banner pattern for retry exhaustion warning with cancel/retry action buttons.
 
-**Findings**: `validateStructuredBuildPlan()` currently checks zone assignments, mustShow elements, and overlay slots against the layout contract. It does NOT check for hookText presence in the machine plan. The check is a simple `includes()` on the extracted TECHNICAL_PROMPT string against the approved hookText.
+**Findings**: App.tsx already has:
+- `showToast()` for success/error states (lines 3238, 3260)
+- `copy_fidelity_failed` error code handling (line 3366)
+- The warning banner should auto-proceed after a timeout (or immediately if user doesn't intervene), with "Cancel" and "Retry" action buttons.
 
-**Rationale**: Simple substring check is sufficient — the spec defines "verbatim" as exact string match with whitespace normalization. Arabic text should match correctly since both strings come from the same pipeline (no re-encoding).
+**Alternatives rejected**: Modal dialog — too disruptive for a warning that doesn't require action (auto-proceeds by default).
 
-**Alternatives rejected**: Fuzzy matching / edit-distance — adds complexity, false positives, and undermines the "verbatim" guarantee.
+---
+
+## R6: blueprintText Storage Verification
+
+**Decision**: Verify `blueprintText` is stored in the primary Firestore generation document, not only in `creativeMemory`.
+
+**Findings**: Currently stored in `creativeMemory/{creativeId}` (creativeMemory.ts:154-155) as part of the creative memory audit trail. FR-009 requires it in the generation record (`generations/{genId}`). Need to verify the main generation document also persists these fields.
+
+**Alternatives rejected**: Store only in creativeMemory — FR-009 explicitly requires it in the generation record.
