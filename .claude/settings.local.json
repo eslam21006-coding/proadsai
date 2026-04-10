@@ -103,7 +103,8 @@
       "Bash(bash .specify/scripts/bash/check-prerequisites.sh --json)",
       "Bash(bash .specify/scripts/bash/create-new-feature.sh \"Phase 9: Team Management\" --json --short-name \"team-management\")",
       "Bash(powershell.exe -File .specify/scripts/powershell/check-prerequisites.ps1 -Json -PathsOnly)",
-      "Bash(grep -rn:*)"
+      "Bash(grep -rn:*)",
+      "Bash(gh pr:*)"
     ]
   }
 }
