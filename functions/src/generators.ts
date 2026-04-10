@@ -6405,6 +6405,8 @@ import { resolveTestimonialSlideCount } from "./creativeResolver.js";
 
 export { setTestimonialGeminiCaller };
 
+const ALLOWED_STYLES: ReadonlySet<VisualStyleFamily> = new Set(["realistic", "fantasy", "minimal"] as const);
+
 export async function generateTestimonialHookSlide(
     inputs: AdInputs,
     testimonialCount: number,
@@ -6558,7 +6560,6 @@ export async function generateTestimonialCarousel(
     maxPlanSlides: number,
 ): Promise<TestimonialCarouselResult> {
     const ctaText = inputs.cta || '';
-    const ALLOWED_STYLES: ReadonlySet<VisualStyleFamily> = new Set(["realistic", "fantasy", "minimal"] as const);
     const rawStyle = resolveStyleFamily(inputs);
     const visualStyleFamily: VisualStyleFamily = ALLOWED_STYLES.has(rawStyle as VisualStyleFamily)
         ? (rawStyle as VisualStyleFamily)
