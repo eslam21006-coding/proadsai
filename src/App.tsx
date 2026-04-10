@@ -3373,36 +3373,39 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   const checkCopyFidelity = (concept: string, tov: string): string[] => {
     const tpStart = concept.indexOf('[[TECHNICAL_PROMPT]]');
     const tpEnd = concept.indexOf('[[/TECHNICAL_PROMPT]]');
-    if (tpStart === -1 || tpEnd === -1) return []; // no TECHNICAL_PROMPT to check
-    const tp = concept.slice(tpStart + 20, tpEnd).normalize('NFC').trim().replace(/\s+/g, ' ');
-    if (!tp) return [];
-    const failed: string[] = [];
     // Extract copy fields from selectedTov
     const hookMatch = tov.match(/HOOK_TEXT:\s*(.+)/);
     const subMatch = tov.match(/SUBHEADLINE:\s*(.+)/);
     const ctaMatch = tov.match(/CTA_BUTTON:\s*(.+)/);
+    const ctaRaw = ctaMatch?.[1]?.trim() || '';
+    const benefitMatch = ctaRaw.includes('|||') ? ctaRaw.split('|||') : null;
+    const hookVal = hookMatch?.[1]?.trim();
+    // hookText is required — blank hookText always fails
+    if (!hookVal) return ['hookText'];
+    // Missing TECHNICAL_PROMPT is a failure
+    if (tpStart === -1 || tpEnd === -1) return ['technicalPrompt'];
+    const tp = concept.slice(tpStart + 20, tpEnd).normalize('NFC').trim().replace(/\s+/g, ' ');
+    if (!tp) return ['technicalPrompt'];
+    const norm = (s: string) => s.normalize('NFC').trim().replace(/\s+/g, ' ');
+    const failed: string[] = [];
     const fields: [string, string | undefined][] = [
-      ['hookText', hookMatch?.[1]?.trim()],
+      ['hookText', hookVal],
       ['subheadText', subMatch?.[1]?.trim()],
-      ['ctaName', ctaMatch?.[1]?.split('|||')[0]?.trim()],
+      ['ctaName', benefitMatch ? benefitMatch[0]?.trim() : ctaRaw || undefined],
+      ['benefitText', benefitMatch ? benefitMatch[1]?.trim() : undefined],
     ];
     for (const [name, val] of fields) {
-      if (val && !tp.includes(val.normalize('NFC').trim().replace(/\s+/g, ' '))) {
+      if (name === 'hookText') {
+        // hookText is required — always check
+        if (!val || !tp.includes(norm(val))) failed.push(name);
+      } else if (val && !tp.includes(norm(val))) {
         failed.push(name);
       }
     }
     return failed;
   };
 
-  const fidelityFieldLabel = (key: string): string => {
-    const labels: Record<string, Record<string, string>> = {
-      hookText: { ar: 'العنوان الرئيسي', en: 'Headline' },
-      subheadText: { ar: 'العنوان الفرعي', en: 'Subheadline' },
-      ctaName: { ar: 'زر الإجراء', en: 'CTA Button' },
-      benefitText: { ar: 'نص الفائدة', en: 'Benefit Text' },
-    };
-    return labels[key]?.[lang] || labels[key]?.en || key;
-  };
+  const fidelityFieldLabel = (key: string): string => t(`fidelity.${key}`);
 
   const handleApproveConcept = async (conceptRaw: string) => {
     if (!inputs) return;
@@ -3421,10 +3424,24 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             proceedWithRender(conceptRaw);
             resolve();
           },
-          onRetry: () => {
-            // Re-trigger concept generation
-            showToast(lang === 'ar' ? 'جاري إعادة إنشاء المخطط...' : 'Regenerating blueprint...', 'info');
+          onRetry: async () => {
             resolve();
+            // Re-trigger concept generation with same inputs
+            if (!inputs || !selectedTov) return;
+            if (!deductCredits('generateConcepts')) return;
+            showToast(t('fidelity.retrying'), 'info');
+            startLoad(t('fidelity.retrying'));
+            try {
+              const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 1) || [] };
+              let res = unwrapGen(await gemini.generateConcepts(selectedTov, cleanInputs, resolvedUniverse, 'initial', '', globalRefinement));
+              res = res ? normalizeFieldLabels(res) : res;
+              if (res && (res.includes('CONCEPT_START') || res.includes('SUBJECT_ACTION'))) {
+                setConceptsText(res);
+              } else {
+                refundCredits('generateConcepts');
+                showToast('Blueprint generation returned empty. Credits refunded.', 'error');
+              }
+            } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
           },
           onCancel: () => {
             // Abort — stay on Step 3
@@ -7890,13 +7907,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 </div>
                 <div>
                   <h3 className="text-sm font-black text-white uppercase tracking-wider">
-                    {lang === 'ar' ? 'تحقق من دقة النص' : 'Copy Fidelity Notice'}
+                    {t('fidelity.title')}
                   </h3>
                   <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
-                    {lang === 'ar'
-                      ? `لم يتم التحقق من ظهور النصوص التالية حرفياً في التصميم: ${copyFidelityWarning.failedFields.map(f => fidelityFieldLabel(f)).join('، ')}. يمكنك المتابعة أو إعادة المحاولة.`
-                      : `The following copy fields could not be verified verbatim in the design prompt: ${copyFidelityWarning.failedFields.map(f => fidelityFieldLabel(f)).join(', ')}. You can continue or retry.`
-                    }
+                    {t('fidelity.description', { fields: copyFidelityWarning.failedFields.map(f => fidelityFieldLabel(f)).join(lang === 'ar' ? '، ' : ', ') })}
                   </p>
                 </div>
               </div>
@@ -7909,7 +7923,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   }}
                   className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-400 bg-slate-900 border border-slate-800 hover:text-white hover:border-slate-700 transition-all"
                 >
-                  {lang === 'ar' ? 'إلغاء' : 'Cancel'}
+                  {t('fidelity.cancel')}
                 </button>
                 <button
                   onClick={() => {
@@ -7919,7 +7933,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   }}
                   className="px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 border border-blue-500 hover:bg-blue-500 transition-all"
                 >
-                  {lang === 'ar' ? 'إعادة المحاولة' : 'Retry'}
+                  {t('fidelity.retry')}
                 </button>
                 <button
                   onClick={() => {
@@ -7929,7 +7943,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   }}
                   className="px-5 py-2.5 rounded-xl text-xs font-black text-white bg-amber-500 hover:bg-amber-400 transition-all shadow-lg shadow-amber-500/20"
                 >
-                  {lang === 'ar' ? 'متابعة' : 'Continue'}
+                  {t('fidelity.continue')}
                 </button>
               </div>
             </div>
