@@ -6408,7 +6408,7 @@ export { setTestimonialGeminiCaller };
 export async function generateTestimonialHookSlide(
     inputs: AdInputs,
     testimonialCount: number,
-    visualStyleFamily: VisualStyleFamily = "realistic",
+    visualStyleFamily: VisualStyleFamily,
 ): Promise<{ hookText: string; subheadText: string }> {
     const campaignType = (inputs as any).campaignType || 'cold';
     const isRetargeting = campaignType === 'retargeting';
@@ -6484,7 +6484,7 @@ SUBHEADLINE: one line of supporting text`;
 
 export async function generateTestimonialCloseSlide(
     inputs: AdInputs,
-    visualStyleFamily: VisualStyleFamily = "realistic",
+    visualStyleFamily: VisualStyleFamily,
 ): Promise<{ closeText: string; subheadText: string }> {
     const campaignType = (inputs as any).campaignType || 'cold';
     const isRetargeting = campaignType === 'retargeting';
@@ -6560,7 +6560,11 @@ export async function generateTestimonialCarousel(
     maxPlanSlides: number,
 ): Promise<TestimonialCarouselResult> {
     const ctaText = inputs.cta || '';
-    const visualStyleFamily = resolveStyleFamily(inputs) || 'realistic';
+    const ALLOWED_STYLES: ReadonlySet<VisualStyleFamily> = new Set(["realistic", "fantasy", "minimal"] as const);
+    const rawStyle = resolveStyleFamily(inputs);
+    const visualStyleFamily: VisualStyleFamily = ALLOWED_STYLES.has(rawStyle as VisualStyleFamily)
+        ? (rawStyle as VisualStyleFamily)
+        : "realistic";
 
     const totalSlides = resolveTestimonialSlideCount(screenshots.length, maxPlanSlides);
     const testimonialCount = totalSlides - 2;
