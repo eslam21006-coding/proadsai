@@ -6665,24 +6665,27 @@ export async function generateVisualPolishes(currentRender: string, inputs: AdIn
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { detectTestimonialPlatform, buildTestimonialMockup, setTestimonialGeminiCaller } from "./testimonialMockup.js";
-import type { PlatformType, TestimonialSlideResult, TestimonialCarouselResult } from "./types.js";
+import type { PlatformType, TestimonialSlideResult, TestimonialCarouselResult, VisualStyleFamily } from "./types.js";
 import { resolveTestimonialSlideCount } from "./creativeResolver.js";
 
 export { setTestimonialGeminiCaller };
 
+const ALLOWED_STYLES: ReadonlySet<VisualStyleFamily> = new Set(["realistic", "fantasy", "minimal"] as const);
+
 export async function generateTestimonialHookSlide(
     inputs: AdInputs,
     testimonialCount: number,
+    visualStyleFamily: VisualStyleFamily,
 ): Promise<{ hookText: string; subheadText: string }> {
-    const campaignType = (inputs as any).campaignType || 'cold';
-    const isRetargeting = campaignType === 'retargeting';
+    const rtCtx = buildNormalizedRetargetingContext(inputs as any);
     const ctaText = inputs.cta || '';
     const lang = inputs.adLanguage || 'ar_fusha';
     const langInstruction = getLanguageInstruction(lang);
+    const artDirectionBlock = `ART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
 
     let prompt: string;
-    if (isRetargeting) {
-        const objectionText = (inputs as any).retargetingObjection || (inputs as any).retargetingObjectionText || '';
+    if (rtCtx.isRetargeting) {
+        const objectionText = rtCtx.effectiveObjectionText;
         prompt = `Write a RETARGETING carousel hook slide (slide 1) for a testimonial carousel.
 
 CAMPAIGN TYPE: Retargeting (warm traffic)
@@ -6691,6 +6694,8 @@ TESTIMONIAL COUNT: ${testimonialCount} testimonials available as evidence
 CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
+
+${artDirectionBlock}
 
 RULES:
 - The headline MUST name or reference the specific objection: "${objectionText}"
@@ -6703,8 +6708,8 @@ RULES:
 - The tone should feel like "you had a doubt? let me show you something"
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your hook text]
-SUBHEADLINE: [supporting text]`;
+HEADLINE: one line of hook text
+SUBHEADLINE: one line of supporting text`;
     } else {
         prompt = `Write a COLD carousel hook slide (slide 1) for a testimonial carousel.
 
@@ -6713,6 +6718,8 @@ TESTIMONIAL COUNT: ${testimonialCount} testimonials available
 CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
+
+${artDirectionBlock}
 
 RULES:
 - Create curiosity to swipe by teasing social proof WITHOUT showing it
@@ -6724,8 +6731,8 @@ RULES:
 - The tone should feel like "wait until you see this"
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your hook text]
-SUBHEADLINE: [supporting text]`;
+HEADLINE: one line of hook text
+SUBHEADLINE: one line of supporting text`;
     }
 
     const response = await retry(() => callGemini({
@@ -6743,16 +6750,17 @@ SUBHEADLINE: [supporting text]`;
 
 export async function generateTestimonialCloseSlide(
     inputs: AdInputs,
+    visualStyleFamily: VisualStyleFamily,
 ): Promise<{ closeText: string; subheadText: string }> {
-    const campaignType = (inputs as any).campaignType || 'cold';
-    const isRetargeting = campaignType === 'retargeting';
+    const rtCtx = buildNormalizedRetargetingContext(inputs as any);
     const ctaText = inputs.cta || '';
     const lang = inputs.adLanguage || 'ar_fusha';
     const langInstruction = getLanguageInstruction(lang);
+    const artDirectionBlock = `ART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
 
     let prompt: string;
-    if (isRetargeting) {
-        const objectionText = (inputs as any).retargetingObjection || (inputs as any).retargetingObjectionText || '';
+    if (rtCtx.isRetargeting) {
+        const objectionText = rtCtx.effectiveObjectionText;
         prompt = `Write a RETARGETING close slide (last slide) for a testimonial carousel.
 
 CAMPAIGN TYPE: Retargeting (warm traffic)
@@ -6760,6 +6768,8 @@ OBJECTION: "${objectionText}"
 CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
+
+${artDirectionBlock}
 
 RULES:
 - This is the FINAL slide after multiple testimonial slides
@@ -6771,8 +6781,8 @@ RULES:
 - Subheadline: max 15 words, final push
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your close text]
-SUBHEADLINE: [supporting text]`;
+HEADLINE: one line of close text
+SUBHEADLINE: one line of supporting text`;
     } else {
         prompt = `Write a COLD close slide (last slide) for a testimonial carousel.
 
@@ -6780,6 +6790,8 @@ CAMPAIGN TYPE: Cold (new traffic)
 CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
+
+${artDirectionBlock}
 
 RULES:
 - This is the FINAL slide after multiple testimonial slides
@@ -6790,8 +6802,8 @@ RULES:
 - Subheadline: max 15 words, final push
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your close text]
-SUBHEADLINE: [supporting text]`;
+HEADLINE: one line of close text
+SUBHEADLINE: one line of supporting text`;
     }
 
     const response = await retry(() => callGemini({
@@ -6813,11 +6825,15 @@ export async function generateTestimonialCarousel(
     maxPlanSlides: number,
 ): Promise<TestimonialCarouselResult> {
     const ctaText = inputs.cta || '';
+    const rawStyle = resolveStyleFamily(inputs);
+    const visualStyleFamily: VisualStyleFamily = ALLOWED_STYLES.has(rawStyle as VisualStyleFamily)
+        ? (rawStyle as VisualStyleFamily)
+        : "realistic";
 
     const totalSlides = resolveTestimonialSlideCount(screenshots.length, maxPlanSlides);
     const testimonialCount = totalSlides - 2;
 
-    console.log(`💬 Testimonial carousel: ${screenshots.length} screenshots, ${totalSlides} slides (${testimonialCount} testimonials + hook + close)`);
+    console.log(`💬 Testimonial carousel: ${screenshots.length} screenshots, ${totalSlides} slides (${testimonialCount} testimonials + hook + close), style=${visualStyleFamily}`);
 
     const platforms = await Promise.all(
         screenshots.slice(0, testimonialCount).map((s) => detectTestimonialPlatform(s))
@@ -6825,11 +6841,11 @@ export async function generateTestimonialCarousel(
     console.log(`💬 Detected platforms: ${platforms.join(', ')}`);
 
     const [hookResult, mockupResults, closeResult] = await Promise.all([
-        generateTestimonialHookSlide(inputs, testimonialCount),
+        generateTestimonialHookSlide(inputs, testimonialCount, visualStyleFamily),
         Promise.all(
-            screenshots.slice(0, testimonialCount).map((s, i) => buildTestimonialMockup(s, platforms[i]))
+            screenshots.slice(0, testimonialCount).map((s, i) => buildTestimonialMockup(s, platforms[i], visualStyleFamily))
         ),
-        generateTestimonialCloseSlide(inputs),
+        generateTestimonialCloseSlide(inputs, visualStyleFamily),
     ]);
 
     const slides: TestimonialSlideResult[] = [];
@@ -6870,5 +6886,6 @@ export async function generateTestimonialCarousel(
         slides,
         detectedPlatforms: platforms,
         totalSlides,
+        visualStyleFamily,
     };
 }
