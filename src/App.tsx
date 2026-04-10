@@ -10,6 +10,8 @@ import { gemini, type GenerationResult } from './services/geminiService';
 import { resolveCreativeSpec, CREATIVE_MODE_CATALOG, type ResolvedCreativeSpec } from './creativeResolver';
 import { isValidHookPayload, validateCanonicalHooks, normalizeHooksToCanonical, getHookValidationSummary } from './utils/hookPayload';
 import FeedbackButtons from './components/FeedbackButtons';
+import FavoritesPanel from './components/FavoritesPanel';
+import { useFavorites } from './hooks/useFavorites';
 import MagicSelector, { type EditRequest } from './components/MagicSelector';
 import { feedbackService, type NegativeFeedbackTag } from './services/feedbackService';
 import { metaService, type MetaConnection } from './services/metaService';
@@ -20,6 +22,9 @@ import { ALL_UNIVERSES, type UniverseEntry } from './universeDatabase';
 const InputForm = React.lazy(() => import('./components/InputForm'));
 const PerformanceDashboard = React.lazy(() => import('./components/PerformanceDashboard'));
 const PricingTableLazy = React.lazy(() => import('./components/PricingTable'));
+const JoinTeamLazy = React.lazy(() => import('./pages/JoinTeam'));
+const TeamLazy = React.lazy(() => import('./pages/Team'));
+const BillingPage = React.lazy(() => import('./pages/Billing'));
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import WorkspaceSettingsModal from './components/WorkspaceSettingsModal';
 
@@ -856,8 +861,8 @@ function sanitizeProjectModes(inputs: any): any {
   }
   // Sanitize removed offer types
   if (clean.offerType && !OFFER_TYPES.includes(clean.offerType)) {
-    console.warn(`🧹 Legacy offer type: "${clean.offerType}" → "Mini-Course"`);
-    clean.offerType = 'Mini-Course';
+    console.warn(`🧹 Legacy offer type: "${clean.offerType}" → "Live Event"`);
+    clean.offerType = 'Live Event';
   }
   return clean;
 }
@@ -998,13 +1003,18 @@ const App: React.FC = () => {
               setIsTrialUser(ownerData.isTrial === true);
               setStripeCustomerId(ownerData.stripeCustomerId ?? null);
               setBillingStatus(ownerData.billingStatus || 'active');
+              setTeamOwnerName(ownerData.displayName || ownerData.email?.split('@')[0] || 'Owner');
             } else {
               setUserCredits(0);
               setUserPlan('none');
               setIsTrialUser(false);
               setBillingStatus('cancelled');
+              setTeamOwnerName(null);
             }
           } else {
+            setTeamOwnerUid(null);
+            setTeamRole(null);
+            setTeamOwnerName(null);
             setUserCredits(userData.credits ?? 0);
             // Plan is stored directly — isTrial just affects credit behavior, not features
             const effectivePlan = (userData.plan ?? 'none');
@@ -1175,7 +1185,8 @@ const App: React.FC = () => {
       if (snap.exists()) {
         const data = snap.data();
         if (data.isTeamMember && data.teamOwnerUid) {
-          // Team member: listen to owner doc for credits/plan/billing
+          setTeamOwnerUid(data.teamOwnerUid);
+          setTeamRole(data.teamRole || 'viewer');
           const ownerRef = doc(db, 'users', data.teamOwnerUid);
           getDoc(ownerRef).then(ownerSnap => {
             if (ownerSnap.exists()) {
@@ -1184,11 +1195,19 @@ const App: React.FC = () => {
               setUserPlan((ow.plan ?? 'none') as UserPlan);
               setIsTrialUser(ow.isTrial === true);
               setBillingStatus(ow.billingStatus || 'active');
+              setTeamOwnerName(ow.displayName || ow.email?.split('@')[0] || 'Owner');
             } else {
               setBillingStatus('cancelled');
+              setTeamOwnerName(null);
             }
           }).catch(() => { /* non-blocking */ });
           return;
+        }
+        if (isTeamMember && !data.isTeamMember && !removedFromTeam) {
+          setRemovedFromTeam(true);
+          setTeamOwnerUid(null);
+          setTeamRole(null);
+          setTeamOwnerName(null);
         }
         setUserCredits(data.credits ?? 0);
         const effectivePlan = ((data.plan ?? 'none') as UserPlan);
@@ -1427,13 +1446,16 @@ const App: React.FC = () => {
   const [isTrialUser, setIsTrialUser] = useState(false);
   const [hasVaultData, setHasVaultData] = useState(false);
   const [billingStatus, setBillingStatus] = useState<'active' | 'past_due' | 'cancelled'>('active');
+  const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
   const [teamOwnerUid, setTeamOwnerUid] = useState<string | null>(null);
   const [teamRole, setTeamRole] = useState<string | null>(null);
+  const [teamOwnerName, setTeamOwnerName] = useState<string | null>(null);
+  const [removedFromTeam, setRemovedFromTeam] = useState(false);
   const isTeamViewer = teamRole === 'viewer';
-  // For team members, use the owner's UID for all avatar/project Firestore operations
   const effectiveUid = teamOwnerUid || user?.uid || null;
   effectiveUidRef.current = effectiveUid;
-  const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
+  const isTeamMember = !!teamOwnerUid;
+  const isTeamOwner = !isTeamMember && !!user;
   const [avatars, setAvatars] = useState<AudienceAvatar[]>([]);
   const [competitorData, setCompetitorData] = useState<CompetitorResearch | null>(null);
   const [competitorLoading, setCompetitorLoading] = useState(false);
@@ -1446,11 +1468,16 @@ const App: React.FC = () => {
   const [favoritesData, setFavoritesData] = useState<any[]>([]);
   const [favTab, setFavTab] = useState('all');
   const [favoritesLoading, setFavoritesLoading] = useState(false);
+  const [openFavoritesPhase, setOpenFavoritesPhase] = useState<'hooks' | 'concepts' | 'render' | 'caption' | null>(null);
+  const [loadedFavoriteId, setLoadedFavoriteId] = useState<string | null>(null);
+  const [favUpdatePrompt, setFavUpdatePrompt] = useState<{ phase: string; newGenId: string } | null>(null);
+  const [loadedRenderRecord, setLoadedRenderRecord] = useState<any>(null);
   const [upgradeReason, setUpgradeReason] = useState('');
   const [showAccountMenu, setShowAccountMenu] = useState(false);
 
   // ─── BILLING MODAL STATE ───────────────────────────────────────────
   const [showBillingModal, setShowBillingModal] = useState(false);
+  const [showBillingPage, setShowBillingPage] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showTeamModal, setShowTeamModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
@@ -1676,7 +1703,6 @@ const App: React.FC = () => {
   };
 
   const handleRemoveTeamMember = async (memberId: string) => {
-    if (!user) return;
     try {
       const removeMember = httpsCallable(functions, 'removeTeamMember');
       const result = await removeMember({ memberId });
@@ -1684,6 +1710,17 @@ const App: React.FC = () => {
       showToast(data.message || 'Team member removed.', 'success');
       loadTeamMembers(); loadTeamInvites();
     } catch { showToast('Failed to remove member.', 'error'); }
+  };
+
+  const handleRoleChange = async (memberId: string, newRole: 'editor' | 'viewer') => {
+    try {
+      const changeRole = httpsCallable(functions, 'updateTeamMemberRole');
+      await changeRole({ memberId, role: newRole });
+      showToast(t('team.role_member') + ' updated.', 'success');
+      loadTeamMembers();
+    } catch (e) {
+      showToast('Failed to update role.', 'error');
+    }
   };
 
   const handleManageBilling = async () => {
@@ -2071,6 +2108,22 @@ const App: React.FC = () => {
   const [hookGenerationIds, setHookGenerationIds] = useState<Record<string, string>>({});
   const [renderGenerationId, setRenderGenerationId] = useState<string>('');
   const [captionGenerationId, setCaptionGenerationId] = useState<string>('');
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const uid = user?.uid;
+    if (!uid) return;
+    const wsId = canUseWorkspaces && activeWorkspaceId ? activeWorkspaceId : undefined;
+    feedbackService.getFavoriteIds(uid, wsId).then(ids => setFavoriteIds(ids)).catch(() => {});
+  }, [user?.uid, activeWorkspaceId]);
+
+  // ─── FAVORITES COUNT PER PHASE ──────────────────────────────
+  const favWsId = canUseWorkspaces ? activeWorkspaceId : null;
+  const { favorites: hooksFavs } = useFavorites({ phase: 'hooks', workspaceId: favWsId });
+  const { favorites: conceptsFavs } = useFavorites({ phase: 'concepts', workspaceId: favWsId });
+  const { favorites: renderFavs } = useFavorites({ phase: 'render', workspaceId: favWsId });
+  const { favorites: captionFavs } = useFavorites({ phase: 'caption', workspaceId: favWsId });
+
   // ─── META ADS CONNECTION ─────────────────────────────────────
   const [metaConnection, setMetaConnection] = useState<MetaConnection | null>(null);
   const [metaSyncing, setMetaSyncing] = useState(false);
@@ -2234,6 +2287,15 @@ const App: React.FC = () => {
   // Ranking linkage — stores the latest ranking metadata from generation responses
   // ⚠️ MUST be above all early returns to satisfy React hooks ordering rules
   const lastRankingLinkage = React.useRef<{ rankingRequestId?: string; rankingRequestFingerprint?: string; rankingAppliedSummary?: string } | null>(null);
+
+  // /join route — must be checked BEFORE auth so unauthenticated invitees see the join page
+  if (window.location.pathname === '/join') {
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-slate-950 flex items-center justify-center text-white">Loading...</div>}>
+        <JoinTeamLazy />
+      </Suspense>
+    );
+  }
 
   if (loadingAuth) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-500">{t('loading')}</div>;
 
@@ -2632,6 +2694,10 @@ const App: React.FC = () => {
   // --- HISTORY ENGINE moved to before render gates ---
 
   const loadProject = (p: SavedProject) => {
+    // Clear stale favorites state from previous project
+    setLoadedFavoriteId(null);
+    setFavUpdatePrompt(null);
+    setLoadedRenderRecord(null);
     setCurrentProjectId(p.id);
     setCurrentProjectName(p.name || "Untitled Project");
     const migratedInputs = p.inputs
@@ -2938,6 +3004,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             }
           }
           setHookGenerationIds(hookIds);
+          // T015: Show update/keep-both prompt if a favorite was loaded
+          const firstGenId = Object.values(hookIds)[0];
+          if (loadedFavoriteId && firstGenId) {
+            setFavUpdatePrompt({ phase: 'hooks', newGenId: firstGenId });
+          }
         } catch (saveErr) {
           console.error('Non-blocking: failed to save hook generation records:', saveErr);
         }
@@ -3288,10 +3359,76 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     } catch (e) { refundCredits('editOneConcept'); handleApiError(e); } finally { setItemLoading(prev => ({ ...prev, [`concept_${index}`]: false })); }
   };
 
+  // ─── COPY FIDELITY: client-side check before rendering ───
+  const checkCopyFidelity = (concept: string, tov: string): string[] => {
+    const tpStart = concept.indexOf('[[TECHNICAL_PROMPT]]');
+    const tpEnd = concept.indexOf('[[/TECHNICAL_PROMPT]]');
+    if (tpStart === -1 || tpEnd === -1) return []; // no TECHNICAL_PROMPT to check
+    const tp = concept.slice(tpStart + 20, tpEnd).normalize('NFC').trim().replace(/\s+/g, ' ');
+    if (!tp) return [];
+    const failed: string[] = [];
+    // Extract copy fields from selectedTov
+    const hookMatch = tov.match(/HOOK_TEXT:\s*(.+)/);
+    const subMatch = tov.match(/SUBHEADLINE:\s*(.+)/);
+    const ctaMatch = tov.match(/CTA_BUTTON:\s*(.+)/);
+    const fields: [string, string | undefined][] = [
+      ['hookText', hookMatch?.[1]?.trim()],
+      ['subheadText', subMatch?.[1]?.trim()],
+      ['ctaName', ctaMatch?.[1]?.split('|||')[0]?.trim()],
+    ];
+    for (const [name, val] of fields) {
+      if (val && !tp.includes(val.normalize('NFC').trim().replace(/\s+/g, ' '))) {
+        failed.push(name);
+      }
+    }
+    return failed;
+  };
+
+  const fidelityFieldLabel = (key: string): string => {
+    const labels: Record<string, Record<string, string>> = {
+      hookText: { ar: 'العنوان الرئيسي', en: 'Headline' },
+      subheadText: { ar: 'العنوان الفرعي', en: 'Subheadline' },
+      ctaName: { ar: 'زر الإجراء', en: 'CTA Button' },
+      benefitText: { ar: 'نص الفائدة', en: 'Benefit Text' },
+    };
+    return labels[key]?.[lang] || labels[key]?.en || key;
+  };
+
   const handleApproveConcept = async (conceptRaw: string) => {
     if (!inputs) return;
     // Normalize any Arabic field labels to English
     conceptRaw = normalizeFieldLabels(conceptRaw);
+
+    // ─── COPY FIDELITY CHECK: verify approved copy appears in TECHNICAL_PROMPT ───
+    const failedFields = checkCopyFidelity(conceptRaw, selectedTov);
+    if (failedFields.length > 0) {
+      // Show blocking warning banner — user must choose Continue/Retry/Cancel
+      return new Promise<void>((resolve) => {
+        setCopyFidelityWarning({
+          failedFields,
+          onContinue: () => {
+            // Proceed with render using the current concept
+            proceedWithRender(conceptRaw);
+            resolve();
+          },
+          onRetry: () => {
+            // Re-trigger concept generation
+            showToast(lang === 'ar' ? 'جاري إعادة إنشاء المخطط...' : 'Regenerating blueprint...', 'info');
+            resolve();
+          },
+          onCancel: () => {
+            // Abort — stay on Step 3
+            resolve();
+          },
+        });
+      });
+    }
+
+    return proceedWithRender(conceptRaw);
+  };
+
+  const proceedWithRender = async (conceptRaw: string) => {
+    if (!inputs) return;
 
     // Determine sizes to render: use selectedSizes from Step 3 UI
     const sizesToRender = Array.from(selectedSizes);
@@ -3338,6 +3475,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity()
             );
             setRenderGenerationId(genId);
+            if (loadedFavoriteId && genId) {
+              setFavUpdatePrompt({ phase: 'render', newGenId: genId });
+            }
           } catch (saveErr) {
             console.error('Non-blocking: failed to save render generation record:', saveErr);
           }
@@ -3854,7 +3994,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             { imageUrl: res, conceptText: (selectedConcept || '').substring(0, 500) },
             buildPlan, resolvedUniverse, 'gemini-3.1-flash-image', 0, editRatio, buildCreativeIdentity()
           );
-          if (genId) setRenderGenerationId(genId);
+          if (genId) {
+            setRenderGenerationId(genId);
+            if (loadedFavoriteId) setFavUpdatePrompt({ phase: 'render', newGenId: genId });
+          }
         } catch (saveErr) {
           console.error('Non-blocking: failed to save polish render record:', saveErr);
         }
@@ -3904,6 +4047,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               res, '', 'gemini-3-flash', 0, undefined, buildCreativeIdentity()
             );
             setCaptionGenerationId(genId);
+            if (loadedFavoriteId && genId) {
+              setFavUpdatePrompt({ phase: 'caption', newGenId: genId });
+            }
           } catch (e) { console.warn('Caption generation save failed (non-blocking):', e); }
         }
       }
@@ -4177,6 +4323,17 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   return (
     <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className={`min-h-screen bg-slate-950 text-slate-200 overflow-x-hidden flex flex-col transition-all duration-500 ${lang === 'ar' ? 'font-arabic' : ''}`} style={{ paddingLeft: showSidebar && lang !== 'ar' ? '320px' : '0', paddingRight: showSidebar && lang === 'ar' ? '320px' : '0' }}>
       <ToastNotification toast={toast} onClose={() => setToast(null)} />
+      {removedFromTeam && (
+        <div className="fixed inset-0 z-[200] bg-black/80 flex items-center justify-center">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl p-8 max-w-md text-center shadow-2xl">
+            <i className="fa-solid fa-user-slash text-4xl text-red-400 mb-4"></i>
+            <h2 className="text-xl font-bold text-white mb-3">{t('team.removed_message')}</h2>
+            <button onClick={() => { setRemovedFromTeam(false); handleLogout(); }} className="mt-4 px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors">
+              OK
+            </button>
+          </div>
+        </div>
+      )}
       {/* VIDEO POPUP — first-time tutorial */}
       {showVideoPopup && <VideoPopup onComplete={handleVideoComplete} onClose={handleVideoSkip} />}
       {/* WALKTHROUGH OVERLAY — first-time guide */}
@@ -4228,7 +4385,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
           <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-3">Account</p>
           <div className="space-y-1">
-            <button onClick={() => { setShowSidebar(false); handleManageBilling(); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
+            <button onClick={() => { setShowSidebar(false); setShowBillingPage(true); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
               <span className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center"><i className="fa-solid fa-credit-card text-emerald-400 text-xs"></i></span>
               <div>
                 <p className="text-[11px] font-bold text-white group-hover:text-emerald-400 transition-colors">Manage Billing</p>
@@ -4411,8 +4568,22 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             )}
           </div>
 
-          {/* ── CENTER: Stepper (inline) ── */}
-          <div className="hidden md:flex items-center gap-1" data-tour="stepper">
+          {/* ── CENTER: Billing label (desktop + mobile) ── */}
+          {showBillingPage && (
+            <>
+              <div className="hidden md:flex items-center gap-2">
+                <button onClick={() => setShowBillingPage(false)} aria-label={t('back')} className="text-slate-500 hover:text-white transition-colors"><i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'} text-xs`}></i></button>
+                <span className="text-[11px] font-bold text-white">{t('billing.title')}</span>
+              </div>
+              <div className="flex md:hidden items-center gap-2">
+                <button onClick={() => setShowBillingPage(false)} aria-label={t('back')} className="text-slate-500 hover:text-white transition-colors"><i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'} text-xs`}></i></button>
+                <span className="text-[10px] font-bold text-blue-400">{t('billing.title')}</span>
+              </div>
+            </>
+          )}
+
+          {/* ── CENTER: Stepper (inline) — hidden when billing page is active ── */}
+          <div className={`${showBillingPage ? 'hidden' : 'hidden md:flex'} items-center gap-1`} data-tour="stepper">
             {steps.map((s, idx) => {
               const active = phase === s.id;
               const completed = steps.findIndex(f => f.id === phase) > idx;
@@ -4446,11 +4617,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             })}
           </div>
 
-          {/* ── Mobile stepper (pill) ── */}
-          <div className="flex md:hidden items-center gap-2">
-            <span className="text-[10px] font-bold text-blue-400">{t(steps.find(s => s.id === phase)?.tKey || 'step.brief')}</span>
-            <span className="text-[10px] text-slate-600">{steps.findIndex(s => s.id === phase) + 1}/{steps.length}</span>
-          </div>
+          {/* ── Mobile stepper (pill) — hidden when billing page is active ── */}
+          {!showBillingPage && (
+            <div className="flex md:hidden items-center gap-2">
+              <span className="text-[10px] font-bold text-blue-400">{t(steps.find(s => s.id === phase)?.tKey || 'step.brief')}</span>
+              <span className="text-[10px] text-slate-600">{steps.findIndex(s => s.id === phase) + 1}/{steps.length}</span>
+            </div>
+          )}
 
           {/* ── RIGHT: Credits + Actions ── */}
           <div className="flex items-center gap-2">
@@ -4488,7 +4661,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               </button>
               <i className="fa-solid fa-coins text-amber-500 text-[10px]"></i>
               <span className="text-[11px] font-bold text-amber-400">{userCredits}</span>
-              <span className="text-[9px] text-slate-600 hidden sm:inline">{PLANS[userPlan]?.name}</span>
+              <span className="text-[9px] text-slate-600 hidden sm:inline">
+                {isTeamMember ? t('team.credits_member', { name: teamOwnerName || 'Owner' }) : (teamMembers.length > 0 ? t('team.credits_owner') : (PLANS[userPlan]?.name || ''))}
+              </span>
             </div>
             <button onClick={() => { setUpgradeReason(''); setShowUpgradeModal(true); }}
               className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500 hover:bg-amber-500/20 transition-colors">
@@ -4544,8 +4719,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         </div>
       </nav>
 
-      {/* Main Content Render Logic */}
-      <main className="flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative w-full">
+      {/* Main Content Render Logic — hidden when billing page is active */}
+      <main className={`flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative w-full ${showBillingPage ? 'hidden' : ''}`}>
         {isLoading && (
           <div className="fixed inset-0 bg-slate-950/98 backdrop-blur-[40px] z-[100] flex flex-col items-center justify-center text-center">
             <div className="relative w-32 h-32 mb-12">
@@ -4759,6 +4934,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         {phase === 'input' && <Suspense fallback={<div className="px-6 py-10 text-center text-sm text-slate-400">Loading workspace...</div>}><InputForm key={currentProjectId} onSubmit={handleStartDesign} onSaveDraft={handleSaveDraft} showToast={showToast} initialValues={inputs} userPlan={userPlan} avatars={avatars} onSaveAvatar={handleSaveAvatar} onUpdateAvatar={handleUpdateAvatar} onDeleteAvatar={handleDeleteAvatar} competitorData={competitorData} competitorLoading={competitorLoading} onRefreshResearch={(formData) => runCompetitorResearch(formData, true)} /></Suspense>}
 
         {phase === 'tov_review' && (
+          <>
           <div className="space-y-16 animate-in fade-in slide-in-from-bottom-12 duration-1000 max-w-5xl mx-auto relative">
             <button onClick={handleBack} className={`absolute -top-12 ${lang === 'ar' ? 'right-0' : 'left-0'} bg-slate-900/60 px-5 py-2.5 rounded-xl text-[10px] font-semibold text-slate-500 hover:text-white transition-all shadow-xl flex items-center ${lang === 'ar' ? 'flex-row-reverse' : ''} space-x-2`}>
               <i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'}`}></i><span>{lang === 'ar' ? 'رجوع' : 'Back'}</span>
@@ -4770,6 +4946,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               {inputs?.adMode === 'carousel' && (
                 <p className="text-sm text-blue-400/70 font-medium mt-2">Choose a story direction for your {inputs?.slideCount || 5}-slide carousel</p>
               )}
+              <div className="flex flex-col items-center gap-3">
+                <button
+                  onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'hooks' ? null : 'hooks')}
+                  className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all flex items-center gap-1.5"
+                >
+                  <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_hooks')}{hooksFavs.length > 0 && ` (${hooksFavs.length})`}
+                </button>
+              </div>
               <div className="flex flex-col items-center gap-3">
                 {((inputs?.visualStyleFamily ?? inputs?.universeMode) === 'minimal') ? (
                   <p className="text-slate-500 text-xs font-bold uppercase tracking-[0.5em] italic">
@@ -5126,6 +5310,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                             <FeedbackButtons
                               generationId={hookGenerationIds[v] || ''}
                               compact={true}
+                              initialFavorite={!!hookGenerationIds[v] && favoriteIds.has(hookGenerationIds[v])}
                               onRegenerate={(tags, freeText) => {
                                 const context = feedbackService.buildRegenerationContext(raw, tags, freeText);
                                 handlePrecisionHookEdit(v, context);
@@ -5331,9 +5516,36 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
               </button>
             </div>
           </div>
+
+          <FavoritesPanel
+            phase="hooks"
+            isOpen={openFavoritesPhase === 'hooks'}
+            onClose={() => setOpenFavoritesPhase(null)}
+            workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+            onLoad={async (record) => {
+              // Auto-save current hook variant if one is active (T014)
+              const activeVariant = Object.keys(hookGenerationIds).find(v => hookGenerationIds[v]);
+              if (activeVariant && hookGenerationIds[activeVariant]) {
+                await feedbackService.toggleFavorite(hookGenerationIds[activeVariant], true).catch(() => {});
+              }
+              if (record.output?.hookText) {
+                const reconstructed = `HOOK_START_A\nHOOK_TEXT: ${record.output.hookText}\nSUBHEADLINE: ${record.output.subhead || ''}\nCTA_BUTTON: ${record.output.ctaText || ''}\nHOOK_END_A`;
+                setTovText(record.output.fullResponse || reconstructed);
+                setSelectedTov(reconstructed);
+              }
+              // Update generation ID so FeedbackButtons targets the loaded record
+              if (record.id && activeVariant) {
+                setHookGenerationIds(prev => ({ ...prev, [activeVariant]: record.id! }));
+              }
+              setLoadedFavoriteId(record.id || null);
+              setOpenFavoritesPhase(null);
+            }}
+          />
+          </>
         )}
 
-        {phase === 'concept_review' && (() => {
+        {phase === 'concept_review' && (<>
+        {(() => {
           /* ─── Unified hook groups: always treat as batch-style layout ─── */
           const hookGroups: { hookKey: string; hookText: string; hookHeadline: string; conceptsSource: string; selectedConcepts: Set<number>; isBatch: boolean }[] =
             batchHookGroups.length > 0
@@ -5376,6 +5588,14 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 <p className="text-[11px] text-slate-400 mt-3 font-medium">
                   {hookGroups.length} hook{hookGroups.length > 1 ? 's' : ''} &middot; {totalSelectedConcepts} concept{totalSelectedConcepts !== 1 ? 's' : ''} &middot; {numSizes} size{numSizes > 1 ? 's' : ''} = {totalImages} image{totalImages !== 1 ? 's' : ''}
                 </p>
+                <div className="mt-3">
+                  <button
+                    onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'concepts' ? null : 'concepts')}
+                    className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all inline-flex items-center gap-1.5"
+                  >
+                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_concepts')}{conceptsFavs.length > 0 && ` (${conceptsFavs.length})`}
+                  </button>
+                </div>
                 {/* Resolved Creative Spec Summary */}
                 {(() => {
                   const spec = resolveCreativeSpec({
@@ -5849,7 +6069,23 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           );
         })()}
 
-        {phase === 'render_studio' && (() => {
+          <FavoritesPanel
+            phase="concepts"
+            isOpen={openFavoritesPhase === 'concepts'}
+            onClose={() => setOpenFavoritesPhase(null)}
+            workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+            onLoad={(record) => {
+              // No concept generation ID tracked — skip auto-save for concepts
+              if (record.output?.conceptText) setConceptsText(record.output.conceptText);
+              if (record.output?.buildPlan) setBuildPlan(record.output.buildPlan);
+              setLoadedFavoriteId(record.id || null);
+              setOpenFavoritesPhase(null);
+            }}
+          />
+        </>)}
+
+        {phase === 'render_studio' && (<>
+        {(() => {
           const hasAnyImage = currentMockup || batchResults.some((r: any) => r.status === 'done') || carouselSlides.some((s: any) => s.status === 'done');
           return (
             <div className="flex flex-col xl:flex-row gap-6 animate-in fade-in duration-700 max-w-[1500px] mx-auto relative">
@@ -5896,6 +6132,30 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   <h2 className="text-xl font-black text-white italic tracking-tight uppercase shrink-0">
                     <i className="fa-solid fa-paintbrush text-blue-500 mr-2 text-sm"></i>Master <span className="text-blue-500">Studio</span>
                   </h2>
+                  <button
+                    onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'render' ? null : 'render')}
+                    className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all flex items-center gap-1.5"
+                  >
+                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_renders')}{renderFavs.length > 0 && ` (${renderFavs.length})`}
+                  </button>
+                  {loadedRenderRecord && (
+                    <button
+                      onClick={() => {
+                        if (loadedRenderRecord.input) setInputs(loadedRenderRecord.input);
+                        if (loadedRenderRecord.output?.conceptText) {
+                          setConceptsText(loadedRenderRecord.output.conceptText);
+                          setSelectedConcept(loadedRenderRecord.output.conceptText);
+                        }
+                        if (loadedRenderRecord.output?.buildPlan) setBuildPlan(loadedRenderRecord.output.buildPlan);
+                        setLoadedRenderRecord(null);
+                        setLoadedFavoriteId(null);
+                        setPhase('concept_review');
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-violet-500/10 border border-violet-500/20 text-violet-400 text-[9px] font-bold uppercase tracking-wider hover:bg-violet-500/20 transition-all flex items-center gap-1.5"
+                    >
+                      <i className="fa-solid fa-rotate-right text-[8px]"></i> {t('fav.edit_regenerate')}
+                    </button>
+                  )}
 
                   {/* Size tabs + Version nav */}
                   {mockupHistory.length > 1 && (() => {
@@ -6429,6 +6689,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     <FeedbackButtons
                       generationId={renderGenerationId}
                       showUsedThis={true}
+                      initialFavorite={!!renderGenerationId && favoriteIds.has(renderGenerationId)}
                     />
                   </div>
                 )}
@@ -6742,7 +7003,27 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           );
         })()}
 
-        {phase === 'primary_text' && (() => {
+          <FavoritesPanel
+            phase="render"
+            isOpen={openFavoritesPhase === 'render'}
+            onClose={() => setOpenFavoritesPhase(null)}
+            workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+            onLoad={async (record) => {
+              // Auto-save current render if exists (T014)
+              if (renderGenerationId) {
+                await feedbackService.toggleFavorite(renderGenerationId, true).catch(() => {});
+              }
+              if (record.output?.imageUrl) pushMockup(record.output.imageUrl, (record.metadata?.aspectRatio || '1:1') as AspectRatio);
+              if (record.id) setRenderGenerationId(record.id);
+              setLoadedFavoriteId(record.id || null);
+              setLoadedRenderRecord(record);
+              setOpenFavoritesPhase(null);
+            }}
+          />
+        </>)}
+
+        {phase === 'primary_text' && (<>
+        {(() => {
           const wordCount = captionText ? captionText.split(/\s+/).filter(Boolean).length : 0;
           return (
             <div className="flex flex-col lg:flex-row gap-16 animate-in fade-in duration-1000 max-w-[1200px] mx-auto relative">
@@ -6754,6 +7035,14 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
               <div className="flex-1 space-y-8 pt-10">
                 <h2 className="text-5xl md:text-6xl font-black text-white italic tracking-tighter uppercase leading-none">{t('script.title')}</h2>
                 <p className="text-[10px] text-slate-500 max-w-lg">{t('tip.step5')}</p>
+                <div className="mt-3">
+                  <button
+                    onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'caption' ? null : 'caption')}
+                    className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all inline-flex items-center gap-1.5"
+                  >
+                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_scripts')}{captionFavs.length > 0 && ` (${captionFavs.length})`}
+                  </button>
+                </div>
 
                 {/* BATCH CAPTION TABS (shown when batch captions exist) */}
                 {batchCaptions.length > 1 && (
@@ -6799,6 +7088,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         generationId={captionGenerationId}
                         showUsedThis={true}
                         compact={true}
+                        initialFavorite={!!captionGenerationId && favoriteIds.has(captionGenerationId)}
                       />
                     </div>
                   )}
@@ -7041,7 +7331,97 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
             </div>
           );
         })()}
+
+          <FavoritesPanel
+            phase="caption"
+            isOpen={openFavoritesPhase === 'caption'}
+            onClose={() => setOpenFavoritesPhase(null)}
+            workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+            onLoad={async (record) => {
+              // Auto-save current caption if exists (T014)
+              if (captionGenerationId) {
+                await feedbackService.toggleFavorite(captionGenerationId, true).catch(() => {});
+              }
+              if (record.output?.captionText) setCaptionText(record.output.captionText);
+              if (record.id) setCaptionGenerationId(record.id);
+              setLoadedFavoriteId(record.id || null);
+              setOpenFavoritesPhase(null);
+            }}
+          />
+        </>)}
+
       </main>
+
+      {/* ═══ BILLING PAGE (transient overlay — not persisted to SavedProject) ═══ */}
+      {showBillingPage && (
+        <main className="flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 relative w-full">
+          <Suspense fallback={<div className="flex items-center justify-center py-32"><div className="animate-pulse space-y-4 w-full max-w-2xl"><div className="h-8 bg-slate-800 rounded w-1/3" /><div className="h-32 bg-slate-800 rounded" /></div></div>}>
+            <BillingPage />
+          </Suspense>
+        </main>
+      )}
+
+      {/* ═══ FAVORITE UPDATE/KEEP-BOTH PROMPT (T015-T018) ═══ */}
+      {favUpdatePrompt && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { setFavUpdatePrompt(null); setLoadedFavoriteId(null); }} />
+          <div className="relative bg-slate-950 border border-amber-500/30 rounded-2xl shadow-2xl max-w-sm w-full mx-4 p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="text-center space-y-2">
+              <i className="fa-solid fa-bookmark text-amber-400 text-2xl"></i>
+              <h3 className="text-lg font-black text-white">{t('fav.update_title')}</h3>
+              <p className="text-[11px] text-slate-400">{t('fav.update_desc')}</p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={async () => {
+                  if (loadedFavoriteId && favUpdatePrompt.newGenId) {
+                    try {
+                      // Get new output fields from the new generation
+                      const newDoc = await getDoc(doc(db, 'generations', favUpdatePrompt.newGenId));
+                      if (newDoc.exists()) {
+                        const newOutput = (newDoc.data() as any).output || {};
+                        await feedbackService.updateFavoriteRecord(loadedFavoriteId, newOutput);
+                        showToast(t('fav.updated'), 'success');
+                      }
+                    } catch { showToast(t('fav.update_failed'), 'error'); }
+                  }
+                  setFavUpdatePrompt(null);
+                  setLoadedFavoriteId(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white text-[9px] font-bold uppercase tracking-wider transition-all"
+              >
+                <i className="fa-solid fa-pen mr-1"></i> {t('fav.yes_update')}
+              </button>
+              <button
+                onClick={async () => {
+                  if (favUpdatePrompt.newGenId) {
+                    try {
+                      await feedbackService.toggleFavorite(favUpdatePrompt.newGenId, true);
+                      showToast(t('fav.saved_new'), 'success');
+                      setFavUpdatePrompt(null);
+                      setLoadedFavoriteId(null);
+                    } catch {
+                      showToast(t('fav.save_failed'), 'error');
+                    }
+                    return;
+                  }
+                  setFavUpdatePrompt(null);
+                  setLoadedFavoriteId(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white text-[9px] font-bold uppercase tracking-wider transition-all"
+              >
+                <i className="fa-solid fa-copy mr-1"></i> {t('fav.keep_both')}
+              </button>
+            </div>
+            <button
+              onClick={() => { setFavUpdatePrompt(null); setLoadedFavoriteId(null); }}
+              className="w-full py-2 text-[9px] text-slate-600 hover:text-slate-300 transition-all"
+            >
+              {t('fav.skip')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ═══ UPGRADE / TOP-UP MODAL ═══ */}
       {/* ═══ CAROUSEL COPY PREVIEW MODAL ═══ */}
@@ -7504,8 +7884,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   </h3>
                   <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
                     {lang === 'ar'
-                      ? `لم يتم التحقق من ظهور النصوص التالية حرفياً في التصميم: ${copyFidelityWarning.failedFields.join(', ')}. يمكنك المتابعة أو إعادة المحاولة.`
-                      : `The following copy fields could not be verified verbatim in the design prompt: ${copyFidelityWarning.failedFields.join(', ')}. You can continue or retry.`
+                      ? `لم يتم التحقق من ظهور النصوص التالية حرفياً في التصميم: ${copyFidelityWarning.failedFields.map(f => fidelityFieldLabel(f)).join('، ')}. يمكنك المتابعة أو إعادة المحاولة.`
+                      : `The following copy fields could not be verified verbatim in the design prompt: ${copyFidelityWarning.failedFields.map(f => fidelityFieldLabel(f)).join(', ')}. You can continue or retry.`
                     }
                   </p>
                 </div>
@@ -7864,7 +8244,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         <p className="text-[10px] font-bold text-white truncate">{m.name}</p>
                         <p className="text-[8px] text-slate-500">{m.email}</p>
                       </div>
-                      <span className="text-[7px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">{m.role}</span>
+                      <span className="text-[7px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">{m.role === 'editor' ? t('team.role_member') : t('team.role_viewer')}</span>
                       <button onClick={() => handleRemoveTeamMember(m.id)} className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 transition-all px-1"><i className="fa-solid fa-xmark text-[10px]"></i></button>
                     </div>
                   ))}

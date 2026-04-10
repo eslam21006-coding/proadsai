@@ -2,9 +2,6 @@
 
 Auto-generated from all feature plans. Last updated: 2026-04-10
 
-## Active Features
-- 002-frontend-filter-qa: Frontend filtering & QA (React, Zustand, Tailwind, fixtures via Cloud Functions v2)
-- 001-resolver-completeness-trace: Resolver completeness tracing (Cloud Functions v2, Firestore)
 
 ## Project Structure
 
@@ -22,7 +19,7 @@ specs/            # Feature specs (speckit workflow)
 `npm run lint` — ESLint
 `cd functions && npm test` — run backend tests
 
-## Platform
+
 
 - Frontend: React 19 + Zustand + Tailwind CSS 3, bundled with Vite 7
 - Backend: Firebase Cloud Functions v2, Firestore, Storage
@@ -35,6 +32,12 @@ specs/            # Feature specs (speckit workflow)
 ## Active Technologies
 - TypeScript 5.7 (functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Gemini 3.1 (text + image), React 19, Zustand, Tailwind CSS 3 (005-render-prompt-pipeline)
 - Firestore (`generations/{genId}`, `creativeMemory/{creativeId}`) (005-render-prompt-pipeline)
+- TypeScript 5.7 (functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Firebase Auth, React 19 (006-team-management)
+- Firestore (`team_invites` collection, `users/{uid}` docs, `users/{uid}/team` subcollection) (006-team-management)
+- TypeScript 5.9 (frontend), TypeScript 5.7 (functions) + React 19, Zustand, Tailwind CSS 3, Firebase SDK (Firestore `onSnapshot`, `query`, `where`, `orderBy`) (010-favorites-workspace)
+- Firestore — `generations` collection (existing), `feedback.savedToFavorites` boolean field (010-favorites-workspace)
+- TypeScript 5.7 (functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Stripe SDK, React 19, Zustand 5 (009-billing-plan-access)
+- Firestore (`users/{uid}` billingState field, `cancellations` collection, `pending_plans` collection) (009-billing-plan-access)
 
 ## Recent Changes
 - 005-render-prompt-pipeline: Added TypeScript 5.7 (functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Gemini 3.1 (text + image), React 19

@@ -76,7 +76,7 @@
 
 **Independent Test**: `cd functions && npm test` — all new tests pass.
 
-- [x] T041 [P] [US6] Add 4-field copy fidelity test in `functions/src/contractFixtures.test.ts` — test `validateCopyFidelity()` with the new multi-field signature: (a) all 4 fields present → `{ passed: true }`, (b) hookText present but subheadText paraphrased → `{ passed: false, failedFields: ['subheadText'] }`, (c) ctaName missing → `{ passed: false, failedFields: ['ctaName'] }`, (d) empty benefitText skipped → `{ passed: true }` (empty fields not validated), (e) Arabic text across all 4 fields → `{ passed: true }`.
+- [x] T041 [P] [US6] Add 4-field copy fidelity test in `functions/src/contractFixtures.test.ts` — test `validateCopyFidelity()` with the new multi-field signature: (a) all 4 fields present → `{ passed: true }`, (b) hookText present but subheadText paraphrased → `{ passed: false, failedFields: ['subheadText'] }`, (c) ctaName missing → `{ passed: false, failedFields: ['ctaName'] }`, (d) empty benefitText skipped → `{ passed: true }` (empty fields not validated), (e) Arabic text across all 4 fields → `{ passed: true }`, (f) empty hookText → `{ passed: false, failedFields: ['hookText'] }` (hookText is required).
 - [x] T042 [P] [US6] Add campaign context field presence test in `functions/src/contractFixtures.test.ts` — given a mock `buildFinalImagePrompt()` input with `productName: "FitPro"`, `targetAudience: "busy professionals"`, verify the assembled `textPrompt` or `coreDesignRules` contains these campaign context values. This guards FR-001 (campaign context fields added 2026-04-10).
 - [x] T043 [P] [US6] Add carousel per-slide copy isolation test in `functions/src/contractFixtures.test.ts` — call `buildFinalImagePrompt()` twice with different hookText values (slide 1: "عرض خاص", slide 2: "فرصة لا تتكرر"). Assert slide 1's `textPrompt` contains only slide 1's hookText. Assert slide 2's `textPrompt` contains only slide 2's hookText and NOT slide 1's.
 
@@ -163,6 +163,6 @@ T041 + T042 + T043 — independent test functions in same file
 - Continues from completed tasks T001–T031
 - Backend imports use `.js` extension (NodeNext): `import { validateCopyFidelity } from "./buildPlanSlotMap.js"`
 - `validateCopyFidelity()` returns `{ passed, failedFields }` — callers check `passed` and log `failedFields`
-- Warning banner is NOT an error — generation auto-proceeds unless user cancels
+- Warning banner is NOT an error — it blocks until user clicks Continue (default), Retry, or Cancel
 - Carousel per-slide tasks are verification/audit — may require no code changes if already wired
 - Storage verification tasks are audit — may require no code changes if already stored

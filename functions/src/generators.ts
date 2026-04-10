@@ -19,12 +19,14 @@ import { compileFullContract, getContractRenderBlock, getContractCaptionBlock, g
 import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, parseBuildPlanEnvelope, parseStructuredBuildPlanResponse, serializeBuildPlanEnvelope, validateStructuredBuildPlan, validateCopyFidelity, stripTechnicalPrompt, TECHNICAL_PROMPT_START, TECHNICAL_PROMPT_END, type BuildPlanSlotMap, type ContractCheckResult, type StructuredBuildPlanPayload, type CopyFidelityFields, type CopyFidelityResult } from "./buildPlanSlotMap.js";
 import { compileModePayload, getModePayloadPromptBlock, getModePayloadPromptBlock_RenderSafe, getModePayloadCaptionAnchors, extractAuthorizedNumbers, getNumericFidelityPolicy, type ModePayload, type NumericFidelityPolicy } from "./modeFieldSchema.js";
 import { compositeOfferOverlay, isOverlayAvailable, extractOfferFacts, validateResolvedOfferFacts } from "./offerOverlay.js";
-import { validateCaption, validateArabicCompliance, validateBlueprintLanguage, validateBlueprintModeContribution, validateBlueprintMinimalStyle, sanitizeReferenceAdSummary, type CaptionValidationInput } from "./captionValidator.js";
+import { validateCaption, validateArabicCompliance, validateBlueprintLanguage, validateBlueprintModeContribution, validateBlueprintMinimalStyle, sanitizeReferenceAdSummary, validateLanguageQuality, type CaptionValidationInput, type CaptionQualityResult, type CaptionQualityCheck } from "./captionValidator.js";
 import { validateBuildPlanAgainstContract, buildScoringPrompt, parseScoringResponse, quickRejectCheck } from "./creativeScoringEngine.js";
 import { storeCreativeToMemory, retrieveCreativePatterns } from "./creativeMemory.js";
 import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.js";
 import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreservation, type SemanticLock } from "./utils/hookPayload.js";
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
+import type { FailureClass, CostEstimate } from "./types.js";
+import { GenerationError } from "./types.js";
 
 // ─── Ranking Guidance Builder ────────────────────────────────────────────
 // Converts Ticket 2 ranking output into a compact prompt-safe guidance block.
@@ -93,6 +95,14 @@ function resolveVisualSubStyle(
 function isTextOnlyMode(inputs: AdInputs): boolean {
     const modes = (inputs as any).offerCreativeMode || ['standard_hero'];
     return modes.includes('text_only');
+}
+
+/** Centralized check: before_after can come from creative mode OR legacy hook angle path.
+ *  Pass effectiveAngle when available to use the resolved angle instead of raw inputs. */
+function isBeforeAfterSelection(inputs: AdInputs, effectiveAngle?: string | null): boolean {
+    const modes = (inputs as any).offerCreativeMode || [];
+    const angle = effectiveAngle !== undefined ? effectiveAngle : inputs.coldHookAngle;
+    return modes.includes('before_after') || angle === 'before_after';
 }
 
 function containsUnresolvedCommercialPlaceholders(value: string): boolean {
@@ -396,7 +406,12 @@ type GeminiCaller = (params: { model: string; contents: any; config?: any }) => 
 let callGemini: GeminiCaller;
 
 export function setGeminiCaller(fn: GeminiCaller) {
-    callGemini = fn;
+    // Wrap the caller to auto-accumulate cost tracking on every Gemini call
+    callGemini = async (params) => {
+        const response = await fn(params);
+        accumulateCost(response);
+        return response;
+    };
 }
 
 // ─── OpenAI Key (injected for design critique — different model catches Gemini blind spots) ────
@@ -464,11 +479,101 @@ async function retry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promis
     try { return await fn(); }
     catch (err: any) {
         if (retries > 0 && (err?.message?.includes("503") || err?.message?.includes("429") || err?.message?.includes("Quota") || err?.message?.includes("INTERNAL"))) {
+            _costTracker.retryCount++;
             await wait(delay);
             return retry(fn, retries - 1, delay * 2);
         }
         throw err;
     }
+}
+
+// ─── Cost Tracking Accumulator ────────────────────────────────────────────
+// Thread-local (per-request) cost accumulator. Call resetCostTracker() at the
+// start of each top-level generation pipeline, then accumulateCost() after each
+// Gemini call. At the end, getCostEstimate() returns the totals.
+
+interface CostTracker {
+    modelTier: string | null;
+    retryCount: number;
+    totalPromptTokens: number;
+    totalCandidateTokens: number;
+}
+
+let _costTracker: CostTracker = { modelTier: null, retryCount: 0, totalPromptTokens: 0, totalCandidateTokens: 0 };
+
+export function resetCostTracker(): void {
+    _costTracker = { modelTier: null, retryCount: 0, totalPromptTokens: 0, totalCandidateTokens: 0 };
+}
+
+interface ResponseUsage {
+    modelVersion?: string;
+    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } | null;
+}
+
+export function accumulateCost(response: ResponseUsage): void {
+    if (response?.modelVersion) _costTracker.modelTier = response.modelVersion;
+    const usage = response?.usageMetadata;
+    if (usage) {
+        const prompt = usage.promptTokenCount || 0;
+        const candidate = usage.candidatesTokenCount || 0;
+        const computed = prompt + candidate;
+        // Use totalTokenCount from API if individual fields are zero but total is available
+        const total = computed > 0 ? computed : (usage.totalTokenCount || 0);
+        _costTracker.totalPromptTokens += prompt;
+        _costTracker.totalCandidateTokens += (total - prompt);
+    }
+}
+
+export function getCostEstimate(): CostEstimate {
+    return {
+        modelTier: _costTracker.modelTier,
+        retryCount: _costTracker.retryCount,
+        estimatedTokens: _costTracker.totalPromptTokens + _costTracker.totalCandidateTokens,
+    };
+}
+
+// ─── Failure Classification Helpers ─────────────────────────────────────────
+
+export function classifyError(error: unknown, errorCode?: string): FailureClass {
+    if (error instanceof GenerationError) return error.failureClass;
+
+    if (errorCode === "safety_blocked") return "model_error";
+    if (errorCode === "validation_failed") return "combination_invalid";
+    if (errorCode === "quality_rejected") return "validation_reject";
+
+    if (error instanceof Error) {
+        const msg = error.message.toLowerCase();
+        if (msg.includes("invalid creative mode combination")) return "combination_invalid";
+        if (msg.includes("blueprint was empty") || msg.includes("blueprint too short")) return "prompt_malformed";
+        if (msg.includes("structured build plan returned empty")) return "model_error";
+        if (msg.includes("json parse failed after repair")) return "model_error";
+        if (msg.includes("structured contract validation")) return "validation_reject";
+        if (msg.includes("strict pair validation")) return "slot_repair_failed";
+        if (msg.includes("insufficient credits")) return "credit_insufficient";
+        if (msg.includes("resource-exhausted") || msg.includes("quota")) return "model_error";
+    }
+
+    return "model_error";
+}
+
+export function buildCostEstimate(
+    modelTier: string | null,
+    retryCount: number,
+    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } | null
+): CostEstimate {
+    if (!usageMetadata) return { modelTier, retryCount, estimatedTokens: 0 };
+    const prompt = usageMetadata.promptTokenCount || 0;
+    const candidate = usageMetadata.candidatesTokenCount || 0;
+    const computed = prompt + candidate;
+    const tokens = computed > 0 ? computed : (usageMetadata.totalTokenCount || 0);
+    return { modelTier, retryCount, estimatedTokens: tokens };
+}
+
+export function errorCodeToFailureClass(errorCode: string): FailureClass {
+    if (errorCode === "safety_blocked") return "model_error";
+    if (errorCode === "validation_failed") return "combination_invalid";
+    if (errorCode === "quality_rejected") return "validation_reject";
+    return "model_error";
 }
 
 // Use any-typed inputs to avoid duplicating the full AdInputs interface
@@ -617,18 +722,7 @@ ${isSquare ? '- 1:1 EXECUTION: Stack cards as a HORIZONTAL strip below the hero,
 ${isWide ? '- 16:9 EXECUTION: Hero left 45%, stack right 45% — generous horizontal space for wider cards with more detail per card.' : ''}`);
     }
 
-    if (secondaryMode === 'module_preview') {
-        parts.push(`
-PAIR EXECUTION — HERO + MODULE PREVIEW (PREMIUM):
-The curriculum card is the PROOF that this is a real structured course, not vague coaching.
-- Module card: render as a FLOATING UI PANEL with clean rounded corners, subtle shadow, and border
-- Each module row: numbered (01, 02, 03...) + title text — clearly separated rows with dividers
-- Progress bar: render at the top of the card as a partially-filled gradient bar (e.g., 40% filled)
-- Card should look like a REAL APP SCREEN or DASHBOARD — clean, modern, typographically precise
-- Hero teaching/presenting gesture beside the card — NOT blocking the module list
-${isTall ? '- 9:16 EXECUTION: Card can be TALLER with more module rows visible (5-6). Hero upper portion, card extending down the right half.' : ''}
-${isSquare ? '- 1:1 EXECUTION: Compact card with 3-4 key modules, hero to one side. Card occupies at least 35% of canvas.' : ''}`);
-    }
+
 
     if (secondaryMode === 'speaker_card' || primaryMode === 'speaker_card') {
         parts.push(`
@@ -656,15 +750,7 @@ ${isTall ? '- 9:16 EXECUTION: Larger ticket with MORE detail — extended perfor
 ${isSquare ? '- 1:1 EXECUTION: Compact ticket, tighter spacing. Portrait smaller. Focus on event title and metadata readability.' : ''}`);
     }
 
-    if ((primaryMode === 'webinar_screen' || secondaryMode === 'webinar_screen') && (primaryMode === 'day_strip' || secondaryMode === 'day_strip')) {
-        parts.push(`
-PAIR EXECUTION — WEBINAR SCREEN + DAY STRIP:
-Two distinct visual elements must BOTH be clearly visible:
-- Screen: realistic laptop/monitor showing session title with LIVE badge — occupies upper/left portion
-- Day strip: 3-5 day NODES as designed circles/hexagons with progression path — occupies lower/right portion
-- Both elements must have their own visual space — do NOT merge them into one
-${isTall ? '- 9:16 EXECUTION: Screen upper 40%, day strip lower 40%, with clear separation. Day nodes vertical progression.' : ''}`);
-    }
+
 
     if ((primaryMode === 'book_mockup' || secondaryMode === 'book_mockup') && (primaryMode === 'device_mockup' || secondaryMode === 'device_mockup')) {
         parts.push(`
@@ -678,31 +764,9 @@ Both products must be clearly visible as a BUNDLE — not one dominating and the
 ${isSquare ? '- 1:1 EXECUTION: Products centered with headline above and CTA below. Tight but balanced arrangement.' : ''}`);
     }
 
-    if (secondaryMode === 'day_strip' || primaryMode === 'day_strip') {
-        if (!parts.some(p => p.includes('DAY STRIP'))) {
-            parts.push(`
-PAIR EXECUTION — DAY STRIP (PREMIUM):
-Day progression nodes must be DESIGNED elements, not just text labels.
-- Each node: styled circle/hexagon/badge with day number and short keyword
-- Progression path: visible connecting line/arrow between nodes
-- Day 1: HIGHLIGHTED with glow, brighter accent, or pulsing effect
-${isTall ? '- 9:16 EXECUTION: VERTICAL day progression top-to-bottom using full height. Each node larger with more detail.' : ''}
-${isSquare ? '- 1:1 EXECUTION: Horizontal strip across the center. Compact but each node still individually distinct.' : ''}`);
-        }
-    }
 
-    if (secondaryMode === 'limited_access' || primaryMode === 'limited_access') {
-        parts.push(`
-PAIR EXECUTION — LIMITED ACCESS / VIP GATE (PREMIUM):
-The VIP/exclusive element must be a STRUCTURAL VISUAL ELEMENT — not just text saying "exclusive".
-- Gate/rope: render a REAL velvet rope, ornate door frame, or exclusive barrier with 3D depth
-- Behind the gate: a blurred but RECOGNIZABLE luxury scene (gold-lit space, premium lounge, exclusive event)
-- "Limited spots" badge: render as a DESIGNED UI ELEMENT — ribbon/seal/badge shape, NOT floating text
-- Urgency counter: render as a real COUNTDOWN DISPLAY or SEATS-REMAINING indicator panel
-- The hero stands AT or NEAR the entrance with an inviting gesture
-${isTall ? '- 9:16 EXECUTION: Gate as a FULL-HEIGHT doorway — hero at threshold, luxury scene visible through opening, badges along the side.' : ''}
-${isSquare ? '- 1:1 EXECUTION: Gate horizontal across center, hero above inviting, blurred luxury below.' : ''}`);
-    }
+
+
 
     if (secondaryMode === 'webinar_screen' || primaryMode === 'webinar_screen') {
         if (!parts.some(p => p.includes('WEBINAR SCREEN'))) {
@@ -1404,7 +1468,7 @@ inputs.coldHookAngle === 'urgency' ? `✅ URGENCY: HOOK_TEXT MUST contain a TIME
 inputs.coldHookAngle === 'scarcity' ? `✅ SCARCITY: HOOK_TEXT MUST contain a QUANTITY LIMIT — "فقط X مقاعد/آخر X أماكن/محدود/X فقط". The reader must feel supply is running out. No scarcity hook passes without a limit word.` :
 inputs.coldHookAngle === 'social_proof' ? `✅ SOCIAL PROOF: HOOK_TEXT MUST reference OTHER PEOPLE's results — a count of clients, a person's name, a group achievement ("X مدرب/عميل حقق"). No social proof hook passes without referencing others.` :
 inputs.coldHookAngle === 'logical_authority' ? `✅ LOGICAL AUTHORITY: HOOK_TEXT MUST contain a CREDENTIAL or TRACK RECORD — "X عميل/X سنة خبرة/أول نظام/ساعدنا X". Must establish WHY the speaker has authority. No authority hook passes without proof.` :
-inputs.coldHookAngle === 'before_after' ? `✅ BEFORE/AFTER: HOOK_TEXT MUST contain TWO contrasting states — a BEFORE state AND an AFTER state. Use transition markers: من...إلى, قبل...بعد, كان...أصبح, بدلاً من. Both states must be specific.` :
+isBeforeAfterSelection(inputs) ? `✅ BEFORE/AFTER: HOOK_TEXT MUST contain TWO contrasting states — a BEFORE state AND an AFTER state. Use transition markers: من...إلى, قبل...بعد, كان...أصبح, بدلاً من. Both states must be specific.` :
 inputs.coldHookAngle === 'emotional' ? `✅ EMOTIONAL: HOOK_TEXT MUST NAME an emotion explicitly or use a VISCERAL verb — يخاف, يحلم, يشعر, يتمنى, يكره, الخوف, الأمل, الإحباط. The reader must FEEL something, not just think.` :
 inputs.coldHookAngle === 'fear_of_missing_out' ? `✅ FOMO: HOOK_TEXT MUST make the reader feel LEFT BEHIND — reference what others are doing/gaining while they hesitate. Use "بينما أنت/غيرك/الآخرون/فاتك". Must create jealousy.` :
 inputs.coldHookAngle === 'future_based' || inputs.coldHookAngle === 'future_pacing' ? `✅ FUTURE PACING: HOOK_TEXT MUST paint a FUTURE SCENARIO — start with or contain "تخيل/بعد X أيام/ماذا لو/يوم ما" or describe a future state. The reader must SEE their desired future.` :
@@ -1805,7 +1869,7 @@ ${hookQualityBlock}` }] },
         if (mode === 'precision') {
             if (!rawText.trim()) {
                 console.error('[generateTOV] Precision edit returned empty text');
-                throw new Error('Hook edit returned empty result. Please retry.');
+                throw new GenerationError('Hook edit returned empty result. Please retry.', 'model_error');
             }
             const semanticCheck = assertHookSemanticPreservation(previousOutput || '', rawText, semanticLock || null);
             if (!semanticCheck.ok && editIntent !== 'change_angle') {
@@ -1893,7 +1957,7 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
 
         // Both attempts failed — throw explicit error instead of returning garbage
         console.error(`[generateTOV] Both attempts returned invalid hook structure. First: ${validation.count}/4, Retry: ${retryValidation.count}/4`);
-        throw new Error('Hook generation failed: invalid structure after retry. Please try again.');
+        throw new GenerationError('Hook generation failed: invalid structure after retry. Please try again.', 'model_error');
     } // end _generateTOVInner
     const text = await _generateTOVInner();
     return { text, rankingGuidance: _tovRankingLinkage };
@@ -1912,7 +1976,7 @@ export async function generateConcepts(approvedTov: string, inputs: AdInputs, re
         console.log(`🎨 CREATIVE MODE AUDIT [generateConcepts]: modes=[${_selectedModes.join(',')}] tab=${_comboCheck.resolvedTab || 'none'} valid=${_comboCheck.valid}${_comboCheck.errors.length ? ' errors: ' + _comboCheck.errors.join('; ') : ''}`);
         if (!_comboCheck.valid) {
             console.error(`🛑 CREATIVE MODE REJECTED in generateConcepts: ${_comboCheck.errors.join('; ')}`);
-            throw new Error(`Invalid creative mode combination: ${_comboCheck.errors.join('; ')}`);
+            throw new GenerationError(`Invalid creative mode combination: ${_comboCheck.errors.join('; ')}`, "combination_invalid");
         }
 
         // ═══ REFERENCE IMAGE ANALYSIS (optional, non-blocking) ═══
@@ -2069,7 +2133,7 @@ DO NOT return the other concepts.`;
         // ═══ RETARGETING CONTEXT (normalized, shared across steps) ═══
         const _rtCtx = buildNormalizedRetargetingContext(inputs as any);
         const _rtConceptBlock = getRetargetingPromptBlock(_rtCtx);
-        const _effectiveColdHookAngle = _rtCtx.isRetargeting ? undefined : inputs.coldHookAngle;
+        const _effectiveColdHookAngle = _rtCtx.isRetargeting ? null : inputs.coldHookAngle;
 
         const prompt = `
 [VISUAL ARCHITECT V5.0]
@@ -2086,10 +2150,20 @@ DO NOT return the other concepts.`;
           const soloMode = isSolo ? modes[0] : null;
           const pairMode = hasHero && secondary.length > 0 ? secondary[0] : null;
 
+          // before_after is a solo mode but REQUIRES hero on both halves — handle separately
+          if (isBeforeAfterSelection(inputs, _effectiveColdHookAngle)) {
+              return `
+═══ CREATIVE MODE CONTRACT (TOP PRIORITY — READ FIRST) ═══
+MODE: BEFORE_AFTER (SPLIT-SCREEN — HERO REQUIRED ON BOTH HALVES)
+BEFORE/AFTER SPLIT — Canvas split into two halves. BEFORE half: hero in problem state with struggle expression. AFTER half: same hero in result state with confident expression. Visible divider between halves. NO "BEFORE"/"AFTER" text labels. Same face both halves.
+⚠️ The SAME hero/person MUST appear in BOTH halves. Props transform logically (empty→full, cheap→premium, cluttered→organized).
+═══════════════════════════════════════════════════════════`;
+          }
+
           if (soloMode) {
               const soloLabels: Record<string, string> = {
                   value_stack: 'This ad has NO hero person. The value stack IS the entire design. Full-width layout with offer items as visual focus. Background is thematic only.',
-                  module_preview: 'This ad shows ONLY the curriculum card. NO hero person. The card is the centerpiece filling 60%+ of canvas.',
+
                   event_ticket: 'TICKET-ONLY design. NO presenter visible. The ticket fills the canvas with premium details (date, time, title, seat count).',
                   webinar_screen: 'SCREEN-ONLY design. Laptop/monitor showing the webinar. NO presenter beside it.',
                   speaker_card: 'SPEAKER PORTRAIT — keynote stage environment mandatory. Dramatic lighting, credentials bar.',
@@ -2106,14 +2180,14 @@ ${soloLabels[soloMode] || 'This ad features ONLY this creative element without a
           } else if (pairMode) {
               const pairWeights: Record<string, string> = {
                   value_stack: 'VISUAL WEIGHT: Hero 45% | Value Stack 45% | Text 10%. Stack items must be INDIVIDUALLY READABLE cards.',
-                  module_preview: 'VISUAL WEIGHT: Hero 45% | Module Card 45% | Text 10%. Card must show 4+ module titles, each READABLE.',
+
                   event_ticket: 'VISUAL WEIGHT: Hero 40% | Ticket 50% | Text 10%. Ticket must show DATE, TIME, TITLE as READABLE text.',
                   speaker_card: 'VISUAL WEIGHT: Hero 50% | Stage/Credentials 40% | Text 10%. STAGE ENVIRONMENT + lower-third bar MANDATORY.',
-                  day_strip: 'VISUAL WEIGHT: Hero 50% | Day Strip 40% | Text 10%. Each day node INDIVIDUALLY LABELED with number + keyword.',
+
                   webinar_screen: 'VISUAL WEIGHT: Hero 40% | Screen 50% | Text 10%. Screen must show LEGIBLE title + LIVE badge.',
                   book_mockup: 'VISUAL WEIGHT: Hero 45% | Book 45% | Text 10%. 3D book with readable cover title.',
                   device_mockup: 'VISUAL WEIGHT: Hero 45% | Device 45% | Text 10%. Device screen shows content, not blank.',
-                  limited_access: 'VISUAL WEIGHT: Hero 40% | VIP Gate 50% | Text 10%. Gate/rope must be a REAL structural element.',
+
               };
               return `
 ═══ CREATIVE MODE CONTRACT (TOP PRIORITY — READ FIRST) ═══
@@ -2172,8 +2246,8 @@ ${getHookTypeVisualDirection(inputs.hookType)}` : ''}
       ${_effectiveColdHookAngle ? `
 HOOK ANGLE VISUAL OVERRIDE: ${(_effectiveColdHookAngle || '').toUpperCase()}
 ${getHookAngleVisualDirection(_effectiveColdHookAngle || '')}
-
-${_effectiveColdHookAngle === 'before_after' ? `
+` : ''}
+      ${isBeforeAfterSelection(inputs, _effectiveColdHookAngle) ? `
 BEFORE/AFTER SPLIT COMPOSITION (MANDATORY):
 - SPLIT the canvas into TWO CLEAR HALVES (left vs right, or top vs bottom)
 - BOTH halves show the SAME HERO — same face, same person, different life chapter
@@ -2187,7 +2261,6 @@ BEFORE/AFTER SPLIT COMPOSITION (MANDATORY):
 - VISIBLE DIVIDER: diagonal line, gradient split, torn edge
 - STRICT: Do NOT render any "BEFORE"/"AFTER" or "قبل"/"بعد" text labels on the image. The visual contrast alone tells the story.
 - This is NOT optional - the user specifically selected before/after split design
-` : ''}
 ` : ''}
       ${(() => {
                 // Concept generation uses resolver spec for creative mode instructions
@@ -2864,7 +2937,7 @@ ${fusionParts.join('\n\n')}
           // ── Ticket 9: Before/after + sub-style fusion ──
           const _sub9 = resolveVisualSubStyle(inputs);
           const _angle9 = inputs.coldHookAngle;
-          if (!_sub9 || _angle9 !== 'before_after') return '';
+          if (!_sub9 || !isBeforeAfterSelection(inputs, _effectiveColdHookAngle)) return '';
           const fusion = getBeforeAfterSubStyleFusion(_sub9);
           if (!fusion) return '';
           return `
@@ -2998,36 +3071,38 @@ ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? '' : `- IMPORTANT: The ho
 - Do NOT skip or omit any field in any concept. ALL fields are MANDATORY for every concept.
 - Each field label must be on its own line, followed by a colon, then the content.
 
-  ${_effectiveColdHookAngle === 'before_after' ? (resolveStyleFamily(inputs) === 'minimal' ? `
-  CONCEPT_START_[INDEX]
-SUBJECT_ACTION: [⚠️ BEFORE/AFTER SPLIT — describe BOTH halves${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? ' in Arabic' : ''}:
+  ${isBeforeAfterSelection(inputs, _effectiveColdHookAngle) ? (resolveStyleFamily(inputs) === 'minimal' ? `
+  CONCEPT_START
+SUBJECT_ACTION: ⚠️ BEFORE/AFTER SPLIT — describe BOTH halves${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? ' in Arabic' : ''}:
 ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? `"النصف الأيسر (قبل):" — البطل في حالة المعاناة. ملابس بسيطة، تعبير مُرهق. خلفية بلون واحد بارد (رمادي/أزرق فاتح).
 "النصف الأيمن (بعد):" — نفس البطل في حالة النجاح. ملابس مهنية أنيقة، تعبير واثق. خلفية بلون واحد دافئ (أبيض/بيج).
 "الفاصل:" — خط عمودي نظيف أو تدرج بسيط يفصل النصفين.` : `"Left half (Before):" — Hero in struggle state. Simple clothing, tired expression. Plain cool solid background (grey/light blue).
 "Right half (After):" — Same hero in success state. Professional polished attire, confident expression. Plain warm solid background (white/beige).
-"Divider:" — Clean vertical line or simple gradient separating the halves.`}]
-ENVIRONMENT_DESC: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'مينيمال: كلا النصفين بخلفية بلون واحد فقط. بدون مشاهد أو أجواء أو بيئات سينمائية أو مناظر. التباين عبر اللون والملابس والتعبير فقط. البطل معزول في كل نصف.' : 'MINIMAL: Both halves use plain solid color backgrounds only. No scenes, no atmosphere, no cinematic environments, no scenery. Contrast through color, clothing, and expression only. Subject isolated in each half.'}]
-MOOD_EMOTION: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إحباط هادئ. النصف الأيمن: ثقة هادئة.' : 'Left: quiet frustration. Right: quiet confidence.'}]
-LIGHTING_LOGIC: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إضاءة استوديو مسطحة باردة. النصف الأيمن: إضاءة استوديو ناعمة دافئة. ممنوع: تأثيرات درامية، إضاءة حجمية، الساعة الذهبية.' : 'Left: flat cool studio lighting. Right: soft warm studio lighting. FORBIDDEN: dramatic effects, volumetric light, golden hour, rim light.'}]
-TEXT_LAYOUT: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'العنوان يمتد فوق النصفين. فراغ سلبي واسع. الـ CTA في الأسفل.' : 'Headline spans both halves. Generous negative space. CTA at bottom.'}]
-BUTTON_POSITION: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'أسفل الصورة، كامل العرض.' : 'Bottom of image, full width.'}]
-BRANDING_LOGIC: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'شعار Box B إن وجد — في الوسط أو على الفاصل.' : 'Box B logo if present — centered or on divider.'}]
-TECHNICAL_PROMPT: [ENGLISH ONLY - SPLIT-SCREEN BEFORE/AFTER composition. MINIMAL STYLE: Both halves use plain solid color backgrounds — LEFT cool grey/blue, RIGHT warm white/beige. Split screen composition with clean vertical divider. Identical soft even studio lighting on both sides. Subject isolated on each side. NO environment scenes, NO cinematic environments, NO environmental storytelling, NO scenic environment, NO atmospheric effects, NO bokeh, NO volumetric light, NO golden hour, NO dramatic lighting, NO depth of field. Style: Premium clean ad (Apple/Nike aesthetic). STRICT: Do NOT render any "BEFORE"/"AFTER" text labels. NO TEXTURES ON FACE.]
-CONCEPT_END_[INDEX]
+"Divider:" — Clean vertical line or simple gradient separating the halves.`}
+ENVIRONMENT_DESC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'مينيمال: كلا النصفين بخلفية بلون واحد فقط. بدون مشاهد أو أجواء أو بيئات سينمائية أو مناظر. التباين عبر اللون والملابس والتعبير فقط. البطل معزول في كل نصف.' : 'MINIMAL: Both halves use plain solid color backgrounds only. No scenes, no atmosphere, no cinematic environments, no scenery. Contrast through color, clothing, and expression only. Subject isolated in each half.'}
+MOOD_EMOTION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إحباط هادئ. النصف الأيمن: ثقة هادئة.' : 'Left: quiet frustration. Right: quiet confidence.'}
+LIGHTING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إضاءة استوديو مسطحة باردة. النصف الأيمن: إضاءة استوديو ناعمة دافئة. ممنوع: تأثيرات درامية، إضاءة حجمية، الساعة الذهبية.' : 'Left: flat cool studio lighting. Right: soft warm studio lighting. FORBIDDEN: dramatic effects, volumetric light, golden hour, rim light.'}
+TEXT_LAYOUT: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'العنوان يمتد فوق النصفين. فراغ سلبي واسع. الـ CTA في الأسفل.' : 'Headline spans both halves. Generous negative space. CTA at bottom.'}
+BUTTON_POSITION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'أسفل الصورة، كامل العرض.' : 'Bottom of image, full width.'}
+BRANDING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'شعار Box B إن وجد — في الوسط أو على الفاصل.' : 'Box B logo if present — centered or on divider.'}
+TECHNICAL_PROMPT: ENGLISH ONLY - SPLIT-SCREEN BEFORE/AFTER composition. MINIMAL STYLE: Both halves use plain solid color backgrounds — LEFT cool grey/blue, RIGHT warm white/beige. Split screen composition with clean vertical divider. Identical soft even studio lighting on both sides. Subject isolated on each side. NO environment scenes, NO cinematic environments, NO atmospheric effects. Style: Premium clean ad. STRICT: Do NOT render any "BEFORE"/"AFTER" text labels.
+CONCEPT_END
   ` : `
-  CONCEPT_START_[INDEX]
-SUBJECT_ACTION: [⚠️ BEFORE/AFTER SPLIT — describe BOTH halves in Arabic:
-"النصف الأيسر (قبل):" — وصف البطل في حالة المعاناة المرتبطة بالعنوان. ملابس بسيطة، بيئة فوضوية، تعبير وجه مُرهق.
+  CONCEPT_START
+SUBJECT_ACTION: ⚠️ BEFORE/AFTER SPLIT — describe BOTH halves${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? ' in Arabic' : ''}:
+${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? `"النصف الأيسر (قبل):" — وصف البطل في حالة المعاناة المرتبطة بالعنوان. ملابس بسيطة، بيئة فوضوية، تعبير وجه مُرهق.
 "النصف الأيمن (بعد):" — نفس البطل في حالة النجاح المرتبطة بالمنتج. ملابس فاخرة، بيئة راقية، تعبير واثق.
-"الفاصل:" — خط مائل ذهبي أو تدرج لوني يفصل النصفين.]
-ENVIRONMENT_DESC: [صف بيئتين مختلفتين: بيئة "القبل" (مكتب فوضوي/غرفة ضيقة) وبيئة "البعد" (مكتب فاخر/بهو فندقي). التباين يجب أن يكون صارخاً.]
-MOOD_EMOTION: [النصف الأيسر: إحباط، إرهاق، هشاشة. النصف الأيمن: انتصار، سيطرة، سلطة.]
-LIGHTING_LOGIC: [النصف الأيسر: إضاءة قاسية، باردة، مسطحة. النصف الأيمن: إضاءة سينمائية ذهبية دافئة.]
-TEXT_LAYOUT: [العنوان يمتد فوق النصفين. الـ CTA في الأسفل يمتد على كامل العرض. الفاصل واضح بصرياً.]
-BUTTON_POSITION: [أسفل الصورة، يمتد على كامل العرض فوق خلفية داكنة.]
-BRANDING_LOGIC: [شعار Box B إن وجد — في الوسط أو على الفاصل.]
-TECHNICAL_PROMPT: [ENGLISH ONLY - SPLIT-SCREEN BEFORE/AFTER composition. LEFT=struggle scene with dim cold lighting. RIGHT=success scene with warm golden lighting. Same hero face in both. Diagonal gold divider. Camera: 85mm, f/1.8. Photorealistic. STRICT: Do NOT render any "BEFORE"/"AFTER" or "قبل"/"بعد" text labels on the image. The visual contrast alone tells the story.]
-CONCEPT_END_[INDEX]
+"الفاصل:" — خط مائل ذهبي أو تدرج لوني يفصل النصفين.` : `"Left half (Before):" — Hero in struggle state connected to headline pain. Simple clothing, chaotic environment, tired expression.
+"Right half (After):" — Same hero in success state connected to product promise. Premium clothing, upscale environment, confident expression.
+"Divider:" — Diagonal gold line or gradient split separating the halves.`}
+ENVIRONMENT_DESC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'صف بيئتين مختلفتين: بيئة "القبل" (مكتب فوضوي/غرفة ضيقة) وبيئة "البعد" (مكتب فاخر/بهو فندقي). التباين يجب أن يكون صارخاً.' : 'Two contrasting environments: "Before" (cluttered office/cramped room) and "After" (premium office/hotel lobby). Contrast must be dramatic.'}
+MOOD_EMOTION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إحباط، إرهاق، هشاشة. النصف الأيمن: انتصار، سيطرة، سلطة.' : 'Left: frustration, exhaustion, vulnerability. Right: triumph, control, authority.'}
+LIGHTING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إضاءة قاسية، باردة، مسطحة. النصف الأيمن: إضاءة سينمائية ذهبية دافئة.' : 'Left: harsh, cold, flat lighting. Right: cinematic warm golden lighting.'}
+TEXT_LAYOUT: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'العنوان يمتد فوق النصفين. الـ CTA في الأسفل يمتد على كامل العرض. الفاصل واضح بصرياً.' : 'Headline spans both halves. CTA at bottom full width. Divider visually clear.'}
+BUTTON_POSITION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'أسفل الصورة، يمتد على كامل العرض فوق خلفية داكنة.' : 'Bottom of image, full width over dark background.'}
+BRANDING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'شعار Box B إن وجد — في الوسط أو على الفاصل.' : 'Box B logo if present — centered or on divider.'}
+TECHNICAL_PROMPT: ENGLISH ONLY - SPLIT-SCREEN BEFORE/AFTER composition. LEFT half shows struggle scene with dim cold lighting. RIGHT half shows success scene with warm golden lighting. Same hero face in both halves. Diagonal divider separating halves. STRICT: Do NOT render any "BEFORE"/"AFTER" text labels on the image. The visual contrast alone tells the story.
+CONCEPT_END
   `) : `
   CONCEPT_START_[INDEX]
 SUBJECT_ACTION: [وصف وضعية البطل بالتفصيل.استخدم "البطل" أو "هم/لهم" فقط.صف الملابس والتفاعل مع عناصر المشهد.لا تصف ملامح الوجه - صور Box A ستُستخدم للوجه.]
@@ -3224,8 +3299,8 @@ Selected modes: [${modes.join(' + ')}]
 
                     // Determine if this is a strict pair BEFORE repair (so we know to fail-closed on any failure)
                     const STRICT_PAIRS_SECONDARY = [
-                        'value_stack', 'module_preview', 'speaker_card',
-                        'event_ticket', 'day_strip',
+                        'value_stack', 'speaker_card',
+                        'event_ticket',
                         'webinar_screen', 'book_mockup', 'device_mockup',
                     ];
                     const isStrictPair = modeContribCheck.missingModes.some(m => STRICT_PAIRS_SECONDARY.includes(m));
@@ -3254,18 +3329,15 @@ Selected modes: [${modes.join(' + ')}]
                             const stillMissing = finalCheck.missingModes.filter(m => STRICT_PAIRS_SECONDARY.includes(m));
                             if (stillMissing.length > 0) {
                                 console.error(`🛑 STRICT PAIR FAIL-CLOSED: Blueprint still underrepresents [${stillMissing.join(', ')}] after repair. Modes=[${selectedModes.join(',')}]. Throwing.`);
-                                throw new Error(`Blueprint failed strict pair validation — secondary mode(s) [${stillMissing.join(', ')}] underrepresented after repair. User should retry.`);
+                                throw new GenerationError(`Blueprint failed strict pair validation — secondary mode(s) [${stillMissing.join(', ')}] underrepresented after repair. User should retry.`, "slot_repair_failed");
                             }
                         }
                     } catch (e) {
-                        if (e instanceof Error && e.message.includes('strict pair validation')) {
-                            throw e; // Re-throw strict pair failures — NEVER swallow
-                        }
                         // Repair API itself failed (Gemini error, timeout, etc.)
                         console.warn(`⚠️ Blueprint mode repair API failed: ${e}`);
                         if (isStrictPair && !repairSucceeded) {
                             console.error(`🛑 STRICT PAIR FAIL-CLOSED (repair API failed): Cannot guarantee [${modeContribCheck.missingModes.join(', ')}] are represented. Modes=[${selectedModes.join(',')}]. Throwing.`);
-                            throw new Error(`Blueprint failed strict pair validation — repair API failed and secondary mode(s) [${modeContribCheck.missingModes.join(', ')}] cannot be guaranteed. User should retry.`);
+                            throw new GenerationError(`Blueprint failed strict pair validation — repair API failed and secondary mode(s) [${modeContribCheck.missingModes.join(', ')}] cannot be guaranteed. User should retry.`, "slot_repair_failed");
                         }
                     }
                 }
@@ -3304,7 +3376,7 @@ export async function generateBuildPlan(conceptRaw: string, selectedTov: string,
     console.log(`🎨 CREATIVE MODE AUDIT [generateBuildPlan]: modes=[${_bpModes.join(',')}] tab=${_bpCheck.resolvedTab || 'none'} valid=${_bpCheck.valid}${_bpCheck.errors.length ? ' errors: ' + _bpCheck.errors.join('; ') : ''}`);
     if (!_bpCheck.valid) {
         console.error(`🛑 CREATIVE MODE REJECTED in generateBuildPlan: ${_bpCheck.errors.join('; ')}`);
-        throw new Error(`Invalid creative mode combination: ${_bpCheck.errors.join('; ')}`);
+        throw new GenerationError(`Invalid creative mode combination: ${_bpCheck.errors.join('; ')}`, "combination_invalid");
     }
 
     let _bpRefInfluence: ReferenceInfluence | null = null;
@@ -3320,7 +3392,7 @@ export async function generateBuildPlan(conceptRaw: string, selectedTov: string,
 
     const _bpRtCtx = buildNormalizedRetargetingContext(inputs as any);
     const _bpRtBlock = getRetargetingPromptBlock(_bpRtCtx);
-    const _bpEffectiveAngle = _bpRtCtx.isRetargeting ? undefined : inputs.coldHookAngle;
+    const _bpEffectiveAngle = _bpRtCtx.isRetargeting ? null : inputs.coldHookAngle;
     const buildPlanContract = compileFullContract({
         selectedModes: (inputs as any).offerCreativeMode || ['standard_hero'],
         hookAngle: _bpEffectiveAngle || undefined,
@@ -3350,8 +3422,8 @@ ${_bpRtBlock}
       TEXTS TO RENDER:
 1. Headline: "${hookText}"
 2. Subheadline: "${subheadText}"
-${ctaName ? `3. Action Benefit: "${benefitText}"
-4. Button: "${ctaName}"` : `⚠️ NO BUTTON / NO CTA / NO BENEFIT on this slide. Do NOT render any button, CTA bar, or benefit text. This is a MIDDLE carousel slide — headline and subheadline ONLY.`
+${benefitText ? `3. Action Benefit: "${benefitText}"` : ''}
+${ctaName ? `4. Button: "${ctaName}"` : `⚠️ NO BUTTON / NO CTA on this slide. Do NOT render any button or CTA bar. This is a MIDDLE carousel slide.`
         }
       ${inputs.badges ? `5. Badge/Sticker: "${inputs.badges}"` : ''}
       OFFER: ${inputs.offerType || 'Not specified'} — match CTA style to this offer type.
@@ -3559,7 +3631,7 @@ ${buildStructuredBuildPlanReturnBlock(buildPlanContract, ownershipMap)}
         } catch (parseError: any) {
             const malformedJson = (rawResponseText || '').trim();
             if (!malformedJson) {
-                throw new Error('Structured build plan returned empty JSON response.');
+                throw new GenerationError('Structured build plan returned empty JSON response.', "model_error");
             }
 
             const repairResponse = await retry(() => callGemini({
@@ -3586,7 +3658,7 @@ ${malformedJson.slice(0, 24000)}`
             try {
                 return parseStructuredBuildPlanResponse(repairResponse.text || '{}', ownershipMap);
             } catch (repairError: any) {
-                throw new Error(`Structured build plan JSON parse failed after repair. Initial error: ${parseError?.message || parseError}. Repair error: ${repairError?.message || repairError}`);
+                throw new GenerationError(`Structured build plan JSON parse failed after repair. Initial error: ${parseError?.message || parseError}. Repair error: ${repairError?.message || repairError}`, "model_error");
             }
         }
     };
@@ -3621,12 +3693,12 @@ ${JSON.stringify(machinePlan)}`;
         machinePlan = await requestStructuredPlan(repairPrompt);
         structuredValidation = validateStructuredBuildPlan(machinePlan, buildPlanContract, ownershipMap);
         if (!structuredValidation.contractCheck.passed) {
-            throw new Error(`Build plan failed structured contract validation: ${structuredValidation.contractCheck.reasons.join(' | ')}`);
+            throw new GenerationError(`Build plan failed structured contract validation: ${structuredValidation.contractCheck.reasons.join(' | ')}`, "validation_reject");
         }
     }
 
     if (!machinePlan.blueprint || machinePlan.blueprint.length < 80) {
-        throw new Error('Build plan blueprint was empty or too short.');
+        throw new GenerationError('Build plan blueprint was empty or too short.', "prompt_malformed");
     }
 
     // ═══ COPY FIDELITY VALIDATION WITH RETRY ═══
@@ -3640,28 +3712,40 @@ ${JSON.stringify(machinePlan)}`;
     const copyFields: CopyFidelityFields = { hookText, subheadText, ctaName, benefitText };
     const MAX_COPY_FIDELITY_ATTEMPTS = 3;
     let bestMachinePlan = machinePlan;
+    let bestFidelityResult: CopyFidelityResult | null = null;
     let copyFidelityPassed = false;
-    let lastFidelityResult: CopyFidelityResult | null = null;
     for (let attempt = 1; attempt <= MAX_COPY_FIDELITY_ATTEMPTS; attempt++) {
         const tp = extractTechnicalPromptFromBlueprint(machinePlan.blueprint);
         const fidelityResult = tp ? validateCopyFidelity(tp, copyFields) : { passed: false, failedFields: ['hookText', 'subheadText', 'ctaName', 'benefitText'] } as CopyFidelityResult;
-        lastFidelityResult = fidelityResult;
         const contractOk = structuredValidation.contractCheck.passed;
         if (fidelityResult.passed && contractOk) {
             copyFidelityPassed = true;
             bestMachinePlan = machinePlan;
+            bestFidelityResult = fidelityResult;
             if (attempt > 1) {
                 console.log(`✅ Copy fidelity + contract passed on attempt ${attempt}`);
             }
             break;
         }
-        // Keep the best plan seen so far (prefer one that passes at least contract)
-        if (contractOk) bestMachinePlan = machinePlan;
+        // Keep the best plan seen so far — prefer fewer failed fields when both pass contract
+        if (contractOk) {
+            if (!bestFidelityResult || fidelityResult.failedFields.length < bestFidelityResult.failedFields.length) {
+                bestMachinePlan = machinePlan;
+                bestFidelityResult = fidelityResult;
+            }
+        } else if (!bestFidelityResult) {
+            bestFidelityResult = fidelityResult;
+        }
         if (attempt < MAX_COPY_FIDELITY_ATTEMPTS) {
             console.warn(`⚠️ Copy fidelity ${fidelityResult.passed ? 'passed' : 'failed (fields: ' + fidelityResult.failedFields.join(', ') + ')'}, contract ${contractOk ? 'passed' : 'failed'} (attempt ${attempt}/${MAX_COPY_FIDELITY_ATTEMPTS}) — rebuilding plan...`);
             machinePlan = await requestStructuredPlan(prompt);
             if (!machinePlan.blueprint || machinePlan.blueprint.length < 80) {
-                throw new Error('Build plan blueprint was empty or too short on copy fidelity retry.');
+                if (bestMachinePlan.blueprint && bestMachinePlan.blueprint.length >= 80) {
+                    console.warn('⚠️ Copy fidelity retry produced empty/short blueprint — falling back to bestMachinePlan');
+                    machinePlan = bestMachinePlan;
+                    break;
+                }
+                throw new GenerationError('Build plan blueprint was empty or too short on copy fidelity retry.', "prompt_malformed");
             }
             structuredValidation = validateStructuredBuildPlan(machinePlan, buildPlanContract, ownershipMap);
         } else {
@@ -3670,8 +3754,8 @@ ${JSON.stringify(machinePlan)}`;
     }
     // Use the best plan even if fidelity didn't pass — soft warning, not hard rejection
     machinePlan = bestMachinePlan;
-    const copyFidelityWarning: CopyFidelityResult | null = !copyFidelityPassed && lastFidelityResult
-        ? { passed: false, failedFields: lastFidelityResult.failedFields }
+    const copyFidelityWarning: CopyFidelityResult | null = !copyFidelityPassed && bestFidelityResult
+        ? { passed: false, failedFields: bestFidelityResult.failedFields }
         : null;
     if (copyFidelityWarning) {
         console.warn(`⚠️ Copy fidelity warning: fields [${copyFidelityWarning.failedFields.join(', ')}] may not appear verbatim in TECHNICAL_PROMPT — using best available plan`);
@@ -3818,10 +3902,10 @@ export async function generateFinalAd(
     base64ToEdit?: string,
     styleReference?: string,
     textOverride?: TextOverride
-): Promise<{ image: string } | { image: null; errorCode: string; debug?: FinalAdDebugInfo }> {
+): Promise<{ image: string; failureClass?: "numeric_hallucination"; costEstimate?: CostEstimate } | { image: null; errorCode: string; failureClass?: FailureClass; debug?: FinalAdDebugInfo }> {
     // ═══ RETARGETING CONTEXT (normalized) ═══
     const _renderRtCtx = buildNormalizedRetargetingContext(inputs as any);
-    const _renderEffectiveAngle = _renderRtCtx.isRetargeting ? undefined : inputs.coldHookAngle;
+    const _renderEffectiveAngle = _renderRtCtx.isRetargeting ? null : inputs.coldHookAngle;
     const renderStartedAt = Date.now();
     const renderSoftDeadlineMs = 270000;
     const hasTimeBudget = (reserveMs: number): boolean => (Date.now() - renderStartedAt) < (renderSoftDeadlineMs - reserveMs);
@@ -3833,7 +3917,7 @@ export async function generateFinalAd(
         console.log(`🎨 CREATIVE MODE AUDIT [generateFinalAd]: modes=[${_renderModes.join(',')}] tab=${_renderCheck.resolvedTab || 'none'} valid=${_renderCheck.valid}${_renderCheck.errors.length ? ' errors: ' + _renderCheck.errors.join('; ') : ''}`);
         if (!_renderCheck.valid) {
             console.error(`🛑 CREATIVE MODE REJECTED in generateFinalAd: ${_renderCheck.errors.join('; ')}`);
-            return { image: null, errorCode: 'validation_failed', debug: { validator: 'creative_mode', reasons: _renderCheck.errors } };
+            return { image: null, errorCode: 'validation_failed', failureClass: 'combination_invalid' as const, debug: { validator: 'creative_mode', reasons: _renderCheck.errors } };
         }
         // Log validity criteria for active modes (consumed by zone gate and prompt system)
         for (const mId of _renderModes) {
@@ -3992,7 +4076,7 @@ If the uploaded photo shows a person in a blue suit, you must NOT default to a b
                 console.warn(`⚠️ RENDER GATE: quickRejectCheck flagged for minimal (non-blocking): ${gateQuickCheck.reason}`);
             } else {
                 console.error(`🛑 RENDER GATE HARD REJECT: ${gateQuickCheck.reason}. Aborting render.`);
-                return { image: null, errorCode: 'quality_rejected', debug: buildQualityRejectedDebug('quick_reject', undefined, [gateQuickCheck.reason || 'Forbidden build-plan element']) };
+                return { image: null, errorCode: 'quality_rejected', failureClass: 'validation_reject' as const, debug: buildQualityRejectedDebug('quick_reject', undefined, [gateQuickCheck.reason || 'Forbidden build-plan element']) };
             }
         }
 
@@ -4059,21 +4143,21 @@ ${JSON.stringify(parsedBuildPlan.machinePlan || {})}`;
                     console.log(`✅ RENDER SLOT GATE: Build plan regenerated (${repairedMachinePlan.blueprint.length} chars)`);
                 } else {
                     console.error(`🛑 RENDER SLOT GATE: Repair still fails slot check: ${repairedSlotValidation.contractCheck.reasons.join(' | ')}`);
-                    return { image: null, errorCode: 'quality_rejected', debug: buildQualityRejectedDebug('slot_map', repairedSlotValidation.slotMap) };
+                    return { image: null, errorCode: 'quality_rejected', failureClass: 'validation_reject' as const, debug: buildQualityRejectedDebug('slot_map', repairedSlotValidation.slotMap) };
                 }
             } catch (repairErr) {
                 console.error(`🛑 RENDER SLOT GATE: Repair call failed. Aborting render.`, repairErr);
-                return { image: null, errorCode: 'quality_rejected', debug: buildQualityRejectedDebug('slot_map', gateSlotMap, ['Repair call failed']) };
+                return { image: null, errorCode: 'quality_rejected', failureClass: 'validation_reject' as const, debug: buildQualityRejectedDebug('slot_map', gateSlotMap, ['Repair call failed']) };
             }
         } else if (!gateSlotValidation.contractCheck.passed && hasSecondaryZones && !base64ToEdit && !editInstruction) {
-            return { image: null, errorCode: 'quality_rejected', debug: buildQualityRejectedDebug('slot_map', gateSlotMap) };
+            return { image: null, errorCode: 'quality_rejected', failureClass: 'validation_reject' as const, debug: buildQualityRejectedDebug('slot_map', gateSlotMap) };
         }
     }
     // ═══ END HARD RENDER GATE ═══
 
     if (containsUnresolvedCommercialPlaceholders(gatedBlueprint)) {
         console.error('🛑 RENDER GATE HARD REJECT: unresolved commercial placeholder text detected in build plan.');
-        return { image: null, errorCode: 'quality_rejected', debug: buildQualityRejectedDebug('placeholder_leak', undefined, ['Build plan contains unresolved commercial placeholder text']) };
+        return { image: null, errorCode: 'quality_rejected', failureClass: 'validation_reject' as const, debug: buildQualityRejectedDebug('placeholder_leak', undefined, ['Build plan contains unresolved commercial placeholder text']) };
     }
 
     const preOverlayFacts = extractOfferFacts(inputs);
@@ -4195,7 +4279,7 @@ SUBHEADLINE VISIBILITY (CRITICAL):
 
             // ── Before/After is handled by the contract's before_after template ──
             // but we add connected-story rules since the contract only defines zones, not narrative
-            const beforeAfterNarrative = inputs.coldHookAngle === 'before_after' ? `
+            const beforeAfterNarrative = isBeforeAfterSelection(inputs, _renderEffectiveAngle) ? `
 BEFORE/AFTER CONNECTED STORY RULES:
 1. Hero MUST appear in BOTH halves — same face, different wardrobe and energy.
 2. BEFORE props must match the HEADLINE's specific pain (not generic sadness).
@@ -5217,6 +5301,7 @@ ${benefitText ? `- BENEFIT goes below CTA ONLY: "${benefitText}"` : ''}
                         const authorizedSet = new Set(allAuthorized.map(normalize));
 
                         let numericPass = false;
+                        let _numericHallucination = false;
 
                         for (let auditAttempt = 0; auditAttempt < 2; auditAttempt++) {
                             try {
@@ -5322,11 +5407,13 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                         }
                                         if (!eraseSuccess) {
                                             console.warn(`⚠️ Numeric erase re-render failed to produce image (non-blocking). Using pre-erase image.`);
+                                            _numericHallucination = true;
                                             numericPass = true;
                                             break;
                                         }
                                     } catch (eraseErr) {
                                         console.warn(`⚠️ Numeric erase re-render call failed (non-blocking). Using original image.`, eraseErr);
+                                        _numericHallucination = true;
                                         numericPass = true;
                                         break;
                                     }
@@ -5335,6 +5422,7 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                     // Second audit still found unauthorized numbers — warn but continue
                                     console.warn(`⚠️ Numeric fidelity: unauthorized numbers persist after retry [${unauthorized.join(', ')}]. Continuing with best-effort image.`);
                                     numericPass = true;
+                                    _numericHallucination = true;
                                 }
                             } catch (auditErr) {
                                 // Audit call itself failed — downgrade to warning, return the image
@@ -5347,6 +5435,7 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                         }
 
                         if (numericPass) {
+                            const _nhResult = _numericHallucination ? { failureClass: 'numeric_hallucination' as const, costEstimate: getCostEstimate() } : {};
                             // ═══ DETERMINISTIC OVERLAY: Composite exact numbers onto the image ═══
                             // For strict-fidelity templates, overlay is MANDATORY — fail if it can't run.
                             if (!base64ToEdit && !styleReference) {
@@ -5360,14 +5449,14 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                 if (overlayContract.overlaySlots.length > 0) {
                                     if (!isOverlayAvailable()) {
                                         console.warn('⚠️ OVERLAY: Sharp not installed — skipping overlay, returning image without price compositing.');
-                                        return { image: currentImage };
+                                        return { image: currentImage, ..._nhResult };
                                     }
 
                                     // Pre-check: extract facts to determine if overlay is structurally possible
                                     const preFacts = extractOfferFacts(inputs);
                                     if (!preFacts) {
                                         console.warn('⚠️ OVERLAY: facts extraction returned null — skipping overlay, returning image without price compositing.');
-                                        return { image: currentImage };
+                                        return { image: currentImage, ..._nhResult };
                                     }
 
                                     const ar = overlayContract.aspectRatioRules;
@@ -5384,7 +5473,7 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                         );
                                         if (!overlaid) {
                                             console.warn('⚠️ OVERLAY: compositor returned null — returning image without price compositing.');
-                                            return { image: currentImage };
+                                            return { image: currentImage, ..._nhResult };
                                         }
 
                                         // ═══ POST-OVERLAY VERIFICATION ═══
@@ -5439,17 +5528,17 @@ If no monetary numbers are visible, return: []` }
                                         }
 
                                         console.log('✅ Deterministic offer overlay applied and verified.');
-                                        return { image: overlaid };
+                                        return { image: overlaid, ..._nhResult };
                                     } catch (overlayErr) {
                                         console.warn('⚠️ Overlay compositing failed (non-blocking). Returning image without overlay.', overlayErr);
-                                        return { image: currentImage };
+                                        return { image: currentImage, ..._nhResult };
                                     }
                                 }
                             }
-                            return { image: currentImage };
+                            return { image: currentImage, ..._nhResult };
                         }
                         // Safety net — should not reach here, but return image if we have one
-                        return { image: currentImage || imageBase64 };
+                        return { image: currentImage || imageBase64, ...(_numericHallucination ? { failureClass: 'numeric_hallucination' as const, costEstimate: getCostEstimate() } : {}) };
                     }
 
                     // ═══ DETERMINISTIC OVERLAY for non-strict modes that still have overlay slots ═══
@@ -5489,7 +5578,7 @@ If no monetary numbers are visible, return: []` }
             }
         }
     }
-    return { image: null, errorCode: 'safety_blocked' };
+    return { image: null, errorCode: 'safety_blocked', failureClass: 'model_error' as const };
 }
 
 // ═══ DESIGN CRITIC LOOP — Internal quality gate before user sees the image ═══
@@ -6064,9 +6153,9 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
 
 // 5. Caption -> NEEDS GEMINI 3 (Creative)
 // Updated to accept 'refinement' and force Fusha
-export async function generateCaption(mockupUrl: string, inputs: AdInputs, visualMetaphor: string, approvedTov: string, refinement?: string, carouselContext?: string, buildPlanContext?: string): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
+export async function generateCaption(mockupUrl: string, inputs: AdInputs, visualMetaphor: string, approvedTov: string, refinement?: string, carouselContext?: string, buildPlanContext?: string): Promise<{ text: string; rankingGuidance: RankingLinkage | null; captionQuality: CaptionQualityResult | null }> {
     let _captionRankingLinkage: RankingLinkage | null = null;
-    async function _generateCaptionInner(): Promise<string> {
+    async function _generateCaptionInner(): Promise<{ text: string; captionQuality: CaptionQualityResult | null }> {
         // ═══ REFERENCE IMAGE ANALYSIS (optional, non-blocking) ═══
         let _captionRefInfluence: ReferenceInfluence | null = null;
         if (inputs.referenceImage) {
@@ -6415,6 +6504,8 @@ Position the offer as clearly superior without naming competitors directly. Use 
         let result = '';
         let attempt = 0;
         let captionRepairPrompt: string | null = null;
+        let captionQuality: CaptionQualityResult | null = null;
+        let repairAttempted = false;
         const MAX_CAPTION_ATTEMPTS = 2;
 
         while (attempt < MAX_CAPTION_ATTEMPTS) {
@@ -6434,7 +6525,7 @@ Position the offer as clearly superior without naming competitors directly. Use 
             // ── Post-processing: Strip leaked step markers / scene descriptions ──
             result = cleanCaptionOutput(result);
 
-            // ── Validate ──
+            // ── Validate caption quality ──
             const validation = validateCaption({
                 caption: result,
                 locale,
@@ -6446,25 +6537,58 @@ Position the offer as clearly superior without naming competitors directly. Use 
                 visualStyleFamily: resolveStyleFamily(inputs),
             });
 
-            if (validation.passed) {
-                console.log(`✅ Caption validated on attempt ${attempt} (${validation.checks.filter(c => c.passed).length}/${validation.checks.length} checks passed)`);
+            // ── Validate language quality ──
+            const lines = result.split(/\n/).filter(Boolean);
+            const headline = lines[0] || "";
+            const subheadline = lines.slice(1).join(" ").trim() || "";
+            const langQuality = validateLanguageQuality({
+                headline,
+                subheadline,
+                locale,
+                fullCaption: result,
+            });
+
+            // Build aggregate captionQuality from both validators
+            const captionChecks: CaptionQualityCheck[] = validation.checks.map(c => ({
+                rule: c.name,
+                passed: c.passed,
+                detail: c.detail,
+            }));
+            const allPassed = validation.passed && langQuality.passed;
+            captionQuality = {
+                passed: allPassed,
+                captionChecks,
+                languageChecks: langQuality.checks,
+                repairedAt: null,
+                locale,
+            };
+
+            if (allPassed) {
+                console.log(`✅ Caption validated on attempt ${attempt} (${captionChecks.filter(c => c.passed).length}/${captionChecks.length} caption checks, ${langQuality.checks.filter(c => c.passed).length}/${langQuality.checks.length} lang quality checks)`);
                 break;
             }
 
-            // Log failures
-            const failedChecks = validation.checks.filter(c => !c.passed);
-            console.warn(`⚠️ Caption validation failed (attempt ${attempt}/${MAX_CAPTION_ATTEMPTS}): ${failedChecks.map(c => c.name).join(', ')}`);
+            const failedChecks = captionChecks.filter(c => !c.passed);
+            const failedLangChecks = langQuality.checks.filter(c => !c.passed);
+            console.warn(`⚠️ Caption validation failed (attempt ${attempt}/${MAX_CAPTION_ATTEMPTS}): caption=[${failedChecks.map(c => c.rule).join(', ')}] lang=[${failedLangChecks.map(c => c.rule).join(', ')}]`);
 
-            if (attempt < MAX_CAPTION_ATTEMPTS && validation.repairPrompt) {
-                captionRepairPrompt = validation.repairPrompt;
-                console.log(`🔄 Attempting caption repair...`);
+            if (attempt < MAX_CAPTION_ATTEMPTS) {
+                const repairParts: string[] = [];
+                if (validation.repairPrompt) repairParts.push(validation.repairPrompt);
+                if (langQuality.repairPrompt) repairParts.push(langQuality.repairPrompt);
+                captionRepairPrompt = repairParts.length > 0 ? repairParts.join('\n') : null;
+                if (captionRepairPrompt) repairAttempted = true;
+                if (captionRepairPrompt) console.log(`🔄 Attempting caption repair...`);
             } else {
-                // Final attempt failed — return best effort with log
-                console.warn(`❌ Caption repair exhausted. Returning best-effort output. Failed: ${failedChecks.map(c => `${c.name}: ${c.detail}`).join(' | ')}`);
+                console.warn(`❌ Caption repair exhausted. Returning best-effort output.`);
             }
         }
 
-        return result;
+        if (captionQuality && repairAttempted && captionQuality.passed) {
+            captionQuality = { ...captionQuality, repairedAt: Date.now() };
+        }
+
+        return { text: result, captionQuality };
     }
 
     // ─── Caption cleanup helper (extracted from inline post-processing) ─────────
@@ -6523,8 +6647,8 @@ Position the offer as clearly superior without naming competitors directly. Use 
 
         return result;
     } // end _generateCaptionInner
-    const text = await _generateCaptionInner();
-    return { text, rankingGuidance: _captionRankingLinkage };
+    const { text, captionQuality } = await _generateCaptionInner();
+    return { text, rankingGuidance: _captionRankingLinkage, captionQuality };
 }
 
 // 6. Visual Polishes -> USE LOGIC MODEL
@@ -6567,24 +6691,27 @@ export async function generateVisualPolishes(currentRender: string, inputs: AdIn
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { detectTestimonialPlatform, buildTestimonialMockup, setTestimonialGeminiCaller } from "./testimonialMockup.js";
-import type { PlatformType, TestimonialSlideResult, TestimonialCarouselResult } from "./types.js";
+import type { PlatformType, TestimonialSlideResult, TestimonialCarouselResult, VisualStyleFamily } from "./types.js";
 import { resolveTestimonialSlideCount } from "./creativeResolver.js";
 
 export { setTestimonialGeminiCaller };
 
+const ALLOWED_STYLES: ReadonlySet<VisualStyleFamily> = new Set(["realistic", "fantasy", "minimal"] as const);
+
 export async function generateTestimonialHookSlide(
     inputs: AdInputs,
     testimonialCount: number,
+    visualStyleFamily: VisualStyleFamily,
 ): Promise<{ hookText: string; subheadText: string }> {
-    const campaignType = (inputs as any).campaignType || 'cold';
-    const isRetargeting = campaignType === 'retargeting';
+    const rtCtx = buildNormalizedRetargetingContext(inputs as any);
     const ctaText = inputs.cta || '';
     const lang = inputs.adLanguage || 'ar_fusha';
     const langInstruction = getLanguageInstruction(lang);
+    const artDirectionBlock = `ART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
 
     let prompt: string;
-    if (isRetargeting) {
-        const objectionText = (inputs as any).retargetingObjection || (inputs as any).retargetingObjectionText || '';
+    if (rtCtx.isRetargeting) {
+        const objectionText = rtCtx.effectiveObjectionText;
         prompt = `Write a RETARGETING carousel hook slide (slide 1) for a testimonial carousel.
 
 CAMPAIGN TYPE: Retargeting (warm traffic)
@@ -6593,6 +6720,8 @@ TESTIMONIAL COUNT: ${testimonialCount} testimonials available as evidence
 CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
+
+${artDirectionBlock}
 
 RULES:
 - The headline MUST name or reference the specific objection: "${objectionText}"
@@ -6605,8 +6734,8 @@ RULES:
 - The tone should feel like "you had a doubt? let me show you something"
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your hook text]
-SUBHEADLINE: [supporting text]`;
+HEADLINE: one line of hook text
+SUBHEADLINE: one line of supporting text`;
     } else {
         prompt = `Write a COLD carousel hook slide (slide 1) for a testimonial carousel.
 
@@ -6615,6 +6744,8 @@ TESTIMONIAL COUNT: ${testimonialCount} testimonials available
 CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
+
+${artDirectionBlock}
 
 RULES:
 - Create curiosity to swipe by teasing social proof WITHOUT showing it
@@ -6626,8 +6757,8 @@ RULES:
 - The tone should feel like "wait until you see this"
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your hook text]
-SUBHEADLINE: [supporting text]`;
+HEADLINE: one line of hook text
+SUBHEADLINE: one line of supporting text`;
     }
 
     const response = await retry(() => callGemini({
@@ -6645,16 +6776,17 @@ SUBHEADLINE: [supporting text]`;
 
 export async function generateTestimonialCloseSlide(
     inputs: AdInputs,
+    visualStyleFamily: VisualStyleFamily,
 ): Promise<{ closeText: string; subheadText: string }> {
-    const campaignType = (inputs as any).campaignType || 'cold';
-    const isRetargeting = campaignType === 'retargeting';
+    const rtCtx = buildNormalizedRetargetingContext(inputs as any);
     const ctaText = inputs.cta || '';
     const lang = inputs.adLanguage || 'ar_fusha';
     const langInstruction = getLanguageInstruction(lang);
+    const artDirectionBlock = `ART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
 
     let prompt: string;
-    if (isRetargeting) {
-        const objectionText = (inputs as any).retargetingObjection || (inputs as any).retargetingObjectionText || '';
+    if (rtCtx.isRetargeting) {
+        const objectionText = rtCtx.effectiveObjectionText;
         prompt = `Write a RETARGETING close slide (last slide) for a testimonial carousel.
 
 CAMPAIGN TYPE: Retargeting (warm traffic)
@@ -6662,6 +6794,8 @@ OBJECTION: "${objectionText}"
 CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
+
+${artDirectionBlock}
 
 RULES:
 - This is the FINAL slide after multiple testimonial slides
@@ -6673,8 +6807,8 @@ RULES:
 - Subheadline: max 15 words, final push
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your close text]
-SUBHEADLINE: [supporting text]`;
+HEADLINE: one line of close text
+SUBHEADLINE: one line of supporting text`;
     } else {
         prompt = `Write a COLD close slide (last slide) for a testimonial carousel.
 
@@ -6682,6 +6816,8 @@ CAMPAIGN TYPE: Cold (new traffic)
 CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
+
+${artDirectionBlock}
 
 RULES:
 - This is the FINAL slide after multiple testimonial slides
@@ -6692,8 +6828,8 @@ RULES:
 - Subheadline: max 15 words, final push
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your close text]
-SUBHEADLINE: [supporting text]`;
+HEADLINE: one line of close text
+SUBHEADLINE: one line of supporting text`;
     }
 
     const response = await retry(() => callGemini({
@@ -6715,11 +6851,15 @@ export async function generateTestimonialCarousel(
     maxPlanSlides: number,
 ): Promise<TestimonialCarouselResult> {
     const ctaText = inputs.cta || '';
+    const rawStyle = resolveStyleFamily(inputs);
+    const visualStyleFamily: VisualStyleFamily = ALLOWED_STYLES.has(rawStyle as VisualStyleFamily)
+        ? (rawStyle as VisualStyleFamily)
+        : "realistic";
 
     const totalSlides = resolveTestimonialSlideCount(screenshots.length, maxPlanSlides);
     const testimonialCount = totalSlides - 2;
 
-    console.log(`💬 Testimonial carousel: ${screenshots.length} screenshots, ${totalSlides} slides (${testimonialCount} testimonials + hook + close)`);
+    console.log(`💬 Testimonial carousel: ${screenshots.length} screenshots, ${totalSlides} slides (${testimonialCount} testimonials + hook + close), style=${visualStyleFamily}`);
 
     const platforms = await Promise.all(
         screenshots.slice(0, testimonialCount).map((s) => detectTestimonialPlatform(s))
@@ -6727,11 +6867,11 @@ export async function generateTestimonialCarousel(
     console.log(`💬 Detected platforms: ${platforms.join(', ')}`);
 
     const [hookResult, mockupResults, closeResult] = await Promise.all([
-        generateTestimonialHookSlide(inputs, testimonialCount),
+        generateTestimonialHookSlide(inputs, testimonialCount, visualStyleFamily),
         Promise.all(
-            screenshots.slice(0, testimonialCount).map((s, i) => buildTestimonialMockup(s, platforms[i]))
+            screenshots.slice(0, testimonialCount).map((s, i) => buildTestimonialMockup(s, platforms[i], visualStyleFamily))
         ),
-        generateTestimonialCloseSlide(inputs),
+        generateTestimonialCloseSlide(inputs, visualStyleFamily),
     ]);
 
     const slides: TestimonialSlideResult[] = [];
@@ -6772,5 +6912,6 @@ export async function generateTestimonialCarousel(
         slides,
         detectedPlatforms: platforms,
         totalSlides,
+        visualStyleFamily,
     };
 }

@@ -569,6 +569,10 @@ export function validateCopyFidelity(
     }
 
     const fields = copyFieldsOrHookText;
+    // hookText is required — blank hookText always fails
+    if (!fields.hookText?.trim()) {
+        return { passed: false, failedFields: ["hookText"] };
+    }
     if (!technicalPrompt) {
         return {
             passed: false,

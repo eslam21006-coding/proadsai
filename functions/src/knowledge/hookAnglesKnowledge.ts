@@ -16,52 +16,6 @@ export interface HookAngleKnowledge {
 
 export const HOOK_ANGLE_KNOWLEDGE: Record<string, HookAngleKnowledge> = {
 
-    before_after: {
-        promptInstruction: `BEFORE/AFTER ANGLE — Show the transformation contrast.
-The headline must create a VISUAL or EMOTIONAL split between "where they are" and "where they could be."
-Structure: [BEFORE state] → [AFTER state] or [PAIN] vs [RESULT].
-The contrast must be SPECIFIC, not vague. Use numbers, timelines, or vivid situations.`,
-        headlineFormula: '[Specific painful BEFORE] → [Specific desirable AFTER]',
-        examplesAr: [
-            'من 3 عملاء شهرياً إلى 47 عميل في 60 يوم',
-            'قبل: تبيع بالساعة. بعد: تبيع بالنظام',
-            'من التسعير بالخجل إلى فاتورة فوق الألف دولار',
-        ],
-        examplesEn: [
-            'From 3 clients/month to 47 in 60 days',
-            'Before: Selling hours. After: Selling systems',
-            'From shy pricing to $1,000+ invoices',
-        ],
-        subheadlineStrategy: 'Explain the MECHANISM that bridges before→after. What changed?',
-        ctaStrategy: 'CTA should promise the "after" state: "ابدأ التحول" / "Start your transformation"',
-        visualDirection: `MANDATORY SPLIT COMPOSITION — NARRATIVE BEFORE/AFTER:
-The two halves must tell a CONNECTED STORY about the same person's transformation.
-
-BEFORE HALF (left or top):
-- The hero is doing the WRONG thing or suffering the SPECIFIC problem mentioned in the headline
-- Example: If headline says "stop burning your prices" → hero is hunched over a laptop with "$5" price tags, discount stickers, frustrated clients walking away
-- The environment MATCHES the pain: messy desk, cheap office, empty room, rejection emails on screen
-- Hero's expression: stressed, exhausted, confused, defeated
-- Color: desaturated, cool blues/grays, dim lighting
-
-AFTER HALF (right or bottom):
-- The SAME hero is now living the RESULT promised by the product
-- Example: Same person now standing confidently behind a premium desk, "$1,000" invoices on screen, happy clients shaking hands
-- The environment MATCHES the success: premium office, gold accents, recognition on walls, team behind them
-- Hero's expression: confident, proud, calm authority
-- Color: warm, golden, bright, premium
-
-CRITICAL CONNECTION RULES:
-1. Both halves must show the SAME PERSON (face likeness preserved)
-2. The BEFORE pain must be SPECIFIC to the headline — not generic "sad person"
-3. The AFTER success must be SPECIFIC to the product promise — not generic "happy person"  
-4. Visual PROPS should change logically: cheap laptop → premium setup, empty calendar → full calendar, solo → team
-5. The transformation should feel BELIEVABLE — same person, different chapter of their life
-6. A visible DIVIDER separates the halves: diagonal line, gradient split, torn edge, or a "قبل/بعد" label`,
-        captionStrategy: 'Open with the "before" pain (2 sentences), then reveal the "after" transformation with specifics. Use a mini case study structure.',
-        carouselStrategy: 'Slide 1: The painful "before." Slides 2-3: The journey/mechanism. Slide 4: The "after" with proof. Final slide: CTA.',
-    },
-
     emotional: {
         promptInstruction: `EMOTIONAL ANGLE — Trigger deep feelings that bypass rational thinking.
 The headline must hit an EMOTION directly: fear, hope, pride, frustration, desire, or shame.
@@ -487,38 +441,6 @@ FEELING: Hope, excitement, "what if today really is the day?"
 SUBHEADLINE: The emotional bridge from pain to possibility.
 `,
 
-    before_after: `
-【BEFORE/AFTER-NATIVE VARIATIONS — ALL 4 hooks must show transformation contrast】
-
-⚠️ CRITICAL: Write each hook as a COMPLETELY ORIGINAL Arabic sentence. Do NOT follow any fill-in-the-blank pattern.
-Each hook must have a UNIQUE sentence structure — vary openings, rhythm, punctuation, and rhetorical devices.
-Do NOT use the same "من X إلى Y" structure for multiple hooks — vary the contrast mechanism.
-
-【HOOK A】 → FINANCIAL TRANSFORMATION
-DIMENSION: Money before vs money after. The reader should feel the financial leap is real and achievable.
-CONSTRAINTS: Must contrast a financial "before" state with an "after" state. The gap should feel dramatic but believable. Use the offer's specific context.
-FEELING: Aspiration — "that financial reality could be mine."
-SUBHEADLINE: The mechanism that bridged the gap.
-
-【HOOK B】 → LIFESTYLE / TIME TRANSFORMATION
-DIMENSION: Daily life before vs daily life after. The reader should feel the weight lifting from their routine.
-CONSTRAINTS: Must contrast daily experience — the grind vs the freedom. Focus on how TIME and ENERGY change, not just money.
-FEELING: Relief, freedom — "imagine waking up without that burden."
-SUBHEADLINE: How time and freedom changed.
-
-【HOOK C】 → STATUS / IDENTITY TRANSFORMATION
-DIMENSION: How others see them before vs after. The reader should feel the social upgrade.
-CONSTRAINTS: Must contrast identity/reputation — from overlooked/struggling to respected/sought-after. The shift should feel like a new chapter.
-FEELING: Pride, recognition — "people would finally see me differently."
-SUBHEADLINE: How others perceive them differently now.
-
-【HOOK D】 → SKILL / CONFIDENCE TRANSFORMATION
-DIMENSION: From guessing to mastery. The reader should feel the confidence of knowing exactly what to do.
-CONSTRAINTS: Must contrast uncertainty/trial-and-error with clarity/system. The shift is from internal chaos to internal calm.
-FEELING: Confidence, mastery — "I'd finally know what I'm doing."
-SUBHEADLINE: The confidence that comes from knowing exactly what to do.
-`,
-
     pain: `
 【PAIN-NATIVE VARIATIONS — ALL 4 hooks must press on different pain dimensions】
 
@@ -744,7 +666,6 @@ export const ANGLE_HARD_RULES: Record<string, string> = {
     scarcity: 'a QUANTITY LIMIT (فقط X مقاعد, آخر X أماكن, محدود)',
     social_proof: 'reference to OTHER PEOPLE\'s results (count of clients, a name, a group achievement)',
     logical_authority: 'a CREDENTIAL or TRACK RECORD (X عميل, X سنة خبرة, أول نظام)',
-    before_after: 'TWO contrasting states (من...إلى, قبل...بعد, كان...أصبح)',
     emotional: 'an EXPLICIT emotion or VISCERAL verb (يخاف, يحلم, يشعر, الإحباط, الأمل)',
     future_based: 'a FUTURE SCENARIO (تخيل, بعد X أيام, ماذا لو, يوم ما)',
     logic: 'a LOGICAL ARGUMENT with cause→effect reasoning (لأن, بسبب, إذا...فإن, مما يعني)',
@@ -784,8 +705,6 @@ const COMBINED_EXAMPLES: Record<string, string> = {
     'urgency__misconception': 'الكل فاكر إن عنده وقت يجرّب — الحقيقة إن السوق بيتغير كل 90 يوم وأنت لسه في مكانك',
     'emotional__controversial': 'توقف عن التظاهر إنك مرتاح — الخوف من ذكر سعرك يأكل ثقتك كل يوم',
     'emotional__question': 'هل تشعر بالذنب كل ما رفعت سعرك — حتى لو خبرتك تستاهل أضعاف؟',
-    'before_after__question': 'ماذا لو تحوّلت من مدرب يطارد العملاء إلى خبير يختاره العملاء — في 30 يوم؟',
-    'before_after__misconception': 'الكل فاكر إن التحول يحتاج سنوات — الحقيقة إن من "أبيع بالساعة" إلى "أبيع بالنظام" ممكن في شهر',
     'logic__question': 'إذا كنت تبيع خبرة 10 سنوات بسعر ساعة واحدة — ألا ترى إن المعادلة خاطئة من الأساس؟',
     'social_proof__question': 'لماذا حقق 340 مدرب نتائج مضاعفة بنفس الخبرة اللي عندك — وأنت لسه في نفس المكان؟',
 };

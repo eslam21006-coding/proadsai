@@ -41,8 +41,9 @@ As a developer, I have unit tests that verify `validateLaunchSurface()` correctl
 
 1. **Given** one passing combination per lane (9 tests), **When** validated, **Then** all return `allowed: true`.
 2. **Given** deleted modes (`limited_access`, `module_preview`, `day_strip`) as input, **When** validated, **Then** each returns `allowed: false`.
-3. **Given** a cross-tab pair (e.g., `value_stack` + `event_ticket`), **When** validated, **Then** returns `allowed: false` with a reason mentioning "cross-tab" or "not supported."
+3. **Given** a cross-tab pair (`value_stack` + `event_ticket`), **When** validated, **Then** returns `allowed: false` with a reason containing "cross-tab".
 4. **Given** `before_after` + carousel format, **When** validated, **Then** returns `allowed: false` with "single-image only."
+5. **Given** a multi-mode pair from the same tab (`text_only` + `value_stack`), **When** validated, **Then** returns `allowed: false`.
 
 ---
 
@@ -57,8 +58,8 @@ As a developer, I have unit tests that verify `carouselSlideCountPlan()` returns
 **Acceptance Scenarios**:
 
 1. **Given** cold carousel with 2 slides, **When** the plan is generated, **Then** both slides have CTA=true (hook + close).
-2. **Given** cold carousel with 9 slides, **When** the plan is generated, **Then** middle slides have angles A, B, C, D, E, F, G in order.
-3. **Given** retargeting carousel with 7 slides, **When** the plan is generated, **Then** middle slides have angles P, M, R, I, C in order.
+2. **Given** cold carousel with 9 slides, **When** the plan is generated, **Then** middle slides have angles B, C, D, E, F, G, A in order (pool[0] 'A' is assigned to the hook slide).
+3. **Given** retargeting carousel with 7 slides, **When** the plan is generated, **Then** middle slides have angles M, R, I, C, Q in order (pool[0] is assigned to the hook slide).
 
 ---
 
@@ -72,9 +73,9 @@ As a developer, I have unit tests that verify `resolveValueStackSlideCount()` co
 
 **Acceptance Scenarios**:
 
-1. **Given** 3 gifts, **When** `resolveValueStackSlideCount` runs, **Then** returns 5 slides.
+1. **Given** 1 gift, **When** `resolveValueStackSlideCount` runs, **Then** returns 3 slides.
 2. **Given** 7 gifts, **When** runs, **Then** returns 9 slides (cap).
-3. **Given** 9 gifts, **When** runs, **Then** returns 9 slides (cap, not 11).
+3. **Given** 10 gifts, **When** runs, **Then** returns 9 slides (cap, not 12).
 4. **Given** mixed populated and empty value_stack fields, **When** `filterEmptyValueStackFields` runs, **Then** only non-empty fields remain in output.
 5. **Given** all fields empty/whitespace, **When** runs, **Then** returns empty object.
 
@@ -93,12 +94,12 @@ As a developer, I have unit tests that verify `resolveValueStackSlideCount()` co
 
 - **FR-001**: A canonical test fixture MUST exist for each of the 9 priority lanes (Lanes 1–9), containing exact input data and deterministic assertions against resolver function outputs.
 - **FR-002**: Each lane fixture MUST call the actual resolver functions (`validateLaunchSurface`, `carouselSlideCountPlan`, `resolveValueStackSlideCount`, `filterEmptyValueStackFields`) with exact inputs — not mock data.
-- **FR-003**: `validateLaunchSurface()` MUST have unit tests covering: one passing combination per lane, one blocked combination per deleted mode, one cross-tab pair, and one before_after + carousel attempt.
+- **FR-003**: `validateLaunchSurface()` MUST have unit tests covering: one passing combination per lane, one blocked combination per deleted mode (`limited_access`, `module_preview`, `day_strip`), one same-tab multi-mode pair (`text_only` + `value_stack`), one cross-tab pair (`value_stack` + `event_ticket`) with reason containing "cross-tab", and one before_after + carousel attempt.
 - **FR-004**: `carouselSlideCountPlan()` MUST have unit tests verifying exact angle arrays for cold 2/5/9 slides and retargeting 3/5/7 slides.
-- **FR-005**: `resolveValueStackSlideCount()` MUST have unit tests for 3 gifts (→5), 7 gifts (→9), and 9 gifts (→9 cap).
+- **FR-005**: `resolveValueStackSlideCount()` MUST have unit tests for 1 gift (→3), 7 gifts (→9), and 10 gifts (→9 cap).
 - **FR-006**: `filterEmptyValueStackFields()` MUST have unit tests for: all fields populated, all fields empty, and mixed populated/empty.
 - **FR-007**: All fixtures and tests MUST pass when run via the existing contract test command. No new test infrastructure is required.
-- **FR-008**: Lanes 10 and 11 (Testimonial Carousel) MUST remain as stubs that pass with a log message until Phase 4 (Testimonial Carousel) is implemented.
+- **FR-008**: Lanes 10 and 11 (Testimonial Carousel) MUST remain as stubs that pass with a log message until the Testimonial Carousel feature is available.
 
 ### Key Entities
 
@@ -110,9 +111,9 @@ As a developer, I have unit tests that verify `resolveValueStackSlideCount()` co
 ### Measurable Outcomes
 
 - **SC-001**: All 9 lane fixtures pass when run via the contract test command.
-- **SC-002**: `validateLaunchSurface()` tests cover at least 9 passing + 5 blocking scenarios (14 total assertions minimum).
+- **SC-002**: `validateLaunchSurface()` tests cover at least 9 passing + 5 blocked combos (task 3.9) + 1 cross-tab pair (task 3.13) + 1 before_after+carousel block (task 3.2) = 16 total assertions minimum.
 - **SC-003**: `carouselSlideCountPlan()` tests cover 6 slide count scenarios (3 cold + 3 retargeting) with exact angle array verification.
-- **SC-004**: `resolveValueStackSlideCount()` tests cover 3 gift count scenarios with correct slide count outputs.
+- **SC-004**: `resolveValueStackSlideCount()` tests cover 3 gift count scenarios (1, 7, 10 gifts) with correct slide count outputs.
 - **SC-005**: `filterEmptyValueStackFields()` tests cover 3 scenarios (all populated, all empty, mixed).
 - **SC-006**: Zero test infrastructure changes — all tests run via the existing `npm run test:contracts` command.
 - **SC-007**: Lanes 10 and 11 stubs pass without errors.

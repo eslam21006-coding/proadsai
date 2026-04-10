@@ -134,6 +134,10 @@ interface AppState {
     setWorkspaces: (w: Workspace[]) => void;
     setActiveWorkspaceId: (id: string | null) => void;
 
+    // Favorites tracking
+    loadedFavoriteId: string | null;
+    setLoadedFavoriteId: (id: string | null) => void;
+
     // Reset (new project)
     resetPipeline: () => void;
 }
@@ -263,6 +267,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     setWorkspaces: (w) => set({ workspaces: w }),
     setActiveWorkspaceId: (id) => set({ activeWorkspaceId: id }),
 
+    // Favorites tracking
+    loadedFavoriteId: null,
+    setLoadedFavoriteId: (id) => set({ loadedFavoriteId: id }),
+
     // Reset
     resetPipeline: () => set({
         phase: 'input',
@@ -278,5 +286,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         captionText: '',
         batchResults: [],
         competitorData: null,
+        loadedFavoriteId: null,
     }),
 }));

@@ -376,13 +376,10 @@ export function selectLayoutTemplate(
             case 'standard_hero': return 'hero_focus';
             case 'event_ticket': return 'event_ticket';
             case 'speaker_card': return 'event_ticket';
-            case 'day_strip': return 'event_ticket';
             case 'webinar_screen': return 'dashboard_product';
             case 'value_stack': return aspectRatio === '1:1' ? 'hero_value_stack_panel' : 'hero_value_stack_split';
-            case 'limited_access': return 'hero_focus'; // support mode, pairs with anchor template
             case 'book_mockup': return 'dashboard_product';
             case 'device_mockup': return 'dashboard_product';
-            case 'module_preview': return 'dashboard_product';
             // Removed modes: fall through to hero_focus for backward compat
             case 'premium_package': return 'hero_focus';
             case 'preview_card': return 'dashboard_product';
@@ -404,18 +401,6 @@ export function selectLayoutTemplate(
     if (hasModes(primaryMode, secondaryMode, 'standard_hero', 'value_stack')) {
         return aspectRatio === '1:1' ? 'hero_value_stack_panel' : 'hero_value_stack_split';
     }
-    if (hasModes(primaryMode, secondaryMode, 'standard_hero', 'limited_access')) {
-        return 'hero_focus';
-    }
-    if (hasModes(primaryMode, secondaryMode, 'standard_hero', 'module_preview')) {
-        return 'dashboard_product';
-    }
-    if (hasModes(primaryMode, secondaryMode, 'value_stack', 'limited_access')) {
-        return aspectRatio === '1:1' ? 'hero_value_stack_panel' : 'hero_value_stack_split';
-    }
-    if (hasModes(primaryMode, secondaryMode, 'module_preview', 'limited_access')) {
-        return 'dashboard_product';
-    }
 
     // Live Events pairs
     if (hasModes(primaryMode, secondaryMode, 'standard_hero', 'event_ticket')) {
@@ -424,26 +409,14 @@ export function selectLayoutTemplate(
     if (hasModes(primaryMode, secondaryMode, 'standard_hero', 'webinar_screen')) {
         return 'dashboard_product';
     }
-    if (hasModes(primaryMode, secondaryMode, 'standard_hero', 'day_strip')) {
-        return 'event_ticket';
-    }
     if (hasModes(primaryMode, secondaryMode, 'standard_hero', 'speaker_card')) {
-        return 'event_ticket';
-    }
-    if (hasModes(primaryMode, secondaryMode, 'event_ticket', 'day_strip')) {
         return 'event_ticket';
     }
     if (hasModes(primaryMode, secondaryMode, 'event_ticket', 'speaker_card')) {
         return 'event_ticket';
     }
-    if (hasModes(primaryMode, secondaryMode, 'webinar_screen', 'day_strip')) {
-        return 'dashboard_product';
-    }
     if (hasModes(primaryMode, secondaryMode, 'webinar_screen', 'speaker_card')) {
         return 'dashboard_product';
-    }
-    if (hasModes(primaryMode, secondaryMode, 'day_strip', 'speaker_card')) {
-        return 'event_ticket';
     }
 
     // Free Guide pairs
@@ -473,12 +446,12 @@ function deriveMinimalSubstyle(
 ): MinimalSubstyle {
     const modeSet = new Set(sourceModes);
     const deviceModes = [
-        'book_mockup', 'device_mockup', 'module_preview', 'webinar_screen',
+        'book_mockup', 'device_mockup', 'webinar_screen',
         'preview_card', 'platform_screenshot', 'dashboard_preview', 'mobile_app_card', 'inside_look',
     ];
     const hasDevice = deviceModes.some(m => modeSet.has(m));
     const hasHero = modeSet.has('standard_hero');
-    const hasValueModule = modeSet.has('value_stack') || modeSet.has('limited_access');
+    const hasValueModule = modeSet.has('value_stack');
     const editorialAngles = new Set(['secret', 'authority', 'authority_builder', 'shocking_stat', 'myth_busting', 'problem_agitation']);
     const colorBlockAngles = new Set(['offer', 'offer_lead', 'offer_stack', 'urgency', 'fomo', 'scarcity']);
 
@@ -537,8 +510,8 @@ function buildMinimalCompositionSpec(
 ): Pick<LayoutContract, 'minimalSubstyle' | 'depthPlan' | 'anchorObject' | 'anchorRelationship' | 'brandGeometry' | 'infoModuleStyle' | 'ctaIntegration' | 'requiredMinimalPatterns' | 'forbiddenMinimalPatterns'> {
     const substyle = deriveMinimalSubstyle(templateId, sourceModes, hookAngle);
     const hasHero = sourceModes.includes('standard_hero');
-    const hasDevice = ['book_mockup', 'device_mockup', 'module_preview', 'webinar_screen', 'preview_card', 'platform_screenshot', 'dashboard_preview', 'mobile_app_card', 'inside_look'].some(m => sourceModes.includes(m));
-    const hasBenefits = sourceModes.includes('value_stack') || sourceModes.includes('limited_access');
+    const hasDevice = ['book_mockup', 'device_mockup', 'webinar_screen', 'preview_card', 'platform_screenshot', 'dashboard_preview', 'mobile_app_card', 'inside_look'].some(m => sourceModes.includes(m));
+    const hasBenefits = sourceModes.includes('value_stack');
 
     const anchorObject: MinimalAnchorObject = hasHero && hasDevice ? 'balanced' : hasDevice ? 'device' : hasHero ? 'hero' : 'product';
     const anchorRelationship = hasHero && hasDevice

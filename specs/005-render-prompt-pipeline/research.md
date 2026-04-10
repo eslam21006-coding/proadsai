@@ -26,22 +26,13 @@
 
 ---
 
-## R2: Copy Fidelity Validation Gap (Critical)
+## R2: Copy Fidelity Validation — Implemented
 
-**Decision**: Expand `validateCopyFidelity()` to check all 4 copy fields (hookText, subheadText, ctaName, benefitText).
+**Decision**: `validateCopyFidelity()` now supports both a legacy string overload (backward-compatible) and an object overload accepting `{ hookText, subheadText, ctaName, benefitText }`.
 
-**Findings**: Current implementation at buildPlanSlotMap.ts:545 only validates `hookText`:
-```typescript
-export function validateCopyFidelity(technicalPrompt: string | null, hookText: string): boolean {
-    if (!technicalPrompt || !hookText?.trim()) return false;
-    const normalizeText = (s: string) => s.normalize('NFC').trim().replace(/\s+/g, ' ');
-    return normalizeText(technicalPrompt).includes(normalizeText(hookText));
-}
-```
+**Current implementation** (buildPlanSlotMap.ts): The object overload returns `CopyFidelityResult { passed: boolean, failedFields: string[] }`. hookText is required — blank hookText fails immediately. Other fields are validated only when non-empty. NFC normalization + whitespace collapse applied to all comparisons. The `failedFields` array identifies which fields failed for debugging and UI display.
 
-Per spec clarification (2026-04-10), all four unconditional copy fields must be validated. The function signature needs to accept an object with all 4 fields and validate each non-empty field independently.
-
-**Rationale**: Per FR-003 — any absent/paraphrased field triggers retry. Checking only hookText misses subheadText, ctaName, and benefitText violations.
+**Rationale**: Per FR-003 — any absent/paraphrased field triggers retry. The `failedFields` output enables targeted warning messages in the UI banner.
 
 **Alternatives rejected**:
 - Single combined string check — masks which field failed

@@ -1,188 +1,223 @@
 # Data Model: Resolver Completeness, Resolution Trace & Slide Plans
 
-**Feature**: 001-resolver-completeness-trace
+**Branch**: `001-resolver-completeness-trace` | **Date**: 2026-04-06
 
-## Entity: ResolverInput (Extended)
+## Entities
 
-```
-ResolverInput
-├── selectedModes: string[]              # 1-2 creative mode IDs
-├── hookAngle?: string                   # Cold hook angle (10 approved, before_after removed)
-├── offerCategory?: string               # Offer type → tab mapping
-├── campaignType?: 'cold' | 'retargeting'  # NEW — defaults to 'cold'
-├── adFormat?: 'single' | 'carousel' | 'batch'  # NEW — defaults to 'single'
-├── visualStyleFamily?: 'realistic' | 'fantasy' | 'minimal'  # NEW — defaults to 'realistic'
-├── referenceAdUsed?: boolean            # NEW — triggers precedence chain level 1
-├── selectedSubStyle?: string | null     # NEW — art direction card ID
-└── selectedUniverse?: string | null     # NEW — universe/setting value
-```
+### 1. LaunchSurface (compile-time constant)
 
-## Entity: CreativeModeMeta (Extended)
+The authoritative registry of approved launch combinations. Immutable at runtime.
 
-```
-CreativeModeMeta
-├── id: CreativeModeId
-├── labelEn: string
-├── labelAr: string
-├── icon: string
-├── description: string
-├── tabs: CreativeTab[]          # Which offer type tabs this mode appears in
-├── role: 'anchor' | 'support'
-├── standaloneAllowed: boolean
-├── soloOnly: boolean            # NEW — true for before_after and text_only
-├── visualHierarchy: string[]
-├── mustShow: string[]
-├── mustAvoid: string[]
-├── textPlacementRules: string[]
-├── captionAnchors: string[]
-├── validity: { requiredElements, invalidSubstitutes, minimumDescription }
-├── boxCLabel?: string
-├── boxCHint?: string
-└── templateNeeds: string[]
-```
+```typescript
+// Offer type → tab mapping
+type OfferTypeId = 'live_event' | 'free_guide' | 'mini_course';
+type TabId = 'live_events' | 'free_guide' | 'mini_course';
 
-## Entity: LaunchSurfaceResult
+// Legacy offer type mapping (5 → 3)
+type LegacyOfferTypeId = 'free_webinar' | 'paid_workshop' | 'challenge';
 
-```
-LaunchSurfaceResult
-├── allowed: boolean
-└── reason?: string         # Human-readable block reason (only when allowed=false)
-```
+interface OfferTypeEntry {
+  id: OfferTypeId;
+  tab: TabId;
+  labelEn: string;
+  labelAr: string;
+  legacyAliases?: LegacyOfferTypeId[];
+}
 
-## Entity: SlideRole
+// Approved modes per tab
+interface TabModeRegistry {
+  tab: TabId;
+  approvedModes: CreativeModeId[];
+  approvedPairings: Array<{
+    modes: [CreativeModeId, CreativeModeId];
+    layoutKey: string;
+  }>;
+}
 
-```
-SlideRole
-├── slide: number           # 1-based slide index
-├── role: 'hook' | 'middle' | 'close'
-├── angle: string           # Cold: A-G. Retargeting: P,M,R,I,C,Q,E. Hook/close: 'hook'/'close'
-├── hasCTA: boolean         # true only for slide 1 and last slide
-└── photoInjection: boolean # true only for slide 1
+// Campaign × Format × Plan matrix
+interface CampaignFormatEntry {
+  campaignType: 'cold' | 'retargeting';
+  adFormat: 'single' | 'carousel' | 'batch';
+  minPlan: 'starter' | 'creator' | 'pro' | 'scaling';
+}
+
+// Solo-only modes
+const SOLO_ONLY_MODES: CreativeModeId[] = ['before_after', 'text_only'];
+
+// Deleted modes (blocklist)
+const DELETED_MODES: string[] = ['limited_access', 'module_preview', 'day_strip'];
+
+// Approved hook angles (cold only, 10 total)
+const APPROVED_HOOK_ANGLES: string[] = [
+  'emotional', 'logic', 'urgency', 'scarcity', 'pain',
+  'curiosity', 'statistics', 'social_proof', 'logical_authority', 'future_based'
+];
+
+// Visual style families
+type VisualStyleFamily = 'realistic' | 'fantasy' | 'minimal';
 ```
 
-## Entity: ValueStackAdjustment
+**Validation rules**:
+- Every generation request must match an entry in `CampaignFormatEntry`
+- Selected modes must appear in the tab's `approvedModes`
+- Mode pairings must appear in the tab's `approvedPairings` or be a solo mode
+- Solo-only modes cannot be paired with any other mode
+- Deleted modes are rejected with a reason string
+- Hook angles must be from `APPROVED_HOOK_ANGLES` (cold only; null for retargeting)
+- Default `visualStyleFamily` is `'realistic'` when not provided
 
-```
-ValueStackAdjustment
-├── giftCount: number           # Non-empty gifts provided
-├── originalSlideCount: number  # User's selected slide count
-├── resolvedSlideCount: number  # Math.min(giftCount + 2, 9)
-└── capped: boolean             # true if giftCount + 2 > 9
-```
+### 2. ResolutionTrace (Firestore field on generation document)
 
-## Entity: AutoSwitchEvent
+Persisted at `generations/{genId}.resolutionTrace`. Lifecycle tied to generation document.
 
-```
-AutoSwitchEvent
-├── field: string     # Which field was changed
-├── from: string      # Previous value
-├── to: string        # New value
-└── reason: string    # Why the switch happened
-```
+```typescript
+interface ResolutionTrace {
+  // What was resolved
+  resolvedCampaignType: 'cold' | 'retargeting';
+  resolvedAdMode: 'single' | 'carousel' | 'batch';
+  resolvedCreativeModes: string[];
+  resolvedStyleFamily: 'realistic' | 'fantasy' | 'minimal';
+  resolvedSubStyle: string | null;
 
-## Entity: ResolutionTrace
+  // Override tracking
+  referenceAdOverrideActive: boolean;
+  overriddenUniverse?: string;
+  overriddenSubStyle?: string;
+  artDirectionCleared?: boolean;
+  artDirectionClearedReason?: string;
 
-```
-ResolutionTrace
-├── resolvedCampaignType: 'cold' | 'retargeting'
-├── resolvedAdMode: 'single' | 'carousel' | 'batch'
-├── resolvedCreativeModes: string[]
-├── resolvedStyleFamily: 'realistic' | 'fantasy' | 'minimal'
-├── resolvedSubStyle: string | null
-├── referenceAdOverrideActive: boolean
-├── overriddenUniverse?: string
-├── overriddenSubStyle?: string
-├── artDirectionCleared?: boolean
-├── artDirectionClearedReason?: string
-├── hookAngle: string | null
-├── hookAngleNullReason?: string
-├── objectionId: string | null
-├── effectiveObjectionText: string | null
-├── modeCompatibilityResult: 'ok' | 'adapt' | 'block'
-├── modeCompatibilityReason?: string
-├── slideCountOverride?: boolean
-├── originalSlideCount?: number
-├── resolvedSlideCount?: number
-├── slideCountOverrideReason?: string
-├── valueStackEmptyFieldsSkipped?: string[]
-├── autoSwitchEvents: AutoSwitchEvent[]
-├── perSlide?: SlideRole[]       # Per-slide structure for carousels
-├── launchMatrixCheckPassed: boolean
-└── launchMatrixBlockReason?: string
-```
+  // Hook & objection
+  hookAngle: string | null;
+  hookAngleNullReason?: string;
+  objectionId: string | null;
+  effectiveObjectionText: string | null;
 
-**Storage:** Field `resolutionTrace` on `generations/{genId}` Firestore document.
+  // Mode compatibility
+  modeCompatibilityResult: 'ok' | 'adapt' | 'block';
+  modeCompatibilityReason?: string;
 
-## Entity: Launch Surface Registry (Static Data)
+  // Slide count
+  slideCountOverride?: boolean;
+  originalSlideCount?: number;
+  resolvedSlideCount?: number;
+  slideCountOverrideReason?: string;
 
-### Approved Offer Types
+  // Data handling
+  valueStackEmptyFieldsSkipped?: string[];
 
-```
-"Live Event"   → tab: live_events
-"Free Guide"   → tab: free_guide
-"Mini-Course"  → tab: mini_course
-```
+  // Event tracking
+  autoSwitchEvents: Array<{
+    field: string;
+    from: string;
+    to: string;
+    reason: string;
+  }>;
 
-### Approved Modes Per Tab
+  // Per-slide detail (carousel only)
+  perSlide?: Array<{
+    slide: number;
+    hasCTA: boolean;
+    narrativeAngle: string;
+    photoInjection: boolean;
+    testimonialPlatform?: string;
+  }>;
 
-```
-mini_course:  standard_hero, value_stack, before_after, text_only
-live_events:  standard_hero, event_ticket, webinar_screen, speaker_card, before_after, text_only
-free_guide:   standard_hero, book_mockup, device_mockup, before_after, text_only
-```
-
-### Solo-Only Modes
-
-```
-before_after:  soloOnly=true (BLOCKED from pairing in all tabs)
-text_only:     soloOnly=true (BLOCKED from pairing in all tabs)
+  // Launch validation
+  launchMatrixCheckPassed: boolean;
+  launchMatrixBlockReason?: string;
+}
 ```
 
-### Approved Campaign × Format × Plan
+**Validation rules**:
+- All non-optional fields are mandatory on every trace
+- `resolvedCreativeModes` is never empty (at least one mode)
+- `hookAngle` is null when `resolvedCampaignType` is `'retargeting'`; `hookAngleNullReason` must then be `'retargeting_selected'`
+- `perSlide` is required when `resolvedAdMode` is `'carousel'`; length must equal `resolvedSlideCount`
+- `perSlide[0].hasCTA` and `perSlide[last].hasCTA` must be `true`; all middle slides must be `false`
+- `valueStackEmptyFieldsSkipped` contains only canonical field names from the 9-field list
+- `autoSwitchEvents` is an empty array when no overrides fire (never undefined)
 
-```
-cold + single:     Starter+
-cold + carousel:   Pro+
-cold + batch:      Scaling
-retargeting + single:   Creator+
-retargeting + carousel: Pro+
-retargeting + batch:    Scaling
+**State transitions**: None — trace is write-once. Built incrementally during resolution, persisted after generation starts.
+
+### 3. SlidePlan (in-memory, not persisted separately)
+
+Produced by `buildSlidePlan()`, consumed by generators and written into the trace's `perSlide` field.
+
+```typescript
+interface SlideEntry {
+  slide: number;        // 1-based index
+  role: 'hook' | 'middle' | 'close';
+  hasCTA: boolean;
+  narrativeAngle: string;  // e.g., 'A', 'P', 'hook', 'close'
+  photoInjection: boolean; // true only for slide 1
+  testimonialPlatform?: string;
+}
+
+type SlidePlan = SlideEntry[];
 ```
 
-### Deleted Modes (removed from codebase)
+**Determinism rule**: `buildSlidePlan(campaignType, slideCount)` always returns the same `SlidePlan` for the same inputs.
 
-```
-limited_access, module_preview, day_strip
+**Cold angle assignment** (N-2 middle slides, in order): A, B, C, D, E, F, G
+**Retargeting angle assignment** (N-2 middle slides, in order): P, M, R, I, C, Q, E
+
+### 4. EmptyFieldFilter (in-memory transform)
+
+```typescript
+const VALUE_STACK_FIELDS = [
+  'valueStackTitle',
+  'valueStackItems',
+  'valueStackBonuses',
+  'valueStackPrice',
+  'valueStackOriginalValue',
+  'valueStackSavings',
+  'valueStackGuarantee',
+  'valueStackDeliveryFormat',
+  'valueStackProofStatement',
+] as const;
+
+type ValueStackFieldId = typeof VALUE_STACK_FIELDS[number];
 ```
 
-### Approved Hook Angles (10 total, cold only)
+**Filter rules**:
+- `undefined`, `null`, `''`, whitespace-only string → suppressed
+- Empty array `[]` or array of all-empty strings → suppressed
+- Suppressed field names recorded in `ResolutionTrace.valueStackEmptyFieldsSkipped`
 
-```
-emotional, logic, urgency, scarcity, pain, curiosity,
-statistics, social_proof, logical_authority, future_based
+### 5. CreativeModeId (updated union type)
+
+```typescript
+// Active modes (after deletion + reclassification)
+type CreativeModeId =
+  | 'standard_hero'
+  | 'value_stack'
+  | 'event_ticket'
+  | 'webinar_screen'
+  | 'speaker_card'
+  | 'book_mockup'
+  | 'device_mockup'
+  | 'text_only'
+  | 'before_after';   // reclassified from hook angle
+
+// Removed — MUST NOT appear anywhere in resolver or catalogs
+// 'limited_access', 'module_preview', 'day_strip'
 ```
 
 ## Relationships
 
+```text
+GenerationRequest
+  └─▶ LaunchSurface.validate()  → pass/block
+  └─▶ CreativeResolver.resolve()
+       ├─▶ EmptyFieldFilter.filter() → suppressed fields
+       ├─▶ SlidePlanEngine.buildSlidePlan() → SlidePlan (carousel only)
+       ├─▶ VisualPrecedenceChain.resolve() → overrides
+       └─▶ ResolutionTrace (built incrementally)
+            └─▶ Firestore: generations/{genId}.resolutionTrace (fire-and-forget)
 ```
-Generation 1:1 ResolutionTrace
-  (trace stored as field on generation document)
 
-ResolverInput → validateLaunchSurface() → LaunchSurfaceResult
-  (pure function, no state)
+## Data Volume Assumptions
 
-ResolverInput → resolveCreativeSpec() → ResolvedCreativeSpec + ResolutionTrace
-  (trace built during resolution)
-
-(campaignType, slideCount) → carouselSlideCountPlan() → SlideRole[]
-  (static lookup, deterministic)
-
-(gifts[]) → resolveValueStackSlideCount() → ValueStackAdjustment
-  (pure function)
-
-(inputs) → filterEmptyValueStackFields() → { filtered, skippedFields }
-  (pure function)
-
-(inputs, resolved) → resolveVisualPrecedence() → AutoSwitchEvent[]
-  (pure function, applies 5-level chain)
-```
+- Resolution trace: ~2-5 KB per generation (JSON). No separate cleanup needed.
+- Launch surface registry: ~50 entries (static constant). Zero runtime I/O.
+- Slide plans: 2-9 entries per carousel. Computed in memory, not persisted separately.

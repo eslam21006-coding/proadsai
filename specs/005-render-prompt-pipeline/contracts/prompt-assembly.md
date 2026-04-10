@@ -66,7 +66,8 @@ Items in coreDesignRules include brand color hex directives, face-consistency in
 ## Copy Fidelity Contract
 
 **Input**: `{ hookText, subheadText, ctaName, benefitText }` (all strings), `technicalPrompt` (string)
-**Check**: For each non-empty field, `normalizedTechnicalPrompt.includes(normalizedField)` using NFC normalization + whitespace collapse
-**Pass**: All non-empty fields found verbatim → proceed
+**Required**: `hookText` must be non-empty — blank hookText fails immediately
+**Check**: For hookText and each other non-empty field, `normalizedTechnicalPrompt.includes(normalizedField)` using NFC normalization + whitespace collapse
+**Pass**: hookText is non-empty AND all non-empty fields found verbatim → proceed
 **Fail**: Any non-empty field absent or paraphrased → retry build plan generation (max 2 retries)
 **Exhausted**: After 3 total attempts → auto-proceed with best available plan + display warning banner with cancel/retry option before image generation starts. Warning also logged for audit.
