@@ -3439,7 +3439,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 setConceptsText(res);
               } else {
                 refundCredits('generateConcepts');
-                showToast('Blueprint generation returned empty. Credits refunded.', 'error');
+                showToast(t('fidelity.retry_empty_refunded'), 'error');
               }
             } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
           },
