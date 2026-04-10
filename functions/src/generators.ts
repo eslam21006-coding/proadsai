@@ -6415,7 +6415,7 @@ export async function generateTestimonialHookSlide(
     const ctaText = inputs.cta || '';
     const lang = inputs.adLanguage || 'ar_fusha';
     const langInstruction = getLanguageInstruction(lang);
-    const artDirectionBlock = `\n\nART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
+    const artDirectionBlock = `ART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
 
     let prompt: string;
     if (isRetargeting) {
@@ -6429,6 +6429,8 @@ CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
 
+${artDirectionBlock}
+
 RULES:
 - The headline MUST name or reference the specific objection: "${objectionText}"
 - The headline MUST tease testimonials as proof/evidence
@@ -6440,8 +6442,8 @@ RULES:
 - The tone should feel like "you had a doubt? let me show you something"
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: <your hook text on one line>
-SUBHEADLINE: <your supporting text on one line>${artDirectionBlock}`;
+HEADLINE: one line of hook text
+SUBHEADLINE: one line of supporting text`;
     } else {
         prompt = `Write a COLD carousel hook slide (slide 1) for a testimonial carousel.
 
@@ -6450,6 +6452,8 @@ TESTIMONIAL COUNT: ${testimonialCount} testimonials available
 CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
+
+${artDirectionBlock}
 
 RULES:
 - Create curiosity to swipe by teasing social proof WITHOUT showing it
@@ -6461,8 +6465,8 @@ RULES:
 - The tone should feel like "wait until you see this"
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: <your hook text on one line>
-SUBHEADLINE: <your supporting text on one line>${artDirectionBlock}`;
+HEADLINE: one line of hook text
+SUBHEADLINE: one line of supporting text`;
     }
 
     const response = await retry(() => callGemini({
@@ -6487,7 +6491,7 @@ export async function generateTestimonialCloseSlide(
     const ctaText = inputs.cta || '';
     const lang = inputs.adLanguage || 'ar_fusha';
     const langInstruction = getLanguageInstruction(lang);
-    const artDirectionBlock = `\n\nART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
+    const artDirectionBlock = `ART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
 
     let prompt: string;
     if (isRetargeting) {
@@ -6500,6 +6504,8 @@ CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
 
+${artDirectionBlock}
+
 RULES:
 - This is the FINAL slide after multiple testimonial slides
 - The close MUST connect back to the objection: "${objectionText}"
@@ -6510,8 +6516,8 @@ RULES:
 - Subheadline: max 15 words, final push
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: <your close text on one line>
-SUBHEADLINE: <your supporting text on one line>${artDirectionBlock}`;
+HEADLINE: one line of close text
+SUBHEADLINE: one line of supporting text`;
     } else {
         prompt = `Write a COLD close slide (last slide) for a testimonial carousel.
 
@@ -6519,6 +6525,8 @@ CAMPAIGN TYPE: Cold (new traffic)
 CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
+
+${artDirectionBlock}
 
 RULES:
 - This is the FINAL slide after multiple testimonial slides
@@ -6529,8 +6537,8 @@ RULES:
 - Subheadline: max 15 words, final push
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: <your close text on one line>
-SUBHEADLINE: <your supporting text on one line>${artDirectionBlock}`;
+HEADLINE: one line of close text
+SUBHEADLINE: one line of supporting text`;
     }
 
     const response = await retry(() => callGemini({

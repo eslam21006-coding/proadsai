@@ -24,6 +24,12 @@ Respond with exactly one of these words:
 
 Respond with ONLY the platform name, nothing else.`;
 
+const VISUAL_STYLE_MAP: Record<VisualStyleFamily, string> = {
+    realistic: "Realistic, professional commercial style.",
+    fantasy: "Stylized cinematic palette consistent with fantasy art direction.",
+    minimal: "Clean, minimal, commercial. No background scenes or decorative environments.",
+};
+
 const MOCKUP_PROMPTS: Record<PlatformType, string> = {
     whatsapp: `Render this testimonial screenshot inside a WhatsApp-style UI frame. Show a green header bar with the contact name, chat bubbles wrapping the screenshot content, and timestamps. The frame should look like an authentic WhatsApp conversation on a phone screen. Keep the original testimonial text readable.`,
     instagram_dm: `Render this testimonial screenshot inside an Instagram DM-style UI frame. Show the Instagram top bar with username, a message bubble containing the screenshot content, and the heart/message bar at the bottom. The frame should look like an authentic Instagram DM on a phone screen. Keep the original testimonial text readable.`,
@@ -73,10 +79,7 @@ export async function buildTestimonialMockup(
             : screenshotBase64.startsWith("data:image/png") ? "image/png"
             : "image/jpeg";
 
-        const styleClause =
-            visualStyleFamily === "minimal" ? "Clean, minimal, commercial. No background scenes or decorative environments."
-            : visualStyleFamily === "fantasy" ? "Stylized cinematic palette consistent with fantasy art direction."
-            : "Realistic, professional commercial style.";
+        const styleClause = VISUAL_STYLE_MAP[visualStyleFamily] ?? VISUAL_STYLE_MAP.realistic;
         const mockupPrompt = `${MOCKUP_PROMPTS[platform]}\n\nVISUAL STYLE: ${styleClause} Maintain identical palette, lighting, and framing across all slides in this carousel for art-direction consistency.`;
 
         const response = await callGemini({
