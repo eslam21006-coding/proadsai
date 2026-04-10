@@ -1461,11 +1461,15 @@ const App: React.FC = () => {
   const [competitorLoading, setCompetitorLoading] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [upgradeAnnual, setUpgradeAnnual] = useState(false);
-  const [copyFidelityWarning, setCopyFidelityWarning] = useState<{ failedFields: string[]; onContinue: () => void; onRetry: () => void; onCancel: () => void } | null>(null);
+  interface CopyFidelityWarning { failedFields: string[]; onContinue: () => void; onRetry: () => void; onCancel: () => void }
+  const [copyFidelityWarning, setCopyFidelityWarning] = useState<CopyFidelityWarning | null>(null);
+  const copyFidelityHandledRef = useRef(false);
   const COPY_FIDELITY_AUTO_PROCEED_MS = 10_000;
   useEffect(() => {
-    if (!copyFidelityWarning) return;
+    if (!copyFidelityWarning) { copyFidelityHandledRef.current = false; return; }
     const timer = setTimeout(() => {
+      if (copyFidelityHandledRef.current) return;
+      copyFidelityHandledRef.current = true;
       const cb = copyFidelityWarning.onContinue;
       setCopyFidelityWarning(null);
       cb();
@@ -3498,7 +3502,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             const _blueprintText = (_tpStart !== -1 && _tpEnd !== -1) ? (conceptRaw.slice(0, _tpStart) + conceptRaw.slice(_tpEnd + 21)).trim().substring(0, 2000) : undefined;
             const genId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
-              { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500), blueprintText: _blueprintText, resolvedImagePrompt: _resolvedImagePrompt },
+              { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500), buildPlan: conceptRaw, blueprintText: _blueprintText, resolvedImagePrompt: _resolvedImagePrompt },
               conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity()
             );
             setRenderGenerationId(genId);
@@ -7917,6 +7921,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
               <div className="flex gap-3 justify-end">
                 <button
                   onClick={() => {
+                    if (copyFidelityHandledRef.current) return;
+                    copyFidelityHandledRef.current = true;
                     const cb = copyFidelityWarning.onCancel;
                     setCopyFidelityWarning(null);
                     cb();
@@ -7927,6 +7933,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 </button>
                 <button
                   onClick={() => {
+                    if (copyFidelityHandledRef.current) return;
+                    copyFidelityHandledRef.current = true;
                     const cb = copyFidelityWarning.onRetry;
                     setCopyFidelityWarning(null);
                     cb();
@@ -7937,6 +7945,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 </button>
                 <button
                   onClick={() => {
+                    if (copyFidelityHandledRef.current) return;
+                    copyFidelityHandledRef.current = true;
                     const cb = copyFidelityWarning.onContinue;
                     setCopyFidelityWarning(null);
                     cb();
