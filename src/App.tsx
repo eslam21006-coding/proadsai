@@ -1462,6 +1462,16 @@ const App: React.FC = () => {
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [upgradeAnnual, setUpgradeAnnual] = useState(false);
   const [copyFidelityWarning, setCopyFidelityWarning] = useState<{ failedFields: string[]; onContinue: () => void; onRetry: () => void; onCancel: () => void } | null>(null);
+  const COPY_FIDELITY_AUTO_PROCEED_MS = 10_000;
+  useEffect(() => {
+    if (!copyFidelityWarning) return;
+    const timer = setTimeout(() => {
+      const cb = copyFidelityWarning.onContinue;
+      setCopyFidelityWarning(null);
+      cb();
+    }, COPY_FIDELITY_AUTO_PROCEED_MS);
+    return () => clearTimeout(timer);
+  }, [copyFidelityWarning]);
   const [topupLoading, setTopupLoading] = useState<string | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
   const [showFavorites, setShowFavorites] = useState(false);

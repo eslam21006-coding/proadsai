@@ -13,7 +13,7 @@
 | `generateBuildPlan()` | generators.ts:3296 | EXISTS — Step 1 inputs injected (productName:982, targetAudience:989, challenges:990, transformation:991, offerType:3352, creative mode, sub-style, hook angle, tone, brand colors:3393) |
 | `buildFinalImagePrompt()` | generators.ts:3733 | EXISTS — single assembly function returning `{ textPrompt, imageParts, trace }` |
 | `parseBuildPlanEnvelope()` | buildPlanSlotMap.ts:330 | EXISTS — extracts `technicalPrompt` via `[[TECHNICAL_PROMPT]]` markers as named field |
-| `validateCopyFidelity()` | buildPlanSlotMap.ts:545 | EXISTS — **checks hookText ONLY** via NFC normalization |
+| `validateCopyFidelity()` | buildPlanSlotMap.ts:545 | EXISTS — object overload checks all 4 fields `{ hookText, subheadText, ctaName, benefitText }` via NFC normalization; legacy string overload (hookText only) preserved for backward compatibility |
 | `stripTechnicalPrompt()` | buildPlanSlotMap.ts:551 | EXISTS — strips `[[TECHNICAL_PROMPT]]` markers for user-facing display |
 | `ResolutionTrace` | generators.ts:3782 | EXISTS — `resolvedImagePrompt` (5000 chars), `blueprintText` (2000 chars), `technicalPrompt` (3000 chars) |
 | `creativeMemory` storage | creativeMemory.ts:154-155 | EXISTS — stores `blueprintText` and `resolvedImagePrompt` |
@@ -67,7 +67,7 @@ FR-005's 10-item list maps correctly:
 
 **Decision**: Wire `buildFinalImagePrompt()` per-slide in carousel generation path with per-slide copy text. Populate `ResolutionTrace.perSlide`.
 
-**Findings**: `ResolutionTrace.perSlide` type is defined (generators.ts:3786 area) but needs verification that it's populated during carousel runs. The carousel flow generates per-slide build plans, but each slide's `buildFinalImagePrompt()` call must use that slide's specific hookText/subheadText — not slide 1's text reused. The `perSlide` trace array must store per-slide `blueprintText` and `resolvedImagePrompt`.
+**Findings**: `ResolutionTrace.perSlide` type is defined (generators.ts:3797) but is **NOT YET POPULATED** — no code writes to the `perSlide` array during carousel rendering. Each carousel slide's `buildFinalImagePrompt()` call already receives per-slide hookText/subheadText (verified via T043 test), so per-slide copy isolation is correct. The remaining work is wiring the trace: after each per-slide `buildFinalImagePrompt()` call, the returned `trace.resolvedImagePrompt` and `trace.blueprintText` must be pushed into `ResolutionTrace.perSlide[i]`. **Status: TODO — tracked as task T038.**
 
 **Alternatives rejected**: Shared prompt with slide-number injection — violates FR-010 (per-slide copy correctness).
 
@@ -77,12 +77,9 @@ FR-005's 10-item list maps correctly:
 
 **Decision**: Use existing toast/banner pattern for retry exhaustion warning with cancel/retry action buttons.
 
-**Findings**: App.tsx already has:
-- `showToast()` for success/error states (lines 3238, 3260)
-- `copy_fidelity_failed` error code handling (line 3366)
-- The warning banner should auto-proceed after a timeout (or immediately if user doesn't intervene), with "Cancel" and "Retry" action buttons.
+**Findings**: Implemented as a blocking modal in App.tsx with Continue/Retry/Cancel buttons. A configurable auto-proceed timer (default 10s) fires the Continue action if the user doesn't act, aligning with the spec's "generation continues by default" intent. The timer is cleared on any button click. Continue is visually prominent as the default action.
 
-**Alternatives rejected**: Modal dialog — too disruptive for a warning that doesn't require action (auto-proceeds by default).
+**Alternatives rejected**: Non-blocking toast — too easy to miss; user might not realize text fidelity was degraded.
 
 ---
 

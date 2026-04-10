@@ -3423,10 +3423,10 @@ ${_bpRtBlock}
 1. Headline: "${hookText}"
 2. Subheadline: "${subheadText}"
 ${benefitText ? `3. Action Benefit: "${benefitText}"` : ''}
-${ctaName ? `4. Button: "${ctaName}"` : `⚠️ NO BUTTON / NO CTA on this slide. Do NOT render any button or CTA bar. This is a MIDDLE carousel slide.`
+${ctaName ? `4. Button: "${ctaName}"
+      OFFER: ${inputs.offerType || 'Not specified'} — match CTA style to this offer type.` : `⚠️ NO BUTTON / NO CTA on this slide. Do NOT render any button or CTA bar. This is a MIDDLE carousel slide.`
         }
       ${inputs.badges ? `5. Badge/Sticker: "${inputs.badges}"` : ''}
-      OFFER: ${inputs.offerType || 'Not specified'} — match CTA style to this offer type.
       CAMPAIGN CONTEXT:
       - Product: "${inputs.productName || ''}"
       - Target Audience: "${inputs.targetAudience || ''}"
@@ -3716,7 +3716,10 @@ ${JSON.stringify(machinePlan)}`;
     let copyFidelityPassed = false;
     for (let attempt = 1; attempt <= MAX_COPY_FIDELITY_ATTEMPTS; attempt++) {
         const tp = extractTechnicalPromptFromBlueprint(machinePlan.blueprint);
-        const fidelityResult = tp ? validateCopyFidelity(tp, copyFields) : { passed: false, failedFields: ['hookText', 'subheadText', 'ctaName', 'benefitText'] } as CopyFidelityResult;
+        const fidelityResult = tp ? validateCopyFidelity(tp, copyFields) : {
+            passed: false,
+            failedFields: (['hookText', 'subheadText', 'ctaName', 'benefitText'] as const).filter(k => copyFields[k]?.trim()),
+        } as CopyFidelityResult;
         const contractOk = structuredValidation.contractCheck.passed;
         if (fidelityResult.passed && contractOk) {
             copyFidelityPassed = true;
@@ -3727,13 +3730,20 @@ ${JSON.stringify(machinePlan)}`;
             }
             break;
         }
-        // Keep the best plan seen so far — prefer fewer failed fields when both pass contract
+        // Keep the best plan seen so far — prefer hookText present, then fewer failed fields
+        const isBetter = (curr: CopyFidelityResult, best: CopyFidelityResult | null): boolean => {
+            if (!best) return true;
+            const currHasHook = !curr.failedFields.includes('hookText');
+            const bestHasHook = !best.failedFields.includes('hookText');
+            if (currHasHook !== bestHasHook) return currHasHook;
+            return curr.failedFields.length < best.failedFields.length;
+        };
         if (contractOk) {
-            if (!bestFidelityResult || fidelityResult.failedFields.length < bestFidelityResult.failedFields.length) {
+            if (isBetter(fidelityResult, bestFidelityResult)) {
                 bestMachinePlan = machinePlan;
                 bestFidelityResult = fidelityResult;
             }
-        } else if (!bestFidelityResult) {
+        } else if (isBetter(fidelityResult, bestFidelityResult)) {
             bestFidelityResult = fidelityResult;
         }
         if (attempt < MAX_COPY_FIDELITY_ATTEMPTS) {
