@@ -6410,16 +6410,15 @@ export async function generateTestimonialHookSlide(
     testimonialCount: number,
     visualStyleFamily: VisualStyleFamily,
 ): Promise<{ hookText: string; subheadText: string }> {
-    const campaignType = (inputs as any).campaignType || 'cold';
-    const isRetargeting = campaignType === 'retargeting';
+    const rtCtx = buildNormalizedRetargetingContext(inputs as any);
     const ctaText = inputs.cta || '';
     const lang = inputs.adLanguage || 'ar_fusha';
     const langInstruction = getLanguageInstruction(lang);
     const artDirectionBlock = `ART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
 
     let prompt: string;
-    if (isRetargeting) {
-        const objectionText = (inputs as any).retargetingObjection || (inputs as any).retargetingObjectionText || '';
+    if (rtCtx.isRetargeting) {
+        const objectionText = rtCtx.effectiveObjectionText;
         prompt = `Write a RETARGETING carousel hook slide (slide 1) for a testimonial carousel.
 
 CAMPAIGN TYPE: Retargeting (warm traffic)
@@ -6486,16 +6485,15 @@ export async function generateTestimonialCloseSlide(
     inputs: AdInputs,
     visualStyleFamily: VisualStyleFamily,
 ): Promise<{ closeText: string; subheadText: string }> {
-    const campaignType = (inputs as any).campaignType || 'cold';
-    const isRetargeting = campaignType === 'retargeting';
+    const rtCtx = buildNormalizedRetargetingContext(inputs as any);
     const ctaText = inputs.cta || '';
     const lang = inputs.adLanguage || 'ar_fusha';
     const langInstruction = getLanguageInstruction(lang);
     const artDirectionBlock = `ART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
 
     let prompt: string;
-    if (isRetargeting) {
-        const objectionText = (inputs as any).retargetingObjection || (inputs as any).retargetingObjectionText || '';
+    if (rtCtx.isRetargeting) {
+        const objectionText = rtCtx.effectiveObjectionText;
         prompt = `Write a RETARGETING close slide (last slide) for a testimonial carousel.
 
 CAMPAIGN TYPE: Retargeting (warm traffic)
