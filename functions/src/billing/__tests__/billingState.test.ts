@@ -64,7 +64,7 @@ console.log("\nTest 3: Monthly reset on Pro (overwrite to 2000)");
     plan: "pro",
     credits: 2000,
     isTrial: false,
-    lastCreditReset: Timestamp.fromDate(new Date()),
+    nextResetDate: Timestamp.fromDate(new Date()),
   });
   assert(state.credits === 2000, "credits is 2000 (plan allotment, not accumulated)");
   assert(state.creditsPerMonth === 2000, "creditsPerMonth is 2000");

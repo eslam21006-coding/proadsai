@@ -3591,6 +3591,14 @@ export const serverGenerateConcepts = onCall({
 });
 
 // ─── GENERATE BUILD PLAN ─────────────────────────────────────────────────
+interface BuildPlanResponse {
+    success: boolean;
+    text: string;
+    errorCode: string | null;
+    costEstimate?: ReturnType<typeof getCostEstimate>;
+    warningCode?: string;
+    failedFields?: string[];
+}
 export const serverGenerateBuildPlan = onCall({
     region: "europe-west1",
     secrets: [geminiApiKey],
@@ -3607,7 +3615,17 @@ export const serverGenerateBuildPlan = onCall({
     resetCostTracker();
     try {
         const result = await generators.generateBuildPlan(conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride);
-        return { success: true, text: result, errorCode: null, costEstimate: getCostEstimate() };
+        const response: BuildPlanResponse = {
+            success: true,
+            text: result.buildPlan,
+            errorCode: null,
+            costEstimate: getCostEstimate(),
+        };
+        if (result.copyFidelityWarning && !result.copyFidelityWarning.passed) {
+            response.warningCode = "copy_fidelity_degraded";
+            response.failedFields = result.copyFidelityWarning.failedFields;
+        }
+        return response;
     } catch (error: any) {
         console.error("generateBuildPlan error:", error);
         const fc = classifyError(error);

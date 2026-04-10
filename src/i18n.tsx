@@ -505,6 +505,20 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'billing.status.past_due': 'Past Due',
         'billing.status.cancelling': 'Cancelling',
         'billing.status.cancelled': 'Cancelled',
+
+        // ── Copy Fidelity ──
+        'fidelity.title': 'Copy Fidelity Notice',
+        'fidelity.description': 'The following copy fields could not be verified verbatim in the design prompt: {fields}. You can continue or retry.',
+        'fidelity.continue': 'Continue',
+        'fidelity.retry': 'Retry',
+        'fidelity.cancel': 'Cancel',
+        'fidelity.retrying': 'Regenerating blueprint...',
+        'fidelity.retry_empty_refunded': 'Blueprint generation returned empty. Credits refunded.',
+        'fidelity.technicalPrompt': 'Design Prompt',
+        'fidelity.hookText': 'Headline',
+        'fidelity.subheadText': 'Subheadline',
+        'fidelity.ctaName': 'CTA Button',
+        'fidelity.benefitText': 'Benefit Text',
     },
 
     ar: {
@@ -1008,6 +1022,20 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'billing.status.past_due': 'متأخر',
         'billing.status.cancelling': 'قيد الإلغاء',
         'billing.status.cancelled': 'ملغى',
+
+        // ── Copy Fidelity ──
+        'fidelity.title': 'تحقق من دقة النص',
+        'fidelity.description': 'لم يتم التحقق من ظهور النصوص التالية حرفياً في التصميم: {fields}. يمكنك المتابعة أو إعادة المحاولة.',
+        'fidelity.continue': 'متابعة',
+        'fidelity.retry': 'إعادة المحاولة',
+        'fidelity.cancel': 'إلغاء',
+        'fidelity.retrying': 'جاري إعادة إنشاء المخطط...',
+        'fidelity.retry_empty_refunded': 'فشل إنشاء المخطط. تم استرداد الرصيد.',
+        'fidelity.technicalPrompt': 'موجّه التصميم',
+        'fidelity.hookText': 'العنوان الرئيسي',
+        'fidelity.subheadText': 'العنوان الفرعي',
+        'fidelity.ctaName': 'زر الإجراء',
+        'fidelity.benefitText': 'نص الفائدة',
     },
 };
 

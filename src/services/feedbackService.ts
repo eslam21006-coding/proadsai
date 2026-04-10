@@ -87,6 +87,8 @@ export interface GenerationRecord {
         ctaText?: string;
         conceptText?: string;
         buildPlan?: string;
+        blueprintText?: string;
+        resolvedImagePrompt?: string;
         imageUrl?: string;
         captionText?: string;
         fullResponse: string;

@@ -149,8 +149,6 @@ export interface FilterResult {
     skippedFields: string[];
 }
 
-export type VisualStyleFamily = "realistic" | "fantasy" | "minimal";
-
 export interface TestimonialSlideResult {
     slideNumber: number;
     role: "hook" | "testimonial" | "close";

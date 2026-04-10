@@ -76,7 +76,7 @@ export function buildBillingState(data: BuildBillingStateInput): BillingState {
   // ── Derive creditsPerMonth ──
   const creditsPerMonth = isTrial
     ? TRIAL_CREDITS
-    : (PLAN_CREDITS[plan] ?? 0);
+    : (plan !== "none" ? (PLAN_CREDITS[plan as keyof typeof PLAN_CREDITS] ?? 0) : 0);
 
   // ── Derive billingStatus ──
   let billingStatus: BillingStatus;
@@ -90,7 +90,7 @@ export function buildBillingState(data: BuildBillingStateInput): BillingState {
   } else if (isTrial) {
     // Trial with 0 credits = cancelled (trial expired)
     billingStatus = credits > 0 ? "trialing" : "cancelled";
-  } else if (data.billingStatus === "active" || plan !== "none") {
+  } else if (data.billingStatus === "active" || (plan as string) !== "none") {
     billingStatus = "active";
   } else {
     billingStatus = "cancelled";

@@ -57,14 +57,17 @@ Items in coreDesignRules include brand color hex directives, face-consistency in
 ## Invariants
 
 - The returned `textPrompt` MUST contain the exact `hookText` string from `inputs`
+- The returned `textPrompt` MUST contain the exact `subheadText` string from `inputs` (when non-empty)
 - The returned `textPrompt` MUST contain the exact `ctaName` string from `inputs` (when CTA is applicable for this slide)
+- The returned `textPrompt` MUST contain the exact `benefitText` string from `inputs` (when non-empty)
 - The returned `textPrompt` MUST NOT contain placeholder text for absent optional inputs
 - The function MUST be the sole entry point for prompt assembly — no inline assembly elsewhere
 
 ## Copy Fidelity Contract
 
-**Input**: `hookText` (string), `technicalPrompt` (string)
-**Check**: `technicalPrompt.includes(hookText.trim())`
-**Pass**: hookText found verbatim → proceed
-**Fail**: hookText absent → retry build plan generation (max 2 retries, advisory)
-**Exhausted**: After 3 total attempts → proceed with best available plan + emit warning (non-blocking)
+**Input**: `{ hookText, subheadText, ctaName, benefitText }` (all strings), `technicalPrompt` (string)
+**Required**: `hookText` must be non-empty — blank hookText fails immediately
+**Check**: For hookText and each other non-empty field, `normalizedTechnicalPrompt.includes(normalizedField)` using NFC normalization + whitespace collapse
+**Pass**: hookText is non-empty AND all non-empty fields found verbatim → proceed
+**Fail**: Any non-empty field absent or paraphrased → retry build plan generation (max 2 retries)
+**Exhausted**: After 3 total attempts → auto-proceed with best available plan + display warning banner with cancel/retry option before image generation starts. Warning also logged for audit.

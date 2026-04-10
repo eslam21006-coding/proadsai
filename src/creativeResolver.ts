@@ -626,7 +626,6 @@ export function getTabForOfferType(offerType: string): CreativeTab {
     const mapping: Record<string, CreativeTab> = {
         'Live Event': 'live_events',
         'Free Webinar': 'live_events', 'Paid Workshop': 'live_events', 'Challenge': 'live_events',
-        'Live Event': 'live_events',
         'Free Guide': 'free_guide', 'Mini-Course': 'mini_course',
     };
     return mapping[offerType] || 'mini_course';

@@ -1461,6 +1461,21 @@ const App: React.FC = () => {
   const [competitorLoading, setCompetitorLoading] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [upgradeAnnual, setUpgradeAnnual] = useState(false);
+  interface CopyFidelityWarning { failedFields: string[]; onContinue: () => void; onRetry: () => void; onCancel: () => void }
+  const [copyFidelityWarning, setCopyFidelityWarning] = useState<CopyFidelityWarning | null>(null);
+  const copyFidelityHandledRef = useRef(false);
+  const COPY_FIDELITY_AUTO_PROCEED_MS = 10_000;
+  useEffect(() => {
+    if (!copyFidelityWarning) { copyFidelityHandledRef.current = false; return; }
+    const timer = setTimeout(() => {
+      if (copyFidelityHandledRef.current) return;
+      copyFidelityHandledRef.current = true;
+      const cb = copyFidelityWarning.onContinue;
+      setCopyFidelityWarning(null);
+      cb();
+    }, COPY_FIDELITY_AUTO_PROCEED_MS);
+    return () => clearTimeout(timer);
+  }, [copyFidelityWarning]);
   const [topupLoading, setTopupLoading] = useState<string | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
   const [showFavorites, setShowFavorites] = useState(false);
@@ -3358,10 +3373,93 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     } catch (e) { refundCredits('editOneConcept'); handleApiError(e); } finally { setItemLoading(prev => ({ ...prev, [`concept_${index}`]: false })); }
   };
 
+  // ─── COPY FIDELITY: client-side check before rendering ───
+  const checkCopyFidelity = (concept: string, tov: string): string[] => {
+    const tpStart = concept.indexOf('[[TECHNICAL_PROMPT]]');
+    const tpEnd = concept.indexOf('[[/TECHNICAL_PROMPT]]');
+    // Extract copy fields from selectedTov
+    const hookMatch = tov.match(/HOOK_TEXT:\s*(.+)/);
+    const subMatch = tov.match(/SUBHEADLINE:\s*(.+)/);
+    const ctaMatch = tov.match(/CTA_BUTTON:\s*(.+)/);
+    const ctaRaw = ctaMatch?.[1]?.trim() || '';
+    const benefitMatch = ctaRaw.includes('|||') ? ctaRaw.split('|||') : null;
+    const hookVal = hookMatch?.[1]?.trim();
+    // hookText is required — blank hookText always fails
+    if (!hookVal) return ['hookText'];
+    // Missing TECHNICAL_PROMPT is a failure
+    if (tpStart === -1 || tpEnd === -1) return ['technicalPrompt'];
+    const tp = concept.slice(tpStart + 20, tpEnd).normalize('NFC').trim().replace(/\s+/g, ' ');
+    if (!tp) return ['technicalPrompt'];
+    const norm = (s: string) => s.normalize('NFC').trim().replace(/\s+/g, ' ');
+    const failed: string[] = [];
+    const fields: [string, string | undefined][] = [
+      ['hookText', hookVal],
+      ['subheadText', subMatch?.[1]?.trim()],
+      ['ctaName', benefitMatch ? benefitMatch[0]?.trim() : ctaRaw || undefined],
+      ['benefitText', benefitMatch ? benefitMatch[1]?.trim() : undefined],
+    ];
+    for (const [name, val] of fields) {
+      if (name === 'hookText') {
+        // hookText is required — always check
+        if (!val || !tp.includes(norm(val))) failed.push(name);
+      } else if (val && !tp.includes(norm(val))) {
+        failed.push(name);
+      }
+    }
+    return failed;
+  };
+
+  const fidelityFieldLabel = (key: string): string => t(`fidelity.${key}`);
+
   const handleApproveConcept = async (conceptRaw: string) => {
     if (!inputs) return;
     // Normalize any Arabic field labels to English
     conceptRaw = normalizeFieldLabels(conceptRaw);
+
+    // ─── COPY FIDELITY CHECK: verify approved copy appears in TECHNICAL_PROMPT ───
+    const failedFields = checkCopyFidelity(conceptRaw, selectedTov);
+    if (failedFields.length > 0) {
+      // Show blocking warning banner — user must choose Continue/Retry/Cancel
+      return new Promise<void>((resolve) => {
+        setCopyFidelityWarning({
+          failedFields,
+          onContinue: () => {
+            // Proceed with render using the current concept
+            proceedWithRender(conceptRaw);
+            resolve();
+          },
+          onRetry: async () => {
+            resolve();
+            // Re-trigger concept generation with same inputs
+            if (!inputs || !selectedTov) return;
+            if (!deductCredits('generateConcepts')) return;
+            showToast(t('fidelity.retrying'), 'info');
+            startLoad(t('fidelity.retrying'));
+            try {
+              const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 1) || [] };
+              let res = unwrapGen(await gemini.generateConcepts(selectedTov, cleanInputs, resolvedUniverse, 'initial', '', globalRefinement));
+              res = res ? normalizeFieldLabels(res) : res;
+              if (res && (res.includes('CONCEPT_START') || res.includes('SUBJECT_ACTION'))) {
+                setConceptsText(res);
+              } else {
+                refundCredits('generateConcepts');
+                showToast(t('fidelity.retry_empty_refunded'), 'error');
+              }
+            } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
+          },
+          onCancel: () => {
+            // Abort — stay on Step 3
+            resolve();
+          },
+        });
+      });
+    }
+
+    return proceedWithRender(conceptRaw);
+  };
+
+  const proceedWithRender = async (conceptRaw: string) => {
+    if (!inputs) return;
 
     // Determine sizes to render: use selectedSizes from Step 3 UI
     const sizesToRender = Array.from(selectedSizes);
@@ -3398,9 +3496,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         // ─── SAVE RENDER FOR FEEDBACK (non-blocking — must not prevent phase transition) ─────────
         if (user) {
           try {
+            const _tpStart = conceptRaw.indexOf('[[TECHNICAL_PROMPT]]');
+            const _tpEnd = conceptRaw.indexOf('[[/TECHNICAL_PROMPT]]');
+            const _resolvedImagePrompt = (_tpStart !== -1 && _tpEnd !== -1) ? conceptRaw.slice(_tpStart + 20, _tpEnd).trim().substring(0, 5000) : undefined;
+            const _blueprintText = (_tpStart !== -1 && _tpEnd !== -1) ? (conceptRaw.slice(0, _tpStart) + conceptRaw.slice(_tpEnd + 21)).trim().substring(0, 2000) : undefined;
             const genId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
-              { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500) },
+              { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500), buildPlan: conceptRaw, blueprintText: _blueprintText, resolvedImagePrompt: _resolvedImagePrompt },
               conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity()
             );
             setRenderGenerationId(genId);
@@ -7793,6 +7895,68 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ COPY FIDELITY WARNING BANNER ═══ */}
+      {copyFidelityWarning && (
+        <div className="fixed inset-0 z-[210] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+          <div className="relative bg-slate-950 border border-amber-500/50 rounded-3xl shadow-2xl shadow-black/80 max-w-lg w-full mx-4" onClick={(e) => e.stopPropagation()}>
+            <div className="px-8 py-6 space-y-5">
+              <div className="flex items-start gap-4">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+                  <i className="fa-solid fa-triangle-exclamation text-amber-500 text-lg"></i>
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">
+                    {t('fidelity.title')}
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                    {t('fidelity.description', { fields: copyFidelityWarning.failedFields.map(f => fidelityFieldLabel(f)).join(lang === 'ar' ? '، ' : ', ') })}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => {
+                    if (copyFidelityHandledRef.current) return;
+                    copyFidelityHandledRef.current = true;
+                    const cb = copyFidelityWarning.onCancel;
+                    setCopyFidelityWarning(null);
+                    cb();
+                  }}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-400 bg-slate-900 border border-slate-800 hover:text-white hover:border-slate-700 transition-all"
+                >
+                  {t('fidelity.cancel')}
+                </button>
+                <button
+                  onClick={() => {
+                    if (copyFidelityHandledRef.current) return;
+                    copyFidelityHandledRef.current = true;
+                    const cb = copyFidelityWarning.onRetry;
+                    setCopyFidelityWarning(null);
+                    cb();
+                  }}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 border border-blue-500 hover:bg-blue-500 transition-all"
+                >
+                  {t('fidelity.retry')}
+                </button>
+                <button
+                  onClick={() => {
+                    if (copyFidelityHandledRef.current) return;
+                    copyFidelityHandledRef.current = true;
+                    const cb = copyFidelityWarning.onContinue;
+                    setCopyFidelityWarning(null);
+                    cb();
+                  }}
+                  className="px-5 py-2.5 rounded-xl text-xs font-black text-white bg-amber-500 hover:bg-amber-400 transition-all shadow-lg shadow-amber-500/20"
+                >
+                  {t('fidelity.continue')}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
