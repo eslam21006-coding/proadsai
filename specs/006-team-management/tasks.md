@@ -137,7 +137,7 @@
 - [x] T027 [US6] Add workspace management UI in `src/pages/Team.tsx` — when `billingState.multiBrandWorkspaces === true`: show a "Workspaces" section on the Team page. List existing workspaces (name, created date). Provide "Create workspace" form (name field), "Rename" action per workspace, and "Delete" action per workspace (with confirmation). Calls `fnCreateWorkspace`, `fnRenameWorkspace`, `fnDeleteWorkspace` from `src/services/teamService.ts`.
 - [x] T028 [US6] Filter generation history by workspace in `src/App.tsx` — when `workspaceId` is set in app state, filter all generation queries (projects, avatars, history) to include `where('workspaceId', '==', activeWorkspaceId)`. New generations created while a workspace is active must include the `workspaceId` field in the Firestore document. Non-Scaling users: no filter (all generations visible). This requires changes across all generation-related Firestore queries.
 
-**Checkpoint**: Workspace switcher UI works. T028 (history isolation) is the remaining integration task for full workspace separation.
+**Checkpoint**: Workspace separation working for Scaling plans with full CRUD and history filtering. Non-Scaling unaffected.
 
 ---
 
@@ -164,7 +164,8 @@
 
 ### Implementation for User Story 8
 
-- [x] T031 [P] [US8] Add fixture test: invite blocked at plan limit in `functions/src/teamFixtureTests.ts` — set up a team at max capacity, attempt `createTeamInvite`, assert it is rejected with a plan-limit error.- [x] T032 [P] [US8] Add fixture test: claim sets membership in `functions/src/teamFixtureTests.ts` — create invite, call `claimTeamInvite`, (via `isClaimable` logic), assert membership state after claim has verifies `isTeamMember`, and `teamOwnerUid` are set correctly.
+- [x] T031 [P] [US8] Add fixture test: invite blocked at plan limit in `functions/src/teamFixtureTests.ts` — set up a team at max capacity, attempt `createTeamInvite`, assert it is rejected with a plan-limit error.
+- [x] T032 [P] [US8] Add fixture test: claim sets membership in `functions/src/teamFixtureTests.ts` — create invite, call `claimTeamInvite`, (via `isClaimable` logic), assert membership state after claim has verifies `isTeamMember`, and `teamOwnerUid` are set correctly.
 - [x] T033 [P] [US8] Add fixture test: expired invite rejected in `functions/src/teamFixtureTests.ts` — create invite with `expiresAt` in past, attempt `claimTeamInvite`, (via `isClaimable` logic), assert expired invites are rejected. Test expired invite with `Date.now() > expiresAt` as expired.
 - [x] T034 [P] [US8] Add fixture test: removal clears membership in `functions/src/teamFixtureTests.ts` — add a team member, call `removeTeamMember`, assert `isTeamMember` is cleared on the user doc.
 - [x] T035 [P] [US8] Add fixture test: viewer rejected by deductCreditsServer in `functions/src/teamFixtureTests.ts` — set user as viewer-role team member, attempt `deductCreditsServer`, assert it is rejected.
@@ -178,7 +179,8 @@
 
 **Purpose**: Build verification and final cleanup
 
-- [x] T037 [P] Run frontend build check — `npm run build` must complete with zero errors- [x] T038 [P] Run backend build check — `cd functions && rm -rf lib && npm run build` must complete with zero errors
+- [x] T037 [P] Run frontend build check — `npm run build` must complete with zero errors
+- [x] T038 [P] Run backend build check — `cd functions && rm -rf lib && npm run build` must complete with zero errors
 - [x] T039 Verify all `t()` keys resolve in both English and Arabic — no missing translation warnings in console
 
 ---
@@ -200,7 +202,7 @@
 - **US3 (P3)**: Depends on US2 (modifies the Team page invite form).
 - **US4 (P4)**: Can start after Phase 2. Independent (modifies credit display in App.tsx).
 - **US5 (P5)**: Can start after Phase 2. Independent (modifies generation buttons in App.tsx).
-- **US6 (P6)**: Can start after Phase 2. Independent. T025–T027 complete (workspace CRUD + switcher + management UI). **T028 remaining** (generation history isolation by workspace).
+- **US6 (P6)**: Can start after Phase 2. Independent (workspace Cloud Functions + switcher + Team page section + history filtering).
 - **US7 (P7)**: Can start immediately (backend verification only — no frontend dependency).
 - **US8 (P8)**: Can start after T003 (needs `getInviteDetails` to exist). Independent of frontend stories.
 
@@ -272,5 +274,4 @@ T036: Fixture — getInviteDetails status
 - All user-facing strings must use `t()` from `src/i18n.tsx` — no hardcoded strings
 - `getInviteDetails` is the only new Cloud Function for team invites. `updateTeamMemberRole` already exists. Workspace CRUD adds 3 more Cloud Functions (US6 only).
 - Phase 8 (Billing State) dependency is satisfied. Team state fields are available via Firestore listeners.
-- **Remaining tasks**: None — all tasks complete.
-- All other 39 tasks (T001–T039, excluding T028) are complete and verified.
+- All 40 tasks (T001–T040) are complete.

@@ -14,6 +14,7 @@ interface FeedbackButtonsProps {
     compact?: boolean;
     showUsedThis?: boolean;
     className?: string;
+    initialFavorite?: boolean;
 }
 
 const NEGATIVE_TAGS: { id: NegativeFeedbackTag; label: string; icon: string }[] = [
@@ -32,23 +33,25 @@ export default function FeedbackButtons({
     compact = false,
     showUsedThis = false,
     className = '',
+    initialFavorite = false,
 }: FeedbackButtonsProps) {
     const [currentRating, setCurrentRating] = useState<FeedbackRating>(null);
     const [showTagPanel, setShowTagPanel] = useState(false);
     const [selectedTags, setSelectedTags] = useState<Set<NegativeFeedbackTag>>(new Set());
     const [freeText, setFreeText] = useState('');
-    const [isFavorite, setIsFavorite] = useState(false);
+    const [isFavorite, setIsFavorite] = useState(initialFavorite);
     const [submitted, setSubmitted] = useState(false);
 
     // Reset UI state when the generation changes (new hook/render)
-    // but DON'T reset if generationId just becomes available for an already-rated item
+    // Re-sync favorite state and clear transient UI on new generationId
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- sync on generationId change
+        setIsFavorite(initialFavorite);
         setShowTagPanel(false);
         setSelectedTags(new Set());
         setFreeText('');
         setSubmitted(false);
-        // Keep currentRating and isFavorite — they persist per component instance
-    }, [generationId]);
+    }, [generationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleRate = async (rating: FeedbackRating) => {
         setCurrentRating(rating);
@@ -84,7 +87,12 @@ export default function FeedbackButtons({
         const newVal = !isFavorite;
         setIsFavorite(newVal);
         if (generationId) {
-            await feedbackService.toggleFavorite(generationId, newVal);
+            try {
+                await feedbackService.toggleFavorite(generationId, newVal);
+            } catch (err) {
+                console.warn('Failed to toggle favorite:', generationId, err);
+                setIsFavorite(!newVal);
+            }
         }
     };
 

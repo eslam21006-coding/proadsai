@@ -1,6 +1,6 @@
 # Data Model: Blueprint → Long-Form Render Prompt Pipeline
 
-**Date**: 2026-04-02 | **Branch**: `005-render-prompt-pipeline`
+**Date**: 2026-04-10 (updated) | **Branch**: `005-render-prompt-pipeline`
 
 ## Entities
 
@@ -83,10 +83,15 @@ Input shape for the `buildFinalImagePrompt()` function. Not persisted — runtim
 ```text
 generateBuildPlan() called
   → parseBuildPlanEnvelope() extracts technicalPrompt
-  → validateCopyFidelity(technicalPrompt, hookText)
-    → PASS + contract PASS: proceed to image generation
-    → FAIL (attempt 1/2): retry generateBuildPlan()
-    → FAIL (attempt 3): proceed with best available plan + warning (non-blocking)
+  → validateCopyFidelity(technicalPrompt, { hookText, subheadText, ctaName, benefitText })
+    → ALL PASS + contract PASS: proceed to image generation
+    → ANY FAIL (attempt 1/2): retry generateBuildPlan()
+    → ANY FAIL (attempt 3): auto-proceed with best plan
+        → display warning banner with cancel/retry option
+        → user ignores or accepts: image generation proceeds
+        → user clicks cancel: generation stopped
+        → user clicks retry: new generateBuildPlan() cycle
+        → warning logged for audit
 ```
 
 ### Prompt Assembly Flow

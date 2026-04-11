@@ -14,7 +14,7 @@ All functions are Firebase Cloud Functions v2 (onCall) located in `functions/src
 |-------|------|----------|-------------|
 | email | string | Yes | Invitee's email address |
 | name | string | Yes | Invitee's display name |
-| role | 'editor' \| 'viewer' | Yes | Role to assign (default: 'editor') |
+| role | 'editor' \| 'viewer' | Yes | Role to assign (no default — must be provided) |
 
 ### Response
 
@@ -82,7 +82,8 @@ See [get-invite-details.md](get-invite-details.md) for full contract.
 
 ### Summary
 - Rate-limited: 10 req/min/IP via Firestore counter
-- Returns invite metadata without sensitive fields
+- Returns limited invite metadata: `ownerName`, `inviteeEmail`, `inviteeName`, `teamPlan`, `role`, `status`, `expiresAt`
+- `inviteeEmail` is included because the invitee needs to confirm they're claiming with the correct account; no other user PII is exposed (ownerId, ownerEmail, claimedByUserId are excluded)
 - Returns status codes for invalid invites (expired/revoked/accepted/not_found)
 
 ---
@@ -100,7 +101,7 @@ See [get-invite-details.md](get-invite-details.md) for full contract.
 ```ts
 { success: true; claimed: number; message?: string }
 // or
-{ success: false; message: string }
+{ success: false; claimed: number; message: string }
 ```
 
 ### Behavior

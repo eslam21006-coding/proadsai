@@ -13,7 +13,7 @@
 - [x] T001 Add `testimonial_carousel` to `CREATIVE_MODE_CATALOG` in `functions/src/creativeResolver.ts` — role: 'anchor', standaloneAllowed: true, soloOnly: false, tabs: ['mini_course', 'live_events', 'free_guide'], labelEn: 'Testimonial Carousel', labelAr: 'كاروسيل الشهادات', icon: '💬'. Add mustShow: ['testimonial_mockup', 'platform_frame', 'cta_button'], mustAvoid: ['raw_screenshot', 'testimonial_text_on_hook']. templateNeeds: ['testimonial_carousel'].
 - [x] T002 [P] Mirror `testimonial_carousel` entry in `src/creativeResolver.ts` (frontend) — same fields as T001.
 - [x] T003 [P] Add `PlatformType` type to `functions/src/types.ts` — `export type PlatformType = 'whatsapp' | 'instagram_dm' | 'facebook' | 'email' | 'google_review' | 'telegram' | 'unknown'`
-- [x] T004 [P] Add `TestimonialSlideResult` interface to `functions/src/types.ts` — fields: slideNumber, role ('hook'|'testimonial'|'close'), platform (PlatformType|null), imageBase64, hookText (string|null), ctaText (string|null), hasCTA (boolean)
+- [x] T004 [P] Add `TestimonialSlideResult` AND `TestimonialCarouselResult` interfaces to `functions/src/types.ts`. `TestimonialSlideResult` fields: slideNumber, role ('hook'|'testimonial'|'close'), platform (PlatformType|null), imageBase64, hookText (string|null), ctaText (string|null), hasCTA (boolean). `TestimonialCarouselResult` fields: slides (TestimonialSlideResult[]), detectedPlatforms (PlatformType[]), totalSlides (number), visualStyleFamily ('realistic'|'fantasy'|'minimal').
 - [x] T005 Write and export `resolveTestimonialSlideCount(testimonialCount: number, maxPlanSlides: number): number` in `functions/src/creativeResolver.ts` — formula: `Math.min(testimonialCount + 2, maxPlanSlides)`. Export it.
 
 **Checkpoint**: `rm -rf functions/lib && cd functions && npm run build` — clean compile. ✅
@@ -112,6 +112,7 @@
 - [x] T020 Run `rm -rf functions/lib && cd functions && npm run build && npm run test:contracts` — all pass ✅
 - [x] T021 Grep `functions/src/` for `testimonial_carousel` — verify it appears in creativeResolver.ts (catalog), generators.ts (pipeline), testimonialMockup.ts (detection + mockup), index.ts (wiring), contractFixtures.test.ts (fixtures) ✅
 - [x] T022 Grep `src/` for `testimonial_carousel` — verify it appears in creativeResolver.ts (frontend catalog) and InputForm.tsx (upload UI + auto-switch) ✅
+- [x] T023 [FR-011] Thread `visualStyleFamily` (resolved via `resolveStyleFamily(inputs)`) through `generateTestimonialCarousel` → `buildTestimonialMockup`, `generateTestimonialHookSlide`, and `generateTestimonialCloseSlide` so all slides share consistent art direction. Append `ART DIRECTION` clause to hook + close prompts; append `VISUAL STYLE` clause to mockup prompts. Add `visualStyleFamily` to `TestimonialCarouselResult` and return it from the orchestrator. Verifies FR-011 (art direction consistency) and Principle VI (auditable — style choice persisted on result). ✅
 
 ---
 

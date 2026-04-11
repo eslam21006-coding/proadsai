@@ -10,7 +10,12 @@
 ### Session 2026-04-02
 
 - Q: Should FR-001/FR-002 be expanded to require mode-specific data fields (valueStackItems, eventTitle, eventDate, etc.) and uploaded assets (photos, logos, mode assets, reference ad) to feed the render prompt? → A: Yes — expand to cover all, but only inject when the user has provided them. All are optional inputs; skip gracefully when absent.
-- Q: What should the user experience be when copy fidelity validation exhausts max retries? → A: Show error + "Retry" button — user can retry generation with the same inputs.
+- Q: What should the user experience be when copy fidelity validation exhausts max retries? → A: ~~Show error + "Retry" button~~ Superseded by Session 2026-04-10.
+
+### Session 2026-04-10
+
+- Q: Retry exhaustion behavior — FR-003/edge case say "proceed with best plan + warning" but the 2026-04-02 clarification said "show error + Retry button." Which behavior? → A: Auto-proceed with best available plan AND show a warning banner with an option to cancel/retry before image generation starts. This preserves the "don't waste credits" principle while giving the user agency.
+- Q: Should copy fidelity validation (FR-003) check only hookText and benefitText, or all four unconditional copy fields? → A: Validate all four: hookText, subheadText, ctaName, and benefitText.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -30,12 +35,13 @@ As a user generating an ad, every input I provided in Steps 1 and 2 — product 
 4. **Given** a user provides brand colors `#FF5733` (primary) and `#1A1A2E` (secondary), **When** the render prompt is assembled, **Then** the prompt contains the exact hex values with placement directives (CTA button, accent elements).
 5. **Given** a user approves hook text "Transform Your Business Today", **When** the render prompt is assembled, **Then** the prompt contains that exact string verbatim — not paraphrased or substituted.
 6. **Given** a user selects `anime_manga` sub-style with `event_ticket` mode, **When** the render prompt is assembled, **Then** both the anime visual constraints AND ticket frame structure appear in the prompt.
+7. **Given** a user provides product name "FitPro App", target audience "busy professionals", and offer type "free trial", **When** the render prompt is assembled, **Then** the prompt contains all three campaign context values to ground the visual in the right product context.
 
 ---
 
 ### User Story 2 - Copy Text Fidelity Validation (Priority: P2)
 
-As a user, the exact hook text, subhead text, and CTA name I approved in Step 2 MUST appear in the rendered image. The system must validate that the render prompt contains my approved text verbatim and reject prompts where the text was paraphrased or omitted.
+As a user, the exact hook text, subhead text, CTA name, and benefit text I approved in Step 2 MUST appear in the rendered image. The system must validate that the render prompt contains my approved text verbatim and reject prompts where the text was paraphrased or omitted.
 
 **Why this priority**: Users carefully craft and approve their copy text. If the image model receives a paraphrased version, the rendered text won't match what was approved — causing confusion, rework, and loss of trust.
 
@@ -46,6 +52,7 @@ As a user, the exact hook text, subhead text, and CTA name I approved in Step 2 
 1. **Given** a user approves hook text in Arabic, **When** the build plan is validated, **Then** the system confirms the exact string appears in the technical prompt.
 2. **Given** a build plan where hook text was paraphrased by the model, **When** validation runs, **Then** the build plan is marked as failed and a rebuild is triggered.
 3. **Given** a build plan where CTA name is missing, **When** validation runs, **Then** the build plan is marked as failed.
+4. **Given** a build plan where `subheadText` was paraphrased, **When** validation runs, **Then** the build plan is marked as failed and a rebuild is triggered.
 
 ---
 
@@ -114,7 +121,7 @@ As a QA reviewer, unit tests verify that the render prompt assembly correctly in
 ### Edge Cases
 
 - What happens when brand colors are not provided? The prompt omits color directives and lets the art direction style drive the palette.
-- What happens when the build plan model paraphrases the hook text on rebuild? The validation retries up to 2 additional times. If all attempts fail, the system proceeds with the best available plan and emits a non-blocking warning — generation continues rather than hard-failing and wasting credits.
+- What happens when the build plan model paraphrases or omits any copy field on rebuild? The validation retries up to 2 additional times. If all attempts fail, the system auto-proceeds with the best available plan and displays a warning banner with Continue/Retry/Cancel options before image generation starts — generation continues by default rather than hard-failing and wasting credits, but the user can intervene.
 - What happens when a carousel slide has empty copy text (e.g., a testimonial slide with image only)? The copy fidelity check is skipped for slides marked as image-only.
 - What happens when the technical prompt exceeds the image model's context window? The prompt is truncated from the least-critical sections (audit trail notes, redundant constraints) while preserving copy text, mode rules, and style constraints.
 - What happens when the user switches sub-style after Step 2 but before Step 3? The blueprint regenerates with the new sub-style. The previous blueprint is discarded.
@@ -124,9 +131,9 @@ As a QA reviewer, unit tests verify that the render prompt assembly correctly in
 
 ### Functional Requirements
 
-- **FR-001**: The system MUST inject ALL Step 1 inputs into the build plan prompt before the model generates the `TECHNICAL_PROMPT`: creative mode, sub-style, universe family, universe setting, campaign type, hook angle (cold), retargeting objection (retargeting), ad tone, and brand colors (as hex values).
-- **FR-002**: The system MUST inject `hookText`, `subheadText`, and `ctaName` from Step 2 under both `TEXTS TO RENDER` and `CANONICAL CONTENT OWNERSHIP` sections unconditionally — never behind a conditional. Additionally, mode-specific data fields (`valueStackItems`, `eventTitle`, `eventDate`, `valueStackPrice`, `benefitText`, etc.) MUST be injected when provided by the user — omitted gracefully when absent.
-- **FR-003**: The system MUST validate after build plan generation that the `TECHNICAL_PROMPT` contains the exact `hookText` string. If absent or paraphrased, the system MUST retry the build plan generation (max 2 retries, 3 total attempts). If retries are exhausted, the system MUST proceed with the best available plan and emit a non-blocking warning — generation continues to avoid wasting credits. The warning is logged for audit but does not block the user.
+- **FR-001**: The system MUST inject ALL Step 1 inputs into the build plan prompt before the model generates the `TECHNICAL_PROMPT`: product name, target audience, challenges, transformation, offer type, creative mode, sub-style, universe family, universe setting, campaign type, hook angle (cold), retargeting objection (retargeting), ad tone, and brand colors (as hex values).
+- **FR-002**: The system MUST inject `hookText`, `subheadText`, `ctaName`, and `benefitText` from Step 2 under both `TEXTS TO RENDER` and `CANONICAL CONTENT OWNERSHIP` sections unconditionally — never behind a conditional. Additionally, mode-specific data fields (`valueStackItems`, `eventTitle`, `eventDate`, `valueStackPrice`, etc.) MUST be injected when provided by the user — omitted gracefully when absent.
+- **FR-003**: The system MUST validate after build plan generation that the `TECHNICAL_PROMPT` contains the exact `hookText`, `subheadText`, `ctaName`, and `benefitText` strings. If any are absent or paraphrased, the system MUST retry the build plan generation (max 2 retries, 3 total attempts). If retries are exhausted, the system MUST auto-proceed with the best available plan AND display a warning banner to the user with an option to cancel or retry before image generation starts. The warning is also logged for audit.
 - **FR-004**: The system MUST extract the `TECHNICAL_PROMPT` from the build plan as a named field on the parsed result — not via substring search.
 - **FR-005**: The system MUST assemble the final image prompt through a single dedicated function that combines (in order): (1) the technical prompt from the blueprint, (2) layout contract zone rules and aspect ratio, (3) sub-style visual constraints, (4) creative mode structural rules, (5) campaign type and hook angle visual direction, (6) brand color hex directives (when provided), (7) face-consistency instructions for uploaded personal photos (Box A, when provided), (8) logo placement directives (Box B, when provided), (9) mode-specific asset references — book covers, device screens, etc. (Box C, when provided), (10) style reference from uploaded reference ad (when provided). Items 6–10 are optional and omitted from the prompt when the user has not provided the corresponding input.
 - **FR-006**: The system MUST NOT assemble image prompts inline elsewhere after the dedicated assembly function is introduced.
@@ -147,7 +154,7 @@ As a QA reviewer, unit tests verify that the render prompt assembly correctly in
 
 ### Measurable Outcomes
 
-- **SC-001**: 100% of Step 1 input categories (creative mode, sub-style, universe, campaign type, hook angle, tone, brand colors) appear in the final render prompt for every generation.
+- **SC-001**: 100% of Step 1 input categories (product context, creative mode, sub-style, universe, campaign type, hook angle, tone, brand colors) appear in the final render prompt for every generation.
 - **SC-002**: Approved copy text appears verbatim in the render prompt in 100% of generations — zero paraphrasing, zero omissions.
 - **SC-003**: Build plans with missing or paraphrased copy text are caught and rebuilt before reaching the image model.
 - **SC-004**: Users can view their blueprint in Step 3 without seeing the raw technical prompt.
@@ -164,4 +171,4 @@ As a QA reviewer, unit tests verify that the render prompt assembly correctly in
 - "Verbatim" copy fidelity uses the following normalization before substring matching: Unicode NFC normalization, trim leading/trailing whitespace, collapse any run of internal whitespace (spaces, tabs, newlines) to a single ASCII space. Case and punctuation are preserved. The approved text must appear as an exact substring after these normalizations.
 - The "View Blueprint" UI panel follows existing expandable panel patterns in the Step 3 interface.
 - The prompt assembly function replaces all current inline prompt assembly — no dual-path execution where some generations use the old path.
-- Max 2 rebuild retries for copy fidelity validation failure. After that, generation proceeds with the best available plan and a non-blocking warning.
+- Max 2 rebuild retries for copy fidelity validation failure. After that, the system auto-proceeds with the best available plan and displays a warning banner with Continue/Retry/Cancel options before image generation starts.

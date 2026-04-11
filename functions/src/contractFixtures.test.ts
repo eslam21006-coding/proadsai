@@ -11,6 +11,7 @@ import {
     TECHNICAL_PROMPT_START,
     TECHNICAL_PROMPT_END,
     type StructuredBuildPlanPayload,
+    type CopyFidelityFields,
 } from "./buildPlanSlotMap.js";
 
 function createContract(selectedModes: string[], hookAngle?: string) {
@@ -429,6 +430,10 @@ function testValidateLaunchSurface() {
     // Blocked: cross-tab pair
     const crossTab = validateLaunchSurface({ selectedModes: ['value_stack', 'event_ticket'] });
     assert.equal(crossTab.allowed, false, 'validateLaunchSurface: cross-tab pair should block');
+    assert.ok(
+        crossTab.reason && crossTab.reason.toLowerCase().includes('cross-tab'),
+        `validateLaunchSurface: cross-tab reason should contain "cross-tab", got: ${crossTab.reason}`
+    );
 
     // Blocked: deleted modes (only assert if actually removed from catalog)
     const deletedModes = ['limited_access', 'module_preview', 'day_strip'];
@@ -446,6 +451,14 @@ function testValidateLaunchSurface() {
         const baCarousel = validateLaunchSurface({ selectedModes: ['before_after'], adFormat: 'carousel' });
         assert.equal(baCarousel.allowed, false, 'validateLaunchSurface: before_after+carousel should block');
     }
+
+    // Blocked: before_after + standard_hero (soloOnly mode cannot be paired)
+    const baHero = validateLaunchSurface({ selectedModes: ['before_after', 'standard_hero'] });
+    assert.equal(baHero.allowed, false, 'validateLaunchSurface: before_after+standard_hero should block');
+
+    // Blocked: text_only + value_stack (soloOnly mode cannot be paired)
+    const textOnlyValueStack = validateLaunchSurface({ selectedModes: ['text_only', 'value_stack'] });
+    assert.equal(textOnlyValueStack.allowed, false, 'validateLaunchSurface: text_only+value_stack should block');
 
     console.log("  ✅ testValidateLaunchSurface: passing + blocked combos verified");
 }
@@ -540,6 +553,16 @@ function testResolveValueStackSlideCount() {
     assert.equal(r9.giftCount, 9);
     assert.equal(r9.resolvedSlideCount, 9);
     assert.equal(r9.capped, true);
+
+    const r1 = resolveValueStackSlideCount(['a']);
+    assert.equal(r1.giftCount, 1);
+    assert.equal(r1.resolvedSlideCount, 3);
+    assert.equal(r1.capped, false);
+
+    const r10 = resolveValueStackSlideCount(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']);
+    assert.equal(r10.giftCount, 10);
+    assert.equal(r10.resolvedSlideCount, 9);
+    assert.equal(r10.capped, true);
 
     const r0 = resolveValueStackSlideCount([]);
     assert.equal(r0.giftCount, 0);
@@ -727,6 +750,89 @@ testPromptAssemblySubStyleLuxuryMagazine();
 testPromptAssemblyRetargetingDirection();
 testCopyFidelityValidation();
 console.log("═══ Spec 005 — All regression tests passed ═══\n");
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Spec 005 Phase 2 — 4-Field Copy Fidelity + Campaign Context + Carousel
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─── T041: 4-field copy fidelity validation ───
+function testCopyFidelity4Fields() {
+    const tp = "Create an ad with عرض خاص لفترة محدودة as headline, كل ما تحتاجه لتغلق عملاء as subheadline, احجز مكانك as CTA, and ابدأ اليوم as benefit text. Dark cinematic lighting.";
+
+    // (a) all 4 fields present → passed
+    const a = validateCopyFidelity(tp, { hookText: "عرض خاص لفترة محدودة", subheadText: "كل ما تحتاجه لتغلق عملاء", ctaName: "احجز مكانك", benefitText: "ابدأ اليوم" });
+    assert.equal(a.passed, true, "T041a: all 4 fields present should pass");
+    assert.deepEqual(a.failedFields, [], "T041a: no failed fields");
+
+    // (b) hookText present but subheadText paraphrased
+    const b = validateCopyFidelity(tp, { hookText: "عرض خاص لفترة محدودة", subheadText: "نص مختلف تماما", ctaName: "احجز مكانك", benefitText: "ابدأ اليوم" });
+    assert.equal(b.passed, false, "T041b: paraphrased subheadText should fail");
+    assert.ok(b.failedFields.includes("subheadText"), "T041b: failedFields must include subheadText");
+    assert.ok(!b.failedFields.includes("hookText"), "T041b: hookText should NOT be in failedFields");
+
+    // (c) ctaName missing
+    const c = validateCopyFidelity(tp, { hookText: "عرض خاص لفترة محدودة", subheadText: "كل ما تحتاجه لتغلق عملاء", ctaName: "نص غير موجود", benefitText: "ابدأ اليوم" });
+    assert.equal(c.passed, false, "T041c: missing ctaName should fail");
+    assert.ok(c.failedFields.includes("ctaName"), "T041c: failedFields must include ctaName");
+
+    // (d) empty benefitText skipped → passed
+    const d = validateCopyFidelity(tp, { hookText: "عرض خاص لفترة محدودة", subheadText: "كل ما تحتاجه لتغلق عملاء", ctaName: "احجز مكانك", benefitText: "" });
+    assert.equal(d.passed, true, "T041d: empty benefitText should be skipped and pass");
+
+    // (e) Arabic text across all 4 fields
+    const tpArabic = "تصميم إعلاني يحتوي على احصل على خصم 50% كعنوان رئيسي مع فرصة لا تتكرر كعنوان فرعي وزر سجل الآن وفائدة وفر 500 ريال";
+    const e = validateCopyFidelity(tpArabic, { hookText: "احصل على خصم 50%", subheadText: "فرصة لا تتكرر", ctaName: "سجل الآن", benefitText: "وفر 500 ريال" });
+    assert.equal(e.passed, true, "T041e: Arabic text across all 4 fields should pass");
+
+    // (f) empty hookText must fail (hookText is required)
+    const f = validateCopyFidelity(tp, { hookText: "", subheadText: "كل ما تحتاجه لتغلق عملاء", ctaName: "احجز مكانك", benefitText: "ابدأ اليوم" });
+    assert.equal(f.passed, false, "T041f: empty hookText should fail");
+    assert.ok(f.failedFields.includes("hookText"), "T041f: failedFields must include hookText");
+
+    console.log("  ✅ testCopyFidelity4Fields");
+}
+
+// ─── T042: campaign context propagation from technicalPrompt ───
+function testCampaignContextPresence() {
+    // Campaign context (productName, targetAudience) flows through the TECHNICAL_PROMPT
+    // generated by Gemini in generateBuildPlan(). This test verifies that
+    // buildFinalImagePrompt() faithfully propagates it into the final textPrompt.
+    const input = makePromptInput({
+        technicalPrompt: "Create an ad for FitPro targeting busy professionals. Dark cinematic lighting, premium wardrobe.",
+        coreDesignRules: "Photorealistic studio lighting. SUB-STYLE: luxury_magazine.",
+    });
+    const result = buildFinalImagePrompt(input);
+    assert.ok(result.textPrompt.includes("FitPro"), "T042: textPrompt must contain productName 'FitPro' from technicalPrompt");
+    assert.ok(result.textPrompt.includes("busy professionals"), "T042: textPrompt must contain targetAudience 'busy professionals' from technicalPrompt");
+    console.log("  ✅ testCampaignContextPresence");
+}
+
+// ─── T043: carousel per-slide copy isolation ───
+function testCarouselPerSlideCopyIsolation() {
+    const slide1Hook = "عرض خاص";
+    const slide2Hook = "فرصة لا تتكرر";
+
+    const input1 = makePromptInput({ hookText: slide1Hook, subheadText: "وصف الشريحة الأولى", ctaName: "" });
+    const result1 = buildFinalImagePrompt(input1);
+
+    const input2 = makePromptInput({ hookText: slide2Hook, subheadText: "وصف الشريحة الثانية", ctaName: "" });
+    const result2 = buildFinalImagePrompt(input2);
+
+    assert.ok(result1.textPrompt.includes(slide1Hook), "T043: slide 1 textPrompt must contain slide 1 hookText");
+    assert.ok(!result1.textPrompt.includes(slide2Hook), "T043: slide 1 textPrompt must NOT contain slide 2 hookText");
+    assert.ok(result2.textPrompt.includes(slide2Hook), "T043: slide 2 textPrompt must contain slide 2 hookText");
+    assert.ok(!result2.textPrompt.includes(slide1Hook), "T043: slide 2 textPrompt must NOT contain slide 1 hookText");
+    console.log("  ✅ testCarouselPerSlideCopyIsolation");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Run Spec 005 Phase 2 Fixtures
+// ═══════════════════════════════════════════════════════════════════════════
+console.log("\n═══ Spec 005 Phase 2 — 4-Field Fidelity + Campaign Context + Carousel ═══");
+testCopyFidelity4Fields();
+testCampaignContextPresence();
+testCarouselPerSlideCopyIsolation();
+console.log("═══ Spec 005 Phase 2 — All new tests passed ═══\n");
 
 import "./teamFixtureTests.js";
 
