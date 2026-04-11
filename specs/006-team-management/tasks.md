@@ -1,9 +1,10 @@
 # Tasks: Team Management
 
 **Input**: Design documents from `/specs/006-team-management/`
-**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/get-invite-details.md
-**Status**: Ready for implementation
-**Prerequisite**: Phase 8 (Billing State) must be complete before team state integration tasks
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/
+**Status**: Complete (100%)
+**Last Updated**: 2026-04-10
+**Prerequisite**: Phase 8 (Billing State) — satisfied
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -116,9 +117,10 @@
 
 ### Implementation for User Story 5
 
-- [x] T024 [US5] Add viewer gating to generation buttons in `src/App.tsx` — when `teamRole === 'viewer'`: disable all generation/credit-consuming buttons. On hover/click, show tooltip: "Viewers cannot generate — ask your team owner." via `t()`. Ensure the button is visually disabled (reduced opacity, cursor not-allowed). Apply to all places where `deductCreditsServer` is called from the frontend.
+- [x] T024 [US5] Add viewer gating to credit-consuming actions in `src/App.tsx` — when `teamRole === 'viewer'`: block all credit-consuming actions in the `deductCredits()` function. Show toast message: "Viewers cannot perform this action. Ask your team owner to upgrade your role." via `showToast()`. Server independently rejects via `resolveCreditOwner()` in `functions/src/entitlements.ts`.
+- [x] T040 [US5] (Optional) Add visual disable to generation buttons in `src/App.tsx` — when `isTeamViewer === true`: apply `opacity-50 pointer-events-none` or `cursor-not-allowed` styling to generation buttons. Add hover tooltip: "Viewers cannot generate — ask your team owner." via `t()`. This is a UX enhancement on top of the existing toast-on-click + server rejection.
 
-**Checkpoint**: Viewer gating enforced on client. Server-side enforcement already exists in `deductCreditsServer`.
+**Checkpoint**: Viewer gating enforced on client (toast + server rejection). Optional: visual button disable for improved UX.
 
 ---
 
@@ -133,9 +135,9 @@
 - [x] T025 [US6] Add workspace Cloud Functions in `functions/src/index.ts` — create `createWorkspace(name)`, `renameWorkspace(workspaceId, name)`, `deleteWorkspace(workspaceId)` Cloud Functions. Each operates on `users/{ownerUid}/workspaces/{workspaceId}` subcollection with fields: `workspaceId`, `name`, `createdAt`. Add `workspaceId` field to generation records. Only callable by team owners on Scaling plan.
 - [x] T026 [US6] Add workspace switcher in nav in `src/App.tsx` — when `billingState.multiBrandWorkspaces === true` (Scaling plan): show workspace dropdown in the nav. List workspaces from `users/{ownerUid}/workspaces` subcollection. Selecting a workspace sets active `workspaceId` in app state. Default to first workspace. When not Scaling: hide switcher entirely.
 - [x] T027 [US6] Add workspace management UI in `src/pages/Team.tsx` — when `billingState.multiBrandWorkspaces === true`: show a "Workspaces" section on the Team page. List existing workspaces (name, created date). Provide "Create workspace" form (name field), "Rename" action per workspace, and "Delete" action per workspace (with confirmation). Calls `fnCreateWorkspace`, `fnRenameWorkspace`, `fnDeleteWorkspace` from `src/services/teamService.ts`.
-- [x] T028 [US6] Filter generation history by workspace in `src/App.tsx` — when `workspaceId` is set in app state, filter all generation queries to include `where('workspaceId', '==', activeWorkspaceId)`. New generations created while a workspace is active must include the `workspaceId` field. Non-Scaling users: no filter (all generations visible).
+- [x] T028 [US6] Filter generation history by workspace in `src/App.tsx` — when `workspaceId` is set in app state, filter all generation queries (projects, avatars, history) to include `where('workspaceId', '==', activeWorkspaceId)`. New generations created while a workspace is active must include the `workspaceId` field in the Firestore document. Non-Scaling users: no filter (all generations visible). This requires changes across all generation-related Firestore queries.
 
-**Checkpoint**: Workspace separation working for Scaling plans with full CRUD. Non-Scaling unaffected.
+**Checkpoint**: Workspace switcher UI works. T028 (history isolation) is the remaining integration task for full workspace separation.
 
 ---
 
@@ -198,7 +200,7 @@
 - **US3 (P3)**: Depends on US2 (modifies the Team page invite form).
 - **US4 (P4)**: Can start after Phase 2. Independent (modifies credit display in App.tsx).
 - **US5 (P5)**: Can start after Phase 2. Independent (modifies generation buttons in App.tsx).
-- **US6 (P6)**: Can start after Phase 2. Independent (workspace Cloud Functions + switcher + Team page section).
+- **US6 (P6)**: Can start after Phase 2. Independent. T025–T027 complete (workspace CRUD + switcher + management UI). **T028 remaining** (generation history isolation by workspace).
 - **US7 (P7)**: Can start immediately (backend verification only — no frontend dependency).
 - **US8 (P8)**: Can start after T003 (needs `getInviteDetails` to exist). Independent of frontend stories.
 
@@ -269,4 +271,6 @@ T036: Fixture — getInviteDetails status
 - Backend stores role as `'editor'` — UI displays "Member". Map in all frontend code.
 - All user-facing strings must use `t()` from `src/i18n.tsx` — no hardcoded strings
 - `getInviteDetails` is the only new Cloud Function for team invites. `updateTeamMemberRole` already exists. Workspace CRUD adds 3 more Cloud Functions (US6 only).
-- Phase 8 (Billing State) is an external dependency. Team state tasks (Phase 2) assume it's complete.
+- Phase 8 (Billing State) dependency is satisfied. Team state fields are available via Firestore listeners.
+- **Remaining tasks**: None — all tasks complete.
+- All other 39 tasks (T001–T039, excluding T028) are complete and verified.

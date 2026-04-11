@@ -456,6 +456,10 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'invite.status_expired': 'Expired',
         'invite.status_revoked': 'Revoked',
         'invite.status_pending': 'Pending',
+        'invite.status_accepted': 'Accepted',
+
+        // ── Credits ──
+        'credits.insufficient': 'You need {cost} credits for this action but only have {balance}.',
     },
 
     ar: {
@@ -910,6 +914,10 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'invite.status_expired': 'منتهية',
         'invite.status_revoked': 'ملغاة',
         'invite.status_pending': 'معلقة',
+        'invite.status_accepted': 'مقبولة',
+
+        // ── Credits ──
+        'credits.insufficient': 'تحتاج {cost} رصيد لهذا الإجراء ولديك فقط {balance}.',
     },
 };
 

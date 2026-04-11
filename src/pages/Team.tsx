@@ -322,7 +322,7 @@ const TeamPage: React.FC<TeamPageProps> = ({
                       <p className="text-[10px] text-slate-500">{isTeamMember ? '' : user?.email}</p>
                     </div>
                     <span className="text-[8px] font-bold uppercase px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 tracking-wider shrink-0">
-                      Owner
+                      {t('team.owner_label')}
                     </span>
                   </div>
 
