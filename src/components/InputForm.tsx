@@ -2320,9 +2320,10 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
               {launchSurfaceResult.reason}
             </div>
           )}
-          <button data-tour="submit" type="submit" disabled={!launchSurfaceResult.allowed || !!isTeamViewer} title={isTeamViewer ? t('team.viewer_tooltip') : undefined} className={`w-full bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-black py-4 rounded-2xl shadow-xl shadow-emerald-600/20 hover:shadow-emerald-600/30 active:scale-[0.98] transition-all text-sm uppercase tracking-wider flex items-center justify-center gap-2 ${(!launchSurfaceResult.allowed || isTeamViewer) ? 'opacity-50 cursor-not-allowed' : ''}`}>
+          <button data-tour="submit" type="submit" disabled={!launchSurfaceResult.allowed || !!isTeamViewer} aria-describedby={isTeamViewer ? "viewer-help" : undefined} className={`w-full bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-black py-4 rounded-2xl shadow-xl shadow-emerald-600/20 hover:shadow-emerald-600/30 active:scale-[0.98] transition-all text-sm uppercase tracking-wider flex items-center justify-center gap-2 ${(!launchSurfaceResult.allowed || isTeamViewer) ? 'opacity-50 cursor-not-allowed' : ''}`}>
             <i className="fa-solid fa-bolt"></i> {isTeamViewer ? t('team.viewer_tooltip') : t('form.submit')}
           </button>
+          {isTeamViewer && <p id="viewer-help" className="text-center text-[10px] text-amber-400/80 mt-2">{t('team.viewer_tooltip')}</p>}
           <button type="button" id="save-draft-btn" onClick={() => {
             console.log('[Save Draft] clicked', inputs?.productName);
             try {
