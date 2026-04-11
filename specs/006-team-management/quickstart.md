@@ -1,34 +1,46 @@
 # Quickstart: Team Management
 
+**Updated**: 2026-04-10
+
 ## What This Feature Does
 
-Builds the user-facing team management UI. Fixes the critical 404 on invite acceptance links by adding a `/join` route. Adds the Team management page, plan limit enforcement, credit visibility, viewer role gating, and workspace separation for Scaling plans.
+Team management enables owners to invite members (editor/viewer roles), manage team composition, enforce plan-based seat limits, share credits from the owner's pool, gate viewer actions, and (for Scaling plans) switch between brand workspaces.
 
-## Key Files to Create
+## Implementation Status
 
-| File | Purpose |
-|------|---------|
-| `src/pages/JoinTeam.tsx` | Invite acceptance page — account creation or login + claim |
-| `src/pages/Team.tsx` | Team management page — members, invites, invite form |
+The feature is ~92% complete. All 8 Cloud Functions, both frontend pages, Firestore security rules, i18n (EN+AR), and fixture tests are implemented.
 
-## Key Files to Modify
+## Key Files
 
-| File | Change |
-|------|--------|
-| `functions/src/index.ts` | Add `getInviteDetails` Cloud Function |
-| `src/App.tsx` | Add `/join` route detection, team credit label, viewer gating, workspace switcher |
-| `src/i18n.tsx` | Add team-related translation strings |
-| `functions/src/contractFixtures.test.ts` | Add team fixture tests |
+| File | Purpose | Status |
+|------|---------|--------|
+| `src/pages/JoinTeam.tsx` | Invite acceptance page — login/signup + claim | Complete |
+| `src/pages/Team.tsx` | Team management modal — members, invites, invite form, role management | Complete |
+| `src/services/teamService.ts` | Cloud Function wrappers (8 functions, typed) | Complete |
+| `src/components/WorkspaceSwitcher.tsx` | Workspace dropdown (Scaling plan only) | UI complete, history isolation pending |
+| `src/App.tsx` | `/join` route, team state, credit deduction, viewer gating | Complete |
+| `src/i18n.tsx` | 70+ team/join/invite keys (EN + AR) | Complete |
+| `src/planconfig.ts` | Plan limits (maxTeamMembers, multiBrandWorkspaces) | Complete |
+| `functions/src/index.ts` | 8 team Cloud Functions + credit resolution | Complete |
+| `functions/src/entitlements.ts` | `resolveCreditOwner()` — credit owner resolution | Complete |
+| `functions/src/teamFixtureTests.ts` | 6 fixture test cases (T031–T036) | Complete |
+| `firestore.rules` | Team-aware security rules | Complete |
+
+## Remaining Work
+
+1. **Workspace history isolation** (US6/FR-012): Generation queries need `workspaceId` scoping for Scaling plan teams. The WorkspaceSwitcher component and feature flag exist, but queries are not filtered by workspace.
+
+2. **Viewer button visual state** (optional UX enhancement): Generation buttons are not visually disabled for viewers. The current implementation blocks via toast on click + server rejection. Adding visual disable (opacity + pointer-events) would improve discoverability.
 
 ## Important Notes
 
-- The backend role is `'editor'` (not `'member'`). The UI shows "Member" as the label for the editor role.
-- No router library is used. The `/join` route is detected via `window.location.pathname` at the top of the App component tree.
-- Team state fields (`isTeamMember`, `teamOwnerUid`, `teamRole`) already exist on the user doc — surface them in the frontend state.
-- `getInviteDetails` is the only new Cloud Function. All other team functions already exist, including `updateTeamMemberRole` for changing a member's role post-invite.
-- `getInviteDetails` must be rate-limited to 10 requests/minute/IP (Firestore-based counter) since it's unauthenticated.
-- The join page must check if the logged-in user's email matches the invite email. If not, show "This invite was sent to [email]. Log in with that email to accept." (The backend already enforces this in `claimTeamInvite` — the frontend check is a UX improvement.)
-- Team page empty state: show "You haven't invited anyone yet. Add your first team member below." with the invite form.
+- The backend role is `'editor'` (not `'member'`). The UI shows "Member" as the label for the editor role via i18n key `team.role_member`.
+- No router library is used. The `/join` route is detected via `window.location.pathname` before the auth gate in App.tsx.
+- Team state fields (`isTeamMember`, `teamOwnerUid`, `teamRole`) are read from the Firestore user document via real-time listener.
+- `teamMemberships/{email}` is the reverse-lookup collection — keyed by normalized email, not UID.
+- Invite statuses that count as "open" (toward seat limit): `pending`, `sent`, `failed`.
+- Rate limiting on `getInviteDetails`: 10 req/min/IP via `rateLimits/{ip}_{minuteKey}` Firestore collection.
+- One-team-per-user model: claiming an invite auto-revokes pending invites from other owners.
 
 ## Build & Test
 
@@ -36,9 +48,12 @@ Builds the user-facing team management UI. Fixes the critical 404 on invite acce
 # Backend compile check
 cd functions && rm -rf lib && npm run build
 
-# Contract fixtures (includes new team tests)
-cd functions && npm run test:contracts
+# Run team fixture tests
+cd functions && node lib/teamFixtureTests.js
 
 # Frontend compile check
 npm run build
+
+# Dev server
+npm run dev
 ```

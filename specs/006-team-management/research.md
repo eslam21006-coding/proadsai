@@ -1,23 +1,23 @@
 # Research: Team Management
 
-**Date**: 2026-04-03 | **Branch**: `006-team-management`
+**Date**: 2026-04-03 | **Updated**: 2026-04-10 | **Branch**: `006-team-management`
 
-## R1: Existing Backend Functions
+## R1: Backend Functions (Complete)
 
-**Decision**: Build frontend UI on top of existing Cloud Functions. Add one new function (`getInviteDetails`).
+**Decision**: All 8 Cloud Functions are implemented and functional.
 
-**Findings**: All 7 team Cloud Functions exist and are functional:
+**Findings**: All team Cloud Functions exist and are functional:
 - `createTeamInvite` — creates invite, sends via GHL webhook, validates seat limits
 - `resendTeamInvite` — refreshes expiry to 7 days, retries GHL delivery
 - `revokeTeamInvite` — marks invite as revoked
 - `claimTeamInvite` — matches caller email to invite, creates team member, sets flags via transaction
 - `getTeamInvites` — lists all invites for owner, auto-expires stale on read
-- `createTeamMember` — legacy compat wrapper
+- `getInviteDetails` — unauthenticated endpoint for join page, rate-limited (10 req/min/IP)
 - `removeTeamMember` — deletes member from subcollection, clears user flags
+- `updateTeamMemberRole` — changes member role atomically in 3 locations
+- `createTeamMember` — legacy compat wrapper (redirects to createTeamInvite)
 
-**Missing**: `getInviteDetails(inviteId)` — unauthenticated endpoint for the join page. Must be created (task 9.4).
-
-**Rationale**: Reuse everything. Only new backend work is `getInviteDetails` and adding `expiresAt` enforcement to `claimTeamInvite`.
+**Rationale**: Full backend surface is complete. No new backend functions needed.
 
 ---
 
@@ -63,11 +63,11 @@
 
 ## R6: Workspace Separation (Scaling Plan)
 
-**Decision**: Defer detailed workspace design to implementation. Core approach: add a `workspaceId` field to generation records and filter by it.
+**Decision**: WorkspaceSwitcher component and `multiBrandWorkspaces` feature flag are implemented. Full workspace-scoped generation history isolation is deferred.
 
-**Findings**: No workspace infrastructure exists. Generations are stored per-user in `users/{uid}/projects`. For workspace separation, generation records would need a `workspaceId` field, and the UI would need a workspace switcher in the nav that sets the active workspace context.
+**Findings**: `WorkspaceSwitcher.tsx` renders in the nav for Scaling plan teams. `WorkspaceSettingsModal.tsx` exists. Firestore rules include `users/{uid}/workspaces/{workspaceId}` with team-aware access. However, generation queries are not yet scoped by workspace ID — all generations appear in all workspaces.
 
-**Rationale**: This is the lowest-priority story (P6). The core data model change (add `workspaceId` to generations) is straightforward. The workspace CRUD (create, rename, delete) can be kept minimal — just a name and ID.
+**Rationale**: The UI infrastructure is in place. Full isolation requires changes to every generation query across the app (projects, avatars, history). This is a separate scope item to avoid blocking core team management launch.
 
 ---
 
@@ -103,3 +103,25 @@
 **Findings**: `claimTeamInvite` already enforces email matching server-side (line 2163 in index.ts): `inviteData.inviteeEmailNormalized !== callerEmail` returns `{ success: false, message: 'This invite is for a different email address.' }`. The frontend should detect the mismatch *before* attempting the claim and show: "This invite was sent to [email]. Log in with that email to accept."
 
 **Rationale**: The server-side check is the security boundary. The frontend check is a UX improvement to avoid a confusing failed claim attempt.
+
+---
+
+## R10: Viewer Gating Implementation (Updated 2026-04-10)
+
+**Decision**: Dual-layer enforcement — client toast + server rejection. No visual button disabling.
+
+**Findings**: The current implementation blocks viewer actions via `deductCredits()` in App.tsx (returns `false` + shows toast: "Viewers cannot perform this action"). Server-side, `resolveCreditOwner()` in `entitlements.ts` throws `permission-denied` for viewers. Generation buttons are NOT visually disabled or styled differently for viewers.
+
+**Rationale**: Toast-on-click is more accessible than tooltip-on-hover (works on touch devices). Server enforcement is the security boundary. Visual button disabling could be added as a UX enhancement but is not required for correctness.
+
+**Alternatives considered**: Tooltip on hover (spec originally said this) → Current toast-on-click approach is simpler and covers mobile.
+
+---
+
+## R11: Firestore Security Rules for Team Access (Updated 2026-04-10)
+
+**Decision**: Denormalized `isTeamMember` + `teamOwnerUid` fields on user document enable Firestore security rules to grant cross-user access.
+
+**Findings**: Rules check `resource.data.isTeamMember == true && resource.data.teamOwnerUid == userId` to allow team members to read owner's subcollections (projects, avatars, workspaces). `teamMemberships/{email}` is email-gated for reverse lookup. `users/{uid}/team/{memberId}` is owner-read-only, Cloud-Functions-write-only.
+
+**Rationale**: Firestore rules cannot perform cross-document lookups. Denormalization is the standard pattern. Custom Claims were rejected due to 1-hour token cache staleness.

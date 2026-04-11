@@ -1250,8 +1250,11 @@ const App: React.FC = () => {
     }
     try {
       const avatarsRef = collection(db, 'users', uid, 'avatars');
-      const docRef = await addDoc(avatarsRef, { ...avatar, createdAt: Date.now() });
-      setAvatars(prev => [{ id: docRef.id, ...avatar, createdAt: Date.now() }, ...prev]);
+      const docRef = await addDoc(avatarsRef, {
+        ...avatar, createdAt: Date.now(),
+        ...(canUseWorkspaces && activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
+      });
+      setAvatars(prev => [{ id: docRef.id, ...avatar, createdAt: Date.now(), ...(canUseWorkspaces && activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}) }, ...prev]);
     } catch (e) {
       console.error('Failed to save avatar:', e);
       showToast('Failed to save avatar', 'error');
@@ -1452,6 +1455,8 @@ const App: React.FC = () => {
   const [teamOwnerName, setTeamOwnerName] = useState<string | null>(null);
   const [removedFromTeam, setRemovedFromTeam] = useState(false);
   const isTeamViewer = teamRole === 'viewer';
+  const viewerBlockCls = isTeamViewer ? 'opacity-50 cursor-not-allowed' : '';
+  const viewerBlockTitle = isTeamViewer ? t('team.viewer_tooltip') : undefined;
   const effectiveUid = teamOwnerUid || user?.uid || null;
   effectiveUidRef.current = effectiveUid;
   const isTeamMember = !!teamOwnerUid;
@@ -1632,6 +1637,9 @@ const App: React.FC = () => {
   const filteredAvatars = canUseWorkspaces && activeWorkspaceId
     ? avatars.filter(a => (a.workspaceId || defaultWsId) === activeWorkspaceId)
     : avatars;
+  const filteredFavoritesData = canUseWorkspaces && activeWorkspaceId
+    ? favoritesData.filter((g: any) => (g.workspaceId || defaultWsId) === activeWorkspaceId)
+    : favoritesData;
 
   // ─── STRIPE BILLING PORTAL ─────────────────────────────────────────
   // ─── TEAM MANAGEMENT ──────────────────────────────────────────────
@@ -1831,12 +1839,12 @@ const App: React.FC = () => {
   const deductCredits = (action: keyof typeof CREDIT_COSTS, count = 1): boolean => {
     // Team viewers cannot perform credit-consuming actions
     if (isTeamViewer) {
-      showToast('Viewers cannot perform this action. Ask your team owner to upgrade your role.', 'error');
+      showToast(t('team.viewer_tooltip'), 'error');
       return false;
     }
     const cost = CREDIT_COSTS[action] * count;
     if (userCredits < cost) {
-      setUpgradeReason(`You need ${cost} credits for this action but only have ${userCredits}.`);
+      setUpgradeReason(t('credits.insufficient', { cost, balance: userCredits }));
       setShowUpgradeModal(true);
       return false;
     }
@@ -3012,7 +3020,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               const genId = await feedbackService.saveGeneration(
                 user.uid, cleanInputs, 'hooks',
                 { hookText: ht, subhead: sh, ctaText: cleanInputs.cta },
-                hookRaw, universe, 'gemini-3-flash', 0, undefined, buildCreativeIdentity()
+                hookRaw, universe, 'gemini-3-flash', 0, undefined, buildCreativeIdentity(),
+                canUseWorkspaces ? activeWorkspaceId : null
               );
               if (genId) hookIds[v] = genId;
             }
@@ -3503,7 +3512,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             const genId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
               { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500), buildPlan: conceptRaw, blueprintText: _blueprintText, resolvedImagePrompt: _resolvedImagePrompt },
-              conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity()
+              conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
+              canUseWorkspaces ? activeWorkspaceId : null
             );
             setRenderGenerationId(genId);
             if (loadedFavoriteId && genId) {
@@ -4023,7 +4033,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           const genId = await feedbackService.saveGeneration(
             user.uid, inputs, 'render',
             { imageUrl: res, conceptText: (selectedConcept || '').substring(0, 500) },
-            buildPlan, resolvedUniverse, 'gemini-3.1-flash-image', 0, editRatio, buildCreativeIdentity()
+            buildPlan, resolvedUniverse, 'gemini-3.1-flash-image', 0, editRatio, buildCreativeIdentity(),
+            canUseWorkspaces ? activeWorkspaceId : null
           );
           if (genId) {
             setRenderGenerationId(genId);
@@ -4075,7 +4086,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             const genId = await feedbackService.saveGeneration(
               user.uid, inputs, 'caption',
               { captionText: res },
-              res, '', 'gemini-3-flash', 0, undefined, buildCreativeIdentity()
+              res, '', 'gemini-3-flash', 0, undefined, buildCreativeIdentity(),
+              canUseWorkspaces ? activeWorkspaceId : null
             );
             setCaptionGenerationId(genId);
             if (loadedFavoriteId && genId) {
@@ -4164,7 +4176,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 const genId = await feedbackService.saveGeneration(
                   user.uid, inputs, 'caption',
                   { captionText: res },
-                  res, '', 'gemini-3-flash', 0, undefined, buildCreativeIdentity()
+                  res, '', 'gemini-3-flash', 0, undefined, buildCreativeIdentity(),
+                  canUseWorkspaces ? activeWorkspaceId : null
                 );
                 setCaptionGenerationId(genId);
               } catch (e) { console.warn('Batch caption save failed:', e); }
@@ -4288,7 +4301,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       const genId = await feedbackService.saveGeneration(
         user.uid, inputs, 'render',
         { imageUrl, conceptText: (conceptText || selectedConcept || '').substring(0, 500), hookText: (hookText || '').substring(0, 200) },
-        bPlan || buildPlan || '', resolvedUniverse, 'gemini-flash', 0, ratio, buildCreativeIdentity()
+        bPlan || buildPlan || '', resolvedUniverse, 'gemini-flash', 0, ratio, buildCreativeIdentity(),
+        canUseWorkspaces ? activeWorkspaceId : null
       );
       if (genId) {
         await feedbackService.toggleFavorite(genId, true);
@@ -4962,7 +4976,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           </div>
         )}
 
-        {phase === 'input' && <Suspense fallback={<div className="px-6 py-10 text-center text-sm text-slate-400">Loading workspace...</div>}><InputForm key={currentProjectId} onSubmit={handleStartDesign} onSaveDraft={handleSaveDraft} showToast={showToast} initialValues={inputs} userPlan={userPlan} avatars={avatars} onSaveAvatar={handleSaveAvatar} onUpdateAvatar={handleUpdateAvatar} onDeleteAvatar={handleDeleteAvatar} competitorData={competitorData} competitorLoading={competitorLoading} onRefreshResearch={(formData) => runCompetitorResearch(formData, true)} /></Suspense>}
+        {phase === 'input' && <Suspense fallback={<div className="px-6 py-10 text-center text-sm text-slate-400">Loading workspace...</div>}><InputForm key={currentProjectId} onSubmit={handleStartDesign} onSaveDraft={handleSaveDraft} showToast={showToast} initialValues={inputs} userPlan={userPlan} avatars={avatars} onSaveAvatar={handleSaveAvatar} onUpdateAvatar={handleUpdateAvatar} onDeleteAvatar={handleDeleteAvatar} competitorData={competitorData} competitorLoading={competitorLoading} onRefreshResearch={(formData) => runCompetitorResearch(formData, true)} isTeamViewer={isTeamViewer} /></Suspense>}
 
         {phase === 'tov_review' && (
           <>
@@ -5423,7 +5437,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                 else { refundCredits('refreshHooks'); showToast("Generation failed. Credits refunded.", "error"); }
                               } catch (e) { refundCredits('refreshHooks'); } finally { stopLoad(); }
                             }}
-                            className="w-full mt-2 py-2.5 rounded-xl bg-slate-950/40 border border-dashed border-slate-700/40 text-slate-500 text-[9px] font-bold uppercase tracking-wider hover:border-blue-500/40 hover:text-blue-400 hover:bg-blue-500/5 transition-all flex items-center justify-center gap-2"
+                            className={`w-full mt-2 py-2.5 rounded-xl bg-slate-950/40 border border-dashed border-slate-700/40 text-slate-500 text-[9px] font-bold uppercase tracking-wider hover:border-blue-500/40 hover:text-blue-400 hover:bg-blue-500/5 transition-all flex items-center justify-center gap-2 ${viewerBlockCls}`}
+                            disabled={isTeamViewer} title={viewerBlockTitle}
                           >
                             <i className="fa-solid fa-clone text-[9px]"></i>
                             <span>Generate 4 More Like This · <i className="fa-solid fa-coins text-[7px] text-amber-400 mr-0.5"></i>{CREDIT_COSTS.refreshHooks}</span>
@@ -5679,7 +5694,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       showToast("Architecture updated with your custom vision.", "success");
                     } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
                   }}
-                  className="w-full py-4 bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white rounded-2xl text-[11px] font-bold uppercase tracking-wider shadow-lg transition-all flex items-center justify-center space-x-2 active:scale-[0.98]"
+                  className={`w-full py-4 bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white rounded-2xl text-[11px] font-bold uppercase tracking-wider shadow-lg transition-all flex items-center justify-center space-x-2 active:scale-[0.98] ${viewerBlockCls}`}
+                  disabled={isTeamViewer} title={viewerBlockTitle}
                 >
                   <i className="fa-solid fa-wand-magic-sparkles"></i>
                   <span>Apply Global Refinement</span>
@@ -6331,7 +6347,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                             const genId = await feedbackService.saveGeneration(
                                               user.uid, inputs, 'render',
                                               { imageUrl: item.url || '', conceptText: item.conceptText?.substring(0, 500) || '', hookText: item.hookText?.substring(0, 200) || '' },
-                                              item.buildPlan || '', resolvedUniverse, 'gemini-flash', 0, item.ratio as AspectRatio, buildCreativeIdentity()
+                                              item.buildPlan || '', resolvedUniverse, 'gemini-flash', 0, item.ratio as AspectRatio, buildCreativeIdentity(),
+                                              canUseWorkspaces ? activeWorkspaceId : null
                                             );
                                             if (genId) {
                                               await feedbackService.toggleFavorite(genId, true);
@@ -6944,7 +6961,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                   <textarea value={studioTweak} onChange={(e) => setStudioTweak(e.target.value)} placeholder={editTarget ? `Describe changes for ${editTarget.label}...` : "e.g. Darker background, enhance text..."} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-[10px] text-slate-200 h-14 outline-none focus:ring-1 focus:ring-blue-500 resize-none" />
 
-                  <button onClick={handleApplyStudioPolishes} className="w-full py-2.5 rounded-xl bg-blue-600 text-white text-[9px] font-bold uppercase tracking-wider hover:bg-blue-500 transition-all active:scale-[0.98]">
+                  <button onClick={handleApplyStudioPolishes} disabled={isTeamViewer} title={viewerBlockTitle} className={`w-full py-2.5 rounded-xl bg-blue-600 text-white text-[9px] font-bold uppercase tracking-wider hover:bg-blue-500 transition-all active:scale-[0.98] ${viewerBlockCls}`}>
                     Apply & Render
                   </button>
                 </div>
@@ -6958,9 +6975,9 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   </button>
 
                   {currentMockup && carouselSlides.length === 0 && (
-                    <button onClick={handleGenerateAB} disabled={abRendering || !canUse(userPlan, 'abVariationTesting')}
-                      className={`w-full py-2.5 rounded-xl border text-[9px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 disabled:opacity-30 ${!canUse(userPlan, 'abVariationTesting') ? 'bg-slate-900/30 border-slate-800/30 text-slate-500 cursor-not-allowed' : 'bg-purple-600/12 border-purple-500/15 text-purple-300 hover:border-purple-500/30'}`}>
-                      {!canUse(userPlan, 'abVariationTesting') && <i className="fa-solid fa-lock text-[7px]"></i>}
+                    <button onClick={handleGenerateAB} disabled={abRendering || !canUse(userPlan, 'abVariationTesting') || isTeamViewer} title={viewerBlockTitle}
+                      className={`w-full py-2.5 rounded-xl border text-[9px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 disabled:opacity-30 ${(!canUse(userPlan, 'abVariationTesting') || isTeamViewer) ? 'bg-slate-900/30 border-slate-800/30 text-slate-500 cursor-not-allowed' : 'bg-purple-600/12 border-purple-500/15 text-purple-300 hover:border-purple-500/30'}`}>
+                      {(!canUse(userPlan, 'abVariationTesting') && !isTeamViewer) && <i className="fa-solid fa-lock text-[7px]"></i>}
                       <i className="fa-solid fa-clone text-[8px]"></i> 3 A/B Variations
                       {canUse(userPlan, 'abVariationTesting') ? (
                         <span className="text-[7px] opacity-40 inline-flex items-center gap-0.5"><i className="fa-solid fa-coins text-[6px]"></i>{(CREDIT_COSTS.buildPlan + CREDIT_COSTS.generateImage) * 3}</span>
@@ -7018,13 +7035,13 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 {/* Script — bottom */}
                 {hasAnyImage && (
                   batchHookGroups.length > 0 ? (
-                    <button onClick={() => handleBatchCaptions()}
-                      className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-blue-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-lg transition-all active:scale-[0.98] hover:from-emerald-500 hover:to-blue-500 flex items-center justify-center gap-2">
+                    <button onClick={() => handleBatchCaptions()} disabled={isTeamViewer} title={viewerBlockTitle}
+                      className={`w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-blue-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-lg transition-all active:scale-[0.98] hover:from-emerald-500 hover:to-blue-500 flex items-center justify-center gap-2 ${viewerBlockCls}`}>
                       <i className="fa-solid fa-pen-nib text-[8px]"></i> Generate {batchHookGroups.length} Scripts <span className="opacity-60">(<i className="fa-solid fa-coins text-[7px]"></i> {batchHookGroups.length})</span>
                     </button>
                   ) : (
-                    <button onClick={() => handleGenerateCaption(false)}
-                      className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-blue-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-lg transition-all active:scale-[0.98] hover:from-emerald-500 hover:to-blue-500 flex items-center justify-center gap-2">
+                    <button onClick={() => handleGenerateCaption(false)} disabled={isTeamViewer} title={viewerBlockTitle}
+                      className={`w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-blue-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-lg transition-all active:scale-[0.98] hover:from-emerald-500 hover:to-blue-500 flex items-center justify-center gap-2 ${viewerBlockCls}`}>
                       <i className="fa-solid fa-pen-nib text-[8px]"></i> Generate Script
                     </button>
                   )
@@ -7541,8 +7558,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
               <div className="flex gap-3 pt-4">
                 <button
-                  onClick={handleCarouselCopyConfirm}
-                  className="flex-1 py-4 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black uppercase tracking-wider shadow-xl transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                  onClick={handleCarouselCopyConfirm} disabled={isTeamViewer} title={viewerBlockTitle}
+                  className={`flex-1 py-4 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black uppercase tracking-wider shadow-xl transition-all active:scale-[0.98] flex items-center justify-center gap-2 ${viewerBlockCls}`}
                 >
                   <i className="fa-solid fa-layer-group"></i>
                   <span>Confirm & Generate Blueprints</span>
@@ -7560,8 +7577,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       setCarouselCopies(copies);
                       showToast('Copies regenerated!', 'success');
                     } catch (e: any) { refundCredits('generateCarouselCopies', regenSlideCount); handleApiError(e); } finally { stopLoad(); }
-                  }}
-                  className="px-6 py-4 rounded-2xl bg-amber-600/20 border border-amber-500/30 text-amber-400 text-[10px] font-bold hover:bg-amber-600/30 transition-all flex items-center gap-2"
+                  }} disabled={isTeamViewer} title={viewerBlockTitle}
+                  className={`px-6 py-4 rounded-2xl bg-amber-600/20 border border-amber-500/30 text-amber-400 text-[10px] font-bold hover:bg-amber-600/30 transition-all flex items-center gap-2 ${viewerBlockCls}`}
                 >
                   <i className="fa-solid fa-rotate-right"></i> Regenerate Copies
                 </button>
@@ -8459,18 +8476,18 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
       {/* ═══ FAVORITES PANEL ═══ */}
       {showFavorites && (() => {
-        const favHooks = favoritesData.filter((f: any) => f.output?.phase === 'hooks');
-        const favBlueprints = favoritesData.filter((f: any) => f.output?.phase === 'concepts');
-        const favDesigns = favoritesData.filter((f: any) => f.output?.phase === 'render');
-        const favCaptions = favoritesData.filter((f: any) => f.output?.phase === 'caption' || f.output?.phase === 'primary_text');
+        const favHooks = filteredFavoritesData.filter((f: any) => f.output?.phase === 'hooks');
+        const favBlueprints = filteredFavoritesData.filter((f: any) => f.output?.phase === 'concepts');
+        const favDesigns = filteredFavoritesData.filter((f: any) => f.output?.phase === 'render');
+        const favCaptions = filteredFavoritesData.filter((f: any) => f.output?.phase === 'caption' || f.output?.phase === 'primary_text');
         const tabs = [
           { key: 'hooks', label: 'Hooks', icon: 'fa-bolt', count: favHooks.length },
           { key: 'blueprints', label: 'Blueprints', icon: 'fa-compass-drafting', count: favBlueprints.length },
           { key: 'designs', label: 'Designs', icon: 'fa-image', count: favDesigns.length },
           { key: 'captions', label: 'Captions', icon: 'fa-pen-nib', count: favCaptions.length },
-          { key: 'all', label: 'All', icon: 'fa-layer-group', count: favoritesData.length },
+          { key: 'all', label: 'All', icon: 'fa-layer-group', count: filteredFavoritesData.length },
         ];
-        const filtered = favTab === 'hooks' ? favHooks : favTab === 'blueprints' ? favBlueprints : favTab === 'designs' ? favDesigns : favTab === 'captions' ? favCaptions : favoritesData;
+        const filtered = favTab === 'hooks' ? favHooks : favTab === 'blueprints' ? favBlueprints : favTab === 'designs' ? favDesigns : favTab === 'captions' ? favCaptions : filteredFavoritesData;
 
         // ─── THEME TOKENS ─────────────────────────────────────────────
         const dk = isDarkMode;

@@ -1,6 +1,6 @@
-﻿# Pro Ads AI - SaaS - FAL Development Guidelines
+# Pro Ads AI - SaaS - FAL Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-10
+Auto-generated from all feature plans. Last updated: 2026-04-11
 
 
 ## Project Structure
@@ -34,6 +34,8 @@ specs/            # Feature specs (speckit workflow)
 - Firestore (`generations/{genId}`, `creativeMemory/{creativeId}`) (005-render-prompt-pipeline)
 - TypeScript 5.7 (functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Firebase Auth, React 19 (006-team-management)
 - Firestore (`team_invites` collection, `users/{uid}` docs, `users/{uid}/team` subcollection) (006-team-management)
+- TypeScript 5.7 (Cloud Functions), TypeScript 5.9 (frontend) + React 19, Firebase Cloud Functions v2, Firebase Auth, Firestore, Vite 7, Tailwind CSS 3 (006-team-management)
+- Firestore (`team_invites`, `teamMemberships`, `users/{uid}`, `users/{uid}/team`, `rateLimits`) (006-team-management)
 - TypeScript 5.9 (frontend), TypeScript 5.7 (functions) + React 19, Zustand, Tailwind CSS 3, Firebase SDK (Firestore `onSnapshot`, `query`, `where`, `orderBy`) (010-favorites-workspace)
 - Firestore — `generations` collection (existing), `feedback.savedToFavorites` boolean field (010-favorites-workspace)
 - TypeScript 5.7 (functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Stripe SDK, React 19, Zustand 5 (009-billing-plan-access)

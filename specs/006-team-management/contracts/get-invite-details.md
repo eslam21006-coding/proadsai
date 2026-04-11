@@ -37,7 +37,9 @@
 ## Security
 
 - Does NOT require authentication (invite link is the access token)
-- Does NOT expose: ownerId, ownerEmail, claimedByUserId, delivery details
+- Returns limited metadata only: `ownerName`, `inviteeEmail`, `inviteeName`, `teamPlan`, `role`, `status`, `expiresAt`
+- `inviteeEmail` is included so the join page can show the invitee which email to authenticate with; this is the email the invite was sent to, so the recipient already knows it
+- Does NOT expose: `ownerId`, `ownerEmail`, `claimedByUserId`, delivery details
 - Rate-limited to **10 requests per minute per IP** via Firestore-based counter (keyed by `request.rawRequest.ip`). Exceeding the limit returns `HttpsError('resource-exhausted', 'Too many requests. Try again shortly.')`
 - Returns `not_found` for non-existent invite IDs (no information leakage about existence vs. invalidity)
 
