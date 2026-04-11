@@ -914,6 +914,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
       <form
         onSubmit={(e) => {
           e.preventDefault();
+          if (isTeamViewer) return;
           if (inputs.campaignType === 'retargeting') {
             const hasObj = !!inputs.retargetingObjection;
             const hasCustom = (inputs.customObjection || '').trim().length > 0;
