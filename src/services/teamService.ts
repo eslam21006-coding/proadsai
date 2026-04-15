@@ -12,6 +12,7 @@ const fnClaimTeamInvite = httpsCallable(functions, 'claimTeamInvite');
 const fnGetTeamInvites = httpsCallable(functions, 'getTeamInvites');
 const fnRemoveTeamMember = httpsCallable(functions, 'removeTeamMember');
 const fnUpdateTeamMemberRole = httpsCallable(functions, 'updateTeamMemberRole');
+const fnDeclineTeamInvite = httpsCallable(functions, 'declineTeamInvite');
 
 export interface InviteDetailsResult {
     success: boolean;
@@ -75,5 +76,10 @@ export async function removeTeamMember(memberId: string): Promise<{ success: boo
 
 export async function updateTeamMemberRole(memberId: string, role: string): Promise<{ success: boolean; message?: string }> {
     const result = await fnUpdateTeamMemberRole({ memberId, role });
+    return result.data as { success: boolean; message?: string };
+}
+
+export async function declineTeamInvite(inviteId: string): Promise<{ success: boolean; message?: string }> {
+    const result = await fnDeclineTeamInvite({ inviteId });
     return result.data as { success: boolean; message?: string };
 }

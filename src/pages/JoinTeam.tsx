@@ -7,9 +7,10 @@ import {
   updateProfile,
   fetchSignInMethodsForEmail,
   signOut,
+  sendEmailVerification,
 } from 'firebase/auth';
 import { LanguageProvider, useT } from '../i18n';
-import { getInviteDetails, claimTeamInvite } from '../services/teamService';
+import { getInviteDetails, claimTeamInvite, declineTeamInvite } from '../services/teamService';
 import type { InviteDetailsResult } from '../services/teamService';
 
 type InviteStatus = 'loading' | 'valid' | 'expired' | 'revoked' | 'accepted' | 'not_found' | 'error' | 'email_mismatch';
@@ -21,7 +22,7 @@ const JoinTeamInner: React.FC = () => {
 
   const [inviteStatus, setInviteStatus] = useState<InviteStatus>('loading');
   const [inviteData, setInviteData] = useState<InviteDetailsResult | null>(null);
-  const [authMode, setAuthMode] = useState<'loading' | 'login' | 'signup' | 'success'>('loading');
+  const [authMode, setAuthMode] = useState<'loading' | 'login' | 'signup' | 'accept_decline' | 'verify_email' | 'declined'>('loading');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -29,18 +30,25 @@ const JoinTeamInner: React.FC = () => {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const checkAuthMode = useCallback(async (emailAddress: string) => {
+  const resolveAuthState = useCallback((emailAddress: string) => {
     const currentUser = auth.currentUser;
+    if (currentUser && currentUser.emailVerified && currentUser.email?.toLowerCase() === emailAddress.toLowerCase()) {
+      setAuthMode('accept_decline');
+      return;
+    }
     if (currentUser && currentUser.email?.toLowerCase() !== emailAddress.toLowerCase()) {
       setInviteStatus('email_mismatch');
       return;
     }
-    try {
-      const methods = await fetchSignInMethodsForEmail(auth, emailAddress);
-      setAuthMode(methods.length > 0 ? 'login' : 'signup');
-    } catch {
-      setAuthMode('signup');
+    if (currentUser && !currentUser.emailVerified) {
+      setAuthMode('verify_email');
+      return;
     }
+    fetchSignInMethodsForEmail(auth, emailAddress).then((methods) => {
+      setAuthMode(methods.length > 0 ? 'login' : 'signup');
+    }).catch(() => {
+      setAuthMode('signup');
+    });
   }, []);
 
   useEffect(() => {
@@ -56,7 +64,7 @@ const JoinTeamInner: React.FC = () => {
         setInviteStatus('valid');
         setEmail(result.inviteeEmail || '');
         setName(result.inviteeName || '');
-        checkAuthMode(result.inviteeEmail || '');
+        resolveAuthState(result.inviteeEmail || '');
       } else {
         const status = result.status as InviteStatus;
         setInviteStatus(status || 'error');
@@ -65,14 +73,41 @@ const JoinTeamInner: React.FC = () => {
       if (active) setInviteStatus('error');
     });
     return () => { active = false; };
-  }, [inviteId, checkAuthMode]);
+  }, [inviteId, resolveAuthState]);
 
-  const handleClaim = async () => {
+  useEffect(() => {
+    if (inviteStatus !== 'valid' || !inviteData?.inviteeEmail) return;
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      if (user && user.emailVerified && user.email?.toLowerCase() === inviteData.inviteeEmail!.toLowerCase()) {
+        setAuthMode('accept_decline');
+      }
+    });
+    return unsubscribe;
+  }, [inviteStatus, inviteData]);
+
+  const handleAccept = async () => {
+    setSubmitting(true);
+    setError('');
     try {
       await claimTeamInvite(inviteId);
       window.location.href = '/';
     } catch {
       setError(t('join.claim_failed'));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDecline = async () => {
+    setSubmitting(true);
+    setError('');
+    try {
+      await declineTeamInvite(inviteId);
+      setAuthMode('declined');
+    } catch {
+      setError(t('join.decline_failed'));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -82,7 +117,7 @@ const JoinTeamInner: React.FC = () => {
     setError('');
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      await handleClaim();
+      resolveAuthState(email);
     } catch {
       setError(t('errors.login_failed'));
     } finally {
@@ -92,17 +127,18 @@ const JoinTeamInner: React.FC = () => {
 
   const handleSignup = async () => {
     if (!email || !password || !name) { setError(t('errors.fields_required')); return; }
-    if (password.length < 6) { setError(t('errors.password_min_length')); return; }
+    if (password.length < 8) { setError(t('errors.password_min_length')); return; }
     if (password !== confirmPassword) { setError(t('errors.passwords_mismatch')); return; }
     setSubmitting(true);
     setError('');
     try {
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       await updateProfile(cred.user, { displayName: name });
-      await handleClaim();
+      await sendEmailVerification(cred.user);
+      setAuthMode('verify_email');
     } catch (e: unknown) {
       const isFirebaseError = (err: unknown): err is Error & { code: string } =>
-        err instanceof Error && typeof (err as any).code === 'string';
+        err instanceof Error && typeof (err as { code?: unknown }).code === 'string';
       const code = isFirebaseError(e) ? e.code : '';
       if (code === 'auth/email-already-in-use') {
         setError(t('errors.email_already_in_use'));
@@ -119,7 +155,7 @@ const JoinTeamInner: React.FC = () => {
     await signOut(auth);
     setInviteStatus('valid');
     if (inviteData?.inviteeEmail) {
-      checkAuthMode(inviteData.inviteeEmail);
+      resolveAuthState(inviteData.inviteeEmail);
     }
   };
 
@@ -133,7 +169,6 @@ const JoinTeamInner: React.FC = () => {
     );
   }
 
-  // ─── Invalid invite statuses ───
   if (inviteStatus !== 'valid' && inviteStatus !== 'email_mismatch') {
     const messageKey: Record<string, string> = {
       expired: 'join.expired',
@@ -155,7 +190,6 @@ const JoinTeamInner: React.FC = () => {
     );
   }
 
-  // ─── Email mismatch — logged-in user's email doesn't match invite ───
   if (inviteStatus === 'email_mismatch' && inviteData) {
     return (
       <div dir={dir} className="min-h-screen bg-slate-950 flex items-center justify-center">
@@ -180,7 +214,6 @@ const JoinTeamInner: React.FC = () => {
     );
   }
 
-  // ─── Valid invite — login or signup form ───
   return (
     <div dir={dir} className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 max-w-md w-full">
@@ -195,6 +228,30 @@ const JoinTeamInner: React.FC = () => {
 
         {authMode === 'loading' ? (
           <div className="text-slate-400">{t('loading')}</div>
+        ) : authMode === 'accept_decline' ? (
+          <div className="space-y-4">
+            <p className="text-slate-300 text-sm">{t('join.ready_to_join')}</p>
+            {error && <p className="text-red-400 text-xs">{error}</p>}
+            <button onClick={handleAccept} disabled={submitting} className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-bold transition-colors">
+              {submitting ? t('login.please_wait') : t('join.accept_invite')}
+            </button>
+            <button onClick={handleDecline} disabled={submitting} className="w-full py-2.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-slate-300 rounded-lg text-sm font-medium transition-colors">
+              {submitting ? t('login.please_wait') : t('join.decline_invite')}
+            </button>
+          </div>
+        ) : authMode === 'verify_email' ? (
+          <div className="text-center space-y-4">
+            <div className="text-4xl">📧</div>
+            <p className="text-slate-300 text-sm">{t('join.verify_email_prompt')}</p>
+          </div>
+        ) : authMode === 'declined' ? (
+          <div className="text-center space-y-4">
+            <div className="text-4xl">✅</div>
+            <p className="text-slate-300 text-sm">{t('join.invite_declined')}</p>
+            <button onClick={() => { window.location.href = '/'; }} className="w-full py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm font-medium transition-colors">
+              {t('join.continue_to_app')}
+            </button>
+          </div>
         ) : authMode === 'login' ? (
           <div className="space-y-4">
             <div>

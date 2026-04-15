@@ -150,6 +150,32 @@ async function inlineRefund(targetUid: string, action: string, count: number = 1
     }
 }
 
+// FR-018: Write-through to `dormantPlan` snapshots when a subscription event fires.
+// Identity field is `stripeCustomerId` on this (pre-Paddle) branch. When 009 lands,
+// rename to `paddleCustomerId` / `paddleSubscriptionId` in lockstep with the billing rename.
+async function writeThroughDormantPlan(stripeCustomerId: string, fields: Record<string, any>): Promise<void> {
+    if (!stripeCustomerId) return;
+    try {
+        const dormantSnap = await db.collection("users")
+            .where("dormantPlan.stripeCustomerId", "==", stripeCustomerId)
+            .limit(10)
+            .get();
+        if (dormantSnap.empty) return;
+        for (const doc of dormantSnap.docs) {
+            const dp = doc.data()?.dormantPlan;
+            if (!dp) continue;
+            const updates: Record<string, any> = {};
+            for (const [key, value] of Object.entries(fields)) {
+                updates[`dormantPlan.${key}`] = value;
+            }
+            await doc.ref.update(updates);
+            console.log(`🔄 dormantPlan write-through: ${doc.id} updated with ${Object.keys(fields).join(', ')}`);
+        }
+    } catch (err) {
+        console.warn("⚠️ dormantPlan write-through failed (non-blocking):", err);
+    }
+}
+
 // ─── MODEL CONSTANTS (single source of truth) ───────────────────────────
 const CREATIVE_MODEL_PRO = "gemini-3.1-pro-preview"; // First generation
 const CREATIVE_MODEL_LITE = "gemini-3.1-flash-lite-preview"; // Regenerations
@@ -403,6 +429,15 @@ export const monthlyCreditsReset = onSchedule({
                     await writeBillingState(userDoc.id, db).catch((e: any) =>
                         console.warn(`⚠️ writeBillingState failed for ${userDoc.id}:`, e.message)
                     );
+                    // T030b: refresh dormantPlan credits for users whose dormant subscription targets this plan
+                    if (data.stripeCustomerId) {
+                        await writeThroughDormantPlan(data.stripeCustomerId, {
+                            credits: PLAN_LIMITS[data.plan],
+                            nextResetDate: admin.firestore.Timestamp.fromDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)),
+                        }).catch((e: any) =>
+                            console.warn(`⚠️ dormantPlan monthly reset failed for ${userDoc.id}:`, e.message)
+                        );
+                    }
                 }
             }
             console.log(`Reset batch ${i / batchSize + 1}: ${chunk.length} users`);
@@ -1148,6 +1183,7 @@ export const stripeWebhook = onRequest({
                     });
                     await writeBillingState(userDoc.id, db);
                     console.log(`⚠️ Subscription past_due: ${userDoc.id}`);
+                    await writeThroughDormantPlan(stripeCustomerId, { billingStatus: 'past_due' });
                 }
             } catch (e: any) {
                 console.error('Failed to handle past_due:', e.message);
@@ -1209,6 +1245,7 @@ export const stripeWebhook = onRequest({
                     });
                     console.log(`✅ Portal plan change (via email): ${customer.email} → ${planInfo.plan} (${planInfo.credits} credits)`);
                     await writeBillingState(userRecord.uid, db);
+                    await writeThroughDormantPlan(stripeCustomerId, { plan: planInfo.plan, credits: planInfo.credits, billingStatus: 'active' });
                 } else {
                     console.error(`No user found for stripeCustomerId: ${stripeCustomerId}`);
                 }
@@ -1227,6 +1264,7 @@ export const stripeWebhook = onRequest({
                 });
                 console.log(`✅ Portal plan change: ${userDoc.id} → ${planInfo.plan} (${planInfo.credits} credits)`);
                 await writeBillingState(userDoc.id, db);
+                await writeThroughDormantPlan(stripeCustomerId, { plan: planInfo.plan, credits: planInfo.credits, billingStatus: 'active' });
             }
             res.status(200).send('OK');
         } catch (err: any) {
@@ -1263,6 +1301,7 @@ export const stripeWebhook = onRequest({
                 });
                 console.log(`✅ Subscription cancelled: ${userDoc.id} → none (0 credits)`);
                 await writeBillingState(userDoc.id, db);
+                await writeThroughDormantPlan(stripeCustomerId, { plan: 'none', credits: 0, billingStatus: 'cancelled' });
             } else {
                 // Fallback via email
                 const stripe = new Stripe(stripeSecretKey.value());
@@ -2277,6 +2316,42 @@ export const revokeTeamInvite = onCall({
     return { success: true, message: 'Invite revoked.' };
 });
 
+// ─── DECLINE INVITE ────────────────────────────────────────────────────────
+export const declineTeamInvite = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be logged in.");
+    const callerUid = request.auth.uid;
+    const callerEmail = request.auth.token.email?.toLowerCase().trim();
+    if (!callerEmail) throw new HttpsError("failed-precondition", "No email on account.");
+
+    const { inviteId } = request.data;
+    if (!inviteId) throw new HttpsError("invalid-argument", "inviteId required.");
+
+    const inviteRef = db.collection("team_invites").doc(inviteId);
+    const inviteSnap = await inviteRef.get();
+    if (!inviteSnap.exists) throw new HttpsError("not-found", "Invite not found.");
+
+    const invite = inviteSnap.data() as TeamInvite;
+
+    if (invite.inviteeEmailNormalized !== callerEmail) {
+        throw new HttpsError("permission-denied", "This invite is not for your email address.");
+    }
+    if (invite.status !== 'pending' && invite.status !== 'sent') {
+        throw new HttpsError("failed-precondition", `Cannot decline invite with status: ${invite.status}`);
+    }
+
+    await inviteRef.update({
+        status: 'declined',
+        declinedAt: Date.now(),
+        updatedAt: Date.now(),
+    });
+
+    console.log(`👥 Invite declined: ${inviteId} by ${callerEmail}`);
+    return { success: true };
+});
+
 // ─── GET INVITE DETAILS (unauthenticated — for /join page) ──────────────
 export const getInviteDetails = onCall({
     region: "europe-west1",
@@ -2453,6 +2528,43 @@ export const claimTeamInvite = onCall({
                 memberId: memberRef.id,
             });
 
+            // ─── dormantPlan capture (FR-017) ───
+            // Two sources handled uniformly: (a) pending_plans/{email} doc from a pre-signup Stripe
+            // payment, or (b) an existing active paid subscription already on users/{uid}. Captured
+            // fields use the branch's Stripe schema (stripeCustomerId); rename alongside 009 on merge.
+            let dormantPlan: Record<string, any> | null = null;
+
+            const pendingPlanRef = db.collection("pending_plans").doc(callerEmail);
+            const pendingPlanSnap = await txn.get(pendingPlanRef);
+            if (pendingPlanSnap.exists) {
+                const pd = pendingPlanSnap.data()!;
+                dormantPlan = {
+                    plan: pd.plan || 'none',
+                    credits: pd.credits ?? 0,
+                    isTrial: pd.isTrial || false,
+                    stripeCustomerId: pd.stripeCustomerId || null,
+                    billingStatus: 'active',
+                    ghlContactId: pd.ghlContactId || null,
+                };
+                txn.delete(pendingPlanRef);
+            } else {
+                const existingUserSnap = await txn.get(db.collection("users").doc(callerUid));
+                if (existingUserSnap.exists) {
+                    const ud = existingUserSnap.data()!;
+                    if (ud.plan && ud.plan !== 'none' && ud.stripeCustomerId) {
+                        dormantPlan = {
+                            plan: ud.plan,
+                            credits: ud.credits ?? 0,
+                            creditsPerMonth: ud.creditsPerMonth ?? ud.credits ?? 0,
+                            stripeCustomerId: ud.stripeCustomerId,
+                            billingStatus: ud.billingStatus || 'active',
+                            nextResetDate: ud.nextResetDate || null,
+                            isTrial: ud.isTrial || false,
+                        };
+                    }
+                }
+            }
+
             // Mark user as team member
             const userRef = db.collection("users").doc(callerUid);
             txn.set(userRef, {
@@ -2462,6 +2574,8 @@ export const claimTeamInvite = onCall({
                 isTeamMember: true,
                 displayName: freshInvite.inviteeName,
                 email: freshInvite.inviteeEmailNormalized,
+                dormantPlan: dormantPlan || admin.firestore.FieldValue.delete(),
+                teamWelcomeToastShown: true,
             }, { merge: true });
 
             // Mark invite accepted
@@ -2638,6 +2752,10 @@ export const removeTeamMember = onCall({
     const memberData = memberDoc.data()!;
     const memberEmail = memberData.email;
 
+    // Get owner display name for removal toast
+    const ownerDoc = await db.collection("users").doc(ownerUid).get();
+    const ownerName = ownerDoc.data()?.displayName || ownerDoc.data()?.email || '';
+
     // Delete team doc
     await db.collection("users").doc(ownerUid).collection("team").doc(memberId).delete();
 
@@ -2646,13 +2764,38 @@ export const removeTeamMember = onCall({
         await db.collection("teamMemberships").doc(memberEmail).delete();
     } catch (e) { /* non-blocking */ }
 
-    // Remove team flags from member's user doc
+    // Remove team flags from member's user doc + restore dormantPlan (FR-009)
     if (memberData.uid) {
-        await db.collection("users").doc(memberData.uid).update({
+        const memberUserRef = db.collection("users").doc(memberData.uid);
+        const memberUserSnap = await memberUserRef.get();
+        const memberUserData = memberUserSnap.data();
+
+        const restoreFields: Record<string, any> = {
             isTeamMember: admin.firestore.FieldValue.delete(),
             teamOwnerUid: admin.firestore.FieldValue.delete(),
             teamRole: admin.firestore.FieldValue.delete(),
-        });
+            pendingRemovalToast: {
+                ownerName,
+                shownAt: null,
+            },
+        };
+
+        if (memberUserData?.dormantPlan) {
+            const dp = memberUserData.dormantPlan;
+            restoreFields.plan = dp.plan || 'none';
+            restoreFields.credits = dp.credits ?? 0;
+            restoreFields.creditsPerMonth = dp.creditsPerMonth ?? null;
+            restoreFields.stripeCustomerId = dp.stripeCustomerId || admin.firestore.FieldValue.delete();
+            restoreFields.billingStatus = dp.billingStatus || 'active';
+            restoreFields.nextResetDate = dp.nextResetDate || admin.firestore.FieldValue.delete();
+            restoreFields.isTrial = dp.isTrial || false;
+            restoreFields.dormantPlan = admin.firestore.FieldValue.delete();
+        } else {
+            restoreFields.plan = 'none';
+            restoreFields.credits = 0;
+        }
+
+        await memberUserRef.update(restoreFields);
     }
 
     console.log(`👥 Team member removed: ${memberEmail} from owner ${ownerUid}`);

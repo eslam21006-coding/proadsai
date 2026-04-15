@@ -4,7 +4,7 @@ import type { AdInputs, AdMode, AppPhase, AspectRatio, ABVariation, BatchResult,
 // --- FIREBASE IMPORTS ---
 import { auth, googleProvider, db, functions } from './firebase';
 import { signInWithPopup, signInWithEmailAndPassword, sendPasswordResetEmail, signOut, onAuthStateChanged, deleteUser, type User } from 'firebase/auth';
-import { doc, getDoc, setDoc, deleteDoc, onSnapshot, collection, addDoc, getDocs, query, orderBy, where, limit } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, deleteField, onSnapshot, collection, addDoc, getDocs, query, orderBy, where, limit } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { gemini, type GenerationResult } from './services/geminiService';
 import { resolveCreativeSpec, CREATIVE_MODE_CATALOG, type ResolvedCreativeSpec } from './creativeResolver';
@@ -989,6 +989,17 @@ const App: React.FC = () => {
           setNoAccountError(false);
           setUser(currentUser);
 
+          // ─── T017b: Consume pendingRemovalToast ───
+          if (userData.pendingRemovalToast && !userData.pendingRemovalToast.shownAt) {
+            const ownerNameForToast = userData.pendingRemovalToast.ownerName || '';
+            try {
+              await updateDoc(userRef, { pendingRemovalToast: deleteField() });
+              setTimeout(() => {
+                showToast(t('team.removedFromTeam', { ownerName: ownerNameForToast }), 'info');
+              }, 1500);
+            } catch (e) { console.warn('Failed to consume pendingRemovalToast:', e); }
+          }
+
           // Team member? Load owner's credits instead of their own
           if (userData.isTeamMember && userData.teamOwnerUid) {
             setTeamOwnerUid(userData.teamOwnerUid);
@@ -1158,6 +1169,32 @@ const App: React.FC = () => {
         setUserCredits(0);
         setUserPlan('none');
         setOnboardingComplete(null);
+      }
+      // ─── T011a: Device-independent post-signin invite discovery ───
+      // Discovers a pending invite by normalized email on any sign-in where the user has no
+      // user doc yet, or has plan 'none' without an active team membership. On match, routes to
+      // /join?id=<inviteId> for explicit Accept/Decline consent — never a silent auto-claim.
+      if (currentUser && currentUser.emailVerified && currentUser.email) {
+        const normalizedEmail = currentUser.email.toLowerCase();
+        const existingDoc = await getDoc(doc(db, 'users', currentUser.uid));
+        const shouldCheck = !existingDoc.exists() ||
+          (existingDoc.data()?.plan === 'none' && !existingDoc.data()?.isTeamMember);
+        if (shouldCheck && !window.location.pathname.startsWith('/join')) {
+          try {
+            const invitesSnap = await getDocs(query(
+              collection(db, 'team_invites'),
+              where('inviteeEmailNormalized', '==', normalizedEmail),
+              where('status', 'in', ['pending', 'sent']),
+              limit(1)
+            ));
+            const now = Date.now();
+            const valid = invitesSnap.docs.find(d => (d.data().expiresAt || 0) > now);
+            if (valid) {
+              window.location.href = `/join?id=${valid.id}`;
+              return;
+            }
+          } catch (e) { console.warn('Post-signin invite discovery failed:', e); }
+        }
       }
       setLoadingAuth(false);
     });
@@ -2331,10 +2368,12 @@ const App: React.FC = () => {
   if (onboardingComplete === false) return <OnboardingQuiz onComplete={handleOnboardingComplete} />;
 
   // Welcome screen (shows after login / after quiz, before entering studio)
-  if (showWelcome) return <WelcomeScreen userName={user.displayName || user.email || ''} isTrial={isTrialUser} onStart={handleWelcomeStart} />;
+  // Team members skip welcome — they don't need the trial onboarding
+  if (showWelcome && !isTeamMember) return <WelcomeScreen userName={user.displayName || user.email || ''} isTrial={isTrialUser} onStart={handleWelcomeStart} />;
 
   // ═══ BILLING STATE GATING — past_due and cancelled block app access ═══
-  if (billingStatus === 'past_due') {
+  // Team members are exempt — they use the owner's credits, not their own billing
+  if (billingStatus === 'past_due' && !isTeamMember) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
         <div className="max-w-lg w-full text-center space-y-8">
@@ -2364,7 +2403,7 @@ const App: React.FC = () => {
     );
   }
 
-  if (billingStatus === 'cancelled') {
+  if (billingStatus === 'cancelled' && !isTeamMember) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
         <div className="max-w-lg w-full text-center space-y-8">
@@ -2396,7 +2435,7 @@ const App: React.FC = () => {
 
   // ═══ TRIAL ENDED — Blocking screen when trial credits are exhausted ═══
   // Trial users get 50 credits + up to 50 from gamification. Once they hit 0, they must upgrade.
-  if (isTrialUser && userCredits <= 0 && userPlan !== 'none') {
+  if (isTrialUser && userCredits <= 0 && userPlan !== 'none' && !isTeamMember) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
         <div className="max-w-lg w-full text-center space-y-8">

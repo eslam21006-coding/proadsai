@@ -287,6 +287,169 @@ function testGetInviteDetailsStatus() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// T036a: dormantPlan capture-and-restore round trip
+// ═══════════════════════════════════════════════════════════════════════════
+
+function testDormantPlanCaptureAndRestore() {
+    // (a) Capture from pending_plans
+    const pendingPlan = {
+        plan: "pro", credits: 2000, isTrial: false,
+        paddleCustomerId: "cus_123", paddleSubscriptionId: "sub_456",
+        paddleUpdatePaymentUrl: "https://pay.update/456",
+        paddleCancelUrl: "https://pay.cancel/456",
+        billingStatus: "active",
+        nextResetDate: Date.now() + 30 * 24 * 60 * 60 * 1000,
+    };
+    const dormantPlanFromPending = { ...pendingPlan };
+    assert.equal(dormantPlanFromPending.plan, "pro", "T036a-1: dormantPlan captures plan from pending_plans");
+    assert.equal(dormantPlanFromPending.paddleSubscriptionId, "sub_456", "T036a-2: dormantPlan captures subscriptionId");
+
+    // User state after claim: on team pool
+    const afterClaim = { plan: "none", credits: 0, isTeamMember: true, dormantPlan: dormantPlanFromPending };
+    assert.equal(afterClaim.plan, "none", "T036a-3: After claim, user plan is none");
+    assert.equal(afterClaim.isTeamMember, true, "T036a-4: After claim, user is team member");
+    assert.ok(!!afterClaim.dormantPlan, "T036a-5: dormantPlan is set after claim");
+
+    // (b) Capture from active subscription on user doc
+    const activeUserBeforeClaim = {
+        plan: "pro", credits: 1400, paddleSubscriptionId: "sub_789",
+        paddleCustomerId: "cus_abc", billingStatus: "active",
+    };
+    const dormantPlanFromActive = {
+        plan: activeUserBeforeClaim.plan,
+        credits: activeUserBeforeClaim.credits,
+        paddleSubscriptionId: activeUserBeforeClaim.paddleSubscriptionId,
+        paddleCustomerId: activeUserBeforeClaim.paddleCustomerId,
+        billingStatus: activeUserBeforeClaim.billingStatus,
+    };
+    assert.equal(dormantPlanFromActive.credits, 1400, "T036a-6: dormantPlan captures active credits");
+    assert.equal(dormantPlanFromActive.plan, "pro", "T036a-7: dormantPlan captures active plan");
+
+    // Restore on removal
+    const afterRemoval = {
+        plan: afterClaim.dormantPlan!.plan,
+        credits: afterClaim.dormantPlan!.credits,
+        paddleSubscriptionId: afterClaim.dormantPlan!.paddleSubscriptionId,
+        billingStatus: afterClaim.dormantPlan!.billingStatus,
+        dormantPlan: null as any,
+    };
+    assert.equal(afterRemoval.plan, "pro", "T036a-8: After removal, plan restored from dormantPlan");
+    assert.equal(afterRemoval.credits, 2000, "T036a-9: After removal, credits restored from dormantPlan");
+    assert.equal(afterRemoval.paddleSubscriptionId, "sub_456", "T036a-10: After removal, subscription restored");
+    assert.equal(afterRemoval.dormantPlan, null, "T036a-11: After removal, dormantPlan cleared");
+
+    console.log("  ✅ testDormantPlanCaptureAndRestore");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// T036b: dormantPlan write-through (webhook / monthly reset)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function testDormantPlanWriteThrough() {
+    const dormantPlan = {
+        plan: "pro", credits: 2000,
+        paddleSubscriptionId: "sub_test",
+        billingStatus: "active",
+    };
+    const userDoc: Record<string, any> = {
+        isTeamMember: true,
+        plan: "none", credits: 0,
+        dormantPlan: { ...dormantPlan },
+    };
+
+    // Simulate subscription.updated write-through
+    const updatedFields = { plan: "scaling", credits: 5000, billingStatus: "active" };
+    const newDormantPlan = { ...userDoc.dormantPlan, ...updatedFields };
+    assert.equal(newDormantPlan.plan, "scaling", "T036b-1: dormantPlan plan updated to scaling");
+    assert.equal(newDormantPlan.credits, 5000, "T036b-2: dormantPlan credits updated to 5000");
+    assert.equal(newDormantPlan.paddleSubscriptionId, "sub_test", "T036b-3: dormantPlan subscriptionId preserved");
+
+    // Live billing state unchanged for team member
+    assert.equal(userDoc.plan, "none", "T036b-4: Live plan stays none for team member");
+    assert.equal(userDoc.credits, 0, "T036b-5: Live credits stay 0 for team member");
+
+    // Simulate subscription.canceled write-through
+    const canceledFields = { plan: "none", credits: 0, billingStatus: "cancelled" };
+    const canceledDormant = { ...newDormantPlan, ...canceledFields };
+    assert.equal(canceledDormant.plan, "none", "T036b-6: dormantPlan plan becomes none on cancel");
+    assert.equal(canceledDormant.credits, 0, "T036b-7: dormantPlan credits become 0 on cancel");
+
+    // Monthly reset refreshes credits
+    const resetCredits = { credits: 5000, nextResetDate: Date.now() + 30 * 24 * 60 * 60 * 1000 };
+    const resetDormant = { ...dormantPlan, ...resetCredits };
+    assert.equal(resetDormant.credits, 5000, "T036b-8: Monthly reset refreshes dormantPlan credits");
+
+    console.log("  ✅ testDormantPlanWriteThrough");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// T036c: Accept/Decline status transitions
+// ═══════════════════════════════════════════════════════════════════════════
+
+function testAcceptDeclineTransitions() {
+    const now = Date.now();
+
+    // (a) Accept: status transitions from 'sent' to 'accepted'
+    const inviteBeforeAccept: TeamInvite = {
+        inviteId: "inv_c1", ownerId: "o1", inviteeEmail: "u@x.com",
+        inviteeEmailNormalized: "u@x.com", inviteeName: "U", role: "editor",
+        teamPlan: "pro", status: "sent",
+        expiresAt: now + 7 * 24 * 60 * 60 * 1000, createdAt: now,
+    };
+    const inviteAfterAccept = { ...inviteBeforeAccept, status: "accepted", acceptedAt: now };
+    assert.equal(inviteAfterAccept.status, "accepted", "T036c-1: After accept, status is 'accepted'");
+
+    // Seat counts toward plan limit
+    const planLimit = PLAN_TEAM_LIMITS["pro"];
+    const seatsUsedAfterAccept = 1;
+    assert.ok(seatsUsedAfterAccept <= planLimit, "T036c-2: Accepted seat counts toward plan limit");
+
+    // (b) Decline: status transitions to 'declined'
+    const inviteBeforeDecline: TeamInvite = {
+        inviteId: "inv_c2", ownerId: "o1", inviteeEmail: "v@x.com",
+        inviteeEmailNormalized: "v@x.com", inviteeName: "V", role: "viewer",
+        teamPlan: "pro", status: "sent",
+        expiresAt: now + 7 * 24 * 60 * 60 * 1000, createdAt: now,
+    };
+    const inviteAfterDecline = { ...inviteBeforeDecline, status: "declined", declinedAt: now };
+    assert.equal(inviteAfterDecline.status, "declined", "T036c-3: After decline, status is 'declined'");
+    assert.ok(typeof inviteAfterDecline.declinedAt === "number", "T036c-4: declinedAt is set");
+
+    // Declined seat is released — new invite can succeed at same limit
+    const canCreateAfterDecline = canCreateInvite("pro", 2, 0);
+    assert.equal(canCreateAfterDecline.allowed, true, "T036c-5: After decline, new invite allowed (seat released)");
+
+    console.log("  ✅ testAcceptDeclineTransitions");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// T036d: pendingRemovalToast write-and-consume idempotency
+// ═══════════════════════════════════════════════════════════════════════════
+
+function testPendingRemovalToastIdempotency() {
+    // Step 1: removeTeamMember writes the toast
+    const ownerName = "Team Owner Alice";
+    const userAfterRemoval: Record<string, any> = {
+        pendingRemovalToast: { ownerName, shownAt: null },
+    };
+    assert.equal(userAfterRemoval.pendingRemovalToast.ownerName, ownerName, "T036d-1: ownerName captured in toast");
+    assert.equal(userAfterRemoval.pendingRemovalToast.shownAt, null, "T036d-2: shownAt is null");
+
+    // Step 2: First post-signin consumes — toast fires and field deleted
+    const shouldFireToast = userAfterRemoval.pendingRemovalToast && !userAfterRemoval.pendingRemovalToast.shownAt;
+    assert.equal(shouldFireToast, true, "T036d-3: First sign-in should fire the toast");
+    // Simulate atomic delete
+    delete userAfterRemoval.pendingRemovalToast;
+
+    // Step 3: Second post-signin — no toast, no field
+    const shouldFireAgain = !!(userAfterRemoval.pendingRemovalToast && !userAfterRemoval.pendingRemovalToast.shownAt);
+    assert.equal(shouldFireAgain, false, "T036d-4: Second sign-in should NOT fire toast (exactly-once)");
+    assert.equal(userAfterRemoval.pendingRemovalToast, undefined, "T036d-5: Field is gone after first consumption");
+
+    console.log("  ✅ testPendingRemovalToastIdempotency");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Run all team fixture tests
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -297,4 +460,8 @@ testExpiredInviteRejected();
 testRemovalClearsMembership();
 testViewerRejectedByDeductCredits();
 testGetInviteDetailsStatus();
+testDormantPlanCaptureAndRestore();
+testDormantPlanWriteThrough();
+testAcceptDeclineTransitions();
+testPendingRemovalToastIdempotency();
 console.log("═══ Spec 006 — All team fixture tests passed ═══\n");

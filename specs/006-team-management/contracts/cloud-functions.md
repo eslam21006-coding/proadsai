@@ -94,7 +94,7 @@ See [get-invite-details.md](get-invite-details.md) for full contract.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| inviteId | string | No | Invite ID (optional — can also match by caller email) |
+| inviteId | string | Yes | Invite ID. Silent email-based matching is NOT permitted — every claim requires an explicit inviteId supplied by the Accept button on the consent screen. |
 
 ### Response
 
@@ -105,12 +105,42 @@ See [get-invite-details.md](get-invite-details.md) for full contract.
 ```
 
 ### Behavior
-- Caller's email must match `inviteeEmailNormalized`
+- Caller's email must match `inviteeEmailNormalized` (server-side verification)
+- Caller must be email-verified (Phase 8 email-only auth gate — unverified callers are rejected)
 - Uses Firestore transaction (prevents race conditions on same invite)
 - Creates: team member doc, teamMemberships reverse-lookup, sets user flags
+- **Dormant plan capture (FR-017)**: Within the same transaction, if `pending_plans/{email.toLowerCase()}` exists, snapshot its fields into `users/{uid}.dormantPlan` and delete the pending document. Else if the user document already has an active paid subscription (`plan !== 'none'` AND `paddleSubscriptionId` set), snapshot the user doc's plan, credits, creditsPerMonth, paddleCustomerId, paddleSubscriptionId, paddleUpdatePaymentUrl, paddleCancelUrl, billingStatus, and nextResetDate into `dormantPlan`. Otherwise leave `dormantPlan` null.
 - Sets member's `plan: 'none'`, `credits: 0` (uses owner's pool)
+- Atomically sets `users/{uid}.teamWelcomeToastShown: true` so the "You've joined [Owner Name]'s team." toast fires exactly once
 - Marks invite `status: 'accepted'`
 - Auto-revokes pending invites from other owners (one-team-per-user)
+- MUST NOT be called by the post-signin handler silently — the handler only routes to `/join?inviteId=<match>`, and `claimTeamInvite` is invoked exclusively when the user clicks Accept on the consent screen
+
+---
+
+## 5a. declineTeamInvite (authenticated) — new in Session 2026-04-15 (second pass)
+
+### Request
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| inviteId | string | Yes | Invite ID to decline |
+
+### Response
+
+```ts
+{ success: true }
+// or
+{ success: false; message: string }
+```
+
+### Behavior
+- Caller's email must match `inviteeEmailNormalized` (server-side verification)
+- Transitions `team_invites/{inviteId}.status` from `'sent'` (or `'pending'`) to `'declined'` (terminal state)
+- Sets `declinedAt` timestamp
+- Releases the seat: `declined` invites do NOT count toward the owner's plan limit, so the owner can immediately re-invite the same or a different email
+- Invoked when the user clicks Decline on the `/join?inviteId=X` consent screen
+- After decline, the user enters their normal post-signin state (own paid plan or the Phase 8 mandatory billing modal)
 
 ---
 
@@ -152,6 +182,8 @@ No parameters (uses caller's UID as owner filter).
 - Deletes `teamMemberships/{email}` reverse-lookup
 - Clears user flags: `isTeamMember`, `teamOwnerUid`, `teamRole`
 - Only the team owner can remove members
+- **Dormant plan restore (FR-009, FR-017)**: Within the same transaction, if `users/{uid}.dormantPlan` is present, atomically restore those fields as the active billing state (plan, credits, paddleCustomerId, paddleSubscriptionId, paddleUpdatePaymentUrl, paddleCancelUrl, billingStatus, nextResetDate) and clear the `dormantPlan` field. The removed member lands directly on their own paid subscription without hitting the mandatory billing modal. If `dormantPlan` is absent, revert `plan` to `'none'` and `credits` to `0`.
+- **Removal toast (FR-009)**: In every removal path (dormantPlan present or not), the transaction atomically writes `users/{uid}.pendingRemovalToast = { ownerName: '<owner's display name captured now>', shownAt: null }`. The post-signin handler on the removed member's next sign-in reads this field, displays the "You've been removed from [Owner Name]'s team." toast, and atomically deletes the field (exactly-once delivery). Owner name is captured at removal time so the message stays stable if the owner later deletes their account.
 
 ---
 
