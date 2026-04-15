@@ -32,7 +32,7 @@ As a user creating a carousel ad, I can upload multiple testimonial screenshots 
 
 ### User Story 2 - Platform Detection (Priority: P2)
 
-As a user, the system automatically detects which messaging platform each screenshot came from and shows a platform badge. Supported platforms: WhatsApp, Instagram DM, Facebook, Email, Google Review, Telegram. Unrecognized screenshots fall back to "Unknown."
+As a user, the system automatically detects which messaging platform each screenshot came from and shows a platform badge. Supported platforms: WhatsApp, Instagram DM, Facebook, Email, Google Review, Telegram. Unrecognized screenshots fall back to "Other."
 
 **Why this priority**: Correct detection determines whether the mockup frame matches the source platform.
 
@@ -41,7 +41,7 @@ As a user, the system automatically detects which messaging platform each screen
 **Acceptance Scenarios**:
 
 1. **Given** a WhatsApp chat screenshot, **When** detected, **Then** the badge shows "WhatsApp."
-2. **Given** an unrecognized screenshot, **When** detected, **Then** the badge shows "Other."
+2. **Given** an unrecognized screenshot, **When** detected, **Then** the badge shows "Other" (canonical display label for `PlatformType` value `unknown`).
 3. **Given** detection completes after generation, **When** the user views the generated slides, **Then** each testimonial slide shows the detected platform in its mockup frame. During upload, a generic "Testimonial" badge is shown.
 
 ---
@@ -144,7 +144,7 @@ As a QA reviewer, the Lane 10 and Lane 11 stub fixtures in `contractFixtures.tes
 
 - What happens when a user uploads 0 testimonials and tries to generate? Blocked with "Upload at least one testimonial screenshot."
 - What happens when a user uploads more testimonials than the plan allows slides for? The system uses as many as fit (max slides - 2 for hook + close) and shows a notification.
-- What happens when platform detection is ambiguous? Falls back to "Unknown/Other" with a clean quote card.
+- What happens when platform detection is ambiguous? Falls back to "Other" (canonical display label for `PlatformType = unknown`) with a clean quote card.
 - What happens when a user switches from testimonial carousel to regular carousel? Testimonial screenshots preserved in state but not used. Regular slide plan takes over.
 - What happens when a retargeting testimonial carousel has no objection-relevant testimonials? All testimonials shown as-is. Framing connects them to the objection at the headline level.
 - What happens when a testimonial screenshot is very low resolution? Accepted and rendered at best available quality. No rejection for resolution.
@@ -155,7 +155,7 @@ As a QA reviewer, the Lane 10 and Lane 11 stub fixtures in `contractFixtures.tes
 
 - **FR-001**: The system MUST add `testimonial_carousel` as a creative mode in the resolver, available for both cold and retargeting campaigns in carousel format only.
 - **FR-002**: The system MUST provide a multi-file upload area for testimonial screenshots when testimonial carousel mode is active (Pro+ plan, carousel format).
-- **FR-003**: The system MUST detect the messaging platform of each uploaded screenshot during generation (server-side, batch), assigning one of 7 types: WhatsApp, Instagram DM, Facebook, Email, Google Review, Telegram, or Unknown/Other. During upload, screenshots show a generic "Testimonial" badge — platform badges appear after generation completes.
+- **FR-003**: The system MUST detect the messaging platform of each uploaded screenshot during generation (server-side, batch), assigning one of 7 `PlatformType` values: `whatsapp`, `instagram_dm`, `facebook`, `email`, `google_review`, `telegram`, or `unknown`. The canonical display label for `unknown` is "Other". During upload, screenshots show a generic "Testimonial" badge — platform-specific framing appears after generation completes.
 - **FR-004**: The system MUST render each testimonial screenshot inside a platform-accurate mockup frame on its carousel slide, following the 7 platform mockup rules from LAUNCH_MATRIX Lane 10.
 - **FR-005**: The system MUST generate an AI hook for slide 1. For cold: creates curiosity, references testimonials indirectly, shows no testimonial content. For retargeting: names the objection AND teases testimonials as evidence.
 - **FR-006**: The system MUST auto-adjust slide count to: testimonial count + 2 (hook + close), capped at plan max. The user MUST be notified when adjusted.

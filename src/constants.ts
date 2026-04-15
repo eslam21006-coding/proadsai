@@ -106,6 +106,7 @@ export const ASPECT_RATIOS: { label: string; value: any; icon: React.ReactNode }
 
 // ─── COLD AD HOOK ANGLES ─────────────────────────────────────────────────
 export const COLD_HOOK_ANGLES: { id: string; labelAr: string; labelEn: string; description: string; carouselRecommended?: boolean }[] = [
+  // ── Starter (first 4) ──
   { id: 'emotional', labelAr: 'عاطفي', labelEn: 'Emotional', description: 'Triggers feelings — fear, hope, desire, frustration' },
   { id: 'pain', labelAr: 'نقطة ألم', labelEn: 'Pain Amplification', description: 'Presses harder on the pain — "you know that feeling when..."' },
   { id: 'curiosity', labelAr: 'فضول', labelEn: 'Curiosity', description: '"The one thing you\'re missing" — an open loop that demands a click' },
@@ -615,19 +616,19 @@ export const getRandomUniverse = (mode?: 'realistic' | 'fantasy', context?: { ta
 
 // ─── OFFER TYPES (restructured with categories + creative modes) ─────────
 export const OFFER_TYPES = [
-    "Live Event",
-    "Free Guide",
-    "Mini-Course",
+  "Live Event",
+  "Free Guide",
+  "Mini-Course",
 ];
 
 // Maps offer type → tab (new v2 system)
 export const OFFER_CATEGORY_MAP: Record<string, string> = {
-    'Live Event': 'live_events',
-    'Free Webinar': 'live_events',
-    'Paid Workshop': 'live_events',
-    'Challenge': 'live_events',
-    'Free Guide': 'free_guide',
-    'Mini-Course': 'mini_course',
+  'Live Event': 'live_events',
+  'Free Webinar': 'live_events',
+  'Paid Workshop': 'live_events',
+  'Challenge': 'live_events',
+  'Free Guide': 'free_guide',
+  'Mini-Course': 'mini_course',
 };
 
 // Creative modes available per tab (new v2 system — replaces old category-based OFFER_CREATIVE_MODES)

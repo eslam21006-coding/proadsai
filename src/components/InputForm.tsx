@@ -27,6 +27,7 @@ interface Props {
   competitorLoading: boolean;
   onRefreshResearch: (formData: AdInputs) => void;
   onRankingsLoaded?: (rankings: RankingResultCompact | null) => void;
+  isTeamViewer?: boolean;
 }
 
 // --- AUTOMATIC COMPRESSION UTILITY ---
@@ -255,7 +256,7 @@ const UniverseDropdown: React.FC<{
   );
 };
 
-const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialValues, userPlan, avatars, onSaveAvatar, onUpdateAvatar, onDeleteAvatar, competitorData, competitorLoading, onRefreshResearch, onRankingsLoaded }) => {
+const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialValues, userPlan, avatars, onSaveAvatar, onUpdateAvatar, onDeleteAvatar, competitorData, competitorLoading, onRefreshResearch, onRankingsLoaded, isTeamViewer }) => {
   const { t, lang: appLang } = useT();
   const getInitialInputs = (): AdInputs => {
     if (initialValues) return initialValues;
@@ -292,10 +293,10 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
       }
       sanitized.offerCreativeMode = (cleaned.length > 0 ? cleaned : ['standard_hero']) as any;
     }
-    // Sanitize removed offer types → fall back to Mini-Course
+    // Sanitize removed offer types → fall back to Live Event (most legacy types were live_events tab)
     if (sanitized.offerType && !OFFER_TYPES.includes(sanitized.offerType)) {
-      console.warn(`🧹 Legacy offer type sanitization: "${sanitized.offerType}" → "Mini-Course"`);
-      sanitized.offerType = 'Mini-Course';
+      console.warn(`🧹 Legacy offer type sanitization: "${sanitized.offerType}" → "Live Event"`);
+      sanitized.offerType = 'Live Event';
     }
     // Normalize visual style family — ensure both fields are consistent
     const _normalizedStyle = ((sanitized as any).visualStyleFamily ?? (sanitized as any).universeMode ?? 'realistic') as 'realistic' | 'fantasy' | 'minimal';
@@ -913,6 +914,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
       <form
         onSubmit={(e) => {
           e.preventDefault();
+          if (isTeamViewer) return;
           if (inputs.campaignType === 'retargeting') {
             const hasObj = !!inputs.retargetingObjection;
             const hasCustom = (inputs.customObjection || '').trim().length > 0;
@@ -2319,9 +2321,10 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
               {launchSurfaceResult.reason}
             </div>
           )}
-          <button data-tour="submit" type="submit" disabled={!launchSurfaceResult.allowed} className={`w-full bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-black py-4 rounded-2xl shadow-xl shadow-emerald-600/20 hover:shadow-emerald-600/30 active:scale-[0.98] transition-all text-sm uppercase tracking-wider flex items-center justify-center gap-2 ${!launchSurfaceResult.allowed ? 'opacity-50 cursor-not-allowed' : ''}`}>
-            <i className="fa-solid fa-bolt"></i> Start Design Engine
+          <button data-tour="submit" type="submit" disabled={!launchSurfaceResult.allowed || !!isTeamViewer} aria-describedby={isTeamViewer ? "viewer-help" : undefined} className={`w-full bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-black py-4 rounded-2xl shadow-xl shadow-emerald-600/20 hover:shadow-emerald-600/30 active:scale-[0.98] transition-all text-sm uppercase tracking-wider flex items-center justify-center gap-2 ${(!launchSurfaceResult.allowed || isTeamViewer) ? 'opacity-50 cursor-not-allowed' : ''}`}>
+            <i className="fa-solid fa-bolt"></i> {isTeamViewer ? t('team.viewer_tooltip') : t('form.submit')}
           </button>
+          {isTeamViewer && <p id="viewer-help" className="text-center text-[10px] text-amber-400/80 mt-2">{t('team.viewer_tooltip')}</p>}
           <button type="button" id="save-draft-btn" onClick={() => {
             console.log('[Save Draft] clicked', inputs?.productName);
             try {

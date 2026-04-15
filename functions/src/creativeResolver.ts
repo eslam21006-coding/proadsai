@@ -7,13 +7,17 @@
 // RULES: max 2 modes, no cross-tab, support cannot be standalone (unless allowed)
 // ═══════════════════════════════════════════════════════════════════════════
 
+import type { AutoSwitchEvent, ResolutionTrace } from "./types.js";
+import { createTraceBuilder } from "./resolutionTrace.js";
+
 export type CreativeModeId =
     | 'standard_hero'
-    | 'value_stack' | 'limited_access' | 'module_preview'
-    | 'event_ticket' | 'webinar_screen' | 'day_strip' | 'speaker_card'
+    | 'value_stack'
+    | 'event_ticket' | 'webinar_screen' | 'speaker_card'
     | 'book_mockup' | 'device_mockup'
     | 'testimonial_carousel'
-    | 'text_only';
+    | 'text_only'
+    | 'before_after';
 
 export type RemovedModeId =
     | 'preview_card' | 'premium_package' | 'platform_screenshot' | 'certificate'
@@ -48,6 +52,7 @@ export interface CreativeModeMeta {
     tabs: CreativeTab[];
     role: ModeRole;
     standaloneAllowed: boolean;
+    soloOnly: boolean;
     visualHierarchy: string[];
     mustShow: string[];
     mustAvoid: string[];
@@ -64,6 +69,7 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         id: 'standard_hero', labelEn: 'Standard Hero', labelAr: 'بطل كلاسيكي', icon: '👤',
         description: 'Classic hero + text layout',
         tabs: ['mini_course', 'live_events', 'free_guide'], role: 'anchor', standaloneAllowed: true,
+        soloOnly: false,
         visualHierarchy: ['hero_dominant', 'text_overlay', 'environment_background'],
         mustShow: ['hero_portrait', 'headline', 'subheadline', 'cta_button'], mustAvoid: [],
         textPlacementRules: ['headline_top_zone', 'cta_bottom_bar'], captionAnchors: [],
@@ -74,6 +80,7 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         id: 'value_stack', labelEn: 'Value Stack', labelAr: 'تراكم القيمة', icon: '📊',
         description: 'Stacked bonuses visualization',
         tabs: ['mini_course'], role: 'anchor', standaloneAllowed: true,
+        soloOnly: false,
         visualHierarchy: ['stack_items_3_5', 'individual_values', 'total_vs_price', 'hero_presenting'],
         mustShow: ['value_items_with_prices', 'total_value_line', 'actual_price_contrast', 'savings_callout'],
         mustAvoid: ['before_after_split', 'day_progression', 'certificate'],
@@ -83,35 +90,12 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         boxCLabel: 'Bonus graphics', boxCHint: 'Upload bonus images or product graphics (up to 3)',
         templateNeeds: ['hero_value_stack_split', 'hero_value_stack_panel'],
     },
-    limited_access: {
-        id: 'limited_access', labelEn: 'Limited Access', labelAr: 'وصول محدود', icon: '🔒',
-        description: 'Exclusive / VIP gate design',
-        tabs: ['mini_course'], role: 'support', standaloneAllowed: false,
-        visualHierarchy: ['gate_or_door', 'vip_rope', 'hero_behind_gate', 'exclusive_badge'],
-        mustShow: ['access_gate_visual', 'vip_indicator', 'countdown_or_limit'],
-        mustAvoid: ['before_after_split', 'value_stack_items'],
-        textPlacementRules: ['headline_above_gate', 'countdown_center', 'cta_unlock_style'],
-        captionAnchors: ['exclusive access', 'limited spots', 'unlock now'],
-        validity: { requiredElements: ['vip_gate_or_rope', 'countdown_or_limit_indicator'], invalidSubstitutes: ['generic_lock_icon', 'text_only_countdown'], minimumDescription: 'VIP gate/rope with countdown or spots-left indicator.' },
-        templateNeeds: ['hero_focus'],
-    },
-    module_preview: {
-        id: 'module_preview', labelEn: 'Module Preview', labelAr: 'معاينة الوحدات', icon: '🎓',
-        description: 'Curriculum card showing modules',
-        tabs: ['mini_course'], role: 'anchor', standaloneAllowed: true,
-        visualHierarchy: ['curriculum_cards', 'module_numbers', 'hero_as_instructor'],
-        mustShow: ['module_list_3_5', 'progress_indicators', 'course_thumbnail'],
-        mustAvoid: ['before_after_split'],
-        textPlacementRules: ['modules_center_stack', 'headline_top', 'cta_bottom'],
-        captionAnchors: ['start module 1', 'see the full curriculum', 'enroll now'],
-        validity: { requiredElements: ['visible_module_list', 'course_content_preview'], invalidSubstitutes: ['single_laptop_with_logo', 'generic_screen_prop'], minimumDescription: 'Visible course/module contents: 3-5 module cards or preview-board.' },
-        boxCLabel: 'Course thumbnail', boxCHint: 'Upload your course thumbnail or platform screenshot',
-        templateNeeds: ['dashboard_product'],
-    },
+
     event_ticket: {
         id: 'event_ticket', labelEn: 'Ticket', labelAr: 'تذكرة', icon: '🎫',
         description: 'Ticket-style with date, time, seats',
         tabs: ['live_events'], role: 'anchor', standaloneAllowed: true,
+        soloOnly: false,
         visualHierarchy: ['ticket_frame', 'hero_portrait_circle', 'event_info_row', 'cta_bottom'],
         mustShow: ['event_title', 'speaker_photo_framed', 'date_time_row', 'live_badge', 'ticket_decorations'],
         mustAvoid: ['full_body_hero', 'environment_background', 'before_after_split'],
@@ -125,6 +109,7 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         id: 'webinar_screen', labelEn: 'Screen', labelAr: 'شاشة', icon: '📺',
         description: 'Event/session broadcast screen',
         tabs: ['live_events'], role: 'anchor', standaloneAllowed: true,
+        soloOnly: false,
         visualHierarchy: ['screen_device', 'webinar_title_on_screen', 'hero_beside_or_behind'],
         mustShow: ['laptop_or_screen', 'webinar_title_displayed', 'live_indicator'],
         mustAvoid: ['ticket_frame', 'before_after_split'],
@@ -133,23 +118,12 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         validity: { requiredElements: ['screen_or_device_frame', 'session_title_on_screen', 'live_broadcast_indicator'], invalidSubstitutes: ['generic_laptop_prop', 'hero_holding_phone'], minimumDescription: 'Clear event/session/broadcast screen framing with title and live indicator.' },
         templateNeeds: ['dashboard_product'],
     },
-    day_strip: {
-        id: 'day_strip', labelEn: 'Day Strip', labelAr: 'شريط الأيام', icon: '📅',
-        description: 'Day-by-day schedule strip',
-        tabs: ['live_events'], role: 'support', standaloneAllowed: false,
-        visualHierarchy: ['day_progression', 'hero_center', 'progress_path', 'day1_highlight'],
-        mustShow: ['day_markers_3_5', 'progress_arrow_path', 'day1_glow', 'community_count'],
-        mustAvoid: ['ticket_frame', 'value_stack_items', 'before_after_split'],
-        textPlacementRules: ['days_horizontal_or_circular', 'hero_center', 'starts_date_bottom'],
-        captionAnchors: ['join day 1', 'start the challenge', 'day-by-day breakdown'],
-        validity: { requiredElements: ['day_sequence_strip', 'multiple_day_markers', 'progress_path'], invalidSubstitutes: ['single_day_label', 'generic_calendar_icon'], minimumDescription: 'Schedule/day sequence strip with 3+ day markers and progress path.' },
-        boxCLabel: 'Day content previews', boxCHint: 'Upload preview images for each challenge day',
-        templateNeeds: ['event_ticket'],
-    },
+
     speaker_card: {
         id: 'speaker_card', labelEn: 'Speaker Card', labelAr: 'بطاقة متحدث', icon: '🎤',
         description: 'Speaker identity block',
         tabs: ['live_events'], role: 'anchor', standaloneAllowed: true,
+        soloOnly: false,
         visualHierarchy: ['stage_environment', 'hero_on_stage', 'lower_third_bar', 'audience_foreground'],
         mustShow: ['stage_spotlight', 'credentials_bar', 'speaker_name', 'audience_silhouettes'],
         mustAvoid: ['ticket_frame', 'book_mockup', 'before_after_split'],
@@ -163,6 +137,7 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         id: 'book_mockup', labelEn: 'Book Mockup', labelAr: 'مجسم كتاب', icon: '📖',
         description: '3D book/PDF floating in scene',
         tabs: ['free_guide'], role: 'anchor', standaloneAllowed: true,
+        soloOnly: false,
         visualHierarchy: ['book_3d_center', 'hero_behind_or_beside', 'glow_effects'],
         mustShow: ['3d_book_mockup', 'book_cover_from_box_c', 'floating_effect'],
         mustAvoid: ['device_screen', 'dashboard_ui', 'before_after_split'],
@@ -176,6 +151,7 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         id: 'device_mockup', labelEn: 'Device Mockup', labelAr: 'مجسم جهاز', icon: '📱',
         description: 'Guide shown on tablet/phone',
         tabs: ['free_guide'], role: 'anchor', standaloneAllowed: true,
+        soloOnly: false,
         visualHierarchy: ['device_frame', 'content_on_screen', 'hero_holding_or_beside'],
         mustShow: ['tablet_or_phone_frame', 'screenshot_on_device', 'device_shadow'],
         mustAvoid: ['book_3d', 'dashboard_desktop', 'before_after_split'],
@@ -189,6 +165,7 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         id: 'text_only', labelEn: 'Text Only', labelAr: 'نص فقط', icon: '✏️',
         description: 'Typography-only ad — no hero, no universe',
         tabs: ['mini_course', 'live_events', 'free_guide'], role: 'anchor', standaloneAllowed: true,
+        soloOnly: true,
         visualHierarchy: ['typography_dominant', 'color_background', 'layout_structure'],
         mustShow: ['headline_large', 'subheadline', 'cta_button'],
         mustAvoid: ['hero_person', 'universe_environment', 'photos', 'illustrations'],
@@ -197,10 +174,22 @@ export const CREATIVE_MODE_CATALOG: Record<CreativeModeId, CreativeModeMeta> = {
         validity: { requiredElements: ['typography_layout', 'color_background'], invalidSubstitutes: ['hero_portrait', 'scene_environment'], minimumDescription: 'Typography-only design with no hero or environment.' },
         templateNeeds: [],
     },
+    before_after: {
+        id: 'before_after', labelEn: 'Before & After', labelAr: 'قبل وبعد', icon: '🔄',
+        description: 'Transformation split design',
+        tabs: ['mini_course', 'live_events', 'free_guide'], role: 'anchor', standaloneAllowed: true, soloOnly: true,
+        visualHierarchy: ['split_composition', 'before_half', 'after_half', 'transformation_divider'],
+        mustShow: ['before_state', 'after_state', 'transformation_divider'],
+        mustAvoid: ['single_state_only', 'text_labels_before_after'],
+        textPlacementRules: ['headline_top', 'contrast_label_center', 'cta_bottom'],
+        captionAnchors: ['before and after', 'the transformation', 'from ... to'],
+        validity: { requiredElements: ['before_half', 'after_half', 'visible_divider'], invalidSubstitutes: ['single_image_no_contrast', 'generic_hero'], minimumDescription: 'Split composition with before and after states separated by a visible divider.' },
+        templateNeeds: ['before_after'],
+    },
     testimonial_carousel: {
         id: 'testimonial_carousel', labelEn: 'Testimonial Carousel', labelAr: 'كاروسيل الشهادات', icon: '💬',
         description: 'Carousel of testimonial screenshots rendered in platform mockup frames',
-        tabs: ['mini_course', 'live_events', 'free_guide'], role: 'anchor', standaloneAllowed: true,
+        tabs: ['mini_course', 'live_events', 'free_guide'], role: 'anchor', standaloneAllowed: true, soloOnly: false,
         visualHierarchy: ['testimonial_mockup', 'platform_frame', 'cta_button'],
         mustShow: ['testimonial_mockup', 'platform_frame', 'cta_button'],
         mustAvoid: ['raw_screenshot', 'testimonial_text_on_hook'],
@@ -223,20 +212,12 @@ export interface AllowedPair {
 export const ALLOWED_PAIRS: AllowedPair[] = [
     // Mini Course
     { a: 'standard_hero', b: 'value_stack', tab: 'mini_course', layoutKey: 'hero_value_stack', templateNeeds: ['hero_value_stack_split', 'hero_value_stack_panel'], pairValidity: 'Must contain real stack zone with multiple item rows.' },
-    { a: 'standard_hero', b: 'limited_access', tab: 'mini_course', layoutKey: 'hero_limited_access', templateNeeds: ['hero_focus'], pairValidity: 'Must show hero and VIP gate/countdown.' },
-    { a: 'standard_hero', b: 'module_preview', tab: 'mini_course', layoutKey: 'hero_module_preview', templateNeeds: ['dashboard_product'], pairValidity: 'Must show course/module preview alongside hero.' },
-    { a: 'value_stack', b: 'limited_access', tab: 'mini_course', layoutKey: 'value_stack_limited', templateNeeds: ['hero_value_stack_split', 'hero_value_stack_panel'], pairValidity: 'Must show value stack AND exclusive indicators.' },
-    { a: 'module_preview', b: 'limited_access', tab: 'mini_course', layoutKey: 'module_limited', templateNeeds: ['dashboard_product'], pairValidity: 'Must show module preview AND exclusive indicators.' },
     // Live Events
     { a: 'standard_hero', b: 'event_ticket', tab: 'live_events', layoutKey: 'hero_ticket', templateNeeds: ['event_ticket'], pairValidity: 'Must show hero and ticket structure.' },
     { a: 'standard_hero', b: 'webinar_screen', tab: 'live_events', layoutKey: 'hero_screen', templateNeeds: ['dashboard_product'], pairValidity: 'Must show hero with screen framing.' },
-    { a: 'standard_hero', b: 'day_strip', tab: 'live_events', layoutKey: 'hero_day_strip', templateNeeds: ['event_ticket'], pairValidity: 'Must show hero with day sequence strip.' },
     { a: 'standard_hero', b: 'speaker_card', tab: 'live_events', layoutKey: 'hero_speaker', templateNeeds: ['authority_proof', 'event_ticket'], pairValidity: 'Must show hero and speaker identity block.' },
-    { a: 'event_ticket', b: 'day_strip', tab: 'live_events', layoutKey: 'ticket_day_strip', templateNeeds: ['event_ticket'], pairValidity: 'Must show ticket structure and day schedule.' },
     { a: 'event_ticket', b: 'speaker_card', tab: 'live_events', layoutKey: 'ticket_speaker', templateNeeds: ['event_ticket'], pairValidity: 'Must show ticket and speaker identity.' },
-    { a: 'webinar_screen', b: 'day_strip', tab: 'live_events', layoutKey: 'screen_day_strip', templateNeeds: ['dashboard_product'], pairValidity: 'Must show screen with day schedule.' },
     { a: 'webinar_screen', b: 'speaker_card', tab: 'live_events', layoutKey: 'screen_speaker', templateNeeds: ['dashboard_product'], pairValidity: 'Must show screen with speaker identity.' },
-    { a: 'day_strip', b: 'speaker_card', tab: 'live_events', layoutKey: 'day_strip_speaker', templateNeeds: ['event_ticket'], pairValidity: 'Must show day schedule and speaker identity.' },
     // Free Guide
     { a: 'standard_hero', b: 'book_mockup', tab: 'free_guide', layoutKey: 'hero_book', templateNeeds: ['dashboard_product'], pairValidity: 'Must show hero with real book mockup.' },
     { a: 'standard_hero', b: 'device_mockup', tab: 'free_guide', layoutKey: 'hero_device', templateNeeds: ['dashboard_product', 'device_stack'], pairValidity: 'Must show hero with real device mockup.' },
@@ -244,7 +225,6 @@ export const ALLOWED_PAIRS: AllowedPair[] = [
 ];
 
 export const DISALLOWED_PAIRS: { a: CreativeModeId; b: CreativeModeId; reason: string }[] = [
-    { a: 'value_stack', b: 'module_preview', reason: 'Two dense secondary structures compete and collapse the layout.' },
     { a: 'event_ticket', b: 'webinar_screen', reason: 'Two anchor structures compete and create clutter.' },
 ];
 
@@ -271,6 +251,17 @@ export function validateCombination(selectedModes: string[], hookAngle?: string)
         if (!CREATIVE_MODE_CATALOG[m]) { errors.push(`Unknown or removed mode: "${m}".`); }
     }
     if (errors.length > 0) return { valid: false, errors, warnings, resolvedTab, resolvedPair };
+
+    // Defense-in-depth: soloOnly is also checked by validateLaunchSurface (Rule 5),
+    // but we repeat it here so validateCombination remains self-contained for callers
+    // that bypass the launch surface guard (e.g., frontend preview, tests).
+    for (const m of modes) {
+        const meta = CREATIVE_MODE_CATALOG[m];
+        if (meta?.soloOnly && modes.length > 1) {
+            errors.push(`"${meta.labelEn}" is a standalone mode and cannot be paired.`);
+            return { valid: false, errors, warnings, resolvedTab: null, resolvedPair: null };
+        }
+    }
 
     // Tab check
     const tabSets = modes.map(m => new Set(CREATIVE_MODE_CATALOG[m].tabs));
@@ -315,9 +306,7 @@ export function validateCombination(selectedModes: string[], hookAngle?: string)
     return { valid: errors.length === 0, errors, warnings, resolvedTab, resolvedPair };
 }
 
-export const HOOK_ANGLE_CREATIVE_CONFLICTS: Record<string, CreativeModeId[]> = {
-    before_after: ['event_ticket', 'speaker_card', 'day_strip', 'webinar_screen', 'book_mockup', 'device_mockup', 'module_preview', 'value_stack', 'limited_access'],
-};
+export const HOOK_ANGLE_CREATIVE_CONFLICTS: Record<string, CreativeModeId[]> = {};
 
 export function getBlockedModes(selectedModes: string[], activeTab: CreativeTab, hookAngle?: string): { blockedIds: Set<string>; reasons: Record<string, string> } {
     const blockedIds = new Set<string>();
@@ -367,46 +356,6 @@ const PAIR_SPECS: Record<string, PairSpec> = {
         textPlacementRules: ['headline_top', 'stack_items_right_or_below', 'price_contrast_large_bottom'],
         captionAnchors: ['look at everything you get', 'total value', 'you pay only'],
     },
-    'standard_hero+limited_access': {
-        layoutKey: 'hero_limited_access', labelEn: 'Hero + Limited Access', labelAr: 'بطل + وصول محدود',
-        blueprintEn: 'Hero behind VIP gate/rope. Countdown or spots-left prominent.',
-        blueprintAr: 'بطل خلف بوابة VIP. عد تنازلي بارز.',
-        mustShow: ['hero_portrait', 'vip_gate_or_rope', 'countdown_or_limit', 'exclusive_badge'],
-        mustAvoid: ['value_stack_items', 'before_after_split'],
-        visualHierarchy: ['hero_behind_gate', 'gate_visual', 'countdown_overlay'],
-        textPlacementRules: ['headline_above_gate', 'countdown_center', 'cta_unlock_button'],
-        captionAnchors: ['exclusive access', 'limited spots', 'unlock now'],
-    },
-    'standard_hero+module_preview': {
-        layoutKey: 'hero_module_preview', labelEn: 'Hero + Module Preview', labelAr: 'بطل + معاينة الوحدات',
-        blueprintEn: 'Hero as instructor with module/curriculum cards visible.',
-        blueprintAr: 'بطل كمدرب مع بطاقات المنهج.',
-        mustShow: ['hero_as_instructor', 'module_list_3_5', 'progress_indicators'],
-        mustAvoid: ['before_after_split'],
-        visualHierarchy: ['hero_left', 'modules_right_or_below'],
-        textPlacementRules: ['headline_top', 'modules_beside_hero', 'cta_bottom'],
-        captionAnchors: ['see the modules', 'start learning'],
-    },
-    'value_stack+limited_access': {
-        layoutKey: 'value_stack_limited', labelEn: 'Value Stack + Limited', labelAr: 'تراكم القيمة + وصول محدود',
-        blueprintEn: 'Value stack with urgency/exclusive indicators.',
-        blueprintAr: 'تراكم القيمة مع مؤشرات حصرية.',
-        mustShow: ['value_items_3_5', 'total_value', 'actual_price', 'countdown_or_limit', 'exclusive_badge'],
-        mustAvoid: ['before_after_split'],
-        visualHierarchy: ['stack_dominant', 'urgency_overlay'],
-        textPlacementRules: ['stack_items_center', 'countdown_top_right', 'price_and_cta_bottom'],
-        captionAnchors: ['limited offer', 'everything you get', 'spots running out'],
-    },
-    'module_preview+limited_access': {
-        layoutKey: 'module_limited', labelEn: 'Modules + Limited', labelAr: 'وحدات + وصول محدود',
-        blueprintEn: 'Module preview with exclusive indicators.',
-        blueprintAr: 'معاينة الوحدات مع مؤشرات حصرية.',
-        mustShow: ['module_list_3_5', 'countdown_or_limit', 'exclusive_badge'],
-        mustAvoid: ['before_after_split'],
-        visualHierarchy: ['modules_center', 'urgency_badge'],
-        textPlacementRules: ['modules_center', 'countdown_top_right', 'cta_bottom'],
-        captionAnchors: ['limited enrollment', 'see the curriculum'],
-    },
 
     // ═══ LIVE EVENTS PAIRS ═══════════════════════════════════════════════════
 
@@ -430,16 +379,7 @@ const PAIR_SPECS: Record<string, PairSpec> = {
         textPlacementRules: ['headline_above', 'screen_center_right', 'date_below_screen', 'cta_bottom'],
         captionAnchors: ['join live', 'register free', 'webinar'],
     },
-    'standard_hero+day_strip': {
-        layoutKey: 'hero_day_strip', labelEn: 'Hero + Day Strip', labelAr: 'بطل + شريط الأيام',
-        blueprintEn: 'Hero centered with a visible day-by-day progression strip (3-5 days) wrapping around them.',
-        blueprintAr: 'بطل في المركز مع شريط تقدم يومي (3-5 أيام) يلتف حوله.',
-        mustShow: ['hero_centered', 'day_markers_3_5', 'progress_path_connecting_days', 'day1_highlighted', 'community_count'],
-        mustAvoid: ['single_date_label', 'generic_calendar_icon', 'before_after_split', 'value_stack_items'],
-        visualHierarchy: ['hero_center', 'day_strip_wrapping', 'day1_glow_accent', 'cta_bottom'],
-        textPlacementRules: ['headline_top', 'day_strip_around_hero', 'cta_bottom'],
-        captionAnchors: ['join day 1', 'challenge', 'daily progression'],
-    },
+
     'standard_hero+speaker_card': {
         layoutKey: 'hero_speaker', labelEn: 'Hero + Speaker Card', labelAr: 'بطل + بطاقة متحدث',
         blueprintEn: 'Hero as keynote speaker on stage with credentials bar, spotlight, and audience hints.',
@@ -450,16 +390,7 @@ const PAIR_SPECS: Record<string, PairSpec> = {
         textPlacementRules: ['headline_top', 'credentials_lower_third', 'cta_bottom'],
         captionAnchors: ['keynote speaker', 'register', 'expert'],
     },
-    'event_ticket+day_strip': {
-        layoutKey: 'ticket_day_strip', labelEn: 'Ticket + Day Strip', labelAr: 'تذكرة + شريط أيام',
-        blueprintEn: 'Event ticket structure with an integrated day-by-day schedule strip showing challenge/workshop progression.',
-        blueprintAr: 'هيكل تذكرة مع شريط جدول يومي يعرض تقدم الورشة.',
-        mustShow: ['ticket_frame', 'event_title', 'date_time_row', 'day_markers_3_5', 'progress_path', 'day1_highlighted', 'ticket_decorations'],
-        mustAvoid: ['standard_hero_environment', 'value_stack_items', 'before_after_split'],
-        visualHierarchy: ['ticket_structure', 'day_schedule_within_ticket', 'metadata_row', 'cta_bottom'],
-        textPlacementRules: ['event_title_top', 'day_strip_center', 'date_and_cta_bottom'],
-        captionAnchors: ['register for day 1', 'challenge schedule', 'event'],
-    },
+
     'event_ticket+speaker_card': {
         layoutKey: 'ticket_speaker', labelEn: 'Ticket + Speaker', labelAr: 'تذكرة + متحدث',
         blueprintEn: 'Event ticket with speaker identity block: framed portrait, credentials bar, stage context within ticket.',
@@ -470,16 +401,7 @@ const PAIR_SPECS: Record<string, PairSpec> = {
         textPlacementRules: ['event_title_top', 'speaker_center', 'credentials_below_speaker', 'cta_bottom'],
         captionAnchors: ['featuring speaker', 'register', 'event'],
     },
-    'webinar_screen+day_strip': {
-        layoutKey: 'screen_day_strip', labelEn: 'Screen + Day Strip', labelAr: 'شاشة + شريط أيام',
-        blueprintEn: 'Webinar screen showing session title with day-by-day schedule strip alongside or below.',
-        blueprintAr: 'شاشة ويبنار تعرض عنوان الجلسة مع شريط جدول يومي.',
-        mustShow: ['realistic_device_screen', 'webinar_title_on_screen', 'live_badge', 'day_markers_3_5', 'progress_path', 'day1_highlighted'],
-        mustAvoid: ['blank_screen', 'generic_laptop_prop', 'value_stack_items', 'before_after_split'],
-        visualHierarchy: ['screen_top_or_left', 'day_strip_below_or_right', 'cta_bottom'],
-        textPlacementRules: ['screen_with_title_top', 'day_strip_below', 'cta_bottom'],
-        captionAnchors: ['join the challenge', 'live sessions', 'daily schedule'],
-    },
+
     'webinar_screen+speaker_card': {
         layoutKey: 'screen_speaker', labelEn: 'Screen + Speaker', labelAr: 'شاشة + متحدث',
         blueprintEn: 'Webinar screen with speaker identity — hero presenting beside screen with credentials bar.',
@@ -489,16 +411,6 @@ const PAIR_SPECS: Record<string, PairSpec> = {
         visualHierarchy: ['screen_center', 'speaker_beside_screen', 'credentials_lower_third', 'cta_bottom'],
         textPlacementRules: ['screen_center', 'speaker_left_or_right', 'credentials_below', 'cta_bottom'],
         captionAnchors: ['live with', 'presented by', 'webinar'],
-    },
-    'day_strip+speaker_card': {
-        layoutKey: 'day_strip_speaker', labelEn: 'Day Strip + Speaker', labelAr: 'شريط أيام + متحدث',
-        blueprintEn: 'Speaker on stage with day-by-day challenge schedule integrated — credentials and day progression visible.',
-        blueprintAr: 'متحدث على المسرح مع جدول يومي للتحدي — مؤهلات وتقدم يومي مرئي.',
-        mustShow: ['hero_on_stage', 'spotlight_lighting', 'credentials_bar', 'day_markers_3_5', 'progress_path', 'day1_highlighted'],
-        mustAvoid: ['generic_hero_portrait', 'single_date_label', 'value_stack_items', 'before_after_split'],
-        visualHierarchy: ['speaker_top_center', 'day_strip_below', 'credentials_bar', 'cta_bottom'],
-        textPlacementRules: ['speaker_name_top', 'day_strip_center', 'cta_bottom'],
-        captionAnchors: ['challenge with expert', 'daily sessions', 'start day 1'],
     },
 
     // ═══ FREE GUIDE PAIRS ════════════════════════════════════════════════════
@@ -546,16 +458,128 @@ export interface ResolvedCreativeSpec {
     mustShow: string[]; mustAvoid: string[]; visualHierarchy: string[];
     textPlacementRules: string[]; captionAnchors: string[];
     incompatibleReasons: string[]; isValid: boolean;
+    autoSwitchEvents: AutoSwitchEvent[];
+    resolutionTrace: ResolutionTrace;
 }
 
-export interface ResolverInput { selectedModes: string[]; hookAngle?: string; offerCategory?: string; }
+export interface ResolverInput {
+    selectedModes: string[]; hookAngle?: string; offerCategory?: string;
+    campaignType?: "cold" | "retargeting";
+    adFormat?: "single" | "carousel" | "batch";
+    visualStyleFamily?: "realistic" | "fantasy" | "minimal";
+    referenceAdUsed?: boolean;
+    selectedSubStyle?: string | null;
+    selectedUniverse?: string | null;
+    objectionId?: string | null;
+    effectiveObjectionText?: string | null;
+}
+
+export function resolveVisualPrecedence(input: ResolverInput): AutoSwitchEvent[] {
+    const events: AutoSwitchEvent[] = [];
+    const modes = (input.selectedModes || []).filter(Boolean) as string[];
+    const visualStyleFamily = input.visualStyleFamily ?? "realistic";
+
+    if (modes.includes("text_only")) {
+        if (input.selectedSubStyle) {
+            events.push({ field: "subStyle", from: input.selectedSubStyle, to: "suppressed", reason: "text_only_suppresses_all_visual" });
+        }
+        if (input.selectedUniverse) {
+            events.push({ field: "universe", from: input.selectedUniverse, to: "suppressed", reason: "text_only_suppresses_all_visual" });
+        }
+        return events;
+    }
+
+    if (input.referenceAdUsed) {
+        if (input.selectedUniverse) {
+            events.push({ field: "universe", from: input.selectedUniverse, to: "suppressed", reason: "reference_ad_override" });
+        }
+        if (input.selectedSubStyle) {
+            events.push({ field: "subStyle", from: input.selectedSubStyle, to: "suppressed", reason: "reference_ad_override" });
+        }
+        return events;
+    }
+
+    if (visualStyleFamily === "minimal") {
+        if (input.selectedSubStyle) {
+            events.push({ field: "subStyle", from: input.selectedSubStyle, to: "suppressed", reason: "minimal_family_clears_art_direction" });
+        }
+        if (input.selectedUniverse) {
+            events.push({ field: "universe", from: input.selectedUniverse, to: "suppressed", reason: "minimal_family_suppresses_universe_scene" });
+        }
+        return events;
+    }
+
+    if (input.selectedSubStyle && input.selectedUniverse) {
+        events.push({ field: "universe", from: input.selectedUniverse, to: "overridden_by_sub_style", reason: "art_direction_overrides_universe_aesthetic" });
+    }
+
+    return events;
+}
 
 export function resolveCreativeSpec(input: ResolverInput): ResolvedCreativeSpec {
+    const start = performance.now();
     let modes = (input.selectedModes || []).filter(Boolean) as CreativeModeId[];
     if (modes.length === 0) modes = ['standard_hero'];
     if (modes.length > 2) modes = modes.slice(0, 2);
+    const visualStyleFamily = input.visualStyleFamily ?? "realistic";
 
     const validation = validateCombination(modes, input.hookAngle);
+    const autoSwitchEvents = resolveVisualPrecedence(input);
+
+    const campaignType = input.campaignType ?? "cold";
+    const adMode = input.adFormat ?? "single";
+
+    let modeCompatResult: "ok" | "adapt" | "block" = "ok";
+    let modeCompatReason: string | undefined;
+    if (validation.errors.length > 0) {
+        modeCompatResult = "block";
+        modeCompatReason = validation.errors[0];
+    } else if (validation.warnings.length > 0) {
+        modeCompatResult = "adapt";
+        modeCompatReason = validation.warnings[0];
+    }
+
+    const hookAngle = campaignType === "retargeting" ? null : (input.hookAngle ?? null);
+    const hookAngleNullReason = campaignType === "retargeting" && input.hookAngle ? "retargeting_selected" : undefined;
+
+    const referenceAdOverrideActive = input.referenceAdUsed ?? false;
+    const artDirectionCleared = autoSwitchEvents.some(
+        (e) => e.field === "subStyle" && e.to === "suppressed"
+    );
+    const artDirectionClearedReason = artDirectionCleared
+        ? autoSwitchEvents.find((e) => e.field === "subStyle" && e.to === "suppressed")?.reason
+        : undefined;
+
+    const resolutionTrace = createTraceBuilder()
+        .setResolved({
+            campaignType,
+            adMode,
+            creativeModes: modes,
+            styleFamily: visualStyleFamily,
+            subStyle: input.selectedSubStyle ?? null,
+        })
+        .setHookAngle(hookAngle, hookAngleNullReason)
+        .setObjection(input.objectionId ?? null, input.effectiveObjectionText ?? null)
+        .setModeCompatibility(modeCompatResult, modeCompatReason)
+        .setLaunchCheck(validation.valid, validation.valid ? undefined : validation.errors[0]);
+
+    if (referenceAdOverrideActive) {
+        resolutionTrace.setReferenceAdOverride(
+            input.selectedUniverse ?? undefined,
+            input.selectedSubStyle ?? undefined,
+        );
+    }
+    if (artDirectionCleared && artDirectionClearedReason) {
+        resolutionTrace.setArtDirectionCleared(artDirectionClearedReason);
+    }
+    for (const evt of autoSwitchEvents) {
+        resolutionTrace.addAutoSwitchEvent(evt.field, evt.from, evt.to, evt.reason);
+    }
+
+    const builtTrace = resolutionTrace.build();
+
+    const elapsed = performance.now() - start;
+    if (elapsed > 50) console.warn("⚠️ Resolver exceeded 50ms target:", elapsed);
 
     let primaryMode: CreativeModeId;
     let secondaryMode: CreativeModeId | null = null;
@@ -578,20 +602,25 @@ export function resolveCreativeSpec(input: ResolverInput): ResolvedCreativeSpec 
     const pMeta = CREATIVE_MODE_CATALOG[primaryMode];
     const sMeta = secondaryMode ? CREATIVE_MODE_CATALOG[secondaryMode] : null;
 
+    const minimalSuppression = visualStyleFamily === "minimal"
+        ? ["environmental_scene", "worldbuilding", "location_rendering"] : [];
+
     if (pairSpec && secondaryMode) {
         return {
             primaryMode, secondaryMode,
             resolvedLayoutKey: pairSpec.layoutKey, resolvedLabelEn: pairSpec.labelEn, resolvedLabelAr: pairSpec.labelAr,
             blueprintSummaryEn: pairSpec.blueprintEn, blueprintSummaryAr: pairSpec.blueprintAr,
-            mustShow: pairSpec.mustShow, mustAvoid: pairSpec.mustAvoid,
+            mustShow: pairSpec.mustShow, mustAvoid: [...new Set([...pairSpec.mustAvoid, ...minimalSuppression])],
             visualHierarchy: pairSpec.visualHierarchy, textPlacementRules: pairSpec.textPlacementRules,
             captionAnchors: pairSpec.captionAnchors,
             incompatibleReasons: validation.errors, isValid: validation.valid,
+            autoSwitchEvents,
+            resolutionTrace: builtTrace,
         };
     }
 
     const ms = [...(pMeta?.mustShow || []), ...(sMeta?.mustShow || [])];
-    const ma = [...(pMeta?.mustAvoid || []), ...(sMeta?.mustAvoid || [])];
+    const ma = [...(pMeta?.mustAvoid || []), ...(sMeta?.mustAvoid || []), ...minimalSuppression];
     const vh = [...(pMeta?.visualHierarchy || []), ...(sMeta?.visualHierarchy || [])];
     const tp = [...(pMeta?.textPlacementRules || []), ...(sMeta?.textPlacementRules || [])];
     const ca = [...(pMeta?.captionAnchors || []), ...(sMeta?.captionAnchors || [])];
@@ -609,6 +638,8 @@ export function resolveCreativeSpec(input: ResolverInput): ResolvedCreativeSpec 
         visualHierarchy: [...new Set(vh)], textPlacementRules: [...new Set(tp)],
         captionAnchors: [...new Set(ca)],
         incompatibleReasons: validation.errors, isValid: validation.valid,
+        autoSwitchEvents,
+        resolutionTrace: builtTrace,
     };
 }
 
@@ -674,6 +705,7 @@ export function getModesForTab(tab: CreativeTab): CreativeModeMeta[] {
 export function getTabForOfferType(offerType: string): CreativeTab {
     const mapping: Record<string, CreativeTab> = {
         'Free Webinar': 'live_events', 'Paid Workshop': 'live_events', 'Challenge': 'live_events',
+        'Live Event': 'live_events',
         'Free Guide': 'free_guide', 'Mini-Course': 'mini_course',
     };
     return mapping[offerType] || 'mini_course';
@@ -706,6 +738,10 @@ export function validateLaunchSurface(inputs: {
     const combo = validateCombination(modes, inputs.hookAngle);
     if (!combo.valid) {
         return { allowed: false, reason: combo.errors[0] || "Invalid combination." };
+    }
+
+    if (inputs.adFormat === 'carousel' && modes.includes('before_after')) {
+        return { allowed: false, reason: 'before_after is not compatible with carousel format.' };
     }
 
     return { allowed: true };
@@ -857,109 +893,106 @@ export const SUBSTYLE_MODE_COMPAT: Record<VisualSubStyleId, Record<string, SubSt
     luxury_magazine: {
         standard_hero: 'ok',
         value_stack: 'adapt',
-        limited_access: 'adapt',
-        module_preview: 'adapt',
         event_ticket: 'adapt',
         webinar_screen: 'adapt',
-        day_strip: 'adapt',
         speaker_card: 'adapt',
         book_mockup: 'adapt',
         device_mockup: 'adapt',
         text_only: 'block',
     },
     documentary_gritty: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
     },
     neon_urban: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
     },
     dark_cinematic: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
     },
     bright_illustrated: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
     },
     mythic_epic: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
     },
     anime_manga: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'adapt', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'block', day_strip: 'adapt', speaker_card: 'adapt',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'block', speaker_card: 'adapt',
         book_mockup: 'adapt', device_mockup: 'block', text_only: 'block',
     },
     watercolor_dreamscape: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'adapt', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'block', day_strip: 'adapt', speaker_card: 'adapt',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'block', speaker_card: 'adapt',
         book_mockup: 'adapt', device_mockup: 'block', text_only: 'block',
     },
     vintage_bw: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'adapt', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'block', day_strip: 'adapt', speaker_card: 'adapt',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'block', speaker_card: 'adapt',
         book_mockup: 'adapt', device_mockup: 'block', text_only: 'block',
     },
     vintage_sepia: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'adapt', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'block', day_strip: 'adapt', speaker_card: 'adapt',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'block', speaker_card: 'adapt',
         book_mockup: 'adapt', device_mockup: 'block', text_only: 'block',
     },
     comic_book: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'adapt', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'block', day_strip: 'adapt', speaker_card: 'adapt',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'block', speaker_card: 'adapt',
         book_mockup: 'adapt', device_mockup: 'block', text_only: 'block',
     },
     ugly_ad: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
     },
     cinematic_film_still: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'ok', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'adapt', day_strip: 'adapt', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'adapt', speaker_card: 'ok',
         book_mockup: 'adapt', device_mockup: 'adapt', text_only: 'block',
     },
     clean_corporate: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
     },
     golden_hour_outdoor: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'ok', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'adapt', day_strip: 'adapt', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'adapt', speaker_card: 'ok',
         book_mockup: 'adapt', device_mockup: 'adapt', text_only: 'block',
     },
     street_photography: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'ok', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'adapt', day_strip: 'adapt', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'adapt', speaker_card: 'ok',
         book_mockup: 'adapt', device_mockup: 'adapt', text_only: 'block',
     },
     pixel_retro_game: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'adapt', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'block', day_strip: 'adapt', speaker_card: 'adapt',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'block', speaker_card: 'adapt',
         book_mockup: 'adapt', device_mockup: 'block', text_only: 'block',
     },
     stained_glass: {
-        standard_hero: 'ok', value_stack: 'adapt', limited_access: 'adapt', module_preview: 'adapt',
-        event_ticket: 'adapt', webinar_screen: 'block', day_strip: 'adapt', speaker_card: 'adapt',
+        standard_hero: 'ok', value_stack: 'adapt',
+        event_ticket: 'adapt', webinar_screen: 'block', speaker_card: 'adapt',
         book_mockup: 'adapt', device_mockup: 'block', text_only: 'block',
     },
     glitch_digital: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
     },
     synthwave_80s: {
-        standard_hero: 'ok', value_stack: 'ok', limited_access: 'ok', module_preview: 'ok',
-        event_ticket: 'ok', webinar_screen: 'ok', day_strip: 'ok', speaker_card: 'ok',
+        standard_hero: 'ok', value_stack: 'ok',
+        event_ticket: 'ok', webinar_screen: 'ok', speaker_card: 'ok',
         book_mockup: 'ok', device_mockup: 'ok', text_only: 'block',
     },
 };
@@ -1044,9 +1077,7 @@ Think: Forbes "Top 10" list format on the cover margin.`,
 Ticket details styled as COVER FEATURE CALLOUT — date/time as bold cover line text.
 Gold metallic badge or banner for event name. Positioned as secondary cover line.
 Dense cover layout energy, NOT a separate invitation card.`,
-        'luxury_magazine__module_preview': `LUXURY MAGAZINE COVER × MODULE PREVIEW FUSION:
-Modules styled as COVER FEATURE LIST — bold numbered entries as cover lines alongside hero.
-Condensed sans-serif, gold numbering. Dense cover sidebar energy, NOT a separate contents page.`,
+
         'luxury_magazine__webinar_screen': `LUXURY MAGAZINE COVER × WEBINAR SCREEN FUSION:
 Screen element as COVER FEATURE BADGE — small device icon or screen thumbnail positioned as a cover callout.
 Does not dominate — hero dominates. Screen is a supporting detail in the cover layout.`,
@@ -1059,12 +1090,6 @@ Hero still dominates 70%. Book is a supporting cover callout, not the centerpiec
         'luxury_magazine__device_mockup': `LUXURY MAGAZINE COVER × DEVICE MOCKUP FUSION:
 Device as COVER FEATURE ELEMENT — small device thumbnail in corner as "featured product."
 Hero still dominates 70%. Device is a supporting cover callout.`,
-        'luxury_magazine__day_strip': `LUXURY MAGAZINE COVER × DAY STRIP FUSION:
-Days styled as COVER FEATURE NUMBERS — bold day count as cover callout text.
-"5-Day Challenge" as a bold cover line. Gold accent on numbers. NOT a separate timeline strip.`,
-        'luxury_magazine__limited_access': `LUXURY MAGAZINE COVER × LIMITED ACCESS FUSION:
-Exclusivity as COVER BADGE — gold "EXCLUSIVE" or "LIMITED EDITION" badge stamp in corner.
-Premium scarcity energy. Think: "Special Collector's Edition" cover seal.`,
 
         // ── ANIME/MANGA fusions ──
         'anime_manga__value_stack': `ANIME/MANGA × VALUE STACK FUSION:
@@ -1073,21 +1098,13 @@ Anime-style item icons. Starburst emphasis on total value. Think: RPG loot scree
         'anime_manga__event_ticket': `ANIME/MANGA × EVENT TICKET FUSION:
 Ticket rendered as MANGA CHAPTER SPLASH PAGE — bold panel borders, dynamic composition, event title as
 manga chapter title with speed lines. Date/time in bold manga lettering. Action energy throughout.`,
-        'anime_manga__module_preview': `ANIME/MANGA × MODULE PREVIEW FUSION:
-Curriculum rendered as MANGA CHAPTER LIST — each module as a manga volume/chapter entry with bold numbering
-and anime-style icons. Think: manga series volume listing with cel-shaded chapter previews.`,
+
         'anime_manga__speaker_card': `ANIME/MANGA × SPEAKER CARD FUSION:
 Speaker rendered as ANIME CHARACTER CARD — hero as anime character portrait, credentials as
 stat-block or character bio panel. Bold outlines, cel-shading. Think: anime trading card or character select screen.`,
         'anime_manga__book_mockup': `ANIME/MANGA × BOOK MOCKUP FUSION:
 Book rendered as MANGA VOLUME — bold illustrated cover in anime style, thick spine, manga format proportions.
 Think: actual manga tankōbon volume. Cover art in cel-shaded anime style.`,
-        'anime_manga__day_strip': `ANIME/MANGA × DAY STRIP FUSION:
-Day strip rendered as MANGA PANEL SEQUENCE — each day as a mini panel in a horizontal strip.
-Bold panel borders, sequential manga flow. Day numbers in bold manga lettering.`,
-        'anime_manga__limited_access': `ANIME/MANGA × LIMITED ACCESS FUSION:
-VIP gate rendered as ANIME BARRIER — energy shield, mystical gate, or dramatic anime door.
-"Limited" badge as manga starburst. Dramatic action-line framing around the exclusive zone.`,
 
         // ── VINTAGE B&W fusions ──
         'vintage_bw__value_stack': `VINTAGE B&W × VALUE STACK FUSION:
@@ -1096,37 +1113,24 @@ Prices in heavy typeset numerals. Thick ink dividers between items. "Total Value
         'vintage_bw__event_ticket': `VINTAGE B&W × EVENT TICKET FUSION:
 Ticket rendered as VINTAGE BROADSHEET EVENT NOTICE — bold serif headline, ink-illustrated border,
 ticket tear-line detail. Date/time in typeset column style. Think: 1950s boxing match poster or theater playbill.`,
-        'vintage_bw__module_preview': `VINTAGE B&W × MODULE PREVIEW FUSION:
-Curriculum rendered as VINTAGE COURSE CATALOG — numbered ink headings, column layout, typeset quality.
-Think: 1950s university course bulletin or vintage correspondence course advertisement.`,
+
         'vintage_bw__speaker_card': `VINTAGE B&W × SPEAKER CARD FUSION:
 Speaker rendered as VINTAGE INK PORTRAIT with credentials in bold typeset below. Cross-hatched portrait
 illustration. Thick ink border around credentials block. Think: vintage newspaper editorial portrait.`,
         'vintage_bw__book_mockup': `VINTAGE B&W × BOOK MOCKUP FUSION:
 Book rendered as VINTAGE INK ILLUSTRATION of a bound volume. Cross-hatched cover detail.
 Bold typeset title on spine/cover. Think: classic 1940s book advertisement illustration.`,
-        'vintage_bw__day_strip': `VINTAGE B&W × DAY STRIP FUSION:
-Day strip rendered as VINTAGE CALENDAR STRIP — ink-drawn day boxes with typeset numbers.
-Decorative ink borders. Think: vintage newspaper serial schedule announcement.`,
-        'vintage_bw__limited_access': `VINTAGE B&W × LIMITED ACCESS FUSION:
-VIP gate rendered as VINTAGE INK ILLUSTRATION — ornate iron gate, velvet rope in cross-hatching.
-"Limited" in bold typeset banner. Think: vintage "Members Only" club advertisement.`,
 
         // ── VINTAGE SEPIA fusions (same as B&W but sepia-toned) ──
         'vintage_sepia__value_stack': `VINTAGE SEPIA × VALUE STACK FUSION:
 Same as Vintage B&W value stack — but all ink in warm sepia/amber tones on aged parchment background.`,
         'vintage_sepia__event_ticket': `VINTAGE SEPIA × EVENT TICKET FUSION:
 Same as Vintage B&W ticket — warm sepia broadsheet event notice on aged parchment.`,
-        'vintage_sepia__module_preview': `VINTAGE SEPIA × MODULE PREVIEW FUSION:
-Same as Vintage B&W curriculum — warm sepia course catalog on aged parchment.`,
+
         'vintage_sepia__speaker_card': `VINTAGE SEPIA × SPEAKER CARD FUSION:
 Same as Vintage B&W speaker portrait — warm sepia ink on parchment.`,
         'vintage_sepia__book_mockup': `VINTAGE SEPIA × BOOK MOCKUP FUSION:
 Same as Vintage B&W book — warm sepia ink illustration of bound volume on aged paper.`,
-        'vintage_sepia__day_strip': `VINTAGE SEPIA × DAY STRIP FUSION:
-Same as Vintage B&W day strip — warm sepia calendar strip on aged parchment.`,
-        'vintage_sepia__limited_access': `VINTAGE SEPIA × LIMITED ACCESS FUSION:
-Same as Vintage B&W VIP gate — warm sepia ink ornate gate illustration.`,
 
         // ── COMIC BOOK fusions ──
         'comic_book__value_stack': `COMIC BOOK × VALUE STACK FUSION:
@@ -1135,21 +1139,13 @@ Halftone shading on backgrounds. "POW" starburst on total value. Think: superher
         'comic_book__event_ticket': `COMIC BOOK × EVENT TICKET FUSION:
 Ticket rendered as COMIC EVENT SPLASH — bold panel border, action-styled event title,
 dynamic composition with speed lines. Date/time in bold comic lettering. Think: comic issue #1 cover.`,
-        'comic_book__module_preview': `COMIC BOOK × MODULE PREVIEW FUSION:
-Curriculum rendered as COMIC ISSUE TABLE OF CONTENTS — bold numbered entries with comic-style icons.
-Halftone backgrounds. Think: comic series issue listing with thumbnail previews.`,
+
         'comic_book__speaker_card': `COMIC BOOK × SPEAKER CARD FUSION:
 Speaker rendered as COMIC CHARACTER PORTRAIT — bold outlines, flat colors, heroic pose.
 Credentials in comic lettering panel below. Think: comic character introduction page.`,
         'comic_book__book_mockup': `COMIC BOOK × BOOK MOCKUP FUSION:
 Book rendered as COMIC BOOK ISSUE — bold illustrated cover, thick spine, comic format.
 Cover art in 4-color comic style. Think: actual comic book or graphic novel cover.`,
-        'comic_book__day_strip': `COMIC BOOK × DAY STRIP FUSION:
-Day strip rendered as COMIC PANEL SEQUENCE — each day as a bold-bordered panel in sequential flow.
-Action lines between panels. Day numbers in bold comic lettering.`,
-        'comic_book__limited_access': `COMIC BOOK × LIMITED ACCESS FUSION:
-VIP gate rendered as COMIC FORCE FIELD/BARRIER — bold energy lines, dramatic comic gate.
-"Limited" in starburst caption. Think: comic book villain's lair entrance.`,
 
         // ── WATERCOLOR fusions ──
         'watercolor_dreamscape__value_stack': `WATERCOLOR × VALUE STACK FUSION:
@@ -1158,21 +1154,13 @@ Handwritten-feel labels. Soft gold accents on values. Think: artisan menu or han
         'watercolor_dreamscape__event_ticket': `WATERCOLOR × EVENT TICKET FUSION:
 Ticket rendered as PAINTED INVITATION — watercolor wash background, handwritten-feel title,
 soft floral or abstract border details. Think: artisan wedding invitation or gallery opening card.`,
-        'watercolor_dreamscape__module_preview': `WATERCOLOR × MODULE PREVIEW FUSION:
-Curriculum rendered as PAINTED JOURNEY MAP — soft watercolor path with module stops along it.
-Handwritten labels. Dreamy, flowing layout. Think: illustrated children's book table of contents.`,
+
         'watercolor_dreamscape__speaker_card': `WATERCOLOR × SPEAKER CARD FUSION:
 Speaker rendered as WATERCOLOR PORTRAIT — soft painted face, bleeding edges into background washes.
 Credentials in delicate handwritten-feel type. Think: artist's self-portrait with bio.`,
         'watercolor_dreamscape__book_mockup': `WATERCOLOR × BOOK MOCKUP FUSION:
 Book rendered as PAINTED ILLUSTRATION of a book — soft watercolor cover art, painted paper texture.
 Think: hand-illustrated book cover for an artisan publication.`,
-        'watercolor_dreamscape__day_strip': `WATERCOLOR × DAY STRIP FUSION:
-Day strip rendered as PAINTED STEPPING STONES — soft watercolor circles along a flowing path.
-Day numbers in gentle handwritten style. Think: garden stepping stones through a watercolor landscape.`,
-        'watercolor_dreamscape__limited_access': `WATERCOLOR × LIMITED ACCESS FUSION:
-VIP gate rendered as SOFT PAINTED GARDEN GATE — watercolor vines and flowers framing a gentle barrier.
-"Limited" in delicate handwritten script. Think: secret garden entrance.`,
     };
 
     return fusions[key] || '';

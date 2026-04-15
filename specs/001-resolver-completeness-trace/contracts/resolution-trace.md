@@ -1,75 +1,83 @@
 # Contract: Resolution Trace
 
 **Feature**: 001-resolver-completeness-trace
-**Location**: Builder in `functions/src/creativeResolver.ts`, persistence in `functions/src/index.ts`
+**Location**: Types + builder in `functions/src/resolutionTrace.ts`, persistence in `functions/src/index.ts`
 
-## buildResolutionTrace
+## Type Definition
 
-### Signature
+See `data-model.md` for the full `ResolutionTrace` interface (matches LAUNCH_MATRIX Section 8 exactly).
+
+## Builder API
 
 ```typescript
-buildResolutionTrace(inputs: AdInputs, resolved: ResolverOutput): ResolutionTrace
+// Create a new trace builder
+function createTraceBuilder(): TraceBuilder;
+
+interface TraceBuilder {
+  // Set resolved values
+  setResolved(fields: {
+    campaignType: 'cold' | 'retargeting';
+    adMode: 'single' | 'carousel' | 'batch';
+    creativeModes: string[];
+    styleFamily: 'realistic' | 'fantasy' | 'minimal';
+    subStyle: string | null;
+  }): TraceBuilder;
+
+  // Set hook & objection
+  setHookAngle(angle: string | null, nullReason?: string): TraceBuilder;
+  setObjection(id: string | null, text: string | null): TraceBuilder;
+
+  // Set mode compatibility
+  setModeCompatibility(result: 'ok' | 'adapt' | 'block', reason?: string): TraceBuilder;
+
+  // Record reference ad override
+  setReferenceAdOverride(universe?: string, subStyle?: string): TraceBuilder;
+
+  // Record art direction cleared
+  setArtDirectionCleared(reason: string): TraceBuilder;
+
+  // Record slide count override
+  setSlideCountOverride(original: number, resolved: number, reason: string): TraceBuilder;
+
+  // Record empty fields skipped
+  setEmptyFieldsSkipped(fields: string[]): TraceBuilder;
+
+  // Record auto-switch event
+  addAutoSwitchEvent(field: string, from: string, to: string, reason: string): TraceBuilder;
+
+  // Set per-slide plan
+  setPerSlide(slides: Array<{
+    slide: number;
+    hasCTA: boolean;
+    narrativeAngle: string;
+    photoInjection: boolean;
+    testimonialPlatform?: string;
+  }>): TraceBuilder;
+
+  // Set launch validation result
+  setLaunchCheck(passed: boolean, blockReason?: string): TraceBuilder;
+
+  // Build final trace object
+  build(): ResolutionTrace;
+}
 ```
-
-### Input
-
-- `inputs`: Original user inputs (AdInputs)
-- `resolved`: Output from `resolveCreativeSpec()` including validation results, visual precedence overrides, slide plan, and empty field filtering
-
-### Output
-
-Complete `ResolutionTrace` object (see data-model.md for full schema).
-
-### Rules
-
-- All fields are populated from resolver outputs — no additional I/O
-- `launchMatrixCheckPassed`: from `validateLaunchSurface()` result
-- `autoSwitchEvents`: collected during resolution (family switch clearing, retargeting hookAngle null, etc.)
-- `perSlide`: from `carouselSlideCountPlan()` if adFormat is carousel
-- `valueStackEmptyFieldsSkipped`: from `filterEmptyValueStackFields()` if value_stack active
-- Partial trace on failure: populate whatever fields were resolved before the failure point. At minimum, the trace must contain `resolvedCampaignType`, `resolvedAdMode`, `resolvedCreativeModes`, and `launchMatrixCheckPassed` even on early failure.
 
 ## Persistence
 
-### Location
-
-Field `resolutionTrace` on `generations/{genId}` Firestore document.
-
-### Write Behavior
-
-- Written server-side by Cloud Functions in `index.ts`
-- Written AFTER generation completes (success or failure)
-- Write is fire-and-forget: failure is logged (`console.warn`) but does not fail the generation
-- Uses `Firestore.update()` on the existing generation document
-
-## resolveVisualPrecedence
-
-### Signature
-
 ```typescript
-resolveVisualPrecedence(inputs: ResolverInput): AutoSwitchEvent[]
+// Fire-and-forget persistence — never fails the generation
+async function persistTrace(genId: string, trace: ResolutionTrace): Promise<void>;
 ```
 
-### Input
+**Behavior**:
+- Writes to `generations/{genId}` document using `updateDoc` with `{ resolutionTrace: trace }`
+- On failure: `console.warn('Trace persistence failed for ${genId}:', error)` — does NOT throw
+- No retry logic — single attempt only
+- Called after generation pipeline has started (not blocking)
 
-Extended `ResolverInput` with `referenceAdUsed`, `visualStyleFamily`, `selectedSubStyle`, `selectedUniverse`.
+## Invariants
 
-### Output
-
-Array of `AutoSwitchEvent` objects recording each override applied.
-
-### Precedence Chain (highest to lowest)
-
-1. **Reference Ad** → overrides universe + art direction. Log: `referenceAdOverrideActive: true`
-2. **Style Family** → controls available art direction cards. Minimal: clears art direction.
-3. **Art Direction** → overrides universe rendering aesthetic
-4. **Universe** → controls scene environment (suppressed in minimal)
-5. **Mode Layout** → never overridden
-
-### Rules
-
-- Apply from highest priority down
-- Each override produces an `AutoSwitchEvent`
-- `text_only` mode: suppress universe, art direction, style family (log `textOnlyActive: true`)
-- `minimal` family: clear art direction, suppress universe scene rendering
-- Family switch: clear incompatible art direction cards
+- `build()` throws if mandatory fields are not set (fail-fast during development)
+- Builder is mutable; `build()` returns a frozen object
+- `autoSwitchEvents` defaults to `[]` (never undefined)
+- `perSlide` is required when `adMode === 'carousel'`

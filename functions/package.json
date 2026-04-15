@@ -4,6 +4,7 @@
     "lint": "eslint --ext .js,.ts .",
     "build": "tsc && shx mkdir -p lib/assets && shx cp -r src/assets/* lib/assets/",
     "test:contracts": "npm run build && node lib/contractFixtures.test.js",
+    "test:failure": "npm run build && node lib/failureClassification.test.js",
     "build:watch": "tsc --watch",
     "serve": "npm run build && firebase emulators:start --only functions",
     "shell": "npm run build && firebase functions:shell",

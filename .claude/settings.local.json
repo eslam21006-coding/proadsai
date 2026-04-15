@@ -100,7 +100,10 @@
       "Bash(bash .specify/scripts/bash/setup-plan.sh --json)",
       "Bash(bash .specify/scripts/bash/update-agent-context.sh --agent-type claude)",
       "Bash(bash .specify/scripts/bash/update-agent-context.sh claude)",
-      "Bash(bash .specify/scripts/bash/check-prerequisites.sh --json)"
-    ]
+      "Bash(bash .specify/scripts/bash/check-prerequisites.sh --json)",
+      "Bash(bash .specify/scripts/bash/create-new-feature.sh \"Phase 9: Team Management\" --json --short-name \"team-management\")",
+      "Bash(powershell.exe -File .specify/scripts/powershell/setup-plan.ps1 -Json)"
+    ],
+    "defaultMode": "auto"
   }
 }

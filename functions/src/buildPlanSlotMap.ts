@@ -542,10 +542,62 @@ export function validateStructuredBuildPlan(
     };
 }
 
-export function validateCopyFidelity(technicalPrompt: string | null, hookText: string): boolean {
-    if (!technicalPrompt || !hookText?.trim()) return false;
-    const normalizeText = (s: string) => s.normalize('NFC').trim().replace(/\s+/g, ' ');
-    return normalizeText(technicalPrompt).includes(normalizeText(hookText));
+export interface CopyFidelityFields {
+    hookText: string;
+    subheadText: string;
+    ctaName: string;
+    benefitText: string;
+}
+
+export interface CopyFidelityResult {
+    passed: boolean;
+    failedFields: string[];
+}
+
+export function validateCopyFidelity(technicalPrompt: string | null, copyFields: CopyFidelityFields): CopyFidelityResult;
+export function validateCopyFidelity(technicalPrompt: string | null, hookText: string): boolean;
+export function validateCopyFidelity(
+    technicalPrompt: string | null,
+    copyFieldsOrHookText: CopyFidelityFields | string,
+): CopyFidelityResult | boolean {
+    const normalizeText = (s: string) => s.normalize("NFC").trim().replace(/\s+/g, " ");
+
+    if (typeof copyFieldsOrHookText === "string") {
+        const hookText = copyFieldsOrHookText;
+        if (!technicalPrompt || !hookText?.trim()) return false;
+        return normalizeText(technicalPrompt).includes(normalizeText(hookText));
+    }
+
+    const fields = copyFieldsOrHookText;
+    // hookText is required — blank hookText always fails
+    if (!fields.hookText?.trim()) {
+        return { passed: false, failedFields: ["hookText"] };
+    }
+    if (!technicalPrompt) {
+        return {
+            passed: false,
+            failedFields: ["hookText", "subheadText", "ctaName", "benefitText"].filter(
+                (k) => (fields as unknown as Record<string, string>)[k]?.trim(),
+            ),
+        };
+    }
+
+    const normalizedPrompt = normalizeText(technicalPrompt);
+    const failedFields: string[] = [];
+    const checks: [string, string][] = [
+        ["hookText", fields.hookText],
+        ["subheadText", fields.subheadText],
+        ["ctaName", fields.ctaName],
+        ["benefitText", fields.benefitText],
+    ];
+
+    for (const [name, value] of checks) {
+        if (value?.trim() && !normalizedPrompt.includes(normalizeText(value))) {
+            failedFields.push(name);
+        }
+    }
+
+    return { passed: failedFields.length === 0, failedFields };
 }
 
 export function stripTechnicalPrompt(blueprint: string): string {

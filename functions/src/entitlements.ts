@@ -413,12 +413,9 @@ export async function resolveCreditOwner(callerUid: string): Promise<{
     return { creditOwnerUid: callerUid, teamRole: null };
 }
 
-// ─── EXPORTS ────────────────────────────────────────────────────────────────
-export { PLAN_CREDITS, TRIAL_CREDITS };
-
-// ─── ACTION → FEATURE MAP (for plan-gate enforcement) ─────────────────────
-// Maps credit-consuming action names from COSTS to their required GatedFeature.
-// null = always allowed (no plan gate, only credit check).
+// ─── ACTION → FEATURE GATE MAP ─────────────────────────────────────────────
+// Maps COSTS action keys to feature gate keys for plan-gate enforcement.
+// null = allowed on all paid plans (no feature gate needed).
 export const ACTION_FEATURE_MAP: Record<string, GatedFeature | null> = {
     generateHooks: null,
     refreshHooks: null,
@@ -432,8 +429,11 @@ export const ACTION_FEATURE_MAP: Record<string, GatedFeature | null> = {
     analyzePolishes: null,
     generateCaption: null,
     refineCaption: null,
-    competitorResearch: "competitorResearch",
     generateCarouselCopies: "carousel",
+    competitorResearch: "competitorResearch",
     brandUrlScraping: "brandUrlScraping",
     editRegion: "regionEditing",
 };
+
+// ─── EXPORTS ────────────────────────────────────────────────────────────────
+export { PLAN_CREDITS, TRIAL_CREDITS };
