@@ -57,6 +57,7 @@ export interface PlanConfig {
     priceAnnualPerMonth: number;
     maxSavedProjects: number;
     maxAvatars: number;
+    paddlePriceId: { monthly: string; yearly: string };
     features: {
         retargeting: boolean;
         fantasyUniverses: boolean;
@@ -141,6 +142,7 @@ const ALL_RATIOS = ['1:1', '4:5', '3:4', '4:3', '9:16', '16:9'];
 export const PLANS: Record<UserPlan, PlanConfig> = {
     none: {
         id: 'none', name: 'No Plan', subtitle: '', monthlyCredits: 0, trialCredits: 0, priceMonthly: 0, priceAnnualPerMonth: 0, maxSavedProjects: 0, maxAvatars: 0,
+        paddlePriceId: { monthly: '', yearly: '' },
         features: {
             retargeting: false, fantasyUniverses: false, aspectRatios: [], visualPolishes: false, brandUrlScraping: false, competitorResearch: false, carousel: false, maxCarouselSlides: 0, batchGeneration: false, maxTeamMembers: 0,
             abVariationTesting: false, regionEditing: false, referenceAdUpload: false, pushToMeta: false, performanceDashboard: 'none', creativeMemory: false, creativeScoringEngine: false, smartRecommendations: false, variantExploration: false, multiBrandWorkspaces: false,
@@ -150,6 +152,7 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
     },
     starter: {
         id: 'starter', name: 'Starter', subtitle: 'For solopreneurs', monthlyCredits: 500, trialCredits: 50, priceMonthly: 19, priceAnnualPerMonth: 15.20, maxSavedProjects: 5, maxAvatars: 3,
+        paddlePriceId: { monthly: 'pri_01knz7v1rr3eehbe12s214ba0t', yearly: 'pri_01knz7wz5cpvv2fx6334wv822e' },
         features: {
             retargeting: false, fantasyUniverses: false, aspectRatios: ALL_RATIOS, visualPolishes: false, brandUrlScraping: true, competitorResearch: false, carousel: false, maxCarouselSlides: 1, batchGeneration: false, maxTeamMembers: 1,
             abVariationTesting: false, regionEditing: false, referenceAdUpload: false, pushToMeta: false, performanceDashboard: 'none', creativeMemory: false, creativeScoringEngine: false, smartRecommendations: false, variantExploration: false, multiBrandWorkspaces: false,
@@ -159,6 +162,7 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
     },
     creator: {
         id: 'creator', name: 'Creator', subtitle: 'For creators running light ads', monthlyCredits: 1000, trialCredits: 50, priceMonthly: 39, priceAnnualPerMonth: 31.20, maxSavedProjects: 15, maxAvatars: 10,
+        paddlePriceId: { monthly: 'pri_01knz7xtmrbsfsrzfc1dy1zser', yearly: 'pri_01knz7ydr6zbpdhatr8yarwjnd' },
         features: {
             retargeting: true, fantasyUniverses: true, aspectRatios: ALL_RATIOS, visualPolishes: true, brandUrlScraping: true, competitorResearch: false, carousel: false, maxCarouselSlides: 1, batchGeneration: false, maxTeamMembers: 1,
             abVariationTesting: true, regionEditing: true, referenceAdUpload: false, pushToMeta: false, performanceDashboard: 'none', creativeMemory: false, creativeScoringEngine: false, smartRecommendations: false, variantExploration: false, multiBrandWorkspaces: false,
@@ -168,6 +172,7 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
     },
     pro: {
         id: 'pro', name: 'Pro', subtitle: 'For serious marketers', monthlyCredits: 2000, trialCredits: 50, priceMonthly: 79, priceAnnualPerMonth: 63.20, maxSavedProjects: 50, maxAvatars: 25,
+        paddlePriceId: { monthly: 'pri_01knz7zpgfbek52zm0n012jqn0', yearly: 'pri_01knz82jwdxjph1mpny39jnxqg' },
         features: {
             retargeting: true, fantasyUniverses: true, aspectRatios: ALL_RATIOS, visualPolishes: true, brandUrlScraping: true, competitorResearch: true, carousel: true, maxCarouselSlides: 5, batchGeneration: false, maxTeamMembers: 3,
             abVariationTesting: true, regionEditing: true, referenceAdUpload: true, pushToMeta: true, performanceDashboard: 'overview', creativeMemory: true, creativeScoringEngine: false, smartRecommendations: false, variantExploration: false, multiBrandWorkspaces: false,
@@ -177,6 +182,7 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
     },
     scaling: {
         id: 'scaling', name: 'Scaling', subtitle: 'For high-volume ad testing', monthlyCredits: 5000, trialCredits: 50, priceMonthly: 179, priceAnnualPerMonth: 143.20, maxSavedProjects: Infinity, maxAvatars: Infinity,
+        paddlePriceId: { monthly: 'pri_01knz80jr5m4ey3wrskpvgbrh4', yearly: 'pri_01knz81pexff8h8wbwq44cy0j3' },
         features: {
             retargeting: true, fantasyUniverses: true, aspectRatios: ALL_RATIOS, visualPolishes: true, brandUrlScraping: true, competitorResearch: true, carousel: true, maxCarouselSlides: 9, batchGeneration: true, maxTeamMembers: 10,
             abVariationTesting: true, regionEditing: true, referenceAdUpload: true, pushToMeta: true, performanceDashboard: 'full', creativeMemory: true, creativeScoringEngine: true, smartRecommendations: true, variantExploration: true, multiBrandWorkspaces: true,
@@ -276,6 +282,12 @@ export const TOPUP_PACKS = [
     { id: 'medium', credits: 300, price: 17, label: '300 Credits' },
     { id: 'large', credits: 800, price: 39, label: '800 Credits' },
 ] as const;
+
+export const PADDLE_TOPUP_PRICE_IDS: Record<number, string> = {
+    100: 'pri_01knz87qc1ezrb84gtffpmtjdq',
+    300: 'pri_01knz898vrhxyge632scazjn2z',
+    800: 'pri_01knz8a0s0f2je5rgrk2y62b0n',
+};
 
 // ─── RE-EXPORT CREDIT COST HELPERS ─────────────────────────────────────────
 export {

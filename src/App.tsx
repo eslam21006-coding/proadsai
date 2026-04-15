@@ -2,9 +2,9 @@ import * as React from 'react';
 import { useState, useEffect, useRef, Suspense } from 'react';
 import type { AdInputs, AdMode, AppPhase, AspectRatio, ABVariation, BatchResult, BatchHookGroup, CarouselSlide, CarouselSlideCopy, ChatMessage, TextOverride, VisualPolish, Toast, SavedProject, AudienceAvatar, CompetitorResearch, SemanticLock, TovEditIntent, RewriteScope, Workspace } from './types';
 // --- FIREBASE IMPORTS ---
-import { auth, googleProvider, db, functions } from './firebase';
-import { signInWithPopup, signInWithEmailAndPassword, sendPasswordResetEmail, signOut, onAuthStateChanged, deleteUser, type User } from 'firebase/auth';
-import { doc, getDoc, setDoc, deleteDoc, onSnapshot, collection, addDoc, getDocs, query, orderBy, where, limit } from 'firebase/firestore';
+import { auth, db, functions } from './firebase';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signOut, onAuthStateChanged, type User } from 'firebase/auth';
+import { doc, getDoc, setDoc, deleteDoc, updateDoc, onSnapshot, collection, addDoc, getDocs, query, orderBy, where, limit } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { gemini, type GenerationResult } from './services/geminiService';
 import { resolveCreativeSpec, CREATIVE_MODE_CATALOG, type ResolvedCreativeSpec } from './creativeResolver';
@@ -20,24 +20,77 @@ import { ALL_UNIVERSES, type UniverseEntry } from './universeDatabase';
 const InputForm = React.lazy(() => import('./components/InputForm'));
 const PerformanceDashboard = React.lazy(() => import('./components/PerformanceDashboard'));
 const PricingTableLazy = React.lazy(() => import('./components/PricingTable'));
+const BillingPage = React.lazy(() => import('./pages/Billing'));
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import WorkspaceSettingsModal from './components/WorkspaceSettingsModal';
+import { ForgotPasswordDialog } from './components/auth/ForgotPasswordDialog';
+import { VerifyEmailScreen } from './components/auth/VerifyEmailScreen';
+import { MandatoryBillingModal } from './components/billing/MandatoryBillingModal';
+import { TrialExpiredBanner } from './components/billing/TrialExpiredBanner';
+import { LowCreditsWarning } from './components/billing/LowCreditsWarning';
 
-// --- LOGIN COMPONENT (Login Only — Signup via GHL) ---
-const LoginScreen = ({ onGoogleLogin, onEmailLogin, onForgotPassword, isSubmitting, noAccountError }: {
-  onGoogleLogin: () => void;
+// --- LOGIN COMPONENT (Email-only with Login / Create Account tabs) ---
+const LoginScreen = ({ onEmailLogin, onCreateAccount, onForgotPassword, isSubmitting, authError, initialEmail, initialTab, onTabChange, onClearAuthError }: {
   onEmailLogin: (email: string, password: string) => void;
+  onCreateAccount: (email: string, password: string) => void;
   onForgotPassword: (email: string) => void;
   isSubmitting: boolean;
-  noAccountError: boolean;
+  authError: string | null;
+  initialEmail: string;
+  initialTab: 'login' | 'create';
+  onTabChange: (tab: 'login' | 'create') => void;
+  onClearAuthError: () => void;
 }) => {
-  const [email, setEmail] = useState('');
+  const [activeTab, setActiveTab] = useState<'login' | 'create'>(initialTab);
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [inlineError, setInlineError] = useState<string | null>(null);
   const { t, lang, setLang } = useT();
 
-  const handleSubmit = () => {
+  // Sync tab + email from parent on auto-switch
+  React.useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
+
+  React.useEffect(() => {
+    if (initialEmail) setEmail(initialEmail);
+  }, [initialEmail]);
+
+  // Display parent-provided auth error (from auto-switch flow)
+  React.useEffect(() => {
+    if (authError) setInlineError(authError);
+  }, [authError]);
+
+  const clearError = () => {
+    setInlineError(null);
+    onClearAuthError();
+  };
+
+  const handleSwitchTab = (tab: 'login' | 'create') => {
+    setActiveTab(tab);
+    onTabChange(tab);
+    clearError();
+  };
+
+  const handleLoginSubmit = () => {
     if (!email || !password) return;
+    clearError();
     onEmailLogin(email, password);
+  };
+
+  const handleCreateSubmit = () => {
+    if (!email || !password || !confirmPassword) return;
+    if (password !== confirmPassword) {
+      setInlineError(t('login.errorPasswordsMismatch'));
+      return;
+    }
+    if (password.length < 8) {
+      setInlineError(t('login.errorWeakPassword'));
+      return;
+    }
+    clearError();
+    onCreateAccount(email, password);
   };
 
   return (
@@ -73,108 +126,141 @@ const LoginScreen = ({ onGoogleLogin, onEmailLogin, onForgotPassword, isSubmitti
           </p>
         </div>
 
-        {/* ═══ No Account Error ═══ */}
-        {noAccountError && (
-          <div className="w-full max-w-md mx-auto bg-red-500/10 border border-red-500/20 rounded-2xl p-5 space-y-3 animate-in fade-in zoom-in-95 duration-300">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-red-500/15 flex items-center justify-center shrink-0">
-                <i className="fa-solid fa-circle-exclamation text-red-400"></i>
-              </div>
-              <div>
-                <p className="text-sm font-bold text-red-400">No account found</p>
-                <p className="text-xs text-slate-400 mt-0.5">There is no account associated with this Google account. Please sign up first.</p>
-              </div>
-            </div>
-            <a
-              href="https://proadsai.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block w-full py-3 bg-blue-600 hover:bg-blue-500 text-white text-center rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-lg shadow-blue-600/20"
-            >
-              <i className="fa-solid fa-rocket mr-2"></i>Sign Up at ProAdsAI.com
-            </a>
+        {/* ═══ Tab Buttons ═══ */}
+        <div className="flex max-w-md mx-auto bg-slate-900/60 rounded-2xl p-1">
+          <button
+            onClick={() => handleSwitchTab('login')}
+            className={`flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === 'login' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}
+          >
+            {t('login.enterStudio')}
+          </button>
+          <button
+            onClick={() => handleSwitchTab('create')}
+            className={`flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === 'create' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}
+          >
+            {t('login.createAccountButton')}
+          </button>
+        </div>
+
+        {/* ═══ Inline Error ═══ */}
+        {inlineError && (
+          <div className="w-full max-w-md mx-auto bg-red-500/10 border border-red-500/20 rounded-2xl p-4">
+            <p className="text-sm font-bold text-red-400">{inlineError}</p>
           </div>
         )}
 
-        {/* ═══ Google Sign-In Button ═══ */}
-        <button
-          onClick={onGoogleLogin}
-          disabled={isSubmitting}
-          className="w-full max-w-md mx-auto bg-white hover:bg-slate-200 text-slate-900 font-bold py-4 rounded-2xl transition-all flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50 shadow-lg"
-        >
-          <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6" alt="G" />
-          {t('login.google')}
-        </button>
-
-        {/* ═══ Divider ═══ */}
-        <div className="flex items-center gap-4 max-w-md mx-auto">
-          <div className="flex-1 h-px bg-slate-800"></div>
-          <span className="text-[10px] text-slate-600 font-bold uppercase tracking-widest">{t('login.or_email')}</span>
-          <div className="flex-1 h-px bg-slate-800"></div>
-        </div>
-
-        {/* ═══ Email/Password Form ═══ */}
-        <div className="flex flex-col items-center space-y-4 w-full max-w-md mx-auto">
-          <div className="w-full relative group">
-            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-              <i className="fa-solid fa-envelope text-slate-600 group-focus-within:text-blue-500 transition-colors"></i>
+        {/* ═══ Login Tab ═══ */}
+        {activeTab === 'login' && (
+          <div className="flex flex-col items-center space-y-4 w-full max-w-md mx-auto">
+            <div className="w-full relative group">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <i className="fa-solid fa-envelope text-slate-600 group-focus-within:text-blue-500 transition-colors"></i>
+              </div>
+              <input
+                type="email"
+                value={email}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setEmail(e.target.value); clearError(); }}
+                placeholder={t('login.emailLabel')}
+                className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl pl-12 pr-6 py-5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all text-sm font-medium shadow-inner"
+                onKeyDown={(e: React.KeyboardEvent) => e.key === 'Enter' && handleLoginSubmit()}
+              />
             </div>
-            <input
-              type="email"
-              value={email}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
-              placeholder={t('login.email_placeholder')}
-              className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl pl-12 pr-6 py-5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all text-sm font-medium shadow-inner"
-              onKeyDown={(e: React.KeyboardEvent) => e.key === 'Enter' && handleSubmit()}
-            />
-          </div>
-          <div className="w-full relative group">
-            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-              <i className="fa-solid fa-lock text-slate-600 group-focus-within:text-blue-500 transition-colors"></i>
+            <div className="w-full relative group">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <i className="fa-solid fa-lock text-slate-600 group-focus-within:text-blue-500 transition-colors"></i>
+              </div>
+              <input
+                type="password"
+                value={password}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setPassword(e.target.value); clearError(); }}
+                placeholder={t('login.passwordLabel')}
+                className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl pl-12 pr-6 py-5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all text-sm font-medium shadow-inner"
+                onKeyDown={(e: React.KeyboardEvent) => e.key === 'Enter' && handleLoginSubmit()}
+              />
             </div>
-            <input
-              type="password"
-              value={password}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
-              placeholder={t('login.password_placeholder')}
-              className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl pl-12 pr-6 py-5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all text-sm font-medium shadow-inner"
-              onKeyDown={(e: React.KeyboardEvent) => e.key === 'Enter' && handleSubmit()}
-            />
+
+            <button
+              onClick={handleLoginSubmit}
+              disabled={isSubmitting || !email || !password}
+              className="w-full py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.25em] shadow-xl shadow-blue-600/20 transition-all active:scale-[0.98] flex items-center justify-center space-x-3 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span>{isSubmitting ? t('login.please_wait') : t('login.enterStudio')}</span>
+              {!isSubmitting && <i className="fa-solid fa-arrow-right"></i>}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onForgotPassword(email)}
+              className="text-[10px] font-bold text-slate-500 hover:text-blue-400 uppercase tracking-widest transition-colors self-end -mt-1"
+            >
+              {t('login.forgotPassword')}
+            </button>
           </div>
+        )}
 
-          <button
-            onClick={handleSubmit}
-            disabled={isSubmitting || !email || !password}
-            className="w-full py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.25em] shadow-xl shadow-blue-600/20 transition-all active:scale-[0.98] flex items-center justify-center space-x-3 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <span>{isSubmitting ? t('login.please_wait') : t('login.enter')}</span>
-            {!isSubmitting && <i className="fa-solid fa-arrow-right"></i>}
-          </button>
+        {/* ═══ Create Account Tab ═══ */}
+        {activeTab === 'create' && (
+          <div className="flex flex-col items-center space-y-4 w-full max-w-md mx-auto">
+            <div className="w-full relative group">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <i className="fa-solid fa-envelope text-slate-600 group-focus-within:text-blue-500 transition-colors"></i>
+              </div>
+              <input
+                type="email"
+                value={email}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setEmail(e.target.value); clearError(); }}
+                placeholder={t('login.emailLabel')}
+                className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl pl-12 pr-6 py-5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all text-sm font-medium shadow-inner"
+              />
+            </div>
+            <div className="w-full relative group">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <i className="fa-solid fa-lock text-slate-600 group-focus-within:text-blue-500 transition-colors"></i>
+              </div>
+              <input
+                type="password"
+                value={password}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setPassword(e.target.value); clearError(); }}
+                placeholder={t('login.passwordLabel')}
+                className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl pl-12 pr-6 py-5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all text-sm font-medium shadow-inner"
+              />
+            </div>
+            <div className="w-full relative group">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <i className="fa-solid fa-lock text-slate-600 group-focus-within:text-blue-500 transition-colors"></i>
+              </div>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setConfirmPassword(e.target.value); clearError(); }}
+                placeholder={t('login.confirmPasswordLabel')}
+                className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl pl-12 pr-6 py-5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all text-sm font-medium shadow-inner"
+                onKeyDown={(e: React.KeyboardEvent) => e.key === 'Enter' && handleCreateSubmit()}
+              />
+            </div>
 
-          {/* ═══ Forgot Password Link ═══ */}
-          <button
-            type="button"
-            onClick={() => {
-              if (!email) { alert('Enter your email address first, then click Forgot Password.'); return; }
-              onForgotPassword(email);
-            }}
-            className="text-[10px] font-bold text-slate-500 hover:text-blue-400 uppercase tracking-widest transition-colors self-end -mt-1"
-          >
-            {t('login.forgot')}
-          </button>
-        </div>
+            <button
+              onClick={handleCreateSubmit}
+              disabled={isSubmitting || !email || !password || !confirmPassword}
+              className="w-full py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.25em] shadow-xl shadow-blue-600/20 transition-all active:scale-[0.98] flex items-center justify-center space-x-3 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span>{isSubmitting ? t('login.please_wait') : t('login.createAccountButton')}</span>
+            </button>
+          </div>
+        )}
 
-        {/* ═══ Don't have an account? ═══ */}
+        {/* ═══ Switch Tab Links ═══ */}
         <div className="pt-4 border-t border-white/5 flex flex-col items-center gap-3">
-          <span className="text-[10px] text-slate-600 font-bold uppercase tracking-widest">{t('login.no_account')}</span>
-          <a
-            href="https://proadsai.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] font-black text-blue-500 uppercase tracking-widest hover:text-white transition-colors border-b border-transparent hover:border-white pb-0.5"
-          >
-            {t('login.get_started')} <i className="fa-solid fa-arrow-right ml-1"></i>
-          </a>
+          {activeTab === 'login' && (
+            <button onClick={() => handleSwitchTab('create')} className="text-[10px] text-slate-600 font-bold uppercase tracking-widest">
+              {t('login.dontHaveAccount')} <span className="text-blue-500 hover:text-white">{t('login.createAccount')}</span>
+            </button>
+          )}
+          {activeTab === 'create' && (
+            <button onClick={() => handleSwitchTab('login')} className="text-[10px] text-slate-600 font-bold uppercase tracking-widest">
+              {t('login.alreadyHaveAccount')} <span className="text-blue-500 hover:text-white">{t('login.enterStudio')}</span>
+            </button>
+          )}
           <p className="text-[9px] text-slate-700 mt-1">
             By logging in, you agree to our{' '}
             <a href="https://proadsai.com/terms" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-blue-400 underline transition-colors">Terms of Service</a>
@@ -921,7 +1007,11 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [noAccountError, setNoAccountError] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [pendingEmail, setPendingEmail] = useState<string>('');
+  const [loginTab, setLoginTab] = useState<'login' | 'create'>('login');
+  const [showMandatoryBilling, setShowMandatoryBilling] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(null); // null = loading
   const [showWelcome, setShowWelcome] = useState(false);
   const [showSignOut, setShowSignOut] = useState(false);
@@ -931,7 +1021,7 @@ const App: React.FC = () => {
   const [milestones, setMilestones] = useState<Milestones>(EMPTY_MILESTONES);
   const [showVideoPopup, setShowVideoPopup] = useState(false);
 
-  // 1. Check for topup return from Stripe
+  // 1. Check for topup return from Paddle
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('topup') === 'success') {
@@ -960,7 +1050,7 @@ const App: React.FC = () => {
       window.history.replaceState({}, '', window.location.pathname);
     }
 
-    // Restore session after returning from Stripe billing portal
+    // Restore session after returning from Paddle billing portal
     const savedPhase = sessionStorage.getItem('proads_return_phase');
     if (savedPhase) {
       sessionStorage.removeItem('proads_return_phase');
@@ -974,14 +1064,20 @@ const App: React.FC = () => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
-        // Fetch or Create User Profile in Firestore
+        // ─── T047: Email verification gate ───
+        if (!currentUser.emailVerified) {
+          setUser(currentUser);
+          setLoadingAuth(false);
+          return;
+        }
+
+        // Email verified — proceed to Firestore lookup
         const userRef = doc(db, "users", currentUser.uid);
         const userSnap = await getDoc(userRef);
 
         if (userSnap.exists()) {
           // EXISTING USER — normal login
           const userData = userSnap.data();
-          setNoAccountError(false);
           setUser(currentUser);
 
           // Team member? Load owner's credits instead of their own
@@ -1006,7 +1102,6 @@ const App: React.FC = () => {
             }
           } else {
             setUserCredits(userData.credits ?? 0);
-            // Plan is stored directly — isTrial just affects credit behavior, not features
             const effectivePlan = (userData.plan ?? 'none');
             setUserPlan(effectivePlan as UserPlan);
             setIsTrialUser(userData.isTrial === true);
@@ -1032,20 +1127,17 @@ const App: React.FC = () => {
           const loadedMilestones = userSnap.data().milestones ?? EMPTY_MILESTONES;
           setMilestones(loadedMilestones);
           setTourCompleted(userSnap.data().tourCompleted === true);
-          // Only show Welcome screen if user has never completed any milestone (true first visit)
-          // Returning users skip straight to the app
           const hasAnyMilestone = loadedMilestones.watchVideo || loadedMilestones.hooksGenerated || loadedMilestones.conceptsGenerated || loadedMilestones.designGenerated || loadedMilestones.copyGenerated;
-          // Check if user is returning from Stripe billing/topup
+          // Check if user is returning from Paddle billing/topup
           const pendingPhase = sessionStorage.getItem('proads_pending_phase');
           if (pendingPhase) {
             sessionStorage.removeItem('proads_pending_phase');
-            // Restore their previous phase — skip welcome screen
             setPhase(pendingPhase as AppPhase);
           } else if (isOnboarded && !hasAnyMilestone) {
             setShowWelcome(true);
           }
         } else {
-          // NO FIRESTORE DOC — check if they purchased via GHL
+          // ─── T048: No Firestore doc — check pending_plans ───
           let hasPendingPlan = false;
 
           if (currentUser.email) {
@@ -1056,12 +1148,10 @@ const App: React.FC = () => {
               hasPendingPlan = true;
               const pending = pendingSnap.data();
               const pendingIsTrial = pending.isTrial === true;
-              // Plan is stored directly — trial users have the real plan + isTrial=true
               const initialPlan = (pending.plan || 'none') as UserPlan;
               const initialCredits = pending.credits || 50;
               const initialBillingType = pending.billingType || 'monthly';
               const initialNextReset = pending.nextCreditReset || null;
-              // Clean up — they've claimed it
               await deleteDoc(pendingRef);
 
               const userDoc: Record<string, any> = {
@@ -1071,20 +1161,24 @@ const App: React.FC = () => {
                 isTrial: pendingIsTrial,
                 billingStatus: 'active',
                 onboardingComplete: false,
-                createdAt: new Date()
+                createdAt: new Date(),
               };
               if (initialBillingType) userDoc.billingType = initialBillingType;
               if (initialNextReset) userDoc.nextCreditReset = initialNextReset;
+              if (pending.paddleCustomerId) userDoc.paddleCustomerId = pending.paddleCustomerId;
+              if (pending.paddleSubscriptionId) userDoc.paddleSubscriptionId = pending.paddleSubscriptionId;
+              if (pending.paddleUpdatePaymentUrl) userDoc.paddleUpdatePaymentUrl = pending.paddleUpdatePaymentUrl;
+              if (pending.paddleCancelUrl) userDoc.paddleCancelUrl = pending.paddleCancelUrl;
               if (pending.stripeCustomerId) userDoc.stripeCustomerId = pending.stripeCustomerId;
 
               await setDoc(userRef, userDoc);
-              setNoAccountError(false);
               setUser(currentUser);
               setUserCredits(initialCredits);
-              setUserPlan(initialPlan); // Use effective plan (trialPlan for trials)
+              setUserPlan(initialPlan);
               setIsTrialUser(pendingIsTrial);
               if (pending.stripeCustomerId) setStripeCustomerId(pending.stripeCustomerId);
               setOnboardingComplete(false);
+              // Welcome toast fires automatically via the createdAt-within-60s effect (FR-024b)
             }
           }
 
@@ -1097,8 +1191,6 @@ const App: React.FC = () => {
               if (membershipSnap.exists()) {
                 isTeamMember = true;
                 const membership = membershipSnap.data();
-                // The Cloud Function should have already created their user doc
-                // But if it hasn't (race condition), create a minimal one
                 await setDoc(userRef, {
                   email: currentUser.email,
                   credits: 0,
@@ -1110,14 +1202,12 @@ const App: React.FC = () => {
                   createdAt: new Date(),
                 }, { merge: true });
 
-                // Load owner's data
                 setTeamOwnerUid(membership.ownerUid);
                 setTeamRole(membership.role || 'viewer');
                 const ownerRef = doc(db, 'users', membership.ownerUid);
                 const ownerSnap = await getDoc(ownerRef);
                 if (ownerSnap.exists()) {
                   const owData = ownerSnap.data();
-                  setNoAccountError(false);
                   setUser(currentUser);
                   setUserCredits(owData.credits ?? 0);
                   const effPlan = (owData.plan ?? 'none');
@@ -1131,15 +1221,23 @@ const App: React.FC = () => {
             }
 
             if (!isTeamMember) {
-              // UNAUTHORIZED — no account, no pending plan, not a team member
-              // Delete the auto-created Firebase Auth account and sign out
-              try { await deleteUser(currentUser); } catch (e) { console.warn('Could not delete orphan auth user:', e); }
-              await signOut(auth);
-              setUser(null);
-              setNoAccountError(true);
+              // ─── T049: Create minimal user doc (DO NOT delete auth account) ───
+              await setDoc(userRef, {
+                email: currentUser.email,
+                credits: 0,
+                plan: 'none',
+                isTrial: false,
+                onboardingComplete: false,
+                createdAt: new Date(),
+              });
+              setUser(currentUser);
               setUserCredits(0);
               setUserPlan('none');
-              setOnboardingComplete(null);
+              setIsTrialUser(false);
+              setStripeCustomerId(null);
+              setBillingStatus('active');
+              setOnboardingComplete(false);
+              setShowMandatoryBilling(true);
             }
           }
         }
@@ -1148,6 +1246,7 @@ const App: React.FC = () => {
         setUserCredits(0);
         setUserPlan('none');
         setOnboardingComplete(null);
+        setShowMandatoryBilling(false);
       }
       setLoadingAuth(false);
     });
@@ -1304,51 +1403,69 @@ const App: React.FC = () => {
     }
   };
 
-  // 2. Handle Google Login
-  const handleGoogleLogin = async () => {
-    setIsSubmitting(true);
-    setNoAccountError(false);
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error: any) {
-      console.error("Google login failed", error);
-      alert(error.message || "Google login failed. Please try again.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // 3. Handle Email/Password Login
   const handleEmailLogin = async (email: string, password: string) => {
     setIsSubmitting(true);
+    setAuthError(null);
     try {
       await signInWithEmailAndPassword(auth, email, password);
     } catch (error: any) {
       console.error("Email login failed", error);
-      const msg = error.code === 'auth/invalid-credential' ? 'Invalid email or password.'
-        : error.code === 'auth/user-not-found' ? 'No account with this email. Sign up first.'
-          : error.code === 'auth/wrong-password' ? 'Incorrect password.'
-            : error.code === 'auth/too-many-requests' ? 'Too many attempts. Try again later.'
-              : error.message || 'Login failed.';
-      alert(msg);
+      // Auto-switch: user-not-found → Create Account tab with email pre-filled
+      if (error.code === 'auth/user-not-found') {
+        setPendingEmail(email);
+        setLoginTab('create');
+        setAuthError(t('login.errorUserNotFound'));
+      } else if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        setAuthError(t('login.errorWrongPassword'));
+      } else if (error.code === 'auth/too-many-requests') {
+        setAuthError(t('login.errorTooManyRequests'));
+      } else if (error.code === 'auth/invalid-email') {
+        setAuthError(t('login.errorInvalidEmail'));
+      } else {
+        setAuthError(t('login.errorGeneric'));
+      }
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const handleCreateAccount = async (email: string, password: string) => {
+    setIsSubmitting(true);
+    setAuthError(null);
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      await sendEmailVerification(cred.user);
+    } catch (error: any) {
+      console.error("Create account failed", error);
+      // Auto-switch: email-already-in-use → Login tab with email pre-filled
+      if (error.code === 'auth/email-already-in-use') {
+        setPendingEmail(email);
+        setLoginTab('login');
+        setAuthError(t('login.errorEmailInUse'));
+      } else if (error.code === 'auth/weak-password') {
+        setAuthError(t('login.errorWeakPassword'));
+      } else if (error.code === 'auth/invalid-email') {
+        setAuthError(t('login.errorInvalidEmail'));
+      } else {
+        setAuthError(t('login.errorGeneric'));
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
-  // 4b. Handle Forgot Password
+  // Handle Forgot Password — Firebase built-in, non-revealing confirmation
   const handleForgotPassword = async (email: string) => {
+    if (!email) {
+      showToast(t('login.forgotPasswordDialog.emailPrompt'), 'error');
+      return;
+    }
     try {
       await sendPasswordResetEmail(auth, email);
-      alert('Password reset email sent! Check your inbox (and spam folder).');
-    } catch (error: any) {
-      const msg = error.code === 'auth/user-not-found' ? 'No account found with this email.'
-        : error.code === 'auth/invalid-email' ? 'Invalid email address.'
-          : error.code === 'auth/too-many-requests' ? 'Too many attempts. Try again later.'
-            : error.message || 'Failed to send reset email.';
-      alert(msg);
+    } catch (_error: any) {
+      // Non-revealing: show the same confirmation regardless of result
     }
+    showToast(t('login.forgotPasswordDialog.confirmation'), 'success');
   };
 
   // 5. Handle Logout
@@ -1448,6 +1565,53 @@ const App: React.FC = () => {
   const [upgradeReason, setUpgradeReason] = useState('');
   const [showAccountMenu, setShowAccountMenu] = useState(false);
 
+  // ─── MANDATORY BILLING AUTO-DISMISS ──────────────────────────────────
+  useEffect(() => {
+    if (showMandatoryBilling && userPlan !== 'none') {
+      setShowMandatoryBilling(false);
+    }
+  }, [userPlan, showMandatoryBilling]);
+
+  // ─── WELCOME TOAST ───────────────────────────────────────────────────
+  // FR-024b: fires once when users/{uid}.createdAt is within 60s AND welcomeToastShown !== true.
+  // Covers both pending_plans consumption and mandatory-modal → paid transitions.
+  const welcomeToastFiredRef = React.useRef(false);
+  useEffect(() => {
+    if (!user) return;
+    if (welcomeToastFiredRef.current) return;
+    if (userPlan === 'none') return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'users', user.uid));
+        if (!snap.exists() || cancelled) return;
+        const data = snap.data();
+        if (data.welcomeToastShown === true) return;
+
+        // createdAt may be a Firestore Timestamp or a Date
+        const createdAt = data.createdAt;
+        let createdMs: number | null = null;
+        if (createdAt?.toDate) createdMs = createdAt.toDate().getTime();
+        else if (createdAt instanceof Date) createdMs = createdAt.getTime();
+        else if (typeof createdAt === 'number') createdMs = createdAt;
+
+        if (createdMs === null) return;
+        if (Date.now() - createdMs > 60_000) return;
+
+        welcomeToastFiredRef.current = true;
+        // Clean up the legacy pending flag if present
+        sessionStorage.removeItem('proads_welcome_pending');
+        showToast(t('login.welcomeTrial'), 'success');
+        await updateDoc(doc(db, 'users', user.uid), { welcomeToastShown: true });
+      } catch {
+        // Non-blocking — welcome toast failure should never break sign-in
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [user, userPlan]);
+
   // ─── BILLING MODAL STATE ───────────────────────────────────────────
   const [showBillingModal, setShowBillingModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -1479,7 +1643,7 @@ const App: React.FC = () => {
   const [editHookData, setEditHookData] = useState<{ hookText: string; subhead: string; cta: string; benefit: string }>({ hookText: '', subhead: '', cta: '', benefit: '' });
   const accountMenuRef = useRef<HTMLDivElement>(null);
 
-  // ─── GHL CHECKOUT URLS (replace with your actual GHL checkout page URLs) ───
+  // ─── PADDLE CHECKOUT URLS (PADDLE TODO: replace with Paddle checkout page URLs) ───
   const GHL_URLS: Record<string, string> = {
     starter_monthly: 'https://proadsai.com/checkout/starter',
     starter_annual: 'https://proadsai.com/checkout/starter',
@@ -1691,7 +1855,7 @@ const App: React.FC = () => {
     // Fetch subscription data from Cloud Function
     setBillingLoading(true);
     try {
-      const getSubscription = httpsCallable(functions, 'getSubscription');
+      const getSubscription = httpsCallable(functions, 'paddleGetSub');
       const result = await getSubscription();
       setBillingData(result.data);
     } catch (error: any) {
@@ -1707,7 +1871,7 @@ const App: React.FC = () => {
     if (!cancelReason) { showToast('Please select a reason.', 'error'); return; }
     setCancelLoading(true);
     try {
-      const cancelSub = httpsCallable(functions, 'cancelSubscription');
+      const cancelSub = httpsCallable(functions, 'paddleCancelSub');
       const result = await cancelSub({ reason: cancelReason, feedback: cancelFeedback });
       const data = result.data as any;
       showToast(`Subscription cancelled. Access continues until ${new Date(data.currentPeriodEnd * 1000).toLocaleDateString()}.`, 'info');
@@ -1727,7 +1891,7 @@ const App: React.FC = () => {
   const handleReactivate = async () => {
     setBillingLoading(true);
     try {
-      const reactivate = httpsCallable(functions, 'reactivateSubscription');
+      const reactivate = httpsCallable(functions, 'paddleReactivateSub');
       await reactivate();
       showToast('Subscription reactivated!', 'success');
       handleManageBilling();
@@ -1802,7 +1966,19 @@ const App: React.FC = () => {
       // Server rejected — restore local balance
       console.error('Server deduction failed:', err);
       setUserCredits(prev => prev + cost);
-      if (err.code === 'functions/resource-exhausted') {
+      if (err.code === 'functions/failed-precondition') {
+        const details = err.details?.details || err.details || {};
+        if (details.code === 'plan_downgraded') {
+          setUpgradeReason(t('billing.error.planDowngraded').replace('{plan}', details.requiredPlan || 'higher'));
+          setShowUpgradeModal(true);
+        } else if (details.code === 'trial_expired') {
+          setUpgradeReason(t('billing.error.trialExpired'));
+          setShowUpgradeModal(true);
+        } else {
+          setUpgradeReason(err.message);
+          setShowUpgradeModal(true);
+        }
+      } else if (err.code === 'functions/resource-exhausted') {
         setUpgradeReason(err.message);
         setShowUpgradeModal(true);
       }
@@ -2239,14 +2415,64 @@ const App: React.FC = () => {
   // Sign-out screen (user just logged out)
   if (showSignOut && !user) return <SignOutScreen onSignIn={handleSignOutToLogin} />;
 
-  if (!user) return <LoginScreen onGoogleLogin={handleGoogleLogin} onEmailLogin={handleEmailLogin} onForgotPassword={handleForgotPassword} isSubmitting={isSubmitting} noAccountError={noAccountError} />;
+  if (!user) return (<>
+    <LoginScreen
+      onEmailLogin={handleEmailLogin}
+      onCreateAccount={handleCreateAccount}
+      onForgotPassword={() => setShowForgotPassword(true)}
+      isSubmitting={isSubmitting}
+      authError={authError}
+      initialEmail={pendingEmail}
+      initialTab={loginTab}
+      onTabChange={(tab) => { setLoginTab(tab); setAuthError(null); }}
+      onClearAuthError={() => setAuthError(null)}
+    />
+    {showForgotPassword && <ForgotPasswordDialog onSubmit={handleForgotPassword} onClose={() => setShowForgotPassword(false)} />}
+  </>);
+
+  if (!user.emailVerified) return (
+    <VerifyEmailScreen
+      email={user.email ?? ''}
+      onResend={async () => { await sendEmailVerification(user); }}
+      onCheckVerified={async () => { await user.reload(); if (auth.currentUser) setUser({ ...auth.currentUser }); }}
+      onSignOut={async () => { await signOut(auth); setUser(null); setShowMandatoryBilling(false); }}
+    />
+  );
+
+  if (showMandatoryBilling && userPlan === 'none') return <MandatoryBillingModal />;
+
+  const trialBanner = isTrialUser && userCredits === 0 && !showMandatoryBilling
+    ? <TrialExpiredBanner onUpgrade={() => window.location.hash = '#/billing'} />
+    : null;
+
+  const creditsPerMonth = PLANS[userPlan]?.monthlyCredits || 0;
+  const showLowCredits = userCredits > 0 && creditsPerMonth > 0 && userCredits < creditsPerMonth * 0.2 && !isTrialUser && !showMandatoryBilling;
+  const lowCreditsBanner = showLowCredits
+    ? <LowCreditsWarning onTopUp={() => window.location.hash = '#/billing'} />
+    : null;
+
+  if (typeof window !== 'undefined' && window.location.hash === '#/billing') {
+    return (
+      <div className="min-h-screen bg-slate-950">
+        {trialBanner}
+        {lowCreditsBanner}
+        <div className="max-w-3xl mx-auto p-4">
+          <button onClick={() => { window.location.hash = ''; }} className="mb-4 text-slate-400 hover:text-white text-sm flex items-center gap-2">
+            <i className="fa-solid fa-arrow-left"></i> Back
+          </button>
+          <Suspense fallback={<div className="text-white text-center py-20">Loading...</div>}>
+            <BillingPage />
+          </Suspense>
+        </div>
+      </div>
+    );
+  }
 
   // Cancelled user win-back screen
   // Onboarding quiz (first login — user exists but hasn't completed quiz)
-  if (onboardingComplete === false) return <OnboardingQuiz onComplete={handleOnboardingComplete} />;
+  if (onboardingComplete === false) return <>{trialBanner}{lowCreditsBanner}<OnboardingQuiz onComplete={handleOnboardingComplete} /></>;
 
-  // Welcome screen (shows after login / after quiz, before entering studio)
-  if (showWelcome) return <WelcomeScreen userName={user.displayName || user.email || ''} isTrial={isTrialUser} onStart={handleWelcomeStart} />;
+  if (showWelcome) return <>{trialBanner}{lowCreditsBanner}<WelcomeScreen userName={user.displayName || user.email || ''} isTrial={isTrialUser} onStart={handleWelcomeStart} /></>;
 
   // ═══ BILLING STATE GATING — past_due and cancelled block app access ═══
   if (billingStatus === 'past_due') {
@@ -7471,8 +7697,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                       <div className="bg-blue-500/5 border border-blue-500/20 rounded-2xl p-5 text-center space-y-3">
                         <i className="fa-solid fa-lock text-blue-400/40 text-lg"></i>
-                        <p className="text-[11px] text-slate-400">Payment method updates will be available when Stripe integration is active.</p>
-                        <p className="text-[9px] text-slate-600">Encrypted & secure. Powered by Stripe.</p>
+                        <p className="text-[11px] text-slate-400">Payment method updates will be available when Paddle integration is active.</p>
+                        <p className="text-[9px] text-slate-600">Encrypted & secure. Powered by Paddle.</p>
                       </div>
                     </div>
                   )}
@@ -7511,7 +7737,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       onClick={async () => {
                         setTopupLoading(pack.id);
                         try {
-                          const createCheckout = httpsCallable(functions, 'createTopupCheckout');
+                          const createCheckout = httpsCallable(functions, 'paddleTopupCheckout');
                           const result = await createCheckout({ packId: `topup_${pack.credits}` });
                           const data = result.data as { url: string };
                           if (data.url) window.location.href = data.url;
@@ -7535,7 +7761,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     </button>
                   ))}
                 </div>
-                <p className="text-[8px] text-slate-600 text-center mt-2"><i className="fa-solid fa-lock mr-1"></i>Secure checkout powered by Stripe · Card saved for future purchases</p>
+                <p className="text-[8px] text-slate-600 text-center mt-2"><i className="fa-solid fa-lock mr-1"></i>Secure checkout powered by Paddle · Card saved for future purchases</p>
               </div>
 
               {/* Upgrade Plan — only shown when triggered from Upgrade menu or feature gates */}

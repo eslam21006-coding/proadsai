@@ -1,0 +1,43 @@
+// functions/src/billing/billingLogger.ts — structured logging for all billing pipeline steps
+
+export type BillingErrorCode =
+    | "paddle_signature_invalid"
+    | "paddle_event_duplicate"
+    | "paddle_event_unknown"
+    | "paddle_price_unmapped"
+    | "ghl_sync_failed"
+    | "user_doc_missing"
+    | "pending_plan_write_failed"
+    | "billing_state_write_failed";
+
+export interface BillingLogEntry {
+    step: string;
+    eventId?: string;
+    eventType?: string;
+    userId?: string;
+    email?: string;
+    status: "success" | "error" | "ignored" | "duplicate";
+    errorCode?: BillingErrorCode;
+    durationMs?: number;
+    extra?: Record<string, unknown>;
+}
+
+export function logBillingStep(
+    step: string,
+    eventId: string | undefined,
+    status: BillingLogEntry["status"],
+    errorCode?: BillingErrorCode,
+    extra?: Record<string, unknown>,
+): void {
+    const entry: BillingLogEntry = {
+        step,
+        eventId,
+        status,
+        ...(errorCode && { errorCode }),
+        ...(extra && { extra }),
+    };
+
+    const emoji = status === "error" ? "🔥" : status === "duplicate" ? "⚠️" : status === "ignored" ? "⏭️" : "✅";
+    const label = errorCode ? `[${errorCode}]` : "";
+    console.log(`${emoji} BILLING ${step} ${label} ${status}`, JSON.stringify(entry));
+}

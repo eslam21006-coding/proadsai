@@ -1,4 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../firebase';
+import { PLANS } from '../planconfig';
+
+const createPaddleCheckoutFn = httpsCallable(functions, "createPaddleCheckout");
 
 const SECTIONS = [
   { id: 'usage', label: 'Usage', defaultOpen: true },
@@ -13,11 +18,12 @@ const SECTIONS = [
 
 type BillingMode = 'monthly' | 'annual';
 
+// PADDLE: CTA buttons call createPaddleCheckout callable
 const plans = [
-  { key: 'starter', name: 'Starter', sub: 'Get hooked', monthly: 19, annual: 15.20, badge: null, ctaLabel: 'Start Creating', ctaHref: 'https://proadsai.com/checkout/starter', micro: 'Your first 25 ads', cls: '', ctaCls: '' },
-  { key: 'creator', name: 'Creator', sub: 'Create freely', monthly: 39, annual: 31.20, badge: null, ctaLabel: 'Unlock Creativity', ctaHref: 'https://proadsai.com/checkout/creator', micro: 'Fantasy + retargeting + A/B', cls: '', ctaCls: '' },
-  { key: 'pro', name: 'Pro', sub: 'Full production', monthly: 79, annual: 63.20, badge: { text: 'Most Popular', cls: 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,.35)]' }, ctaLabel: 'Go Full Production', ctaHref: 'https://proadsai.com/checkout/pro', micro: 'Carousels + Meta + intelligence', cls: 'highlight-col', ctaCls: 'pro' },
-  { key: 'scaling', name: 'Scaling', sub: 'AI runs the show', monthly: 179, annual: 143.20, badge: { text: 'AI-Powered', cls: 'bg-amber-500 text-gray-900' }, ctaLabel: 'Let AI Optimize', ctaHref: 'https://proadsai.com/checkout/scaling', micro: '5 exclusives no other plan gets', cls: 'scaling-col', ctaCls: 'scaling' },
+  { key: 'starter', name: 'Starter', sub: 'Get hooked', monthly: 19, annual: 15.20, badge: null, ctaLabel: 'Start Creating', micro: 'Your first 25 ads', cls: '', ctaCls: '' },
+  { key: 'creator', name: 'Creator', sub: 'Create freely', monthly: 39, annual: 31.20, badge: null, ctaLabel: 'Unlock Creativity', micro: 'Fantasy + retargeting + A/B', cls: '', ctaCls: '' },
+  { key: 'pro', name: 'Pro', sub: 'Full production', monthly: 79, annual: 63.20, badge: { text: 'Most Popular', cls: 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,.35)]' }, ctaLabel: 'Go Full Production', micro: 'Carousels + Meta + intelligence', cls: 'highlight-col', ctaCls: 'pro' },
+  { key: 'scaling', name: 'Scaling', sub: 'AI runs the show', monthly: 179, annual: 143.20, badge: { text: 'AI-Powered', cls: 'bg-amber-500 text-gray-900' }, ctaLabel: 'Let AI Optimize', micro: '5 exclusives no other plan gets', cls: 'scaling-col', ctaCls: 'scaling' },
 ];
 
 type CellValue = string | boolean | { text: string; note?: string; emphasis?: boolean; soon?: boolean };
@@ -206,14 +212,36 @@ export default function PricingTable() {
             {/* CTA Row */}
             <div className="grid min-w-[1080px] border-t border-white/[0.08] bg-[#0d1727]" style={{ gridTemplateColumns: '260px repeat(4, 1fr)' }}>
               <div className="border-r border-white/[0.06]"></div>
-              {plans.map(p => (
+              {plans.map(p => {
+                const planConfig = PLANS[p.key as keyof typeof PLANS];
+                const priceId = billing === 'annual' ? planConfig?.paddlePriceId?.yearly : planConfig?.paddlePriceId?.monthly;
+                return (
                 <div key={p.key} className={`p-[18px] text-center border-r border-white/[0.06] last:border-r-0 transition-all hover:-translate-y-0.5 ${p.ctaCls === 'pro' ? 'bg-blue-600/[0.08]' : p.ctaCls === 'scaling' ? 'bg-amber-500/[0.06]' : ''}`}>
-                  <a href={p.ctaHref} className={`block w-full py-3.5 px-4 rounded-xl no-underline text-white font-extrabold transition-all hover:-translate-y-0.5 hover:opacity-95 ${p.ctaCls === 'pro' ? 'bg-blue-600 shadow-[0_0_25px_rgba(37,99,235,.28)]' : p.ctaCls === 'scaling' ? 'bg-amber-500 !text-gray-900 shadow-[0_0_25px_rgba(245,158,11,.22)]' : 'bg-white/[0.08]'}`}>
+                  <button
+                    onClick={async () => {
+                      if (!priceId) return;
+                      try {
+                        const result = await createPaddleCheckoutFn({ priceId });
+                        const data = result.data as any;
+                        if (data?.transactionId && (window as any).Paddle) {
+                          (window as any).Paddle.Checkout.open({
+                            settings: { displayMode: 'overlay' },
+                            transactionId: data.transactionId,
+                          });
+                        } else if (data?.checkoutUrl) {
+                          window.open(data.checkoutUrl, "_blank");
+                        }
+                      } catch (e: any) {
+                        console.error("Checkout error:", e);
+                      }
+                    }}
+                    className={`block w-full py-3.5 px-4 rounded-xl no-underline text-white font-extrabold transition-all hover:-translate-y-0.5 hover:opacity-95 cursor-pointer border-0 ${p.ctaCls === 'pro' ? 'bg-blue-600 shadow-[0_0_25px_rgba(37,99,235,.28)]' : p.ctaCls === 'scaling' ? 'bg-amber-500 !text-gray-900 shadow-[0_0_25px_rgba(245,158,11,.22)]' : 'bg-white/[0.08]'}`}>
                     {p.ctaLabel} &rarr;
-                  </a>
+                  </button>
                   <div className="mt-2.5 text-xs text-slate-400">{p.micro}</div>
                 </div>
-              ))}
+              );
+              })}
             </div>
           </div>
         </div>

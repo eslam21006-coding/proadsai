@@ -415,3 +415,25 @@ export async function resolveCreditOwner(callerUid: string): Promise<{
 
 // ─── EXPORTS ────────────────────────────────────────────────────────────────
 export { PLAN_CREDITS, TRIAL_CREDITS };
+
+// ─── ACTION → FEATURE MAP (for plan-gate enforcement) ─────────────────────
+// Maps credit-consuming action names from COSTS to their required GatedFeature.
+// null = always allowed (no plan gate, only credit check).
+export const ACTION_FEATURE_MAP: Record<string, GatedFeature | null> = {
+    generateHooks: null,
+    refreshHooks: null,
+    editOneHook: null,
+    generateConcepts: null,
+    editOneConcept: null,
+    buildPlan: null,
+    generateImage: null,
+    polishImage: null,
+    reflowImage: null,
+    analyzePolishes: null,
+    generateCaption: null,
+    refineCaption: null,
+    competitorResearch: "competitorResearch",
+    generateCarouselCopies: "carousel",
+    brandUrlScraping: "brandUrlScraping",
+    editRegion: "regionEditing",
+};

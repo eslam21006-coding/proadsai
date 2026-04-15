@@ -3,7 +3,7 @@
 
 > **Authority**: This file overrides all older behavior assumptions, the Compatibility Matrix v2, and the ChatGPT master plan for launch scope.
 > Where this file and any other document disagree, this file wins.
-> Last updated: v3 — 11 product owner decisions applied.
+> Last updated: v4 — 11 product owner decisions + 7 new feature phases + Paddle migration. Codebase audit April 11, 2026.
 
 ---
 
@@ -17,6 +17,8 @@
 
 A combination is approved for launch **only if it appears in Section 2**.
 A fix is valid **only if it satisfies the Evidence Workflow (Section 10)**.
+
+**For implementation:** Go directly to **Section 14 — Build Order** at the bottom of this file. Section 14 is self-contained — it has everything needed to execute each phase without reading any other section. Sections 1–13 are the reference spec; Section 14 is the execution guide. Start with the Dependency Map at the top of Section 14 to understand which phases unlock which, then work top to bottom through each phase.
 
 ---
 
@@ -43,6 +45,15 @@ All product owner decisions. These are final for launch.
 | Testimonial carousel | New feature — user uploads testimonial screenshots, each rendered as platform mockup slide. Cold + Retargeting. |
 | value_stack + carousel | Item-per-slide. Slide count auto-adjusted to gift count + 2. User's original selection overridden with notification. |
 | value_stack empty fields | Never rendered. Never mentioned. If a field is empty it does not exist in the blueprint, contract, or image. |
+| Billing provider | **Paddle** as Merchant of Record. Replaces Stripe as payment processor. GHL stays as CRM — receives post-payment webhooks from Firebase for automations (welcome email, dunning, tags). Flow: Paddle checkout → Paddle webhook → Firebase → update user + notify GHL. |
+| Magic Edit engine | **fal.ai FLUX Kontext** for inpainting/outpainting. Lasso selection → mask → Kontext pipeline. Text compositing re-runs after every edit. Quality restoration pass after 3+ edits. |
+| Magic Edit scope | Single, batch (apply-to-all), carousel (per-slide). Undo stack of 10. Modes: erase, add object, style/color change, environment replacement. Text edits handled by textCompositing only — never sent to Kontext. |
+| Workspace Meta linking | Each workspace has its own `metaAdAccountId`. Generations from that workspace push to that account. Team members see only workspaces they have access to. |
+| Saved project navigation | Step-by-step dot navigator. User can click any completed step to resume from there. Thumbnail from first render persisted. Status: draft / rendered / published. |
+| RAG feedback loop | `metaDailySync` pulls Meta Insights API daily. Performance data (CTR/CPC/ROAS) feeds back into generation prompts via `getRAGContext()`. Minimum 10 records before RAG injection activates. |
+| Brand color enforcement | Brand colors injected per-slide in carousel, per-item in batch, inherited from cold ad in retargeting. Text compositing uses brand primary for CTA, brand secondary for headlines. |
+| Resize / reflow | Reflow available for single, batch (all N), carousel (all slides). Text compositing re-runs after reflow with safe-zone re-validation. CSS preview costs 0 credits. |
+| Authentication method | **Email + password only**. Google sign-in removed entirely to prevent email mismatch with Paddle. Login page has Login / Create Account tabs on the same page. New account creation checks Firestore for existing Paddle payment — if found, user enters app with trial active. If not found, billing modal opens. |
 
 ---
 
@@ -50,17 +61,32 @@ All product owner decisions. These are final for launch.
 
 | Area | Key File(s) | Status |
 |---|---|---|
-| Creative resolver | `functions/src/creativeResolver.ts` (1133 lines) | Exists |
-| 6-stage generation pipeline | `functions/src/generators.ts` (6395 lines) | Exists |
+| Creative resolver | `functions/src/creativeResolver.ts` (1292 lines) | Exists |
+| 6-stage generation pipeline | `functions/src/generators.ts` (6926 lines) | Exists |
 | Layout contract system | `functions/src/layoutContract.ts`, `layoutTemplates.ts` | Exists |
 | Build plan validation | `functions/src/buildPlanSlotMap.ts` | Exists |
 | Caption validation | `functions/src/captionValidator.ts` | Exists |
 | Creative scoring engine | `functions/src/creativeScoringEngine.ts` | Exists |
 | Entitlements | `functions/src/entitlements.ts`, `src/planconfig.ts` | Exists |
 | Mode field schema | `src/modeFieldSchema.ts` | Exists |
-| Creative memory + RAG | `functions/src/creativeMemory.ts`, `rankingEngine.ts` | Exists |
+| Creative memory + RAG | `functions/src/creativeMemory.ts`, `rankingEngine.ts`, `recommendationTracking.ts` | Exists — no daily sync or prompt injection yet |
 | Zustand store | `src/store.ts` | Exists |
 | Generation run records | `generations` Firestore collection | Exists |
+| Magic Edit (FAL Kontext) | `functions/src/falEditing.ts` (161 lines) | Exists — erase/style only, no batch/carousel/add/environment |
+| Magic Selector UI | `src/components/MagicSelector.tsx` (334 lines) | Exists — lasso + erase + style, no add/environment/undo/batch |
+| FAL image generation | `functions/src/falGeneration.ts` (128 lines) | Exists |
+| Text compositing | `functions/src/textCompositing.ts` (631 lines) | Exists |
+| Workspace switcher | `src/components/WorkspaceSwitcher.tsx` (91 lines) | Exists — no Meta account linking, no team scoping |
+| Workspace settings | `src/components/WorkspaceSettingsModal.tsx` (170 lines) | Exists — no Meta account field |
+| Meta service (OAuth) | `src/services/metaService.ts` | Exists — OAuth + account picker, no insights fetch |
+| Variant engine | `functions/src/variantEngine.ts` | Exists |
+| Pattern summaries | `functions/src/patternSummaries.ts` (542 lines) | Exists |
+| Billing state | `functions/src/billing/billingState.ts` (162 lines) | Exists — currently GHL+Stripe, migrating to Paddle |
+| Billing UI | `src/pages/Billing.tsx` (206 lines) + 6 billing components | Exists — references Stripe, needs Paddle migration |
+| Billing hook | `src/hooks/useBillingState.ts` (98 lines) | Exists |
+| Team management | `src/pages/Team.tsx` (683L), `JoinTeam.tsx` (248L), `teamService.ts` (79L) | Exists |
+| Favorites | `src/components/FavoritesPanel.tsx` (179L), `src/hooks/useFavorites.ts` (106L), `feedbackService.ts` (638L) | Exists |
+| Saved projects | `SavedProject` interface in `types.ts`, save/load in `App.tsx` | Exists — no thumbnails, no step navigation, no search |
 | `step3point5.ts` | `functions/src/step3point5.ts` | DEAD CODE — DELETE |
 
 ---
@@ -882,6 +908,32 @@ Phase 3 — New Feature (independent)
 Phase 4 — Quality (parallel, independent)
   Spec E: Language Quality Contracts
   Spec F: Failure Classification
+
+Phase 5 — Blueprint → Render Prompt Pipeline (requires Phase 1)
+
+Phase 6 — Language Quality Contracts (independent)
+
+Phase 7 — Failure Classification (independent)
+
+Phase 8 — Billing: Paddle + GHL Sync (requires Phase 2)
+
+Phase 9 — Team Management (requires Phase 8)
+
+Phase 10 — Favorites & Workspace (requires Phase 8)
+
+Phase 11 — Magic Edit (requires Phase 5)
+
+Phase 12 — Workspace Logic (requires Phase 8 + Phase 9)
+
+Phase 13 — Saved Projects (requires Phase 10)
+
+Phase 14 — RAG + Meta Reporting (requires Phase 7 + Phase 8)
+
+Phase 15 — Brand Colors (requires Phase 5)
+
+Phase 16 — Creative Modes QA (requires Phase 1 + Phase 3 + Phase 5)
+
+Phase 17 — Resize & Reflow (requires Phase 5 + Phase 15)
 ```
 
 ---
@@ -901,243 +953,541 @@ Launch is complete when all of the following pass:
 9. Art Direction section labeled correctly, Fantasy and Realistic each have their own card sets
 10. Fixes require full evidence pack before closure
 11. 7 launch languages visible. 5 non-launch languages hidden entirely.
+12. Paddle billing handles subscribe, cancel, top-up, past-due with GHL CRM sync for automations
+13. Magic Edit works in single, batch, and carousel modes with undo support
+14. Each workspace is linked to its own Meta ad account, team visibility is role-scoped
+15. Saved projects show thumbnail + status, can be resumed from any completed step
+16. Meta Insights API syncs daily and performance data feeds back into generation prompts
+17. Brand colors are enforced across all carousel slides, batch items, and retargeting ads
+18. All 10 creative modes × all format combinations have passing fixture tests
+19. Reflow works for single, batch, and carousel with text safe-zone re-validation
+20. Login page has Login / Create Account tabs, no Google sign-in. Paddle-paid users land in app with trial toast. Unpaid users see billing modal.
 
 ---
+
 
 ## SECTION 14 — BUILD ORDER
 
+> **For AI agents:** This section is self-contained. Do not read other sections to execute tasks.
+> Each task is one file, one action, one done condition. Do not break tasks down further.
+> Do not create sub-phases. Do not plan. Execute the task, confirm done, move to the next row.
+
+---
+
 ### Dependency Map
 
-Read this before touching a single file. Starting a phase before its dependencies are done creates rework.
-
 ```
-Phase 1: Resolver Foundation          ← must be first, blocks everything
-    │
-    ├── Phase 2: Frontend Enforcement  ─┐
-    ├── Phase 3: QA Fixtures            │  all require Phase 1 complete
-    ├── Phase 4: Testimonial Carousel   │  can run in parallel with each other
-    └── Phase 5: Render Prompt Pipeline─┘  (Phase 5 was misplaced as Phase 7)
-    
-Phase 6: Language Quality             ← truly independent, any time
-Phase 7: Failure Classification       ← truly independent, any time
+Phase 1  ──► Phase 2  ──► Phase 8  ──► Phase 9
+         ──► Phase 3             └──► Phase 10
+         ──► Phase 4             └──► Phase 12 (Workspace)
+         ──► Phase 5
 
-Phase 2 completes
-    │
-    └── Phase 8: Billing               ← requires Phase 2 frontend stable
+Phase 6   (no dependency — start any time)
+Phase 7   (no dependency — start any time)
 
-Phase 8 completes
-    │
-    └── Phase 9: Team Management       ← requires Phase 8 (billingState hook)
+Phase 8   requires Phase 2
+Phase 9   requires Phase 8
+Phase 10  requires Phase 8 (billingState for team scoping)
+Phase 11  requires Phase 5 (render pipeline must be stable)
+Phase 12  requires Phase 8 + Phase 9 (billing + team must exist)
+Phase 13  requires Phase 10 (favorites + workspace scoping)
+Phase 14  requires Phase 7 + Phase 8 (failure classification + billing)
+Phase 15  requires Phase 5 (build plan pipeline)
+Phase 16  requires Phase 1 + Phase 3 + Phase 5
+Phase 17  requires Phase 5 + Phase 15 (pipeline + brand colors)
 ```
 
-**Rule:** If a phase is not listed under a dependency above, it can run in parallel with its siblings. If it IS listed under a dependency, wait for the parent to be complete before starting it.
-
-Tasks within each phase are ordered — earlier tasks unblock later ones within the same phase.
-
----
-
-### Phase 1: Resolver Foundation
-*Everything else depends on this phase. Do not start Phase 2 or 3 until all Phase 1 tasks are complete.*
-
-| Task | Description |
-|---|---|
-| 1.1 | Delete `functions/src/step3point5.ts` — confirmed dead code, not imported anywhere |
-| 1.2 | Delete `limited_access`, `module_preview`, `day_strip` from `CREATIVE_MODE_CATALOG` in `creativeResolver.ts` |
-| 1.3 | Delete all `ALLOWED_PAIRS` entries that reference `limited_access`, `module_preview`, or `day_strip` in `creativeResolver.ts` |
-| 1.4 | Delete `SUBSTYLE_MODE_COMPAT` entries for `limited_access`, `module_preview`, `day_strip` in `creativeResolver.ts` |
-| 1.5 | Add `campaignType: 'cold' | 'retargeting'` as an input field to `ResolverInput` in `creativeResolver.ts` |
-| 1.6 | Add `adFormat: 'single' | 'carousel' | 'batch'` as an input field to `ResolverInput` in `creativeResolver.ts` |
-| 1.7 | Add `universeStyle: 'realistic' | 'fantasy' | 'minimal'` as an input field to `ResolverInput` in `creativeResolver.ts` |
-| 1.8 | Add `minimal` handling to `resolveStyleFamily()` in `generators.ts` — when minimal is active, suppress environment rendering regardless of universe field value |
-| 1.9 | Write `validateLaunchSurface(inputs): { allowed: boolean, reason?: string }` in `creativeResolver.ts` — consumes the approved combination tables from Section 2 of this file. This is the shared gate used by both frontend and backend. |
-| 1.10 | Write `carouselSlideCountPlan(campaignType, slideCount, mode): SlideRole[]` in `creativeResolver.ts` — returns exact per-slide role and angle for every count 2–9, cold and retargeting, per Section 5.A tables |
-| 1.11 | Write `resolveValueStackSlideCount(gifts: string[]): number` in `creativeResolver.ts` — implements the N+2 auto-adjust formula with 9-slide cap |
-| 1.12 | Write `filterEmptyValueStackFields(inputs: AdInputs): AdInputs` in `creativeResolver.ts` — strips any empty value_stack fields before they reach any prompt. Empty = whitespace-only or undefined. |
-| 1.13 | Write `ResolutionTrace` interface (exact schema from Section 8) in `functions/src/types.ts` or a new `resolutionTrace.ts` file |
-| 1.14 | Write `buildResolutionTrace(inputs, resolved): ResolutionTrace` in `creativeResolver.ts` — populates all trace fields from resolved inputs |
-| 1.15 | Wire `buildResolutionTrace()` into the generation Cloud Function in `functions/src/index.ts` — write the trace as a sub-document to `generations/{genId}/resolutionTrace` after every generation run |
-| 1.16 | Add server-side launch surface guard to `functions/src/index.ts` — call `validateLaunchSurface(inputs)` at the top of every generation handler, reject with 400 if `allowed: false`, log `launchMatrixBlockReason` |
-| 1.17 | Centralize the retargeting `effectiveColdHookAngle = undefined` rule from `generators.ts` into `resolveCreativeSpec()` — it should come from the resolver, not be scattered inline |
+Complete all tasks in a phase before starting any phase that depends on it.
+Within a phase, do tasks top to bottom — each row unblocks the next.
 
 ---
 
-### Phase 2: Frontend Enforcement
-*Requires Phase 1 complete. Tasks 2.1–2.5 can run in parallel. Tasks 2.6–2.10 depend on 2.1–2.5.*
+### Task Format
 
-| Task | Description |
-|---|---|
-| 2.1 | Remove `limited_access`, `module_preview`, `day_strip` from all UI components in `src/components/InputForm.tsx` — mode cards, mode selectors, mode field sections |
-| 2.2 | Remove `limited_access`, `module_preview`, `day_strip` from `OFFER_CREATIVE_MODES`, `CREATIVE_MODE_CONFLICTS`, `HOOK_ANGLE_MODE_CONFLICTS` in `src/constants.ts` |
-| 2.3 | Move `before_after` from the hook angle selector to the Creative Mode card grid in `InputForm.tsx` — it is now a Creative Mode, not a hook angle |
-| 2.4 | Remove `before_after` from `COLD_HOOK_ANGLES` in `src/constants.ts` |
-| 2.5 | Slice `AD_LANGUAGES` to 7 launch languages — remove `fr`, `es`, `de`, `tr`, `pt` from the selector in `InputForm.tsx` |
-| 2.6 | Consume `validateLaunchSurface()` from Phase 1 in `InputForm.tsx` — on any mode/format/campaign combination change, call the validator and show an inline message below the blocked element if `allowed: false` |
-| 2.7 | Update Visual Style Family selector: all 3 families (Realistic, Fantasy, Minimal) always show the universe dropdown. When Minimal is active, add a silent flag `minimalActive: true` to state — do not hide the dropdown |
-| 2.8 | Rename the art direction / sub-style card section label to **"Art Direction"** in `InputForm.tsx`. Ensure Fantasy family has its own art direction cards (same as Realistic — both filter from `ART_DIRECTION_CARDS` by family). |
-| 2.9 | Update the reference ad upload field: gate it behind Pro plan check. Hide for Starter and Creator plans. |
-| 2.10 | Add `slideCount` auto-override logic: when `value_stack` is in `offerCreativeMode` and `adMode` is `carousel`, call `resolveValueStackSlideCount()` and update `slideCount` in state. Show inline message: "Carousel adjusted to [N] slides — one gift per slide." |
-| 2.11 | Add `slideCount` auto-override for testimonial mode: same pattern as 2.10. Show inline message: "Carousel adjusted to [N] slides — one testimonial per slide." |
-| 2.12 | Add toast/inline signals for all remaining auto-switches listed in Section 7: retargeting clears hook angle, text_only collapses visual section, before_after + carousel blocked, testimonial format auto-switch, family switch clears art direction |
+| # | File | Action | Done when |
+|---|---|---|---|
+
+Each row is one atomic action. "Done when" is the acceptance test.
+If a task would require creating a sub-plan, the task description is wrong — follow it literally.
 
 ---
 
-### Phase 3: QA Fixtures
-*Requires Phase 1 complete. Can run in parallel with Phase 2.*
+## Phase 1 — Resolver Foundation
+**Requires:** Nothing.
+**Blocks:** Phase 2, Phase 3, Phase 4, Phase 5.
 
-| Task | Description |
-|---|---|
-| 3.1 | Create canonical input fixture for Lane 1 (Retargeting + Carousel, 5 slides) in `contractFixtures.test.ts` — exact input JSON, expected `resolutionTrace`, CTA placement check per slide |
-| 3.2 | Create canonical input fixture for Lane 2 (Cold + Single + before_after) — input JSON, split-canvas visual contract checks |
-| 3.3 | Create canonical input fixture for Lane 3 (Cold + Carousel + value_stack, 4 gifts) — input JSON, slide count override check, empty field check |
-| 3.4 | Create canonical input fixture for Lane 4 (Cold + Carousel, 5 slides, standard_hero) — input JSON, per-slide angle assignment check |
-| 3.5 | Create canonical input fixture for Lane 5 (Cold + Batch + hero + value_stack) — input JSON, full stack in every image check |
-| 3.6 | Create canonical input fixture for Lane 6 (Cold + Single + value_stack) — input JSON, empty field suppression check |
-| 3.7 | Create canonical input fixture for Lane 7 (Retargeting + Single + value_stack) — input JSON, objection-connected copy check |
-| 3.8 | Create canonical input fixture for Lane 8 (Minimal + hero + Single) — input JSON, no-environment check |
-| 3.9 | Create canonical input fixture for Lane 9 (Minimal + hero + Batch) — input JSON, per-image minimal check |
-| 3.10 | Add `validateLaunchSurface()` unit tests — one passing combination per lane, one blocked combination per removed mode (`limited_access`, `module_preview`, `day_strip`), one cross-tab combination, one `before_after` + carousel attempt |
-| 3.11 | Add `carouselSlideCountPlan()` unit tests — cold 2/5/9 slides, retargeting 3/5/7 slides, verify exact angle arrays |
-| 3.12 | Add `resolveValueStackSlideCount()` unit tests — 3 gifts→5 slides, 7 gifts→9 slides, 9 gifts→9 slides (cap) |
-| 3.13 | Add `filterEmptyValueStackFields()` unit tests — some fields populated, some empty, confirm empty fields removed from output |
+| # | File | Action | Done when |
+|---|---|---|---|
+| 1.1 | `functions/src/creativeResolver.ts` | Add `campaignType: 'cold' \| 'retargeting'` as a required input to `resolveCreative()`. Pass it through to all downstream resolution logic. | `resolveCreative({ ..., campaignType: 'retargeting' })` returns a resolution with `resolvedCampaignType: 'retargeting'` |
+| 1.2 | `functions/src/creativeResolver.ts` | Add `adFormat: 'single' \| 'carousel' \| 'batch'` as a required input to `resolveCreative()`. | `resolveCreative({ ..., adFormat: 'carousel' })` returns a resolution with `resolvedAdMode: 'carousel'` |
+| 1.3 | `functions/src/creativeResolver.ts` | Add `minimal` as a third universe family. When `visualStyleFamily === 'minimal'`: set `resolvedSubStyle: null`, suppress environment generation flag, keep universe dropdown value in trace but mark as `notApplied`. | `resolveCreative({ visualStyleFamily: 'minimal' })` returns `resolvedStyleFamily: 'minimal'` and `resolvedSubStyle: null` |
+| 1.4 | `functions/src/creativeResolver.ts` | Add function `validateLaunchSurface(inputs): { allowed: boolean, reason?: string }`. Checks every combination against Section 2. If not in Section 2, return `{ allowed: false, reason }`. Export this function for both frontend and backend use. | Calling with `{ offerCreativeMode: ['limited_access'] }` returns `{ allowed: false, reason: 'mode_deleted' }`. Calling with `{ campaignType: 'cold', adFormat: 'single', offerCreativeMode: ['standard_hero'] }` returns `{ allowed: true }`. |
+| 1.5 | `functions/src/resolutionTrace.ts` | Implement `writeResolutionTrace(genId, trace: ResolutionTrace)`. Writes the `resolutionTrace` sub-document to `generations/{genId}` using the schema from Section 8. | After calling, Firestore document `generations/{genId}` has a `resolutionTrace` sub-document with all required fields |
+| 1.6 | `functions/src/slidePlanEngine.ts` | Implement `carouselSlideCountPlan(campaignType, slideCount, mode): SlidePlan[]`. Returns per-slide angle/role array exactly matching Section 5.A tables. Cold uses angle pool A–G, retargeting uses P–E. | `carouselSlideCountPlan('cold', 5, 'standard_hero')` returns 5 entries: slide 1 = hook+CTA, slides 2–4 = angles A/B/C no CTA, slide 5 = close+CTA |
+| 1.7 | `functions/src/slidePlanEngine.ts` | Implement `resolveValueStackSlideCount(gifts: string[]): number`. Returns `Math.min(gifts.length + 2, 9)`. | `resolveValueStackSlideCount(['a','b','c'])` returns `5`. `resolveValueStackSlideCount(['a','b','c','d','e','f','g','h'])` returns `9`. |
+| 1.8 | `functions/src/emptyFieldFilter.ts` | Implement `filterEmptyValueStackFields(inputs): FilteredInputs`. Strips every value_stack field that is empty string, null, or undefined. Returns the cleaned inputs. | `filterEmptyValueStackFields({ valueStackPrice: '', valueStackTitle: 'Test' })` returns `{ valueStackTitle: 'Test' }` — `valueStackPrice` is gone |
+| 1.9 | `functions/src/creativeResolver.ts` | Delete `step3point5.ts` from the codebase. Remove any imports referencing it. | File does not exist. No import errors. |
 
 ---
 
-### Phase 4: Testimonial Carousel
-*Independent. Can start after Phase 1 completes. Does not block Phase 2 or 3.*
+## Phase 2 — Frontend Enforcement
+**Requires:** Phase 1 complete.
+**Blocks:** Phase 8.
 
-| Task | Description |
-|---|---|
-| 4.1 | Add `testimonial_carousel` to `CREATIVE_MODE_CATALOG` in `creativeResolver.ts` — role: anchor, standalone: true, tabs: all three, compatible with carousel only |
-| 4.2 | Add testimonial screenshot upload field (Box D) to `InputForm.tsx` — multi-upload, visible when testimonial mode selected |
-| 4.3 | Write `detectTestimonialPlatform(screenshotBase64): Platform` in a new `testimonialMockup.ts` file — heuristic detection returning one of: `whatsapp`, `instagram_dm`, `facebook`, `email`, `google_review`, `telegram`, `unknown` |
-| 4.4 | Write per-platform mockup generator — wraps the screenshot in a platform-accurate UI frame (WhatsApp bubble, IG interface, etc.) using Sharp or CSS overlay |
-| 4.5 | Write hook slide generator for testimonial carousel — AI prompt to generate a curiosity hook for slide 1 that teases testimonials without quoting them |
-| 4.6 | Wire `resolveValueStackSlideCount()` equivalent for testimonials: testimonial count + 2, cap at 9 |
-| 4.7 | Wire the full testimonial carousel pipeline into `generators.ts` — hook slide (AI), N mockup slides (per-platform renderer), close slide (AI) |
-| 4.8 | Add retargeting variant of testimonial hook slide — slide 1 must name the objection AND tease testimonials as evidence |
-| 4.9 | Create canonical input fixtures for Lane 10 (Cold testimonial carousel) and Lane 11 (Retargeting testimonial carousel) in `contractFixtures.test.ts` |
-
----
-
-### Phase 5: Blueprint → Long-Form Render Prompt Pipeline
-*Requires Phase 1 complete. Can run in parallel with Phases 2, 3, and 4. The pipeline that turns the user-visible blueprint (Step 3) into the machine-executable image generation prompt. Currently lives inline in `generators.ts`. This phase makes it explicit, auditable, and correctly fed from all inputs — Steps 1 and 2.*
-
-**How the pipeline works today:**
-Step 2 produces `hookText` + `subheadText` + `ctaName`. Step 3 takes those exact strings and generates a Visual Blueprint (the human-readable rendering plan shown to the user). Inside that blueprint is a `TECHNICAL_PROMPT` field — a long-form machine-readable prompt in English that the image model receives. This `TECHNICAL_PROMPT` is generated by the same Gemini call that produces the blueprint.
-
-**What must feed the long-form prompt (complete input set):**
-
-The `TECHNICAL_PROMPT` must be informed by ALL of the following — not just the Step 2 copy text:
-
-| Input Source | Fields | Why |
-|---|---|---|
-| Step 1 — Campaign context | `productName`, `targetAudience`, `challenges`, `transformation`, `offerType` | Grounds the visual in the right product context and persona — wardrobe, environment energy, and prop choices must match the offer |
-| Step 1 — Creative mode | `offerCreativeMode` (e.g. `value_stack`, `event_ticket`, `before_after`) | Determines the compositional structure — stack zone, ticket frame, split canvas, etc. |
-| Step 1 — Art direction | `visualSubStyle` (e.g. `luxury_magazine`, `anime_manga`, `dark_cinematic`) | Drives the entire visual language — color palette, texture, lighting, typography style, forbidden elements |
-| Step 1 — Universe family | `visualStyleFamily` (realistic / fantasy / minimal) | Controls whether an environment is rendered at all, and what kind |
-| Step 1 — Universe setting | `preferredUniverse` | Sets the specific scene, location, or world the hero inhabits |
-| Step 1 — Campaign type | `campaignType` (cold / retargeting) | Determines copy tone direction — cold uses transformation energy, retargeting uses objection-resolution energy |
-| Step 1 — Hook angle | `coldHookAngle` (cold only) | Drives the emotional framing of the visual — before/after split, pain imagery, social proof visual cues, etc. |
-| Step 1 — Retargeting objection | `retargetingObjection` (retargeting only) | The visual must reflect the specific objection being resolved — proof-angle visuals differ from risk-reversal visuals |
-| Step 1 — Ad tone | `adTone` | Visual energy must match tone — luxury_ceo tone requires premium wardrobe; funny tone allows casual/absurd props |
-| Step 1 — Brand colors | `brandColorPrimary`, `brandColorSecondary` | Injected as specific hex values into CTA button, accent elements, or background — never generic "brand color" placeholder |
-| Step 2 — Copy text | `hookText`, `subheadText`, `ctaName`, `benefitText` | Must appear verbatim in the prompt and in the rendered output — no paraphrase, no substitution |
-| Step 2 — Mode-specific data | `valueStackItems`, `eventTitle`, `eventDate`, `valueStackPrice`, etc. | Drives visible data in the image — stack items, ticket fields, device content |
-| Uploads | Box A (personal photos), Box B (logos), Box C (mode assets), Reference Ad | Face consistency, logo placement, book/device cover, or full style reference |
-
-| Task | Description |
-|---|---|
-| 5.1 | Audit `generators.ts` → `generateBuildPlan()` to confirm ALL Step 1 fields above are present in the build plan prompt before the model writes the `TECHNICAL_PROMPT`. Check: `offerCreativeMode` injects the mode spec block, `visualSubStyle` injects the sub-style constraint block, `coldHookAngle` / `retargetingObjection` injects the angle visual direction, `adTone` injects the tone mood block, brand colors inject as hex values. Fix any that are missing or conditional. |
-| 5.2 | Audit that `hookText`, `subheadText`, and `ctaName` from Step 2 are injected under `TEXTS TO RENDER` and declared in `CANONICAL CONTENT OWNERSHIP` before the model writes the `TECHNICAL_PROMPT`. If either injection is missing or conditional, fix it unconditionally. |
-| 5.3 | Add a hard validation after build plan generation: parse the returned `TECHNICAL_PROMPT` and verify that it contains the exact `hookText` string. If absent or paraphrased, mark build plan failed and trigger a rebuild. Add this check to `validateBuildPlanSlots()` in `buildPlanSlotMap.ts`. |
-| 5.4 | Add `TECHNICAL_PROMPT` extraction to `parseBuildPlanEnvelope()` in `buildPlanSlotMap.ts` — named field on the parsed result, not a substring search. Expose as `technicalPrompt: string` on `BuildPlanSlotMap`. |
-| 5.5 | Write `buildFinalImagePrompt(blueprint: string, technicalPrompt: string, contract: FullLayoutContract, inputs: AdInputs): string` in `generators.ts` — the single function that assembles the final prompt sent to the image model. It combines in this exact order: (1) the `TECHNICAL_PROMPT` from the blueprint, (2) layout contract zone rules and aspect ratio, (3) sub-style visual constraints, (4) creative mode structural rules (e.g. split-canvas for before_after, stack zone for value_stack), (5) campaign type and hook angle visual direction, (6) brand color hex directives, (7) face-consistency instruction referencing Box A. Nothing added inline elsewhere after this function is introduced. |
-| 5.6 | Add `resolvedImagePrompt: string` to the `ResolutionTrace` schema (Section 8) — store the final assembled prompt per run. This makes every render fully auditable. |
-| 5.7 | Surface the blueprint to the user in Step 3 UI exactly as generated — no rewriting. The user sees the human-readable blueprint. The `TECHNICAL_PROMPT` portion is stripped from the user-facing display (stays in trace only). Add a "View Blueprint" expandable panel in Step 3. |
-| 5.8 | Add `blueprintText` field to the generation Firestore record — store the full blueprint string alongside `resolvedImagePrompt`. Enables debugging: compare what the blueprint said vs what the image model produced. |
-| 5.9 | For carousel mode: verify `buildFinalImagePrompt()` is called per-slide with the correct per-slide `hookText`/`subheadText` (not slide 1 text reused). Add per-slide `blueprintText` and `resolvedImagePrompt` to the `perSlide` array in `ResolutionTrace`. |
-| 5.10 | Add unit tests in `contractFixtures.test.ts`: (a) given a known `hookText` + blueprint, assert `buildFinalImagePrompt()` contains exact `hookText`; (b) given `visualSubStyle: "luxury_magazine"`, assert the output contains the luxury magazine constraint block; (c) given `campaignType: "retargeting"` + objection, assert the output contains the retargeting visual direction. These are the regression guards. |
+| # | File | Action | Done when |
+|---|---|---|---|
+| 2.1 | `src/components/InputForm.tsx`, `src/modeFieldSchema.ts`, `src/creativeResolver.ts` | Delete `limited_access`, `module_preview`, `day_strip` from every mode catalog, mode field schema entry, UI component, and constant array. Search and destroy — nothing remains. | `grep -r "limited_access\|module_preview\|day_strip" src/ functions/src/` returns zero results |
+| 2.2 | `src/components/InputForm.tsx` | Import `validateLaunchSurface` from `creativeResolver.ts`. After every user selection change (mode, format, campaign type, family), call `validateLaunchSurface(currentInputs)`. If `allowed === false`, show the `reason` string as an inline message below the blocked item. Disable the generate button. | Selecting `before_after` + carousel shows "Before/After is single-image only" below the format selector. Generate button is disabled. |
+| 2.3 | `src/components/InputForm.tsx` | Hide all non-launch languages from the AD_LANGUAGES dropdown. Only show the 7 approved languages from Section 2.6. | Dropdown shows exactly 7 options. No French, Spanish, German, Turkish, or Portuguese. |
+| 2.4 | `src/components/InputForm.tsx` | Remove `before_after` from the hook angle selector. It must only appear in the Creative Mode grid. | Hook angle dropdown does not contain `before_after`. Creative Mode grid does contain it. |
+| 2.5 | `src/components/InputForm.tsx` | When `visualStyleFamily` changes: clear art direction if switching to `minimal`. Reset art direction cards to the correct family when switching between `realistic` and `fantasy`. Show "Art Direction" as the section label for all families. | Switching from realistic to minimal clears art direction. Switching from realistic to fantasy shows fantasy cards. Label says "Art Direction" for both. |
+| 2.6 | `src/components/InputForm.tsx` | When `text_only` is selected: hide universe dropdown, hide art direction section, hide style family selector. When deselected: restore them. | Selecting text_only hides all three. Deselecting restores them. |
+| 2.7 | `src/components/InputForm.tsx` | Add all override signals from Section 7. Reference ad: show banner "Reference ad active — visual style follows the reference." When retargeting selected: replace hook section with objection section. When testimonial + single format: auto-switch to carousel with toast. | All 9 override signals from Section 7 fire correctly with their specified UI signal. |
+| 2.8 | `src/components/InputForm.tsx` | Add value_stack carousel auto-adjustment. When value_stack is active in carousel mode and user changes gift count, auto-adjust slide count to `resolveValueStackSlideCount(gifts)`. Show inline notification: "Carousel adjusted to [N] slides — one gift per slide." | Adding 3 gifts sets slide count to 5 with notification. |
+| 2.9 | `functions/src/index.ts` | In every generation Cloud Function entry point, call `validateLaunchSurface(inputs)` before any processing. If not allowed, throw `HttpsError('invalid-argument', reason)`. | Sending a request with `offerCreativeMode: ['limited_access']` returns `invalid-argument` error from the server |
+| 2.10 | `src/components/InputForm.tsx` | Reference ad upload: gate behind Pro plan check from `useBillingState()`. If plan < Pro, show "Upgrade to Pro to use reference ads" and disable the upload area. | Starter/Creator users see the gated message. Pro+ users see the upload area. |
 
 ---
 
-### Phase 6: Language Quality Contracts
-*Independent. Can start any time. Does not block any other phase.*
+## Phase 3 — QA Fixtures
+**Requires:** Phase 1 complete.
 
-| Task | Description |
-|---|---|
-| 6.1 | Add `ar_fusha` quality checks to `captionValidator.ts` — headline max 8 words, subheadline max 12 words, no hanging conjunctions, Arabic Unicode >= 70%, weak opener detection |
-| 6.2 | Add `ar_egyptian` quality checks — dialect marker validation, warmth register, same word count rules |
-| 6.3 | Add `ar_gulf` quality checks — dialect markers, same word count rules |
-| 6.4 | Add `ar_levantine`, `ar_iraqi`, `ar_maghreb` minimum checks — word count + RTL + no LTR bleed |
-| 6.5 | Add `en` quality checks — grammar baseline, CTA clarity, no filler phrases |
-| 6.6 | Add unit tests per language — one passing caption, one failing (word count), one failing (hanging conjunction for Arabic) |
-
----
-
-### Phase 7: Failure Classification
-*Independent. Can start any time. Does not block any other phase.*
-
-| Task | Description |
-|---|---|
-| 7.1 | Add `FailureClass` type to `functions/src/types.ts` — 7 values from Spec F |
-| 7.2 | Add `failureClass: FailureClass \| null` field to generation Firestore record schema |
-| 7.3 | Add `costEstimate: { modelTier, retryCount, estimatedTokens }` field to generation Firestore record schema |
-| 7.4 | Tag each existing error path in `generators.ts` with the correct `FailureClass` — map every `throw` and `catch` to one of the 7 values |
-| 7.5 | Write `failureClass` and `costEstimate` to Firestore on every failed generation in `functions/src/index.ts` |
-| 7.6 | Add a Firestore query index on `failureClass` to enable cost-per-failure-type analysis |
+| # | File | Action | Done when |
+|---|---|---|---|
+| 3.1 | `functions/src/contractFixtures.test.ts` | Write fixture for Lane 1 (retargeting + carousel). Input: `campaignType: 'retargeting', adMode: 'carousel', slideCount: 5, retargetingObjection: 'price_too_high', offerCreativeMode: ['standard_hero']`. Assert: resolver allowed, slide plan has 5 entries, slide 1 has CTA, slides 2–4 have no CTA, slide 5 has CTA, all slides reference the objection. | Fixture test passes |
+| 3.2 | `functions/src/contractFixtures.test.ts` | Write fixture for Lane 2 (cold + single + before_after). Input: `campaignType: 'cold', adMode: 'single', offerCreativeMode: ['before_after']`. Assert: resolver allowed, layout contract has split canvas zones, no `before_after` in hook angles. | Fixture test passes |
+| 3.3 | `functions/src/contractFixtures.test.ts` | Write fixture for Lane 3 (cold + carousel + value_stack). Input: `campaignType: 'cold', adMode: 'carousel', offerCreativeMode: ['value_stack'], gifts: ['a','b','c']`. Assert: slide count = 5, slide 1 no price, middle slides one gift each no CTA, last slide price + CTA, empty fields stripped. | Fixture test passes |
+| 3.4 | `functions/src/contractFixtures.test.ts` | Write fixture for Lane 8 (minimal + standard_hero + single). Input: `visualStyleFamily: 'minimal', offerCreativeMode: ['standard_hero'], adMode: 'single'`. Assert: `resolvedSubStyle: null`, environment suppressed flag true, universe value present but marked not applied. | Fixture test passes |
+| 3.5 | `functions/src/contractFixtures.test.ts` | Write fixture for Lane 10 (testimonial carousel cold). Input: `campaignType: 'cold', adMode: 'carousel', testimonialMode: true, testimonialCount: 4`. Assert: slide count = 6, slide 1 = hook + CTA, slides 2–5 = testimonial (no CTA), slide 6 = close + CTA. | Fixture test passes |
+| 3.6 | `functions/src/contractFixtures.test.ts` | Write one fixture for each remaining lane (4, 5, 6, 7, 9, 11). Total = 6 fixtures. Each has exact input JSON and asserts resolver result, slide/batch plan if applicable, and key contract rules from the lane spec. | All 6 fixture tests pass |
 
 ---
 
-### Phase 8: Billing, Plan Access, Top-Up, Downgrade, and Cancellation
-*Requires Phase 2 complete (frontend must be stable before building the Billing page on top of it). The existing billing infrastructure (GHL webhooks + Stripe) is partially built. This phase fills the gaps: plan-gating enforcement at the point of use, the user-facing billing management surface, and the full lifecycle from trial to paid to cancelled.*
+## Phase 4 — Testimonial Carousel
+**Requires:** Phase 1 complete.
 
-**What already exists:** `ghlpaymentwebhook`, `ghlCancellationWebhook`, `createStripePortalSession`, `createTopupCheckout`, `stripeWebhook`, `cancelSubscription`, `monthlyCreditsReset`, `deductCreditsServer`, `refundCreditsServer` are all in `functions/src/index.ts`. Plan features are defined in `entitlements.ts`. Credit costs are in `COSTS` map.
-
-**What is missing:** A user-facing billing page, plan-downgrade enforcement at credit-deduction time, trial expiry handling, and a unified billing state the frontend can read reliably.
-
-| Task | Description |
-|---|---|
-| 8.1 | Create a `billingState` derived field on the user Firestore document — computed and written by Cloud Functions whenever plan/credits change. Shape: `{ plan, isTrial, credits, creditsPerMonth, billingStatus, nextResetDate, stripeCustomerId, canUpgrade, canTopUp, isTeamMember, teamOwnerUid }`. Frontend reads this one field, not scattered user doc fields. |
-| 8.2 | Wire `billingState` write into all plan-change paths: `ghlpaymentwebhook` (plan upgrade/new), `ghlCancellationWebhook` (cancel), `monthlyCreditsReset` (credit reset), `createTopupCheckout` completion (top-up). Every path that touches credits or plan must also write `billingState`. |
-| 8.3 | Add a `useBillingState()` hook in `src/hooks/useBillingState.ts` — subscribes to `users/{uid}.billingState` via Firestore real-time listener. Replaces scattered `userData` reads in the frontend. Every plan gate check (`canUse()`) must read from this hook, not from stale cached state. |
-| 8.4 | Implement plan-gate enforcement at credit-deduction time in `deductCreditsServer`: before deducting, call `resolveEntitlement()` and verify the action is allowed for the user's current plan. If the plan was downgraded since the frontend last loaded, the server rejects with a clear error (`plan_downgraded`) rather than silently deducting. |
-| 8.5 | Build the Billing page in the frontend (`src/pages/Billing.tsx` or equivalent) with the following sections: current plan + credits bar, upgrade CTA (links to GHL checkout), top-up options (100 / 300 / 800 credits via `createTopupCheckout`), manage subscription button (opens Stripe portal via `createStripePortalSession`), cancel subscription button (calls `cancelSubscription` with confirmation dialog), and trial countdown if `isTrial: true`. |
-| 8.6 | Implement trial expiry handling: when `isTrial: true` and credits reach 0, show a persistent banner across the app ("Your trial has ended — upgrade to keep generating"). Block generation actions server-side when `plan === 'none'` or credits < action cost. |
-| 8.7 | Implement downgrade enforcement: when a user's plan drops (e.g. Scaling → Pro), features they no longer have access to must be hidden on next page load. The `useBillingState()` hook triggers a UI re-evaluation on plan change. Do not wait for page refresh. |
-| 8.8 | Implement top-up flow end-to-end: user clicks top-up option → `createTopupCheckout` creates Stripe checkout session → user pays → `stripeWebhook` fires → credits added to `users/{uid}.credits` → `billingState` updated → frontend credit bar updates in real time via listener. Add a success toast: "100 credits added to your account." |
-| 8.9 | Implement cancellation flow: user clicks cancel → confirmation dialog ("Your access continues until [period end date]") → `cancelSubscription` called → Firestore updated with `billingStatus: 'cancelled', cancelAt: <date>` → `billingState` updated → UI shows "Cancelled — access until [date]" in billing page header. |
-| 8.10 | Add credits low warning: when credits drop below 20% of plan monthly allocation, show a persistent low-credits banner with a top-up CTA. Threshold: `credits < creditsPerMonth * 0.2`. |
-| 8.11 | Write a `billingState` unit test fixture: assert that `ghlpaymentwebhook` with a `pro_monthly` product ID correctly sets `plan: 'pro'`, `credits: 2000`, `billingStatus: 'active'`, and writes `billingState`. Assert that `ghlCancellationWebhook` sets `plan: 'none'`, `credits: 0`, `billingStatus: 'cancelled'`. |
+| # | File | Action | Done when |
+|---|---|---|---|
+| 4.1 | `functions/src/creativeResolver.ts` | Add `testimonial_carousel` to `CREATIVE_MODE_CATALOG`. Available tabs: all three. Solo only — mutually exclusive with all other modes. Forces `adFormat: 'carousel'`. | `validateLaunchSurface({ offerCreativeMode: ['testimonial_carousel'], adFormat: 'carousel' })` returns allowed. With `adFormat: 'single'` returns not allowed. |
+| 4.2 | `src/components/InputForm.tsx` | When `testimonial_carousel` mode is selected, show a new upload zone: "Upload testimonial screenshots". Accept unlimited images. Each appears as a thumbnail strip below the upload zone. User can reorder and delete. | Upload zone appears. Multiple images uploadable. Thumbnails show in order. Delete button works. |
+| 4.3 | `functions/src/testimonialMockup.ts` | Implement `detectPlatform(imageBase64): Promise<'whatsapp' \| 'instagram_dm' \| 'facebook' \| 'email' \| 'google_review' \| 'telegram' \| 'other'>`. Use a lightweight prompt to a fast model (Gemini Flash) to identify the messaging platform from the screenshot. | Function correctly identifies WhatsApp, Instagram DM, and Facebook screenshots in test images. |
+| 4.4 | `functions/src/testimonialMockup.ts` | Implement `renderMockupSlide(screenshotBase64, platform, slideIndex, artDirection?): Promise<string>`. Renders the screenshot inside a platform-accurate UI frame matching the detected platform. Returns the composited image as base64. Art direction styling applied to the frame if provided. | WhatsApp screenshot returns image with green header, chat bubble UI, timestamp. |
+| 4.5 | `functions/src/generators.ts` | Add testimonial carousel generation flow. For slide 1: generate AI hook using testimonial-specific framing (curiosity about social proof). For middle slides: call `renderMockupSlide` per testimonial. For last slide: generate CTA close. Auto-adjust slide count to `testimonialCount + 2`. | Generating with 4 testimonials produces 6 slides with correct structure. |
+| 4.6 | `functions/src/generators.ts` | Add retargeting variant for testimonial carousel. Slide 1 hook names the objection AND teases testimonials. Testimonial slides framed to counter the objection. Close slide has objection-resolution CTA. | Retargeting testimonial carousel slide 1 references the objection. Close CTA is not generic. |
 
 ---
 
-### Phase 9: Team Management
-*The invite/accept/remove flow exists as Cloud Functions. This phase builds the user-facing team management UI, fixes the critical 404 bug on invite acceptance, and adds the full account setup flow for new invitees.*
+## Phase 5 — Blueprint → Render Prompt Pipeline
+**Requires:** Phase 1 complete.
 
-**What already exists:** `createTeamInvite`, `resendTeamInvite`, `revokeTeamInvite`, `claimTeamInvite`, `getTeamInvites`, `createTeamMember`, `removeTeamMember` in `functions/src/index.ts`. Team credit pooling via `resolveEntitlement()`. Team invite storage in `team_invites` collection. GHL webhook for invite delivery.
-
-**Critical bug:** When an invitee clicks the invite link, they land on a 404 page. The `/join` route does not exist in the frontend router. New users also have no way to create an account or set a password before claiming the invite. This must be fixed before team invites can work at all.
-
-**Plan limits:** Starter: 1 member (owner only). Creator: 1 member. Pro: 3 members. Scaling: 10 members.
-
-| Task | Description |
-|---|---|
-| 9.1 | **[CRITICAL — fixes 404]** Add `/join` route to the frontend router (`src/App.tsx` or equivalent routing config). The route must accept `?inviteId=<id>` as a query parameter. This single task unblocks the entire invite acceptance flow. Without it, every invite link is a dead end. |
-| 9.2 | **[CRITICAL — fixes 404]** Build the `/join` page component (`src/pages/JoinTeam.tsx`). On load, call `getTeamInvites` or a new `getInviteDetails(inviteId)` Cloud Function to fetch the invite record. Show: team owner's name, the invitee's email, and the invite status. If invite is expired or revoked, show a clear error ("This invite is no longer valid") — not a 404. |
-| 9.3 | **[CRITICAL — new user account setup]** On the `/join` page, detect whether the invitee already has a Firebase Auth account for their email. If they do: show a login form pre-filled with their email → after login, auto-call `claimTeamInvite(inviteId)` → redirect to the main app. If they do NOT have an account: show an account creation form (full name field + password field + confirm password field, email pre-filled and locked from the invite record) → create Firebase Auth account with email + password → then auto-call `claimTeamInvite(inviteId)` → redirect to the main app. |
-| 9.4 | Add `getInviteDetails(inviteId): { ownerName, inviteeEmail, teamPlan, status, expiresAt }` Cloud Function in `functions/src/index.ts` — reads from `team_invites` collection, returns only the fields needed for the `/join` page. Does not require authentication to call (the invite link is the auth token). Returns `{ status: 'expired' }` or `{ status: 'revoked' }` for invalid invites so the frontend can show the right message instead of crashing. |
-| 9.5 | Add invite expiry: set `expiresAt` to 7 days from creation when `createTeamInvite` fires. In `getInviteDetails` and `claimTeamInvite`, check `expiresAt`. If expired, return `status: 'expired'` — do not allow claim. Add "Resend" to reset the expiry clock. |
-| 9.6 | Build the Team page in the frontend (`src/pages/Team.tsx`) — accessible from account/settings. Shows: current team members list (name, email, role, joined date), pending invites list (email, sent date, status, resend/revoke actions), invite new member form, and member count vs plan limit (`2 / 3 members on Pro`). |
-| 9.7 | Implement invite flow in the frontend: owner enters invitee email + name → calls `createTeamInvite` → shows pending invite in the list with status "Sent". If plan limit reached, show inline error: "Your Pro plan allows 3 members. Upgrade to Scaling for up to 10." |
-| 9.8 | Implement resend and revoke in the pending invites list: resend calls `resendTeamInvite` (resets expiry, resends GHL email), revoke calls `revokeTeamInvite` with confirmation ("This invite link will stop working."). Both update status in real time via Firestore listener. |
-| 9.9 | Implement member removal: owner clicks remove → confirmation dialog ("Remove [Name]? They will lose access immediately.") → calls `removeTeamMember` → member's `isTeamMember` flag cleared → member's next action shows "You've been removed from this team. Contact your team owner." → member's account reverts to `plan: 'none'` (no independent plan) or their own plan if they had one. |
-| 9.10 | Implement member credit visibility: team members see a credit bar showing the owner's credit pool, labeled "Team credits — [Owner Name]'s account". Owner sees "Team credits — your account". Updates in real time via `useBillingState()` from Phase 8. |
-| 9.11 | Implement role-based action gating: `viewer` role cannot trigger credit-consuming actions. Generation buttons show tooltip "Viewers cannot generate — ask your team owner." Server-side `deductCreditsServer` already rejects viewer (existing code). |
-| 9.12 | Implement plan-limit enforcement in the invite UI: check `maxTeamMembers` against active member + open invite count before showing the invite form. At limit: replace form with "Upgrade to [next plan] to invite more members." |
-| 9.13 | Implement workspace separation for Scaling plan (`multiBrandWorkspaces: true`): workspace switcher in nav, each workspace has own generation history. Non-Scaling: no switcher, all members share one workspace. |
-| 9.14 | Add team state to `billingState` (Phase 8 task 8.1): include `teamMemberCount`, `teamOpenInvites`, `maxTeamMembers`, `isTeamOwner`, `isTeamMember`, `teamOwnerName` so the frontend reads team context from the same real-time listener. |
-| 9.15 | Write fixture tests: assert `createTeamInvite` blocked at plan limit. Assert `claimTeamInvite` sets `isTeamMember: true` and `teamOwnerUid`. Assert `claimTeamInvite` fails on expired invite. Assert `removeTeamMember` clears `isTeamMember`. Assert viewer role rejected by `deductCreditsServer`. Assert `getInviteDetails` returns correct status for expired/revoked invites without throwing. |
+| # | File | Action | Done when |
+|---|---|---|---|
+| 5.1 | `functions/src/generators.ts` | In `generateBuildPlan()`, confirm `inputs.offerCreativeMode` is used to inject the mode spec block into the prompt before the model generates the `TECHNICAL_PROMPT`. If the injection is conditional or missing, make it unconditional. | Calling `generateBuildPlan` with `offerCreativeMode: ['value_stack']` produces a blueprint whose `TECHNICAL_PROMPT` contains stack-zone composition language |
+| 5.2 | `functions/src/generators.ts` | In `generateBuildPlan()`, confirm paired modes inject both specs. When `offerCreativeMode: ['standard_hero', 'event_ticket']`, the prompt must contain both the hero spec AND the ticket spec blocks. | Calling with two modes produces a blueprint whose `TECHNICAL_PROMPT` references both mode compositions |
+| 5.3 | `functions/src/generators.ts` | In `generateBuildPlan()`, confirm `filterEmptyValueStackFields(inputs)` is called before any prompt assembly when `value_stack` is active. The filtered inputs — not raw inputs — are used everywhere downstream. | Calling with `{ valueStackPrice: '', valueStackTitle: 'Test' }` produces a blueprint that never mentions price |
+| 5.4 | `functions/src/generators.ts` | In `generateBuildPlan()`, confirm `inputs.brandColorPrimary` is injected as its exact hex value (e.g. `#FF6B00`) into the prompt before `TECHNICAL_PROMPT`. Never inject as a placeholder string like `[brand primary color]`. | Calling with `brandColorPrimary: '#FF6B00'` produces a blueprint whose `TECHNICAL_PROMPT` contains the string `#FF6B00` |
+| 5.5 | `functions/src/generators.ts` | In `generateBuildPlan()`, when `visualStyleFamily === 'minimal'`, inject: "MINIMAL FAMILY ACTIVE. Do NOT render any environment, scene, or worldbuilding. Background: solid color or minimal gradient only. Hero isolated. No environmental context." | Calling with `visualStyleFamily: 'minimal'` produces a blueprint whose `TECHNICAL_PROMPT` contains the minimal-family instruction |
+| 5.6 | `functions/src/generators.ts` | In `generateBuildPlan()`, when a reference ad is uploaded, inject: "REFERENCE AD ACTIVE. Match the reference ad's visual style, color palette, lighting, and composition. Override universe and art direction. Preserve creative mode layout." | Calling with a reference ad URL produces a blueprint whose `TECHNICAL_PROMPT` contains the reference-ad instruction |
+| 5.7 | `functions/src/generators.ts` | Write and export function `buildFinalImagePrompt(technicalPrompt: string, contract: FullLayoutContract, inputs: AdInputs): string`. Assembles the final string sent to the image model in this order: (1) `technicalPrompt`, (2) aspect ratio instruction, (3) sub-style constraint block if `inputs.visualSubStyle` is set, (4) creative mode structural rules from `inputs.offerCreativeMode`, (5) face-consistency instruction if Box A photos are present. Return the assembled string. | Function returns a string containing all five sections when all inputs are provided |
 
 ---
 
-*Source: `creativeResolver.ts` · `generators.ts` · `entitlements.ts` · `artDirectionConfig.ts` · `retargetingObjections.ts` · `constants.ts` · `types.ts` · `index.ts` · terminal session decisions · product owner decisions v3*
+## Phase 6 — Language Quality Contracts
+**Requires:** Nothing — start any time.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 6.1 | `functions/src/captionValidator.ts` | Add per-language word count limits. Arabic dialects: headline max 8 words, subheadline max 12 words, caption max 150 words. English: headline max 10 words, subheadline max 15 words, caption max 200 words. Validation function `validateWordCount(text, language, field): { valid: boolean, actual: number, max: number }`. | Function returns valid/invalid with correct counts for each language and field type |
+| 6.2 | `functions/src/captionValidator.ts` | Add Arabic Unicode ratio check. `validateArabicRatio(text): { valid: boolean, ratio: number }`. Must be >= 70% Arabic characters (excluding spaces, numbers, punctuation). If below, flag `arabicRatioFail: true`. | Pure Arabic text returns ratio > 0.95. Mixed text with 50% English returns valid: false. |
+| 6.3 | `functions/src/dialectMarkers.ts` | Implement dialect-specific marker validation. For each of the 6 Arabic dialects, define 5+ marker words/phrases. `validateDialect(text, dialect): { valid: boolean, markers: string[] }` checks for at least 2 markers. | Egyptian text with `ازاي` and `يعني` returns valid for `ar_egyptian`. Same text returns invalid for `ar_gulf`. |
+| 6.4 | `functions/src/captionValidator.ts` | Add RTL compliance check. `validateRTL(text): { valid: boolean, issues: string[] }`. Checks: no LTR-override characters, parentheses/brackets in correct RTL direction, numbers not breaking RTL flow. | Text with `(hello)` flags LTR parentheses issue. Pure RTL text passes. |
+| 6.5 | `functions/src/languageQuality.test.ts` | Write test file with one fixture per launch language (7 total). Each has a sample headline, subheadline, and caption. Assert all validators pass for correct samples and fail for deliberately broken samples. | All 7 language fixtures pass. At least 3 deliberate-failure samples caught. |
+
+---
+
+## Phase 7 — Failure Classification
+**Requires:** Nothing — start any time.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 7.1 | `functions/src/generators.ts` | Add `failureClass` field to generation records. Type: `'prompt_malformed' \| 'model_error' \| 'validation_reject' \| 'slot_repair_failed' \| 'numeric_hallucination' \| 'combination_invalid' \| 'credit_insufficient'`. On every caught error, classify and write to the generation record before re-throwing. | Failed generation records have a non-null `failureClass` field |
+| 7.2 | `functions/src/generators.ts` | Add `costEstimate` field to generation records. Before calling any AI model, compute: `costEstimate = { inputTokens: estimated, outputTokens: estimated, imageRenders: count, totalCredits: cost }`. Write to record at the start of generation (before potential failure). | Every generation record has `costEstimate` with non-zero values |
+| 7.3 | `functions/src/failureClassification.test.ts` | Write test: simulate each failure class. Assert classification is correct. (a) Invalid JSON from model → `prompt_malformed`. (b) 500 from image API → `model_error`. (c) Word count violation → `validation_reject`. (d) Slot map has unfilled required slot → `slot_repair_failed`. (e) Plan check fails → `combination_invalid`. (f) Credits < cost → `credit_insufficient`. | All 6 classification tests pass |
+
+---
+
+## Phase 8 — Billing (Paddle + GHL Sync)
+**Requires:** Phase 2 complete.
+**Blocks:** Phase 9, Phase 12, Phase 14.
+
+**Architecture:** Paddle is the Merchant of Record (handles tax, invoicing, payment processing). GHL remains the CRM — it receives post-payment webhooks from Firebase to trigger automations (welcome email, onboarding, tag updates). The flow is: User clicks subscribe → Paddle checkout overlay → Paddle processes payment → Paddle sends webhook to Firebase Cloud Function → Firebase updates user doc + sends webhook to GHL inbound webhook URL.
+
+**What already exists (being replaced):**
+- `ghlpaymentwebhook` in `index.ts` — GHL-specific webhook with Stripe customer lookup. Being replaced by Paddle webhook handler.
+- `createStripePortalSession` callable — replaced by Paddle management URLs.
+- `Billing.tsx` (206L) — references Stripe portal.
+- `billingState.ts` (162L) — `writeBillingState()`.
+- `useBillingState.ts` (98L) — Firestore `onSnapshot` hook.
+- Billing UI components: `CancelDialog`, `CreditBar`, `PaymentFailedAlert`, `PlanCard`, `ReactivateButton`, `TopUpSelector`.
+
+**What stays:** `GHL_TEAM_INVITE_WEBHOOK_URL` secret stays — used by Phase 9 team invites. GHL inbound webhook URL stays — Firebase will POST to it after Paddle events.
+
+### 8.A — Paddle Dashboard Setup (Owner Steps — Not Code)
+
+These are manual steps for Eslam to complete before any code tasks begin.
+
+| # | Where | Action | Done when |
+|---|---|---|---|
+| 8.A.1 | Paddle Dashboard | Create a Paddle Billing account at paddle.com. Complete business verification. Switch to **Sandbox** mode for development. | Paddle account exists. Sandbox mode is active. |
+| 8.A.2 | Paddle Dashboard → Catalog → Products | Create 4 subscription products: **Starter** (monthly), **Creator** (monthly), **Pro** (monthly), **Scaling** (monthly). Set prices in USD. Each product has one default price. Note down the **Price ID** for each (format: `pri_xxxxx`). | 4 products exist with 4 price IDs recorded. |
+| 8.A.3 | Paddle Dashboard → Catalog → Products | Create 1 one-time product: **Credit Top-Up**. Create 3 prices: 100 credits, 300 credits, 800 credits. Note down each Price ID. | Top-up product exists with 3 price IDs recorded. |
+| 8.A.4 | Paddle Dashboard → Developer Tools → Authentication | Generate an **API key**. Copy and save securely. This is `PADDLE_API_KEY`. | API key saved. |
+| 8.A.5 | Paddle Dashboard → Developer Tools → Notifications | Create a **Notification destination**. Type: Webhook. URL: `https://europe-west1-proadsai-saas.cloudfunctions.net/paddleWebhook` (update region if different). Subscribe to events: `subscription.created`, `subscription.updated`, `subscription.canceled`, `subscription.past_due`, `transaction.completed`, `transaction.payment_failed`. Copy the **Webhook Secret** (format: `pdl_ntfset_xxxxx_xxxxx`). This is `PADDLE_WEBHOOK_SECRET`. | Webhook destination exists. Secret saved. All 6 events subscribed. |
+| 8.A.6 | Paddle Dashboard → Developer Tools → Notifications | Use the **Webhook Simulator** to send a test `subscription.created` event. Verify it hits the Cloud Function URL (will 404 until code is deployed — that's fine, just confirm the URL is reachable). | Simulator sends test event. Paddle shows delivery attempt (even if 404). |
+| 8.A.7 | Firebase Console → Functions → Configuration | Set the following secrets using `firebase functions:secrets:set`: `PADDLE_API_KEY` → value from 8.A.4. `PADDLE_WEBHOOK_SECRET` → value from 8.A.5. Verify with `firebase functions:secrets:access PADDLE_API_KEY`. | Both secrets are set and accessible. |
+
+### 8.B — GHL Setup (Owner Steps — Not Code)
+
+| # | Where | Action | Done when |
+|---|---|---|---|
+| 8.B.1 | GHL → Automation → Workflows | Create a new workflow: **"Paddle Payment Received"**. Set trigger type: **Inbound Webhook**. GHL generates a unique webhook URL (format: `https://services.leadconnectorhq.com/hooks/xxxxx`). Copy this URL. This is `GHL_PADDLE_SYNC_WEBHOOK_URL`. | Workflow exists with inbound webhook trigger. URL saved. |
+| 8.B.2 | GHL → Automation → Workflows | In the same workflow, add actions after the trigger: (1) **Update Contact** — set custom field `plan` to `{{plan}}`, set custom field `billing_status` to `{{billingStatus}}`, set tag `paid_{{plan}}`. (2) **If/Else** — if `{{event}}` = `subscription.created`, then send **Welcome Email** (or trigger welcome automation). (3) **If/Else** — if `{{event}}` = `subscription.canceled`, then remove paid tags and trigger **Win-Back** automation. | Workflow has Update Contact + conditional email triggers for created/cancelled. |
+| 8.B.3 | GHL → Automation → Workflows | Create a second workflow: **"Paddle Payment Failed"**. Trigger: Inbound Webhook (separate URL). Actions: (1) Update Contact — set `billing_status` to `past_due`. (2) Send **Dunning Email** — "Your payment failed, update your card here: {{updatePaymentUrl}}". Copy this URL as `GHL_PADDLE_FAILED_WEBHOOK_URL`. | Workflow exists with dunning email action. URL saved. |
+| 8.B.4 | GHL → Sites → Funnels | Update the pricing/checkout page CTA buttons. For new users coming from the GHL funnel (who do NOT have a Firebase Auth account yet), the Paddle checkout URL should NOT include `firebaseUid` — it is not available yet. The Paddle webhook handler (8.C.3) detects the missing uid and writes to `pending_plans/{email}` instead. For existing users upgrading from inside the app, the `createPaddleCheckout` callable (8.C.11) passes `firebaseUid` automatically. The GHL funnel buttons just need the correct Paddle price ID per plan. | CTA buttons point to Paddle checkout URLs with the correct price ID. No firebaseUid in the URL for new-user funnels. |
+| 8.B.5 | Firebase Console → Functions → Configuration | Set secrets: `GHL_PADDLE_SYNC_WEBHOOK_URL` → value from 8.B.1. `GHL_PADDLE_FAILED_WEBHOOK_URL` → value from 8.B.3. | Both GHL webhook URL secrets are set. |
+
+### 8.C — Code Tasks
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 8.C.1 | `functions/package.json` | Add `@paddle/paddle-node-sdk` dependency. Add `PADDLE_API_KEY` and `PADDLE_WEBHOOK_SECRET` to `defineSecret` in `index.ts`. Keep `GHL_TEAM_INVITE_WEBHOOK_URL` (used by Phase 9). Remove `Stripe` import and `stripeSecretKey` secret. | `paddle-node-sdk` is in dependencies. Stripe import is gone. Both Paddle secrets + GHL team invite secret are defined. |
+| 8.C.2 | `functions/src/billing/paddleWebhook.ts` | Create this file. Export `handlePaddleWebhook(req, res)` — an `onRequest` handler that: (1) reads raw body with `req.rawBody` (NOT `req.body` — Paddle signature verification breaks if JSON is re-parsed), (2) verifies signature using `paddle.webhooks.unmarshal(rawBody, secret, signature)` from `@paddle/paddle-node-sdk`, (3) routes to handler by `event.eventType`. Supported events: `subscription.created`, `subscription.updated`, `subscription.canceled`, `subscription.past_due`, `transaction.completed`, `transaction.payment_failed`. Return 200 after processing. | Function verifies signature. Invalid signature returns 400. Valid event returns 200 and logs eventType. |
+| 8.C.3 | `functions/src/billing/paddleWebhook.ts` | In `subscription.created` handler: extract `event.data.customData`. Map `event.data.items[0].price.id` to plan name using `PADDLE_PRICE_TO_PLAN` map (Starter/Creator/Pro/Scaling). Compute plan data: `plan`, `credits` (from `planconfig.ts`), `paddleSubscriptionId` (from `event.data.id`), `paddleCustomerId` (from `event.data.customerId`), `billingStatus: 'active'`, `paddleUpdatePaymentUrl` (from `event.data.managementUrls.updatePaymentMethod`), `paddleCancelUrl` (from `event.data.managementUrls.cancel`), `isTrial` (true if trial period active). **Dual-write logic:** If `customData.firebaseUid` exists (existing user upgrading from inside the app), write directly to `users/{uid}` and call `writeBillingState(uid)`. If `customData.firebaseUid` is missing or empty (new user paid on Paddle BEFORE creating a Firebase Auth account), write to `pending_plans/{email.toLowerCase()}` instead — using `event.data.customer.email` or the email from the transaction. This matches the existing `onAuthStateChanged` handler in `App.tsx` which reads `pending_plans/{email}` on first login. Then call `notifyGHL(email, 'subscription.created')`. | After webhook with firebaseUid → user doc updated. After webhook without firebaseUid → `pending_plans/{email}` doc created. Both include all plan fields. |
+| 8.C.4 | `functions/src/billing/paddleWebhook.ts` | In `subscription.canceled` handler: set `plan: 'none'`, `billingStatus: 'cancelled'`, `credits: 0`. Call `writeBillingState(uid)`. Call `notifyGHL(uid, 'subscription.canceled')`. In `subscription.past_due`: set `billingStatus: 'past_due'`, do NOT zero credits yet. Call `writeBillingState(uid)`. Call `notifyGHLFailed(uid, 'past_due')`. | Cancellation sets plan to none + GHL notified. Past-due keeps credits + GHL dunning triggered. |
+| 8.C.5 | `functions/src/billing/paddleWebhook.ts` | In `subscription.updated` handler: read new `event.data.items[0].price.id`. If price ID changed (plan upgrade/downgrade), map to new plan name, update credits to new plan's allocation. Always update management URLs. Call `writeBillingState(uid)`. Call `notifyGHL(uid, 'subscription.updated')`. | Plan upgrade changes plan and credits. Management URLs refresh. GHL notified. |
+| 8.C.6 | `functions/src/billing/paddleWebhook.ts` | In `transaction.completed` handler: check `event.data.customData.isTopUp === true`. If yes, add `event.data.customData.creditAmount` to user's current credits. Call `writeBillingState(uid)`. Call `notifyGHL(uid, 'topup')`. If not a top-up, ignore (subscription transactions handled by subscription events). | Top-up adds credits. GHL notified. Non-top-up transactions ignored. |
+| 8.C.7 | `functions/src/billing/paddleWebhook.ts` | In `transaction.payment_failed` handler: set `billingStatus: 'past_due'` on the user doc. Call `writeBillingState(uid)`. Call `notifyGHLFailed(uid, 'payment_failed')`. | Payment failure sets past-due status. GHL dunning workflow triggered. |
+| 8.C.8 | `functions/src/billing/ghlBillingSync.ts` | Create this file. Export two functions: `notifyGHL(identifier, event)` — `identifier` is either a `uid` (reads user doc for email/name) or an `email` string (for pending_plans users who have no Firebase Auth account yet). POSTs to `GHL_PADDLE_SYNC_WEBHOOK_URL` with JSON body: `{ email, contactName, plan, billingStatus, event, credits, paddleSubscriptionId, updatePaymentUrl: paddleUpdatePaymentUrl }`. `notifyGHLFailed(identifier, event)` — POSTs to `GHL_PADDLE_FAILED_WEBHOOK_URL` with: `{ email, contactName, event, updatePaymentUrl }`. Both use `fetch()` with no auth (GHL inbound webhooks are open endpoints). Log success/failure but do NOT throw on GHL failure — GHL sync is best-effort and must never block Paddle webhook processing. | `notifyGHL` with uid reads user doc and sends POST. `notifyGHL` with email sends POST with email only. GHL workflow triggers. Failure is logged but does not throw. |
+| 8.C.9 | `functions/src/billing/billingState.ts` | Update `writeBillingState()`: replace `stripeCustomerId` with `paddleCustomerId`, `paddleSubscriptionId`, `paddleUpdatePaymentUrl`, and `paddleCancelUrl` in the billingState shape. Remove all Stripe references. Keep shape compatible with `useBillingState` hook. | billingState shape has Paddle fields, no Stripe fields. |
+| 8.C.10 | `functions/src/index.ts` | Export `paddleWebhook` as `onRequest` with `cors: true`, `secrets: [paddleApiKey, paddleWebhookSecret, ghlPaddleSyncUrl, ghlPaddleFailedUrl]`. Remove `ghlpaymentwebhook` and `ghlCancellationWebhook` exports (these were the old GHL→Firebase webhooks — direction is now reversed). Remove `createStripePortalSession`. Remove Stripe import. Keep `ghlTeamInviteUrl` secret for Phase 9. | Only `paddleWebhook` exists for billing. No old GHL payment handlers. No Stripe. Team invite GHL URL preserved. |
+| 8.C.11 | `functions/src/index.ts` | Create callable `createPaddleCheckout(priceId: string)` that uses Paddle Node SDK to create a checkout session: `paddle.checkout.create({ items: [{ priceId }], customData: { firebaseUid: auth.uid }, customer: { email: auth.email } })`. Returns the checkout URL. Create callable `createPaddleTopUp(creditAmount: number, topUpPriceId: string)` that creates a one-time checkout with `customData: { firebaseUid: auth.uid, isTopUp: true, creditAmount }`. | Both callables return valid Paddle checkout URLs. |
+| 8.C.12 | `src/pages/Billing.tsx` | Replace `createStripePortalSession` with: (1) "Update Payment" button opens `billingState.paddleUpdatePaymentUrl` in new tab, (2) "Cancel" button opens `billingState.paddleCancelUrl` in new tab with confirmation dialog first. Replace top-up buttons to call `createPaddleTopUp`. Replace plan upgrade buttons to call `createPaddleCheckout`. | All billing actions use Paddle URLs/callables. No Stripe/old-GHL references in frontend. |
+| 8.C.13 | `src/components/PricingTable.tsx` | Update CTA buttons on each plan card to call `createPaddleCheckout(paddlePriceId)`. Pass Paddle price IDs from `planconfig.ts`. On success, open returned URL. Optionally embed Paddle.js overlay: add `<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>` and use `Paddle.Checkout.open({ settings: { displayMode: 'overlay' }, items: [{ priceId, quantity: 1 }], customData: { firebaseUid } })` for in-page checkout. | Clicking "Subscribe" on any plan opens Paddle checkout with correct plan. |
+| 8.C.14 | `src/planconfig.ts` | Add `paddlePriceId` field to each plan entry. Map: `starter` → Paddle price ID from 8.A.2, `creator` → Creator price ID, `pro` → Pro price ID, `scaling` → Scaling price ID. Add `paddleTopUpPriceIds: { 100: 'pri_xxx', 300: 'pri_xxx', 800: 'pri_xxx' }`. Remove any GHL product ID mappings and Stripe references. | Each plan has a `paddlePriceId`. Top-ups have price IDs. No GHL/Stripe product references. |
+| 8.C.15 | `functions/src/billing/__tests__/billingState.test.ts` | Rewrite tests: (a) simulated `subscription.created` webhook sets correct plan, credits, and paddleSubscriptionId, (b) `subscription.canceled` sets plan to `none` and calls `notifyGHL`, (c) `transaction.completed` with `isTopUp: true` adds credits, (d) `subscription.past_due` sets status but keeps credits and calls `notifyGHLFailed`, (e) invalid Paddle signature returns 400, (f) `notifyGHL` failure does not throw (GHL sync is best-effort). | All six tests pass. |
+| 8.C.16 | `functions/src/index.ts` | Keep `monthlyCreditsReset` scheduled function unchanged — it already reads plan from user doc and resets credits. Verify it calls `writeBillingState()` after reset. | Monthly reset still works after Paddle migration. billingState updates after reset. |
+| 8.C.17 | `index.html` | Add Paddle.js for overlay checkout: `<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>`. In `main.tsx` or app init, call `Paddle.Setup({ token: 'your_client_side_token' })` for Sandbox during development (`Paddle.Environment.set('sandbox')`). | Paddle.js loads. `Paddle.Checkout.open()` is available. Sandbox mode active in dev. |
+
+### 8.D — Email-Only Auth (Replace Login Page)
+
+**Context:** Users arrive at `app.proadsai.com` after paying on Paddle. Their email already exists in Firestore (written by `paddleWebhookHandler`) with plan, credits, and subscription status. They need to create a Firebase Auth account using the exact same email. Google sign-in is removed entirely to prevent email mismatches between Paddle payment and Firebase Auth.
+
+**What already exists:**
+- `LoginScreen` component inline in `App.tsx` (around line 32) — has email+password fields, Google sign-in button, forgot password link.
+- `handleGoogleLogin()` in `App.tsx` (line 1330) — calls `signInWithPopup(auth, googleProvider)`.
+- `handleEmailLogin()` in `App.tsx` (line 1344) — calls `signInWithEmailAndPassword`.
+- `googleProvider` exported from `firebase.ts` (line 23) — `new GoogleAuthProvider()`.
+- `noAccountError` state (line 929) — shows error when Google account has no matching Firestore doc.
+- No `createUserWithEmailAndPassword` — account creation does not exist in the app yet.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 8.D.1 | `src/firebase.ts` | Remove `GoogleAuthProvider` import and `export const googleProvider = new GoogleAuthProvider()` line. | `googleProvider` export is gone. No Google auth imports in `firebase.ts`. |
+| 8.D.2 | `src/App.tsx` | Remove `googleProvider` from the import of `firebase.ts`. Remove `signInWithPopup` from the `firebase/auth` import. Add `createUserWithEmailAndPassword` to the `firebase/auth` import. | Import line has `createUserWithEmailAndPassword`. No `signInWithPopup` or `googleProvider`. |
+| 8.D.3 | `src/App.tsx` | Delete `handleGoogleLogin` function entirely (around line 1330). Remove `onGoogleLogin` prop from `LoginScreen` component definition and from the `<LoginScreen>` render call (around line 2327). | `handleGoogleLogin` does not exist. `LoginScreen` has no `onGoogleLogin` prop. |
+| 8.D.4 | `src/App.tsx` | Refactor `LoginScreen` component. Add `activeTab` state: `'login' \| 'create'`. Render two tab buttons above the form: `[ Login ]  [ Create Account ]`. Active tab is visually highlighted. Both tabs render on the same page — no route change, just state toggle. Remove `noAccountError` prop — replaced by specific error handling per tab. | Two tabs render above the form. Clicking toggles between them. No route change. |
+| 8.D.5 | `src/App.tsx` | In the Login tab: show Email and Password fields. Button text: `ENTER STUDIO →` (keep existing style). Below the form, show link: "Don't have an account? Create one" — clicking it switches `activeTab` to `'create'`. Keep "Forgot Password?" link. Remove the Google sign-in button and its divider/separator. | Login tab has email + password + ENTER STUDIO button + forgot password link + create account link. No Google button. |
+| 8.D.6 | `src/App.tsx` | In the Create Account tab: show Email, Password, and Confirm Password fields. Button text: `CREATE ACCOUNT →` (same style as login button). Below the button, show link: "Already have an account? Log in" — clicking it switches `activeTab` to `'login'`. No "Forgot Password?" link on this tab. | Create Account tab has 3 fields + CREATE ACCOUNT button + login link. No forgot password. |
+| 8.D.7 | `src/App.tsx` | Add `handleCreateAccount` function. On submit: (1) validate `password === confirmPassword`, if not show inline error "Passwords don't match". (2) Validate `password.length >= 8`, if not show inline error "Password must be at least 8 characters". (3) Call `createUserWithEmailAndPassword(auth, email, password)`. On success, `onAuthStateChanged` fires and the app proceeds to the authenticated state — no manual redirect needed. | Function creates account. Validation errors show inline. Successful creation triggers `onAuthStateChanged`. |
+| 8.D.8 | `src/App.tsx` | In the `onAuthStateChanged` handler (around line 980), update the "no Firestore doc" branch (line 1057+). The existing flow already checks `pending_plans/{email}` — keep this logic but update field names to match Paddle webhook output (replace `stripeCustomerId` with `paddleCustomerId`, `paddleSubscriptionId`, `paddleUpdatePaymentUrl`, `paddleCancelUrl`). The `pending_plans` doc is created by the Paddle webhook (task 8.C.3) when a user pays before creating an account. The existing code deletes the pending doc after consuming it — keep that. **Critical change at line 1143:** currently, if no pending plan AND no team membership, the code **deletes the Firebase Auth account** and signs out. Replace this with: keep the auth account, set `user`, set `userPlan: 'none'`, set `userCredits: 0`, and set a new state `showBillingModal: true`. Render `PricingTable` in a fullscreen modal overlay when `showBillingModal` is true. After the user subscribes via Paddle and the webhook writes their plan, the `useBillingState` hook will update and the modal can close. | Paid-before-signup user → pending_plans consumed → enters app with plan. Unpaid user → NOT deleted → sees billing modal with PricingTable. Team member → enters app via team flow (unchanged). |
+| 8.D.9 | `src/App.tsx` | Add error handling for `handleCreateAccount`: `auth/email-already-in-use` → show inline error "An account with this email already exists. Please log in." AND auto-switch `activeTab` to `'login'` with the email pre-filled in the login form. `auth/weak-password` → "Password must be at least 8 characters." `auth/invalid-email` → "Please enter a valid email address." Any other error → "Something went wrong. Please try again." | Each error code shows correct message. `email-already-in-use` auto-switches to login with email pre-filled. |
+| 8.D.10 | `src/App.tsx` | Update error handling for `handleEmailLogin`: `auth/user-not-found` → show inline error "No account found with this email. Please create an account first." AND auto-switch `activeTab` to `'create'` with the email pre-filled. `auth/wrong-password` → "Incorrect password. Please try again." `auth/too-many-requests` → "Too many attempts. Please wait a few minutes and try again." Remove old `noAccountError` state and its Google-specific error UI. | Each error code shows correct message. `user-not-found` auto-switches to create tab with email pre-filled. |
+| 8.D.11 | `src/App.tsx` | Add shared `pendingEmail` state used for cross-tab email pre-fill. When `auth/email-already-in-use` fires on Create tab, set `pendingEmail` to the entered email and switch to Login tab — Login tab reads `pendingEmail` as the initial value of its email field. Same in reverse for `auth/user-not-found`. Clear `pendingEmail` after it's consumed. | Email carries over when auto-switching tabs in both directions. |
+| 8.D.12 | `src/i18n.tsx` | Add translation keys for new strings: `login.createAccount`, `login.createAccountButton` (`CREATE ACCOUNT →`), `login.alreadyHaveAccount`, `login.dontHaveAccount`, `login.errorEmailInUse`, `login.errorUserNotFound`, `login.errorWrongPassword`, `login.errorTooManyRequests`, `login.errorWeakPassword`, `login.errorInvalidEmail`, `login.errorPasswordsMismatch`, `login.errorGeneric`, `login.welcomeTrial`. Add both Arabic and English values. | All new strings have AR + EN translations. No hardcoded strings in the auth UI. |
+| 8.D.13 | `src/App.tsx` | In the `onAuthStateChanged` handler, after a `pending_plans` doc is consumed and the user doc is created (around line 1090): show welcome toast using the existing toast system: `"Welcome! Your 7-day trial has started."` (use `login.welcomeTrial` translation key). Only show on the FIRST login after account creation — check `createdAt` is within the last 60 seconds to avoid showing on subsequent logins. | First login after Paddle payment shows welcome toast. Subsequent logins do not. |
+| 8.D.14 | `src/App.tsx` | Add `showBillingModal` state (default `false`). When `showBillingModal` is true, render a fullscreen modal overlay with `<PricingTable />` inside. The modal has no close button — user must pick a plan. After Paddle checkout completes and the webhook fires, `useBillingState` will update `plan` from `'none'` to the new plan. Add a `useEffect` that watches `billingState.plan`: when it changes from `'none'` to any real plan, set `showBillingModal: false` and show welcome toast. | Unpaid user sees mandatory billing modal. After paying, modal auto-closes and app loads. |
+
+---
+
+## Phase 9 — Team Management
+**Requires:** Phase 8 complete.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 9.1 | `src/App.tsx` (or router config file) | Add route `/join` that renders a `JoinTeam` component and accepts `?inviteId=` query param | Navigating to `/join?inviteId=test` renders a page instead of 404 |
+| 9.2 | `functions/src/index.ts` | Write and export Cloud Function `getInviteDetails(inviteId: string)` — reads from `team_invites` collection, returns `{ ownerName, inviteeEmail, teamPlan, status, expiresAt }`. Does not require Firebase Auth. Returns `{ status: 'expired' }` if `expiresAt` is in the past. Returns `{ status: 'revoked' }` if invite was revoked. | Calling with a valid inviteId returns the invite fields. Calling with expired inviteId returns `{ status: 'expired' }`. |
+| 9.3 | `functions/src/index.ts` | In `createTeamInvite`, set `expiresAt` to `Date.now() + 7 * 24 * 60 * 60 * 1000` (7 days from creation) on every new invite. | New invites in `team_invites` collection have `expiresAt` set to 7 days from now |
+| 9.4 | `functions/src/index.ts` | In `claimTeamInvite`, check `expiresAt` before processing. If expired, throw `HttpsError('failed-precondition', 'invite_expired')`. Do not set `isTeamMember`. | Calling `claimTeamInvite` with an expired inviteId returns the invite_expired error |
+| 9.5 | `src/pages/JoinTeam.tsx` | Create this file. On mount, call `getInviteDetails(inviteId)`. If `status === 'expired'` or `status === 'revoked'`, render error message (no 404, no crash). If valid, render the invite card showing owner name and invitee email. **No Google sign-in on this page** — email + password only, consistent with the main login page (Phase 8.D). The existing `JoinTeam.tsx` in the codebase already follows this pattern. | Page renders invite details for valid invite. Page renders "This invite is no longer valid" for expired/revoked. Never shows a 404. No Google auth button. |
+| 9.6 | `src/pages/JoinTeam.tsx` | Add login branch: check if `auth.currentUser` email matches `inviteeEmail` from invite. If user is already logged in with matching email, show "Join [Owner]'s team" button that calls `claimTeamInvite`. On success, redirect to `/`. | Logged-in user with matching email can claim invite and is redirected |
+| 9.7 | `src/pages/JoinTeam.tsx` | Add new-account branch: if no current user or email does not match, show a form with fields: full name (pre-filled if available), email (pre-filled from invite, read-only), password, confirm password. On submit: create Firebase Auth account with email+password, then call `claimTeamInvite`, then redirect to `/`. | New user can create an account and claim the invite in one flow. Ends up logged in and redirected. |
+| 9.8 | `src/pages/Team.tsx` | Create this file. Render three sections: (1) active members list showing name, email, role, joined date with a "Remove" button per member; (2) pending invites list showing email, sent date, status with "Resend" and "Revoke" buttons; (3) invite form with name and email fields and "Send Invite" button. | Page renders all three sections. Data comes from `getTeamInvites` Cloud Function. |
+| 9.9 | `src/pages/Team.tsx` | Wire "Send Invite" button to call `createTeamInvite(name, email)`. On success, add the new invite to the pending list in local state. If plan limit is reached (`teamMemberCount + openInvites >= maxTeamMembers`), replace the form with inline text: "Upgrade to [next plan] to invite more members." | Sending an invite adds it to the pending list without page refresh. Limit message shows when at cap. |
+| 9.10 | `src/pages/Team.tsx` | Wire "Resend" button to call `resendTeamInvite(inviteId)`. Wire "Revoke" button to call `revokeTeamInvite(inviteId)` after a browser `confirm()` dialog. Both update the invite status in local state on success. | Resend calls the function. Revoke shows confirm dialog first. Both update the UI without page refresh. |
+| 9.11 | `src/pages/Team.tsx` | Wire "Remove" button on active members to call `removeTeamMember(memberUid)` after a `confirm()` dialog. On success, remove the member from the active list in local state. | Remove shows confirm dialog. On confirm, member disappears from list without page refresh. |
+| 9.12 | `src/components/Layout.tsx` (or credit bar component) | For team members, show the credit bar labeled "Team credits — [ownerName]'s account" using `billingState.teamOwnerName`. For team owners, show "Team credits — your account". Both read from `useBillingState()`. | Team member sees owner's name in credit bar. Owner sees "your account". |
+| 9.13 | `src/components/InputForm.tsx` | Disable all generation-triggering buttons when `billingState.teamRole === 'viewer'`. Add tooltip on disabled state: "Viewers cannot generate — contact your team owner." | Viewer role user sees disabled generate buttons with tooltip |
+| 9.14 | `functions/src/index.ts` | In `writeBillingState()` from Phase 8, add team fields: `teamMemberCount`, `teamOpenInvites`, `maxTeamMembers`, `isTeamOwner`, `isTeamMember`, `teamOwnerName`. Read team member count from `users/{uid}/team` subcollection size. Read open invites from `team_invites` where `ownerUid === uid` and `status === 'pending'`. | `billingState` object includes all team fields after a team invite is sent |
+| 9.15 | `functions/src/contractFixtures.test.ts` | Add four team fixture tests: (a) `createTeamInvite` is blocked when memberCount + openInvites >= maxTeamMembers; (b) `claimTeamInvite` sets `isTeamMember: true` on the invitee's user doc; (c) `claimTeamInvite` with expired invite returns `invite_expired` error; (d) `removeTeamMember` sets `isTeamMember: false` on the removed member's user doc. | All four tests pass |
+
+---
+
+## Phase 10 — Favorites & Workspace
+**Requires:** Phase 8 complete (needs `billingState` for team scoping — which user's favorites to show).
+
+**What already exists:**
+- `feedbackService.toggleFavorite(generationId, isFavorite)` — writes `feedback.savedToFavorites` to Firestore. Works.
+- `FeedbackButtons.tsx` — renders a bookmark button that calls `toggleFavorite`. The button exists on each step's output cards.
+- `PerformanceDashboard.tsx` — has a Favorites tab that loads and displays saved generations. Read-only display, no navigation, no team scope.
+- `generations` Firestore collection — stores all outputs with `output.phase` field (`hooks`, `concepts`, `render`, `caption`).
+
+**What is missing:**
+- The bookmark button in `FeedbackButtons` starts with `isFavorite: false` always — it does not load the real saved state from Firestore, so the star is always empty on page load even for already-favorited items.
+- No favorites panel inside each step — the only favorites view is the Performance Dashboard modal, which is separate from the generation flow.
+- No "load this" action — clicking a favorite in the dashboard shows it but does not navigate back to the step with the data restored for editing.
+- Favorites are scoped to `userId` only — team members cannot see each other's saved items.
+- No way to save an edited/updated version back to favorites from within a step.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 10.1 | `src/services/feedbackService.ts` | Add function `getFavoriteIds(userId: string, workspaceId?: string): Promise<Set<string>>` that queries the `generations` collection for all records where `userId == userId` AND `feedback.savedToFavorites == true` and returns a Set of their document IDs. If `workspaceId` is provided, also include favorites from team members on the same workspace. | Function returns a Set containing the IDs of favorited generation records for the user and their team |
+| 10.2 | `src/hooks/useFavorites.ts` | Create this file. Export hook `useFavorites(phase: 'hooks' \| 'concepts' \| 'render' \| 'caption')` that subscribes to the `generations` collection via Firestore `onSnapshot` filtered by: `userId == currentUser.uid`, `feedback.savedToFavorites == true`, `output.phase == phase`. Also includes team members' favorites if `billingState.isTeamMember` or `billingState.isTeamOwner` is true (scope by `workspaceId`). Returns `{ favorites: GenerationRecord[], loading: boolean }`. | Hook returns the correct filtered list in real time. Adding a favorite in one browser tab appears in another tab within 2 seconds. |
+| 10.3 | `src/components/FeedbackButtons.tsx` | On component mount, if `generationId` is provided, fetch the real `savedToFavorites` value from Firestore for that generation and set `isFavorite` accordingly. Currently the component always starts with `isFavorite: false`. | Bookmarked items show the filled star icon (amber) immediately on page load without needing to re-click |
+| 10.4 | `src/components/FavoritesPanel.tsx` | Create this new component. Props: `phase: 'hooks' \| 'concepts' \| 'render' \| 'caption'`, `onLoad: (record: GenerationRecord) => void`. Uses `useFavorites(phase)` to get the list. Renders a scrollable sidebar panel. Each item shows: step badge (Hook / Concept / Design / Caption), the `hookText` or `captionText` preview, the date saved, and two buttons: "Load" and "Remove from favorites". Empty state: "No saved [hooks/concepts/designs/captions] yet. Click ⭐ on any result to save it." | Component renders correct items per phase. "Remove" calls `toggleFavorite(id, false)` and item disappears from list. |
+| 10.5 | Step 2 UI (hooks output component) | Add a "Saved Hooks" toggle button in the Step 2 header area. When clicked, shows the `FavoritesPanel` with `phase="hooks"` as a slide-in panel alongside the hook results. Clicking "Load" on a saved hook populates the hook text fields in Step 2 state with the saved `hookText` and `subheadText`. | User can open the panel, see saved hooks, click Load, and the hook text appears in the editable fields in Step 2 |
+| 10.6 | Step 3 UI (concepts/blueprint output component) | Add a "Saved Concepts" toggle in Step 3 header. `FavoritesPanel` with `phase="concepts"`. Clicking "Load" on a saved concept restores the `conceptText` and `buildPlan` into Step 3 state, showing the blueprint as if it was just generated. | User can load a saved concept into Step 3 and see the blueprint rendered |
+| 10.7 | Step 4 UI (render output component) | Add a "Saved Designs" toggle in Step 4 header. `FavoritesPanel` with `phase="render"`. Clicking "Load" on a saved design displays the saved `imageUrl` in the Step 4 result area. Also shows a "Edit & Re-generate" button that pre-fills Step 1 inputs from the generation record's `input` fields, then navigates to Step 3 to re-run from the blueprint stage. | User can load a saved design image and see it in Step 4. "Edit & Re-generate" restores context. |
+| 10.8 | Step 5 UI (caption output component) | Add a "Saved Captions" toggle in Step 5 header. `FavoritesPanel` with `phase="caption"`. Clicking "Load" restores the `captionText` into the Step 5 editable caption field. | User can load a saved caption into the Step 5 text field and continue editing it |
+| 10.9 | `src/services/feedbackService.ts` | Add function `updateFavoriteRecord(generationId: string, updatedFields: Partial<GenerationRecord['output']>): Promise<void>` that writes updated output fields to an existing favorited generation record. Used when the user loads a favorite, edits it, and wants to save the updated version in place. | Calling the function updates the `output.hookText` (or other field) on the specified Firestore document |
+| 10.10 | Step 2, 3, 4, 5 UI (each step's save action) | After editing a loaded favorite and generating new output, show a prompt: "Update saved favorite with this new version?" with "Yes, update" and "Keep both" buttons. "Yes, update" calls `updateFavoriteRecord` to overwrite the existing favorite. "Keep both" calls `toggleFavorite` on the new generation to save it as a second favorite alongside the old one. | Both options work correctly. "Yes, update" overwrites. "Keep both" saves a new favorite and leaves the old one. |
+| 10.11 | `src/services/feedbackService.ts` | Update `getFavoriteIds` and `useFavorites` to scope team favorites by `workspaceId`. Query: `where('workspaceId', '==', currentWorkspaceId)` instead of `where('userId', '==', uid)` when a workspace is active. This allows team members to see each other's favorited outputs within the same workspace. | A team member's favorited hook appears in another team member's "Saved Hooks" panel within the same workspace |
+| 10.12 | Step 2, 3, 4, 5 UI (each step header) | Add a favorites count badge next to the "Saved [X]" toggle button showing how many items are saved for that step's phase. Example: "Saved Hooks (3)". Uses the `favorites.length` from `useFavorites`. | Badge count updates in real time as items are added or removed from favorites |
+
+---
+
+## Phase 11 — Magic Edit
+**Requires:** Phase 5 complete (render pipeline must be stable).
+
+**What already exists:**
+- `falEditing.ts` (161L) — `editWithFalKontext()` sends image + English edit prompt to fal.ai FLUX Kontext. Returns edited image base64. Text overlay is stripped before edit and re-composited after.
+- `MagicSelector.tsx` (334L) — Canvas overlay with lasso drawing tool. Computes selection region as `{ xPct, yPct, widthPct, heightPct }`. Supports three edit modes: `text` (replace/remove text in region), `erase` (remove object), `style` (change color/style). Emits `onEditRequest` callback with mode, region, and payload.
+- `textCompositing.ts` (631L) — Sharp-based Arabic text rendering. Re-runs after any edit to re-apply text overlay.
+
+**What is missing:**
+- No "add object" edit instruction (only erase and style exist).
+- No environment/background replacement instruction.
+- No batch edit flow (apply same edit to all N batch images).
+- No carousel per-slide edit routing (edit one slide, maintain carousel coherence).
+- No retargeting edit mode (edit must preserve objection-answering visual cues).
+- No edit history/undo stack (each edit is destructive).
+- No quality-preservation guard for repeated edits (repeated Kontext calls degrade image).
+- No mask-to-prompt translation for complex lasso shapes.
+- `textCompositing` is not automatically re-triggered after `editWithFalKontext` returns.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 11.1 | `functions/src/falEditing.ts` | Add function `editWithFalKontextInpaint(imageBase64, maskBase64, editPrompt, falApiKey): Promise<FalEditResult>`. This variant accepts a binary mask (white = edit region, black = keep) alongside the text prompt. Used when lasso selection is non-rectangular. Convert lasso polygon points to a Sharp-rendered mask PNG before calling. | Function accepts mask + prompt and returns edited image. Non-rectangular selections produce correct mask. |
+| 11.2 | `functions/src/falEditing.ts` | Add function `buildEditPrompt(editMode, payload, currentBuildPlan): string`. Translates UI edit actions into English Kontext prompts: `erase` → "Remove the [object description] from the image, fill with surrounding context". `add` → "Add [payload.description] at [region description]". `style` → "Change the color of [region description] to [payload.colorHex]". `environment` → "Replace the background/environment with [payload.environmentDescription], keep the foreground subject intact". `text` → NO Kontext call (handled by textCompositing only). Uses `currentBuildPlan` to extract scene context for better prompt grounding. | Each edit mode produces a coherent English prompt. Text mode returns null (no Kontext call needed). |
+| 11.3 | `functions/src/falEditing.ts` | Add function `preserveQuality(originalBase64, editedBase64, editCount): Promise<string>`. If `editCount >= 3`, run a quality-restoration pass: send the edited image back through Kontext with prompt "Enhance image quality, sharpen details, restore color vibrancy, maintain all content exactly as-is". Return the quality-restored base64. If `editCount < 3`, return editedBase64 unchanged. Store `editCount` on the generation record. | After 3+ edits, output image has visibly sharper details than without the restoration pass. |
+| 11.4 | `functions/src/index.ts` | Create callable `magicEditImage({ generationId, editMode, region, payload, slideIndex? })`. Flow: (1) load generation record, (2) get clean image (pre-text-overlay) from `output.cleanImageBase64` or `output.cleanImageUrl`, (3) if region is non-rectangular, render mask via 11.1, else use standard Kontext call, (4) build prompt via 11.2, (5) call Kontext, (6) run `preserveQuality` via 11.3, (7) re-run `compositeArabicText()` on edited image, (8) save edited image to Storage, (9) update generation record with new URLs and increment `editCount`, (10) return new image URL. | Calling with a valid generationId and erase mode returns a new image URL with the object removed and text re-composited. |
+| 11.5 | `functions/src/index.ts` | In `magicEditImage`, add `slideIndex` parameter support. If `slideIndex` is provided, load the carousel slide's individual clean image from `output.carouselSlides[slideIndex].cleanImageBase64`. After editing, write back to the same slide index. Do not re-render other slides. | Editing carousel slide 3 only affects slide 3. Other slides remain unchanged. |
+| 11.6 | `functions/src/index.ts` | In `magicEditImage`, add batch edit support. If `payload.applyToAll === true` AND the generation is a batch (`output.batchResults` exists), iterate over all batch images and apply the same Kontext edit to each. Use `Promise.allSettled` for parallel execution. Return array of results with per-image success/failure. | Batch edit with `applyToAll: true` edits all N images. Partial failures don't block successful edits. |
+| 11.7 | `src/components/MagicSelector.tsx` | Add "Add Object" tool alongside existing erase/style tools. When selected, show a text input for object description (e.g., "a laptop on the desk") and let user lasso the region where the object should appear. Emit `onEditRequest({ mode: 'add', region, payload: { description } })`. | User can select "Add" tool, draw a lasso region, type a description, and submit. |
+| 11.8 | `src/components/MagicSelector.tsx` | Add "Change Environment" tool. When selected, show a text input for new environment description (e.g., "luxury office with floor-to-ceiling windows"). No lasso needed — applies to full background. Emit `onEditRequest({ mode: 'environment', region: null, payload: { environmentDescription } })`. | User can select "Environment" tool, type description, and submit without drawing a region. |
+| 11.9 | `src/components/MagicSelector.tsx` | Add edit history stack. Store up to 10 previous `cleanImageBase64` states in component state. Add "Undo" button that reverts to previous state and decrements `editCount`. Add "Redo" button. History resets when user navigates away from the step. | Undo reverts the last edit visually. Redo re-applies it. History is capped at 10. |
+| 11.10 | `src/components/MagicSelector.tsx` | Add batch edit toggle. When the current generation is batch mode (`batchResults` exists), show a checkbox: "Apply this edit to all [N] images". When checked, the `onEditRequest` payload includes `applyToAll: true`. Show a progress indicator during batch processing with per-image status. | Checkbox appears in batch mode. Checking it and editing applies to all images with progress feedback. |
+| 11.11 | `src/components/MagicSelector.tsx` | Add carousel slide selector. When the current generation is carousel mode, show a horizontal strip of slide thumbnails above the edit canvas. Clicking a thumbnail loads that slide's clean image into the editor. The `onEditRequest` payload includes `slideIndex`. | User can switch between carousel slides and edit each individually. |
+| 11.12 | `functions/src/generators.ts` | In the generation pipeline, after rendering the final image, persist the clean (pre-text-overlay) image separately as `output.cleanImageBase64` (or upload to Storage as `output.cleanImageUrl`). This is the image that Magic Edit operates on. For carousel, store per-slide: `output.carouselSlides[i].cleanImageUrl`. | Every rendered image has a corresponding clean version stored. Magic Edit can retrieve it without re-rendering. |
+| 11.13 | `functions/src/contractFixtures.test.ts` | Add magic edit fixture tests: (a) `magicEditImage` with `mode: 'erase'` returns new URL different from original, (b) `magicEditImage` with `slideIndex: 2` only modifies slide 2, (c) `magicEditImage` with `applyToAll: true` returns array with length equal to batch size, (d) `preserveQuality` with `editCount: 5` produces output different from input (quality pass ran). | All four tests pass. |
+
+---
+
+## Phase 12 — Workspace Logic (Scaling Mode)
+**Requires:** Phase 8 + Phase 9 complete (billing + team management).
+
+**What already exists:**
+- `Workspace` interface: `id, name, brandName, brandUrl?, brandColorPrimary?, brandColorSecondary?, logoUrl?, createdAt, isDefault`.
+- `WorkspaceSwitcher.tsx` (91L) — dropdown UI for switching active workspace.
+- `WorkspaceSettingsModal.tsx` (170L) — form for editing workspace name, brand name, colors, logo.
+- Zustand store: `workspaces[]`, `activeWorkspaceId`, `setWorkspaces()`, `setActiveWorkspaceId()`.
+- `SavedProject` has `workspaceId?` field.
+- `GenerationRecord` (in types) has `workspaceId?` field.
+
+**What is missing:**
+- No `metaAdAccountId` on Workspace — each workspace cannot be linked to its own Meta ad account.
+- No workspace CRUD Cloud Functions — all workspace logic is client-side only.
+- No workspace-scoped generation queries — the `generations` collection is queried by `userId` only, not `workspaceId`.
+- No team role-based workspace visibility (all team members see all workspaces — no per-workspace access control).
+- No workspace switching guard (user can switch workspace mid-generation without warning).
+- No workspace creation/deletion limit tied to plan.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 12.1 | `src/types.ts` | Add `metaAdAccountId?: string` and `metaAdAccountName?: string` to `Workspace` interface. | Interface has both new fields. |
+| 12.2 | `functions/src/index.ts` | Create callable `createWorkspace({ name, brandName, brandColorPrimary?, brandColorSecondary?, logoUrl? })`. Writes to `users/{uid}/workspaces/{workspaceId}` subcollection. Checks plan limit: Scaling plan allows up to 10 workspaces. Below Scaling, throw `HttpsError('permission-denied', 'scaling_plan_required')`. Returns the new workspace ID. | Calling with Scaling plan creates workspace. Calling with Pro plan returns error. |
+| 12.3 | `functions/src/index.ts` | Create callable `updateWorkspace({ workspaceId, ...fields })`. Updates any subset of workspace fields in `users/{uid}/workspaces/{workspaceId}`. Validates `metaAdAccountId` if provided by checking the user's Meta connection has that account ID in their `adAccounts` array. | Updating with a valid `metaAdAccountId` succeeds. Updating with an account ID not in the user's connected accounts throws error. |
+| 12.4 | `functions/src/index.ts` | Create callable `deleteWorkspace({ workspaceId })`. Prevents deleting the default workspace (`isDefault: true`). Before deleting, reassign all `generations` and `savedProjects` with this `workspaceId` to the default workspace. Delete the workspace document. | Default workspace cannot be deleted. Non-default workspace deletion moves orphaned records to default. |
+| 12.5 | `functions/src/index.ts` | Create callable `linkMetaAccountToWorkspace({ workspaceId, metaAdAccountId, metaAdAccountName })`. Verifies the user has a valid Meta OAuth token. Verifies the ad account exists in their connected accounts. Writes `metaAdAccountId` and `metaAdAccountName` to the workspace document. | After linking, workspace doc has the Meta ad account fields. Generations from this workspace use this ad account for Meta push. |
+| 12.6 | `src/components/WorkspaceSettingsModal.tsx` | Add "Meta Ad Account" section. Show a dropdown of the user's connected Meta ad accounts (from `metaService.getConnection()`). Selecting one calls `linkMetaAccountToWorkspace`. Show current linked account name if already set. Add "Disconnect" button that calls `updateWorkspace({ metaAdAccountId: null })`. | User can link and unlink a Meta ad account per workspace. |
+| 12.7 | `functions/src/index.ts` | In all generation Cloud Functions (`generateHooks`, `generateConcepts`, `generateImage`, `generateCaption`), read `activeWorkspaceId` from request payload. Write `workspaceId` to the generation record. When pushing to Meta Ads API, use the workspace's `metaAdAccountId` instead of the user-level default. | Generation records have `workspaceId`. Meta push uses workspace-specific ad account. |
+| 12.8 | `src/components/WorkspaceSwitcher.tsx` | Add a workspace switching guard: if user is mid-generation (any step beyond Step 1 has data), show a confirmation dialog: "Switching workspace will start a new project. Save current work?" with "Save & Switch" and "Discard & Switch" buttons. "Save & Switch" triggers `saveProjectToDB` before switching. | Switching mid-generation shows confirmation. Current work is not silently lost. |
+| 12.9 | `functions/src/index.ts` | Create callable `getWorkspaceGenerations({ workspaceId, limit?, cursor? })`. Returns generations from the `generations` collection where `workspaceId == workspaceId` AND (`userId == auth.uid` OR user is team member of the workspace owner). Paginated with cursor. | Team members see generations from their team's workspace. Non-team members cannot access other users' workspace generations. |
+| 12.10 | `src/pages/Team.tsx` | Add workspace access section per team member. Show checkboxes for which workspaces each member can access. Store as `workspaceAccess: string[]` on the team member record. Members only see workspaces they have access to in the switcher. Owner sees all. | Team owner can restrict member access to specific workspaces. Members only see permitted workspaces. |
+| 12.11 | `src/components/WorkspaceSwitcher.tsx` | Filter `workspaces` array by user's `workspaceAccess` if `billingState.isTeamMember === true`. Team owners see all workspaces unfiltered. | Team member sees only workspaces they have access to. Owner sees all. |
+| 12.12 | `functions/src/contractFixtures.test.ts` | Add workspace fixture tests: (a) `createWorkspace` blocked below Scaling plan, (b) `deleteWorkspace` blocked for default workspace, (c) `linkMetaAccountToWorkspace` blocked for unconnected ad account, (d) generation record includes `workspaceId` when `activeWorkspaceId` is passed. | All four tests pass. |
+
+---
+
+## Phase 13 — Saved Projects
+**Requires:** Phase 10 complete (favorites + workspace scoping).
+
+**What already exists:**
+- `SavedProject` interface with 20+ fields: `id, userId, name, workspaceId, timestamp, inputs, phase, tovText, conceptsText, selectedTov, selectedConcept, buildPlan, mockupHistory, historyIndex, resolvedUniverse, captionText, batchCaptions, batchResults`.
+- `saveProjectToDB(project)` — saves to IndexedDB.
+- `saveProjectToFirestore(userId, project)` — saves to `users/{uid}/projects` subcollection.
+- Auto-save on draft creation with `📝` prefix.
+- `loadProject(p)` — restores full application state from a SavedProject.
+- Cloud + local merge on login: fetches from Firestore, merges with IndexedDB, deduplicates.
+- Legacy mode sanitizer strips deleted modes on load.
+
+**What is missing:**
+- No rendered image thumbnail on project cards — project list shows name + date only.
+- No step-by-step navigation within a saved project — loading always jumps to the last active phase.
+- No "resume from Step 2" — user must re-navigate manually after load.
+- No project search or filter by workspace/status.
+- No project deletion with confirmation.
+- No distinction between "completed" and "in-progress" projects.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 13.1 | `src/types.ts` | Add `thumbnailUrl?: string` and `status: 'draft' \| 'rendered' \| 'published'` to `SavedProject` interface. `draft` = no render yet. `rendered` = has at least one mockupHistory entry. `published` = pushed to Meta. | Interface has both new fields. |
+| 13.2 | `src/App.tsx` | In `saveProjectToDB` and `saveProjectToFirestore`, compute `status` before saving: if `mockupHistory.length > 0`, set `rendered`. If Meta push succeeded (check for `metaAdId` field), set `published`. Otherwise `draft`. | Every saved project has correct status field. |
+| 13.3 | `src/App.tsx` | After a successful render (Step 4 complete), take the first `mockupHistory[0].url` and persist it as `thumbnailUrl` on the project. If it's a base64 data URL, upload to Firebase Storage under `users/{uid}/thumbnails/{projectId}.jpg` and store the download URL. | Rendered projects have a `thumbnailUrl` that resolves to an actual image. |
+| 13.4 | `src/App.tsx` | In the project list panel, render `thumbnailUrl` as a 64×64 image thumbnail next to each project name. Show a placeholder icon for `draft` projects (no thumbnail). Show a colored status badge: gray for draft, green for rendered, blue for published. | Project list shows image thumbnails for rendered projects and status badges for all. |
+| 13.5 | `src/App.tsx` | Add a step indicator bar inside each project card showing steps 1–5 as dots. Filled dots = steps with data (e.g., `inputs` filled = Step 1 done, `tovText` filled = Step 2 done, `buildPlan` filled = Step 3 done, `mockupHistory.length > 0` = Step 4 done, `captionText` filled = Step 5 done). Clicking a filled dot navigates directly to that step after loading the project. | User sees which steps are complete. Clicking Step 3 dot loads project and navigates to Step 3. |
+| 13.6 | `src/App.tsx` | In `loadProject`, add optional `targetPhase` parameter. If provided, after restoring state, set `currentStep` to the target phase instead of the project's saved `phase`. Validate that the target phase has data (don't allow jumping to Step 4 if no build plan exists). | `loadProject(project, 'step3')` loads the project and opens Step 3. Invalid target phase is ignored. |
+| 13.7 | `src/App.tsx` | Add project search bar above the project list. Filter projects by name (case-insensitive substring match). Add workspace filter dropdown that shows only projects matching the selected workspace. Add status filter tabs: All / Draft / Rendered / Published. | Typing in search filters the list. Workspace dropdown filters by workspace. Status tabs filter by status. |
+| 13.8 | `src/App.tsx` | Add "Delete Project" button (trash icon) on each project card. On click, show confirmation dialog: "Delete '[project name]'? This cannot be undone." On confirm, delete from IndexedDB via `deleteProjectFromDB(id)`, delete from Firestore via `deleteDoc(doc(db, 'users', uid, 'projects', id))`, and delete thumbnail from Storage if exists. Remove from local state. | Deleting a project removes it from all storage backends. It no longer appears in the list. |
+| 13.9 | `src/App.tsx` | Implement continuous auto-save with 30-second debounce. After any state change in Steps 1–5 (form input, hook selection, concept selection, render complete, caption edit), queue a save. Debounce to prevent excessive writes. Show a subtle "Saving..." indicator in the header during save, then "Saved" with a checkmark for 2 seconds. | Changing a form field triggers auto-save within 30 seconds. Indicator shows save status. |
+| 13.10 | `functions/src/index.ts` | Create callable `getUserProjects({ workspaceId?, status?, limit?, cursor? })`. Queries `users/{uid}/projects` with optional filters. Returns paginated results ordered by `timestamp` descending. For team members, also queries team owner's projects scoped to their accessible workspaces. | Callable returns filtered, paginated project list. Team members see shared workspace projects. |
+
+---
+
+## Phase 14 — RAG + Meta Reporting Feedback Loop
+**Requires:** Phase 7 (failure classification) + Phase 8 (billing) complete.
+
+**What already exists:**
+- `creativeMemory.ts` (432L) — full memory record schema with performance scores. `storeCreativeMemory()` writes record. `updateCreativePerformance()` accepts CTR/CPC/ROAS and recalculates composite score. Index aggregation by dimension combinations.
+- `rankingEngine.ts` (520L) — scoring with CTR (40%), CPC (30%), ROAS (30%) against benchmarks. `getTopPerformers()`, `getPatternInsights()`.
+- `recommendationTracking.ts` (292L) — tracks AI recommendation acceptance/rejection rates.
+- `metaService.ts` — OAuth popup flow, account picker, connection status.
+- `variantEngine.ts` — structured A/B variant generation.
+- `patternSummaries.ts` (542L) — natural-language creative pattern summaries.
+
+**What is missing:**
+- No `metaDailySync` scheduled function — Meta Insights API is never actually called.
+- No feedback loop: performance data from Meta never flows back into generation prompts.
+- No per-mode RAG context injection — `creativeMemory` records exist but are not queried during generation.
+- No pattern summary refresh on schedule.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 14.1 | `functions/src/index.ts` | Create scheduled function `metaDailySync` (runs daily at 03:00 UTC). For each user with `metaConnected: true` in their user doc: (1) refresh Meta access token if expiring, (2) call Meta Insights API for each connected ad account to fetch last 7 days of ad-level metrics (CTR, CPC, CPM, ROAS, spend, impressions, clicks), (3) match each ad to a generation record using `output.metaAdId`, (4) call `updateCreativePerformance(generationId, metrics)` from `creativeMemory.ts`. | After scheduled run, generation records with `metaAdId` have updated `performance` fields with real Meta data. |
+| 14.2 | `functions/src/metaInsights.ts` | Create this file. Export `fetchAdInsights(accessToken, adAccountId, dateRange): Promise<AdInsight[]>`. Calls Meta Marketing API `GET /{adAccountId}/insights` with fields `impressions, clicks, ctr, cpc, cpm, spend, actions` and breakdowns by `ad.id`. Parse response into `AdInsight` objects. Handle pagination with `after` cursor. Handle rate limits with exponential backoff. | Function returns array of `AdInsight` objects for all ads in the account for the date range. |
+| 14.3 | `functions/src/metaInsights.ts` | Export `matchInsightToGeneration(adId, userId): Promise<string \| null>`. Queries `generations` collection where `userId == userId` AND `output.metaAdId == adId`. Returns the generationId if found, null otherwise. | Function returns correct generationId for a known adId. Returns null for unknown adId. |
+| 14.4 | `functions/src/creativeMemory.ts` | Add function `getRAGContext(userId, inputs: { hookAngle?, mode?, dialect?, styleFamily?, subStyle? }): Promise<RAGContext>`. Queries the user's `creativePatterns` indexes to find: (1) top 3 performing combinations matching the current inputs, (2) bottom 3 performing combinations to avoid, (3) pattern insights as natural language. Returns `{ topPerformers, avoid, insights, sampleSize }`. If `sampleSize < 10`, return `{ insufficient: true }` to skip RAG injection. | Function returns relevant performance context filtered by current generation inputs. Returns insufficient flag when data is sparse. |
+| 14.5 | `functions/src/generators.ts` | In `generateHooks()`, before calling the AI model, call `getRAGContext(userId, { hookAngle, dialect })`. If RAG context is sufficient, inject a `PERFORMANCE_CONTEXT` block into the prompt: "Based on this user's historical ad performance data, these hook patterns performed best: [topPerformers]. These patterns underperformed: [avoid]. Insights: [insights]. Use this to inform — but not rigidly copy — the hooks you generate." | Hook generation prompt includes real performance context when available. Prompt is unchanged when data is insufficient. |
+| 14.6 | `functions/src/generators.ts` | In `generateBuildPlan()`, before calling the AI model, call `getRAGContext(userId, { mode, styleFamily, subStyle })`. Inject `PERFORMANCE_CONTEXT` block with top-performing visual compositions and avoid list. Focus on layout, color, and compositional patterns rather than copy. | Build plan prompt includes visual performance context when available. |
+| 14.7 | `functions/src/generators.ts` | In `generateCaption()`, call `getRAGContext(userId, { hookAngle, dialect, mode })`. Inject `PERFORMANCE_CONTEXT` with top-performing caption structures (length, CTA style, emoji usage patterns). | Caption prompt includes performance-informed structural guidance when available. |
+| 14.8 | `functions/src/creativeMemory.ts` | Add function `refreshPatternSummaries(userId): Promise<void>`. Recalculates all `creativePatterns/{userId}/indexes/*` aggregation documents from the raw `creativeMemory` records. Called by `metaDailySync` after all performance updates are written. | After refresh, pattern index documents reflect the latest performance data. |
+| 14.9 | `functions/src/index.ts` | In every generation Cloud Function output handler (after hooks, concepts, render, caption), call `storeCreativeMemory()` with the full generation inputs + outputs. This ensures the memory store grows even before Meta performance data arrives. | Every successful generation creates a memory record. Records exist even for users who never connect Meta. |
+| 14.10 | `src/components/PerformanceDashboard.tsx` | Add "Sync Now" button that calls a new callable `triggerMetaSync()`. This runs the same logic as `metaDailySync` but for the current user only. Show last sync timestamp from user doc `lastMetaSyncAt`. Disable button if synced within the last hour. | User can manually trigger a Meta sync. Button disables for 1 hour after sync. |
+| 14.11 | `src/components/PerformanceDashboard.tsx` | Add "What's Working" section that displays `getPatternInsights()` results as natural-language cards. Show top performers grouped by dimension (best hook angle, best mode, best dialect, best time of day). Show recommendations panel with "Use these patterns in your next generation" CTA that pre-fills Step 1 inputs with top-performing settings. | Dashboard shows pattern insights. Clicking CTA navigates to Step 1 with pre-filled inputs. |
+| 14.12 | `functions/src/contractFixtures.test.ts` | Add RAG fixture tests: (a) `getRAGContext` with 15+ memory records returns non-empty `topPerformers`, (b) `getRAGContext` with 3 records returns `{ insufficient: true }`, (c) `storeCreativeMemory` creates a record with all required fields, (d) `refreshPatternSummaries` updates index documents. | All four tests pass. |
+
+---
+
+## Phase 15 — Brand Colors
+**Requires:** Phase 5 complete (build plan pipeline).
+
+**What already exists:**
+- `generators.ts` injects `brandColorPrimary` and `brandColorSecondary` as hex values into both the hook-level and concept-level prompts (lines 1049–1111, 2106–2111).
+- Anti-placeholder guard: prompt includes "NEVER write placeholder text like [brand color] — only exact hex values."
+- Three concept diversity rules for brand color usage: (1) accent color pops, (2) dominant background, (3) environment tones.
+- `Workspace` interface stores `brandColorPrimary` and `brandColorSecondary`.
+- `textCompositing.ts` uses colors for text rendering but does not read brand colors from workspace — uses colors from the build plan's `colorPalette`.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 15.1 | `functions/src/generators.ts` | In carousel generation flow (`generateCarouselSlides`), pass `brandColorPrimary` and `brandColorSecondary` to EVERY slide's build plan prompt, not just slide 1. Add a carousel-specific color instruction: "CRITICAL: Maintain brand color consistency across all carousel slides. Primary brand color {hex} must appear in every slide (CTA button, accent, or heading highlight). Secondary color {hex} used as supporting accent. This creates visual cohesion when swiping." | Every carousel slide's prompt contains both brand colors and the carousel consistency instruction. |
+| 15.2 | `functions/src/generators.ts` | In batch generation flow, add a batch-wide color instruction prepended to each batch item's prompt: "This is part of a batch of [N] ad variations. All variations MUST use the same brand color palette anchored by primary {hex} and secondary {hex}. Vary composition and messaging, NOT the color scheme." | Every batch item's prompt includes the batch color consistency instruction with actual hex values. |
+| 15.3 | `functions/src/generators.ts` | In retargeting generation, add brand color inheritance: read the original cold ad's `brandColorPrimary` and `brandColorSecondary` from the linked generation record (via `retargetingSourceId`). If the retargeting request does not provide brand colors, inherit from the cold ad. Add to prompt: "This retargeting ad targets users who saw the original cold ad. Use the same brand colors (Primary: {hex}, Secondary: {hex}) for visual recognition and brand recall." | Retargeting ads inherit brand colors from the original cold ad when not explicitly provided. |
+| 15.4 | `functions/src/textCompositing.ts` | Read `brandColorPrimary` from the generation record's inputs (not just the build plan's parsed `colorPalette`). Use brand primary as the default CTA button background color. Use brand secondary as the default headline accent color. Fall back to build plan colors only if brand colors are not set. | CTA buttons use brand primary color. Headlines use brand secondary. Non-branded generations fall back to AI-chosen colors. |
+| 15.5 | `src/components/InputForm.tsx` | Add brand color preview swatches next to the brand color picker inputs. Show a mini-preview card with two rectangles showing how the colors will appear together (primary as background, secondary as accent). Auto-populate from active workspace's brand colors if set, with "Using workspace colors" label. Allow override per-generation. | Color swatches render next to the pickers. Workspace colors auto-fill with label. Override is possible. |
+| 15.6 | `functions/src/creativeScoringEngine.ts` | Add brand color compliance check to the scoring engine. After rendering, extract the dominant colors from the rendered image (use a lightweight color extraction — quantize to top 5 colors). Check if `brandColorPrimary` hex is within a ΔE < 15 tolerance of any dominant color. If not, flag `brandColorMissing: true` on the generation record and deduct 10 points from creative score. | Rendered images missing brand colors are flagged and scored lower. |
+| 15.7 | `functions/src/contractFixtures.test.ts` | Add brand color fixture tests: (a) carousel prompt for slide 3 contains brand color hex values, (b) batch item 2 prompt contains batch color consistency instruction, (c) retargeting generation inherits brand colors from cold ad source, (d) scoring engine flags missing brand color. | All four tests pass. |
+
+---
+
+## Phase 16 — Creative Modes & Art Direction QA
+**Requires:** Phase 1 + Phase 3 + Phase 5 complete.
+
+**What already exists:**
+- All 10 creative modes in `creativeResolver.ts` with compatibility rules, required elements, and validation.
+- Mode pairs per tab (Section 2.3) with layout keys.
+- Art direction adapt states (Section 11) for 8 explicit combinations.
+- `offerCreativeModes.ts` knowledge file (586L) with per-mode prompt guidance.
+- `layoutContract.ts` (746L) and `layoutTemplates.ts` (701L).
+- `modeFieldSchema.ts` (995L server / 689L client).
+- `contractFixtures.test.ts` (839L) with existing QA fixtures.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 16.1 | `functions/src/contractFixtures.test.ts` | Add one fixture per solo creative mode (10 modes) × single format. Each fixture provides exact input JSON and asserts: (a) resolver returns `allowed: true`, (b) build plan prompt contains the mode's required composition language (from `CREATIVE_MODE_CATALOG[mode].validity.requiredElements`), (c) layout contract has correct zone structure. | 10 solo-mode fixture tests pass. |
+| 16.2 | `functions/src/contractFixtures.test.ts` | Add one fixture per approved mode pair (13 pairs from Section 2.3). Each fixture asserts: (a) resolver allows the pair, (b) layout contract has zones for BOTH modes (e.g., `hero_ticket` has `heroZone` and `ticketZone`), (c) build plan prompt contains composition language for both modes. | 13 mode-pair fixture tests pass. |
+| 16.3 | `functions/src/contractFixtures.test.ts` | Add one fixture per blocked combination (`before_after` + any, `text_only` + any). Each asserts resolver returns `allowed: false` with correct `reason` string. | Blocked combination tests pass (at least 4). |
+| 16.4 | `functions/src/contractFixtures.test.ts` | Add carousel-specific mode fixtures: (a) `value_stack` + carousel — slide count auto-adjusted to gift count + 2, (b) `testimonial_carousel` — slide count = testimonial count + 2, (c) `webinar_screen` + carousel — each slide has webinar composition, (d) `standard_hero` + carousel — slide 1 has hero, slides 2+ have narrative progression. | All 4 carousel-mode fixture tests pass. |
+| 16.5 | `functions/src/contractFixtures.test.ts` | Add batch-specific mode fixtures: (a) `standard_hero` + batch — each batch item has independent hook but same layout, (b) `speaker_card` + batch — each item has speaker composition, (c) `value_stack` + batch — each item has stack zone. Assert all N batch items' prompts contain the correct mode composition language. | All 3 batch-mode fixture tests pass. |
+| 16.6 | `functions/src/contractFixtures.test.ts` | Add retargeting-specific mode fixtures: (a) `standard_hero` + retargeting single — prompt contains objection-answering language + hero composition, (b) `event_ticket` + retargeting carousel — each slide addresses sequential objection with ticket composition. | Both retargeting-mode fixture tests pass. |
+| 16.7 | `functions/src/contractFixtures.test.ts` | Add art direction adapt state fixtures for 8 explicit combinations from Section 11. Each fixture asserts the build plan prompt contains the adapt state's specific composition override (e.g., `luxury_magazine` + `value_stack` → prompt contains "magazine cover sidebar" and "gold accent prices"). | All 8 adapt state fixture tests pass. |
+| 16.8 | `functions/src/generators.ts` | Audit `getPairRenderExecution()` function. Verify it handles all 13 approved pairs and returns non-empty composition guidance for each. Add missing pairs if any return empty string. | `getPairRenderExecution` returns non-empty guidance for all 13 approved pairs. |
+| 16.9 | `functions/src/generators.ts` | Add mode validation in `generateImage()`: after the build plan is generated, parse the `TECHNICAL_PROMPT` and verify it contains at least one keyword from each active mode's `requiredElements`. If missing, log a `mode_composition_missing` warning on the resolution trace and add a reinforcement line to the image prompt: "CRITICAL: This ad MUST include [missing element]. Do not omit it." | Missing mode elements trigger reinforcement. Resolution trace logs the warning. |
+| 16.10 | `functions/src/creativeResolver.ts` | Add function `validateModeFormatCombination(modes: string[], adFormat: 'single' \| 'carousel' \| 'batch', campaignType: 'cold' \| 'retargeting'): { valid: boolean, reason?: string }`. Encodes all the implicit rules: `before_after` is single-only, `text_only` is mutually exclusive, `testimonial_carousel` forces carousel, batch = single × N (all single-compatible modes work). | Function returns correct valid/invalid for all tested combinations. |
+| 16.11 | `src/components/InputForm.tsx` | When user selects a creative mode, call `validateModeFormatCombination` with current `adFormat` and `campaignType`. If invalid, show inline message below the mode card explaining the conflict (from `reason` field) and prevent generation. | Invalid mode+format combos show inline error. Generate button is disabled. |
+
+---
+
+## Phase 17 — Resize & Reflow
+**Requires:** Phase 5 + Phase 15 complete (pipeline + brand colors).
+
+**What already exists:**
+- Reflow logic in `generators.ts` (line 4913+): sends `REFLOW: Ratio {ratio}` instruction to re-render same concept at new aspect ratio.
+- Aspect ratios 1:1, 4:5, 3:4, 4:3, 9:16, 16:9 all defined and selectable.
+- Safe zone inset referenced in `textCompositing.ts`.
+- Layout contract system defines zone proportions per aspect ratio.
+- `mockupHistory` on SavedProject stores `{ url, ratio }` pairs.
+
+**What is missing:**
+- No batch reflow (all N images).
+- No carousel per-slide reflow.
+- No safe-zone re-validation after reflow.
+- No reflow preview before committing.
+- No text compositing re-run after reflow.
+- No reflow in retargeting mode.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 17.1 | `functions/src/generators.ts` | In the reflow path (around line 4920), after the reflow image is generated, re-run `compositeArabicText()` with the new aspect ratio's safe zone dimensions. Store the clean (pre-text) reflowed image separately as `cleanReflowedImageBase64` before text compositing. | Reflowed images have fresh text overlay positioned for the new ratio. Clean version is stored for future edits. |
+| 17.2 | `functions/src/generators.ts` | Add function `reflowBatch(generationId, newAspectRatio): Promise<BatchReflowResult[]>`. Iterates over all `batchResults` in the generation record. For each batch item, runs the reflow pipeline (same concept, new ratio). Uses `Promise.allSettled` for parallel execution. Updates each batch item's URLs in the generation record. Returns per-item success/failure. | Calling with a batch generationId and `4:5` reflows all batch items. Partial failures don't block successful reflows. |
+| 17.3 | `functions/src/generators.ts` | Add function `reflowCarousel(generationId, newAspectRatio): Promise<CarouselReflowResult[]>`. Iterates over all carousel slides in `output.carouselSlides`. For each slide, runs reflow with the new ratio. Maintains slide order. Updates all slide URLs. | Calling with a carousel generationId reflows all slides. Slide order is preserved. |
+| 17.4 | `functions/src/index.ts` | Create callable `reflowImage({ generationId, newAspectRatio, scope })`. `scope` is `'single' \| 'batch_all' \| 'carousel_all' \| 'carousel_slide'`. For `single`: reflow the single image. For `batch_all`: call `reflowBatch`. For `carousel_all`: call `reflowCarousel`. For `carousel_slide`: reflow only the specified slide index. Deduct credits per reflowed image. | Callable handles all four scopes. Credits are deducted correctly (1 per image reflowed). |
+| 17.5 | `functions/src/layoutContract.ts` | Add function `getSafeZoneForRatio(aspectRatio: AspectRatio): { top, right, bottom, left }`. Returns the safe zone inset in percentage for each supported ratio. Taller ratios (9:16) get larger top/bottom insets. Wider ratios (16:9) get larger left/right insets. Square (1:1) uses uniform inset. | Function returns correct insets for all 6 supported ratios. |
+| 17.6 | `functions/src/textCompositing.ts` | After reflow, call `getSafeZoneForRatio(newAspectRatio)` and re-calculate all text positions. Validate that no text element exceeds the new safe zone boundaries. If any text overflows, reduce font size by 10% increments until it fits (maximum 3 reductions). Log `textReflowOverflow: true` on the resolution trace if reduction was needed. | Text never clips outside safe zone after reflow. Font size reduction is logged. |
+| 17.7 | `src/App.tsx` (or Step 4 UI component) | Add "Resize" button group in Step 4 output area. Show 6 ratio buttons (1:1, 4:5, 3:4, 4:3, 9:16, 16:9). Current ratio is highlighted. Clicking a different ratio calls `reflowImage` callable. For batch/carousel modes, show a scope selector: "Resize this image only" vs "Resize all [N] images". Show loading state per image during reflow. | User can click a ratio button and see the reflowed result. Batch/carousel scope selector appears in those modes. |
+| 17.8 | `src/App.tsx` (or Step 4 UI component) | Add reflow preview: before committing a reflow (spending credits), show a lightweight CSS-based preview of how the current image would crop/extend at the new ratio. Use CSS `object-fit: cover` with the target aspect ratio container to simulate the framing. Show "This is a preview — generate to see the final result" label. Preview costs 0 credits. | Clicking a ratio shows instant CSS preview. "Generate" button commits the reflow and deducts credits. |
+| 17.9 | `functions/src/generators.ts` | In the reflow prompt, add brand color reinforcement: "Maintain the exact same brand color palette (Primary: {hex}, Secondary: {hex}) in the reflowed composition. Do not shift colors or introduce new dominant tones." Read brand colors from the generation record's original inputs. | Reflowed images maintain brand colors. Prompt includes hex values. |
+| 17.10 | `functions/src/contractFixtures.test.ts` | Add reflow fixture tests: (a) single reflow from 1:1 to 9:16 returns new image URL with `aspectRatio: '9:16'`, (b) batch reflow with 4 items returns 4 results, (c) carousel reflow maintains slide count, (d) text compositing after reflow has no overflow (or logged reduction), (e) brand colors are present in reflow prompt. | All 5 tests pass. |
+
+---
+
+*Source: `creativeResolver.ts` · `generators.ts` · `entitlements.ts` · `artDirectionConfig.ts` · `retargetingObjections.ts` · `constants.ts` · `types.ts` · `index.ts` · `falEditing.ts` · `MagicSelector.tsx` · `WorkspaceSwitcher.tsx` · `creativeMemory.ts` · `rankingEngine.ts` · `metaService.ts` · `billingState.ts` · `textCompositing.ts` · `layoutContract.ts` · terminal session decisions · product owner decisions v4 · codebase audit April 11, 2026*
