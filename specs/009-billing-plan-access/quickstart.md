@@ -1,86 +1,150 @@
-# Quickstart: Billing, Plan Access, Top-Up, Downgrade, and Cancellation
+# Quickstart: Billing, Plan Access, Top-Up, Downgrade, Cancellation, and Email-Only Auth
 
-**Branch**: `009-billing-plan-access` | **Date**: 2026-04-04
+**Branch**: `009-billing-plan-access` | **Date**: 2026-04-14
 
 ## Prerequisites
 
-- Node.js 20+ (Firebase Functions v2 requirement)
+- Node.js 18+ (Firebase Cloud Functions v2 requirement)
 - Firebase CLI (`npm install -g firebase-tools`)
-- Access to Stripe dashboard (for webhook secrets and test mode)
-- Access to GHL (GoHighLevel) for payment webhook testing
+- Paddle sandbox account with products/prices configured per LAUNCH_MATRIX 8.A
+- GHL account with the two inbound webhook workflows configured per LAUNCH_MATRIX 8.B
 
-## Setup
+## Owner Setup Steps (Manual, Before Any Code)
+
+These map to LAUNCH_MATRIX tasks 8.A and 8.B. Complete them before implementation.
+
+### Paddle Dashboard (8.A)
+
+1. **8.A.1**: Create a Paddle Billing account, complete business verification, switch to Sandbox mode.
+2. **8.A.2**: Create 4 subscription products in Paddle: Starter ($19/mo), Creator ($39/mo), Pro ($79/mo), Scaling ($179/mo). Note each Price ID (`pri_xxxxx`).
+3. **8.A.3**: Create the one-time "Credit Top-Up" product with 3 prices (100 / 300 / 800 credits). Note each Price ID.
+4. **8.A.4**: Generate a Paddle API key → save as `PADDLE_API_KEY`.
+5. **8.A.5**: Create a Paddle Notification destination (Webhook) pointing to `https://europe-west1-proadsai-saas.cloudfunctions.net/paddleWebhook`. Subscribe to these 6 events: `subscription.created`, `subscription.updated`, `subscription.canceled`, `subscription.past_due`, `transaction.completed`, `transaction.payment_failed`. Save the webhook secret as `PADDLE_WEBHOOK_SECRET`.
+6. **8.A.6**: Use the Paddle Webhook Simulator to verify the URL is reachable (404 before deployment is fine).
+
+### GHL Setup (8.B)
+
+1. **8.B.1**: Create the "Paddle Payment Received" workflow with Inbound Webhook trigger. Save the URL as `GHL_PADDLE_SYNC_WEBHOOK_URL`.
+2. **8.B.2**: Add actions: Update Contact (set `plan`, `billing_status`, tag `paid_{{plan}}`), If/Else for `subscription.created` → Welcome Email, If/Else for `subscription.canceled` → Win-Back.
+3. **8.B.3**: Create the "Paddle Payment Failed" workflow with a separate inbound webhook. Save the URL as `GHL_PADDLE_FAILED_WEBHOOK_URL`. Add Update Contact (set `billing_status: past_due`) and Dunning Email action.
+4. **8.B.4**: Update GHL funnel CTA buttons to point at Paddle checkout URLs with the correct price ID. **Do NOT include `firebaseUid`** — new users coming from the funnel don't have one; the webhook handler will write to `pending_plans/{email}`.
+
+### Firebase Secrets
 
 ```bash
-# Install dependencies
-npm install
-cd functions && npm install && cd ..
-
-# Start local dev server
-npm run dev
+firebase functions:secrets:set PADDLE_API_KEY
+firebase functions:secrets:set PADDLE_WEBHOOK_SECRET
+firebase functions:secrets:set GHL_PADDLE_SYNC_WEBHOOK_URL
+firebase functions:secrets:set GHL_PADDLE_FAILED_WEBHOOK_URL
+# Verify:
+firebase functions:secrets:access PADDLE_API_KEY
 ```
 
-## Key Files to Understand First
+Keep `GHL_TEAM_INVITE_WEBHOOK_URL` for Phase 9.
 
-1. **`functions/src/entitlements.ts`** — Plan definitions, feature gates, `resolveEntitlement()`, `checkFeature()`. This is the authoritative source for what each plan allows.
+## Code Setup
 
-2. **`src/planconfig.ts`** — Frontend mirror of plan config. `PLANS`, `canUse()`, `TOPUP_PACKS`, `CREDIT_COSTS`.
+### 1. Install Dependencies
 
-3. **`functions/src/index.ts`** — All Cloud Functions. The billing-related ones: `ghlpaymentwebhook`, `ghlCancellationWebhook`, `stripeWebhook`, `createTopupCheckout`, `createStripePortalSession`, `cancelSubscription`, `deductCreditsServer`, `monthlyCreditsReset`.
+```bash
+cd functions
+npm install @paddle/paddle-node-sdk
+npm uninstall stripe  # OR keep for reference; remove from active imports only
+```
 
-4. **`src/store.ts`** — Zustand store. Contains `userPlan`, `userCredits`, `setUserPlan()`, `setUserCredits()`.
+### 2. Add Paddle.js to Frontend
 
-5. **`src/App.tsx`** — Main app component. Phase-based navigation (no React Router). Auth state listener. Conditional rendering based on `AppPhase`.
+In `index.html`:
 
-## Implementation Order
+```html
+<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
+```
 
-### Phase 1: Backend Foundation
-1. Verify `functions/src/billing/billingState.ts` — exports `buildBillingState()` (plan validation, derived fields) and `writeBillingState()` (reads user doc, builds state, writes to Firestore with observability logs)
-2. Verify `writeBillingState()` is called in all billing call sites in `functions/src/index.ts` (ghlpaymentwebhook, ghlCancellationWebhook, monthlyCreditsReset, stripeWebhook, cancelSubscription, reactivateSubscription, deductCreditsServer)
-3. Verify `monthlyCreditsReset` uses overwrite (`credits = creditsPerMonth`) — confirmed correct
-4. Verify plan-gate check in `deductCreditsServer` — uses `resolveEntitlement()` + `checkFeature()` with fail-closed `Object.hasOwn()` guard on ACTION_FEATURE_MAP + re-check inside transaction
-5. Verify `ACTION_FEATURE_MAP` in `entitlements.ts` — maps all COSTS action keys to feature gates
-6. Verify `reactivateSubscription` callable (exists in index.ts)
-7. Verify `cancelSubscription` reason/feedback fields (wired with CancellationReason enum)
+In `src/main.tsx` or app init:
 
-### Phase 2: Frontend Foundation
-1. Verify `src/hooks/useBillingState.ts` — uses `onAuthStateChanged` (not one-shot currentUser), Firestore `onSnapshot` listener, logs snapshot errors
-2. Verify `'billing'` in AppPhase type and sidebar navigation wires `setPhase('billing')`
-3. Verify billing nav link in header/sidebar
-4. Verify `InputForm.tsx` reads from `useBillingState()` instead of `userData.plan`/`userData.credits` (FR-015)
+```typescript
+Paddle.Setup({ token: PADDLE_CLIENT_TOKEN });
+if (import.meta.env.DEV) Paddle.Environment.set('sandbox');
+```
 
-### Phase 3: Billing Page (components already scaffolded)
-1. Verify `src/pages/Billing.tsx` renders correctly once useBillingState hook exists
-2. Verify components work: `CreditBar`, `PlanCard`, `TopUpSelector`, `CancelDialog`, `PaymentFailedAlert`, `ReactivateButton`
-3. Wire top-up flow (calls `createTopupCheckout`)
-4. Wire cancellation flow (two-step dialog → `cancelSubscription`)
-5. Wire reactivation (calls `reactivateSubscription`)
-6. Wire "Manage subscription" button (calls `createStripePortalSession`)
+### 3. Configure Plan Price IDs
 
-### Phase 4: App-Wide Banners & Enforcement
-1. Verify `TrialBanner` and `LowCreditsBanner` components exist and work
-2. Add banners to `App.tsx` (rendered outside phase-specific content)
-3. Implement downgrade enforcement — `useBillingState()` drives `canUse()` checks in real-time
-4. Handle `plan_downgraded` error in frontend credit-consuming actions
+In `src/planconfig.ts`:
 
-### Phase 5: Testing & Validation
-1. Verify test fixtures for `buildBillingState()` match the current contract in `functions/src/billing/billingState.ts` (31 assertions, all passing)
-2. Manual testing of all billing flows (Stripe test mode)
+```typescript
+starter: { ..., paddlePriceId: 'pri_xxx_starter' }
+creator: { ..., paddlePriceId: 'pri_xxx_creator' }
+pro:     { ..., paddlePriceId: 'pri_xxx_pro' }
+scaling: { ..., paddlePriceId: 'pri_xxx_scaling' }
+paddleTopUpPriceIds: { 100: 'pri_xxx', 300: 'pri_xxx', 800: 'pri_xxx' }
+```
 
-## Testing Approach
+Mirror on backend in `functions/src/index.ts` as `PADDLE_PRICE_TO_PLAN`.
 
-- **Backend**: `cd functions && npm test` — fixture-based tests for `buildBillingState()` writes
-- **Frontend**: Manual testing with Stripe test mode cards
-- **Stripe test cards**: `4242424242424242` (success), `4000000000000341` (payment failure)
-- **Webhook testing**: Use Firebase emulator or Stripe CLI for local webhook forwarding
+## Development Workflow
 
-## Architecture Decisions
+```bash
+# Frontend dev server
+npm run dev
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| billingState location | Derived field on user doc | Single read, real-time listener, no join needed |
-| Navigation | New AppPhase, not React Router | Consistent with existing app architecture |
-| Credit reset | Overwrite (credits = plan allocation) | Product decision — top-up credits do not carry over past reset |
-| Grace period | Stripe-managed | No app-level configuration needed |
-| Plan-gate check | Fast-fail outside transaction + re-check inside transaction | Fast-fail avoids unnecessary transaction; re-check inside transaction prevents TOCTOU race |
-| Reactivation | Separate function (not toggle on cancel) | Semantic clarity |
+# Backend emulator
+cd functions && npm run serve
+
+# Backend tests
+cd functions && npm test
+
+# Deploy functions only
+firebase deploy --only functions
+
+# Deploy everything
+firebase deploy
+```
+
+## Testing Paddle Webhooks
+
+Use Paddle's Webhook Simulator from the dashboard to send test events. Or run the Firebase emulator and curl the webhook endpoint with a valid signed payload (see `billingState.test.ts` for fixtures).
+
+## Key Files to Modify
+
+### Backend (functions/src/)
+
+- `index.ts` — Add Paddle secret refs, `paddleWebhook` export, `createPaddleCheckout` and `createPaddleTopUp` callables. Remove Stripe imports, `createStripePortalSession`, `ghlpaymentwebhook`, `ghlCancellationWebhook`, `ghlPaymentFailedWebhook`, `stripeWebhook`.
+- `billing/billingState.ts` — Update `writeBillingState()` with Paddle fields (`paddleCustomerId`, `paddleSubscriptionId`, `paddleUpdatePaymentUrl`, `paddleCancelUrl`). Add idempotency helpers (`isEventProcessed`, `markEventProcessed`).
+- `billing/paddleWebhook.ts` — NEW. `handlePaddleWebhook()` with signature verification, idempotency, dual-write logic, and GHL notification calls.
+- `billing/ghlBillingSync.ts` — NEW. `notifyGHL(identifier, event)` and `notifyGHLFailed(identifier, event)`, both fire-and-forget.
+- `entitlements.ts` — Add `ACTION_FEATURE_MAP` export.
+- `billing/__tests__/billingState.test.ts` — Rewrite 6 scenarios for Paddle (see 8.C.15).
+
+### Frontend (src/)
+
+- `firebase.ts` — Remove `GoogleAuthProvider` and `googleProvider` export.
+- `App.tsx` — Refactor LoginScreen into Login / Create Account tabs, remove `handleGoogleLogin` and all Google UI, add `handleCreateAccount` with email verification gate, update `onAuthStateChanged` to: (a) route unverified to VerifyEmailScreen, (b) consume `pending_plans/{email}` on first login, (c) KEEP unpaid accounts (do not delete) and show `MandatoryBillingModal`, (d) show welcome toast only if `createdAt` within 60s.
+- `components/auth/VerifyEmailScreen.tsx` — NEW.
+- `components/auth/ForgotPasswordDialog.tsx` — NEW.
+- `components/billing/MandatoryBillingModal.tsx` — NEW (dismiss-proof).
+- `components/billing/CreditBar.tsx`, `PlanCard.tsx`, `TopUpSelector.tsx`, `ReactivateButton.tsx`, `PaymentFailedAlert.tsx`, `TrialExpiredBanner.tsx`, `LowCreditsWarning.tsx` — NEW components for the Billing page.
+- `components/billing/CancelDialog.tsx` — Existing, ensure it records the reason to `cancellation_logs` and opens `paddleCancelUrl` on submit.
+- `components/PricingTable.tsx` — Update CTA buttons to call `createPaddleCheckout(paddlePriceId)`.
+- `hooks/useBillingState.ts` — Real-time listener + `useCanUse` hook.
+- `pages/Billing.tsx` — Assemble sections using `useBillingState`, call Paddle URLs directly for management actions.
+- `i18n.tsx` — Add all `billing.*` and `login.*` keys (en + ar).
+- `planconfig.ts` — Add `paddlePriceId` per plan and `paddleTopUpPriceIds`. Remove Stripe price IDs.
+
+### Config
+
+- `functions/package.json` — Add `@paddle/paddle-node-sdk`.
+- `index.html` — Add Paddle.js script tag.
+
+## Manual Validation Checklist (Post-Deploy)
+
+1. Pay on Paddle via GHL funnel WITHOUT firebaseUid → verify `pending_plans/{email}` written, GHL sync hits sync webhook
+2. Create Firebase Auth account with same email → verify pending plan consumed, `users/{uid}` created, welcome toast shown (within 60s)
+3. Create Firebase Auth account with a fresh email (no pending plan) → verify verification email sent, VerifyEmailScreen shown
+4. Click verification link → return to app → mandatory billing modal shown (dismiss-proof)
+5. Complete Paddle checkout from modal → verify modal auto-closes, welcome toast fires
+6. Trigger `transaction.completed` with `isTopUp: true` → credits added
+7. Trigger `subscription.past_due` → billingStatus past_due, GHL dunning sync fires
+8. Trigger `subscription.canceled` → plan=none, credits=0, GHL win-back sync fires
+9. Verify login screen shows NO Google button, NO Google-related UI
+10. Verify RTL layout on billing page and auth screens with Arabic locale
+11. Check Cloud Functions logs — every webhook produces a structured log entry with event ID, type, and result

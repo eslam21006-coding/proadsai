@@ -1,40 +1,23 @@
-// src/components/billing/ReactivateButton.tsx
+// src/components/billing/ReactivateButton.tsx — reactivate cancelled subscription via Paddle management URL
 
-import React, { useState } from "react";
+import React from "react";
 import { useT } from "../../i18n";
 
 interface ReactivateButtonProps {
-  onReactivate: () => Promise<void>;
+  paddleUpdatePaymentUrl: string | null;
 }
 
-export const ReactivateButton: React.FC<ReactivateButtonProps> = ({ onReactivate }) => {
+export const ReactivateButton: React.FC<ReactivateButtonProps> = ({ paddleUpdatePaymentUrl }) => {
   const { t } = useT();
-  const [loading, setLoading] = useState(false);
-
-  const handleClick = async () => {
-    setLoading(true);
-    try {
-      await onReactivate();
-    } finally {
-      setLoading(false);
-    }
-  };
 
   return (
     <button
-      onClick={handleClick}
-      disabled={loading}
-      className="w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-sm font-semibold transition-all"
+      onClick={() => {
+        if (paddleUpdatePaymentUrl) window.open(paddleUpdatePaymentUrl, "_blank");
+      }}
+      className="w-full py-2.5 rounded-lg bg-emerald-600/10 border border-emerald-500/20 text-emerald-400 text-sm font-bold hover:bg-emerald-600/20 transition-all"
     >
-      {loading ? (
-        <span className="flex items-center justify-center gap-2">
-          <i className="fa-solid fa-spinner fa-spin" /> {t('billing.reactivating')}
-        </span>
-      ) : (
-        <span className="flex items-center justify-center gap-2">
-          <i className="fa-solid fa-rotate-left" /> {t('billing.reactivateSubscription')}
-        </span>
-      )}
+      {t("billing.cancelled.reactivate")}
     </button>
   );
 };

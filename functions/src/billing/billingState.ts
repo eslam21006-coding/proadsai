@@ -1,162 +1,183 @@
-/**
- * functions/src/billing/billingState.ts
- * ═══════════════════════════════════════════════════════════════════════════
- * SINGLE WRITE POINT for the derived `billingState` field on user documents.
- *
- * buildBillingState() — pure function that computes BillingState from user doc data
- * writeBillingState() — reads user doc, calls buildBillingState(), writes result
- *
- * Every backend path that touches plan/credits MUST call writeBillingState()
- * after its mutation so the frontend real-time listener stays in sync.
- * ═══════════════════════════════════════════════════════════════════════════
- */
+// functions/src/billing/billingState.ts — server-side billing state resolution, persistence, and idempotency
 
-import * as admin from "firebase-admin";
-import type { Firestore } from "firebase-admin/firestore";
-import { PLAN_CREDITS, TRIAL_CREDITS } from "../entitlements.js";
+import { Firestore, type Timestamp, FieldValue } from "firebase-admin/firestore";
 
-// ─── TYPES ─────────────────────────────────────────────────────────────────
-
-export type UserPlan = "starter" | "creator" | "pro" | "scaling" | "none";
-
-export type BillingStatus =
-  | "active"
-  | "trialing"
-  | "past_due"
-  | "cancelling"
-  | "cancelled";
+// ═══════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════
 
 export interface BillingState {
-  plan: UserPlan;
-  isTrial: boolean;
-  credits: number;
-  creditsPerMonth: number;
-  billingStatus: BillingStatus;
-  nextResetDate: admin.firestore.Timestamp | null;
-  cancelAt: admin.firestore.Timestamp | null;
-  stripeCustomerId: string | null;
-  canUpgrade: boolean;
-  canTopUp: boolean;
-  isTeamMember: boolean;
-  teamOwnerUid: string | null;
-  gracePeriodEndsAt: admin.firestore.Timestamp | null;
+    plan: string;
+    isTrial: boolean;
+    credits: number;
+    creditsPerMonth: number;
+    billingStatus: "active" | "past_due" | "cancelled" | "cancelling" | "trialing";
+    nextResetDate: { seconds: number; nanoseconds: number } | null;
+    paddleCustomerId: string | null;
+    paddleSubscriptionId: string | null;
+    paddleUpdatePaymentUrl: string | null;
+    paddleCancelUrl: string | null;
+    canUpgrade: boolean;
+    canTopUp: boolean;
+    isTeamMember: boolean;
+    teamOwnerUid: string | null;
+    teamOwnerName: string | null;
+    cancelAt: { seconds: number; nanoseconds: number } | null;
+    gracePeriodEndsAt: { seconds: number; nanoseconds: number } | null;
+    pendingPlan: string | null;
+    pendingPlanEffectiveAt: { seconds: number; nanoseconds: number } | null;
 }
 
-// ─── BUILD BILLING STATE (pure function) ───────────────────────────────────
-
-export interface BuildBillingStateInput {
-  plan?: string;
-  isTrial?: boolean;
-  credits?: number;
-  stripeCustomerId?: string | null;
-  isTeamMember?: boolean;
-  teamOwnerUid?: string | null;
-  cancelAtPeriodEnd?: boolean;
-  cancelAt?: admin.firestore.Timestamp | null;
-  billingStatus?: string;
-  gracePeriodEndsAt?: admin.firestore.Timestamp | null;
-  nextResetDate?: admin.firestore.Timestamp | null;
+interface UserData {
+    plan?: string;
+    credits?: number;
+    isTrial?: boolean;
+    billingStatus?: string;
+    billingType?: string;
+    isTeamMember?: boolean;
+    teamOwnerUid?: string;
+    teamOwnerName?: string;
+    paddleCustomerId?: string;
+    paddleSubscriptionId?: string;
+    paddleUpdatePaymentUrl?: string;
+    paddleCancelUrl?: string;
+    cancelAtPeriodEnd?: boolean;
+    cancelAt?: Timestamp | null;
+    pendingPlan?: string;
+    pendingPlanEffectiveAt?: Timestamp | null;
+    gracePeriodEndsAt?: Timestamp | null;
+    nextCreditReset?: Timestamp | null;
+    cancelledAt?: Timestamp | null;
 }
 
-const VALID_PLANS = new Set<string>(["starter", "creator", "pro", "scaling", "none"]);
+const PLAN_CREDITS: Record<string, number> = {
+    starter: 500,
+    creator: 1000,
+    pro: 2000,
+    scaling: 5000,
+};
 
-export function buildBillingState(data: BuildBillingStateInput): BillingState {
-  const rawPlan = data.plan || "none";
-  const plan: UserPlan = VALID_PLANS.has(rawPlan) ? rawPlan as UserPlan : "none";
-  const isTrial = data.isTrial === true;
-  const credits = data.credits ?? 0;
-  const isTeamMember = data.isTeamMember === true;
-  const teamOwnerUid = data.teamOwnerUid || null;
-  const stripeCustomerId = data.stripeCustomerId || null;
-  const cancelAtPeriodEnd = data.cancelAtPeriodEnd === true;
-  const cancelAt = data.cancelAt || null;
-  const gracePeriodEndsAt = data.gracePeriodEndsAt || null;
-  const nextResetDate = data.nextResetDate || null;
+const TRIAL_CREDITS = 50;
 
-  // ── Derive creditsPerMonth ──
-  const creditsPerMonth = isTrial
-    ? TRIAL_CREDITS
-    : (plan !== "none" ? (PLAN_CREDITS[plan as keyof typeof PLAN_CREDITS] ?? 0) : 0);
+const PLAN_HIERARCHY: Record<string, number> = {
+    none: 0,
+    starter: 1,
+    creator: 2,
+    pro: 3,
+    scaling: 4,
+};
 
-  // ── Derive billingStatus ──
-  let billingStatus: BillingStatus;
+// ═══════════════════════════════════════════════════════════
+// buildBillingState — pure function, no Firestore dependency
+// ═══════════════════════════════════════════════════════════
 
-  if (data.billingStatus === "past_due" || (gracePeriodEndsAt !== null && plan !== "none")) {
-    billingStatus = "past_due";
-  } else if (data.billingStatus === "cancelled" || plan === "none") {
-    billingStatus = "cancelled";
-  } else if (data.billingStatus === "cancelling" || cancelAtPeriodEnd) {
-    billingStatus = "cancelling";
-  } else if (isTrial) {
-    // Trial with 0 credits = cancelled (trial expired)
-    billingStatus = credits > 0 ? "trialing" : "cancelled";
-  } else if (data.billingStatus === "active" || (plan as string) !== "none") {
-    billingStatus = "active";
-  } else {
-    billingStatus = "cancelled";
-  }
-
-  // ── Derive canUpgrade ──
-  const canUpgrade = !isTeamMember && plan !== "scaling";
-
-  // ── Derive canTopUp ──
-  const canTopUp =
-    !isTeamMember &&
-    !isTrial &&
-    billingStatus !== "cancelled";
-
-  return {
-    plan,
-    isTrial,
-    credits,
-    creditsPerMonth,
-    billingStatus,
-    nextResetDate,
-    cancelAt: cancelAtPeriodEnd ? cancelAt : null,
-    stripeCustomerId,
-    canUpgrade,
-    canTopUp,
-    isTeamMember,
-    teamOwnerUid,
-    gracePeriodEndsAt: billingStatus === "past_due" ? gracePeriodEndsAt : null,
-  };
+function tsToObj(ts: Timestamp | null | undefined): { seconds: number; nanoseconds: number } | null {
+    if (!ts) return null;
+    if (typeof (ts as any).seconds === "number") {
+        return { seconds: (ts as Timestamp).seconds, nanoseconds: (ts as Timestamp).nanoseconds };
+    }
+    return null;
 }
 
-// ─── WRITE BILLING STATE (Firestore helper) ────────────────────────────────
+export function buildBillingState(data: UserData): BillingState {
+    const plan = data.plan || "none";
+    const isTrial = data.isTrial === true;
+    const isTeamMember = data.isTeamMember === true;
+    const rawCredits = data.credits ?? 0;
+    const planCredits = PLAN_CREDITS[plan] ?? 0;
+    const creditsPerMonth = isTrial ? TRIAL_CREDITS : planCredits;
 
-export async function writeBillingState(
-  uid: string,
-  db: Firestore
+    let billingStatus: BillingState["billingStatus"] = "active";
+
+    if (data.gracePeriodEndsAt) {
+        billingStatus = "past_due";
+    } else if (data.cancelAtPeriodEnd || data.cancelAt) {
+        billingStatus = "cancelling";
+    }
+
+    if (data.billingStatus === "cancelled") {
+        billingStatus = "cancelled";
+    }
+
+    if (plan === "none" && rawCredits === 0 && !isTrial) {
+        billingStatus = "cancelled";
+    }
+
+    if (isTrial && rawCredits <= 0) {
+        billingStatus = "cancelled";
+    }
+
+    const currentRank = PLAN_HIERARCHY[plan] ?? 0;
+    const canUpgrade = !isTeamMember && currentRank < PLAN_HIERARCHY["scaling"] && currentRank >= PLAN_HIERARCHY["starter"];
+    const canTopUp = !isTeamMember && !isTrial && plan !== "none" && billingStatus !== "cancelled" && billingStatus !== "past_due";
+
+    return {
+        plan,
+        isTrial,
+        credits: rawCredits,
+        creditsPerMonth,
+        billingStatus,
+        nextResetDate: tsToObj(data.nextCreditReset),
+        paddleCustomerId: data.paddleCustomerId || null,
+        paddleSubscriptionId: data.paddleSubscriptionId || null,
+        paddleUpdatePaymentUrl: data.paddleUpdatePaymentUrl || null,
+        paddleCancelUrl: data.paddleCancelUrl || null,
+        canUpgrade,
+        canTopUp,
+        isTeamMember,
+        teamOwnerUid: data.teamOwnerUid || null,
+        teamOwnerName: data.teamOwnerName || null,
+        cancelAt: tsToObj(data.cancelAt),
+        gracePeriodEndsAt: tsToObj(data.gracePeriodEndsAt),
+        pendingPlan: data.pendingPlan || null,
+        pendingPlanEffectiveAt: tsToObj(data.pendingPlanEffectiveAt),
+    };
+}
+
+// ═══════════════════════════════════════════════════════════
+// writeBillingState — reads user doc, computes state, writes to embedded billingState sub-object
+// ═══════════════════════════════════════════════════════════
+
+export async function writeBillingState(uid: string, db: Firestore): Promise<void> {
+    const userRef = db.collection("users").doc(uid);
+
+    await db.runTransaction(async (tx) => {
+        const snap = await tx.get(userRef);
+        if (!snap.exists) return;
+
+        const data = snap.data() as UserData;
+        const state = buildBillingState(data);
+
+        tx.update(userRef, { billingState: state });
+    });
+}
+
+// ═══════════════════════════════════════════════════════════
+// IDEMPOTENCY — paddle_events/{eventId}
+// ═══════════════════════════════════════════════════════════
+
+export async function isEventProcessed(eventId: string, db: Firestore): Promise<boolean> {
+    const doc = await db.collection("paddle_events").doc(eventId).get();
+    return doc.exists;
+}
+
+export async function markEventProcessed(
+    eventId: string,
+    eventType: string,
+    metadata: {
+        paddleCustomerId?: string;
+        paddleSubscriptionId?: string;
+        email?: string;
+        result: "applied" | "duplicate" | "ignored";
+    },
+    db: Firestore,
 ): Promise<void> {
-  console.log(`💳 writeBillingState START uid=${uid}`);
-  const userRef = db.collection("users").doc(uid);
-  const snap = await userRef.get();
-  if (!snap.exists) {
-    console.log(`💳 writeBillingState SKIP uid=${uid} — user doc not found`);
-    return;
-  }
-
-  const data = snap.data()!;
-  const state = buildBillingState({
-    plan: data.plan,
-    isTrial: data.isTrial,
-    credits: data.credits,
-    stripeCustomerId: data.stripeCustomerId,
-    isTeamMember: data.isTeamMember,
-    teamOwnerUid: data.teamOwnerUid,
-    cancelAtPeriodEnd: data.cancelAtPeriodEnd,
-    cancelAt: data.cancelAt,
-    billingStatus: data.billingStatus,
-    gracePeriodEndsAt: data.gracePeriodEndsAt,
-    nextResetDate: data.nextResetDate,
-  });
-  console.log(`💳 writeBillingState BUILT uid=${uid} plan=${state.plan} status=${state.billingStatus} credits=${state.credits}`);
-
-  try {
-    await userRef.update({ billingState: state });
-    console.log(`💳 writeBillingState OK uid=${uid}`);
-  } catch (err) {
-    console.error(`💳 writeBillingState FAIL uid=${uid}`, err);
-    throw err;
-  }
+    await db.collection("paddle_events").doc(eventId).set({
+        eventType,
+        processedAt: FieldValue.serverTimestamp(),
+        paddleCustomerId: metadata.paddleCustomerId || null,
+        paddleSubscriptionId: metadata.paddleSubscriptionId || null,
+        email: metadata.email || null,
+        result: metadata.result,
+    });
 }
