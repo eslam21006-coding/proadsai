@@ -4,7 +4,7 @@ import { Response, Request } from "express";
 import { Paddle } from "@paddle/paddle-node-sdk";
 import { Firestore } from "firebase-admin/firestore";
 import * as admin from "firebase-admin";
-import { isEventProcessed, markEventProcessed, writeBillingState } from "./billingState.js";
+import { isEventProcessed, markEventProcessed, writeBillingState, writeThroughDormantPlan } from "./billingState.js";
 import { logBillingStep } from "./billingLogger.js";
 import { notifyGHL, notifyGHLFailed } from "./ghlBillingSync.js";
 
@@ -248,6 +248,18 @@ async function handleSubscriptionUpdated(event: any, deps: PaddleWebhookDeps): P
 
     await deps.db.collection("users").doc(uid).update(updateFields);
     await writeBillingState(uid, deps.db);
+    // Phase 9 FR-018: propagate to any dormantPlan snapshots referencing this customer
+    const customerId = userData.paddleCustomerId || sub.customerId;
+    if (customerId) {
+        const dormantFields: Record<string, unknown> = {
+            paddleUpdatePaymentUrl: managementUrls.updatePaymentMethod || null,
+            paddleCancelUrl: managementUrls.cancel || null,
+        };
+        if (updateFields.plan) dormantFields.plan = updateFields.plan;
+        if (updateFields.credits !== undefined) dormantFields.credits = updateFields.credits;
+        if (updateFields.billingStatus) dormantFields.billingStatus = updateFields.billingStatus;
+        await writeThroughDormantPlan(deps.db, "paddleCustomerId", customerId, dormantFields).catch(() => {});
+    }
     notifyGHL(uid, "subscription.updated", deps.ghlSyncUrl, {
         plan: updateFields.plan || userData.plan,
         billingStatus: updateFields.billingStatus || userData.billingStatus || "active",
@@ -279,6 +291,7 @@ async function handleSubscriptionCanceled(event: any, deps: PaddleWebhookDeps): 
     }
 
     const uid = userSnap.docs[0].id;
+    const customerId = userSnap.docs[0].data()?.paddleCustomerId || sub.customerId;
 
     await deps.db.collection("users").doc(uid).update({
         plan: "none",
@@ -290,6 +303,14 @@ async function handleSubscriptionCanceled(event: any, deps: PaddleWebhookDeps): 
 
     logBillingStep("subscription_canceled", event.eventId, "success", undefined, { uid });
     await writeBillingState(uid, deps.db);
+    // Phase 9 FR-018: cancel-propagate to any dormantPlan snapshots
+    if (customerId) {
+        await writeThroughDormantPlan(deps.db, "paddleCustomerId", customerId, {
+            plan: "none",
+            credits: 0,
+            billingStatus: "cancelled",
+        }).catch(() => {});
+    }
     notifyGHL(uid, "subscription.canceled", deps.ghlSyncUrl, {
         plan: "none",
         billingStatus: "cancelled",
@@ -321,6 +342,7 @@ async function handleSubscriptionPastDue(event: any, deps: PaddleWebhookDeps): P
     }
 
     const uid = userSnap.docs[0].id;
+    const customerId = userSnap.docs[0].data()?.paddleCustomerId || sub.customerId;
     const graceEnd = admin.firestore.Timestamp.fromDate(
         new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
     );
@@ -333,6 +355,12 @@ async function handleSubscriptionPastDue(event: any, deps: PaddleWebhookDeps): P
 
     logBillingStep("subscription_past_due", event.eventId, "success", undefined, { uid });
     await writeBillingState(uid, deps.db);
+    // Phase 9 FR-018: past_due propagates to dormantPlan snapshots (credits untouched)
+    if (customerId) {
+        await writeThroughDormantPlan(deps.db, "paddleCustomerId", customerId, {
+            billingStatus: "past_due",
+        }).catch(() => {});
+    }
     notifyGHLFailed(uid, "past_due", deps.ghlFailedUrl, managementUrls.updatePaymentMethod).catch(() => {});
 }
 
@@ -382,6 +410,16 @@ async function handleTransactionCompleted(event: any, deps: PaddleWebhookDeps): 
         creditAmount,
     });
     await writeBillingState(firebaseUid, deps.db);
+    // Phase 9 FR-018: top-up credits add to any dormantPlan snapshot too (best-effort)
+    const userSnapAfter = await deps.db.collection("users").doc(firebaseUid).get();
+    const customerId = userSnapAfter.data()?.paddleCustomerId;
+    const dormantBefore = userSnapAfter.data()?.dormantPlan;
+    if (customerId && dormantBefore) {
+        const newCredits = (dormantBefore.credits || 0) + creditAmount;
+        await writeThroughDormantPlan(deps.db, "paddleCustomerId", customerId, {
+            credits: newCredits,
+        }).catch(() => {});
+    }
     notifyGHL(firebaseUid, "topup", deps.ghlSyncUrl, {
         credits: creditAmount,
     }).catch(() => {});
@@ -427,5 +465,9 @@ async function handleTransactionPaymentFailed(event: any, deps: PaddleWebhookDep
 
     logBillingStep("transaction_payment_failed", event.eventId, "success", undefined, { uid });
     await writeBillingState(uid, deps.db);
+    // Phase 9 FR-018: payment-failed propagates to any dormantPlan snapshots for this customer
+    await writeThroughDormantPlan(deps.db, "paddleCustomerId", paddleCustomerId, {
+        billingStatus: "past_due",
+    }).catch(() => {});
     notifyGHLFailed(uid, "payment_failed", deps.ghlFailedUrl, userData.paddleUpdatePaymentUrl).catch(() => {});
 }

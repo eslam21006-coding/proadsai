@@ -153,6 +153,44 @@ export async function writeBillingState(uid: string, db: Firestore): Promise<voi
 }
 
 // ═══════════════════════════════════════════════════════════
+// Phase 9 FR-018 — dormantPlan write-through
+// ═══════════════════════════════════════════════════════════
+// When a subscription event fires, propagate plan/credits/URL/status changes
+// to any `dormantPlan` snapshots referencing the affected customer. Called from
+// both the Stripe webhook (legacy, queryField='stripeCustomerId') and the Paddle
+// webhook (queryField='paddleCustomerId') so dormant snapshots stay live for
+// users who joined a team mid-subscription. Matches against a nested map subfield
+// — Firestore auto-indexes these, no explicit index configuration required.
+export async function writeThroughDormantPlan(
+    db: Firestore,
+    queryField: "stripeCustomerId" | "paddleCustomerId",
+    customerId: string,
+    fields: Record<string, unknown>,
+): Promise<void> {
+    if (!customerId) return;
+    try {
+        const fieldPath = `dormantPlan.${queryField}`;
+        const snap = await db.collection("users")
+            .where(fieldPath, "==", customerId)
+            .limit(10)
+            .get();
+        if (snap.empty) return;
+        for (const doc of snap.docs) {
+            const dp = doc.data()?.dormantPlan;
+            if (!dp) continue;
+            const updates: Record<string, unknown> = {};
+            for (const [key, value] of Object.entries(fields)) {
+                updates[`dormantPlan.${key}`] = value;
+            }
+            await doc.ref.update(updates);
+            console.log(`🔄 dormantPlan write-through: ${doc.id} via ${queryField}`);
+        }
+    } catch (err) {
+        console.warn("⚠️ dormantPlan write-through failed (non-blocking):", err);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
 // IDEMPOTENCY — paddle_events/{eventId}
 // ═══════════════════════════════════════════════════════════
 

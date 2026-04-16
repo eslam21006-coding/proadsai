@@ -19,7 +19,7 @@ import {
     type GatedFeature, type ResolvedEntitlement,
 } from "./entitlements.js";
 import { validateSelector } from "./selectorLimits.js";
-import { writeBillingState } from "./billing/billingState.js";
+import { writeBillingState, writeThroughDormantPlan } from "./billing/billingState.js";
 import { paddleGetSubscription, paddleCancelSubscription, paddleReactivateSubscription, paddleChangePlan } from "./paddle/paddleSubscriptions.js";
 import { paddleCreateTopupCheckout } from "./paddle/paddleCheckout.js";
 import { paddleCreatePortalSession } from "./paddle/paddlePortal.js";
@@ -116,32 +116,6 @@ const ACTION_FEATURE_MAP: Record<string, string> = {
     reflowImage: "visualPolishes",
     editRegion: "regionEditing",
 };
-
-// FR-018: Write-through to `dormantPlan` snapshots when a subscription event fires.
-// Identity field is `stripeCustomerId` on this (pre-Paddle) branch. When 009 lands,
-// rename to `paddleCustomerId` / `paddleSubscriptionId` in lockstep with the billing rename.
-async function writeThroughDormantPlan(stripeCustomerId: string, fields: Record<string, any>): Promise<void> {
-    if (!stripeCustomerId) return;
-    try {
-        const dormantSnap = await db.collection("users")
-            .where("dormantPlan.stripeCustomerId", "==", stripeCustomerId)
-            .limit(10)
-            .get();
-        if (dormantSnap.empty) return;
-        for (const doc of dormantSnap.docs) {
-            const dp = doc.data()?.dormantPlan;
-            if (!dp) continue;
-            const updates: Record<string, any> = {};
-            for (const [key, value] of Object.entries(fields)) {
-                updates[`dormantPlan.${key}`] = value;
-            }
-            await doc.ref.update(updates);
-            console.log(`🔄 dormantPlan write-through: ${doc.id} updated with ${Object.keys(fields).join(', ')}`);
-        }
-    } catch (err) {
-        console.warn("⚠️ dormantPlan write-through failed (non-blocking):", err);
-    }
-}
 
 // ─── MODEL CONSTANTS (single source of truth) ───────────────────────────
 const CREATIVE_MODEL_PRO = "gemini-3.1-pro-preview"; // First generation
@@ -398,12 +372,18 @@ export const monthlyCreditsReset = onSchedule({
                         console.warn(`⚠️ writeBillingState failed for ${userDoc.id}:`, e.message)
                     );
                     // T030b: refresh dormantPlan credits for users whose dormant subscription targets this plan
+                    const resetFields = {
+                        credits: PLAN_LIMITS[data.plan],
+                        nextResetDate: admin.firestore.Timestamp.fromDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)),
+                    };
                     if (data.stripeCustomerId) {
-                        await writeThroughDormantPlan(data.stripeCustomerId, {
-                            credits: PLAN_LIMITS[data.plan],
-                            nextResetDate: admin.firestore.Timestamp.fromDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)),
-                        }).catch((e: any) =>
-                            console.warn(`⚠️ dormantPlan monthly reset failed for ${userDoc.id}:`, e.message)
+                        await writeThroughDormantPlan(db, "stripeCustomerId", data.stripeCustomerId, resetFields).catch((e: any) =>
+                            console.warn(`⚠️ dormantPlan monthly reset (stripe) failed for ${userDoc.id}:`, e.message)
+                        );
+                    }
+                    if (data.paddleCustomerId) {
+                        await writeThroughDormantPlan(db, "paddleCustomerId", data.paddleCustomerId, resetFields).catch((e: any) =>
+                            console.warn(`⚠️ dormantPlan monthly reset (paddle) failed for ${userDoc.id}:`, e.message)
                         );
                     }
                 }
@@ -1162,7 +1142,7 @@ const stripeWebhook = onRequest({
                     });
                     await writeBillingState(userDoc.id, db);
                     console.log(`⚠️ Subscription past_due: ${userDoc.id}`);
-                    await writeThroughDormantPlan(stripeCustomerId, { billingStatus: 'past_due' });
+                    await writeThroughDormantPlan(db, "stripeCustomerId", stripeCustomerId, { billingStatus: 'past_due' });
                 }
             } catch (e: any) {
                 console.error('Failed to handle past_due:', e.message);
@@ -1224,7 +1204,7 @@ const stripeWebhook = onRequest({
                     });
                     console.log(`✅ Portal plan change (via email): ${customer.email} → ${planInfo.plan} (${planInfo.credits} credits)`);
                     await writeBillingState(userRecord.uid, db);
-                    await writeThroughDormantPlan(stripeCustomerId, { plan: planInfo.plan, credits: planInfo.credits, billingStatus: 'active' });
+                    await writeThroughDormantPlan(db, "stripeCustomerId", stripeCustomerId, { plan: planInfo.plan, credits: planInfo.credits, billingStatus: 'active' });
                 } else {
                     console.error(`No user found for stripeCustomerId: ${stripeCustomerId}`);
                 }
@@ -1243,7 +1223,7 @@ const stripeWebhook = onRequest({
                 });
                 console.log(`✅ Portal plan change: ${userDoc.id} → ${planInfo.plan} (${planInfo.credits} credits)`);
                 await writeBillingState(userDoc.id, db);
-                await writeThroughDormantPlan(stripeCustomerId, { plan: planInfo.plan, credits: planInfo.credits, billingStatus: 'active' });
+                await writeThroughDormantPlan(db, "stripeCustomerId", stripeCustomerId, { plan: planInfo.plan, credits: planInfo.credits, billingStatus: 'active' });
             }
             res.status(200).send('OK');
         } catch (err: any) {
@@ -1280,7 +1260,7 @@ const stripeWebhook = onRequest({
                 });
                 console.log(`✅ Subscription cancelled: ${userDoc.id} → none (0 credits)`);
                 await writeBillingState(userDoc.id, db);
-                await writeThroughDormantPlan(stripeCustomerId, { plan: 'none', credits: 0, billingStatus: 'cancelled' });
+                await writeThroughDormantPlan(db, "stripeCustomerId", stripeCustomerId, { plan: 'none', credits: 0, billingStatus: 'cancelled' });
             } else {
                 // Fallback via email
                 const stripe = new Stripe(stripeSecretKey.value());
@@ -2631,9 +2611,11 @@ export const claimTeamInvite = onCall({
             });
 
             // ─── dormantPlan capture (FR-017) ───
-            // Two sources handled uniformly: (a) pending_plans/{email} doc from a pre-signup Stripe
-            // payment, or (b) an existing active paid subscription already on users/{uid}. Captured
-            // fields use the branch's Stripe schema (stripeCustomerId); rename alongside 009 on merge.
+            // Two sources handled uniformly: (a) pending_plans/{email} doc from a pre-signup
+            // payment, or (b) an existing active paid subscription already on users/{uid}.
+            // Both identity fields (stripeCustomerId legacy + paddleCustomerId new) are captured
+            // if present, so the Stripe webhook write-through and the Paddle webhook write-through
+            // can each match their respective field on the same dormant snapshot.
             let dormantPlan: Record<string, any> | null = null;
 
             const pendingPlanRef = db.collection("pending_plans").doc(callerEmail);
@@ -2643,9 +2625,15 @@ export const claimTeamInvite = onCall({
                 dormantPlan = {
                     plan: pd.plan || 'none',
                     credits: pd.credits ?? 0,
+                    creditsPerMonth: pd.creditsPerMonth ?? pd.credits ?? 0,
                     isTrial: pd.isTrial || false,
+                    billingStatus: pd.billingStatus || 'active',
+                    nextResetDate: pd.nextResetDate || null,
                     stripeCustomerId: pd.stripeCustomerId || null,
-                    billingStatus: 'active',
+                    paddleCustomerId: pd.paddleCustomerId || null,
+                    paddleSubscriptionId: pd.paddleSubscriptionId || null,
+                    paddleUpdatePaymentUrl: pd.paddleUpdatePaymentUrl || null,
+                    paddleCancelUrl: pd.paddleCancelUrl || null,
                     ghlContactId: pd.ghlContactId || null,
                 };
                 txn.delete(pendingPlanRef);
@@ -2653,15 +2641,21 @@ export const claimTeamInvite = onCall({
                 const existingUserSnap = await txn.get(db.collection("users").doc(callerUid));
                 if (existingUserSnap.exists) {
                     const ud = existingUserSnap.data()!;
-                    if (ud.plan && ud.plan !== 'none' && ud.stripeCustomerId) {
+                    const hasActivePaidSub = ud.plan && ud.plan !== 'none'
+                        && (ud.stripeCustomerId || ud.paddleCustomerId);
+                    if (hasActivePaidSub) {
                         dormantPlan = {
                             plan: ud.plan,
                             credits: ud.credits ?? 0,
                             creditsPerMonth: ud.creditsPerMonth ?? ud.credits ?? 0,
-                            stripeCustomerId: ud.stripeCustomerId,
+                            isTrial: ud.isTrial || false,
                             billingStatus: ud.billingStatus || 'active',
                             nextResetDate: ud.nextResetDate || null,
-                            isTrial: ud.isTrial || false,
+                            stripeCustomerId: ud.stripeCustomerId || null,
+                            paddleCustomerId: ud.paddleCustomerId || null,
+                            paddleSubscriptionId: ud.paddleSubscriptionId || null,
+                            paddleUpdatePaymentUrl: ud.paddleUpdatePaymentUrl || null,
+                            paddleCancelUrl: ud.paddleCancelUrl || null,
                         };
                     }
                 }
@@ -2888,10 +2882,15 @@ export const removeTeamMember = onCall({
             restoreFields.plan = dp.plan || 'none';
             restoreFields.credits = dp.credits ?? 0;
             restoreFields.creditsPerMonth = dp.creditsPerMonth ?? null;
-            restoreFields.stripeCustomerId = dp.stripeCustomerId || admin.firestore.FieldValue.delete();
             restoreFields.billingStatus = dp.billingStatus || 'active';
             restoreFields.nextResetDate = dp.nextResetDate || admin.firestore.FieldValue.delete();
             restoreFields.isTrial = dp.isTrial || false;
+            // Restore both legacy (Stripe) and current (Paddle) identity fields whichever were captured
+            restoreFields.stripeCustomerId = dp.stripeCustomerId || admin.firestore.FieldValue.delete();
+            restoreFields.paddleCustomerId = dp.paddleCustomerId || admin.firestore.FieldValue.delete();
+            restoreFields.paddleSubscriptionId = dp.paddleSubscriptionId || admin.firestore.FieldValue.delete();
+            restoreFields.paddleUpdatePaymentUrl = dp.paddleUpdatePaymentUrl || admin.firestore.FieldValue.delete();
+            restoreFields.paddleCancelUrl = dp.paddleCancelUrl || admin.firestore.FieldValue.delete();
             restoreFields.dormantPlan = admin.firestore.FieldValue.delete();
         } else {
             restoreFields.plan = 'none';
