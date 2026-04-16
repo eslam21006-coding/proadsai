@@ -1,6 +1,6 @@
-// src/components/billing/PaymentFailedAlert.tsx
+// src/components/billing/PaymentFailedAlert.tsx — alert for past_due billing with grace period countdown
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { useT } from "../../i18n";
 
 interface PaymentFailedAlertProps {
@@ -13,30 +13,36 @@ export const PaymentFailedAlert: React.FC<PaymentFailedAlertProps> = ({
   onUpdatePayment,
 }) => {
   const { t } = useT();
-  let countdown = "";
-  if (gracePeriodEndsAt) {
-    const endMs = gracePeriodEndsAt.seconds * 1000;
-    const daysLeft = Math.max(0, Math.ceil((endMs - Date.now()) / (1000 * 60 * 60 * 24)));
-    countdown = daysLeft === 1 ? "1 day remaining" : `${daysLeft} days remaining`;
-  }
+  const [daysLeft, setDaysLeft] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!gracePeriodEndsAt) return;
+    const end = gracePeriodEndsAt.seconds * 1000;
+    const update = () => {
+      const diff = end - Date.now();
+      setDaysLeft(diff > 0 ? Math.ceil(diff / (1000 * 60 * 60 * 24)) : 0);
+    };
+    update();
+    const interval = setInterval(update, 60000);
+    return () => clearInterval(interval);
+  }, [gracePeriodEndsAt]);
 
   return (
     <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-4 space-y-3">
-      <div className="flex items-start gap-3">
-        <i className="fa-solid fa-triangle-exclamation text-rose-400 mt-0.5" />
-        <div className="flex-1 space-y-1">
-          <p className="text-sm font-semibold text-rose-300">{t('billing.paymentFailed')}</p>
-          <p className="text-xs text-slate-400">
-            {t('billing.paymentFailedDesc')}
-            {countdown && <span className="text-rose-400 font-semibold ml-1">({countdown})</span>}
-          </p>
-        </div>
+      <div className="flex items-center gap-2">
+        <i className="fa-solid fa-circle-exclamation text-rose-400" />
+        <p className="text-rose-300 font-semibold text-sm">{t("billing.paymentFailed.title")}</p>
       </div>
+      {daysLeft !== null && daysLeft > 0 && (
+        <p className="text-xs text-slate-400">
+          {t("billing.paymentFailed.graceCountdown").replace("{days}", String(daysLeft))}
+        </p>
+      )}
       <button
         onClick={onUpdatePayment}
-        className="w-full py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-sm font-semibold transition-all"
+        className="w-full py-2 rounded-lg bg-rose-600/20 border border-rose-500/30 text-rose-300 text-sm font-bold hover:bg-rose-600/30 transition-all"
       >
-        {t('billing.updatePaymentBtn')}
+        {t("billing.paymentFailed.updateMethod")}
       </button>
     </div>
   );

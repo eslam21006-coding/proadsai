@@ -1,33 +1,10 @@
-// src/hooks/useBillingState.ts — Firestore real-time listener for unified billing state
+// src/hooks/useBillingState.ts — real-time hook reading billingState embedded sub-object from users/{uid}
 
 import { useState, useEffect } from "react";
-import { onSnapshot, doc } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
-import { getAuth, onAuthStateChanged } from "firebase/auth";
-import type { UserPlan } from "../planconfig";
-
-export type BillingStatus =
-  | "active"
-  | "trialing"
-  | "past_due"
-  | "cancelling"
-  | "cancelled";
-
-export interface BillingState {
-  plan: UserPlan;
-  isTrial: boolean;
-  credits: number;
-  creditsPerMonth: number;
-  billingStatus: BillingStatus;
-  nextResetDate: { seconds: number; nanoseconds: number } | null;
-  cancelAt: { seconds: number; nanoseconds: number } | null;
-  stripeCustomerId: string | null;
-  canUpgrade: boolean;
-  canTopUp: boolean;
-  isTeamMember: boolean;
-  teamOwnerUid: string | null;
-  gracePeriodEndsAt: { seconds: number; nanoseconds: number } | null;
-}
+import { useAppStore } from "../store";
+import { canUse, type UserPlan } from "../planconfig";
 
 export type CancellationReason =
   | "too_expensive"
@@ -36,63 +13,92 @@ export type CancellationReason =
   | "missing_features"
   | "other";
 
-export interface CancellationRecord {
-  uid: string;
-  email: string;
-  plan: UserPlan;
-  reason: CancellationReason;
-  feedback: string | null;
-  cancelAt: { seconds: number; nanoseconds: number };
-  createdAt: { seconds: number; nanoseconds: number };
+export interface BillingState {
+  plan: string;
+  isTrial: boolean;
+  credits: number;
+  creditsPerMonth: number;
+  billingStatus: "active" | "past_due" | "cancelled" | "cancelling" | "trialing";
+  nextResetDate: { seconds: number; nanoseconds: number } | null;
+  billingType: string | null;
+  paddleCustomerId: string | null;
+  paddleSubscriptionId: string | null;
+  paddleUpdatePaymentUrl: string | null;
+  paddleCancelUrl: string | null;
+  canUpgrade: boolean;
+  canTopUp: boolean;
+  isTeamMember: boolean;
+  teamOwnerUid: string | null;
+  teamOwnerName: string | null;
+  cancelAt: { seconds: number; nanoseconds: number } | null;
+  gracePeriodEndsAt: { seconds: number; nanoseconds: number } | null;
+  pendingPlan: string | null;
+  pendingPlanEffectiveAt: { seconds: number; nanoseconds: number } | null;
 }
 
-export function useBillingState(): {
-  billingState: BillingState | null;
-  isLoading: boolean;
-} {
+export function useBillingState() {
+  const user = useAppStore((s) => s.user);
   const [billingState, setBillingState] = useState<BillingState | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    const auth = getAuth();
-    let unsubBilling: (() => void) | null = null;
+    if (!user) {
+      setBillingState(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
 
-    const unsubAuth = onAuthStateChanged(auth, (user) => {
-      // Clean up previous billing listener if user changed
-      if (unsubBilling) {
-        unsubBilling();
-        unsubBilling = null;
-      }
-
-      if (!user) {
-        setBillingState(null);
-        setIsLoading(false);
-        return;
-      }
-
-      unsubBilling = onSnapshot(
-        doc(db, "users", user.uid),
-        (snap) => {
+    const unsub = onSnapshot(
+      doc(db, "users", user.uid),
+      (snap) => {
+        if (snap.exists()) {
           const data = snap.data();
-          if (data?.billingState) {
-            setBillingState(data.billingState as BillingState);
-          } else {
-            setBillingState(null);
-          }
-          setIsLoading(false);
-        },
-        (err) => {
-          console.warn("billing snapshot listener error", err);
-          setIsLoading(false);
+          setBillingState((data.billingState as BillingState) || null);
+        } else {
+          setBillingState(null);
         }
-      );
-    });
+        setLoading(false);
+        setError(null);
+      },
+      (err) => {
+        setError(err);
+        setBillingState(null);
+        setLoading(false);
+      },
+    );
 
-    return () => {
-      unsubAuth();
-      if (unsubBilling) unsubBilling();
+    return () => unsub();
+  }, [user]);
+
+  return { billingState, loading, error };
+}
+
+export function useCanUse(feature: string): { allowed: boolean; requiredPlan: string } {
+  const { billingState } = useBillingState();
+  const plan = (billingState?.plan || "none") as UserPlan;
+
+  if (plan === "none") {
+    return { allowed: false, requiredPlan: "starter" };
+  }
+
+  const allowed = canUse(plan, feature as any);
+  if (!allowed) {
+    const PLAN_HIERARCHY: Record<string, string[]> = {
+      starter: ["brandUrlScraping"],
+      creator: ["retargeting", "fantasyUniverses", "visualPolishes", "abVariationTesting", "regionEditing"],
+      pro: ["carousel", "competitorResearch", "referenceAdUpload", "pushToMeta", "creativeMemory"],
+      scaling: ["batchGeneration", "creativeScoringEngine", "smartRecommendations", "variantExploration", "multiBrandWorkspaces"],
     };
-  }, []);
 
-  return { billingState, isLoading };
+    for (const [planName, features] of Object.entries(PLAN_HIERARCHY)) {
+      if (features.includes(feature)) {
+        return { allowed: false, requiredPlan: planName };
+      }
+    }
+    return { allowed: false, requiredPlan: "starter" };
+  }
+
+  return { allowed: true, requiredPlan: "" };
 }

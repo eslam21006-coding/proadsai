@@ -1,6 +1,6 @@
 ﻿# Pro Ads AI - SaaS - FAL Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-15
+Auto-generated from all feature plans. Last updated: 2026-04-16
 
 
 ## Project Structure
@@ -32,16 +32,14 @@ specs/            # Feature specs (speckit workflow)
 ## Active Technologies
 - TypeScript 5.7 (functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Gemini 3.1 (text + image), React 19, Zustand, Tailwind CSS 3 (005-render-prompt-pipeline)
 - Firestore (`generations/{genId}`, `creativeMemory/{creativeId}`) (005-render-prompt-pipeline)
-- TypeScript 5.7 (functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Firebase Auth, React 19 (006-team-management)
-- Firestore (`team_invites` collection, `users/{uid}` docs, `users/{uid}/team` subcollection) (006-team-management)
 - TypeScript 5.7 (Cloud Functions), TypeScript 5.9 (frontend) + React 19, Firebase Cloud Functions v2, Firebase Auth, Firestore, Vite 7, Tailwind CSS 3 (006-team-management)
 - Firestore (`team_invites`, `teamMemberships`, `users/{uid}`, `users/{uid}/team`, `rateLimits`) (006-team-management)
 - TypeScript 5.9 (frontend), TypeScript 5.7 (functions) + React 19, Zustand, Tailwind CSS 3, Firebase SDK (Firestore `onSnapshot`, `query`, `where`, `orderBy`) (010-favorites-workspace)
 - Firestore — `generations` collection (existing), `feedback.savedToFavorites` boolean field (010-favorites-workspace)
-- TypeScript 5.7 (functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Stripe SDK, React 19, Zustand 5 (009-billing-plan-access)
-- Firestore (`users/{uid}` billingState field, `cancellations` collection, `pending_plans` collection) (009-billing-plan-access)
-- TypeScript 5.7 (Cloud Functions), TypeScript 5.9 (frontend) + React 19, Firebase Cloud Functions v2, Firebase Auth, Firestore, Vite 7, Tailwind CSS 3, Paddle billing integration (via Phase 8 `billingState` / 009) (006-team-management)
-- Firestore (`team_invites`, `teamMemberships`, `users/{uid}`, `users/{uid}/team`, `rateLimits`, `pending_plans` consumed by Phase 8 + consumed-at-claim by Phase 9). New indexes: `team_invites.inviteeEmailNormalized` (for device-independent discovery + modal suppression), `users.dormantPlan.paddleSubscriptionId` (for Paddle webhook write-through) (006-team-management)
+- TypeScript 5.7 (functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Firebase Auth (email/password + email verification), React 19, Zustand, Tailwind CSS 3, `@paddle/paddle-node-sdk` (backend), Paddle.js v2 (client-side overlay checkout) (009-billing-plan-access)
+- Firestore — `users/{uid}` (with embedded `billingState` sub-object), `pending_plans/{email.toLowerCase()}` (pre-signup plans), `paddle_events/{eventId}` (webhook idempotency), `cancellation_logs/{uid}_{ts}` (analytics) (009-billing-plan-access)
+- TypeScript 5.7 (Cloud Functions), TypeScript 5.9 (frontend) + React 19, Firebase Cloud Functions v2, Firebase Auth, Firestore, Vite 7, Tailwind CSS 3, Paddle billing integration (via Phase 8 `billingState` / 009) (006-team-management-followup)
+- Firestore (`team_invites`, `teamMemberships`, `users/{uid}`, `users/{uid}/team`, `rateLimits`, `pending_plans` consumed by Phase 8 + consumed-at-claim by Phase 9). dormantPlan write-through uses auto-indexed `dormantPlan.paddleCustomerId` (006-team-management-followup)
 
 ## Recent Changes
 - 005-render-prompt-pipeline: Added TypeScript 5.7 (functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Gemini 3.1 (text + image), React 19

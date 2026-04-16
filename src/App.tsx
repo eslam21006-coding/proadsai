@@ -2,16 +2,14 @@ import * as React from 'react';
 import { useState, useEffect, useRef, Suspense } from 'react';
 import type { AdInputs, AdMode, AppPhase, AspectRatio, ABVariation, BatchResult, BatchHookGroup, CarouselSlide, CarouselSlideCopy, ChatMessage, TextOverride, VisualPolish, Toast, SavedProject, AudienceAvatar, CompetitorResearch, SemanticLock, TovEditIntent, RewriteScope, Workspace } from './types';
 // --- FIREBASE IMPORTS ---
-import { auth, googleProvider, db, functions } from './firebase';
-import { signInWithPopup, signInWithEmailAndPassword, sendPasswordResetEmail, signOut, onAuthStateChanged, deleteUser, type User } from 'firebase/auth';
+import { auth, db, functions } from './firebase';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signOut, onAuthStateChanged, type User } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, deleteDoc, deleteField, onSnapshot, collection, addDoc, getDocs, query, orderBy, where, limit } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { gemini, type GenerationResult } from './services/geminiService';
 import { resolveCreativeSpec, CREATIVE_MODE_CATALOG, type ResolvedCreativeSpec } from './creativeResolver';
 import { isValidHookPayload, validateCanonicalHooks, normalizeHooksToCanonical, getHookValidationSummary } from './utils/hookPayload';
 import FeedbackButtons from './components/FeedbackButtons';
-import FavoritesPanel from './components/FavoritesPanel';
-import { useFavorites } from './hooks/useFavorites';
 import MagicSelector, { type EditRequest } from './components/MagicSelector';
 import { feedbackService, type NegativeFeedbackTag } from './services/feedbackService';
 import { metaService, type MetaConnection } from './services/metaService';
@@ -22,27 +20,77 @@ import { ALL_UNIVERSES, type UniverseEntry } from './universeDatabase';
 const InputForm = React.lazy(() => import('./components/InputForm'));
 const PerformanceDashboard = React.lazy(() => import('./components/PerformanceDashboard'));
 const PricingTableLazy = React.lazy(() => import('./components/PricingTable'));
-const JoinTeamLazy = React.lazy(() => import('./pages/JoinTeam'));
-const TeamLazy = React.lazy(() => import('./pages/Team'));
 const BillingPage = React.lazy(() => import('./pages/Billing'));
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import WorkspaceSettingsModal from './components/WorkspaceSettingsModal';
+import { ForgotPasswordDialog } from './components/auth/ForgotPasswordDialog';
+import { VerifyEmailScreen } from './components/auth/VerifyEmailScreen';
+import { MandatoryBillingModal } from './components/billing/MandatoryBillingModal';
+import { TrialExpiredBanner } from './components/billing/TrialExpiredBanner';
+import { LowCreditsWarning } from './components/billing/LowCreditsWarning';
 
-// --- LOGIN COMPONENT (Login Only — Signup via GHL) ---
-const LoginScreen = ({ onGoogleLogin, onEmailLogin, onForgotPassword, isSubmitting, noAccountError }: {
-  onGoogleLogin: () => void;
+// --- LOGIN COMPONENT (Email-only with Login / Create Account tabs) ---
+const LoginScreen = ({ onEmailLogin, onCreateAccount, onForgotPassword, isSubmitting, authError, initialEmail, initialTab, onTabChange, onClearAuthError }: {
   onEmailLogin: (email: string, password: string) => void;
+  onCreateAccount: (email: string, password: string) => void;
   onForgotPassword: (email: string) => void;
   isSubmitting: boolean;
-  noAccountError: boolean;
+  authError: string | null;
+  initialEmail: string;
+  initialTab: 'login' | 'create';
+  onTabChange: (tab: 'login' | 'create') => void;
+  onClearAuthError: () => void;
 }) => {
-  const [email, setEmail] = useState('');
+  const [activeTab, setActiveTab] = useState<'login' | 'create'>(initialTab);
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [inlineError, setInlineError] = useState<string | null>(null);
   const { t, lang, setLang } = useT();
 
-  const handleSubmit = () => {
+  // Sync tab + email from parent on auto-switch
+  React.useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
+
+  React.useEffect(() => {
+    if (initialEmail) setEmail(initialEmail);
+  }, [initialEmail]);
+
+  // Display parent-provided auth error (from auto-switch flow)
+  React.useEffect(() => {
+    if (authError) setInlineError(authError);
+  }, [authError]);
+
+  const clearError = () => {
+    setInlineError(null);
+    onClearAuthError();
+  };
+
+  const handleSwitchTab = (tab: 'login' | 'create') => {
+    setActiveTab(tab);
+    onTabChange(tab);
+    clearError();
+  };
+
+  const handleLoginSubmit = () => {
     if (!email || !password) return;
+    clearError();
     onEmailLogin(email, password);
+  };
+
+  const handleCreateSubmit = () => {
+    if (!email || !password || !confirmPassword) return;
+    if (password !== confirmPassword) {
+      setInlineError(t('login.errorPasswordsMismatch'));
+      return;
+    }
+    if (password.length < 8) {
+      setInlineError(t('login.errorWeakPassword'));
+      return;
+    }
+    clearError();
+    onCreateAccount(email, password);
   };
 
   return (
@@ -78,108 +126,141 @@ const LoginScreen = ({ onGoogleLogin, onEmailLogin, onForgotPassword, isSubmitti
           </p>
         </div>
 
-        {/* ═══ No Account Error ═══ */}
-        {noAccountError && (
-          <div className="w-full max-w-md mx-auto bg-red-500/10 border border-red-500/20 rounded-2xl p-5 space-y-3 animate-in fade-in zoom-in-95 duration-300">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-red-500/15 flex items-center justify-center shrink-0">
-                <i className="fa-solid fa-circle-exclamation text-red-400"></i>
-              </div>
-              <div>
-                <p className="text-sm font-bold text-red-400">No account found</p>
-                <p className="text-xs text-slate-400 mt-0.5">There is no account associated with this Google account. Please sign up first.</p>
-              </div>
-            </div>
-            <a
-              href="https://proadsai.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block w-full py-3 bg-blue-600 hover:bg-blue-500 text-white text-center rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-lg shadow-blue-600/20"
-            >
-              <i className="fa-solid fa-rocket mr-2"></i>Sign Up at ProAdsAI.com
-            </a>
+        {/* ═══ Tab Buttons ═══ */}
+        <div className="flex max-w-md mx-auto bg-slate-900/60 rounded-2xl p-1">
+          <button
+            onClick={() => handleSwitchTab('login')}
+            className={`flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === 'login' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}
+          >
+            {t('login.enterStudio')}
+          </button>
+          <button
+            onClick={() => handleSwitchTab('create')}
+            className={`flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === 'create' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}
+          >
+            {t('login.createAccountButton')}
+          </button>
+        </div>
+
+        {/* ═══ Inline Error ═══ */}
+        {inlineError && (
+          <div className="w-full max-w-md mx-auto bg-red-500/10 border border-red-500/20 rounded-2xl p-4">
+            <p className="text-sm font-bold text-red-400">{inlineError}</p>
           </div>
         )}
 
-        {/* ═══ Google Sign-In Button ═══ */}
-        <button
-          onClick={onGoogleLogin}
-          disabled={isSubmitting}
-          className="w-full max-w-md mx-auto bg-white hover:bg-slate-200 text-slate-900 font-bold py-4 rounded-2xl transition-all flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50 shadow-lg"
-        >
-          <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6" alt="G" />
-          {t('login.google')}
-        </button>
-
-        {/* ═══ Divider ═══ */}
-        <div className="flex items-center gap-4 max-w-md mx-auto">
-          <div className="flex-1 h-px bg-slate-800"></div>
-          <span className="text-[10px] text-slate-600 font-bold uppercase tracking-widest">{t('login.or_email')}</span>
-          <div className="flex-1 h-px bg-slate-800"></div>
-        </div>
-
-        {/* ═══ Email/Password Form ═══ */}
-        <div className="flex flex-col items-center space-y-4 w-full max-w-md mx-auto">
-          <div className="w-full relative group">
-            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-              <i className="fa-solid fa-envelope text-slate-600 group-focus-within:text-blue-500 transition-colors"></i>
+        {/* ═══ Login Tab ═══ */}
+        {activeTab === 'login' && (
+          <div className="flex flex-col items-center space-y-4 w-full max-w-md mx-auto">
+            <div className="w-full relative group">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <i className="fa-solid fa-envelope text-slate-600 group-focus-within:text-blue-500 transition-colors"></i>
+              </div>
+              <input
+                type="email"
+                value={email}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setEmail(e.target.value); clearError(); }}
+                placeholder={t('login.emailLabel')}
+                className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl pl-12 pr-6 py-5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all text-sm font-medium shadow-inner"
+                onKeyDown={(e: React.KeyboardEvent) => e.key === 'Enter' && handleLoginSubmit()}
+              />
             </div>
-            <input
-              type="email"
-              value={email}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
-              placeholder={t('login.email_placeholder')}
-              className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl pl-12 pr-6 py-5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all text-sm font-medium shadow-inner"
-              onKeyDown={(e: React.KeyboardEvent) => e.key === 'Enter' && handleSubmit()}
-            />
-          </div>
-          <div className="w-full relative group">
-            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-              <i className="fa-solid fa-lock text-slate-600 group-focus-within:text-blue-500 transition-colors"></i>
+            <div className="w-full relative group">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <i className="fa-solid fa-lock text-slate-600 group-focus-within:text-blue-500 transition-colors"></i>
+              </div>
+              <input
+                type="password"
+                value={password}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setPassword(e.target.value); clearError(); }}
+                placeholder={t('login.passwordLabel')}
+                className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl pl-12 pr-6 py-5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all text-sm font-medium shadow-inner"
+                onKeyDown={(e: React.KeyboardEvent) => e.key === 'Enter' && handleLoginSubmit()}
+              />
             </div>
-            <input
-              type="password"
-              value={password}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
-              placeholder={t('login.password_placeholder')}
-              className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl pl-12 pr-6 py-5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all text-sm font-medium shadow-inner"
-              onKeyDown={(e: React.KeyboardEvent) => e.key === 'Enter' && handleSubmit()}
-            />
+
+            <button
+              onClick={handleLoginSubmit}
+              disabled={isSubmitting || !email || !password}
+              className="w-full py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.25em] shadow-xl shadow-blue-600/20 transition-all active:scale-[0.98] flex items-center justify-center space-x-3 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span>{isSubmitting ? t('login.please_wait') : t('login.enterStudio')}</span>
+              {!isSubmitting && <i className="fa-solid fa-arrow-right"></i>}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onForgotPassword(email)}
+              className="text-[10px] font-bold text-slate-500 hover:text-blue-400 uppercase tracking-widest transition-colors self-end -mt-1"
+            >
+              {t('login.forgotPassword')}
+            </button>
           </div>
+        )}
 
-          <button
-            onClick={handleSubmit}
-            disabled={isSubmitting || !email || !password}
-            className="w-full py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.25em] shadow-xl shadow-blue-600/20 transition-all active:scale-[0.98] flex items-center justify-center space-x-3 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <span>{isSubmitting ? t('login.please_wait') : t('login.enter')}</span>
-            {!isSubmitting && <i className="fa-solid fa-arrow-right"></i>}
-          </button>
+        {/* ═══ Create Account Tab ═══ */}
+        {activeTab === 'create' && (
+          <div className="flex flex-col items-center space-y-4 w-full max-w-md mx-auto">
+            <div className="w-full relative group">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <i className="fa-solid fa-envelope text-slate-600 group-focus-within:text-blue-500 transition-colors"></i>
+              </div>
+              <input
+                type="email"
+                value={email}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setEmail(e.target.value); clearError(); }}
+                placeholder={t('login.emailLabel')}
+                className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl pl-12 pr-6 py-5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all text-sm font-medium shadow-inner"
+              />
+            </div>
+            <div className="w-full relative group">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <i className="fa-solid fa-lock text-slate-600 group-focus-within:text-blue-500 transition-colors"></i>
+              </div>
+              <input
+                type="password"
+                value={password}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setPassword(e.target.value); clearError(); }}
+                placeholder={t('login.passwordLabel')}
+                className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl pl-12 pr-6 py-5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all text-sm font-medium shadow-inner"
+              />
+            </div>
+            <div className="w-full relative group">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <i className="fa-solid fa-lock text-slate-600 group-focus-within:text-blue-500 transition-colors"></i>
+              </div>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setConfirmPassword(e.target.value); clearError(); }}
+                placeholder={t('login.confirmPasswordLabel')}
+                className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl pl-12 pr-6 py-5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all text-sm font-medium shadow-inner"
+                onKeyDown={(e: React.KeyboardEvent) => e.key === 'Enter' && handleCreateSubmit()}
+              />
+            </div>
 
-          {/* ═══ Forgot Password Link ═══ */}
-          <button
-            type="button"
-            onClick={() => {
-              if (!email) { alert('Enter your email address first, then click Forgot Password.'); return; }
-              onForgotPassword(email);
-            }}
-            className="text-[10px] font-bold text-slate-500 hover:text-blue-400 uppercase tracking-widest transition-colors self-end -mt-1"
-          >
-            {t('login.forgot')}
-          </button>
-        </div>
+            <button
+              onClick={handleCreateSubmit}
+              disabled={isSubmitting || !email || !password || !confirmPassword}
+              className="w-full py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.25em] shadow-xl shadow-blue-600/20 transition-all active:scale-[0.98] flex items-center justify-center space-x-3 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span>{isSubmitting ? t('login.please_wait') : t('login.createAccountButton')}</span>
+            </button>
+          </div>
+        )}
 
-        {/* ═══ Don't have an account? ═══ */}
+        {/* ═══ Switch Tab Links ═══ */}
         <div className="pt-4 border-t border-white/5 flex flex-col items-center gap-3">
-          <span className="text-[10px] text-slate-600 font-bold uppercase tracking-widest">{t('login.no_account')}</span>
-          <a
-            href="https://proadsai.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] font-black text-blue-500 uppercase tracking-widest hover:text-white transition-colors border-b border-transparent hover:border-white pb-0.5"
-          >
-            {t('login.get_started')} <i className="fa-solid fa-arrow-right ml-1"></i>
-          </a>
+          {activeTab === 'login' && (
+            <button onClick={() => handleSwitchTab('create')} className="text-[10px] text-slate-600 font-bold uppercase tracking-widest">
+              {t('login.dontHaveAccount')} <span className="text-blue-500 hover:text-white">{t('login.createAccount')}</span>
+            </button>
+          )}
+          {activeTab === 'create' && (
+            <button onClick={() => handleSwitchTab('login')} className="text-[10px] text-slate-600 font-bold uppercase tracking-widest">
+              {t('login.alreadyHaveAccount')} <span className="text-blue-500 hover:text-white">{t('login.enterStudio')}</span>
+            </button>
+          )}
           <p className="text-[9px] text-slate-700 mt-1">
             By logging in, you agree to our{' '}
             <a href="https://proadsai.com/terms" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-blue-400 underline transition-colors">Terms of Service</a>
@@ -861,8 +942,8 @@ function sanitizeProjectModes(inputs: any): any {
   }
   // Sanitize removed offer types
   if (clean.offerType && !OFFER_TYPES.includes(clean.offerType)) {
-    console.warn(`🧹 Legacy offer type: "${clean.offerType}" → "Live Event"`);
-    clean.offerType = 'Live Event';
+    console.warn(`🧹 Legacy offer type: "${clean.offerType}" → "Mini-Course"`);
+    clean.offerType = 'Mini-Course';
   }
   return clean;
 }
@@ -926,7 +1007,11 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [noAccountError, setNoAccountError] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [pendingEmail, setPendingEmail] = useState<string>('');
+  const [loginTab, setLoginTab] = useState<'login' | 'create'>('login');
+  const [showMandatoryBilling, setShowMandatoryBilling] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(null); // null = loading
   const [showWelcome, setShowWelcome] = useState(false);
   const [showSignOut, setShowSignOut] = useState(false);
@@ -936,7 +1021,7 @@ const App: React.FC = () => {
   const [milestones, setMilestones] = useState<Milestones>(EMPTY_MILESTONES);
   const [showVideoPopup, setShowVideoPopup] = useState(false);
 
-  // 1. Check for topup return from Stripe
+  // 1. Check for topup return from Paddle
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('topup') === 'success') {
@@ -965,7 +1050,7 @@ const App: React.FC = () => {
       window.history.replaceState({}, '', window.location.pathname);
     }
 
-    // Restore session after returning from Stripe billing portal
+    // Restore session after returning from Paddle billing portal
     const savedPhase = sessionStorage.getItem('proads_return_phase');
     if (savedPhase) {
       sessionStorage.removeItem('proads_return_phase');
@@ -979,14 +1064,20 @@ const App: React.FC = () => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
-        // Fetch or Create User Profile in Firestore
+        // ─── T047: Email verification gate ───
+        if (!currentUser.emailVerified) {
+          setUser(currentUser);
+          setLoadingAuth(false);
+          return;
+        }
+
+        // Email verified — proceed to Firestore lookup
         const userRef = doc(db, "users", currentUser.uid);
         const userSnap = await getDoc(userRef);
 
         if (userSnap.exists()) {
           // EXISTING USER — normal login
           const userData = userSnap.data();
-          setNoAccountError(false);
           setUser(currentUser);
 
           // ─── T017b: Consume pendingRemovalToast ───
@@ -1014,20 +1105,14 @@ const App: React.FC = () => {
               setIsTrialUser(ownerData.isTrial === true);
               setStripeCustomerId(ownerData.stripeCustomerId ?? null);
               setBillingStatus(ownerData.billingStatus || 'active');
-              setTeamOwnerName(ownerData.displayName || ownerData.email?.split('@')[0] || 'Owner');
             } else {
               setUserCredits(0);
               setUserPlan('none');
               setIsTrialUser(false);
               setBillingStatus('cancelled');
-              setTeamOwnerName(null);
             }
           } else {
-            setTeamOwnerUid(null);
-            setTeamRole(null);
-            setTeamOwnerName(null);
             setUserCredits(userData.credits ?? 0);
-            // Plan is stored directly — isTrial just affects credit behavior, not features
             const effectivePlan = (userData.plan ?? 'none');
             setUserPlan(effectivePlan as UserPlan);
             setIsTrialUser(userData.isTrial === true);
@@ -1053,20 +1138,17 @@ const App: React.FC = () => {
           const loadedMilestones = userSnap.data().milestones ?? EMPTY_MILESTONES;
           setMilestones(loadedMilestones);
           setTourCompleted(userSnap.data().tourCompleted === true);
-          // Only show Welcome screen if user has never completed any milestone (true first visit)
-          // Returning users skip straight to the app
           const hasAnyMilestone = loadedMilestones.watchVideo || loadedMilestones.hooksGenerated || loadedMilestones.conceptsGenerated || loadedMilestones.designGenerated || loadedMilestones.copyGenerated;
-          // Check if user is returning from Stripe billing/topup
+          // Check if user is returning from Paddle billing/topup
           const pendingPhase = sessionStorage.getItem('proads_pending_phase');
           if (pendingPhase) {
             sessionStorage.removeItem('proads_pending_phase');
-            // Restore their previous phase — skip welcome screen
             setPhase(pendingPhase as AppPhase);
           } else if (isOnboarded && !hasAnyMilestone) {
             setShowWelcome(true);
           }
         } else {
-          // NO FIRESTORE DOC — check if they purchased via GHL
+          // ─── T048: No Firestore doc — check pending_plans ───
           let hasPendingPlan = false;
 
           if (currentUser.email) {
@@ -1077,12 +1159,10 @@ const App: React.FC = () => {
               hasPendingPlan = true;
               const pending = pendingSnap.data();
               const pendingIsTrial = pending.isTrial === true;
-              // Plan is stored directly — trial users have the real plan + isTrial=true
               const initialPlan = (pending.plan || 'none') as UserPlan;
               const initialCredits = pending.credits || 50;
               const initialBillingType = pending.billingType || 'monthly';
               const initialNextReset = pending.nextCreditReset || null;
-              // Clean up — they've claimed it
               await deleteDoc(pendingRef);
 
               const userDoc: Record<string, any> = {
@@ -1092,20 +1172,24 @@ const App: React.FC = () => {
                 isTrial: pendingIsTrial,
                 billingStatus: 'active',
                 onboardingComplete: false,
-                createdAt: new Date()
+                createdAt: new Date(),
               };
               if (initialBillingType) userDoc.billingType = initialBillingType;
               if (initialNextReset) userDoc.nextCreditReset = initialNextReset;
+              if (pending.paddleCustomerId) userDoc.paddleCustomerId = pending.paddleCustomerId;
+              if (pending.paddleSubscriptionId) userDoc.paddleSubscriptionId = pending.paddleSubscriptionId;
+              if (pending.paddleUpdatePaymentUrl) userDoc.paddleUpdatePaymentUrl = pending.paddleUpdatePaymentUrl;
+              if (pending.paddleCancelUrl) userDoc.paddleCancelUrl = pending.paddleCancelUrl;
               if (pending.stripeCustomerId) userDoc.stripeCustomerId = pending.stripeCustomerId;
 
               await setDoc(userRef, userDoc);
-              setNoAccountError(false);
               setUser(currentUser);
               setUserCredits(initialCredits);
-              setUserPlan(initialPlan); // Use effective plan (trialPlan for trials)
+              setUserPlan(initialPlan);
               setIsTrialUser(pendingIsTrial);
               if (pending.stripeCustomerId) setStripeCustomerId(pending.stripeCustomerId);
               setOnboardingComplete(false);
+              // Welcome toast fires automatically via the createdAt-within-60s effect (FR-024b)
             }
           }
 
@@ -1118,8 +1202,6 @@ const App: React.FC = () => {
               if (membershipSnap.exists()) {
                 isTeamMember = true;
                 const membership = membershipSnap.data();
-                // The Cloud Function should have already created their user doc
-                // But if it hasn't (race condition), create a minimal one
                 await setDoc(userRef, {
                   email: currentUser.email,
                   credits: 0,
@@ -1131,14 +1213,12 @@ const App: React.FC = () => {
                   createdAt: new Date(),
                 }, { merge: true });
 
-                // Load owner's data
                 setTeamOwnerUid(membership.ownerUid);
                 setTeamRole(membership.role || 'viewer');
                 const ownerRef = doc(db, 'users', membership.ownerUid);
                 const ownerSnap = await getDoc(ownerRef);
                 if (ownerSnap.exists()) {
                   const owData = ownerSnap.data();
-                  setNoAccountError(false);
                   setUser(currentUser);
                   setUserCredits(owData.credits ?? 0);
                   const effPlan = (owData.plan ?? 'none');
@@ -1152,15 +1232,23 @@ const App: React.FC = () => {
             }
 
             if (!isTeamMember) {
-              // UNAUTHORIZED — no account, no pending plan, not a team member
-              // Delete the auto-created Firebase Auth account and sign out
-              try { await deleteUser(currentUser); } catch (e) { console.warn('Could not delete orphan auth user:', e); }
-              await signOut(auth);
-              setUser(null);
-              setNoAccountError(true);
+              // ─── T049: Create minimal user doc (DO NOT delete auth account) ───
+              await setDoc(userRef, {
+                email: currentUser.email,
+                credits: 0,
+                plan: 'none',
+                isTrial: false,
+                onboardingComplete: false,
+                createdAt: new Date(),
+              });
+              setUser(currentUser);
               setUserCredits(0);
               setUserPlan('none');
-              setOnboardingComplete(null);
+              setIsTrialUser(false);
+              setStripeCustomerId(null);
+              setBillingStatus('active');
+              setOnboardingComplete(false);
+              setShowMandatoryBilling(true);
             }
           }
         }
@@ -1169,6 +1257,7 @@ const App: React.FC = () => {
         setUserCredits(0);
         setUserPlan('none');
         setOnboardingComplete(null);
+        setShowMandatoryBilling(false);
       }
       // ─── T011a: Device-independent post-signin invite discovery ───
       // Discovers a pending invite by normalized email on any sign-in where the user has no
@@ -1222,8 +1311,7 @@ const App: React.FC = () => {
       if (snap.exists()) {
         const data = snap.data();
         if (data.isTeamMember && data.teamOwnerUid) {
-          setTeamOwnerUid(data.teamOwnerUid);
-          setTeamRole(data.teamRole || 'viewer');
+          // Team member: listen to owner doc for credits/plan/billing
           const ownerRef = doc(db, 'users', data.teamOwnerUid);
           getDoc(ownerRef).then(ownerSnap => {
             if (ownerSnap.exists()) {
@@ -1232,19 +1320,11 @@ const App: React.FC = () => {
               setUserPlan((ow.plan ?? 'none') as UserPlan);
               setIsTrialUser(ow.isTrial === true);
               setBillingStatus(ow.billingStatus || 'active');
-              setTeamOwnerName(ow.displayName || ow.email?.split('@')[0] || 'Owner');
             } else {
               setBillingStatus('cancelled');
-              setTeamOwnerName(null);
             }
           }).catch(() => { /* non-blocking */ });
           return;
-        }
-        if (isTeamMember && !data.isTeamMember && !removedFromTeam) {
-          setRemovedFromTeam(true);
-          setTeamOwnerUid(null);
-          setTeamRole(null);
-          setTeamOwnerName(null);
         }
         setUserCredits(data.credits ?? 0);
         const effectivePlan = ((data.plan ?? 'none') as UserPlan);
@@ -1287,11 +1367,8 @@ const App: React.FC = () => {
     }
     try {
       const avatarsRef = collection(db, 'users', uid, 'avatars');
-      const docRef = await addDoc(avatarsRef, {
-        ...avatar, createdAt: Date.now(),
-        ...(canUseWorkspaces && activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
-      });
-      setAvatars(prev => [{ id: docRef.id, ...avatar, createdAt: Date.now(), ...(canUseWorkspaces && activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}) }, ...prev]);
+      const docRef = await addDoc(avatarsRef, { ...avatar, createdAt: Date.now() });
+      setAvatars(prev => [{ id: docRef.id, ...avatar, createdAt: Date.now() }, ...prev]);
     } catch (e) {
       console.error('Failed to save avatar:', e);
       showToast('Failed to save avatar', 'error');
@@ -1363,51 +1440,69 @@ const App: React.FC = () => {
     }
   };
 
-  // 2. Handle Google Login
-  const handleGoogleLogin = async () => {
-    setIsSubmitting(true);
-    setNoAccountError(false);
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error: any) {
-      console.error("Google login failed", error);
-      alert(error.message || "Google login failed. Please try again.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // 3. Handle Email/Password Login
   const handleEmailLogin = async (email: string, password: string) => {
     setIsSubmitting(true);
+    setAuthError(null);
     try {
       await signInWithEmailAndPassword(auth, email, password);
     } catch (error: any) {
       console.error("Email login failed", error);
-      const msg = error.code === 'auth/invalid-credential' ? 'Invalid email or password.'
-        : error.code === 'auth/user-not-found' ? 'No account with this email. Sign up first.'
-          : error.code === 'auth/wrong-password' ? 'Incorrect password.'
-            : error.code === 'auth/too-many-requests' ? 'Too many attempts. Try again later.'
-              : error.message || 'Login failed.';
-      alert(msg);
+      // Auto-switch: user-not-found → Create Account tab with email pre-filled
+      if (error.code === 'auth/user-not-found') {
+        setPendingEmail(email);
+        setLoginTab('create');
+        setAuthError(t('login.errorUserNotFound'));
+      } else if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        setAuthError(t('login.errorWrongPassword'));
+      } else if (error.code === 'auth/too-many-requests') {
+        setAuthError(t('login.errorTooManyRequests'));
+      } else if (error.code === 'auth/invalid-email') {
+        setAuthError(t('login.errorInvalidEmail'));
+      } else {
+        setAuthError(t('login.errorGeneric'));
+      }
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const handleCreateAccount = async (email: string, password: string) => {
+    setIsSubmitting(true);
+    setAuthError(null);
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      await sendEmailVerification(cred.user);
+    } catch (error: any) {
+      console.error("Create account failed", error);
+      // Auto-switch: email-already-in-use → Login tab with email pre-filled
+      if (error.code === 'auth/email-already-in-use') {
+        setPendingEmail(email);
+        setLoginTab('login');
+        setAuthError(t('login.errorEmailInUse'));
+      } else if (error.code === 'auth/weak-password') {
+        setAuthError(t('login.errorWeakPassword'));
+      } else if (error.code === 'auth/invalid-email') {
+        setAuthError(t('login.errorInvalidEmail'));
+      } else {
+        setAuthError(t('login.errorGeneric'));
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
-  // 4b. Handle Forgot Password
+  // Handle Forgot Password — Firebase built-in, non-revealing confirmation
   const handleForgotPassword = async (email: string) => {
+    if (!email) {
+      showToast(t('login.forgotPasswordDialog.emailPrompt'), 'error');
+      return;
+    }
     try {
       await sendPasswordResetEmail(auth, email);
-      alert('Password reset email sent! Check your inbox (and spam folder).');
-    } catch (error: any) {
-      const msg = error.code === 'auth/user-not-found' ? 'No account found with this email.'
-        : error.code === 'auth/invalid-email' ? 'Invalid email address.'
-          : error.code === 'auth/too-many-requests' ? 'Too many attempts. Try again later.'
-            : error.message || 'Failed to send reset email.';
-      alert(msg);
+    } catch (_error: any) {
+      // Non-revealing: show the same confirmation regardless of result
     }
+    showToast(t('login.forgotPasswordDialog.confirmation'), 'success');
   };
 
   // 5. Handle Logout
@@ -1486,54 +1581,77 @@ const App: React.FC = () => {
   const [isTrialUser, setIsTrialUser] = useState(false);
   const [hasVaultData, setHasVaultData] = useState(false);
   const [billingStatus, setBillingStatus] = useState<'active' | 'past_due' | 'cancelled'>('active');
-  const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
   const [teamOwnerUid, setTeamOwnerUid] = useState<string | null>(null);
   const [teamRole, setTeamRole] = useState<string | null>(null);
-  const [teamOwnerName, setTeamOwnerName] = useState<string | null>(null);
-  const [removedFromTeam, setRemovedFromTeam] = useState(false);
+  const isTeamMember = teamOwnerUid !== null;
   const isTeamViewer = teamRole === 'viewer';
-  const viewerBlockCls = isTeamViewer ? 'opacity-50 cursor-not-allowed' : '';
-  const viewerBlockTitle = isTeamViewer ? t('team.viewer_tooltip') : undefined;
+  // For team members, use the owner's UID for all avatar/project Firestore operations
   const effectiveUid = teamOwnerUid || user?.uid || null;
   effectiveUidRef.current = effectiveUid;
-  const isTeamMember = !!teamOwnerUid;
-  const isTeamOwner = !isTeamMember && !!user;
+  const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
   const [avatars, setAvatars] = useState<AudienceAvatar[]>([]);
   const [competitorData, setCompetitorData] = useState<CompetitorResearch | null>(null);
   const [competitorLoading, setCompetitorLoading] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [upgradeAnnual, setUpgradeAnnual] = useState(false);
-  interface CopyFidelityWarning { failedFields: string[]; onContinue: () => void; onRetry: () => void; onCancel: () => void }
-  const [copyFidelityWarning, setCopyFidelityWarning] = useState<CopyFidelityWarning | null>(null);
-  const copyFidelityHandledRef = useRef(false);
-  const COPY_FIDELITY_AUTO_PROCEED_MS = 10_000;
-  useEffect(() => {
-    if (!copyFidelityWarning) { copyFidelityHandledRef.current = false; return; }
-    const timer = setTimeout(() => {
-      if (copyFidelityHandledRef.current) return;
-      copyFidelityHandledRef.current = true;
-      const cb = copyFidelityWarning.onContinue;
-      setCopyFidelityWarning(null);
-      cb();
-    }, COPY_FIDELITY_AUTO_PROCEED_MS);
-    return () => clearTimeout(timer);
-  }, [copyFidelityWarning]);
   const [topupLoading, setTopupLoading] = useState<string | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
   const [showFavorites, setShowFavorites] = useState(false);
   const [favoritesData, setFavoritesData] = useState<any[]>([]);
   const [favTab, setFavTab] = useState('all');
   const [favoritesLoading, setFavoritesLoading] = useState(false);
-  const [openFavoritesPhase, setOpenFavoritesPhase] = useState<'hooks' | 'concepts' | 'render' | 'caption' | null>(null);
-  const [loadedFavoriteId, setLoadedFavoriteId] = useState<string | null>(null);
-  const [favUpdatePrompt, setFavUpdatePrompt] = useState<{ phase: string; newGenId: string } | null>(null);
-  const [loadedRenderRecord, setLoadedRenderRecord] = useState<any>(null);
   const [upgradeReason, setUpgradeReason] = useState('');
   const [showAccountMenu, setShowAccountMenu] = useState(false);
 
+  // ─── MANDATORY BILLING AUTO-DISMISS ──────────────────────────────────
+  useEffect(() => {
+    if (showMandatoryBilling && userPlan !== 'none') {
+      setShowMandatoryBilling(false);
+    }
+  }, [userPlan, showMandatoryBilling]);
+
+  // ─── WELCOME TOAST ───────────────────────────────────────────────────
+  // FR-024b: fires once when users/{uid}.createdAt is within 60s AND welcomeToastShown !== true.
+  // Covers both pending_plans consumption and mandatory-modal → paid transitions.
+  const welcomeToastFiredRef = React.useRef(false);
+  useEffect(() => {
+    if (!user) return;
+    if (welcomeToastFiredRef.current) return;
+    if (userPlan === 'none') return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'users', user.uid));
+        if (!snap.exists() || cancelled) return;
+        const data = snap.data();
+        if (data.welcomeToastShown === true) return;
+
+        // createdAt may be a Firestore Timestamp or a Date
+        const createdAt = data.createdAt;
+        let createdMs: number | null = null;
+        if (createdAt?.toDate) createdMs = createdAt.toDate().getTime();
+        else if (createdAt instanceof Date) createdMs = createdAt.getTime();
+        else if (typeof createdAt === 'number') createdMs = createdAt;
+
+        if (createdMs === null) return;
+        if (Date.now() - createdMs > 60_000) return;
+
+        welcomeToastFiredRef.current = true;
+        // Clean up the legacy pending flag if present
+        sessionStorage.removeItem('proads_welcome_pending');
+        showToast(t('login.welcomeTrial'), 'success');
+        await updateDoc(doc(db, 'users', user.uid), { welcomeToastShown: true });
+      } catch {
+        // Non-blocking — welcome toast failure should never break sign-in
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [user, userPlan]);
+
   // ─── BILLING MODAL STATE ───────────────────────────────────────────
   const [showBillingModal, setShowBillingModal] = useState(false);
-  const [showBillingPage, setShowBillingPage] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showTeamModal, setShowTeamModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
@@ -1563,7 +1681,7 @@ const App: React.FC = () => {
   const [editHookData, setEditHookData] = useState<{ hookText: string; subhead: string; cta: string; benefit: string }>({ hookText: '', subhead: '', cta: '', benefit: '' });
   const accountMenuRef = useRef<HTMLDivElement>(null);
 
-  // ─── GHL CHECKOUT URLS (replace with your actual GHL checkout page URLs) ───
+  // ─── PADDLE CHECKOUT URLS (PADDLE TODO: replace with Paddle checkout page URLs) ───
   const GHL_URLS: Record<string, string> = {
     starter_monthly: 'https://proadsai.com/checkout/starter',
     starter_annual: 'https://proadsai.com/checkout/starter',
@@ -1674,9 +1792,6 @@ const App: React.FC = () => {
   const filteredAvatars = canUseWorkspaces && activeWorkspaceId
     ? avatars.filter(a => (a.workspaceId || defaultWsId) === activeWorkspaceId)
     : avatars;
-  const filteredFavoritesData = canUseWorkspaces && activeWorkspaceId
-    ? favoritesData.filter((g: any) => (g.workspaceId || defaultWsId) === activeWorkspaceId)
-    : favoritesData;
 
   // ─── STRIPE BILLING PORTAL ─────────────────────────────────────────
   // ─── TEAM MANAGEMENT ──────────────────────────────────────────────
@@ -1762,6 +1877,7 @@ const App: React.FC = () => {
   };
 
   const handleRemoveTeamMember = async (memberId: string) => {
+    if (!user) return;
     try {
       const removeMember = httpsCallable(functions, 'removeTeamMember');
       const result = await removeMember({ memberId });
@@ -1771,24 +1887,13 @@ const App: React.FC = () => {
     } catch { showToast('Failed to remove member.', 'error'); }
   };
 
-  const handleRoleChange = async (memberId: string, newRole: 'editor' | 'viewer') => {
-    try {
-      const changeRole = httpsCallable(functions, 'updateTeamMemberRole');
-      await changeRole({ memberId, role: newRole });
-      showToast(t('team.role_member') + ' updated.', 'success');
-      loadTeamMembers();
-    } catch (e) {
-      showToast('Failed to update role.', 'error');
-    }
-  };
-
   const handleManageBilling = async () => {
     setBillingTab('manage');
     setShowBillingModal(true);
     // Fetch subscription data from Cloud Function
     setBillingLoading(true);
     try {
-      const getSubscription = httpsCallable(functions, 'getSubscription');
+      const getSubscription = httpsCallable(functions, 'paddleGetSub');
       const result = await getSubscription();
       setBillingData(result.data);
     } catch (error: any) {
@@ -1804,7 +1909,7 @@ const App: React.FC = () => {
     if (!cancelReason) { showToast('Please select a reason.', 'error'); return; }
     setCancelLoading(true);
     try {
-      const cancelSub = httpsCallable(functions, 'cancelSubscription');
+      const cancelSub = httpsCallable(functions, 'paddleCancelSub');
       const result = await cancelSub({ reason: cancelReason, feedback: cancelFeedback });
       const data = result.data as any;
       showToast(`Subscription cancelled. Access continues until ${new Date(data.currentPeriodEnd * 1000).toLocaleDateString()}.`, 'info');
@@ -1824,7 +1929,7 @@ const App: React.FC = () => {
   const handleReactivate = async () => {
     setBillingLoading(true);
     try {
-      const reactivate = httpsCallable(functions, 'reactivateSubscription');
+      const reactivate = httpsCallable(functions, 'paddleReactivateSub');
       await reactivate();
       showToast('Subscription reactivated!', 'success');
       handleManageBilling();
@@ -1876,12 +1981,12 @@ const App: React.FC = () => {
   const deductCredits = (action: keyof typeof CREDIT_COSTS, count = 1): boolean => {
     // Team viewers cannot perform credit-consuming actions
     if (isTeamViewer) {
-      showToast(t('team.viewer_tooltip'), 'error');
+      showToast('Viewers cannot perform this action. Ask your team owner to upgrade your role.', 'error');
       return false;
     }
     const cost = CREDIT_COSTS[action] * count;
     if (userCredits < cost) {
-      setUpgradeReason(t('credits.insufficient', { cost, balance: userCredits }));
+      setUpgradeReason(`You need ${cost} credits for this action but only have ${userCredits}.`);
       setShowUpgradeModal(true);
       return false;
     }
@@ -1899,7 +2004,19 @@ const App: React.FC = () => {
       // Server rejected — restore local balance
       console.error('Server deduction failed:', err);
       setUserCredits(prev => prev + cost);
-      if (err.code === 'functions/resource-exhausted') {
+      if (err.code === 'functions/failed-precondition') {
+        const details = err.details?.details || err.details || {};
+        if (details.code === 'plan_downgraded') {
+          setUpgradeReason(t('billing.error.planDowngraded').replace('{plan}', details.requiredPlan || 'higher'));
+          setShowUpgradeModal(true);
+        } else if (details.code === 'trial_expired') {
+          setUpgradeReason(t('billing.error.trialExpired'));
+          setShowUpgradeModal(true);
+        } else {
+          setUpgradeReason(err.message);
+          setShowUpgradeModal(true);
+        }
+      } else if (err.code === 'functions/resource-exhausted') {
         setUpgradeReason(err.message);
         setShowUpgradeModal(true);
       }
@@ -2167,22 +2284,6 @@ const App: React.FC = () => {
   const [hookGenerationIds, setHookGenerationIds] = useState<Record<string, string>>({});
   const [renderGenerationId, setRenderGenerationId] = useState<string>('');
   const [captionGenerationId, setCaptionGenerationId] = useState<string>('');
-  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    const uid = user?.uid;
-    if (!uid) return;
-    const wsId = canUseWorkspaces && activeWorkspaceId ? activeWorkspaceId : undefined;
-    feedbackService.getFavoriteIds(uid, wsId).then(ids => setFavoriteIds(ids)).catch(() => {});
-  }, [user?.uid, activeWorkspaceId]);
-
-  // ─── FAVORITES COUNT PER PHASE ──────────────────────────────
-  const favWsId = canUseWorkspaces ? activeWorkspaceId : null;
-  const { favorites: hooksFavs } = useFavorites({ phase: 'hooks', workspaceId: favWsId });
-  const { favorites: conceptsFavs } = useFavorites({ phase: 'concepts', workspaceId: favWsId });
-  const { favorites: renderFavs } = useFavorites({ phase: 'render', workspaceId: favWsId });
-  const { favorites: captionFavs } = useFavorites({ phase: 'caption', workspaceId: favWsId });
-
   // ─── META ADS CONNECTION ─────────────────────────────────────
   const [metaConnection, setMetaConnection] = useState<MetaConnection | null>(null);
   const [metaSyncing, setMetaSyncing] = useState(false);
@@ -2347,29 +2448,71 @@ const App: React.FC = () => {
   // ⚠️ MUST be above all early returns to satisfy React hooks ordering rules
   const lastRankingLinkage = React.useRef<{ rankingRequestId?: string; rankingRequestFingerprint?: string; rankingAppliedSummary?: string } | null>(null);
 
-  // /join route — must be checked BEFORE auth so unauthenticated invitees see the join page
-  if (window.location.pathname === '/join') {
-    return (
-      <Suspense fallback={<div className="min-h-screen bg-slate-950 flex items-center justify-center text-white">Loading...</div>}>
-        <JoinTeamLazy />
-      </Suspense>
-    );
-  }
-
   if (loadingAuth) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-500">{t('loading')}</div>;
 
   // Sign-out screen (user just logged out)
   if (showSignOut && !user) return <SignOutScreen onSignIn={handleSignOutToLogin} />;
 
-  if (!user) return <LoginScreen onGoogleLogin={handleGoogleLogin} onEmailLogin={handleEmailLogin} onForgotPassword={handleForgotPassword} isSubmitting={isSubmitting} noAccountError={noAccountError} />;
+  if (!user) return (<>
+    <LoginScreen
+      onEmailLogin={handleEmailLogin}
+      onCreateAccount={handleCreateAccount}
+      onForgotPassword={() => setShowForgotPassword(true)}
+      isSubmitting={isSubmitting}
+      authError={authError}
+      initialEmail={pendingEmail}
+      initialTab={loginTab}
+      onTabChange={(tab) => { setLoginTab(tab); setAuthError(null); }}
+      onClearAuthError={() => setAuthError(null)}
+    />
+    {showForgotPassword && <ForgotPasswordDialog onSubmit={handleForgotPassword} onClose={() => setShowForgotPassword(false)} />}
+  </>);
+
+  if (!user.emailVerified) return (
+    <VerifyEmailScreen
+      email={user.email ?? ''}
+      onResend={async () => { await sendEmailVerification(user); }}
+      onCheckVerified={async () => { await user.reload(); if (auth.currentUser) setUser({ ...auth.currentUser }); }}
+      onSignOut={async () => { await signOut(auth); setUser(null); setShowMandatoryBilling(false); }}
+    />
+  );
+
+  if (showMandatoryBilling && userPlan === 'none') return <MandatoryBillingModal />;
+
+  const trialBanner = isTrialUser && userCredits === 0 && !showMandatoryBilling
+    ? <TrialExpiredBanner onUpgrade={() => window.location.hash = '#/billing'} />
+    : null;
+
+  const creditsPerMonth = PLANS[userPlan]?.monthlyCredits || 0;
+  const showLowCredits = userCredits > 0 && creditsPerMonth > 0 && userCredits < creditsPerMonth * 0.2 && !isTrialUser && !showMandatoryBilling;
+  const lowCreditsBanner = showLowCredits
+    ? <LowCreditsWarning onTopUp={() => window.location.hash = '#/billing'} />
+    : null;
+
+  if (typeof window !== 'undefined' && window.location.hash === '#/billing') {
+    return (
+      <div className="min-h-screen bg-slate-950">
+        {trialBanner}
+        {lowCreditsBanner}
+        <div className="max-w-3xl mx-auto p-4">
+          <button onClick={() => { window.location.hash = ''; }} className="mb-4 text-slate-400 hover:text-white text-sm flex items-center gap-2">
+            <i className="fa-solid fa-arrow-left"></i> Back
+          </button>
+          <Suspense fallback={<div className="text-white text-center py-20">Loading...</div>}>
+            <BillingPage />
+          </Suspense>
+        </div>
+      </div>
+    );
+  }
 
   // Cancelled user win-back screen
   // Onboarding quiz (first login — user exists but hasn't completed quiz)
-  if (onboardingComplete === false) return <OnboardingQuiz onComplete={handleOnboardingComplete} />;
+  if (onboardingComplete === false) return <>{trialBanner}{lowCreditsBanner}<OnboardingQuiz onComplete={handleOnboardingComplete} /></>;
 
   // Welcome screen (shows after login / after quiz, before entering studio)
-  // Team members skip welcome — they don't need the trial onboarding
-  if (showWelcome && !isTeamMember) return <WelcomeScreen userName={user.displayName || user.email || ''} isTrial={isTrialUser} onStart={handleWelcomeStart} />;
+  // Team members skip welcome — they don't need the trial onboarding (they use the owner's pool)
+  if (showWelcome && !isTeamMember) return <>{trialBanner}{lowCreditsBanner}<WelcomeScreen userName={user.displayName || user.email || ''} isTrial={isTrialUser} onStart={handleWelcomeStart} /></>;
 
   // ═══ BILLING STATE GATING — past_due and cancelled block app access ═══
   // Team members are exempt — they use the owner's credits, not their own billing
@@ -2755,10 +2898,6 @@ const App: React.FC = () => {
   // --- HISTORY ENGINE moved to before render gates ---
 
   const loadProject = (p: SavedProject) => {
-    // Clear stale favorites state from previous project
-    setLoadedFavoriteId(null);
-    setFavUpdatePrompt(null);
-    setLoadedRenderRecord(null);
     setCurrentProjectId(p.id);
     setCurrentProjectName(p.name || "Untitled Project");
     const migratedInputs = p.inputs
@@ -3059,18 +3198,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               const genId = await feedbackService.saveGeneration(
                 user.uid, cleanInputs, 'hooks',
                 { hookText: ht, subhead: sh, ctaText: cleanInputs.cta },
-                hookRaw, universe, 'gemini-3-flash', 0, undefined, buildCreativeIdentity(),
-                canUseWorkspaces ? activeWorkspaceId : null
+                hookRaw, universe, 'gemini-3-flash', 0, undefined, buildCreativeIdentity()
               );
               if (genId) hookIds[v] = genId;
             }
           }
           setHookGenerationIds(hookIds);
-          // T015: Show update/keep-both prompt if a favorite was loaded
-          const firstGenId = Object.values(hookIds)[0];
-          if (loadedFavoriteId && firstGenId) {
-            setFavUpdatePrompt({ phase: 'hooks', newGenId: firstGenId });
-          }
         } catch (saveErr) {
           console.error('Non-blocking: failed to save hook generation records:', saveErr);
         }
@@ -3421,93 +3554,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     } catch (e) { refundCredits('editOneConcept'); handleApiError(e); } finally { setItemLoading(prev => ({ ...prev, [`concept_${index}`]: false })); }
   };
 
-  // ─── COPY FIDELITY: client-side check before rendering ───
-  const checkCopyFidelity = (concept: string, tov: string): string[] => {
-    const tpStart = concept.indexOf('[[TECHNICAL_PROMPT]]');
-    const tpEnd = concept.indexOf('[[/TECHNICAL_PROMPT]]');
-    // Extract copy fields from selectedTov
-    const hookMatch = tov.match(/HOOK_TEXT:\s*(.+)/);
-    const subMatch = tov.match(/SUBHEADLINE:\s*(.+)/);
-    const ctaMatch = tov.match(/CTA_BUTTON:\s*(.+)/);
-    const ctaRaw = ctaMatch?.[1]?.trim() || '';
-    const benefitMatch = ctaRaw.includes('|||') ? ctaRaw.split('|||') : null;
-    const hookVal = hookMatch?.[1]?.trim();
-    // hookText is required — blank hookText always fails
-    if (!hookVal) return ['hookText'];
-    // Missing TECHNICAL_PROMPT is a failure
-    if (tpStart === -1 || tpEnd === -1) return ['technicalPrompt'];
-    const tp = concept.slice(tpStart + 20, tpEnd).normalize('NFC').trim().replace(/\s+/g, ' ');
-    if (!tp) return ['technicalPrompt'];
-    const norm = (s: string) => s.normalize('NFC').trim().replace(/\s+/g, ' ');
-    const failed: string[] = [];
-    const fields: [string, string | undefined][] = [
-      ['hookText', hookVal],
-      ['subheadText', subMatch?.[1]?.trim()],
-      ['ctaName', benefitMatch ? benefitMatch[0]?.trim() : ctaRaw || undefined],
-      ['benefitText', benefitMatch ? benefitMatch[1]?.trim() : undefined],
-    ];
-    for (const [name, val] of fields) {
-      if (name === 'hookText') {
-        // hookText is required — always check
-        if (!val || !tp.includes(norm(val))) failed.push(name);
-      } else if (val && !tp.includes(norm(val))) {
-        failed.push(name);
-      }
-    }
-    return failed;
-  };
-
-  const fidelityFieldLabel = (key: string): string => t(`fidelity.${key}`);
-
   const handleApproveConcept = async (conceptRaw: string) => {
     if (!inputs) return;
     // Normalize any Arabic field labels to English
     conceptRaw = normalizeFieldLabels(conceptRaw);
-
-    // ─── COPY FIDELITY CHECK: verify approved copy appears in TECHNICAL_PROMPT ───
-    const failedFields = checkCopyFidelity(conceptRaw, selectedTov);
-    if (failedFields.length > 0) {
-      // Show blocking warning banner — user must choose Continue/Retry/Cancel
-      return new Promise<void>((resolve) => {
-        setCopyFidelityWarning({
-          failedFields,
-          onContinue: () => {
-            // Proceed with render using the current concept
-            proceedWithRender(conceptRaw);
-            resolve();
-          },
-          onRetry: async () => {
-            resolve();
-            // Re-trigger concept generation with same inputs
-            if (!inputs || !selectedTov) return;
-            if (!deductCredits('generateConcepts')) return;
-            showToast(t('fidelity.retrying'), 'info');
-            startLoad(t('fidelity.retrying'));
-            try {
-              const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 1) || [] };
-              let res = unwrapGen(await gemini.generateConcepts(selectedTov, cleanInputs, resolvedUniverse, 'initial', '', globalRefinement));
-              res = res ? normalizeFieldLabels(res) : res;
-              if (res && (res.includes('CONCEPT_START') || res.includes('SUBJECT_ACTION'))) {
-                setConceptsText(res);
-              } else {
-                refundCredits('generateConcepts');
-                showToast(t('fidelity.retry_empty_refunded'), 'error');
-              }
-            } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
-          },
-          onCancel: () => {
-            // Abort — stay on Step 3
-            resolve();
-          },
-        });
-      });
-    }
-
-    return proceedWithRender(conceptRaw);
-  };
-
-  const proceedWithRender = async (conceptRaw: string) => {
-    if (!inputs) return;
 
     // Determine sizes to render: use selectedSizes from Step 3 UI
     const sizesToRender = Array.from(selectedSizes);
@@ -3544,20 +3594,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         // ─── SAVE RENDER FOR FEEDBACK (non-blocking — must not prevent phase transition) ─────────
         if (user) {
           try {
-            const _tpStart = conceptRaw.indexOf('[[TECHNICAL_PROMPT]]');
-            const _tpEnd = conceptRaw.indexOf('[[/TECHNICAL_PROMPT]]');
-            const _resolvedImagePrompt = (_tpStart !== -1 && _tpEnd !== -1) ? conceptRaw.slice(_tpStart + 20, _tpEnd).trim().substring(0, 5000) : undefined;
-            const _blueprintText = (_tpStart !== -1 && _tpEnd !== -1) ? (conceptRaw.slice(0, _tpStart) + conceptRaw.slice(_tpEnd + 21)).trim().substring(0, 2000) : undefined;
             const genId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
-              { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500), buildPlan: conceptRaw, blueprintText: _blueprintText, resolvedImagePrompt: _resolvedImagePrompt },
-              conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
-              canUseWorkspaces ? activeWorkspaceId : null
+              { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500) },
+              conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity()
             );
             setRenderGenerationId(genId);
-            if (loadedFavoriteId && genId) {
-              setFavUpdatePrompt({ phase: 'render', newGenId: genId });
-            }
           } catch (saveErr) {
             console.error('Non-blocking: failed to save render generation record:', saveErr);
           }
@@ -4072,13 +4114,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           const genId = await feedbackService.saveGeneration(
             user.uid, inputs, 'render',
             { imageUrl: res, conceptText: (selectedConcept || '').substring(0, 500) },
-            buildPlan, resolvedUniverse, 'gemini-3.1-flash-image', 0, editRatio, buildCreativeIdentity(),
-            canUseWorkspaces ? activeWorkspaceId : null
+            buildPlan, resolvedUniverse, 'gemini-3.1-flash-image', 0, editRatio, buildCreativeIdentity()
           );
-          if (genId) {
-            setRenderGenerationId(genId);
-            if (loadedFavoriteId) setFavUpdatePrompt({ phase: 'render', newGenId: genId });
-          }
+          if (genId) setRenderGenerationId(genId);
         } catch (saveErr) {
           console.error('Non-blocking: failed to save polish render record:', saveErr);
         }
@@ -4125,13 +4163,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             const genId = await feedbackService.saveGeneration(
               user.uid, inputs, 'caption',
               { captionText: res },
-              res, '', 'gemini-3-flash', 0, undefined, buildCreativeIdentity(),
-              canUseWorkspaces ? activeWorkspaceId : null
+              res, '', 'gemini-3-flash', 0, undefined, buildCreativeIdentity()
             );
             setCaptionGenerationId(genId);
-            if (loadedFavoriteId && genId) {
-              setFavUpdatePrompt({ phase: 'caption', newGenId: genId });
-            }
           } catch (e) { console.warn('Caption generation save failed (non-blocking):', e); }
         }
       }
@@ -4215,8 +4249,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 const genId = await feedbackService.saveGeneration(
                   user.uid, inputs, 'caption',
                   { captionText: res },
-                  res, '', 'gemini-3-flash', 0, undefined, buildCreativeIdentity(),
-                  canUseWorkspaces ? activeWorkspaceId : null
+                  res, '', 'gemini-3-flash', 0, undefined, buildCreativeIdentity()
                 );
                 setCaptionGenerationId(genId);
               } catch (e) { console.warn('Batch caption save failed:', e); }
@@ -4340,8 +4373,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       const genId = await feedbackService.saveGeneration(
         user.uid, inputs, 'render',
         { imageUrl, conceptText: (conceptText || selectedConcept || '').substring(0, 500), hookText: (hookText || '').substring(0, 200) },
-        bPlan || buildPlan || '', resolvedUniverse, 'gemini-flash', 0, ratio, buildCreativeIdentity(),
-        canUseWorkspaces ? activeWorkspaceId : null
+        bPlan || buildPlan || '', resolvedUniverse, 'gemini-flash', 0, ratio, buildCreativeIdentity()
       );
       if (genId) {
         await feedbackService.toggleFavorite(genId, true);
@@ -4407,17 +4439,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   return (
     <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className={`min-h-screen bg-slate-950 text-slate-200 overflow-x-hidden flex flex-col transition-all duration-500 ${lang === 'ar' ? 'font-arabic' : ''}`} style={{ paddingLeft: showSidebar && lang !== 'ar' ? '320px' : '0', paddingRight: showSidebar && lang === 'ar' ? '320px' : '0' }}>
       <ToastNotification toast={toast} onClose={() => setToast(null)} />
-      {removedFromTeam && (
-        <div className="fixed inset-0 z-[200] bg-black/80 flex items-center justify-center">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl p-8 max-w-md text-center shadow-2xl">
-            <i className="fa-solid fa-user-slash text-4xl text-red-400 mb-4"></i>
-            <h2 className="text-xl font-bold text-white mb-3">{t('team.removed_message')}</h2>
-            <button onClick={() => { setRemovedFromTeam(false); handleLogout(); }} className="mt-4 px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors">
-              OK
-            </button>
-          </div>
-        </div>
-      )}
       {/* VIDEO POPUP — first-time tutorial */}
       {showVideoPopup && <VideoPopup onComplete={handleVideoComplete} onClose={handleVideoSkip} />}
       {/* WALKTHROUGH OVERLAY — first-time guide */}
@@ -4469,7 +4490,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
           <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-3">Account</p>
           <div className="space-y-1">
-            <button onClick={() => { setShowSidebar(false); setShowBillingPage(true); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
+            <button onClick={() => { setShowSidebar(false); handleManageBilling(); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
               <span className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center"><i className="fa-solid fa-credit-card text-emerald-400 text-xs"></i></span>
               <div>
                 <p className="text-[11px] font-bold text-white group-hover:text-emerald-400 transition-colors">Manage Billing</p>
@@ -4652,22 +4673,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             )}
           </div>
 
-          {/* ── CENTER: Billing label (desktop + mobile) ── */}
-          {showBillingPage && (
-            <>
-              <div className="hidden md:flex items-center gap-2">
-                <button onClick={() => setShowBillingPage(false)} aria-label={t('back')} className="text-slate-500 hover:text-white transition-colors"><i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'} text-xs`}></i></button>
-                <span className="text-[11px] font-bold text-white">{t('billing.title')}</span>
-              </div>
-              <div className="flex md:hidden items-center gap-2">
-                <button onClick={() => setShowBillingPage(false)} aria-label={t('back')} className="text-slate-500 hover:text-white transition-colors"><i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'} text-xs`}></i></button>
-                <span className="text-[10px] font-bold text-blue-400">{t('billing.title')}</span>
-              </div>
-            </>
-          )}
-
-          {/* ── CENTER: Stepper (inline) — hidden when billing page is active ── */}
-          <div className={`${showBillingPage ? 'hidden' : 'hidden md:flex'} items-center gap-1`} data-tour="stepper">
+          {/* ── CENTER: Stepper (inline) ── */}
+          <div className="hidden md:flex items-center gap-1" data-tour="stepper">
             {steps.map((s, idx) => {
               const active = phase === s.id;
               const completed = steps.findIndex(f => f.id === phase) > idx;
@@ -4701,13 +4708,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             })}
           </div>
 
-          {/* ── Mobile stepper (pill) — hidden when billing page is active ── */}
-          {!showBillingPage && (
-            <div className="flex md:hidden items-center gap-2">
-              <span className="text-[10px] font-bold text-blue-400">{t(steps.find(s => s.id === phase)?.tKey || 'step.brief')}</span>
-              <span className="text-[10px] text-slate-600">{steps.findIndex(s => s.id === phase) + 1}/{steps.length}</span>
-            </div>
-          )}
+          {/* ── Mobile stepper (pill) ── */}
+          <div className="flex md:hidden items-center gap-2">
+            <span className="text-[10px] font-bold text-blue-400">{t(steps.find(s => s.id === phase)?.tKey || 'step.brief')}</span>
+            <span className="text-[10px] text-slate-600">{steps.findIndex(s => s.id === phase) + 1}/{steps.length}</span>
+          </div>
 
           {/* ── RIGHT: Credits + Actions ── */}
           <div className="flex items-center gap-2">
@@ -4745,9 +4750,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               </button>
               <i className="fa-solid fa-coins text-amber-500 text-[10px]"></i>
               <span className="text-[11px] font-bold text-amber-400">{userCredits}</span>
-              <span className="text-[9px] text-slate-600 hidden sm:inline">
-                {isTeamMember ? t('team.credits_member', { name: teamOwnerName || 'Owner' }) : (teamMembers.length > 0 ? t('team.credits_owner') : (PLANS[userPlan]?.name || ''))}
-              </span>
+              <span className="text-[9px] text-slate-600 hidden sm:inline">{PLANS[userPlan]?.name}</span>
             </div>
             <button onClick={() => { setUpgradeReason(''); setShowUpgradeModal(true); }}
               className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500 hover:bg-amber-500/20 transition-colors">
@@ -4803,8 +4806,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         </div>
       </nav>
 
-      {/* Main Content Render Logic — hidden when billing page is active */}
-      <main className={`flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative w-full ${showBillingPage ? 'hidden' : ''}`}>
+      {/* Main Content Render Logic */}
+      <main className="flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative w-full">
         {isLoading && (
           <div className="fixed inset-0 bg-slate-950/98 backdrop-blur-[40px] z-[100] flex flex-col items-center justify-center text-center">
             <div className="relative w-32 h-32 mb-12">
@@ -5015,10 +5018,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           </div>
         )}
 
-        {phase === 'input' && <Suspense fallback={<div className="px-6 py-10 text-center text-sm text-slate-400">Loading workspace...</div>}><InputForm key={currentProjectId} onSubmit={handleStartDesign} onSaveDraft={handleSaveDraft} showToast={showToast} initialValues={inputs} userPlan={userPlan} avatars={avatars} onSaveAvatar={handleSaveAvatar} onUpdateAvatar={handleUpdateAvatar} onDeleteAvatar={handleDeleteAvatar} competitorData={competitorData} competitorLoading={competitorLoading} onRefreshResearch={(formData) => runCompetitorResearch(formData, true)} isTeamViewer={isTeamViewer} /></Suspense>}
+        {phase === 'input' && <Suspense fallback={<div className="px-6 py-10 text-center text-sm text-slate-400">Loading workspace...</div>}><InputForm key={currentProjectId} onSubmit={handleStartDesign} onSaveDraft={handleSaveDraft} showToast={showToast} initialValues={inputs} userPlan={userPlan} avatars={avatars} onSaveAvatar={handleSaveAvatar} onUpdateAvatar={handleUpdateAvatar} onDeleteAvatar={handleDeleteAvatar} competitorData={competitorData} competitorLoading={competitorLoading} onRefreshResearch={(formData) => runCompetitorResearch(formData, true)} /></Suspense>}
 
         {phase === 'tov_review' && (
-          <>
           <div className="space-y-16 animate-in fade-in slide-in-from-bottom-12 duration-1000 max-w-5xl mx-auto relative">
             <button onClick={handleBack} className={`absolute -top-12 ${lang === 'ar' ? 'right-0' : 'left-0'} bg-slate-900/60 px-5 py-2.5 rounded-xl text-[10px] font-semibold text-slate-500 hover:text-white transition-all shadow-xl flex items-center ${lang === 'ar' ? 'flex-row-reverse' : ''} space-x-2`}>
               <i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'}`}></i><span>{lang === 'ar' ? 'رجوع' : 'Back'}</span>
@@ -5030,14 +5032,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               {inputs?.adMode === 'carousel' && (
                 <p className="text-sm text-blue-400/70 font-medium mt-2">Choose a story direction for your {inputs?.slideCount || 5}-slide carousel</p>
               )}
-              <div className="flex flex-col items-center gap-3">
-                <button
-                  onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'hooks' ? null : 'hooks')}
-                  className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all flex items-center gap-1.5"
-                >
-                  <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_hooks')}{hooksFavs.length > 0 && ` (${hooksFavs.length})`}
-                </button>
-              </div>
               <div className="flex flex-col items-center gap-3">
                 {((inputs?.visualStyleFamily ?? inputs?.universeMode) === 'minimal') ? (
                   <p className="text-slate-500 text-xs font-bold uppercase tracking-[0.5em] italic">
@@ -5394,7 +5388,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                             <FeedbackButtons
                               generationId={hookGenerationIds[v] || ''}
                               compact={true}
-                              initialFavorite={!!hookGenerationIds[v] && favoriteIds.has(hookGenerationIds[v])}
                               onRegenerate={(tags, freeText) => {
                                 const context = feedbackService.buildRegenerationContext(raw, tags, freeText);
                                 handlePrecisionHookEdit(v, context);
@@ -5476,8 +5469,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                 else { refundCredits('refreshHooks'); showToast("Generation failed. Credits refunded.", "error"); }
                               } catch (e) { refundCredits('refreshHooks'); } finally { stopLoad(); }
                             }}
-                            className={`w-full mt-2 py-2.5 rounded-xl bg-slate-950/40 border border-dashed border-slate-700/40 text-slate-500 text-[9px] font-bold uppercase tracking-wider hover:border-blue-500/40 hover:text-blue-400 hover:bg-blue-500/5 transition-all flex items-center justify-center gap-2 ${viewerBlockCls}`}
-                            disabled={isTeamViewer} title={viewerBlockTitle}
+                            className="w-full mt-2 py-2.5 rounded-xl bg-slate-950/40 border border-dashed border-slate-700/40 text-slate-500 text-[9px] font-bold uppercase tracking-wider hover:border-blue-500/40 hover:text-blue-400 hover:bg-blue-500/5 transition-all flex items-center justify-center gap-2"
                           >
                             <i className="fa-solid fa-clone text-[9px]"></i>
                             <span>Generate 4 More Like This · <i className="fa-solid fa-coins text-[7px] text-amber-400 mr-0.5"></i>{CREDIT_COSTS.refreshHooks}</span>
@@ -5601,36 +5593,9 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
               </button>
             </div>
           </div>
-
-          <FavoritesPanel
-            phase="hooks"
-            isOpen={openFavoritesPhase === 'hooks'}
-            onClose={() => setOpenFavoritesPhase(null)}
-            workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
-            onLoad={async (record) => {
-              // Auto-save current hook variant if one is active (T014)
-              const activeVariant = Object.keys(hookGenerationIds).find(v => hookGenerationIds[v]);
-              if (activeVariant && hookGenerationIds[activeVariant]) {
-                await feedbackService.toggleFavorite(hookGenerationIds[activeVariant], true).catch(() => {});
-              }
-              if (record.output?.hookText) {
-                const reconstructed = `HOOK_START_A\nHOOK_TEXT: ${record.output.hookText}\nSUBHEADLINE: ${record.output.subhead || ''}\nCTA_BUTTON: ${record.output.ctaText || ''}\nHOOK_END_A`;
-                setTovText(record.output.fullResponse || reconstructed);
-                setSelectedTov(reconstructed);
-              }
-              // Update generation ID so FeedbackButtons targets the loaded record
-              if (record.id && activeVariant) {
-                setHookGenerationIds(prev => ({ ...prev, [activeVariant]: record.id! }));
-              }
-              setLoadedFavoriteId(record.id || null);
-              setOpenFavoritesPhase(null);
-            }}
-          />
-          </>
         )}
 
-        {phase === 'concept_review' && (<>
-        {(() => {
+        {phase === 'concept_review' && (() => {
           /* ─── Unified hook groups: always treat as batch-style layout ─── */
           const hookGroups: { hookKey: string; hookText: string; hookHeadline: string; conceptsSource: string; selectedConcepts: Set<number>; isBatch: boolean }[] =
             batchHookGroups.length > 0
@@ -5673,14 +5638,6 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 <p className="text-[11px] text-slate-400 mt-3 font-medium">
                   {hookGroups.length} hook{hookGroups.length > 1 ? 's' : ''} &middot; {totalSelectedConcepts} concept{totalSelectedConcepts !== 1 ? 's' : ''} &middot; {numSizes} size{numSizes > 1 ? 's' : ''} = {totalImages} image{totalImages !== 1 ? 's' : ''}
                 </p>
-                <div className="mt-3">
-                  <button
-                    onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'concepts' ? null : 'concepts')}
-                    className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all inline-flex items-center gap-1.5"
-                  >
-                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_concepts')}{conceptsFavs.length > 0 && ` (${conceptsFavs.length})`}
-                  </button>
-                </div>
                 {/* Resolved Creative Spec Summary */}
                 {(() => {
                   const spec = resolveCreativeSpec({
@@ -5733,8 +5690,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       showToast("Architecture updated with your custom vision.", "success");
                     } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
                   }}
-                  className={`w-full py-4 bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white rounded-2xl text-[11px] font-bold uppercase tracking-wider shadow-lg transition-all flex items-center justify-center space-x-2 active:scale-[0.98] ${viewerBlockCls}`}
-                  disabled={isTeamViewer} title={viewerBlockTitle}
+                  className="w-full py-4 bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white rounded-2xl text-[11px] font-bold uppercase tracking-wider shadow-lg transition-all flex items-center justify-center space-x-2 active:scale-[0.98]"
                 >
                   <i className="fa-solid fa-wand-magic-sparkles"></i>
                   <span>Apply Global Refinement</span>
@@ -6155,23 +6111,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           );
         })()}
 
-          <FavoritesPanel
-            phase="concepts"
-            isOpen={openFavoritesPhase === 'concepts'}
-            onClose={() => setOpenFavoritesPhase(null)}
-            workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
-            onLoad={(record) => {
-              // No concept generation ID tracked — skip auto-save for concepts
-              if (record.output?.conceptText) setConceptsText(record.output.conceptText);
-              if (record.output?.buildPlan) setBuildPlan(record.output.buildPlan);
-              setLoadedFavoriteId(record.id || null);
-              setOpenFavoritesPhase(null);
-            }}
-          />
-        </>)}
-
-        {phase === 'render_studio' && (<>
-        {(() => {
+        {phase === 'render_studio' && (() => {
           const hasAnyImage = currentMockup || batchResults.some((r: any) => r.status === 'done') || carouselSlides.some((s: any) => s.status === 'done');
           return (
             <div className="flex flex-col xl:flex-row gap-6 animate-in fade-in duration-700 max-w-[1500px] mx-auto relative">
@@ -6218,30 +6158,6 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   <h2 className="text-xl font-black text-white italic tracking-tight uppercase shrink-0">
                     <i className="fa-solid fa-paintbrush text-blue-500 mr-2 text-sm"></i>Master <span className="text-blue-500">Studio</span>
                   </h2>
-                  <button
-                    onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'render' ? null : 'render')}
-                    className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all flex items-center gap-1.5"
-                  >
-                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_renders')}{renderFavs.length > 0 && ` (${renderFavs.length})`}
-                  </button>
-                  {loadedRenderRecord && (
-                    <button
-                      onClick={() => {
-                        if (loadedRenderRecord.input) setInputs(loadedRenderRecord.input);
-                        if (loadedRenderRecord.output?.conceptText) {
-                          setConceptsText(loadedRenderRecord.output.conceptText);
-                          setSelectedConcept(loadedRenderRecord.output.conceptText);
-                        }
-                        if (loadedRenderRecord.output?.buildPlan) setBuildPlan(loadedRenderRecord.output.buildPlan);
-                        setLoadedRenderRecord(null);
-                        setLoadedFavoriteId(null);
-                        setPhase('concept_review');
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-violet-500/10 border border-violet-500/20 text-violet-400 text-[9px] font-bold uppercase tracking-wider hover:bg-violet-500/20 transition-all flex items-center gap-1.5"
-                    >
-                      <i className="fa-solid fa-rotate-right text-[8px]"></i> {t('fav.edit_regenerate')}
-                    </button>
-                  )}
 
                   {/* Size tabs + Version nav */}
                   {mockupHistory.length > 1 && (() => {
@@ -6386,8 +6302,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                             const genId = await feedbackService.saveGeneration(
                                               user.uid, inputs, 'render',
                                               { imageUrl: item.url || '', conceptText: item.conceptText?.substring(0, 500) || '', hookText: item.hookText?.substring(0, 200) || '' },
-                                              item.buildPlan || '', resolvedUniverse, 'gemini-flash', 0, item.ratio as AspectRatio, buildCreativeIdentity(),
-                                              canUseWorkspaces ? activeWorkspaceId : null
+                                              item.buildPlan || '', resolvedUniverse, 'gemini-flash', 0, item.ratio as AspectRatio, buildCreativeIdentity()
                                             );
                                             if (genId) {
                                               await feedbackService.toggleFavorite(genId, true);
@@ -6776,7 +6691,6 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     <FeedbackButtons
                       generationId={renderGenerationId}
                       showUsedThis={true}
-                      initialFavorite={!!renderGenerationId && favoriteIds.has(renderGenerationId)}
                     />
                   </div>
                 )}
@@ -7000,7 +6914,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                   <textarea value={studioTweak} onChange={(e) => setStudioTweak(e.target.value)} placeholder={editTarget ? `Describe changes for ${editTarget.label}...` : "e.g. Darker background, enhance text..."} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-[10px] text-slate-200 h-14 outline-none focus:ring-1 focus:ring-blue-500 resize-none" />
 
-                  <button onClick={handleApplyStudioPolishes} disabled={isTeamViewer} title={viewerBlockTitle} className={`w-full py-2.5 rounded-xl bg-blue-600 text-white text-[9px] font-bold uppercase tracking-wider hover:bg-blue-500 transition-all active:scale-[0.98] ${viewerBlockCls}`}>
+                  <button onClick={handleApplyStudioPolishes} className="w-full py-2.5 rounded-xl bg-blue-600 text-white text-[9px] font-bold uppercase tracking-wider hover:bg-blue-500 transition-all active:scale-[0.98]">
                     Apply & Render
                   </button>
                 </div>
@@ -7014,9 +6928,9 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   </button>
 
                   {currentMockup && carouselSlides.length === 0 && (
-                    <button onClick={handleGenerateAB} disabled={abRendering || !canUse(userPlan, 'abVariationTesting') || isTeamViewer} title={viewerBlockTitle}
-                      className={`w-full py-2.5 rounded-xl border text-[9px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 disabled:opacity-30 ${(!canUse(userPlan, 'abVariationTesting') || isTeamViewer) ? 'bg-slate-900/30 border-slate-800/30 text-slate-500 cursor-not-allowed' : 'bg-purple-600/12 border-purple-500/15 text-purple-300 hover:border-purple-500/30'}`}>
-                      {(!canUse(userPlan, 'abVariationTesting') && !isTeamViewer) && <i className="fa-solid fa-lock text-[7px]"></i>}
+                    <button onClick={handleGenerateAB} disabled={abRendering || !canUse(userPlan, 'abVariationTesting')}
+                      className={`w-full py-2.5 rounded-xl border text-[9px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 disabled:opacity-30 ${!canUse(userPlan, 'abVariationTesting') ? 'bg-slate-900/30 border-slate-800/30 text-slate-500 cursor-not-allowed' : 'bg-purple-600/12 border-purple-500/15 text-purple-300 hover:border-purple-500/30'}`}>
+                      {!canUse(userPlan, 'abVariationTesting') && <i className="fa-solid fa-lock text-[7px]"></i>}
                       <i className="fa-solid fa-clone text-[8px]"></i> 3 A/B Variations
                       {canUse(userPlan, 'abVariationTesting') ? (
                         <span className="text-[7px] opacity-40 inline-flex items-center gap-0.5"><i className="fa-solid fa-coins text-[6px]"></i>{(CREDIT_COSTS.buildPlan + CREDIT_COSTS.generateImage) * 3}</span>
@@ -7074,13 +6988,13 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 {/* Script — bottom */}
                 {hasAnyImage && (
                   batchHookGroups.length > 0 ? (
-                    <button onClick={() => handleBatchCaptions()} disabled={isTeamViewer} title={viewerBlockTitle}
-                      className={`w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-blue-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-lg transition-all active:scale-[0.98] hover:from-emerald-500 hover:to-blue-500 flex items-center justify-center gap-2 ${viewerBlockCls}`}>
+                    <button onClick={() => handleBatchCaptions()}
+                      className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-blue-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-lg transition-all active:scale-[0.98] hover:from-emerald-500 hover:to-blue-500 flex items-center justify-center gap-2">
                       <i className="fa-solid fa-pen-nib text-[8px]"></i> Generate {batchHookGroups.length} Scripts <span className="opacity-60">(<i className="fa-solid fa-coins text-[7px]"></i> {batchHookGroups.length})</span>
                     </button>
                   ) : (
-                    <button onClick={() => handleGenerateCaption(false)} disabled={isTeamViewer} title={viewerBlockTitle}
-                      className={`w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-blue-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-lg transition-all active:scale-[0.98] hover:from-emerald-500 hover:to-blue-500 flex items-center justify-center gap-2 ${viewerBlockCls}`}>
+                    <button onClick={() => handleGenerateCaption(false)}
+                      className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-blue-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-lg transition-all active:scale-[0.98] hover:from-emerald-500 hover:to-blue-500 flex items-center justify-center gap-2">
                       <i className="fa-solid fa-pen-nib text-[8px]"></i> Generate Script
                     </button>
                   )
@@ -7090,27 +7004,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           );
         })()}
 
-          <FavoritesPanel
-            phase="render"
-            isOpen={openFavoritesPhase === 'render'}
-            onClose={() => setOpenFavoritesPhase(null)}
-            workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
-            onLoad={async (record) => {
-              // Auto-save current render if exists (T014)
-              if (renderGenerationId) {
-                await feedbackService.toggleFavorite(renderGenerationId, true).catch(() => {});
-              }
-              if (record.output?.imageUrl) pushMockup(record.output.imageUrl, (record.metadata?.aspectRatio || '1:1') as AspectRatio);
-              if (record.id) setRenderGenerationId(record.id);
-              setLoadedFavoriteId(record.id || null);
-              setLoadedRenderRecord(record);
-              setOpenFavoritesPhase(null);
-            }}
-          />
-        </>)}
-
-        {phase === 'primary_text' && (<>
-        {(() => {
+        {phase === 'primary_text' && (() => {
           const wordCount = captionText ? captionText.split(/\s+/).filter(Boolean).length : 0;
           return (
             <div className="flex flex-col lg:flex-row gap-16 animate-in fade-in duration-1000 max-w-[1200px] mx-auto relative">
@@ -7122,14 +7016,6 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
               <div className="flex-1 space-y-8 pt-10">
                 <h2 className="text-5xl md:text-6xl font-black text-white italic tracking-tighter uppercase leading-none">{t('script.title')}</h2>
                 <p className="text-[10px] text-slate-500 max-w-lg">{t('tip.step5')}</p>
-                <div className="mt-3">
-                  <button
-                    onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'caption' ? null : 'caption')}
-                    className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all inline-flex items-center gap-1.5"
-                  >
-                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_scripts')}{captionFavs.length > 0 && ` (${captionFavs.length})`}
-                  </button>
-                </div>
 
                 {/* BATCH CAPTION TABS (shown when batch captions exist) */}
                 {batchCaptions.length > 1 && (
@@ -7175,7 +7061,6 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         generationId={captionGenerationId}
                         showUsedThis={true}
                         compact={true}
-                        initialFavorite={!!captionGenerationId && favoriteIds.has(captionGenerationId)}
                       />
                     </div>
                   )}
@@ -7418,97 +7303,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
             </div>
           );
         })()}
-
-          <FavoritesPanel
-            phase="caption"
-            isOpen={openFavoritesPhase === 'caption'}
-            onClose={() => setOpenFavoritesPhase(null)}
-            workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
-            onLoad={async (record) => {
-              // Auto-save current caption if exists (T014)
-              if (captionGenerationId) {
-                await feedbackService.toggleFavorite(captionGenerationId, true).catch(() => {});
-              }
-              if (record.output?.captionText) setCaptionText(record.output.captionText);
-              if (record.id) setCaptionGenerationId(record.id);
-              setLoadedFavoriteId(record.id || null);
-              setOpenFavoritesPhase(null);
-            }}
-          />
-        </>)}
-
       </main>
-
-      {/* ═══ BILLING PAGE (transient overlay — not persisted to SavedProject) ═══ */}
-      {showBillingPage && (
-        <main className="flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 relative w-full">
-          <Suspense fallback={<div className="flex items-center justify-center py-32"><div className="animate-pulse space-y-4 w-full max-w-2xl"><div className="h-8 bg-slate-800 rounded w-1/3" /><div className="h-32 bg-slate-800 rounded" /></div></div>}>
-            <BillingPage />
-          </Suspense>
-        </main>
-      )}
-
-      {/* ═══ FAVORITE UPDATE/KEEP-BOTH PROMPT (T015-T018) ═══ */}
-      {favUpdatePrompt && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { setFavUpdatePrompt(null); setLoadedFavoriteId(null); }} />
-          <div className="relative bg-slate-950 border border-amber-500/30 rounded-2xl shadow-2xl max-w-sm w-full mx-4 p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200">
-            <div className="text-center space-y-2">
-              <i className="fa-solid fa-bookmark text-amber-400 text-2xl"></i>
-              <h3 className="text-lg font-black text-white">{t('fav.update_title')}</h3>
-              <p className="text-[11px] text-slate-400">{t('fav.update_desc')}</p>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={async () => {
-                  if (loadedFavoriteId && favUpdatePrompt.newGenId) {
-                    try {
-                      // Get new output fields from the new generation
-                      const newDoc = await getDoc(doc(db, 'generations', favUpdatePrompt.newGenId));
-                      if (newDoc.exists()) {
-                        const newOutput = (newDoc.data() as any).output || {};
-                        await feedbackService.updateFavoriteRecord(loadedFavoriteId, newOutput);
-                        showToast(t('fav.updated'), 'success');
-                      }
-                    } catch { showToast(t('fav.update_failed'), 'error'); }
-                  }
-                  setFavUpdatePrompt(null);
-                  setLoadedFavoriteId(null);
-                }}
-                className="flex-1 py-2.5 rounded-xl bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white text-[9px] font-bold uppercase tracking-wider transition-all"
-              >
-                <i className="fa-solid fa-pen mr-1"></i> {t('fav.yes_update')}
-              </button>
-              <button
-                onClick={async () => {
-                  if (favUpdatePrompt.newGenId) {
-                    try {
-                      await feedbackService.toggleFavorite(favUpdatePrompt.newGenId, true);
-                      showToast(t('fav.saved_new'), 'success');
-                      setFavUpdatePrompt(null);
-                      setLoadedFavoriteId(null);
-                    } catch {
-                      showToast(t('fav.save_failed'), 'error');
-                    }
-                    return;
-                  }
-                  setFavUpdatePrompt(null);
-                  setLoadedFavoriteId(null);
-                }}
-                className="flex-1 py-2.5 rounded-xl bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white text-[9px] font-bold uppercase tracking-wider transition-all"
-              >
-                <i className="fa-solid fa-copy mr-1"></i> {t('fav.keep_both')}
-              </button>
-            </div>
-            <button
-              onClick={() => { setFavUpdatePrompt(null); setLoadedFavoriteId(null); }}
-              className="w-full py-2 text-[9px] text-slate-600 hover:text-slate-300 transition-all"
-            >
-              {t('fav.skip')}
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* ═══ UPGRADE / TOP-UP MODAL ═══ */}
       {/* ═══ CAROUSEL COPY PREVIEW MODAL ═══ */}
@@ -7597,8 +7392,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
               <div className="flex gap-3 pt-4">
                 <button
-                  onClick={handleCarouselCopyConfirm} disabled={isTeamViewer} title={viewerBlockTitle}
-                  className={`flex-1 py-4 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black uppercase tracking-wider shadow-xl transition-all active:scale-[0.98] flex items-center justify-center gap-2 ${viewerBlockCls}`}
+                  onClick={handleCarouselCopyConfirm}
+                  className="flex-1 py-4 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black uppercase tracking-wider shadow-xl transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                 >
                   <i className="fa-solid fa-layer-group"></i>
                   <span>Confirm & Generate Blueprints</span>
@@ -7616,8 +7411,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       setCarouselCopies(copies);
                       showToast('Copies regenerated!', 'success');
                     } catch (e: any) { refundCredits('generateCarouselCopies', regenSlideCount); handleApiError(e); } finally { stopLoad(); }
-                  }} disabled={isTeamViewer} title={viewerBlockTitle}
-                  className={`px-6 py-4 rounded-2xl bg-amber-600/20 border border-amber-500/30 text-amber-400 text-[10px] font-bold hover:bg-amber-600/30 transition-all flex items-center gap-2 ${viewerBlockCls}`}
+                  }}
+                  className="px-6 py-4 rounded-2xl bg-amber-600/20 border border-amber-500/30 text-amber-400 text-[10px] font-bold hover:bg-amber-600/30 transition-all flex items-center gap-2"
                 >
                   <i className="fa-solid fa-rotate-right"></i> Regenerate Copies
                 </button>
@@ -7943,76 +7738,14 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                       <div className="bg-blue-500/5 border border-blue-500/20 rounded-2xl p-5 text-center space-y-3">
                         <i className="fa-solid fa-lock text-blue-400/40 text-lg"></i>
-                        <p className="text-[11px] text-slate-400">Payment method updates will be available when Stripe integration is active.</p>
-                        <p className="text-[9px] text-slate-600">Encrypted & secure. Powered by Stripe.</p>
+                        <p className="text-[11px] text-slate-400">Payment method updates will be available when Paddle integration is active.</p>
+                        <p className="text-[9px] text-slate-600">Encrypted & secure. Powered by Paddle.</p>
                       </div>
                     </div>
                   )}
                 </div>
               </>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* ═══ COPY FIDELITY WARNING BANNER ═══ */}
-      {copyFidelityWarning && (
-        <div className="fixed inset-0 z-[210] flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
-          <div className="relative bg-slate-950 border border-amber-500/50 rounded-3xl shadow-2xl shadow-black/80 max-w-lg w-full mx-4" onClick={(e) => e.stopPropagation()}>
-            <div className="px-8 py-6 space-y-5">
-              <div className="flex items-start gap-4">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center flex-shrink-0">
-                  <i className="fa-solid fa-triangle-exclamation text-amber-500 text-lg"></i>
-                </div>
-                <div>
-                  <h3 className="text-sm font-black text-white uppercase tracking-wider">
-                    {t('fidelity.title')}
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
-                    {t('fidelity.description', { fields: copyFidelityWarning.failedFields.map(f => fidelityFieldLabel(f)).join(lang === 'ar' ? '، ' : ', ') })}
-                  </p>
-                </div>
-              </div>
-              <div className="flex gap-3 justify-end">
-                <button
-                  onClick={() => {
-                    if (copyFidelityHandledRef.current) return;
-                    copyFidelityHandledRef.current = true;
-                    const cb = copyFidelityWarning.onCancel;
-                    setCopyFidelityWarning(null);
-                    cb();
-                  }}
-                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-400 bg-slate-900 border border-slate-800 hover:text-white hover:border-slate-700 transition-all"
-                >
-                  {t('fidelity.cancel')}
-                </button>
-                <button
-                  onClick={() => {
-                    if (copyFidelityHandledRef.current) return;
-                    copyFidelityHandledRef.current = true;
-                    const cb = copyFidelityWarning.onRetry;
-                    setCopyFidelityWarning(null);
-                    cb();
-                  }}
-                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 border border-blue-500 hover:bg-blue-500 transition-all"
-                >
-                  {t('fidelity.retry')}
-                </button>
-                <button
-                  onClick={() => {
-                    if (copyFidelityHandledRef.current) return;
-                    copyFidelityHandledRef.current = true;
-                    const cb = copyFidelityWarning.onContinue;
-                    setCopyFidelityWarning(null);
-                    cb();
-                  }}
-                  className="px-5 py-2.5 rounded-xl text-xs font-black text-white bg-amber-500 hover:bg-amber-400 transition-all shadow-lg shadow-amber-500/20"
-                >
-                  {t('fidelity.continue')}
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       )}
@@ -8045,7 +7778,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       onClick={async () => {
                         setTopupLoading(pack.id);
                         try {
-                          const createCheckout = httpsCallable(functions, 'createTopupCheckout');
+                          const createCheckout = httpsCallable(functions, 'paddleTopupCheckout');
                           const result = await createCheckout({ packId: `topup_${pack.credits}` });
                           const data = result.data as { url: string };
                           if (data.url) window.location.href = data.url;
@@ -8069,7 +7802,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     </button>
                   ))}
                 </div>
-                <p className="text-[8px] text-slate-600 text-center mt-2"><i className="fa-solid fa-lock mr-1"></i>Secure checkout powered by Stripe · Card saved for future purchases</p>
+                <p className="text-[8px] text-slate-600 text-center mt-2"><i className="fa-solid fa-lock mr-1"></i>Secure checkout powered by Paddle · Card saved for future purchases</p>
               </div>
 
               {/* Upgrade Plan — only shown when triggered from Upgrade menu or feature gates */}
@@ -8334,7 +8067,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         <p className="text-[10px] font-bold text-white truncate">{m.name}</p>
                         <p className="text-[8px] text-slate-500">{m.email}</p>
                       </div>
-                      <span className="text-[7px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">{m.role === 'editor' ? t('team.role_member') : t('team.role_viewer')}</span>
+                      <span className="text-[7px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">{m.role}</span>
                       <button onClick={() => handleRemoveTeamMember(m.id)} className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 transition-all px-1"><i className="fa-solid fa-xmark text-[10px]"></i></button>
                     </div>
                   ))}
@@ -8515,18 +8248,18 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
       {/* ═══ FAVORITES PANEL ═══ */}
       {showFavorites && (() => {
-        const favHooks = filteredFavoritesData.filter((f: any) => f.output?.phase === 'hooks');
-        const favBlueprints = filteredFavoritesData.filter((f: any) => f.output?.phase === 'concepts');
-        const favDesigns = filteredFavoritesData.filter((f: any) => f.output?.phase === 'render');
-        const favCaptions = filteredFavoritesData.filter((f: any) => f.output?.phase === 'caption' || f.output?.phase === 'primary_text');
+        const favHooks = favoritesData.filter((f: any) => f.output?.phase === 'hooks');
+        const favBlueprints = favoritesData.filter((f: any) => f.output?.phase === 'concepts');
+        const favDesigns = favoritesData.filter((f: any) => f.output?.phase === 'render');
+        const favCaptions = favoritesData.filter((f: any) => f.output?.phase === 'caption' || f.output?.phase === 'primary_text');
         const tabs = [
           { key: 'hooks', label: 'Hooks', icon: 'fa-bolt', count: favHooks.length },
           { key: 'blueprints', label: 'Blueprints', icon: 'fa-compass-drafting', count: favBlueprints.length },
           { key: 'designs', label: 'Designs', icon: 'fa-image', count: favDesigns.length },
           { key: 'captions', label: 'Captions', icon: 'fa-pen-nib', count: favCaptions.length },
-          { key: 'all', label: 'All', icon: 'fa-layer-group', count: filteredFavoritesData.length },
+          { key: 'all', label: 'All', icon: 'fa-layer-group', count: favoritesData.length },
         ];
-        const filtered = favTab === 'hooks' ? favHooks : favTab === 'blueprints' ? favBlueprints : favTab === 'designs' ? favDesigns : favTab === 'captions' ? favCaptions : filteredFavoritesData;
+        const filtered = favTab === 'hooks' ? favHooks : favTab === 'blueprints' ? favBlueprints : favTab === 'designs' ? favDesigns : favTab === 'captions' ? favCaptions : favoritesData;
 
         // ─── THEME TOKENS ─────────────────────────────────────────────
         const dk = isDarkMode;
