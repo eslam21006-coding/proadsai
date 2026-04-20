@@ -292,11 +292,13 @@ export function resolveEntitlement(input: EntitlementInput): EntitlementDecision
             return { allowed: true, limit: limits.batchMaxAds };
         }
         case "teamInvite": {
+            // Contract: quantity = proposed owner-inclusive team size AFTER the invite.
+            // Pro cap 3 means q=3 is at cap → ALLOWED; q=4 exceeds → DENIED.
             const q = quantity ?? 0;
             if (limits.teamLimit <= 1) {
                 return { allowed: false, reason: "pro_plan_required", limit: limits.teamLimit };
             }
-            if (q >= limits.teamLimit) {
+            if (q > limits.teamLimit) {
                 return { allowed: false, reason: "team_limit_exceeded", limit: limits.teamLimit };
             }
             return { allowed: true, limit: limits.teamLimit };

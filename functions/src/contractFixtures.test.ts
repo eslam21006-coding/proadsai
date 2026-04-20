@@ -980,17 +980,9 @@ function testQuantityBoundedFixtures() {
                 continue;
             }
 
-            if (feature === "teamInvite") {
-                // teamInvite uses >= comparison: q >= limit → denied
-                const atResult = resolveEntitlement({ plan, feature, quantity: limit });
-                const overResult = resolveEntitlement({ plan, feature, quantity: limit + 1 });
-                assert.equal(atResult.allowed, false, `qty: ${plan}/${feature} at-limit(${limit}) → denied (>=)`);
-                assert.equal(atResult.reason, DENY_REASONS[feature], `qty: ${plan}/${feature} at-limit reason`);
-                assert.equal(atResult.limit, limit, `qty: ${plan}/${feature} at-limit limit`);
-                assert.equal(overResult.allowed, false, `qty: ${plan}/${feature} over-limit(${limit + 1}) → denied`);
-                assert.equal(overResult.reason, DENY_REASONS[feature], `qty: ${plan}/${feature} over-limit reason`);
-            } else {
-                // Standard features use > comparison: q > limit → denied
+            // All quantity-bounded features use > comparison per contract:
+            // quantity === limit → allowed (at cap); quantity > limit → denied.
+            {
                 const atResult = resolveEntitlement({ plan, feature, quantity: limit });
                 const overResult = resolveEntitlement({ plan, feature, quantity: limit + 1 });
                 assert.equal(atResult.allowed, true, `qty: ${plan}/${feature} at-limit(${limit}) → allowed`);
@@ -1007,28 +999,30 @@ function testQuantityBoundedFixtures() {
 }
 
 // ─── 4 team-invite boundary fixtures ───
+// Contract (entitlement-resolver.md §2): quantity = proposed owner-inclusive team size AFTER invite.
+// At-limit is ALLOWED; strictly over-limit is DENIED.
 function testTeamInviteBoundaryFixtures() {
-    // Pro at 3 seats → denied (>= limit of 3)
+    // Pro at proposed 3 (owner + 2 invitees) → allowed (at cap)
     const pro3 = resolveEntitlement({ plan: "pro", feature: "teamInvite", quantity: 3 });
-    assert.equal(pro3.allowed, false, "team-boundary: Pro q=3 → denied");
-    assert.equal(pro3.reason, "team_limit_exceeded", "team-boundary: Pro q=3 reason");
+    assert.equal(pro3.allowed, true, "team-boundary: Pro q=3 → allowed (at cap)");
     assert.equal(pro3.limit, 3, "team-boundary: Pro q=3 limit=3");
 
-    // Pro at 2 → allowed
-    const pro2 = resolveEntitlement({ plan: "pro", feature: "teamInvite", quantity: 2 });
-    assert.equal(pro2.allowed, true, "team-boundary: Pro q=2 → allowed");
-    assert.equal(pro2.limit, 3, "team-boundary: Pro q=2 limit=3");
+    // Pro at proposed 4 (owner + 3 invitees) → denied (over cap)
+    const pro4 = resolveEntitlement({ plan: "pro", feature: "teamInvite", quantity: 4 });
+    assert.equal(pro4.allowed, false, "team-boundary: Pro q=4 → denied (over cap)");
+    assert.equal(pro4.reason, "team_limit_exceeded", "team-boundary: Pro q=4 reason");
+    assert.equal(pro4.limit, 3, "team-boundary: Pro q=4 limit=3");
 
-    // Scale at 10 → denied (>= limit of 10)
+    // Scale at proposed 10 (owner + 9 invitees) → allowed (at cap)
     const scale10 = resolveEntitlement({ plan: "scale", feature: "teamInvite", quantity: 10 });
-    assert.equal(scale10.allowed, false, "team-boundary: Scale q=10 → denied");
-    assert.equal(scale10.reason, "team_limit_exceeded", "team-boundary: Scale q=10 reason");
+    assert.equal(scale10.allowed, true, "team-boundary: Scale q=10 → allowed (at cap)");
     assert.equal(scale10.limit, 10, "team-boundary: Scale q=10 limit=10");
 
-    // Scale at 9 → allowed
-    const scale9 = resolveEntitlement({ plan: "scale", feature: "teamInvite", quantity: 9 });
-    assert.equal(scale9.allowed, true, "team-boundary: Scale q=9 → allowed");
-    assert.equal(scale9.limit, 10, "team-boundary: Scale q=9 limit=10");
+    // Scale at proposed 11 → denied
+    const scale11 = resolveEntitlement({ plan: "scale", feature: "teamInvite", quantity: 11 });
+    assert.equal(scale11.allowed, false, "team-boundary: Scale q=11 → denied");
+    assert.equal(scale11.reason, "team_limit_exceeded", "team-boundary: Scale q=11 reason");
+    assert.equal(scale11.limit, 10, "team-boundary: Scale q=11 limit=10");
 
     console.log("  ✅ testTeamInviteBoundaryFixtures: 4 fixtures passed");
 }
@@ -1047,47 +1041,82 @@ console.log("═══ T025 — All entitlement fixtures passed ═══\n");
 // T026a — Cross-module parity test (frontend ↔ backend)
 // ═══════════════════════════════════════════════════════════════════════════
 
+// T026a approach: compare the backend PLAN_FEATURES against canonical contract
+// values (duplicated from contracts/planconfig-schema.md §2). Frontend `src/planconfig.ts`
+// cannot be imported at runtime from the compiled functions build (Node has no
+// cross-project resolver), so we assert BOTH sides against the canonical values:
+//   - this test asserts backend PLAN_FEATURES matches the canonicals (here)
+//   - a future frontend test (e.g. vitest) asserts PLANS matches the same canonicals
+// If either side drifts, its respective test fails. Single source of truth = the contract.
+interface CanonicalPlanFeatures {
+    retargeting: boolean;
+    fantasyUniverses: boolean;
+    visualPolishes: boolean;
+    batchGeneration: boolean;
+    carousel: boolean;
+    referenceAdUpload: boolean;
+    maxTeamMembers: number;
+    maxCarouselSlides: number;  // backend name; FE uses carouselMaxSlides with same value
+}
+
+const CANONICAL: Record<"starter" | "pro" | "scale", CanonicalPlanFeatures> = {
+    starter: {
+        retargeting: false, fantasyUniverses: false, visualPolishes: false,
+        batchGeneration: false, carousel: false, referenceAdUpload: false,
+        maxTeamMembers: 1, maxCarouselSlides: 0,
+    },
+    pro: {
+        retargeting: true, fantasyUniverses: true, visualPolishes: true,
+        batchGeneration: true, carousel: true, referenceAdUpload: true,
+        maxTeamMembers: 3, maxCarouselSlides: 7,
+    },
+    scale: {
+        retargeting: true, fantasyUniverses: true, visualPolishes: true,
+        batchGeneration: true, carousel: true, referenceAdUpload: true,
+        maxTeamMembers: 10, maxCarouselSlides: 10,
+    },
+};
+
+const CANONICAL_BATCH_ADS_PER_RUN: Record<"starter" | "pro" | "scale", number | null> = {
+    starter: null,
+    pro: 4,
+    scale: 36,
+};
+
 function testCrossModuleParity() {
-    let frontendPlans: any;
-    try {
-        frontendPlans = require("../../src/planconfig").PLANS;
-    } catch {
-        console.log("  ⚠️ T026a: Cross-module parity test skipped (frontend import unavailable in functions context)");
-        console.log("    Verify manually: src/planconfig.ts PLANS vs functions/src/entitlements.ts PLAN_FEATURES");
-        return;
+    const plans: Array<"starter" | "pro" | "scale"> = ["starter", "pro", "scale"];
+
+    for (const plan of plans) {
+        const backend = PLAN_FEATURES[plan];
+        if (!backend) {
+            throw new Error(`T026a: backend PLAN_FEATURES[${plan}] missing.`);
+        }
+        const expected = CANONICAL[plan];
+
+        assert.equal(backend.retargeting, expected.retargeting, `${plan}/retargeting`);
+        assert.equal(backend.fantasyUniverses, expected.fantasyUniverses, `${plan}/fantasyUniverses`);
+        assert.equal(backend.visualPolishes, expected.visualPolishes, `${plan}/visualPolishes`);
+        assert.equal(backend.batchGeneration, expected.batchGeneration, `${plan}/batchGeneration`);
+        assert.equal(backend.carousel, expected.carousel, `${plan}/carousel`);
+        assert.equal(backend.referenceAdUpload, expected.referenceAdUpload, `${plan}/referenceAdUpload`);
+        assert.equal(backend.maxTeamMembers, expected.maxTeamMembers, `${plan}/maxTeamMembers`);
+        assert.equal(backend.maxCarouselSlides, expected.maxCarouselSlides, `${plan}/maxCarouselSlides`);
     }
 
-    const paidPlans: PlanName[] = ["starter", "pro", "scale"];
-    const boolKeys = [
-        "retargeting", "fantasyUniverses", "visualPolishes", "brandUrlScraping",
-        "competitorResearch", "carousel", "batchGeneration",
-        "abVariationTesting", "regionEditing", "referenceAdUpload", "pushToMeta",
-        "creativeMemory", "creativeScoringEngine", "smartRecommendations",
-        "variantExploration", "multiBrandWorkspaces",
-    ] as const;
-
-    for (const plan of paidPlans) {
-        const bf = frontendPlans[plan]?.features;
-        const bb = PLAN_FEATURES[plan as "starter" | "pro" | "scale"];
-        if (!bf || !bb) {
-            console.log(`  ⚠️ Skipping parity for ${plan} (missing data)`);
-            continue;
-        }
-
-        for (const key of boolKeys) {
-            assert.equal(bf[key], bb[key], `parity: ${plan}/${key}`);
-        }
-
-        assert.equal(bf.maxTeamMembers, bb.maxTeamMembers, `parity: ${plan}/maxTeamMembers`);
+    // batchConfig is frontend-only on PLANS; backend has batchGeneration boolean.
+    // Confirm the numeric cap that DOES live backend-side matches the canonical value used by validateBatchRunEntitlement().
+    // (Backend cap is enforced by resolveEntitlement's `batchRun` branch which reads PLAN_CREDIT_LIMITS.batchMaxAds.)
+    for (const plan of plans) {
+        const expected = CANONICAL_BATCH_ADS_PER_RUN[plan];
+        if (expected === null) continue;
+        const dec = resolveEntitlement({ plan, feature: "batchRun", quantity: expected });
+        assert.equal(dec.allowed, true, `batch cap canonical: ${plan} at ${expected} should allow`);
+        assert.equal(dec.limit, expected, `batch cap canonical: ${plan} limit = ${expected}`);
+        const dec2 = resolveEntitlement({ plan, feature: "batchRun", quantity: expected + 1 });
+        assert.equal(dec2.allowed, false, `batch cap canonical: ${plan} at ${expected + 1} should deny`);
     }
 
-    assert.equal(frontendPlans.pro?.carouselMaxSlides, PLAN_FEATURES.pro.maxCarouselSlides, "parity: pro/carouselMaxSlides");
-    assert.equal(frontendPlans.scale?.carouselMaxSlides, PLAN_FEATURES.scale.maxCarouselSlides, "parity: scale/carouselMaxSlides");
-
-    assert.equal(frontendPlans.pro?.batchConfig?.maxAdsPerRun, 4, "parity: pro/batchMaxAdsPerRun");
-    assert.equal(frontendPlans.scale?.batchConfig?.maxAdsPerRun, 36, "parity: scale/batchMaxAdsPerRun");
-
-    console.log("  ✅ testCrossModuleParity: frontend ↔ backend parity verified");
+    console.log("  ✅ testCrossModuleParity: backend ↔ contract canonicals verified");
 }
 
 console.log("\n═══ T026a — Cross-module Parity ═══");

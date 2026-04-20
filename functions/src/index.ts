@@ -24,7 +24,7 @@ import { paddleGetSubscription, paddleCancelSubscription, paddleReactivateSubscr
 import { paddleCreateTopupCheckout } from "./paddle/paddleCheckout.js";
 import { paddleCreatePortalSession } from "./paddle/paddlePortal.js";
 import { handlePaddleWebhook } from "./billing/paddleWebhook.js";
-import { createPaddleClient } from "./paddle/paddleClient.js";
+import { createPaddleClient, PADDLE_PRICE_TO_PLAN } from "./paddle/paddleClient.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
@@ -74,17 +74,7 @@ const PLAN_MAP: Record<string, { plan: string; credits: number; isTrial?: boolea
     'topup_800': { plan: 'keep_current', credits: 800 },
 };
 
-// ─── PADDLE PRICE → PLAN MAPPING ──────────────────────────────────────────
-const PADDLE_PRICE_TO_PLAN: Record<string, { plan: string; credits: number }> = {
-    "pri_01knz7v1rr3eehbe12s214ba0t": { plan: "starter", credits: 800 },
-    "pri_01knz7wz5cpvv2fx6334wv822e": { plan: "starter", credits: 800 },
-    "pri_01knz7xtmrbsfsrzfc1dy1zser": { plan: "pro", credits: 2500 },
-    "pri_01knz7ydr6zbpdhatr8yarwjnd": { plan: "pro", credits: 2500 },
-    "pri_01knz7zpgfbek52zm0n012jqn0": { plan: "pro", credits: 2500 },
-    "pri_01knz82jwdxjph1mpny39jnxqg": { plan: "pro", credits: 2500 },
-    "pri_01knz80jr5m4ey3wrskpvgbrh4": { plan: "scale", credits: 6500 },
-    "pri_01knz81pexff8h8wbwq44cy0j3": { plan: "scale", credits: 6500 },
-};
+// PADDLE_PRICE_TO_PLAN is imported from ./paddle/paddleClient (single source of truth).
 
 const PADDLE_TOPUP_PRICES: Record<string, { priceId: string; credits: number }> = {
     topup_100: { priceId: "pri_01knz87qc1ezrb84gtffpmtjdq", credits: 100 },
@@ -350,8 +340,11 @@ export const monthlyCreditsReset = onSchedule({
             for (const userDoc of chunk) {
                 const data = userDoc.data();
                 const plan = data.plan;
-                // Skip team members — they don't have their own credits
+                // Skip team members — they don't have their own credits.
                 if (data.isTeamMember) continue;
+                // Skip trial users — paid-plan monthly refill does NOT apply to trials.
+                // Trial credits run out once; continued access requires upgrading.
+                if (data.isTrial === true) continue;
                 if (PLAN_LIMITS[plan]) {
                     batch.update(userDoc.ref, {
                         credits: PLAN_LIMITS[plan],
@@ -363,7 +356,7 @@ export const monthlyCreditsReset = onSchedule({
             await batch.commit();
             for (const userDoc of chunk) {
                 const data = userDoc.data();
-                if (!data.isTeamMember && PLAN_LIMITS[data.plan]) {
+                if (!data.isTeamMember && data.isTrial !== true && PLAN_LIMITS[data.plan]) {
                     await writeBillingState(userDoc.id, db).catch((e: any) =>
                         console.warn(`⚠️ writeBillingState failed for ${userDoc.id}:`, e.message)
                     );

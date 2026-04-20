@@ -22,29 +22,29 @@ export interface BatchConfig {
 
 export interface PlanFeatures {
   retargeting: boolean;
-  fantasyUniverse: boolean;
-  artDirection: boolean;
-  batch: boolean;
+  fantasyUniverses: boolean;       // plural — matches implementation
+  visualPolishes: boolean;         // formerly "artDirection" in an earlier draft
+  batchGeneration: boolean;        // formerly "batch" in an earlier draft
   carousel: boolean;
-  referenceAds: boolean;
-  hookAngles: 'full';              // literal, ungated on every paid plan
-  hookTypes: 'full';
-  copywritingStrategies: 'full';
-  adTones: 'full';
+  referenceAdUpload: boolean;      // formerly "referenceAds" in an earlier draft
+  maxTeamMembers: number;          // owner-inclusive (clarification Q1) — lives inside features
+  hookAngles: 'full' | 'none';
+  hookTypes: 'full' | 'none';
+  copywritingStrategies: 'full' | 'none';
+  adTones: 'full' | 'none';
 }
 
 export interface PlanConfig {
   name: string;
   monthlyCredits: number;
-  maxTeamMembers: number;          // owner-inclusive (clarification Q1)
   savedProjectLimit: number;       // Infinity allowed
   audienceAvatarLimit: number;     // Infinity allowed
   carouselMaxSlides: number | null;
   batchConfig: BatchConfig | null;
-  features: PlanFeatures;
+  features: PlanFeatures;          // maxTeamMembers lives here (not at top level)
   paddlePriceId?: {
     monthly: string;
-    annual: string;
+    yearly: string;                // implementation uses 'yearly' — matches Paddle SDK
   };
 }
 
@@ -59,26 +59,26 @@ export const PLANS: Record<UserPlan, PlanConfig> = { /* 4 entries below */ };
 
 ```typescript
 {
-  name: 'None',
+  name: 'No Plan',
   monthlyCredits: 0,
-  maxTeamMembers: 0,
   savedProjectLimit: 0,
   audienceAvatarLimit: 0,
   carouselMaxSlides: null,
   batchConfig: null,
   features: {
     retargeting: false,
-    fantasyUniverse: false,
-    artDirection: false,
-    batch: false,
+    fantasyUniverses: false,
+    visualPolishes: false,
+    batchGeneration: false,
     carousel: false,
-    referenceAds: false,
-    hookAngles: 'full',
-    hookTypes: 'full',
-    copywritingStrategies: 'full',
-    adTones: 'full',
+    referenceAdUpload: false,
+    maxTeamMembers: 0,
+    hookAngles: 'none',              // 'none' plan has no creative access
+    hookTypes: 'none',
+    copywritingStrategies: 'none',
+    adTones: 'none',
   },
-  // no paddlePriceId
+  paddlePriceId: { monthly: '', yearly: '' },
 }
 ```
 
@@ -88,24 +88,24 @@ export const PLANS: Record<UserPlan, PlanConfig> = { /* 4 entries below */ };
 {
   name: 'Starter',
   monthlyCredits: 800,
-  maxTeamMembers: 1,                    // owner only — invite form hidden
   savedProjectLimit: 10,
   audienceAvatarLimit: 5,
   carouselMaxSlides: null,              // carousel locked
   batchConfig: null,                    // batch locked
   features: {
     retargeting: false,
-    fantasyUniverse: false,
-    artDirection: false,
-    batch: false,
+    fantasyUniverses: false,
+    visualPolishes: false,
+    batchGeneration: false,
     carousel: false,
-    referenceAds: false,
+    referenceAdUpload: false,
+    maxTeamMembers: 1,                  // owner only — invite form hidden
     hookAngles: 'full',                 // all 11 available
     hookTypes: 'full',                  // all 12 available
     copywritingStrategies: 'full',      // all 8 available
     adTones: 'full',                    // all 11 available
   },
-  paddlePriceId: { monthly: '<see planconfig.ts>', annual: '<see planconfig.ts>' },
+  paddlePriceId: { monthly: '<see planconfig.ts>', yearly: '<see planconfig.ts>' },
 }
 ```
 
@@ -115,24 +115,24 @@ export const PLANS: Record<UserPlan, PlanConfig> = { /* 4 entries below */ };
 {
   name: 'Pro',
   monthlyCredits: 2500,
-  maxTeamMembers: 3,                    // owner + 2 invitees
   savedProjectLimit: 30,
   audienceAvatarLimit: 15,
   carouselMaxSlides: 7,
   batchConfig: { maxSizes: 1, maxHooks: 2, maxConcepts: 2, maxAdsPerRun: 4 },
   features: {
     retargeting: true,
-    fantasyUniverse: true,
-    artDirection: true,
-    batch: true,
+    fantasyUniverses: true,
+    visualPolishes: true,
+    batchGeneration: true,
     carousel: true,
-    referenceAds: true,
+    referenceAdUpload: true,
+    maxTeamMembers: 3,                  // owner + 2 invitees
     hookAngles: 'full',
     hookTypes: 'full',
     copywritingStrategies: 'full',
     adTones: 'full',
   },
-  paddlePriceId: { monthly: '<see planconfig.ts>', annual: '<see planconfig.ts>' },
+  paddlePriceId: { monthly: '<see planconfig.ts>', yearly: '<see planconfig.ts>' },
 }
 ```
 
@@ -142,24 +142,24 @@ export const PLANS: Record<UserPlan, PlanConfig> = { /* 4 entries below */ };
 {
   name: 'Scale',
   monthlyCredits: 6500,
-  maxTeamMembers: 10,                   // owner + 9 invitees
   savedProjectLimit: Infinity,
   audienceAvatarLimit: Infinity,
   carouselMaxSlides: 10,
   batchConfig: { maxSizes: 3, maxHooks: 4, maxConcepts: 3, maxAdsPerRun: 36 },
   features: {
     retargeting: true,
-    fantasyUniverse: true,
-    artDirection: true,
-    batch: true,
+    fantasyUniverses: true,
+    visualPolishes: true,
+    batchGeneration: true,
     carousel: true,
-    referenceAds: true,
+    referenceAdUpload: true,
+    maxTeamMembers: 10,                 // owner + 9 invitees
     hookAngles: 'full',
     hookTypes: 'full',
     copywritingStrategies: 'full',
     adTones: 'full',
   },
-  paddlePriceId: { monthly: '<see planconfig.ts>', annual: '<see planconfig.ts>' },
+  paddlePriceId: { monthly: '<see planconfig.ts>', yearly: '<see planconfig.ts>' },
 }
 ```
 
@@ -170,15 +170,15 @@ export const PLANS: Record<UserPlan, PlanConfig> = { /* 4 entries below */ };
 | # | Invariant | Validation |
 |---|---|---|
 | C-01 | `Object.keys(PLANS)` is exactly `['none','starter','pro','scale']` in any order | Unit test: `expect(new Set(Object.keys(PLANS))).toEqual(new Set(['none','starter','pro','scale']))` |
-| C-02 | No runtime reference to `'creator'` or `'scaling'` exists anywhere under `src/` or `functions/src/` | Repo grep in CI: `grep -rE "\bcreator\b\|\bscaling\b" src/ functions/src/` returns zero plan-related hits |
-| C-03 | `PLANS.starter.features.batch === false` and `PLANS.starter.batchConfig === null` | Unit test |
+| C-02 | No runtime reference to `'creator'` or `'scaling'` exists in active plan unions or entitlement enums under `src/` or `functions/src/` | Repo grep in CI: `grep -rnE "\b(creator\|scaling)\b" src/ functions/src/ --include="*.ts" --include="*.tsx"` — with an allowlist for documented legacy-mapping paths (see `plan.md`) returns zero plan-related hits |
+| C-03 | `PLANS.starter.features.batchGeneration === false` and `PLANS.starter.batchConfig === null` | Unit test |
 | C-04 | `PLANS.pro.batchConfig.maxAdsPerRun === 4`, `PLANS.pro.carouselMaxSlides === 7` | Unit test |
 | C-05 | `PLANS.scale.batchConfig.maxAdsPerRun === 36`, `PLANS.scale.carouselMaxSlides === 10` | Unit test |
 | C-06 | `PLANS.scale.savedProjectLimit === Infinity`, `PLANS.scale.audienceAvatarLimit === Infinity` | Unit test |
 | C-07 | For every paid plan, `features.hookAngles === 'full' && features.hookTypes === 'full' && features.copywritingStrategies === 'full' && features.adTones === 'full'` | Unit test, parameterised over `['starter','pro','scale']` |
-| C-08 | Retargeting / fantasyUniverse / artDirection / batch / carousel / referenceAds are `false` on Starter, `true` on Pro, `true` on Scale | Unit test, one assertion per feature |
-| C-09 | `PLANS.pro.maxTeamMembers === 3`, `PLANS.scale.maxTeamMembers === 10`, `PLANS.starter.maxTeamMembers === 1` (owner-inclusive) | Unit test |
-| C-10 | Backend mirror: `functions/src/entitlements.ts` has the same `features.*` booleans and the same `maxTeamMembers` / `carouselMaxSlides` / `batchConfig.maxAdsPerRun` per plan | Cross-module unit test that imports both and compares key values |
+| C-08 | `retargeting` / `fantasyUniverses` / `visualPolishes` / `batchGeneration` / `carousel` / `referenceAdUpload` are `false` on Starter, `true` on Pro, `true` on Scale | Unit test, one assertion per feature |
+| C-09 | `PLANS.pro.features.maxTeamMembers === 3`, `PLANS.scale.features.maxTeamMembers === 10`, `PLANS.starter.features.maxTeamMembers === 1` (owner-inclusive) | Unit test |
+| C-10 | Backend mirror: `functions/src/entitlements.ts` `PLAN_FEATURES` has the same booleans and the same `maxTeamMembers` / `maxCarouselSlides` (backend field) ≡ `carouselMaxSlides` (frontend) / `batchConfig.maxAdsPerRun` per plan | Cross-module unit test that imports both and compares key values (T026a — hard-fail on import failure) |
 
 ---
 

@@ -773,18 +773,18 @@ const SELF_OBJECTIONS: RetargetingObjectionData[] = [
 // COMBINED EXPORT
 // =============================================================================
 
-// Ordered by plan tier: Creator [0..3], Pro/Scaling [0..11]
-// Starter has 0 objections (retargeting mode itself is gated).
+// Retargeting is Pro+ only (Starter has 0 objections — retargeting mode itself is gated).
+// Pro and Scale both get all 12 objections; first 4 are the most universal.
 const ALL_OBJECTIONS_UNORDERED = [...CIRCUMSTANCES_OBJECTIONS, ...OTHER_PEOPLE_OBJECTIONS, ...SELF_OBJECTIONS];
 const pick = (id: RetargetingObjectionId) => ALL_OBJECTIONS_UNORDERED.find(o => o.id === id)!;
 
 export const RETARGETING_OBJECTION_DATA: RetargetingObjectionData[] = [
-    // ── Creator (first 4 — most universal) ──
+    // ── Most universal objections (first 4) ──
     pick('price_too_high'),
     pick('dont_trust'),
     pick('will_it_work_for_me'),
     pick('no_time'),
-    // ── Pro/Scaling (all 12) ──
+    // ── Remaining 8 (pro/scale get all 12) ──
     pick('no_budget_now'),
     pick('need_installments'),
     pick('tried_before_failed'),

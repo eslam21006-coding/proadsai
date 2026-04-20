@@ -14,7 +14,8 @@ import MagicSelector, { type EditRequest } from './components/MagicSelector';
 import { feedbackService, type NegativeFeedbackTag } from './services/feedbackService';
 import { metaService, type MetaConnection } from './services/metaService';
 import { ASPECT_RATIOS, COLD_HOOK_ANGLES, OFFER_TYPES, getRandomUniverse } from './constants';
-import { type UserPlan, PLANS, CREDIT_COSTS, TOPUP_PACKS, CREDITS_PER_AD, canUse, canUseRatio, requiredPlanFor, requiredPlanForRatio, hasCredits, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
+import type { UserPlan } from './planconfig';
+import { PLANS, CREDIT_COSTS, TOPUP_PACKS, CREDITS_PER_AD, canUse, canUseRatio, requiredPlanFor, requiredPlanForRatio, hasCredits, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
 import { LanguageProvider, useT, type UILanguage } from './i18n';
 import { ALL_UNIVERSES, type UniverseEntry } from './universeDatabase';
 const InputForm = React.lazy(() => import('./components/InputForm'));
@@ -3612,8 +3613,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const batchConfig = PLANS[userPlan]?.batchConfig;
     if (batchConfig) {
       const numSizes = selectedSizes.size || 1;
-      const numHooks = batchHookGroups.length > 0 ? batchHookGroups.length : 1;
-      const totalCombos = numSizes * numHooks * 3;
+      // Sum ACTUAL selected concepts across hook groups, not a hardcoded 3.
+      const conceptCount = batchHookGroups.length > 0
+        ? batchHookGroups.reduce((sum, g) => sum + (g.selectedConcepts?.size ?? 0), 0)
+        : (singleSelectedConcepts.size || 1);
+      const totalCombos = numSizes * conceptCount;
       if (totalCombos > batchConfig.maxAdsPerRun) {
         showToast(`Your plan allows up to ${batchConfig.maxAdsPerRun} ads per batch run. You requested ${totalCombos}.`, 'error');
         return;
