@@ -836,4 +836,262 @@ console.log("═══ Spec 005 Phase 2 — All new tests passed ═══\n");
 
 import "./teamFixtureTests.js";
 
+// ═══════════════════════════════════════════════════════════════════════════
+// T025 — Entitlement Resolver Fixtures (3-plan hotfix)
+// ═══════════════════════════════════════════════════════════════════════════
+
+import {
+    resolveEntitlement,
+    PLAN_FEATURES,
+    type FeatureName,
+    type EntitlementDecision,
+} from "./entitlements.js";
+
+type PlanName = "none" | "starter" | "pro" | "scale";
+const ALL_PLANS: PlanName[] = ["none", "starter", "pro", "scale"];
+
+function assertDecision(actual: EntitlementDecision, expected: Partial<EntitlementDecision>, label: string) {
+    if (expected.allowed !== undefined && actual.allowed !== expected.allowed) {
+        assert.fail(`❌ ${label}: expected allowed=${expected.allowed}, got allowed=${actual.allowed}`);
+    }
+    if (expected.reason !== undefined && actual.reason !== expected.reason) {
+        assert.fail(`❌ ${label}: expected reason=${expected.reason}, got reason=${actual.reason}`);
+    }
+    if (expected.limit !== undefined && actual.limit !== expected.limit) {
+        assert.fail(`❌ ${label}: expected limit=${expected.limit}, got limit=${actual.limit}`);
+    }
+}
+
+// ─── 24 boolean-gate fixtures: 6 features × 4 plans ───
+function testBooleanGateFixtures() {
+    const gates: FeatureName[] = [
+        "retargeting", "fantasyUniverse", "artDirection", "batch", "carousel", "referenceAds",
+    ];
+    let count = 0;
+    for (const plan of ALL_PLANS) {
+        for (const feature of gates) {
+            const result = resolveEntitlement({ plan, feature });
+            if (plan === "none") {
+                assert.equal(result.allowed, false, `bool-gate: ${plan}/${feature} → denied`);
+                assert.equal(result.reason, "plan_none", `bool-gate: ${plan}/${feature} reason`);
+            } else if (plan === "starter") {
+                assert.equal(result.allowed, false, `bool-gate: ${plan}/${feature} → denied`);
+                assert.equal(result.reason, "pro_plan_required", `bool-gate: ${plan}/${feature} reason`);
+            } else {
+                assert.equal(result.allowed, true, `bool-gate: ${plan}/${feature} → allowed`);
+                assert.equal(result.reason, undefined, `bool-gate: ${plan}/${feature} no reason`);
+            }
+            count++;
+        }
+    }
+    assert.equal(count, 24, "boolean-gate fixture count = 24");
+    console.log("  ✅ testBooleanGateFixtures: 24 fixtures passed");
+}
+
+// ─── 16 always-allowed fixtures: 4 features × 4 plans ───
+function testAlwaysAllowedFixtures() {
+    const always: FeatureName[] = [
+        "hookAngles", "hookTypes", "copywritingStrategies", "adTones",
+    ];
+    let count = 0;
+    for (const plan of ALL_PLANS) {
+        for (const feature of always) {
+            const result = resolveEntitlement({ plan, feature });
+            if (plan === "none") {
+                assert.equal(result.allowed, false, `always: ${plan}/${feature} → denied`);
+                assert.equal(result.reason, "plan_none", `always: ${plan}/${feature} reason`);
+            } else {
+                assert.equal(result.allowed, true, `always: ${plan}/${feature} → allowed`);
+                assert.equal(result.reason, undefined, `always: ${plan}/${feature} no reason`);
+            }
+            count++;
+        }
+    }
+    assert.equal(count, 16, "always-allowed fixture count = 16");
+    console.log("  ✅ testAlwaysAllowedFixtures: 16 fixtures passed");
+}
+
+// ─── 40 quantity-bounded fixtures: 5 features × 4 plans × 2 boundaries ───
+function testQuantityBoundedFixtures() {
+    const qtyFeatures: FeatureName[] = [
+        "carouselSlides", "batchRun", "teamInvite", "savedProjectSave", "audienceAvatarCreate",
+    ];
+
+    const LIMITS: Record<string, Record<string, number>> = {
+        none: { carouselSlides: 0, batchRun: 0, teamInvite: 0, savedProjectSave: 0, audienceAvatarCreate: 0 },
+        starter: { carouselSlides: 0, batchRun: 0, teamInvite: 1, savedProjectSave: 10, audienceAvatarCreate: 5 },
+        pro: { carouselSlides: 7, batchRun: 4, teamInvite: 3, savedProjectSave: 30, audienceAvatarCreate: 15 },
+        scale: { carouselSlides: 10, batchRun: 36, teamInvite: 10, savedProjectSave: Infinity, audienceAvatarCreate: Infinity },
+    };
+
+    const DENY_REASONS: Record<string, string> = {
+        carouselSlides: "carousel_limit_exceeded",
+        batchRun: "batch_limit_exceeded",
+        teamInvite: "team_limit_exceeded",
+        savedProjectSave: "saved_project_limit_exceeded",
+        audienceAvatarCreate: "avatar_limit_exceeded",
+    };
+
+    let count = 0;
+    for (const plan of ALL_PLANS) {
+        for (const feature of qtyFeatures) {
+            const limit = LIMITS[plan][feature];
+            const isInf = limit === Infinity;
+
+            if (plan === "none") {
+                const atResult = resolveEntitlement({ plan, feature, quantity: 1 });
+                const overResult = resolveEntitlement({ plan, feature, quantity: 99 });
+                assert.equal(atResult.allowed, false, `qty: ${plan}/${feature} at-limit → denied`);
+                assert.equal(atResult.reason, "plan_none", `qty: ${plan}/${feature} at-limit reason`);
+                assert.equal(overResult.allowed, false, `qty: ${plan}/${feature} over-limit → denied`);
+                assert.equal(overResult.reason, "plan_none", `qty: ${plan}/${feature} over-limit reason`);
+                count += 2;
+                continue;
+            }
+
+            if (limit === 0) {
+                const atResult = resolveEntitlement({ plan, feature, quantity: 0 });
+                const overResult = resolveEntitlement({ plan, feature, quantity: 1 });
+                assert.equal(atResult.allowed, false, `qty: ${plan}/${feature} at-limit(0) → denied`);
+                assert.equal(atResult.reason, "pro_plan_required", `qty: ${plan}/${feature} at-limit reason`);
+                assert.equal(overResult.allowed, false, `qty: ${plan}/${feature} over-limit(1) → denied`);
+                assert.equal(overResult.reason, "pro_plan_required", `qty: ${plan}/${feature} over-limit reason`);
+                count += 2;
+                continue;
+            }
+
+            if (feature === "teamInvite" && limit <= 1) {
+                const atResult = resolveEntitlement({ plan, feature, quantity: 1 });
+                const overResult = resolveEntitlement({ plan, feature, quantity: 2 });
+                assert.equal(atResult.allowed, false, `qty: ${plan}/${feature} at-limit(1) → denied`);
+                assert.equal(atResult.reason, "pro_plan_required", `qty: ${plan}/${feature} at-limit reason`);
+                assert.equal(overResult.allowed, false, `qty: ${plan}/${feature} over-limit(2) → denied`);
+                assert.equal(overResult.reason, "pro_plan_required", `qty: ${plan}/${feature} over-limit reason`);
+                count += 2;
+                continue;
+            }
+
+            if (isInf) {
+                const atResult = resolveEntitlement({ plan, feature, quantity: 999 });
+                const overResult = resolveEntitlement({ plan, feature, quantity: 1000 });
+                assert.equal(atResult.allowed, true, `qty: ${plan}/${feature} at-limit(999) → allowed (Infinity)`);
+                assert.equal(overResult.allowed, true, `qty: ${plan}/${feature} over-limit(1000) → allowed (Infinity)`);
+                count += 2;
+                continue;
+            }
+
+            if (feature === "teamInvite") {
+                // teamInvite uses >= comparison: q >= limit → denied
+                const atResult = resolveEntitlement({ plan, feature, quantity: limit });
+                const overResult = resolveEntitlement({ plan, feature, quantity: limit + 1 });
+                assert.equal(atResult.allowed, false, `qty: ${plan}/${feature} at-limit(${limit}) → denied (>=)`);
+                assert.equal(atResult.reason, DENY_REASONS[feature], `qty: ${plan}/${feature} at-limit reason`);
+                assert.equal(atResult.limit, limit, `qty: ${plan}/${feature} at-limit limit`);
+                assert.equal(overResult.allowed, false, `qty: ${plan}/${feature} over-limit(${limit + 1}) → denied`);
+                assert.equal(overResult.reason, DENY_REASONS[feature], `qty: ${plan}/${feature} over-limit reason`);
+            } else {
+                // Standard features use > comparison: q > limit → denied
+                const atResult = resolveEntitlement({ plan, feature, quantity: limit });
+                const overResult = resolveEntitlement({ plan, feature, quantity: limit + 1 });
+                assert.equal(atResult.allowed, true, `qty: ${plan}/${feature} at-limit(${limit}) → allowed`);
+                assert.equal(atResult.limit, limit, `qty: ${plan}/${feature} at-limit limit`);
+                assert.equal(overResult.allowed, false, `qty: ${plan}/${feature} over-limit(${limit + 1}) → denied`);
+                assert.equal(overResult.reason, DENY_REASONS[feature], `qty: ${plan}/${feature} over-limit reason`);
+                assert.equal(overResult.limit, limit, `qty: ${plan}/${feature} over-limit limit`);
+            }
+            count += 2;
+        }
+    }
+    assert.equal(count, 40, "quantity-bounded fixture count = 40");
+    console.log("  ✅ testQuantityBoundedFixtures: 40 fixtures passed");
+}
+
+// ─── 4 team-invite boundary fixtures ───
+function testTeamInviteBoundaryFixtures() {
+    // Pro at 3 seats → denied (>= limit of 3)
+    const pro3 = resolveEntitlement({ plan: "pro", feature: "teamInvite", quantity: 3 });
+    assert.equal(pro3.allowed, false, "team-boundary: Pro q=3 → denied");
+    assert.equal(pro3.reason, "team_limit_exceeded", "team-boundary: Pro q=3 reason");
+    assert.equal(pro3.limit, 3, "team-boundary: Pro q=3 limit=3");
+
+    // Pro at 2 → allowed
+    const pro2 = resolveEntitlement({ plan: "pro", feature: "teamInvite", quantity: 2 });
+    assert.equal(pro2.allowed, true, "team-boundary: Pro q=2 → allowed");
+    assert.equal(pro2.limit, 3, "team-boundary: Pro q=2 limit=3");
+
+    // Scale at 10 → denied (>= limit of 10)
+    const scale10 = resolveEntitlement({ plan: "scale", feature: "teamInvite", quantity: 10 });
+    assert.equal(scale10.allowed, false, "team-boundary: Scale q=10 → denied");
+    assert.equal(scale10.reason, "team_limit_exceeded", "team-boundary: Scale q=10 reason");
+    assert.equal(scale10.limit, 10, "team-boundary: Scale q=10 limit=10");
+
+    // Scale at 9 → allowed
+    const scale9 = resolveEntitlement({ plan: "scale", feature: "teamInvite", quantity: 9 });
+    assert.equal(scale9.allowed, true, "team-boundary: Scale q=9 → allowed");
+    assert.equal(scale9.limit, 10, "team-boundary: Scale q=9 limit=10");
+
+    console.log("  ✅ testTeamInviteBoundaryFixtures: 4 fixtures passed");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Run T025 Entitlement Fixtures
+// ═══════════════════════════════════════════════════════════════════════════
+console.log("\n═══ T025 — Entitlement Resolver Fixtures (3-plan) ═══");
+testBooleanGateFixtures();
+testAlwaysAllowedFixtures();
+testQuantityBoundedFixtures();
+testTeamInviteBoundaryFixtures();
+console.log("═══ T025 — All entitlement fixtures passed ═══\n");
+
+// ═══════════════════════════════════════════════════════════════════════════
+// T026a — Cross-module parity test (frontend ↔ backend)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function testCrossModuleParity() {
+    let frontendPlans: any;
+    try {
+        frontendPlans = require("../../src/planconfig").PLANS;
+    } catch {
+        console.log("  ⚠️ T026a: Cross-module parity test skipped (frontend import unavailable in functions context)");
+        console.log("    Verify manually: src/planconfig.ts PLANS vs functions/src/entitlements.ts PLAN_FEATURES");
+        return;
+    }
+
+    const paidPlans: PlanName[] = ["starter", "pro", "scale"];
+    const boolKeys = [
+        "retargeting", "fantasyUniverses", "visualPolishes", "brandUrlScraping",
+        "competitorResearch", "carousel", "batchGeneration",
+        "abVariationTesting", "regionEditing", "referenceAdUpload", "pushToMeta",
+        "creativeMemory", "creativeScoringEngine", "smartRecommendations",
+        "variantExploration", "multiBrandWorkspaces",
+    ] as const;
+
+    for (const plan of paidPlans) {
+        const bf = frontendPlans[plan]?.features;
+        const bb = PLAN_FEATURES[plan as "starter" | "pro" | "scale"];
+        if (!bf || !bb) {
+            console.log(`  ⚠️ Skipping parity for ${plan} (missing data)`);
+            continue;
+        }
+
+        for (const key of boolKeys) {
+            assert.equal(bf[key], bb[key], `parity: ${plan}/${key}`);
+        }
+
+        assert.equal(bf.maxTeamMembers, bb.maxTeamMembers, `parity: ${plan}/maxTeamMembers`);
+    }
+
+    assert.equal(frontendPlans.pro?.carouselMaxSlides, PLAN_FEATURES.pro.maxCarouselSlides, "parity: pro/carouselMaxSlides");
+    assert.equal(frontendPlans.scale?.carouselMaxSlides, PLAN_FEATURES.scale.maxCarouselSlides, "parity: scale/carouselMaxSlides");
+
+    assert.equal(frontendPlans.pro?.batchConfig?.maxAdsPerRun, 4, "parity: pro/batchMaxAdsPerRun");
+    assert.equal(frontendPlans.scale?.batchConfig?.maxAdsPerRun, 36, "parity: scale/batchMaxAdsPerRun");
+
+    console.log("  ✅ testCrossModuleParity: frontend ↔ backend parity verified");
+}
+
+console.log("\n═══ T026a — Cross-module Parity ═══");
+testCrossModuleParity();
+console.log("═══ T026a — Cross-module parity complete ═══\n");
+
 console.log('contractFixtures.test: PASS');

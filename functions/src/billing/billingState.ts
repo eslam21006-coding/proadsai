@@ -51,10 +51,9 @@ interface UserData {
 }
 
 const PLAN_CREDITS: Record<string, number> = {
-    starter: 500,
-    creator: 1000,
-    pro: 2000,
-    scaling: 5000,
+    starter: 800,
+    pro: 2500,
+    scale: 6500,
 };
 
 const TRIAL_CREDITS = 50;
@@ -62,9 +61,8 @@ const TRIAL_CREDITS = 50;
 const PLAN_HIERARCHY: Record<string, number> = {
     none: 0,
     starter: 1,
-    creator: 2,
-    pro: 3,
-    scaling: 4,
+    pro: 2,
+    scale: 3,
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -80,7 +78,17 @@ function tsToObj(ts: Timestamp | null | undefined): { seconds: number; nanosecon
 }
 
 export function buildBillingState(data: UserData): BillingState {
-    const plan = data.plan || "none";
+    let plan = data.plan || "none";
+
+    // ── Legacy read-time mapping (creator → pro, scaling → scale) ──
+    if (plan === "creator") {
+        console.log(JSON.stringify({ event: "plan.legacy_mapped", uid: "unknown", legacy: "creator", canonical: "pro" }));
+        plan = "pro";
+    } else if (plan === "scaling") {
+        console.log(JSON.stringify({ event: "plan.legacy_mapped", uid: "unknown", legacy: "scaling", canonical: "scale" }));
+        plan = "scale";
+    }
+
     const isTrial = data.isTrial === true;
     const isTeamMember = data.isTeamMember === true;
     const rawCredits = data.credits ?? 0;
@@ -108,7 +116,7 @@ export function buildBillingState(data: UserData): BillingState {
     }
 
     const currentRank = PLAN_HIERARCHY[plan] ?? 0;
-    const canUpgrade = !isTeamMember && currentRank < PLAN_HIERARCHY["scaling"] && currentRank >= PLAN_HIERARCHY["starter"];
+    const canUpgrade = !isTeamMember && currentRank < PLAN_HIERARCHY["scale"] && currentRank >= PLAN_HIERARCHY["starter"];
     const canTopUp = !isTeamMember && !isTrial && plan !== "none" && billingStatus !== "cancelled" && billingStatus !== "past_due";
 
     return {

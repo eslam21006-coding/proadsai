@@ -34,7 +34,7 @@ console.log("\n(a) subscription.created → Pro monthly");
 {
     const state = buildBillingState({
         plan: "pro",
-        credits: 2000,
+        credits: 2500,
         isTrial: false,
         paddleCustomerId: "ctm_test123",
         paddleSubscriptionId: "sub_test456",
@@ -43,14 +43,14 @@ console.log("\n(a) subscription.created → Pro monthly");
         billingStatus: "active",
     });
     assertEqual(state.plan, "pro", "plan is pro");
-    assertEqual(state.credits, 2000, "credits is 2000");
+    assertEqual(state.credits, 2500, "credits is 2500");
     assertEqual(state.billingStatus, "active", "billingStatus is active");
     assertEqual(state.paddleCustomerId, "ctm_test123", "paddleCustomerId is set");
     assertEqual(state.paddleSubscriptionId, "sub_test456", "paddleSubscriptionId is set");
     assertEqual(state.paddleUpdatePaymentUrl, "https://sandbox-paddle.com/update/123", "updatePaymentUrl is set");
     assertEqual(state.paddleCancelUrl, "https://sandbox-paddle.com/cancel/123", "cancelUrl is set");
-    assertEqual(state.creditsPerMonth, 2000, "creditsPerMonth is 2000 for pro");
-    assertEqual(state.canUpgrade, true, "canUpgrade is true (pro < scaling)");
+    assertEqual(state.creditsPerMonth, 2500, "creditsPerMonth is 2500 for pro");
+    assertEqual(state.canUpgrade, true, "canUpgrade is true (pro < scale)");
     assertEqual(state.canTopUp, true, "canTopUp is true");
 }
 
@@ -58,7 +58,7 @@ console.log("\n(a.2) subscription.created → Starter plan");
 {
     const state = buildBillingState({
         plan: "starter",
-        credits: 500,
+        credits: 800,
         isTrial: false,
         paddleCustomerId: "ctm_starter",
         paddleSubscriptionId: "sub_starter",
@@ -67,41 +67,41 @@ console.log("\n(a.2) subscription.created → Starter plan");
         billingStatus: "active",
     });
     assertEqual(state.plan, "starter", "plan is starter");
-    assertEqual(state.credits, 500, "credits is 500");
-    assertEqual(state.creditsPerMonth, 500, "creditsPerMonth is 500 for starter");
-    assertEqual(state.canUpgrade, true, "canUpgrade is true (starter < scaling)");
+    assertEqual(state.credits, 800, "credits is 800");
+    assertEqual(state.creditsPerMonth, 800, "creditsPerMonth is 800 for starter");
+    assertEqual(state.canUpgrade, true, "canUpgrade is true (starter < scale)");
 }
 
-console.log("\n(a.3) subscription.created → Creator plan");
+console.log("\n(a.3) Legacy mapping: creator → pro");
 {
     const state = buildBillingState({
         plan: "creator",
-        credits: 1000,
+        credits: 2500,
         isTrial: false,
         paddleCustomerId: "ctm_creator",
         paddleSubscriptionId: "sub_creator",
         billingStatus: "active",
     });
-    assertEqual(state.plan, "creator", "plan is creator");
-    assertEqual(state.credits, 1000, "credits is 1000");
-    assertEqual(state.creditsPerMonth, 1000, "creditsPerMonth is 1000 for creator");
+    assertEqual(state.plan, "pro", "plan mapped from creator to pro");
+    assertEqual(state.credits, 2500, "credits is 2500");
+    assertEqual(state.creditsPerMonth, 2500, "creditsPerMonth is 2500 (pro after mapping)");
 }
 
-console.log("\n(a.4) subscription.created → Scaling plan");
+console.log("\n(a.4) subscription.created → Scale plan");
 {
     const state = buildBillingState({
-        plan: "scaling",
-        credits: 5000,
+        plan: "scale",
+        credits: 6500,
         isTrial: false,
-        paddleCustomerId: "ctm_scaling",
-        paddleSubscriptionId: "sub_scaling",
+        paddleCustomerId: "ctm_scale",
+        paddleSubscriptionId: "sub_scale",
         billingStatus: "active",
     });
-    assertEqual(state.plan, "scaling", "plan is scaling");
-    assertEqual(state.credits, 5000, "credits is 5000");
-    assertEqual(state.creditsPerMonth, 5000, "creditsPerMonth is 5000 for scaling");
-    assertEqual(state.canUpgrade, false, "canUpgrade is false for scaling (highest tier)");
-    assertEqual(state.canTopUp, true, "canTopUp is true for scaling");
+    assertEqual(state.plan, "scale", "plan is scale");
+    assertEqual(state.credits, 6500, "credits is 6500");
+    assertEqual(state.creditsPerMonth, 6500, "creditsPerMonth is 6500 for scale");
+    assertEqual(state.canUpgrade, false, "canUpgrade is false for scale (highest tier)");
+    assertEqual(state.canTopUp, true, "canTopUp is true for scale");
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -144,35 +144,35 @@ console.log("\n(b.2) subscription.canceled — Paddle URLs still present from pr
 
 // ═══════════════════════════════════════════════════════════
 // (c) transaction.completed with isTopUp → credits added
-//     (Simulates user had 1500 credits, top-up added 300 → 1800)
 // ═══════════════════════════════════════════════════════════
 console.log("\n(c) transaction.completed (top-up) → credits added");
 {
     const state = buildBillingState({
         plan: "pro",
-        credits: 1800,
+        credits: 2800,
         isTrial: false,
         paddleCustomerId: "ctm_test123",
         paddleSubscriptionId: "sub_test456",
         billingStatus: "active",
     });
-    assertEqual(state.credits, 1800, "credits is 1800 (1500 base + 300 top-up)");
+    assertEqual(state.credits, 2800, "credits is 2800 (2500 base + 300 top-up)");
     assertEqual(state.billingStatus, "active", "billingStatus is active");
     assertEqual(state.canTopUp, true, "canTopUp is true");
-    assertEqual(state.creditsPerMonth, 2000, "creditsPerMonth is still 2000 (plan unchanged)");
+    assertEqual(state.creditsPerMonth, 2500, "creditsPerMonth is still 2500 (plan unchanged)");
 }
 
-console.log("\n(c.2) transaction.completed (top-up) — credits exceed monthly allotment");
+console.log("\n(c.2) transaction.completed (top-up) — credits exceed monthly allotment (legacy creator input)");
 {
     const state = buildBillingState({
         plan: "creator",
-        credits: 1500,
+        credits: 3000,
         isTrial: false,
         paddleCustomerId: "ctm_topup_over",
         billingStatus: "active",
     });
-    assertEqual(state.credits, 1500, "credits is 1500 (1000 base + 500 top-up, exceeds 1000 allotment)");
-    assertEqual(state.creditsPerMonth, 1000, "creditsPerMonth stays 1000");
+    assertEqual(state.plan, "pro", "plan mapped from creator to pro");
+    assertEqual(state.credits, 3000, "credits is 3000 (2500 base + 500 top-up, exceeds 2500 allotment)");
+    assertEqual(state.creditsPerMonth, 2500, "creditsPerMonth stays 2500 (pro after mapping)");
     assertEqual(state.canTopUp, true, "canTopUp still true");
 }
 
@@ -201,7 +201,7 @@ console.log("\n(d.2) subscription.past_due — grace period with updatePaymentUr
     const graceEnd = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
     const state = buildBillingState({
         plan: "pro",
-        credits: 2000,
+        credits: 2500,
         isTrial: false,
         paddleCustomerId: "ctm_past_due_2",
         paddleSubscriptionId: "sub_past_due_2",
@@ -210,13 +210,11 @@ console.log("\n(d.2) subscription.past_due — grace period with updatePaymentUr
     });
     assertEqual(state.billingStatus, "past_due", "billingStatus is past_due");
     assertEqual(state.paddleUpdatePaymentUrl, "https://sandbox-paddle.com/update/pd", "updatePaymentUrl is available for user to fix payment");
-    assertEqual(state.credits, 2000, "credits NOT zeroed during grace period");
+    assertEqual(state.credits, 2500, "credits NOT zeroed during grace period");
 }
 
 // ═══════════════════════════════════════════════════════════
 // (e) Invalid Paddle signature → graceful handling (no crash on empty data)
-//     The webhook handler returns 400 for invalid signatures.
-//     buildBillingState handles missing/malformed data gracefully.
 // ═══════════════════════════════════════════════════════════
 console.log("\n(e) Invalid signature → graceful handling (no crash on empty data)");
 {
@@ -237,24 +235,22 @@ console.log("\n(e.2) Partial data — only plan set, rest defaults");
     const state = buildBillingState({ plan: "starter" });
     assertEqual(state.plan, "starter", "plan is starter");
     assertEqual(state.credits, 0, "credits defaults to 0");
-    assertEqual(state.creditsPerMonth, 500, "creditsPerMonth is 500 for starter");
+    assertEqual(state.creditsPerMonth, 800, "creditsPerMonth is 800 for starter");
     assertEqual(state.billingStatus, "active", "billingStatus is active (plan is set, no explicit cancelled)");
 }
 
 // ═══════════════════════════════════════════════════════════
 // (f) notifyGHL failure → does not throw (best-effort)
-//     GHL sync is fire-and-forget; verify buildBillingState
-//     completes even with unusual/partial data
 // ═══════════════════════════════════════════════════════════
 console.log("\n(f) GHL failure path → buildBillingState completes with partial data");
 {
     const state = buildBillingState({
-        plan: "creator",
-        credits: 1000,
+        plan: "pro",
+        credits: 2500,
         isTrial: false,
         paddleCustomerId: "ctm_only",
     });
-    assertEqual(state.plan, "creator", "plan is creator");
+    assertEqual(state.plan, "pro", "plan is pro");
     assertEqual(state.paddleCustomerId, "ctm_only", "paddleCustomerId is set");
     assertEqual(state.paddleSubscriptionId, null, "paddleSubscriptionId is null (not yet set)");
     assertEqual(state.billingStatus, "active", "billingStatus is active");
@@ -275,13 +271,12 @@ console.log("\n(f.2) GHL failure path — minimal data (no paddleCustomerId)");
 
 // ═══════════════════════════════════════════════════════════
 // (g) subscription.created WITHOUT firebaseUid → pending_plans write
-//     Verify buildBillingState works with data that would come from pending_plans
 // ═══════════════════════════════════════════════════════════
 console.log("\n(g) subscription.created without firebaseUid → pending_plans data");
 {
     const state = buildBillingState({
         plan: "starter",
-        credits: 500,
+        credits: 800,
         isTrial: false,
         paddleCustomerId: "ctm_pending",
         paddleSubscriptionId: "sub_pending",
@@ -290,10 +285,10 @@ console.log("\n(g) subscription.created without firebaseUid → pending_plans da
         billingStatus: "active",
     });
     assertEqual(state.plan, "starter", "plan is starter");
-    assertEqual(state.credits, 500, "credits is 500");
+    assertEqual(state.credits, 800, "credits is 800");
     assertEqual(state.paddleCustomerId, "ctm_pending", "paddleCustomerId is set");
     assertEqual(state.paddleSubscriptionId, "sub_pending", "paddleSubscriptionId is set");
-    assertEqual(state.canUpgrade, true, "canUpgrade is true (starter < scaling)");
+    assertEqual(state.canUpgrade, true, "canUpgrade is true (starter < scale)");
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -303,7 +298,7 @@ console.log("\nAdditional: Team member restrictions");
 {
     const state = buildBillingState({
         plan: "pro",
-        credits: 2000,
+        credits: 2500,
         isTrial: false,
         isTeamMember: true,
         teamOwnerUid: "owner123",
@@ -317,18 +312,18 @@ console.log("\nAdditional: Team member restrictions");
 }
 
 // ═══════════════════════════════════════════════════════════
-// Additional: Scaling plan (highest tier, canUpgrade=false)
+// Additional: Scale plan (highest tier, canUpgrade=false)
 // ═══════════════════════════════════════════════════════════
-console.log("\nAdditional: Scaling plan (highest tier)");
+console.log("\nAdditional: Scale plan (highest tier)");
 {
     const state = buildBillingState({
-        plan: "scaling",
-        credits: 5000,
+        plan: "scale",
+        credits: 6500,
         isTrial: false,
     });
-    assertEqual(state.canUpgrade, false, "canUpgrade is false for scaling");
-    assertEqual(state.canTopUp, true, "canTopUp is true for scaling");
-    assertEqual(state.creditsPerMonth, 5000, "creditsPerMonth is 5000");
+    assertEqual(state.canUpgrade, false, "canUpgrade is false for scale");
+    assertEqual(state.canTopUp, true, "canTopUp is true for scale");
+    assertEqual(state.creditsPerMonth, 6500, "creditsPerMonth is 6500");
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -382,7 +377,7 @@ console.log("\nAdditional: Trial active (credits > 0)");
     assertEqual(state.billingStatus, "active", "billingStatus is active (trial with credits)");
     assertEqual(state.creditsPerMonth, 50, "creditsPerMonth is 50 (trial)");
     assertEqual(state.canTopUp, false, "canTopUp is false for trial");
-    assertEqual(state.canUpgrade, true, "canUpgrade is true (starter < scaling)");
+    assertEqual(state.canUpgrade, true, "canUpgrade is true (starter < scale)");
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -393,7 +388,7 @@ console.log("\nAdditional: Pending downgrade");
     const futureDate = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
     const state = buildBillingState({
         plan: "pro",
-        credits: 2000,
+        credits: 2500,
         isTrial: false,
         paddleCustomerId: "ctm_downgrade",
         paddleSubscriptionId: "sub_downgrade",
@@ -429,12 +424,27 @@ console.log("\nAdditional: nextResetDate passthrough");
     const resetDate = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
     const state = buildBillingState({
         plan: "pro",
-        credits: 2000,
+        credits: 2500,
         isTrial: false,
         nextCreditReset: Timestamp.fromDate(resetDate),
     });
     assert(state.nextResetDate !== null, "nextResetDate is set");
     assertEqual(state.nextResetDate!.seconds, Math.floor(resetDate.getTime() / 1000), "nextResetDate.seconds matches");
+}
+
+// ═══════════════════════════════════════════════════════════
+// Legacy read-time mapping fixtures
+// ═══════════════════════════════════════════════════════════
+console.log("\nLegacy: Read-time mapping creator → pro");
+{
+    const state = buildBillingState({ plan: "creator" });
+    assertEqual(state.plan, "pro", "legacy creator mapped to pro at read time");
+}
+
+console.log("\nLegacy: Read-time mapping scaling → scale");
+{
+    const state = buildBillingState({ plan: "scaling" });
+    assertEqual(state.plan, "scale", "legacy scaling mapped to scale at read time");
 }
 
 // ═══════════════════════════════════════════════════════════

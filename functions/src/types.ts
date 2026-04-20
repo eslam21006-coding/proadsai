@@ -132,7 +132,7 @@ export interface LaunchSurfaceInput {
     creativeModes: string[];
     hookAngle?: string | null;
     visualStyleFamily?: VisualStyleFamily;
-    userPlan: "starter" | "creator" | "pro" | "scaling";
+    userPlan: "starter" | "pro" | "scale";
     batchN?: number;
 }
 

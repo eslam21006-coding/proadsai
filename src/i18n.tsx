@@ -427,6 +427,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'billing.cancelScheduled': 'Cancellation scheduled',
         'billing.cancelledUntil': 'Cancelled — access until {date}',
         'billing.trialBadge': 'Trial',
+        'plan.upgradeTo': 'Upgrade to {plan}',
 
         // ── Login / Auth ──
         'login.title': 'Welcome to Pro Ads AI',
@@ -1023,6 +1024,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'billing.cancelScheduled': 'تم جدولة الإلغاء',
         'billing.cancelledUntil': 'ملغى — الوصول حتى {date}',
         'billing.trialBadge': 'تجريبي',
+        'plan.upgradeTo': 'الترقية إلى {plan}',
 
         // ── Login / Auth ──
         'login.title': 'مرحباً بك في Pro Ads AI',

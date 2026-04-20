@@ -13,8 +13,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import Stripe from "stripe";
 import * as crypto from "crypto";
 import {
-    resolveEntitlement, checkFeature, checkCarouselSlides,
-    checkAspectRatio, resolveCreditOwner,
+    resolveFirestoreEntitlement, checkFeature, checkCarouselSlides,
+    checkAspectRatio, resolveCreditOwner, resolveEntitlement,
     PLAN_CREDITS, TRIAL_CREDITS,
     type GatedFeature, type ResolvedEntitlement,
 } from "./entitlements.js";
@@ -54,24 +54,20 @@ const ghlPaddleFailedUrl = defineSecret("GHL_PADDLE_FAILED_WEBHOOK_URL");
 // ─── CONFIGURATION ──────────────────────────────────────────────────────────
 const PLAN_MAP: Record<string, { plan: string; credits: number; isTrial?: boolean }> = {
     // Simple names (for GHL automations)
-    'starter': { plan: 'starter', credits: 500 },
-    'creator': { plan: 'creator', credits: 1000 },
-    'pro': { plan: 'pro', credits: 2000 },
-    'scaling': { plan: 'scaling', credits: 5000 },
+    'starter': { plan: 'starter', credits: 800 },
+    'pro': { plan: 'pro', credits: 2500 },
+    'scale': { plan: 'scale', credits: 6500 },
     // Trial plans — full features, 50 credits
     'starter_trial': { plan: 'starter', credits: 50, isTrial: true },
-    'creator_trial': { plan: 'creator', credits: 50, isTrial: true },
     'pro_trial': { plan: 'pro', credits: 50, isTrial: true },
-    'scaling_trial': { plan: 'scaling', credits: 50, isTrial: true },
+    'scale_trial': { plan: 'scale', credits: 50, isTrial: true },
     // Full names
-    'starter_monthly': { plan: 'starter', credits: 500 },
-    'starter_annual': { plan: 'starter', credits: 500 },
-    'creator_monthly': { plan: 'creator', credits: 1000 },
-    'creator_annual': { plan: 'creator', credits: 1000 },
-    'pro_monthly': { plan: 'pro', credits: 2000 },
-    'pro_annual': { plan: 'pro', credits: 2000 },
-    'scaling_monthly': { plan: 'scaling', credits: 5000 },
-    'scaling_annual': { plan: 'scaling', credits: 5000 },
+    'starter_monthly': { plan: 'starter', credits: 800 },
+    'starter_annual': { plan: 'starter', credits: 800 },
+    'pro_monthly': { plan: 'pro', credits: 2500 },
+    'pro_annual': { plan: 'pro', credits: 2500 },
+    'scale_monthly': { plan: 'scale', credits: 6500 },
+    'scale_annual': { plan: 'scale', credits: 6500 },
     // Top-ups
     'topup_100': { plan: 'keep_current', credits: 100 },
     'topup_300': { plan: 'keep_current', credits: 300 },
@@ -80,14 +76,14 @@ const PLAN_MAP: Record<string, { plan: string; credits: number; isTrial?: boolea
 
 // ─── PADDLE PRICE → PLAN MAPPING ──────────────────────────────────────────
 const PADDLE_PRICE_TO_PLAN: Record<string, { plan: string; credits: number }> = {
-    "pri_01knz7v1rr3eehbe12s214ba0t": { plan: "starter", credits: 500 },
-    "pri_01knz7wz5cpvv2fx6334wv822e": { plan: "starter", credits: 500 },
-    "pri_01knz7xtmrbsfsrzfc1dy1zser": { plan: "creator", credits: 1000 },
-    "pri_01knz7ydr6zbpdhatr8yarwjnd": { plan: "creator", credits: 1000 },
-    "pri_01knz7zpgfbek52zm0n012jqn0": { plan: "pro", credits: 2000 },
-    "pri_01knz82jwdxjph1mpny39jnxqg": { plan: "pro", credits: 2000 },
-    "pri_01knz80jr5m4ey3wrskpvgbrh4": { plan: "scaling", credits: 5000 },
-    "pri_01knz81pexff8h8wbwq44cy0j3": { plan: "scaling", credits: 5000 },
+    "pri_01knz7v1rr3eehbe12s214ba0t": { plan: "starter", credits: 800 },
+    "pri_01knz7wz5cpvv2fx6334wv822e": { plan: "starter", credits: 800 },
+    "pri_01knz7xtmrbsfsrzfc1dy1zser": { plan: "pro", credits: 2500 },
+    "pri_01knz7ydr6zbpdhatr8yarwjnd": { plan: "pro", credits: 2500 },
+    "pri_01knz7zpgfbek52zm0n012jqn0": { plan: "pro", credits: 2500 },
+    "pri_01knz82jwdxjph1mpny39jnxqg": { plan: "pro", credits: 2500 },
+    "pri_01knz80jr5m4ey3wrskpvgbrh4": { plan: "scale", credits: 6500 },
+    "pri_01knz81pexff8h8wbwq44cy0j3": { plan: "scale", credits: 6500 },
 };
 
 const PADDLE_TOPUP_PRICES: Record<string, { priceId: string; credits: number }> = {
@@ -243,7 +239,7 @@ const ghlpaymentwebhook = onRequest({
             finalPlan = mapped.plan;
         }
     }
-    if (finalCredits === 0) finalCredits = isTrial ? 50 : 500; // Trial=50, otherwise fallback to starter
+    if (finalCredits === 0) finalCredits = isTrial ? 50 : 800; // Trial=50, otherwise fallback to starter
 
     const normalizedEmail = email.toLowerCase().trim();
 
@@ -335,12 +331,12 @@ export const monthlyCreditsReset = onSchedule({
     region: 'europe-west1'
 }, async () => {
     const PLAN_LIMITS: Record<string, number> = {
-        starter: 500, creator: 1000, pro: 2000, scaling: 5000
+        starter: 800, pro: 2500, scale: 6500
     };
 
     // ═══ RESET PAID USERS ═══
     const usersSnap = await db.collection('users')
-        .where('plan', 'in', ['starter', 'creator', 'pro', 'scaling'])
+        .where('plan', 'in', ['starter', 'pro', 'scale'])
         .get();
 
     if (!usersSnap.empty) {
@@ -568,7 +564,7 @@ export const competitorResearch = onCall({
     const uid = request.auth.uid;
 
     // ═══ ENTITLEMENT: Check competitor research access ═══
-    const entitlement = await resolveEntitlement(uid);
+    const entitlement = await resolveFirestoreEntitlement(uid);
     const featureCheck = checkFeature(entitlement, 'competitorResearch');
     if (!featureCheck.allowed) {
         throw new HttpsError("permission-denied", JSON.stringify({
@@ -1145,15 +1141,13 @@ const stripeWebhook = onRequest({
         // Go to Stripe Dashboard → Products → click each plan → copy the price ID (starts with "price_")
         const STRIPE_PRICE_TO_PLAN: Record<string, { plan: string; credits: number }> = {
             // Monthly prices
-            'price_1T4Ul84MIh5WD4bv1B1IjpfP': { plan: 'starter', credits: 500 },
-            'price_1T4UkA4MIh5WD4bvFgdrP4Ck': { plan: 'creator', credits: 1000 },
-            'price_1T4UkA4MIh5WD4bvc55rCOVO': { plan: 'pro', credits: 2000 },
-            'price_1T4Uj84MIh5WD4bv8VmCYHMW': { plan: 'scaling', credits: 5000 },
+            'price_1T4Ul84MIh5WD4bv1B1IjpfP': { plan: 'starter', credits: 800 },
+            'price_1T4UkA4MIh5WD4bvc55rCOVO': { plan: 'pro', credits: 2500 },
+            'price_1T4Uj84MIh5WD4bv8VmCYHMW': { plan: 'scale', credits: 6500 },
             // Annual prices
-            'price_1T4UkA4MIh5WD4bvQXOGG7xF': { plan: 'starter', credits: 500 },
-            'price_1T4UkA4MIh5WD4bvjHlrFwtT': { plan: 'creator', credits: 1000 },
-            'price_1T4Uk94MIh5WD4bvBY7366k9': { plan: 'pro', credits: 2000 },
-            'price_1T4Uj84MIh5WD4bvL656TLHR': { plan: 'scaling', credits: 5000 },
+            'price_1T4UkA4MIh5WD4bvQXOGG7xF': { plan: 'starter', credits: 800 },
+            'price_1T4Uk94MIh5WD4bvBY7366k9': { plan: 'pro', credits: 2500 },
+            'price_1T4Uj84MIh5WD4bvL656TLHR': { plan: 'scale', credits: 6500 },
         };
 
         const planInfo = STRIPE_PRICE_TO_PLAN[priceId];
@@ -1305,7 +1299,7 @@ export const deductCreditsServer = onCall({
 
     // ═══ PLAN-GATE (fast-fail outside transaction) ═══
     const gatedFeature = ACTION_FEATURE_MAP[action as string] as GatedFeature | undefined;
-    const entitlement = await resolveEntitlement(callerId);
+    const entitlement = await resolveFirestoreEntitlement(callerId);
     if (gatedFeature) {
         const featureCheck = checkFeature(entitlement, gatedFeature);
         if (!featureCheck.allowed) {
@@ -1332,7 +1326,7 @@ export const deductCreditsServer = onCall({
 
         if (gatedFeature) {
             // Re-resolve entitlement from transactional data
-            const txEntitlement = await resolveEntitlement(callerId);
+            const txEntitlement = await resolveFirestoreEntitlement(callerId);
             const txCheck = checkFeature(txEntitlement, gatedFeature);
             if (!txCheck.allowed) {
                 throw new HttpsError("failed-precondition", "Feature requires a higher plan", {
@@ -2113,7 +2107,7 @@ export const paddleWebhook = onRequest({
 // TEAM MANAGEMENT: Create Team Member
 // ═══════════════════════════════════════════════════════════════════════════
 const PLAN_TEAM_LIMITS: Record<string, number> = {
-    none: 0, starter: 1, creator: 1, pro: 3, scaling: 10,
+    none: 0, starter: 1, pro: 3, scale: 10,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3217,11 +3211,12 @@ async function enforceGenerationEntitlement(
     options?: {
         requireCarousel?: boolean;
         requireBatch?: boolean;
+        batchQuantity?: number;
         requireVisualPolishes?: boolean;
         requireAspectRatio?: string;
     }
 ): Promise<ResolvedEntitlement> {
-    const entitlement = await resolveEntitlement(callerUid);
+    const entitlement = await resolveFirestoreEntitlement(callerUid);
 
     // ── Retargeting gate ──
     if (inputs?.campaignType === 'retargeting') {
@@ -3259,6 +3254,12 @@ async function enforceGenerationEntitlement(
                 requiredPlan: check.requiredPlan,
                 message: "Batch generation requires Agency plan.",
             }));
+        }
+        if (options.batchQuantity) {
+            const batchDecision = resolveEntitlement({ plan: entitlement.basePlan, feature: "batchRun", quantity: options.batchQuantity });
+            if (!batchDecision.allowed) {
+                throw new HttpsError("permission-denied", batchDecision.reason || "batch_limit_exceeded");
+            }
         }
     }
 
@@ -3842,7 +3843,7 @@ export const serverGenerateCarouselAngles = onCall({
     }
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
-        const result = await generators.generateCarouselAngles(inputs, resolvedUniverse, slideCount, globalRefinement);
+        const result = await generators.generateCarouselAngles(inputs, resolvedUniverse, slideCount, globalRefinement, entitlement.basePlan);
         return { success: true, text: result };
     } catch (error: any) {
         console.error("generateCarouselAngles error:", error);
@@ -3862,13 +3863,13 @@ export const serverGenerateCarouselSlideCopies = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { approvedTov, inputs, slideCount, resolvedUniverse, refinement } = request.data;
     // ═══ ENTITLEMENT: Check carousel access ═══
-    await enforceGenerationEntitlement(request.auth.uid, inputs, {
+    const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireCarousel: true,
     });
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
-        const result = await generators.generateCarouselSlideCopies(approvedTov, inputs, slideCount, resolvedUniverse, refinement);
+        const result = await generators.generateCarouselSlideCopies(approvedTov, inputs, slideCount, resolvedUniverse, refinement, entitlement.basePlan);
         return { success: true, copies: result };
     } catch (error: any) {
         console.error("generateCarouselSlideCopies error:", error);
@@ -4738,7 +4739,7 @@ export const analyzeWebsite = onCall({
     const uid = request.auth.uid;
 
     // Entitlement check
-    const entitlement = await resolveEntitlement(uid);
+    const entitlement = await resolveFirestoreEntitlement(uid);
     const featureCheck = checkFeature(entitlement, 'brandUrlScraping');
     if (!featureCheck.allowed) {
         return { ok: false, errorCode: 'not_allowed', errorMessage: 'Brand website analysis requires a higher plan.' };

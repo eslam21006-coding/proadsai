@@ -1,6 +1,6 @@
 # Pro Ads AI - SaaS - FAL Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-15
+Auto-generated from all feature plans. Last updated: 2026-04-20
 
 
 ## Project Structure
@@ -40,4 +40,5 @@ specs/            # Feature specs (speckit workflow)
 - Firestore — `users/{uid}` (with embedded `billingState` sub-object), `pending_plans/{email.toLowerCase()}` (pre-signup plans), `paddle_events/{eventId}` (webhook idempotency), `cancellation_logs/{uid}_{ts}` (analytics) (009-billing-plan-access)
 
 ## Recent Changes
+- 09.50-hotfix-plan-alignment: `UserPlan` union narrowed to `'none' | 'starter' | 'pro' | 'scale'`. Legacy `creator` → `pro`, `scaling` → `scale` mapped at read time in `functions/src/billing/billingState.ts::buildBillingState()`. `PLANS` record in `src/planconfig.ts` adds `savedProjectLimit` / `audienceAvatarLimit` / `batchConfig` / `carouselMaxSlides`. Full hook/tone/strategy libraries ungated on Starter; retargeting/fantasy/art-direction/batch/carousel/reference-ads gated at Pro+. Pro batch cap 4 ads/run; Scale batch cap 36. Pro carousel 7 slides; Scale 10.
 - 005-render-prompt-pipeline: Added TypeScript 5.7 (functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Gemini 3.1 (text + image), React 19

@@ -14,7 +14,7 @@ import MagicSelector, { type EditRequest } from './components/MagicSelector';
 import { feedbackService, type NegativeFeedbackTag } from './services/feedbackService';
 import { metaService, type MetaConnection } from './services/metaService';
 import { ASPECT_RATIOS, COLD_HOOK_ANGLES, OFFER_TYPES, getRandomUniverse } from './constants';
-import { type UserPlan, PLANS, CREDIT_COSTS, TOPUP_PACKS, CREDITS_PER_AD, canUse, canUseRatio, requiredPlanFor, requiredPlanForRatio, hasCredits, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getMaxAvatars, getMaxSavedProjects } from './planconfig';
+import { type UserPlan, PLANS, CREDIT_COSTS, TOPUP_PACKS, CREDITS_PER_AD, canUse, canUseRatio, requiredPlanFor, requiredPlanForRatio, hasCredits, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
 import { LanguageProvider, useT, type UILanguage } from './i18n';
 import { ALL_UNIVERSES, type UniverseEntry } from './universeDatabase';
 const InputForm = React.lazy(() => import('./components/InputForm'));
@@ -1323,7 +1323,7 @@ const App: React.FC = () => {
     const uid = effectiveUidRef.current;
     if (!user || !uid) return;
     // Enforce plan limit (allow overwrites but block new saves)
-    const maxAvatars = getMaxAvatars(userPlan);
+    const maxAvatars = getAudienceAvatarLimit(userPlan);
     if (avatars.length >= maxAvatars) {
       showToast(`Avatar limit reached (${maxAvatars} on your plan). Upgrade to save more.`, 'error');
       return;
@@ -1647,12 +1647,10 @@ const App: React.FC = () => {
   const GHL_URLS: Record<string, string> = {
     starter_monthly: 'https://proadsai.com/checkout/starter',
     starter_annual: 'https://proadsai.com/checkout/starter',
-    creator_monthly: 'https://proadsai.com/checkout/creator',
-    creator_annual: 'https://proadsai.com/checkout/creator',
     pro_monthly: 'https://proadsai.com/checkout/pro',
     pro_annual: 'https://proadsai.com/checkout/pro',
-    scaling_monthly: 'https://proadsai.com/checkout/scaling',
-    scaling_annual: 'https://proadsai.com/checkout/scaling',
+    scale_monthly: 'https://proadsai.com/checkout/scaling',
+    scale_annual: 'https://proadsai.com/checkout/scaling',
   };
 
   // ─── WORKSPACE STATE & LOGIC (Multi-Brand — Scaling only) ───────────────
@@ -2346,7 +2344,7 @@ const App: React.FC = () => {
       // Enforce plan limit for NEW projects (allow updates to existing ones)
       const isNewProject = !projects.some((p: SavedProject) => p.id === currentProjectId);
       if (isNewProject) {
-        const maxProjects = getMaxSavedProjects(userPlan);
+        const maxProjects = getSavedProjectLimit(userPlan);
         if (projects.length >= maxProjects) {
           showToast(`Project limit reached (${maxProjects} on your plan). Upgrade to save more.`, 'error');
           return;
@@ -2561,7 +2559,7 @@ const App: React.FC = () => {
 
           {/* Plan cards */}
           <div className="space-y-3">
-            {(['starter', 'creator', 'pro', 'scaling'] as const).map(planKey => {
+            {(['starter', 'pro', 'scale'] as const).map(planKey => {
               const plan = PLANS[planKey];
               const isCurrentTrial = planKey === userPlan;
               const billingKey = `${planKey}_monthly`;
@@ -3609,6 +3607,17 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     if (!canUse(userPlan, 'batchGeneration')) {
       showToast(`Batch generation requires ${requiredPlanFor('batchGeneration')} plan.`, 'error');
       return;
+    }
+
+    const batchConfig = PLANS[userPlan]?.batchConfig;
+    if (batchConfig) {
+      const numSizes = selectedSizes.size || 1;
+      const numHooks = batchHookGroups.length > 0 ? batchHookGroups.length : 1;
+      const totalCombos = numSizes * numHooks * 3;
+      if (totalCombos > batchConfig.maxAdsPerRun) {
+        showToast(`Your plan allows up to ${batchConfig.maxAdsPerRun} ads per batch run. You requested ${totalCombos}.`, 'error');
+        return;
+      }
     }
 
     // Build combinations from batchHookGroups
@@ -5463,7 +5472,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         </div>
                         <div>
                           <div className="text-[11px] font-bold text-white">{batchSelectedHooks.size} {t('batch.hooks_selected')}</div>
-                          <div className="text-[9px] text-slate-500">{t('batch.each_hook_gets')}</div>
+                          <div className="text-[9px] text-slate-500">{t('batch.each_hook_gets')}{PLANS[userPlan]?.batchConfig ? ` · Up to ${PLANS[userPlan].batchConfig.maxAdsPerRun} ads/run` : ''}</div>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -7639,7 +7648,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   {billingTab === 'upgrade' && (
                     <div className="space-y-5">
                       <p className="text-[11px] text-slate-400 text-center">Changes take effect immediately with prorated billing.</p>
-                      {(['starter', 'creator', 'pro', 'scaling'] as const).map(planKey => {
+                      {(['starter', 'pro', 'scale'] as const).map(planKey => {
                         const plan = PLANS[planKey];
                         if (!plan) return null;
                         const isCurrent = userPlan === planKey;
@@ -7658,11 +7667,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                   const billingKey = `${planKey}_monthly`;
                                   if (GHL_URLS[billingKey]) window.open(GHL_URLS[billingKey], '_blank');
                                 }}
-                                  className={`px-4 py-2 rounded-lg text-[10px] font-bold transition-all ${(['starter', 'creator', 'pro', 'scaling'].indexOf(planKey) > ['starter', 'creator', 'pro', 'scaling'].indexOf(userPlan))
+                                  className={`px-4 py-2 rounded-lg text-[10px] font-bold transition-all ${(['starter', 'pro', 'scale'].indexOf(planKey) > ['starter', 'pro', 'scale'].indexOf(userPlan))
                                     ? 'bg-blue-600 hover:bg-blue-500 text-white'
                                     : 'bg-slate-800 hover:bg-slate-700 text-slate-400'
                                     }`}>
-                                  {(['starter', 'creator', 'pro', 'scaling'].indexOf(planKey) > ['starter', 'creator', 'pro', 'scaling'].indexOf(userPlan)) ? 'Upgrade' : 'Downgrade'}
+                                  {(['starter', 'pro', 'scale'].indexOf(planKey) > ['starter', 'pro', 'scale'].indexOf(userPlan)) ? 'Upgrade' : 'Downgrade'}
                                 </button>
                               )}
                             </div>
@@ -7765,7 +7774,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
               </div>
 
               {/* Upgrade Plan — only shown when triggered from Upgrade menu or feature gates */}
-              {upgradeReason && userPlan !== 'scaling' && (
+              {upgradeReason && userPlan !== 'scale' && (
                 <div>
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest"><i className="fa-solid fa-rocket text-blue-500 mr-2"></i>Upgrade Plan</h3>
@@ -7781,9 +7790,9 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     </div>
                   </div>
                   <div className="space-y-3">
-                    {(['starter', 'creator', 'pro', 'scaling'] as UserPlan[])
+                    {(['starter', 'pro', 'scale'] as UserPlan[])
                       .filter(p => {
-                        const order: Record<UserPlan, number> = { none: 0, starter: 1, creator: 2, pro: 3, scaling: 4 };
+                        const order: Record<UserPlan, number> = { none: 0, starter: 1, pro: 2, scale: 3 };
                         return order[p] > order[userPlan];
                       })
                       .map(planKey => {
@@ -8126,7 +8135,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
               <div className="bg-slate-900/40 rounded-xl border border-slate-800/60 p-4">
                 <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-3">Team Limits by Plan</p>
                 <div className="space-y-2">
-                  {(['starter', 'creator', 'pro', 'scaling'] as const).map(plan => (
+                  {(['starter', 'pro', 'scale'] as const).map(plan => (
                     <div key={plan} className={`flex justify-between text-[10px] ${plan === userPlan ? 'text-emerald-400 font-bold' : 'text-slate-500'}`}>
                       <span className="capitalize">{plan}{plan === userPlan ? ' (current)' : ''}</span>
                       <span>{PLANS[plan]?.features.maxTeamMembers === -1 ? 'Unlimited' : `${PLANS[plan]?.features.maxTeamMembers} member${(PLANS[plan]?.features.maxTeamMembers || 0) !== 1 ? 's' : ''}`}</span>

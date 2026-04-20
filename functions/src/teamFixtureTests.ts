@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 // ═══════════════════════════════════════════════════════════════════════════
 
 const PLAN_TEAM_LIMITS: Record<string, number> = {
-    none: 0, starter: 1, creator: 1, pro: 3, scaling: 10,
+    none: 0, starter: 1, pro: 3, scale: 10,
 };
 
 const INVITE_EXPIRY_DAYS = 7;

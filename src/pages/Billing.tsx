@@ -191,7 +191,7 @@ export const Billing: React.FC = () => {
 
       {/* Upgrade CTA */}
       {canUpgrade && !isTeamMember && (() => {
-        const UPGRADE_ORDER: UserPlan[] = ['starter', 'creator', 'pro', 'scaling'];
+        const UPGRADE_ORDER: UserPlan[] = ['starter', 'pro', 'scale'];
         const currentIdx = UPGRADE_ORDER.indexOf(plan as UserPlan);
         const nextTier = currentIdx >= 0 && currentIdx < UPGRADE_ORDER.length - 1
           ? UPGRADE_ORDER[currentIdx + 1] : null;

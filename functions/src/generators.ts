@@ -7,6 +7,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { SYSTEM_TOV, SYSTEM_CONCEPTS, SYSTEM_RENDER, SYSTEM_CAPTION, getLanguageInstruction } from "./promptConstants.js";
+import { resolveEntitlement, type StoredPlan } from "./entitlements.js";
+import { HttpsError } from "firebase-functions/v2/https";
 import { RETARGETING_OBJECTION_DATA, getBestAngleForObjection, buildNormalizedRetargetingContext, getRetargetingPromptBlock } from "./retargetingObjections.js";
 import { LANGUAGE_RULES, SLIPPERY_SLIDE, HEADLINE_TYPES, COLD_TRAFFIC_RULES, RETARGETING_RULES, BELIEF_SHIFTING_FRAMEWORK, QUALITY_CHECKLIST } from "./copywriting_knowledge.js";
 import { getHookAnglePrompt, getHookAngleVisualDirection, getHookAngleCaptionStrategy, getAngleVariationBlueprint, getAnglePlusDeliveryInstruction, getAngleValidationChecklist } from "./knowledge/hookAnglesKnowledge.js";
@@ -5702,8 +5704,13 @@ export async function generateCarouselAngles(
     inputs: AdInputs,
     resolvedUniverse: string,
     slideCount: number,
-    globalRefinement?: string
+    globalRefinement?: string,
+    plan?: StoredPlan
 ): Promise<string> {
+    const carouselDecision = resolveEntitlement({ plan: plan || "none", feature: "carouselSlides", quantity: slideCount });
+    if (!carouselDecision.allowed) {
+        throw new HttpsError("permission-denied", carouselDecision.reason || "carousel_limit_exceeded");
+    }
     const _angRtCtx = buildNormalizedRetargetingContext(inputs as any);
     const campaignType = (inputs as any).campaignType || 'cold';
     const isRetargeting = _angRtCtx.isRetargeting;
@@ -5927,8 +5934,13 @@ export async function generateCarouselSlideCopies(
     inputs: AdInputs,
     slideCount: number,
     resolvedUniverse: string,
-    refinement?: string
+    refinement?: string,
+    plan?: StoredPlan
 ): Promise<CarouselSlideCopy[]> {
+    const carouselDecision = resolveEntitlement({ plan: plan || "none", feature: "carouselSlides", quantity: slideCount });
+    if (!carouselDecision.allowed) {
+        throw new HttpsError("permission-denied", carouselDecision.reason || "carousel_limit_exceeded");
+    }
 
     const hookText = extract(approvedTov, "HOOK_TEXT:", "SUBHEADLINE:");
     // Extract subheadline carefully — stop at STORY_ARC (carousel) or CTA_BUTTON (single)
@@ -6924,4 +6936,12 @@ export async function generateTestimonialCarousel(
         totalSlides,
         visualStyleFamily,
     };
+}
+
+export function validateBatchRunEntitlement(plan: StoredPlan, sizes: number, hooks: number, concepts: number): void {
+    const requested = sizes * hooks * concepts;
+    const decision = resolveEntitlement({ plan, feature: "batchRun", quantity: requested });
+    if (!decision.allowed) {
+        throw new HttpsError("permission-denied", decision.reason || "batch_limit_exceeded");
+    }
 }

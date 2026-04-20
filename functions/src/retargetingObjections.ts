@@ -896,8 +896,7 @@ import type { StoredPlan } from './entitlements';
 /** Get the objections available for a given plan. Starter/none = [] (retargeting is gated). */
 export const getAvailableObjections = (plan: StoredPlan): RetargetingObjectionData[] => {
     if (plan === 'starter' || plan === 'none') return [];
-    if (plan === 'creator') return RETARGETING_OBJECTION_DATA.slice(0, 4);  // Creator = 4 core
-    return RETARGETING_OBJECTION_DATA; // ultimate + agency = all 12
+    return RETARGETING_OBJECTION_DATA;
 };
 
 /** Check if a specific objection is available for a given plan. */
