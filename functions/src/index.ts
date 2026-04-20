@@ -2212,11 +2212,16 @@ export const createTeamInvite = onCall({
     const ownerRecord = await auth.getUser(ownerUid);
     if (ownerRecord.email?.toLowerCase() === normalizedEmail) throw new HttpsError("invalid-argument", "You cannot invite yourself.");
 
-    // Seat limit including open invites
+    // Seat limit including open invites — owner-inclusive (per spec FR-005, clarification Q1).
+    // maxMembers is TOTAL seats including the owner; `reserved` counts non-owner members + open invites.
+    // Proposed size after this new invite = reserved + 1 (owner) + 1 (new invite) = reserved + 2.
+    // Block when that would exceed the total cap.
     if (maxMembers !== -1) {
         const reserved = await countReservedSeats(ownerUid);
-        if (reserved >= maxMembers) {
-            throw new HttpsError("resource-exhausted", `Your ${ownerPlan} plan allows ${maxMembers} seat(s). ${reserved} already reserved (active + pending invites). Upgrade for more.`);
+        const proposedSize = reserved + 2;
+        if (proposedSize > maxMembers) {
+            const currentSize = reserved + 1; // owner + active + pending
+            throw new HttpsError("resource-exhausted", `Your ${ownerPlan} plan allows ${maxMembers} seat(s) (owner + team). You're at ${currentSize}/${maxMembers}. Remove someone or upgrade.`);
         }
     }
 
@@ -2587,7 +2592,11 @@ export const createTeamMember = onCall({
     if (ownerRecord.email?.toLowerCase() === normalizedEmail) throw new HttpsError("invalid-argument", "You cannot invite yourself.");
     if (maxMembers !== -1) {
         const reserved = await countReservedSeats(ownerUid);
-        if (reserved >= maxMembers) throw new HttpsError("resource-exhausted", `Your ${ownerPlan} plan allows ${maxMembers} seat(s). Upgrade for more.`);
+        const proposedSize = reserved + 2; // owner + existing + new invite (owner-inclusive per FR-005)
+        if (proposedSize > maxMembers) {
+            const currentSize = reserved + 1;
+            throw new HttpsError("resource-exhausted", `Your ${ownerPlan} plan allows ${maxMembers} seat(s) (owner + team). You're at ${currentSize}/${maxMembers}. Upgrade for more.`);
+        }
     }
 
     // Check already active on this team

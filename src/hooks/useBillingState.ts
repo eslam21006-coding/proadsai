@@ -87,9 +87,12 @@ export function useCanUse(feature: string): { allowed: boolean; requiredPlan: st
   if (!allowed) {
     const PLAN_HIERARCHY: Record<string, string[]> = {
       starter: ["brandUrlScraping"],
-      creator: ["retargeting", "fantasyUniverses", "visualPolishes", "abVariationTesting", "regionEditing"],
-      pro: ["carousel", "competitorResearch", "referenceAdUpload", "pushToMeta", "creativeMemory"],
-      scaling: ["batchGeneration", "creativeScoringEngine", "smartRecommendations", "variantExploration", "multiBrandWorkspaces"],
+      pro: [
+        "retargeting", "fantasyUniverses", "visualPolishes", "abVariationTesting", "regionEditing",
+        "carousel", "competitorResearch", "referenceAdUpload", "pushToMeta", "creativeMemory",
+        "batchGeneration",
+      ],
+      scale: ["creativeScoringEngine", "smartRecommendations", "variantExploration", "multiBrandWorkspaces"],
     };
 
     for (const [planName, features] of Object.entries(PLAN_HIERARCHY)) {
