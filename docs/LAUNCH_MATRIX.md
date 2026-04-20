@@ -3,7 +3,7 @@
 
 > **Authority**: This file overrides all older behavior assumptions, the Compatibility Matrix v2, and the ChatGPT master plan for launch scope.
 > Where this file and any other document disagree, this file wins.
-> Last updated: v4 — 11 product owner decisions + 7 new feature phases + Paddle migration. Codebase audit April 11, 2026.
+> Last updated: v4 — 11 product owner decisions + 7 new feature phases + Stripe migration. Codebase audit April 11, 2026.
 
 ---
 
@@ -45,7 +45,7 @@ All product owner decisions. These are final for launch.
 | Testimonial carousel | New feature — user uploads testimonial screenshots, each rendered as platform mockup slide. Cold + Retargeting. |
 | value_stack + carousel | Item-per-slide. Slide count auto-adjusted to gift count + 2. User's original selection overridden with notification. |
 | value_stack empty fields | Never rendered. Never mentioned. If a field is empty it does not exist in the blueprint, contract, or image. |
-| Billing provider | **Paddle** as Merchant of Record. Replaces Stripe as payment processor. GHL stays as CRM — receives post-payment webhooks from Firebase for automations (welcome email, dunning, tags). Flow: Paddle checkout → Paddle webhook → Firebase → update user + notify GHL. |
+| Billing provider | **Stripe** for payment processing (Checkout Sessions, Customer Portal, subscriptions). GHL stays as CRM — receives post-payment webhooks from Firebase for automations (welcome email, dunning, tags). Flow: Stripe Checkout → Stripe webhook → Firebase → update user + notify GHL. |
 | Magic Edit engine | **fal.ai FLUX Kontext** for inpainting/outpainting. Lasso selection → mask → Kontext pipeline. Text compositing re-runs after every edit. Quality restoration pass after 3+ edits. |
 | Magic Edit scope | Single, batch (apply-to-all), carousel (per-slide). Undo stack of 10. Modes: erase, add object, style/color change, environment replacement. Text edits handled by textCompositing only — never sent to Kontext. |
 | Workspace Meta linking | Each workspace has its own `metaAdAccountId`. Generations from that workspace push to that account. Team members see only workspaces they have access to. |
@@ -53,7 +53,13 @@ All product owner decisions. These are final for launch.
 | RAG feedback loop | `metaDailySync` pulls Meta Insights API daily. Performance data (CTR/CPC/ROAS) feeds back into generation prompts via `getRAGContext()`. Minimum 10 records before RAG injection activates. |
 | Brand color enforcement | Brand colors injected per-slide in carousel, per-item in batch, inherited from cold ad in retargeting. Text compositing uses brand primary for CTA, brand secondary for headlines. |
 | Resize / reflow | Reflow available for single, batch (all N), carousel (all slides). Text compositing re-runs after reflow with safe-zone re-validation. CSS preview costs 0 credits. |
-| Authentication method | **Email + password only**. Google sign-in removed entirely to prevent email mismatch with Paddle. Login page has Login / Create Account tabs on the same page. New account creation checks Firestore for existing Paddle payment — if found, user enters app with trial active. If not found, billing modal opens. |
+| Plan structure | **3 plans only**: Starter ($29/mo), Pro ($79/mo), Scale ($197/mo). The Creator plan has been removed. All references to "Creator" or 4-plan structure are obsolete. Annual billing saves 2 months. |
+| Feature gating philosophy | All creative engine features (hook angles, hook types, ad tones, copywriting strategies, creative modes) are **fully ungated on ALL plans** including Starter. Gating applies only to: production features (batch, carousel, retargeting, Meta push, creative memory), visual premium features (fantasy universes, art direction, reference ad, auto-optimized creatives), and intelligence features (predictive CTR, variant exploration, smart recommendations, multi-brand workspaces). |
+| Carousel slide limits | Pro: up to 7 slides. Scale: up to 10 slides. (Previously Pro: 2–5, Scaling: 2–9.) |
+| Batch generation | **Pro gets batch** (limited: up to 4 ads/run = 1 size × 2 hooks × 2 concepts). **Scale gets full batch** (up to 36 ads/run = 3 sizes × 4 hooks × 3 concepts). Batch is no longer Scale-only. |
+| Saved project limits | Starter: 10. Pro: 30. Scale: Unlimited. |
+| Audience Avatars | Reusable brand profiles that pre-fill the form. Starter: 5. Pro: 15. Scale: Unlimited. |
+| Authentication method | **Email + password only**. Google sign-in removed entirely to prevent email mismatch with Stripe. Login page has Login / Create Account tabs on the same page. New account creation checks Firestore for existing Stripe payment — if found, user enters app with trial active. If not found, billing modal opens. |
 
 ---
 
@@ -81,8 +87,8 @@ All product owner decisions. These are final for launch.
 | Meta service (OAuth) | `src/services/metaService.ts` | Exists — OAuth + account picker, no insights fetch |
 | Variant engine | `functions/src/variantEngine.ts` | Exists |
 | Pattern summaries | `functions/src/patternSummaries.ts` (542 lines) | Exists |
-| Billing state | `functions/src/billing/billingState.ts` (162 lines) | Exists — currently GHL+Stripe, migrating to Paddle |
-| Billing UI | `src/pages/Billing.tsx` (206 lines) + 6 billing components | Exists — references Stripe, needs Paddle migration |
+| Billing state | `functions/src/billing/billingState.ts` (162 lines) | Exists — currently GHL+Stripe, being updated for direct Stripe webhooks |
+| Billing UI | `src/pages/Billing.tsx` (206 lines) + 6 billing components | Exists — references Stripe, needs update for direct Stripe webhook flow |
 | Billing hook | `src/hooks/useBillingState.ts` (98 lines) | Exists |
 | Team management | `src/pages/Team.tsx` (683L), `JoinTeam.tsx` (248L), `teamService.ts` (79L) | Exists |
 | Favorites | `src/components/FavoritesPanel.tsx` (179L), `src/hooks/useFavorites.ts` (106L), `feedbackService.ts` (638L) | Exists |
@@ -149,18 +155,18 @@ Mini-Course    → tab: mini_course
 | Campaign Type | Format | Plan Required | Approved? | Notes |
 |---|---|---|---|---|
 | `cold` | `single` | Starter+ | YES | |
-| `cold` | `carousel` | Pro+ | YES | |
-| `cold` | `batch` | Scaling | YES | |
-| `retargeting` | `single` | Creator+ | YES | |
+| `cold` | `carousel` | Pro+ | YES | Up to 7 slides (Pro), up to 10 slides (Scale) |
+| `cold` | `batch` | Pro+ | YES | Pro: up to 4 ads/run. Scale: up to 36 ads/run. |
+| `retargeting` | `single` | Pro+ | YES | |
 | `retargeting` | `carousel` | Pro+ | YES | Sequential objection answering |
-| `retargeting` | `batch` | Scaling | YES | Batch = retargeting single x N |
+| `retargeting` | `batch` | Pro+ | YES | Pro: limited batch. Scale: full batch. |
 
 ### 2.5 Universe Families and Art Direction
 
 | Family | Art Direction Cards | Universe Dropdown | Minimal behavior |
 |---|---|---|---|
-| `realistic` | Yes — 10 cards (Creator+ to unlock) | Yes — location list | — |
-| `fantasy` | Yes — 10 cards (Creator+ to unlock) | Yes — world list | — |
+| `realistic` | Yes — 10 cards (Pro+ to unlock) | Yes — location list | — |
+| `fantasy` | Yes — 10 cards (Pro+ to unlock) | Yes — world list | — |
 | `minimal` | None | Visible (not hidden) — user may need to switch away | Environment is suppressed in generation. Backdrop is clean/solid. The universe value is ignored when rendering. |
 
 **Art Direction section label:** The entire sub-style card grid is called **"Art Direction"** in the UI. It shows cards filtered to the currently selected family. Realistic and Fantasy each have their own card sets.
@@ -651,16 +657,16 @@ Follow testimonial slide-count plan from Section 5.A.
 | Transformation | Text + AI chips | Free text | YES |
 | Offer Type | Dropdown | `Live Event`, `Free Guide`, `Mini-Course` | YES |
 | CTA Button Text | Text | Free text | YES |
-| Campaign Type | Toggle | Cold / Retargeting (Creator+) | YES |
+| Campaign Type | Toggle | Cold / Retargeting (Pro+) | YES |
 | Ad Language | Dropdown | 7 launch languages only | YES |
 
 ### 6.2 Cold Only
 
 | Field | Options | Plan Limits |
 |---|---|---|
-| Hook Angle | 10 angles (before_after is a Creative Mode now, not listed here) | Starter: 4. Creator: 8. Pro+: 10. |
-| Hook Type | 12 styles | Starter: 4. Creator: 8. Pro+: 12. |
-| Copywriting Strategy | 8 strategies | Starter: 3. Creator: 6. Pro+: 8. |
+| Hook Angle | 11 angles (before_after is a Creative Mode now, not listed here) | All plans: all 11 angles. No gating. |
+| Hook Type | 12 styles | All plans: all 12 styles. No gating. |
+| Copywriting Strategy | 8 strategies | All plans: all 8 strategies. No gating. |
 
 ### 6.3 Retargeting Only
 
@@ -673,13 +679,13 @@ Follow testimonial slide-count plan from Section 5.A.
 
 | Field | Options | Notes |
 |---|---|---|
-| Ad Format | Single / Carousel (Pro+) / Batch (Scaling) | |
-| Slide Count | 2–5 (Pro) / 2–9 (Scaling) | Hidden for single and batch. |
-| Visual Style Family | Realistic / Fantasy (Creator+) / Minimal | All three show universe dropdown. Minimal suppresses scene in generation. |
+| Ad Format | Single / Carousel (Pro+) / Batch (Pro+ limited, Scale full) | |
+| Slide Count | 2–7 (Pro) / 2–10 (Scale) | Hidden for single and batch. |
+| Visual Style Family | Realistic / Fantasy (Pro+) / Minimal | All three show universe dropdown. Minimal suppresses scene in generation. |
 | Universe / Setting | Realistic: location list + custom. Fantasy: world list + custom. | Visible for all families. Not applied to scene when Minimal is active. Hidden for text_only. |
 | Art Direction | Cards filtered to current family. Incompatible cards hidden. | Section labeled "Art Direction." Hidden for text_only and minimal. |
 | Aspect Ratio | 1:1, 4:5, 3:4, 4:3, 9:16, 16:9 | All plans. |
-| Ad Tone | 11 tones | Starter: 4. Creator: 8. Pro+: 11. |
+| Ad Tone | 11 tones | All plans: all 11 tones. No gating. |
 
 ### 6.5 Upload Boxes
 
@@ -915,9 +921,11 @@ Phase 6 — Language Quality Contracts (independent)
 
 Phase 7 — Failure Classification (independent)
 
-Phase 8 — Billing: Paddle + GHL Sync (requires Phase 2)
+Phase 8 — Billing: Stripe + GHL Sync (requires Phase 2)
 
 Phase 9 — Team Management (requires Phase 8)
+
+HOTFIX — Plan Structure Alignment (requires Phase 9, apply BEFORE Phase 10+)
 
 Phase 10 — Favorites & Workspace (requires Phase 8)
 
@@ -953,15 +961,17 @@ Launch is complete when all of the following pass:
 9. Art Direction section labeled correctly, Fantasy and Realistic each have their own card sets
 10. Fixes require full evidence pack before closure
 11. 7 launch languages visible. 5 non-launch languages hidden entirely.
-12. Paddle billing handles subscribe, cancel, top-up, past-due with GHL CRM sync for automations
-13. Magic Edit works in single, batch, and carousel modes with undo support
-14. Each workspace is linked to its own Meta ad account, team visibility is role-scoped
-15. Saved projects show thumbnail + status, can be resumed from any completed step
-16. Meta Insights API syncs daily and performance data feeds back into generation prompts
-17. Brand colors are enforced across all carousel slides, batch items, and retargeting ads
-18. All 10 creative modes × all format combinations have passing fixture tests
-19. Reflow works for single, batch, and carousel with text safe-zone re-validation
-20. Login page has Login / Create Account tabs, no Google sign-in. Paddle-paid users land in app with trial toast. Unpaid users see billing modal.
+12. Stripe billing handles subscribe, cancel, top-up, past-due with GHL CRM sync for automations
+13. Plan structure is 3 plans only (Starter/Pro/Scale). No Creator plan. All creative engine features fully ungated on all plans.
+14. Magic Edit works in single, batch, and carousel modes with undo support (Pro+ only)
+15. Each workspace is linked to its own Meta ad account, team visibility is role-scoped
+16. Saved projects show thumbnail + status + per-plan project limits, can be resumed from any completed step
+17. Meta Insights API syncs daily and performance data feeds back into generation prompts
+18. Brand colors are enforced across all carousel slides, batch items, and retargeting ads
+19. All 10 creative modes × all format combinations have passing fixture tests
+20. Reflow works for single, batch, and carousel with text safe-zone re-validation
+21. Login page has Login / Create Account tabs, no Google sign-in. Stripe-paid users land in app with trial toast. Unpaid users see billing modal.
+22. Batch generation: Pro limited to 4 ads/run, Scale up to 36 ads/run. Carousel: Pro up to 7 slides, Scale up to 10 slides.
 
 ---
 
@@ -977,7 +987,7 @@ Launch is complete when all of the following pass:
 ### Dependency Map
 
 ```
-Phase 1  ──► Phase 2  ──► Phase 8  ──► Phase 9
+Phase 1  ──► Phase 2  ──► Phase 8  ──► Phase 9  ──► HOTFIX (plan alignment)
          ──► Phase 3             └──► Phase 10
          ──► Phase 4             └──► Phase 12 (Workspace)
          ──► Phase 5
@@ -985,6 +995,7 @@ Phase 1  ──► Phase 2  ──► Phase 8  ──► Phase 9
 Phase 6   (no dependency — start any time)
 Phase 7   (no dependency — start any time)
 
+HOTFIX    requires Phase 9 complete (apply before Phase 10+)
 Phase 8   requires Phase 2
 Phase 9   requires Phase 8
 Phase 10  requires Phase 8 (billingState for team scoping)
@@ -1045,7 +1056,7 @@ If a task would require creating a sub-plan, the task description is wrong — f
 | 2.7 | `src/components/InputForm.tsx` | Add all override signals from Section 7. Reference ad: show banner "Reference ad active — visual style follows the reference." When retargeting selected: replace hook section with objection section. When testimonial + single format: auto-switch to carousel with toast. | All 9 override signals from Section 7 fire correctly with their specified UI signal. |
 | 2.8 | `src/components/InputForm.tsx` | Add value_stack carousel auto-adjustment. When value_stack is active in carousel mode and user changes gift count, auto-adjust slide count to `resolveValueStackSlideCount(gifts)`. Show inline notification: "Carousel adjusted to [N] slides — one gift per slide." | Adding 3 gifts sets slide count to 5 with notification. |
 | 2.9 | `functions/src/index.ts` | In every generation Cloud Function entry point, call `validateLaunchSurface(inputs)` before any processing. If not allowed, throw `HttpsError('invalid-argument', reason)`. | Sending a request with `offerCreativeMode: ['limited_access']` returns `invalid-argument` error from the server |
-| 2.10 | `src/components/InputForm.tsx` | Reference ad upload: gate behind Pro plan check from `useBillingState()`. If plan < Pro, show "Upgrade to Pro to use reference ads" and disable the upload area. | Starter/Creator users see the gated message. Pro+ users see the upload area. |
+| 2.10 | `src/components/InputForm.tsx` | Reference ad upload: gate behind Pro plan check from `useBillingState()`. If plan < Pro, show "Upgrade to Pro to use reference ads" and disable the upload area. | Starter users see the gated message. Pro+ users see the upload area. |
 
 ---
 
@@ -1116,71 +1127,72 @@ If a task would require creating a sub-plan, the task description is wrong — f
 
 ---
 
-## Phase 8 — Billing (Paddle + GHL Sync)
+## Phase 8 — Billing (Stripe + GHL Sync)
 **Requires:** Phase 2 complete.
 **Blocks:** Phase 9, Phase 12, Phase 14.
 
-**Architecture:** Paddle is the Merchant of Record (handles tax, invoicing, payment processing). GHL remains the CRM — it receives post-payment webhooks from Firebase to trigger automations (welcome email, onboarding, tag updates). The flow is: User clicks subscribe → Paddle checkout overlay → Paddle processes payment → Paddle sends webhook to Firebase Cloud Function → Firebase updates user doc + sends webhook to GHL inbound webhook URL.
+**Architecture:** Stripe handles payment processing (Checkout Sessions, Customer Portal, subscription management). GHL remains the CRM — it receives post-payment webhooks from Firebase to trigger automations (welcome email, onboarding, tag updates, dunning). The flow is: User clicks subscribe → Stripe Checkout → Stripe processes payment → Stripe sends webhook to Firebase Cloud Function → Firebase updates user doc + sends webhook to GHL inbound webhook URL.
 
-**What already exists (being replaced):**
-- `ghlpaymentwebhook` in `index.ts` — GHL-specific webhook with Stripe customer lookup. Being replaced by Paddle webhook handler.
-- `createStripePortalSession` callable — replaced by Paddle management URLs.
-- `Billing.tsx` (206L) — references Stripe portal.
-- `billingState.ts` (162L) — `writeBillingState()`.
-- `useBillingState.ts` (98L) — Firestore `onSnapshot` hook.
-- Billing UI components: `CancelDialog`, `CreditBar`, `PaymentFailedAlert`, `PlanCard`, `ReactivateButton`, `TopUpSelector`.
+**What already exists (being updated):**
+- `ghlpaymentwebhook` in `index.ts` — GHL-specific webhook with Stripe customer lookup. Being replaced by a direct Stripe webhook handler.
+- `stripeSecretKey` secret — already defined. Keep it.
+- `Stripe` import in `index.ts` — already exists. Keep it.
+- `createStripePortalSession` callable — exists but needs update.
+- `Billing.tsx` (206L) — references Stripe portal. Needs update to use new billingState fields.
+- `billingState.ts` (162L) — `writeBillingState()`. Needs Stripe-specific fields.
+- `useBillingState.ts` (98L) — Firestore `onSnapshot` hook. No changes needed.
+- Billing UI components: `CancelDialog`, `CreditBar`, `PaymentFailedAlert`, `PlanCard`, `ReactivateButton`, `TopUpSelector`. Minor field updates.
 
-**What stays:** `GHL_TEAM_INVITE_WEBHOOK_URL` secret stays — used by Phase 9 team invites. GHL inbound webhook URL stays — Firebase will POST to it after Paddle events.
+**What stays:** `GHL_TEAM_INVITE_WEBHOOK_URL` secret stays — used by Phase 9 team invites. GHL inbound webhook URL stays — Firebase will POST to it after Stripe events.
 
-### 8.A — Paddle Dashboard Setup (Owner Steps — Not Code)
+### 8.A — Stripe Dashboard Setup (Owner Steps — Not Code)
 
 These are manual steps for Eslam to complete before any code tasks begin.
 
 | # | Where | Action | Done when |
 |---|---|---|---|
-| 8.A.1 | Paddle Dashboard | Create a Paddle Billing account at paddle.com. Complete business verification. Switch to **Sandbox** mode for development. | Paddle account exists. Sandbox mode is active. |
-| 8.A.2 | Paddle Dashboard → Catalog → Products | Create 4 subscription products: **Starter** (monthly), **Creator** (monthly), **Pro** (monthly), **Scaling** (monthly). Set prices in USD. Each product has one default price. Note down the **Price ID** for each (format: `pri_xxxxx`). | 4 products exist with 4 price IDs recorded. |
-| 8.A.3 | Paddle Dashboard → Catalog → Products | Create 1 one-time product: **Credit Top-Up**. Create 3 prices: 100 credits, 300 credits, 800 credits. Note down each Price ID. | Top-up product exists with 3 price IDs recorded. |
-| 8.A.4 | Paddle Dashboard → Developer Tools → Authentication | Generate an **API key**. Copy and save securely. This is `PADDLE_API_KEY`. | API key saved. |
-| 8.A.5 | Paddle Dashboard → Developer Tools → Notifications | Create a **Notification destination**. Type: Webhook. URL: `https://europe-west1-proadsai-saas.cloudfunctions.net/paddleWebhook` (update region if different). Subscribe to events: `subscription.created`, `subscription.updated`, `subscription.canceled`, `subscription.past_due`, `transaction.completed`, `transaction.payment_failed`. Copy the **Webhook Secret** (format: `pdl_ntfset_xxxxx_xxxxx`). This is `PADDLE_WEBHOOK_SECRET`. | Webhook destination exists. Secret saved. All 6 events subscribed. |
-| 8.A.6 | Paddle Dashboard → Developer Tools → Notifications | Use the **Webhook Simulator** to send a test `subscription.created` event. Verify it hits the Cloud Function URL (will 404 until code is deployed — that's fine, just confirm the URL is reachable). | Simulator sends test event. Paddle shows delivery attempt (even if 404). |
-| 8.A.7 | Firebase Console → Functions → Configuration | Set the following secrets using `firebase functions:secrets:set`: `PADDLE_API_KEY` → value from 8.A.4. `PADDLE_WEBHOOK_SECRET` → value from 8.A.5. Verify with `firebase functions:secrets:access PADDLE_API_KEY`. | Both secrets are set and accessible. |
+| 8.A.1 | Stripe Dashboard | Log in to stripe.com. Ensure account is activated. Switch to **Test mode** for development. | Stripe account exists. Test mode is active. |
+| 8.A.2 | Stripe Dashboard → Products | Create 3 subscription products: **Starter** ($29/monthly), **Pro** ($79/monthly), **Scale** ($197/monthly). Set prices in USD. Also create annual variants for each (Starter $290/yr, Pro $790/yr, Scale $1,970/yr — 2 months free). Note down the **Price ID** for each monthly and annual variant (format: `price_xxxxx`). | 3 products exist with 6 price IDs recorded (3 monthly + 3 annual). |
+| 8.A.3 | Stripe Dashboard → Products | Create 1 one-time product: **Credit Top-Up**. Create 3 prices: 100 credits, 300 credits, 800 credits. Note down each Price ID. | Top-up product exists with 3 price IDs recorded. |
+| 8.A.4 | Stripe Dashboard → Developers → API keys | Copy the **Secret key** (`sk_test_xxxxx` for test, `sk_live_xxxxx` for production). This is `STRIPE_SECRET_KEY`. Copy the **Publishable key** (`pk_test_xxxxx`). This is used frontend-side for Stripe.js. | Both keys saved. |
+| 8.A.5 | Stripe Dashboard → Developers → Webhooks | Click "Add endpoint". URL: `https://europe-west1-proadsai-saas.cloudfunctions.net/stripeWebhook` (update region if different). Select events: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_succeeded`, `invoice.payment_failed`. Copy the **Signing secret** (format: `whsec_xxxxx`). This is `STRIPE_WEBHOOK_SECRET`. | Webhook endpoint exists. Signing secret saved. All 5 events subscribed. |
+| 8.A.6 | Stripe Dashboard → Settings → Customer portal | Configure the Customer Portal: enable subscription cancellation, plan switching, payment method updates. Set the return URL to `https://app.proadsai.com/billing`. | Customer portal configured with correct return URL. |
+| 8.A.7 | Firebase Console → Functions → Configuration | Set the following secrets using `firebase functions:secrets:set`: `STRIPE_SECRET_KEY` → value from 8.A.4 (should already exist — verify it's current). `STRIPE_WEBHOOK_SECRET` → value from 8.A.5 (new). Verify with `firebase functions:secrets:access STRIPE_SECRET_KEY`. | Both secrets are set and accessible. |
 
 ### 8.B — GHL Setup (Owner Steps — Not Code)
 
 | # | Where | Action | Done when |
 |---|---|---|---|
-| 8.B.1 | GHL → Automation → Workflows | Create a new workflow: **"Paddle Payment Received"**. Set trigger type: **Inbound Webhook**. GHL generates a unique webhook URL (format: `https://services.leadconnectorhq.com/hooks/xxxxx`). Copy this URL. This is `GHL_PADDLE_SYNC_WEBHOOK_URL`. | Workflow exists with inbound webhook trigger. URL saved. |
-| 8.B.2 | GHL → Automation → Workflows | In the same workflow, add actions after the trigger: (1) **Update Contact** — set custom field `plan` to `{{plan}}`, set custom field `billing_status` to `{{billingStatus}}`, set tag `paid_{{plan}}`. (2) **If/Else** — if `{{event}}` = `subscription.created`, then send **Welcome Email** (or trigger welcome automation). (3) **If/Else** — if `{{event}}` = `subscription.canceled`, then remove paid tags and trigger **Win-Back** automation. | Workflow has Update Contact + conditional email triggers for created/cancelled. |
-| 8.B.3 | GHL → Automation → Workflows | Create a second workflow: **"Paddle Payment Failed"**. Trigger: Inbound Webhook (separate URL). Actions: (1) Update Contact — set `billing_status` to `past_due`. (2) Send **Dunning Email** — "Your payment failed, update your card here: {{updatePaymentUrl}}". Copy this URL as `GHL_PADDLE_FAILED_WEBHOOK_URL`. | Workflow exists with dunning email action. URL saved. |
-| 8.B.4 | GHL → Sites → Funnels | Update the pricing/checkout page CTA buttons. For new users coming from the GHL funnel (who do NOT have a Firebase Auth account yet), the Paddle checkout URL should NOT include `firebaseUid` — it is not available yet. The Paddle webhook handler (8.C.3) detects the missing uid and writes to `pending_plans/{email}` instead. For existing users upgrading from inside the app, the `createPaddleCheckout` callable (8.C.11) passes `firebaseUid` automatically. The GHL funnel buttons just need the correct Paddle price ID per plan. | CTA buttons point to Paddle checkout URLs with the correct price ID. No firebaseUid in the URL for new-user funnels. |
-| 8.B.5 | Firebase Console → Functions → Configuration | Set secrets: `GHL_PADDLE_SYNC_WEBHOOK_URL` → value from 8.B.1. `GHL_PADDLE_FAILED_WEBHOOK_URL` → value from 8.B.3. | Both GHL webhook URL secrets are set. |
+| 8.B.1 | GHL → Automation → Workflows | Create a new workflow: **"Stripe Payment Received"**. Set trigger type: **Inbound Webhook**. GHL generates a unique webhook URL (format: `https://services.leadconnectorhq.com/hooks/xxxxx`). Copy this URL. This is `GHL_STRIPE_SYNC_WEBHOOK_URL`. | Workflow exists with inbound webhook trigger. URL saved. |
+| 8.B.2 | GHL → Automation → Workflows | In the same workflow, add actions after the trigger: (1) **Update Contact** — set custom field `plan` to `{{plan}}`, set custom field `billing_status` to `{{billingStatus}}`, set tag `paid_{{plan}}`. (2) **If/Else** — if `{{event}}` = `checkout.session.completed`, then send **Welcome Email** (or trigger welcome automation). (3) **If/Else** — if `{{event}}` = `customer.subscription.deleted`, then remove paid tags and trigger **Win-Back** automation. | Workflow has Update Contact + conditional email triggers for completed/deleted. |
+| 8.B.3 | GHL → Automation → Workflows | Create a second workflow: **"Stripe Payment Failed"**. Trigger: Inbound Webhook (separate URL). Actions: (1) Update Contact — set `billing_status` to `past_due`. (2) Send **Dunning Email** — "Your payment failed, update your card here: {{portalUrl}}". Copy this URL as `GHL_STRIPE_FAILED_WEBHOOK_URL`. | Workflow exists with dunning email action. URL saved. |
+| 8.B.4 | GHL → Sites → Funnels | For new users coming from the GHL funnel (who do NOT have a Firebase Auth account yet), the checkout flow goes: GHL funnel CTA → app.proadsai.com pricing page → Stripe Checkout. The funnel CTA should link to the app's pricing page, not directly to Stripe. The app's `PricingTable` component (task 8.C.13) handles creating the Stripe Checkout Session with the correct `client_reference_id` if the user is logged in, or without it for anonymous users. | CTA buttons point to the app's pricing page URL. |
+| 8.B.5 | Firebase Console → Functions → Configuration | Set secrets: `GHL_STRIPE_SYNC_WEBHOOK_URL` → value from 8.B.1. `GHL_STRIPE_FAILED_WEBHOOK_URL` → value from 8.B.3. | Both GHL webhook URL secrets are set. |
 
 ### 8.C — Code Tasks
 
 | # | File | Action | Done when |
 |---|---|---|---|
-| 8.C.1 | `functions/package.json` | Add `@paddle/paddle-node-sdk` dependency. Add `PADDLE_API_KEY` and `PADDLE_WEBHOOK_SECRET` to `defineSecret` in `index.ts`. Keep `GHL_TEAM_INVITE_WEBHOOK_URL` (used by Phase 9). Remove `Stripe` import and `stripeSecretKey` secret. | `paddle-node-sdk` is in dependencies. Stripe import is gone. Both Paddle secrets + GHL team invite secret are defined. |
-| 8.C.2 | `functions/src/billing/paddleWebhook.ts` | Create this file. Export `handlePaddleWebhook(req, res)` — an `onRequest` handler that: (1) reads raw body with `req.rawBody` (NOT `req.body` — Paddle signature verification breaks if JSON is re-parsed), (2) verifies signature using `paddle.webhooks.unmarshal(rawBody, secret, signature)` from `@paddle/paddle-node-sdk`, (3) routes to handler by `event.eventType`. Supported events: `subscription.created`, `subscription.updated`, `subscription.canceled`, `subscription.past_due`, `transaction.completed`, `transaction.payment_failed`. Return 200 after processing. | Function verifies signature. Invalid signature returns 400. Valid event returns 200 and logs eventType. |
-| 8.C.3 | `functions/src/billing/paddleWebhook.ts` | In `subscription.created` handler: extract `event.data.customData`. Map `event.data.items[0].price.id` to plan name using `PADDLE_PRICE_TO_PLAN` map (Starter/Creator/Pro/Scaling). Compute plan data: `plan`, `credits` (from `planconfig.ts`), `paddleSubscriptionId` (from `event.data.id`), `paddleCustomerId` (from `event.data.customerId`), `billingStatus: 'active'`, `paddleUpdatePaymentUrl` (from `event.data.managementUrls.updatePaymentMethod`), `paddleCancelUrl` (from `event.data.managementUrls.cancel`), `isTrial` (true if trial period active). **Dual-write logic:** If `customData.firebaseUid` exists (existing user upgrading from inside the app), write directly to `users/{uid}` and call `writeBillingState(uid)`. If `customData.firebaseUid` is missing or empty (new user paid on Paddle BEFORE creating a Firebase Auth account), write to `pending_plans/{email.toLowerCase()}` instead — using `event.data.customer.email` or the email from the transaction. This matches the existing `onAuthStateChanged` handler in `App.tsx` which reads `pending_plans/{email}` on first login. Then call `notifyGHL(email, 'subscription.created')`. | After webhook with firebaseUid → user doc updated. After webhook without firebaseUid → `pending_plans/{email}` doc created. Both include all plan fields. |
-| 8.C.4 | `functions/src/billing/paddleWebhook.ts` | In `subscription.canceled` handler: set `plan: 'none'`, `billingStatus: 'cancelled'`, `credits: 0`. Call `writeBillingState(uid)`. Call `notifyGHL(uid, 'subscription.canceled')`. In `subscription.past_due`: set `billingStatus: 'past_due'`, do NOT zero credits yet. Call `writeBillingState(uid)`. Call `notifyGHLFailed(uid, 'past_due')`. | Cancellation sets plan to none + GHL notified. Past-due keeps credits + GHL dunning triggered. |
-| 8.C.5 | `functions/src/billing/paddleWebhook.ts` | In `subscription.updated` handler: read new `event.data.items[0].price.id`. If price ID changed (plan upgrade/downgrade), map to new plan name, update credits to new plan's allocation. Always update management URLs. Call `writeBillingState(uid)`. Call `notifyGHL(uid, 'subscription.updated')`. | Plan upgrade changes plan and credits. Management URLs refresh. GHL notified. |
-| 8.C.6 | `functions/src/billing/paddleWebhook.ts` | In `transaction.completed` handler: check `event.data.customData.isTopUp === true`. If yes, add `event.data.customData.creditAmount` to user's current credits. Call `writeBillingState(uid)`. Call `notifyGHL(uid, 'topup')`. If not a top-up, ignore (subscription transactions handled by subscription events). | Top-up adds credits. GHL notified. Non-top-up transactions ignored. |
-| 8.C.7 | `functions/src/billing/paddleWebhook.ts` | In `transaction.payment_failed` handler: set `billingStatus: 'past_due'` on the user doc. Call `writeBillingState(uid)`. Call `notifyGHLFailed(uid, 'payment_failed')`. | Payment failure sets past-due status. GHL dunning workflow triggered. |
-| 8.C.8 | `functions/src/billing/ghlBillingSync.ts` | Create this file. Export two functions: `notifyGHL(identifier, event)` — `identifier` is either a `uid` (reads user doc for email/name) or an `email` string (for pending_plans users who have no Firebase Auth account yet). POSTs to `GHL_PADDLE_SYNC_WEBHOOK_URL` with JSON body: `{ email, contactName, plan, billingStatus, event, credits, paddleSubscriptionId, updatePaymentUrl: paddleUpdatePaymentUrl }`. `notifyGHLFailed(identifier, event)` — POSTs to `GHL_PADDLE_FAILED_WEBHOOK_URL` with: `{ email, contactName, event, updatePaymentUrl }`. Both use `fetch()` with no auth (GHL inbound webhooks are open endpoints). Log success/failure but do NOT throw on GHL failure — GHL sync is best-effort and must never block Paddle webhook processing. | `notifyGHL` with uid reads user doc and sends POST. `notifyGHL` with email sends POST with email only. GHL workflow triggers. Failure is logged but does not throw. |
-| 8.C.9 | `functions/src/billing/billingState.ts` | Update `writeBillingState()`: replace `stripeCustomerId` with `paddleCustomerId`, `paddleSubscriptionId`, `paddleUpdatePaymentUrl`, and `paddleCancelUrl` in the billingState shape. Remove all Stripe references. Keep shape compatible with `useBillingState` hook. | billingState shape has Paddle fields, no Stripe fields. |
-| 8.C.10 | `functions/src/index.ts` | Export `paddleWebhook` as `onRequest` with `cors: true`, `secrets: [paddleApiKey, paddleWebhookSecret, ghlPaddleSyncUrl, ghlPaddleFailedUrl]`. Remove `ghlpaymentwebhook` and `ghlCancellationWebhook` exports (these were the old GHL→Firebase webhooks — direction is now reversed). Remove `createStripePortalSession`. Remove Stripe import. Keep `ghlTeamInviteUrl` secret for Phase 9. | Only `paddleWebhook` exists for billing. No old GHL payment handlers. No Stripe. Team invite GHL URL preserved. |
-| 8.C.11 | `functions/src/index.ts` | Create callable `createPaddleCheckout(priceId: string)` that uses Paddle Node SDK to create a checkout session: `paddle.checkout.create({ items: [{ priceId }], customData: { firebaseUid: auth.uid }, customer: { email: auth.email } })`. Returns the checkout URL. Create callable `createPaddleTopUp(creditAmount: number, topUpPriceId: string)` that creates a one-time checkout with `customData: { firebaseUid: auth.uid, isTopUp: true, creditAmount }`. | Both callables return valid Paddle checkout URLs. |
-| 8.C.12 | `src/pages/Billing.tsx` | Replace `createStripePortalSession` with: (1) "Update Payment" button opens `billingState.paddleUpdatePaymentUrl` in new tab, (2) "Cancel" button opens `billingState.paddleCancelUrl` in new tab with confirmation dialog first. Replace top-up buttons to call `createPaddleTopUp`. Replace plan upgrade buttons to call `createPaddleCheckout`. | All billing actions use Paddle URLs/callables. No Stripe/old-GHL references in frontend. |
-| 8.C.13 | `src/components/PricingTable.tsx` | Update CTA buttons on each plan card to call `createPaddleCheckout(paddlePriceId)`. Pass Paddle price IDs from `planconfig.ts`. On success, open returned URL. Optionally embed Paddle.js overlay: add `<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>` and use `Paddle.Checkout.open({ settings: { displayMode: 'overlay' }, items: [{ priceId, quantity: 1 }], customData: { firebaseUid } })` for in-page checkout. | Clicking "Subscribe" on any plan opens Paddle checkout with correct plan. |
-| 8.C.14 | `src/planconfig.ts` | Add `paddlePriceId` field to each plan entry. Map: `starter` → Paddle price ID from 8.A.2, `creator` → Creator price ID, `pro` → Pro price ID, `scaling` → Scaling price ID. Add `paddleTopUpPriceIds: { 100: 'pri_xxx', 300: 'pri_xxx', 800: 'pri_xxx' }`. Remove any GHL product ID mappings and Stripe references. | Each plan has a `paddlePriceId`. Top-ups have price IDs. No GHL/Stripe product references. |
-| 8.C.15 | `functions/src/billing/__tests__/billingState.test.ts` | Rewrite tests: (a) simulated `subscription.created` webhook sets correct plan, credits, and paddleSubscriptionId, (b) `subscription.canceled` sets plan to `none` and calls `notifyGHL`, (c) `transaction.completed` with `isTopUp: true` adds credits, (d) `subscription.past_due` sets status but keeps credits and calls `notifyGHLFailed`, (e) invalid Paddle signature returns 400, (f) `notifyGHL` failure does not throw (GHL sync is best-effort). | All six tests pass. |
-| 8.C.16 | `functions/src/index.ts` | Keep `monthlyCreditsReset` scheduled function unchanged — it already reads plan from user doc and resets credits. Verify it calls `writeBillingState()` after reset. | Monthly reset still works after Paddle migration. billingState updates after reset. |
-| 8.C.17 | `index.html` | Add Paddle.js for overlay checkout: `<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>`. In `main.tsx` or app init, call `Paddle.Setup({ token: 'your_client_side_token' })` for Sandbox during development (`Paddle.Environment.set('sandbox')`). | Paddle.js loads. `Paddle.Checkout.open()` is available. Sandbox mode active in dev. |
+| 8.C.1 | `functions/src/billing/stripeWebhook.ts` | Create this file. Export `handleStripeWebhook(req, res)` — an `onRequest` handler that: (1) reads raw body with `req.rawBody`, (2) verifies signature using `stripe.webhooks.constructEvent(req.rawBody, req.headers['stripe-signature'], webhookSecret)`, (3) routes to handler by `event.type`. Supported events: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_succeeded`, `invoice.payment_failed`. Return 200 after processing. | Function verifies signature. Invalid signature returns 400. Valid event returns 200 and logs event type. |
+| 8.C.2 | `functions/src/billing/stripeWebhook.ts` | In `checkout.session.completed` handler: read `session.client_reference_id` (this is the `firebaseUid` if set) and `session.customer_email`. Retrieve the subscription from `session.subscription`. Get price ID from the subscription's items. Map price ID to plan name using `STRIPE_PRICE_TO_PLAN` map (Starter/Pro/Scale). Compute plan data: `plan`, `credits` (from `planconfig.ts`), `stripeSubscriptionId`, `stripeCustomerId` (from `session.customer`), `billingStatus: 'active'`, `isTrial` (check `subscription.trial_end`). **Dual-write logic:** If `client_reference_id` exists (user was logged in), write directly to `users/{uid}` and call `writeBillingState(uid)`. If `client_reference_id` is missing (new user paid BEFORE creating a Firebase Auth account), write to `pending_plans/{email.toLowerCase()}` instead. Then call `notifyGHL(identifier, 'checkout.session.completed')`. | After webhook with client_reference_id → user doc updated. After webhook without it → `pending_plans/{email}` doc created. Both include all plan fields. |
+| 8.C.3 | `functions/src/billing/stripeWebhook.ts` | In `customer.subscription.updated` handler: read subscription status. If `status === 'canceled'` or `status === 'unpaid'`: set `plan: 'none'`, `billingStatus: 'cancelled'`, `credits: 0`. If `status === 'past_due'`: set `billingStatus: 'past_due'`, do NOT zero credits. If `status === 'active'` and price ID changed (plan upgrade/downgrade): map new price to plan, update credits. Lookup user by `stripeCustomerId` (query `users` collection where `stripeCustomerId == event.data.object.customer`). Call `writeBillingState(uid)`. Call `notifyGHL(uid, 'customer.subscription.updated')`. | Cancellation sets plan to none. Past-due keeps credits. Upgrade changes plan. |
+| 8.C.4 | `functions/src/billing/stripeWebhook.ts` | In `customer.subscription.deleted` handler: lookup user by `stripeCustomerId`. Set `plan: 'none'`, `billingStatus: 'cancelled'`, `credits: 0`. Call `writeBillingState(uid)`. Call `notifyGHL(uid, 'customer.subscription.deleted')`. | Deletion sets plan to none + GHL notified. |
+| 8.C.5 | `functions/src/billing/stripeWebhook.ts` | In `invoice.payment_succeeded` handler: if the invoice is for a subscription renewal (not the first payment — check `billing_reason === 'subscription_cycle'`), update `billingStatus: 'active'` if it was `past_due`. Call `writeBillingState(uid)`. In `invoice.payment_failed`: set `billingStatus: 'past_due'`. Call `notifyGHLFailed(uid, 'invoice.payment_failed')`. | Successful renewal clears past-due. Failed payment sets past-due + GHL dunning triggered. |
+| 8.C.6 | `functions/src/billing/stripeWebhook.ts` | Add top-up handling in `checkout.session.completed`: if `session.mode === 'payment'` (one-time, not subscription) AND `session.metadata.isTopUp === 'true'`, add `session.metadata.creditAmount` to user's current credits. Lookup user by `client_reference_id` (top-ups always come from logged-in users). Call `writeBillingState(uid)`. Call `notifyGHL(uid, 'topup')`. | Top-up adds credits without changing plan. |
+| 8.C.7 | `functions/src/billing/ghlBillingSync.ts` | Create this file. Export two functions: `notifyGHL(identifier, event)` — `identifier` is either a `uid` (reads user doc for email/name) or an `email` string (for `pending_plans` users who have no Firebase Auth account yet). POSTs to `GHL_STRIPE_SYNC_WEBHOOK_URL` with JSON body: `{ email, contactName, plan, billingStatus, event, credits, stripeSubscriptionId, portalUrl }`. `notifyGHLFailed(uid, event)` — POSTs to `GHL_STRIPE_FAILED_WEBHOOK_URL` with: `{ email, contactName, event, portalUrl }`. Both use `fetch()` with no auth (GHL inbound webhooks are open endpoints). Log success/failure but do NOT throw on GHL failure — GHL sync is best-effort and must never block Stripe webhook processing. | `notifyGHL` with uid reads user doc and sends POST. `notifyGHL` with email sends POST with email only. GHL workflow triggers. Failure is logged but does not throw. |
+| 8.C.8 | `functions/src/billing/billingState.ts` | Update `writeBillingState()`: ensure shape includes `stripeCustomerId`, `stripeSubscriptionId`, and `billingStatus`. Remove any GHL-specific payment fields (the old `ghlpaymentwebhook` wrote different fields). Keep shape compatible with `useBillingState` hook. | billingState shape has Stripe fields. No old GHL payment fields. |
+| 8.C.9 | `functions/src/index.ts` | Export `stripeWebhook` as `onRequest` with `cors: true`, `secrets: [stripeSecretKey, stripeWebhookSecret, ghlStripeSyncUrl, ghlStripeFailedUrl]`. Remove `ghlpaymentwebhook` and `ghlCancellationWebhook` exports (these were the old GHL→Firebase webhooks — direction is now reversed: Firebase→GHL). Keep `ghlTeamInviteUrl` secret for Phase 9. | Only `stripeWebhook` exists for billing. No old GHL payment handlers. Team invite GHL URL preserved. |
+| 8.C.10 | `functions/src/index.ts` | Create callable `createStripeCheckoutSession({ priceId, mode })`. For subscriptions (`mode: 'subscription'`): call `stripe.checkout.sessions.create({ mode: 'subscription', line_items: [{ price: priceId, quantity: 1 }], success_url: 'https://app.proadsai.com/billing?session_id={CHECKOUT_SESSION_ID}', cancel_url: 'https://app.proadsai.com/billing', client_reference_id: auth.uid, customer_email: auth.email, metadata: {} })`. For top-ups (`mode: 'payment'`): same but `mode: 'payment'` and add `metadata: { isTopUp: 'true', creditAmount }`. Return `session.url`. | Callable returns a valid Stripe Checkout URL for both subscription and one-time payment. |
+| 8.C.11 | `functions/src/index.ts` | Update `createStripePortalSession` callable. Call `stripe.billingPortal.sessions.create({ customer: stripeCustomerId, return_url: 'https://app.proadsai.com/billing' })`. Read `stripeCustomerId` from the user's Firestore doc. Return `session.url`. | Callable returns a valid Stripe Customer Portal URL. |
+| 8.C.12 | `src/pages/Billing.tsx` | Update to use new billingState fields. (1) "Manage Subscription" button calls `createStripePortalSession` and opens returned URL — this handles payment method updates, plan changes, and cancellation all in one. (2) Top-up buttons call `createStripeCheckoutSession({ priceId, mode: 'payment' })`. (3) Plan upgrade buttons call `createStripeCheckoutSession({ priceId, mode: 'subscription' })`. | All billing actions use Stripe callables. No old GHL payment references. |
+| 8.C.13 | `src/components/PricingTable.tsx` | Update CTA buttons on each plan card to call `createStripeCheckoutSession({ priceId: stripePriceId, mode: 'subscription' })`. Pass Stripe price IDs from `planconfig.ts`. On success, redirect to the returned `session.url`. | Clicking "Subscribe" on any plan redirects to Stripe Checkout with correct plan. |
+| 8.C.14 | `src/planconfig.ts` | Add `stripePriceId` field to each plan entry. Map: `starter` → Stripe price ID from 8.A.2 (monthly + annual), `pro` → Pro price ID (monthly + annual), `scale` → Scale price ID (monthly + annual). Remove the old `creator` plan entry entirely. Add `stripeTopUpPriceIds: { 100: 'price_xxx', 300: 'price_xxx', 800: 'price_xxx' }`. Remove any GHL product ID mappings. | Each plan has a `stripePriceId`. Top-ups have price IDs. No GHL product references. |
+| 8.C.15 | `functions/src/billing/__tests__/billingState.test.ts` | Rewrite tests: (a) simulated `checkout.session.completed` webhook sets correct plan, credits, and stripeSubscriptionId, (b) `customer.subscription.deleted` sets plan to `none` and calls `notifyGHL`, (c) `checkout.session.completed` with `metadata.isTopUp` adds credits, (d) `invoice.payment_failed` sets past-due and calls `notifyGHLFailed`, (e) invalid Stripe signature returns 400, (f) `notifyGHL` failure does not throw (GHL sync is best-effort), (g) `checkout.session.completed` without `client_reference_id` writes to `pending_plans/{email}`. | All seven tests pass. |
+| 8.C.16 | `functions/src/index.ts` | Keep `monthlyCreditsReset` scheduled function unchanged — it already reads plan from user doc and resets credits. Verify it calls `writeBillingState()` after reset. | Monthly reset still works. billingState updates after reset. |
 
 ### 8.D — Email-Only Auth (Replace Login Page)
 
-**Context:** Users arrive at `app.proadsai.com` after paying on Paddle. Their email already exists in Firestore (written by `paddleWebhookHandler`) with plan, credits, and subscription status. They need to create a Firebase Auth account using the exact same email. Google sign-in is removed entirely to prevent email mismatches between Paddle payment and Firebase Auth.
+**Context:** Users arrive at `app.proadsai.com` after paying via Stripe. Their email already exists in Firestore (written by `stripeWebhook` handler to either `users/{uid}` or `pending_plans/{email}`) with their plan, credits, and subscription status. They need to create a Firebase Auth account using the exact same email they used on Stripe. Google sign-in is removed entirely to prevent email mismatches.
 
 **What already exists:**
 - `LoginScreen` component inline in `App.tsx` (around line 32) — has email+password fields, Google sign-in button, forgot password link.
@@ -1199,13 +1211,14 @@ These are manual steps for Eslam to complete before any code tasks begin.
 | 8.D.5 | `src/App.tsx` | In the Login tab: show Email and Password fields. Button text: `ENTER STUDIO →` (keep existing style). Below the form, show link: "Don't have an account? Create one" — clicking it switches `activeTab` to `'create'`. Keep "Forgot Password?" link. Remove the Google sign-in button and its divider/separator. | Login tab has email + password + ENTER STUDIO button + forgot password link + create account link. No Google button. |
 | 8.D.6 | `src/App.tsx` | In the Create Account tab: show Email, Password, and Confirm Password fields. Button text: `CREATE ACCOUNT →` (same style as login button). Below the button, show link: "Already have an account? Log in" — clicking it switches `activeTab` to `'login'`. No "Forgot Password?" link on this tab. | Create Account tab has 3 fields + CREATE ACCOUNT button + login link. No forgot password. |
 | 8.D.7 | `src/App.tsx` | Add `handleCreateAccount` function. On submit: (1) validate `password === confirmPassword`, if not show inline error "Passwords don't match". (2) Validate `password.length >= 8`, if not show inline error "Password must be at least 8 characters". (3) Call `createUserWithEmailAndPassword(auth, email, password)`. On success, `onAuthStateChanged` fires and the app proceeds to the authenticated state — no manual redirect needed. | Function creates account. Validation errors show inline. Successful creation triggers `onAuthStateChanged`. |
-| 8.D.8 | `src/App.tsx` | In the `onAuthStateChanged` handler (around line 980), update the "no Firestore doc" branch (line 1057+). The existing flow already checks `pending_plans/{email}` — keep this logic but update field names to match Paddle webhook output (replace `stripeCustomerId` with `paddleCustomerId`, `paddleSubscriptionId`, `paddleUpdatePaymentUrl`, `paddleCancelUrl`). The `pending_plans` doc is created by the Paddle webhook (task 8.C.3) when a user pays before creating an account. The existing code deletes the pending doc after consuming it — keep that. **Critical change at line 1143:** currently, if no pending plan AND no team membership, the code **deletes the Firebase Auth account** and signs out. Replace this with: keep the auth account, set `user`, set `userPlan: 'none'`, set `userCredits: 0`, and set a new state `showBillingModal: true`. Render `PricingTable` in a fullscreen modal overlay when `showBillingModal` is true. After the user subscribes via Paddle and the webhook writes their plan, the `useBillingState` hook will update and the modal can close. | Paid-before-signup user → pending_plans consumed → enters app with plan. Unpaid user → NOT deleted → sees billing modal with PricingTable. Team member → enters app via team flow (unchanged). |
+| 8.D.8 | `src/App.tsx` | In the `onAuthStateChanged` handler (around line 980), update the "no Firestore doc" branch (line 1057+). The existing flow already checks `pending_plans/{email}` — keep this logic but ensure field names match Stripe webhook output (`stripeCustomerId`, `stripeSubscriptionId`). The `pending_plans` doc is created by the Stripe webhook (task 8.C.2) when a user pays before creating an account. The existing code deletes the pending doc after consuming it — keep that. **Critical change at line 1143:** currently, if no pending plan AND no team membership, the code **deletes the Firebase Auth account** and signs out. Replace this with: keep the auth account, set `user`, set `userPlan: 'none'`, set `userCredits: 0`, and set a new state `showBillingModal: true`. Render `PricingTable` in a fullscreen modal overlay when `showBillingModal` is true. After the user subscribes via Stripe and the webhook writes their plan, the `useBillingState` hook will update and the modal can close. **Route guard for JoinTeam:** Before entering the "no plan" branch, check if the current URL path starts with `/join`. If so, skip the billing modal — the JoinTeam page (Phase 9.5) manages its own auth flow. Also check for `sessionStorage.getItem('proads_team_invite_pending')` as a fallback (set by JoinTeam before `createUserWithEmailAndPassword` — see Phase 9.7). This prevents a race condition: when JoinTeam calls `createUserWithEmailAndPassword`, `onAuthStateChanged` fires immediately BEFORE `claimTeamInvite` has written the user doc, so the handler would incorrectly show the billing modal for a team invite user. | Paid-before-signup user → pending_plans consumed → enters app with plan. Unpaid user → NOT deleted → sees billing modal with PricingTable. Team member on `/join` → handler skips billing modal, lets JoinTeam page handle the flow. |
 | 8.D.9 | `src/App.tsx` | Add error handling for `handleCreateAccount`: `auth/email-already-in-use` → show inline error "An account with this email already exists. Please log in." AND auto-switch `activeTab` to `'login'` with the email pre-filled in the login form. `auth/weak-password` → "Password must be at least 8 characters." `auth/invalid-email` → "Please enter a valid email address." Any other error → "Something went wrong. Please try again." | Each error code shows correct message. `email-already-in-use` auto-switches to login with email pre-filled. |
 | 8.D.10 | `src/App.tsx` | Update error handling for `handleEmailLogin`: `auth/user-not-found` → show inline error "No account found with this email. Please create an account first." AND auto-switch `activeTab` to `'create'` with the email pre-filled. `auth/wrong-password` → "Incorrect password. Please try again." `auth/too-many-requests` → "Too many attempts. Please wait a few minutes and try again." Remove old `noAccountError` state and its Google-specific error UI. | Each error code shows correct message. `user-not-found` auto-switches to create tab with email pre-filled. |
 | 8.D.11 | `src/App.tsx` | Add shared `pendingEmail` state used for cross-tab email pre-fill. When `auth/email-already-in-use` fires on Create tab, set `pendingEmail` to the entered email and switch to Login tab — Login tab reads `pendingEmail` as the initial value of its email field. Same in reverse for `auth/user-not-found`. Clear `pendingEmail` after it's consumed. | Email carries over when auto-switching tabs in both directions. |
 | 8.D.12 | `src/i18n.tsx` | Add translation keys for new strings: `login.createAccount`, `login.createAccountButton` (`CREATE ACCOUNT →`), `login.alreadyHaveAccount`, `login.dontHaveAccount`, `login.errorEmailInUse`, `login.errorUserNotFound`, `login.errorWrongPassword`, `login.errorTooManyRequests`, `login.errorWeakPassword`, `login.errorInvalidEmail`, `login.errorPasswordsMismatch`, `login.errorGeneric`, `login.welcomeTrial`. Add both Arabic and English values. | All new strings have AR + EN translations. No hardcoded strings in the auth UI. |
-| 8.D.13 | `src/App.tsx` | In the `onAuthStateChanged` handler, after a `pending_plans` doc is consumed and the user doc is created (around line 1090): show welcome toast using the existing toast system: `"Welcome! Your 7-day trial has started."` (use `login.welcomeTrial` translation key). Only show on the FIRST login after account creation — check `createdAt` is within the last 60 seconds to avoid showing on subsequent logins. | First login after Paddle payment shows welcome toast. Subsequent logins do not. |
-| 8.D.14 | `src/App.tsx` | Add `showBillingModal` state (default `false`). When `showBillingModal` is true, render a fullscreen modal overlay with `<PricingTable />` inside. The modal has no close button — user must pick a plan. After Paddle checkout completes and the webhook fires, `useBillingState` will update `plan` from `'none'` to the new plan. Add a `useEffect` that watches `billingState.plan`: when it changes from `'none'` to any real plan, set `showBillingModal: false` and show welcome toast. | Unpaid user sees mandatory billing modal. After paying, modal auto-closes and app loads. |
+| 8.D.13 | `src/App.tsx` | In the `onAuthStateChanged` handler, after a `pending_plans` doc is consumed and the user doc is created (around line 1090): show welcome toast using the existing toast system: `"Welcome! Your 7-day trial has started."` (use `login.welcomeTrial` translation key). Only show on the FIRST login after account creation — check `createdAt` is within the last 60 seconds to avoid showing on subsequent logins. | First login after Stripe payment shows welcome toast. Subsequent logins do not. |
+| 8.D.14 | `src/App.tsx` | Add `showBillingModal` state (default `false`). When `showBillingModal` is true, render a fullscreen modal overlay with `<PricingTable />` inside. The modal has no close button — user must pick a plan. After Stripe Checkout completes and the webhook fires, `useBillingState` will update `plan` from `'none'` to the new plan. Add a `useEffect` that watches `billingState.plan`: when it changes from `'none'` to any real plan, set `showBillingModal: false` and show welcome toast. | Unpaid user sees mandatory billing modal. After paying, modal auto-closes and app loads. |
+
 
 ---
 
@@ -1220,7 +1233,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 | 9.4 | `functions/src/index.ts` | In `claimTeamInvite`, check `expiresAt` before processing. If expired, throw `HttpsError('failed-precondition', 'invite_expired')`. Do not set `isTeamMember`. | Calling `claimTeamInvite` with an expired inviteId returns the invite_expired error |
 | 9.5 | `src/pages/JoinTeam.tsx` | Create this file. On mount, call `getInviteDetails(inviteId)`. If `status === 'expired'` or `status === 'revoked'`, render error message (no 404, no crash). If valid, render the invite card showing owner name and invitee email. **No Google sign-in on this page** — email + password only, consistent with the main login page (Phase 8.D). The existing `JoinTeam.tsx` in the codebase already follows this pattern. | Page renders invite details for valid invite. Page renders "This invite is no longer valid" for expired/revoked. Never shows a 404. No Google auth button. |
 | 9.6 | `src/pages/JoinTeam.tsx` | Add login branch: check if `auth.currentUser` email matches `inviteeEmail` from invite. If user is already logged in with matching email, show "Join [Owner]'s team" button that calls `claimTeamInvite`. On success, redirect to `/`. | Logged-in user with matching email can claim invite and is redirected |
-| 9.7 | `src/pages/JoinTeam.tsx` | Add new-account branch: if no current user or email does not match, show a form with fields: full name (pre-filled if available), email (pre-filled from invite, read-only), password, confirm password. On submit: create Firebase Auth account with email+password, then call `claimTeamInvite`, then redirect to `/`. | New user can create an account and claim the invite in one flow. Ends up logged in and redirected. |
+| 9.7 | `src/pages/JoinTeam.tsx` | Add new-account branch: if no current user or email does not match, show a form with fields: full name (pre-filled if available), email (pre-filled from invite, read-only), password, confirm password. On submit: (1) set `sessionStorage.setItem('proads_team_invite_pending', 'true')` BEFORE creating the account — this prevents the `onAuthStateChanged` handler in App.tsx from showing the billing modal during the brief window between account creation and `claimTeamInvite` completion (see Phase 8.D.8 route guard), (2) call `createUserWithEmailAndPassword`, (3) call `claimTeamInvite`, (4) remove the sessionStorage flag, (5) redirect to `/`. | New user can create an account and claim the invite in one flow. Ends up logged in and redirected. `onAuthStateChanged` does not show billing modal during the process. |
 | 9.8 | `src/pages/Team.tsx` | Create this file. Render three sections: (1) active members list showing name, email, role, joined date with a "Remove" button per member; (2) pending invites list showing email, sent date, status with "Resend" and "Revoke" buttons; (3) invite form with name and email fields and "Send Invite" button. | Page renders all three sections. Data comes from `getTeamInvites` Cloud Function. |
 | 9.9 | `src/pages/Team.tsx` | Wire "Send Invite" button to call `createTeamInvite(name, email)`. On success, add the new invite to the pending list in local state. If plan limit is reached (`teamMemberCount + openInvites >= maxTeamMembers`), replace the form with inline text: "Upgrade to [next plan] to invite more members." | Sending an invite adds it to the pending list without page refresh. Limit message shows when at cap. |
 | 9.10 | `src/pages/Team.tsx` | Wire "Resend" button to call `resendTeamInvite(inviteId)`. Wire "Revoke" button to call `revokeTeamInvite(inviteId)` after a browser `confirm()` dialog. Both update the invite status in local state on success. | Resend calls the function. Revoke shows confirm dialog first. Both update the UI without page refresh. |
@@ -1229,6 +1242,25 @@ These are manual steps for Eslam to complete before any code tasks begin.
 | 9.13 | `src/components/InputForm.tsx` | Disable all generation-triggering buttons when `billingState.teamRole === 'viewer'`. Add tooltip on disabled state: "Viewers cannot generate — contact your team owner." | Viewer role user sees disabled generate buttons with tooltip |
 | 9.14 | `functions/src/index.ts` | In `writeBillingState()` from Phase 8, add team fields: `teamMemberCount`, `teamOpenInvites`, `maxTeamMembers`, `isTeamOwner`, `isTeamMember`, `teamOwnerName`. Read team member count from `users/{uid}/team` subcollection size. Read open invites from `team_invites` where `ownerUid === uid` and `status === 'pending'`. | `billingState` object includes all team fields after a team invite is sent |
 | 9.15 | `functions/src/contractFixtures.test.ts` | Add four team fixture tests: (a) `createTeamInvite` is blocked when memberCount + openInvites >= maxTeamMembers; (b) `claimTeamInvite` sets `isTeamMember: true` on the invitee's user doc; (c) `claimTeamInvite` with expired invite returns `invite_expired` error; (d) `removeTeamMember` sets `isTeamMember: false` on the removed member's user doc. | All four tests pass |
+
+---
+
+## HOTFIX — Plan Structure Alignment (Apply to Phases 1–9)
+
+> **Context:** The pricing table has been finalized with **3 plans** (Starter/Pro/Scale), not 4. The Creator plan no longer exists. Phases 1–9 were built with a 4-plan structure. These hotfixes align already-shipped code with the final pricing.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| HF.1 | `src/planconfig.ts` | Remove the `creator` plan entry entirely. Rename `scaling` to `scale`. Final plan IDs: `starter`, `pro`, `scale`. Update credits: Starter 800, Pro 2500, Scale 6500. Update team member limits: Starter 1, Pro 3, Scale 10. Add `savedProjectLimit`: Starter 10, Pro 30, Scale `Infinity`. Add `audienceAvatarLimit`: Starter 5, Pro 15, Scale `Infinity`. Add `batchConfig` per plan: Starter `null` (no batch), Pro `{ maxSizes: 1, maxHooks: 2, maxConcepts: 2, maxAdsPerRun: 4 }`, Scale `{ maxSizes: 3, maxHooks: 4, maxConcepts: 3, maxAdsPerRun: 36 }`. Add `carouselMaxSlides`: Starter `null` (no carousel), Pro 7, Scale 10. | `planconfig.ts` has exactly 3 plans. No `creator` entry. All limits match the pricing table. |
+| HF.2 | `functions/src/entitlements.ts` | Remove all Creator-tier gates. Update `resolveEntitlement()`: features previously gated at Creator+ (retargeting, fantasy, art direction) are now gated at Pro+. Remove ALL per-plan limits on hook angles, hook types, copywriting strategies, and ad tones — these are fully ungated on all plans. Batch: available on Pro (limited by `batchConfig`) and Scale (full). Carousel: Pro up to 7 slides, Scale up to 10. | `resolveEntitlement({ plan: 'starter', feature: 'hookAngles' })` returns all 11. `resolveEntitlement({ plan: 'starter', feature: 'retargeting' })` returns blocked. `resolveEntitlement({ plan: 'pro', feature: 'batch' })` returns allowed with limits. |
+| HF.3 | `functions/src/creativeResolver.ts` | Update `validateLaunchSurface()`: remove Creator from the plan hierarchy check. Batch allowed for Pro+ (not Scale-only). Retargeting allowed for Pro+ (not Creator+). Update any `plan === 'creator'` checks to map to appropriate tier or remove. | No reference to `creator` plan in resolver. Batch + Pro returns allowed. |
+| HF.4 | `src/components/InputForm.tsx` | Remove all Creator-specific UI gates. Hook angle selector: show all 11 for all plans (remove the per-plan slicing logic). Hook type selector: show all 12 for all plans. Copywriting strategy: show all 8 for all plans. Ad tone: show all 11 for all plans. Fantasy family: gate behind Pro+ (was Creator+). Retargeting toggle: gate behind Pro+ (was Creator+). Batch format option: show for Pro+ (was Scale-only). | Starter user sees all hooks, tones, strategies. Starter user sees batch/retargeting/fantasy as locked with "Upgrade to Pro" message. |
+| HF.5 | `src/components/InputForm.tsx` | Update carousel slide count selector: Pro shows options 2–7. Scale shows options 2–10. Update batch UI: Pro shows batch with "Up to 4 ads per run" label. Scale shows "Up to 36 ads per run". | Slide count max is 7 for Pro, 10 for Scale. Batch limits displayed correctly per plan. |
+| HF.6 | `functions/src/generators.ts` | In batch generation flow, enforce `batchConfig` limits from `planconfig.ts`: if plan is Pro, cap at 4 total combinations (1 size × 2 hooks × 2 concepts). If plan is Scale, cap at 36. Throw `HttpsError('permission-denied', 'batch_limit_exceeded')` if request exceeds plan limit. | Pro user requesting 5 batch combos gets rejected. Scale user requesting 36 passes. |
+| HF.7 | `functions/src/generators.ts` | Update carousel slide count validation: Pro max 7 slides (was 5). Scale max 10 slides (was 9). Update any hardcoded `maxSlides` checks. | Pro user requesting 7 slides passes. Scale user requesting 10 passes. Pro user requesting 8 gets rejected. |
+| HF.8 | `src/store.ts`, `src/types.ts` | Replace any `'creator'` literal in the `UserPlan` type union. New type: `type UserPlan = 'none' \| 'starter' \| 'pro' \| 'scale'`. Rename `'scaling'` to `'scale'` in all type definitions, Zustand state, and component comparisons. | `grep -r "creator\|scaling" src/` returns zero plan-related hits. |
+| HF.9 | `functions/src/index.ts` | In all Cloud Functions that check plan names (generation functions, team functions, billing functions): replace `'scaling'` with `'scale'`. Remove `'creator'` from any plan checks. Update `PLANS` constant if it exists. | No Cloud Function references `creator` or `scaling` as a plan name. |
+| HF.10 | `functions/src/contractFixtures.test.ts` | Update all fixture tests that reference Creator plan. Replace `plan: 'creator'` with `plan: 'pro'` in any test that was testing Creator-tier access. Update batch fixtures: Pro user should now pass (limited), not fail. Update carousel fixtures: Pro user max 7, Scale max 10. | All fixture tests pass with 3-plan structure. |
 
 ---
 
@@ -1289,7 +1321,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 | 11.1 | `functions/src/falEditing.ts` | Add function `editWithFalKontextInpaint(imageBase64, maskBase64, editPrompt, falApiKey): Promise<FalEditResult>`. This variant accepts a binary mask (white = edit region, black = keep) alongside the text prompt. Used when lasso selection is non-rectangular. Convert lasso polygon points to a Sharp-rendered mask PNG before calling. | Function accepts mask + prompt and returns edited image. Non-rectangular selections produce correct mask. |
 | 11.2 | `functions/src/falEditing.ts` | Add function `buildEditPrompt(editMode, payload, currentBuildPlan): string`. Translates UI edit actions into English Kontext prompts: `erase` → "Remove the [object description] from the image, fill with surrounding context". `add` → "Add [payload.description] at [region description]". `style` → "Change the color of [region description] to [payload.colorHex]". `environment` → "Replace the background/environment with [payload.environmentDescription], keep the foreground subject intact". `text` → NO Kontext call (handled by textCompositing only). Uses `currentBuildPlan` to extract scene context for better prompt grounding. | Each edit mode produces a coherent English prompt. Text mode returns null (no Kontext call needed). |
 | 11.3 | `functions/src/falEditing.ts` | Add function `preserveQuality(originalBase64, editedBase64, editCount): Promise<string>`. If `editCount >= 3`, run a quality-restoration pass: send the edited image back through Kontext with prompt "Enhance image quality, sharpen details, restore color vibrancy, maintain all content exactly as-is". Return the quality-restored base64. If `editCount < 3`, return editedBase64 unchanged. Store `editCount` on the generation record. | After 3+ edits, output image has visibly sharper details than without the restoration pass. |
-| 11.4 | `functions/src/index.ts` | Create callable `magicEditImage({ generationId, editMode, region, payload, slideIndex? })`. Flow: (1) load generation record, (2) get clean image (pre-text-overlay) from `output.cleanImageBase64` or `output.cleanImageUrl`, (3) if region is non-rectangular, render mask via 11.1, else use standard Kontext call, (4) build prompt via 11.2, (5) call Kontext, (6) run `preserveQuality` via 11.3, (7) re-run `compositeArabicText()` on edited image, (8) save edited image to Storage, (9) update generation record with new URLs and increment `editCount`, (10) return new image URL. | Calling with a valid generationId and erase mode returns a new image URL with the object removed and text re-composited. |
+| 11.4 | `functions/src/index.ts` | Create callable `magicEditImage({ generationId, editMode, region, payload, slideIndex? })`. **Plan gate: Pro+ only** — if `billingState.plan === 'starter'`, throw `HttpsError('permission-denied', 'pro_plan_required')`. Flow: (1) load generation record, (2) get clean image (pre-text-overlay) from `output.cleanImageBase64` or `output.cleanImageUrl`, (3) if region is non-rectangular, render mask via 11.1, else use standard Kontext call, (4) build prompt via 11.2, (5) call Kontext, (6) run `preserveQuality` via 11.3, (7) re-run `compositeArabicText()` on edited image, (8) save edited image to Storage, (9) update generation record with new URLs and increment `editCount`, (10) return new image URL. | Starter user gets `pro_plan_required` error. Pro+ user gets edited image with text re-composited. |
 | 11.5 | `functions/src/index.ts` | In `magicEditImage`, add `slideIndex` parameter support. If `slideIndex` is provided, load the carousel slide's individual clean image from `output.carouselSlides[slideIndex].cleanImageBase64`. After editing, write back to the same slide index. Do not re-render other slides. | Editing carousel slide 3 only affects slide 3. Other slides remain unchanged. |
 | 11.6 | `functions/src/index.ts` | In `magicEditImage`, add batch edit support. If `payload.applyToAll === true` AND the generation is a batch (`output.batchResults` exists), iterate over all batch images and apply the same Kontext edit to each. Use `Promise.allSettled` for parallel execution. Return array of results with per-image success/failure. | Batch edit with `applyToAll: true` edits all N images. Partial failures don't block successful edits. |
 | 11.7 | `src/components/MagicSelector.tsx` | Add "Add Object" tool alongside existing erase/style tools. When selected, show a text input for object description (e.g., "a laptop on the desk") and let user lasso the region where the object should appear. Emit `onEditRequest({ mode: 'add', region, payload: { description } })`. | User can select "Add" tool, draw a lasso region, type a description, and submit. |
@@ -1302,7 +1334,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## Phase 12 — Workspace Logic (Scaling Mode)
+## Phase 12 — Workspace Logic (Scale Mode)
 **Requires:** Phase 8 + Phase 9 complete (billing + team management).
 
 **What already exists:**
@@ -1324,7 +1356,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 | # | File | Action | Done when |
 |---|---|---|---|
 | 12.1 | `src/types.ts` | Add `metaAdAccountId?: string` and `metaAdAccountName?: string` to `Workspace` interface. | Interface has both new fields. |
-| 12.2 | `functions/src/index.ts` | Create callable `createWorkspace({ name, brandName, brandColorPrimary?, brandColorSecondary?, logoUrl? })`. Writes to `users/{uid}/workspaces/{workspaceId}` subcollection. Checks plan limit: Scaling plan allows up to 10 workspaces. Below Scaling, throw `HttpsError('permission-denied', 'scaling_plan_required')`. Returns the new workspace ID. | Calling with Scaling plan creates workspace. Calling with Pro plan returns error. |
+| 12.2 | `functions/src/index.ts` | Create callable `createWorkspace({ name, brandName, brandColorPrimary?, brandColorSecondary?, logoUrl? })`. Writes to `users/{uid}/workspaces/{workspaceId}` subcollection. Checks plan limit: Scale plan allows up to 10 workspaces. Below Scale, throw `HttpsError('permission-denied', 'scale_plan_required')`. Returns the new workspace ID. | Calling with Scale plan creates workspace. Calling with Pro plan returns error. |
 | 12.3 | `functions/src/index.ts` | Create callable `updateWorkspace({ workspaceId, ...fields })`. Updates any subset of workspace fields in `users/{uid}/workspaces/{workspaceId}`. Validates `metaAdAccountId` if provided by checking the user's Meta connection has that account ID in their `adAccounts` array. | Updating with a valid `metaAdAccountId` succeeds. Updating with an account ID not in the user's connected accounts throws error. |
 | 12.4 | `functions/src/index.ts` | Create callable `deleteWorkspace({ workspaceId })`. Prevents deleting the default workspace (`isDefault: true`). Before deleting, reassign all `generations` and `savedProjects` with this `workspaceId` to the default workspace. Delete the workspace document. | Default workspace cannot be deleted. Non-default workspace deletion moves orphaned records to default. |
 | 12.5 | `functions/src/index.ts` | Create callable `linkMetaAccountToWorkspace({ workspaceId, metaAdAccountId, metaAdAccountName })`. Verifies the user has a valid Meta OAuth token. Verifies the ad account exists in their connected accounts. Writes `metaAdAccountId` and `metaAdAccountName` to the workspace document. | After linking, workspace doc has the Meta ad account fields. Generations from this workspace use this ad account for Meta push. |
@@ -1334,7 +1366,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 | 12.9 | `functions/src/index.ts` | Create callable `getWorkspaceGenerations({ workspaceId, limit?, cursor? })`. Returns generations from the `generations` collection where `workspaceId == workspaceId` AND (`userId == auth.uid` OR user is team member of the workspace owner). Paginated with cursor. | Team members see generations from their team's workspace. Non-team members cannot access other users' workspace generations. |
 | 12.10 | `src/pages/Team.tsx` | Add workspace access section per team member. Show checkboxes for which workspaces each member can access. Store as `workspaceAccess: string[]` on the team member record. Members only see workspaces they have access to in the switcher. Owner sees all. | Team owner can restrict member access to specific workspaces. Members only see permitted workspaces. |
 | 12.11 | `src/components/WorkspaceSwitcher.tsx` | Filter `workspaces` array by user's `workspaceAccess` if `billingState.isTeamMember === true`. Team owners see all workspaces unfiltered. | Team member sees only workspaces they have access to. Owner sees all. |
-| 12.12 | `functions/src/contractFixtures.test.ts` | Add workspace fixture tests: (a) `createWorkspace` blocked below Scaling plan, (b) `deleteWorkspace` blocked for default workspace, (c) `linkMetaAccountToWorkspace` blocked for unconnected ad account, (d) generation record includes `workspaceId` when `activeWorkspaceId` is passed. | All four tests pass. |
+| 12.12 | `functions/src/contractFixtures.test.ts` | Add workspace fixture tests: (a) `createWorkspace` blocked below Scale plan, (b) `deleteWorkspace` blocked for default workspace, (c) `linkMetaAccountToWorkspace` blocked for unconnected ad account, (d) generation record includes `workspaceId` when `activeWorkspaceId` is passed. | All four tests pass. |
 
 ---
 
@@ -1361,7 +1393,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 | # | File | Action | Done when |
 |---|---|---|---|
 | 13.1 | `src/types.ts` | Add `thumbnailUrl?: string` and `status: 'draft' \| 'rendered' \| 'published'` to `SavedProject` interface. `draft` = no render yet. `rendered` = has at least one mockupHistory entry. `published` = pushed to Meta. | Interface has both new fields. |
-| 13.2 | `src/App.tsx` | In `saveProjectToDB` and `saveProjectToFirestore`, compute `status` before saving: if `mockupHistory.length > 0`, set `rendered`. If Meta push succeeded (check for `metaAdId` field), set `published`. Otherwise `draft`. | Every saved project has correct status field. |
+| 13.2 | `src/App.tsx` | In `saveProjectToDB` and `saveProjectToFirestore`, compute `status` before saving: if `mockupHistory.length > 0`, set `rendered`. If Meta push succeeded (check for `metaAdId` field), set `published`. Otherwise `draft`. **Enforce project limit:** before saving a NEW project (not updating existing), check `billingState.plan` against `planconfig[plan].savedProjectLimit`. If at limit, show inline error: "You've reached the [N]-project limit on your [Plan] plan. Upgrade to save more." Block the save. | Every saved project has correct status. Project limit is enforced per plan. |
 | 13.3 | `src/App.tsx` | After a successful render (Step 4 complete), take the first `mockupHistory[0].url` and persist it as `thumbnailUrl` on the project. If it's a base64 data URL, upload to Firebase Storage under `users/{uid}/thumbnails/{projectId}.jpg` and store the download URL. | Rendered projects have a `thumbnailUrl` that resolves to an actual image. |
 | 13.4 | `src/App.tsx` | In the project list panel, render `thumbnailUrl` as a 64×64 image thumbnail next to each project name. Show a placeholder icon for `draft` projects (no thumbnail). Show a colored status badge: gray for draft, green for rendered, blue for published. | Project list shows image thumbnails for rendered projects and status badges for all. |
 | 13.5 | `src/App.tsx` | Add a step indicator bar inside each project card showing steps 1–5 as dots. Filled dots = steps with data (e.g., `inputs` filled = Step 1 done, `tovText` filled = Step 2 done, `buildPlan` filled = Step 3 done, `mockupHistory.length > 0` = Step 4 done, `captionText` filled = Step 5 done). Clicking a filled dot navigates directly to that step after loading the project. | User sees which steps are complete. Clicking Step 3 dot loads project and navigates to Step 3. |
