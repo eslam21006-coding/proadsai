@@ -588,11 +588,12 @@ Use the above to guide creative direction. Match preferences while staying fresh
     }
 
     // ═══ 9b. GET FAVORITE STATUS (per-record) ═══
-    // Authoritative check for a single generation's savedToFavorites flag.
-    // Used to initialize FeedbackButtons bookmark state without relying on
-    // the per-phase subscription's 100-item window (FR-001 correctness for
-    // users with more than 100 favorites in a phase).
-    async getFavoriteStatus(generationId: string): Promise<boolean> {
+    // Authoritative tri-state check for a single generation's savedToFavorites flag.
+    // Returns true / false for authoritative reads, null for transient failures
+    // (network, permission, etc.) so callers can distinguish "confirmed not
+    // favorited" from "don't know — keep last-known state". Missing docs return
+    // false (authoritative: the record can't be favorited if it doesn't exist).
+    async getFavoriteStatus(generationId: string): Promise<boolean | null> {
         if (!generationId) return false;
         try {
             const ref = doc(db, 'generations', generationId);
@@ -602,7 +603,7 @@ Use the above to guide creative direction. Match preferences while staying fresh
                 .feedback?.savedToFavorites === true;
         } catch (err) {
             console.warn('getFavoriteStatus failed for', generationId, err);
-            return false;
+            return null;
         }
     }
 

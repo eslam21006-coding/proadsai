@@ -7,19 +7,20 @@
 
 ### getFavoriteStatus
 
-Authoritative per-record check for a single generation's favorite state.
+Authoritative tri-state per-record check for a single generation's favorite state.
 
 **Signature**:
 
 ```ts
-getFavoriteStatus(generationId: string) → Promise<boolean>
+getFavoriteStatus(generationId: string) → Promise<boolean | null>
 ```
 
 **Behavior**:
 
-- Reads `generations/{generationId}` via `getDoc` and returns `data.feedback.savedToFavorites === true`.
-- Returns `false` if the document does not exist, if `generationId` is empty, or if the read throws (logs a `console.warn` for non-missing-doc errors).
-- Used by `FeedbackButtons` on mount and on every `generationId` change to lock the star icon to authoritative Firestore state — independent of any per-phase subscription window.
+- Returns `true` if the doc exists and `feedback.savedToFavorites === true`.
+- Returns `false` if the doc exists and `savedToFavorites` is absent or non-`true`, or if the doc does not exist, or if `generationId` is falsy — all three are authoritative "not favorited" states.
+- Returns `null` only for transient read failures (network error, permission denied mid-session, etc.), logged via `console.warn`. Callers MUST treat `null` as "unknown — preserve any previously-seeded state" rather than treating it as `false`.
+- Used by `FeedbackButtons` on mount and on every `generationId` change to lock the star icon to authoritative Firestore state — independent of any per-phase subscription window. On `null`, the component keeps its `initialFavorite` seed instead of flipping to an unconfirmed `false`.
 
 ### getFavoriteIds
 
@@ -111,7 +112,7 @@ useFavorites(options: {
 | hasMore | `boolean` | True when the most recent page returned a full 100 items (another page may exist); false once the tail has been reached |
 | loadMore | `() => Promise<void>` | Fetches the next 100 timestamp-descending items via `getDocs` with `startAfter(lastCursor)` and appends them to the tail. No-op if `hasMore === false` or a load is already in flight. Always returns a resolved promise — thrown errors from the Firestore SDK are caught internally (and logged via `console.warn`) so the caller need not handle rejection. |
 | connectionState | `'live' \| 'stale'` | Driven by `snapshot.metadata.fromCache` (the subscription is opened with `{ includeMetadataChanges: true }`): `'live'` when the snapshot reflects the server, `'stale'` when Firestore is serving from offline cache or the error callback has fired. Returns to `'live'` on the next server-sourced snapshot without manual retry. |
-| markRemovedInList | `(id: string) => void` | Optimistic-removal escape hatch. Call this after a successful `toggleFavorite(id, false)` to drop the item from the returned `favorites` array immediately. Head items are also refreshed by the live subscription; tail items (loaded via `loadMore`) have no live listener, so this is the only signal that removes them from the merged view. Calls are idempotent — re-adding a removed ID is not currently supported; a re-subscribe (phase/workspace change) clears the removed set. |
+| markRemovedInList | `(id: string) => void` | Optimistic-removal escape hatch. Call this after a successful `toggleFavorite(id, false)` to drop the item from the returned `favorites` array immediately. Implementation details: the id is added to an internal `removedIds` set AND synchronously filtered out of `tailItems` so the removal is durable. Self-heal: if the same id later re-appears in the live head (e.g., the user re-bookmarks the generation), an effect prunes it from `removedIds` and the record becomes visible again — no resubscribe required. The self-heal scan watches head only; tail is never resurrected by this mechanism. A resubscribe (phase / workspace change) also clears `removedIds` and refetches the tail from scratch. |
 
 **Behavior**:
 - First page ("head") uses `onSnapshot` with `{ includeMetadataChanges: true }` + `limit(100)`; subsequent pages ("tail") loaded by `loadMore()` use `getDocs` with `startAfter(lastCursor)` (static for the session — older pages are not live-subscribed)

@@ -57,7 +57,9 @@ export default function FeedbackButtons({
         if (!generationId) return;
         let cancelled = false;
         feedbackService.getFavoriteStatus(generationId).then(actual => {
-            if (!cancelled) setIsFavorite(actual);
+            // null → transient read error; keep the seeded `initialFavorite`
+            // instead of overwriting with a fabricated value.
+            if (!cancelled && actual !== null) setIsFavorite(actual);
         });
         return () => { cancelled = true; };
     }, [generationId]); // eslint-disable-line react-hooks/exhaustive-deps

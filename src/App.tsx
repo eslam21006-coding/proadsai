@@ -12,6 +12,13 @@ import { isValidHookPayload, validateCanonicalHooks, normalizeHooksToCanonical, 
 import FeedbackButtons from './components/FeedbackButtons';
 import FavoritesPanel from './components/FavoritesPanel';
 import { useFavorites } from './hooks/useFavorites';
+import type { GenerationRecord } from './services/feedbackService';
+
+type FavoritesPhase = 'hooks' | 'concepts' | 'render' | 'caption';
+interface FavUpdatePrompt {
+  phase: FavoritesPhase;
+  newGenId: string;
+}
 import MagicSelector, { type EditRequest } from './components/MagicSelector';
 import { feedbackService, type NegativeFeedbackTag } from './services/feedbackService';
 import { metaService, type MetaConnection } from './services/metaService';
@@ -1565,10 +1572,10 @@ const App: React.FC = () => {
   const [favoritesData, setFavoritesData] = useState<any[]>([]);
   const [favTab, setFavTab] = useState('all');
   const [favoritesLoading, setFavoritesLoading] = useState(false);
-  const [openFavoritesPhase, setOpenFavoritesPhase] = useState<'hooks' | 'concepts' | 'render' | 'caption' | null>(null);
+  const [openFavoritesPhase, setOpenFavoritesPhase] = useState<FavoritesPhase | null>(null);
   const [loadedFavoriteId, setLoadedFavoriteId] = useState<string | null>(null);
-  const [favUpdatePrompt, setFavUpdatePrompt] = useState<{ phase: string; newGenId: string } | null>(null);
-  const [loadedRenderRecord, setLoadedRenderRecord] = useState<import('./services/feedbackService').GenerationRecord | null>(null);
+  const [favUpdatePrompt, setFavUpdatePrompt] = useState<FavUpdatePrompt | null>(null);
+  const [loadedRenderRecord, setLoadedRenderRecord] = useState<GenerationRecord | null>(null);
   const [upgradeReason, setUpgradeReason] = useState('');
   const [showAccountMenu, setShowAccountMenu] = useState(false);
 
@@ -6206,6 +6213,12 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                           setSelectedConcept(loadedRenderRecord.output.conceptText);
                         }
                         if (loadedRenderRecord.output?.buildPlan) setBuildPlan(loadedRenderRecord.output.buildPlan);
+                        // Restore or explicitly clear the upstream hook. The render
+                        // record's current output schema does not carry selectedTov,
+                        // so the typed lookup will miss on legacy records — clear
+                        // rather than leave a stale hook from the prior flow.
+                        const recordTov = (loadedRenderRecord.output as { selectedTov?: string }).selectedTov;
+                        setSelectedTov(recordTov || '');
                         setLoadedRenderRecord(null);
                         setLoadedFavoriteId(null);
                         setPhase('concept_review');
@@ -7389,6 +7402,22 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
             if (record.id && activeVariant) {
               setHookGenerationIds(prev => ({ ...prev, [activeVariant]: record.id! }));
             }
+            // Rewind downstream: a loaded hook is a new branch. Strand any
+            // concepts / renders / captions from the prior flow so the user
+            // can't carry mismatched Step 3–5 state forward.
+            setConceptsText('');
+            setSelectedConcept('');
+            setBuildPlan('');
+            setMockupHistory([]);
+            setHistoryIndex(-1);
+            setBatchResults([]);
+            setCarouselSlides([]);
+            setCaptionText('');
+            setBatchCaptions([]);
+            setActiveBatchCaptionKey('');
+            setRenderGenerationId('');
+            setCaptionGenerationId('');
+            setHighestUnlockedPhase(prev => Math.min(prev, 1));
             setLoadedFavoriteId(record.id || null);
             setOpenFavoritesPhase(null);
           }}
@@ -7401,6 +7430,18 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           onLoad={(record) => {
             if (record.output?.conceptText) setConceptsText(record.output.conceptText);
             if (record.output?.buildPlan) setBuildPlan(record.output.buildPlan);
+            // Rewind downstream: a loaded concept is a new branch. Strand
+            // any renders / captions from the prior flow.
+            setMockupHistory([]);
+            setHistoryIndex(-1);
+            setBatchResults([]);
+            setCarouselSlides([]);
+            setCaptionText('');
+            setBatchCaptions([]);
+            setActiveBatchCaptionKey('');
+            setRenderGenerationId('');
+            setCaptionGenerationId('');
+            setHighestUnlockedPhase(prev => Math.min(prev, 2));
             setLoadedFavoriteId(record.id || null);
             setOpenFavoritesPhase(null);
           }}
@@ -7453,9 +7494,25 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 onClick={async () => {
                   if (loadedFavoriteId && favUpdatePrompt.newGenId) {
                     try {
+                      // Guard against a concurrent removal of the favorite on
+                      // another tab/client: verify it still exists AND is still
+                      // flagged savedToFavorites before overwriting its output.
+                      // (updateFavoriteRecord only writes output.*, so a removed
+                      // favorite would become a ghost record with stale copy
+                      // but no visible home.)
+                      const favDoc = await getDoc(doc(db, 'generations', loadedFavoriteId));
+                      const favData = favDoc.exists()
+                        ? favDoc.data() as { feedback?: { savedToFavorites?: boolean } }
+                        : null;
+                      if (!favData || favData.feedback?.savedToFavorites !== true) {
+                        showToast(t('fav.update_failed'), 'error');
+                        setFavUpdatePrompt(null);
+                        setLoadedFavoriteId(null);
+                        return;
+                      }
                       const newDoc = await getDoc(doc(db, 'generations', favUpdatePrompt.newGenId));
                       if (newDoc.exists()) {
-                        const newOutput = (newDoc.data() as { output?: Partial<import('./services/feedbackService').GenerationRecord['output']> }).output || {};
+                        const newOutput = (newDoc.data() as { output?: Partial<GenerationRecord['output']> }).output || {};
                         await feedbackService.updateFavoriteRecord(loadedFavoriteId, newOutput);
                         showToast(t('fav.updated'), 'success');
                       }

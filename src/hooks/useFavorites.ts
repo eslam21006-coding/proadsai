@@ -39,6 +39,11 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
   const lastCursorRef = useRef<DocumentSnapshot | null>(null);
   const tailNonEmptyRef = useRef(false);
   const loadingMoreRef = useRef(false);
+  // Incremented on every resubscribe (phase/workspace change). `loadMore`
+  // captures this at call start and bails before writing state if it's been
+  // bumped mid-flight — prevents a stale async response from polluting the
+  // fresh scope's reset state.
+  const subscriptionTokenRef = useRef(0);
   const uid = auth.currentUser?.uid;
 
   // Head (live) merged with tail (paginated). Dedupe by id; head wins on collision
@@ -72,26 +77,34 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
       next.add(id);
       return next;
     });
+    // Also strip from the static tail so the self-heal effect (which only
+    // scans the live head) cannot resurrect it from a stale tail copy.
+    setTailItems(prev => {
+      const filtered = prev.filter(r => r.id !== id);
+      return filtered.length === prev.length ? prev : filtered;
+    });
   }, []);
 
-  // Self-heal: if an id in `removedIds` re-appears in the live head or in a
-  // fresh tail fetch, drop it from the set so the record becomes visible
-  // again. Covers the re-bookmark-after-remove flow and any remote revert.
+  // Self-heal: if an id in `removedIds` re-appears in the live head (e.g., the
+  // user re-bookmarks the item, or a remote write reverted the removal), drop
+  // it from the set so the record becomes visible again. Scans head only —
+  // the static tail never gains new entries spontaneously, and markRemovedInList
+  // filters it directly, so including tail here would let a stale tail copy
+  // resurrect an item the user just removed.
   useEffect(() => {
     setRemovedIds(prev => {
       if (prev.size === 0) return prev;
-      const liveIds = new Set<string>();
-      for (const h of headItems) if (h.id) liveIds.add(h.id);
-      for (const t of tailItems) if (t.id) liveIds.add(t.id);
+      const headIds = new Set<string>();
+      for (const h of headItems) if (h.id) headIds.add(h.id);
       let changed = false;
       const next = new Set<string>();
       for (const id of prev) {
-        if (liveIds.has(id)) { changed = true; continue; }
+        if (headIds.has(id)) { changed = true; continue; }
         next.add(id);
       }
       return changed ? next : prev;
     });
-  }, [headItems, tailItems]);
+  }, [headItems]);
 
   useEffect(() => {
     if (!uid) {
@@ -108,7 +121,9 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
 
     // Reset all state on every resubscribe (phase or workspace change) so
     // pagination cursors, removed-id optimism, and tail pages from the prior
-    // scope don't leak into the new scope.
+    // scope don't leak into the new scope. The token bump invalidates any
+    // in-flight loadMore from the previous scope.
+    subscriptionTokenRef.current += 1;
     setHeadItems([]);
     setTailItems([]);
     setRemovedIds(new Set());
@@ -216,6 +231,12 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
 
   const loadMore = useCallback(async () => {
     if (!hasMore || loadingMoreRef.current || !uid) return;
+    // Capture the current subscription generation. If the effect resets
+    // state mid-flight (phase/workspace change), this number is bumped and
+    // every write path below short-circuits via stillFresh().
+    const myToken = subscriptionTokenRef.current;
+    const stillFresh = () => subscriptionTokenRef.current === myToken;
+
     loadingMoreRef.current = true;
     setLoading(true);
 
@@ -235,7 +256,7 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
     try {
       if (!lastCursorRef.current) {
         loadingMoreRef.current = false;
-        setLoading(false);
+        if (stillFresh()) setLoading(false);
         return;
       }
 
@@ -247,6 +268,7 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
       const accumulated: GenerationRecord[] = [];
       let exhausted = false;
       for (let i = 0; i < MAX_ITERATIONS; i++) {
+        if (!stillFresh()) return;
         const cursor: DocumentSnapshot | null = lastCursorRef.current;
         if (!cursor) { exhausted = true; break; }
         const pageQ: Query<DocumentData> = query(
@@ -259,6 +281,7 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
           limit(PAGE_SIZE)
         );
         const snap: QuerySnapshot<DocumentData> = await getDocs(pageQ);
+        if (!stillFresh()) return;
         if (snap.docs.length === 0) { exhausted = true; break; }
         lastCursorRef.current = snap.docs[snap.docs.length - 1];
         const raw = snap.docs.map(
@@ -269,6 +292,7 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
         if (accumulated.length >= PAGE_SIZE) break;
       }
 
+      if (!stillFresh()) return;
       if (accumulated.length > 0) {
         setTailItems(prev => [...prev, ...accumulated]);
         tailNonEmptyRef.current = true;
@@ -276,10 +300,11 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
       setHasMore(!exhausted);
     } catch (primaryErr) {
       try {
+        if (!stillFresh()) return;
         const cursor = lastCursorRef.current;
         if (!cursor) {
           loadingMoreRef.current = false;
-          setLoading(false);
+          if (stillFresh()) setLoading(false);
           return;
         }
 
@@ -292,6 +317,7 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
           limit(FALLBACK_PAGE_SIZE)
         );
         const fallbackSnap = await getDocs(fallbackQ);
+        if (!stillFresh()) return;
         const rawFiltered = fallbackSnap.docs
           .map((d: DocumentSnapshot) => ({ id: d.id, ...d.data() } as GenerationRecord))
           .filter((r: GenerationRecord) => r.output?.phase === phase);
@@ -317,7 +343,7 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
       }
     } finally {
       loadingMoreRef.current = false;
-      setLoading(false);
+      if (stillFresh()) setLoading(false);
     }
   }, [phase, workspaceId, uid, hasMore]);
 
