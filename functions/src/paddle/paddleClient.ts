@@ -7,10 +7,9 @@ import * as admin from "firebase-admin";
 export type PaddleEventNameType = PaddleEventName;
 
 const PLAN_CREDITS: Record<string, number> = {
-    starter: 500,
-    creator: 1000,
-    pro: 2000,
-    scaling: 5000,
+    starter: 800,
+    pro: 2500,
+    scale: 6500,
 };
 
 export function createPaddleClient(apiKey: string): Paddle {
@@ -55,12 +54,12 @@ export async function findUserByEmail(
 }
 
 export const PADDLE_PRICE_TO_PLAN: Record<string, { plan: string; credits: number }> = {
-    pri_01knz7v1rr3eehbe12s214ba0t: { plan: "starter", credits: 500 },
-    pri_01knz7wz5cpvv2fx6334wv822e: { plan: "starter", credits: 500 },
-    pri_01knz7xtmrbsfsrzfc1dy1zser: { plan: "creator", credits: 1000 },
-    pri_01knz7ydr6zbpdhatr8yarwjnd: { plan: "creator", credits: 1000 },
-    pri_01knz7zpgfbek52zm0n012jqn0: { plan: "pro", credits: 2000 },
-    pri_01knz82jwdxjph1mpny39jnxqg: { plan: "pro", credits: 2000 },
-    pri_01knz80jr5m4ey3wrskpvgbrh4: { plan: "scaling", credits: 5000 },
-    pri_01knz81pexff8h8wbwq44cy0j3: { plan: "scaling", credits: 5000 },
+    pri_01knz7v1rr3eehbe12s214ba0t: { plan: "starter", credits: 800 },
+    pri_01knz7wz5cpvv2fx6334wv822e: { plan: "starter", credits: 800 },
+    pri_01knz7xtmrbsfsrzfc1dy1zser: { plan: "pro", credits: 2500 },
+    pri_01knz7ydr6zbpdhatr8yarwjnd: { plan: "pro", credits: 2500 },
+    pri_01knz7zpgfbek52zm0n012jqn0: { plan: "pro", credits: 2500 },
+    pri_01knz82jwdxjph1mpny39jnxqg: { plan: "pro", credits: 2500 },
+    pri_01knz80jr5m4ey3wrskpvgbrh4: { plan: "scale", credits: 6500 },
+    pri_01knz81pexff8h8wbwq44cy0j3: { plan: "scale", credits: 6500 },
 };

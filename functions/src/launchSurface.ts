@@ -71,19 +71,19 @@ export const TAB_MODE_REGISTRY: Record<TabId, TabModeEntry> = {
 export interface CampaignFormatEntry {
     campaignType: "cold" | "retargeting";
     adFormat: "single" | "carousel" | "batch";
-    minPlan: "starter" | "creator" | "pro" | "scaling";
+    minPlan: "starter" | "pro" | "scale";
 }
 
 export const CAMPAIGN_FORMAT_MATRIX: CampaignFormatEntry[] = [
     { campaignType: "cold", adFormat: "single", minPlan: "starter" },
-    { campaignType: "cold", adFormat: "carousel", minPlan: "creator" },
+    { campaignType: "cold", adFormat: "carousel", minPlan: "pro" },
     { campaignType: "cold", adFormat: "batch", minPlan: "pro" },
     { campaignType: "retargeting", adFormat: "single", minPlan: "starter" },
-    { campaignType: "retargeting", adFormat: "carousel", minPlan: "creator" },
+    { campaignType: "retargeting", adFormat: "carousel", minPlan: "pro" },
     { campaignType: "retargeting", adFormat: "batch", minPlan: "pro" },
 ];
 
-const PLAN_ORDER: Record<string, number> = { starter: 0, creator: 1, pro: 2, scaling: 3 };
+const PLAN_ORDER: Record<string, number> = { starter: 0, pro: 1, scale: 2 };
 
 // ═══════════════════════════════════════════════════════════
 // RESOLVE OFFER TYPE
