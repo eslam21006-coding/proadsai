@@ -4860,9 +4860,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               <div className="flex flex-col items-center gap-3">
                 <button
                   onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'hooks' ? null : 'hooks')}
+                  aria-expanded={openFavoritesPhase === 'hooks'}
+                  aria-controls="favorites-panel-hooks"
                   className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all flex items-center gap-1.5"
                 >
-                  <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_hooks')}{hooksFavs.length > 0 && ` (${hooksFavs.length})`}
+                  <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_hooks')}<span aria-live="polite">{hooksFavs.length > 0 && ` (${hooksFavs.length})`}</span>
                 </button>
               </div>
               <div className="flex flex-col items-center gap-3">
@@ -5502,9 +5504,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 <div className="mt-3">
                   <button
                     onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'concepts' ? null : 'concepts')}
+                    aria-expanded={openFavoritesPhase === 'concepts'}
+                    aria-controls="favorites-panel-concepts"
                     className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all inline-flex items-center gap-1.5"
                   >
-                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_concepts')}{conceptsFavs.length > 0 && ` (${conceptsFavs.length})`}
+                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_concepts')}<span aria-live="polite">{conceptsFavs.length > 0 && ` (${conceptsFavs.length})`}</span>
                   </button>
                 </div>
                 {/* Resolved Creative Spec Summary */}
@@ -6045,9 +6049,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   </h2>
                   <button
                     onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'render' ? null : 'render')}
+                    aria-expanded={openFavoritesPhase === 'render'}
+                    aria-controls="favorites-panel-render"
                     className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all flex items-center gap-1.5"
                   >
-                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_renders')}{renderFavs.length > 0 && ` (${renderFavs.length})`}
+                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_renders')}<span aria-live="polite">{renderFavs.length > 0 && ` (${renderFavs.length})`}</span>
                   </button>
                   {loadedRenderRecord && (
                     <button
@@ -6949,9 +6955,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 <div className="mt-3">
                   <button
                     onClick={() => setOpenFavoritesPhase(openFavoritesPhase === 'caption' ? null : 'caption')}
+                    aria-expanded={openFavoritesPhase === 'caption'}
+                    aria-controls="favorites-panel-caption"
                     className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-bold uppercase tracking-wider hover:bg-amber-500/20 transition-all inline-flex items-center gap-1.5"
                   >
-                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_scripts')}{captionFavs.length > 0 && ` (${captionFavs.length})`}
+                    <i className="fa-solid fa-bookmark text-[8px]"></i> {t('fav.saved_scripts')}<span aria-live="polite">{captionFavs.length > 0 && ` (${captionFavs.length})`}</span>
                   </button>
                 </div>
 
