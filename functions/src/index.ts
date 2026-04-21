@@ -25,6 +25,10 @@ import { paddleCreateTopupCheckout } from "./paddle/paddleCheckout.js";
 import { paddleCreatePortalSession } from "./paddle/paddlePortal.js";
 import { handlePaddleWebhook } from "./billing/paddleWebhook.js";
 import { createPaddleClient, PADDLE_PRICE_TO_PLAN } from "./paddle/paddleClient.js";
+import { assertOwner, assertScalePlan, assertWorkspaceActive, assertWorkspaceLimit, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
+import { probeMetaRole } from "./workspaces/metaRoleProbe.js";
+import { writeAuditEntry } from "./workspaces/auditLog.js";
+import { purgeExpiredWorkspaces, cascadeReassignOnDelete, cascadeRevertOnRestore } from "./workspaces/workspacePurge.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
@@ -5004,3 +5008,398 @@ ANTI-HALLUCINATION (CRITICAL):
         return heuristicResult;
     }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WORKSPACE CALLABLES (Phase 12 — Workspace Logic)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+export const createWorkspace = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const data = request.data as any;
+
+    const name = (data.name ?? "").trim();
+    const brandName = (data.brandName ?? "").trim();
+    if (!name) throw new HttpsError("invalid-argument", "Workspace name is required.");
+    if (!brandName) throw new HttpsError("invalid-argument", "Brand name is required.");
+    if (name.length > 60) throw new HttpsError("invalid-argument", "Workspace name must be 60 characters or fewer.");
+    if (brandName.length > 60) throw new HttpsError("invalid-argument", "Brand name must be 60 characters or fewer.");
+
+    if (data.brandColorPrimary && !HEX_RE.test(data.brandColorPrimary)) {
+        throw new HttpsError("invalid-argument", "Brand color must be a 6-digit hex value like #A1B2C3.");
+    }
+    if (data.brandColorSecondary && !HEX_RE.test(data.brandColorSecondary)) {
+        throw new HttpsError("invalid-argument", "Brand color must be a 6-digit hex value.");
+    }
+
+    await assertScalePlan(uid);
+    await assertWorkspaceLimit(uid);
+
+    const docRef = db.collection(`users/${uid}/workspaces`).doc();
+    await docRef.set({
+        name,
+        brandName,
+        brandUrl: data.brandUrl ?? null,
+        brandColorPrimary: data.brandColorPrimary ?? null,
+        brandColorSecondary: data.brandColorSecondary ?? null,
+        logoUrl: data.logoUrl ?? null,
+        isDefault: false,
+        createdAt: Date.now(),
+        deletedAt: null,
+        metaAdAccountId: null,
+        metaAdAccountName: null,
+        metaRoleAtLinkTime: null,
+        pendingReassign: false,
+        pendingRestore: false,
+    });
+
+    return { workspaceId: docRef.id };
+});
+
+export const updateWorkspace = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const data = request.data as any;
+    const workspaceId = data.workspaceId;
+
+    if (!workspaceId) throw new HttpsError("invalid-argument", "workspaceId is required.");
+
+    const forbidden = ["isDefault", "createdAt", "deletedAt", "metaAdAccountId", "metaAdAccountName", "metaRoleAtLinkTime", "pendingReassign", "pendingRestore"];
+    for (const f of forbidden) {
+        if (data[f] !== undefined) throw new HttpsError("invalid-argument", `Field ${f} cannot be updated here.`);
+    }
+
+    if (data.brandColorPrimary && !HEX_RE.test(data.brandColorPrimary)) {
+        throw new HttpsError("invalid-argument", "Brand color must be a 6-digit hex value.");
+    }
+    if (data.brandColorSecondary && !HEX_RE.test(data.brandColorSecondary)) {
+        throw new HttpsError("invalid-argument", "Brand color must be a 6-digit hex value.");
+    }
+    if (data.name !== undefined && `${data.name}`.trim().length > 60) {
+        throw new HttpsError("invalid-argument", "Workspace name must be 60 characters or fewer.");
+    }
+
+    const wsSnap = await assertOwner(request.auth, workspaceId);
+    assertWorkspaceActive(wsSnap);
+
+    const updates: Record<string, any> = {};
+    for (const key of ["name", "brandName", "brandUrl", "brandColorPrimary", "brandColorSecondary", "logoUrl"]) {
+        if (data[key] !== undefined) {
+            updates[key] = data[key] === null ? admin.firestore.FieldValue.delete() : data[key];
+        }
+    }
+
+    await wsSnap.ref.update(updates);
+    return { ok: true };
+});
+
+export const deleteWorkspace = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const { workspaceId } = request.data as { workspaceId: string };
+    if (!workspaceId) throw new HttpsError("invalid-argument", "workspaceId is required.");
+
+    const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
+    if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found or already deleted.");
+    const wsData = wsSnap.data()!;
+
+    if (wsData.isDefault === true) {
+        throw new HttpsError("failed-precondition", "The default workspace can't be deleted.");
+    }
+
+    if (wsData.deletedAt != null) {
+        return { ok: true, pendingReassign: wsData.pendingReassign ?? false };
+    }
+
+    await wsSnap.ref.update({
+        deletedAt: Date.now(),
+        pendingReassign: true,
+    });
+
+    const defaultId = await resolveDefaultWorkspaceId(uid);
+    cascadeReassignOnDelete(uid, workspaceId, defaultId).catch((err) => {
+        console.error(`🔥 Cascade reassign failed for workspace ${workspaceId}:`, err);
+    });
+
+    return { ok: true, pendingReassign: true };
+});
+
+export const restoreWorkspace = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const { workspaceId } = request.data as { workspaceId: string };
+    if (!workspaceId) throw new HttpsError("invalid-argument", "workspaceId is required.");
+
+    const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
+    if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
+    const wsData = wsSnap.data()!;
+
+    if (wsData.deletedAt == null) {
+        throw new HttpsError("failed-precondition", "This workspace is not deleted and does not need restoration.");
+    }
+
+    const thirtyDaysMs = 30 * 24 * 3600 * 1000;
+    if (Date.now() - wsData.deletedAt > thirtyDaysMs) {
+        throw new HttpsError("failed-precondition", "This workspace was deleted more than 30 days ago and cannot be restored.");
+    }
+
+    await wsSnap.ref.update({
+        deletedAt: admin.firestore.FieldValue.delete(),
+        pendingRestore: true,
+    });
+
+    cascadeRevertOnRestore(uid, workspaceId).catch((err) => {
+        console.error(`🔥 Cascade restore failed for workspace ${workspaceId}:`, err);
+    });
+
+    return { ok: true, pendingRestore: true };
+});
+
+export const linkMetaAccountToWorkspace = onCall({
+    region: "europe-west1",
+    secrets: [metaAppId, metaAppSecret],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const data = request.data as any;
+    const { workspaceId, metaAdAccountId, metaAdAccountName } = data;
+
+    if (!workspaceId || !metaAdAccountId) {
+        throw new HttpsError("invalid-argument", "workspaceId and metaAdAccountId are required.");
+    }
+
+    const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
+    if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
+    assertWorkspaceActive(wsSnap);
+
+    const userSnap = await db.collection("users").doc(uid).get();
+    const metaConnection = userSnap.data()?.metaConnection;
+    if (!metaConnection?.accessToken) {
+        throw new HttpsError("failed-precondition", "Connect your Meta account first.");
+    }
+
+    const connectedAccounts: any[] = metaConnection.adAccounts ?? [];
+    const isConnected = connectedAccounts.some((a: any) => a.id === metaAdAccountId || `act_${a.id}` === metaAdAccountId || a.id === metaAdAccountId.replace("act_", ""));
+    if (!isConnected) {
+        throw new HttpsError("failed-precondition", "This Meta ad account is not in your connected accounts.");
+    }
+
+    const role = await probeMetaRole(metaConnection.accessToken, metaAdAccountId);
+    if (role === "INSUFFICIENT") {
+        throw new HttpsError("failed-precondition", "Your Meta role on this ad account doesn't allow publishing. Request Advertiser access in Meta Business Manager to link it.");
+    }
+
+    await wsSnap.ref.update({
+        metaAdAccountId,
+        metaAdAccountName: metaAdAccountName ?? "",
+        metaRoleAtLinkTime: role,
+    });
+
+    return { ok: true, metaRoleAtLinkTime: role };
+});
+
+export const unlinkMetaAccountFromWorkspace = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const { workspaceId } = request.data as { workspaceId: string };
+    if (!workspaceId) throw new HttpsError("invalid-argument", "workspaceId is required.");
+
+    const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
+    if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
+
+    await wsSnap.ref.update({
+        metaAdAccountId: admin.firestore.FieldValue.delete(),
+        metaAdAccountName: admin.firestore.FieldValue.delete(),
+        metaRoleAtLinkTime: admin.firestore.FieldValue.delete(),
+    });
+
+    return { ok: true };
+});
+
+export const setTeamMemberWorkspaceAccess = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const { memberDocId, workspaceAccess } = request.data as { memberDocId: string; workspaceAccess: string[] };
+    if (!memberDocId || !Array.isArray(workspaceAccess)) {
+        throw new HttpsError("invalid-argument", "memberDocId and workspaceAccess array are required.");
+    }
+
+    const memberRef = db.collection(`users/${uid}/team`).doc(memberDocId);
+    const memberSnap = await memberRef.get();
+    if (!memberSnap.exists) throw new HttpsError("not-found", "Team member not found.");
+
+    const memberData = memberSnap.data()!;
+    const currentAccess: string[] = memberData.workspaceAccess ?? [];
+
+    const granted = workspaceAccess.filter((id) => !currentAccess.includes(id));
+    const revoked = currentAccess.filter((id) => !workspaceAccess.includes(id));
+
+    for (const wsId of workspaceAccess) {
+        const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(wsId).get();
+        if (!wsSnap.exists || wsSnap.data()?.deletedAt != null) {
+            throw new HttpsError("failed-precondition", "One or more workspace IDs are invalid or soft-deleted.");
+        }
+    }
+
+    if (granted.length === 0 && revoked.length === 0) {
+        return { ok: true, granted: [], revoked: [] };
+    }
+
+    const userSnap = await db.collection("users").doc(uid).get();
+    const planSnapshot = userSnap.data()?.billingState?.plan ?? userSnap.data()?.plan ?? "none";
+
+    await db.runTransaction(async (txn) => {
+        txn.update(memberRef, { workspaceAccess });
+
+        for (const wsId of granted) {
+            const wsSnap = await txn.get(db.collection(`users/${uid}/workspaces`).doc(wsId));
+            await writeAuditEntry(txn, {
+                ownerUid: uid,
+                actorUid: uid,
+                targetMemberUid: memberData.memberUid ?? "",
+                targetMemberEmail: memberData.memberEmail ?? "",
+                workspaceId: wsId,
+                workspaceNameAtEvent: wsSnap.data()?.name ?? "",
+                action: "grant",
+                planSnapshot,
+            });
+        }
+
+        for (const wsId of revoked) {
+            const wsSnap = await txn.get(db.collection(`users/${uid}/workspaces`).doc(wsId));
+            await writeAuditEntry(txn, {
+                ownerUid: uid,
+                actorUid: uid,
+                targetMemberUid: memberData.memberUid ?? "",
+                targetMemberEmail: memberData.memberEmail ?? "",
+                workspaceId: wsId,
+                workspaceNameAtEvent: wsSnap.data()?.name ?? "",
+                action: "revoke",
+                planSnapshot,
+            });
+        }
+    });
+
+    return { ok: true, granted, revoked };
+});
+
+export const getWorkspaceGenerations = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const { workspaceId, limit: reqLimit, cursor } = request.data as {
+        workspaceId: string;
+        limit?: number;
+        cursor?: number;
+    };
+
+    if (!workspaceId) throw new HttpsError("invalid-argument", "workspaceId is required.");
+
+    const wsSnap = await db.collectionGroup("workspaces").where(admin.firestore.FieldPath.documentId(), "==", workspaceId).limit(1).get();
+    if (wsSnap.empty) throw new HttpsError("not-found", "Workspace not found.");
+
+    const wsDoc = wsSnap.docs[0];
+    const ownerUid = wsDoc.ref.parent.parent?.id;
+    if (!ownerUid) throw new HttpsError("not-found", "Workspace not found.");
+
+    if (uid !== ownerUid) {
+        // Team docs are auto-IDed, not keyed by member uid — find by memberUid field.
+        const memberQuery = await db
+            .collection(`users/${ownerUid}/team`)
+            .where("memberUid", "==", uid)
+            .limit(1)
+            .get();
+        if (memberQuery.empty) {
+            throw new HttpsError("permission-denied", "You don't have access to this workspace.");
+        }
+        const memberData = memberQuery.docs[0].data();
+        if (!(memberData.workspaceAccess ?? []).includes(workspaceId)) {
+            throw new HttpsError("permission-denied", "You don't have access to this workspace.");
+        }
+    }
+
+    const effectiveLimit = Math.min(reqLimit ?? 20, 50);
+    let q = db.collection("generations")
+        .where("userId", "==", ownerUid)
+        .where("workspaceId", "==", workspaceId)
+        .orderBy("timestamp", "desc")
+        .limit(effectiveLimit);
+
+    if (cursor) {
+        q = q.startAfter(cursor);
+    }
+
+    const snap = await q.get();
+    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    let nextCursor: number | null = null;
+    if (items.length >= effectiveLimit && items.length > 0) {
+        nextCursor = items[items.length - 1].timestamp ?? null;
+    }
+
+    return { items, nextCursor };
+});
+
+export const getWorkspaceAccessAuditLog = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const { limit: reqLimit, cursor, filterMemberUid, filterWorkspaceId } = request.data as {
+        limit?: number;
+        cursor?: string;
+        filterMemberUid?: string;
+        filterWorkspaceId?: string;
+    };
+
+    const effectiveLimit = Math.min(reqLimit ?? 50, 200);
+    let q = db.collection(`users/${uid}/workspace_access_audit`)
+        .orderBy("timestamp", "desc")
+        .limit(effectiveLimit);
+
+    if (filterMemberUid) {
+        q = q.where("targetMemberUid", "==", filterMemberUid) as any;
+    }
+    if (filterWorkspaceId) {
+        q = q.where("workspaceId", "==", filterWorkspaceId) as any;
+    }
+    if (cursor) {
+        q = q.startAfter(cursor) as any;
+    }
+
+    const snap = await q.get();
+    const entries = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    let nextCursor: string | null = null;
+    if (entries.length >= effectiveLimit) {
+        nextCursor = entries[entries.length - 1]?.id ?? null;
+    }
+
+    return { entries, nextCursor };
+});
+
+export { purgeExpiredWorkspaces };

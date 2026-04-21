@@ -133,6 +133,7 @@ interface AppState {
     activeWorkspaceId: string | null;
     setWorkspaces: (w: Workspace[]) => void;
     setActiveWorkspaceId: (id: string | null) => void;
+    hasInProgressWork: boolean;
 
     // Favorites tracking
     loadedFavoriteId: string | null;
@@ -266,6 +267,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     activeWorkspaceId: null,
     setWorkspaces: (w) => set({ workspaces: w }),
     setActiveWorkspaceId: (id) => set({ activeWorkspaceId: id }),
+    hasInProgressWork: false,
 
     // Favorites tracking
     loadedFavoriteId: null,

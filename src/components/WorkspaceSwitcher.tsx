@@ -8,11 +8,39 @@ interface WorkspaceSwitcherProps {
   onSwitch: (id: string) => void;
   onCreateNew: () => void;
   onEditWorkspace: (ws: Workspace) => void;
+  isTeamMember?: boolean;
+  workspaceAccess?: string[];
+  hasInProgressWork?: boolean;
+  switchGuardTarget?: string | null;
+  onSwitchGuardCancel?: () => void;
+  onSwitchGuardDiscard?: (targetId: string) => void;
+  onSwitchGuardSave?: (targetId: string) => void;
 }
 
-export default function WorkspaceSwitcher({ workspaces, activeWorkspaceId, onSwitch, onCreateNew, onEditWorkspace }: WorkspaceSwitcherProps) {
+export default function WorkspaceSwitcher({
+  workspaces,
+  activeWorkspaceId,
+  onSwitch,
+  onCreateNew,
+  onEditWorkspace,
+  isTeamMember,
+  workspaceAccess,
+  hasInProgressWork,
+  switchGuardTarget,
+  onSwitchGuardCancel,
+  onSwitchGuardDiscard,
+  onSwitchGuardSave,
+}: WorkspaceSwitcherProps) {
   const [open, setOpen] = useState(false);
+  const [guardOpen, setGuardOpen] = useState(false);
+  const [pendingTarget, setPendingTarget] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+
+  const activeWorkspaces = workspaces.filter(ws => ws.deletedAt == null);
+
+  const visibleWorkspaces = isTeamMember && workspaceAccess
+    ? activeWorkspaces.filter(ws => workspaceAccess.includes(ws.id))
+    : activeWorkspaces;
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -22,7 +50,42 @@ export default function WorkspaceSwitcher({ workspaces, activeWorkspaceId, onSwi
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const active = workspaces.find(w => w.id === activeWorkspaceId) || workspaces.find(w => w.isDefault);
+  const handleSwitch = (id: string) => {
+    if (hasInProgressWork && id !== activeWorkspaceId) {
+      setPendingTarget(id);
+      setGuardOpen(true);
+      return;
+    }
+    onSwitch(id);
+    setOpen(false);
+  };
+
+  const handleGuardDiscard = () => {
+    if (pendingTarget) {
+      onSwitchGuardDiscard?.(pendingTarget);
+      onSwitch(pendingTarget);
+    }
+    setGuardOpen(false);
+    setPendingTarget(null);
+    setOpen(false);
+  };
+
+  const handleGuardSave = () => {
+    if (pendingTarget) {
+      onSwitchGuardSave?.(pendingTarget);
+    }
+    setGuardOpen(false);
+    setPendingTarget(null);
+    setOpen(false);
+  };
+
+  const handleGuardCancel = () => {
+    onSwitchGuardCancel?.();
+    setGuardOpen(false);
+    setPendingTarget(null);
+  };
+
+  const active = visibleWorkspaces.find(w => w.id === activeWorkspaceId) || visibleWorkspaces.find(w => w.isDefault);
   const displayName = active?.name || 'Default Workspace';
   const brandColor = active?.brandColorPrimary || '#3b82f6';
 
@@ -46,7 +109,12 @@ export default function WorkspaceSwitcher({ workspaces, activeWorkspaceId, onSwi
             <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Brand Workspaces</p>
           </div>
           <div className="max-h-[240px] overflow-y-auto custom-scrollbar">
-            {workspaces.map(ws => (
+            {visibleWorkspaces.length === 0 && (
+              <div className="px-3 py-4 text-center text-[10px] text-slate-500">
+                No workspace access — ask your team owner to grant you access.
+              </div>
+            )}
+            {visibleWorkspaces.map(ws => (
               <div
                 key={ws.id}
                 className={`flex items-center gap-2.5 px-3 py-2.5 cursor-pointer transition-all group ${
@@ -54,7 +122,7 @@ export default function WorkspaceSwitcher({ workspaces, activeWorkspaceId, onSwi
                     ? 'bg-blue-500/10'
                     : 'hover:bg-white/[0.04]'
                 }`}
-                onClick={() => { onSwitch(ws.id); setOpen(false); }}
+                onClick={() => handleSwitch(ws.id)}
               >
                 <span
                   className="w-3 h-3 rounded-full flex-shrink-0 border border-white/10"
@@ -76,13 +144,45 @@ export default function WorkspaceSwitcher({ workspaces, activeWorkspaceId, onSwi
               </div>
             ))}
           </div>
-          <div className="border-t border-white/[0.04] p-2">
-            <button
-              onClick={() => { onCreateNew(); setOpen(false); }}
-              className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-white/[0.04] text-slate-400 text-[10px] font-bold hover:bg-white/[0.08] hover:text-white transition-all"
-            >
-              <i className="fa-solid fa-plus text-[8px]" /> New Workspace
-            </button>
+          {!isTeamMember && (
+            <div className="border-t border-white/[0.04] p-2">
+              <button
+                onClick={() => { onCreateNew(); setOpen(false); }}
+                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-white/[0.04] text-slate-400 text-[10px] font-bold hover:bg-white/[0.08] hover:text-white transition-all"
+              >
+                <i className="fa-solid fa-plus text-[8px]" /> New Workspace
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {guardOpen && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleGuardCancel} />
+          <div className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-sm w-full mx-4 p-6 shadow-2xl">
+            <h3 className="text-lg font-bold text-white mb-2">Switch workspace?</h3>
+            <p className="text-sm text-slate-400 mb-6">Switching workspace will start a new project. Save current work?</p>
+            <div className="flex gap-3">
+              <button
+                onClick={handleGuardSave}
+                className="flex-1 h-10 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-500 transition-colors"
+              >
+                Save & Switch
+              </button>
+              <button
+                onClick={handleGuardDiscard}
+                className="flex-1 h-10 rounded-xl bg-white/[0.06] text-slate-300 text-xs font-bold hover:bg-white/[0.1] transition-colors"
+              >
+                Discard & Switch
+              </button>
+              <button
+                onClick={handleGuardCancel}
+                className="flex-1 h-10 rounded-xl bg-white/[0.04] text-slate-500 text-xs font-bold hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1682,7 +1682,8 @@ const App: React.FC = () => {
         const wsRef = collection(db, 'users', uid, 'workspaces');
         const q = query(wsRef, orderBy('createdAt', 'desc'));
         const snap = await getDocs(q);
-        const wsList = snap.docs.map(d => ({ id: d.id, ...d.data() } as Workspace));
+        const wsList = snap.docs.map(d => ({ id: d.id, ...d.data() } as Workspace))
+          .filter(ws => ws.deletedAt == null);
         if (wsList.length === 0) {
           const defaultWs: Omit<Workspace, 'id'> = {
             name: 'Default Workspace', brandName: user?.displayName || 'My Brand',
@@ -1743,10 +1744,11 @@ const App: React.FC = () => {
     const uid = effectiveUidRef.current;
     if (!uid) return;
     try {
-      await deleteDoc(doc(db, 'users', uid, 'workspaces', workspaceId));
+      const { workspaceService } = await import('./services/workspaceService');
+      await workspaceService.deleteWorkspace(workspaceId);
       setWorkspacesLocal(prev => prev.filter(w => w.id !== workspaceId));
       if (activeWorkspaceId === workspaceId) {
-        const remaining = workspaces.filter(w => w.id !== workspaceId);
+        const remaining = workspaces.filter(w => w.id !== workspaceId && w.deletedAt == null);
         const def = remaining.find(w => w.isDefault) || remaining[0];
         setActiveWorkspaceIdLocal(def?.id || null);
       }

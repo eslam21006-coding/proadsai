@@ -383,6 +383,24 @@ export interface Workspace {
   logoUrl?: string;
   createdAt: number;
   isDefault: boolean;
+  metaAdAccountId?: string;
+  metaAdAccountName?: string;
+  metaRoleAtLinkTime?: 'ADMIN' | 'ADVERTISER';
+  deletedAt?: number | null;
+  pendingReassign?: boolean;
+  pendingRestore?: boolean;
+}
+
+export interface WorkspaceAccessAuditEntry {
+  id: string;
+  actorUid: string;
+  targetMemberUid: string;
+  targetMemberEmail: string;
+  workspaceId: string;
+  workspaceNameAtEvent: string;
+  action: 'grant' | 'revoke';
+  timestamp: number;
+  planSnapshot: 'none' | 'starter' | 'pro' | 'scale';
 }
 
 export interface SavedProject {
@@ -408,6 +426,7 @@ export interface SavedProject {
   batchResults?: BatchResult[];
   batchHookGroups?: (Omit<BatchHookGroup, 'selectedConcepts'> & { selectedConcepts: number[] | Set<number> })[];
   carouselSlides?: CarouselSlide[];
+  reassignedFromWorkspaceId?: string;
   resolvedCreativeSpec?: any; // ResolvedCreativeSpec from creativeResolver.ts
   creatorName?: string;
   creatorEmail?: string;

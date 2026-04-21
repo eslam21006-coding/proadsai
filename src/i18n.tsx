@@ -628,6 +628,18 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'fidelity.subheadText': 'Subheadline',
         'fidelity.ctaName': 'CTA Button',
         'fidelity.benefitText': 'Benefit Text',
+
+        // ── Workspace ──
+        'workspace.switch_guard.title': 'Switch workspace?',
+        'workspace.switch_guard.body': 'Switching workspace will start a new project. Save current work?',
+        'workspace.switch_guard.save': 'Save & Switch',
+        'workspace.switch_guard.discard': 'Discard & Switch',
+        'workspace.switch_guard.cancel': 'Cancel',
+        'workspace.error.scale_required': 'Creating more than one workspace requires the Scale plan.',
+        'workspace.error.limit_reached': "You've reached the 10-workspace limit on the Scale plan.",
+        'workspace.error.insufficient_meta_role': "Your Meta role on this ad account doesn't allow publishing. Request Advertiser access in Meta Business Manager to link it.",
+        'workspace.error.no_access': 'No workspace access — ask your team owner to grant you access.',
+        'workspace.error.default_undeletable': "The default workspace can't be deleted.",
     },
 
     ar: {
@@ -1254,6 +1266,18 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'fidelity.subheadText': 'العنوان الفرعي',
         'fidelity.ctaName': 'زر الإجراء',
         'fidelity.benefitText': 'نص الفائدة',
+
+        // ── Workspace ──
+        'workspace.switch_guard.title': 'تبديل مساحة العمل؟',
+        'workspace.switch_guard.body': 'تبديل مساحة العمل سيبدأ مشروعًا جديدًا. احفظ عملك الحالي؟',
+        'workspace.switch_guard.save': 'احفظ وبدّل',
+        'workspace.switch_guard.discard': 'تجاهل وبدّل',
+        'workspace.switch_guard.cancel': 'إلغاء',
+        'workspace.error.scale_required': 'إنشاء أكثر من مساحة عمل يتطلّب خطة Scale.',
+        'workspace.error.limit_reached': 'وصلت إلى الحد الأقصى 10 مساحات عمل على خطة Scale.',
+        'workspace.error.insufficient_meta_role': 'دورك على حساب إعلانات Meta هذا لا يسمح بالنشر. اطلب صلاحية Advertiser من Meta Business Manager لربطه.',
+        'workspace.error.no_access': 'لا توجد صلاحية وصول إلى مساحات عمل — اطلب من مالك الفريق منحك الصلاحية.',
+        'workspace.error.default_undeletable': 'لا يمكن حذف مساحة العمل الافتراضية.',
     },
 };
 
