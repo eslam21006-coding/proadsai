@@ -43,14 +43,23 @@ export default function FeedbackButtons({
     const [submitted, setSubmitted] = useState(false);
 
     // Reset UI state when the generation changes (new hook/render)
-    // Re-sync favorite state and clear transient UI on new generationId
+    // Fast-path: seed from initialFavorite for first paint (FR-001 SC-001 zero-flicker
+    // target). Authoritative-path: query Firestore per-record for this exact
+    // generationId so users with >100 favorites in a phase still see correct state
+    // even when their record is outside the per-phase subscription window.
     useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- sync on generationId change
         setIsFavorite(initialFavorite);
         setShowTagPanel(false);
         setSelectedTags(new Set());
         setFreeText('');
         setSubmitted(false);
+
+        if (!generationId) return;
+        let cancelled = false;
+        feedbackService.getFavoriteStatus(generationId).then(actual => {
+            if (!cancelled) setIsFavorite(actual);
+        });
+        return () => { cancelled = true; };
     }, [generationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleRate = async (rating: FeedbackRating) => {

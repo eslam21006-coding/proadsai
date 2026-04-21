@@ -79,23 +79,23 @@ generations
 
 Identical predicate, with `startAfter(lastDocSnapshot)` appended and `limit(100)` retained. Executed via `getDocs` (not `onSnapshot`) — only the first page keeps a live subscription.
 
-### Favorite IDs set (for bookmark state initialization)
+### Favorite state per-record (for bookmark state initialization)
 
-The `FeedbackButtons` instances rendered in Steps 2–5 need a membership set so the star icon reflects real saved state on first paint (FR-001). The set is **derived at the App level from the four per-phase `useFavorites` subscriptions** — no separate bulk query is issued:
+The `FeedbackButtons` star icon MUST reflect real saved state on first paint (FR-001). The component performs an **authoritative per-record check** on mount and whenever `generationId` changes:
 
 ```text
-favoriteIds = union over phase ∈ {hooks, concepts, render, caption} of
-  useFavorites({ phase, workspaceId }).favorites.map(r => r.id)
+feedbackService.getFavoriteStatus(generationId) → boolean
+  → getDoc(generations/{generationId}).feedback.savedToFavorites === true
 ```
 
-This approach:
+Design rationale:
 
-- Uses only data already subscribed to by the per-phase panels (no extra Firestore reads).
-- Stays correct for every favorite currently visible in any panel, including items loaded via "Show older" pagination (which the hook merges into its returned `favorites` array).
-- Does not need a bulk cap — each per-phase subscription is independently bounded to 100 (plus paginated tail), matching FR-014.
-- Automatically reflects removals/additions in real time via the live head subscription.
+- **Single-document read per button**, not bounded by any per-phase subscription window. Users with more than 100 favorites in a phase still see correct state on generations whose records live outside the live head or loaded tail.
+- `initialFavorite` prop remains as a synchronous hint for zero-flicker first paint (seeded from whatever the App level happens to know), but the authoritative async result from `getFavoriteStatus` is what locks the icon.
+- No bulk bootstrap query runs at App mount — the previous `getFavoriteIds(LIMIT 200)` approach is retired for this purpose because it silently dropped older favorites.
+- Per-phase `useFavorites` subscriptions continue to feed the panels (list, pagination, count badges) but do not feed bookmark state on individual stars.
 
-The service function `feedbackService.getFavoriteIds(userId, workspaceId?)` still exists for analytics-style callers, but it MUST NOT be used to bootstrap panel bookmark state — its implicit limit would drop older favorites for users with large histories.
+The service function `feedbackService.getFavoriteIds(userId, workspaceId?)` still exists for analytics-style callers but is NOT used for FeedbackButtons initialization.
 
 ## Firestore Indexes Required
 

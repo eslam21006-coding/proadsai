@@ -587,6 +587,25 @@ Use the above to guide creative direction. Match preferences while staying fresh
         }
     }
 
+    // ═══ 9b. GET FAVORITE STATUS (per-record) ═══
+    // Authoritative check for a single generation's savedToFavorites flag.
+    // Used to initialize FeedbackButtons bookmark state without relying on
+    // the per-phase subscription's 100-item window (FR-001 correctness for
+    // users with more than 100 favorites in a phase).
+    async getFavoriteStatus(generationId: string): Promise<boolean> {
+        if (!generationId) return false;
+        try {
+            const ref = doc(db, 'generations', generationId);
+            const snap = await getDoc(ref);
+            if (!snap.exists()) return false;
+            return (snap.data() as { feedback?: { savedToFavorites?: boolean } })
+                .feedback?.savedToFavorites === true;
+        } catch (err) {
+            console.warn('getFavoriteStatus failed for', generationId, err);
+            return false;
+        }
+    }
+
     // ═══ 10. UPDATE FAVORITE RECORD ═══
     async updateFavoriteRecord(
         generationId: string,

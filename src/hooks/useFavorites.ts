@@ -5,7 +5,7 @@ import { db, auth } from '../firebase';
 import {
   collection, query, where, orderBy, limit, onSnapshot,
   getDocs, startAfter,
-  type DocumentSnapshot, type Unsubscribe
+  type DocumentSnapshot, type Query, type QuerySnapshot, type Unsubscribe, type DocumentData
 } from 'firebase/firestore';
 import type { GenerationRecord } from '../services/feedbackService';
 
@@ -73,6 +73,25 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
       return next;
     });
   }, []);
+
+  // Self-heal: if an id in `removedIds` re-appears in the live head or in a
+  // fresh tail fetch, drop it from the set so the record becomes visible
+  // again. Covers the re-bookmark-after-remove flow and any remote revert.
+  useEffect(() => {
+    setRemovedIds(prev => {
+      if (prev.size === 0) return prev;
+      const liveIds = new Set<string>();
+      for (const h of headItems) if (h.id) liveIds.add(h.id);
+      for (const t of tailItems) if (t.id) liveIds.add(t.id);
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (liveIds.has(id)) { changed = true; continue; }
+        next.add(id);
+      }
+      return changed ? next : prev;
+    });
+  }, [headItems, tailItems]);
 
   useEffect(() => {
     if (!uid) {
@@ -214,37 +233,47 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
     };
 
     try {
-      const cursor = lastCursorRef.current;
-      if (!cursor) {
+      if (!lastCursorRef.current) {
         loadingMoreRef.current = false;
         setLoading(false);
         return;
       }
 
-      const q = query(
-        collection(db, 'generations'),
-        ...baseConstraints,
-        where('feedback.savedToFavorites', '==', true),
-        where('output.phase', '==', phase),
-        orderBy('timestamp', 'desc'),
-        startAfter(cursor),
-        limit(PAGE_SIZE)
-      );
+      // Keep fetching pages until we've accumulated PAGE_SIZE visible items
+      // (after client-side scope filtering) OR Firestore returns a short page
+      // (tail exhausted). Hard cap on iterations protects against runaway loops
+      // when the scope filter rejects everything in a very large history.
+      const MAX_ITERATIONS = 5;
+      const accumulated: GenerationRecord[] = [];
+      let exhausted = false;
+      for (let i = 0; i < MAX_ITERATIONS; i++) {
+        const cursor: DocumentSnapshot | null = lastCursorRef.current;
+        if (!cursor) { exhausted = true; break; }
+        const pageQ: Query<DocumentData> = query(
+          collection(db, 'generations'),
+          ...baseConstraints,
+          where('feedback.savedToFavorites', '==', true),
+          where('output.phase', '==', phase),
+          orderBy('timestamp', 'desc'),
+          startAfter(cursor),
+          limit(PAGE_SIZE)
+        );
+        const snap: QuerySnapshot<DocumentData> = await getDocs(pageQ);
+        if (snap.docs.length === 0) { exhausted = true; break; }
+        lastCursorRef.current = snap.docs[snap.docs.length - 1];
+        const raw = snap.docs.map(
+          (d: DocumentSnapshot) => ({ id: d.id, ...d.data() } as GenerationRecord)
+        );
+        accumulated.push(...scopeFilter(raw));
+        if (snap.docs.length < PAGE_SIZE) { exhausted = true; break; }
+        if (accumulated.length >= PAGE_SIZE) break;
+      }
 
-      const snap = await getDocs(q);
-      const raw = snap.docs.map(
-        (d: DocumentSnapshot) => ({ id: d.id, ...d.data() } as GenerationRecord)
-      );
-      const newRecords = scopeFilter(raw);
-
-      if (newRecords.length > 0) {
-        setTailItems(prev => [...prev, ...newRecords]);
+      if (accumulated.length > 0) {
+        setTailItems(prev => [...prev, ...accumulated]);
         tailNonEmptyRef.current = true;
       }
-      if (snap.docs.length > 0) {
-        lastCursorRef.current = snap.docs[snap.docs.length - 1];
-      }
-      setHasMore(snap.docs.length === PAGE_SIZE);
+      setHasMore(!exhausted);
     } catch (primaryErr) {
       try {
         const cursor = lastCursorRef.current;

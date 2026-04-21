@@ -5,6 +5,22 @@
 
 ## feedbackService extensions
 
+### getFavoriteStatus
+
+Authoritative per-record check for a single generation's favorite state.
+
+**Signature**:
+
+```ts
+getFavoriteStatus(generationId: string) → Promise<boolean>
+```
+
+**Behavior**:
+
+- Reads `generations/{generationId}` via `getDoc` and returns `data.feedback.savedToFavorites === true`.
+- Returns `false` if the document does not exist, if `generationId` is empty, or if the read throws (logs a `console.warn` for non-missing-doc errors).
+- Used by `FeedbackButtons` on mount and on every `generationId` change to lock the star icon to authoritative Firestore state — independent of any per-phase subscription window.
+
 ### getFavoriteIds
 
 Returns the set of generation IDs that are currently favorited for the given scope.

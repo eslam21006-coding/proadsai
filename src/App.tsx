@@ -10,6 +10,8 @@ import { gemini, type GenerationResult } from './services/geminiService';
 import { resolveCreativeSpec, CREATIVE_MODE_CATALOG, type ResolvedCreativeSpec } from './creativeResolver';
 import { isValidHookPayload, validateCanonicalHooks, normalizeHooksToCanonical, getHookValidationSummary } from './utils/hookPayload';
 import FeedbackButtons from './components/FeedbackButtons';
+import FavoritesPanel from './components/FavoritesPanel';
+import { useFavorites } from './hooks/useFavorites';
 import MagicSelector, { type EditRequest } from './components/MagicSelector';
 import { feedbackService, type NegativeFeedbackTag } from './services/feedbackService';
 import { metaService, type MetaConnection } from './services/metaService';
@@ -1563,6 +1565,10 @@ const App: React.FC = () => {
   const [favoritesData, setFavoritesData] = useState<any[]>([]);
   const [favTab, setFavTab] = useState('all');
   const [favoritesLoading, setFavoritesLoading] = useState(false);
+  const [openFavoritesPhase, setOpenFavoritesPhase] = useState<'hooks' | 'concepts' | 'render' | 'caption' | null>(null);
+  const [loadedFavoriteId, setLoadedFavoriteId] = useState<string | null>(null);
+  const [favUpdatePrompt, setFavUpdatePrompt] = useState<{ phase: string; newGenId: string } | null>(null);
+  const [loadedRenderRecord, setLoadedRenderRecord] = useState<import('./services/feedbackService').GenerationRecord | null>(null);
   const [upgradeReason, setUpgradeReason] = useState('');
   const [showAccountMenu, setShowAccountMenu] = useState(false);
 
@@ -3182,6 +3188,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             }
           }
           setHookGenerationIds(hookIds);
+          const firstGenId = Object.values(hookIds)[0];
+          if (loadedFavoriteId && firstGenId) {
+            setFavUpdatePrompt({ phase: 'hooks', newGenId: firstGenId });
+          }
         } catch (saveErr) {
           console.error('Non-blocking: failed to save hook generation records:', saveErr);
         }
@@ -3578,6 +3588,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity()
             );
             setRenderGenerationId(genId);
+            if (loadedFavoriteId && genId) {
+              setFavUpdatePrompt({ phase: 'render', newGenId: genId });
+            }
           } catch (saveErr) {
             console.error('Non-blocking: failed to save render generation record:', saveErr);
           }
@@ -4108,7 +4121,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             { imageUrl: res, conceptText: (selectedConcept || '').substring(0, 500) },
             buildPlan, resolvedUniverse, 'gemini-3.1-flash-image', 0, editRatio, buildCreativeIdentity()
           );
-          if (genId) setRenderGenerationId(genId);
+          if (genId) {
+            setRenderGenerationId(genId);
+            if (loadedFavoriteId) setFavUpdatePrompt({ phase: 'render', newGenId: genId });
+          }
         } catch (saveErr) {
           console.error('Non-blocking: failed to save polish render record:', saveErr);
         }
@@ -4158,6 +4174,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               res, '', 'gemini-3-flash', 0, undefined, buildCreativeIdentity()
             );
             setCaptionGenerationId(genId);
+            if (loadedFavoriteId && genId) {
+              setFavUpdatePrompt({ phase: 'caption', newGenId: genId });
+            }
           } catch (e) { console.warn('Caption generation save failed (non-blocking):', e); }
         }
       }
@@ -6181,7 +6200,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   {loadedRenderRecord && (
                     <button
                       onClick={() => {
-                        if (loadedRenderRecord.input) setInputs(loadedRenderRecord.input);
+                        if (loadedRenderRecord.input) setInputs(loadedRenderRecord.input as unknown as AdInputs);
                         if (loadedRenderRecord.output?.conceptText) {
                           setConceptsText(loadedRenderRecord.output.conceptText);
                           setSelectedConcept(loadedRenderRecord.output.conceptText);
@@ -7351,7 +7370,131 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
             </div>
           );
         })()}
+        {/* ═══ FAVORITES PANELS (one mounted per phase; isOpen gates visibility) ═══ */}
+        <FavoritesPanel
+          phase="hooks"
+          isOpen={openFavoritesPhase === 'hooks'}
+          onClose={() => setOpenFavoritesPhase(null)}
+          workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+          onLoad={async (record) => {
+            const activeVariant = Object.keys(hookGenerationIds).find(v => hookGenerationIds[v]);
+            if (activeVariant && hookGenerationIds[activeVariant]) {
+              await feedbackService.toggleFavorite(hookGenerationIds[activeVariant], true).catch(() => {});
+            }
+            if (record.output?.hookText) {
+              const reconstructed = `HOOK_START_A\nHOOK_TEXT: ${record.output.hookText}\nSUBHEADLINE: ${record.output.subhead || ''}\nCTA_BUTTON: ${record.output.ctaText || ''}\nHOOK_END_A`;
+              setTovText(record.output.fullResponse || reconstructed);
+              setSelectedTov(reconstructed);
+            }
+            if (record.id && activeVariant) {
+              setHookGenerationIds(prev => ({ ...prev, [activeVariant]: record.id! }));
+            }
+            setLoadedFavoriteId(record.id || null);
+            setOpenFavoritesPhase(null);
+          }}
+        />
+        <FavoritesPanel
+          phase="concepts"
+          isOpen={openFavoritesPhase === 'concepts'}
+          onClose={() => setOpenFavoritesPhase(null)}
+          workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+          onLoad={(record) => {
+            if (record.output?.conceptText) setConceptsText(record.output.conceptText);
+            if (record.output?.buildPlan) setBuildPlan(record.output.buildPlan);
+            setLoadedFavoriteId(record.id || null);
+            setOpenFavoritesPhase(null);
+          }}
+        />
+        <FavoritesPanel
+          phase="render"
+          isOpen={openFavoritesPhase === 'render'}
+          onClose={() => setOpenFavoritesPhase(null)}
+          workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+          onLoad={async (record) => {
+            if (renderGenerationId) {
+              await feedbackService.toggleFavorite(renderGenerationId, true).catch(() => {});
+            }
+            if (record.output?.imageUrl) pushMockup(record.output.imageUrl, (record.metadata?.aspectRatio || '1:1') as AspectRatio);
+            if (record.id) setRenderGenerationId(record.id);
+            setLoadedFavoriteId(record.id || null);
+            setLoadedRenderRecord(record);
+            setOpenFavoritesPhase(null);
+          }}
+        />
+        <FavoritesPanel
+          phase="caption"
+          isOpen={openFavoritesPhase === 'caption'}
+          onClose={() => setOpenFavoritesPhase(null)}
+          workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+          onLoad={async (record) => {
+            if (captionGenerationId) {
+              await feedbackService.toggleFavorite(captionGenerationId, true).catch(() => {});
+            }
+            if (record.output?.captionText) setCaptionText(record.output.captionText);
+            if (record.id) setCaptionGenerationId(record.id);
+            setLoadedFavoriteId(record.id || null);
+            setOpenFavoritesPhase(null);
+          }}
+        />
       </main>
+
+      {/* ═══ FAVORITE UPDATE/KEEP-BOTH PROMPT (T015-T018) ═══ */}
+      {favUpdatePrompt && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { setFavUpdatePrompt(null); setLoadedFavoriteId(null); }} />
+          <div className="relative bg-slate-950 border border-amber-500/30 rounded-2xl shadow-2xl max-w-sm w-full mx-4 p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="text-center space-y-2">
+              <i className="fa-solid fa-bookmark text-amber-400 text-2xl"></i>
+              <h3 className="text-lg font-black text-white">{t('fav.update_title')}</h3>
+              <p className="text-[11px] text-slate-400">{t('fav.update_desc')}</p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={async () => {
+                  if (loadedFavoriteId && favUpdatePrompt.newGenId) {
+                    try {
+                      const newDoc = await getDoc(doc(db, 'generations', favUpdatePrompt.newGenId));
+                      if (newDoc.exists()) {
+                        const newOutput = (newDoc.data() as { output?: Partial<import('./services/feedbackService').GenerationRecord['output']> }).output || {};
+                        await feedbackService.updateFavoriteRecord(loadedFavoriteId, newOutput);
+                        showToast(t('fav.updated'), 'success');
+                      }
+                    } catch { showToast(t('fav.update_failed'), 'error'); }
+                  }
+                  setFavUpdatePrompt(null);
+                  setLoadedFavoriteId(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white text-[9px] font-bold uppercase tracking-wider transition-all"
+              >
+                <i className="fa-solid fa-pen mr-1"></i> {t('fav.yes_update')}
+              </button>
+              <button
+                onClick={async () => {
+                  if (favUpdatePrompt.newGenId) {
+                    try {
+                      await feedbackService.toggleFavorite(favUpdatePrompt.newGenId, true);
+                      showToast(t('fav.saved_new'), 'success');
+                    } catch {
+                      showToast(t('fav.save_failed'), 'error');
+                    }
+                  }
+                  setFavUpdatePrompt(null);
+                  setLoadedFavoriteId(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white text-[9px] font-bold uppercase tracking-wider transition-all"
+              >
+                <i className="fa-solid fa-copy mr-1"></i> {t('fav.keep_both')}
+              </button>
+            </div>
+            <button
+              onClick={() => { setFavUpdatePrompt(null); setLoadedFavoriteId(null); }}
+              className="w-full py-2 text-[9px] text-slate-600 hover:text-slate-300 transition-all"
+            >
+              {t('fav.skip')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ═══ UPGRADE / TOP-UP MODAL ═══ */}
       {/* ═══ CAROUSEL COPY PREVIEW MODAL ═══ */}
