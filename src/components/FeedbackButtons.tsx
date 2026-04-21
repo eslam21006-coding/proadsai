@@ -42,16 +42,34 @@ export default function FeedbackButtons({
     const [isFavorite, setIsFavorite] = useState(initialFavorite);
     const [submitted, setSubmitted] = useState(false);
 
-    // Reset UI state when the generation changes (new hook/render)
-    // Re-sync favorite state and clear transient UI on new generationId
+    // Reset transient UI and run the authoritative per-record check whenever
+    // the target generation changes. Transient state (tag panel, selected
+    // tags, free-text, submitted flash) resets here and only here — we don't
+    // want it to clear when the parent's favoriteIds set flips.
     useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- sync on generationId change
-        setIsFavorite(initialFavorite);
         setShowTagPanel(false);
         setSelectedTags(new Set());
         setFreeText('');
         setSubmitted(false);
-    }, [generationId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+        if (!generationId) return;
+        let cancelled = false;
+        feedbackService.getFavoriteStatus(generationId).then(actual => {
+            // null → transient read error; keep whatever isFavorite currently
+            // holds (whether from initialFavorite seed or a prior authoritative
+            // read) instead of fabricating a value.
+            if (!cancelled && actual !== null) setIsFavorite(actual);
+        });
+        return () => { cancelled = true; };
+    }, [generationId]);
+
+    // Sync isFavorite with the parent-supplied seed whenever it flips. Covers
+    // the window between mount and the authoritative getFavoriteStatus result
+    // landing, and any later seed updates (e.g., the parent's favoriteIds
+    // useMemo recomputed because a teammate saved the same generation).
+    useEffect(() => {
+        setIsFavorite(initialFavorite);
+    }, [initialFavorite]);
 
     const handleRate = async (rating: FeedbackRating) => {
         setCurrentRating(rating);

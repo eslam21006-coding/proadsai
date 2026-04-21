@@ -16,7 +16,7 @@ No new fields required. The feature reads and writes existing fields:
 | `timestamp` | `Timestamp` | Sort key (default: newest first) |
 | `output.phase` | `'hooks' \| 'concepts' \| 'render' \| 'caption'` | Filter key for per-step favorites panel |
 | `output.hookText` | `string?` | Preview text for hooks panel; loaded into Step 2 fields |
-| `output.subhead` | `string?` | Loaded into Step 2 subhead field alongside hookText |
+| `output.subhead` | `string?` | Loaded into Step 2 subhead field alongside `hookText` (matches `GenerationRecord.output.subhead` in `src/services/feedbackService.ts:86` and consumers in `src/App.tsx`) |
 | `output.conceptText` | `string?` | Preview/load for concepts panel (Step 3) |
 | `output.buildPlan` | `string?` | Loaded alongside conceptText in Step 3 |
 | `output.imageUrl` | `string?` | Preview/load for designs panel (Step 4) |
@@ -50,36 +50,52 @@ User ──member of──► Workspace (via billingState.isTeamMember/isTeamOwn
 
 ## Query Patterns
 
-### Personal favorites (no workspace active)
+### Personal favorites (no workspace active) — first page
 
-```
+```text
 generations
   WHERE userId == {currentUid}
+  AND workspaceId == null          -- excludes workspace-owned records (FR-009)
   AND feedback.savedToFavorites == true
   AND output.phase == {phase}
   ORDER BY timestamp DESC
+  LIMIT 100
 ```
 
-### Team favorites (workspace active)
+The `workspaceId == null` constraint MAY be enforced client-side (filter on the loaded page) to avoid adding a new composite index; the effect on SC-002 latency is negligible because the page is already bounded to 100.
 
-```
+### Team favorites (workspace active) — first page
+
+```text
 generations
   WHERE workspaceId == {activeWorkspaceId}
   AND feedback.savedToFavorites == true
   AND output.phase == {phase}
   ORDER BY timestamp DESC
+  LIMIT 100
 ```
 
-### Favorite IDs set (for bookmark state initialization)
+### Next page ("Show older")
 
-```
-generations
-  WHERE userId == {currentUid}
-  AND feedback.savedToFavorites == true
-  SELECT id
+Identical predicate, with `startAfter(lastDocSnapshot)` appended and `limit(100)` retained. Executed via `getDocs` (not `onSnapshot`) — only the first page keeps a live subscription.
+
+### Favorite state per-record (for bookmark state initialization)
+
+The `FeedbackButtons` star icon MUST reflect real saved state on first paint (FR-001). The component performs an **authoritative per-record check** on mount and whenever `generationId` changes:
+
+```text
+feedbackService.getFavoriteStatus(generationId) → boolean
+  → getDoc(generations/{generationId}).feedback.savedToFavorites === true
 ```
 
-When workspace is active, replace `userId` constraint with `workspaceId` constraint.
+Design rationale:
+
+- **Single-document read per button**, not bounded by any per-phase subscription window. Users with more than 100 favorites in a phase still see correct state on generations whose records live outside the live head or loaded tail.
+- `initialFavorite` prop remains as a synchronous hint for zero-flicker first paint (seeded from whatever the App level happens to know), but the authoritative async result from `getFavoriteStatus` is what locks the icon.
+- No bulk bootstrap query runs at App mount — the previous `getFavoriteIds(LIMIT 200)` approach is retired for this purpose because it silently dropped older favorites.
+- Per-phase `useFavorites` subscriptions continue to feed the panels (list, pagination, count badges) but do not feed bookmark state on individual stars.
+
+The service function `feedbackService.getFavoriteIds(userId, workspaceId?)` still exists for analytics-style callers but is NOT used for FeedbackButtons initialization.
 
 ## Firestore Indexes Required
 
@@ -99,7 +115,7 @@ If composite index is not yet deployed, fall back to:
 
 ### Favorite lifecycle
 
-```
+```text
 Not Favorited ──[toggle on]──► Favorited ──[toggle off]──► Not Favorited
                                     │
                                     ├──[edit & update]──► Favorited (output fields overwritten)
@@ -109,7 +125,7 @@ Not Favorited ──[toggle on]──► Favorited ──[toggle off]──► N
 
 ### Load-from-favorites flow
 
-```
+```text
 Step has current output ──[user clicks Load]──► Auto-save current output as favorite
                                                     ──► Load selected favorite into step fields
                                                     ──► Track loadedFavoriteId in store
@@ -117,7 +133,7 @@ Step has current output ──[user clicks Load]──► Auto-save current outp
 
 ### Post-edit regeneration flow
 
-```
+```text
 Loaded favorite tracked ──[user regenerates]──► Show update prompt
     ├── "Yes, update" ──► updateFavoriteRecord(loadedFavoriteId, newOutput)
     └── "Keep both"   ──► toggleFavorite(newGenerationId, true)
@@ -130,3 +146,19 @@ Loaded favorite tracked ──[user regenerates]──► Show update prompt
 - `output.phase` must be one of the four allowed values for panel filtering to work
 - `workspaceId` must match exactly for team scoping — partial matches or null comparisons excluded
 - When auto-saving before load, the current generation must have a valid `generationId` (skip auto-save if no generation exists yet)
+- Pagination cursor must be a Firestore `DocumentSnapshot` (not a plain document ID) — `startAfter` requires the snapshot to preserve compound-order positioning
+- Revocation semantics: records with a `workspaceId` MUST NOT have that field cleared or migrated to personal scope when a member leaves the workspace — the record stays attached to the workspace (FR-009, Session 2026-04-21 Q3)
+
+## Client-Side State (derived, not persisted)
+
+`useFavorites` hook local state — not stored in Firestore:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `favorites` | `GenerationRecord[]` | Currently loaded items (first page + any loaded "Show older" pages), client-side sorted per user selection |
+| `loading` | `boolean` | True during initial subscription setup or while `loadMore()` is in flight |
+| `hasMore` | `boolean` | True if the most recent page returned exactly 100 items (potential next page exists) |
+| `connectionState` | `'live' \| 'stale'` | `'live'` when the first-page `onSnapshot` is active; `'stale'` if `onSnapshot` error callback has fired and no recovery has occurred yet |
+| `lastCursor` | `DocumentSnapshot \| null` | Last document of the currently-loaded tail; used by `loadMore()` |
+
+These derived fields support FR-014 (pagination), FR-015 (offline banner), and SC-002 (<3 s panel open).

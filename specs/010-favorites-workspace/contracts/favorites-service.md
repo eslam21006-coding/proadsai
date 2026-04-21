@@ -5,6 +5,23 @@
 
 ## feedbackService extensions
 
+### getFavoriteStatus
+
+Authoritative tri-state per-record check for a single generation's favorite state.
+
+**Signature**:
+
+```ts
+getFavoriteStatus(generationId: string) → Promise<boolean | null>
+```
+
+**Behavior**:
+
+- Returns `true` if the doc exists and `feedback.savedToFavorites === true`.
+- Returns `false` if the doc exists and `savedToFavorites` is absent or non-`true`, or if the doc does not exist, or if `generationId` is falsy — all three are authoritative "not favorited" states.
+- Returns `null` only for transient read failures (network error, permission denied mid-session, etc.), logged via `console.warn`. Callers MUST treat `null` as "unknown — preserve any previously-seeded state" rather than treating it as `false`.
+- Used by `FeedbackButtons` on mount and on every `generationId` change to lock the star icon to authoritative Firestore state — independent of any per-phase subscription window. On `null`, the component keeps its `initialFavorite` seed instead of flipping to an unconfirmed `false`.
+
 ### getFavoriteIds
 
 Returns the set of generation IDs that are currently favorited for the given scope.
@@ -66,28 +83,45 @@ updateFavoriteRecord(generationId: string, updatedFields: Partial<GenerationReco
 **Signature**:
 
 ```ts
-useFavorites(phase: 'hooks' | 'concepts' | 'render' | 'caption') → { favorites: GenerationRecord[], loading: boolean }
+useFavorites(options: {
+  phase: 'hooks' | 'concepts' | 'render' | 'caption'
+  workspaceId?: string | null
+}): {
+  favorites: GenerationRecord[]
+  loading: boolean
+  hasMore: boolean
+  loadMore: () => Promise<void>
+  connectionState: 'live' | 'stale'
+  markRemovedInList: (id: string) => void
+}
 ```
 
-**Inputs**:
+**Inputs** (single options object):
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| phase | string enum | yes | Filter favorites by content phase |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `phase` | `'hooks' \| 'concepts' \| 'render' \| 'caption'` | yes | Filter favorites by content phase |
+| `workspaceId` | `string \| null \| undefined` | no | When truthy, scopes the subscription by `where('workspaceId', '==', workspaceId)` instead of `where('userId', '==', currentUid)`. When null/undefined, falls back to user-scoped. Callers are responsible for resolving the active workspace from billing state and passing the right value. |
 
 **Output**:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| favorites | GenerationRecord[] | Sorted by timestamp descending (default) |
-| loading | boolean | True during initial subscription setup |
+| favorites | `GenerationRecord[]` | Currently loaded items: a live "head" page (up to 100 newest via `onSnapshot`) merged with any static "tail" pages that `loadMore()` has already appended, de-duplicated by `id` (head items win on collision). Both head and tail are in timestamp-descending order from the server; the consuming component applies client-side sort if desired. |
+| loading | `boolean` | True during initial subscription setup or while `loadMore()` is in flight |
+| hasMore | `boolean` | True when the most recent page returned a full 100 items (another page may exist); false once the tail has been reached |
+| loadMore | `() => Promise<void>` | Fetches the next 100 timestamp-descending items via `getDocs` with `startAfter(lastCursor)` and appends them to the tail. No-op if `hasMore === false` or a load is already in flight. Always returns a resolved promise — thrown errors from the Firestore SDK are caught internally (and logged via `console.warn`) so the caller need not handle rejection. |
+| connectionState | `'live' \| 'stale'` | Driven by `snapshot.metadata.fromCache` (the subscription is opened with `{ includeMetadataChanges: true }`): `'live'` when the snapshot reflects the server, `'stale'` when Firestore is serving from offline cache or the error callback has fired. Returns to `'live'` on the next server-sourced snapshot without manual retry. |
+| markRemovedInList | `(id: string) => void` | Optimistic-removal escape hatch. Call this after a successful `toggleFavorite(id, false)` to drop the item from the returned `favorites` array immediately. Implementation details: the id is added to an internal `removedIds` set AND synchronously filtered out of `tailItems` so the removal is durable. Self-heal: if the same id later re-appears in the live head (e.g., the user re-bookmarks the generation), an effect prunes it from `removedIds` and the record becomes visible again — no resubscribe required. The self-heal scan watches head only; tail is never resurrected by this mechanism. A resubscribe (phase / workspace change) also clears `removedIds` and refetches the tail from scratch. |
 
 **Behavior**:
-- Uses `onSnapshot` for real-time updates
-- Automatically scopes to workspace if `activeWorkspaceId` is set and user is team member/owner
-- Falls back to user-scoped query if no workspace active
-- Unsubscribes on component unmount
-- Falls back to broader query + client-side phase filter if composite index is unavailable
+- First page ("head") uses `onSnapshot` with `{ includeMetadataChanges: true }` + `limit(100)`; subsequent pages ("tail") loaded by `loadMore()` use `getDocs` with `startAfter(lastCursor)` (static for the session — older pages are not live-subscribed)
+- Scopes to workspace when the caller passes a truthy `workspaceId`; otherwise scopes to `auth.currentUser.uid`
+- Unsubscribes the head listener on unmount or when `phase`/`workspaceId` changes; resets `headItems`, `tailItems`, `lastCursor`, and `hasMore` on resubscribe
+- Falls back to broader query + client-side phase filter if the composite index is unavailable; the fallback path follows the same head+tail merge and same `metadata.fromCache` detection
+- `connectionState` flips to `'stale'` when `snapshot.metadata.fromCache === true` OR when the error callback fires; flips back to `'live'` on the next server-sourced snapshot
+- Live head refreshes MUST NOT discard tail items already loaded via `loadMore()` — the returned `favorites` array is always the merged, de-duplicated view
+- When called without a truthy `workspaceId`, the hook MUST exclude records whose `workspaceId` is set to a non-null value (FR-009: workspace-owned favorites MUST NOT leak into personal scope). The exclusion is applied as a client-side filter on the loaded page, so no new composite index is required.
 
 ---
 
@@ -109,8 +143,22 @@ interface FavoritesPanelProps {
 - Shows sort toggle (newest / oldest / alphabetical)
 - Each item displays: phase badge, preview text, date saved, "Load" button, "Remove" button
 - Empty state when no favorites for the phase
-- "Remove" calls `toggleFavorite(id, false)` — item disappears via real-time subscription
+- "Remove" calls `toggleFavorite(id, false)` followed by `markRemovedInList(id)`. The live head subscription catches the removal for items currently on page 1 (real-time disappearance via `onSnapshot`); items on any paginated tail page have no live listener, so `markRemovedInList` is what removes them optimistically. Both code paths result in the item disappearing from the rendered list without waiting for a resubscribe. `connectionState` and the offline banner are unaffected by this path — they key only on the head subscription's cache metadata.
 - "Load" calls `onLoad(record)` — parent step handles field population and auto-save logic
+- Pagination: when `useFavorites().hasMore === true`, renders a "Show older" button at the tail. Clicking it calls `loadMore()`. After items append, focus moves to the first newly-loaded item for keyboard continuity
+- Offline state: when `useFavorites().connectionState === 'stale'`, renders a non-blocking inline banner ("Offline — showing last saved list") above the list. The banner disappears automatically when `connectionState` returns to `'live'`. The banner region is marked `aria-live="polite"` so its appearance is announced
+
+### Accessibility contract (WCAG 2.1 AA — FR-016, SC-007)
+
+- Toggle button rendered as `<button aria-expanded aria-controls={panelId}>`
+- Panel container: `role="region" aria-label={phaseLabel}`
+- Items wrapped in `role="list"` / `role="listitem"`; Load and Remove are `<button>` with accessible names including the item preview
+- Sort: either `<select aria-label="Sort favorites">` or `<button role="radio">` set inside `role="radiogroup" aria-label="Sort order"`
+- "Show older" button has accessible name and `aria-busy` while loading
+- Count badge (rendered by step header, not panel) lives in an `aria-live="polite"` region so increments/decrements are announced
+- Focus management: opening the panel moves focus to the first interactive control (usually the sort toggle); `Escape` closes and returns focus to the toggle
+- RTL: Arabic content previews retain `dir="rtl"`; focus order follows DOM order regardless of visual direction
+- Tested via axe-core (automated) and keyboard-only manual pass (SC-007)
 
 ---
 

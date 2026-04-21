@@ -113,9 +113,11 @@ A user loads a saved design in Step 4 and wants to iterate on it. They click "Ed
 - What happens when a user tries to load a favorite whose underlying generation record has been deleted? The system should show a "This saved item is no longer available" message and offer to remove it from favorites.
 - What happens when a user loads a favorite into a step but the step's data schema has changed since the favorite was saved? The system should load available fields and leave missing fields empty with a notice.
 - What happens when two team members simultaneously edit and save the same favorite? The last write wins, and the other user sees the updated version on their next panel refresh.
-- What happens when a user's workspace membership is revoked? Team favorites from that workspace should no longer appear in their panel.
+- What happens when a user's workspace membership is revoked? All favorites bearing that `workspaceId` — both teammates' saves and the ex-member's own — disappear from their panel. Records stay attached to the workspace; none follow the user into personal scope. The ex-member's personal-scope favorites (records with no `workspaceId`, or saved before joining the workspace) are unaffected.
 - What happens when the favorites panel is open and the user bookmarks a new item from the current step? The new item should appear in the panel in real time.
 - What happens when a user clicks "Load" while they have unsaved edits in the current step? The system auto-saves (bookmarks) the current output first, then loads the selected favorite.
+- What happens when a user or workspace has more than 100 favorites in a single phase? Per FR-014, server-side paging is fixed to timestamp-descending order: the first page contains the 100 items with the most recent `timestamp`, and each "Show older" action loads the next older page of 100 by the same timestamp cursor. The active sort toggle (newest / oldest / alphabetical from FR-004) only rearranges the currently-loaded set client-side — it never changes the server cursor or the set of items that a "Show older" click fetches. Pagination continues from the timestamp cursor until all items are reachable.
+- What happens when the Firestore snapshot connection is lost mid-session? The panel keeps displaying the last successful snapshot, shows an inline "Offline — showing last saved list" banner, and automatically resumes live updates when the connection recovers — no manual retry or refresh required.
 
 ## Clarifications
 
@@ -125,6 +127,14 @@ A user loads a saved design in Step 4 and wants to iterate on it. They click "Ed
 - Q: What happens when "Load" would overwrite unsaved work in the current step? → A: Auto-save then load — system automatically bookmarks the current work before loading the favorite.
 - Q: How are items in the favorites panel sorted? → A: User-sortable — default newest first, with a toggle to switch between newest/oldest/alphabetical.
 
+### Session 2026-04-21
+
+- Q: Can a team member mark a favorite as private (personal-only) while working in a team workspace? → A: No — team workspaces auto-share every favorite; there is no private-in-team mode. Solo users (no active workspace) remain personal-only by construction.
+- Q: What is the maximum number of favorites shown in a panel per phase, and how are overflow items accessed? → A: Soft cap of 100 newest items per phase by default, with a "Show older" control that loads the next page of 100. No hard cap on total favorites stored.
+- Q: When a user's workspace membership is revoked, what happens to favorites they personally saved in that workspace? → A: Favorites stay with the workspace. The ex-member loses access to every favorite bearing that `workspaceId` — both teammates' saves and their own. No records follow the user into personal scope.
+- Q: What does the favorites panel show when the Firestore snapshot connection is lost or errors transiently? → A: Keep the last successful snapshot visible, surface a non-blocking inline banner ("Offline — showing last saved list"), and auto-resume live updates when the connection recovers. No manual retry required.
+- Q: What accessibility standard must the favorites panel meet? → A: WCAG 2.1 AA — full keyboard operability, visible focus states, ARIA labels on every interactive control (toggle, Load, Remove, sort, Show older), and `aria-live` announcement of count-badge changes.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -132,16 +142,19 @@ A user loads a saved design in Step 4 and wants to iterate on it. They click "Ed
 - **FR-001**: System MUST load and display the accurate saved/unsaved state of the bookmark icon for every generation when the page loads.
 - **FR-002**: System MUST provide a real-time subscription to the user's favorited generations, filtered by content phase (hooks, concepts, render, caption).
 - **FR-003**: System MUST display a per-step favorites panel accessible via a toggle button in each step header (Steps 2–5).
-- **FR-004**: Each favorites panel MUST show: content preview, date saved, and "Load" and "Remove from favorites" actions for each item. Items MUST be sortable by the user (newest first, oldest first, alphabetical) with newest first as the default.
+- **FR-004**: Each favorites panel MUST show: content preview, date saved, and "Load" and "Remove from favorites" actions for each item. Items MUST be sortable by the user with three options — newest first, oldest first, alphabetical — and newest first MUST be the default. The **alphabetical** sort keys on the item's primary text preview: `hookText` for the hooks phase, `conceptText` for concepts, `captionText` for captions. For the **render** phase, items are images with no text key; alphabetical on `render` MUST therefore fall through to the underlying timestamp order (equivalent to newest-first) rather than mixing image items into a meaningless text comparison.
 - **FR-005**: Clicking "Load" on a favorite MUST populate the corresponding step's editable fields with the saved content data. If the step has unsaved work, the system MUST automatically bookmark the current output before loading the favorite.
 - **FR-006**: System MUST support updating an existing favorite record with new output data after the user edits and regenerates.
-- **FR-007**: After regenerating from a loaded favorite, the system MUST prompt the user to either overwrite the existing favorite or keep both versions.
-- **FR-008**: System MUST scope favorites to the active workspace when the user is a team member or team owner, showing all team members' favorites within that workspace. All team members have full access (view, load, edit, remove) to any favorite in the workspace.
-- **FR-009**: When no workspace is active, favorites MUST be scoped to the individual user only.
+- **FR-007**: After regenerating from a loaded favorite, the system MUST display a centered modal dialog over a dimmed page backdrop offering two actions — "Yes, update" (overwrites the existing favorite via `updateFavoriteRecord`) and "Keep both" (bookmarks the new generation as a separate favorite alongside the original). Clicking the dimmed backdrop MUST cancel the prompt without applying either action and MUST clear the `loadedFavoriteId` tracking. The prompt MUST NOT appear unless a favorite was previously loaded in that step (i.e., `loadedFavoriteId` is non-null at the moment regeneration completes).
+- **FR-008**: System MUST scope favorites to the active workspace when the user is a team member or team owner, showing all team members' favorites within that workspace. All team members have full access (view, load, edit, remove) to any favorite in the workspace. There is no private-in-team mode: when a user is in an active workspace, every favorite they create is automatically team-visible, and no visibility toggle is exposed.
+- **FR-009**: When no workspace is active, favorites MUST be scoped to the individual user only. Favorites a user saved while a member of a workspace MUST remain attached to that workspace and MUST NOT migrate into the user's personal scope if the user's workspace membership is later revoked.
 - **FR-010**: Each step's "Saved [X]" toggle button MUST display a real-time count badge showing the number of favorites for that phase.
 - **FR-011**: The "Edit & Re-generate" action on a saved design MUST restore the original generation's input fields and navigate the user to the blueprint stage (Step 3).
 - **FR-012**: Favorites panel MUST display an appropriate empty state message when no favorites exist for a given phase.
 - **FR-013**: Removing a favorite MUST immediately remove the item from the panel without requiring a page refresh.
+- **FR-014**: Each favorites panel MUST render at most 100 items per phase on initial open. Server-side pagination MUST use a fixed timestamp-descending order (newest first) and MUST expose a "Show older" control that loads the next page of 100 timestamp-descending items when more exist. The user's active sort (newest / oldest / alphabetical from FR-004) MUST be applied client-side to the currently-loaded set after each page arrives; it MUST NOT change the server's pagination cursor. There is no hard cap on the total number of favorites a user or workspace may store.
+- **FR-015**: When the Firestore subscription is serving from offline cache (e.g., the client is offline, or the network is dropping) or when its error callback fires, the panel MUST continue to display the last successful snapshot, MUST surface a non-blocking inline banner indicating the list is offline/stale, and MUST automatically resume live updates when the server becomes reachable again without requiring user action. Implementations MUST detect cache-served snapshots via the Firestore subscription's metadata (not only via error callbacks) so transient offline states are surfaced before the SDK escalates to an error.
+- **FR-016**: The favorites panel and its controls MUST meet WCAG 2.1 AA. Specifically: (a) the "Saved [X]" toggle, every list item, Load, Remove, sort control, and "Show older" control MUST be operable by keyboard with a visible focus indicator; (b) every interactive control MUST expose an accessible name via ARIA or text; (c) count-badge changes and snapshot-offline banner appearance MUST be announced via an `aria-live` region; (d) RTL content previews MUST preserve `dir="rtl"` and correct focus order.
 
 ### Key Entities
 
@@ -159,12 +172,15 @@ A user loads a saved design in Step 4 and wants to iterate on it. They click "Ed
 - **SC-004**: Team members in the same workspace see each other's favorites without any additional configuration or manual sharing steps.
 - **SC-005**: 90% of users who save a favorite successfully load and reuse it within the same session or a future session.
 - **SC-006**: The favorites count badge accurately reflects the current count at all times, including after add/remove operations.
+- **SC-007**: An automated WCAG 2.1 AA audit (e.g., axe-core) on the favorites panel reports zero critical or serious violations, and a manual keyboard-only pass can open the panel, focus each item, trigger Load and Remove, change sort, and paginate via "Show older" without using a pointing device.
 
 ## Assumptions
 
 - The existing `feedback.savedToFavorites` field on generation records is the source of truth for favorite status — no new collection is needed.
 - The existing `toggleFavorite` function in `feedbackService` works correctly for adding/removing favorites and does not need to be rewritten.
 - The `billingState` from Phase 8 is available and reliably provides `isTeamMember`, `isTeamOwner`, and workspace context for team scoping.
-- The `generations` collection already contains all necessary output fields (`hookText`, `subheadText`, `conceptText`, `buildPlan`, `imageUrl`, `captionText`) and input fields for re-generation.
+- The `generations` collection already contains all necessary output fields (`hookText`, `subhead`, `conceptText`, `buildPlan`, `imageUrl`, `captionText`) and input fields for re-generation.
+- Generation records carry a `workspaceId` field populated at creation time; team-scoped queries rely on this field being indexable alongside `feedback.savedToFavorites` and `output.phase`.
+- The existing `PerformanceDashboard.tsx` Favorites tab (read-only, non-team-scoped) is out of scope for this feature; per-step panels become the primary favorites surface, but the dashboard tab is not modified or removed.
 - Real-time subscriptions via Firestore snapshots are the appropriate mechanism for live updates in the favorites panel.
 - The step UI components (Steps 2–5) expose state setters or a store mechanism that allows the favorites panel to inject loaded data into the active step's editable fields.
