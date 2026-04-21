@@ -7,6 +7,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { SYSTEM_TOV, SYSTEM_CONCEPTS, SYSTEM_RENDER, SYSTEM_CAPTION, getLanguageInstruction } from "./promptConstants.js";
+import { resolveEntitlement, type StoredPlan } from "./entitlements.js";
+import { HttpsError } from "firebase-functions/v2/https";
 import { RETARGETING_OBJECTION_DATA, getBestAngleForObjection, buildNormalizedRetargetingContext, getRetargetingPromptBlock } from "./retargetingObjections.js";
 import { LANGUAGE_RULES, SLIPPERY_SLIDE, HEADLINE_TYPES, COLD_TRAFFIC_RULES, RETARGETING_RULES, BELIEF_SHIFTING_FRAMEWORK, QUALITY_CHECKLIST } from "./copywriting_knowledge.js";
 import { getHookAnglePrompt, getHookAngleVisualDirection, getHookAngleCaptionStrategy, getAngleVariationBlueprint, getAnglePlusDeliveryInstruction, getAngleValidationChecklist } from "./knowledge/hookAnglesKnowledge.js";
@@ -16,7 +18,7 @@ import { getCopywritingStrategyPrompt, getCopywritingStrategyCaptionStructure, g
 import { getOfferHookPsychology, getCreativeModeConceptInstruction, getCreativeModeBuildPlanInstruction, getOfferCaptionStructure } from "./knowledge/offerCreativeModes.js";
 import { resolveCreativeSpec, getResolvedSpecPromptBlock, getCaptionCreativeModeAnchors, validateCombination, CREATIVE_MODE_CATALOG as _MODE_CATALOG, type ResolvedCreativeSpec, getSubStyleModeFusion, getBeforeAfterSubStyleFusion } from "./creativeResolver.js";
 import { compileFullContract, getContractRenderBlock, getContractCaptionBlock, getContractForScoring, type FullLayoutContract, type OverlayDataFilter } from "./layoutContract.js";
-import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, parseBuildPlanEnvelope, parseStructuredBuildPlanResponse, serializeBuildPlanEnvelope, validateStructuredBuildPlan, validateCopyFidelity, stripTechnicalPrompt, TECHNICAL_PROMPT_START, TECHNICAL_PROMPT_END, type BuildPlanSlotMap, type ContractCheckResult, type StructuredBuildPlanPayload } from "./buildPlanSlotMap.js";
+import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, parseBuildPlanEnvelope, parseStructuredBuildPlanResponse, serializeBuildPlanEnvelope, validateStructuredBuildPlan, validateCopyFidelity, stripTechnicalPrompt, TECHNICAL_PROMPT_START, TECHNICAL_PROMPT_END, type BuildPlanSlotMap, type ContractCheckResult, type StructuredBuildPlanPayload, type CopyFidelityFields, type CopyFidelityResult } from "./buildPlanSlotMap.js";
 import { compileModePayload, getModePayloadPromptBlock, getModePayloadPromptBlock_RenderSafe, getModePayloadCaptionAnchors, extractAuthorizedNumbers, getNumericFidelityPolicy, type ModePayload, type NumericFidelityPolicy } from "./modeFieldSchema.js";
 import { compositeOfferOverlay, isOverlayAvailable, extractOfferFacts, validateResolvedOfferFacts } from "./offerOverlay.js";
 import { validateCaption, validateArabicCompliance, validateBlueprintLanguage, validateBlueprintModeContribution, validateBlueprintMinimalStyle, sanitizeReferenceAdSummary, validateLanguageQuality, type CaptionValidationInput, type CaptionQualityResult, type CaptionQualityCheck } from "./captionValidator.js";
@@ -95,6 +97,14 @@ function resolveVisualSubStyle(
 function isTextOnlyMode(inputs: AdInputs): boolean {
     const modes = (inputs as any).offerCreativeMode || ['standard_hero'];
     return modes.includes('text_only');
+}
+
+/** Centralized check: before_after can come from creative mode OR legacy hook angle path.
+ *  Pass effectiveAngle when available to use the resolved angle instead of raw inputs. */
+function isBeforeAfterSelection(inputs: AdInputs, effectiveAngle?: string | null): boolean {
+    const modes = (inputs as any).offerCreativeMode || [];
+    const angle = effectiveAngle !== undefined ? effectiveAngle : inputs.coldHookAngle;
+    return modes.includes('before_after') || angle === 'before_after';
 }
 
 function containsUnresolvedCommercialPlaceholders(value: string): boolean {
@@ -714,18 +724,7 @@ ${isSquare ? '- 1:1 EXECUTION: Stack cards as a HORIZONTAL strip below the hero,
 ${isWide ? '- 16:9 EXECUTION: Hero left 45%, stack right 45% — generous horizontal space for wider cards with more detail per card.' : ''}`);
     }
 
-    if (secondaryMode === 'module_preview') {
-        parts.push(`
-PAIR EXECUTION — HERO + MODULE PREVIEW (PREMIUM):
-The curriculum card is the PROOF that this is a real structured course, not vague coaching.
-- Module card: render as a FLOATING UI PANEL with clean rounded corners, subtle shadow, and border
-- Each module row: numbered (01, 02, 03...) + title text — clearly separated rows with dividers
-- Progress bar: render at the top of the card as a partially-filled gradient bar (e.g., 40% filled)
-- Card should look like a REAL APP SCREEN or DASHBOARD — clean, modern, typographically precise
-- Hero teaching/presenting gesture beside the card — NOT blocking the module list
-${isTall ? '- 9:16 EXECUTION: Card can be TALLER with more module rows visible (5-6). Hero upper portion, card extending down the right half.' : ''}
-${isSquare ? '- 1:1 EXECUTION: Compact card with 3-4 key modules, hero to one side. Card occupies at least 35% of canvas.' : ''}`);
-    }
+
 
     if (secondaryMode === 'speaker_card' || primaryMode === 'speaker_card') {
         parts.push(`
@@ -753,15 +752,7 @@ ${isTall ? '- 9:16 EXECUTION: Larger ticket with MORE detail — extended perfor
 ${isSquare ? '- 1:1 EXECUTION: Compact ticket, tighter spacing. Portrait smaller. Focus on event title and metadata readability.' : ''}`);
     }
 
-    if ((primaryMode === 'webinar_screen' || secondaryMode === 'webinar_screen') && (primaryMode === 'day_strip' || secondaryMode === 'day_strip')) {
-        parts.push(`
-PAIR EXECUTION — WEBINAR SCREEN + DAY STRIP:
-Two distinct visual elements must BOTH be clearly visible:
-- Screen: realistic laptop/monitor showing session title with LIVE badge — occupies upper/left portion
-- Day strip: 3-5 day NODES as designed circles/hexagons with progression path — occupies lower/right portion
-- Both elements must have their own visual space — do NOT merge them into one
-${isTall ? '- 9:16 EXECUTION: Screen upper 40%, day strip lower 40%, with clear separation. Day nodes vertical progression.' : ''}`);
-    }
+
 
     if ((primaryMode === 'book_mockup' || secondaryMode === 'book_mockup') && (primaryMode === 'device_mockup' || secondaryMode === 'device_mockup')) {
         parts.push(`
@@ -775,31 +766,9 @@ Both products must be clearly visible as a BUNDLE — not one dominating and the
 ${isSquare ? '- 1:1 EXECUTION: Products centered with headline above and CTA below. Tight but balanced arrangement.' : ''}`);
     }
 
-    if (secondaryMode === 'day_strip' || primaryMode === 'day_strip') {
-        if (!parts.some(p => p.includes('DAY STRIP'))) {
-            parts.push(`
-PAIR EXECUTION — DAY STRIP (PREMIUM):
-Day progression nodes must be DESIGNED elements, not just text labels.
-- Each node: styled circle/hexagon/badge with day number and short keyword
-- Progression path: visible connecting line/arrow between nodes
-- Day 1: HIGHLIGHTED with glow, brighter accent, or pulsing effect
-${isTall ? '- 9:16 EXECUTION: VERTICAL day progression top-to-bottom using full height. Each node larger with more detail.' : ''}
-${isSquare ? '- 1:1 EXECUTION: Horizontal strip across the center. Compact but each node still individually distinct.' : ''}`);
-        }
-    }
 
-    if (secondaryMode === 'limited_access' || primaryMode === 'limited_access') {
-        parts.push(`
-PAIR EXECUTION — LIMITED ACCESS / VIP GATE (PREMIUM):
-The VIP/exclusive element must be a STRUCTURAL VISUAL ELEMENT — not just text saying "exclusive".
-- Gate/rope: render a REAL velvet rope, ornate door frame, or exclusive barrier with 3D depth
-- Behind the gate: a blurred but RECOGNIZABLE luxury scene (gold-lit space, premium lounge, exclusive event)
-- "Limited spots" badge: render as a DESIGNED UI ELEMENT — ribbon/seal/badge shape, NOT floating text
-- Urgency counter: render as a real COUNTDOWN DISPLAY or SEATS-REMAINING indicator panel
-- The hero stands AT or NEAR the entrance with an inviting gesture
-${isTall ? '- 9:16 EXECUTION: Gate as a FULL-HEIGHT doorway — hero at threshold, luxury scene visible through opening, badges along the side.' : ''}
-${isSquare ? '- 1:1 EXECUTION: Gate horizontal across center, hero above inviting, blurred luxury below.' : ''}`);
-    }
+
+
 
     if (secondaryMode === 'webinar_screen' || primaryMode === 'webinar_screen') {
         if (!parts.some(p => p.includes('WEBINAR SCREEN'))) {
@@ -1501,7 +1470,7 @@ inputs.coldHookAngle === 'urgency' ? `✅ URGENCY: HOOK_TEXT MUST contain a TIME
 inputs.coldHookAngle === 'scarcity' ? `✅ SCARCITY: HOOK_TEXT MUST contain a QUANTITY LIMIT — "فقط X مقاعد/آخر X أماكن/محدود/X فقط". The reader must feel supply is running out. No scarcity hook passes without a limit word.` :
 inputs.coldHookAngle === 'social_proof' ? `✅ SOCIAL PROOF: HOOK_TEXT MUST reference OTHER PEOPLE's results — a count of clients, a person's name, a group achievement ("X مدرب/عميل حقق"). No social proof hook passes without referencing others.` :
 inputs.coldHookAngle === 'logical_authority' ? `✅ LOGICAL AUTHORITY: HOOK_TEXT MUST contain a CREDENTIAL or TRACK RECORD — "X عميل/X سنة خبرة/أول نظام/ساعدنا X". Must establish WHY the speaker has authority. No authority hook passes without proof.` :
-inputs.coldHookAngle === 'before_after' ? `✅ BEFORE/AFTER: HOOK_TEXT MUST contain TWO contrasting states — a BEFORE state AND an AFTER state. Use transition markers: من...إلى, قبل...بعد, كان...أصبح, بدلاً من. Both states must be specific.` :
+isBeforeAfterSelection(inputs) ? `✅ BEFORE/AFTER: HOOK_TEXT MUST contain TWO contrasting states — a BEFORE state AND an AFTER state. Use transition markers: من...إلى, قبل...بعد, كان...أصبح, بدلاً من. Both states must be specific.` :
 inputs.coldHookAngle === 'emotional' ? `✅ EMOTIONAL: HOOK_TEXT MUST NAME an emotion explicitly or use a VISCERAL verb — يخاف, يحلم, يشعر, يتمنى, يكره, الخوف, الأمل, الإحباط. The reader must FEEL something, not just think.` :
 inputs.coldHookAngle === 'fear_of_missing_out' ? `✅ FOMO: HOOK_TEXT MUST make the reader feel LEFT BEHIND — reference what others are doing/gaining while they hesitate. Use "بينما أنت/غيرك/الآخرون/فاتك". Must create jealousy.` :
 inputs.coldHookAngle === 'future_based' || inputs.coldHookAngle === 'future_pacing' ? `✅ FUTURE PACING: HOOK_TEXT MUST paint a FUTURE SCENARIO — start with or contain "تخيل/بعد X أيام/ماذا لو/يوم ما" or describe a future state. The reader must SEE their desired future.` :
@@ -2166,7 +2135,7 @@ DO NOT return the other concepts.`;
         // ═══ RETARGETING CONTEXT (normalized, shared across steps) ═══
         const _rtCtx = buildNormalizedRetargetingContext(inputs as any);
         const _rtConceptBlock = getRetargetingPromptBlock(_rtCtx);
-        const _effectiveColdHookAngle = _rtCtx.isRetargeting ? undefined : inputs.coldHookAngle;
+        const _effectiveColdHookAngle = _rtCtx.isRetargeting ? null : inputs.coldHookAngle;
 
         const prompt = `
 [VISUAL ARCHITECT V5.0]
@@ -2183,10 +2152,20 @@ DO NOT return the other concepts.`;
           const soloMode = isSolo ? modes[0] : null;
           const pairMode = hasHero && secondary.length > 0 ? secondary[0] : null;
 
+          // before_after is a solo mode but REQUIRES hero on both halves — handle separately
+          if (isBeforeAfterSelection(inputs, _effectiveColdHookAngle)) {
+              return `
+═══ CREATIVE MODE CONTRACT (TOP PRIORITY — READ FIRST) ═══
+MODE: BEFORE_AFTER (SPLIT-SCREEN — HERO REQUIRED ON BOTH HALVES)
+BEFORE/AFTER SPLIT — Canvas split into two halves. BEFORE half: hero in problem state with struggle expression. AFTER half: same hero in result state with confident expression. Visible divider between halves. NO "BEFORE"/"AFTER" text labels. Same face both halves.
+⚠️ The SAME hero/person MUST appear in BOTH halves. Props transform logically (empty→full, cheap→premium, cluttered→organized).
+═══════════════════════════════════════════════════════════`;
+          }
+
           if (soloMode) {
               const soloLabels: Record<string, string> = {
                   value_stack: 'This ad has NO hero person. The value stack IS the entire design. Full-width layout with offer items as visual focus. Background is thematic only.',
-                  module_preview: 'This ad shows ONLY the curriculum card. NO hero person. The card is the centerpiece filling 60%+ of canvas.',
+
                   event_ticket: 'TICKET-ONLY design. NO presenter visible. The ticket fills the canvas with premium details (date, time, title, seat count).',
                   webinar_screen: 'SCREEN-ONLY design. Laptop/monitor showing the webinar. NO presenter beside it.',
                   speaker_card: 'SPEAKER PORTRAIT — keynote stage environment mandatory. Dramatic lighting, credentials bar.',
@@ -2203,14 +2182,14 @@ ${soloLabels[soloMode] || 'This ad features ONLY this creative element without a
           } else if (pairMode) {
               const pairWeights: Record<string, string> = {
                   value_stack: 'VISUAL WEIGHT: Hero 45% | Value Stack 45% | Text 10%. Stack items must be INDIVIDUALLY READABLE cards.',
-                  module_preview: 'VISUAL WEIGHT: Hero 45% | Module Card 45% | Text 10%. Card must show 4+ module titles, each READABLE.',
+
                   event_ticket: 'VISUAL WEIGHT: Hero 40% | Ticket 50% | Text 10%. Ticket must show DATE, TIME, TITLE as READABLE text.',
                   speaker_card: 'VISUAL WEIGHT: Hero 50% | Stage/Credentials 40% | Text 10%. STAGE ENVIRONMENT + lower-third bar MANDATORY.',
-                  day_strip: 'VISUAL WEIGHT: Hero 50% | Day Strip 40% | Text 10%. Each day node INDIVIDUALLY LABELED with number + keyword.',
+
                   webinar_screen: 'VISUAL WEIGHT: Hero 40% | Screen 50% | Text 10%. Screen must show LEGIBLE title + LIVE badge.',
                   book_mockup: 'VISUAL WEIGHT: Hero 45% | Book 45% | Text 10%. 3D book with readable cover title.',
                   device_mockup: 'VISUAL WEIGHT: Hero 45% | Device 45% | Text 10%. Device screen shows content, not blank.',
-                  limited_access: 'VISUAL WEIGHT: Hero 40% | VIP Gate 50% | Text 10%. Gate/rope must be a REAL structural element.',
+
               };
               return `
 ═══ CREATIVE MODE CONTRACT (TOP PRIORITY — READ FIRST) ═══
@@ -2269,8 +2248,8 @@ ${getHookTypeVisualDirection(inputs.hookType)}` : ''}
       ${_effectiveColdHookAngle ? `
 HOOK ANGLE VISUAL OVERRIDE: ${(_effectiveColdHookAngle || '').toUpperCase()}
 ${getHookAngleVisualDirection(_effectiveColdHookAngle || '')}
-
-${_effectiveColdHookAngle === 'before_after' ? `
+` : ''}
+      ${isBeforeAfterSelection(inputs, _effectiveColdHookAngle) ? `
 BEFORE/AFTER SPLIT COMPOSITION (MANDATORY):
 - SPLIT the canvas into TWO CLEAR HALVES (left vs right, or top vs bottom)
 - BOTH halves show the SAME HERO — same face, same person, different life chapter
@@ -2284,7 +2263,6 @@ BEFORE/AFTER SPLIT COMPOSITION (MANDATORY):
 - VISIBLE DIVIDER: diagonal line, gradient split, torn edge
 - STRICT: Do NOT render any "BEFORE"/"AFTER" or "قبل"/"بعد" text labels on the image. The visual contrast alone tells the story.
 - This is NOT optional - the user specifically selected before/after split design
-` : ''}
 ` : ''}
       ${(() => {
                 // Concept generation uses resolver spec for creative mode instructions
@@ -2961,7 +2939,7 @@ ${fusionParts.join('\n\n')}
           // ── Ticket 9: Before/after + sub-style fusion ──
           const _sub9 = resolveVisualSubStyle(inputs);
           const _angle9 = inputs.coldHookAngle;
-          if (!_sub9 || _angle9 !== 'before_after') return '';
+          if (!_sub9 || !isBeforeAfterSelection(inputs, _effectiveColdHookAngle)) return '';
           const fusion = getBeforeAfterSubStyleFusion(_sub9);
           if (!fusion) return '';
           return `
@@ -3095,36 +3073,38 @@ ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? '' : `- IMPORTANT: The ho
 - Do NOT skip or omit any field in any concept. ALL fields are MANDATORY for every concept.
 - Each field label must be on its own line, followed by a colon, then the content.
 
-  ${_effectiveColdHookAngle === 'before_after' ? (resolveStyleFamily(inputs) === 'minimal' ? `
-  CONCEPT_START_[INDEX]
-SUBJECT_ACTION: [⚠️ BEFORE/AFTER SPLIT — describe BOTH halves${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? ' in Arabic' : ''}:
+  ${isBeforeAfterSelection(inputs, _effectiveColdHookAngle) ? (resolveStyleFamily(inputs) === 'minimal' ? `
+  CONCEPT_START
+SUBJECT_ACTION: ⚠️ BEFORE/AFTER SPLIT — describe BOTH halves${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? ' in Arabic' : ''}:
 ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? `"النصف الأيسر (قبل):" — البطل في حالة المعاناة. ملابس بسيطة، تعبير مُرهق. خلفية بلون واحد بارد (رمادي/أزرق فاتح).
 "النصف الأيمن (بعد):" — نفس البطل في حالة النجاح. ملابس مهنية أنيقة، تعبير واثق. خلفية بلون واحد دافئ (أبيض/بيج).
 "الفاصل:" — خط عمودي نظيف أو تدرج بسيط يفصل النصفين.` : `"Left half (Before):" — Hero in struggle state. Simple clothing, tired expression. Plain cool solid background (grey/light blue).
 "Right half (After):" — Same hero in success state. Professional polished attire, confident expression. Plain warm solid background (white/beige).
-"Divider:" — Clean vertical line or simple gradient separating the halves.`}]
-ENVIRONMENT_DESC: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'مينيمال: كلا النصفين بخلفية بلون واحد فقط. بدون مشاهد أو أجواء أو بيئات سينمائية أو مناظر. التباين عبر اللون والملابس والتعبير فقط. البطل معزول في كل نصف.' : 'MINIMAL: Both halves use plain solid color backgrounds only. No scenes, no atmosphere, no cinematic environments, no scenery. Contrast through color, clothing, and expression only. Subject isolated in each half.'}]
-MOOD_EMOTION: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إحباط هادئ. النصف الأيمن: ثقة هادئة.' : 'Left: quiet frustration. Right: quiet confidence.'}]
-LIGHTING_LOGIC: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إضاءة استوديو مسطحة باردة. النصف الأيمن: إضاءة استوديو ناعمة دافئة. ممنوع: تأثيرات درامية، إضاءة حجمية، الساعة الذهبية.' : 'Left: flat cool studio lighting. Right: soft warm studio lighting. FORBIDDEN: dramatic effects, volumetric light, golden hour, rim light.'}]
-TEXT_LAYOUT: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'العنوان يمتد فوق النصفين. فراغ سلبي واسع. الـ CTA في الأسفل.' : 'Headline spans both halves. Generous negative space. CTA at bottom.'}]
-BUTTON_POSITION: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'أسفل الصورة، كامل العرض.' : 'Bottom of image, full width.'}]
-BRANDING_LOGIC: [${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'شعار Box B إن وجد — في الوسط أو على الفاصل.' : 'Box B logo if present — centered or on divider.'}]
-TECHNICAL_PROMPT: [ENGLISH ONLY - SPLIT-SCREEN BEFORE/AFTER composition. MINIMAL STYLE: Both halves use plain solid color backgrounds — LEFT cool grey/blue, RIGHT warm white/beige. Split screen composition with clean vertical divider. Identical soft even studio lighting on both sides. Subject isolated on each side. NO environment scenes, NO cinematic environments, NO environmental storytelling, NO scenic environment, NO atmospheric effects, NO bokeh, NO volumetric light, NO golden hour, NO dramatic lighting, NO depth of field. Style: Premium clean ad (Apple/Nike aesthetic). STRICT: Do NOT render any "BEFORE"/"AFTER" text labels. NO TEXTURES ON FACE.]
-CONCEPT_END_[INDEX]
+"Divider:" — Clean vertical line or simple gradient separating the halves.`}
+ENVIRONMENT_DESC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'مينيمال: كلا النصفين بخلفية بلون واحد فقط. بدون مشاهد أو أجواء أو بيئات سينمائية أو مناظر. التباين عبر اللون والملابس والتعبير فقط. البطل معزول في كل نصف.' : 'MINIMAL: Both halves use plain solid color backgrounds only. No scenes, no atmosphere, no cinematic environments, no scenery. Contrast through color, clothing, and expression only. Subject isolated in each half.'}
+MOOD_EMOTION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إحباط هادئ. النصف الأيمن: ثقة هادئة.' : 'Left: quiet frustration. Right: quiet confidence.'}
+LIGHTING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إضاءة استوديو مسطحة باردة. النصف الأيمن: إضاءة استوديو ناعمة دافئة. ممنوع: تأثيرات درامية، إضاءة حجمية، الساعة الذهبية.' : 'Left: flat cool studio lighting. Right: soft warm studio lighting. FORBIDDEN: dramatic effects, volumetric light, golden hour, rim light.'}
+TEXT_LAYOUT: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'العنوان يمتد فوق النصفين. فراغ سلبي واسع. الـ CTA في الأسفل.' : 'Headline spans both halves. Generous negative space. CTA at bottom.'}
+BUTTON_POSITION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'أسفل الصورة، كامل العرض.' : 'Bottom of image, full width.'}
+BRANDING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'شعار Box B إن وجد — في الوسط أو على الفاصل.' : 'Box B logo if present — centered or on divider.'}
+TECHNICAL_PROMPT: ENGLISH ONLY - SPLIT-SCREEN BEFORE/AFTER composition. MINIMAL STYLE: Both halves use plain solid color backgrounds — LEFT cool grey/blue, RIGHT warm white/beige. Split screen composition with clean vertical divider. Identical soft even studio lighting on both sides. Subject isolated on each side. NO environment scenes, NO cinematic environments, NO atmospheric effects. Style: Premium clean ad. STRICT: Do NOT render any "BEFORE"/"AFTER" text labels.
+CONCEPT_END
   ` : `
-  CONCEPT_START_[INDEX]
-SUBJECT_ACTION: [⚠️ BEFORE/AFTER SPLIT — describe BOTH halves in Arabic:
-"النصف الأيسر (قبل):" — وصف البطل في حالة المعاناة المرتبطة بالعنوان. ملابس بسيطة، بيئة فوضوية، تعبير وجه مُرهق.
+  CONCEPT_START
+SUBJECT_ACTION: ⚠️ BEFORE/AFTER SPLIT — describe BOTH halves${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? ' in Arabic' : ''}:
+${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? `"النصف الأيسر (قبل):" — وصف البطل في حالة المعاناة المرتبطة بالعنوان. ملابس بسيطة، بيئة فوضوية، تعبير وجه مُرهق.
 "النصف الأيمن (بعد):" — نفس البطل في حالة النجاح المرتبطة بالمنتج. ملابس فاخرة، بيئة راقية، تعبير واثق.
-"الفاصل:" — خط مائل ذهبي أو تدرج لوني يفصل النصفين.]
-ENVIRONMENT_DESC: [صف بيئتين مختلفتين: بيئة "القبل" (مكتب فوضوي/غرفة ضيقة) وبيئة "البعد" (مكتب فاخر/بهو فندقي). التباين يجب أن يكون صارخاً.]
-MOOD_EMOTION: [النصف الأيسر: إحباط، إرهاق، هشاشة. النصف الأيمن: انتصار، سيطرة، سلطة.]
-LIGHTING_LOGIC: [النصف الأيسر: إضاءة قاسية، باردة، مسطحة. النصف الأيمن: إضاءة سينمائية ذهبية دافئة.]
-TEXT_LAYOUT: [العنوان يمتد فوق النصفين. الـ CTA في الأسفل يمتد على كامل العرض. الفاصل واضح بصرياً.]
-BUTTON_POSITION: [أسفل الصورة، يمتد على كامل العرض فوق خلفية داكنة.]
-BRANDING_LOGIC: [شعار Box B إن وجد — في الوسط أو على الفاصل.]
-TECHNICAL_PROMPT: [ENGLISH ONLY - SPLIT-SCREEN BEFORE/AFTER composition. LEFT=struggle scene with dim cold lighting. RIGHT=success scene with warm golden lighting. Same hero face in both. Diagonal gold divider. Camera: 85mm, f/1.8. Photorealistic. STRICT: Do NOT render any "BEFORE"/"AFTER" or "قبل"/"بعد" text labels on the image. The visual contrast alone tells the story.]
-CONCEPT_END_[INDEX]
+"الفاصل:" — خط مائل ذهبي أو تدرج لوني يفصل النصفين.` : `"Left half (Before):" — Hero in struggle state connected to headline pain. Simple clothing, chaotic environment, tired expression.
+"Right half (After):" — Same hero in success state connected to product promise. Premium clothing, upscale environment, confident expression.
+"Divider:" — Diagonal gold line or gradient split separating the halves.`}
+ENVIRONMENT_DESC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'صف بيئتين مختلفتين: بيئة "القبل" (مكتب فوضوي/غرفة ضيقة) وبيئة "البعد" (مكتب فاخر/بهو فندقي). التباين يجب أن يكون صارخاً.' : 'Two contrasting environments: "Before" (cluttered office/cramped room) and "After" (premium office/hotel lobby). Contrast must be dramatic.'}
+MOOD_EMOTION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إحباط، إرهاق، هشاشة. النصف الأيمن: انتصار، سيطرة، سلطة.' : 'Left: frustration, exhaustion, vulnerability. Right: triumph, control, authority.'}
+LIGHTING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إضاءة قاسية، باردة، مسطحة. النصف الأيمن: إضاءة سينمائية ذهبية دافئة.' : 'Left: harsh, cold, flat lighting. Right: cinematic warm golden lighting.'}
+TEXT_LAYOUT: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'العنوان يمتد فوق النصفين. الـ CTA في الأسفل يمتد على كامل العرض. الفاصل واضح بصرياً.' : 'Headline spans both halves. CTA at bottom full width. Divider visually clear.'}
+BUTTON_POSITION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'أسفل الصورة، يمتد على كامل العرض فوق خلفية داكنة.' : 'Bottom of image, full width over dark background.'}
+BRANDING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'شعار Box B إن وجد — في الوسط أو على الفاصل.' : 'Box B logo if present — centered or on divider.'}
+TECHNICAL_PROMPT: ENGLISH ONLY - SPLIT-SCREEN BEFORE/AFTER composition. LEFT half shows struggle scene with dim cold lighting. RIGHT half shows success scene with warm golden lighting. Same hero face in both halves. Diagonal divider separating halves. STRICT: Do NOT render any "BEFORE"/"AFTER" text labels on the image. The visual contrast alone tells the story.
+CONCEPT_END
   `) : `
   CONCEPT_START_[INDEX]
 SUBJECT_ACTION: [وصف وضعية البطل بالتفصيل.استخدم "البطل" أو "هم/لهم" فقط.صف الملابس والتفاعل مع عناصر المشهد.لا تصف ملامح الوجه - صور Box A ستُستخدم للوجه.]
@@ -3321,8 +3301,8 @@ Selected modes: [${modes.join(' + ')}]
 
                     // Determine if this is a strict pair BEFORE repair (so we know to fail-closed on any failure)
                     const STRICT_PAIRS_SECONDARY = [
-                        'value_stack', 'module_preview', 'speaker_card',
-                        'event_ticket', 'day_strip',
+                        'value_stack', 'speaker_card',
+                        'event_ticket',
                         'webinar_screen', 'book_mockup', 'device_mockup',
                     ];
                     const isStrictPair = modeContribCheck.missingModes.some(m => STRICT_PAIRS_SECONDARY.includes(m));
@@ -3355,9 +3335,6 @@ Selected modes: [${modes.join(' + ')}]
                             }
                         }
                     } catch (e) {
-                        if (e instanceof Error && e.message.includes('strict pair validation')) {
-                            throw e; // Re-throw strict pair failures — NEVER swallow
-                        }
                         // Repair API itself failed (Gemini error, timeout, etc.)
                         console.warn(`⚠️ Blueprint mode repair API failed: ${e}`);
                         if (isStrictPair && !repairSucceeded) {
@@ -3390,7 +3367,12 @@ Selected modes: [${modes.join(' + ')}]
 }
 
 // 3. Build Plan -> USE LOGIC MODEL (Engineer)
-export async function generateBuildPlan(conceptRaw: string, selectedTov: string, inputs: AdInputs, resolvedUniverse: string, currentAspectRatio: AspectRatio, textOverride?: TextOverride): Promise<string> {
+export interface GenerateBuildPlanResult {
+    buildPlan: string;
+    copyFidelityWarning: CopyFidelityResult | null;
+}
+
+export async function generateBuildPlan(conceptRaw: string, selectedTov: string, inputs: AdInputs, resolvedUniverse: string, currentAspectRatio: AspectRatio, textOverride?: TextOverride): Promise<GenerateBuildPlanResult> {
     const _bpModes = (inputs as any).offerCreativeMode || ['standard_hero'];
     const _bpCheck = validateCombination(_bpModes, inputs.coldHookAngle);
     console.log(`🎨 CREATIVE MODE AUDIT [generateBuildPlan]: modes=[${_bpModes.join(',')}] tab=${_bpCheck.resolvedTab || 'none'} valid=${_bpCheck.valid}${_bpCheck.errors.length ? ' errors: ' + _bpCheck.errors.join('; ') : ''}`);
@@ -3412,7 +3394,7 @@ export async function generateBuildPlan(conceptRaw: string, selectedTov: string,
 
     const _bpRtCtx = buildNormalizedRetargetingContext(inputs as any);
     const _bpRtBlock = getRetargetingPromptBlock(_bpRtCtx);
-    const _bpEffectiveAngle = _bpRtCtx.isRetargeting ? undefined : inputs.coldHookAngle;
+    const _bpEffectiveAngle = _bpRtCtx.isRetargeting ? null : inputs.coldHookAngle;
     const buildPlanContract = compileFullContract({
         selectedModes: (inputs as any).offerCreativeMode || ['standard_hero'],
         hookAngle: _bpEffectiveAngle || undefined,
@@ -3442,11 +3424,16 @@ ${_bpRtBlock}
       TEXTS TO RENDER:
 1. Headline: "${hookText}"
 2. Subheadline: "${subheadText}"
-${ctaName ? `3. Action Benefit: "${benefitText}"
-4. Button: "${ctaName}"` : `⚠️ NO BUTTON / NO CTA / NO BENEFIT on this slide. Do NOT render any button, CTA bar, or benefit text. This is a MIDDLE carousel slide — headline and subheadline ONLY.`
+${benefitText ? `3. Action Benefit: "${benefitText}"` : ''}
+${ctaName ? `4. Button: "${ctaName}"
+      OFFER: ${inputs.offerType || 'Not specified'} — match CTA style to this offer type.` : `⚠️ NO BUTTON / NO CTA on this slide. Do NOT render any button or CTA bar. This is a MIDDLE carousel slide.`
         }
       ${inputs.badges ? `5. Badge/Sticker: "${inputs.badges}"` : ''}
-      ${inputs.offerType ? `OFFER: ${inputs.offerType} — match CTA style to this offer type.` : ''}
+      CAMPAIGN CONTEXT:
+      - Product: "${inputs.productName || ''}"
+      - Target Audience: "${inputs.targetAudience || ''}"
+      - Core Challenge: "${inputs.challenges || ''}"
+      - Transformation: "${inputs.transformation || ''}"
       ${inputs.adTone ? `TONE MOOD: ${inputs.adTone.toUpperCase()}
 ${getAdToneVisualMood(inputs.adTone)}` : ''}
       ${_bpEffectiveAngle ? `HOOK ANGLE: ${(_bpEffectiveAngle || '').toUpperCase()}
@@ -3724,25 +3711,45 @@ ${JSON.stringify(machinePlan)}`;
         return bp.slice(s + TECHNICAL_PROMPT_START.length, e).trim();
     };
 
+    const copyFields: CopyFidelityFields = { hookText, subheadText, ctaName, benefitText };
     const MAX_COPY_FIDELITY_ATTEMPTS = 3;
     let bestMachinePlan = machinePlan;
+    let bestFidelityResult: CopyFidelityResult | null = null;
     let copyFidelityPassed = false;
     for (let attempt = 1; attempt <= MAX_COPY_FIDELITY_ATTEMPTS; attempt++) {
         const tp = extractTechnicalPromptFromBlueprint(machinePlan.blueprint);
-        const fidelityOk = tp ? validateCopyFidelity(tp, hookText) : false;
+        const fidelityResult = tp ? validateCopyFidelity(tp, copyFields) : {
+            passed: false,
+            failedFields: (['hookText', 'subheadText', 'ctaName', 'benefitText'] as const).filter(k => copyFields[k]?.trim()),
+        } as CopyFidelityResult;
         const contractOk = structuredValidation.contractCheck.passed;
-        if (fidelityOk && contractOk) {
+        if (fidelityResult.passed && contractOk) {
             copyFidelityPassed = true;
             bestMachinePlan = machinePlan;
+            bestFidelityResult = fidelityResult;
             if (attempt > 1) {
                 console.log(`✅ Copy fidelity + contract passed on attempt ${attempt}`);
             }
             break;
         }
-        // Keep the best plan seen so far (prefer one that passes at least contract)
-        if (contractOk) bestMachinePlan = machinePlan;
+        // Keep the best plan seen so far — prefer hookText present, then fewer failed fields
+        const isBetter = (curr: CopyFidelityResult, best: CopyFidelityResult | null): boolean => {
+            if (!best) return true;
+            const currHasHook = !curr.failedFields.includes('hookText');
+            const bestHasHook = !best.failedFields.includes('hookText');
+            if (currHasHook !== bestHasHook) return currHasHook;
+            return curr.failedFields.length < best.failedFields.length;
+        };
+        if (contractOk) {
+            if (isBetter(fidelityResult, bestFidelityResult)) {
+                bestMachinePlan = machinePlan;
+                bestFidelityResult = fidelityResult;
+            }
+        } else if (isBetter(fidelityResult, bestFidelityResult)) {
+            bestFidelityResult = fidelityResult;
+        }
         if (attempt < MAX_COPY_FIDELITY_ATTEMPTS) {
-            console.warn(`⚠️ Copy fidelity ${fidelityOk ? 'passed' : 'failed'}, contract ${contractOk ? 'passed' : 'failed'} (attempt ${attempt}/${MAX_COPY_FIDELITY_ATTEMPTS}) — rebuilding plan...`);
+            console.warn(`⚠️ Copy fidelity ${fidelityResult.passed ? 'passed' : 'failed (fields: ' + fidelityResult.failedFields.join(', ') + ')'}, contract ${contractOk ? 'passed' : 'failed'} (attempt ${attempt}/${MAX_COPY_FIDELITY_ATTEMPTS}) — rebuilding plan...`);
             machinePlan = await requestStructuredPlan(prompt);
             if (!machinePlan.blueprint || machinePlan.blueprint.length < 80) {
                 if (bestMachinePlan.blueprint && bestMachinePlan.blueprint.length >= 80) {
@@ -3759,8 +3766,11 @@ ${JSON.stringify(machinePlan)}`;
     }
     // Use the best plan even if fidelity didn't pass — soft warning, not hard rejection
     machinePlan = bestMachinePlan;
-    if (!copyFidelityPassed) {
-        console.warn(`⚠️ Copy fidelity warning: hookText may not appear verbatim in TECHNICAL_PROMPT — using best available plan`);
+    const copyFidelityWarning: CopyFidelityResult | null = !copyFidelityPassed && bestFidelityResult
+        ? { passed: false, failedFields: bestFidelityResult.failedFields }
+        : null;
+    if (copyFidelityWarning) {
+        console.warn(`⚠️ Copy fidelity warning: fields [${copyFidelityWarning.failedFields.join(', ')}] may not appear verbatim in TECHNICAL_PROMPT — using best available plan`);
     }
 
     try {
@@ -3782,7 +3792,10 @@ ${JSON.stringify(machinePlan)}`;
         ownership: mergeContentOwnership(ownershipMap, machinePlan.ownership),
     };
 
-    return serializeBuildPlanEnvelope(finalMachinePlan.blueprint, finalMachinePlan);
+    return {
+        buildPlan: serializeBuildPlanEnvelope(finalMachinePlan.blueprint, finalMachinePlan),
+        copyFidelityWarning,
+    };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3904,7 +3917,7 @@ export async function generateFinalAd(
 ): Promise<{ image: string; failureClass?: "numeric_hallucination"; costEstimate?: CostEstimate } | { image: null; errorCode: string; failureClass?: FailureClass; debug?: FinalAdDebugInfo }> {
     // ═══ RETARGETING CONTEXT (normalized) ═══
     const _renderRtCtx = buildNormalizedRetargetingContext(inputs as any);
-    const _renderEffectiveAngle = _renderRtCtx.isRetargeting ? undefined : inputs.coldHookAngle;
+    const _renderEffectiveAngle = _renderRtCtx.isRetargeting ? null : inputs.coldHookAngle;
     const renderStartedAt = Date.now();
     const renderSoftDeadlineMs = 270000;
     const hasTimeBudget = (reserveMs: number): boolean => (Date.now() - renderStartedAt) < (renderSoftDeadlineMs - reserveMs);
@@ -4278,7 +4291,7 @@ SUBHEADLINE VISIBILITY (CRITICAL):
 
             // ── Before/After is handled by the contract's before_after template ──
             // but we add connected-story rules since the contract only defines zones, not narrative
-            const beforeAfterNarrative = inputs.coldHookAngle === 'before_after' ? `
+            const beforeAfterNarrative = isBeforeAfterSelection(inputs, _renderEffectiveAngle) ? `
 BEFORE/AFTER CONNECTED STORY RULES:
 1. Hero MUST appear in BOTH halves — same face, different wardrobe and energy.
 2. BEFORE props must match the HEADLINE's specific pain (not generic sadness).
@@ -5691,8 +5704,13 @@ export async function generateCarouselAngles(
     inputs: AdInputs,
     resolvedUniverse: string,
     slideCount: number,
-    globalRefinement?: string
+    globalRefinement?: string,
+    plan?: StoredPlan
 ): Promise<string> {
+    const carouselDecision = resolveEntitlement({ plan: plan || "none", feature: "carouselSlides", quantity: slideCount });
+    if (!carouselDecision.allowed) {
+        throw new HttpsError("permission-denied", carouselDecision.reason || "carousel_limit_exceeded");
+    }
     const _angRtCtx = buildNormalizedRetargetingContext(inputs as any);
     const campaignType = (inputs as any).campaignType || 'cold';
     const isRetargeting = _angRtCtx.isRetargeting;
@@ -5916,8 +5934,13 @@ export async function generateCarouselSlideCopies(
     inputs: AdInputs,
     slideCount: number,
     resolvedUniverse: string,
-    refinement?: string
+    refinement?: string,
+    plan?: StoredPlan
 ): Promise<CarouselSlideCopy[]> {
+    const carouselDecision = resolveEntitlement({ plan: plan || "none", feature: "carouselSlides", quantity: slideCount });
+    if (!carouselDecision.allowed) {
+        throw new HttpsError("permission-denied", carouselDecision.reason || "carousel_limit_exceeded");
+    }
 
     const hookText = extract(approvedTov, "HOOK_TEXT:", "SUBHEADLINE:");
     // Extract subheadline carefully — stop at STORY_ARC (carousel) or CTA_BUTTON (single)
@@ -6690,24 +6713,27 @@ export async function generateVisualPolishes(currentRender: string, inputs: AdIn
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { detectTestimonialPlatform, buildTestimonialMockup, setTestimonialGeminiCaller } from "./testimonialMockup.js";
-import type { PlatformType, TestimonialSlideResult, TestimonialCarouselResult } from "./types.js";
+import type { PlatformType, TestimonialSlideResult, TestimonialCarouselResult, VisualStyleFamily } from "./types.js";
 import { resolveTestimonialSlideCount } from "./creativeResolver.js";
 
 export { setTestimonialGeminiCaller };
 
+const ALLOWED_STYLES: ReadonlySet<VisualStyleFamily> = new Set(["realistic", "fantasy", "minimal"] as const);
+
 export async function generateTestimonialHookSlide(
     inputs: AdInputs,
     testimonialCount: number,
+    visualStyleFamily: VisualStyleFamily,
 ): Promise<{ hookText: string; subheadText: string }> {
-    const campaignType = (inputs as any).campaignType || 'cold';
-    const isRetargeting = campaignType === 'retargeting';
+    const rtCtx = buildNormalizedRetargetingContext(inputs as any);
     const ctaText = inputs.cta || '';
     const lang = inputs.adLanguage || 'ar_fusha';
     const langInstruction = getLanguageInstruction(lang);
+    const artDirectionBlock = `ART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
 
     let prompt: string;
-    if (isRetargeting) {
-        const objectionText = (inputs as any).retargetingObjection || (inputs as any).retargetingObjectionText || '';
+    if (rtCtx.isRetargeting) {
+        const objectionText = rtCtx.effectiveObjectionText;
         prompt = `Write a RETARGETING carousel hook slide (slide 1) for a testimonial carousel.
 
 CAMPAIGN TYPE: Retargeting (warm traffic)
@@ -6716,6 +6742,8 @@ TESTIMONIAL COUNT: ${testimonialCount} testimonials available as evidence
 CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
+
+${artDirectionBlock}
 
 RULES:
 - The headline MUST name or reference the specific objection: "${objectionText}"
@@ -6728,8 +6756,8 @@ RULES:
 - The tone should feel like "you had a doubt? let me show you something"
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your hook text]
-SUBHEADLINE: [supporting text]`;
+HEADLINE: one line of hook text
+SUBHEADLINE: one line of supporting text`;
     } else {
         prompt = `Write a COLD carousel hook slide (slide 1) for a testimonial carousel.
 
@@ -6738,6 +6766,8 @@ TESTIMONIAL COUNT: ${testimonialCount} testimonials available
 CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
+
+${artDirectionBlock}
 
 RULES:
 - Create curiosity to swipe by teasing social proof WITHOUT showing it
@@ -6749,8 +6779,8 @@ RULES:
 - The tone should feel like "wait until you see this"
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your hook text]
-SUBHEADLINE: [supporting text]`;
+HEADLINE: one line of hook text
+SUBHEADLINE: one line of supporting text`;
     }
 
     const response = await retry(() => callGemini({
@@ -6768,16 +6798,17 @@ SUBHEADLINE: [supporting text]`;
 
 export async function generateTestimonialCloseSlide(
     inputs: AdInputs,
+    visualStyleFamily: VisualStyleFamily,
 ): Promise<{ closeText: string; subheadText: string }> {
-    const campaignType = (inputs as any).campaignType || 'cold';
-    const isRetargeting = campaignType === 'retargeting';
+    const rtCtx = buildNormalizedRetargetingContext(inputs as any);
     const ctaText = inputs.cta || '';
     const lang = inputs.adLanguage || 'ar_fusha';
     const langInstruction = getLanguageInstruction(lang);
+    const artDirectionBlock = `ART DIRECTION: ${visualStyleFamily}. Tone must remain consistent with the rest of this testimonial carousel (hook, mockups, and close all share one art direction).`;
 
     let prompt: string;
-    if (isRetargeting) {
-        const objectionText = (inputs as any).retargetingObjection || (inputs as any).retargetingObjectionText || '';
+    if (rtCtx.isRetargeting) {
+        const objectionText = rtCtx.effectiveObjectionText;
         prompt = `Write a RETARGETING close slide (last slide) for a testimonial carousel.
 
 CAMPAIGN TYPE: Retargeting (warm traffic)
@@ -6785,6 +6816,8 @@ OBJECTION: "${objectionText}"
 CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
+
+${artDirectionBlock}
 
 RULES:
 - This is the FINAL slide after multiple testimonial slides
@@ -6796,8 +6829,8 @@ RULES:
 - Subheadline: max 15 words, final push
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your close text]
-SUBHEADLINE: [supporting text]`;
+HEADLINE: one line of close text
+SUBHEADLINE: one line of supporting text`;
     } else {
         prompt = `Write a COLD close slide (last slide) for a testimonial carousel.
 
@@ -6805,6 +6838,8 @@ CAMPAIGN TYPE: Cold (new traffic)
 CTA BUTTON: "${ctaText}"
 
 ${langInstruction}
+
+${artDirectionBlock}
 
 RULES:
 - This is the FINAL slide after multiple testimonial slides
@@ -6815,8 +6850,8 @@ RULES:
 - Subheadline: max 15 words, final push
 
 OUTPUT FORMAT (STRICT):
-HEADLINE: [your close text]
-SUBHEADLINE: [supporting text]`;
+HEADLINE: one line of close text
+SUBHEADLINE: one line of supporting text`;
     }
 
     const response = await retry(() => callGemini({
@@ -6838,11 +6873,15 @@ export async function generateTestimonialCarousel(
     maxPlanSlides: number,
 ): Promise<TestimonialCarouselResult> {
     const ctaText = inputs.cta || '';
+    const rawStyle = resolveStyleFamily(inputs);
+    const visualStyleFamily: VisualStyleFamily = ALLOWED_STYLES.has(rawStyle as VisualStyleFamily)
+        ? (rawStyle as VisualStyleFamily)
+        : "realistic";
 
     const totalSlides = resolveTestimonialSlideCount(screenshots.length, maxPlanSlides);
     const testimonialCount = totalSlides - 2;
 
-    console.log(`💬 Testimonial carousel: ${screenshots.length} screenshots, ${totalSlides} slides (${testimonialCount} testimonials + hook + close)`);
+    console.log(`💬 Testimonial carousel: ${screenshots.length} screenshots, ${totalSlides} slides (${testimonialCount} testimonials + hook + close), style=${visualStyleFamily}`);
 
     const platforms = await Promise.all(
         screenshots.slice(0, testimonialCount).map((s) => detectTestimonialPlatform(s))
@@ -6850,11 +6889,11 @@ export async function generateTestimonialCarousel(
     console.log(`💬 Detected platforms: ${platforms.join(', ')}`);
 
     const [hookResult, mockupResults, closeResult] = await Promise.all([
-        generateTestimonialHookSlide(inputs, testimonialCount),
+        generateTestimonialHookSlide(inputs, testimonialCount, visualStyleFamily),
         Promise.all(
-            screenshots.slice(0, testimonialCount).map((s, i) => buildTestimonialMockup(s, platforms[i]))
+            screenshots.slice(0, testimonialCount).map((s, i) => buildTestimonialMockup(s, platforms[i], visualStyleFamily))
         ),
-        generateTestimonialCloseSlide(inputs),
+        generateTestimonialCloseSlide(inputs, visualStyleFamily),
     ]);
 
     const slides: TestimonialSlideResult[] = [];
@@ -6895,5 +6934,14 @@ export async function generateTestimonialCarousel(
         slides,
         detectedPlatforms: platforms,
         totalSlides,
+        visualStyleFamily,
     };
+}
+
+export function validateBatchRunEntitlement(plan: StoredPlan, sizes: number, hooks: number, concepts: number): void {
+    const requested = sizes * hooks * concepts;
+    const decision = resolveEntitlement({ plan, feature: "batchRun", quantity: requested });
+    if (!decision.allowed) {
+        throw new HttpsError("permission-denied", decision.reason || "batch_limit_exceeded");
+    }
 }

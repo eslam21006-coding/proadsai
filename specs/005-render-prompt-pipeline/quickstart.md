@@ -9,11 +9,11 @@ Makes the pipeline from user-visible blueprint (Step 3) to machine-executable im
 | File | Change |
 |------|--------|
 | `functions/src/generators.ts` | Audit `generateBuildPlan()` input injection; extract `buildFinalImagePrompt()` from inline assembly in `generateFinalAd()`; add `generateTestimonialHookSlide`/close retries |
-| `functions/src/buildPlanSlotMap.ts` | Add `technicalPrompt` extraction to `parseBuildPlanEnvelope()`; add copy fidelity check to validation |
+| `functions/src/buildPlanSlotMap.ts` | Expand `validateCopyFidelity()` to check all 4 copy fields (hookText, subheadText, ctaName, benefitText); `technicalPrompt` extraction already exists |
 | `functions/src/index.ts` | Wire retry logic for build plan failures; store `blueprintText` + `resolvedImagePrompt` in generation record |
 | `functions/src/creativeMemory.ts` | Add `blueprintText` and `resolvedImagePrompt` fields to `CreativeMemoryRecord` |
 | `functions/src/contractFixtures.test.ts` | Add regression tests for prompt assembly |
-| `src/App.tsx` | Add "View Blueprint" expandable panel in Step 3; strip TECHNICAL_PROMPT from display; handle retry on fidelity failure |
+| `src/App.tsx` | Verify "View Blueprint" panel strips TECHNICAL_PROMPT; add warning banner with cancel/retry for fidelity exhaustion |
 
 ## Build & Test
 

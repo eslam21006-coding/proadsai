@@ -190,21 +190,9 @@ const MODE_CAPTION_SIGNALS: Record<string, { en: string[]; ar: string[] }> = {
         en: ['offer', 'price', 'invest', 'package', 'plan', 'access'],
         ar: ['عرض', 'سعر', 'استثمر', 'حزمة', 'خطة', 'وصول', 'اشترك'],
     },
-    limited_access: {
-        en: ['exclusive', 'limited', 'close', 'access', 'vip', 'spots'],
-        ar: ['حصري', 'محدود', 'يغلق', 'وصول', 'خاص', 'أماكن', 'متبقي'],
-    },
-    module_preview: {
-        en: ['module', 'lesson', 'curriculum', 'course', 'learn', 'program', 'step'],
-        ar: ['وحدة', 'درس', 'منهج', 'دورة', 'تعلم', 'برنامج', 'مرحلة', 'خطوة'],
-    },
     speaker_card: {
         en: ['speaker', 'keynote', 'expert', 'stage', 'present', 'authority', 'credentials'],
         ar: ['متحدث', 'خبير', 'مسرح', 'يقدم', 'مؤهل', 'سنوات', 'عميل'],
-    },
-    day_strip: {
-        en: ['day', 'challenge', 'daily', 'schedule', 'progression', 'journey'],
-        ar: ['يوم', 'تحدي', 'يومي', 'جدول', 'رحلة', 'مرحلة', 'ابدأ'],
     },
     book_mockup: {
         en: ['guide', 'book', 'download', 'ebook', 'free', 'copy', 'chapter'],
@@ -392,20 +380,6 @@ export function validateCaption(input: CaptionValidationInput): CaptionValidatio
         }
     }
 
-    // ── 7b. Additional payload reference checks for new modes ──
-    if (modePayload.module_preview) {
-        const mp = modePayload.module_preview;
-        const anyModuleRef = mp.moduleTitles.some((t: string) => {
-            const words = t.split(/\s+/).filter((w: string) => w.length > 2);
-            return words.some((w: string) => caption.includes(w));
-        });
-        checks.push({
-            name: 'module_preview_ref',
-            passed: anyModuleRef,
-            detail: anyModuleRef ? 'Module content referenced' : 'No module titles found in caption',
-        });
-    }
-
     if (modePayload.speaker_card) {
         const sc = modePayload.speaker_card;
         const nameWords = sc.speakerName.split(/\s+/).filter((w: string) => w.length > 1);
@@ -428,19 +402,6 @@ export function validateCaption(input: CaptionValidationInput): CaptionValidatio
             name: 'guide_title_ref',
             passed: titlePresent,
             detail: titlePresent ? 'Guide title referenced' : `Guide "${bm.guideTitle}" not found`,
-        });
-    }
-
-    if (modePayload.day_strip) {
-        const ds = modePayload.day_strip;
-        const dayRef = ds.dayNodes.some((d: string) => {
-            const words = d.split(/\s+/).filter((w: string) => w.length > 2);
-            return words.some((w: string) => caption.includes(w));
-        }) || caption.includes('يوم') || textLower.includes('day');
-        checks.push({
-            name: 'day_strip_ref',
-            passed: dayRef,
-            detail: dayRef ? 'Day/challenge referenced' : 'No day strip content found in caption',
         });
     }
 
@@ -688,14 +649,11 @@ Rewrite all non-technical field values in Arabic.`,
 /** Mode-specific visual keywords that should appear in a blueprint for that mode */
 const MODE_BLUEPRINT_SIGNALS: Record<string, string[]> = {
     value_stack: ['stack', 'card', 'item', 'bonus', 'price', 'value', 'panel', 'row', 'بونص', 'قيمة', 'بطاقة'],
-    module_preview: ['module', 'curriculum', 'progress', 'course', 'lesson', 'وحدة', 'منهج', 'درس', 'تقدم'],
     event_ticket: ['ticket', 'event', 'date', 'time', 'seat', 'barcode', 'perforation', 'تذكرة', 'حدث', 'تاريخ'],
     speaker_card: ['stage', 'speaker', 'podium', 'credentials', 'audience', 'spotlight', 'متحدث', 'مسرح', 'مؤهل'],
-    day_strip: ['day', 'progression', 'node', 'strip', 'challenge', 'path', 'يوم', 'تحدي', 'مرحلة'],
     webinar_screen: ['screen', 'laptop', 'monitor', 'live', 'badge', 'شاشة', 'مباشر', 'ويبنار'],
     book_mockup: ['book', '3d', 'cover', 'mockup', 'spine', 'chapter', 'كتاب', 'غلاف', 'دليل'],
     device_mockup: ['device', 'tablet', 'phone', 'screen', 'content', 'جهاز', 'شاشة', 'محتوى'],
-    limited_access: ['gate', 'rope', 'exclusive', 'vip', 'limited', 'countdown', 'حصري', 'محدود', 'بوابة'],
 };
 
 /**

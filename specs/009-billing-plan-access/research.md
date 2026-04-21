@@ -1,100 +1,122 @@
-# Research: Billing, Plan Access, Top-Up, Downgrade, and Cancellation
+# Research: Billing, Plan Access, Top-Up, Downgrade, Cancellation, and Email-Only Auth
 
-**Branch**: `009-billing-plan-access` | **Date**: 2026-04-04
+**Branch**: `009-billing-plan-access` | **Date**: 2026-04-14
 
-## R1: billingState Write Strategy
+## R-001: Paddle Node.js SDK for Backend Integration
 
-**Decision**: Extract a `buildBillingState()` pure function and a `writeBillingState(uid)` Firestore helper into `functions/src/billing/billingState.ts`. Every billing path calls `writeBillingState()` after mutating plan/credits.
+**Decision**: Use `@paddle/paddle-node-sdk` (official SDK) for webhook signature verification (`paddle.webhooks.unmarshal`), checkout session creation (`paddle.checkout.create`), and customer/subscription lookups.
 
-**Rationale**: The existing `index.ts` has 9 billing functions that each independently write plan/credits fields. Centralizing the billingState computation eliminates the risk of inconsistent writes and makes testing trivial (unit-test `buildBillingState()` with fixture data).
+**Rationale**: First-party SDK, handles signature algorithm internally, provides type safety, matches the existing pattern used for Stripe. The raw-body requirement for signature verification is correctly handled by the SDK.
 
-**Alternatives considered**:
-- Firestore trigger (`onDocumentUpdated`) that recomputes billingState whenever user doc changes — rejected because it adds latency (extra function invocation) and complexity (must filter non-billing writes).
-- Frontend-computed billing state — rejected because it violates constitution principle XI (frontend and backend must agree on truth).
+**Alternatives Considered**:
+- Raw HTTP calls with manual HMAC: Rejected — reimplements what the SDK provides.
 
-## R2: Monthly Credit Reset — Accumulation Model
+## R-002: Paddle Management URLs vs Custom Portal Session
 
-**Decision**: Change `monthlyCreditsReset` from `credits = creditsPerMonth` to `credits += creditsPerMonth`. The existing code resets credits to the plan allocation; this must be changed to additive.
+**Decision**: Store the `managementUrls.updatePaymentMethod` and `managementUrls.cancel` that Paddle includes in every subscription event (`subscription.created`, `subscription.updated`, etc.) on the user's `billingState`. Frontend opens these URLs directly when the user clicks "Update Payment Method" or "Cancel".
 
-**Rationale**: Product decision (clarification session 2026-04-04). Top-up credits and unused monthly credits carry over across billing cycles. This is a single-line change in the batch update within `monthlyCreditsReset`.
+**Rationale**: Paddle provides these URLs on every subscription event at zero cost. Building a custom portal session callable adds latency (one extra API call) and code surface without benefit. URLs are refreshed on every subscription event, so they stay current.
 
-**Alternatives considered**:
-- Separate top-up balance field tracked independently — rejected as over-engineering; a single `credits` field with additive reset is simpler and sufficient.
+**Alternatives Considered**:
+- Custom portal session callable (`createPaddlePortalSession`): Rejected — unnecessary complexity.
 
-## R3: billingStatus State Machine
+## R-003: Dual-Write Pattern for `subscription.created`
 
-**Decision**: Five states: `active`, `trialing`, `past_due`, `cancelling`, `cancelled`. Transitions:
+**Decision**: The `subscription.created` handler inspects `customData.firebaseUid`. If present (existing user upgrading from inside the app), write plan data to `users/{uid}` and call `writeBillingState(uid)`. If missing (new user paid on Paddle via the GHL funnel before creating a Firebase Auth account), write to `pending_plans/{email.toLowerCase()}` using the Paddle event's customer email. The sign-in handler consumes the pending document on first login.
 
-```
-trialing → active (first payment)
-trialing → cancelled (trial expired + 0 credits + no upgrade)
-active → past_due (payment failed)
-active → cancelling (user cancels, access until period end)
-past_due → active (payment recovered)
-past_due → cancelled (grace period expired)
-cancelling → active (user reactivates before period end)
-cancelling → cancelled (period end reached)
-cancelled → active (new subscription via GHL webhook)
-```
+**Rationale**: Preserves the existing `pending_plans` mechanism for pre-signup users (matches existing `onAuthStateChanged` flow in `App.tsx`). Enables seamless onboarding: pay on GHL funnel → create account later → pending plan is consumed on first login. Avoids forcing users through a pricing page they already completed.
 
-**Rationale**: Covers the full lifecycle including the "cancelling" interim state where access continues. Maps cleanly to Stripe subscription statuses.
+**Alternatives Considered**:
+- Always require `firebaseUid`: Rejected — GHL funnel users don't have one yet.
+- Store all users in a unified `users/{email}` collection: Rejected — breaks Firebase Auth uid model.
 
-**Alternatives considered**:
-- Four states using `isTrial` flag instead of `trialing` status — rejected because `billingStatus` should be self-contained for UI rendering without cross-referencing `isTrial`.
-- Six states with `paused` — rejected; subscription pausing is not in scope.
+## R-004: Webhook Idempotency via Firestore Document Creation
 
-## R4: Billing Page Navigation (No React Router)
+**Decision**: Store processed Paddle event IDs in `paddle_events/{eventId}` with fields `eventType`, `processedAt`, and `paddleCustomerId`. Before processing any webhook, check if the document exists. If it does, return 200 OK without re-processing.
 
-**Decision**: Add billing as a new `AppPhase` value (e.g., `'billing'`) in the existing phase-based navigation system in `App.tsx` and `store.ts`. Render `<Billing />` conditionally like other phases.
+**Rationale**: Firestore atomic document creation is reliable and doesn't require external infrastructure. Paddle delivers webhook retries; dedup prevents double-crediting on top-ups and duplicate state transitions.
 
-**Rationale**: The app uses conditional rendering based on `AppPhase` state in Zustand, not React Router. Adding a billing phase is consistent with the existing pattern. A nav link in the sidebar/header triggers `setAppPhase('billing')`.
+**Alternatives Considered**:
+- In-memory dedup: Rejected — doesn't survive cold starts.
+- Redis: Rejected — adds infrastructure.
 
-**Alternatives considered**:
-- Add React Router — rejected; would require refactoring the entire navigation system for a single page addition.
-- Modal/drawer overlay — rejected; billing needs a full page for proper layout of plan details, credit bar, top-up packs, and cancellation flow.
+## R-005: Last-Write-Wins for Duplicate `pending_plans`
 
-## R5: Plan-Gate Enforcement in deductCreditsServer
+**Decision**: When a Paddle webhook writes a `pending_plans/{email}` document that already exists (user paid twice before signup), overwrite the document with the newer plan data. Paddle event idempotency (by event ID) still prevents the literal same event from being applied twice; this rule handles different events for the same email.
 
-**Decision**: Add a `resolveEntitlement()` call at the top of `deductCreditsServer` before the credit deduction transaction. Use `checkFeature()` to verify the action is allowed. Reject with `functions.https.HttpsError('failed-precondition', 'plan_downgraded', { requiredPlan })`.
+**Rationale**: Simpler than merge logic. Matches Paddle's state model — the most recent subscription is authoritative. Both transactions remain in Paddle's billing history, so support can refund duplicates.
 
-**Rationale**: `resolveEntitlement()` and `checkFeature()` already exist in `entitlements.ts` and handle team member resolution. The deductCreditsServer currently only checks credit balance, not plan entitlement. Adding the check before the transaction is correct because plan changes are infrequent and the entitlement read doesn't need to be inside the transaction.
+**Alternatives Considered**:
+- Reject on collision (409): Rejected — blocks the user and requires manual intervention.
+- Merge/preserve higher tier: Rejected — complexity without clear user benefit.
 
-**Alternatives considered**:
-- Entitlement check inside the Firestore transaction — rejected; `resolveEntitlement()` reads from team memberships which would complicate the transaction scope. Entitlement is stable enough to read outside.
+## R-006: GHL Sync with Dual Identifier (uid or email)
 
-## R6: Grace Period Data Source
+**Decision**: The `notifyGHL(identifier, event)` helper accepts either a Firebase `uid` string or a raw `email` string. For a uid, the helper reads the `users/{uid}` document for email and contact name. For an email, the helper sends the email directly (used for `pending_plans` users who don't have a Firebase Auth account yet). GHL POST is fire-and-forget — failures are logged but do not throw.
 
-**Decision**: Read `gracePeriodEndsAt` from Stripe subscription data via the `customer.subscription.updated` webhook event. Store in billingState for frontend countdown display.
+**Rationale**: Supports both existing-user flows and pre-signup flows with a single helper. Fire-and-forget pattern matches FR-018 and prevents GHL availability from blocking billing updates.
 
-**Rationale**: Product decision (clarification session 2026-04-04). Stripe manages dunning schedules and retry timing. The app reads the computed date rather than maintaining its own grace period logic.
+**Alternatives Considered**:
+- Separate helpers for uid vs email: Rejected — duplicates code.
+- Retry queue via Cloud Tasks: Deferred — logged failures are enough for launch; add retry later if GHL failures become frequent.
 
-**Alternatives considered**:
-- App-level grace period with configurable duration — rejected per product decision.
+## R-007: Mandatory Billing Modal Pattern
 
-## R7: Reactivation Flow
+**Decision**: When an authenticated user's `billingState.plan === 'none'` AND they are NOT a team member (by `isTeamMember: true` or by having an unclaimed team invite for their email), render a fullscreen modal containing `<PricingTable />`. The modal has no close button, ignores outside clicks and the escape key. It closes automatically via a `useEffect` that watches `billingState.plan`: when the plan transitions from `'none'` to a real plan, the modal closes and the welcome toast fires.
 
-**Decision**: Add a `reactivateSubscription` callable Cloud Function that calls `stripe.subscriptions.update(subId, { cancel_at_period_end: false })` and updates billingState from `cancelling` → `active`.
+**Rationale**: Replaces the previous behavior of DELETING unpaid Firebase Auth accounts — a destructive pattern that caused data loss and confused users. The new pattern is safer and more conversion-friendly: the user can still try the app after paying without needing to re-create their account.
 
-**Rationale**: Stripe supports clearing `cancel_at_period_end` natively. The existing `cancelSubscription` function sets this flag; reactivation simply clears it. This is a new function (not an extension of `cancelSubscription`) for clarity.
+**Alternatives Considered**:
+- Redirect to an external pricing page: Rejected — breaks the SPA flow and loses auth state.
+- Allow modal dismissal: Rejected — users could bypass and attempt to use paid features.
+- Delete the account (previous behavior): Rejected — destructive, confusing, and error-prone.
 
-**Alternatives considered**:
-- Reuse `cancelSubscription` with a toggle parameter — rejected for clarity; cancel and reactivate are semantically distinct operations.
+## R-008: Email Verification as Access Gate
 
-## R8: Action-to-Feature Mapping for Plan Gates
+**Decision**: After `createUserWithEmailAndPassword`, call `sendEmailVerification` immediately. Show a dedicated `<VerifyEmailScreen>` with the user's email and a "Resend verification email" button. The app routes (including the mandatory billing modal) are blocked until `user.emailVerified === true` (checked on each `onAuthStateChanged` firing and on explicit `reload`).
 
-**Decision**: Create a `ACTION_FEATURE_MAP` in `entitlements.ts` that maps COSTS action keys to feature gate keys. For actions that don't require a specific feature (e.g., `generateHooks`, `generateConcepts`, `buildPlan`), the map returns `null` (always allowed for any paid plan).
+**Rationale**: Adds a trust layer to the new email-only auth flow. Prevents abuse of the mandatory modal surface by bots creating fake accounts. Aligns with industry standard for password-based signup.
 
-```
-generateCarouselCopies → 'carousel'
-competitorResearch → 'competitorResearch'
-generateImage → null (all plans)
-generateHooks → null (all plans)
-editRegion → 'regionEditing'
-brandUrlScraping → 'brandUrlScraping'
-...
-```
+**Alternatives Considered**:
+- No verification: Rejected — weaker security posture.
+- Soft verification (banner only): Rejected — users can still access paid features without verification.
 
-**Rationale**: The existing `COSTS` map and `checkFeature()` function operate on different key spaces. A mapping table bridges them without modifying either existing structure.
+## R-009: Forgot Password via Firebase Built-In Flow
 
-**Alternatives considered**:
-- Merge COSTS and features into a single config — rejected; would require changing both frontend and backend config structures.
+**Decision**: The "Forgot Password?" link opens a dialog asking for email, calls `sendPasswordResetEmail(auth, email)`, and displays a non-revealing confirmation message ("If an account exists for this email, a reset link has been sent"). Firebase hosts the reset page — no custom in-app reset UI is built.
+
+**Rationale**: Zero custom code, secure (non-revealing response), and works out of the box. The reset flow is handled entirely by Firebase's hosted UI.
+
+**Alternatives Considered**:
+- Custom in-app reset page: Rejected — reimplements Firebase functionality.
+- Hide the link at launch: Rejected — users forget passwords; support burden would be unreasonable.
+
+## R-010: Structured Logging with Error Classification Codes
+
+**Decision**: Every billing pipeline step emits a structured log entry with fields `{ step, eventId, eventType, userId?, email?, status, errorCode?, durationMs }`. Error codes use a fixed vocabulary: `paddle_signature_invalid`, `paddle_event_duplicate`, `paddle_event_unknown`, `paddle_price_unmapped`, `ghl_sync_failed`, `user_doc_missing`, `pending_plan_write_failed`, `billing_state_write_failed`.
+
+**Rationale**: Enables end-to-end tracing of a webhook through the pipeline via Cloud Functions logs. Structured format allows log-based metrics to be added later without code changes. Fixed vocabulary prevents log noise and enables reliable filtering.
+
+**Alternatives Considered**:
+- Error-only logs: Rejected — missing success traces makes incident triage harder.
+- Free-text error messages: Rejected — prevents reliable log-based metrics.
+- Full OpenTelemetry tracing: Deferred — heavier infrastructure than needed for launch.
+
+## R-011: Paddle Checkout in Frontend (Overlay vs Redirect)
+
+**Decision**: Use Paddle.js v2 loaded via `<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>` in `index.html`. Initialize with `Paddle.Setup({ token: CLIENT_TOKEN, environment: 'sandbox'|'production' })` in app init. Subscription and top-up checkouts use `Paddle.Checkout.open({ items, customData, settings: { displayMode: 'overlay' } })`.
+
+**Rationale**: In-app overlay checkout keeps users in the SPA context and provides a smoother experience than redirect. Paddle.js is loaded once globally, adding no per-page overhead.
+
+**Alternatives Considered**:
+- Full-page redirect: Rejected — breaks SPA state and feels unfinished.
+- Custom checkout embed: Rejected — violates PCI compliance (Paddle handles PCI as Merchant of Record).
+
+## R-012: Paddle Product/Price ID Configuration
+
+**Decision**: Store `paddlePriceId` on each plan entry in `src/planconfig.ts` and mirror a backend `PADDLE_PRICE_TO_PLAN` map in `functions/src/index.ts`. Top-up packs have `paddleTopUpPriceIds: { 100, 300, 800 }`. Values are assigned during Paddle dashboard setup (8.A.2, 8.A.3) and hardcoded into the config files.
+
+**Rationale**: Matches the existing Stripe price ID pattern. Hardcoding is acceptable for launch; env-based config can be added later.
+
+**Alternatives Considered**:
+- Environment variables: Deferred — launch scope prioritizes code simplicity.

@@ -1,4 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../firebase';
+import { PLANS } from '../planconfig';
+
+const createPaddleCheckoutFn = httpsCallable(functions, "createPaddleCheckout");
 
 const SECTIONS = [
   { id: 'usage', label: 'Usage', defaultOpen: true },
@@ -7,17 +12,17 @@ const SECTIONS = [
   { id: 'retargeting', label: 'Retargeting', defaultOpen: false },
   { id: 'studio', label: 'Render Studio', defaultOpen: false },
   { id: 'production', label: 'Production & Integrations', defaultOpen: false },
-  { id: 'scaling', label: 'Scaling Exclusives', defaultOpen: false },
+  { id: 'scale', label: 'Scale Exclusives', defaultOpen: false },
   { id: 'team', label: 'Team', defaultOpen: false },
 ] as const;
 
 type BillingMode = 'monthly' | 'annual';
 
+// PADDLE: CTA buttons call createPaddleCheckout callable
 const plans = [
-  { key: 'starter', name: 'Starter', sub: 'Get hooked', monthly: 19, annual: 15.20, badge: null, ctaLabel: 'Start Creating', ctaHref: 'https://proadsai.com/checkout/starter', micro: 'Your first 25 ads', cls: '', ctaCls: '' },
-  { key: 'creator', name: 'Creator', sub: 'Create freely', monthly: 39, annual: 31.20, badge: null, ctaLabel: 'Unlock Creativity', ctaHref: 'https://proadsai.com/checkout/creator', micro: 'Fantasy + retargeting + A/B', cls: '', ctaCls: '' },
-  { key: 'pro', name: 'Pro', sub: 'Full production', monthly: 79, annual: 63.20, badge: { text: 'Most Popular', cls: 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,.35)]' }, ctaLabel: 'Go Full Production', ctaHref: 'https://proadsai.com/checkout/pro', micro: 'Carousels + Meta + intelligence', cls: 'highlight-col', ctaCls: 'pro' },
-  { key: 'scaling', name: 'Scaling', sub: 'AI runs the show', monthly: 179, annual: 143.20, badge: { text: 'AI-Powered', cls: 'bg-amber-500 text-gray-900' }, ctaLabel: 'Let AI Optimize', ctaHref: 'https://proadsai.com/checkout/scaling', micro: '5 exclusives no other plan gets', cls: 'scaling-col', ctaCls: 'scaling' },
+  { key: 'starter', name: 'Starter', sub: 'Get hooked', monthly: 19, annual: 15.20, badge: null, ctaLabel: 'Start Creating', micro: 'Your first 25 ads', cls: '', ctaCls: '' },
+  { key: 'pro', name: 'Pro', sub: 'Full production', monthly: 79, annual: 63.20, badge: { text: 'Most Popular', cls: 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,.35)]' }, ctaLabel: 'Go Full Production', micro: 'Carousels + Meta + intelligence', cls: 'highlight-col', ctaCls: 'pro' },
+  { key: 'scale', name: 'Scale', sub: 'AI runs the show', monthly: 179, annual: 143.20, badge: { text: 'AI-Powered', cls: 'bg-amber-500 text-gray-900' }, ctaLabel: 'Let AI Optimize', micro: '5 exclusives no other plan gets', cls: 'scale-col', ctaCls: 'scale' },
 ];
 
 type CellValue = string | boolean | { text: string; note?: string; emphasis?: boolean; soon?: boolean };
@@ -27,48 +32,40 @@ const Y = '\u2713'; // checkmark
 const N = '\u2014'; // dash
 
 const featureRows: FeatureRow[] = [
-  // Usage
-  { section: 'usage', label: 'Credits / Month', values: ['500', '1,000', '2,000', '5,000'] },
-  { section: 'usage', label: 'Ads / Month', note: '~20 credits per ad', values: ['~25', '~50', '~100', '~250'] },
-  { section: 'usage', label: 'Saved Projects', values: ['5', '15', '50', 'Unlimited'] },
-  { section: 'usage', label: 'Audience Avatars', note: 'Reusable brand profiles that pre-fill the form', values: ['3', '10', '25', 'Unlimited'] },
-  { section: 'usage', label: 'Credit Top-Ups', note: 'Buy extra credits anytime', values: [true, true, true, true] },
-  // AI Creative Engine
-  { section: 'engine', label: 'Primary Text + Refinement', note: '150-word ad copy generation', values: [true, true, true, true] },
-  { section: 'engine', label: '6 Aspect Ratios', note: '1:1 \u00b7 4:5 \u00b7 3:4 \u00b7 4:3 \u00b7 9:16 \u00b7 16:9', values: [true, true, true, true] },
-  { section: 'engine', label: 'Hook Angles', note: 'Before/after, emotional, pain, curiosity\u2026', values: ['4 core', '8 angles', 'All 11', 'All 11'] },
-  { section: 'engine', label: 'Hook Delivery Styles', note: 'Comedic, controversial, question\u2026', values: ['4 core', '8 styles', 'All 12', 'All 12'] },
-  { section: 'engine', label: 'Ad Tones', note: 'Formal, bold, mentor, luxury CEO\u2026', values: ['4 tones', '8 tones', 'All 11', 'All 11'] },
-  { section: 'engine', label: 'Copywriting Strategies', note: 'Pattern interrupt, myth busting\u2026', values: ['3 core', '6 strategies', 'All 8', 'All 8'] },
-  { section: 'engine', label: 'Offer Creative Modes', note: 'Value stack, event ticket, book mockup\u2026', values: ['6 basic', '12 modes', 'All 18+', 'All 18+'] },
-  // Visual & Creative
-  { section: 'visual', label: 'Brand URL Scraping', note: 'Auto-extract colors, tone, and assets', values: [true, true, true, true] },
-  { section: 'visual', label: 'Realistic Universes', values: [true, true, true, true] },
-  { section: 'visual', label: 'Bilingual UI (Arabic + English)', note: 'Full RTL support', values: [true, true, true, true] },
-  { section: 'visual', label: 'Fantasy Universes', note: '500+ cinematic sci-fi & fantasy worlds', values: [false, true, true, true] },
-  { section: 'visual', label: 'Auto-Optimized Creatives', note: 'AI visual polishes applied automatically', values: [false, true, true, true] },
-  { section: 'visual', label: 'Reference Ad Upload', note: 'Adapt style from any competitor ad', values: [false, false, true, true] },
-  // Retargeting
-  { section: 'retargeting', label: 'Retargeting Mode', note: 'Separate campaign type with objection logic', values: [false, true, true, true] },
-  { section: 'retargeting', label: 'Objection Scripts', note: 'Price, trust, time, overwhelm, approval\u2026', values: [false, '4 core', 'All 12', 'All 12'] },
-  // Render Studio
-  { section: 'studio', label: 'Multi-Ratio Reflow', note: 'Reflow one creative into all 6 sizes', values: [true, true, true, true] },
-  { section: 'studio', label: 'A/B Variation Testing', note: 'Auto-generate 3 creative variants', values: [false, true, true, true] },
-  { section: 'studio', label: 'Region Editing', note: 'Edit specific zones of the rendered image', values: [false, true, true, true] },
-  { section: 'studio', label: 'Carousel Ads', values: [false, false, 'Up to 5 slides', 'Up to 9 slides'] },
-  // Production & Integrations
-  { section: 'production', label: 'Competitor Intelligence', note: 'Research competitors + differentiation angles', values: [false, false, true, true] },
-  { section: 'production', label: 'Push to Meta Ads', note: 'One-click push creatives to your ad account', values: [false, false, true, true] },
-  { section: 'production', label: 'Creative Memory', note: 'AI remembers your past generations', values: [false, false, true, true] },
-  { section: 'production', label: 'Performance Dashboard', note: 'Track CTR, CPC, ROAS by dimension', values: [false, false, 'Overview', { text: 'Full breakdown', emphasis: true }] },
-  // Scaling Exclusives
-  { section: 'scaling', label: 'Batch Rendering', note: 'All hooks \u00d7 concepts \u00d7 sizes in one flow', values: [false, false, false, { text: '\u2713 Scaling only', emphasis: true }] },
-  { section: 'scaling', label: 'Creative Scoring Engine', note: 'AI ranks your creatives by predicted CTR', values: [false, false, false, { text: '\u2713 Scaling only', emphasis: true }] },
-  { section: 'scaling', label: 'Smart Recommendations', note: 'AI suggests your next best creative combo', values: [false, false, false, { text: '\u2713 Scaling only', emphasis: true }] },
-  { section: 'scaling', label: 'Variant Exploration Engine', note: 'Multi-dimensional testing with winner tracking', values: [false, false, false, { text: '\u2713 Scaling only', emphasis: true }] },
-  { section: 'scaling', label: 'Multi-Brand Workspaces', note: 'Separate environments per client brand', values: [false, false, false, { text: '\u2713 Scaling only', emphasis: true, soon: true }] },
-  // Team
-  { section: 'team', label: 'Team Members', note: 'Shared credit pool', values: ['1', '1', '3', '10+'] },
+  { section: 'usage', label: 'Credits / Month', values: ['800', '2,500', '6,500'] },
+  { section: 'usage', label: 'Ads / Month', note: '~20 credits per ad', values: ['~40', '~125', '~325'] },
+  { section: 'usage', label: 'Saved Projects', values: ['10', '30', 'Unlimited'] },
+  { section: 'usage', label: 'Audience Avatars', note: 'Reusable brand profiles that pre-fill the form', values: ['5', '15', 'Unlimited'] },
+  { section: 'usage', label: 'Credit Top-Ups', note: 'Buy extra credits anytime', values: [true, true, true] },
+  { section: 'engine', label: 'Primary Text + Refinement', note: '150-word ad copy generation', values: [true, true, true] },
+  { section: 'engine', label: '6 Aspect Ratios', note: '1:1 \u00b7 4:5 \u00b7 3:4 \u00b7 4:3 \u00b7 9:16 \u00b7 16:9', values: [true, true, true] },
+  { section: 'engine', label: 'Hook Angles', note: 'Before/after, emotional, pain, curiosity\u2026', values: ['All 11', 'All 11', 'All 11'] },
+  { section: 'engine', label: 'Hook Delivery Styles', note: 'Comedic, controversial, question\u2026', values: ['All 12', 'All 12', 'All 12'] },
+  { section: 'engine', label: 'Ad Tones', note: 'Formal, bold, mentor, luxury CEO\u2026', values: ['All 11', 'All 11', 'All 11'] },
+  { section: 'engine', label: 'Copywriting Strategies', note: 'Pattern interrupt, myth busting\u2026', values: ['All 8', 'All 8', 'All 8'] },
+  { section: 'engine', label: 'Offer Creative Modes', note: 'Value stack, event ticket, book mockup\u2026', values: ['All 18+', 'All 18+', 'All 18+'] },
+  { section: 'visual', label: 'Brand URL Scraping', note: 'Auto-extract colors, tone, and assets', values: [true, true, true] },
+  { section: 'visual', label: 'Realistic Universes', values: [true, true, true] },
+  { section: 'visual', label: 'Bilingual UI (Arabic + English)', note: 'Full RTL support', values: [true, true, true] },
+  { section: 'visual', label: 'Fantasy Universes', note: '500+ cinematic sci-fi & fantasy worlds', values: [false, true, true] },
+  { section: 'visual', label: 'Auto-Optimized Creatives', note: 'AI visual polishes applied automatically', values: [false, true, true] },
+  { section: 'visual', label: 'Reference Ad Upload', note: 'Adapt style from any competitor ad', values: [false, true, true] },
+  { section: 'retargeting', label: 'Retargeting Mode', note: 'Separate campaign type with objection logic', values: [false, true, true] },
+  { section: 'retargeting', label: 'Objection Scripts', note: 'Price, trust, time, overwhelm, approval\u2026', values: [false, 'All 12', 'All 12'] },
+  { section: 'studio', label: 'Multi-Ratio Reflow', note: 'Reflow one creative into all 6 sizes', values: [true, true, true] },
+  { section: 'studio', label: 'A/B Variation Testing', note: 'Auto-generate 3 creative variants', values: [false, true, true] },
+  { section: 'studio', label: 'Region Editing', note: 'Edit specific zones of the rendered image', values: [false, true, true] },
+  { section: 'studio', label: 'Carousel Ads', values: [false, 'Up to 7 slides', 'Up to 10 slides'] },
+  { section: 'production', label: 'Competitor Intelligence', note: 'Research competitors + differentiation angles', values: [false, true, true] },
+  { section: 'production', label: 'Push to Meta Ads', note: 'One-click push creatives to your ad account', values: [false, true, true] },
+  { section: 'production', label: 'Creative Memory', note: 'AI remembers your past generations', values: [false, true, true] },
+  { section: 'production', label: 'Performance Dashboard', note: 'Track CTR, CPC, ROAS by dimension', values: [false, 'Overview', { text: 'Full breakdown', emphasis: true }] },
+  { section: 'scale', label: 'Batch Rendering', note: 'All hooks \u00d7 concepts \u00d7 sizes in one flow', values: [false, 'Up to 4 ads / run', { text: 'Up to 36 ads / run', emphasis: true }] },
+  { section: 'scale', label: 'Creative Scoring Engine', note: 'AI ranks your creatives by predicted CTR', values: [false, false, { text: '\u2713 Scale only', emphasis: true }] },
+  { section: 'scale', label: 'Smart Recommendations', note: 'AI suggests your next best creative combo', values: [false, false, { text: '\u2713 Scale only', emphasis: true }] },
+  { section: 'scale', label: 'Variant Exploration Engine', note: 'Multi-dimensional testing with winner tracking', values: [false, false, { text: '\u2713 Scale only', emphasis: true }] },
+  { section: 'scale', label: 'Multi-Brand Workspaces', note: 'Separate environments per client brand', values: [false, false, { text: '\u2713 Scale only', emphasis: true, soon: true }] },
+  { section: 'team', label: 'Team Members', note: 'Shared credit pool (owner + invitees)', values: ['1', '3', '10'] },
 ];
 
 function CellContent({ val, highlight }: { val: CellValue; highlight: string }) {
@@ -84,7 +81,7 @@ function CellContent({ val, highlight }: { val: CellValue; highlight: string }) 
     );
   }
   // String — check for "All" to make strong
-  if (val.startsWith('All') || val === 'Unlimited') return <span className={`font-extrabold ${highlight === 'scaling-col' ? 'text-white' : highlight === 'highlight-col' ? 'text-white' : 'text-white'}`}>{val}</span>;
+  if (val.startsWith('All') || val === 'Unlimited') return <span className={`font-extrabold ${highlight === 'scale-col' ? 'text-white' : highlight === 'highlight-col' ? 'text-white' : 'text-white'}`}>{val}</span>;
   return <span className="text-slate-300">{val}</span>;
 }
 
@@ -127,7 +124,7 @@ export default function PricingTable() {
           <div className="inline-block text-[13px] font-bold tracking-[.08em] uppercase text-blue-400 mb-2.5">Compare Plans</div>
           <h2 className="text-[clamp(28px,4vw,42px)] leading-[1.1] font-extrabold m-0 mb-3">Every Tier Unlocks the Next Level</h2>
           <p className="text-base leading-relaxed text-slate-400 max-w-[820px] mx-auto mb-[18px]">
-            Start creating on Starter. Unlock creative depth on Creator. Go full-production on Pro. Let AI optimize everything on Scaling.
+            Start creating on Starter. Go full-production on Pro. Let AI optimize everything on Scale.
           </p>
           <div className="flex justify-center mb-[18px]">
             <div className="inline-flex items-center bg-white/5 border border-white/[0.08] rounded-full p-[5px]">
@@ -174,7 +171,6 @@ export default function PricingTable() {
                         <td className="bg-blue-600/[0.08] border-b border-white/5"></td>
                         <td className="bg-blue-600/[0.08] border-b border-white/5"></td>
                         <td className="bg-blue-600/[0.08] border-b border-white/5"></td>
-                        <td className="bg-blue-600/[0.08] border-b border-white/5"></td>
                       </tr>
                       {isOpen && rows.map((row, ri) => (
                         <tr key={`${section.id}-${ri}`} className="hover:bg-white/[0.03]">
@@ -204,16 +200,38 @@ export default function PricingTable() {
             </div>
 
             {/* CTA Row */}
-            <div className="grid min-w-[1080px] border-t border-white/[0.08] bg-[#0d1727]" style={{ gridTemplateColumns: '260px repeat(4, 1fr)' }}>
+            <div className="grid min-w-[1080px] border-t border-white/[0.08] bg-[#0d1727]" style={{ gridTemplateColumns: '260px repeat(3, 1fr)' }}>
               <div className="border-r border-white/[0.06]"></div>
-              {plans.map(p => (
-                <div key={p.key} className={`p-[18px] text-center border-r border-white/[0.06] last:border-r-0 transition-all hover:-translate-y-0.5 ${p.ctaCls === 'pro' ? 'bg-blue-600/[0.08]' : p.ctaCls === 'scaling' ? 'bg-amber-500/[0.06]' : ''}`}>
-                  <a href={p.ctaHref} className={`block w-full py-3.5 px-4 rounded-xl no-underline text-white font-extrabold transition-all hover:-translate-y-0.5 hover:opacity-95 ${p.ctaCls === 'pro' ? 'bg-blue-600 shadow-[0_0_25px_rgba(37,99,235,.28)]' : p.ctaCls === 'scaling' ? 'bg-amber-500 !text-gray-900 shadow-[0_0_25px_rgba(245,158,11,.22)]' : 'bg-white/[0.08]'}`}>
+              {plans.map(p => {
+                const planConfig = PLANS[p.key as keyof typeof PLANS];
+                const priceId = billing === 'annual' ? planConfig?.paddlePriceId?.yearly : planConfig?.paddlePriceId?.monthly;
+                return (
+                <div key={p.key} className={`p-[18px] text-center border-r border-white/[0.06] last:border-r-0 transition-all hover:-translate-y-0.5 ${p.ctaCls === 'pro' ? 'bg-blue-600/[0.08]' : p.ctaCls === 'scale' ? 'bg-amber-500/[0.06]' : ''}`}>
+                  <button
+                    onClick={async () => {
+                      if (!priceId) return;
+                      try {
+                        const result = await createPaddleCheckoutFn({ priceId });
+                        const data = result.data as any;
+                        if (data?.transactionId && (window as any).Paddle) {
+                          (window as any).Paddle.Checkout.open({
+                            settings: { displayMode: 'overlay' },
+                            transactionId: data.transactionId,
+                          });
+                        } else if (data?.checkoutUrl) {
+                          window.open(data.checkoutUrl, "_blank");
+                        }
+                      } catch (e: any) {
+                        console.error("Checkout error:", e);
+                      }
+                    }}
+                    className={`block w-full py-3.5 px-4 rounded-xl no-underline text-white font-extrabold transition-all hover:-translate-y-0.5 hover:opacity-95 cursor-pointer border-0 ${p.ctaCls === 'pro' ? 'bg-blue-600 shadow-[0_0_25px_rgba(37,99,235,.28)]' : p.ctaCls === 'scale' ? 'bg-amber-500 !text-gray-900 shadow-[0_0_25px_rgba(245,158,11,.22)]' : 'bg-white/[0.08]'}`}>
                     {p.ctaLabel} &rarr;
-                  </a>
+                  </button>
                   <div className="mt-2.5 text-xs text-slate-400">{p.micro}</div>
                 </div>
-              ))}
+              );
+              })}
             </div>
           </div>
         </div>

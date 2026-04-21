@@ -1,16 +1,15 @@
-// planConfig.ts
-// Central configuration for all plan tiers, credit costs, and feature access.
-// This is the SINGLE SOURCE OF TRUTH for monetization logic.
+// src/planconfig.ts — central configuration for all plan tiers, credit costs, and feature access
+// Single source of truth for monetization logic (Principle XI).
 //
 // PLAN MODEL:
-//   - There are exactly 4 plans: starter, creator, pro, scaling
-//   - Every user is on one of these 4 plans
+//   - There are exactly 3 paid plans: starter, pro, scale
+//   - Every user is on one of these 3 plans or 'none' (cancelled / no active subscription)
 //   - Trial: user is on a real plan with full features, but only 50 credits (no reset)
 //   - Paid: user is on the same plan with full credits (monthly reset)
 //   - 'none' = cancelled / no active subscription — blocked from everything
 //   - There is NO 'free' plan
 
-export type UserPlan = 'starter' | 'creator' | 'pro' | 'scaling' | 'none';
+export type UserPlan = 'none' | 'starter' | 'pro' | 'scale';
 
 // ─── CREDIT COSTS PER ACTION ─────────────────────────────────────────────────
 // All costs are strictly linear: unit cost × count. No bundling, no discounts.
@@ -46,6 +45,14 @@ export interface FeatureLabel {
     category: 'core' | 'creative' | 'advanced' | 'limits' | 'scaling';
 }
 
+// ─── BATCH CONFIG (per-plan batch limits) ─────────────────────────────────────
+export interface BatchConfig {
+    maxSizes: number;
+    maxHooks: number;
+    maxConcepts: number;
+    maxAdsPerRun: number;
+}
+
 // ─── PLAN DEFINITIONS ────────────────────────────────────────────────────────
 export interface PlanConfig {
     id: UserPlan;
@@ -55,8 +62,11 @@ export interface PlanConfig {
     trialCredits: number;
     priceMonthly: number;
     priceAnnualPerMonth: number;
-    maxSavedProjects: number;
-    maxAvatars: number;
+    savedProjectLimit: number;
+    audienceAvatarLimit: number;
+    carouselMaxSlides: number | null;
+    batchConfig: BatchConfig | null;
+    paddlePriceId: { monthly: string; yearly: string };
     features: {
         retargeting: boolean;
         fantasyUniverses: boolean;
@@ -65,7 +75,6 @@ export interface PlanConfig {
         brandUrlScraping: boolean;
         competitorResearch: boolean;
         carousel: boolean;
-        maxCarouselSlides: number;
         batchGeneration: boolean;
         maxTeamMembers: number;
         // ── New feature gates ──
@@ -86,25 +95,31 @@ export interface PlanConfig {
         maxCopyStrategies: number;
         maxOfferModes: number;
         maxObjectionScripts: number;
+        // ── Ungated creative library — literal 'full' on every paid plan (HF.2) ──
+        hookAngles: 'full';
+        hookTypes: 'full';
+        copywritingStrategies: 'full';
+        adTones: 'full';
     };
     featureLabels: FeatureLabel[];
 }
 
 // ─── FEATURE LABEL BUILDER ────────────────────────────────────────────────────
 function buildFeatureLabels(plan: {
-    maxSavedProjects: number;
-    maxAvatars: number;
+    savedProjectLimit: number;
+    audienceAvatarLimit: number;
+    carouselMaxSlides: number | null;
     features: PlanConfig['features'];
 }): FeatureLabel[] {
     const f = plan.features;
-    const slides = f.maxCarouselSlides;
+    const slides = plan.carouselMaxSlides ?? 0;
     const team = f.maxTeamMembers;
     return [
         // Core
         { key: 'generateAds', label: 'Generate Ads', value: true, category: 'core' },
         { key: 'aspectRatios', label: 'Multiple Aspect Ratios', value: true, category: 'core' },
-        { key: 'savedProjects', label: 'Saved Projects', value: plan.maxSavedProjects === Infinity ? 'Unlimited' : String(plan.maxSavedProjects), category: 'core' },
-        { key: 'avatars', label: 'Audience Avatars', value: plan.maxAvatars === Infinity ? 'Unlimited' : String(plan.maxAvatars), category: 'core' },
+        { key: 'savedProjects', label: 'Saved Projects', value: plan.savedProjectLimit === Infinity ? 'Unlimited' : String(plan.savedProjectLimit), category: 'core' },
+        { key: 'avatars', label: 'Audience Avatars', value: plan.audienceAvatarLimit === Infinity ? 'Unlimited' : String(plan.audienceAvatarLimit), category: 'core' },
         // Creative Tools
         { key: 'brandUrlScraping', label: 'Brand URL Scraping', value: f.brandUrlScraping, category: 'creative' },
         { key: 'retargeting', label: 'Retargeting Mode', value: f.retargeting, category: 'creative' },
@@ -127,10 +142,10 @@ function buildFeatureLabels(plan: {
         { key: 'multiBrandWorkspaces', label: 'Multi-Brand Workspaces', value: f.multiBrandWorkspaces, category: 'scaling' },
         // Limits
         { key: 'maxTeamMembers', label: 'Max Team Members', value: team >= 10 ? '10+' : String(team), category: 'limits' },
-        { key: 'hookAngles', label: 'Hook Angles', value: String(f.maxHookAngles), category: 'limits' },
-        { key: 'hookStyles', label: 'Hook Delivery Styles', value: String(f.maxHookStyles), category: 'limits' },
-        { key: 'adTones', label: 'Ad Tones', value: String(f.maxAdTones), category: 'limits' },
-        { key: 'copyStrategies', label: 'Copywriting Strategies', value: String(f.maxCopyStrategies), category: 'limits' },
+        { key: 'hookAngles', label: 'Hook Angles', value: f.hookAngles === 'full' ? 'All' : String(f.maxHookAngles), category: 'limits' },
+        { key: 'hookStyles', label: 'Hook Delivery Styles', value: f.hookTypes === 'full' ? 'All' : String(f.maxHookStyles), category: 'limits' },
+        { key: 'adTones', label: 'Ad Tones', value: f.adTones === 'full' ? 'All' : String(f.maxAdTones), category: 'limits' },
+        { key: 'copyStrategies', label: 'Copywriting Strategies', value: f.copywritingStrategies === 'full' ? 'All' : String(f.maxCopyStrategies), category: 'limits' },
         { key: 'offerModes', label: 'Offer Creative Modes', value: String(f.maxOfferModes), category: 'limits' },
         { key: 'objectionScripts', label: 'Objection Scripts', value: f.maxObjectionScripts === 0 ? false : String(f.maxObjectionScripts), category: 'limits' },
     ];
@@ -140,47 +155,52 @@ const ALL_RATIOS = ['1:1', '4:5', '3:4', '4:3', '9:16', '16:9'];
 
 export const PLANS: Record<UserPlan, PlanConfig> = {
     none: {
-        id: 'none', name: 'No Plan', subtitle: '', monthlyCredits: 0, trialCredits: 0, priceMonthly: 0, priceAnnualPerMonth: 0, maxSavedProjects: 0, maxAvatars: 0,
+        id: 'none', name: 'No Plan', subtitle: '', monthlyCredits: 0, trialCredits: 0, priceMonthly: 0, priceAnnualPerMonth: 0,
+        savedProjectLimit: 0, audienceAvatarLimit: 0, carouselMaxSlides: null, batchConfig: null,
+        paddlePriceId: { monthly: '', yearly: '' },
         features: {
-            retargeting: false, fantasyUniverses: false, aspectRatios: [], visualPolishes: false, brandUrlScraping: false, competitorResearch: false, carousel: false, maxCarouselSlides: 0, batchGeneration: false, maxTeamMembers: 0,
+            retargeting: false, fantasyUniverses: false, aspectRatios: [], visualPolishes: false, brandUrlScraping: false, competitorResearch: false, carousel: false, batchGeneration: false, maxTeamMembers: 0,
             abVariationTesting: false, regionEditing: false, referenceAdUpload: false, pushToMeta: false, performanceDashboard: 'none', creativeMemory: false, creativeScoringEngine: false, smartRecommendations: false, variantExploration: false, multiBrandWorkspaces: false,
             maxHookAngles: 0, maxHookStyles: 0, maxAdTones: 0, maxCopyStrategies: 0, maxOfferModes: 0, maxObjectionScripts: 0,
+            hookAngles: 'full', hookTypes: 'full', copywritingStrategies: 'full', adTones: 'full',
         },
         featureLabels: [],
     },
     starter: {
-        id: 'starter', name: 'Starter', subtitle: 'For solopreneurs', monthlyCredits: 500, trialCredits: 50, priceMonthly: 19, priceAnnualPerMonth: 15.20, maxSavedProjects: 5, maxAvatars: 3,
+        id: 'starter', name: 'Starter', subtitle: 'For solopreneurs', monthlyCredits: 800, trialCredits: 50, priceMonthly: 19, priceAnnualPerMonth: 15.20,
+        savedProjectLimit: 10, audienceAvatarLimit: 5, carouselMaxSlides: null, batchConfig: null,
+        paddlePriceId: { monthly: 'pri_01knz7v1rr3eehbe12s214ba0t', yearly: 'pri_01knz7wz5cpvv2fx6334wv822e' },
         features: {
-            retargeting: false, fantasyUniverses: false, aspectRatios: ALL_RATIOS, visualPolishes: false, brandUrlScraping: true, competitorResearch: false, carousel: false, maxCarouselSlides: 1, batchGeneration: false, maxTeamMembers: 1,
+            retargeting: false, fantasyUniverses: false, aspectRatios: ALL_RATIOS, visualPolishes: false, brandUrlScraping: true, competitorResearch: false, carousel: false, batchGeneration: false, maxTeamMembers: 1,
             abVariationTesting: false, regionEditing: false, referenceAdUpload: false, pushToMeta: false, performanceDashboard: 'none', creativeMemory: false, creativeScoringEngine: false, smartRecommendations: false, variantExploration: false, multiBrandWorkspaces: false,
-            maxHookAngles: 4, maxHookStyles: 4, maxAdTones: 4, maxCopyStrategies: 3, maxOfferModes: 6, maxObjectionScripts: 0,
-        },
-        featureLabels: [],
-    },
-    creator: {
-        id: 'creator', name: 'Creator', subtitle: 'For creators running light ads', monthlyCredits: 1000, trialCredits: 50, priceMonthly: 39, priceAnnualPerMonth: 31.20, maxSavedProjects: 15, maxAvatars: 10,
-        features: {
-            retargeting: true, fantasyUniverses: true, aspectRatios: ALL_RATIOS, visualPolishes: true, brandUrlScraping: true, competitorResearch: false, carousel: false, maxCarouselSlides: 1, batchGeneration: false, maxTeamMembers: 1,
-            abVariationTesting: true, regionEditing: true, referenceAdUpload: false, pushToMeta: false, performanceDashboard: 'none', creativeMemory: false, creativeScoringEngine: false, smartRecommendations: false, variantExploration: false, multiBrandWorkspaces: false,
-            maxHookAngles: 8, maxHookStyles: 8, maxAdTones: 8, maxCopyStrategies: 6, maxOfferModes: 12, maxObjectionScripts: 4,
+            maxHookAngles: 11, maxHookStyles: 12, maxAdTones: 11, maxCopyStrategies: 8, maxOfferModes: 6, maxObjectionScripts: 0,
+            hookAngles: 'full', hookTypes: 'full', copywritingStrategies: 'full', adTones: 'full',
         },
         featureLabels: [],
     },
     pro: {
-        id: 'pro', name: 'Pro', subtitle: 'For serious marketers', monthlyCredits: 2000, trialCredits: 50, priceMonthly: 79, priceAnnualPerMonth: 63.20, maxSavedProjects: 50, maxAvatars: 25,
+        id: 'pro', name: 'Pro', subtitle: 'For serious marketers', monthlyCredits: 2500, trialCredits: 50, priceMonthly: 79, priceAnnualPerMonth: 63.20,
+        savedProjectLimit: 30, audienceAvatarLimit: 15, carouselMaxSlides: 7,
+        batchConfig: { maxSizes: 1, maxHooks: 2, maxConcepts: 2, maxAdsPerRun: 4 },
+        paddlePriceId: { monthly: 'pri_01knz7zpgfbek52zm0n012jqn0', yearly: 'pri_01knz82jwdxjph1mpny39jnxqg' },
         features: {
-            retargeting: true, fantasyUniverses: true, aspectRatios: ALL_RATIOS, visualPolishes: true, brandUrlScraping: true, competitorResearch: true, carousel: true, maxCarouselSlides: 5, batchGeneration: false, maxTeamMembers: 3,
+            retargeting: true, fantasyUniverses: true, aspectRatios: ALL_RATIOS, visualPolishes: true, brandUrlScraping: true, competitorResearch: true, carousel: true, batchGeneration: true, maxTeamMembers: 3,
             abVariationTesting: true, regionEditing: true, referenceAdUpload: true, pushToMeta: true, performanceDashboard: 'overview', creativeMemory: true, creativeScoringEngine: false, smartRecommendations: false, variantExploration: false, multiBrandWorkspaces: false,
             maxHookAngles: 11, maxHookStyles: 12, maxAdTones: 11, maxCopyStrategies: 8, maxOfferModes: 21, maxObjectionScripts: 12,
+            hookAngles: 'full', hookTypes: 'full', copywritingStrategies: 'full', adTones: 'full',
         },
         featureLabels: [],
     },
-    scaling: {
-        id: 'scaling', name: 'Scaling', subtitle: 'For high-volume ad testing', monthlyCredits: 5000, trialCredits: 50, priceMonthly: 179, priceAnnualPerMonth: 143.20, maxSavedProjects: Infinity, maxAvatars: Infinity,
+    scale: {
+        id: 'scale', name: 'Scale', subtitle: 'For high-volume ad testing', monthlyCredits: 6500, trialCredits: 50, priceMonthly: 179, priceAnnualPerMonth: 143.20,
+        savedProjectLimit: Infinity, audienceAvatarLimit: Infinity, carouselMaxSlides: 10,
+        batchConfig: { maxSizes: 3, maxHooks: 4, maxConcepts: 3, maxAdsPerRun: 36 },
+        paddlePriceId: { monthly: 'pri_01knz80jr5m4ey3wrskpvgbrh4', yearly: 'pri_01knz81pexff8h8wbwq44cy0j3' },
         features: {
-            retargeting: true, fantasyUniverses: true, aspectRatios: ALL_RATIOS, visualPolishes: true, brandUrlScraping: true, competitorResearch: true, carousel: true, maxCarouselSlides: 9, batchGeneration: true, maxTeamMembers: 10,
+            retargeting: true, fantasyUniverses: true, aspectRatios: ALL_RATIOS, visualPolishes: true, brandUrlScraping: true, competitorResearch: true, carousel: true, batchGeneration: true, maxTeamMembers: 10,
             abVariationTesting: true, regionEditing: true, referenceAdUpload: true, pushToMeta: true, performanceDashboard: 'full', creativeMemory: true, creativeScoringEngine: true, smartRecommendations: true, variantExploration: true, multiBrandWorkspaces: true,
             maxHookAngles: 11, maxHookStyles: 12, maxAdTones: 11, maxCopyStrategies: 8, maxOfferModes: 21, maxObjectionScripts: 12,
+            hookAngles: 'full', hookTypes: 'full', copywritingStrategies: 'full', adTones: 'full',
         },
         featureLabels: [],
     },
@@ -194,7 +214,7 @@ for (const key of Object.keys(PLANS) as UserPlan[]) {
 }
 
 // ─── HELPER FUNCTIONS ────────────────────────────────────────────────────────
-export const isPaidPlan = (plan: UserPlan): plan is 'starter' | 'creator' | 'pro' | 'scaling' => {
+export const isPaidPlan = (plan: UserPlan): plan is 'starter' | 'pro' | 'scale' => {
     return plan !== 'none';
 };
 
@@ -220,34 +240,33 @@ export const getFeatureLevel = (plan: UserPlan, feature: 'performanceDashboard')
 };
 
 /** Get the numeric limit of a tiered feature (e.g. maxHookAngles). */
-type NumericFeature = 'maxHookAngles' | 'maxHookStyles' | 'maxAdTones' | 'maxCopyStrategies' | 'maxOfferModes' | 'maxObjectionScripts' | 'maxCarouselSlides' | 'maxTeamMembers';
+type NumericFeature = 'maxHookAngles' | 'maxHookStyles' | 'maxAdTones' | 'maxCopyStrategies' | 'maxOfferModes' | 'maxObjectionScripts' | 'maxTeamMembers';
 export const getFeatureLimit = (plan: UserPlan, feature: NumericFeature): number => {
     if (plan === 'none') return 0;
     return PLANS[plan]?.features[feature] ?? 0;
 };
 
-export const getMaxAvatars = (plan: UserPlan): number => {
+export const getSavedProjectLimit = (plan: UserPlan): number => {
     if (plan === 'none') return 0;
-    return PLANS[plan]?.maxAvatars ?? 0;
+    return PLANS[plan]?.savedProjectLimit ?? 0;
 };
 
-export const getMaxSavedProjects = (plan: UserPlan): number => {
+export const getAudienceAvatarLimit = (plan: UserPlan): number => {
     if (plan === 'none') return 0;
-    return PLANS[plan]?.maxSavedProjects ?? 0;
+    return PLANS[plan]?.audienceAvatarLimit ?? 0;
 };
 
 export const requiredPlanFor = (feature: keyof PlanConfig['features']): string => {
     // Starter-level
     if (feature === 'brandUrlScraping') return 'Starter';
-    // Creator-level
-    if (feature === 'fantasyUniverses' || feature === 'visualPolishes' || feature === 'retargeting') return 'Creator';
-    if (feature === 'abVariationTesting' || feature === 'regionEditing') return 'Creator';
-    // Pro-level
+    // Pro-level (includes features formerly gated at Creator tier)
+    if (feature === 'fantasyUniverses' || feature === 'visualPolishes' || feature === 'retargeting') return 'Pro';
+    if (feature === 'abVariationTesting' || feature === 'regionEditing') return 'Pro';
     if (feature === 'carousel' || feature === 'competitorResearch') return 'Pro';
     if (feature === 'referenceAdUpload' || feature === 'pushToMeta' || feature === 'creativeMemory' || feature === 'performanceDashboard') return 'Pro';
-    // Scaling-level
-    if (feature === 'batchGeneration') return 'Scaling';
-    if (feature === 'creativeScoringEngine' || feature === 'smartRecommendations' || feature === 'variantExploration' || feature === 'multiBrandWorkspaces') return 'Scaling';
+    if (feature === 'batchGeneration') return 'Pro';
+    // Scale-level
+    if (feature === 'creativeScoringEngine' || feature === 'smartRecommendations' || feature === 'variantExploration' || feature === 'multiBrandWorkspaces') return 'Scale';
     return 'Starter';
 };
 
@@ -260,7 +279,7 @@ export const hasCredits = (currentCredits: number, action: keyof typeof CREDIT_C
 };
 
 export const getMaxSlides = (plan: UserPlan): number => {
-    return PLANS[plan]?.features.maxCarouselSlides ?? 0;
+    return PLANS[plan]?.carouselMaxSlides ?? 0;
 };
 
 export const getApproxAdsPerMonth = (plan: PlanConfig): number => {
@@ -276,6 +295,12 @@ export const TOPUP_PACKS = [
     { id: 'medium', credits: 300, price: 17, label: '300 Credits' },
     { id: 'large', credits: 800, price: 39, label: '800 Credits' },
 ] as const;
+
+export const PADDLE_TOPUP_PRICE_IDS: Record<number, string> = {
+    100: 'pri_01knz87qc1ezrb84gtffpmtjdq',
+    300: 'pri_01knz898vrhxyge632scazjn2z',
+    800: 'pri_01knz8a0s0f2je5rgrk2y62b0n',
+};
 
 // ─── RE-EXPORT CREDIT COST HELPERS ─────────────────────────────────────────
 export {

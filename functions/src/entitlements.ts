@@ -1,31 +1,20 @@
-/**
- * entitlements.ts
- * ═══════════════════════════════════════════════════════════════════════════
- * SINGLE SOURCE OF TRUTH for plan entitlements (backend).
- * Every backend function that checks plan, features, or credits MUST use this.
- *
- * PLAN MODEL:
- *   - 4 plans: starter, creator, pro, scaling
- *   - Trial: plan='starter' (or any), isTrial=true, credits=50, features=full
- *   - Paid:  plan='starter' (or any), isTrial=false, credits=plan amount
- *   - Cancelled: plan='none', credits=0, blocked from everything
- *   - There is NO 'free' plan
- *
- * Firestore user doc fields:
- *   - plan: 'starter' | 'creator' | 'pro' | 'scaling' | 'none'
- *   - isTrial: boolean (true = trial, credits don't reset)
- *   - credits: number (current balance)
- *   - isTeamMember: boolean
- *   - teamOwnerUid: string (if team member)
- * ═══════════════════════════════════════════════════════════════════════════
- */
+// functions/src/entitlements.ts — server-side plan/credit entitlement resolution
+// SINGLE SOURCE OF TRUTH for plan entitlements (backend).
+// Every backend function that checks plan, features, or credits MUST use this.
+//
+// PLAN MODEL:
+//   - 3 paid plans: starter, pro, scale
+//   - Trial: plan='starter' (or any), isTrial=true, credits=50, features=full
+//   - Paid:  plan='starter' (or any), isTrial=false, credits=plan amount
+//   - Cancelled: plan='none', credits=0, blocked from everything
+//   - There is NO 'free' plan
 
 import * as admin from "firebase-admin";
 
 function getDb() { return admin.firestore(); }
 
 // ─── PLAN TYPES ─────────────────────────────────────────────────────────────
-export type BasePlan = "starter" | "creator" | "pro" | "scaling";
+export type BasePlan = "starter" | "pro" | "scale";
 export type StoredPlan = BasePlan | "none";
 
 // ─── FEATURE SET ────────────────────────────────────────────────────────────
@@ -81,7 +70,7 @@ const PLAN_FEATURES: Record<BasePlan, PlanFeatures> = {
         fantasyUniverses: false,
         visualPolishes: false,
         brandUrlScraping: true,
-        maxCarouselSlides: 1,
+        maxCarouselSlides: 0,
         maxTeamMembers: 1,
         aspectRatios: ["1:1", "4:5", "3:4", "4:3", "9:16", "16:9"],
         abVariationTesting: false,
@@ -94,50 +83,22 @@ const PLAN_FEATURES: Record<BasePlan, PlanFeatures> = {
         smartRecommendations: false,
         variantExploration: false,
         multiBrandWorkspaces: false,
-        maxHookAngles: 4,
-        maxHookStyles: 4,
-        maxAdTones: 4,
-        maxCopyStrategies: 3,
+        maxHookAngles: 11,
+        maxHookStyles: 12,
+        maxAdTones: 11,
+        maxCopyStrategies: 8,
         maxOfferModes: 6,
         maxObjectionScripts: 0,
-    },
-    creator: {
-        retargeting: true,
-        carousel: false,
-        competitorResearch: false,
-        batchGeneration: false,
-        fantasyUniverses: true,
-        visualPolishes: true,
-        brandUrlScraping: true,
-        maxCarouselSlides: 1,
-        maxTeamMembers: 1,
-        aspectRatios: ["1:1", "4:5", "3:4", "4:3", "9:16", "16:9"],
-        abVariationTesting: true,
-        regionEditing: true,
-        referenceAdUpload: false,
-        pushToMeta: false,
-        performanceDashboard: "none",
-        creativeMemory: false,
-        creativeScoringEngine: false,
-        smartRecommendations: false,
-        variantExploration: false,
-        multiBrandWorkspaces: false,
-        maxHookAngles: 8,
-        maxHookStyles: 8,
-        maxAdTones: 8,
-        maxCopyStrategies: 6,
-        maxOfferModes: 12,
-        maxObjectionScripts: 4,
     },
     pro: {
         retargeting: true,
         carousel: true,
         competitorResearch: true,
-        batchGeneration: false,
+        batchGeneration: true,
         fantasyUniverses: true,
         visualPolishes: true,
         brandUrlScraping: true,
-        maxCarouselSlides: 5,
+        maxCarouselSlides: 7,
         maxTeamMembers: 3,
         aspectRatios: ["1:1", "4:5", "3:4", "4:3", "9:16", "16:9"],
         abVariationTesting: true,
@@ -157,7 +118,7 @@ const PLAN_FEATURES: Record<BasePlan, PlanFeatures> = {
         maxOfferModes: 21,
         maxObjectionScripts: 12,
     },
-    scaling: {
+    scale: {
         retargeting: true,
         carousel: true,
         competitorResearch: true,
@@ -165,7 +126,7 @@ const PLAN_FEATURES: Record<BasePlan, PlanFeatures> = {
         fantasyUniverses: true,
         visualPolishes: true,
         brandUrlScraping: true,
-        maxCarouselSlides: 9,
+        maxCarouselSlides: 10,
         maxTeamMembers: 10,
         aspectRatios: ["1:1", "4:5", "3:4", "4:3", "9:16", "16:9"],
         abVariationTesting: true,
@@ -217,16 +178,162 @@ const NONE_FEATURES: PlanFeatures = {
 };
 
 const PLAN_CREDITS: Record<BasePlan, number> = {
-    starter: 500,
-    creator: 1000,
-    pro: 2000,
-    scaling: 5000,
+    starter: 800,
+    pro: 2500,
+    scale: 6500,
 };
 
 const TRIAL_CREDITS = 50;
 
+// ═══════════════════════════════════════════════════════════
+// ENTITLEMENT RESOLVER (contracts/entitlement-resolver.md)
+// ═══════════════════════════════════════════════════════════
+
+export type FeatureName =
+    | "retargeting"
+    | "fantasyUniverse"
+    | "artDirection"
+    | "batch"
+    | "carousel"
+    | "referenceAds"
+    | "carouselSlides"
+    | "batchRun"
+    | "teamInvite"
+    | "savedProjectSave"
+    | "audienceAvatarCreate"
+    | "hookAngles"
+    | "hookTypes"
+    | "copywritingStrategies"
+    | "adTones";
+
+export type EntitlementDenialReason =
+    | "plan_none"
+    | "pro_plan_required"
+    | "scale_plan_required"
+    | "batch_limit_exceeded"
+    | "carousel_limit_exceeded"
+    | "team_limit_exceeded"
+    | "saved_project_limit_exceeded"
+    | "avatar_limit_exceeded"
+    | "unknown_feature";
+
+export interface EntitlementDecision {
+    allowed: boolean;
+    reason?: EntitlementDenialReason;
+    limit?: number;
+}
+
+export interface EntitlementInput {
+    plan: StoredPlan;
+    feature: FeatureName;
+    quantity?: number;
+}
+
+const BOOLEAN_GATES: FeatureName[] = [
+    "retargeting", "fantasyUniverse", "artDirection", "batch", "carousel", "referenceAds",
+];
+
+const ALWAYS_ALLOWED: FeatureName[] = [
+    "hookAngles", "hookTypes", "copywritingStrategies", "adTones",
+];
+
+const PLAN_CREDIT_LIMITS: Record<string, { carouselMaxSlides: number; batchMaxAds: number; teamLimit: number; savedProjectLimit: number; avatarLimit: number }> = {
+    starter: { carouselMaxSlides: 0, batchMaxAds: 0, teamLimit: 1, savedProjectLimit: 10, avatarLimit: 5 },
+    pro: { carouselMaxSlides: 7, batchMaxAds: 4, teamLimit: 3, savedProjectLimit: 30, avatarLimit: 15 },
+    scale: { carouselMaxSlides: 10, batchMaxAds: 36, teamLimit: 10, savedProjectLimit: Infinity, avatarLimit: Infinity },
+};
+
+const PRO_REQUIRED_FEATURES: Set<FeatureName> = new Set([
+    "retargeting", "fantasyUniverse", "artDirection", "batch", "carousel", "referenceAds",
+    "carouselSlides", "batchRun",
+]);
+
+export function resolveEntitlement(input: EntitlementInput): EntitlementDecision {
+    const { plan, feature, quantity } = input;
+
+    if (plan === "none") {
+        return { allowed: false, reason: "plan_none" };
+    }
+
+    if (ALWAYS_ALLOWED.includes(feature)) {
+        return { allowed: true };
+    }
+
+    if (BOOLEAN_GATES.includes(feature)) {
+        if (plan === "starter") {
+            return { allowed: false, reason: "pro_plan_required" };
+        }
+        return { allowed: true };
+    }
+
+    const limits = PLAN_CREDIT_LIMITS[plan];
+    if (!limits) {
+        return { allowed: false, reason: "plan_none" };
+    }
+
+    switch (feature) {
+        case "carouselSlides": {
+            if (limits.carouselMaxSlides === 0) {
+                return { allowed: false, reason: "pro_plan_required", limit: 0 };
+            }
+            const q = quantity ?? 0;
+            if (q > limits.carouselMaxSlides) {
+                return { allowed: false, reason: "carousel_limit_exceeded", limit: limits.carouselMaxSlides };
+            }
+            return { allowed: true, limit: limits.carouselMaxSlides };
+        }
+        case "batchRun": {
+            if (limits.batchMaxAds === 0) {
+                return { allowed: false, reason: "pro_plan_required", limit: 0 };
+            }
+            const q = quantity ?? 0;
+            if (q > limits.batchMaxAds) {
+                return { allowed: false, reason: "batch_limit_exceeded", limit: limits.batchMaxAds };
+            }
+            return { allowed: true, limit: limits.batchMaxAds };
+        }
+        case "teamInvite": {
+            // Contract: quantity = proposed owner-inclusive team size AFTER the invite.
+            // Pro cap 3 means q=3 is at cap → ALLOWED; q=4 exceeds → DENIED.
+            const q = quantity ?? 0;
+            if (limits.teamLimit <= 1) {
+                return { allowed: false, reason: "pro_plan_required", limit: limits.teamLimit };
+            }
+            if (q > limits.teamLimit) {
+                return { allowed: false, reason: "team_limit_exceeded", limit: limits.teamLimit };
+            }
+            return { allowed: true, limit: limits.teamLimit };
+        }
+        case "savedProjectSave": {
+            const q = quantity ?? 0;
+            if (limits.savedProjectLimit === Infinity) {
+                return { allowed: true, limit: Infinity };
+            }
+            if (q > limits.savedProjectLimit) {
+                return { allowed: false, reason: "saved_project_limit_exceeded", limit: limits.savedProjectLimit };
+            }
+            return { allowed: true, limit: limits.savedProjectLimit };
+        }
+        case "audienceAvatarCreate": {
+            const q = quantity ?? 0;
+            if (limits.avatarLimit === Infinity) {
+                return { allowed: true, limit: Infinity };
+            }
+            if (q > limits.avatarLimit) {
+                return { allowed: false, reason: "avatar_limit_exceeded", limit: limits.avatarLimit };
+            }
+            return { allowed: true, limit: limits.avatarLimit };
+        }
+        default:
+            // Fail-closed: an unknown FeatureName (e.g., added to the enum but not handled
+            // here) is denied, not silently allowed. Every new feature MUST be added
+            // explicitly to ALWAYS_ALLOWED, BOOLEAN_GATES, or this switch.
+            return { allowed: false, reason: "unknown_feature" };
+    }
+}
+
 // ─── RESOLVE ENTITLEMENT FROM FIRESTORE ─────────────────────────────────────
-export async function resolveEntitlement(callerUid: string): Promise<ResolvedEntitlement> {
+export async function resolveFirestoreEntitlement(callerUid: string): Promise<ResolvedEntitlement> {
     const userDoc = await getDb().collection("users").doc(callerUid).get();
     if (!userDoc.exists) {
         return makeNoneFallback(callerUid);
@@ -255,19 +362,44 @@ function resolveFromUserData(
     const storedPlan = (userData.plan || "none") as StoredPlan;
     const isTrial = userData.isTrial === true;
 
+    // ── Legacy plan normalization (matches buildBillingState read-time map) ──
+    // Users whose Firestore `plan` field still holds the pre-hotfix identifier
+    // must resolve to the canonical equivalent, else entitlement lookup falls
+    // through to makeNoneFallback and they lose all access.
+    let normalizedPlan: StoredPlan = storedPlan;
+    if ((storedPlan as string) === "creator") {
+        normalizedPlan = "pro";
+        console.log(JSON.stringify({
+            event: "plan.legacy_mapped",
+            source: "resolveFromUserData",
+            uid: creditOwnerUid,
+            legacy: "creator",
+            canonical: "pro",
+        }));
+    } else if ((storedPlan as string) === "scaling") {
+        normalizedPlan = "scale";
+        console.log(JSON.stringify({
+            event: "plan.legacy_mapped",
+            source: "resolveFromUserData",
+            uid: creditOwnerUid,
+            legacy: "scaling",
+            canonical: "scale",
+        }));
+    }
+
     // ── Real plan (trial or paid) ──
-    if (storedPlan !== "none" && PLAN_FEATURES[storedPlan as BasePlan]) {
+    if (normalizedPlan !== "none" && PLAN_FEATURES[normalizedPlan as BasePlan]) {
         return {
-            basePlan: storedPlan as BasePlan,
+            basePlan: normalizedPlan as BasePlan,
             isTrial,
-            creditsPerMonth: isTrial ? TRIAL_CREDITS : PLAN_CREDITS[storedPlan as BasePlan],
-            features: { ...PLAN_FEATURES[storedPlan as BasePlan] },
+            creditsPerMonth: isTrial ? TRIAL_CREDITS : PLAN_CREDITS[normalizedPlan as BasePlan],
+            features: { ...PLAN_FEATURES[normalizedPlan as BasePlan] },
             teamCreditPoolShared: true,
             creditOwnerUid,
         };
     }
 
-    // ── Cancelled / no plan ──
+    // ── Cancelled / no plan / unknown value ──
     return makeNoneFallback(creditOwnerUid);
 }
 
@@ -290,22 +422,22 @@ export type GatedFeature = keyof Omit<PlanFeatures,
 >;
 
 const FEATURE_REQUIRED_PLAN: Record<GatedFeature, string> = {
-    retargeting: "Creator",
+    retargeting: "Pro",
     carousel: "Pro",
     competitorResearch: "Pro",
-    batchGeneration: "Scaling",
-    fantasyUniverses: "Creator",
-    visualPolishes: "Creator",
+    batchGeneration: "Pro",
+    fantasyUniverses: "Pro",
+    visualPolishes: "Pro",
     brandUrlScraping: "Starter",
-    abVariationTesting: "Creator",
-    regionEditing: "Creator",
+    abVariationTesting: "Pro",
+    regionEditing: "Pro",
     referenceAdUpload: "Pro",
     pushToMeta: "Pro",
     creativeMemory: "Pro",
-    creativeScoringEngine: "Scaling",
-    smartRecommendations: "Scaling",
-    variantExploration: "Scaling",
-    multiBrandWorkspaces: "Scaling",
+    creativeScoringEngine: "Scale",
+    smartRecommendations: "Scale",
+    variantExploration: "Scale",
+    multiBrandWorkspaces: "Scale",
 };
 
 export interface FeatureCheckResult {
@@ -353,7 +485,7 @@ export function checkCarouselSlides(entitlement: ResolvedEntitlement, slideCount
             allowed: false,
             code: "feature_not_allowed",
             feature: `carousel_slides_${slideCount}`,
-            requiredPlan: "Scaling",
+            requiredPlan: "Scale",
         };
     }
     return { allowed: true };
@@ -374,7 +506,7 @@ export function checkNumericLimit(
         allowed: false,
         code: "feature_not_allowed",
         feature: featureLabel,
-        requiredPlan: limit === 0 ? "Creator" : "Pro",
+        requiredPlan: limit === 0 ? "Pro" : "Scale",
     };
 }
 
@@ -390,7 +522,7 @@ export function checkDashboardAccess(
         allowed: false,
         code: "feature_not_allowed",
         feature: "performanceDashboard",
-        requiredPlan: requiredLevel === "full" ? "Scaling" : "Pro",
+        requiredPlan: requiredLevel === "full" ? "Scale" : "Pro",
     };
 }
 
@@ -413,5 +545,25 @@ export async function resolveCreditOwner(callerUid: string): Promise<{
     return { creditOwnerUid: callerUid, teamRole: null };
 }
 
+// ─── ACTION → FEATURE GATE MAP ─────────────────────────────────────────────
+export const ACTION_FEATURE_MAP: Record<string, GatedFeature | null> = {
+    generateHooks: null,
+    refreshHooks: null,
+    editOneHook: null,
+    generateConcepts: null,
+    editOneConcept: null,
+    buildPlan: null,
+    generateImage: null,
+    polishImage: null,
+    reflowImage: null,
+    analyzePolishes: null,
+    generateCaption: null,
+    refineCaption: null,
+    generateCarouselCopies: "carousel",
+    competitorResearch: "competitorResearch",
+    brandUrlScraping: "brandUrlScraping",
+    editRegion: "regionEditing",
+};
+
 // ─── EXPORTS ────────────────────────────────────────────────────────────────
-export { PLAN_CREDITS, TRIAL_CREDITS };
+export { PLAN_CREDITS, TRIAL_CREDITS, PLAN_FEATURES };

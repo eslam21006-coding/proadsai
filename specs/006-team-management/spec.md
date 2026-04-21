@@ -2,7 +2,8 @@
 
 **Feature Branch**: `006-team-management`
 **Created**: 2026-04-03
-**Status**: Draft
+**Status**: In Review
+**Last Reviewed**: 2026-04-10
 **Input**: Phase 9 from LAUNCH_MATRIX.md — Team Management (15 tasks: 9.1–9.15)
 
 ## Clarifications
@@ -178,15 +179,17 @@ As a QA reviewer, fixture tests verify the core team operations: invite creation
 - **FR-008**: The invite form MUST enforce plan limits: count active members + open invites against `maxTeamMembers`. At limit, replace the form with an upgrade prompt.
 - **FR-009**: Member removal MUST clear the member's team association immediately, revert their plan, and show them "You've been removed from this team. Contact your team owner." on their next action.
 - **FR-010**: Team members MUST see the team's shared credit pool labeled with the owner's name. The credit display MUST update in real time.
-- **FR-011**: Viewer-role members MUST be blocked from all credit-consuming actions, with a tooltip explanation on generation buttons.
+- **FR-011**: Viewer-role members MUST be blocked from all credit-consuming actions. The client MUST prevent action execution and show a clear message explaining the restriction. The server MUST independently reject viewer requests as a second layer of enforcement.
+- **FR-015**: Team owners MUST be able to change an existing member's role (editor/viewer) from the Team page without requiring re-invitation.
 - **FR-012**: Scaling plan teams MUST have a workspace switcher in the nav, with each workspace maintaining its own generation history. Non-Scaling plans MUST NOT show the switcher.
 - **FR-013**: Team state (`teamMemberCount`, `teamOpenInvites`, `maxTeamMembers`, `isTeamOwner`, `isTeamMember`, `teamOwnerName`) MUST be available to the frontend via the same real-time mechanism as billing state.
 - **FR-014**: Fixture tests MUST verify: invite blocked at limit, claim sets membership, expired invite rejected, removal clears membership, viewer rejected by credit deduction, and invite details returns correct status for expired/revoked invites.
+- **FR-016**: The invite form MUST include a role selector allowing the owner to choose between editor (displayed as "Member") and viewer roles at invite time, defaulting to editor.
 
 ### Key Entities
 
-- **Team Invite**: A pending invitation from a team owner to a prospective member. Has: invitee email, invitee name, owner ID, assigned role (member/viewer, default: member), status (pending/claimed/revoked/expired), expiry date, creation date.
-- **Team Member**: A user who has claimed an invite and is associated with a team. Has: user ID, team owner ID, role (member/viewer), join date.
+- **Team Invite**: A pending invitation from a team owner to a prospective member. Has: invitee email, invitee name, owner ID, assigned role (editor/viewer, default: editor — displayed as "Member"/"Viewer" in the UI), status (pending/sent/claimed/revoked/expired/failed), expiry date, creation date.
+- **Team Member**: A user who has claimed an invite and is associated with a team. Has: user ID, team owner ID, role (editor/viewer — displayed as "Member"/"Viewer"), join date.
 - **Team**: Implicitly defined by the owner's account. The owner IS the team. Members are associated via `teamOwnerUid`. Plan limits come from the owner's subscription.
 - **Workspace**: A logical separation of generation history within a team. Only available on Scaling plan. Members can switch between workspaces.
 
@@ -205,11 +208,13 @@ As a QA reviewer, fixture tests verify the core team operations: invite creation
 
 ## Assumptions
 
-- The backend Cloud Functions for team operations (`createTeamInvite`, `claimTeamInvite`, `removeTeamMember`, etc.) already exist and are functional. This feature builds the frontend UI and fixes the routing gap.
-- Team credit pooling via `resolveEntitlement()` already works. This feature adds the UI to display it.
-- Server-side viewer rejection in `deductCreditsServer` already exists. This feature adds the client-side tooltip and button gating.
+- Backend Cloud Functions for team operations (`createTeamInvite`, `claimTeamInvite`, `removeTeamMember`, `resendTeamInvite`, `revokeTeamInvite`, `getInviteDetails`, `getTeamInvites`, `updateTeamMemberRole`) are implemented and functional.
+- Team credit pooling via `resolveCreditOwner()` is implemented. The UI displays the owner's credit balance for team members.
+- Server-side viewer rejection in `deductCreditsServer` is implemented. Client-side gating blocks the action and shows a toast message.
 - Invite delivery happens via GHL webhook (existing). This feature does not change the delivery mechanism.
 - A user can only be on one team at a time. Switching teams requires leaving the current team first.
-- Phase 8 (Billing State) is a dependency. The `billingState` real-time hook must be available before team state can be added to it.
-- Plan limits: Starter/Creator = 1 member (owner only), Pro = 3 members, Scaling = 10 members. These are enforced at the plan configuration level.
-- Workspace separation (US6) is Scaling-plan only. Non-Scaling teams share a single implicit workspace.
+- Phase 8 (Billing State) dependency is satisfied. Team state fields (`teamOwnerUid`, `teamRole`, `teamOwnerName`, `isTeamMember`, `isTeamViewer`, `isTeamOwner`) are available via Firestore real-time listeners.
+- Plan limits: Starter/Creator = 1 member (owner only), Pro = 3 members, Scaling = 10 members. These are enforced at both the plan configuration level and server-side.
+- Workspace separation (US6) is Scaling-plan only. The `WorkspaceSwitcher` component and `multiBrandWorkspaces` feature flag exist, but full workspace-scoped generation history isolation requires additional integration work.
+- Internal role values are `editor` and `viewer`. The UI displays these as "Member" and "Viewer" respectively via i18n keys.
+- Invite statuses follow the lifecycle: `pending` → `sent` (after GHL webhook) → `accepted` | `failed` | `revoked` | `expired`. Open invite statuses that count toward plan limits are: `pending`, `sent`, `failed`.

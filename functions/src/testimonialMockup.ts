@@ -1,6 +1,6 @@
 // testimonialMockup.ts — Platform detection and mockup rendering for testimonial carousels
 
-import type { PlatformType } from "./types.js";
+import type { PlatformType, VisualStyleFamily } from "./types.js";
 
 type GeminiCaller = (params: { model: string; contents: any; config?: any }) => Promise<any>;
 let callGemini: GeminiCaller;
@@ -23,6 +23,12 @@ Respond with exactly one of these words:
 - unknown (none of the above or ambiguous)
 
 Respond with ONLY the platform name, nothing else.`;
+
+const VISUAL_STYLE_MAP: Record<VisualStyleFamily, string> = {
+    realistic: "Realistic, professional commercial style.",
+    fantasy: "Stylized cinematic palette consistent with fantasy art direction.",
+    minimal: "Clean, minimal, commercial. No background scenes or decorative environments.",
+};
 
 const MOCKUP_PROMPTS: Record<PlatformType, string> = {
     whatsapp: `Render this testimonial screenshot inside a WhatsApp-style UI frame. Show a green header bar with the contact name, chat bubbles wrapping the screenshot content, and timestamps. The frame should look like an authentic WhatsApp conversation on a phone screen. Keep the original testimonial text readable.`,
@@ -62,14 +68,19 @@ export async function detectTestimonialPlatform(screenshotBase64: string): Promi
     }
 }
 
-export async function buildTestimonialMockup(screenshotBase64: string, platform: PlatformType): Promise<string> {
+export async function buildTestimonialMockup(
+    screenshotBase64: string,
+    platform: PlatformType,
+    visualStyleFamily: VisualStyleFamily = "realistic",
+): Promise<string> {
     try {
         const rawB64 = screenshotBase64.includes(",") ? screenshotBase64.split(",")[1] : screenshotBase64;
         const mime = screenshotBase64.startsWith("data:image/webp") ? "image/webp"
             : screenshotBase64.startsWith("data:image/png") ? "image/png"
             : "image/jpeg";
 
-        const mockupPrompt = MOCKUP_PROMPTS[platform];
+        const styleClause = VISUAL_STYLE_MAP[visualStyleFamily] ?? VISUAL_STYLE_MAP.realistic;
+        const mockupPrompt = `${MOCKUP_PROMPTS[platform]}\n\nVISUAL STYLE: ${styleClause} Maintain identical palette, lighting, and framing across all slides in this carousel for art-direction consistency.`;
 
         const response = await callGemini({
             model: VISUAL_MODEL,

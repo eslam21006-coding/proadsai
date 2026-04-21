@@ -8,21 +8,23 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { defineSecret } from "firebase-functions/params";
 import * as admin from "firebase-admin";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+// DEPRECATED: Stripe import — only used by deprecated functions kept for reference.
+// Active code uses Paddle via @paddle/paddle-node-sdk.
 import Stripe from "stripe";
 import * as crypto from "crypto";
 import {
-    resolveEntitlement, checkFeature, checkCarouselSlides,
-    checkAspectRatio, resolveCreditOwner,
+    resolveFirestoreEntitlement, checkFeature, checkCarouselSlides,
+    checkAspectRatio, resolveCreditOwner, resolveEntitlement,
     PLAN_CREDITS, TRIAL_CREDITS,
     type GatedFeature, type ResolvedEntitlement,
-    ACTION_FEATURE_MAP,
 } from "./entitlements.js";
 import { validateSelector } from "./selectorLimits.js";
-import type { FailureClass, CostEstimate } from "./types.js";
-import { GenerationError } from "./types.js";
-import { classifyError, buildCostEstimate, errorCodeToFailureClass, resetCostTracker, getCostEstimate } from "./generators.js";
 import { writeBillingState } from "./billing/billingState.js";
-
+import { paddleGetSubscription, paddleCancelSubscription, paddleReactivateSubscription, paddleChangePlan } from "./paddle/paddleSubscriptions.js";
+import { paddleCreateTopupCheckout } from "./paddle/paddleCheckout.js";
+import { paddleCreatePortalSession } from "./paddle/paddlePortal.js";
+import { handlePaddleWebhook } from "./billing/paddleWebhook.js";
+import { createPaddleClient, PADDLE_PRICE_TO_PLAN } from "./paddle/paddleClient.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
@@ -35,6 +37,7 @@ admin.initializeApp({
 const db = admin.firestore();
 const geminiApiKey = defineSecret("GEMINI_API_KEY");
 const ghlWebhookSecret = defineSecret("GHL_WEBHOOK_SECRET");
+// DEPRECATED: only used by deprecated Stripe functions kept for reference
 const stripeSecretKey = defineSecret("STRIPE_SECRET_KEY");
 const metaAppId = defineSecret("META_APP_ID");
 const ghlTeamInviteUrl = defineSecret("GHL_TEAM_INVITE_WEBHOOK_URL");
@@ -42,31 +45,41 @@ const metaAppSecret = defineSecret("META_APP_SECRET");
 const openaiApiKey = defineSecret("OPENAI_API_KEY");
 const falApiKey = defineSecret("FAL_API_KEY");
 
+// ─── PADDLE SECRETS ──────────────────────────────────────────────────────────
+const paddleApiKey = defineSecret("PADDLE_API_KEY");
+const paddleWebhookSecret = defineSecret("PADDLE_WEBHOOK_SECRET");
+const ghlPaddleSyncUrl = defineSecret("GHL_PADDLE_SYNC_WEBHOOK_URL");
+const ghlPaddleFailedUrl = defineSecret("GHL_PADDLE_FAILED_WEBHOOK_URL");
+
 // ─── CONFIGURATION ──────────────────────────────────────────────────────────
 const PLAN_MAP: Record<string, { plan: string; credits: number; isTrial?: boolean }> = {
     // Simple names (for GHL automations)
-    'starter': { plan: 'starter', credits: 500 },
-    'creator': { plan: 'creator', credits: 1000 },
-    'pro': { plan: 'pro', credits: 2000 },
-    'scaling': { plan: 'scaling', credits: 5000 },
+    'starter': { plan: 'starter', credits: 800 },
+    'pro': { plan: 'pro', credits: 2500 },
+    'scale': { plan: 'scale', credits: 6500 },
     // Trial plans — full features, 50 credits
     'starter_trial': { plan: 'starter', credits: 50, isTrial: true },
-    'creator_trial': { plan: 'creator', credits: 50, isTrial: true },
     'pro_trial': { plan: 'pro', credits: 50, isTrial: true },
-    'scaling_trial': { plan: 'scaling', credits: 50, isTrial: true },
+    'scale_trial': { plan: 'scale', credits: 50, isTrial: true },
     // Full names
-    'starter_monthly': { plan: 'starter', credits: 500 },
-    'starter_annual': { plan: 'starter', credits: 500 },
-    'creator_monthly': { plan: 'creator', credits: 1000 },
-    'creator_annual': { plan: 'creator', credits: 1000 },
-    'pro_monthly': { plan: 'pro', credits: 2000 },
-    'pro_annual': { plan: 'pro', credits: 2000 },
-    'scaling_monthly': { plan: 'scaling', credits: 5000 },
-    'scaling_annual': { plan: 'scaling', credits: 5000 },
+    'starter_monthly': { plan: 'starter', credits: 800 },
+    'starter_annual': { plan: 'starter', credits: 800 },
+    'pro_monthly': { plan: 'pro', credits: 2500 },
+    'pro_annual': { plan: 'pro', credits: 2500 },
+    'scale_monthly': { plan: 'scale', credits: 6500 },
+    'scale_annual': { plan: 'scale', credits: 6500 },
     // Top-ups
     'topup_100': { plan: 'keep_current', credits: 100 },
     'topup_300': { plan: 'keep_current', credits: 300 },
     'topup_800': { plan: 'keep_current', credits: 800 },
+};
+
+// PADDLE_PRICE_TO_PLAN is imported from ./paddle/paddleClient (single source of truth).
+
+const PADDLE_TOPUP_PRICES: Record<string, { priceId: string; credits: number }> = {
+    topup_100: { priceId: "pri_01knz87qc1ezrb84gtffpmtjdq", credits: 100 },
+    topup_300: { priceId: "pri_01knz898vrhxyge632scazjn2z", credits: 300 },
+    topup_800: { priceId: "pri_01knz8a0s0f2je5rgrk2y62b0n", credits: 800 },
 };
 
 // All costs are strictly linear: unit cost × count. No bundling, no discounts.
@@ -81,74 +94,14 @@ const COSTS: Record<string, number> = {
     brandUrlScraping: 3,
 };
 
-// ─── Failure Classification Helpers ─────────────────────────────────────────
-
-const POST_DEDUCTION_FAILURES: FailureClass[] = ["model_error", "validation_reject", "slot_repair_failed"];
-
-function isPostDeductionFailure(fc: FailureClass): boolean {
-    return POST_DEDUCTION_FAILURES.includes(fc);
-}
-
-async function writeFailureRecord(
-    userId: string,
-    failureClass: FailureClass,
-    costEstimate: CostEstimate,
-    inputMeta: Record<string, any>,
-    errorMessage: string,
-    phase: string
-): Promise<void> {
-    try {
-        await db.collection("generations").add({
-            userId,
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            failureClass,
-            costEstimate,
-            input: {
-                productName: inputMeta.productName || "",
-                productCategory: inputMeta.productCategory || "",
-                niche: inputMeta.targetAudience || "",
-                challenges: inputMeta.challenges || "",
-                transformation: inputMeta.transformation || "",
-                offer: inputMeta.offerType || "",
-                tone: "",
-                language: inputMeta.adLanguage || "ar_fusha",
-                adType: inputMeta.adMode || "single",
-                campaignType: inputMeta.campaignType || "cold",
-            },
-            output: {
-                phase,
-                fullResponse: errorMessage.substring(0, 5000),
-            },
-            feedback: {
-                rating: null,
-                tags: [],
-                freeText: "",
-                savedToFavorites: false,
-            },
-        });
-        console.log(`📝 Failure record written: ${failureClass} for user ${userId}`);
-    } catch (err) {
-        console.warn("⚠️ Failed to write failure record (non-blocking):", err);
-    }
-}
-
-async function inlineRefund(targetUid: string, action: string, count: number = 1): Promise<void> {
-    const unitCost = COSTS[action];
-    if (unitCost === undefined) return;
-    const cost = unitCost * count;
-    try {
-        await db.runTransaction(async (tx) => {
-            const userRef = db.collection("users").doc(targetUid);
-            const snap = await tx.get(userRef);
-            if (!snap.exists) return;
-            const current = snap.data()?.credits ?? 0;
-            tx.update(userRef, { credits: current + cost });
-        });
-        console.log(`💰 Inline refund: ${cost} credits restored to ${targetUid} for action=${action}`);
-    } catch (err) {
-        console.warn("⚠️ Inline refund failed (non-blocking):", err);
-    }
-}
+const ACTION_FEATURE_MAP: Record<string, string> = {
+    competitorResearch: "competitorResearch",
+    brandUrlScraping: "brandUrlScraping",
+    generateImage: "visualPolishes",
+    polishImage: "visualPolishes",
+    reflowImage: "visualPolishes",
+    editRegion: "regionEditing",
+};
 
 // ─── MODEL CONSTANTS (single source of truth) ───────────────────────────
 const CREATIVE_MODEL_PRO = "gemini-3.1-pro-preview"; // First generation
@@ -222,7 +175,8 @@ export const generateCreative = onCall({
 // ═══════════════════════════════════════════════════════════════════════════
 // 3. THE GHL PAYMENT WEBHOOK (The "Cash Register")
 // ═══════════════════════════════════════════════════════════════════════════
-export const ghlpaymentwebhook = onRequest({
+// DEPRECATED: replaced by paddleWebhook + notifyGHL
+const ghlpaymentwebhook = onRequest({
     region: "europe-west1",
     cors: true,
     secrets: [ghlWebhookSecret, stripeSecretKey],
@@ -275,7 +229,7 @@ export const ghlpaymentwebhook = onRequest({
             finalPlan = mapped.plan;
         }
     }
-    if (finalCredits === 0) finalCredits = isTrial ? 50 : 500; // Trial=50, otherwise fallback to starter
+    if (finalCredits === 0) finalCredits = isTrial ? 50 : 800; // Trial=50, otherwise fallback to starter
 
     const normalizedEmail = email.toLowerCase().trim();
 
@@ -367,12 +321,12 @@ export const monthlyCreditsReset = onSchedule({
     region: 'europe-west1'
 }, async () => {
     const PLAN_LIMITS: Record<string, number> = {
-        starter: 500, creator: 1000, pro: 2000, scaling: 5000
+        starter: 800, pro: 2500, scale: 6500
     };
 
     // ═══ RESET PAID USERS ═══
     const usersSnap = await db.collection('users')
-        .where('plan', 'in', ['starter', 'creator', 'pro', 'scaling'])
+        .where('plan', 'in', ['starter', 'pro', 'scale'])
         .get();
 
     if (!usersSnap.empty) {
@@ -386,8 +340,11 @@ export const monthlyCreditsReset = onSchedule({
             for (const userDoc of chunk) {
                 const data = userDoc.data();
                 const plan = data.plan;
-                // Skip team members — they don't have their own credits
+                // Skip team members — they don't have their own credits.
                 if (data.isTeamMember) continue;
+                // Skip trial users — paid-plan monthly refill does NOT apply to trials.
+                // Trial credits run out once; continued access requires upgrading.
+                if (data.isTrial === true) continue;
                 if (PLAN_LIMITS[plan]) {
                     batch.update(userDoc.ref, {
                         credits: PLAN_LIMITS[plan],
@@ -399,7 +356,7 @@ export const monthlyCreditsReset = onSchedule({
             await batch.commit();
             for (const userDoc of chunk) {
                 const data = userDoc.data();
-                if (!data.isTeamMember && PLAN_LIMITS[data.plan]) {
+                if (!data.isTeamMember && data.isTrial !== true && PLAN_LIMITS[data.plan]) {
                     await writeBillingState(userDoc.id, db).catch((e: any) =>
                         console.warn(`⚠️ writeBillingState failed for ${userDoc.id}:`, e.message)
                     );
@@ -428,7 +385,8 @@ export const monthlyCreditsReset = onSchedule({
 //   Headers: x-ghl-secret: YOUR_SECRET
 //   Body: { "email": "{{contact.email}}" }
 // ═══════════════════════════════════════════════════════════════════════════
-export const ghlCancellationWebhook = onRequest({
+// DEPRECATED: replaced by paddleWebhook + notifyGHLFailed
+const ghlCancellationWebhook = onRequest({
     region: "europe-west1",
     cors: true,
     secrets: [ghlWebhookSecret],
@@ -493,7 +451,8 @@ export const ghlCancellationWebhook = onRequest({
 //   Headers: x-ghl-secret: YOUR_SECRET
 //   Body: { "email": "{{contact.email}}" }
 // ═══════════════════════════════════════════════════════════════════════════
-export const ghlPaymentFailedWebhook = onRequest({
+// DEPRECATED: replaced by paddleWebhook + notifyGHLFailed
+const ghlPaymentFailedWebhook = onRequest({
     region: "europe-west1",
     cors: true,
     secrets: [ghlWebhookSecret],
@@ -598,7 +557,7 @@ export const competitorResearch = onCall({
     const uid = request.auth.uid;
 
     // ═══ ENTITLEMENT: Check competitor research access ═══
-    const entitlement = await resolveEntitlement(uid);
+    const entitlement = await resolveFirestoreEntitlement(uid);
     const featureCheck = checkFeature(entitlement, 'competitorResearch');
     if (!featureCheck.allowed) {
         throw new HttpsError("permission-denied", JSON.stringify({
@@ -759,6 +718,11 @@ CRITICAL:
     }
 });
 // ═══════════════════════════════════════════════════════════════════════════
+// @LEGACY — STRIPE BILLING (7–19)
+// These functions use Stripe and are preserved for backward compatibility.
+// Paddle equivalents are registered below. Migrate frontend to Paddle callables,
+// then remove this entire section.
+// ═══════════════════════════════════════════════════════════════════════════
 // 7. STRIPE CUSTOMER PORTAL
 // ═══════════════════════════════════════════════════════════════════════════
 // Called from App.tsx when user clicks "Manage Billing" or "Manage Subscription".
@@ -773,7 +737,8 @@ CRITICAL:
 //
 // The stripeCustomerId is automatically saved when GHL webhook fires (see section 3 above).
 // ═══════════════════════════════════════════════════════════════════════════
-export const createStripePortalSession = onCall({
+// DEPRECATED: replaced by Paddle management URLs
+const createStripePortalSession = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
     cors: true,
@@ -862,6 +827,7 @@ export const createStripePortalSession = onCall({
 // ═══════════════════════════════════════════════════════════════════════════
 // 8. ONE-TIME BACKFILL: Add stripeCustomerId to existing users
 // ═══════════════════════════════════════════════════════════════════════════
+// DEPRECATED: Stripe backfill — no longer needed with Paddle migration.
 // Run this ONCE after deploying by visiting:
 //   https://europe-west1-proadsai-saas.cloudfunctions.net/backfillStripeCustomerIds
 //
@@ -949,7 +915,8 @@ const TOPUP_PRICES: Record<string, { priceId: string; credits: number }> = {
     'topup_800': { priceId: 'price_1T4zgC4MIh5WD4bvYtG2UB4K', credits: 800 },
 };
 
-export const createTopupCheckout = onCall({
+// DEPRECATED: replaced by createPaddleTopUp
+const createTopupCheckout = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
     cors: true,
@@ -1045,7 +1012,8 @@ export const createTopupCheckout = onCall({
 const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
 const ghlCancelWebhookUrl = defineSecret("GHL_CANCEL_WEBHOOK_URL");
 
-export const stripeWebhook = onRequest({
+// DEPRECATED: replaced by paddleWebhook
+const stripeWebhook = onRequest({
     region: "europe-west1",
     secrets: [stripeSecretKey, stripeWebhookSecret],
 }, async (req, res) => {
@@ -1166,15 +1134,13 @@ export const stripeWebhook = onRequest({
         // Go to Stripe Dashboard → Products → click each plan → copy the price ID (starts with "price_")
         const STRIPE_PRICE_TO_PLAN: Record<string, { plan: string; credits: number }> = {
             // Monthly prices
-            'price_1T4Ul84MIh5WD4bv1B1IjpfP': { plan: 'starter', credits: 500 },
-            'price_1T4UkA4MIh5WD4bvFgdrP4Ck': { plan: 'creator', credits: 1000 },
-            'price_1T4UkA4MIh5WD4bvc55rCOVO': { plan: 'pro', credits: 2000 },
-            'price_1T4Uj84MIh5WD4bv8VmCYHMW': { plan: 'scaling', credits: 5000 },
+            'price_1T4Ul84MIh5WD4bv1B1IjpfP': { plan: 'starter', credits: 800 },
+            'price_1T4UkA4MIh5WD4bvc55rCOVO': { plan: 'pro', credits: 2500 },
+            'price_1T4Uj84MIh5WD4bv8VmCYHMW': { plan: 'scale', credits: 6500 },
             // Annual prices
-            'price_1T4UkA4MIh5WD4bvQXOGG7xF': { plan: 'starter', credits: 500 },
-            'price_1T4UkA4MIh5WD4bvjHlrFwtT': { plan: 'creator', credits: 1000 },
-            'price_1T4Uk94MIh5WD4bvBY7366k9': { plan: 'pro', credits: 2000 },
-            'price_1T4Uj84MIh5WD4bvL656TLHR': { plan: 'scaling', credits: 5000 },
+            'price_1T4UkA4MIh5WD4bvQXOGG7xF': { plan: 'starter', credits: 800 },
+            'price_1T4Uk94MIh5WD4bvBY7366k9': { plan: 'pro', credits: 2500 },
+            'price_1T4Uj84MIh5WD4bvL656TLHR': { plan: 'scale', credits: 6500 },
         };
 
         const planInfo = STRIPE_PRICE_TO_PLAN[priceId];
@@ -1325,8 +1291,8 @@ export const deductCreditsServer = onCall({
     }
 
     // ═══ PLAN-GATE (fast-fail outside transaction) ═══
-    const gatedFeature = ACTION_FEATURE_MAP[action as string];
-    const entitlement = await resolveEntitlement(callerId);
+    const gatedFeature = ACTION_FEATURE_MAP[action as string] as GatedFeature | undefined;
+    const entitlement = await resolveFirestoreEntitlement(callerId);
     if (gatedFeature) {
         const featureCheck = checkFeature(entitlement, gatedFeature);
         if (!featureCheck.allowed) {
@@ -1353,7 +1319,7 @@ export const deductCreditsServer = onCall({
 
         if (gatedFeature) {
             // Re-resolve entitlement from transactional data
-            const txEntitlement = await resolveEntitlement(callerId);
+            const txEntitlement = await resolveFirestoreEntitlement(callerId);
             const txCheck = checkFeature(txEntitlement, gatedFeature);
             if (!txCheck.allowed) {
                 throw new HttpsError("failed-precondition", "Feature requires a higher plan", {
@@ -1504,6 +1470,7 @@ async function resolveStripeCustomerId(uid: string, stripe: Stripe): Promise<str
     throw new HttpsError("not-found", "No Stripe customer found. If you subscribed recently, please contact support.");
 }
 
+// DEPRECATED: replaced by Paddle management URLs — getSubscription uses Stripe
 export const getSubscription = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1546,18 +1513,7 @@ export const getSubscription = onCall({
     };
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 12. BILLING: CANCEL SUBSCRIPTION (with GHL notification)
-// ═══════════════════════════════════════════════════════════════════════════
-// Sets cancel_at_period_end = true on Stripe AND notifies GHL so CRM
-// automations (emails, tags, pipeline) still fire.
-//
-// SETUP:
-// 1. In GHL, create a workflow with "Inbound Webhook" trigger
-// 2. Copy the webhook URL GHL gives you
-// 3. Run: firebase functions:secrets:set GHL_CANCEL_WEBHOOK_URL
-//    Paste the webhook URL
-// ═══════════════════════════════════════════════════════════════════════════
+// DEPRECATED: replaced by Paddle cancel URL — cancelSubscription uses Stripe
 export const cancelSubscription = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey, ghlCancelWebhookUrl],
@@ -1638,9 +1594,7 @@ export const cancelSubscription = onCall({
     };
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 13. BILLING: REACTIVATE SUBSCRIPTION (undo cancellation)
-// ═══════════════════════════════════════════════════════════════════════════
+// DEPRECATED: replaced by Paddle reactivation URL — reactivateSubscription uses Stripe
 export const reactivateSubscription = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1696,16 +1650,7 @@ export const reactivateSubscription = onCall({
     return { success: true };
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 14. BILLING: APPLY RETENTION DISCOUNT
-// ═══════════════════════════════════════════════════════════════════════════
-// Applied during cancellation flow to save the customer.
-// Applies a Stripe coupon and cancels the pending cancellation.
-//
-// SETUP: Create these coupons in Stripe Dashboard → Coupons:
-//   - ID: "retention_50_3mo"    → 50% off, duration: repeating, 3 months
-//   - ID: "retention_25_forever" → 25% off, duration: forever
-// ═══════════════════════════════════════════════════════════════════════════
+// DEPRECATED: replaced by Paddle billing — applyRetentionDiscount uses Stripe coupons
 export const applyRetentionDiscount = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1767,9 +1712,7 @@ export const applyRetentionDiscount = onCall({
     return { success: true, couponApplied: couponId };
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 15. BILLING: GET INVOICES
-// ═══════════════════════════════════════════════════════════════════════════
+// DEPRECATED: replaced by Paddle invoice delivery — getInvoices uses Stripe
 export const getInvoices = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1801,9 +1744,7 @@ export const getInvoices = onCall({
     };
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 16. BILLING: RETRY FAILED INVOICE
-// ═══════════════════════════════════════════════════════════════════════════
+// DEPRECATED: replaced by Paddle — retryInvoice uses Stripe
 export const retryInvoice = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1838,12 +1779,7 @@ export const retryInvoice = onCall({
     }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 17. BILLING: CREATE SETUP INTENT (for updating payment method)
-// ═══════════════════════════════════════════════════════════════════════════
-// Returns a client_secret that Stripe Elements uses to collect new card info.
-// The card is attached to the customer but NO charge is made.
-// ═══════════════════════════════════════════════════════════════════════════
+// DEPRECATED: replaced by Paddle — createSetupIntent uses Stripe
 export const createSetupIntent = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1863,12 +1799,7 @@ export const createSetupIntent = onCall({
     return { clientSecret: setupIntent.client_secret };
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 18. BILLING: UPDATE DEFAULT PAYMENT METHOD
-// ═══════════════════════════════════════════════════════════════════════════
-// After Stripe Elements confirms the SetupIntent, the frontend calls this
-// to set the new card as the default for the subscription.
-// ═══════════════════════════════════════════════════════════════════════════
+// DEPRECATED: replaced by Paddle management URLs — updatePaymentMethod uses Stripe
 export const updatePaymentMethod = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1918,12 +1849,7 @@ export const updatePaymentMethod = onCall({
     };
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 19. BILLING: CHANGE PLAN (upgrade/downgrade)
-// ═══════════════════════════════════════════════════════════════════════════
-// Switches the user's Stripe subscription to a different price ID.
-// Takes effect immediately with proration.
-// ═══════════════════════════════════════════════════════════════════════════
+// DEPRECATED: replaced by createPaddleCheckout — changePlan uses Stripe
 export const changePlan = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1981,10 +1907,200 @@ export const changePlan = onCall({
     };
 });
 // ═══════════════════════════════════════════════════════════════════════════
+// @END LEGACY STRIPE BILLING
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PADDLE BILLING (active)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const paddleGetSub = onCall({
+    region: "europe-west1",
+    secrets: [paddleApiKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    return paddleGetSubscription(request, paddleApiKey.value(), db);
+});
+
+export const paddleCancelSub = onCall({
+    region: "europe-west1",
+    secrets: [paddleApiKey, ghlCancelWebhookUrl],
+    cors: true,
+}, async (request: CallableRequest) => {
+    return paddleCancelSubscription(request, paddleApiKey.value(), ghlCancelWebhookUrl.value(), db);
+});
+
+export const paddleReactivateSub = onCall({
+    region: "europe-west1",
+    secrets: [paddleApiKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    return paddleReactivateSubscription(request, paddleApiKey.value(), db);
+});
+
+export const paddleChangePlanFn = onCall({
+    region: "europe-west1",
+    secrets: [paddleApiKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    return paddleChangePlan(request, paddleApiKey.value(), db);
+});
+
+export const paddleTopupCheckout = onCall({
+    region: "europe-west1",
+    secrets: [paddleApiKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    return paddleCreateTopupCheckout(request, paddleApiKey.value(), db);
+});
+
+export const paddlePortalSession = onCall({
+    region: "europe-west1",
+    secrets: [paddleApiKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    return paddleCreatePortalSession(request, paddleApiKey.value(), db);
+});
+
+export const createPaddleCheckout = onCall({
+    region: "europe-west1",
+    secrets: [paddleApiKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+    const uid = request.auth.uid;
+    const email = request.auth.token?.email;
+    const priceId = request.data?.priceId as string;
+    if (!priceId) throw new HttpsError("invalid-argument", "Missing priceId.");
+
+    const userDoc = await db.collection("users").doc(uid).get();
+    const userData = userDoc.data();
+    if (userData?.isTeamMember) {
+        throw new HttpsError("failed-precondition", "Team members cannot subscribe directly.");
+    }
+
+    const paddle = createPaddleClient(paddleApiKey.value());
+
+    let customerId = userData?.paddleCustomerId;
+    if (!customerId) {
+        try {
+            const existing = paddle.customers.list({ email: [email?.toLowerCase().trim() || ""], perPage: 1 });
+            const items = await existing.next();
+            if (items && items.length > 0) {
+                customerId = items[0].id;
+            } else {
+                const newCustomer = await paddle.customers.create({
+                    email: email?.toLowerCase().trim() ?? "",
+                    customData: { firebaseUid: uid },
+                });
+                customerId = newCustomer.id;
+            }
+            await db.collection("users").doc(uid).update({ paddleCustomerId: customerId });
+        } catch (err: any) {
+            console.error("Failed to create/find Paddle customer:", err.message);
+            throw new HttpsError("internal", "Failed to set up billing customer.");
+        }
+    }
+
+    try {
+        const tx = await paddle.transactions.create({
+            customerId,
+            items: [{ priceId, quantity: 1 }],
+            customData: { firebaseUid: uid },
+        });
+        return {
+            checkoutUrl: tx.checkout?.url || null,
+            transactionId: tx.id,
+        };
+    } catch (err: any) {
+        console.error("Paddle checkout error:", err.message);
+        throw new HttpsError("internal", "Failed to create checkout: " + err.message);
+    }
+});
+
+export const createPaddleTopUp = onCall({
+    region: "europe-west1",
+    secrets: [paddleApiKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+    const uid = request.auth.uid;
+    const email = request.auth.token?.email;
+    const packId = request.data?.packId as string;
+    if (!packId) throw new HttpsError("invalid-argument", "Missing packId.");
+
+    const pack = PADDLE_TOPUP_PRICES[packId];
+    if (!pack) throw new HttpsError("invalid-argument", `Unknown top-up pack: ${packId}`);
+
+    const userDoc = await db.collection("users").doc(uid).get();
+    const userData = userDoc.data();
+    if (userData?.isTeamMember) {
+        throw new HttpsError("failed-precondition", "Team members cannot purchase top-ups directly.");
+    }
+    if (userData?.billingStatus === "past_due") {
+        throw new HttpsError("failed-precondition", "Resolve your payment issue before purchasing credits.");
+    }
+
+    const paddle = createPaddleClient(paddleApiKey.value());
+
+    let customerId = userData?.paddleCustomerId;
+    if (!customerId) {
+        try {
+            const existing = paddle.customers.list({ email: [email?.toLowerCase().trim() || ""], perPage: 1 });
+            const items = await existing.next();
+            if (items && items.length > 0) {
+                customerId = items[0].id;
+            } else {
+                const newCustomer = await paddle.customers.create({
+                    email: email?.toLowerCase().trim() ?? "",
+                    customData: { firebaseUid: uid },
+                });
+                customerId = newCustomer.id;
+            }
+            await db.collection("users").doc(uid).update({ paddleCustomerId: customerId });
+        } catch (err: any) {
+            console.error("Failed to create/find Paddle customer:", err.message);
+            throw new HttpsError("internal", "Failed to set up billing customer.");
+        }
+    }
+
+    try {
+        const tx = await paddle.transactions.create({
+            customerId,
+            items: [{ priceId: pack.priceId, quantity: 1 }],
+            customData: { firebaseUid: uid, isTopUp: true, creditAmount: pack.credits },
+        });
+        return {
+            checkoutUrl: tx.checkout?.url || null,
+            transactionId: tx.id,
+        };
+    } catch (err: any) {
+        console.error("Paddle top-up checkout error:", err.message);
+        throw new HttpsError("internal", "Failed to create top-up checkout: " + err.message);
+    }
+});
+
+export const paddleWebhook = onRequest({
+    region: "europe-west1",
+    secrets: [paddleApiKey, paddleWebhookSecret, ghlPaddleSyncUrl, ghlPaddleFailedUrl],
+    cors: true,
+}, async (req, res) => {
+    await handlePaddleWebhook(req, res, {
+        db,
+        paddleApiKey: paddleApiKey.value(),
+        webhookSecret: paddleWebhookSecret.value(),
+        ghlSyncUrl: ghlPaddleSyncUrl.value(),
+        ghlFailedUrl: ghlPaddleFailedUrl.value(),
+        priceToPlan: PADDLE_PRICE_TO_PLAN,
+        topupPrices: PADDLE_TOPUP_PRICES,
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // TEAM MANAGEMENT: Create Team Member
 // ═══════════════════════════════════════════════════════════════════════════
 const PLAN_TEAM_LIMITS: Record<string, number> = {
-    none: 0, starter: 1, creator: 1, pro: 3, scaling: 10,
+    none: 0, starter: 1, pro: 3, scale: 10,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2089,11 +2205,16 @@ export const createTeamInvite = onCall({
     const ownerRecord = await auth.getUser(ownerUid);
     if (ownerRecord.email?.toLowerCase() === normalizedEmail) throw new HttpsError("invalid-argument", "You cannot invite yourself.");
 
-    // Seat limit including open invites
+    // Seat limit including open invites — owner-inclusive (per spec FR-005, clarification Q1).
+    // maxMembers is TOTAL seats including the owner; `reserved` counts non-owner members + open invites.
+    // Proposed size after this new invite = reserved + 1 (owner) + 1 (new invite) = reserved + 2.
+    // Block when that would exceed the total cap.
     if (maxMembers !== -1) {
         const reserved = await countReservedSeats(ownerUid);
-        if (reserved >= maxMembers) {
-            throw new HttpsError("resource-exhausted", `Your ${ownerPlan} plan allows ${maxMembers} seat(s). ${reserved} already reserved (active + pending invites). Upgrade for more.`);
+        const proposedSize = reserved + 2;
+        if (proposedSize > maxMembers) {
+            const currentSize = reserved + 1; // owner + active + pending
+            throw new HttpsError("resource-exhausted", `Your ${ownerPlan} plan allows ${maxMembers} seat(s) (owner + team). You're at ${currentSize}/${maxMembers}. Remove someone or upgrade.`);
         }
     }
 
@@ -2272,66 +2393,6 @@ export const revokeTeamInvite = onCall({
     return { success: true, message: 'Invite revoked.' };
 });
 
-// ─── GET INVITE DETAILS (unauthenticated — for /join page) ──────────────
-export const getInviteDetails = onCall({
-    region: "europe-west1",
-    cors: true,
-}, async (request: CallableRequest) => {
-    // ─── IP-based rate limiting: 10 req/min/IP ───
-    const callerIp = request.rawRequest?.ip || "unknown";
-    const nowMs = Date.now();
-    const minuteKey = new Date(nowMs).toISOString().slice(0, 16);
-    const rateRef = db.collection("rateLimits").doc(`${callerIp}_${minuteKey}`);
-    try {
-        const rateSnap = await rateRef.get();
-        const currentCount = (rateSnap.exists ? (rateSnap.data()?.count || 0) : 0) as number;
-        if (currentCount >= 10) {
-            throw new HttpsError("resource-exhausted", "Too many requests. Try again shortly.");
-        }
-        await rateRef.set({ count: currentCount + 1, ip: callerIp, minute: minuteKey }, { merge: true });
-    } catch (e: any) {
-        if (e.code === "resource-exhausted") throw e;
-        // Non-blocking: if rate limit write fails, proceed
-        console.warn("⚠️ Rate limit check failed (non-blocking):", e.message);
-    }
-
-    const { inviteId } = request.data;
-    if (!inviteId || typeof inviteId !== "string") {
-        return { success: false, status: "not_found", message: "Invite not found" };
-    }
-
-    const inviteSnap = await db.collection("team_invites").doc(inviteId).get();
-    if (!inviteSnap.exists) {
-        return { success: false, status: "not_found", message: "Invite not found" };
-    }
-
-    const invite = inviteSnap.data() as TeamInvite;
-
-    if (invite.expiresAt < Date.now()) {
-        return { success: false, status: "expired", message: "This invite has expired" };
-    }
-    if (invite.status === "revoked") {
-        return { success: false, status: "revoked", message: "This invite is no longer valid" };
-    }
-    if (invite.status === "accepted") {
-        return { success: false, status: "accepted", message: "This invite has already been claimed" };
-    }
-    if (!["pending", "sent"].includes(invite.status)) {
-        return { success: false, status: "not_found", message: "Invite not found" };
-    }
-
-    return {
-        success: true,
-        ownerName: invite.ownerName,
-        inviteeEmail: invite.inviteeEmail,
-        inviteeName: invite.inviteeName,
-        teamPlan: invite.teamPlan,
-        role: invite.role,
-        status: invite.status,
-        expiresAt: invite.expiresAt,
-    };
-});
-
 // ─── CLAIM INVITE (auto-claim on login) ──────────────────────────────────
 export const claimTeamInvite = onCall({
     region: "europe-west1",
@@ -2348,54 +2409,32 @@ export const claimTeamInvite = onCall({
         return { success: false, claimed: 0, message: 'Already a member of a team.' };
     }
 
-    const { inviteId } = request.data || {};
-    let target: { doc: FirebaseFirestore.DocumentSnapshot; data: TeamInvite } | null = null;
-    let remainingInvites: Array<{ doc: FirebaseFirestore.DocumentSnapshot; data: TeamInvite }> = [];
+    const invites = await db.collection("team_invites")
+        .where("inviteeEmailNormalized", "==", callerEmail)
+        .where("status", "in", OPEN_INVITE_STATUSES)
+        .get();
 
-    if (inviteId && typeof inviteId === 'string') {
-        // Specific invite claim — used from /join page
-        const inviteSnap = await db.collection("team_invites").doc(inviteId).get();
-        if (!inviteSnap.exists) return { success: false, claimed: 0, message: 'Invite not found.' };
-        const inviteData = inviteSnap.data() as TeamInvite;
-        if (inviteData.inviteeEmailNormalized !== callerEmail) {
-            return { success: false, claimed: 0, message: 'This invite is for a different email address.' };
+    if (invites.empty) return { success: false, claimed: 0, message: 'No open invites found.' };
+
+    // Sort by createdAt ascending — claim the earliest valid invite only
+    const sorted = invites.docs
+        .map(d => ({ doc: d, data: d.data() as TeamInvite }))
+        .sort((a, b) => a.data.createdAt - b.data.createdAt);
+
+    // Expire stale invites first
+    const valid: typeof sorted = [];
+    for (const entry of sorted) {
+        if (entry.data.expiresAt < Date.now()) {
+            await entry.doc.ref.update({ status: 'expired', updatedAt: Date.now() });
+        } else {
+            valid.push(entry);
         }
-        if (!OPEN_INVITE_STATUSES.includes(inviteData.status)) {
-            return { success: false, claimed: 0, message: `Invite is ${inviteData.status}.` };
-        }
-        if (inviteData.expiresAt < Date.now()) {
-            await inviteSnap.ref.update({ status: 'expired', updatedAt: Date.now() });
-            return { success: false, claimed: 0, message: 'This invite has expired.' };
-        }
-        target = { doc: inviteSnap, data: inviteData };
-    } else {
-        // Fallback: auto-claim earliest open invite by email (legacy login flow)
-        const invites = await db.collection("team_invites")
-            .where("inviteeEmailNormalized", "==", callerEmail)
-            .where("status", "in", OPEN_INVITE_STATUSES)
-            .get();
-
-        if (invites.empty) return { success: false, claimed: 0, message: 'No open invites found.' };
-
-        const sorted = invites.docs
-            .map(d => ({ doc: d, data: d.data() as TeamInvite }))
-            .sort((a, b) => a.data.createdAt - b.data.createdAt);
-
-        // Expire stale invites first
-        const valid: typeof sorted = [];
-        for (const entry of sorted) {
-            if (entry.data.expiresAt < Date.now()) {
-                await entry.doc.ref.update({ status: 'expired', updatedAt: Date.now() });
-            } else {
-                valid.push(entry);
-            }
-        }
-
-        if (valid.length === 0) return { success: false, claimed: 0, message: 'All invites have expired.' };
-        target = valid[0];
-        remainingInvites = valid.slice(1);
     }
 
+    if (valid.length === 0) return { success: false, claimed: 0, message: 'All invites have expired.' };
+
+    // Claim exactly the first valid invite
+    const target = valid[0];
     let claimed = 0;
 
     try {
@@ -2473,8 +2512,9 @@ export const claimTeamInvite = onCall({
     }
 
     // Clean up remaining open invites from other owners to free their reserved seats
-    if (claimed > 0 && remainingInvites.length > 0) {
-        for (const entry of remainingInvites) {
+    if (claimed > 0 && valid.length > 1) {
+        const remaining = valid.slice(1);
+        for (const entry of remaining) {
             try {
                 await entry.doc.ref.update({
                     status: 'revoked',
@@ -2545,7 +2585,11 @@ export const createTeamMember = onCall({
     if (ownerRecord.email?.toLowerCase() === normalizedEmail) throw new HttpsError("invalid-argument", "You cannot invite yourself.");
     if (maxMembers !== -1) {
         const reserved = await countReservedSeats(ownerUid);
-        if (reserved >= maxMembers) throw new HttpsError("resource-exhausted", `Your ${ownerPlan} plan allows ${maxMembers} seat(s). Upgrade for more.`);
+        const proposedSize = reserved + 2; // owner + existing + new invite (owner-inclusive per FR-005)
+        if (proposedSize > maxMembers) {
+            const currentSize = reserved + 1;
+            throw new HttpsError("resource-exhausted", `Your ${ownerPlan} plan allows ${maxMembers} seat(s) (owner + team). You're at ${currentSize}/${maxMembers}. Upgrade for more.`);
+        }
     }
 
     // Check already active on this team
@@ -2652,39 +2696,6 @@ export const removeTeamMember = onCall({
 
     console.log(`👥 Team member removed: ${memberEmail} from owner ${ownerUid}`);
     return { success: true, message: `${memberData.name} has been removed from your team.` };
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// TEAM MANAGEMENT: Update Team Member Role
-// ═══════════════════════════════════════════════════════════════════════════
-export const updateTeamMemberRole = onCall({
-    region: "europe-west1",
-    cors: true,
-}, async (request: CallableRequest) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Must be logged in.");
-
-    const { memberId, role } = request.data;
-    const ownerUid = request.auth.uid;
-
-    if (!memberId) throw new HttpsError("invalid-argument", "Member ID required.");
-    if (!["editor", "viewer"].includes(role)) throw new HttpsError("invalid-argument", "Role must be 'editor' or 'viewer'.");
-
-    const memberDoc = await db.collection("users").doc(ownerUid).collection("team").doc(memberId).get();
-    if (!memberDoc.exists) throw new HttpsError("not-found", "Team member not found.");
-
-    const memberData = memberDoc.data()!;
-    const memberEmail = memberData.email;
-
-    const batch = db.batch();
-    batch.update(db.collection("users").doc(ownerUid).collection("team").doc(memberId), { role });
-    if (memberData.uid) {
-        batch.update(db.collection("users").doc(memberData.uid), { teamRole: role });
-    }
-    batch.update(db.collection("teamMemberships").doc(memberEmail), { role });
-    await batch.commit();
-
-    console.log(`👥 Team member role updated: ${memberEmail} → ${role} by owner ${ownerUid}`);
-    return { success: true, message: `Role updated to ${role}.` };
 });
 // ═══════════════════════════════════════════════════════════════════════════
 // META ADS API INTEGRATION — PHASE 2
@@ -3202,11 +3213,12 @@ async function enforceGenerationEntitlement(
     options?: {
         requireCarousel?: boolean;
         requireBatch?: boolean;
+        batchQuantity?: number;
         requireVisualPolishes?: boolean;
         requireAspectRatio?: string;
     }
 ): Promise<ResolvedEntitlement> {
-    const entitlement = await resolveEntitlement(callerUid);
+    const entitlement = await resolveFirestoreEntitlement(callerUid);
 
     // ── Retargeting gate ──
     if (inputs?.campaignType === 'retargeting') {
@@ -3244,6 +3256,12 @@ async function enforceGenerationEntitlement(
                 requiredPlan: check.requiredPlan,
                 message: "Batch generation requires Agency plan.",
             }));
+        }
+        if (options.batchQuantity) {
+            const batchDecision = resolveEntitlement({ plan: entitlement.basePlan, feature: "batchRun", quantity: options.batchQuantity });
+            if (!batchDecision.allowed) {
+                throw new HttpsError("permission-denied", batchDecision.reason || "batch_limit_exceeded");
+            }
         }
     }
 
@@ -3346,9 +3364,7 @@ function createGeminiCaller(apiKey: string) {
                         return p;
                     })
                 }
-            })),
-            usageMetadata: (response as any).usageMetadata || null,
-            modelVersion: params.model,
+            }))
         };
     };
 }
@@ -3541,17 +3557,12 @@ export const serverGenerateTOV = onCall({
     // ═══ ENTITLEMENT: Check retargeting gate on hook generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
-    resetCostTracker();
     try {
         const result = await generators.generateTOV(inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, editIntent, rewriteScope, semanticLock);
         const rg = result.rankingGuidance;
         return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null };
     } catch (error: any) {
         console.error("generateTOV error:", error);
-        const fc = classifyError(error);
-        const ce = getCostEstimate();
-        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "hooks");
-        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateHooks");
         throw new HttpsError("internal", "Hook generation failed: " + error.message);
     }
 });
@@ -3570,17 +3581,12 @@ export const serverGenerateConcepts = onCall({
     // ═══ ENTITLEMENT: Check retargeting gate on concept generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
-    resetCostTracker();
     try {
         const result = await generators.generateConcepts(approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex);
         const rg = result.rankingGuidance;
         return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null };
     } catch (error: any) {
         console.error("generateConcepts error:", error);
-        const fc = classifyError(error);
-        const ce = getCostEstimate();
-        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "concepts");
-        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateConcepts");
         throw new HttpsError("internal", "Concept generation failed: " + error.message);
     }
 });
@@ -3599,16 +3605,11 @@ export const serverGenerateBuildPlan = onCall({
     // ═══ ENTITLEMENT ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
-    resetCostTracker();
     try {
         const result = await generators.generateBuildPlan(conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride);
-        return { success: true, text: result, errorCode: null, costEstimate: getCostEstimate() };
+        return { success: true, text: result, errorCode: null };
     } catch (error: any) {
         console.error("generateBuildPlan error:", error);
-        const fc = classifyError(error);
-        const ce = getCostEstimate();
-        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "buildPlan");
-        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "buildPlan");
         throw new HttpsError("internal", "Build plan generation failed: " + error.message);
     }
 });
@@ -3631,7 +3632,6 @@ export const serverGenerateFinalAd = onCall({
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setOpenAIKey(openaiApiKey.value());
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
-    resetCostTracker();
 
     // ═══ CREATIVE MODE VALIDATION: fail-closed for invalid combinations ═══
     if (!editInstruction && !base64ToEdit) {
@@ -3639,8 +3639,6 @@ export const serverGenerateFinalAd = onCall({
         const comboCheck = validateCombination(inputs?.offerCreativeMode || ['standard_hero'], inputs?.coldHookAngle);
         if (!comboCheck.valid) {
             console.error(`🛑 Backend combo validation failed: ${comboCheck.errors.join('; ')}`);
-            const ce = getCostEstimate();
-            await writeFailureRecord(request.auth.uid, 'combination_invalid', ce, inputs, `combination_invalid: ${comboCheck.errors.join('; ')}`, "render");
             throw new HttpsError("invalid-argument", `Invalid creative mode combination: ${comboCheck.errors.join('; ')}`);
         }
     }
@@ -3685,36 +3683,17 @@ export const serverGenerateFinalAd = onCall({
         }
 
         if (result.image) {
-            const _fc = (result as any).failureClass || undefined;
-            const ce = getCostEstimate();
-            return {
-                success: true,
-                imageBase64: result.image,
-                errorCode: null,
-                failureClass: _fc || null,
-                costEstimate: ce,
-            };
+            return { success: true, imageBase64: result.image, errorCode: null };
         } else {
-            const errorCode = (result as any).errorCode || "generation_failed";
-            const fc = (result as any).failureClass || errorCodeToFailureClass(errorCode);
-            const ce = getCostEstimate();
-            await writeFailureRecord(request.auth.uid, fc, ce, inputs, `${errorCode} - render phase`, "render");
-            if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateImage");
             return {
                 success: false,
                 imageBase64: null,
-                errorCode,
-                failureClass: fc,
-                costEstimate: ce,
-                debug: process.env.NODE_ENV !== "production" ? ((result as any).debug || null) : undefined,
+                errorCode: (result as any).errorCode || "generation_failed",
+                debug: process.env.NODE_ENV !== 'production' ? ((result as any).debug || null) : undefined,
             };
         }
     } catch (error: any) {
         console.error("generateFinalAd error:", error);
-        const fc = classifyError(error);
-        const ce = getCostEstimate();
-        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "render");
-        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateImage");
         throw new HttpsError("internal", "Image generation failed: " + error.message);
     }
 });
@@ -3796,7 +3775,6 @@ Rules:
     instruction += `\n\n⚠️ CRITICAL: The output image MUST have the EXACT SAME aspect ratio and dimensions as the input image. This is a ${ratio || '1:1'} image. Do NOT change it to square or any other ratio.`;
 
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
-    resetCostTracker();
 
     try {
         const rawB64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
@@ -3835,14 +3813,9 @@ Rules:
             }
         }
         return { success: false, imageBase64: null, errorCode: 'no_image_returned' };
-    } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : String(error);
-        console.error("editRegion error:", msg, error);
-        const fc = classifyError(error);
-        const ce = getCostEstimate();
-        await writeFailureRecord(request.auth.uid, fc, ce, request.data, msg, "editRegion");
-        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "editRegion");
-        throw new HttpsError("internal", "Region edit failed: " + msg);
+    } catch (error: any) {
+        console.error("editRegion error:", error);
+        throw new HttpsError("internal", "Region edit failed: " + error.message);
     }
 });
 
@@ -3871,16 +3844,11 @@ export const serverGenerateCarouselAngles = onCall({
         }));
     }
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
-    resetCostTracker();
     try {
-        const result = await generators.generateCarouselAngles(inputs, resolvedUniverse, slideCount, globalRefinement);
+        const result = await generators.generateCarouselAngles(inputs, resolvedUniverse, slideCount, globalRefinement, entitlement.basePlan);
         return { success: true, text: result };
     } catch (error: any) {
         console.error("generateCarouselAngles error:", error);
-        const fc = classifyError(error);
-        const ce = getCostEstimate();
-        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "carousel_angles");
-        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateCarouselCopies", slideCount || 1);
         throw new HttpsError("internal", "Carousel angle generation failed: " + error.message);
     }
 });
@@ -3897,21 +3865,16 @@ export const serverGenerateCarouselSlideCopies = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { approvedTov, inputs, slideCount, resolvedUniverse, refinement } = request.data;
     // ═══ ENTITLEMENT: Check carousel access ═══
-    await enforceGenerationEntitlement(request.auth.uid, inputs, {
+    const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireCarousel: true,
     });
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
-    resetCostTracker();
     try {
-        const result = await generators.generateCarouselSlideCopies(approvedTov, inputs, slideCount, resolvedUniverse, refinement);
+        const result = await generators.generateCarouselSlideCopies(approvedTov, inputs, slideCount, resolvedUniverse, refinement, entitlement.basePlan);
         return { success: true, copies: result };
     } catch (error: any) {
         console.error("generateCarouselSlideCopies error:", error);
-        const fc = classifyError(error);
-        const ce = getCostEstimate();
-        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "carousel_copies");
-        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateCarouselCopies", slideCount || 1);
         throw new HttpsError("internal", "Carousel copy generation failed: " + error.message);
     }
 });
@@ -3942,16 +3905,11 @@ export const serverGenerateTestimonialCarousel = onCall({
     const maxSlides = entitlement.features.maxCarouselSlides || 5;
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
-    resetCostTracker();
     try {
         const result = await generators.generateTestimonialCarousel(inputs, screenshots, maxSlides);
         return { success: true, ...result };
     } catch (error: any) {
         console.error("generateTestimonialCarousel error:", error);
-        const fc = classifyError(error);
-        const ce = getCostEstimate();
-        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "testimonial");
-        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateCarouselCopies", maxSlides || 1);
         throw new HttpsError("internal", "Testimonial carousel generation failed: " + error.message);
     }
 });
@@ -3968,17 +3926,12 @@ export const serverGenerateCaption = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan } = request.data;
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
-    resetCostTracker();
     try {
         const result = await generators.generateCaption(mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan);
         const rg = result.rankingGuidance;
         return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null };
     } catch (error: any) {
         console.error("generateCaption error:", error);
-        const fc = classifyError(error);
-        const ce = getCostEstimate();
-        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "caption");
-        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "generateCaption");
         throw new HttpsError("internal", "Caption generation failed: " + error.message);
     }
 });
@@ -3999,16 +3952,11 @@ export const serverGenerateVisualPolishes = onCall({
         requireVisualPolishes: true,
     });
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
-    resetCostTracker();
     try {
         const result = await generators.generateVisualPolishes(currentRender, inputs);
         return { success: true, polishes: result };
     } catch (error: any) {
         console.error("generateVisualPolishes error:", error);
-        const fc = classifyError(error);
-        const ce = getCostEstimate();
-        await writeFailureRecord(request.auth.uid, fc, ce, inputs, error.message, "polish");
-        if (isPostDeductionFailure(fc)) await inlineRefund(request.auth.uid, "polishImage");
         throw new HttpsError("internal", "Polish generation failed: " + error.message);
     }
 });
@@ -4793,7 +4741,7 @@ export const analyzeWebsite = onCall({
     const uid = request.auth.uid;
 
     // Entitlement check
-    const entitlement = await resolveEntitlement(uid);
+    const entitlement = await resolveFirestoreEntitlement(uid);
     const featureCheck = checkFeature(entitlement, 'brandUrlScraping');
     if (!featureCheck.allowed) {
         return { ok: false, errorCode: 'not_allowed', errorMessage: 'Brand website analysis requires a higher plan.' };

@@ -1,6 +1,6 @@
 # Data Model: Team Management
 
-**Date**: 2026-04-03 | **Branch**: `006-team-management`
+**Date**: 2026-04-03 | **Updated**: 2026-04-10 | **Branch**: `006-team-management`
 
 ## Entities
 
@@ -57,7 +57,7 @@ No new collection. Team membership is stored as fields on the `users/{uid}` docu
 | plan | string | Set to 'none' while on team (reverts on removal) |
 | credits | number | Set to 0 while on team (uses owner's pool) |
 
-**Membership lookup**: `teamMemberships/{uid}` document maps member UID → owner UID for reverse lookup.
+**Membership lookup**: `teamMemberships/{normalizedEmail}` document maps member email → owner UID for reverse lookup (one-team-per-user enforced by document uniqueness).
 
 ---
 
@@ -68,7 +68,8 @@ No dedicated collection. The team is the owner's account + their `team` subcolle
 | Location | Description |
 |----------|-------------|
 | `users/{ownerUid}` | Owner's user doc (plan, credits, maxTeamMembers) |
-| `users/{ownerUid}/team/{memberUid}` | Per-member subdoc (name, email, role, joinedAt) |
+| `users/{ownerUid}/team/{memberId}` | Per-member subdoc (name, email, role, uid, status, invitedAt, joinedAt, inviteId) |
+| `teamMemberships/{normalizedEmail}` | Reverse lookup: email → ownerUid, role, teamPlan, joinedAt, memberId |
 | `team_invites` (filtered by ownerId) | All invites for this team |
 
 ---
@@ -86,7 +87,21 @@ No dedicated collection. The team is the owner's account + their `team` subcolle
 
 ---
 
-### GetInviteDetails Response (new endpoint)
+### Rate Limits (`rateLimits` collection)
+
+IP-based rate limiting for `getInviteDetails` endpoint.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| count | number | Request count in this minute window |
+| ip | string | Caller's IP address |
+| minute | string | ISO minute key (YYYY-MM-DDTHH:MM) |
+
+**Storage**: `rateLimits/{ip}_{minuteKey}`. 10 requests per minute per IP. Non-blocking write (request proceeds if write fails).
+
+---
+
+### GetInviteDetails Response (endpoint)
 
 Unauthenticated endpoint return shape. No sensitive data exposed.
 

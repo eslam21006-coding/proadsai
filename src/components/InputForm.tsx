@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useState, useRef } from 'react';
 import type { AdInputs, AdMode, AspectRatio, RetargetingAngle, RetargetingObjectionId, UniverseMode, AudienceAvatar, CompetitorResearch, ColdHookAngle, HookType, AdTone, CopywritingStrategy } from '../types';
-import { OFFER_TYPES, OFFER_CATEGORY_MAP, OFFER_CREATIVE_MODES, CREATIVE_MODE_CONFLICTS, HOOK_ANGLE_MODE_CONFLICTS, ASPECT_RATIOS, RETARGETING_OBJECTIONS, AD_LANGUAGES, FIELD_EXAMPLES, COLD_HOOK_ANGLES, HOOK_TYPES, AD_TONES, COPYWRITING_STRATEGIES, CREATIVE_TABS, getAvailableHookAngles, getAvailableHookStyles, getAvailableAdTones, getAvailableCopyStrategies } from '../constants';
+import { OFFER_TYPES, OFFER_CATEGORY_MAP, OFFER_CREATIVE_MODES, CREATIVE_MODE_CONFLICTS, HOOK_ANGLE_MODE_CONFLICTS, ASPECT_RATIOS, RETARGETING_OBJECTIONS, AD_LANGUAGES, FIELD_EXAMPLES, COLD_HOOK_ANGLES, HOOK_TYPES, AD_TONES, COPYWRITING_STRATEGIES, CREATIVE_TABS } from '../constants';
 import { REALISTIC_UNIVERSES as DB_REALISTIC, FANTASY_UNIVERSES as DB_FANTASY } from '../universeDatabase';
 import { isStrongPair, getBlockedModes, CREATIVE_MODE_CATALOG, type CreativeTab, getBlockedModesForSubStyle, getBlockedSubStylesForModes, validateLaunchSurface, resolveValueStackSlideCount, resolveTestimonialSlideCount } from '../creativeResolver';
 import { ART_DIRECTION_GROUPS, getAvailableCards, getCardById, isSubStyleInFamily, type ArtDirectionCard } from '../artDirectionConfig';
@@ -27,6 +27,7 @@ interface Props {
   competitorLoading: boolean;
   onRefreshResearch: (formData: AdInputs) => void;
   onRankingsLoaded?: (rankings: RankingResultCompact | null) => void;
+  isTeamViewer?: boolean;
 }
 
 // --- AUTOMATIC COMPRESSION UTILITY ---
@@ -255,7 +256,7 @@ const UniverseDropdown: React.FC<{
   );
 };
 
-const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialValues, userPlan, avatars, onSaveAvatar, onUpdateAvatar, onDeleteAvatar, competitorData, competitorLoading, onRefreshResearch, onRankingsLoaded }) => {
+const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialValues, userPlan, avatars, onSaveAvatar, onUpdateAvatar, onDeleteAvatar, competitorData, competitorLoading, onRefreshResearch, onRankingsLoaded, isTeamViewer }) => {
   const { t, lang: appLang } = useT();
   const getInitialInputs = (): AdInputs => {
     if (initialValues) return initialValues;
@@ -292,10 +293,10 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
       }
       sanitized.offerCreativeMode = (cleaned.length > 0 ? cleaned : ['standard_hero']) as any;
     }
-    // Sanitize removed offer types → fall back to Mini-Course
+    // Sanitize removed offer types → fall back to Live Event (most legacy types were live_events tab)
     if (sanitized.offerType && !OFFER_TYPES.includes(sanitized.offerType)) {
-      console.warn(`🧹 Legacy offer type sanitization: "${sanitized.offerType}" → "Mini-Course"`);
-      sanitized.offerType = 'Mini-Course';
+      console.warn(`🧹 Legacy offer type sanitization: "${sanitized.offerType}" → "Live Event"`);
+      sanitized.offerType = 'Live Event';
     }
     // Normalize visual style family — ensure both fields are consistent
     const _normalizedStyle = ((sanitized as any).visualStyleFamily ?? (sanitized as any).universeMode ?? 'realistic') as 'realistic' | 'fantasy' | 'minimal';
@@ -913,6 +914,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
       <form
         onSubmit={(e) => {
           e.preventDefault();
+          if (isTeamViewer) return;
           if (inputs.campaignType === 'retargeting') {
             const hasObj = !!inputs.retargetingObjection;
             const hasCustom = (inputs.customObjection || '').trim().length > 0;
@@ -1181,25 +1183,18 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
               <i className={`fa-solid fa-chevron-down text-[8px] text-slate-600 transition-transform ${openSections.tone ? 'rotate-180' : ''}`}></i>
             </div>
           </button>
-          {openSections.tone && (() => {
-            const availableTones = new Set(getAvailableAdTones(userPlan).map(t => t.id));
-            return (
+          {openSections.tone && (
             <div className="flex flex-wrap gap-2 pb-2 animate-in fade-in slide-in-from-top-1 duration-200">
-              {AD_TONES.map(tone => {
-                const isLocked = !availableTones.has(tone.id);
-                return (
+              {AD_TONES.map(tone => (
                 <button key={tone.id} type="button"
-                  onClick={() => { if (isLocked) return; setInputs(prev => ({ ...prev, adTone: prev.adTone === tone.id ? undefined : tone.id as AdTone })); }}
-                  className={`px-3 py-2 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 ${isLocked ? 'opacity-50 cursor-not-allowed bg-slate-900/20 text-slate-600 border border-slate-800/20' : inputs.adTone === tone.id ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'bg-slate-900/50 text-slate-500 border border-slate-800/40 hover:text-slate-300'}`}>
+                  onClick={() => { setInputs(prev => ({ ...prev, adTone: prev.adTone === tone.id ? undefined : tone.id as AdTone })); }}
+                  className={`px-3 py-2 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 ${inputs.adTone === tone.id ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'bg-slate-900/50 text-slate-500 border border-slate-800/40 hover:text-slate-300'}`}>
                   <span>{tone.emoji}</span>
                   <span>{appLang === "ar" ? tone.labelAr : tone.labelEn}</span>
-                  {isLocked && <i className="fa-solid fa-lock text-[6px] ml-0.5"></i>}
                 </button>
-                );
-              })}
+              ))}
             </div>
-            );
-          })()}
+          )}
         </div>
 
         {/* ═══════════════════════════════════════════════════════════════════
@@ -1223,25 +1218,18 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                   <i className={`fa-solid fa-chevron-down text-[8px] text-slate-600 transition-transform ${openSections.angle ? 'rotate-180' : ''}`}></i>
                 </div>
               </button>
-              {openSections.angle && (() => {
-                const availableAngles = new Set(getAvailableHookAngles(userPlan).map(a => a.id));
-                return (
+              {openSections.angle && (
                 <div className="grid grid-cols-2 gap-2 pb-2 animate-in fade-in slide-in-from-top-1 duration-200">
-                  {COLD_HOOK_ANGLES.map(angle => {
-                    const isLocked = !availableAngles.has(angle.id);
-                    return (
+                  {COLD_HOOK_ANGLES.map(angle => (
                     <button key={angle.id} type="button"
-                      onClick={() => { if (isLocked) return; setInputs(prev => ({ ...prev, coldHookAngle: prev.coldHookAngle === angle.id ? undefined : angle.id as ColdHookAngle })); }}
-                      className={`px-3 py-2.5 rounded-lg text-left transition-all relative ${isLocked ? 'opacity-50 cursor-not-allowed bg-slate-950/20 border border-slate-800/20 text-slate-600' : inputs.coldHookAngle === angle.id ? 'bg-blue-600/15 border border-blue-500/30 text-blue-400' : 'bg-slate-950/40 border border-slate-800/40 text-slate-500 hover:text-slate-300'}`}>
+                      onClick={() => { setInputs(prev => ({ ...prev, coldHookAngle: prev.coldHookAngle === angle.id ? undefined : angle.id as ColdHookAngle })); }}
+                      className={`px-3 py-2.5 rounded-lg text-left transition-all relative ${inputs.coldHookAngle === angle.id ? 'bg-blue-600/15 border border-blue-500/30 text-blue-400' : 'bg-slate-950/40 border border-slate-800/40 text-slate-500 hover:text-slate-300'}`}>
                       <div className="text-[10px] font-bold">{appLang === "ar" ? angle.labelAr : angle.labelEn}</div>
                       <div className="text-[8px] opacity-60 mt-0.5 line-clamp-1">{angle.description}</div>
-                      {isLocked && <span className="absolute top-1 right-1 text-[7px] text-blue-400"><i className="fa-solid fa-lock mr-0.5"></i>{requiredPlanFor('abVariationTesting')}</span>}
                     </button>
-                    );
-                  })}
+                  ))}
                 </div>
-                );
-              })()}
+              )}
             </div>
 
             {/* ── Angle-Specific Supporting Details (Conditional) ── */}
@@ -1295,23 +1283,17 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                   <i className={`fa-solid fa-chevron-down text-[8px] text-slate-600 transition-transform ${openSections.hookType ? 'rotate-180' : ''}`}></i>
                 </div>
               </button>
-              {openSections.hookType && (() => {
-                const availableStyles = new Set(getAvailableHookStyles(userPlan).map(h => h.id));
-                return (
+              {openSections.hookType && (
                 <div className="flex flex-wrap gap-1.5 pb-2 animate-in fade-in slide-in-from-top-1 duration-200">
-                  {HOOK_TYPES.map(ht => {
-                    const isLocked = !availableStyles.has(ht.id);
-                    return (
+                  {HOOK_TYPES.map(ht => (
                     <button key={ht.id} type="button"
-                      onClick={() => { if (isLocked) return; setInputs(prev => ({ ...prev, hookType: prev.hookType === ht.id ? undefined : ht.id as HookType })); }}
-                      className={`px-2.5 py-1.5 rounded-lg text-[9px] font-bold transition-all ${isLocked ? 'opacity-50 cursor-not-allowed bg-slate-950/20 text-slate-600 border border-slate-800/20' : inputs.hookType === ht.id ? 'bg-violet-600/20 text-violet-400 border border-violet-500/30' : 'bg-slate-950/40 text-slate-500 border border-slate-800/40 hover:text-slate-300'}`}>
-                      {isLocked && <i className="fa-solid fa-lock text-[6px] mr-1"></i>}{appLang === "ar" ? ht.labelAr : ht.labelEn}
+                      onClick={() => { setInputs(prev => ({ ...prev, hookType: prev.hookType === ht.id ? undefined : ht.id as HookType })); }}
+                      className={`px-2.5 py-1.5 rounded-lg text-[9px] font-bold transition-all ${inputs.hookType === ht.id ? 'bg-violet-600/20 text-violet-400 border border-violet-500/30' : 'bg-slate-950/40 text-slate-500 border border-slate-800/40 hover:text-slate-300'}`}>
+                      {appLang === "ar" ? ht.labelAr : ht.labelEn}
                     </button>
-                    );
-                  })}
+                  ))}
                 </div>
-                );
-              })()}
+              )}
             </div>
 
             {/* Copywriting Strategy */}
@@ -1329,20 +1311,16 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                 </div>
               </button>
               {openSections.strategy && (() => {
-                const availableStrategies = new Set(getAvailableCopyStrategies(userPlan).map(s => s.id));
                 return (
                 <div className="space-y-1.5 pb-2 animate-in fade-in slide-in-from-top-1 duration-200">
                   <div className="flex flex-wrap gap-1.5">
-                    {COPYWRITING_STRATEGIES.map(s => {
-                      const isLocked = !availableStrategies.has(s.id);
-                      return (
+                    {COPYWRITING_STRATEGIES.map(s => (
                       <button key={s.id} type="button"
-                        onClick={() => { if (isLocked) return; setInputs(prev => ({ ...prev, copywritingStrategy: prev.copywritingStrategy === s.id ? undefined : s.id as CopywritingStrategy })); }}
-                        className={`px-2.5 py-1.5 rounded-lg text-[9px] font-bold transition-all ${isLocked ? 'opacity-50 cursor-not-allowed bg-slate-950/20 text-slate-600 border border-slate-800/20' : inputs.copywritingStrategy === s.id ? 'bg-amber-600/20 text-amber-400 border border-amber-500/30' : 'bg-slate-950/40 text-slate-500 border border-slate-800/40 hover:text-slate-300'}`}>
-                        {isLocked && <i className="fa-solid fa-lock text-[6px] mr-1"></i>}{appLang === "ar" ? s.labelAr : s.labelEn}
+                        onClick={() => { setInputs(prev => ({ ...prev, copywritingStrategy: prev.copywritingStrategy === s.id ? undefined : s.id as CopywritingStrategy })); }}
+                        className={`px-2.5 py-1.5 rounded-lg text-[9px] font-bold transition-all ${inputs.copywritingStrategy === s.id ? 'bg-amber-600/20 text-amber-400 border border-amber-500/30' : 'bg-slate-950/40 text-slate-500 border border-slate-800/40 hover:text-slate-300'}`}>
+                        {appLang === "ar" ? s.labelAr : s.labelEn}
                       </button>
-                      );
-                    })}
+                    ))}
                   </div>
                   <p className="text-[8px] text-slate-600">{t('hook.strategy_hint')}</p>
                 </div>
@@ -1994,7 +1972,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                   <div className="mt-2 space-y-1.5">
                     <Label>Number of slides</Label>
                     <div className="flex gap-2">
-                      {[2, 3, 4, 5, 6, 7, 8, 9].filter(n => n <= getMaxSlides(userPlan)).map(n => (
+                      {[2, 3, 4, 5, 6, 7, 8, 9, 10].filter(n => n <= getMaxSlides(userPlan)).map(n => (
                         <button key={n} type="button" onClick={() => setInputs(prev => ({ ...prev, slideCount: n }))}
                           className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${inputs.slideCount === n ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-800/50 text-slate-400 hover:text-white'}`}>
                           {n} slides
@@ -2081,14 +2059,13 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
 
               {/* Art Direction — dropdown selector */}
               {(activeStyle === 'fantasy' || activeStyle === 'realistic') && !isTextOnlyActive && (() => {
+                const artLocked = !canUse(userPlan, 'visualPolishes');
                 const selectedModes = (inputs as any).offerCreativeMode || ['standard_hero'];
                 const availableCards = getAvailableCards(activeStyle as 'realistic' | 'fantasy', selectedModes);
                 const currentSubStyle = (inputs as any).visualSubStyle;
-                // Auto-clear if current selection is no longer available
                 if (currentSubStyle && !availableCards.find((c: ArtDirectionCard) => c.id === currentSubStyle)) {
                     setTimeout(() => setInputs(prev => ({ ...prev, visualSubStyle: undefined as any })), 0);
                 }
-                // Group for optgroup labels
                 const groupedCards: Record<string, ArtDirectionCard[]> = {};
                 for (const card of availableCards) {
                     if (!groupedCards[card.group]) groupedCards[card.group] = [];
@@ -2097,12 +2074,13 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                 const visibleGroups = ART_DIRECTION_GROUPS.filter(g => groupedCards[g.id]?.length > 0);
 
                 return (
-                <div className="space-y-1.5">
-                  <Label>{appLang === 'ar' ? 'اتجاه فني (اختياري)' : 'Art Direction (optional)'}</Label>
+                <div className="space-y-1.5 relative">
+                  <Label>{appLang === 'ar' ? 'اتجاه فني (اختياري)' : 'Art Direction (optional)'}{artLocked && <LockedBadge requiredPlan={requiredPlanFor('visualPolishes')} />}</Label>
                   <select
                     value={inputs.visualSubStyle || ''}
-                    onChange={e => setInputs({ ...inputs, visualSubStyle: (e.target.value || undefined) as any })}
+                    onChange={e => { if (artLocked) return; setInputs({ ...inputs, visualSubStyle: (e.target.value || undefined) as any }); }}
                     className={inputCls}
+                    disabled={artLocked}
                   >
                     <option value="">{appLang === 'ar' ? '🎯 بدون اتجاه فني (الافتراضي)' : '🎯 None — Default Style'}</option>
                     {visibleGroups.map(group => (
@@ -2115,6 +2093,14 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                       </optgroup>
                     ))}
                   </select>
+                  {artLocked && (
+                    <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-[1px] rounded-xl flex items-center justify-center z-10">
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 text-amber-400 text-[10px] font-bold border border-amber-500/20">
+                        <i className="fa-solid fa-lock text-[7px]"></i>
+                        {t('plan.upgradeTo').replace('{plan}', requiredPlanFor('visualPolishes'))}
+                      </span>
+                    </div>
+                  )}
                 </div>
                 );
               })()}
@@ -2124,7 +2110,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                 <div className="text-[9px] font-black uppercase tracking-widest text-slate-500"><i className="fa-solid fa-image mr-1.5 text-indigo-400/60"></i>{appLang === 'ar' ? 'المراجع (اختياري)' : 'References (optional)'}</div>
                 <div>
                   {/* Reference Ad */}
-                  <div className={`space-y-2 ${!canUse(userPlan, 'referenceAdUpload') ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <div className={`space-y-2 relative ${!canUse(userPlan, 'referenceAdUpload') ? 'opacity-50 pointer-events-none' : ''}`}>
                     <p className="text-[8px] text-slate-500 font-semibold"><i className="fa-solid fa-rectangle-ad mr-1 text-amber-400/50"></i>{appLang === 'ar' ? 'إعلان مرجعي' : 'Reference Ad'}{!canUse(userPlan, 'referenceAdUpload') && <LockedBadge requiredPlan={requiredPlanFor('referenceAdUpload')} />}</p>
                     {inputs.referenceAd ? (
                       <div className="relative w-full aspect-video rounded-xl overflow-hidden border border-amber-500/30 shadow-md">
@@ -2319,9 +2305,10 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
               {launchSurfaceResult.reason}
             </div>
           )}
-          <button data-tour="submit" type="submit" disabled={!launchSurfaceResult.allowed} className={`w-full bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-black py-4 rounded-2xl shadow-xl shadow-emerald-600/20 hover:shadow-emerald-600/30 active:scale-[0.98] transition-all text-sm uppercase tracking-wider flex items-center justify-center gap-2 ${!launchSurfaceResult.allowed ? 'opacity-50 cursor-not-allowed' : ''}`}>
-            <i className="fa-solid fa-bolt"></i> Start Design Engine
+          <button data-tour="submit" type="submit" disabled={!launchSurfaceResult.allowed || !!isTeamViewer} aria-describedby={isTeamViewer ? "viewer-help" : undefined} className={`w-full bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-black py-4 rounded-2xl shadow-xl shadow-emerald-600/20 hover:shadow-emerald-600/30 active:scale-[0.98] transition-all text-sm uppercase tracking-wider flex items-center justify-center gap-2 ${(!launchSurfaceResult.allowed || isTeamViewer) ? 'opacity-50 cursor-not-allowed' : ''}`}>
+            <i className="fa-solid fa-bolt"></i> {isTeamViewer ? t('team.viewer_tooltip') : t('form.submit')}
           </button>
+          {isTeamViewer && <p id="viewer-help" className="text-center text-[10px] text-amber-400/80 mt-2">{t('team.viewer_tooltip')}</p>}
           <button type="button" id="save-draft-btn" onClick={() => {
             console.log('[Save Draft] clicked', inputs?.productName);
             try {

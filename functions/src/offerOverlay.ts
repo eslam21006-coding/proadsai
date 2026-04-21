@@ -279,7 +279,7 @@ export function extractOfferFacts(inputs: Record<string, any>): OfferFacts | nul
         };
     }
 
-    if (selectedModes.includes('premium_package') || selectedModes.includes('limited_access')) {
+    if (selectedModes.includes('premium_package')) {
         const inclusions = splitLinesLoose(inputs.offerCardInclusions).map((label) => ({ label, kind: 'item' as const }));
         return {
             offerTitle: (inputs.offerCardTitle || inputs.productName || '').trim() || undefined,

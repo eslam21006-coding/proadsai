@@ -1,38 +1,59 @@
 # Contract: validateLaunchSurface
 
 **Feature**: 001-resolver-completeness-trace
-**Location**: `functions/src/creativeResolver.ts` (shared frontend + backend)
+**Location**: `functions/src/launchSurface.ts` (new file)
 
-## Signature
-
-```typescript
-validateLaunchSurface(inputs: ResolverInput): LaunchSurfaceResult
-```
-
-## Input
-
-Extended `ResolverInput` with `selectedModes`, `campaignType`, `adFormat`, `hookAngle`, `visualStyleFamily`, objection fields.
-
-## Output
+## Function Signature
 
 ```typescript
-{ allowed: true }
-// or
-{ allowed: false, reason: "Human-readable block reason" }
+interface LaunchSurfaceInput {
+  offerType: string;           // 'live_event' | 'free_guide' | 'mini_course' (or legacy aliases)
+  campaignType: 'cold' | 'retargeting';
+  adFormat: 'single' | 'carousel' | 'batch';
+  creativeModes: string[];     // 1 or 2 modes
+  hookAngle?: string | null;
+  visualStyleFamily?: 'realistic' | 'fantasy' | 'minimal';
+  userPlan: 'starter' | 'creator' | 'pro' | 'scaling';
+  batchN?: number;               // Product of variation dimensions (hooks × concepts × sizes); required when adFormat === 'batch'
+}
+
+interface LaunchSurfaceResult {
+  passed: boolean;
+  blockReason?: string;          // Human-readable, user-facing
+  resolvedOfferType: OfferTypeId; // Canonical (after legacy alias mapping)
+  resolvedTab: TabId;
+  layoutKey?: string;             // For approved pairings
+}
+
+function validateLaunchSurface(input: LaunchSurfaceInput): LaunchSurfaceResult;
 ```
 
-## Validation Rules (executed in order, first failure stops)
+## Validation Rules (in order)
 
-1. **Deleted mode check:** `limited_access`, `module_preview`, `day_strip` → "This creative mode is no longer available."
-2. **Mode-to-tab check:** Every mode must belong to resolved tab → "{mode} is not available for {offerType}."
-3. **Solo-only check:** If `before_after` or `text_only` selected with 2+ modes → "{mode} is a standalone mode and cannot be paired."
-4. **Mode pair check:** If 2 modes, pair must exist in `ALLOWED_PAIRS` → "This mode combination is not supported for {offerType}."
-5. **Campaign × format × plan check:** Must be in approved table → "{campaignType} + {adFormat} requires {plan} plan."
-6. **Retargeting objection check:** Retargeting with no objection → "Retargeting requires an objection selection."
-7. **before_after + carousel check:** → "Before/After is single-image only."
+1. **Deleted mode check**: If any mode in `creativeModes` is in `DELETED_MODES`, return `{ passed: false, blockReason: '"{mode}" is no longer available.' }`
+2. **Offer type resolution**: Map legacy aliases to canonical. If unknown, return `{ passed: false, blockReason: 'Unknown offer type.' }`
+3. **Campaign × Format × Plan check**: Match against `CampaignFormatEntry` table. If no match, block. If user plan < `minPlan`, block with plan upgrade reason.
+4. **Tab mode check**: Verify all modes are in the tab's `approvedModes`. If not, block.
+5. **Solo-only check**: If any mode is solo-only and `creativeModes.length > 1`, block with mode-specific reason.
+6. **Pairing check**: If 2 modes selected, verify the pair exists in `approvedPairings`. Return `layoutKey`.
+7. **Hook angle check**: If `campaignType === 'cold'` and `hookAngle` is provided, verify it's in `APPROVED_HOOK_ANGLES`. If retargeting, `hookAngle` must be null.
+8. **Format restriction**: If `before_after` selected and `adFormat !== 'single'`, block: "Before/After is single-image only."
+9. **Batch N cap**: If `adFormat === 'batch'`, validate that N (product of variation dimensions: hooks × concepts × sizes) does not exceed 30. If exceeded, block: "Batch count exceeds maximum of 30 combinations."
 
-## Behavior
+## Error Messages
 
-- Pure function, never throws. Returns result object.
-- Caller decides: server throws `HttpsError`, frontend shows inline message.
-- Must work in both `bundler` (frontend) and `NodeNext` (backend) module resolution.
+| Scenario | Message |
+|----------|---------|
+| Deleted mode | `"{mode}" is no longer available.` |
+| Plan insufficient | `"{format}" requires {minPlan} plan or higher.` |
+| Mode not in tab | `"{mode}" is not available for {offerType}.` |
+| Solo-only paired | `"Before/After is single-image only."` / `"Text Only is a standalone mode."` |
+| Invalid pairing | `"{mode1}" and "{mode2}" cannot be paired.` |
+| Invalid hook angle | `"{angle}" is not an approved hook angle.` |
+| before_after + carousel | `"Before/After is single-image only."` |
+
+## Invariants
+
+- Pure function, no side effects, no async I/O
+- Called at the entry point of `generateCreative` in `index.ts`, before credit deduction
+- Result feeds into `ResolutionTrace.launchMatrixCheckPassed` and `launchMatrixBlockReason`
