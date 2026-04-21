@@ -16,7 +16,7 @@ No new fields required. The feature reads and writes existing fields:
 | `timestamp` | `Timestamp` | Sort key (default: newest first) |
 | `output.phase` | `'hooks' \| 'concepts' \| 'render' \| 'caption'` | Filter key for per-step favorites panel |
 | `output.hookText` | `string?` | Preview text for hooks panel; loaded into Step 2 fields |
-| `output.subhead` | `string?` | Loaded into Step 2 subhead field alongside hookText |
+| `output.subheadText` | `string?` | Loaded into Step 2 subhead field alongside `hookText` (matches `src/types.ts` `GenerationRecord` definition) |
 | `output.conceptText` | `string?` | Preview/load for concepts panel (Step 3) |
 | `output.buildPlan` | `string?` | Loaded alongside conceptText in Step 3 |
 | `output.imageUrl` | `string?` | Preview/load for designs panel (Step 4) |
@@ -50,7 +50,7 @@ User ──member of──► Workspace (via billingState.isTeamMember/isTeamOwn
 
 ## Query Patterns
 
-### Personal favorites (no workspace active)
+### Personal favorites (no workspace active) — first page
 
 ```
 generations
@@ -58,9 +58,10 @@ generations
   AND feedback.savedToFavorites == true
   AND output.phase == {phase}
   ORDER BY timestamp DESC
+  LIMIT 100
 ```
 
-### Team favorites (workspace active)
+### Team favorites (workspace active) — first page
 
 ```
 generations
@@ -68,7 +69,12 @@ generations
   AND feedback.savedToFavorites == true
   AND output.phase == {phase}
   ORDER BY timestamp DESC
+  LIMIT 100
 ```
+
+### Next page ("Show older")
+
+Identical predicate, with `startAfter(lastDocSnapshot)` appended and `limit(100)` retained. Executed via `getDocs` (not `onSnapshot`) — only the first page keeps a live subscription.
 
 ### Favorite IDs set (for bookmark state initialization)
 
@@ -76,10 +82,12 @@ generations
 generations
   WHERE userId == {currentUid}
   AND feedback.savedToFavorites == true
+  ORDER BY timestamp DESC
+  LIMIT 200
   SELECT id
 ```
 
-When workspace is active, replace `userId` constraint with `workspaceId` constraint.
+When workspace is active, replace `userId` constraint with `workspaceId` constraint. The 200-item bound on this bulk lookup is independent of the 100-item per-phase page bound; it exists to cover any phase a user has currently open in any step.
 
 ## Firestore Indexes Required
 
@@ -130,3 +138,19 @@ Loaded favorite tracked ──[user regenerates]──► Show update prompt
 - `output.phase` must be one of the four allowed values for panel filtering to work
 - `workspaceId` must match exactly for team scoping — partial matches or null comparisons excluded
 - When auto-saving before load, the current generation must have a valid `generationId` (skip auto-save if no generation exists yet)
+- Pagination cursor must be a Firestore `DocumentSnapshot` (not a plain document ID) — `startAfter` requires the snapshot to preserve compound-order positioning
+- Revocation semantics: records with a `workspaceId` MUST NOT have that field cleared or migrated to personal scope when a member leaves the workspace — the record stays attached to the workspace (FR-009, Session 2026-04-21 Q3)
+
+## Client-Side State (derived, not persisted)
+
+`useFavorites` hook local state — not stored in Firestore:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `favorites` | `GenerationRecord[]` | Currently loaded items (first page + any loaded "Show older" pages), client-side sorted per user selection |
+| `loading` | `boolean` | True during initial subscription setup or while `loadMore()` is in flight |
+| `hasMore` | `boolean` | True if the most recent page returned exactly 100 items (potential next page exists) |
+| `connectionState` | `'live' \| 'stale'` | `'live'` when the first-page `onSnapshot` is active; `'stale'` if `onSnapshot` error callback has fired and no recovery has occurred yet |
+| `lastCursor` | `DocumentSnapshot \| null` | Last document of the currently-loaded tail; used by `loadMore()` |
+
+These derived fields support FR-014 (pagination), FR-015 (offline banner), and SC-002 (<3 s panel open).

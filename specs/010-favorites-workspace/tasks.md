@@ -3,7 +3,7 @@
 **Input**: Design documents from `/specs/010-favorites-workspace/`
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
 
-**Tests**: Not explicitly requested — test tasks omitted. Manual testing via quickstart.md.
+**Tests**: Not explicitly requested for the original scope — test tasks omitted for T001–T029. Manual testing via quickstart.md. **Phase 10 adds one automated a11y test (T040) required by SC-007.**
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
@@ -81,7 +81,7 @@
 
 ### Implementation for User Story 3
 
-- [X] T015 [US3] In `src/App.tsx`, after each generation completes (hook/concept/render/caption generation callback), check if `loadedFavoriteId` is not null in the Zustand store. If so, show a modal/toast prompt with two buttons: "Yes, update" and "Keep both".
+- [X] T015 [US3] In `src/App.tsx`, after each generation completes (hook/concept/render/caption generation callback), check if `loadedFavoriteId` is not null in the Zustand store. If so, show a centered modal dialog over a dimmed (black/60, backdrop-blur) page backdrop with two buttons: "Yes, update" and "Keep both". Clicking the backdrop cancels the prompt and clears `loadedFavoriteId`. (Matches shipped implementation at `src/App.tsx:7265+`.)
 - [X] T016 [US3] Implement "Yes, update" handler — call `feedbackService.updateFavoriteRecord(loadedFavoriteId, newOutputFields)` where `newOutputFields` are the newly generated output fields for the current phase. Then call `setLoadedFavoriteId(null)` to clear tracking.
 - [X] T017 [US3] Implement "Keep both" handler — call `feedbackService.toggleFavorite(newGenerationId, true)` to save the new generation as a separate favorite. Then call `setLoadedFavoriteId(null)` to clear tracking.
 - [X] T018 [US3] Ensure the update/keep-both prompt does NOT appear when the user generates output without having loaded a favorite (i.e., `loadedFavoriteId === null`).
@@ -143,7 +143,38 @@
 - [X] T026 [P] Handle schema-mismatch edge case in `src/App.tsx` step `onLoad` handlers — when loading a favorite, if expected output fields are missing (e.g., `hookText` is undefined), load available fields and leave missing fields empty. Show a brief notice to the user.
 - [X] T027 Verify `dir="rtl"` is preserved on all text previews in `src/components/FavoritesPanel.tsx` for Arabic content (matches existing pattern in PerformanceDashboard).
 - [X] T028 Run `npm run lint` and `npm run build` to verify no TypeScript or lint errors across all modified files.
-- [X] T029 Run manual validation per `specs/010-favorites-workspace/quickstart.md` — test all 5 scenarios listed in the Testing section. Additionally, verify that revoking a user's workspace membership causes team favorites from that workspace to no longer appear in their panel (spec edge case #4).
+- [X] T029 Run manual validation per `specs/010-favorites-workspace/quickstart.md` — test all 5 scenarios listed in the Testing section. Additionally: (a) verify that revoking a user's workspace membership causes team favorites from that workspace to no longer appear in their panel (spec edge case #4); (b) measure and record the observed panel-open + first-item-load latency (target: <3 s per SC-002) and cross-tab real-time sync delay (target: ≤2 s per SC-003), using browser DevTools Performance or timestamp logs. Report the observed numbers in the task closeout note.
+
+---
+
+## Phase 10: Clarification-Driven Enhancements (Session 2026-04-21)
+
+**Purpose**: Implement FR-014 (pagination), FR-015 (offline banner), and FR-016 + SC-007 (WCAG 2.1 AA). These are cross-cutting enhancements to the already-shipped favorites surface. No user-story label — each task touches the shared `useFavorites` hook, `FavoritesPanel`, or step headers across all four steps.
+
+**Prerequisites**: T001–T029 complete (US1–US6 shipped). Phase 10 enhances existing behavior; it does not block earlier stories.
+
+### FR-014 — Pagination (100-item soft cap + "Show older")
+
+- [X] T030 Extend `src/hooks/useFavorites.ts` with pagination: add `limit(100)` to the primary Firestore query, expose `hasMore: boolean` (true when the current page returned exactly 100 docs), `lastCursor: DocumentSnapshot | null`, and `loadMore(): Promise<void>` that fetches the next 100 via `getDocs` + `startAfter(lastCursor)` and appends to `favorites`. The first page retains the live `onSnapshot` subscription; subsequent pages are static for the session. `loadMore()` is a no-op when `hasMore === false` or a load is already in flight.
+- [X] T031 Update `src/components/FavoritesPanel.tsx` to render a "Show older" button at the tail of the list when `useFavorites().hasMore === true`. Clicking calls `loadMore()`. Set `aria-busy="true"` on the button while loading. After new items append, programmatically move focus to the first newly-added listitem so keyboard users can continue navigation without losing place.
+
+### FR-015 — Offline / snapshot-loss banner
+
+- [X] T032 Extend `src/hooks/useFavorites.ts` to expose `connectionState: 'live' | 'stale'`. In the `onSnapshot` error callback: retain the last successful `favorites`, set `connectionState = 'stale'`, and do NOT unsubscribe (the Firebase SDK auto-retries). On the next successful snapshot: set `connectionState = 'live'`. Do not surface a user-facing error from the hook itself.
+- [X] T033 Update `src/components/FavoritesPanel.tsx` to render a non-blocking inline banner above the list when `useFavorites().connectionState === 'stale'` with text "Offline — showing last saved list". Place the banner inside an `aria-live="polite"` region so screen readers announce the state transition. The banner disappears automatically when `connectionState` returns to `'live'` — no manual retry control.
+
+### FR-016 + SC-007 — WCAG 2.1 AA baseline
+
+- [X] T034 [P] Add `aria-expanded={isOpen}` and `aria-controls={panelId}` to each "Saved [X]" toggle button in `src/App.tsx` (Steps 2, 3, 4, 5). Generate a stable, unique `panelId` per step (e.g., `favorites-panel-hooks`).
+- [X] T035 [P] Add `role="region"` and `aria-label` (phase-specific: "Saved hooks" / "Saved concepts" / "Saved designs" / "Saved captions") to the panel root container in `src/components/FavoritesPanel.tsx`.
+- [X] T036 [P] Wrap the favorites list in `role="list"` and each item in `role="listitem"` within `src/components/FavoritesPanel.tsx`. Render Load and Remove as `<button>` elements with accessible names that include a truncated preview of the item (e.g., `aria-label="Load hook: <first 40 chars>"`, `aria-label="Remove hook: <first 40 chars> from favorites"`).
+- [X] T037 Implement focus management in `src/components/FavoritesPanel.tsx`: on `isOpen` transitioning to true, move focus to the first interactive control (sort toggle). Handle `Escape` keypress to call `onClose()` and return focus to the step-header toggle button. Panel is non-modal — no focus trap required. Store the pre-open `activeElement` so focus restoration is reliable.
+- [X] T038 [P] Wrap each step's count-badge span in `src/App.tsx` with an `aria-live="polite"` region so screen readers announce count changes (e.g., "Saved Hooks (3)" → "Saved Hooks (4)") without being disruptive.
+- [X] T039 [P] Add `axe-core` and `vitest-axe` as dev dependencies: `npm install -D axe-core vitest-axe`. If already present, verify versions are compatible with Vitest 1.x.
+- [X] T040 [P] Create `src/components/__tests__/FavoritesPanel.a11y.test.tsx` — render `FavoritesPanel` with a mock `useFavorites` returning four states (empty, 3 items, 100 items with `hasMore: true`, `connectionState: 'stale'` with 3 items). For each state: run `axe.run()` and assert zero `critical` or `serious` violations. This is the automated half of SC-007.
+- [ ] T041 Manual keyboard-only validation matching quickstart.md Test 8 — open the panel via Tab + Enter on the toggle, Tab through each listitem, press Enter on Load and Remove, change the sort via keyboard, activate "Show older" via keyboard, close via `Escape`. All without using a pointing device. Record PASS/FAIL per step. This is the manual half of SC-007. Also re-measure panel-open + first-item-load latency (SC-002: <3 s) and real-time sync delay (SC-003: ≤2 s) using the post-Phase-10 implementation (pagination may affect first-page render); report observed numbers alongside the a11y checklist.
+
+**Checkpoint**: FR-014 (pagination), FR-015 (offline banner), and FR-016 / SC-007 (WCAG 2.1 AA) fully implemented and verified. All 16 functional requirements and all 7 success criteria now covered by tasks.
 
 ---
 
@@ -160,6 +191,7 @@
 - **US5 (Phase 7)**: Depends on US2 (Phase 4) — needs the toggle button and panel to exist for badge placement.
 - **US6 (Phase 8)**: Depends on US2 (Phase 4) — needs FavoritesPanel with Load in Step 4.
 - **Polish (Phase 9)**: Depends on all user stories being complete.
+- **Clarification Enhancements (Phase 10)**: Depends on US2 (Phase 4) and US5 (Phase 7) — extends the shipped `useFavorites` hook, `FavoritesPanel`, and step count badges. Each sub-group (FR-014 / FR-015 / FR-016) can be tackled independently; inside each group, hook changes precede panel/UI changes (e.g., T030 before T031; T032 before T033).
 
 ### User Story Dependencies
 
@@ -184,6 +216,7 @@ Phase 2 (Foundational) ──► US1 (bookmark fix)
 - T011, T012, T013 can run in parallel (different step sections in App.tsx — different line ranges)
 - T025, T026, T027 can run in parallel (different files/concerns)
 - US1 and US4 can run in parallel (independent concerns)
+- **Phase 10 parallel set**: T034, T035, T036, T038, T039, T040 can all run in parallel (different files or concerns — App.tsx toggle attributes, FavoritesPanel container attributes, list role markup, count-badge live region, dep install, and a11y test file). T030/T031 and T032/T033 form two serial pairs that can themselves run in parallel with the a11y set and with each other. T037 and T041 are single-file / manual tasks that close out the phase.
 
 ---
 
@@ -195,6 +228,28 @@ Phase 2 (Foundational) ──► US1 (bookmark fix)
 Task T011: "Integrate FavoritesPanel into Step 3 in src/App.tsx"
 Task T012: "Integrate FavoritesPanel into Step 4 in src/App.tsx"
 Task T013: "Integrate FavoritesPanel into Step 5 in src/App.tsx"
+```
+
+## Parallel Example: Phase 10 (Clarification Enhancements)
+
+```bash
+# Hook-side work (two independent sub-groups, can run concurrently):
+Task T030: "Add pagination (limit/hasMore/loadMore) to src/hooks/useFavorites.ts"
+Task T032: "Add connectionState tracking to src/hooks/useFavorites.ts"
+
+# After T030, T032 land, six a11y tasks can run fully in parallel:
+Task T034: "Add aria-expanded/aria-controls to step toggles in src/App.tsx"
+Task T035: "Add role/aria-label to panel container in FavoritesPanel.tsx"
+Task T036: "Add role='list' / 'listitem' in FavoritesPanel.tsx"
+Task T038: "Wrap count badges with aria-live='polite' in src/App.tsx"
+Task T039: "Install axe-core + vitest-axe dev deps"
+Task T040: "Write FavoritesPanel.a11y.test.tsx with axe assertions"
+
+# Close out serially:
+Task T031: "Render 'Show older' button in FavoritesPanel.tsx"
+Task T033: "Render offline banner in FavoritesPanel.tsx"
+Task T037: "Implement panel focus management + Escape key"
+Task T041: "Manual keyboard-only validation pass"
 ```
 
 ---
@@ -218,6 +273,7 @@ Task T013: "Integrate FavoritesPanel into Step 5 in src/App.tsx"
 4. Add US3 (edit & save back) → Test → Deploy (iteration loop closed)
 5. Add US4 (team scoping) → Test → Deploy (collaboration enabled)
 6. Add US5 + US6 (badges + re-generate) → Test → Deploy (polish)
+7. Add Phase 10 (pagination + offline banner + WCAG 2.1 AA) → Test → Deploy (launch-quality polish + scalability)
 
 ---
 

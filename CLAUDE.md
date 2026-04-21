@@ -1,6 +1,6 @@
 ﻿# Pro Ads AI - SaaS - FAL Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-05
+Auto-generated from all feature plans. Last updated: 2026-04-21
 
 ## Active Features
 - 002-frontend-filter-qa: Frontend filtering & QA (React, Zustand, Tailwind, fixtures via Cloud Functions v2)
