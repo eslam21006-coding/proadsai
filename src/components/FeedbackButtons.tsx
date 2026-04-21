@@ -42,13 +42,11 @@ export default function FeedbackButtons({
     const [isFavorite, setIsFavorite] = useState(initialFavorite);
     const [submitted, setSubmitted] = useState(false);
 
-    // Reset UI state when the generation changes (new hook/render)
-    // Fast-path: seed from initialFavorite for first paint (FR-001 SC-001 zero-flicker
-    // target). Authoritative-path: query Firestore per-record for this exact
-    // generationId so users with >100 favorites in a phase still see correct state
-    // even when their record is outside the per-phase subscription window.
+    // Reset transient UI and run the authoritative per-record check whenever
+    // the target generation changes. Transient state (tag panel, selected
+    // tags, free-text, submitted flash) resets here and only here — we don't
+    // want it to clear when the parent's favoriteIds set flips.
     useEffect(() => {
-        setIsFavorite(initialFavorite);
         setShowTagPanel(false);
         setSelectedTags(new Set());
         setFreeText('');
@@ -57,12 +55,21 @@ export default function FeedbackButtons({
         if (!generationId) return;
         let cancelled = false;
         feedbackService.getFavoriteStatus(generationId).then(actual => {
-            // null → transient read error; keep the seeded `initialFavorite`
-            // instead of overwriting with a fabricated value.
+            // null → transient read error; keep whatever isFavorite currently
+            // holds (whether from initialFavorite seed or a prior authoritative
+            // read) instead of fabricating a value.
             if (!cancelled && actual !== null) setIsFavorite(actual);
         });
         return () => { cancelled = true; };
-    }, [generationId]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [generationId]);
+
+    // Sync isFavorite with the parent-supplied seed whenever it flips. Covers
+    // the window between mount and the authoritative getFavoriteStatus result
+    // landing, and any later seed updates (e.g., the parent's favoriteIds
+    // useMemo recomputed because a teammate saved the same generation).
+    useEffect(() => {
+        setIsFavorite(initialFavorite);
+    }, [initialFavorite]);
 
     const handleRate = async (rating: FeedbackRating) => {
         setCurrentRating(rating);

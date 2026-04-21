@@ -143,7 +143,7 @@ interface FavoritesPanelProps {
 - Shows sort toggle (newest / oldest / alphabetical)
 - Each item displays: phase badge, preview text, date saved, "Load" button, "Remove" button
 - Empty state when no favorites for the phase
-- "Remove" calls `toggleFavorite(id, false)` — item disappears via real-time subscription
+- "Remove" calls `toggleFavorite(id, false)` followed by `markRemovedInList(id)`. The live head subscription catches the removal for items currently on page 1 (real-time disappearance via `onSnapshot`); items on any paginated tail page have no live listener, so `markRemovedInList` is what removes them optimistically. Both code paths result in the item disappearing from the rendered list without waiting for a resubscribe. `connectionState` and the offline banner are unaffected by this path — they key only on the head subscription's cache metadata.
 - "Load" calls `onLoad(record)` — parent step handles field population and auto-save logic
 - Pagination: when `useFavorites().hasMore === true`, renders a "Show older" button at the tail. Clicking it calls `loadMore()`. After items append, focus moves to the first newly-loaded item for keyboard continuity
 - Offline state: when `useFavorites().connectionState === 'stale'`, renders a non-blocking inline banner ("Offline — showing last saved list") above the list. The banner disappears automatically when `connectionState` returns to `'live'`. The banner region is marked `aria-live="polite"` so its appearance is announced

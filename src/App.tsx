@@ -7512,8 +7512,18 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       }
                       const newDoc = await getDoc(doc(db, 'generations', favUpdatePrompt.newGenId));
                       if (newDoc.exists()) {
-                        const newOutput = (newDoc.data() as { output?: Partial<GenerationRecord['output']> }).output || {};
-                        await feedbackService.updateFavoriteRecord(loadedFavoriteId, newOutput);
+                        // Fully synchronize the favorite with the new generation:
+                        // output + input + metadata + creativeIdentity. Input
+                        // sync matters because the user may have edited Step 1
+                        // before regenerating; without it, the saved input and
+                        // saved output would disagree.
+                        const newData = newDoc.data() as Partial<GenerationRecord>;
+                        await feedbackService.updateFavoriteRecord(loadedFavoriteId, {
+                          input: newData.input,
+                          output: newData.output,
+                          metadata: newData.metadata,
+                          creativeIdentity: newData.creativeIdentity,
+                        });
                         showToast(t('fav.updated'), 'success');
                       }
                     } catch { showToast(t('fav.update_failed'), 'error'); }

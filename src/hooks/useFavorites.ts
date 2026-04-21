@@ -108,6 +108,10 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
 
   useEffect(() => {
     if (!uid) {
+      // Bump the token so any in-flight loadMore from the previous (signed-in)
+      // scope fails the stillFresh() guard and doesn't repopulate state after
+      // logout.
+      subscriptionTokenRef.current += 1;
       setHeadItems([]);
       setTailItems([]);
       setRemovedIds(new Set());

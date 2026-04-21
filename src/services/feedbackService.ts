@@ -608,18 +608,23 @@ Use the above to guide creative direction. Match preferences while staying fresh
     }
 
     // ═══ 10. UPDATE FAVORITE RECORD ═══
+    // Accepts any combination of top-level sections (output / input / metadata /
+    // creativeIdentity) and replaces each provided section wholesale on the
+    // target record. Used by the favorite Update flow to fully synchronize a
+    // saved favorite with the contents of a freshly-generated record, not just
+    // the output. Excludes feedback / userId / workspaceId / timestamp — those
+    // are immutable properties of the favorite record itself.
     async updateFavoriteRecord(
         generationId: string,
-        updatedFields: Partial<GenerationRecord['output']>
+        patch: Partial<Pick<GenerationRecord, 'input' | 'output' | 'metadata' | 'creativeIdentity'>>
     ): Promise<void> {
         if (!generationId) throw new Error('generationId required');
         const updates: Record<string, any> = {};
-        for (const [key, value] of Object.entries(updatedFields)) {
-            if (value !== undefined) {
-                updates[`output.${key}`] = value;
-            }
-        }
-        if (Object.keys(updates).length === 0) throw new Error('No output fields provided for update');
+        if (patch.output !== undefined) updates.output = patch.output;
+        if (patch.input !== undefined) updates.input = patch.input;
+        if (patch.metadata !== undefined) updates.metadata = patch.metadata;
+        if (patch.creativeIdentity !== undefined) updates.creativeIdentity = patch.creativeIdentity;
+        if (Object.keys(updates).length === 0) throw new Error('No fields provided for update');
         try {
             const ref = doc(db, 'generations', generationId);
             await updateDoc(ref, updates);
