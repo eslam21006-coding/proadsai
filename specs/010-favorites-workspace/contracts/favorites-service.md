@@ -47,7 +47,7 @@ updateFavoriteRecord(generationId: string, updatedFields: Partial<GenerationReco
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | generationId | string | yes | Document ID of the generation to update |
-| updatedFields | Partial output object | yes | Fields to overwrite (e.g., `{ hookText, subheadText }`) |
+| updatedFields | Partial output object | yes | Fields to overwrite (e.g., `{ hookText, subhead }`) |
 
 **Output**: `void` — throws on failure
 
@@ -66,7 +66,10 @@ updateFavoriteRecord(generationId: string, updatedFields: Partial<GenerationReco
 **Signature**:
 
 ```ts
-useFavorites(phase: 'hooks' | 'concepts' | 'render' | 'caption') → {
+useFavorites(options: {
+  phase: 'hooks' | 'concepts' | 'render' | 'caption'
+  workspaceId?: string | null
+}): {
   favorites: GenerationRecord[]
   loading: boolean
   hasMore: boolean
@@ -75,29 +78,30 @@ useFavorites(phase: 'hooks' | 'concepts' | 'render' | 'caption') → {
 }
 ```
 
-**Inputs**:
+**Inputs** (single options object):
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| phase | string enum | yes | Filter favorites by content phase |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `phase` | `'hooks' \| 'concepts' \| 'render' \| 'caption'` | yes | Filter favorites by content phase |
+| `workspaceId` | `string \| null \| undefined` | no | When truthy, scopes the subscription by `where('workspaceId', '==', workspaceId)` instead of `where('userId', '==', currentUid)`. When null/undefined, falls back to user-scoped. Callers are responsible for resolving the active workspace from billing state and passing the right value. |
 
 **Output**:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| favorites | GenerationRecord[] | Currently loaded items; first page sorted by timestamp descending, subsequent pages appended in the same order |
-| loading | boolean | True during initial subscription setup or while `loadMore()` is in flight |
-| hasMore | boolean | True if the most recent page returned a full 100 items (another page may exist); false once the tail has been reached |
-| loadMore | `() => Promise<void>` | Fetches the next 100 items via `getDocs` with `startAfter(lastCursor)`; appends to `favorites`. No-op if `hasMore === false` or a load is already in flight |
-| connectionState | `'live' \| 'stale'` | `'live'` while the first-page `onSnapshot` is active; `'stale'` after an `onSnapshot` error callback until the next successful snapshot |
+| favorites | `GenerationRecord[]` | Currently loaded items: a live "head" page (up to 100 newest via `onSnapshot`) merged with any static "tail" pages that `loadMore()` has already appended, de-duplicated by `id` (head items win on collision). Both head and tail are in timestamp-descending order from the server; the consuming component applies client-side sort if desired. |
+| loading | `boolean` | True during initial subscription setup or while `loadMore()` is in flight |
+| hasMore | `boolean` | True when the most recent page returned a full 100 items (another page may exist); false once the tail has been reached |
+| loadMore | `() => Promise<void>` | Fetches the next 100 timestamp-descending items via `getDocs` with `startAfter(lastCursor)` and appends them to the tail. No-op if `hasMore === false` or a load is already in flight. Always returns a resolved promise — thrown errors from the Firestore SDK are caught internally (and logged via `console.warn`) so the caller need not handle rejection. |
+| connectionState | `'live' \| 'stale'` | Driven by `snapshot.metadata.fromCache` (the subscription is opened with `{ includeMetadataChanges: true }`): `'live'` when the snapshot reflects the server, `'stale'` when Firestore is serving from offline cache or the error callback has fired. Returns to `'live'` on the next server-sourced snapshot without manual retry. |
 
 **Behavior**:
-- First page uses `onSnapshot` (real-time) with `limit(100)`; subsequent pages loaded by `loadMore()` use `getDocs` (static for the session)
-- Automatically scopes to workspace if `activeWorkspaceId` is set and user is team member/owner
-- Falls back to user-scoped query if no workspace active
-- Unsubscribes the first-page listener on component unmount
-- Falls back to broader query + client-side phase filter if composite index is unavailable
-- On `onSnapshot` error: retains the last successful `favorites`, flips `connectionState` to `'stale'`, and relies on the Firebase SDK to auto-retry; flips back to `'live'` on next successful snapshot. Does NOT surface a user-facing error — the consuming panel renders the stale banner (FR-015)
+- First page ("head") uses `onSnapshot` with `{ includeMetadataChanges: true }` + `limit(100)`; subsequent pages ("tail") loaded by `loadMore()` use `getDocs` with `startAfter(lastCursor)` (static for the session — older pages are not live-subscribed)
+- Scopes to workspace when the caller passes a truthy `workspaceId`; otherwise scopes to `auth.currentUser.uid`
+- Unsubscribes the head listener on unmount or when `phase`/`workspaceId` changes; resets `headItems`, `tailItems`, `lastCursor`, and `hasMore` on resubscribe
+- Falls back to broader query + client-side phase filter if the composite index is unavailable; the fallback path follows the same head+tail merge and same `metadata.fromCache` detection
+- `connectionState` flips to `'stale'` when `snapshot.metadata.fromCache === true` OR when the error callback fires; flips back to `'live'` on the next server-sourced snapshot
+- Live head refreshes MUST NOT discard tail items already loaded via `loadMore()` — the returned `favorites` array is always the merged, de-duplicated view
 
 ---
 

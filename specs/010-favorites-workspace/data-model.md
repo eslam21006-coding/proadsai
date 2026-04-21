@@ -16,7 +16,7 @@ No new fields required. The feature reads and writes existing fields:
 | `timestamp` | `Timestamp` | Sort key (default: newest first) |
 | `output.phase` | `'hooks' \| 'concepts' \| 'render' \| 'caption'` | Filter key for per-step favorites panel |
 | `output.hookText` | `string?` | Preview text for hooks panel; loaded into Step 2 fields |
-| `output.subheadText` | `string?` | Loaded into Step 2 subhead field alongside `hookText` (matches `src/types.ts` `GenerationRecord` definition) |
+| `output.subhead` | `string?` | Loaded into Step 2 subhead field alongside `hookText` (matches `GenerationRecord.output.subhead` in `src/services/feedbackService.ts:86` and consumers in `src/App.tsx`) |
 | `output.conceptText` | `string?` | Preview/load for concepts panel (Step 3) |
 | `output.buildPlan` | `string?` | Loaded alongside conceptText in Step 3 |
 | `output.imageUrl` | `string?` | Preview/load for designs panel (Step 4) |

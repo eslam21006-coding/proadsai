@@ -67,7 +67,7 @@
 
 ### R7: Pagination Strategy — "Show older"
 
-**Decision**: Use cursor-based pagination via `limit(100)` + `startAfter(lastDoc)`. `useFavorites` exposes `{ favorites, loading, hasMore, loadMore() }`. `loadMore()` appends the next 100 documents to the in-memory array. Pagination is append-only; earlier pages are never evicted during the session. A `hasMore` boolean is derived from whether the last snapshot returned a full page.
+**Decision**: Use cursor-based pagination via `limit(100)` + `startAfter(lastDoc)`. `useFavorites` exposes `{ favorites, loading, hasMore, loadMore() }`. `loadMore()` fetches the next 100 documents and appends them to a separate `tailItems` state; the live head subscription and the static tail are merged (de-duplicated by `id`, head wins on collision) to produce the returned `favorites` array. This ensures a live snapshot refresh — which always returns the current head page — never discards previously-loaded tail pages. Pagination is append-only; earlier pages are never evicted during the session. A `hasMore` boolean is derived from whether the last page fetch returned a full 100 docs.
 
 **Rationale**: Resolves Session 2026-04-21 Q2 (soft cap 100 per phase, "Show older" control). Cursor pagination is idiomatic Firestore, scales to unbounded total favorites without degrading SC-002 (<3 s to open), and is compatible with `onSnapshot` — the first page remains a live subscription, while subsequent pages are fetched with `getDocs` since `onSnapshot` does not cleanly compose across `startAfter` boundaries. Only the first page stays live; older pages are static for the session, which is acceptable because edits most often target recently-saved items.
 
@@ -78,14 +78,15 @@
 
 ### R8: Offline / Snapshot Loss Handling
 
-**Decision**: `useFavorites` tracks a `connectionState: 'live' | 'stale'` flag. On `onSnapshot` error callback, retain the last successful `favorites` array, set `connectionState = 'stale'`, and do not unsubscribe — the Firebase SDK retries automatically. When a subsequent snapshot succeeds, flip back to `'live'`. The `FavoritesPanel` renders a non-blocking inline banner ("Offline — showing last saved list") when `connectionState === 'stale'`.
+**Decision**: `useFavorites` tracks a `connectionState: 'live' | 'stale'` flag. The head `onSnapshot` is opened with `{ includeMetadataChanges: true }` so every snapshot callback fires with `snap.metadata.fromCache` populated. The hook sets `connectionState = snap.metadata.fromCache ? 'stale' : 'live'` on each callback, and additionally sets `'stale'` from the error callback (defence in depth). The last successful `favorites` array is retained throughout; the subscription is not torn down — the Firebase SDK auto-retries. When the server becomes reachable again, the next callback flips state back to `'live'`. The `FavoritesPanel` renders a non-blocking inline banner ("Offline — showing last saved list") when `connectionState === 'stale'`.
 
-**Rationale**: Resolves Session 2026-04-21 Q4. Matches Principle VII (No Silent Override) — the stale state is explicitly signaled; matches Principle VI (Hidden Layers Auditable) — the banner makes the degraded state user-visible. Reuses the Firebase SDK's built-in retry rather than adding a manual retry loop.
+**Rationale**: Resolves Session 2026-04-21 Q4. Driving stale detection off `metadata.fromCache` catches the common offline-but-reading-cache case that Firestore handles gracefully *without* firing the error callback — using the error callback alone would under-report stale state. Matches Principle VII (No Silent Override) — the stale state is explicitly signaled; matches Principle VI (Hidden Layers Auditable) — the banner makes the degraded state user-visible. Reuses the Firebase SDK's built-in retry rather than adding a manual retry loop.
 
 **Alternatives considered**:
 - Blank the panel on error — rejected: destroys context the user may still want to load from.
 - Hard error screen with Retry button — rejected: too aggressive for transient network blips; silently-recovered failures would still require user action.
 - Fall back to the missing-index path on every error — rejected: conflates two distinct failure modes.
+- Error-callback-only detection (no `includeMetadataChanges`) — rejected: Firestore serves from cache silently for most transient offline states and never fires the error callback; users would see stale data without any banner. The metadata path closes that gap.
 
 ### R9: Accessibility Baseline — WCAG 2.1 AA
 

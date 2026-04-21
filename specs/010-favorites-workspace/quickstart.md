@@ -63,7 +63,7 @@ cd functions && npm test
 **Manual acceptance passes** (mirror the spec's User Stories and SC-007):
 
 1. **Bookmark persistence (US1, SC-001)** — bookmark a generation → refresh → filled icon appears immediately, no flicker.
-2. **Panel open + Load (US2, SC-002)** — open Saved Hooks in Step 2 → items listed in <3 s → click Load → hookText + subheadText populate the editable fields.
+2. **Panel open + Load (US2, SC-002)** — open Saved Hooks in Step 2 → items listed in <3 s → click Load → hookText + subhead populate the editable fields.
 3. **Edit & save back (US3)** — load a favorite → regenerate → verify "Update or Keep both" prompt, both paths work.
 4. **Team scope (US4, SC-004)** — two team members in same workspace, each saves a favorite → both appear in both members' panels within 2 s (SC-003).
 5. **Revocation** — remove a user from the workspace → verify every favorite with that `workspaceId` disappears from their panel, including their own saves; their personal-scope favorites remain.

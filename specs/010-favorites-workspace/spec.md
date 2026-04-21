@@ -34,7 +34,7 @@ A user working on Step 2 (hooks) wants to reference or reuse a previously saved 
 **Acceptance Scenarios**:
 
 1. **Given** a user has saved hooks, **When** they click "Saved Hooks" in Step 2, **Then** a panel slides in showing all saved hooks with preview text, date, and Load/Remove buttons.
-2. **Given** the user clicks "Load" on a saved hook, **When** the hook data is applied, **Then** the hook text (`hookText`) and subhead (`subheadText`) populate the Step 2 editable fields.
+2. **Given** the user clicks "Load" on a saved hook, **When** the hook data is applied, **Then** the hook text (`hookText`) and subhead (`subhead`) populate the Step 2 editable fields.
 3. **Given** the user clicks "Load" on a saved concept in Step 3, **When** the concept is applied, **Then** the concept text and build plan render as if freshly generated.
 4. **Given** the user clicks "Load" on a saved design in Step 4, **When** the design is applied, **Then** the saved image displays in the Step 4 result area.
 5. **Given** the user clicks "Load" on a saved caption in Step 5, **When** the caption is applied, **Then** the caption text populates the editable caption field.
@@ -152,8 +152,8 @@ A user loads a saved design in Step 4 and wants to iterate on it. They click "Ed
 - **FR-011**: The "Edit & Re-generate" action on a saved design MUST restore the original generation's input fields and navigate the user to the blueprint stage (Step 3).
 - **FR-012**: Favorites panel MUST display an appropriate empty state message when no favorites exist for a given phase.
 - **FR-013**: Removing a favorite MUST immediately remove the item from the panel without requiring a page refresh.
-- **FR-014**: Each favorites panel MUST render at most 100 items per phase on initial open (ordered by the active sort), and MUST expose a "Show older" control that loads the next page of 100 items when more exist. There is no hard cap on the total number of favorites a user or workspace may store.
-- **FR-015**: When the Firestore snapshot connection is lost or errors transiently, the panel MUST continue to display the last successful snapshot, MUST surface a non-blocking inline banner indicating the list is offline/stale, and MUST automatically resume live updates when the connection recovers without requiring user action.
+- **FR-014**: Each favorites panel MUST render at most 100 items per phase on initial open. Server-side pagination MUST use a fixed timestamp-descending order (newest first) and MUST expose a "Show older" control that loads the next page of 100 timestamp-descending items when more exist. The user's active sort (newest / oldest / alphabetical from FR-004) MUST be applied client-side to the currently-loaded set after each page arrives; it MUST NOT change the server's pagination cursor. There is no hard cap on the total number of favorites a user or workspace may store.
+- **FR-015**: When the Firestore subscription is serving from offline cache (e.g., the client is offline, or the network is dropping) or when its error callback fires, the panel MUST continue to display the last successful snapshot, MUST surface a non-blocking inline banner indicating the list is offline/stale, and MUST automatically resume live updates when the server becomes reachable again without requiring user action. Implementations MUST detect cache-served snapshots via the Firestore subscription's metadata (not only via error callbacks) so transient offline states are surfaced before the SDK escalates to an error.
 - **FR-016**: The favorites panel and its controls MUST meet WCAG 2.1 AA. Specifically: (a) the "Saved [X]" toggle, every list item, Load, Remove, sort control, and "Show older" control MUST be operable by keyboard with a visible focus indicator; (b) every interactive control MUST expose an accessible name via ARIA or text; (c) count-badge changes and snapshot-offline banner appearance MUST be announced via an `aria-live` region; (d) RTL content previews MUST preserve `dir="rtl"` and correct focus order.
 
 ### Key Entities
@@ -179,7 +179,7 @@ A user loads a saved design in Step 4 and wants to iterate on it. They click "Ed
 - The existing `feedback.savedToFavorites` field on generation records is the source of truth for favorite status — no new collection is needed.
 - The existing `toggleFavorite` function in `feedbackService` works correctly for adding/removing favorites and does not need to be rewritten.
 - The `billingState` from Phase 8 is available and reliably provides `isTeamMember`, `isTeamOwner`, and workspace context for team scoping.
-- The `generations` collection already contains all necessary output fields (`hookText`, `subheadText`, `conceptText`, `buildPlan`, `imageUrl`, `captionText`) and input fields for re-generation.
+- The `generations` collection already contains all necessary output fields (`hookText`, `subhead`, `conceptText`, `buildPlan`, `imageUrl`, `captionText`) and input fields for re-generation.
 - Generation records carry a `workspaceId` field populated at creation time; team-scoped queries rely on this field being indexable alongside `feedback.savedToFavorites` and `output.phase`.
 - The existing `PerformanceDashboard.tsx` Favorites tab (read-only, non-team-scoped) is out of scope for this feature; per-step panels become the primary favorites surface, but the dashboard tab is not modified or removed.
 - Real-time subscriptions via Firestore snapshots are the appropriate mechanism for live updates in the favorites panel.
