@@ -1083,6 +1083,20 @@ const CANONICAL_BATCH_ADS_PER_RUN: Record<"starter" | "pro" | "scale", number | 
     scale: 36,
 };
 
+// FR-006, FR-007 — owner-inclusive saved-project and audience-avatar caps.
+// `null` = plan has no limit (Infinity); skip in boundary tests.
+const CANONICAL_SAVED_PROJECT_LIMIT: Record<"starter" | "pro" | "scale", number | null> = {
+    starter: 10,
+    pro: 30,
+    scale: null, // Infinity
+};
+
+const CANONICAL_AUDIENCE_AVATAR_LIMIT: Record<"starter" | "pro" | "scale", number | null> = {
+    starter: 5,
+    pro: 15,
+    scale: null, // Infinity
+};
+
 function testCrossModuleParity() {
     const plans: Array<"starter" | "pro" | "scale"> = ["starter", "pro", "scale"];
 
@@ -1116,7 +1130,31 @@ function testCrossModuleParity() {
         assert.equal(dec2.allowed, false, `batch cap canonical: ${plan} at ${expected + 1} should deny`);
     }
 
-    console.log("  ✅ testCrossModuleParity: backend ↔ contract canonicals verified");
+    // FR-006 savedProjectSave canonical values
+    for (const plan of plans) {
+        const expected = CANONICAL_SAVED_PROJECT_LIMIT[plan];
+        if (expected === null) continue;
+        const dec = resolveEntitlement({ plan, feature: "savedProjectSave", quantity: expected });
+        assert.equal(dec.allowed, true, `savedProjectSave canonical: ${plan} at ${expected} should allow`);
+        assert.equal(dec.limit, expected, `savedProjectSave canonical: ${plan} limit = ${expected}`);
+        const dec2 = resolveEntitlement({ plan, feature: "savedProjectSave", quantity: expected + 1 });
+        assert.equal(dec2.allowed, false, `savedProjectSave canonical: ${plan} at ${expected + 1} should deny`);
+        assert.equal(dec2.reason, "saved_project_limit_exceeded", `savedProjectSave canonical: ${plan} over-limit reason`);
+    }
+
+    // FR-007 audienceAvatarCreate canonical values
+    for (const plan of plans) {
+        const expected = CANONICAL_AUDIENCE_AVATAR_LIMIT[plan];
+        if (expected === null) continue;
+        const dec = resolveEntitlement({ plan, feature: "audienceAvatarCreate", quantity: expected });
+        assert.equal(dec.allowed, true, `audienceAvatarCreate canonical: ${plan} at ${expected} should allow`);
+        assert.equal(dec.limit, expected, `audienceAvatarCreate canonical: ${plan} limit = ${expected}`);
+        const dec2 = resolveEntitlement({ plan, feature: "audienceAvatarCreate", quantity: expected + 1 });
+        assert.equal(dec2.allowed, false, `audienceAvatarCreate canonical: ${plan} at ${expected + 1} should deny`);
+        assert.equal(dec2.reason, "avatar_limit_exceeded", `audienceAvatarCreate canonical: ${plan} over-limit reason`);
+    }
+
+    console.log("  ✅ testCrossModuleParity: backend ↔ contract canonicals verified (features + batch + savedProject + avatar)");
 }
 
 console.log("\n═══ T026a — Cross-module Parity ═══");

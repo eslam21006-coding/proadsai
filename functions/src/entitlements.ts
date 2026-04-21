@@ -214,7 +214,8 @@ export type EntitlementDenialReason =
     | "carousel_limit_exceeded"
     | "team_limit_exceeded"
     | "saved_project_limit_exceeded"
-    | "avatar_limit_exceeded";
+    | "avatar_limit_exceeded"
+    | "unknown_feature";
 
 export interface EntitlementDecision {
     allowed: boolean;
@@ -324,7 +325,10 @@ export function resolveEntitlement(input: EntitlementInput): EntitlementDecision
             return { allowed: true, limit: limits.avatarLimit };
         }
         default:
-            return { allowed: true };
+            // Fail-closed: an unknown FeatureName (e.g., added to the enum but not handled
+            // here) is denied, not silently allowed. Every new feature MUST be added
+            // explicitly to ALWAYS_ALLOWED, BOOLEAN_GATES, or this switch.
+            return { allowed: false, reason: "unknown_feature" };
     }
 }
 
@@ -358,19 +362,44 @@ function resolveFromUserData(
     const storedPlan = (userData.plan || "none") as StoredPlan;
     const isTrial = userData.isTrial === true;
 
+    // ── Legacy plan normalization (matches buildBillingState read-time map) ──
+    // Users whose Firestore `plan` field still holds the pre-hotfix identifier
+    // must resolve to the canonical equivalent, else entitlement lookup falls
+    // through to makeNoneFallback and they lose all access.
+    let normalizedPlan: StoredPlan = storedPlan;
+    if ((storedPlan as string) === "creator") {
+        normalizedPlan = "pro";
+        console.log(JSON.stringify({
+            event: "plan.legacy_mapped",
+            source: "resolveFromUserData",
+            uid: creditOwnerUid,
+            legacy: "creator",
+            canonical: "pro",
+        }));
+    } else if ((storedPlan as string) === "scaling") {
+        normalizedPlan = "scale";
+        console.log(JSON.stringify({
+            event: "plan.legacy_mapped",
+            source: "resolveFromUserData",
+            uid: creditOwnerUid,
+            legacy: "scaling",
+            canonical: "scale",
+        }));
+    }
+
     // ── Real plan (trial or paid) ──
-    if (storedPlan !== "none" && PLAN_FEATURES[storedPlan as BasePlan]) {
+    if (normalizedPlan !== "none" && PLAN_FEATURES[normalizedPlan as BasePlan]) {
         return {
-            basePlan: storedPlan as BasePlan,
+            basePlan: normalizedPlan as BasePlan,
             isTrial,
-            creditsPerMonth: isTrial ? TRIAL_CREDITS : PLAN_CREDITS[storedPlan as BasePlan],
-            features: { ...PLAN_FEATURES[storedPlan as BasePlan] },
+            creditsPerMonth: isTrial ? TRIAL_CREDITS : PLAN_CREDITS[normalizedPlan as BasePlan],
+            features: { ...PLAN_FEATURES[normalizedPlan as BasePlan] },
             teamCreditPoolShared: true,
             creditOwnerUid,
         };
     }
 
-    // ── Cancelled / no plan ──
+    // ── Cancelled / no plan / unknown value ──
     return makeNoneFallback(creditOwnerUid);
 }
 
