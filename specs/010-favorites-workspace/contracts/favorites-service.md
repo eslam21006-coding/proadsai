@@ -75,6 +75,7 @@ useFavorites(options: {
   hasMore: boolean
   loadMore: () => Promise<void>
   connectionState: 'live' | 'stale'
+  markRemovedInList: (id: string) => void
 }
 ```
 
@@ -94,6 +95,7 @@ useFavorites(options: {
 | hasMore | `boolean` | True when the most recent page returned a full 100 items (another page may exist); false once the tail has been reached |
 | loadMore | `() => Promise<void>` | Fetches the next 100 timestamp-descending items via `getDocs` with `startAfter(lastCursor)` and appends them to the tail. No-op if `hasMore === false` or a load is already in flight. Always returns a resolved promise — thrown errors from the Firestore SDK are caught internally (and logged via `console.warn`) so the caller need not handle rejection. |
 | connectionState | `'live' \| 'stale'` | Driven by `snapshot.metadata.fromCache` (the subscription is opened with `{ includeMetadataChanges: true }`): `'live'` when the snapshot reflects the server, `'stale'` when Firestore is serving from offline cache or the error callback has fired. Returns to `'live'` on the next server-sourced snapshot without manual retry. |
+| markRemovedInList | `(id: string) => void` | Optimistic-removal escape hatch. Call this after a successful `toggleFavorite(id, false)` to drop the item from the returned `favorites` array immediately. Head items are also refreshed by the live subscription; tail items (loaded via `loadMore`) have no live listener, so this is the only signal that removes them from the merged view. Calls are idempotent — re-adding a removed ID is not currently supported; a re-subscribe (phase/workspace change) clears the removed set. |
 
 **Behavior**:
 - First page ("head") uses `onSnapshot` with `{ includeMetadataChanges: true }` + `limit(100)`; subsequent pages ("tail") loaded by `loadMore()` use `getDocs` with `startAfter(lastCursor)` (static for the session — older pages are not live-subscribed)
@@ -102,6 +104,7 @@ useFavorites(options: {
 - Falls back to broader query + client-side phase filter if the composite index is unavailable; the fallback path follows the same head+tail merge and same `metadata.fromCache` detection
 - `connectionState` flips to `'stale'` when `snapshot.metadata.fromCache === true` OR when the error callback fires; flips back to `'live'` on the next server-sourced snapshot
 - Live head refreshes MUST NOT discard tail items already loaded via `loadMore()` — the returned `favorites` array is always the merged, de-duplicated view
+- When called without a truthy `workspaceId`, the hook MUST exclude records whose `workspaceId` is set to a non-null value (FR-009: workspace-owned favorites MUST NOT leak into personal scope). The exclusion is applied as a client-side filter on the loaded page, so no new composite index is required.
 
 ---
 

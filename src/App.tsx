@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useState, useEffect, useRef, Suspense } from 'react';
+import { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import type { AdInputs, AdMode, AppPhase, AspectRatio, ABVariation, BatchResult, BatchHookGroup, CarouselSlide, CarouselSlideCopy, ChatMessage, TextOverride, VisualPolish, Toast, SavedProject, AudienceAvatar, CompetitorResearch, SemanticLock, TovEditIntent, RewriteScope, Workspace } from './types';
 // --- FIREBASE IMPORTS ---
 import { auth, googleProvider, db, functions } from './firebase';
@@ -2105,21 +2105,25 @@ const App: React.FC = () => {
   const [hookGenerationIds, setHookGenerationIds] = useState<Record<string, string>>({});
   const [renderGenerationId, setRenderGenerationId] = useState<string>('');
   const [captionGenerationId, setCaptionGenerationId] = useState<string>('');
-  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    const uid = user?.uid;
-    if (!uid) return;
-    const wsId = canUseWorkspaces && activeWorkspaceId ? activeWorkspaceId : undefined;
-    feedbackService.getFavoriteIds(uid, wsId).then(ids => setFavoriteIds(ids)).catch(() => {});
-  }, [user?.uid, activeWorkspaceId]);
-
   // ─── FAVORITES COUNT PER PHASE ──────────────────────────────
   const favWsId = canUseWorkspaces ? activeWorkspaceId : null;
   const { favorites: hooksFavs } = useFavorites({ phase: 'hooks', workspaceId: favWsId });
   const { favorites: conceptsFavs } = useFavorites({ phase: 'concepts', workspaceId: favWsId });
   const { favorites: renderFavs } = useFavorites({ phase: 'render', workspaceId: favWsId });
   const { favorites: captionFavs } = useFavorites({ phase: 'caption', workspaceId: favWsId });
+
+  // Derive favoriteIds from the live per-phase subscriptions instead of a
+  // separate bulk bootstrap query. Covers pagination ("Show older" items flow
+  // through the hook's merged view) and removes the prior LIMIT 200 cap that
+  // could drop older bookmarks. See data-model.md § "Favorite IDs set".
+  const favoriteIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of hooksFavs) if (r.id) set.add(r.id);
+    for (const r of conceptsFavs) if (r.id) set.add(r.id);
+    for (const r of renderFavs) if (r.id) set.add(r.id);
+    for (const r of captionFavs) if (r.id) set.add(r.id);
+    return set;
+  }, [hooksFavs, conceptsFavs, renderFavs, captionFavs]);
 
   // ─── META ADS CONNECTION ─────────────────────────────────────
   const [metaConnection, setMetaConnection] = useState<MetaConnection | null>(null);

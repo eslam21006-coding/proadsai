@@ -22,6 +22,7 @@ interface FavoritesResult {
   hasMore: boolean;
   loadMore: () => Promise<void>;
   connectionState: 'live' | 'stale';
+  markRemovedInList: (id: string) => void;
 }
 
 const PAGE_SIZE = 100;
@@ -30,6 +31,7 @@ const FALLBACK_PAGE_SIZE = 200;
 export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): FavoritesResult {
   const [headItems, setHeadItems] = useState<GenerationRecord[]>([]);
   const [tailItems, setTailItems] = useState<GenerationRecord[]>([]);
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [connectionState, setConnectionState] = useState<'live' | 'stale'>('live');
@@ -41,21 +43,42 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
 
   // Head (live) merged with tail (paginated). Dedupe by id; head wins on collision
   // so live updates to items already in tail flow through to the rendered view.
+  // `removedIds` provides an optimistic-removal escape hatch so consumers can
+  // drop items from the rendered list immediately after calling toggleFavorite(id,false)
+  // — needed because the static tail won't self-heal via onSnapshot.
   const favorites = useMemo(() => {
-    if (tailItems.length === 0) return headItems;
     const headIds = new Set<string>();
-    for (const r of headItems) if (r.id) headIds.add(r.id);
-    const merged: GenerationRecord[] = [...headItems];
-    for (const t of tailItems) {
-      if (t.id && !headIds.has(t.id)) merged.push(t);
+    const mergedHead: GenerationRecord[] = [];
+    for (const h of headItems) {
+      if (h.id && !removedIds.has(h.id)) {
+        mergedHead.push(h);
+        headIds.add(h.id);
+      }
     }
-    return merged;
-  }, [headItems, tailItems]);
+    if (tailItems.length === 0) return mergedHead;
+    const mergedTail: GenerationRecord[] = [];
+    for (const t of tailItems) {
+      if (t.id && !removedIds.has(t.id) && !headIds.has(t.id)) {
+        mergedTail.push(t);
+      }
+    }
+    return [...mergedHead, ...mergedTail];
+  }, [headItems, tailItems, removedIds]);
+
+  const markRemovedInList = useCallback((id: string) => {
+    setRemovedIds(prev => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!uid) {
       setHeadItems([]);
       setTailItems([]);
+      setRemovedIds(new Set());
       setLoading(false);
       setHasMore(false);
       setConnectionState('live');
@@ -64,9 +87,12 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
       return;
     }
 
-    // Reset pagination state on every resubscribe (phase or workspace change)
+    // Reset all state on every resubscribe (phase or workspace change) so
+    // pagination cursors, removed-id optimism, and tail pages from the prior
+    // scope don't leak into the new scope.
     setHeadItems([]);
     setTailItems([]);
+    setRemovedIds(new Set());
     setHasMore(false);
     setLoading(true);
     lastCursorRef.current = null;
@@ -74,13 +100,28 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
 
     let unsubscribe: Unsubscribe | null = null;
     const useWorkspace = !!workspaceId;
-    const scopeField = useWorkspace ? 'workspaceId' : 'userId';
-    const scopeValue = useWorkspace ? workspaceId! : uid;
+
+    // Client-side post-filter for the "no workspace" scope: Firestore would
+    // need a new composite index to add `where('workspaceId','==', null)` to
+    // the query, so we enforce FR-009 (workspace-owned records MUST NOT appear
+    // in personal scope) by filtering the loaded page. The head is bounded to
+    // 100 docs, so the filter cost is trivial.
+    const scopeFilter = (records: GenerationRecord[]): GenerationRecord[] => {
+      if (useWorkspace) return records;
+      return records.filter((r) => {
+        const ws = (r as GenerationRecord & { workspaceId?: string | null }).workspaceId;
+        return ws == null;
+      });
+    };
 
     try {
+      const baseConstraints = useWorkspace
+        ? [where('workspaceId', '==', workspaceId)]
+        : [where('userId', '==', uid)];
+
       const q = query(
         collection(db, 'generations'),
-        where(scopeField, '==', scopeValue),
+        ...baseConstraints,
         where('feedback.savedToFavorites', '==', true),
         where('output.phase', '==', phase),
         orderBy('timestamp', 'desc'),
@@ -91,13 +132,15 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
         q,
         { includeMetadataChanges: true },
         (snap) => {
-          const records = snap.docs.map(
+          const raw = snap.docs.map(
             (d: DocumentSnapshot) => ({ id: d.id, ...d.data() } as GenerationRecord)
           );
-          setHeadItems(records);
+          setHeadItems(scopeFilter(raw));
           // Only advance the cursor off the head when no tail has been loaded yet;
           // once the user has paginated, loadMore owns the cursor so we don't
-          // regress it when the live head refreshes.
+          // regress it when the live head refreshes. `hasMore` is computed off
+          // the RAW page length (not the filtered length) so pagination keeps
+          // walking even when scope-filtered items reduce visible count.
           if (!tailNonEmptyRef.current) {
             lastCursorRef.current = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
             setHasMore(snap.docs.length === PAGE_SIZE);
@@ -109,7 +152,7 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
           try {
             const fallbackQ = query(
               collection(db, 'generations'),
-              where(scopeField, '==', scopeValue),
+              ...baseConstraints,
               where('feedback.savedToFavorites', '==', true),
               orderBy('timestamp', 'desc'),
               limit(FALLBACK_PAGE_SIZE)
@@ -118,10 +161,10 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
               fallbackQ,
               { includeMetadataChanges: true },
               (snap) => {
-                const records = snap.docs
+                const raw = snap.docs
                   .map((d: DocumentSnapshot) => ({ id: d.id, ...d.data() } as GenerationRecord))
                   .filter((r: GenerationRecord) => r.output?.phase === phase);
-                setHeadItems(records);
+                setHeadItems(scopeFilter(raw));
                 if (!tailNonEmptyRef.current) {
                   lastCursorRef.current = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
                   setHasMore(snap.docs.length === FALLBACK_PAGE_SIZE);
@@ -135,14 +178,14 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
               }
             );
           } catch (err) {
-            console.warn('useFavorites: fallback subscription failed', { scopeField, scopeValue, err });
+            console.warn('useFavorites: fallback subscription failed', { useWorkspace, workspaceId, uid, err });
             setConnectionState('stale');
             setLoading(false);
           }
         }
       );
     } catch (err) {
-      console.warn('useFavorites: primary subscription failed', { scopeField, scopeValue, err });
+      console.warn('useFavorites: primary subscription failed', { useWorkspace, workspaceId, uid, err });
       setHeadItems([]);
       setLoading(false);
     }
@@ -158,8 +201,17 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
     setLoading(true);
 
     const useWorkspace = !!workspaceId;
-    const scopeField = useWorkspace ? 'workspaceId' : 'userId';
-    const scopeValue = useWorkspace ? workspaceId! : uid;
+    const baseConstraints = useWorkspace
+      ? [where('workspaceId', '==', workspaceId)]
+      : [where('userId', '==', uid)];
+
+    const scopeFilter = (records: GenerationRecord[]): GenerationRecord[] => {
+      if (useWorkspace) return records;
+      return records.filter((r) => {
+        const ws = (r as GenerationRecord & { workspaceId?: string | null }).workspaceId;
+        return ws == null;
+      });
+    };
 
     try {
       const cursor = lastCursorRef.current;
@@ -171,7 +223,7 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
 
       const q = query(
         collection(db, 'generations'),
-        where(scopeField, '==', scopeValue),
+        ...baseConstraints,
         where('feedback.savedToFavorites', '==', true),
         where('output.phase', '==', phase),
         orderBy('timestamp', 'desc'),
@@ -180,9 +232,10 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
       );
 
       const snap = await getDocs(q);
-      const newRecords = snap.docs.map(
+      const raw = snap.docs.map(
         (d: DocumentSnapshot) => ({ id: d.id, ...d.data() } as GenerationRecord)
       );
+      const newRecords = scopeFilter(raw);
 
       if (newRecords.length > 0) {
         setTailItems(prev => [...prev, ...newRecords]);
@@ -203,16 +256,17 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
 
         const fallbackQ = query(
           collection(db, 'generations'),
-          where(scopeField, '==', scopeValue),
+          ...baseConstraints,
           where('feedback.savedToFavorites', '==', true),
           orderBy('timestamp', 'desc'),
           startAfter(cursor),
           limit(FALLBACK_PAGE_SIZE)
         );
         const fallbackSnap = await getDocs(fallbackQ);
-        const filtered = fallbackSnap.docs
+        const rawFiltered = fallbackSnap.docs
           .map((d: DocumentSnapshot) => ({ id: d.id, ...d.data() } as GenerationRecord))
           .filter((r: GenerationRecord) => r.output?.phase === phase);
+        const filtered = scopeFilter(rawFiltered);
 
         if (filtered.length > 0) {
           setTailItems(prev => [...prev, ...filtered]);
@@ -224,8 +278,9 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
         setHasMore(fallbackSnap.docs.length === FALLBACK_PAGE_SIZE);
       } catch (fallbackErr) {
         console.warn('useFavorites: loadMore pagination failed', {
-          scopeField,
-          scopeValue,
+          useWorkspace,
+          workspaceId,
+          uid,
           lastCursorId: lastCursorRef.current?.id ?? null,
           primaryErr,
           fallbackErr,
@@ -237,5 +292,5 @@ export function useFavorites({ phase, workspaceId }: UseFavoritesOptions): Favor
     }
   }, [phase, workspaceId, uid, hasMore]);
 
-  return { favorites, loading, hasMore, loadMore, connectionState };
+  return { favorites, loading, hasMore, loadMore, connectionState, markRemovedInList };
 }

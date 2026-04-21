@@ -51,7 +51,7 @@ function sortFavorites(
 
 export default function FavoritesPanel({ phase, onLoad, isOpen, onClose, workspaceId }: FavoritesPanelProps) {
   const { t, dir } = useT();
-  const { favorites, loading, hasMore, loadMore, connectionState } = useFavorites({ phase, workspaceId });
+  const { favorites, loading, hasMore, loadMore, connectionState, markRemovedInList } = useFavorites({ phase, workspaceId });
   const [sortMode, setSortMode] = useState<SortMode>('newest');
   const [removing, setRemoving] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -137,6 +137,10 @@ export default function FavoritesPanel({ phase, onLoad, isOpen, onClose, workspa
     setRemoving(id);
     try {
       await feedbackService.toggleFavorite(id, false);
+      // Optimistically drop from the merged list. Head items will also be
+      // updated by the live onSnapshot; tail items (loaded via "Show older")
+      // have no live subscription so this is the only signal that removes them.
+      markRemovedInList(id);
     } catch (err) {
       console.warn('Failed to toggle favorite for id:', id, err);
     } finally {
@@ -177,13 +181,20 @@ export default function FavoritesPanel({ phase, onLoad, isOpen, onClose, workspa
           </button>
         </div>
 
-        <div className="flex gap-1.5 px-4 py-2 border-b border-slate-800/50">
+        <div
+          role="radiogroup"
+          aria-label={t('fav.sort_by', { mode: sortLabel(sortMode) })}
+          className="flex gap-1.5 px-4 py-2 border-b border-slate-800/50"
+        >
           {(['newest', 'oldest', 'alphabetical'] as SortMode[]).map((mode, idx) => (
             <button
               key={mode}
               ref={idx === 0 ? sortToggleRef : undefined}
-              onClick={() => setSortMode(mode)}
+              type="button"
+              role="radio"
+              aria-checked={sortMode === mode}
               aria-label={t('fav.sort_by', { mode: sortLabel(mode) })}
+              onClick={() => setSortMode(mode)}
               className={`px-2.5 py-1.5 rounded-lg text-[8px] font-bold uppercase tracking-wider transition-all ${sortMode === mode ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'bg-slate-900/60 text-slate-500 hover:text-slate-300 border border-transparent'}`}
             >
               {sortLabel(mode)}
