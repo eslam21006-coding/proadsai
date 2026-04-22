@@ -60,6 +60,7 @@ All product owner decisions. These are final for launch.
 | Saved project limits | Starter: 10. Pro: 30. Scale: Unlimited. |
 | Audience Avatars | Reusable brand profiles that pre-fill the form. Starter: 5. Pro: 15. Scale: Unlimited. |
 | Authentication method | **Email + password only**. Google sign-in removed entirely to prevent email mismatch with Stripe. Login page has Login / Create Account tabs on the same page. New account creation checks Firestore for existing Stripe payment — if found, user enters app with trial active. If not found, billing modal opens. |
+| Cultural compliance | **Arabic ads enforce Islamic cultural guardrails.** Universes with alcohol (wine cellars, bars, cigar lounges) are hidden for Arabic languages. Visual motifs sanitized (cocktails → premium beverages, champagne → sparkling drinks). Cultural compliance prompt block injected into build plan + final image prompt. Wardrobe modesty rules enforced. Post-generation validation catches and replaces leaked haram terms. English ads are unaffected. |
 
 ---
 
@@ -927,6 +928,8 @@ Phase 9 — Team Management (requires Phase 8)
 
 HOTFIX — Plan Structure Alignment (requires Phase 9, apply BEFORE Phase 10+)
 
+HOTFIX-C — Cultural Compliance (requires Phase 5, apply BEFORE Phase 10+)
+
 Phase 10 — Favorites & Workspace (requires Phase 8)
 
 Phase 11 — Magic Edit (requires Phase 5)
@@ -972,6 +975,7 @@ Launch is complete when all of the following pass:
 20. Reflow works for single, batch, and carousel with text safe-zone re-validation
 21. Login page has Login / Create Account tabs, no Google sign-in. Stripe-paid users land in app with trial toast. Unpaid users see billing modal.
 22. Batch generation: Pro limited to 4 ads/run, Scale up to 36 ads/run. Carousel: Pro up to 7 slides, Scale up to 10 slides.
+23. Arabic ads: no alcohol, no immodest clothing, no haram elements in any render. Haram universes hidden. Cultural compliance block in every Arabic prompt. English ads unaffected.
 
 ---
 
@@ -996,6 +1000,7 @@ Phase 6   (no dependency — start any time)
 Phase 7   (no dependency — start any time)
 
 HOTFIX    requires Phase 9 complete (apply before Phase 10+)
+HOTFIX-C  requires Phase 5 complete (apply before Phase 10+, can parallel with HOTFIX)
 Phase 8   requires Phase 2
 Phase 9   requires Phase 8
 Phase 10  requires Phase 8 (billingState for team scoping)
@@ -1261,6 +1266,43 @@ These are manual steps for Eslam to complete before any code tasks begin.
 | HF.8 | `src/store.ts`, `src/types.ts` | Replace any `'creator'` literal in the `UserPlan` type union. New type: `type UserPlan = 'none' \| 'starter' \| 'pro' \| 'scale'`. Rename `'scaling'` to `'scale'` in all type definitions, Zustand state, and component comparisons. | `grep -r "creator\|scaling" src/` returns zero plan-related hits. |
 | HF.9 | `functions/src/index.ts` | In all Cloud Functions that check plan names (generation functions, team functions, billing functions): replace `'scaling'` with `'scale'`. Remove `'creator'` from any plan checks. Update `PLANS` constant if it exists. | No Cloud Function references `creator` or `scaling` as a plan name. |
 | HF.10 | `functions/src/contractFixtures.test.ts` | Update all fixture tests that reference Creator plan. Replace `plan: 'creator'` with `plan: 'pro'` in any test that was testing Creator-tier access. Update batch fixtures: Pro user should now pass (limited), not fail. Update carousel fixtures: Pro user max 7, Scale max 10. | All fixture tests pass with 3-plan structure. |
+
+---
+
+## HOTFIX-C — Cultural Compliance (Arabic Market Guardrails)
+
+> **Context:** Pro Ads AI is an Arabic-first app targeting coaches and consultants in the GCC/Gulf market. The pipeline currently has ZERO cultural guardrails — the universe database contains environments with alcohol (wine cellars, rooftop bars, cigar lounges with whiskey), the visual motifs inject haram elements (cocktails, champagne, whiskey) directly into image prompts, and there are no wardrobe modesty rules for Arabic audiences. This causes renders to show wine glasses, bar scenes, revealing clothing, and other culturally inappropriate elements. This must be fixed before ANY new user-facing feature ships.
+
+**Haram elements found in the current pipeline:**
+
+| Source | Problem |
+|---|---|
+| `r_wine_cellar` | Entire universe is a wine cellar |
+| `r_wine_tasting` | Entire universe is a wine tasting room |
+| `r_rooftop_bar` | Name says "bar", motifs include `'cocktails'` |
+| `r_cigar_lounge` | Motifs include `'whiskey'` |
+| `r_private_jet` | Motifs include `'champagne'` |
+| `r_networking` | Motifs include `'cocktail reception'` |
+| `r_diamond_lounge` | Motifs include `'private bar'` |
+| `r_harbor_yacht_club` | Motifs include `'cocktails'` |
+| `r_airport_lounge` | Motifs include `'premium bar'` |
+| `r_vineyard` | Tuscan vineyard with wine barrels |
+| `r_sushi_bar` | Name contains "bar" — minor but flagged |
+| `r_dance_studio` | Culturally sensitive for conservative audiences |
+| Build plan prompt | No cultural compliance block |
+| Wardrobe rules | No modesty guidelines for Arabic audiences |
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| HFC.1 | `src/universeDatabase.ts` | Add `arabicSafe: boolean` field to every universe entry. Set `arabicSafe: false` on: `r_wine_cellar`, `r_wine_tasting`, `r_rooftop_bar`, `r_cigar_lounge`, `r_vineyard`, `r_dance_studio`, `r_sushi_bar` (the name — rename to `r_sushi_counter` and remove "bar" from display name). Set `arabicSafe: true` on all others. | Every universe entry has `arabicSafe` field. 7 entries are marked `false`. |
+| HFC.2 | `src/universeDatabase.ts` | Sanitize `visualMotifs` arrays. Create a constant `HARAM_MOTIFS = ['cocktails', 'champagne', 'whiskey', 'wine', 'beer', 'spirits', 'cocktail reception', 'private bar', 'premium bar', 'bottles', 'barrels']`. For every universe entry whose motifs contain any of these strings, replace the haram motif with a culturally neutral alternative: `'cocktails'` → `'premium beverages'`, `'champagne'` → `'sparkling drinks'`, `'whiskey'` → `'warm lighting'`, `'private bar'` → `'private lounge area'`, `'premium bar'` → `'premium refreshment area'`, `'cocktail reception'` → `'elegant reception'`, `'bottles'` → `'crystal decanters'`, `'barrels'` → `'aged wood casks'`. These replacements apply at the data level so ALL downstream prompts receive clean motifs. | No universe entry has any string from `HARAM_MOTIFS` in its `visualMotifs` array. |
+| HFC.3 | `src/components/InputForm.tsx` | When `adLanguage` starts with `'ar'`, filter the universe dropdown to only show entries where `arabicSafe === true`. Universes marked `arabicSafe: false` are hidden entirely — not grayed out, not locked, gone. When `adLanguage === 'en'`, show all universes (no filtering). | Arabic user does not see Wine Cellar, Rooftop Bar, Cigar Lounge, Vineyard, Dance Studio, or Wine Tasting in the dropdown. English user sees all. |
+| HFC.4 | `functions/src/generators.ts` | Add a `CULTURAL_COMPLIANCE` block to `generateBuildPlan()`. When `inputs.adLanguage` starts with `'ar'`, inject the following BEFORE the `TECHNICAL_PROMPT` section: `"CULTURAL COMPLIANCE (MANDATORY — Arabic market):\n- NEVER render alcohol in any form: no wine glasses, beer bottles, champagne, cocktails, whiskey, spirits, or any drinking vessel that implies alcohol.\n- NEVER render nightclub, bar, or pub interiors.\n- NEVER render gambling elements: no cards, chips, roulette, slot machines.\n- NEVER render pork products or pork-related food scenes.\n- NEVER render dogs as pets (culturally sensitive in Gulf markets).\n- NEVER render crosses, churches, or non-Islamic religious symbols unless specifically relevant to the product.\n- NEVER render revealing or immodest clothing on any person — all figures should be dressed conservatively. Shoulders covered, no deep necklines, no short skirts/shorts.\n- NEVER render mixed-gender physical contact (handshakes are acceptable).\n- Luxury signaling should use: premium tea/coffee, luxury watches, fine dining (halal), architecture, cars, travel, nature — NOT alcohol or nightlife.\n- If the universe mentions any bar/lounge/club setting, replace the alcohol elements with premium non-alcoholic beverages (Arabic coffee, tea, juice, water)."` When `adLanguage === 'en'`, do NOT inject this block. | Arabic build plans contain the cultural compliance block. English build plans do not. |
+| HFC.5 | `functions/src/generators.ts` | Add the same `CULTURAL_COMPLIANCE` block to `buildFinalImagePrompt()` (task 5.7). This is the last prompt before the image model renders. Double-inject the rules here as reinforcement — image models sometimes ignore build plan instructions. | Both the build plan AND the final image prompt contain cultural compliance rules for Arabic ads. |
+| HFC.6 | `functions/src/generators.ts` | Add Arabic wardrobe modesty rules. When `adLanguage` starts with `'ar'`, add to the wardrobe section of the prompt: `"ARABIC MARKET WARDROBE RULES:\n- All figures (male and female) must be dressed conservatively and modestly.\n- Female figures: shoulders covered, no cleavage, skirt/dress below knee or trousers. Hijab ONLY if present in Box A — never add or remove it.\n- Male figures: no tank tops, no shorts above knee. Business casual minimum.\n- No swimwear, no gym wear showing skin, no lingerie or underwear visible.\n- Luxury fashion is encouraged — but covered luxury (suits, abayas, elegant modest dresses, thobes)."` | Arabic ad wardrobe prompts include modesty rules. Non-Arabic ads are unaffected. |
+| HFC.7 | `functions/src/generators.ts` | In carousel and batch generation flows, ensure the `CULTURAL_COMPLIANCE` and wardrobe blocks are injected into EVERY slide/item prompt — not just slide 1. The cultural rules must be present in every individual image generation call. | Carousel slide 4 and batch item 3 both contain cultural compliance rules for Arabic ads. |
+| HFC.8 | `functions/src/generators.ts` | Add a post-generation validation check for Arabic ads. After the build plan is generated and parsed, scan the `TECHNICAL_PROMPT` text for any of these trigger words: `wine, whiskey, cocktail, champagne, beer, alcohol, bar counter, nightclub, casino, gambling, bikini, swimsuit, lingerie, revealing, cleavage, short skirt, tank top, strapless`. If any are found, log `culturalViolation: true` and the matched words on the resolution trace, then auto-replace them in the prompt: `wine` → `premium tea`, `cocktail` → `artisan coffee`, `champagne` → `sparkling water`, `bar counter` → `service counter`, `nightclub` → `premium lounge`, etc. This is a safety net — the cultural compliance block should prevent these, but this catches leaks. | Post-validation catches and replaces any haram terms in Arabic build plans. Resolution trace logs violations. |
+| HFC.9 | `functions/src/contractFixtures.test.ts` | Add cultural compliance fixture tests: (a) Arabic ad with `r_private_jet` universe — build plan does NOT contain "champagne" or "wine" (motif was sanitized + compliance block active), (b) Arabic ad — wardrobe section contains modesty rules, (c) English ad — NO cultural compliance block injected (freedom preserved for English market), (d) Arabic carousel slide 3 — contains cultural compliance block, (e) build plan with leaked "cocktail" in TECHNICAL_PROMPT — post-validation replaces it. | All 5 cultural compliance tests pass. |
 
 ---
 

@@ -1,16 +1,20 @@
 import * as React from 'react';
-import { useState, useEffect, useMemo, useRef, Suspense } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, Suspense } from 'react';
 import type { AdInputs, AdMode, AppPhase, AspectRatio, ABVariation, BatchResult, BatchHookGroup, CarouselSlide, CarouselSlideCopy, ChatMessage, TextOverride, VisualPolish, Toast, SavedProject, AudienceAvatar, CompetitorResearch, SemanticLock, TovEditIntent, RewriteScope, Workspace } from './types';
 // --- FIREBASE IMPORTS ---
-import { auth, db, functions } from './firebase';
+import { auth, db, functions, storage } from './firebase';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signOut, onAuthStateChanged, type User } from 'firebase/auth';
 import { doc, getDoc, setDoc, deleteDoc, updateDoc, onSnapshot, collection, addDoc, getDocs, query, orderBy, where, limit } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
+import { ref as storageRef, deleteObject } from 'firebase/storage';
 import { gemini, type GenerationResult } from './services/geminiService';
 import { resolveCreativeSpec, CREATIVE_MODE_CATALOG, type ResolvedCreativeSpec } from './creativeResolver';
 import { isValidHookPayload, validateCanonicalHooks, normalizeHooksToCanonical, getHookValidationSummary } from './utils/hookPayload';
 import FeedbackButtons from './components/FeedbackButtons';
 import FavoritesPanel from './components/FavoritesPanel';
+import SavedProjectsPanel from './components/SavedProjectsPanel/SavedProjectsPanel';
+import DeleteProjectDialog from './components/SavedProjectsPanel/DeleteProjectDialog';
+import SaveStatusIndicator from './components/SavedProjectsPanel/SaveStatusIndicator';
 import { useFavorites } from './hooks/useFavorites';
 import type { GenerationRecord } from './services/feedbackService';
 
@@ -26,6 +30,12 @@ import { ASPECT_RATIOS, COLD_HOOK_ANGLES, OFFER_TYPES, getRandomUniverse } from 
 import type { UserPlan } from './planconfig';
 import { PLANS, CREDIT_COSTS, TOPUP_PACKS, CREDITS_PER_AD, canUse, canUseRatio, requiredPlanFor, requiredPlanForRatio, hasCredits, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
 import { LanguageProvider, useT, type UILanguage } from './i18n';
+import { deriveStatus } from './lib/projectStatus';
+import { resolveCoverImage } from './lib/projectCoverImage';
+import { uploadAndPersistThumbnail } from './lib/projectThumbnail';
+import { stepsWithData } from './lib/projectStepsData';
+import { useProjectAutoSave } from './hooks/useProjectAutoSave';
+import type { AutoSaveState } from './lib/projectAutoSave';
 import { ALL_UNIVERSES, type UniverseEntry } from './universeDatabase';
 const InputForm = React.lazy(() => import('./components/InputForm'));
 const PerformanceDashboard = React.lazy(() => import('./components/PerformanceDashboard'));
@@ -2369,76 +2379,137 @@ const App: React.FC = () => {
     initLoad();
   }, [user, effectiveUid]);
 
+  // ─── Auto-save (Phase 13) ─────────────────────────────────────────────────
+  // The save callback is registered once with the projectAutoSave module via the
+  // hook. The hook keeps it fresh via a ref, so the closure below sees the latest
+  // setProjects / showToast on every fire. Local IndexedDB write happens BEFORE
+  // the cloud round-trip (FR-017) so a cloud failure never loses work locally.
+  // QUOTA_EXCEEDED is surfaced as a toast and treated as a successful no-op for
+  // the auto-save state machine — the 3-strike banner is for transport failures
+  // (offline, auth expired), not for product-level rejections that the user has
+  // already been told about.
+  const saveCurrentProject = useCallback(async (project: SavedProject) => {
+    const uid = effectiveUidRef.current;
+    if (!uid) return;
+
+    await saveProjectToDB(project);
+
+    try {
+      const saveProjectFn = httpsCallable(functions, 'saveProject');
+      await saveProjectFn({ project });
+    } catch (firestoreErr: any) {
+      console.error("Firestore cloud sync failed:", firestoreErr);
+      if (firestoreErr?.code === 'failed-precondition' && firestoreErr?.message?.includes('QUOTA_EXCEEDED')) {
+        const details = firestoreErr?.details || {};
+        // Roll back the local IndexedDB write so mergeProjects on next sign-in
+        // doesn't reintroduce a project the server has already rejected.
+        // QUOTA_EXCEEDED only fires for NEW projects, so the local record we
+        // just wrote was a brand-new doc, never an update.
+        deleteProjectFromDB(project.id).catch(() => {});
+        setProjects((prev: SavedProject[]) => prev.filter((p: SavedProject) => p.id !== project.id));
+        showToast(`Project limit reached (${details.limit || 'plan cap'} on your plan). Upgrade to save more.`, 'error');
+        return;
+      }
+      throw firestoreErr;
+    }
+
+    setProjects((prev: SavedProject[]) => {
+      const filtered = prev.filter((p: SavedProject) => p.id !== project.id);
+      return [project, ...filtered];
+    });
+
+    const cover = resolveCoverImage(project);
+    if (cover && project.thumbnailUrl !== cover.url) {
+      uploadAndPersistThumbnail(uid, project.id, cover.url)
+        .then((storageUrl) => {
+          setProjects((prev: SavedProject[]) =>
+            prev.map((p: SavedProject) =>
+              p.id === project.id ? { ...p, thumbnailUrl: storageUrl } : p,
+            ),
+          );
+          const updated = { ...project, thumbnailUrl: storageUrl };
+          saveProjectToDB(updated).catch(() => {});
+          const callable = httpsCallable(functions, 'saveProject');
+          callable({ project: updated }).catch(() => {});
+        })
+        .catch((err) => {
+          console.warn("phase13 ▸ thumbnail upload failed (non-blocking):", err);
+        });
+    }
+  }, []);
+
+  const { saveStatus: autoSaveState, queue: autoSaveQueue, retryNow: autoSaveRetry } =
+    useProjectAutoSave(saveCurrentProject);
+
+  // Build the current SavedProject snapshot from in-memory state and queue it.
+  // The hook's queue() debounces (3 s) and ceiling-flushes (30 s) per
+  // projectAutoSave.ts (R5), so we don't need a setTimeout here.
   useEffect(() => {
     if (!user || !effectiveUidRef.current) return;
     if (projects.some((p: SavedProject) => p.isRenaming)) return;
+    const uid = effectiveUidRef.current;
+    if (!uid) return;
 
-    const timeout = setTimeout(async () => {
-      const uid = effectiveUidRef.current; // Read from ref (always current, not stale closure)
-      if (!uid) return;
-
-      // Enforce plan limit for NEW projects (allow updates to existing ones)
-      const isNewProject = !projects.some((p: SavedProject) => p.id === currentProjectId);
-      if (isNewProject) {
-        const maxProjects = getSavedProjectLimit(userPlan);
-        if (projects.length >= maxProjects) {
-          showToast(`Project limit reached (${maxProjects} on your plan). Upgrade to save more.`, 'error');
-          return;
-        }
+    // Client-side cap precheck — instant feedback before any round-trip.
+    // The server enforces the same cap inside a transaction (authoritative).
+    const isNewProject = !projects.some((p: SavedProject) => p.id === currentProjectId);
+    if (isNewProject) {
+      const maxProjects = getSavedProjectLimit(userPlan);
+      if (Number.isFinite(maxProjects) && projects.length >= maxProjects) {
+        showToast(`Project limit reached (${maxProjects} on your plan). Upgrade to save more.`, 'error');
+        return;
       }
+    }
 
-      const projectName = inputs?.productName
-        ? `${inputs.productName}${resolvedUniverse ? `_${resolvedUniverse}` : ''}`
-        : currentProjectName || "Untitled Project";
+    const projectName = inputs?.productName
+      ? `${inputs.productName}${resolvedUniverse ? `_${resolvedUniverse}` : ''}`
+      : currentProjectName || "Untitled Project";
 
-      const currentProject: SavedProject = {
-        id: currentProjectId,
-        userId: uid,
-        name: projectName,
-        timestamp: Date.now(),
-        inputs,
-        phase,
-        tovText,
-        conceptsText,
-        selectedTov,
-        selectedConcept,
-        buildPlan,
-        mockupHistory,
-        historyIndex,
-        resolvedUniverse,
-        captionText,
-        batchCaptions: batchCaptions.length > 0 ? batchCaptions : undefined,
-        batchResults: batchResults.length > 0 ? batchResults : undefined,
-        batchHookGroups: batchHookGroups.length > 0 ? batchHookGroups.map(g => ({ ...g, selectedConcepts: Array.from(g.selectedConcepts) })) : undefined,
-        creatorName: user?.displayName || user?.email?.split('@')[0] || 'Unknown',
-        creatorEmail: user?.email || '',
-        carouselSlides: carouselSlides.length > 0 ? carouselSlides : undefined,
-      };
+    const existingProject = currentProjectId ? projects.find((p: SavedProject) => p.id === currentProjectId) : undefined;
+    const derivedStatus = deriveStatus(existingProject?.status, {
+      metaAdId: existingProject?.metaAdId,
+      mockupHistory,
+      carouselSlides,
+      batchResults,
+    });
 
-      try {
-        await saveProjectToDB(currentProject);
-        // Also sync to Firestore for cross-browser access (uses ref for current uid)
-        if (uid) {
-          try {
-            await saveProjectToFirestore(uid, currentProject);
-          } catch (firestoreErr: any) {
-            console.error("Firestore cloud sync failed:", firestoreErr);
-            showToast(`Cloud sync failed: ${firestoreErr?.code || firestoreErr?.message || 'unknown'}`, 'error');
-          }
-        }
-      } catch (e) {
-        console.error("DB Save Failed", e);
-      }
+    // Workspace assignment: prefer the active workspace if the user can use
+    // them; otherwise preserve whatever the existing project was already
+    // attached to so editing an existing project never silently re-homes it.
+    const resolvedWorkspaceId = (canUseWorkspaces && activeWorkspaceId)
+      || existingProject?.workspaceId
+      || undefined;
 
-      setProjects((prev: SavedProject[]) => {
-        const filtered = prev.filter((p: SavedProject) => p.id !== currentProjectId);
-        return [currentProject, ...filtered];
-      });
+    const currentProject: SavedProject = {
+      id: currentProjectId,
+      userId: uid,
+      name: projectName,
+      timestamp: Date.now(),
+      inputs,
+      phase,
+      tovText,
+      conceptsText,
+      selectedTov,
+      selectedConcept,
+      buildPlan,
+      mockupHistory,
+      historyIndex,
+      resolvedUniverse,
+      captionText,
+      batchCaptions: batchCaptions.length > 0 ? batchCaptions : undefined,
+      batchResults: batchResults.length > 0 ? batchResults : undefined,
+      batchHookGroups: batchHookGroups.length > 0 ? batchHookGroups.map(g => ({ ...g, selectedConcepts: Array.from(g.selectedConcepts) })) : undefined,
+      creatorName: user?.displayName || user?.email?.split('@')[0] || 'Unknown',
+      creatorEmail: user?.email || '',
+      carouselSlides: carouselSlides.length > 0 ? carouselSlides : undefined,
+      status: derivedStatus,
+      thumbnailUrl: existingProject?.thumbnailUrl,
+      metaAdId: existingProject?.metaAdId,
+      ...(resolvedWorkspaceId ? { workspaceId: resolvedWorkspaceId } : {}),
+    };
 
-    }, 1000);
-
-    return () => clearTimeout(timeout);
-  }, [user, inputs, phase, tovText, conceptsText, selectedTov, selectedConcept, buildPlan, mockupHistory, historyIndex, resolvedUniverse, captionText, batchResults, batchCaptions, batchHookGroups, carouselSlides, currentProjectId]);
+    autoSaveQueue(currentProject);
+  }, [user, inputs, phase, tovText, conceptsText, selectedTov, selectedConcept, buildPlan, mockupHistory, historyIndex, resolvedUniverse, captionText, batchResults, batchCaptions, batchHookGroups, carouselSlides, currentProjectId, activeWorkspaceId, canUseWorkspaces, autoSaveQueue]);
 
   // Ranking linkage — stores the latest ranking metadata from generation responses
   // ⚠️ MUST be above all early returns to satisfy React hooks ordering rules
@@ -2890,7 +2961,7 @@ const App: React.FC = () => {
 
   // --- HISTORY ENGINE moved to before render gates ---
 
-  const loadProject = (p: SavedProject) => {
+  const loadProject = (p: SavedProject, targetPhase?: AppPhase) => {
     setCurrentProjectId(p.id);
     setCurrentProjectName(p.name || "Untitled Project");
     const migratedInputs = p.inputs
@@ -2939,58 +3010,90 @@ const App: React.FC = () => {
 
     const highestIdx = phaseOrder.indexOf(highestPhaseWithData);
     setHighestUnlockedPhase(highestIdx >= 0 ? highestIdx : 0);
-    setPhase(highestPhaseWithData);
+
+    // FR-010 / FR-011: honour an explicit targetPhase (validated against
+    // stepsWithData), otherwise resume at the project's saved p.phase rather
+    // than the auto-derived highestPhaseWithData. The saved phase reflects
+    // where the user actually left off — preserving the existing card-body
+    // open behaviour from before Phase 13.
+    const steps = stepsWithData(p);
+    if (targetPhase && steps[targetPhase]) {
+      setPhase(targetPhase);
+    } else {
+      setPhase(p.phase || highestPhaseWithData);
+    }
     setShowSidebar(false);
     showToast(`Loaded "${p.name}"`, 'success');
   };
 
+  // Non-interactive reset (no window.confirm prompt). Called by the
+  // post-deletion path so the user doesn't get a second confirmation dialog
+  // after they've already confirmed the delete.
+  const resetToBlankProject = () => {
+    const newId = Date.now().toString();
+    setCurrentProjectId(newId);
+    setCurrentProjectName("Untitled Project");
+    setInputs(null);
+    setPhase('input');
+    setTovText('');
+    setConceptsText('');
+    setSelectedTov('');
+    setSelectedConcept('');
+    setBuildPlan('');
+    setMockupHistory([]);
+    setHistoryIndex(-1);
+    setResolvedUniverse('');
+    setCaptionText('');
+    setBatchResults([]);
+    setCarouselSlides([]);
+    setBatchRendering(false);
+    setBatchSelectedHooks(new Set());
+    setBatchHookGroups([]);
+    setShowBatchConfig(false);
+    setBatchConceptsLoading(false);
+    setBatchCaptions([]);
+    setCarouselCopies([]);
+    setShowCarouselPreview(false);
+    setHighestUnlockedPhase(0);
+    setShowSidebar(false);
+    localStorage.removeItem('adInputsDraft');
+  };
+
   const createNewProject = () => {
     if (window.confirm("Start a brand new project?")) {
-      const newId = Date.now().toString();
-      setCurrentProjectId(newId);
-      setCurrentProjectName("Untitled Project");
-      setInputs(null);
-      setPhase('input');
-      setTovText('');
-      setConceptsText('');
-      setSelectedTov('');
-      setSelectedConcept('');
-      setBuildPlan('');
-      setMockupHistory([]);
-      setHistoryIndex(-1);
-      setResolvedUniverse('');
-      setCaptionText('');
-      setBatchResults([]);
-      setCarouselSlides([]);
-      setBatchRendering(false);
-      setBatchSelectedHooks(new Set());
-      setBatchHookGroups([]);
-      setShowBatchConfig(false);
-      setBatchConceptsLoading(false);
-      setBatchCaptions([]);
-      setCarouselCopies([]);
-      setShowCarouselPreview(false);
-      setHighestUnlockedPhase(0);
-      setShowSidebar(false);
-      localStorage.removeItem('adInputsDraft');
+      resetToBlankProject();
     }
   };
 
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+
   const deleteProject = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (window.confirm("Delete this project history?")) {
-      // 1. Delete from DB + Firestore
-      try {
-        await deleteProjectFromDB(id);
-        if (effectiveUid) deleteProjectFromFirestore(effectiveUid, id);
-      } catch (e) { console.warn("Delete sync failed"); }
+    setDeleteTarget(id);
+  };
 
-      // 2. Update UI
-      const updated = projects.filter(p => p.id !== id);
-      setProjects(updated);
+  const confirmDelete = async (id: string) => {
+    try {
+      await deleteProjectFromDB(id);
+      if (effectiveUid) {
+        deleteProjectFromFirestore(effectiveUid, id).catch(() => {});
+        for (const ext of ["jpg", "png"]) {
+          try {
+            await deleteObject(storageRef(storage, `users/${effectiveUid}/projects/${id}/thumbnail.${ext}`));
+          } catch (err: any) {
+            if (err?.code !== "storage/object-not-found") throw err;
+          }
+        }
+      }
+    } catch (e) { console.warn("Delete sync failed"); }
 
-      if (id === currentProjectId) createNewProject();
-    }
+    const updated = projects.filter(p => p.id !== id);
+    setProjects(updated);
+    // The user already confirmed the delete in <DeleteProjectDialog>; calling
+    // createNewProject() here would prompt them a second time. Use the
+    // non-interactive reset instead.
+    if (id === currentProjectId) resetToBlankProject();
+    setDeleteTarget(null);
   };
 
   const handleApiError = (e: any) => {
@@ -4826,8 +4929,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                     <i className="fa-solid fa-right-from-bracket w-4"></i> {t('header.logout')}
                   </button>
                 </div>
-              )}
-            </div>
+            )}
+            <SaveStatusIndicator state={autoSaveState} onRetry={autoSaveRetry} />
+          </div>
           </div>
         </div>
       </nav>
@@ -4845,172 +4949,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         )}
 
         {/* ═══ PROJECT GALLERY (shown on input phase) ═══ */}
-        {phase === 'input' && projects.length > 1 && (() => {
-          // Separate completed projects from drafts
-          const completedProjects = projects.filter((p: SavedProject) =>
-            p.phase === 'render_studio' || p.phase === 'primary_text' ||
-            (p.batchResults && p.batchResults.length > 0) ||
-            (p.mockupHistory && p.mockupHistory.length > 0) ||
-            (p.carouselSlides && p.carouselSlides.some(s => s.status === 'done'))
-          );
-          const draftProjects = projects.filter((p: SavedProject) =>
-            p.phase === 'input' || p.phase === 'tov_review' || p.phase === 'concept_review'
-          ).filter((p: SavedProject) => !completedProjects.includes(p));
-
-          return (
-            <div className="max-w-5xl mx-auto mb-10 space-y-4 animate-in fade-in duration-700">
-              {/* Recent Projects — only completed/near-complete */}
-              {completedProjects.length > 0 && (
-                <details className="bg-slate-900/30 border border-slate-800/30 rounded-2xl overflow-hidden group">
-                  <summary className="px-6 py-4 cursor-pointer text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors flex items-center gap-2">
-                    <i className="fa-solid fa-folder-open text-emerald-400/60"></i>
-                    <span>Recent Projects ({completedProjects.length})</span>
-                    <i className="fa-solid fa-chevron-down ml-auto text-[8px] group-open:rotate-180 transition-transform"></i>
-                  </summary>
-                  <div className="px-6 pb-5">
-                    <div className={`${showAllCompleted && completedProjects.length > 8 ? 'max-h-[500px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent' : ''}`}>
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 mt-2">
-                      {(showAllCompleted ? completedProjects : completedProjects.slice(0, 8)).map((p: SavedProject) => {
-                        const historyItem = p.mockupHistory?.[p.historyIndex ?? 0];
-                        const thumb: string | null = (typeof historyItem === 'string' ? historyItem : historyItem?.url)
-                          || p.batchResults?.find(r => r.status === 'done')?.url
-                          || p.carouselSlides?.find(s => s.status === 'done')?.imageUrl
-                          || null;
-                        const stepLabel = p.phase === 'input' ? 'Brief' : p.phase === 'tov_review' ? 'Hooks' : p.phase === 'concept_review' ? 'Visual Blueprint' : p.phase === 'render_studio' ? 'Studio' : p.phase === 'primary_text' ? 'Script' : p.phase || '';
-                        return (
-                          <button
-                            key={p.id}
-                            onClick={() => loadProject(p)}
-                            className={`group/card bg-slate-950/50 rounded-xl border border-slate-800/40 overflow-hidden hover:border-blue-500/30 transition-all text-left ${p.id === currentProjectId ? 'ring-1 ring-blue-500/50' : ''}`}
-                          >
-                            {/* Thumbnail */}
-                            <div className="aspect-square bg-slate-900 flex items-center justify-center overflow-hidden relative">
-                              {thumb ? (
-                                <img src={thumb} className="w-full h-full object-cover" alt={p.name} />
-                              ) : (
-                                <div className="text-center p-3">
-                                  <i className="fa-solid fa-pen-ruler text-2xl text-slate-700"></i>
-                                  <p className="text-[8px] text-slate-600 mt-1 uppercase">{stepLabel}</p>
-                                </div>
-                              )}
-                              {/* Delete button */}
-                              <div className="absolute top-1.5 right-1.5 opacity-0 group-hover/card:opacity-100 transition-all" onClick={(e) => { e.stopPropagation(); setShowDeleteConfirm(p.id); }}>
-                                <span className="w-6 h-6 rounded-lg bg-red-500/80 hover:bg-red-500 flex items-center justify-center cursor-pointer shadow-lg"><i className="fa-solid fa-trash text-[8px] text-white"></i></span>
-                              </div>
-                            </div>
-                            {/* Info */}
-                            <div className="p-2.5">
-                              <p className="text-[10px] font-bold text-white truncate">{p.name}</p>
-                              <div className="flex items-center justify-between mt-1">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-[8px] text-slate-500">{new Date(p.timestamp).toLocaleDateString()}</span>
-                                  {p.creatorName && <span className="text-[7px] text-amber-400/50">· {p.creatorName}</span>}
-                                </div>
-                                <span className={`text-[7px] font-bold uppercase px-1.5 py-0.5 rounded ${p.phase === 'render_studio' || p.phase === 'primary_text' || (p.batchResults && p.batchResults.length > 0) ? 'bg-emerald-500/20 text-emerald-400' : 'bg-blue-500/15 text-blue-400'}`}>{stepLabel}</span>
-                              </div>
-                              {p.carouselSlides && p.carouselSlides.length > 0 && (
-                                <span className="text-[7px] text-amber-400/60 mt-1 block"><i className="fa-solid fa-layer-group mr-1"></i>{p.carouselSlides.length} slides</span>
-                              )}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    </div>
-                    {completedProjects.length > 8 && (
-                      <button
-                        onClick={() => setShowAllCompleted(prev => !prev)}
-                        className="mt-3 w-full text-center text-[9px] font-bold uppercase tracking-widest text-blue-400/70 hover:text-blue-400 transition-colors py-2 rounded-lg hover:bg-blue-500/5"
-                      >
-                        {showAllCompleted ? 'Show Less' : `See All (${completedProjects.length})`}
-                      </button>
-                    )}
-                  </div>
-                </details>
-              )}
-
-              {/* Drafts — incomplete work */}
-              {draftProjects.length > 0 && (
-                <details className="bg-slate-900/20 border border-slate-800/20 rounded-2xl overflow-hidden group">
-                  <summary className="px-6 py-3 cursor-pointer text-[9px] font-black uppercase tracking-widest text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-2">
-                    <i className="fa-solid fa-file-pen text-slate-500/50"></i>
-                    <span>Drafts ({draftProjects.length})</span>
-                    <i className="fa-solid fa-chevron-down ml-auto text-[8px] group-open:rotate-180 transition-transform"></i>
-                  </summary>
-                  <div className="px-6 pb-4">
-                    <div className={`space-y-2 mt-2 ${showAllDrafts && draftProjects.length > 6 ? 'max-h-[400px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent' : ''}`}>
-                      {(showAllDrafts ? draftProjects : draftProjects.slice(0, 6)).map((p: SavedProject) => {
-                        const stepLabel = p.phase === 'input' ? 'Brief' : p.phase === 'tov_review' ? 'Hooks' : p.phase === 'concept_review' ? 'Visual Blueprint' : p.phase || '';
-                        return (
-                          <button key={p.id} onClick={() => { loadProject(p); }}
-                            className={`group/draft relative w-full flex items-center justify-between px-4 py-3 rounded-xl bg-slate-950/30 border border-slate-800/30 hover:border-blue-500/20 transition-all text-left ${p.id === currentProjectId ? 'ring-1 ring-blue-500/30' : ''}`}>
-                            <div className="flex items-center gap-3 min-w-0">
-                              <i className="fa-solid fa-file-pen text-slate-600 text-xs"></i>
-                              <div className="min-w-0">
-                                <p className="text-[10px] font-bold text-slate-300 truncate">{p.name}</p>
-                                <span className="text-[8px] text-slate-600">{new Date(p.timestamp).toLocaleDateString()}</span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[7px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400/70">{stepLabel}</span>
-                              <div className="opacity-0 group-hover/draft:opacity-100 transition-all" onClick={(e) => { e.stopPropagation(); setShowDeleteConfirm(p.id); }}>
-                                <span className="w-6 h-6 rounded-lg bg-red-500/80 hover:bg-red-500 flex items-center justify-center cursor-pointer shadow-lg"><i className="fa-solid fa-trash text-[8px] text-white"></i></span>
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {draftProjects.length > 6 && (
-                      <button
-                        onClick={() => setShowAllDrafts(prev => !prev)}
-                        className="mt-3 w-full text-center text-[9px] font-bold uppercase tracking-widest text-blue-400/70 hover:text-blue-400 transition-colors py-2 rounded-lg hover:bg-blue-500/5"
-                      >
-                        {showAllDrafts ? 'Show Less' : `See All (${draftProjects.length})`}
-                      </button>
-                    )}
-                  </div>
-                </details>
-              )}
-            </div>
-          );
-        })()}
-
-        {/* ═══ FIRST-RUN ONBOARDING GUIDE ═══ */}
-        {/* Onboarding guide — only for brand new users */}
-        {phase === 'input' && projects.length === 0 && !inputs?.productName && (
-          <div className="max-w-3xl mx-auto mb-6 animate-in fade-in slide-in-from-bottom-6 duration-1000">
-            <div className="bg-gradient-to-br from-blue-950/40 to-slate-900/60 border border-blue-500/20 rounded-3xl p-8 space-y-6">
-              <div className="text-center space-y-2">
-                <span className="text-[10px] font-black uppercase tracking-widest text-blue-400/60">{t('welcome.card_title')}</span>
-                <h3 className="text-2xl font-black text-white">{t('welcome.card_headline')}</h3>
-              </div>
-              <div className="grid grid-cols-5 gap-2">
-                {[
-                  { icon: 'fa-pen-to-square', label: t('step.brief'), desc: t('welcome.step1_desc') },
-                  { icon: 'fa-bolt', label: t('step.hooks'), desc: t('welcome.step2_desc') },
-                  { icon: 'fa-compass-drafting', label: t('step.blueprint'), desc: t('welcome.step3_desc') },
-                  { icon: 'fa-wand-magic-sparkles', label: t('step.studio'), desc: t('welcome.step4_desc') },
-                  { icon: 'fa-file-lines', label: t('step.script'), desc: t('welcome.step5_desc') },
-                ].map((step, i) => (
-                  <div key={i} className="text-center space-y-2 p-3 rounded-xl bg-slate-950/30">
-                    <div className="w-10 h-10 mx-auto rounded-full bg-blue-500/15 flex items-center justify-center">
-                      <i className={`fa-solid ${step.icon} text-blue-400 text-sm`}></i>
-                    </div>
-                    <p className="text-[10px] font-bold text-white">{step.label}</p>
-                    <p className="text-[8px] text-slate-500 leading-relaxed">{step.desc}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="text-center space-y-3 pt-2">
-                <p className="text-xs text-slate-400">{t('welcome.card_sub')}</p>
-                <div className="flex items-center justify-center gap-6 text-[9px] text-slate-500">
-                  <span><i className="fa-solid fa-clock text-blue-400/50 mr-1"></i>{t('welcome.time_single')}</span>
-                  <span><i className="fa-solid fa-layer-group text-purple-400/50 mr-1"></i>{t('welcome.time_carousel')}</span>
-                  <span><i className="fa-solid fa-images text-emerald-400/50 mr-1"></i>{t('welcome.upload_photos')}</span>
-                </div>
-              </div>
-            </div>
+        {phase === 'input' && projects.length > 1 && (
+          <div className="max-w-5xl mx-auto mb-10 animate-in fade-in duration-700">
+            <SavedProjectsPanel
+              projects={projects}
+              workspaces={workspaces.map(w => ({ id: w.id, name: w.name }))}
+              metaConnected={metaConnection?.connected ?? false}
+              onLoad={loadProject}
+              onDelete={deleteProject}
+            />
           </div>
         )}
 
@@ -8164,6 +8111,17 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           </div>
         </div>
       )}
+
+      {deleteTarget && (() => {
+        const project = projects.find(p => p.id === deleteTarget);
+        return project ? (
+          <DeleteProjectDialog
+            projectName={project.name}
+            onConfirm={() => confirmDelete(deleteTarget!)}
+            onCancel={() => setDeleteTarget(null)}
+          />
+        ) : null;
+      })()}
 
       {/* SETTINGS MODAL */}
       {showSettingsModal && (

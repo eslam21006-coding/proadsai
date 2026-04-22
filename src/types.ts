@@ -430,6 +430,10 @@ export interface SavedProject {
   resolvedCreativeSpec?: any; // ResolvedCreativeSpec from creativeResolver.ts
   creatorName?: string;
   creatorEmail?: string;
+
+  status?: 'draft' | 'rendered' | 'published';
+  thumbnailUrl?: string;
+  metaAdId?: string;
 }
 
 export type AppPhase = 'input' | 'tov_review' | 'concept_review' | 'render_studio' | 'primary_text';
