@@ -26,6 +26,9 @@ import { paddleCreatePortalSession } from "./paddle/paddlePortal.js";
 import { handlePaddleWebhook } from "./billing/paddleWebhook.js";
 import { createPaddleClient, PADDLE_PRICE_TO_PLAN } from "./paddle/paddleClient.js";
 import { assertOwner, assertWorkspaceActive, createWorkspaceWithLimit, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
+import { enforceProjectQuota } from "./savedProjects/projectQuota.js";
+import { deriveStatus } from "./savedProjects/projectStatus.js";
+import { getUserProjects } from "./savedProjects/getUserProjects.js";
 import { probeMetaRole } from "./workspaces/metaRoleProbe.js";
 import { writeAuditEntry } from "./workspaces/auditLog.js";
 import { purgeExpiredWorkspaces, cascadeReassignOnDelete, cascadeRevertOnRestore } from "./workspaces/workspacePurge.js";
@@ -5573,6 +5576,51 @@ export const getWorkspaceAccessAuditLog = onCall({
     }
 
     return { entries, nextCursor };
+});
+
+export const saveProject = onCall(async (request: CallableRequest<any>) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required");
+    const uid = request.auth.uid;
+    const { project } = request.data;
+    if (!project || !project.id) throw new HttpsError("invalid-argument", "project.id required");
+
+    const db = admin.firestore();
+
+    // Plan can be read outside the txn — billing state is unrelated to the
+    // count-vs-cap race we're protecting against, and rarely changes mid-save.
+    const userSnap = await db.collection("users").doc(uid).get();
+    const plan = userSnap.data()?.billingState?.plan ?? "none";
+
+    // Quota check, status latch read, and project write must all happen inside
+    // ONE transaction (FR-006/FR-007/SC-005, Constitution principle XI). Otherwise
+    // two parallel saves at cap-1 can both pass the count check and both write.
+    const status = await db.runTransaction(async (txn) => {
+        const projectRef = db.doc(`users/${uid}/projects/${project.id}`);
+        // All reads first (Firestore txn requirement) — existing project doc
+        // gives us isNew + the prev status for the latch.
+        const existingSnap = await txn.get(projectRef);
+        const isNew = !existingSnap.exists;
+        const prevStatus = (existingSnap.data() as { status?: "draft" | "rendered" | "published" } | undefined)?.status;
+
+        await enforceProjectQuota(txn, uid, plan, isNew);
+
+        // Server-side latch is authoritative — never trust the client-supplied
+        // project.status (it may be stale and would otherwise allow demotion).
+        const newStatus = deriveStatus(prevStatus, project);
+
+        const cleanProject = { ...project, status: newStatus, userId: uid, updatedAt: Date.now() };
+        if (cleanProject.batchResults && cleanProject.batchResults.length > 0) {
+            cleanProject.batchResults = cleanProject.batchResults.map((r: any) => ({
+                ...r,
+                url: r.url && r.url.length > 5000 ? null : r.url,
+            }));
+        }
+        const { id: _id, ...data } = cleanProject;
+        txn.set(projectRef, data, { merge: true });
+        return newStatus;
+    });
+
+    return { status };
 });
 
 export { purgeExpiredWorkspaces };

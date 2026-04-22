@@ -139,6 +139,10 @@ interface AppState {
     loadedFavoriteId: string | null;
     setLoadedFavoriteId: (id: string | null) => void;
 
+    // Auto-save status (Phase 13)
+    saveStatus: { phase: string } | null;
+    setSaveStatus: (status: { phase: string } | null) => void;
+
     // Reset (new project)
     resetPipeline: () => void;
 }
@@ -272,6 +276,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Favorites tracking
     loadedFavoriteId: null,
     setLoadedFavoriteId: (id) => set({ loadedFavoriteId: id }),
+
+    saveStatus: null,
+    setSaveStatus: (status) => set({ saveStatus: status }),
 
     // Reset
     resetPipeline: () => set({

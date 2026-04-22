@@ -114,3 +114,22 @@ export async function resolveDefaultWorkspaceId(
   }
   return snap.docs[0].id;
 }
+
+export async function resolveCallerScope(callerUid: string): Promise<{
+  ownerUid: string;
+  allowedWorkspaceIds: string[] | "ALL";
+}> {
+  const userSnap = await db.collection("users").doc(callerUid).get();
+  const teamDoc = await db.collection(`users/${callerUid}/team`).doc("meta").get();
+
+  if (teamDoc.exists && teamDoc.data()?.ownerUid) {
+    const ownerUid = teamDoc.data()!.ownerUid;
+    const membersSnap = await db.collection(`users/${ownerUid}/team/members`).doc(callerUid).get();
+    const allowedWs: string[] = membersSnap.exists ? (membersSnap.data()?.workspaceIds ?? []) : [];
+    return { ownerUid, allowedWorkspaceIds: allowedWs };
+  }
+
+  const wsSnap = await db.collection(`users/${callerUid}/workspaces`).get();
+  const wsIds = wsSnap.docs.filter((d) => d.data().deletedAt == null).map((d) => d.id);
+  return { ownerUid: callerUid, allowedWorkspaceIds: wsIds.length > 0 ? wsIds : "ALL" };
+}

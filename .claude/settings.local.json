@@ -102,7 +102,11 @@
       "Bash(bash .specify/scripts/bash/update-agent-context.sh claude)",
       "Bash(bash .specify/scripts/bash/check-prerequisites.sh --json)",
       "Bash(bash .specify/scripts/bash/create-new-feature.sh \"Phase 9: Team Management\" --json --short-name \"team-management\")",
-      "Bash(powershell.exe -File .specify/scripts/powershell/setup-plan.ps1 -Json)"
+      "Bash(powershell.exe -File .specify/scripts/powershell/setup-plan.ps1 -Json)",
+      "PowerShell(& \"D:/proads-worktrees/013-saved-projects/.specify/scripts/powershell/check-prerequisites.ps1\" -Json -PathsOnly)",
+      "PowerShell(& \"D:/proads-worktrees/013-saved-projects/.specify/scripts/powershell/setup-plan.ps1\" -Json)",
+      "PowerShell(& \"D:/proads-worktrees/013-saved-projects/.specify/scripts/powershell/update-agent-context.ps1\" -AgentType claude)",
+      "PowerShell(& \"D:/proads-worktrees/013-saved-projects/.specify/scripts/powershell/check-prerequisites.ps1\" -Json)"
     ],
     "defaultMode": "auto"
   }
