@@ -56,6 +56,17 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
         name: workspace.metaAdAccountName,
         role: workspace.metaRoleAtLinkTime,
       });
+    } else {
+      // Reset to create-mode defaults when the modal switches from edit → create.
+      setName('');
+      setBrandName('');
+      setBrandUrl('');
+      setColorPrimary('#3b82f6');
+      setColorSecondary('#1e293b');
+      setSelectedMetaAccount('');
+      setLinkedMeta({ id: undefined, name: undefined, role: undefined });
+      setConfirmDelete(false);
+      setUiError(null);
     }
   }, [workspace]);
 
@@ -159,14 +170,18 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
         <div className="bg-gradient-to-b from-blue-900/20 to-transparent p-8 pb-6">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-black text-white">
-              {isEdit ? 'Edit Workspace' : 'New Workspace'}
+              {isEdit ? t('workspace.settings.edit_title') : t('workspace.settings.new_title')}
             </h2>
-            <button onClick={onClose} className="text-slate-600 hover:text-white transition-all">
-              <i className="fa-solid fa-xmark text-lg" />
+            <button
+              onClick={onClose}
+              aria-label={t('close')}
+              className="text-slate-600 hover:text-white transition-all"
+            >
+              <i className="fa-solid fa-xmark text-lg" aria-hidden="true" />
             </button>
           </div>
           <p className="text-[10px] text-slate-500 mt-2">
-            {isEdit ? 'Update brand settings for this workspace' : 'Create a separate environment for a client brand'}
+            {isEdit ? t('workspace.settings.edit_subtitle') : t('workspace.settings.new_subtitle')}
           </p>
           {!isScale && !isEdit && (
             <div className="mt-3 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px]">
@@ -177,29 +192,29 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
 
         <div className="p-8 pt-2 space-y-5">
           <div>
-            <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-1.5">Workspace Name</label>
+            <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-1.5">{t('workspace.settings.field.name')}</label>
             <input
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
-              placeholder="e.g. Client: Nike"
+              placeholder={t('workspace.settings.field.name_placeholder')}
               className="w-full h-10 px-4 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[11px] placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors"
             />
           </div>
 
           <div>
-            <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-1.5">Brand Name</label>
+            <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-1.5">{t('workspace.settings.field.brand')}</label>
             <input
               type="text"
               value={brandName}
               onChange={e => setBrandName(e.target.value)}
-              placeholder="e.g. Nike"
+              placeholder={t('workspace.settings.field.brand_placeholder')}
               className="w-full h-10 px-4 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[11px] placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors"
             />
           </div>
 
           <div>
-            <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-1.5">Brand URL <span className="text-slate-700">(optional)</span></label>
+            <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-1.5">{t('workspace.settings.field.url')} <span className="text-slate-700">{t('workspace.settings.field.url_optional')}</span></label>
             <input
               type="url"
               value={brandUrl}
@@ -211,7 +226,7 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
 
           <div className="flex gap-4">
             <div className="flex-1">
-              <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-1.5">Primary Color</label>
+              <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-1.5">{t('workspace.settings.field.primary_color')}</label>
               <div className="flex items-center gap-2">
                 <input
                   type="color"
@@ -228,7 +243,7 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
               </div>
             </div>
             <div className="flex-1">
-              <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-1.5">Secondary Color</label>
+              <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-1.5">{t('workspace.settings.field.secondary_color')}</label>
               <div className="flex items-center gap-2">
                 <input
                   type="color"
@@ -248,7 +263,7 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
 
           {showMetaSection && (
             <div className="border-t border-white/[0.04] pt-4">
-              <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-2">Meta Ad Account</label>
+              <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-2">{t('workspace.settings.meta_section_label')}</label>
               {linkedMeta.id ? (
                 <div className="flex items-center gap-3">
                   <div className="flex-1 px-3 py-2 rounded-xl bg-slate-900/60 border border-slate-800">
@@ -259,13 +274,13 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
                     onClick={handleUnlinkMeta}
                     className="px-3 py-2 rounded-xl bg-red-500/10 text-red-400 text-[10px] font-bold hover:bg-red-500/20 transition-colors"
                   >
-                    Disconnect
+                    {t('workspace.settings.disconnect')}
                   </button>
                 </div>
               ) : (
                 <div>
                   {(!metaAdAccounts || metaAdAccounts.length === 0) ? (
-                    <p className="text-[10px] text-slate-500">Connect your Meta account first to link an ad account.</p>
+                    <p className="text-[10px] text-slate-500">{t('workspace.settings.meta_connect_prompt')}</p>
                   ) : (
                     <div className="flex gap-2">
                       <select
@@ -273,7 +288,7 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
                         onChange={e => setSelectedMetaAccount(e.target.value)}
                         className="flex-1 h-10 px-3 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[10px] focus:outline-none focus:border-blue-500/50"
                       >
-                        <option value="">Select ad account...</option>
+                        <option value="">{t('workspace.settings.meta_select_placeholder')}</option>
                         {metaAdAccounts.map(a => (
                           <option key={a.id} value={a.id}>{a.name}</option>
                         ))}
@@ -283,7 +298,7 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
                         disabled={!selectedMetaAccount}
                         className="px-4 rounded-xl bg-blue-600 text-white text-[10px] font-bold hover:bg-blue-500 disabled:opacity-40 transition-colors"
                       >
-                        Link
+                        {t('workspace.settings.link')}
                       </button>
                     </div>
                   )}
@@ -304,7 +319,9 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
               disabled={!name.trim() || !brandName.trim() || saving || (!isScale && !isEdit)}
               className="flex-1 h-11 rounded-xl bg-blue-600 text-white text-[11px] font-bold hover:bg-blue-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {saving ? 'Saving...' : (isEdit ? 'Save Changes' : 'Create Workspace')}
+              {saving
+                ? t('workspace.settings.saving')
+                : (isEdit ? t('workspace.settings.save_changes') : t('workspace.settings.create'))}
             </button>
             {isEdit && !workspace?.isDefault && onDelete && (
               confirmDelete ? (
@@ -313,21 +330,22 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
                   disabled={saving}
                   className="h-11 px-5 rounded-xl bg-red-600/20 border border-red-500/30 text-red-400 text-[10px] font-bold hover:bg-red-600/30 transition-colors"
                 >
-                  {saving ? 'Deleting...' : 'Confirm Delete'}
+                  {saving ? t('workspace.settings.deleting') : t('workspace.settings.confirm_delete')}
                 </button>
               ) : (
                 <button
                   onClick={() => setConfirmDelete(true)}
+                  aria-label={t('delete')}
                   className="h-11 px-4 rounded-xl bg-white/[0.04] text-slate-500 text-[10px] font-bold hover:text-red-400 hover:bg-red-500/5 transition-colors"
                 >
-                  <i className="fa-solid fa-trash text-[9px]" />
+                  <i className="fa-solid fa-trash text-[9px]" aria-hidden="true" />
                 </button>
               )
             )}
           </div>
           {isEdit && !workspace?.isDefault && confirmDelete && (
             <p className="text-[9px] text-slate-500 text-center">
-              This workspace will be hidden immediately and permanently deleted in 30 days.
+              {t('workspace.settings.delete_notice')}
             </p>
           )}
         </div>

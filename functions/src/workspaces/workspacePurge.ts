@@ -87,56 +87,82 @@ export const purgeExpiredWorkspaces = onSchedule(
   }
 );
 
+async function paginatedUpdate(
+  buildQuery: (cursor: admin.firestore.QueryDocumentSnapshot | null) => admin.firestore.Query,
+  applyUpdate: (doc: admin.firestore.QueryDocumentSnapshot) => Record<string, unknown>
+): Promise<void> {
+  let cursor: admin.firestore.QueryDocumentSnapshot | null = null;
+  while (true) {
+    const snap = await buildQuery(cursor).get();
+    if (snap.empty) break;
+    const batch = db.batch();
+    for (const doc of snap.docs) {
+      batch.update(doc.ref, applyUpdate(doc));
+    }
+    await batch.commit();
+    cursor = snap.docs[snap.docs.length - 1];
+    if (snap.size < PAGE_SIZE) break;
+  }
+}
+
 export async function cascadeReassignOnDelete(
   ownerUid: string,
   deletedWorkspaceId: string,
   defaultWorkspaceId: string
 ): Promise<void> {
-  const batch = db.batch();
-
-  const genSnap = await db
-    .collection("generations")
-    .where("workspaceId", "==", deletedWorkspaceId)
-    .limit(PAGE_SIZE)
-    .get();
-
-  for (const doc of genSnap.docs) {
-    batch.update(doc.ref, {
+  // Generations — scope by owner AND workspaceId so another owner's records never leak into the update.
+  await paginatedUpdate(
+    (cursor) => {
+      let q: admin.firestore.Query = db
+        .collection("generations")
+        .where("userId", "==", ownerUid)
+        .where("workspaceId", "==", deletedWorkspaceId)
+        .limit(PAGE_SIZE);
+      if (cursor) q = q.startAfter(cursor);
+      return q;
+    },
+    () => ({
       workspaceId: defaultWorkspaceId,
       reassignedFromWorkspaceId: deletedWorkspaceId,
-    });
-  }
+    })
+  );
 
-  const projSnap = await db
-    .collection(`users/${ownerUid}/projects`)
-    .where("workspaceId", "==", deletedWorkspaceId)
-    .limit(PAGE_SIZE)
-    .get();
-
-  for (const doc of projSnap.docs) {
-    batch.update(doc.ref, {
+  // Saved projects under this owner only.
+  await paginatedUpdate(
+    (cursor) => {
+      let q: admin.firestore.Query = db
+        .collection(`users/${ownerUid}/projects`)
+        .where("workspaceId", "==", deletedWorkspaceId)
+        .limit(PAGE_SIZE);
+      if (cursor) q = q.startAfter(cursor);
+      return q;
+    },
+    () => ({
       workspaceId: defaultWorkspaceId,
       reassignedFromWorkspaceId: deletedWorkspaceId,
-    });
-  }
+    })
+  );
 
+  // Team members — bounded small list, one batch is fine.
   const teamSnap = await db
     .collection(`users/${ownerUid}/team`)
     .where("workspaceAccess", "array-contains", deletedWorkspaceId)
     .get();
-
-  for (const doc of teamSnap.docs) {
-    const data = doc.data();
-    const access: string[] = data.workspaceAccess ?? [];
-    const removed: string[] = data.removedWorkspaceAccessByDelete ?? [];
-    batch.update(doc.ref, {
-      workspaceAccess: access.filter((id) => id !== deletedWorkspaceId),
-      removedWorkspaceAccessByDelete: [...removed, deletedWorkspaceId],
-    });
+  if (!teamSnap.empty) {
+    const batch = db.batch();
+    for (const doc of teamSnap.docs) {
+      const data = doc.data();
+      const access: string[] = data.workspaceAccess ?? [];
+      const removed: string[] = data.removedWorkspaceAccessByDelete ?? [];
+      batch.update(doc.ref, {
+        workspaceAccess: access.filter((id) => id !== deletedWorkspaceId),
+        removedWorkspaceAccessByDelete: [...removed, deletedWorkspaceId],
+      });
+    }
+    await batch.commit();
   }
 
-  await batch.commit();
-
+  // Clear the pending flag only after every page has been processed.
   await db
     .collection(`users/${ownerUid}/workspaces`)
     .doc(deletedWorkspaceId)
@@ -147,49 +173,56 @@ export async function cascadeRevertOnRestore(
   ownerUid: string,
   restoredWorkspaceId: string
 ): Promise<void> {
-  const batch = db.batch();
-
-  const genSnap = await db
-    .collection("generations")
-    .where("reassignedFromWorkspaceId", "==", restoredWorkspaceId)
-    .limit(PAGE_SIZE)
-    .get();
-
-  for (const doc of genSnap.docs) {
-    batch.update(doc.ref, {
+  await paginatedUpdate(
+    (cursor) => {
+      let q: admin.firestore.Query = db
+        .collection("generations")
+        .where("userId", "==", ownerUid)
+        .where("reassignedFromWorkspaceId", "==", restoredWorkspaceId)
+        .limit(PAGE_SIZE);
+      if (cursor) q = q.startAfter(cursor);
+      return q;
+    },
+    () => ({
       workspaceId: restoredWorkspaceId,
       reassignedFromWorkspaceId: admin.firestore.FieldValue.delete(),
-    });
-  }
+    })
+  );
 
-  const projSnap = await db
-    .collection(`users/${ownerUid}/projects`)
-    .where("reassignedFromWorkspaceId", "==", restoredWorkspaceId)
-    .limit(PAGE_SIZE)
-    .get();
-
-  for (const doc of projSnap.docs) {
-    batch.update(doc.ref, {
+  await paginatedUpdate(
+    (cursor) => {
+      let q: admin.firestore.Query = db
+        .collection(`users/${ownerUid}/projects`)
+        .where("reassignedFromWorkspaceId", "==", restoredWorkspaceId)
+        .limit(PAGE_SIZE);
+      if (cursor) q = q.startAfter(cursor);
+      return q;
+    },
+    () => ({
       workspaceId: restoredWorkspaceId,
       reassignedFromWorkspaceId: admin.firestore.FieldValue.delete(),
-    });
-  }
+    })
+  );
 
   const teamSnap = await db.collection(`users/${ownerUid}/team`).get();
-  for (const doc of teamSnap.docs) {
-    const data = doc.data();
-    const removed: string[] = data.removedWorkspaceAccessByDelete ?? [];
-    if (!removed.includes(restoredWorkspaceId)) continue;
-    const access: string[] = data.workspaceAccess ?? [];
-    batch.update(doc.ref, {
-      workspaceAccess: [...access, restoredWorkspaceId],
-      removedWorkspaceAccessByDelete: removed.filter(
-        (id) => id !== restoredWorkspaceId
-      ),
-    });
+  if (!teamSnap.empty) {
+    const batch = db.batch();
+    let pending = 0;
+    for (const doc of teamSnap.docs) {
+      const data = doc.data();
+      const removed: string[] = data.removedWorkspaceAccessByDelete ?? [];
+      if (!removed.includes(restoredWorkspaceId)) continue;
+      const access: string[] = data.workspaceAccess ?? [];
+      batch.update(doc.ref, {
+        workspaceAccess: [...access, restoredWorkspaceId],
+        removedWorkspaceAccessByDelete: removed.filter(
+          (id) => id !== restoredWorkspaceId
+        ),
+      });
+      pending++;
+    }
+    if (pending > 0) await batch.commit();
   }
-
-  await batch.commit();
 
   await db
     .collection(`users/${ownerUid}/workspaces`)

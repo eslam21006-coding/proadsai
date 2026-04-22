@@ -24,7 +24,7 @@ export async function assertOwner(
 
 export async function assertScalePlan(uid: string): Promise<void> {
   const userSnap = await db.collection("users").doc(uid).get();
-  const plan = userSnap.data()?.billingState?.plan ?? userSnap.data()?.plan ?? "none";
+  const plan = userSnap.data()?.billingState?.plan ?? "none";
   if (plan !== "scale") {
     throw new HttpsError(
       "permission-denied",
@@ -78,7 +78,8 @@ export async function createWorkspaceWithLimit(
     if (active.length >= 10) {
       throw new HttpsError(
         "failed-precondition",
-        "You've reached the 10-workspace limit on the Scale plan."
+        "You've reached the 10-workspace limit on the Scale plan.",
+        { reason: "workspace_limit_reached" }
       );
     }
     txn.create(newRef, newDoc);

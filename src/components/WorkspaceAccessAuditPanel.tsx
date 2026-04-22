@@ -80,7 +80,9 @@ export default function WorkspaceAccessAuditPanel({ ownerUid }: Props) {
                         ? 'bg-green-500/10 text-green-400'
                         : 'bg-red-500/10 text-red-400'
                     }`}>
-                      {entry.action}
+                      {entry.action === 'grant'
+                        ? t('workspace.access_history.action.grant')
+                        : t('workspace.access_history.action.revoke')}
                     </span>
                   </td>
                 </tr>

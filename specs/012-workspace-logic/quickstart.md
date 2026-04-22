@@ -26,7 +26,7 @@ Seed the emulator Firestore with a test user whose `billingState.plan = 'scale'`
 
 ```bash
 cd functions
-npm test -- workspace
+npm run test:workspace
 ```
 
 Expected new-passing cases (from `workspace.test.ts`):

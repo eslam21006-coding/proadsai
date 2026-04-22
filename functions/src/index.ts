@@ -5123,20 +5123,29 @@ export const deleteWorkspace = onCall({
         throw new HttpsError("failed-precondition", "The default workspace can't be deleted.");
     }
 
-    if (wsData.deletedAt != null) {
-        return { ok: true, pendingReassign: wsData.pendingReassign ?? false };
+    const alreadySoftDeleted = wsData.deletedAt != null;
+    const cascadeStillPending = wsData.pendingReassign === true;
+
+    // If the prior run finished cleanly, return idempotently.
+    if (alreadySoftDeleted && !cascadeStillPending) {
+        return { ok: true, pendingReassign: false };
     }
 
-    await wsSnap.ref.update({
-        deletedAt: Date.now(),
-        pendingReassign: true,
-    });
+    // First attempt: mark soft-deleted + pendingReassign BEFORE the cascade runs.
+    // Retry attempt: pendingReassign is already true — fall through to re-run the cascade.
+    if (!alreadySoftDeleted) {
+        await wsSnap.ref.update({
+            deletedAt: Date.now(),
+            pendingReassign: true,
+        });
+    }
 
     const defaultId = await resolveDefaultWorkspaceId(uid);
     try {
         await cascadeReassignOnDelete(uid, workspaceId, defaultId);
     } catch (err) {
         console.error(`🔥 Cascade reassign failed for workspace ${workspaceId}:`, err);
+        // pendingReassign stays true so a retry will re-enter this handler.
         throw new HttpsError("internal", "Workspace deletion partially failed. Please retry.");
     }
 
@@ -5156,24 +5165,32 @@ export const restoreWorkspace = onCall({
     if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
     const wsData = wsSnap.data()!;
 
-    if (wsData.deletedAt == null) {
+    const isSoftDeleted = wsData.deletedAt != null;
+    const restorePending = wsData.pendingRestore === true;
+
+    // Neither soft-deleted nor mid-restore → nothing to do.
+    if (!isSoftDeleted && !restorePending) {
         throw new HttpsError("failed-precondition", "This workspace is not deleted and does not need restoration.");
     }
 
-    const thirtyDaysMs = 30 * 24 * 3600 * 1000;
-    if (Date.now() - wsData.deletedAt > thirtyDaysMs) {
-        throw new HttpsError("failed-precondition", "This workspace was deleted more than 30 days ago and cannot be restored.");
+    // First attempt: clear deletedAt + set pendingRestore BEFORE the cascade runs.
+    // Retry attempt: pendingRestore is already true — fall through to re-run the cascade.
+    if (isSoftDeleted) {
+        const thirtyDaysMs = 30 * 24 * 3600 * 1000;
+        if (Date.now() - wsData.deletedAt > thirtyDaysMs) {
+            throw new HttpsError("failed-precondition", "This workspace was deleted more than 30 days ago and cannot be restored.");
+        }
+        await wsSnap.ref.update({
+            deletedAt: admin.firestore.FieldValue.delete(),
+            pendingRestore: true,
+        });
     }
-
-    await wsSnap.ref.update({
-        deletedAt: admin.firestore.FieldValue.delete(),
-        pendingRestore: true,
-    });
 
     try {
         await cascadeRevertOnRestore(uid, workspaceId);
     } catch (err) {
         console.error(`🔥 Cascade restore failed for workspace ${workspaceId}:`, err);
+        // pendingRestore stays true so a retry will re-enter this handler.
         throw new HttpsError("internal", "Workspace restore partially failed. Please retry.");
     }
 
@@ -5198,19 +5215,20 @@ export const linkMetaAccountToWorkspace = onCall({
     if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
     assertWorkspaceActive(wsSnap);
 
-    const userSnap = await db.collection("users").doc(uid).get();
-    const metaConnection = userSnap.data()?.metaConnection;
-    if (!metaConnection?.accessToken) {
+    const connDoc = await db.collection("metaConnections").doc(uid).get();
+    const conn = connDoc.exists ? connDoc.data() : null;
+    if (!conn?.encryptedToken) {
         throw new HttpsError("failed-precondition", "Connect your Meta account first.");
     }
+    const accessToken = decryptToken(conn.encryptedToken, metaAppSecret.value());
 
-    const connectedAccounts: any[] = metaConnection.adAccounts ?? [];
+    const connectedAccounts: any[] = conn.adAccounts ?? [];
     const isConnected = connectedAccounts.some((a: any) => a.id === metaAdAccountId || `act_${a.id}` === metaAdAccountId || a.id === metaAdAccountId.replace("act_", ""));
     if (!isConnected) {
         throw new HttpsError("failed-precondition", "This Meta ad account is not in your connected accounts.");
     }
 
-    const role = await probeMetaRole(metaConnection.accessToken, metaAdAccountId);
+    const role = await probeMetaRole(accessToken, metaAdAccountId);
     if (role === "INSUFFICIENT") {
         throw new HttpsError("failed-precondition", "Your Meta role on this ad account doesn't allow publishing. Request Advertiser access in Meta Business Manager to link it.");
     }
@@ -5338,10 +5356,11 @@ export const getWorkspaceGenerations = onCall({
     assertWorkspaceActive(wsDoc);
 
     if (uid !== ownerUid) {
-        // Team docs are auto-IDed, not keyed by member uid — find by memberUid field.
+        // Team docs are auto-IDed; member doc stores the teammate's auth uid as `uid`
+        // (see createTeamInvite accept path — txn.set({ uid: callerUid, ... })).
         const memberQuery = await db
             .collection(`users/${ownerUid}/team`)
-            .where("memberUid", "==", uid)
+            .where("uid", "==", uid)
             .limit(1)
             .get();
         if (memberQuery.empty) {

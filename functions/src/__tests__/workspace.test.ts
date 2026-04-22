@@ -14,6 +14,7 @@ const FAILED = 1;
 
 let passed = 0;
 let failed = 0;
+let skipped = 0;
 const failures: string[] = [];
 
 async function run(name: string, fn: () => Promise<void>) {
@@ -28,9 +29,16 @@ async function run(name: string, fn: () => Promise<void>) {
     }
 }
 
+// Skipped test harness: keeps the human-readable name in the output but does NOT
+// run any assertion, so placeholder contract checks cannot report false positives.
+function skip(name: string, _fn?: () => Promise<void>) {
+    skipped++;
+    console.log(`  ⏭  ${name} (skipped — pending emulator harness)`);
+}
+
 function summary() {
     console.log(`\n${"=".repeat(60)}`);
-    console.log(`Workspace Tests: ${passed} passed, ${failed} failed`);
+    console.log(`Workspace Tests: ${passed} passed, ${failed} failed, ${skipped} skipped`);
     if (failures.length > 0) {
         console.log("Failures:");
         failures.forEach((f) => console.log(`  - ${f}`));
@@ -180,58 +188,21 @@ await run("T015: createWorkspaceWithLimit happy path → new id", async () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Remaining contract checks — held as documentation until an emulator harness lands.
+// Remaining contract checks — skipped until an emulator harness lands.
+// The names are preserved so the suite can be easily restored when real tests arrive.
 // ═══════════════════════════════════════════════════════════════════════════
-await run("T016: updateWorkspace partial write → LWW (needs emulator)", async () => {
-    assert.ok(true, "Partial update uses Firestore .update() — LWW semantics");
-});
-
-await run("T017: deleteWorkspace default → default_workspace_undeletable (needs emulator)", async () => {
-    assert.ok(true, "Default workspace rejects delete; tested live in emulator CI");
-});
-
-await run("T018: deleteWorkspace + restoreWorkspace round-trip (needs emulator)", async () => {
-    assert.ok(true, "Delete sets deletedAt, restore clears it within 30d window");
-});
-
-await run("T032: linkMeta not connected (needs emulator + Meta fake)", async () => {
-    assert.ok(true, "Requires live Meta Graph API — documented contract only");
-});
-
-await run("T033: linkMeta INSUFFICIENT role (needs emulator + Meta fake)", async () => {
-    assert.ok(true, "Requires live Meta Graph API — documented contract only");
-});
-
-await run("T034: linkMeta ADVERTISER ok (needs emulator + Meta fake)", async () => {
-    assert.ok(true, "Requires live Meta Graph API — documented contract only");
-});
-
-await run("T035: unlinkMeta → fields cleared (needs emulator)", async () => {
-    assert.ok(true, "Returns { ok: true }, three Meta fields deleted");
-});
-
-await run("T042: generation missing activeWorkspaceId (client-side contract)", async () => {
-    assert.ok(true, "Client contract — tested via frontend integration");
-});
-
-await run("T043: generation writes workspaceId (client-side contract)", async () => {
-    assert.ok(true, "feedbackService.saveGeneration writes workspaceId");
-});
-
-await run("T058: setAccess non-owner → owner_only (needs emulator)", async () => {
-    assert.ok(true, "Tested via auth context in emulator CI");
-});
-
-await run("T059: setAccess soft-deleted → invalid_workspace_id (needs emulator)", async () => {
-    assert.ok(true, "Tested via auth context in emulator CI");
-});
-
-await run("T060: setAccess diff → one audit per grant/revoke (needs emulator)", async () => {
-    assert.ok(true, "Transaction writes audit entries for each grant/revoke");
-});
-
-await run("T026: purgeExpiredWorkspaces → hard delete (needs emulator)", async () => {
-    assert.ok(true, "Daily at 04:00 UTC, deletes workspace docs with deletedAt > 30d");
-});
+skip("T016: updateWorkspace partial write → LWW");
+skip("T017: deleteWorkspace default → default_workspace_undeletable");
+skip("T018: deleteWorkspace + restoreWorkspace round-trip");
+skip("T032: linkMeta not connected → meta_account_not_connected");
+skip("T033: linkMeta INSUFFICIENT role → insufficient_meta_role");
+skip("T034: linkMeta ADVERTISER → ok, fields written");
+skip("T035: unlinkMeta → fields cleared");
+skip("T042: generation missing activeWorkspaceId → active_workspace_required");
+skip("T043: generation writes workspaceId");
+skip("T058: setAccess non-owner → owner_only");
+skip("T059: setAccess soft-deleted → invalid_workspace_id");
+skip("T060: setAccess diff → one audit per grant/revoke");
+skip("T026: purgeExpiredWorkspaces → hard delete");
 
 summary();
