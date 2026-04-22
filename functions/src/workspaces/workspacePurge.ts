@@ -53,10 +53,20 @@ export const purgeExpiredWorkspaces = onSchedule(
 
         for (const doc of snap.docs) {
           summary.workspacesChecked++;
-          if (doc.data().isDefault === true) {
+          const data = doc.data();
+          if (data.isDefault === true) {
             summary.errors.push({
               workspaceId: doc.id,
               reason: "Default workspace should never be purged",
+            });
+            continue;
+          }
+          // Don't hard-delete while the reassign cascade is still in flight —
+          // the workspace row is the pointer the retry path relies on to resume.
+          if (data.pendingReassign === true) {
+            summary.errors.push({
+              workspaceId: doc.id,
+              reason: "Pending reassignment in progress",
             });
             continue;
           }

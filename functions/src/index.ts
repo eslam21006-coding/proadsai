@@ -5028,10 +5028,22 @@ export const createWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
+    if (!request.data || typeof request.data !== "object") {
+        throw new HttpsError("invalid-argument", "Request payload is required.", { reason: "invalid_payload" });
+    }
     const data = request.data as any;
 
-    const name = (data.name ?? "").trim();
-    const brandName = (data.brandName ?? "").trim();
+    // Guard against non-string payloads before calling .trim() — a TypeError here
+    // would surface as an opaque "internal" error to the client.
+    if (data.name !== undefined && data.name !== null && typeof data.name !== "string") {
+        throw new HttpsError("invalid-argument", "Workspace name must be a string.", { reason: "invalid_type" });
+    }
+    if (data.brandName !== undefined && data.brandName !== null && typeof data.brandName !== "string") {
+        throw new HttpsError("invalid-argument", "Brand name must be a string.", { reason: "invalid_type" });
+    }
+
+    const name = (typeof data.name === "string" ? data.name : "").trim();
+    const brandName = (typeof data.brandName === "string" ? data.brandName : "").trim();
     if (!name) throw new HttpsError("invalid-argument", "Workspace name is required.", { reason: "name_required" });
     if (!brandName) throw new HttpsError("invalid-argument", "Brand name is required.", { reason: "brand_name_required" });
     if (name.length > 60) throw new HttpsError("invalid-argument", "Workspace name must be 60 characters or fewer.", { reason: "name_too_long" });
@@ -5295,62 +5307,83 @@ export const setTeamMemberWorkspaceAccess = onCall({
     }
 
     const memberRef = db.collection(`users/${uid}/team`).doc(memberDocId);
-    const memberSnap = await memberRef.get();
-    if (!memberSnap.exists) throw new HttpsError("not-found", "Team member not found.");
 
-    const memberData = memberSnap.data()!;
-    const currentAccess: string[] = memberData.workspaceAccess ?? [];
-
-    const granted = workspaceAccess.filter((id) => !currentAccess.includes(id));
-    const revoked = currentAccess.filter((id) => !workspaceAccess.includes(id));
-
-    for (const wsId of workspaceAccess) {
-        const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(wsId).get();
-        if (!wsSnap.exists || wsSnap.data()?.deletedAt != null) {
-            throw new HttpsError("failed-precondition", "One or more workspace IDs are invalid or soft-deleted.");
-        }
-    }
-
-    if (granted.length === 0 && revoked.length === 0) {
-        return { ok: true, granted: [], revoked: [] };
-    }
-
+    // Snapshot the plan outside the txn — it is not part of the concurrent access diff.
     const userSnap = await db.collection("users").doc(uid).get();
     const planSnapshot = userSnap.data()?.billingState?.plan ?? userSnap.data()?.plan ?? "none";
 
-    await db.runTransaction(async (txn) => {
+    // The whole diff + audit write happens inside one transaction so that two
+    // concurrent setTeamMemberWorkspaceAccess calls cannot compute their granted/revoked
+    // deltas against the same stale pre-txn snapshot and double-emit audit entries.
+    const result = await db.runTransaction(async (txn) => {
+        const memberSnap = await txn.get(memberRef);
+        if (!memberSnap.exists) {
+            throw new HttpsError("not-found", "Team member not found.");
+        }
+        const memberData = memberSnap.data()!;
+        const currentAccess: string[] = memberData.workspaceAccess ?? [];
+
+        const granted = workspaceAccess.filter((id) => !currentAccess.includes(id));
+        const revoked = currentAccess.filter((id) => !workspaceAccess.includes(id));
+
+        // Validate each requested workspace inside the txn so a concurrent delete
+        // of a workspace can't slip through after our pre-txn check.
+        const wsCache = new Map<string, admin.firestore.DocumentSnapshot>();
+        for (const wsId of workspaceAccess) {
+            const wsSnap = await txn.get(db.collection(`users/${uid}/workspaces`).doc(wsId));
+            if (!wsSnap.exists || wsSnap.data()?.deletedAt != null) {
+                throw new HttpsError("failed-precondition", "One or more workspace IDs are invalid or soft-deleted.");
+            }
+            wsCache.set(wsId, wsSnap);
+        }
+        // Also read workspaces that are being revoked so we can record their name at event.
+        for (const wsId of revoked) {
+            if (wsCache.has(wsId)) continue;
+            const wsSnap = await txn.get(db.collection(`users/${uid}/workspaces`).doc(wsId));
+            wsCache.set(wsId, wsSnap);
+        }
+
+        // No diff? Short-circuit before any writes hit.
+        if (granted.length === 0 && revoked.length === 0) {
+            return { granted: [] as string[], revoked: [] as string[] };
+        }
+
+        // All reads are done; now writes.
         txn.update(memberRef, { workspaceAccess });
 
+        const targetMemberUid = memberData.uid ?? memberData.memberUid ?? "";
+        const targetMemberEmail = memberData.email ?? memberData.memberEmail ?? "";
+
         for (const wsId of granted) {
-            const wsSnap = await txn.get(db.collection(`users/${uid}/workspaces`).doc(wsId));
             await writeAuditEntry(txn, {
                 ownerUid: uid,
                 actorUid: uid,
-                targetMemberUid: memberData.uid ?? memberData.memberUid ?? "",
-                targetMemberEmail: memberData.email ?? memberData.memberEmail ?? "",
+                targetMemberUid,
+                targetMemberEmail,
                 workspaceId: wsId,
-                workspaceNameAtEvent: wsSnap.data()?.name ?? "",
+                workspaceNameAtEvent: wsCache.get(wsId)?.data()?.name ?? "",
                 action: "grant",
                 planSnapshot,
             });
         }
 
         for (const wsId of revoked) {
-            const wsSnap = await txn.get(db.collection(`users/${uid}/workspaces`).doc(wsId));
             await writeAuditEntry(txn, {
                 ownerUid: uid,
                 actorUid: uid,
-                targetMemberUid: memberData.uid ?? memberData.memberUid ?? "",
-                targetMemberEmail: memberData.email ?? memberData.memberEmail ?? "",
+                targetMemberUid,
+                targetMemberEmail,
                 workspaceId: wsId,
-                workspaceNameAtEvent: wsSnap.data()?.name ?? "",
+                workspaceNameAtEvent: wsCache.get(wsId)?.data()?.name ?? "",
                 action: "revoke",
                 planSnapshot,
             });
         }
+
+        return { granted, revoked };
     });
 
-    return { ok: true, granted, revoked };
+    return { ok: true, granted: result.granted, revoked: result.revoked };
 });
 
 export const getWorkspaceGenerations = onCall({
@@ -5415,7 +5448,10 @@ export const getWorkspaceGenerations = onCall({
         primarySnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
     // FR-015: legacy records with workspaceId === null surface under the default workspace.
-    if (wsDoc.data()?.isDefault === true && combined.length < effectiveLimit) {
+    // Always run the merge — a legacy record with a higher timestamp can outrank a primary
+    // record on the current page, so short-circuiting when the primary page is already full
+    // would drop legitimately-newer legacy rows.
+    if (wsDoc.data()?.isDefault === true) {
         const legacySnap = await buildQuery(null).get();
         const seen = new Set(combined.map((x) => x.id));
         for (const d of legacySnap.docs) {
