@@ -1682,7 +1682,8 @@ const App: React.FC = () => {
         const wsRef = collection(db, 'users', uid, 'workspaces');
         const q = query(wsRef, orderBy('createdAt', 'desc'));
         const snap = await getDocs(q);
-        const wsList = snap.docs.map(d => ({ id: d.id, ...d.data() } as Workspace));
+        const wsList = snap.docs.map(d => ({ id: d.id, ...d.data() } as Workspace))
+          .filter(ws => ws.deletedAt == null);
         if (wsList.length === 0) {
           const defaultWs: Omit<Workspace, 'id'> = {
             name: 'Default Workspace', brandName: user?.displayName || 'My Brand',
@@ -1743,10 +1744,11 @@ const App: React.FC = () => {
     const uid = effectiveUidRef.current;
     if (!uid) return;
     try {
-      await deleteDoc(doc(db, 'users', uid, 'workspaces', workspaceId));
+      const { workspaceService } = await import('./services/workspaceService');
+      await workspaceService.deleteWorkspace(workspaceId);
       setWorkspacesLocal(prev => prev.filter(w => w.id !== workspaceId));
       if (activeWorkspaceId === workspaceId) {
-        const remaining = workspaces.filter(w => w.id !== workspaceId);
+        const remaining = workspaces.filter(w => w.id !== workspaceId && w.deletedAt == null);
         const def = remaining.find(w => w.isDefault) || remaining[0];
         setActiveWorkspaceIdLocal(def?.id || null);
       }
@@ -3189,7 +3191,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               const genId = await feedbackService.saveGeneration(
                 user.uid, cleanInputs, 'hooks',
                 { hookText: ht, subhead: sh, ctaText: cleanInputs.cta },
-                hookRaw, universe, 'gemini-3-flash', 0, undefined, buildCreativeIdentity()
+                hookRaw, universe, 'gemini-3-flash', 0, undefined, buildCreativeIdentity(),
+                canUseWorkspaces ? activeWorkspaceId : null
               );
               if (genId) hookIds[v] = genId;
             }
@@ -3592,7 +3595,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             const genId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
               { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500) },
-              conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity()
+              conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
+              canUseWorkspaces ? activeWorkspaceId : null
             );
             setRenderGenerationId(genId);
             if (loadedFavoriteId && genId) {
@@ -4126,7 +4130,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           const genId = await feedbackService.saveGeneration(
             user.uid, inputs, 'render',
             { imageUrl: res, conceptText: (selectedConcept || '').substring(0, 500) },
-            buildPlan, resolvedUniverse, 'gemini-3.1-flash-image', 0, editRatio, buildCreativeIdentity()
+            buildPlan, resolvedUniverse, 'gemini-3.1-flash-image', 0, editRatio, buildCreativeIdentity(),
+            canUseWorkspaces ? activeWorkspaceId : null
           );
           if (genId) {
             setRenderGenerationId(genId);
@@ -4178,7 +4183,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             const genId = await feedbackService.saveGeneration(
               user.uid, inputs, 'caption',
               { captionText: res },
-              res, '', 'gemini-3-flash', 0, undefined, buildCreativeIdentity()
+              res, '', 'gemini-3-flash', 0, undefined, buildCreativeIdentity(),
+              canUseWorkspaces ? activeWorkspaceId : null
             );
             setCaptionGenerationId(genId);
             if (loadedFavoriteId && genId) {
@@ -4267,7 +4273,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 const genId = await feedbackService.saveGeneration(
                   user.uid, inputs, 'caption',
                   { captionText: res },
-                  res, '', 'gemini-3-flash', 0, undefined, buildCreativeIdentity()
+                  res, '', 'gemini-3-flash', 0, undefined, buildCreativeIdentity(),
+                  canUseWorkspaces ? activeWorkspaceId : null
                 );
                 setCaptionGenerationId(genId);
               } catch (e) { console.warn('Batch caption save failed:', e); }
@@ -4391,7 +4398,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       const genId = await feedbackService.saveGeneration(
         user.uid, inputs, 'render',
         { imageUrl, conceptText: (conceptText || selectedConcept || '').substring(0, 500), hookText: (hookText || '').substring(0, 200) },
-        bPlan || buildPlan || '', resolvedUniverse, 'gemini-flash', 0, ratio, buildCreativeIdentity()
+        bPlan || buildPlan || '', resolvedUniverse, 'gemini-flash', 0, ratio, buildCreativeIdentity(),
+        canUseWorkspaces ? activeWorkspaceId : null
       );
       if (genId) {
         await feedbackService.toggleFavorite(genId, true);
@@ -6372,7 +6380,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                             const genId = await feedbackService.saveGeneration(
                                               user.uid, inputs, 'render',
                                               { imageUrl: item.url || '', conceptText: item.conceptText?.substring(0, 500) || '', hookText: item.hookText?.substring(0, 200) || '' },
-                                              item.buildPlan || '', resolvedUniverse, 'gemini-flash', 0, item.ratio as AspectRatio, buildCreativeIdentity()
+                                              item.buildPlan || '', resolvedUniverse, 'gemini-flash', 0, item.ratio as AspectRatio, buildCreativeIdentity(),
+                                              canUseWorkspaces ? activeWorkspaceId : null
                                             );
                                             if (genId) {
                                               await feedbackService.toggleFavorite(genId, true);

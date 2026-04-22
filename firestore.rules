@@ -31,13 +31,24 @@ service cloud.firestore {
                           && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamOwnerUid == userId;
       }
 
-      // Workspaces subcollection (Multi-Brand — Scaling only) — owner + team members
+      // Workspaces subcollection (Multi-Brand — Scale only) — owner + team members.
+      // Coarse-grained: team members of the owner can read any active workspace under that owner.
+      // Fine-grained per-member `workspaceAccess` filtering is enforced by the server callables
+      // (`getWorkspaceGenerations`, `setTeamMemberWorkspaceAccess`) and by the frontend switcher —
+      // three-layer defense per plan.md#Phase 1 R7. Soft-deleted workspaces are hidden from reads.
       match /workspaces/{workspaceId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
-        allow read, write: if request.auth != null
+        allow read: if request.auth != null
                           && exists(/databases/$(database)/documents/users/$(request.auth.uid))
                           && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isTeamMember == true
-                          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamOwnerUid == userId;
+                          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamOwnerUid == userId
+                          && resource.data.deletedAt == null;
+      }
+
+      // Workspace access audit — owner only, immutable
+      match /workspace_access_audit/{entryId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow write: if false;
       }
 
       // Team subcollection — only the owner can read their team list

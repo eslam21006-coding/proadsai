@@ -25,6 +25,10 @@ import { paddleCreateTopupCheckout } from "./paddle/paddleCheckout.js";
 import { paddleCreatePortalSession } from "./paddle/paddlePortal.js";
 import { handlePaddleWebhook } from "./billing/paddleWebhook.js";
 import { createPaddleClient, PADDLE_PRICE_TO_PLAN } from "./paddle/paddleClient.js";
+import { assertOwner, assertWorkspaceActive, createWorkspaceWithLimit, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
+import { probeMetaRole } from "./workspaces/metaRoleProbe.js";
+import { writeAuditEntry } from "./workspaces/auditLog.js";
+import { purgeExpiredWorkspaces, cascadeReassignOnDelete, cascadeRevertOnRestore } from "./workspaces/workspacePurge.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
@@ -3553,7 +3557,8 @@ export const serverGenerateTOV = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, editIntent, rewriteScope, semanticLock } = request.data;
+    const { inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, editIntent, rewriteScope, semanticLock, activeWorkspaceId } = request.data;
+    void activeWorkspaceId;
     // ═══ ENTITLEMENT: Check retargeting gate on hook generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
@@ -3577,7 +3582,8 @@ export const serverGenerateConcepts = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex } = request.data;
+    const { approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, activeWorkspaceId } = request.data;
+    void activeWorkspaceId;
     // ═══ ENTITLEMENT: Check retargeting gate on concept generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
@@ -3601,7 +3607,8 @@ export const serverGenerateBuildPlan = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride } = request.data;
+    const { conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride, activeWorkspaceId } = request.data;
+    void activeWorkspaceId;
     // ═══ ENTITLEMENT ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
@@ -3624,7 +3631,8 @@ export const serverGenerateFinalAd = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride } = request.data;
+    const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId } = request.data;
+    void activeWorkspaceId;
     // ═══ ENTITLEMENT: Check retargeting + aspect ratio gates ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireAspectRatio: currentAspectRatio,
@@ -3829,7 +3837,8 @@ export const serverGenerateCarouselAngles = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { inputs, resolvedUniverse, slideCount, globalRefinement } = request.data;
+    const { inputs, resolvedUniverse, slideCount, globalRefinement, activeWorkspaceId } = request.data;
+    void activeWorkspaceId;
     // ═══ ENTITLEMENT: Check carousel access + slide count ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireCarousel: true,
@@ -3863,7 +3872,8 @@ export const serverGenerateCarouselSlideCopies = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { approvedTov, inputs, slideCount, resolvedUniverse, refinement } = request.data;
+    const { approvedTov, inputs, slideCount, resolvedUniverse, refinement, activeWorkspaceId } = request.data;
+    void activeWorkspaceId;
     // ═══ ENTITLEMENT: Check carousel access ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireCarousel: true,
@@ -3924,7 +3934,8 @@ export const serverGenerateCaption = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan } = request.data;
+    const { mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan, activeWorkspaceId } = request.data;
+    void activeWorkspaceId;
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateCaption(mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan);
@@ -5004,3 +5015,564 @@ ANTI-HALLUCINATION (CRITICAL):
         return heuristicResult;
     }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WORKSPACE CALLABLES (Phase 12 — Workspace Logic)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+// ─── Shared payload helpers for workspace callables ─────────────────────────
+function asObjectPayload(raw: unknown): Record<string, any> {
+    if (raw == null) return {};
+    if (typeof raw !== "object") {
+        throw new HttpsError("invalid-argument", "Request payload must be an object.", { reason: "invalid_payload" });
+    }
+    return raw as Record<string, any>;
+}
+
+function requireNonEmptyString(val: unknown, fieldName: string): string {
+    if (typeof val !== "string" || val.trim().length === 0) {
+        throw new HttpsError("invalid-argument", `${fieldName} is required and must be a non-empty string.`, { reason: `${fieldName}_required` });
+    }
+    return val;
+}
+
+function validatePositiveIntLimit(val: unknown, fieldName: string, max: number): number | undefined {
+    if (val === undefined || val === null) return undefined;
+    if (typeof val !== "number" || !Number.isInteger(val) || val <= 0) {
+        throw new HttpsError("invalid-argument", `${fieldName} must be a positive integer.`, { reason: "invalid_limit" });
+    }
+    if (val > max) {
+        throw new HttpsError("invalid-argument", `${fieldName} must be ≤ ${max}.`, { reason: "invalid_limit" });
+    }
+    return val;
+}
+
+function validateTimestampIdCursor(
+    val: unknown,
+    fieldName: string
+): { timestamp: number; id: string } | null {
+    if (val === undefined || val === null) return null;
+    if (typeof val !== "object") {
+        throw new HttpsError("invalid-argument", `${fieldName} must be an object.`, { reason: "invalid_cursor" });
+    }
+    const c = val as Record<string, unknown>;
+    if (typeof c.timestamp !== "number" || !Number.isFinite(c.timestamp)) {
+        throw new HttpsError("invalid-argument", `${fieldName}.timestamp must be a number.`, { reason: "invalid_cursor" });
+    }
+    if (typeof c.id !== "string" || c.id.length === 0) {
+        throw new HttpsError("invalid-argument", `${fieldName}.id must be a non-empty string.`, { reason: "invalid_cursor" });
+    }
+    return { timestamp: c.timestamp, id: c.id };
+}
+
+export const createWorkspace = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    if (!request.data || typeof request.data !== "object") {
+        throw new HttpsError("invalid-argument", "Request payload is required.", { reason: "invalid_payload" });
+    }
+    const data = request.data as any;
+
+    // Guard against non-string payloads before calling .trim() — a TypeError here
+    // would surface as an opaque "internal" error to the client.
+    if (data.name !== undefined && data.name !== null && typeof data.name !== "string") {
+        throw new HttpsError("invalid-argument", "Workspace name must be a string.", { reason: "invalid_type" });
+    }
+    if (data.brandName !== undefined && data.brandName !== null && typeof data.brandName !== "string") {
+        throw new HttpsError("invalid-argument", "Brand name must be a string.", { reason: "invalid_type" });
+    }
+
+    const name = (typeof data.name === "string" ? data.name : "").trim();
+    const brandName = (typeof data.brandName === "string" ? data.brandName : "").trim();
+    if (!name) throw new HttpsError("invalid-argument", "Workspace name is required.", { reason: "name_required" });
+    if (!brandName) throw new HttpsError("invalid-argument", "Brand name is required.", { reason: "brand_name_required" });
+    if (name.length > 60) throw new HttpsError("invalid-argument", "Workspace name must be 60 characters or fewer.", { reason: "name_too_long" });
+    if (brandName.length > 60) throw new HttpsError("invalid-argument", "Brand name must be 60 characters or fewer.", { reason: "brand_name_too_long" });
+
+    if (data.brandColorPrimary && !HEX_RE.test(data.brandColorPrimary)) {
+        throw new HttpsError("invalid-argument", "Brand color must be a 6-digit hex value like #A1B2C3.", { reason: "invalid_hex_color" });
+    }
+    if (data.brandColorSecondary && !HEX_RE.test(data.brandColorSecondary)) {
+        throw new HttpsError("invalid-argument", "Brand color must be a 6-digit hex value.", { reason: "invalid_hex_color" });
+    }
+
+    // Plan check is inside createWorkspaceWithLimit's transaction to avoid a
+    // TOCTOU race between entitlement read and workspace create.
+    const workspaceId = await createWorkspaceWithLimit(uid, {
+        name,
+        brandName,
+        brandUrl: data.brandUrl ?? null,
+        brandColorPrimary: data.brandColorPrimary ?? null,
+        brandColorSecondary: data.brandColorSecondary ?? null,
+        logoUrl: data.logoUrl ?? null,
+        isDefault: false,
+        createdAt: Date.now(),
+        deletedAt: null,
+        metaAdAccountId: null,
+        metaAdAccountName: null,
+        metaRoleAtLinkTime: null,
+        pendingReassign: false,
+        pendingRestore: false,
+    });
+
+    return { workspaceId };
+});
+
+export const updateWorkspace = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const data = asObjectPayload(request.data);
+    const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
+
+    const forbidden = ["isDefault", "createdAt", "deletedAt", "metaAdAccountId", "metaAdAccountName", "metaRoleAtLinkTime", "pendingReassign", "pendingRestore"];
+    for (const f of forbidden) {
+        if (data[f] !== undefined) throw new HttpsError("invalid-argument", `Field ${f} cannot be updated here.`);
+    }
+
+    if (data.brandColorPrimary && !HEX_RE.test(data.brandColorPrimary)) {
+        throw new HttpsError("invalid-argument", "Brand color must be a 6-digit hex value.");
+    }
+    if (data.brandColorSecondary && !HEX_RE.test(data.brandColorSecondary)) {
+        throw new HttpsError("invalid-argument", "Brand color must be a 6-digit hex value.");
+    }
+
+    // Parity with createWorkspace: name / brandName must be a string, non-whitespace, ≤ 60 chars after trim.
+    const trimmedStrings: Record<string, string | null> = {};
+    for (const key of ["name", "brandName"] as const) {
+        const val = data[key];
+        if (val === undefined) continue;
+        if (val === null) {
+            // Null is not a valid clear for required fields.
+            throw new HttpsError("invalid-argument", `${key} cannot be cleared.`);
+        }
+        if (typeof val !== "string") {
+            throw new HttpsError("invalid-argument", `${key} must be a string.`, { reason: "invalid_type" });
+        }
+        const trimmed = val.trim();
+        if (trimmed.length === 0) {
+            throw new HttpsError("invalid-argument", `${key} cannot be empty or whitespace.`);
+        }
+        if (trimmed.length > 60) {
+            throw new HttpsError("invalid-argument", `${key} must be 60 characters or fewer.`);
+        }
+        trimmedStrings[key] = trimmed;
+    }
+
+    const wsSnap = await assertOwner(request.auth, workspaceId);
+    assertWorkspaceActive(wsSnap);
+
+    const updates: Record<string, any> = {};
+    for (const key of ["name", "brandName", "brandUrl", "brandColorPrimary", "brandColorSecondary", "logoUrl"]) {
+        if (data[key] !== undefined) {
+            if (key === "name" || key === "brandName") {
+                updates[key] = trimmedStrings[key];
+            } else {
+                updates[key] = data[key] === null ? admin.firestore.FieldValue.delete() : data[key];
+            }
+        }
+    }
+
+    await wsSnap.ref.update(updates);
+    return { ok: true };
+});
+
+export const deleteWorkspace = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const data = asObjectPayload(request.data);
+    const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
+
+    const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
+    if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found or already deleted.");
+    const wsData = wsSnap.data()!;
+
+    if (wsData.isDefault === true) {
+        throw new HttpsError("failed-precondition", "The default workspace can't be deleted.");
+    }
+
+    const alreadySoftDeleted = wsData.deletedAt != null;
+    const cascadeStillPending = wsData.pendingReassign === true;
+
+    // If the prior run finished cleanly, return idempotently.
+    if (alreadySoftDeleted && !cascadeStillPending) {
+        return { ok: true, pendingReassign: false };
+    }
+
+    // First attempt: mark soft-deleted + pendingReassign BEFORE the cascade runs.
+    // Retry attempt: pendingReassign is already true — fall through to re-run the cascade.
+    if (!alreadySoftDeleted) {
+        await wsSnap.ref.update({
+            deletedAt: Date.now(),
+            pendingReassign: true,
+        });
+    }
+
+    const defaultId = await resolveDefaultWorkspaceId(uid);
+    try {
+        await cascadeReassignOnDelete(uid, workspaceId, defaultId);
+    } catch (err) {
+        console.error(`🔥 Cascade reassign failed for workspace ${workspaceId}:`, err);
+        // pendingReassign stays true so a retry will re-enter this handler.
+        throw new HttpsError("internal", "Workspace deletion partially failed. Please retry.");
+    }
+
+    return { ok: true, pendingReassign: false };
+});
+
+export const restoreWorkspace = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const data = asObjectPayload(request.data);
+    const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
+
+    const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
+    if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
+    const wsData = wsSnap.data()!;
+
+    const isSoftDeleted = wsData.deletedAt != null;
+    const restorePending = wsData.pendingRestore === true;
+
+    // Neither soft-deleted nor mid-restore → nothing to do.
+    if (!isSoftDeleted && !restorePending) {
+        throw new HttpsError("failed-precondition", "This workspace is not deleted and does not need restoration.");
+    }
+
+    // First attempt: clear deletedAt + set pendingRestore BEFORE the cascade runs.
+    // Retry attempt: pendingRestore is already true — fall through to re-run the cascade.
+    if (isSoftDeleted) {
+        const thirtyDaysMs = 30 * 24 * 3600 * 1000;
+        if (Date.now() - wsData.deletedAt > thirtyDaysMs) {
+            throw new HttpsError("failed-precondition", "This workspace was deleted more than 30 days ago and cannot be restored.");
+        }
+        await wsSnap.ref.update({
+            deletedAt: admin.firestore.FieldValue.delete(),
+            pendingRestore: true,
+        });
+    }
+
+    try {
+        await cascadeRevertOnRestore(uid, workspaceId);
+    } catch (err) {
+        console.error(`🔥 Cascade restore failed for workspace ${workspaceId}:`, err);
+        // pendingRestore stays true so a retry will re-enter this handler.
+        throw new HttpsError("internal", "Workspace restore partially failed. Please retry.");
+    }
+
+    return { ok: true, pendingRestore: false };
+});
+
+export const linkMetaAccountToWorkspace = onCall({
+    region: "europe-west1",
+    secrets: [metaAppId, metaAppSecret],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const data = asObjectPayload(request.data);
+    const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
+    const metaAdAccountId = requireNonEmptyString(data.metaAdAccountId, "metaAdAccountId");
+    const metaAdAccountName = typeof data.metaAdAccountName === "string" ? data.metaAdAccountName : "";
+
+    const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
+    if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
+    assertWorkspaceActive(wsSnap);
+
+    const connDoc = await db.collection("metaConnections").doc(uid).get();
+    const conn = connDoc.exists ? connDoc.data() : null;
+    if (!conn?.encryptedToken) {
+        throw new HttpsError("failed-precondition", "Connect your Meta account first.");
+    }
+    const accessToken = decryptToken(conn.encryptedToken, metaAppSecret.value());
+
+    const connectedAccounts: any[] = conn.adAccounts ?? [];
+    const isConnected = connectedAccounts.some((a: any) => a.id === metaAdAccountId || `act_${a.id}` === metaAdAccountId || a.id === metaAdAccountId.replace("act_", ""));
+    if (!isConnected) {
+        throw new HttpsError("failed-precondition", "This Meta ad account is not in your connected accounts.");
+    }
+
+    const role = await probeMetaRole(accessToken, metaAdAccountId);
+    if (role === "INSUFFICIENT") {
+        throw new HttpsError("failed-precondition", "Your Meta role on this ad account doesn't allow publishing. Request Advertiser access in Meta Business Manager to link it.");
+    }
+
+    await wsSnap.ref.update({
+        metaAdAccountId,
+        metaAdAccountName: metaAdAccountName ?? "",
+        metaRoleAtLinkTime: role,
+    });
+
+    return { ok: true, metaRoleAtLinkTime: role };
+});
+
+export const unlinkMetaAccountFromWorkspace = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const data = asObjectPayload(request.data);
+    const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
+
+    const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
+    if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
+
+    await wsSnap.ref.update({
+        metaAdAccountId: admin.firestore.FieldValue.delete(),
+        metaAdAccountName: admin.firestore.FieldValue.delete(),
+        metaRoleAtLinkTime: admin.firestore.FieldValue.delete(),
+    });
+
+    return { ok: true };
+});
+
+export const setTeamMemberWorkspaceAccess = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const data = asObjectPayload(request.data);
+    const memberDocId = requireNonEmptyString(data.memberDocId, "memberDocId");
+    if (!Array.isArray(data.workspaceAccess)) {
+        throw new HttpsError("invalid-argument", "workspaceAccess must be an array of strings.");
+    }
+
+    // Canonicalize: drop non-string / empty / whitespace entries, dedupe via Set,
+    // then sort for stable array ordering. This is what feeds the diff, the
+    // per-workspace validation loop, and the written member doc — so duplicate
+    // IDs in the request can never produce duplicate audit entries.
+    const workspaceAccess: string[] = [
+        ...new Set(
+            (data.workspaceAccess as unknown[])
+                .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+                .map((x) => x.trim())
+        ),
+    ].sort();
+
+    const memberRef = db.collection(`users/${uid}/team`).doc(memberDocId);
+
+    // Snapshot the plan outside the txn — it is not part of the concurrent access diff.
+    const userSnap = await db.collection("users").doc(uid).get();
+    const planSnapshot = userSnap.data()?.billingState?.plan ?? userSnap.data()?.plan ?? "none";
+
+    // The whole diff + audit write happens inside one transaction so that two
+    // concurrent setTeamMemberWorkspaceAccess calls cannot compute their granted/revoked
+    // deltas against the same stale pre-txn snapshot and double-emit audit entries.
+    const result = await db.runTransaction(async (txn) => {
+        const memberSnap = await txn.get(memberRef);
+        if (!memberSnap.exists) {
+            throw new HttpsError("not-found", "Team member not found.");
+        }
+        const memberData = memberSnap.data()!;
+        const currentAccess: string[] = memberData.workspaceAccess ?? [];
+
+        const granted = workspaceAccess.filter((id) => !currentAccess.includes(id));
+        const revoked = currentAccess.filter((id) => !workspaceAccess.includes(id));
+
+        // Validate each requested workspace inside the txn so a concurrent delete
+        // of a workspace can't slip through after our pre-txn check.
+        const wsCache = new Map<string, admin.firestore.DocumentSnapshot>();
+        for (const wsId of workspaceAccess) {
+            const wsSnap = await txn.get(db.collection(`users/${uid}/workspaces`).doc(wsId));
+            if (!wsSnap.exists || wsSnap.data()?.deletedAt != null) {
+                throw new HttpsError("failed-precondition", "One or more workspace IDs are invalid or soft-deleted.");
+            }
+            wsCache.set(wsId, wsSnap);
+        }
+        // Also read workspaces that are being revoked so we can record their name at event.
+        for (const wsId of revoked) {
+            if (wsCache.has(wsId)) continue;
+            const wsSnap = await txn.get(db.collection(`users/${uid}/workspaces`).doc(wsId));
+            wsCache.set(wsId, wsSnap);
+        }
+
+        // No diff? Short-circuit before any writes hit.
+        if (granted.length === 0 && revoked.length === 0) {
+            return { granted: [] as string[], revoked: [] as string[] };
+        }
+
+        // All reads are done; now writes.
+        txn.update(memberRef, { workspaceAccess });
+
+        const targetMemberUid = memberData.uid ?? memberData.memberUid ?? "";
+        const targetMemberEmail = memberData.email ?? memberData.memberEmail ?? "";
+
+        for (const wsId of granted) {
+            await writeAuditEntry(txn, {
+                ownerUid: uid,
+                actorUid: uid,
+                targetMemberUid,
+                targetMemberEmail,
+                workspaceId: wsId,
+                workspaceNameAtEvent: wsCache.get(wsId)?.data()?.name ?? "",
+                action: "grant",
+                planSnapshot,
+            });
+        }
+
+        for (const wsId of revoked) {
+            await writeAuditEntry(txn, {
+                ownerUid: uid,
+                actorUid: uid,
+                targetMemberUid,
+                targetMemberEmail,
+                workspaceId: wsId,
+                workspaceNameAtEvent: wsCache.get(wsId)?.data()?.name ?? "",
+                action: "revoke",
+                planSnapshot,
+            });
+        }
+
+        return { granted, revoked };
+    });
+
+    return { ok: true, granted: result.granted, revoked: result.revoked };
+});
+
+export const getWorkspaceGenerations = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const data = asObjectPayload(request.data);
+    const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
+    const reqLimit = validatePositiveIntLimit(data.limit, "limit", 50);
+    const cursor = validateTimestampIdCursor(data.cursor, "cursor");
+
+    const wsSnap = await db.collectionGroup("workspaces").where(admin.firestore.FieldPath.documentId(), "==", workspaceId).limit(1).get();
+    if (wsSnap.empty) throw new HttpsError("not-found", "Workspace not found.");
+
+    const wsDoc = wsSnap.docs[0];
+    const ownerUid = wsDoc.ref.parent.parent?.id;
+    if (!ownerUid) throw new HttpsError("not-found", "Workspace not found.");
+    assertWorkspaceActive(wsDoc);
+
+    if (uid !== ownerUid) {
+        // Team docs are auto-IDed; member doc stores the teammate's auth uid as `uid`
+        // (see createTeamInvite accept path — txn.set({ uid: callerUid, ... })).
+        const memberQuery = await db
+            .collection(`users/${ownerUid}/team`)
+            .where("uid", "==", uid)
+            .limit(1)
+            .get();
+        if (memberQuery.empty) {
+            throw new HttpsError("permission-denied", "You don't have access to this workspace.");
+        }
+        const memberData = memberQuery.docs[0].data();
+        if (!(memberData.workspaceAccess ?? []).includes(workspaceId)) {
+            throw new HttpsError("permission-denied", "You don't have access to this workspace.");
+        }
+    }
+
+    const effectiveLimit = reqLimit ?? 20;
+
+    // Composite cursor: (timestamp DESC, __name__ DESC). Using __name__ as the
+    // secondary sort ensures rows sharing a timestamp paginate deterministically,
+    // including when results from the primary and legacy (workspaceId===null)
+    // queries are merged for the default workspace.
+    const buildQuery = (wsFilter: string | null) => {
+        let q: admin.firestore.Query = db.collection("generations")
+            .where("userId", "==", ownerUid)
+            .where("workspaceId", "==", wsFilter)
+            .orderBy("timestamp", "desc")
+            .orderBy(admin.firestore.FieldPath.documentId(), "desc");
+        if (cursor && cursor.timestamp != null && cursor.id) {
+            q = q.startAfter(cursor.timestamp, cursor.id);
+        }
+        return q.limit(effectiveLimit);
+    };
+
+    const primarySnap = await buildQuery(workspaceId).get();
+    const combined: Array<{ id: string; timestamp?: number; [k: string]: any }> =
+        primarySnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    // FR-015: legacy records with workspaceId === null surface under the default workspace.
+    // Always run the merge — a legacy record with a higher timestamp can outrank a primary
+    // record on the current page, so short-circuiting when the primary page is already full
+    // would drop legitimately-newer legacy rows.
+    if (wsDoc.data()?.isDefault === true) {
+        const legacySnap = await buildQuery(null).get();
+        const seen = new Set(combined.map((x) => x.id));
+        for (const d of legacySnap.docs) {
+            if (seen.has(d.id)) continue;
+            combined.push({ id: d.id, ...d.data() });
+        }
+        // Merge sort by (timestamp DESC, id DESC) to match the query ordering,
+        // then truncate to the page limit.
+        combined.sort((a, b) => {
+            const dt = (b.timestamp ?? 0) - (a.timestamp ?? 0);
+            if (dt !== 0) return dt;
+            return b.id < a.id ? -1 : b.id > a.id ? 1 : 0;
+        });
+        combined.length = Math.min(combined.length, effectiveLimit);
+    }
+
+    let nextCursor: { timestamp: number; id: string } | null = null;
+    if (combined.length >= effectiveLimit && combined.length > 0) {
+        const last = combined[combined.length - 1];
+        if (last?.timestamp != null && last.id) {
+            nextCursor = { timestamp: last.timestamp, id: last.id };
+        }
+    }
+
+    return { items: combined, nextCursor };
+});
+
+export const getWorkspaceAccessAuditLog = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+    const uid = request.auth.uid;
+    const data = asObjectPayload(request.data);
+    const reqLimit = validatePositiveIntLimit(data.limit, "limit", 200);
+    const cursor = validateTimestampIdCursor(data.cursor, "cursor");
+    const filterMemberUid = typeof data.filterMemberUid === "string" && data.filterMemberUid.length > 0 ? data.filterMemberUid : undefined;
+    const filterWorkspaceId = typeof data.filterWorkspaceId === "string" && data.filterWorkspaceId.length > 0 ? data.filterWorkspaceId : undefined;
+
+    const effectiveLimit = reqLimit ?? 50;
+    let q: admin.firestore.Query = db.collection(`users/${uid}/workspace_access_audit`)
+        .orderBy("timestamp", "desc")
+        .orderBy(admin.firestore.FieldPath.documentId(), "desc");
+
+    if (filterMemberUid) {
+        q = q.where("targetMemberUid", "==", filterMemberUid);
+    }
+    if (filterWorkspaceId) {
+        q = q.where("workspaceId", "==", filterWorkspaceId);
+    }
+    if (cursor) {
+        q = q.startAfter(cursor.timestamp, cursor.id);
+    }
+    q = q.limit(effectiveLimit);
+
+    const snap = await q.get();
+    const entries = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Array<{ id: string; timestamp?: number }>;
+
+    let nextCursor: { timestamp: number; id: string } | null = null;
+    if (entries.length >= effectiveLimit) {
+        const last = entries[entries.length - 1];
+        if (last?.timestamp != null && last.id) {
+            nextCursor = { timestamp: last.timestamp, id: last.id };
+        }
+    }
+
+    return { entries, nextCursor };
+});
+
+export { purgeExpiredWorkspaces };

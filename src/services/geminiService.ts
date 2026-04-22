@@ -205,12 +205,13 @@ Use this information to better understand the brand's positioning, tone, and tar
     mode: 'initial' | 'refresh' | 'precision' = 'initial',
     previousOutput?: string, globalRefinement?: string,
     editFeedback?: string, editIndex?: string,
-    editIntent?: TovEditIntent, rewriteScope?: RewriteScope, semanticLock?: SemanticLock
+    editIntent?: TovEditIntent, rewriteScope?: RewriteScope, semanticLock?: SemanticLock,
+    activeWorkspaceId?: string
   ): Promise<GenerationResult> {
     const result = await fnTOV({
       inputs: sanitizeInputs(inputs), resolvedUniverse, mode,
       previousOutput, globalRefinement, editFeedback, editIndex,
-      editIntent, rewriteScope, semanticLock,
+      editIntent, rewriteScope, semanticLock, activeWorkspaceId,
     });
     return parseGenerationResult(result.data);
   }
@@ -220,11 +221,12 @@ Use this information to better understand the brand's positioning, tone, and tar
     approvedTov: string, inputs: AdInputs, resolvedUniverse: string,
     mode: 'initial' | 'refresh' | 'precision' = 'initial',
     previousOutput?: string, globalRefinement?: string,
-    editFeedback?: string, editIndex?: string
+    editFeedback?: string, editIndex?: string,
+    activeWorkspaceId?: string
   ): Promise<GenerationResult> {
     const result = await fnConcepts({
       approvedTov, inputs: sanitizeInputs(inputs), resolvedUniverse,
-      mode, previousOutput, globalRefinement, editFeedback, editIndex,
+      mode, previousOutput, globalRefinement, editFeedback, editIndex, activeWorkspaceId,
     });
     return parseGenerationResult(result.data);
   }
@@ -233,11 +235,12 @@ Use this information to better understand the brand's positioning, tone, and tar
   async generateBuildPlan(
     conceptRaw: string, selectedTov: string, inputs: AdInputs,
     resolvedUniverse: string, currentAspectRatio: AspectRatio,
-    textOverride?: TextOverride
+    textOverride?: TextOverride,
+    activeWorkspaceId?: string
   ): Promise<BuildPlanResult> {
     const result = await fnBuildPlan({
       conceptRaw, selectedTov, inputs: sanitizeInputs(inputs),
-      resolvedUniverse, currentAspectRatio, textOverride,
+      resolvedUniverse, currentAspectRatio, textOverride, activeWorkspaceId,
     });
     const data = result.data as { text?: string; success?: boolean; errorCode?: string | null; warningCode?: string; failedFields?: string[] };
     return {
@@ -252,18 +255,17 @@ Use this information to better understand the brand's positioning, tone, and tar
     buildPlan: string, approvedTov: string, inputs: AdInputs,
     resolvedUniverse: string, currentAspectRatio: AspectRatio,
     editInstruction?: string, base64ToEdit?: string,
-    styleReference?: string, textOverride?: TextOverride
+    styleReference?: string, textOverride?: TextOverride,
+    activeWorkspaceId?: string
   ): Promise<{ image: string | null; errorCode?: string; debug?: any }> {
-    // For image generation, we need to send photos
     const inputsWithPhotos = { ...inputs } as any;
-    // Keep personal photos for face reference (max 5)
     inputsWithPhotos.personalPhotos = (inputs.personalPhotos || []).slice(0, 5);
     inputsWithPhotos.brandLogos = (inputs.brandLogos || []).slice(0, 1);
 
     const result = await fnFinalAd({
       buildPlan, approvedTov, inputs: inputsWithPhotos,
       resolvedUniverse, currentAspectRatio,
-      editInstruction, base64ToEdit, styleReference, textOverride,
+      editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId,
     });
     const data = result.data as any;
     if (import.meta.env.DEV && data.debug) {
@@ -299,37 +301,38 @@ Use this information to better understand the brand's positioning, tone, and tar
   // ─── CAROUSEL ANGLE GENERATION ─────────────────────────────────────────
   async generateCarouselAngles(
     inputs: AdInputs, resolvedUniverse: string,
-    slideCount: number, globalRefinement?: string
+    slideCount: number, globalRefinement?: string,
+    activeWorkspaceId?: string
   ): Promise<string> {
     const result = await fnCarouselAngles({
       inputs: sanitizeInputs(inputs), resolvedUniverse,
-      slideCount, globalRefinement,
+      slideCount, globalRefinement, activeWorkspaceId,
     });
     return (result.data as any).text || '';
   }
 
-  // ─── CAROUSEL SLIDE COPY GENERATION ────────────────────────────────────
   async generateCarouselSlideCopies(
     approvedTov: string, inputs: AdInputs,
     slideCount: number, resolvedUniverse: string,
-    refinement?: string
+    refinement?: string,
+    activeWorkspaceId?: string
   ): Promise<CarouselSlideCopy[]> {
     const result = await fnCarouselCopies({
       approvedTov, inputs: sanitizeInputs(inputs),
-      slideCount, resolvedUniverse, refinement,
+      slideCount, resolvedUniverse, refinement, activeWorkspaceId,
     });
     return (result.data as any).copies || [];
   }
 
-  // ─── CAPTION GENERATION ────────────────────────────────────────────────
   async generateCaption(
     mockupUrl: string, inputs: AdInputs,
     visualMetaphor: string, approvedTov: string,
-    refinement?: string, carouselContext?: string, buildPlan?: string
+    refinement?: string, carouselContext?: string, buildPlan?: string,
+    activeWorkspaceId?: string
   ): Promise<GenerationResult> {
     const result = await fnCaption({
       mockupUrl, inputs: sanitizeInputs(inputs),
-      visualMetaphor, approvedTov, refinement, carouselContext, buildPlan,
+      visualMetaphor, approvedTov, refinement, carouselContext, buildPlan, activeWorkspaceId,
     });
     return parseGenerationResult(result.data);
   }

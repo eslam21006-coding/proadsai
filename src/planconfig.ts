@@ -101,6 +101,7 @@ export interface PlanConfig {
         copywritingStrategies: 'full';
         adTones: 'full';
     };
+    workspaceLimit: number;
     featureLabels: FeatureLabel[];
 }
 
@@ -156,7 +157,7 @@ const ALL_RATIOS = ['1:1', '4:5', '3:4', '4:3', '9:16', '16:9'];
 export const PLANS: Record<UserPlan, PlanConfig> = {
     none: {
         id: 'none', name: 'No Plan', subtitle: '', monthlyCredits: 0, trialCredits: 0, priceMonthly: 0, priceAnnualPerMonth: 0,
-        savedProjectLimit: 0, audienceAvatarLimit: 0, carouselMaxSlides: null, batchConfig: null,
+        savedProjectLimit: 0, audienceAvatarLimit: 0, carouselMaxSlides: null, batchConfig: null, workspaceLimit: 1,
         paddlePriceId: { monthly: '', yearly: '' },
         features: {
             retargeting: false, fantasyUniverses: false, aspectRatios: [], visualPolishes: false, brandUrlScraping: false, competitorResearch: false, carousel: false, batchGeneration: false, maxTeamMembers: 0,
@@ -168,7 +169,7 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
     },
     starter: {
         id: 'starter', name: 'Starter', subtitle: 'For solopreneurs', monthlyCredits: 800, trialCredits: 50, priceMonthly: 19, priceAnnualPerMonth: 15.20,
-        savedProjectLimit: 10, audienceAvatarLimit: 5, carouselMaxSlides: null, batchConfig: null,
+        savedProjectLimit: 10, audienceAvatarLimit: 5, carouselMaxSlides: null, batchConfig: null, workspaceLimit: 1,
         paddlePriceId: { monthly: 'pri_01knz7v1rr3eehbe12s214ba0t', yearly: 'pri_01knz7wz5cpvv2fx6334wv822e' },
         features: {
             retargeting: false, fantasyUniverses: false, aspectRatios: ALL_RATIOS, visualPolishes: false, brandUrlScraping: true, competitorResearch: false, carousel: false, batchGeneration: false, maxTeamMembers: 1,
@@ -180,7 +181,7 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
     },
     pro: {
         id: 'pro', name: 'Pro', subtitle: 'For serious marketers', monthlyCredits: 2500, trialCredits: 50, priceMonthly: 79, priceAnnualPerMonth: 63.20,
-        savedProjectLimit: 30, audienceAvatarLimit: 15, carouselMaxSlides: 7,
+        savedProjectLimit: 30, audienceAvatarLimit: 15, carouselMaxSlides: 7, workspaceLimit: 1,
         batchConfig: { maxSizes: 1, maxHooks: 2, maxConcepts: 2, maxAdsPerRun: 4 },
         paddlePriceId: { monthly: 'pri_01knz7zpgfbek52zm0n012jqn0', yearly: 'pri_01knz82jwdxjph1mpny39jnxqg' },
         features: {
@@ -193,7 +194,7 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
     },
     scale: {
         id: 'scale', name: 'Scale', subtitle: 'For high-volume ad testing', monthlyCredits: 6500, trialCredits: 50, priceMonthly: 179, priceAnnualPerMonth: 143.20,
-        savedProjectLimit: Infinity, audienceAvatarLimit: Infinity, carouselMaxSlides: 10,
+        savedProjectLimit: Infinity, audienceAvatarLimit: Infinity, carouselMaxSlides: 10, workspaceLimit: 10,
         batchConfig: { maxSizes: 3, maxHooks: 4, maxConcepts: 3, maxAdsPerRun: 36 },
         paddlePriceId: { monthly: 'pri_01knz80jr5m4ey3wrskpvgbrh4', yearly: 'pri_01knz81pexff8h8wbwq44cy0j3' },
         features: {
