@@ -191,7 +191,7 @@ Added to `firestore.indexes.json`:
 },
 {
   "collectionGroup": "workspaces",
-  "queryScope": "COLLECTION",
+  "queryScope": "COLLECTION_GROUP",
   "fields": [
     { "fieldPath": "deletedAt", "order": "ASCENDING" }
   ]

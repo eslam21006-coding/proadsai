@@ -25,7 +25,7 @@ import { paddleCreateTopupCheckout } from "./paddle/paddleCheckout.js";
 import { paddleCreatePortalSession } from "./paddle/paddlePortal.js";
 import { handlePaddleWebhook } from "./billing/paddleWebhook.js";
 import { createPaddleClient, PADDLE_PRICE_TO_PLAN } from "./paddle/paddleClient.js";
-import { assertOwner, assertScalePlan, assertWorkspaceActive, assertWorkspaceLimit, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
+import { assertOwner, assertScalePlan, assertWorkspaceActive, createWorkspaceWithLimit, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
 import { probeMetaRole } from "./workspaces/metaRoleProbe.js";
 import { writeAuditEntry } from "./workspaces/auditLog.js";
 import { purgeExpiredWorkspaces, cascadeReassignOnDelete, cascadeRevertOnRestore } from "./workspaces/workspacePurge.js";
@@ -3557,7 +3557,8 @@ export const serverGenerateTOV = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, editIntent, rewriteScope, semanticLock } = request.data;
+    const { inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, editIntent, rewriteScope, semanticLock, activeWorkspaceId } = request.data;
+    void activeWorkspaceId;
     // ═══ ENTITLEMENT: Check retargeting gate on hook generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
@@ -3581,7 +3582,8 @@ export const serverGenerateConcepts = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex } = request.data;
+    const { approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, activeWorkspaceId } = request.data;
+    void activeWorkspaceId;
     // ═══ ENTITLEMENT: Check retargeting gate on concept generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
@@ -3605,7 +3607,8 @@ export const serverGenerateBuildPlan = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride } = request.data;
+    const { conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride, activeWorkspaceId } = request.data;
+    void activeWorkspaceId;
     // ═══ ENTITLEMENT ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
@@ -3628,7 +3631,8 @@ export const serverGenerateFinalAd = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride } = request.data;
+    const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId } = request.data;
+    void activeWorkspaceId;
     // ═══ ENTITLEMENT: Check retargeting + aspect ratio gates ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireAspectRatio: currentAspectRatio,
@@ -3833,7 +3837,8 @@ export const serverGenerateCarouselAngles = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { inputs, resolvedUniverse, slideCount, globalRefinement } = request.data;
+    const { inputs, resolvedUniverse, slideCount, globalRefinement, activeWorkspaceId } = request.data;
+    void activeWorkspaceId;
     // ═══ ENTITLEMENT: Check carousel access + slide count ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireCarousel: true,
@@ -3867,7 +3872,8 @@ export const serverGenerateCarouselSlideCopies = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { approvedTov, inputs, slideCount, resolvedUniverse, refinement } = request.data;
+    const { approvedTov, inputs, slideCount, resolvedUniverse, refinement, activeWorkspaceId } = request.data;
+    void activeWorkspaceId;
     // ═══ ENTITLEMENT: Check carousel access ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireCarousel: true,
@@ -3928,7 +3934,8 @@ export const serverGenerateCaption = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan } = request.data;
+    const { mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan, activeWorkspaceId } = request.data;
+    void activeWorkspaceId;
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateCaption(mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan);
@@ -5025,23 +5032,21 @@ export const createWorkspace = onCall({
 
     const name = (data.name ?? "").trim();
     const brandName = (data.brandName ?? "").trim();
-    if (!name) throw new HttpsError("invalid-argument", "Workspace name is required.");
-    if (!brandName) throw new HttpsError("invalid-argument", "Brand name is required.");
-    if (name.length > 60) throw new HttpsError("invalid-argument", "Workspace name must be 60 characters or fewer.");
-    if (brandName.length > 60) throw new HttpsError("invalid-argument", "Brand name must be 60 characters or fewer.");
+    if (!name) throw new HttpsError("invalid-argument", "Workspace name is required.", { reason: "name_required" });
+    if (!brandName) throw new HttpsError("invalid-argument", "Brand name is required.", { reason: "brand_name_required" });
+    if (name.length > 60) throw new HttpsError("invalid-argument", "Workspace name must be 60 characters or fewer.", { reason: "name_too_long" });
+    if (brandName.length > 60) throw new HttpsError("invalid-argument", "Brand name must be 60 characters or fewer.", { reason: "brand_name_too_long" });
 
     if (data.brandColorPrimary && !HEX_RE.test(data.brandColorPrimary)) {
-        throw new HttpsError("invalid-argument", "Brand color must be a 6-digit hex value like #A1B2C3.");
+        throw new HttpsError("invalid-argument", "Brand color must be a 6-digit hex value like #A1B2C3.", { reason: "invalid_hex_color" });
     }
     if (data.brandColorSecondary && !HEX_RE.test(data.brandColorSecondary)) {
-        throw new HttpsError("invalid-argument", "Brand color must be a 6-digit hex value.");
+        throw new HttpsError("invalid-argument", "Brand color must be a 6-digit hex value.", { reason: "invalid_hex_color" });
     }
 
     await assertScalePlan(uid);
-    await assertWorkspaceLimit(uid);
 
-    const docRef = db.collection(`users/${uid}/workspaces`).doc();
-    await docRef.set({
+    const workspaceId = await createWorkspaceWithLimit(uid, {
         name,
         brandName,
         brandUrl: data.brandUrl ?? null,
@@ -5058,7 +5063,7 @@ export const createWorkspace = onCall({
         pendingRestore: false,
     });
 
-    return { workspaceId: docRef.id };
+    return { workspaceId };
 });
 
 export const updateWorkspace = onCall({
@@ -5128,11 +5133,14 @@ export const deleteWorkspace = onCall({
     });
 
     const defaultId = await resolveDefaultWorkspaceId(uid);
-    cascadeReassignOnDelete(uid, workspaceId, defaultId).catch((err) => {
+    try {
+        await cascadeReassignOnDelete(uid, workspaceId, defaultId);
+    } catch (err) {
         console.error(`🔥 Cascade reassign failed for workspace ${workspaceId}:`, err);
-    });
+        throw new HttpsError("internal", "Workspace deletion partially failed. Please retry.");
+    }
 
-    return { ok: true, pendingReassign: true };
+    return { ok: true, pendingReassign: false };
 });
 
 export const restoreWorkspace = onCall({
@@ -5162,11 +5170,14 @@ export const restoreWorkspace = onCall({
         pendingRestore: true,
     });
 
-    cascadeRevertOnRestore(uid, workspaceId).catch((err) => {
+    try {
+        await cascadeRevertOnRestore(uid, workspaceId);
+    } catch (err) {
         console.error(`🔥 Cascade restore failed for workspace ${workspaceId}:`, err);
-    });
+        throw new HttpsError("internal", "Workspace restore partially failed. Please retry.");
+    }
 
-    return { ok: true, pendingRestore: true };
+    return { ok: true, pendingRestore: false };
 });
 
 export const linkMetaAccountToWorkspace = onCall({
@@ -5277,8 +5288,8 @@ export const setTeamMemberWorkspaceAccess = onCall({
             await writeAuditEntry(txn, {
                 ownerUid: uid,
                 actorUid: uid,
-                targetMemberUid: memberData.memberUid ?? "",
-                targetMemberEmail: memberData.memberEmail ?? "",
+                targetMemberUid: memberData.uid ?? memberData.memberUid ?? "",
+                targetMemberEmail: memberData.email ?? memberData.memberEmail ?? "",
                 workspaceId: wsId,
                 workspaceNameAtEvent: wsSnap.data()?.name ?? "",
                 action: "grant",
@@ -5291,8 +5302,8 @@ export const setTeamMemberWorkspaceAccess = onCall({
             await writeAuditEntry(txn, {
                 ownerUid: uid,
                 actorUid: uid,
-                targetMemberUid: memberData.memberUid ?? "",
-                targetMemberEmail: memberData.memberEmail ?? "",
+                targetMemberUid: memberData.uid ?? memberData.memberUid ?? "",
+                targetMemberEmail: memberData.email ?? memberData.memberEmail ?? "",
                 workspaceId: wsId,
                 workspaceNameAtEvent: wsSnap.data()?.name ?? "",
                 action: "revoke",
@@ -5324,6 +5335,7 @@ export const getWorkspaceGenerations = onCall({
     const wsDoc = wsSnap.docs[0];
     const ownerUid = wsDoc.ref.parent.parent?.id;
     if (!ownerUid) throw new HttpsError("not-found", "Workspace not found.");
+    assertWorkspaceActive(wsDoc);
 
     if (uid !== ownerUid) {
         // Team docs are auto-IDed, not keyed by member uid — find by memberUid field.
@@ -5342,25 +5354,39 @@ export const getWorkspaceGenerations = onCall({
     }
 
     const effectiveLimit = Math.min(reqLimit ?? 20, 50);
-    let q = db.collection("generations")
-        .where("userId", "==", ownerUid)
-        .where("workspaceId", "==", workspaceId)
-        .orderBy("timestamp", "desc")
-        .limit(effectiveLimit);
 
-    if (cursor) {
-        q = q.startAfter(cursor);
+    const buildQuery = (wsFilter: string | null) => {
+        let q: admin.firestore.Query = db.collection("generations")
+            .where("userId", "==", ownerUid)
+            .where("workspaceId", "==", wsFilter)
+            .orderBy("timestamp", "desc");
+        if (cursor) q = q.startAfter(cursor);
+        return q.limit(effectiveLimit);
+    };
+
+    const primarySnap = await buildQuery(workspaceId).get();
+    const combined: Array<{ id: string; timestamp?: number; [k: string]: any }> =
+        primarySnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    // FR-015: legacy records with workspaceId === null surface under the default workspace.
+    if (wsDoc.data()?.isDefault === true && combined.length < effectiveLimit) {
+        const legacySnap = await buildQuery(null).get();
+        const seen = new Set(combined.map((x) => x.id));
+        for (const d of legacySnap.docs) {
+            if (seen.has(d.id)) continue;
+            combined.push({ id: d.id, ...d.data() });
+        }
+        // Merge sort by timestamp desc and truncate to the page limit.
+        combined.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+        combined.length = Math.min(combined.length, effectiveLimit);
     }
-
-    const snap = await q.get();
-    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
     let nextCursor: number | null = null;
-    if (items.length >= effectiveLimit && items.length > 0) {
-        nextCursor = items[items.length - 1].timestamp ?? null;
+    if (combined.length >= effectiveLimit && combined.length > 0) {
+        nextCursor = combined[combined.length - 1].timestamp ?? null;
     }
 
-    return { items, nextCursor };
+    return { items: combined, nextCursor };
 });
 
 export const getWorkspaceAccessAuditLog = onCall({
@@ -5371,32 +5397,36 @@ export const getWorkspaceAccessAuditLog = onCall({
     const uid = request.auth.uid;
     const { limit: reqLimit, cursor, filterMemberUid, filterWorkspaceId } = request.data as {
         limit?: number;
-        cursor?: string;
+        cursor?: { timestamp: number; id: string } | null;
         filterMemberUid?: string;
         filterWorkspaceId?: string;
     };
 
     const effectiveLimit = Math.min(reqLimit ?? 50, 200);
-    let q = db.collection(`users/${uid}/workspace_access_audit`)
+    let q: admin.firestore.Query = db.collection(`users/${uid}/workspace_access_audit`)
         .orderBy("timestamp", "desc")
-        .limit(effectiveLimit);
+        .orderBy(admin.firestore.FieldPath.documentId(), "desc");
 
     if (filterMemberUid) {
-        q = q.where("targetMemberUid", "==", filterMemberUid) as any;
+        q = q.where("targetMemberUid", "==", filterMemberUid);
     }
     if (filterWorkspaceId) {
-        q = q.where("workspaceId", "==", filterWorkspaceId) as any;
+        q = q.where("workspaceId", "==", filterWorkspaceId);
     }
-    if (cursor) {
-        q = q.startAfter(cursor) as any;
+    if (cursor && typeof cursor === "object" && cursor.timestamp != null && cursor.id) {
+        q = q.startAfter(cursor.timestamp, cursor.id);
     }
+    q = q.limit(effectiveLimit);
 
     const snap = await q.get();
-    const entries = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const entries = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Array<{ id: string; timestamp?: number }>;
 
-    let nextCursor: string | null = null;
+    let nextCursor: { timestamp: number; id: string } | null = null;
     if (entries.length >= effectiveLimit) {
-        nextCursor = entries[entries.length - 1]?.id ?? null;
+        const last = entries[entries.length - 1];
+        if (last?.timestamp != null && last.id) {
+            nextCursor = { timestamp: last.timestamp, id: last.id };
+        }
     }
 
     return { entries, nextCursor };

@@ -2,6 +2,11 @@
 
 import { httpsCallable } from "firebase/functions";
 import { functions } from "../firebase";
+import type { WorkspaceAccessAuditEntry } from "../types";
+import type { GenerationRecord } from "./feedbackService";
+
+type WorkspaceGeneration = GenerationRecord & { id: string; workspaceId: string };
+type AuditLogCursor = { timestamp: number; id: string };
 
 interface CreateWorkspaceRequest {
   name: string;
@@ -41,7 +46,7 @@ interface GetWorkspaceGenerationsRequest {
 
 interface GetWorkspaceAccessAuditLogRequest {
   limit?: number;
-  cursor?: string;
+  cursor?: AuditLogCursor | null;
   filterMemberUid?: string;
   filterWorkspaceId?: string;
 }
@@ -92,12 +97,12 @@ export const workspaceService = {
   getWorkspaceGenerations: (req: GetWorkspaceGenerationsRequest) =>
     httpsCallable<
       GetWorkspaceGenerationsRequest,
-      { items: any[]; nextCursor: number | null }
+      { items: WorkspaceGeneration[]; nextCursor: number | null }
     >(functions, "getWorkspaceGenerations")(req),
 
   getWorkspaceAccessAuditLog: (req?: GetWorkspaceAccessAuditLogRequest) =>
     httpsCallable<
       GetWorkspaceAccessAuditLogRequest,
-      { entries: any[]; nextCursor: string | null }
+      { entries: WorkspaceAccessAuditEntry[]; nextCursor: AuditLogCursor | null }
     >(functions, "getWorkspaceAccessAuditLog")(req ?? {}),
 };

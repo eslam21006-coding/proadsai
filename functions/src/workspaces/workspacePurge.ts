@@ -1,52 +1,89 @@
 // functions/src/workspaces/workspacePurge.ts — scheduled purge + delete/restore cascade triggers
 
 import * as functions from "firebase-functions";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
 
 const db = admin.firestore();
 const THIRTY_DAYS_MS = 30 * 24 * 3600 * 1000;
 const PAGE_SIZE = 400;
+const PURGE_BATCH_SIZE = 200;
+const MAX_ITEMS_PER_INVOCATION = 2000;
 
-export const purgeExpiredWorkspaces = functions.scheduler.onSchedule(
+interface PurgeRunSummary {
+  startedAt: number;
+  finishedAt: number;
+  workspacesChecked: number;
+  workspacesPurged: number;
+  errors: { workspaceId: string; reason: string }[];
+}
+
+export const purgeExpiredWorkspaces = onSchedule(
   {
     schedule: "0 4 * * *",
     timeZone: "UTC",
     region: "us-central1",
   },
   async () => {
+    const summary: PurgeRunSummary = {
+      startedAt: Date.now(),
+      finishedAt: 0,
+      workspacesChecked: 0,
+      workspacesPurged: 0,
+      errors: [],
+    };
+
     const cutoff = Date.now() - THIRTY_DAYS_MS;
-    let purged = 0;
-    let errors: { workspaceId: string; reason: string }[] = [];
+    let lastDoc: admin.firestore.QueryDocumentSnapshot | null = null;
 
     try {
-      const snap = await db
-        .collectionGroup("workspaces")
-        .where("deletedAt", "<=", cutoff)
-        .limit(500)
-        .get();
+      while (summary.workspacesChecked < MAX_ITEMS_PER_INVOCATION) {
+        let q: admin.firestore.Query = db
+          .collectionGroup("workspaces")
+          .where("deletedAt", "<=", cutoff)
+          .orderBy("deletedAt", "asc")
+          .limit(PURGE_BATCH_SIZE);
 
-      for (const doc of snap.docs) {
-        if (doc.data().isDefault === true) {
-          errors.push({
-            workspaceId: doc.id,
-            reason: "Default workspace should never be purged",
-          });
-          continue;
+        if (lastDoc) {
+          q = q.startAfter(lastDoc);
         }
-        try {
-          await doc.ref.delete();
-          purged++;
-        } catch (err: any) {
-          errors.push({ workspaceId: doc.id, reason: err.message });
+
+        const snap = await q.get();
+        if (snap.empty) break;
+
+        for (const doc of snap.docs) {
+          summary.workspacesChecked++;
+          if (doc.data().isDefault === true) {
+            summary.errors.push({
+              workspaceId: doc.id,
+              reason: "Default workspace should never be purged",
+            });
+            continue;
+          }
+          try {
+            await doc.ref.delete();
+            summary.workspacesPurged++;
+          } catch (err: any) {
+            summary.errors.push({
+              workspaceId: doc.id,
+              reason: err?.message ?? String(err),
+            });
+          }
         }
+
+        lastDoc = snap.docs[snap.docs.length - 1];
+        if (snap.size < PURGE_BATCH_SIZE) break;
       }
     } catch (err: any) {
       functions.logger.error("🔥 Purge run failed:", err);
+      summary.errors.push({
+        workspaceId: "(run)",
+        reason: err?.message ?? String(err),
+      });
     }
 
-    functions.logger.log(
-      `✅ Purge complete: ${purged} purged, ${errors.length} errors`
-    );
+    summary.finishedAt = Date.now();
+    functions.logger.log("✅ Purge run summary", summary);
   }
 );
 

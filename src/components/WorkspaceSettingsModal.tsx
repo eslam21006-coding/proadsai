@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import type { Workspace } from '../types';
 import { workspaceService } from '../services/workspaceService';
 import type { UserPlan } from '../planconfig';
+import { useT } from '../i18n';
 
 interface WorkspaceSettingsModalProps {
   workspace: Workspace | null;
@@ -13,7 +14,12 @@ interface WorkspaceSettingsModalProps {
   metaAdAccounts?: { id: string; name: string }[];
 }
 
+function isMetaEligible(plan?: UserPlan): boolean {
+  return plan === 'pro' || plan === 'scale';
+}
+
 export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, onClose, plan, metaAdAccounts }: WorkspaceSettingsModalProps) {
+  const { t } = useT();
   const isEdit = !!workspace;
   const [name, setName] = useState(workspace?.name || '');
   const [brandName, setBrandName] = useState(workspace?.brandName || '');
@@ -23,9 +29,19 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [selectedMetaAccount, setSelectedMetaAccount] = useState<string>(workspace?.metaAdAccountId || '');
   const [saving, setSaving] = useState(false);
+  const [uiError, setUiError] = useState<string | null>(null);
+  const [linkedMeta, setLinkedMeta] = useState<{
+    id?: string;
+    name?: string;
+    role?: 'ADMIN' | 'ADVERTISER';
+  }>({
+    id: workspace?.metaAdAccountId,
+    name: workspace?.metaAdAccountName,
+    role: workspace?.metaRoleAtLinkTime,
+  });
 
   const isScale = plan === 'scale';
-  const showMetaSection = isEdit && isScale;
+  const showMetaSection = isEdit && isMetaEligible(plan);
 
   useEffect(() => {
     if (workspace) {
@@ -35,12 +51,18 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
       setColorPrimary(workspace.brandColorPrimary || '#3b82f6');
       setColorSecondary(workspace.brandColorSecondary || '#1e293b');
       setSelectedMetaAccount(workspace.metaAdAccountId || '');
+      setLinkedMeta({
+        id: workspace.metaAdAccountId,
+        name: workspace.metaAdAccountName,
+        role: workspace.metaRoleAtLinkTime,
+      });
     }
   }, [workspace]);
 
   const handleSubmit = async () => {
     if (!name.trim() || !brandName.trim()) return;
     setSaving(true);
+    setUiError(null);
     try {
       if (!isEdit) {
         await workspaceService.createWorkspace({
@@ -69,8 +91,9 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
         logoUrl: workspace?.logoUrl || '',
         isDefault: workspace?.isDefault ?? false,
       });
-    } catch (err: any) {
-      console.error('Workspace save failed:', err);
+    } catch (err) {
+      console.warn('Workspace save failed:', err);
+      setUiError(t('workspace.settings.save_failed'));
     } finally {
       setSaving(false);
     }
@@ -79,11 +102,13 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
   const handleDelete = async () => {
     if (!workspace || !onDelete) return;
     setSaving(true);
+    setUiError(null);
     try {
       await workspaceService.deleteWorkspace(workspace.id);
       onDelete(workspace.id);
-    } catch (err: any) {
-      console.error('Workspace delete failed:', err);
+    } catch (err) {
+      console.warn('Workspace delete failed:', err);
+      setUiError(t('workspace.settings.delete_failed'));
     } finally {
       setSaving(false);
     }
@@ -92,24 +117,38 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
   const handleLinkMeta = async () => {
     if (!workspace || !selectedMetaAccount) return;
     const account = metaAdAccounts?.find(a => a.id === selectedMetaAccount);
+    setUiError(null);
     try {
-      await workspaceService.linkMetaAccountToWorkspace({
+      const result = await workspaceService.linkMetaAccountToWorkspace({
         workspaceId: workspace.id,
         metaAdAccountId: selectedMetaAccount,
         metaAdAccountName: account?.name || selectedMetaAccount,
       });
+      const role = (result.data?.metaRoleAtLinkTime ?? undefined) as
+        | 'ADMIN'
+        | 'ADVERTISER'
+        | undefined;
+      setLinkedMeta({
+        id: selectedMetaAccount,
+        name: account?.name || selectedMetaAccount,
+        role,
+      });
     } catch (err) {
-      console.error('Meta link failed:', err);
+      console.warn('Meta link failed:', err);
+      setUiError(t('workspace.settings.meta_link_failed'));
     }
   };
 
   const handleUnlinkMeta = async () => {
     if (!workspace) return;
+    setUiError(null);
     try {
       await workspaceService.unlinkMetaAccountFromWorkspace(workspace.id);
       setSelectedMetaAccount('');
+      setLinkedMeta({});
     } catch (err) {
-      console.error('Meta unlink failed:', err);
+      console.warn('Meta unlink failed:', err);
+      setUiError(t('workspace.settings.meta_unlink_failed'));
     }
   };
 
@@ -131,7 +170,7 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
           </p>
           {!isScale && !isEdit && (
             <div className="mt-3 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px]">
-              Creating more than one workspace requires the Scale plan.
+              {t('workspace.error.scale_required')}
             </div>
           )}
         </div>
@@ -210,11 +249,11 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
           {showMetaSection && (
             <div className="border-t border-white/[0.04] pt-4">
               <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-2">Meta Ad Account</label>
-              {workspace?.metaAdAccountId ? (
+              {linkedMeta.id ? (
                 <div className="flex items-center gap-3">
                   <div className="flex-1 px-3 py-2 rounded-xl bg-slate-900/60 border border-slate-800">
-                    <p className="text-[10px] font-bold text-white">{workspace.metaAdAccountName}</p>
-                    <p className="text-[8px] text-slate-500">{workspace.metaRoleAtLinkTime}</p>
+                    <p className="text-[10px] font-bold text-white">{linkedMeta.name}</p>
+                    <p className="text-[8px] text-slate-500">{linkedMeta.role}</p>
                   </div>
                   <button
                     onClick={handleUnlinkMeta}
@@ -250,6 +289,12 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {uiError && (
+            <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-[10px]">
+              {uiError}
             </div>
           )}
 

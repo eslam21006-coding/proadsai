@@ -48,5 +48,5 @@ export async function writeAuditEntry(
   const ref = db
     .collection(`users/${params.ownerUid}/workspace_access_audit`)
     .doc(entryId);
-  txn.set(ref, entry);
+  txn.create(ref, entry);
 }

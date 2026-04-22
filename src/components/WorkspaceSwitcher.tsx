@@ -1,6 +1,7 @@
 // WorkspaceSwitcher.tsx — Dropdown for switching between brand workspaces (Scaling plan only)
 import React, { useState, useRef, useEffect } from 'react';
 import type { Workspace } from '../types';
+import { useT } from '../i18n';
 
 interface WorkspaceSwitcherProps {
   workspaces: Workspace[];
@@ -31,6 +32,7 @@ export default function WorkspaceSwitcher({
   onSwitchGuardDiscard,
   onSwitchGuardSave,
 }: WorkspaceSwitcherProps) {
+  const { t } = useT();
   const [open, setOpen] = useState(false);
   const [guardOpen, setGuardOpen] = useState(false);
   const [pendingTarget, setPendingTarget] = useState<string | null>(null);
@@ -111,7 +113,7 @@ export default function WorkspaceSwitcher({
           <div className="max-h-[240px] overflow-y-auto custom-scrollbar">
             {visibleWorkspaces.length === 0 && (
               <div className="px-3 py-4 text-center text-[10px] text-slate-500">
-                No workspace access — ask your team owner to grant you access.
+                {t('workspace.error.no_access')}
               </div>
             )}
             {visibleWorkspaces.map(ws => (
@@ -161,26 +163,26 @@ export default function WorkspaceSwitcher({
         <div className="fixed inset-0 z-[300] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleGuardCancel} />
           <div className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-sm w-full mx-4 p-6 shadow-2xl">
-            <h3 className="text-lg font-bold text-white mb-2">Switch workspace?</h3>
-            <p className="text-sm text-slate-400 mb-6">Switching workspace will start a new project. Save current work?</p>
+            <h3 className="text-lg font-bold text-white mb-2">{t('workspace.switch_guard.title')}</h3>
+            <p className="text-sm text-slate-400 mb-6">{t('workspace.switch_guard.body')}</p>
             <div className="flex gap-3">
               <button
                 onClick={handleGuardSave}
                 className="flex-1 h-10 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-500 transition-colors"
               >
-                Save & Switch
+                {t('workspace.switch_guard.save')}
               </button>
               <button
                 onClick={handleGuardDiscard}
                 className="flex-1 h-10 rounded-xl bg-white/[0.06] text-slate-300 text-xs font-bold hover:bg-white/[0.1] transition-colors"
               >
-                Discard & Switch
+                {t('workspace.switch_guard.discard')}
               </button>
               <button
                 onClick={handleGuardCancel}
                 className="flex-1 h-10 rounded-xl bg-white/[0.04] text-slate-500 text-xs font-bold hover:text-white transition-colors"
               >
-                Cancel
+                {t('workspace.switch_guard.cancel')}
               </button>
             </div>
           </div>

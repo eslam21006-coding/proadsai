@@ -28,7 +28,7 @@ interface DeleteWorkspaceResponse {
 
 ## Side effects (synchronous)
 
-- Sets `deletedAt = serverTimestamp()`, `pendingReassign = true` on the workspace doc.
+- Sets `deletedAt = Date.now()` (epoch ms, since retention arithmetic is done in JS), `pendingReassign = true` on the workspace doc.
 - Emits a user-facing UI signal (workspace disappears from switcher on next fetch).
 
 ## Side effects (asynchronous, via Firestore trigger on `deletedAt` write)

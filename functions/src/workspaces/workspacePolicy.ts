@@ -28,7 +28,8 @@ export async function assertScalePlan(uid: string): Promise<void> {
   if (plan !== "scale") {
     throw new HttpsError(
       "permission-denied",
-      "Creating more than one workspace requires the Scale plan."
+      "Creating more than one workspace requires the Scale plan.",
+      { reason: "scale_plan_required" }
     );
   }
 }
@@ -57,9 +58,32 @@ export async function assertWorkspaceLimit(uid: string): Promise<void> {
   if (active.length >= 10) {
     throw new HttpsError(
       "failed-precondition",
-      "You've reached the 10-workspace limit on the Scale plan."
+      "You've reached the 10-workspace limit on the Scale plan.",
+      { reason: "workspace_limit_reached" }
     );
   }
+}
+
+// Transaction-safe limit check + create. The check and the write happen in the
+// same txn so concurrent createWorkspace calls cannot both pass the limit.
+export async function createWorkspaceWithLimit(
+  uid: string,
+  newDoc: Record<string, unknown>
+): Promise<string> {
+  const colRef = db.collection(`users/${uid}/workspaces`);
+  const newRef = colRef.doc();
+  await db.runTransaction(async (txn) => {
+    const snap = await txn.get(colRef);
+    const active = snap.docs.filter((d) => d.data().deletedAt == null);
+    if (active.length >= 10) {
+      throw new HttpsError(
+        "failed-precondition",
+        "You've reached the 10-workspace limit on the Scale plan."
+      );
+    }
+    txn.create(newRef, newDoc);
+  });
+  return newRef.id;
 }
 
 export async function resolveDefaultWorkspaceId(

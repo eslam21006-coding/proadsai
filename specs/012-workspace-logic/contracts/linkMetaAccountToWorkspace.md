@@ -8,8 +8,8 @@
 ```ts
 interface LinkMetaAccountRequest {
   workspaceId: string;
-  metaAdAccountId: string;     // e.g., "act_123456789"
-  metaAdAccountName: string;   // display name snapshot
+  metaAdAccountId: string;      // e.g., "act_123456789"
+  metaAdAccountName?: string;   // optional display name snapshot; defaults to "" server-side
 }
 ```
 

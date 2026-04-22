@@ -34,7 +34,7 @@ Technical approach — keep to the existing stack: Cloud Functions v2 callables 
 - Fail-closed authorization on every workspace-scoped read/write (FR-025 + Principle XI).
 - No silent downgrade of workspace caps when plan drops Scale → Pro (spec Assumptions — downgrade grace rule).
 - Soft-delete must preserve `workspaceAccess` references so a restore within 30 days is lossless.
-- Meta role verification on link must fail with a distinct `insufficient-meta-role` error code so the UI can route to a helpful message.
+- Meta role verification on link must fail with a distinct `insufficient_meta_role` error code so the UI can route to a helpful message.
 **Scale/Scope**:
 - Per-account workspace cap: 10 (Scale), 1 (all other plans — default workspace).
 - Team members per account: bounded by Phase 6 team cap (already enforced).

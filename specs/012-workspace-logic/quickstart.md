@@ -7,7 +7,7 @@
 
 - Node 20+, pwsh, Firebase CLI.
 - Local `.env` wired per existing repo conventions (no new env vars for this phase).
-- A test Paddle/Stripe plan config that supports a `scale` and a `pro` seat for the test user.
+- A test Paddle plan config that supports a `scale` and a `pro` seat for the test user (backend: `@paddle/paddle-node-sdk`; client-side overlay: Paddle.js v2).
 - A test Meta Business account with at least two ad accounts — one where the test user is `ADVERTISER` and one where they are `ANALYST` (to verify the role gate).
 
 ## 1. Start the dev stack

@@ -640,6 +640,21 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.error.insufficient_meta_role': "Your Meta role on this ad account doesn't allow publishing. Request Advertiser access in Meta Business Manager to link it.",
         'workspace.error.no_access': 'No workspace access — ask your team owner to grant you access.',
         'workspace.error.default_undeletable': "The default workspace can't be deleted.",
+        // Access audit panel
+        'workspace.access_history.button': 'View access history',
+        'workspace.access_history.title': 'Workspace Access History',
+        'workspace.access_history.close': 'Close',
+        'workspace.access_history.loading': 'Loading...',
+        'workspace.access_history.empty': 'No access changes recorded yet.',
+        'workspace.access_history.col.time': 'Time',
+        'workspace.access_history.col.member': 'Member',
+        'workspace.access_history.col.workspace': 'Workspace',
+        'workspace.access_history.col.action': 'Action',
+        'workspace.access_history.load_failed': 'Could not load access history.',
+        'workspace.settings.meta_link_failed': 'Could not link the Meta ad account.',
+        'workspace.settings.meta_unlink_failed': 'Could not unlink the Meta ad account.',
+        'workspace.settings.save_failed': 'Could not save workspace changes.',
+        'workspace.settings.delete_failed': 'Could not delete the workspace.',
     },
 
     ar: {
@@ -1278,6 +1293,21 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.error.insufficient_meta_role': 'دورك على حساب إعلانات Meta هذا لا يسمح بالنشر. اطلب صلاحية Advertiser من Meta Business Manager لربطه.',
         'workspace.error.no_access': 'لا توجد صلاحية وصول إلى مساحات عمل — اطلب من مالك الفريق منحك الصلاحية.',
         'workspace.error.default_undeletable': 'لا يمكن حذف مساحة العمل الافتراضية.',
+        // Access audit panel
+        'workspace.access_history.button': 'عرض سجل الوصول',
+        'workspace.access_history.title': 'سجل الوصول إلى مساحة العمل',
+        'workspace.access_history.close': 'إغلاق',
+        'workspace.access_history.loading': 'جارٍ التحميل...',
+        'workspace.access_history.empty': 'لا توجد تغييرات وصول مسجّلة بعد.',
+        'workspace.access_history.col.time': 'الوقت',
+        'workspace.access_history.col.member': 'العضو',
+        'workspace.access_history.col.workspace': 'مساحة العمل',
+        'workspace.access_history.col.action': 'الإجراء',
+        'workspace.access_history.load_failed': 'تعذّر تحميل سجل الوصول.',
+        'workspace.settings.meta_link_failed': 'تعذّر ربط حساب إعلانات Meta.',
+        'workspace.settings.meta_unlink_failed': 'تعذّر فصل حساب إعلانات Meta.',
+        'workspace.settings.save_failed': 'تعذّر حفظ تغييرات مساحة العمل.',
+        'workspace.settings.delete_failed': 'تعذّر حذف مساحة العمل.',
     },
 };
 
