@@ -35,9 +35,9 @@ Expected new-passing cases (from `workspace.test.ts`):
 2. `createWorkspace` 11th workspace on Scale → `failed-precondition: workspace_limit_reached`.
 3. `deleteWorkspace` on default → `failed-precondition: default_workspace_undeletable`.
 4. `deleteWorkspace` on non-default → returns `ok: true, pendingReassign: true`, eventual `deletedAt` set.
-5. `linkMetaAccountToWorkspace` with ANALYST role → `failed-precondition: insufficient_meta_role`.
-6. `linkMetaAccountToWorkspace` with ADVERTISER role → `ok`, fields written, `metaRoleAtLinkTime: 'ADVERTISER'`.
-7. `linkMetaAccountToWorkspace` with ad account ID not in connected list → `failed-precondition: meta_account_not_connected`.
+5. When called with ANALYST role, `linkMetaAccountToWorkspace` → `failed-precondition: insufficient_meta_role`.
+6. With ADVERTISER role, linking via `linkMetaAccountToWorkspace` → `ok`, fields written, `metaRoleAtLinkTime: 'ADVERTISER'`.
+7. If ad account ID is not in the connected list, `linkMetaAccountToWorkspace` → `failed-precondition: meta_account_not_connected`.
 8. Generation callable without `activeWorkspaceId` → `invalid-argument: active_workspace_required`.
 9. Generation callable writes the `workspaceId` field.
 10. `setTeamMemberWorkspaceAccess` writes one audit entry per grant/revoke in the diff.
@@ -56,7 +56,7 @@ Expected new-passing cases (from `workspace.test.ts`):
    - It disappears from the switcher.
    - The teammate no longer sees it on their next switcher load.
    - The generation you made in it now appears under "Default" in the history list.
-   - An audit entry logged the revoke for the teammate (inspect via `getWorkspaceAccessAuditLog`).
+   - An audit entry logged the revoke for the teammate. Inspect via `getWorkspaceAccessAuditLog` — open the browser devtools console and call `workspaceService.getWorkspaceAccessAuditLog({})`, or from the emulator run `firebase functions:shell` and execute `getWorkspaceAccessAuditLog({}, { auth: { uid: '<ownerUid>' } })`. The returned `entries` array should contain one entry with `action: 'revoke'`, `workspaceId` matching "Client Brand A", and `targetMemberUid`/`targetMemberEmail` matching the teammate.
 8. Call `restoreWorkspace({ workspaceId })` (via a script or temporary devtools handler since this phase ships no end-user restore UI). Verify:
    - "Client Brand A" reappears in the owner's switcher.
    - The teammate's access is restored on next load.
@@ -70,15 +70,15 @@ Switch the UI language to Arabic (existing toggle). Re-run steps 2–4 above. Ev
 
 Via admin tooling or billingState fixture, downgrade the test user to `pro` while 3 workspaces exist.
 
-- Confirm all 3 workspaces remain listable and editable.
-- Confirm "Create Workspace" now returns `permission-denied: scale_plan_required`.
-- Confirm `linkMetaAccountToWorkspace` on an existing workspace still works (Pro retains Meta linking on its one default workspace — verify this matches the final plan-gate table in data-model.md #6).
+- Verify all 3 workspaces remain listable and editable.
+- Attempt to create a workspace and expect `permission-denied: scale_plan_required`.
+- Ensure `linkMetaAccountToWorkspace` on an existing workspace still works (Pro retains Meta linking on its one default workspace — verify this matches the final plan-gate table in data-model.md #6).
 
 Upgrade back to `scale`; creation works again.
 
 ## 6. Scheduled purge verification
 
-Set `deletedAt` on a test workspace to `now - 31 days` via direct Firestore write. Manually trigger `purgeExpiredWorkspaces` from the emulator functions shell. Confirm the workspace document is hard-deleted and its `workspace_access_audit` entries remain.
+Set `deletedAt` on a test workspace to `now - 30 days` (matching `THIRTY_DAYS_MS` and the cutoff in `purgeExpiredWorkspaces`) via direct Firestore write. Manually trigger `purgeExpiredWorkspaces` from the emulator functions shell. Confirm the workspace document is hard-deleted while `workspace_access_audit` entries stored under `users/{uid}/workspace_access_audit` remain untouched.
 
 ## Contract-to-code map
 
@@ -88,7 +88,7 @@ Set `deletedAt` on a test workspace to `now - 31 days` via direct Firestore writ
 | `updateWorkspace` | `functions/src/index.ts` |
 | `deleteWorkspace` | `functions/src/index.ts` → background handler in `functions/src/workspaces/workspacePurge.ts`-adjacent delete handler |
 | `restoreWorkspace` | same |
-| `linkMetaAccountToWorkspace` | `functions/src/workspaces/metaRoleProbe.ts` |
+| `linkMetaAccountToWorkspace` | `functions/src/index.ts` (role probe in `functions/src/workspaces/metaRoleProbe.ts`) |
 | `unlinkMetaAccountFromWorkspace` | `functions/src/index.ts` |
 | `setTeamMemberWorkspaceAccess` | `functions/src/index.ts` + `functions/src/workspaces/auditLog.ts` |
 | `getWorkspaceGenerations` | `functions/src/index.ts` |

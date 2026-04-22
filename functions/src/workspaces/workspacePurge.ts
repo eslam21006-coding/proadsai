@@ -204,14 +204,18 @@ export async function cascadeRevertOnRestore(
     })
   );
 
-  const teamSnap = await db.collection(`users/${ownerUid}/team`).get();
+  // Mirror the reassign cascade: filter team docs server-side via array-contains
+  // on removedWorkspaceAccessByDelete so we don't fetch every member doc.
+  const teamSnap = await db
+    .collection(`users/${ownerUid}/team`)
+    .where("removedWorkspaceAccessByDelete", "array-contains", restoredWorkspaceId)
+    .get();
   if (!teamSnap.empty) {
     const batch = db.batch();
     let pending = 0;
     for (const doc of teamSnap.docs) {
       const data = doc.data();
       const removed: string[] = data.removedWorkspaceAccessByDelete ?? [];
-      if (!removed.includes(restoredWorkspaceId)) continue;
       const access: string[] = data.workspaceAccess ?? [];
       batch.update(doc.ref, {
         workspaceAccess: [...access, restoredWorkspaceId],

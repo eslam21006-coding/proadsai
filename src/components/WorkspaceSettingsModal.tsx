@@ -268,7 +268,13 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
                 <div className="flex items-center gap-3">
                   <div className="flex-1 px-3 py-2 rounded-xl bg-slate-900/60 border border-slate-800">
                     <p className="text-[10px] font-bold text-white">{linkedMeta.name}</p>
-                    <p className="text-[8px] text-slate-500">{linkedMeta.role}</p>
+                    <p className="text-[8px] text-slate-500">
+                      {linkedMeta.role === 'ADMIN'
+                        ? t('roles.meta.admin')
+                        : linkedMeta.role === 'ADVERTISER'
+                          ? t('roles.meta.advertiser')
+                          : (linkedMeta.role ?? t('roles.unknown'))}
+                    </p>
                   </div>
                   <button
                     onClick={handleUnlinkMeta}

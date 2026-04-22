@@ -684,6 +684,9 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.switcher.brand_workspaces': 'Brand Workspaces',
         'workspace.switcher.default_badge': 'Default',
         'workspace.switcher.default_name': 'Default Workspace',
+        'roles.meta.admin': 'Meta Admin',
+        'roles.meta.advertiser': 'Advertiser',
+        'roles.unknown': 'Unknown role',
     },
 
     ar: {
@@ -1366,6 +1369,9 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.switcher.brand_workspaces': 'مساحات عمل العلامات',
         'workspace.switcher.default_badge': 'افتراضية',
         'workspace.switcher.default_name': 'مساحة العمل الافتراضية',
+        'roles.meta.admin': 'مسؤول Meta',
+        'roles.meta.advertiser': 'معلِن',
+        'roles.unknown': 'دور غير معروف',
     },
 };
 

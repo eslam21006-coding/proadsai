@@ -7,6 +7,7 @@ import type { GenerationRecord } from "./feedbackService";
 
 type WorkspaceGeneration = GenerationRecord & { id: string; workspaceId: string };
 type AuditLogCursor = { timestamp: number; id: string };
+type GenerationsCursor = { timestamp: number; id: string };
 
 interface CreateWorkspaceRequest {
   name: string;
@@ -41,7 +42,7 @@ interface SetTeamMemberWorkspaceAccessRequest {
 interface GetWorkspaceGenerationsRequest {
   workspaceId: string;
   limit?: number;
-  cursor?: number;
+  cursor?: GenerationsCursor | null;
 }
 
 interface GetWorkspaceAccessAuditLogRequest {
@@ -97,7 +98,7 @@ export const workspaceService = {
   getWorkspaceGenerations: (req: GetWorkspaceGenerationsRequest) =>
     httpsCallable<
       GetWorkspaceGenerationsRequest,
-      { items: WorkspaceGeneration[]; nextCursor: number | null }
+      { items: WorkspaceGeneration[]; nextCursor: GenerationsCursor | null }
     >(functions, "getWorkspaceGenerations")(req),
 
   getWorkspaceAccessAuditLog: (req?: GetWorkspaceAccessAuditLogRequest) =>

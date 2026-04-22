@@ -5088,8 +5088,24 @@ export const updateWorkspace = onCall({
     if (data.brandColorSecondary && !HEX_RE.test(data.brandColorSecondary)) {
         throw new HttpsError("invalid-argument", "Brand color must be a 6-digit hex value.");
     }
-    if (data.name !== undefined && `${data.name}`.trim().length > 60) {
-        throw new HttpsError("invalid-argument", "Workspace name must be 60 characters or fewer.");
+
+    // Parity with createWorkspace: name / brandName must be non-whitespace and ≤ 60 chars after trim.
+    const trimmedStrings: Record<string, string | null> = {};
+    for (const key of ["name", "brandName"] as const) {
+        const val = data[key];
+        if (val === undefined) continue;
+        if (val === null) {
+            // Null is not a valid clear for required fields.
+            throw new HttpsError("invalid-argument", `${key} cannot be cleared.`);
+        }
+        const trimmed = `${val}`.trim();
+        if (trimmed.length === 0) {
+            throw new HttpsError("invalid-argument", `${key} cannot be empty or whitespace.`);
+        }
+        if (trimmed.length > 60) {
+            throw new HttpsError("invalid-argument", `${key} must be 60 characters or fewer.`);
+        }
+        trimmedStrings[key] = trimmed;
     }
 
     const wsSnap = await assertOwner(request.auth, workspaceId);
@@ -5098,7 +5114,11 @@ export const updateWorkspace = onCall({
     const updates: Record<string, any> = {};
     for (const key of ["name", "brandName", "brandUrl", "brandColorPrimary", "brandColorSecondary", "logoUrl"]) {
         if (data[key] !== undefined) {
-            updates[key] = data[key] === null ? admin.firestore.FieldValue.delete() : data[key];
+            if (key === "name" || key === "brandName") {
+                updates[key] = trimmedStrings[key];
+            } else {
+                updates[key] = data[key] === null ? admin.firestore.FieldValue.delete() : data[key];
+            }
         }
     }
 
@@ -5342,7 +5362,7 @@ export const getWorkspaceGenerations = onCall({
     const { workspaceId, limit: reqLimit, cursor } = request.data as {
         workspaceId: string;
         limit?: number;
-        cursor?: number;
+        cursor?: { timestamp: number; id: string } | null;
     };
 
     if (!workspaceId) throw new HttpsError("invalid-argument", "workspaceId is required.");
@@ -5374,12 +5394,19 @@ export const getWorkspaceGenerations = onCall({
 
     const effectiveLimit = Math.min(reqLimit ?? 20, 50);
 
+    // Composite cursor: (timestamp DESC, __name__ DESC). Using __name__ as the
+    // secondary sort ensures rows sharing a timestamp paginate deterministically,
+    // including when results from the primary and legacy (workspaceId===null)
+    // queries are merged for the default workspace.
     const buildQuery = (wsFilter: string | null) => {
         let q: admin.firestore.Query = db.collection("generations")
             .where("userId", "==", ownerUid)
             .where("workspaceId", "==", wsFilter)
-            .orderBy("timestamp", "desc");
-        if (cursor) q = q.startAfter(cursor);
+            .orderBy("timestamp", "desc")
+            .orderBy(admin.firestore.FieldPath.documentId(), "desc");
+        if (cursor && cursor.timestamp != null && cursor.id) {
+            q = q.startAfter(cursor.timestamp, cursor.id);
+        }
         return q.limit(effectiveLimit);
     };
 
@@ -5395,14 +5422,22 @@ export const getWorkspaceGenerations = onCall({
             if (seen.has(d.id)) continue;
             combined.push({ id: d.id, ...d.data() });
         }
-        // Merge sort by timestamp desc and truncate to the page limit.
-        combined.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+        // Merge sort by (timestamp DESC, id DESC) to match the query ordering,
+        // then truncate to the page limit.
+        combined.sort((a, b) => {
+            const dt = (b.timestamp ?? 0) - (a.timestamp ?? 0);
+            if (dt !== 0) return dt;
+            return b.id < a.id ? -1 : b.id > a.id ? 1 : 0;
+        });
         combined.length = Math.min(combined.length, effectiveLimit);
     }
 
-    let nextCursor: number | null = null;
+    let nextCursor: { timestamp: number; id: string } | null = null;
     if (combined.length >= effectiveLimit && combined.length > 0) {
-        nextCursor = combined[combined.length - 1].timestamp ?? null;
+        const last = combined[combined.length - 1];
+        if (last?.timestamp != null && last.id) {
+            nextCursor = { timestamp: last.timestamp, id: last.id };
+        }
     }
 
     return { items: combined, nextCursor };

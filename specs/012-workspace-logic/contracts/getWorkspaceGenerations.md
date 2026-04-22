@@ -8,8 +8,8 @@
 ```ts
 interface GetWorkspaceGenerationsRequest {
   workspaceId: string;
-  limit?: number;   // default 20, max 50
-  cursor?: number;  // timestamp ms; paginate via startAfter(cursor)
+  limit?: number;                             // default 20, max 50
+  cursor?: { timestamp: number; id: string }; // composite cursor (timestamp DESC, __name__ DESC)
 }
 ```
 
@@ -18,7 +18,7 @@ interface GetWorkspaceGenerationsRequest {
 ```ts
 interface GetWorkspaceGenerationsResponse {
   items: GenerationSummary[];
-  nextCursor: number | null;
+  nextCursor: { timestamp: number; id: string } | null;
 }
 
 interface GenerationSummary {
@@ -44,9 +44,9 @@ Workspace MUST be active. Soft-deleted workspaces are treated as non-existent fo
 
 ## Query behavior
 
-- Primary query: `where('userId', '==', ownerUid) AND where('workspaceId', '==', workspaceId) ORDER BY timestamp DESC LIMIT <limit>`.
-- When `workspaceId === defaultWorkspaceId`, a second query `where('userId', '==', ownerUid) AND where('workspaceId', '==', null) LIMIT <remaining>` is merged client-side in the callable (per FR-015 — legacy records surface under the default).
-- Pagination uses `startAfter(cursor)` on `timestamp`.
+- Primary query: `where('userId', '==', ownerUid) AND where('workspaceId', '==', workspaceId) ORDER BY timestamp DESC, __name__ DESC LIMIT <limit>`.
+- When `workspaceId === defaultWorkspaceId`, a second query `where('userId', '==', ownerUid) AND where('workspaceId', '==', null)` is merged client-side in the callable (per FR-015 — legacy records surface under the default) using the same ordering and startAfter semantics so merged results are deterministic.
+- Pagination uses `startAfter(cursor.timestamp, cursor.id)` — the secondary sort on document id guarantees stable paging when rows share a timestamp.
 
 ## Errors
 

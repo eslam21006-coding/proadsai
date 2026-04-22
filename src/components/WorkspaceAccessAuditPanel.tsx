@@ -12,18 +12,23 @@ export default function WorkspaceAccessAuditPanel({ ownerUid }: Props) {
   const { t } = useT();
   const [entries, setEntries] = useState<WorkspaceAccessAuditEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
     if (!visible) return;
     setLoading(true);
+    setLoadError(null);
     workspaceService.getWorkspaceAccessAuditLog()
       .then((result) => {
         setEntries(result.data?.entries ?? []);
       })
-      .catch((err) => console.warn('Audit log load failed:', err))
+      .catch((err) => {
+        console.warn('Audit log load failed:', err);
+        setLoadError(t('workspace.access_history.load_failed'));
+      })
       .finally(() => setLoading(false));
-  }, [visible, ownerUid]);
+  }, [visible, ownerUid, t]);
 
   if (!visible) {
     return (
@@ -53,6 +58,8 @@ export default function WorkspaceAccessAuditPanel({ ownerUid }: Props) {
 
       {loading ? (
         <div className="p-4 text-center text-[10px] text-slate-500">{t('workspace.access_history.loading')}</div>
+      ) : loadError ? (
+        <div className="p-4 text-center text-[10px] text-red-400" role="alert">{loadError}</div>
       ) : entries.length === 0 ? (
         <div className="p-4 text-center text-[10px] text-slate-500">{t('workspace.access_history.empty')}</div>
       ) : (
