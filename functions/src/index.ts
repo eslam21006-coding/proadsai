@@ -25,7 +25,7 @@ import { paddleCreateTopupCheckout } from "./paddle/paddleCheckout.js";
 import { paddleCreatePortalSession } from "./paddle/paddlePortal.js";
 import { handlePaddleWebhook } from "./billing/paddleWebhook.js";
 import { createPaddleClient, PADDLE_PRICE_TO_PLAN } from "./paddle/paddleClient.js";
-import { assertOwner, assertScalePlan, assertWorkspaceActive, createWorkspaceWithLimit, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
+import { assertOwner, assertWorkspaceActive, createWorkspaceWithLimit, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
 import { probeMetaRole } from "./workspaces/metaRoleProbe.js";
 import { writeAuditEntry } from "./workspaces/auditLog.js";
 import { purgeExpiredWorkspaces, cascadeReassignOnDelete, cascadeRevertOnRestore } from "./workspaces/workspacePurge.js";
@@ -5022,6 +5022,51 @@ ANTI-HALLUCINATION (CRITICAL):
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
+// ─── Shared payload helpers for workspace callables ─────────────────────────
+function asObjectPayload(raw: unknown): Record<string, any> {
+    if (raw == null) return {};
+    if (typeof raw !== "object") {
+        throw new HttpsError("invalid-argument", "Request payload must be an object.", { reason: "invalid_payload" });
+    }
+    return raw as Record<string, any>;
+}
+
+function requireNonEmptyString(val: unknown, fieldName: string): string {
+    if (typeof val !== "string" || val.trim().length === 0) {
+        throw new HttpsError("invalid-argument", `${fieldName} is required and must be a non-empty string.`, { reason: `${fieldName}_required` });
+    }
+    return val;
+}
+
+function validatePositiveIntLimit(val: unknown, fieldName: string, max: number): number | undefined {
+    if (val === undefined || val === null) return undefined;
+    if (typeof val !== "number" || !Number.isInteger(val) || val <= 0) {
+        throw new HttpsError("invalid-argument", `${fieldName} must be a positive integer.`, { reason: "invalid_limit" });
+    }
+    if (val > max) {
+        throw new HttpsError("invalid-argument", `${fieldName} must be ≤ ${max}.`, { reason: "invalid_limit" });
+    }
+    return val;
+}
+
+function validateTimestampIdCursor(
+    val: unknown,
+    fieldName: string
+): { timestamp: number; id: string } | null {
+    if (val === undefined || val === null) return null;
+    if (typeof val !== "object") {
+        throw new HttpsError("invalid-argument", `${fieldName} must be an object.`, { reason: "invalid_cursor" });
+    }
+    const c = val as Record<string, unknown>;
+    if (typeof c.timestamp !== "number" || !Number.isFinite(c.timestamp)) {
+        throw new HttpsError("invalid-argument", `${fieldName}.timestamp must be a number.`, { reason: "invalid_cursor" });
+    }
+    if (typeof c.id !== "string" || c.id.length === 0) {
+        throw new HttpsError("invalid-argument", `${fieldName}.id must be a non-empty string.`, { reason: "invalid_cursor" });
+    }
+    return { timestamp: c.timestamp, id: c.id };
+}
+
 export const createWorkspace = onCall({
     region: "europe-west1",
     cors: true,
@@ -5056,8 +5101,8 @@ export const createWorkspace = onCall({
         throw new HttpsError("invalid-argument", "Brand color must be a 6-digit hex value.", { reason: "invalid_hex_color" });
     }
 
-    await assertScalePlan(uid);
-
+    // Plan check is inside createWorkspaceWithLimit's transaction to avoid a
+    // TOCTOU race between entitlement read and workspace create.
     const workspaceId = await createWorkspaceWithLimit(uid, {
         name,
         brandName,
@@ -5084,10 +5129,8 @@ export const updateWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
-    const data = request.data as any;
-    const workspaceId = data.workspaceId;
-
-    if (!workspaceId) throw new HttpsError("invalid-argument", "workspaceId is required.");
+    const data = asObjectPayload(request.data);
+    const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
     const forbidden = ["isDefault", "createdAt", "deletedAt", "metaAdAccountId", "metaAdAccountName", "metaRoleAtLinkTime", "pendingReassign", "pendingRestore"];
     for (const f of forbidden) {
@@ -5101,7 +5144,7 @@ export const updateWorkspace = onCall({
         throw new HttpsError("invalid-argument", "Brand color must be a 6-digit hex value.");
     }
 
-    // Parity with createWorkspace: name / brandName must be non-whitespace and ≤ 60 chars after trim.
+    // Parity with createWorkspace: name / brandName must be a string, non-whitespace, ≤ 60 chars after trim.
     const trimmedStrings: Record<string, string | null> = {};
     for (const key of ["name", "brandName"] as const) {
         const val = data[key];
@@ -5110,7 +5153,10 @@ export const updateWorkspace = onCall({
             // Null is not a valid clear for required fields.
             throw new HttpsError("invalid-argument", `${key} cannot be cleared.`);
         }
-        const trimmed = `${val}`.trim();
+        if (typeof val !== "string") {
+            throw new HttpsError("invalid-argument", `${key} must be a string.`, { reason: "invalid_type" });
+        }
+        const trimmed = val.trim();
         if (trimmed.length === 0) {
             throw new HttpsError("invalid-argument", `${key} cannot be empty or whitespace.`);
         }
@@ -5144,8 +5190,8 @@ export const deleteWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
-    const { workspaceId } = request.data as { workspaceId: string };
-    if (!workspaceId) throw new HttpsError("invalid-argument", "workspaceId is required.");
+    const data = asObjectPayload(request.data);
+    const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
     const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
     if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found or already deleted.");
@@ -5190,8 +5236,8 @@ export const restoreWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
-    const { workspaceId } = request.data as { workspaceId: string };
-    if (!workspaceId) throw new HttpsError("invalid-argument", "workspaceId is required.");
+    const data = asObjectPayload(request.data);
+    const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
     const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
     if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
@@ -5236,12 +5282,10 @@ export const linkMetaAccountToWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
-    const data = request.data as any;
-    const { workspaceId, metaAdAccountId, metaAdAccountName } = data;
-
-    if (!workspaceId || !metaAdAccountId) {
-        throw new HttpsError("invalid-argument", "workspaceId and metaAdAccountId are required.");
-    }
+    const data = asObjectPayload(request.data);
+    const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
+    const metaAdAccountId = requireNonEmptyString(data.metaAdAccountId, "metaAdAccountId");
+    const metaAdAccountName = typeof data.metaAdAccountName === "string" ? data.metaAdAccountName : "";
 
     const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
     if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
@@ -5280,8 +5324,8 @@ export const unlinkMetaAccountFromWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
-    const { workspaceId } = request.data as { workspaceId: string };
-    if (!workspaceId) throw new HttpsError("invalid-argument", "workspaceId is required.");
+    const data = asObjectPayload(request.data);
+    const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
     const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
     if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
@@ -5301,10 +5345,23 @@ export const setTeamMemberWorkspaceAccess = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
-    const { memberDocId, workspaceAccess } = request.data as { memberDocId: string; workspaceAccess: string[] };
-    if (!memberDocId || !Array.isArray(workspaceAccess)) {
-        throw new HttpsError("invalid-argument", "memberDocId and workspaceAccess array are required.");
+    const data = asObjectPayload(request.data);
+    const memberDocId = requireNonEmptyString(data.memberDocId, "memberDocId");
+    if (!Array.isArray(data.workspaceAccess)) {
+        throw new HttpsError("invalid-argument", "workspaceAccess must be an array of strings.");
     }
+
+    // Canonicalize: drop non-string / empty / whitespace entries, dedupe via Set,
+    // then sort for stable array ordering. This is what feeds the diff, the
+    // per-workspace validation loop, and the written member doc — so duplicate
+    // IDs in the request can never produce duplicate audit entries.
+    const workspaceAccess: string[] = [
+        ...new Set(
+            (data.workspaceAccess as unknown[])
+                .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+                .map((x) => x.trim())
+        ),
+    ].sort();
 
     const memberRef = db.collection(`users/${uid}/team`).doc(memberDocId);
 
@@ -5392,13 +5449,10 @@ export const getWorkspaceGenerations = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
-    const { workspaceId, limit: reqLimit, cursor } = request.data as {
-        workspaceId: string;
-        limit?: number;
-        cursor?: { timestamp: number; id: string } | null;
-    };
-
-    if (!workspaceId) throw new HttpsError("invalid-argument", "workspaceId is required.");
+    const data = asObjectPayload(request.data);
+    const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
+    const reqLimit = validatePositiveIntLimit(data.limit, "limit", 50);
+    const cursor = validateTimestampIdCursor(data.cursor, "cursor");
 
     const wsSnap = await db.collectionGroup("workspaces").where(admin.firestore.FieldPath.documentId(), "==", workspaceId).limit(1).get();
     if (wsSnap.empty) throw new HttpsError("not-found", "Workspace not found.");
@@ -5425,7 +5479,7 @@ export const getWorkspaceGenerations = onCall({
         }
     }
 
-    const effectiveLimit = Math.min(reqLimit ?? 20, 50);
+    const effectiveLimit = reqLimit ?? 20;
 
     // Composite cursor: (timestamp DESC, __name__ DESC). Using __name__ as the
     // secondary sort ensures rows sharing a timestamp paginate deterministically,
@@ -5485,14 +5539,13 @@ export const getWorkspaceAccessAuditLog = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
-    const { limit: reqLimit, cursor, filterMemberUid, filterWorkspaceId } = request.data as {
-        limit?: number;
-        cursor?: { timestamp: number; id: string } | null;
-        filterMemberUid?: string;
-        filterWorkspaceId?: string;
-    };
+    const data = asObjectPayload(request.data);
+    const reqLimit = validatePositiveIntLimit(data.limit, "limit", 200);
+    const cursor = validateTimestampIdCursor(data.cursor, "cursor");
+    const filterMemberUid = typeof data.filterMemberUid === "string" && data.filterMemberUid.length > 0 ? data.filterMemberUid : undefined;
+    const filterWorkspaceId = typeof data.filterWorkspaceId === "string" && data.filterWorkspaceId.length > 0 ? data.filterWorkspaceId : undefined;
 
-    const effectiveLimit = Math.min(reqLimit ?? 50, 200);
+    const effectiveLimit = reqLimit ?? 50;
     let q: admin.firestore.Query = db.collection(`users/${uid}/workspace_access_audit`)
         .orderBy("timestamp", "desc")
         .orderBy(admin.firestore.FieldPath.documentId(), "desc");
@@ -5503,7 +5556,7 @@ export const getWorkspaceAccessAuditLog = onCall({
     if (filterWorkspaceId) {
         q = q.where("workspaceId", "==", filterWorkspaceId);
     }
-    if (cursor && typeof cursor === "object" && cursor.timestamp != null && cursor.id) {
+    if (cursor) {
         q = q.startAfter(cursor.timestamp, cursor.id);
     }
     q = q.limit(effectiveLimit);

@@ -167,8 +167,9 @@ await run("T014: assertWorkspaceLimit at 10 → failed-precondition", async () =
     await expectHttpsError(() => assertWorkspaceLimit("uid-scale"), "failed-precondition", "10-workspace");
 });
 
-await run("T014b: createWorkspaceWithLimit at 10 → failed-precondition", async () => {
+await run("T014b: createWorkspaceWithLimit at 10 on Scale → failed-precondition", async () => {
     resetStore();
+    bucket("users").set("uid-scale", { billingState: { plan: "scale" } });
     const wsBucket = bucket("users/uid-scale/workspaces");
     for (let i = 0; i < 10; i++) wsBucket.set(`ws-${i}`, { deletedAt: null });
     await expectHttpsError(
@@ -178,8 +179,20 @@ await run("T014b: createWorkspaceWithLimit at 10 → failed-precondition", async
     );
 });
 
+await run("T014c: createWorkspaceWithLimit on non-Scale → permission-denied (TOCTOU-safe)", async () => {
+    resetStore();
+    bucket("users").set("uid-pro", { billingState: { plan: "pro" } });
+    // Even with room for another workspace, a non-Scale plan is rejected inside the txn.
+    await expectHttpsError(
+        () => createWorkspaceWithLimit("uid-pro", { name: "Client B" }),
+        "permission-denied",
+        "Scale plan"
+    );
+});
+
 await run("T015: createWorkspaceWithLimit happy path → new id", async () => {
     resetStore();
+    bucket("users").set("uid-scale", { billingState: { plan: "scale" } });
     const wsBucket = bucket("users/uid-scale/workspaces");
     wsBucket.set("default", { isDefault: true, deletedAt: null });
     const newId = await createWorkspaceWithLimit("uid-scale", { name: "Client A", deletedAt: null });

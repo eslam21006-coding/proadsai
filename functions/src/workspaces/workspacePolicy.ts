@@ -64,16 +64,30 @@ export async function assertWorkspaceLimit(uid: string): Promise<void> {
   }
 }
 
-// Transaction-safe limit check + create. The check and the write happen in the
-// same txn so concurrent createWorkspace calls cannot both pass the limit.
+// Transaction-safe plan check + limit check + create. Plan, count, and write
+// all happen in one txn so a concurrent downgrade or concurrent create cannot
+// slip through between a pre-txn entitlement check and the write.
 export async function createWorkspaceWithLimit(
   uid: string,
   newDoc: Record<string, unknown>
 ): Promise<string> {
   const colRef = db.collection(`users/${uid}/workspaces`);
+  const userRef = db.collection("users").doc(uid);
   const newRef = colRef.doc();
   await db.runTransaction(async (txn) => {
+    // All reads first (Firestore txn requirement).
+    const userSnap = await txn.get(userRef);
     const snap = await txn.get(colRef);
+
+    const plan = userSnap.data()?.billingState?.plan ?? "none";
+    if (plan !== "scale") {
+      throw new HttpsError(
+        "permission-denied",
+        "Creating more than one workspace requires the Scale plan.",
+        { reason: "scale_plan_required" }
+      );
+    }
+
     const active = snap.docs.filter((d) => d.data().deletedAt == null);
     if (active.length >= 10) {
       throw new HttpsError(
