@@ -11,7 +11,9 @@ export async function deleteThumbnailObject(uid: string, projectId: string): Pro
     try {
       await bucket.file(filePath).delete();
     } catch (err: any) {
-      if (err?.code !== 404 && err?.message?.includes("No such object")) {
+      // Swallow "object not found" only — re-throw any other failure.
+      const isNotFound = err?.code === 404 || err?.message?.includes("No such object");
+      if (!isNotFound) {
         throw err;
       }
     }

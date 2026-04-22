@@ -7,7 +7,7 @@
 
 ## Storage path
 
-```
+```text
 users/{uid}/projects/{projectId}/thumbnail.{ext}
 ```
 
@@ -19,23 +19,27 @@ users/{uid}/projects/{projectId}/thumbnail.{ext}
 
 ## Rule (V1 — owner-only access)
 
-```
+```text
 service firebase.storage {
   match /b/{bucket}/o {
 
     match /users/{uid}/projects/{projectId}/thumbnail.{ext} {
-      allow read, write: if request.auth != null
-                         && request.auth.uid == uid
-                         && (ext == 'jpg' || ext == 'png')
-                         && (resource == null
-                             || resource.size < 256 * 1024
-                             || request.resource.size < 256 * 1024);
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if request.auth != null
+                   && request.auth.uid == uid
+                   && (ext == 'jpg' || ext == 'png')
+                   && request.resource.size < 256 * 1024;
     }
 
     // ... existing rules preserved
   }
 }
 ```
+
+> Note: writes always validate `request.resource.size` (the incoming payload),
+> never `resource.size` (the previously stored object). On a first-time
+> upload `resource` is `null`, so any size predicate that ORs in
+> `resource == null` would silently bypass the cap.
 
 ### What the rule does
 
@@ -56,7 +60,7 @@ V1 above denies cross-uid reads. The product flow returns thumbnail URLs through
 
 ### Rule (V2 — team-member-aware fallback, only if V1 fails team-member rendering)
 
-```
+```text
 match /users/{uid}/projects/{projectId}/thumbnail.{ext} {
   allow read: if request.auth != null
               && (request.auth.uid == uid

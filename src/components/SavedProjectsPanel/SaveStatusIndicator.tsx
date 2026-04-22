@@ -1,6 +1,6 @@
 // src/components/SavedProjectsPanel/SaveStatusIndicator.tsx — header indicator for auto-save state
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { useT } from "../../i18n";
 import { saveIndicator } from "../../i18n/savedProjects";
 import type { AutoSaveState } from "../../lib/projectAutoSave";
@@ -12,22 +12,14 @@ interface Props {
 
 const SaveStatusIndicator: React.FC<Props> = ({ state, onRetry }) => {
   const { lang } = useT();
-  const [visible, setVisible] = useState(false);
+  const typedLang = (lang === "ar" ? "ar" : "en") as "en" | "ar";
 
-  useEffect(() => {
-    if (state.phase === "idle") {
-      setVisible(false);
-    } else {
-      setVisible(true);
-    }
-  }, [state.phase]);
-
-  if (!visible || state.phase === "idle") return null;
+  if (state.phase === "idle") return null;
 
   if (state.phase === "saving") {
     return (
       <span className="text-[10px] text-slate-400 animate-pulse">
-        {saveIndicator.saving?.[lang as "en" | "ar"] ?? "Saving..."}
+        {saveIndicator.saving?.[typedLang] ?? "Saving..."}
       </span>
     );
   }
@@ -35,16 +27,17 @@ const SaveStatusIndicator: React.FC<Props> = ({ state, onRetry }) => {
   if (state.phase === "saved") {
     return (
       <span className="text-[10px] text-emerald-400">
-        {saveIndicator.saved?.[lang as "en" | "ar"] ?? "Saved ✓"}
+        {saveIndicator.saved?.[typedLang] ?? "Saved ✓"}
       </span>
     );
   }
 
   if (state.phase === "transient-error") {
+    const tooltip = saveIndicator.transientTooltip?.[typedLang] ?? "Cloud save failed, will retry";
     return (
-      <span className="text-[10px] text-amber-400" title="Cloud save failed">
-        <i className="fa-solid fa-cloud-arrow-up mr-1" />
-        !
+      <span className="text-[10px] text-amber-400 inline-flex items-center gap-1" title={tooltip}>
+        <i className="fa-solid fa-cloud-arrow-up" />
+        <span>{tooltip}</span>
       </span>
     );
   }
@@ -53,13 +46,14 @@ const SaveStatusIndicator: React.FC<Props> = ({ state, onRetry }) => {
     return (
       <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 flex items-center gap-2 text-[10px]">
         <span className="text-amber-400">
-          {saveIndicator.persistentBody?.[lang as "en" | "ar"] ?? "Saving to cloud failed — your work is safe locally"}
+          {saveIndicator.persistentBody?.[typedLang] ?? "Saving to cloud failed — your work is safe locally"}
         </span>
         <button
+          type="button"
           onClick={onRetry}
           className="px-2 py-1 bg-amber-600 hover:bg-amber-500 text-white text-[9px] font-bold rounded transition-colors"
         >
-          {saveIndicator.retryBtn?.[lang as "en" | "ar"] ?? "Try saving now"}
+          {saveIndicator.retryBtn?.[typedLang] ?? "Try saving now"}
         </button>
       </div>
     );

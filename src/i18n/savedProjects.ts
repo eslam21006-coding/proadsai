@@ -15,7 +15,7 @@ export const filterLabels: Record<string, { en: string; ar: string }> = {
   published: { en: "Published", ar: "منشور" },
   publishedEmptyMeta: { en: "No published projects yet — connect Meta to push ads from saved projects.", ar: "لا توجد مشاريع منشورة بعد — اربط ميتا لدفع الإعلانات من المشاريع المحفوظة." },
   publishedEmptyNeutral: { en: "You haven't pushed any projects to Meta yet.", ar: "لم تقم بدفع أي مشاريع إلى ميتا بعد." },
-  emptyNoProjects: { en: "No projects match your filters.", ar: "لا توجد مشارروع تطابق عوامل التصفية." },
+  emptyNoProjects: { en: "No projects match your filters.", ar: "لا توجد مشاريع تطابق عوامل التصفية." },
 };
 
 export const deleteDialog: Record<string, { en: string; ar: string }> = {
@@ -36,4 +36,9 @@ export const saveIndicator: Record<string, { en: string; ar: string }> = {
 export const planCapBlocker: Record<string, { en: string; ar: string }> = {
   message: { en: "Project limit reached. Upgrade your plan to save more projects.", ar: "تم بلوغ الحد الأقصى للمشاريع. قم بترقية خطتك لحفظ المزيد." },
   cta: { en: "Upgrade Plan", ar: "ترقية الخطة" },
+};
+
+export const cardLabels: Record<string, { en: string; ar: string }> = {
+  untitled: { en: "Untitled Project", ar: "مشروع بدون عنوان" },
+  deleteAction: { en: "Delete", ar: "حذف" },
 };

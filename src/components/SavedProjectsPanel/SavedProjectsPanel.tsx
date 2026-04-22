@@ -47,7 +47,6 @@ const SavedProjectsPanel: React.FC<Props> = ({ projects, workspaces, metaConnect
         value={filters}
         onChange={setFilters}
         workspaces={workspaces}
-        metaConnected={metaConnected}
       />
       {filteredProjects.length === 0 ? (
         <div className="text-center py-6 text-slate-500 text-xs">

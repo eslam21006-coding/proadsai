@@ -138,7 +138,7 @@ For team members: callable looks up `users/{ownerUid}/team/members/{callerUid}` 
 
 **Decision**: Add to `storage.rules`:
 
-```
+```firestore-security-rules
 match /users/{uid}/projects/{projectId}/thumbnail.{ext} {
   allow read, write: if request.auth != null && request.auth.uid == uid;
 }

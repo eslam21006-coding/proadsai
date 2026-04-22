@@ -103,8 +103,8 @@ interface SavedProjectListItem {
 
 ### Status filter semantics
 
-- `status: 'draft'` returns projects whose persisted `status === 'draft'` AND projects with no `status` field at all (legacy projects → treated as draft per FR-022). The query handles this with a small post-filter on the server when `status === 'draft'` is requested: it issues both `where('status', '==', 'draft')` AND `where('status', '==', null)` and concatenates (or, simpler, the migration sets `status` on every read path so this becomes a non-issue after the first save).
-- `status: 'rendered'` and `status: 'published'` return only projects with a persisted matching value.
+- `status: 'rendered'` and `status: 'published'` return only projects whose persisted `status` field equals the requested value.
+- `status: 'draft'` is the awkward case for legacy projects (created before Phase 13) that have no `status` field at all. Firestore does **not** treat a missing field as `null`, so a `where('status', '==', null)` query would NOT match those documents. The implementation therefore relies on persisted-status migration: every Phase 13 save callsite (client and server) computes `deriveStatus(...)` and writes a concrete value, so any legacy project becomes status-tagged the first time the user touches it (FR-022). Until that first touch, a legacy project will simply be invisible to the `status: 'draft'` filter — surfaced via the `All` tab instead. Backfilling legacy docs is out of scope for this phase; if it later becomes necessary, run a one-shot migration that reads every `users/{uid}/projects/*` doc and writes back `status: deriveStatus(undefined, doc)`.
 
 ### Audit / instrumentation
 

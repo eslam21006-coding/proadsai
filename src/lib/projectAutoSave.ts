@@ -50,10 +50,14 @@ function scheduleSave() {
   debounceTimer = setTimeout(() => flush(), DEBOUNCE_MS);
 
   if (!ceilingTimer) {
+    // Clamp to a non-negative delay — if the ceiling was somehow missed
+    // (e.g., the tab was throttled), fire on the next tick rather than
+    // letting setTimeout treat a negative number as 0 unpredictably.
+    const ceilingDelay = Math.max(0, CEILING_MS - (Date.now() - firstChangeAt));
     ceilingTimer = setTimeout(() => {
       ceilingTimer = null;
       flush();
-    }, CEILING_MS - (Date.now() - firstChangeAt));
+    }, ceilingDelay);
   }
 }
 
@@ -139,6 +143,11 @@ export function reset() {
   ceilingTimer = null;
   firstChangeAt = null;
   consecutiveFailures = 0;
+  // Reset snapshot counters too — otherwise a later save's snapshotId could
+  // collide with a stale comparison from before reset(), defeating the
+  // FR-018 in-memory-prevails check.
+  pendingSnapshotId = 0;
+  currentInMemoryId = 0;
   state = { phase: "idle" };
   pendingData = null;
 }

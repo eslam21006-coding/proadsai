@@ -7,11 +7,10 @@ import { planCapBlocker } from "../../i18n/savedProjects";
 interface Props {
   plan: string;
   limit: number;
-  current: number;
 }
 
 const PlanCapBlocker: React.FC<Props> = ({ plan, limit }) => {
-  const { lang, t } = useT();
+  const { lang } = useT();
   const msgs = planCapBlocker;
   const planName = plan.charAt(0).toUpperCase() + plan.slice(1);
 

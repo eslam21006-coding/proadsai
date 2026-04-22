@@ -3,7 +3,6 @@
 import React from "react";
 import { useT } from "../../i18n";
 import { filterLabels } from "../../i18n/savedProjects";
-import type { SavedProject } from "../../types";
 import type { ProjectStatus } from "../../lib/projectStatus";
 
 interface FilterState {
@@ -16,11 +15,10 @@ interface Props {
   value: FilterState;
   onChange: (filters: FilterState) => void;
   workspaces: { id: string; name: string }[];
-  metaConnected: boolean;
 }
 
 const ProjectFilters: React.FC<Props> = ({ value, onChange, workspaces }) => {
-  const { t, lang } = useT();
+  const { lang } = useT();
   const lbl = filterLabels;
 
   return (

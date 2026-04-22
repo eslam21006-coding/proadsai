@@ -28,7 +28,8 @@ import { createPaddleClient, PADDLE_PRICE_TO_PLAN } from "./paddle/paddleClient.
 import { assertOwner, assertWorkspaceActive, createWorkspaceWithLimit, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
 import { enforceProjectQuota } from "./savedProjects/projectQuota.js";
 import { deriveStatus } from "./savedProjects/projectStatus.js";
-import { getUserProjects } from "./savedProjects/getUserProjects.js";
+// Re-export so Firebase deploys the callable from this module (main: lib/index.js).
+export { getUserProjects } from "./savedProjects/getUserProjects.js";
 import { probeMetaRole } from "./workspaces/metaRoleProbe.js";
 import { writeAuditEntry } from "./workspaces/auditLog.js";
 import { purgeExpiredWorkspaces, cascadeReassignOnDelete, cascadeRevertOnRestore } from "./workspaces/workspacePurge.js";
@@ -5578,7 +5579,7 @@ export const getWorkspaceAccessAuditLog = onCall({
     return { entries, nextCursor };
 });
 
-export const saveProject = onCall(async (request: CallableRequest<any>) => {
+export const saveProject = onCall({ region: "europe-west1" }, async (request: CallableRequest<any>) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required");
     const uid = request.auth.uid;
     const { project } = request.data;
@@ -5588,8 +5589,16 @@ export const saveProject = onCall(async (request: CallableRequest<any>) => {
 
     // Plan can be read outside the txn — billing state is unrelated to the
     // count-vs-cap race we're protecting against, and rarely changes mid-save.
+    // Resolve canonically: prefer billingState.plan; fall back to legacy users.{uid}.plan;
+    // map the historical "creator"/"scaling" labels to "pro"/"scale" (matches
+    // billingState.ts:84-90); narrow to one of "none"|"starter"|"pro"|"scale".
     const userSnap = await db.collection("users").doc(uid).get();
-    const plan = userSnap.data()?.billingState?.plan ?? "none";
+    const userData = userSnap.data() ?? {};
+    let rawPlan: string = userData.billingState?.plan ?? userData.plan ?? "none";
+    if (rawPlan === "creator") rawPlan = "pro";
+    else if (rawPlan === "scaling") rawPlan = "scale";
+    const plan: "none" | "starter" | "pro" | "scale" =
+        rawPlan === "starter" || rawPlan === "pro" || rawPlan === "scale" ? rawPlan : "none";
 
     // Quota check, status latch read, and project write must all happen inside
     // ONE transaction (FR-006/FR-007/SC-005, Constitution principle XI). Otherwise

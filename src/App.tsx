@@ -2401,6 +2401,12 @@ const App: React.FC = () => {
       console.error("Firestore cloud sync failed:", firestoreErr);
       if (firestoreErr?.code === 'failed-precondition' && firestoreErr?.message?.includes('QUOTA_EXCEEDED')) {
         const details = firestoreErr?.details || {};
+        // Roll back the local IndexedDB write so mergeProjects on next sign-in
+        // doesn't reintroduce a project the server has already rejected.
+        // QUOTA_EXCEEDED only fires for NEW projects, so the local record we
+        // just wrote was a brand-new doc, never an update.
+        deleteProjectFromDB(project.id).catch(() => {});
+        setProjects((prev: SavedProject[]) => prev.filter((p: SavedProject) => p.id !== project.id));
         showToast(`Project limit reached (${details.limit || 'plan cap'} on your plan). Upgrade to save more.`, 'error');
         return;
       }
@@ -2467,6 +2473,13 @@ const App: React.FC = () => {
       batchResults,
     });
 
+    // Workspace assignment: prefer the active workspace if the user can use
+    // them; otherwise preserve whatever the existing project was already
+    // attached to so editing an existing project never silently re-homes it.
+    const resolvedWorkspaceId = (canUseWorkspaces && activeWorkspaceId)
+      || existingProject?.workspaceId
+      || undefined;
+
     const currentProject: SavedProject = {
       id: currentProjectId,
       userId: uid,
@@ -2492,10 +2505,11 @@ const App: React.FC = () => {
       status: derivedStatus,
       thumbnailUrl: existingProject?.thumbnailUrl,
       metaAdId: existingProject?.metaAdId,
+      ...(resolvedWorkspaceId ? { workspaceId: resolvedWorkspaceId } : {}),
     };
 
     autoSaveQueue(currentProject);
-  }, [user, inputs, phase, tovText, conceptsText, selectedTov, selectedConcept, buildPlan, mockupHistory, historyIndex, resolvedUniverse, captionText, batchResults, batchCaptions, batchHookGroups, carouselSlides, currentProjectId, autoSaveQueue]);
+  }, [user, inputs, phase, tovText, conceptsText, selectedTov, selectedConcept, buildPlan, mockupHistory, historyIndex, resolvedUniverse, captionText, batchResults, batchCaptions, batchHookGroups, carouselSlides, currentProjectId, activeWorkspaceId, canUseWorkspaces, autoSaveQueue]);
 
   // Ranking linkage — stores the latest ranking metadata from generation responses
   // ⚠️ MUST be above all early returns to satisfy React hooks ordering rules
@@ -2997,45 +3011,57 @@ const App: React.FC = () => {
     const highestIdx = phaseOrder.indexOf(highestPhaseWithData);
     setHighestUnlockedPhase(highestIdx >= 0 ? highestIdx : 0);
 
+    // FR-010 / FR-011: honour an explicit targetPhase (validated against
+    // stepsWithData), otherwise resume at the project's saved p.phase rather
+    // than the auto-derived highestPhaseWithData. The saved phase reflects
+    // where the user actually left off — preserving the existing card-body
+    // open behaviour from before Phase 13.
     const steps = stepsWithData(p);
     if (targetPhase && steps[targetPhase]) {
       setPhase(targetPhase);
     } else {
-      setPhase(highestPhaseWithData);
+      setPhase(p.phase || highestPhaseWithData);
     }
     setShowSidebar(false);
     showToast(`Loaded "${p.name}"`, 'success');
   };
 
+  // Non-interactive reset (no window.confirm prompt). Called by the
+  // post-deletion path so the user doesn't get a second confirmation dialog
+  // after they've already confirmed the delete.
+  const resetToBlankProject = () => {
+    const newId = Date.now().toString();
+    setCurrentProjectId(newId);
+    setCurrentProjectName("Untitled Project");
+    setInputs(null);
+    setPhase('input');
+    setTovText('');
+    setConceptsText('');
+    setSelectedTov('');
+    setSelectedConcept('');
+    setBuildPlan('');
+    setMockupHistory([]);
+    setHistoryIndex(-1);
+    setResolvedUniverse('');
+    setCaptionText('');
+    setBatchResults([]);
+    setCarouselSlides([]);
+    setBatchRendering(false);
+    setBatchSelectedHooks(new Set());
+    setBatchHookGroups([]);
+    setShowBatchConfig(false);
+    setBatchConceptsLoading(false);
+    setBatchCaptions([]);
+    setCarouselCopies([]);
+    setShowCarouselPreview(false);
+    setHighestUnlockedPhase(0);
+    setShowSidebar(false);
+    localStorage.removeItem('adInputsDraft');
+  };
+
   const createNewProject = () => {
     if (window.confirm("Start a brand new project?")) {
-      const newId = Date.now().toString();
-      setCurrentProjectId(newId);
-      setCurrentProjectName("Untitled Project");
-      setInputs(null);
-      setPhase('input');
-      setTovText('');
-      setConceptsText('');
-      setSelectedTov('');
-      setSelectedConcept('');
-      setBuildPlan('');
-      setMockupHistory([]);
-      setHistoryIndex(-1);
-      setResolvedUniverse('');
-      setCaptionText('');
-      setBatchResults([]);
-      setCarouselSlides([]);
-      setBatchRendering(false);
-      setBatchSelectedHooks(new Set());
-      setBatchHookGroups([]);
-      setShowBatchConfig(false);
-      setBatchConceptsLoading(false);
-      setBatchCaptions([]);
-      setCarouselCopies([]);
-      setShowCarouselPreview(false);
-      setHighestUnlockedPhase(0);
-      setShowSidebar(false);
-      localStorage.removeItem('adInputsDraft');
+      resetToBlankProject();
     }
   };
 
@@ -3063,7 +3089,10 @@ const App: React.FC = () => {
 
     const updated = projects.filter(p => p.id !== id);
     setProjects(updated);
-    if (id === currentProjectId) createNewProject();
+    // The user already confirmed the delete in <DeleteProjectDialog>; calling
+    // createNewProject() here would prompt them a second time. Use the
+    // non-interactive reset instead.
+    if (id === currentProjectId) resetToBlankProject();
     setDeleteTarget(null);
   };
 

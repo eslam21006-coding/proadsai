@@ -96,7 +96,7 @@
 4. Type 10 characters in quick succession (under 1 second total).
 5. **Verify**: only one save cycle fires (`Saving… / Saved` shown once, not 10 times).
 6. Type continuously for 60 seconds without stopping.
-7. **Verify**: the save fires at the 30 s ceiling regardless of inactivity (R5 — proves SC-006).
+7. **Verify**: the save fires at the 30 s ceiling regardless of inactivity (FR-016 auto-save coalescing window — proves SC-006).
 8. With DevTools, set Network → Offline. Type a few more edits.
 9. **Verify**: indicator shows the inline save-failure state. The local IndexedDB save still succeeds (open DevTools → Application → IndexedDB → ProAdsDB_V2 → projects, confirm the latest edit is written).
 10. Continue typing while offline so 3 cloud saves fail in a row.

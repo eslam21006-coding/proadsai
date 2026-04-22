@@ -14,7 +14,7 @@ interface GetRequest {
   cursor?: string;
 }
 
-export const getUserProjects = onCall(async (request: CallableRequest<GetRequest>) => {
+export const getUserProjects = onCall({ region: "europe-west1" }, async (request: CallableRequest<GetRequest>) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Login required");
   const callerUid = request.auth.uid;
   const { workspaceId, status, pageSize, cursor } = request.data ?? {};
@@ -43,15 +43,23 @@ export const getUserProjects = onCall(async (request: CallableRequest<GetRequest
     }
   }
 
+  // Fetch one extra row so we can tell "exactly N items returned" apart from
+  // "there's a next page" without an extra round-trip.
   let q: admin.firestore.Query = db.collection(`users/${ownerUid}/projects`)
     .orderBy("timestamp", "desc")
     .orderBy("id", "desc")
-    .limit(effectivePageSize);
+    .limit(effectivePageSize + 1);
 
   if (workspaceId) {
     q = q.where("workspaceId", "==", workspaceId);
   } else if (allowedWorkspaceIds !== "ALL" && allowedWorkspaceIds.length > 0) {
     const wsSlice = allowedWorkspaceIds.slice(0, 30);
+    if (allowedWorkspaceIds.length > wsSlice.length) {
+      console.warn(
+        `phase13 ▸ getUserProjects allowedWorkspaceIds truncated for caller=${callerUid} ` +
+        `total=${allowedWorkspaceIds.length} kept=${wsSlice.length} omitted=${allowedWorkspaceIds.length - wsSlice.length}`,
+      );
+    }
     q = q.where("workspaceId", "in", wsSlice);
   }
 
@@ -70,7 +78,11 @@ export const getUserProjects = onCall(async (request: CallableRequest<GetRequest
   }
 
   const snap = await q.get();
-  const projects = snap.docs.map((doc) => {
+  const allDocs = snap.docs;
+  const hasMore = allDocs.length > effectivePageSize;
+  const pageDocs = hasMore ? allDocs.slice(0, effectivePageSize) : allDocs;
+
+  const projects = pageDocs.map((doc) => {
     const d = doc.data();
     const steps = stepsWithData({
       inputs: d.inputs ?? null,
@@ -98,7 +110,7 @@ export const getUserProjects = onCall(async (request: CallableRequest<GetRequest
   });
 
   let nextCursor: string | null = null;
-  if (projects.length === effectivePageSize && projects.length > 0) {
+  if (hasMore && projects.length > 0) {
     const last = projects[projects.length - 1];
     nextCursor = Buffer.from(JSON.stringify({ timestamp: last.timestamp, id: last.id })).toString("base64");
   }

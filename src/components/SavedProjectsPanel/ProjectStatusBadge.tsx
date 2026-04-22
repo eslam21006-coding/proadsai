@@ -9,16 +9,10 @@ interface Props {
   status: ProjectStatus | undefined;
 }
 
-const FALLBACK: Record<string, { en: string; ar: string; twClass: string }> = {
-  draft: { en: "Draft", ar: "مسودة", twClass: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300" },
-  rendered: { en: "Rendered", ar: "تم العرض", twClass: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" },
-  published: { en: "Published", ar: "منشور", twClass: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" },
-};
-
 const ProjectStatusBadge: React.FC<Props> = ({ status }) => {
   const { lang } = useT();
   const key = status ?? "draft";
-  const label = statusLabels[key] ?? FALLBACK[key];
+  const label = statusLabels[key];
   if (!label) return null;
 
   return (

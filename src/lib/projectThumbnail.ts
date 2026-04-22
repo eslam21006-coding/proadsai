@@ -12,6 +12,7 @@ function downscaleToJpg(blob: Blob): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
+    const objectUrl = URL.createObjectURL(blob);
     img.onload = () => {
       const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
       const w = Math.round(img.width * scale);
@@ -20,16 +21,27 @@ function downscaleToJpg(blob: Blob): Promise<Blob> {
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext("2d");
-      if (!ctx) { reject(new Error("Canvas 2d unavailable")); return; }
+      if (!ctx) {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("Canvas 2d unavailable"));
+        return;
+      }
       ctx.drawImage(img, 0, 0, w, h);
       canvas.toBlob(
-        (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),
+        (b) => {
+          URL.revokeObjectURL(objectUrl);
+          if (b) resolve(b);
+          else reject(new Error("toBlob returned null"));
+        },
         "image/jpeg",
         0.82,
       );
     };
-    img.onerror = () => reject(new Error("Image load failed"));
-    img.src = URL.createObjectURL(blob);
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Image load failed"));
+    };
+    img.src = objectUrl;
   });
 }
 
@@ -47,14 +59,10 @@ export async function uploadAndPersistThumbnail(
     return sourceUrl;
   }
 
-  let blob: Blob;
-  if (sourceUrl.startsWith("data:")) {
-    const res = await fetch(sourceUrl);
-    blob = await res.blob();
-  } else {
-    const res = await fetch(sourceUrl);
-    blob = await res.blob();
-  }
+  // fetch() handles both data: URLs and remote URLs natively, so a single
+  // branch covers both cases.
+  const res = await fetch(sourceUrl);
+  let blob: Blob = await res.blob();
 
   if (blob.size > MAX_BYTES || blob.type !== "image/jpeg") {
     blob = await downscaleToJpg(blob);

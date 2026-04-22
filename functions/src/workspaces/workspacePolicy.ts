@@ -119,7 +119,6 @@ export async function resolveCallerScope(callerUid: string): Promise<{
   ownerUid: string;
   allowedWorkspaceIds: string[] | "ALL";
 }> {
-  const userSnap = await db.collection("users").doc(callerUid).get();
   const teamDoc = await db.collection(`users/${callerUid}/team`).doc("meta").get();
 
   if (teamDoc.exists && teamDoc.data()?.ownerUid) {
