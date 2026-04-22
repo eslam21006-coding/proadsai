@@ -24,6 +24,10 @@ const SavedProjectCard: React.FC<Props> = ({ project, onLoad, onDelete }) => {
 
   const handleActivate = () => onLoad(project);
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    // Only react to Enter/Space when focus is on the wrapper itself —
+    // otherwise nested controls (step-dot buttons, delete button) would have
+    // their own keyboard activations hijacked by this parent handler.
+    if (e.currentTarget !== e.target) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault(); // Space would otherwise scroll the page.
       handleActivate();
@@ -58,7 +62,7 @@ const SavedProjectCard: React.FC<Props> = ({ project, onLoad, onDelete }) => {
             {project.name || untitledLabel}
           </div>
           <div className="text-[10px] text-slate-400 mt-0.5">
-            {new Date(project.timestamp).toLocaleDateString(undefined, {
+            {new Date(project.timestamp).toLocaleDateString(lang, {
               month: "short",
               day: "numeric",
               hour: "2-digit",

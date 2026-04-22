@@ -86,15 +86,16 @@ interface SavedProjectListItem {
 3. Build the Firestore query against `users/{ownerUid}/projects`:
    - If `workspaceId` set → `where('workspaceId', '==', workspaceId)`
    - Else if owner → no workspace constraint
-   - Else (team member) → `where('workspaceId', 'in', allowedWorkspaceIds.slice(0, 30))` (Firestore `in` cap is 30 items; if a member somehow has > 30 workspaces, fan out into multiple queries and merge — extremely unlikely in practice)
+   - Else (team member) → `where('workspaceId', 'in', allowedWorkspaceIds.slice(0, 30))`. **Known limitation**: Firestore caps `in` queries at 30 items, so a member with more than 30 accessible workspaces sees only the first 30 in their listing. The implementation logs a `phase13 ▸ getUserProjects allowedWorkspaceIds truncated …` warning when this clipping happens. Fan-out across multiple `in` queries with merging is a possible future fix, but in practice members hold ≤ 5–10 workspaces, so the truncation is dormant at launch.
    - If `status` set → `where('status', '==', status)`
    - Order by `timestamp DESC, id DESC` (matches `firestore.indexes.json` composites in `data-model.md`)
-   - `limit(pageSize)`
+   - `limit(pageSize + 1)` — fetch one extra row so a "next page" can be detected without an additional round-trip
    - If `cursor` present → `startAfter(cursor.timestamp, cursor.id)`
 4. For each returned doc, project to `SavedProjectListItem` (compute `stepsWithData`).
 5. Build `nextCursor`:
-   - If returned `length === pageSize` → encode `{ timestamp, id }` of the last doc as base64.
-   - Else → `null`.
+   - If returned `length > pageSize` → there IS a next page. Drop the extra row (it's the lookahead), then encode the last *kept* doc's `{ timestamp, id }` as base64.
+   - Else → `null`. (An exactly-`pageSize`-or-fewer result means we've reached the tail.)
+   - This avoids the `length === pageSize` ambiguity that would otherwise advertise a phantom next page on every exactly-full last page.
 
 ### Pagination stability
 
@@ -128,5 +129,5 @@ Live in `functions/src/__tests__/__fixtures__/savedProjects.fixtures.ts`.
 | `member_no_workspace_param` | Member with access to ws-A only, no `workspaceId` → returns only ws-A projects. |
 | `pagination_two_pages` | 6 projects, `pageSize: 4` → page 1 returns 4 projects + non-null cursor; page 2 returns 2 projects + null cursor. |
 | `pagination_cursor_stable` | After page 1, owner adds a new project; page 2 returned via cursor still contains the original next 2 (new project doesn't shift the cursor). |
-| `legacy_status_filter_draft` | A project with no `status` field is included in the `status: 'draft'` page. |
+| `legacy_status_after_first_save_drafts` | A legacy project (no `status` field at write time) that has been touched once by Phase-13 save code now carries `status: 'draft'` and is returned by the `status: 'draft'` filter. The matching negative case — a *truly untouched* legacy project, with no `status` field on disk, is **NOT** matched by the `status: 'draft'` filter (Firestore does not equate missing fields with `null`); it appears only in the `All` tab until next save promotes it. See "Status filter semantics" above. |
 | `permission_denied_no_metadata_leak` | Permission-denied response payload is JSON-strict-equal to `{ error: { code: 'PERMISSION_DENIED', ... } }` with no `projects`, `nextCursor`, or any project shape leaked. |

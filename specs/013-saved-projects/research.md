@@ -144,11 +144,13 @@ match /users/{uid}/projects/{projectId}/thumbnail.{ext} {
 }
 ```
 
-Team members do **not** read other-uid thumbnails directly; the `getUserProjects` callable returns the URL string and team members render it. Cross-uid Storage reads of someone else's thumbnail are denied. (The thumbnail URL itself is a long-lived signed Firebase download URL; if a team member needs it the callable response includes it — they fetch it via the URL the callable returned, which the Firebase SDK will sign with the team member's auth token.)
+**`getUserProjects` is the authorisation boundary** — it decides who is told the long-lived Firebase download URL for an owner's thumbnail. Cross-uid programmatic SDK reads of `users/{otherUid}/projects/{projectId}/thumbnail.{ext}` are denied by the V1 rule; team members never call `getDownloadURL()` against another user's path. They render the URL the callable handed them.
 
-**Rationale**: Matches the spec's "user-scoped storage" assumption and the Phase-12 pattern of routing cross-user data access through callables, never raw Storage/Firestore reads.
+**Important caveat — download URLs are bearer tokens, not auth-checked fetches.** A long-lived `?token=…` Firebase download URL bypasses Storage Rules on every fetch — the Firebase SDK does **not** "re-sign" the request with the caller's auth token at HTTP fetch time. Possession of the URL is sufficient to fetch the bytes. In practice this means: anyone in possession of the URL string (a team member who legitimately received it; another tab; a network observer if the URL leaks; a logging system that captured the response payload) can GET the thumbnail until the token is revoked. For Phase 13's launch surface this is an acceptable trade-off — thumbnails are 64×64 cropped jpgs of ad creative the user is already preparing to publish. If a stricter posture is later required, switch the client off `<img src=…>` and onto path-based SDK reads (`getBlob` / `getBytes` against `users/{ownerUid}/projects/{projectId}/thumbnail.jpg`) and use the V2 storage rule (with `isTeamMemberOf(...)`) so Storage Rules enforce per-request access checks instead of relying on URL secrecy.
 
-**Open consideration noted in `contracts/storage-rules.md`**: If team-member rendering of owner-uid thumbnails fails because the rule denies `request.auth.uid == uid`, we will switch to the Phase-12 "is-team-member" subexpression (the same one workspace logos use). The contract document will name the exact form to ship.
+**Rationale**: Matches the spec's "user-scoped storage" assumption and the Phase-12 pattern of routing cross-user data access through callables, never raw Storage/Firestore reads. The bearer-token caveat is a known property of Firebase download URLs, not a Phase-13 regression.
+
+**Open consideration noted in `contracts/storage-rules.md`**: If team-member rendering of owner-uid thumbnails fails (because the rule denies `request.auth.uid == uid`) AND we have moved off URL-fetch onto path-fetch as above, switch to the V2 rule with the Phase-12 "is-team-member" subexpression.
 
 ---
 

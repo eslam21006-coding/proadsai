@@ -5582,34 +5582,45 @@ export const getWorkspaceAccessAuditLog = onCall({
 export const saveProject = onCall({ region: "europe-west1" }, async (request: CallableRequest<any>) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required");
     const uid = request.auth.uid;
-    const { project } = request.data;
-    if (!project || !project.id) throw new HttpsError("invalid-argument", "project.id required");
+
+    // Reuse the file-level payload guard so a non-object request.data fails
+    // with the same shape as the workspace callables.
+    const data = asObjectPayload(request.data);
+    const project = data.project;
+    if (!project || typeof project !== "object" || !project.id) {
+        throw new HttpsError("invalid-argument", "project.id required");
+    }
 
     const db = admin.firestore();
 
-    // Plan can be read outside the txn — billing state is unrelated to the
-    // count-vs-cap race we're protecting against, and rarely changes mid-save.
-    // Resolve canonically: prefer billingState.plan; fall back to legacy users.{uid}.plan;
-    // map the historical "creator"/"scaling" labels to "pro"/"scale" (matches
-    // billingState.ts:84-90); narrow to one of "none"|"starter"|"pro"|"scale".
-    const userSnap = await db.collection("users").doc(uid).get();
-    const userData = userSnap.data() ?? {};
-    let rawPlan: string = userData.billingState?.plan ?? userData.plan ?? "none";
-    if (rawPlan === "creator") rawPlan = "pro";
-    else if (rawPlan === "scaling") rawPlan = "scale";
-    const plan: "none" | "starter" | "pro" | "scale" =
-        rawPlan === "starter" || rawPlan === "pro" || rawPlan === "scale" ? rawPlan : "none";
-
-    // Quota check, status latch read, and project write must all happen inside
-    // ONE transaction (FR-006/FR-007/SC-005, Constitution principle XI). Otherwise
-    // two parallel saves at cap-1 can both pass the count check and both write.
+    // Quota check, plan resolution, status latch read, and project write must
+    // all happen inside ONE transaction (FR-006/FR-007/SC-005, Constitution
+    // principle XI). Otherwise two parallel saves at cap-1 can both pass the
+    // count check and both write, AND a concurrent plan downgrade between the
+    // out-of-txn plan read and the txn could let the user slip past their
+    // new lower cap.
     const status = await db.runTransaction(async (txn) => {
         const projectRef = db.doc(`users/${uid}/projects/${project.id}`);
-        // All reads first (Firestore txn requirement) — existing project doc
-        // gives us isNew + the prev status for the latch.
+        const userRef = db.doc(`users/${uid}`);
+
+        // All reads first (Firestore txn requirement). Existing project doc
+        // gives us isNew + the prev status for the latch; user doc gives us
+        // the canonical plan.
         const existingSnap = await txn.get(projectRef);
+        const userSnap = await txn.get(userRef);
+
         const isNew = !existingSnap.exists;
         const prevStatus = (existingSnap.data() as { status?: "draft" | "rendered" | "published" } | undefined)?.status;
+
+        // Resolve canonically: prefer billingState.plan; fall back to legacy
+        // users.{uid}.plan; map "creator"→"pro" / "scaling"→"scale" (matches
+        // billingState.ts:84-90); narrow to one of "none"|"starter"|"pro"|"scale".
+        const userData = userSnap.data() ?? {};
+        let rawPlan: string = userData.billingState?.plan ?? userData.plan ?? "none";
+        if (rawPlan === "creator") rawPlan = "pro";
+        else if (rawPlan === "scaling") rawPlan = "scale";
+        const plan: "none" | "starter" | "pro" | "scale" =
+            rawPlan === "starter" || rawPlan === "pro" || rawPlan === "scale" ? rawPlan : "none";
 
         await enforceProjectQuota(txn, uid, plan, isNew);
 
@@ -5617,15 +5628,24 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
         // project.status (it may be stale and would otherwise allow demotion).
         const newStatus = deriveStatus(prevStatus, project);
 
-        const cleanProject = { ...project, status: newStatus, userId: uid, updatedAt: Date.now() };
+        // IMPORTANT: keep the `id` field on the persisted doc. getUserProjects
+        // uses `.orderBy("id", "desc")` as the cursor tiebreaker — Firestore
+        // would silently exclude documents missing the field from those queries,
+        // breaking pagination.
+        const cleanProject: Record<string, any> = {
+            ...project,
+            id: project.id,
+            status: newStatus,
+            userId: uid,
+            updatedAt: Date.now(),
+        };
         if (cleanProject.batchResults && cleanProject.batchResults.length > 0) {
             cleanProject.batchResults = cleanProject.batchResults.map((r: any) => ({
                 ...r,
                 url: r.url && r.url.length > 5000 ? null : r.url,
             }));
         }
-        const { id: _id, ...data } = cleanProject;
-        txn.set(projectRef, data, { merge: true });
+        txn.set(projectRef, cleanProject, { merge: true });
         return newStatus;
     });
 
