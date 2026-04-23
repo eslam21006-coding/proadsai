@@ -1162,192 +1162,50 @@ testCrossModuleParity();
 console.log("═══ T026a — Cross-module parity complete ═══\n");
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HFC.9 — Cultural Compliance Fixtures (Arabic Market Guardrails)
+// HFC.9 — Cultural Compliance: pipeline-level / integration assertions only.
+// ───────────────────────────────────────────────────────────────────────────
+// Pure unit checks for scanAndReplace, table invariants, case-handling, and
+// block content live in `__tests__/culturalCompliance.test.ts`. This file
+// only covers the call-site gate (isArabic) and the minimum count/shape
+// guarantees needed by SC-006 / SC-005 so updates to SUBSTITUTIONS,
+// TRIGGER_WORDS, HARAM_MOTIFS, CULTURAL_COMPLIANCE_BLOCK, and
+// ARABIC_WARDROBE_BLOCK only require changes in a single dedicated test file.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import {
-    CULTURAL_COMPLIANCE_BLOCK,
-    ARABIC_WARDROBE_BLOCK,
-    HARAM_MOTIFS,
-    MOTIF_SUBSTITUTIONS,
     TRIGGER_WORDS,
-    SUBSTITUTIONS,
+    HARAM_MOTIFS,
     isArabic,
     scanAndReplace,
-    assertInvariants as assertCulturalInvariants,
 } from "./culturalCompliance.js";
 
-function testCulturalInvariants() {
-    // Table invariants — every trigger and haram motif has a substitution; no substitution is itself a trigger.
-    assert.doesNotThrow(() => assertCulturalInvariants(), "assertInvariants does not throw");
-
-    for (const motif of HARAM_MOTIFS) {
-        assert.ok(motif in MOTIF_SUBSTITUTIONS, `HARAM_MOTIFS "${motif}" has MOTIF_SUBSTITUTIONS entry`);
-    }
-    for (const trigger of TRIGGER_WORDS) {
-        assert.ok(trigger in SUBSTITUTIONS, `TRIGGER_WORDS "${trigger}" has SUBSTITUTIONS entry`);
-    }
-    assert.ok(HARAM_MOTIFS.length >= 11, "HARAM_MOTIFS contains at least 11 entries");
-    assert.ok(TRIGGER_WORDS.length >= 18, "TRIGGER_WORDS contains at least 18 entries");
-
-    console.log("  ✅ testCulturalInvariants: tables consistent, every trigger/motif has a substitution");
-}
-
-function testIsArabicLocaleGate() {
-    // Clarification Q3 — any locale whose code begins with `ar` is Arabic; all others are not.
-    assert.equal(isArabic("ar"), true, "ar → true");
-    assert.equal(isArabic("ar_fusha"), true, "ar_fusha → true");
-    assert.equal(isArabic("ar-SA"), true, "ar-SA → true");
-    assert.equal(isArabic("ar-EG"), true, "ar-EG → true");
-    assert.equal(isArabic("ar-MA"), true, "ar-MA → true");
-    assert.equal(isArabic("en"), false, "en → false");
-    assert.equal(isArabic("en-US"), false, "en-US → false");
-    assert.equal(isArabic(undefined), false, "undefined → false");
-    assert.equal(isArabic(null), false, "null → false");
-    assert.equal(isArabic(""), false, "empty string → false");
-    // Intentional: `isArabic` uses a strict string-prefix check per research.md D-1 —
-    // any locale whose code begins with `ar` is Arabic. BCP-47 validity is out of scope
-    // for this predicate; it only has to match the `adLanguage` values the app already
-    // produces (`ar`, `ar_fusha`, `ar-SA`, `ar-EG`, etc.). A pathological input like
-    // "arabic" also passes; this is accepted as an unlikely false-positive, not a bug.
-    assert.equal(isArabic("arabic"), true, "strict prefix: any string starting with 'ar' → true");
-
-    console.log("  ✅ testIsArabicLocaleGate: startsWith('ar') applies uniformly");
-}
-
-function testCulturalComplianceBlockShape() {
-    // Contract: cultural-compliance-block.md §1.1 — verbatim content.
-    assert.ok(CULTURAL_COMPLIANCE_BLOCK.length > 0, "CULTURAL_COMPLIANCE_BLOCK is non-empty");
-    assert.ok(
-        CULTURAL_COMPLIANCE_BLOCK.startsWith("CULTURAL COMPLIANCE (MANDATORY — Arabic market):"),
-        "CULTURAL_COMPLIANCE_BLOCK starts with the mandated header",
-    );
-    assert.ok(CULTURAL_COMPLIANCE_BLOCK.includes("NEVER render alcohol"), "block prohibits alcohol");
-    assert.ok(CULTURAL_COMPLIANCE_BLOCK.includes("NEVER render nightclub, bar, or pub interiors"), "block prohibits nightclubs/bars/pubs");
-    assert.ok(CULTURAL_COMPLIANCE_BLOCK.includes("NEVER render gambling elements"), "block prohibits gambling");
-    assert.ok(CULTURAL_COMPLIANCE_BLOCK.includes("NEVER render pork products"), "block prohibits pork");
-    assert.ok(CULTURAL_COMPLIANCE_BLOCK.includes("dogs as pets"), "block addresses dogs-as-pets");
-    assert.ok(CULTURAL_COMPLIANCE_BLOCK.includes("non-Islamic religious symbols"), "block addresses religious symbols");
-    assert.ok(CULTURAL_COMPLIANCE_BLOCK.includes("revealing or immodest clothing"), "block addresses modesty");
-    assert.ok(CULTURAL_COMPLIANCE_BLOCK.includes("Luxury signaling"), "block gives approved luxury palette");
-
-    // Contract: cultural-compliance-block.md §2.1 — wardrobe block content.
-    assert.ok(ARABIC_WARDROBE_BLOCK.length > 0, "ARABIC_WARDROBE_BLOCK is non-empty");
-    assert.ok(
-        ARABIC_WARDROBE_BLOCK.startsWith("ARABIC MARKET WARDROBE RULES:"),
-        "ARABIC_WARDROBE_BLOCK starts with mandated header",
-    );
-    assert.ok(ARABIC_WARDROBE_BLOCK.includes("shoulders covered"), "wardrobe block requires shoulders covered");
-    assert.ok(ARABIC_WARDROBE_BLOCK.includes("Hijab ONLY if present in Box A"), "hijab preservation rule present");
-    assert.ok(ARABIC_WARDROBE_BLOCK.includes("No swimwear"), "no-swimwear rule present");
-
-    console.log("  ✅ testCulturalComplianceBlockShape: both blocks contain mandated clauses");
-}
-
-function testScanAndReplaceImageLayer() {
-    // Contract: trigger-word-scan.md §7 case (a) — stubbed prompt with "cocktail".
-    const input = "Scene includes a cocktail on the table.";
-    const { cleaned, matched } = scanAndReplace(input, "imagePrompt");
-    assert.ok(!cleaned.includes("cocktail"), "cocktail removed from cleaned output");
-    assert.ok(cleaned.includes("artisan coffee"), "replacement 'artisan coffee' present");
-    assert.deepEqual(matched, ["cocktail"], "matched reports the single trigger");
-
-    console.log("  ✅ testScanAndReplaceImageLayer: 'cocktail' → 'artisan coffee', trace-ready matched list");
-}
-
-function testScanAndReplaceAdCopyLayer() {
-    // Contract: trigger-word-scan.md §7 case (b) — stubbed hook with "champagne".
-    const input = "Celebrate with champagne tonight";
-    const { cleaned, matched } = scanAndReplace(input, "adCopy");
-    assert.ok(!cleaned.includes("champagne"), "champagne removed from cleaned output");
-    assert.ok(cleaned.includes("sparkling water"), "replacement 'sparkling water' present");
-    assert.deepEqual(matched, ["champagne"], "matched reports the single trigger");
-
-    console.log("  ✅ testScanAndReplaceAdCopyLayer: 'champagne' → 'sparkling water'");
-}
-
-function testScanAndReplaceCaseInsensitive() {
-    // Contract: trigger-word-scan.md §7 case (e) — "Wine" title-case triggers replacement; matched stays lowercased.
-    const { cleaned, matched } = scanAndReplace("Wine and dine", "imagePrompt");
-    assert.ok(!cleaned.toLowerCase().includes("wine"), "Wine (title-case) replaced");
-    assert.deepEqual(matched, ["wine"], "matched reports canonical lowercased trigger");
-
-    console.log("  ✅ testScanAndReplaceCaseInsensitive: title-case hits the same trigger");
-}
-
-function testScanAndReplaceWholeWordBoundary() {
-    // Contract: trigger-word-scan.md §2 — whole-word matching bounded by \W.
-    // "wineglass" MUST NOT trigger "wine".
-    const { cleaned, matched } = scanAndReplace("wineglass holder", "imagePrompt");
-    assert.equal(cleaned, "wineglass holder", "substring inside compound word is untouched");
-    assert.deepEqual(matched, [], "no spurious match inside 'wineglass'");
-
-    console.log("  ✅ testScanAndReplaceWholeWordBoundary: substring in compound word not matched");
-}
-
-function testScanAndReplaceLongestMatchFirst() {
-    // Contract: trigger-word-scan.md §2 — multi-word triggers beat single-word variants.
-    const { cleaned, matched } = scanAndReplace("meet me at the bar counter tonight", "imagePrompt");
-    assert.ok(cleaned.includes("service counter"), "bar counter phrase replaced");
-    assert.ok(!cleaned.includes("bar counter"), "original phrase gone");
-    assert.deepEqual(matched, ["bar counter"], "matched reports the multi-word trigger");
-
-    console.log("  ✅ testScanAndReplaceLongestMatchFirst: 'bar counter' replaced as one phrase");
-}
-
-function testScanAndReplaceCleanText() {
-    // Contract: trigger-word-scan.md §8 — empty and clean inputs are no-ops.
-    const empty = scanAndReplace("", "imagePrompt");
-    assert.equal(empty.cleaned, "", "empty input returns empty cleaned");
-    assert.deepEqual(empty.matched, [], "empty input returns empty matched");
-
-    const clean = scanAndReplace("the quick brown fox jumps over the lazy dog", "adCopy");
-    assert.equal(clean.cleaned, "the quick brown fox jumps over the lazy dog", "clean text is unchanged");
-    assert.deepEqual(clean.matched, [], "no matches on clean text");
-
-    console.log("  ✅ testScanAndReplaceCleanText: empty and clean inputs unchanged");
-}
-
-function testSubstitutionsDoNotContainTriggers() {
-    // Contract: trigger-word-scan.md §3 — substitution values must not themselves contain trigger words.
-    for (const [key, value] of Object.entries(SUBSTITUTIONS)) {
-        for (const trigger of TRIGGER_WORDS) {
-            const escaped = trigger.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            const re = new RegExp(`(?:^|\\W)${escaped}(?:\\W|$)`, "i");
-            assert.ok(!re.test(value), `SUBSTITUTIONS["${key}"] = "${value}" must not contain trigger "${trigger}"`);
-        }
-    }
-
-    console.log("  ✅ testSubstitutionsDoNotContainTriggers: no escape-by-substitution loops");
-}
-
 function testEnglishIsNotGated() {
-    // Contract: clarification Q5 / FR-025 — scan is NOT called for English ads, but the function itself has no gate.
-    // The gate is at the call site: `if (isArabic(adLanguage)) { scanAndReplace(...) }`.
-    // This fixture asserts that when callers skip the scan for English, `isArabic` returns false.
-    assert.equal(isArabic("en"), false, "English locale is not Arabic");
-    assert.equal(isArabic("en_US"), false, "English-US is not Arabic");
-    // If someone mistakenly called the scan with English text anyway, the function is still pure:
-    // triggers would fire. This is by design (the function is language-agnostic; gating lives at call sites).
+    // Clarification Q5 / FR-025 — scanAndReplace is pure and language-agnostic by design;
+    // the `isArabic(adLanguage)` gate lives at each call site (generators.ts). This fixture
+    // proves the gate behavior rather than re-testing the pure function.
+    assert.equal(isArabic("en"), false, "English locale does not trigger the gate");
+    assert.equal(isArabic("en_US"), false, "English-US does not trigger the gate");
+    // If a call site WERE to skip the gate and invoke the scan on English text, the scan
+    // would still fire — this is intentional (no language knob inside the pure function).
     const { cleaned, matched } = scanAndReplace("wine cellar", "imagePrompt");
-    assert.ok(matched.length > 0, "function is language-agnostic — gate must live at the call site");
-    assert.notEqual(cleaned, "wine cellar", "function replaces when called, regardless of language");
+    assert.ok(matched.length > 0, "scan itself is pure — call sites must gate via isArabic");
+    assert.notEqual(cleaned, "wine cellar", "scan replaces when invoked, regardless of language");
 
     console.log("  ✅ testEnglishIsNotGated: isArabic is the gate; scan itself is pure");
 }
 
-console.log("\n═══ HFC.9 — Cultural Compliance Fixtures ═══");
-testCulturalInvariants();
-testIsArabicLocaleGate();
-testCulturalComplianceBlockShape();
-testScanAndReplaceImageLayer();
-testScanAndReplaceAdCopyLayer();
-testScanAndReplaceCaseInsensitive();
-testScanAndReplaceWholeWordBoundary();
-testScanAndReplaceLongestMatchFirst();
-testScanAndReplaceCleanText();
-testSubstitutionsDoNotContainTriggers();
+function testMinimumCoverageShape() {
+    // SC-005 / SC-006 shape floor: the round-2 expanded lists must still satisfy the
+    // documented minimums so a future trimming of either array does not silently drop
+    // coverage below the spec baseline.
+    assert.ok(HARAM_MOTIFS.length >= 11, `HARAM_MOTIFS has at least 11 entries (got ${HARAM_MOTIFS.length})`);
+    assert.ok(TRIGGER_WORDS.length >= 29, `TRIGGER_WORDS has at least 29 entries (got ${TRIGGER_WORDS.length})`);
+    console.log(`  ✅ testMinimumCoverageShape: HARAM_MOTIFS=${HARAM_MOTIFS.length}, TRIGGER_WORDS=${TRIGGER_WORDS.length}`);
+}
+
+console.log("\n═══ HFC.9 — Cultural Compliance Integration Checks ═══");
 testEnglishIsNotGated();
-console.log("═══ HFC.9 — Cultural compliance fixtures complete ═══\n");
+testMinimumCoverageShape();
+console.log("═══ HFC.9 — Integration checks complete (unit coverage lives in __tests__/culturalCompliance.test.ts) ═══\n");
 
 console.log('contractFixtures.test: PASS');

@@ -4046,6 +4046,26 @@ export async function generateFinalAd(
     let subheadText = ownedRenderText.subheadText;
     let ctaName = ownedRenderText.ctaName;
     let benefitText = ownedRenderText.benefitText;
+    // ── Cultural sanitization for Arabic ads (defense-in-depth). ──
+    // generateBuildPlan also performs this scan on its local copies, but generateFinalAd
+    // re-derives ad copy from `approvedTov` via resolveOwnedRenderText, so any sanitization
+    // done earlier is lost across the two Cloud Function boundary. Re-apply the same
+    // substitution table here so the final render uses sanitized text regardless of the
+    // client's orchestration path.
+    if (isArabic(inputs.adLanguage)) {
+        for (const key of ["hookText", "subheadText", "ctaName", "benefitText"] as const) {
+            const field = { hookText, subheadText, ctaName, benefitText }[key];
+            if (!field) continue;
+            const { cleaned, matched } = scanAndReplace(field, "adCopy");
+            if (matched.length > 0) {
+                if (key === "hookText") hookText = cleaned;
+                else if (key === "subheadText") subheadText = cleaned;
+                else if (key === "ctaName") ctaName = cleaned;
+                else benefitText = cleaned;
+                console.log(`🕌 Cultural compliance scan (generateFinalAd/${key}): replaced [${matched.join(", ")}]`);
+            }
+        }
+    }
     const parsedBuildPlan = parseBuildPlanEnvelope(buildPlan);
     let incomingBuildBlueprint = parsedBuildPlan.blueprint || buildPlan;
     const ownershipMap = parsedBuildPlan.machinePlan?.ownership
@@ -6800,8 +6820,20 @@ Position the offer as clearly superior without naming competitors directly. Use 
             text = cleaned;
             captionCulturalMatched = matched;
             console.log(`🕌 Cultural compliance scan (caption): replaced [${matched.join(", ")}]`);
+            // captionQuality was computed against the pre-scan text. Since scanAndReplace
+            // mutated the caption, the stored checks (length, repetition, language-quality)
+            // may no longer match the final text. Null it out with a stale-marker log so
+            // downstream consumers treat post-scan captions as "quality unknown" rather than
+            // trusting validator signals that refer to the un-sanitized string.
+            // (Full re-validation would require threading headline/subheadline/locale out of
+            // _generateCaptionInner; deferred — see research.md D-6 for the scope note.)
+            if (captionQuality) {
+                console.warn(`⚠️ captionQuality invalidated: text was mutated by cultural scan (matched: [${matched.join(", ")}])`);
+                captionQuality = null;
+            }
         }
     }
+    void captionCulturalMatched;
     return { text, rankingGuidance: _captionRankingLinkage, captionQuality };
 }
 

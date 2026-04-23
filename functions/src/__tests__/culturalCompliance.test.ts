@@ -103,6 +103,41 @@ function runTests(): void {
     assert(r.matched.length === 0, "no matches on clean text");
   }
 
+  // ─── Non-fatal invalid sourceLayer ───
+  console.log("  invalid sourceLayer returns warning, not throw");
+  {
+    const r = scanAndReplace("wine tasting", "unknown" as unknown as "imagePrompt");
+    assert(r.cleaned === "wine tasting", "invalid sourceLayer: text unchanged");
+    assert(r.matched.length === 0, "invalid sourceLayer: empty matched");
+    assert(typeof r.warning === "string" && r.warning.length > 0, "invalid sourceLayer: warning string emitted");
+  }
+
+  // ─── Round-2 trigger expansion (vodka/rum/pub/crop top/backless/brothel …) ───
+  console.log("  round-2 trigger expansion");
+  {
+    const cases: Array<[string, string]> = [
+      ["A glass of vodka on the table", "sparkling water"],
+      ["Friday night at the pub", "private lounge"],
+      ["rum and coke", "artisan coffee"],
+      ["Wearing a crop top and heels", "tailored top"],
+      ["backless dress at the gala", "elegant"],
+      ["near the brothel district", "private residence"],
+    ];
+    for (const [input, expectedSub] of cases) {
+      const r = scanAndReplace(input, "adCopy");
+      assert(r.matched.length > 0, `round-2 trigger fired for: "${input}"`);
+      assert(r.cleaned.includes(expectedSub), `round-2 substitution present for: "${input}" → expected "${expectedSub}" in "${r.cleaned}"`);
+    }
+  }
+
+  // ─── Repeat hits preserve original order including repeats ───
+  console.log("  repeat hits preserved");
+  {
+    const r = scanAndReplace("wine and more wine", "imagePrompt");
+    assert(r.matched.length === 2, "two wine hits recorded, not deduplicated");
+    assert(r.matched[0] === "wine" && r.matched[1] === "wine", "matched preserves repeat order");
+  }
+
   // ─── Summary ───
   console.log(`  ${passed} passed, ${failed} failed`);
   if (failed > 0) {

@@ -2341,9 +2341,12 @@ const App: React.FC = () => {
           const mostRecent = savedProjects[0];
           setCurrentProjectId(mostRecent.id);
           setCurrentProjectName(mostRecent.name || "Untitled Project");
-          // Apply the same migration used by loadProject so legacy preferredUniverse values
-          // (e.g. "Premium Sushi Bar") and retargeting-plan normalizations are consistent.
-          setInputs(sanitizeProjectModes(migrateProjectInputs(mostRecent.inputs)));
+          // Startup auto-restore runs BEFORE the billing/userPlan effect completes, so we
+          // apply only the plan-AGNOSTIC shape migration here (universe remap, style
+          // normalization). Plan-aware retargeting normalization is reserved for loadProject
+          // (user-initiated action) where userPlan is known; applying it here would wrongly
+          // strip retargeting data for users whose plan is still loading.
+          setInputs(sanitizeProjectModes(migrateProjectInputsShape(mostRecent.inputs)));
           setPhase(mostRecent.phase);
           setTovText(mostRecent.tovText);
           setConceptsText(normalizeFieldLabels(mostRecent.conceptsText));
@@ -2963,7 +2966,10 @@ const App: React.FC = () => {
 
   // --- HISTORY ENGINE moved to before render gates ---
 
-  const migrateProjectInputs = (rawInputs: any): any => {
+  // Plan-agnostic shape migration: universe remap (r_sushi_bar → r_sushi_counter,
+  // "Premium Sushi Bar" → "Premium Sushi Counter") and style/universe mode normalization.
+  // Safe to run before userPlan is resolved (i.e., on the startup auto-restore path).
+  const migrateProjectInputsShape = (rawInputs: any): any => {
     if (!rawInputs) return null;
     const _style = (rawInputs.visualStyleFamily ?? rawInputs.universeMode ?? 'realistic') as 'realistic' | 'fantasy' | 'minimal';
     const rawUniverse = rawInputs.preferredUniverse;
@@ -2971,13 +2977,25 @@ const App: React.FC = () => {
     return {
       ...rawInputs,
       preferredUniverse: remappedUniverse,
-      campaignType: canUse(userPlan, 'retargeting') ? (rawInputs.campaignType ?? 'cold') : 'cold',
-      retargetingObjection: canUse(userPlan, 'retargeting') ? (rawInputs.retargetingObjection ?? rawInputs.retargetingObjections?.[0] ?? undefined) : undefined,
-      retargetingObjections: canUse(userPlan, 'retargeting') ? (rawInputs.retargetingObjections ?? (rawInputs.retargetingObjection ? [rawInputs.retargetingObjection] : [])) : [],
-      customObjection: canUse(userPlan, 'retargeting') ? (rawInputs.customObjection ?? '') : '',
       testimonial: rawInputs.testimonial ?? '',
       universeMode: _style,
       visualStyleFamily: _style,
+    };
+  };
+
+  // Plan-aware migration: calls the shape migration first, then enforces retargeting
+  // entitlement based on the explicit `plan` argument. MUST NOT be called before
+  // userPlan is resolved — an unresolved 'none' would incorrectly strip retargeting
+  // from a saved project that belongs to a user who actually has a paid tier.
+  const migrateProjectInputs = (rawInputs: any, plan: UserPlan = userPlan): any => {
+    const shaped = migrateProjectInputsShape(rawInputs);
+    if (!shaped) return null;
+    return {
+      ...shaped,
+      campaignType: canUse(plan, 'retargeting') ? (shaped.campaignType ?? 'cold') : 'cold',
+      retargetingObjection: canUse(plan, 'retargeting') ? (shaped.retargetingObjection ?? shaped.retargetingObjections?.[0] ?? undefined) : undefined,
+      retargetingObjections: canUse(plan, 'retargeting') ? (shaped.retargetingObjections ?? (shaped.retargetingObjection ? [shaped.retargetingObjection] : [])) : [],
+      customObjection: canUse(plan, 'retargeting') ? (shaped.customObjection ?? '') : '',
     };
   };
 

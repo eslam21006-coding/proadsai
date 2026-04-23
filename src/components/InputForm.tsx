@@ -333,7 +333,11 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
   const arabicUniverseBlocked = React.useMemo(() => {
     if (!isArabic(inputs.adLanguage) || !inputs.preferredUniverse) return false;
     const entry = [...DB_REALISTIC, ...DB_FANTASY].find(u => u.name === inputs.preferredUniverse);
-    return entry ? !entry.arabicSafe : false;
+    // Fail-closed: an unknown/legacy preferredUniverse id that does not resolve to a
+    // current entry is treated as BLOCKED for Arabic configurations. This prevents
+    // a stale or migrated-away id (e.g. a project saved with a universe that no
+    // longer exists) from slipping past the Arabic guardrail as "safe by default".
+    return entry ? !entry.arabicSafe : true;
   }, [inputs.adLanguage, inputs.preferredUniverse]);
 
   const generateAllowed = launchSurfaceResult.allowed && !arabicUniverseBlocked;
@@ -413,10 +417,14 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
       const selectedEntry = clearing
         ? [...DB_REALISTIC, ...DB_FANTASY].find(u => u.name === prev.preferredUniverse)
         : null;
+      // Fail-closed: on en→ar switch, clear preferredUniverse whenever the entry
+      // is NOT explicitly arabicSafe — which includes the unknown-entry case
+      // (legacy / migrated-away id). This matches arabicUniverseBlocked's guard.
+      const shouldClear = clearing && (!selectedEntry || !selectedEntry.arabicSafe);
       return {
         ...prev,
         adLanguage: nextLangId,
-        ...(clearing && selectedEntry && !selectedEntry.arabicSafe ? { preferredUniverse: '' } : {}),
+        ...(shouldClear ? { preferredUniverse: '' } : {}),
       };
     });
     setShowLangPicker(false);
@@ -945,6 +953,18 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
         onSubmit={(e) => {
           e.preventDefault();
           if (isTeamViewer) return;
+          // Server-side / keyboard-path guard: the disabled-button UI prevents clicks,
+          // but Enter-key or programmatic form.requestSubmit() can still dispatch a
+          // submit event. Re-check generateAllowed (which covers both launch-surface
+          // validity and the Arabic-safe-universe block from arabicUniverseBlocked).
+          if (!generateAllowed) {
+            if (showToast) {
+              const reason = launchSurfaceResult.reason
+                || (arabicUniverseBlocked ? t('form.pick_arabic_safe_environment') : t('form.submit'));
+              showToast(reason, 'error');
+            }
+            return;
+          }
           if (inputs.campaignType === 'retargeting') {
             const hasObj = !!inputs.retargetingObjection;
             const hasCustom = (inputs.customObjection || '').trim().length > 0;
