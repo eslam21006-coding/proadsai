@@ -3371,9 +3371,13 @@ Selected modes: [${modes.join(' + ')}]
 export interface GenerateBuildPlanResult {
     buildPlan: string;
     copyFidelityWarning: CopyFidelityResult | null;
+    // Shape MUST mirror ResolutionTrace.culturalViolation in types.ts so the value
+    // can be persisted directly onto the trace via setCulturalViolation(...). Only
+    // present when ≥ 1 trigger word was caught during the Arabic post-parse scan.
     culturalViolation?: {
-        words: string[];
-        layer: "imagePrompt" | "adCopy" | "both";
+        caught: true;
+        matchedWords: string[];
+        sourceLayer: "imagePrompt" | "adCopy" | "both";
     };
 }
 
@@ -3868,18 +3872,18 @@ ${JSON.stringify(machinePlan)}`;
         for (const w of [...imageMatched, ...copyMatched]) {
             if (!seen.has(w)) { seen.add(w); allWords.push(w); }
         }
-        const layer: "imagePrompt" | "adCopy" | "both" =
+        const sourceLayer: "imagePrompt" | "adCopy" | "both" =
             imageMatched.length > 0 && copyMatched.length > 0 ? "both"
                 : imageMatched.length > 0 ? "imagePrompt" : "adCopy";
-        culturalViolation = { words: allWords, layer };
-        console.log(`🔒 Cultural violation aggregated: words=[${allWords.join(", ")}] layer=${layer}`);
+        culturalViolation = { caught: true, matchedWords: allWords, sourceLayer };
+        console.log(`🔒 Cultural violation aggregated: matchedWords=[${allWords.join(", ")}] sourceLayer=${sourceLayer}`);
     }
 
     // ── Rebuild finalMachinePlan.ownership from the cleaned copy fields so the serialized
     //    envelope reflects the sanitized hook/subhead/CTA/benefit, not the pre-scan text.
-    //    Also invalidate copyFidelityWarning — it was computed against the pre-scan copy
-    //    and the scan just changed both the technical prompt and the reference fields, so
-    //    any failedFields inside it no longer correspond to the outgoing blueprint.
+    //    Also RECOMPUTE copyFidelityWarning against the sanitized blueprint + sanitized copy
+    //    so downstream consumers see an up-to-date fidelity signal (the pre-scan warning
+    //    referenced text that no longer exists in the outgoing plan).
     let finalCopyFidelityWarning: CopyFidelityResult | null = copyFidelityWarning;
     if (copyMatched.length > 0 || imageMatched.length > 0) {
         const sanitizedOwnershipMap = buildContentOwnershipMap(
@@ -3891,12 +3895,24 @@ ${JSON.stringify(machinePlan)}`;
             // Drop the pre-scan machine-plan ownership so the sanitized map wins.
             null,
         );
-        if (copyFidelityWarning) {
-            console.warn(
-                "⚠️ copyFidelityWarning invalidated: cultural scan mutated ad-copy and/or technical prompt " +
-                "after fidelity validation. Downstream consumers should treat fidelity as unknown for this generation.",
+        // Re-run validateCopyFidelity on the sanitized blueprint + sanitized copy fields.
+        const sanitizedTp = extractTechnicalPromptFromBlueprint(finalMachinePlan.blueprint);
+        const sanitizedCopyFields: CopyFidelityFields = { hookText, subheadText, ctaName, benefitText };
+        if (sanitizedTp) {
+            finalCopyFidelityWarning = validateCopyFidelity(sanitizedTp, sanitizedCopyFields);
+            console.log(
+                `🔁 copyFidelityWarning recomputed post-scan: passed=${finalCopyFidelityWarning.passed}` +
+                (finalCopyFidelityWarning.passed ? "" : ` failedFields=[${(finalCopyFidelityWarning.failedFields ?? []).join(", ")}]`),
             );
-            finalCopyFidelityWarning = null;
+        } else {
+            // No technical prompt recoverable from the sanitized blueprint — conservatively
+            // mark all four copy fields as failing so downstream consumers don't trust stale
+            // pre-scan data.
+            finalCopyFidelityWarning = {
+                passed: false,
+                failedFields: (["hookText", "subheadText", "ctaName", "benefitText"] as const).filter(k => sanitizedCopyFields[k]?.trim()),
+            } as CopyFidelityResult;
+            console.warn("⚠️ copyFidelityWarning set to conservative fail: sanitized blueprint has no TECHNICAL_PROMPT region to re-validate against.");
         }
     }
 

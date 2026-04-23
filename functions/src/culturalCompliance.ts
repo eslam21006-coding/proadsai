@@ -22,7 +22,9 @@ export const HARAM_MOTIFS = [
 ] as const;
 export type HaramMotif = typeof HARAM_MOTIFS[number];
 
-export const MOTIF_SUBSTITUTIONS: Readonly<Record<HaramMotif, string>> = {
+// `as const satisfies Record<HaramMotif, string>` — compile-time exact-key coverage
+// against the derived literal union while preserving the literal types of each value.
+export const MOTIF_SUBSTITUTIONS = {
   cocktails: "premium beverages",
   champagne: "sparkling drinks",
   whiskey: "warm lighting",
@@ -32,9 +34,12 @@ export const MOTIF_SUBSTITUTIONS: Readonly<Record<HaramMotif, string>> = {
   "cocktail reception": "elegant reception",
   "private bar": "private lounge area",
   "premium bar": "premium refreshment area",
-  bottles: "crystal decanters",
-  barrels: "aged wood casks",
-};
+  // Neutral, non-drink-storage substitutions: "crystal decanters" and "aged wood casks"
+  // both read as alcohol drinkware (decanters carry spirits; wine/whiskey casks are barrels
+  // by another name). Use storage containers that carry no alcohol connotation.
+  bottles: "glass jars",
+  barrels: "wooden storage crates",
+} as const satisfies Record<HaramMotif, string>;
 
 // ═══════════════════════════════════════════════════════════
 // TRIGGER WORDS — post-validation scan substitutions
@@ -79,7 +84,9 @@ export const TRIGGER_WORDS = [
 ] as const;
 export type TriggerWord = typeof TRIGGER_WORDS[number];
 
-export const SUBSTITUTIONS: Readonly<Record<TriggerWord, string>> = {
+// `as const satisfies Record<TriggerWord, string>` — same compile-time exact-key
+// coverage guarantee as MOTIF_SUBSTITUTIONS. See note above MOTIF_SUBSTITUTIONS.
+export const SUBSTITUTIONS = {
   wine: "premium tea",
   whiskey: "artisan coffee",
   cocktail: "artisan coffee",
@@ -109,7 +116,7 @@ export const SUBSTITUTIONS: Readonly<Record<TriggerWord, string>> = {
   backless: "elegant",
   strapless: "elegant",
   brothel: "private residence",
-};
+} as const satisfies Record<TriggerWord, string>;
 
 // ═══════════════════════════════════════════════════════════
 // CULTURAL COMPLIANCE BLOCK — injected into image prompts
@@ -175,17 +182,42 @@ export function scanAndReplace(
 
   // Build one combined alternation ordered longest-first, so multi-word phrases
   // (e.g., "bar counter") are preferred over any hypothetical shorter overlap.
+  // Each trigger also matches a common plural form (-s / -es) UNLESS the base form
+  // already ends in "s" (to avoid "strapless" → "straplesss"). The matched list
+  // always records the canonical singular form from TRIGGER_WORDS.
   const sortedTriggers = [...TRIGGER_WORDS].sort((a, b) => b.length - a.length);
-  const lowerByEscaped = new Map<string, string>();
   const escapedTriggers = sortedTriggers.map((t) => {
     const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    lowerByEscaped.set(escaped, t);
-    return escaped;
+    // Only append optional plural suffix when the base does NOT already end in "s"
+    // or an "s-sound" cluster that would produce awkward doubles. Words ending in
+    // "h", "x", "z" take "-es" in English; "-y" takes "-ies"; otherwise "-s".
+    const base = t;
+    if (/s$/i.test(base)) return escaped; // strapless, backless, etc. — no plural suffix appended
+    if (/[hxz]$/i.test(base)) return `${escaped}(?:es)?`;
+    if (/[^aeiou]y$/i.test(base)) return `${escaped.slice(0, -1)}(?:y|ies)`;
+    return `${escaped}s?`;
   });
   const combined = new RegExp(
     `(^|\\W)(${escapedTriggers.join("|")})(?=\\W|$)`,
     "gi",
   );
+
+  // Canonicalizer: given a matched token (potentially a plural / -ies form),
+  // return the base TRIGGER_WORDS entry. Tries exact → strip -ies → strip -es → strip -s.
+  const canonicalize = (word: string): TriggerWord | null => {
+    const lower = word.toLowerCase();
+    const tryForms = [
+      lower,
+      /ies$/.test(lower) ? `${lower.slice(0, -3)}y` : null,
+      /es$/.test(lower) ? lower.slice(0, -2) : null,
+      /s$/.test(lower) ? lower.slice(0, -1) : null,
+    ].filter((v): v is string => v !== null);
+    for (const form of tryForms) {
+      const hit = TRIGGER_WORDS.find((t) => t.toLowerCase() === form);
+      if (hit) return hit;
+    }
+    return null;
+  };
 
   // Single left-to-right pass. matched preserves first-seen order INCLUDING repeats.
   let out = "";
@@ -197,9 +229,7 @@ export function scanAndReplace(
     const word = m[2] ?? "";
     const hitStart = fullMatchIndex + pre.length;
     const hitEnd = hitStart + word.length;
-    const canonical = TRIGGER_WORDS.find(
-      (t) => t.toLowerCase() === word.toLowerCase(),
-    );
+    const canonical = canonicalize(word);
     if (!canonical) continue;
     out += text.slice(cursor, hitStart) + SUBSTITUTIONS[canonical];
     matched.push(canonical);

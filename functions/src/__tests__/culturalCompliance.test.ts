@@ -162,6 +162,38 @@ function runTests(): void {
     assert(isArabic("  EN-US ") === false, "non-arabic after trim stays false");
   }
 
+  // ─── Plural variants (reviewer round 4) — "-s", "-es", "-ies" ───
+  console.log("  plural variants match and canonicalize");
+  {
+    // Standard -s plural
+    const a = scanAndReplace("serve cocktails on the terrace", "adCopy");
+    assert(a.matched.length === 1 && a.matched[0] === "cocktail", `"cocktails" canonicalized to "cocktail" (got ${JSON.stringify(a.matched)})`);
+    assert(a.cleaned.includes("artisan coffee"), `"cocktails" replaced with the cocktail substitution`);
+    assert(!a.cleaned.toLowerCase().includes("cocktail"), "no residual cocktail substring");
+
+    // "spirits" is already in HARAM_MOTIFS (plural); here we also cover "rum" / "beer" plurals on the trigger-word scanner
+    const b = scanAndReplace("beers and rums for all", "adCopy");
+    assert(b.matched.includes("beer") && b.matched.includes("rum"), `plurals of beer + rum matched (got ${JSON.stringify(b.matched)})`);
+
+    // Words ending in "s" — strapless / backless — must NOT match their "own +s" (no "straplesss")
+    const c = scanAndReplace("strapless gown and backless sandals", "adCopy");
+    assert(c.matched.includes("strapless") && c.matched.includes("backless"), "strapless/backless still match their base form");
+    assert(!c.cleaned.toLowerCase().includes("straplesss") && !c.cleaned.toLowerCase().includes("backlesss"), "no spurious triple-s");
+
+    // Multi-word trigger with plural: "bar counters"
+    const d = scanAndReplace("two bar counters were installed", "imagePrompt");
+    assert(d.matched.length === 1 && d.matched[0] === "bar counter", `"bar counters" canonicalized to "bar counter" (got ${JSON.stringify(d.matched)})`);
+  }
+
+  // ─── Neutral substitutions for bottles/barrels (reviewer round 4) ───
+  console.log("  bottles/barrels substitutions are neutral");
+  {
+    assert(MOTIF_SUBSTITUTIONS.bottles === "glass jars", `bottles → glass jars (got "${MOTIF_SUBSTITUTIONS.bottles}")`);
+    assert(MOTIF_SUBSTITUTIONS.barrels === "wooden storage crates", `barrels → wooden storage crates (got "${MOTIF_SUBSTITUTIONS.barrels}")`);
+    assert(!/decant/i.test(MOTIF_SUBSTITUTIONS.bottles), "bottles substitution does not mention decanters");
+    assert(!/cask/i.test(MOTIF_SUBSTITUTIONS.barrels), "barrels substitution does not mention casks");
+  }
+
   // ─── Summary ───
   console.log(`  ${passed} passed, ${failed} failed`);
   if (failed > 0) {
