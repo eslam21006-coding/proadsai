@@ -147,7 +147,9 @@ export const ARABIC_WARDROBE_BLOCK: string = `ARABIC MARKET WARDROBE RULES:
 // same commit. See plan.md §Constraints.
 
 export function isArabic(adLanguage: string | undefined | null): boolean {
-  return typeof adLanguage === "string" && adLanguage.startsWith("ar");
+  if (adLanguage == null) return false;
+  return typeof adLanguage === "string"
+    && adLanguage.trim().toLowerCase().startsWith("ar");
 }
 
 // ═══════════════════════════════════════════════════════════

@@ -330,15 +330,36 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
       hookAngle: inputs.coldHookAngle,
   }), [inputs.offerCreativeMode, inputs.campaignType, inputs.adMode, inputs.coldHookAngle]);
 
+  // Sentinel `preferredUniverse` values that represent UI placeholder choices,
+  // NOT real universe entries. These must pass the Arabic safety gate even
+  // though they do not resolve to a DB entry — they are resolved later in the
+  // pipeline (e.g. "Surprise Me" picks a random Arabic-safe entry, custom/hero
+  // values are user-authored descriptions). Kept in sync with the sentinels
+  // defined elsewhere in this file (see SURPRISE_* + '🎨 Custom World').
+  const ARABIC_SAFE_UNIVERSE_SENTINELS: ReadonlySet<string> = React.useMemo(() => new Set([
+    'Surprise Me (Random Realistic)',
+    'Surprise Me (Random Fantasy)',
+    '🎨 Custom World',
+    'Custom World',
+    'Custom / Insert Your Own Atmosphere',
+  ]), []);
+
+  // Single canonical predicate for "is this preferredUniverse value safe to use
+  // under an Arabic ad configuration?". Used by: arabicUniverseBlocked (submit
+  // gate), handleLanguageSelect (auto-clear on en→ar switch), and the inline
+  // warning below the picker. Fail-closed: unknown / legacy ids that are NOT
+  // sentinels and NOT in DB return false.
+  const isArabicAllowedUniverse = React.useCallback((name: string | undefined | null): boolean => {
+    if (!name) return true; // empty = nothing selected; nothing to block
+    if (ARABIC_SAFE_UNIVERSE_SENTINELS.has(name)) return true;
+    const entry = [...DB_REALISTIC, ...DB_FANTASY].find(u => u.name === name);
+    return entry ? entry.arabicSafe === true : false;
+  }, [ARABIC_SAFE_UNIVERSE_SENTINELS]);
+
   const arabicUniverseBlocked = React.useMemo(() => {
     if (!isArabic(inputs.adLanguage) || !inputs.preferredUniverse) return false;
-    const entry = [...DB_REALISTIC, ...DB_FANTASY].find(u => u.name === inputs.preferredUniverse);
-    // Fail-closed: an unknown/legacy preferredUniverse id that does not resolve to a
-    // current entry is treated as BLOCKED for Arabic configurations. This prevents
-    // a stale or migrated-away id (e.g. a project saved with a universe that no
-    // longer exists) from slipping past the Arabic guardrail as "safe by default".
-    return entry ? !entry.arabicSafe : true;
-  }, [inputs.adLanguage, inputs.preferredUniverse]);
+    return !isArabicAllowedUniverse(inputs.preferredUniverse);
+  }, [inputs.adLanguage, inputs.preferredUniverse, isArabicAllowedUniverse]);
 
   const generateAllowed = launchSurfaceResult.allowed && !arabicUniverseBlocked;
 
@@ -414,13 +435,10 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
       const prevArabic = isArabic(prev.adLanguage);
       const nextArabic = isArabic(nextLangId);
       const clearing = !prevArabic && nextArabic && prev.preferredUniverse;
-      const selectedEntry = clearing
-        ? [...DB_REALISTIC, ...DB_FANTASY].find(u => u.name === prev.preferredUniverse)
-        : null;
-      // Fail-closed: on en→ar switch, clear preferredUniverse whenever the entry
-      // is NOT explicitly arabicSafe — which includes the unknown-entry case
-      // (legacy / migrated-away id). This matches arabicUniverseBlocked's guard.
-      const shouldClear = clearing && (!selectedEntry || !selectedEntry.arabicSafe);
+      // Delegate to the shared predicate so sentinel values ("Surprise Me…",
+      // "🎨 Custom World", etc.) are preserved across en→ar transitions while
+      // real haram or unknown/legacy ids are still cleared fail-closed.
+      const shouldClear = !!clearing && !isArabicAllowedUniverse(prev.preferredUniverse);
       return {
         ...prev,
         adLanguage: nextLangId,
@@ -960,7 +978,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
           if (!generateAllowed) {
             if (showToast) {
               const reason = launchSurfaceResult.reason
-                || (arabicUniverseBlocked ? t('form.pick_arabic_safe_environment') : t('form.submit'));
+                || (arabicUniverseBlocked ? t('form.pick_arabic_safe_environment') : t('form.unknown_error'));
               showToast(reason, 'error');
             }
             return;
@@ -2104,7 +2122,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                     <input required value={inputs.customUniverseDetails} onChange={e => setInputs({ ...inputs, customUniverseDetails: e.target.value })} className={`${inputCls} mt-2`}
                       placeholder={activeStyle === 'realistic' ? "Describe your custom location..." : "Describe your custom world..."} />
                   )}
-                  {isArabic(inputs.adLanguage) && inputs.preferredUniverse && ![...DB_REALISTIC, ...DB_FANTASY].filter(u => u.arabicSafe).some(u => u.name === inputs.preferredUniverse) && (
+                  {isArabic(inputs.adLanguage) && inputs.preferredUniverse && !isArabicAllowedUniverse(inputs.preferredUniverse) && (
                     <p className="text-[10px] text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
                       <i className="fa-solid fa-triangle-exclamation mr-1.5"></i>
                       {t('form.pick_arabic_safe_environment')}

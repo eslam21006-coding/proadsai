@@ -1289,7 +1289,9 @@ const MOTIF_SUBSTITUTIONS: Readonly<Record<string, string>> = {
 // from each other. Any change to the rule below MUST be mirrored in both files
 // in the same commit. See plan.md §Constraints.
 export function isArabic(adLanguage: string | undefined | null): boolean {
-    return typeof adLanguage === "string" && adLanguage.startsWith("ar");
+    if (adLanguage == null) return false;
+    return typeof adLanguage === "string"
+        && adLanguage.trim().toLowerCase().startsWith("ar");
 }
 
 function sanitizeMotifs<T extends UniverseEntry>(entries: T[]): T[] {

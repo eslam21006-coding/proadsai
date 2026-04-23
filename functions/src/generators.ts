@@ -3875,9 +3875,34 @@ ${JSON.stringify(machinePlan)}`;
         console.log(`🔒 Cultural violation aggregated: words=[${allWords.join(", ")}] layer=${layer}`);
     }
 
+    // ── Rebuild finalMachinePlan.ownership from the cleaned copy fields so the serialized
+    //    envelope reflects the sanitized hook/subhead/CTA/benefit, not the pre-scan text.
+    //    Also invalidate copyFidelityWarning — it was computed against the pre-scan copy
+    //    and the scan just changed both the technical prompt and the reference fields, so
+    //    any failedFields inside it no longer correspond to the outgoing blueprint.
+    let finalCopyFidelityWarning: CopyFidelityResult | null = copyFidelityWarning;
+    if (copyMatched.length > 0 || imageMatched.length > 0) {
+        const sanitizedOwnershipMap = buildContentOwnershipMap(
+            { hookText, subheadText, ctaName, benefitText },
+            inputs,
+        );
+        finalMachinePlan.ownership = mergeContentOwnership(
+            sanitizedOwnershipMap,
+            // Drop the pre-scan machine-plan ownership so the sanitized map wins.
+            null,
+        );
+        if (copyFidelityWarning) {
+            console.warn(
+                "⚠️ copyFidelityWarning invalidated: cultural scan mutated ad-copy and/or technical prompt " +
+                "after fidelity validation. Downstream consumers should treat fidelity as unknown for this generation.",
+            );
+            finalCopyFidelityWarning = null;
+        }
+    }
+
     return {
         buildPlan: serializeBuildPlanEnvelope(finalMachinePlan.blueprint, finalMachinePlan),
-        copyFidelityWarning,
+        copyFidelityWarning: finalCopyFidelityWarning,
         culturalViolation,
     };
 }
@@ -6307,6 +6332,20 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
                 if (matched.length > 0) {
                     copy.subheadText = cleaned;
                     console.log(`🕌 Cultural compliance scan (carousel subheadText): replaced [${matched.join(", ")}]`);
+                }
+            }
+            if (copy.ctaText) {
+                const { cleaned, matched } = scanAndReplace(copy.ctaText, "adCopy");
+                if (matched.length > 0) {
+                    copy.ctaText = cleaned;
+                    console.log(`🕌 Cultural compliance scan (carousel ctaText): replaced [${matched.join(", ")}]`);
+                }
+            }
+            if (copy.benefitText) {
+                const { cleaned, matched } = scanAndReplace(copy.benefitText, "adCopy");
+                if (matched.length > 0) {
+                    copy.benefitText = cleaned;
+                    console.log(`🕌 Cultural compliance scan (carousel benefitText): replaced [${matched.join(", ")}]`);
                 }
             }
         }

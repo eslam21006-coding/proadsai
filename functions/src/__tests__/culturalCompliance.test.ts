@@ -7,6 +7,7 @@
 import {
   scanAndReplace,
   assertInvariants,
+  isArabic,
   TRIGGER_WORDS,
   SUBSTITUTIONS,
   HARAM_MOTIFS,
@@ -136,6 +137,29 @@ function runTests(): void {
     const r = scanAndReplace("wine and more wine", "imagePrompt");
     assert(r.matched.length === 2, "two wine hits recorded, not deduplicated");
     assert(r.matched[0] === "wine" && r.matched[1] === "wine", "matched preserves repeat order");
+  }
+
+  // ─── Caller-level English bypass: the function is pure and language-agnostic,
+  //     but the documented contract is that callers gate with isArabic first. This
+  //     test simulates the gate at the caller: if isArabic("en") returns false,
+  //     the caller never invokes scanAndReplace and the text is preserved verbatim.
+  console.log("  caller gates scanAndReplace for English");
+  {
+    const englishInput = "Wine tasting with premium cheeses";
+    const shouldScan = isArabic("en");
+    assert(shouldScan === false, "isArabic('en') returns false");
+    // Because the gate said no, the caller leaves the text untouched:
+    const finalText = shouldScan ? scanAndReplace(englishInput, "imagePrompt").cleaned : englishInput;
+    assert(finalText === englishInput, "English input preserved when caller respects the gate");
+  }
+
+  // ─── isArabic is case- and whitespace-tolerant (reviewer round 3) ───
+  console.log("  isArabic tolerates case and whitespace");
+  {
+    assert(isArabic("  ar  ") === true, "whitespace tolerated");
+    assert(isArabic("AR-SA") === true, "upper-case locale tolerated");
+    assert(isArabic("Ar_Fusha") === true, "mixed-case locale tolerated");
+    assert(isArabic("  EN-US ") === false, "non-arabic after trim stays false");
   }
 
   // ─── Summary ───
