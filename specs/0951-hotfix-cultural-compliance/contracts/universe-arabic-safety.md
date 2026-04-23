@@ -81,7 +81,7 @@ When the user flips `adLanguage` from a non-`ar*` locale to an `ar*` locale, the
 1. Check the currently selected `universeId`.
 2. Look up the entry's `arabicSafe` flag (applying the legacy remap from §4 if the id is `r_sushi_bar`).
 3. If the flag is `false`, auto-clear only the environment field (set the store's `universeId` to `''` or `null`), leaving every other input intact (hook text, subhead text, concept text, copy, reference uploads, build-plan history).
-4. Surface an inline prompt on the picker — e.g., `"اختر بيئة متوافقة"` / `"Pick an Arabic-safe environment"` — and keep the Generate button disabled until a new Arabic-safe `universeId` is set.
+4. Surface an inline prompt on the picker via the i18n key `t('form.pick_arabic_safe_environment')` (Arabic: `"اختر بيئة متوافقة"`; English: `"Pick an Arabic-safe environment"`). The prompt string MUST be looked up through `useT()` — inlining the literal in the component is a contract violation. Keep the Generate button disabled until a new Arabic-safe `universeId` is set.
 5. Emit an auto-switch trace event via `addAutoSwitchEvent('universe', <oldId>, '', 'cultural_compliance_language_switch')`.
 
 When the user loads a saved project under an Arabic configuration and the project's stored `universeId` resolves to an `arabicSafe: false` entry, the loader MUST:

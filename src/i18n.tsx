@@ -181,6 +181,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'form.save_draft': 'Save Draft',
         'form.get_example': 'Get example',
         'form.no_matches': 'No matches',
+        'form.pick_arabic_safe_environment': 'Pick an Arabic-safe environment',
 
         'override.reference_ad_active': 'Reference ad active — visual style follows the reference.',
         'override.testimonial_requires_carousel': 'Testimonials require carousel — switched automatically.',
@@ -866,6 +867,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'form.save_draft': 'حفظ المسودة',
         'form.get_example': 'احصل على مثال',
         'form.no_matches': 'لا توجد نتائج',
+        'form.pick_arabic_safe_environment': 'اختر بيئة متوافقة',
 
         'override.reference_ad_active': 'الإعلان المرجعي مفعّل — الأسلوب البصري يتبع المرجع.',
         'override.testimonial_requires_carousel': 'الشهادات تحتاج كاروسيل — تم التبديل تلقائياً.',

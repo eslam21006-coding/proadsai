@@ -400,6 +400,28 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
   const [exampleField, setExampleField] = useState<string | null>(null);
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
 
+  // ─── LANGUAGE-SWITCH HELPER ────────────────────────────────────────────
+  // Single source of the Arabic/English language-switch state transition:
+  // on en→ar transition, auto-clear a preferredUniverse that is not arabicSafe
+  // (FR-009 / clarification Q2); preserve every other field. Also closes the
+  // language picker. Used by both the Arabic-dialects and other-languages lists.
+  const handleLanguageSelect = (nextLangId: string) => {
+    setInputs(prev => {
+      const prevArabic = isArabic(prev.adLanguage);
+      const nextArabic = isArabic(nextLangId);
+      const clearing = !prevArabic && nextArabic && prev.preferredUniverse;
+      const selectedEntry = clearing
+        ? [...DB_REALISTIC, ...DB_FANTASY].find(u => u.name === prev.preferredUniverse)
+        : null;
+      return {
+        ...prev,
+        adLanguage: nextLangId,
+        ...(clearing && selectedEntry && !selectedEntry.arabicSafe ? { preferredUniverse: '' } : {}),
+      };
+    });
+    setShowLangPicker(false);
+  };
+
   // ── Progress bar calculation ────────────────────────────────────────
   const progressFields = [
     { filled: !!inputs.productName, weight: 1 },
@@ -1391,22 +1413,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                   <span className="text-[9px] font-bold text-blue-400 uppercase tracking-widest">{t('form.arabic_dialects')}</span>
                 </div>
                 {AD_LANGUAGES.filter(l => l.group === 'ar').map(lang => (
-                  <button type="button" key={lang.id} onClick={() => {
-                    setInputs(prev => {
-                      const prevArabic = isArabic(prev.adLanguage);
-                      const nextArabic = isArabic(lang.id);
-                      const clearing = !prevArabic && nextArabic && prev.preferredUniverse;
-                      const selectedEntry = clearing
-                        ? [...DB_REALISTIC, ...DB_FANTASY].find(u => u.name === prev.preferredUniverse)
-                        : null;
-                      return {
-                        ...prev,
-                        adLanguage: lang.id,
-                        ...(clearing && selectedEntry && !selectedEntry.arabicSafe ? { preferredUniverse: '' } : {}),
-                      };
-                    });
-                    setShowLangPicker(false);
-                  }}
+                  <button type="button" key={lang.id} onClick={() => handleLanguageSelect(lang.id)}
                     className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${inputs.adLanguage === lang.id ? 'bg-blue-600/15 text-blue-400' : 'text-slate-300 hover:bg-slate-800'}`}>
                     <span>{lang.flag}</span>
                     <span className="flex-1 text-right">{lang.label}</span>
@@ -1418,22 +1425,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                   <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">{t('form.other_languages')}</span>
                 </div>
                 {AD_LANGUAGES.filter(l => l.group !== 'ar').map(lang => (
-                  <button type="button" key={lang.id} onClick={() => {
-                    setInputs(prev => {
-                      const prevArabic = isArabic(prev.adLanguage);
-                      const nextArabic = isArabic(lang.id);
-                      const clearing = !prevArabic && nextArabic && prev.preferredUniverse;
-                      const selectedEntry = clearing
-                        ? [...DB_REALISTIC, ...DB_FANTASY].find(u => u.name === prev.preferredUniverse)
-                        : null;
-                      return {
-                        ...prev,
-                        adLanguage: lang.id,
-                        ...(clearing && selectedEntry && !selectedEntry.arabicSafe ? { preferredUniverse: '' } : {}),
-                      };
-                    });
-                    setShowLangPicker(false);
-                  }}
+                  <button type="button" key={lang.id} onClick={() => handleLanguageSelect(lang.id)}
                     className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${inputs.adLanguage === lang.id ? 'bg-blue-600/15 text-blue-400' : 'text-slate-300 hover:bg-slate-800'}`}>
                     <span>{lang.flag}</span>
                     <span className="flex-1">{lang.label}</span>
@@ -2095,7 +2087,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                   {isArabic(inputs.adLanguage) && inputs.preferredUniverse && ![...DB_REALISTIC, ...DB_FANTASY].filter(u => u.arabicSafe).some(u => u.name === inputs.preferredUniverse) && (
                     <p className="text-[10px] text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
                       <i className="fa-solid fa-triangle-exclamation mr-1.5"></i>
-                      {inputs.adLanguage?.startsWith('ar') ? 'اختر بيئة متوافقة' : 'Pick an Arabic-safe environment'}
+                      {t('form.pick_arabic_safe_environment')}
                     </p>
                   )}
                 </div>

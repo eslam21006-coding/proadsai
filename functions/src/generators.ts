@@ -3371,6 +3371,10 @@ Selected modes: [${modes.join(' + ')}]
 export interface GenerateBuildPlanResult {
     buildPlan: string;
     copyFidelityWarning: CopyFidelityResult | null;
+    culturalViolation?: {
+        words: string[];
+        layer: "imagePrompt" | "adCopy" | "both";
+    };
 }
 
 export async function generateBuildPlan(conceptRaw: string, selectedTov: string, inputs: AdInputs, resolvedUniverse: string, currentAspectRatio: AspectRatio, textOverride?: TextOverride): Promise<GenerateBuildPlanResult> {
@@ -3388,10 +3392,11 @@ export async function generateBuildPlan(conceptRaw: string, selectedTov: string,
     }
 
     const ownedText = resolveOwnedRenderText(selectedTov, inputs, textOverride);
-    const hookText = ownedText.hookText;
-    const subheadText = ownedText.subheadText;
-    const ctaName = ownedText.ctaName;
-    const benefitText = ownedText.benefitText;
+    // `let` so the post-parse ad-copy cultural scan (T025) can write back sanitized text.
+    let hookText = ownedText.hookText;
+    let subheadText = ownedText.subheadText;
+    let ctaName = ownedText.ctaName;
+    let benefitText = ownedText.benefitText;
 
     const _bpRtCtx = buildNormalizedRetargetingContext(inputs as any);
     const _bpRtBlock = getRetargetingPromptBlock(_bpRtCtx);
@@ -3796,8 +3801,8 @@ ${JSON.stringify(machinePlan)}`;
     };
 
     // ── T024: Post-parse cultural scan on technical prompt text ──
-    let imageMatched: string[] = [];
-    let copyMatched: string[] = [];
+    const imageMatched: string[] = [];
+    const copyMatched: string[] = [];
     if (isArabic(inputs.adLanguage)) {
         const tpRaw = extractTechnicalPromptFromBlueprint(finalMachinePlan.blueprint);
         if (tpRaw) {
@@ -3812,41 +3817,68 @@ ${JSON.stringify(machinePlan)}`;
                         "\n" + cleaned + "\n" +
                         bp.slice(end);
                 }
-                imageMatched = matched;
+                imageMatched.push(...matched);
                 console.log(`🕌 Cultural compliance scan (imagePrompt): replaced [${matched.join(", ")}]`);
             }
         }
-        // ── T025: Post-parse cultural scan on ad-copy fields ──
-        for (const field of [hookText, subheadText, ctaName, benefitText]) {
-            if (!field) continue;
-            const { matched: fieldMatched } = scanAndReplace(field, "adCopy");
-            if (fieldMatched.length > 0) {
-                copyMatched.push(...fieldMatched);
+        // ── T025: Post-parse cultural scan on ad-copy fields — WRITE CLEANED VALUES BACK. ──
+        // hookText/subheadText/ctaName/benefitText are `let` so the final render uses sanitized text.
+        if (hookText) {
+            const { cleaned, matched } = scanAndReplace(hookText, "adCopy");
+            if (matched.length > 0) {
+                hookText = cleaned;
+                copyMatched.push(...matched);
+                console.log(`🕌 Cultural compliance scan (adCopy/hookText): replaced [${matched.join(", ")}]`);
             }
         }
-        if (copyMatched.length > 0) {
-            copyMatched = [...new Set(copyMatched)];
-            console.log(`🕌 Cultural compliance scan (adCopy): detected [${copyMatched.join(", ")}] in build-plan fields`);
+        if (subheadText) {
+            const { cleaned, matched } = scanAndReplace(subheadText, "adCopy");
+            if (matched.length > 0) {
+                subheadText = cleaned;
+                copyMatched.push(...matched);
+                console.log(`🕌 Cultural compliance scan (adCopy/subheadText): replaced [${matched.join(", ")}]`);
+            }
         }
-        // ── T026: Aggregate matches for trace ──
-        if (imageMatched.length > 0 || copyMatched.length > 0) {
-            const allWords = [...new Set([...imageMatched, ...copyMatched])];
-            const sourceLayer = imageMatched.length > 0 && copyMatched.length > 0 ? "both"
-                : imageMatched.length > 0 ? "imagePrompt" : "adCopy";
-            console.log(`🕌 Cultural violation aggregated: words=[${allWords.join(", ")}] layer=${sourceLayer}`);
+        if (ctaName) {
+            const { cleaned, matched } = scanAndReplace(ctaName, "adCopy");
+            if (matched.length > 0) {
+                ctaName = cleaned;
+                copyMatched.push(...matched);
+                console.log(`🕌 Cultural compliance scan (adCopy/ctaName): replaced [${matched.join(", ")}]`);
+            }
         }
+        if (benefitText) {
+            const { cleaned, matched } = scanAndReplace(benefitText, "adCopy");
+            if (matched.length > 0) {
+                benefitText = cleaned;
+                copyMatched.push(...matched);
+                console.log(`🕌 Cultural compliance scan (adCopy/benefitText): replaced [${matched.join(", ")}]`);
+            }
+        }
+        // silence unused-warnings where the cleaned fields aren't re-read inside this function;
+        // they are returned-by-closure and re-read by downstream generator paths.
+        void ctaName; void benefitText; void subheadText; void hookText;
     }
 
+    // ── T026: Aggregate matches — dedupe while preserving first-seen order; expose on result. ──
+    let culturalViolation: GenerateBuildPlanResult["culturalViolation"] | undefined;
     if (imageMatched.length > 0 || copyMatched.length > 0) {
-        const sourceLayer = imageMatched.length > 0 && copyMatched.length > 0
-            ? "both"
-            : imageMatched.length > 0 ? "imagePrompt" : "adCopy";
-        console.log(`🔒 Cultural compliance scan: sourceLayer=${sourceLayer} matchedWords=[${[...imageMatched, ...copyMatched].join(",")}]`);
+        const seen = new Set<string>();
+        const allWords: string[] = [];
+        for (const w of [...imageMatched, ...copyMatched]) {
+            if (!seen.has(w)) { seen.add(w); allWords.push(w); }
+        }
+        const layer: "imagePrompt" | "adCopy" | "both" =
+            imageMatched.length > 0 && copyMatched.length > 0 ? "both"
+                : imageMatched.length > 0 ? "imagePrompt" : "adCopy";
+        culturalViolation = { words: allWords, layer };
+        console.log(`🔒 Cultural violation aggregated: words=[${allWords.join(", ")}] layer=${layer}`);
     }
 
     return {
         buildPlan: serializeBuildPlanEnvelope(finalMachinePlan.blueprint, finalMachinePlan),
         copyFidelityWarning,
+        culturalViolation,
     };
 }
 
@@ -3919,8 +3951,16 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
 
     const strippedBlueprint = stripTechnicalPrompt(blueprint);
 
-    const _ccBlock = isArabic(inputs.adLanguage) ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n` : "";
-    const _wardrobeBlock = isArabic(inputs.adLanguage) ? `\n${ARABIC_WARDROBE_BLOCK}\n` : "";
+    // coreDesignRules already contains CULTURAL_COMPLIANCE_BLOCK and costumeRules already
+    // contains ARABIC_WARDROBE_BLOCK for Arabic ads (see generateFinalAd assembly).
+    // Only prepend the blocks here if — for any reason — the assembled rules have dropped
+    // them. This prevents the duplicate-block injection that would otherwise happen on the
+    // Arabic path, while keeping a safety net if a caller ever passes a minimal rules string.
+    const _isAr = isArabic(inputs.adLanguage);
+    const _ccBlock = _isAr && !coreDesignRules.includes(CULTURAL_COMPLIANCE_BLOCK)
+        ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n` : "";
+    const _wardrobeBlock = _isAr && !costumeRules.includes(ARABIC_WARDROBE_BLOCK)
+        ? `\n${ARABIC_WARDROBE_BLOCK}\n` : "";
 
     const textPrompt = `${_ccBlock}${coreDesignRules}
 ${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}

@@ -1284,6 +1284,10 @@ const MOTIF_SUBSTITUTIONS: Readonly<Record<string, string>> = {
     barrels: "aged wood casks",
 };
 
+// ⚠️ INVARIANT: this predicate also exists at `functions/src/culturalCompliance.ts`
+// (backend) because the two packages have separate tsconfigs and cannot import
+// from each other. Any change to the rule below MUST be mirrored in both files
+// in the same commit. See plan.md §Constraints.
 export function isArabic(adLanguage: string | undefined | null): boolean {
     return typeof adLanguage === "string" && adLanguage.startsWith("ar");
 }

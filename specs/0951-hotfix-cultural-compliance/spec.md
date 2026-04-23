@@ -36,8 +36,8 @@ An Arabic customer opens Step 1 and browses the environment ("universe") library
 **Acceptance Scenarios**:
 
 1. **Given** an Arabic ad configuration, **When** the user opens the universe picker, **Then** the wine cellar, wine tasting, rooftop bar, cigar lounge, vineyard, and dance studio environments are not visible.
-2. **Given** an Arabic ad configuration, **When** the user opens the universe picker, **Then** the former "sushi bar" entry either does not appear or appears under a renamed label that removes the word "bar".
-3. **Given** an English ad configuration, **When** the user opens the universe picker, **Then** every environment — including the ones blocked in Arabic — is visible and selectable.
+2. **Given** an Arabic ad configuration, **When** the user opens the universe picker, **Then** `r_sushi_counter` (marked `arabicSafe: false` per FR-002, filtered per FR-007) is hidden entirely from the universe picker — not shown under any label.
+3. **Given** an English ad configuration, **When** the user opens the universe picker, **Then** every environment — including the six haram-flagged universes and `r_sushi_counter` — is visible and selectable; `r_sushi_counter` appears under its renamed English label ("Premium Sushi Counter") which no longer contains the word "bar", and this renamed entry is also what the loader resolves to when a legacy saved project references the former `r_sushi_bar` identifier.
 4. **Given** the user switches the language mid-session from English to Arabic after selecting a haram environment, **When** the language change takes effect, **Then** the user is prompted to pick an Arabic-safe environment before continuing to the next step.
 
 ---

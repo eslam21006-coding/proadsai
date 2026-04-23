@@ -108,6 +108,10 @@ export const ARABIC_WARDROBE_BLOCK: string = `ARABIC MARKET WARDROBE RULES:
 // ═══════════════════════════════════════════════════════════
 // ARABIC DETECTION
 // ═══════════════════════════════════════════════════════════
+// ⚠️ INVARIANT: this predicate also exists at `src/universeDatabase.ts` (frontend)
+// because the two packages have separate tsconfigs and cannot import from each
+// other. Any change to the rule below MUST be mirrored in both files in the
+// same commit. See plan.md §Constraints.
 
 export function isArabic(adLanguage: string | undefined | null): boolean {
   return typeof adLanguage === "string" && adLanguage.startsWith("ar");
@@ -120,31 +124,49 @@ export function isArabic(adLanguage: string | undefined | null): boolean {
 export function scanAndReplace(
   text: string,
   sourceLayer: "imagePrompt" | "adCopy",
-): { cleaned: string; matched: string[] } {
+): { cleaned: string; matched: string[]; warning?: string } {
   if (sourceLayer !== "imagePrompt" && sourceLayer !== "adCopy") {
-    throw new TypeError(`scanAndReplace: invalid sourceLayer "${sourceLayer}"`);
+    const warning = `scanAndReplace: invalid sourceLayer "${sourceLayer}"; returning input unchanged`;
+    console.warn(`⚠️ ${warning}`);
+    return { cleaned: text, matched: [], warning };
   }
   if (text === "") return { cleaned: "", matched: [] };
 
-  const sorted = [...TRIGGER_WORDS].sort((a, b) => b.length - a.length);
+  // Build one combined alternation ordered longest-first, so multi-word phrases
+  // (e.g., "bar counter") are preferred over any hypothetical shorter overlap.
+  const sortedTriggers = [...TRIGGER_WORDS].sort((a, b) => b.length - a.length);
+  const lowerByEscaped = new Map<string, string>();
+  const escapedTriggers = sortedTriggers.map((t) => {
+    const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    lowerByEscaped.set(escaped, t);
+    return escaped;
+  });
+  const combined = new RegExp(
+    `(^|\\W)(${escapedTriggers.join("|")})(?=\\W|$)`,
+    "gi",
+  );
 
-  let result = text;
+  // Single left-to-right pass. matched preserves first-seen order INCLUDING repeats.
+  let out = "";
+  let cursor = 0;
   const matched: string[] = [];
-
-  for (const trigger of sorted) {
-    const escaped = trigger.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp(`(^|\\W)(${escaped})(\\W|$)`, "gi");
-    let hit = false;
-    result = result.replace(re, (_match, pre, word, post) => {
-      if (!hit) {
-        matched.push(trigger);
-        hit = true;
-      }
-      return `${pre}${SUBSTITUTIONS[trigger]}${post}`;
-    });
+  for (const m of text.matchAll(combined)) {
+    const fullMatchIndex = m.index ?? 0;
+    const pre = m[1] ?? "";
+    const word = m[2] ?? "";
+    const hitStart = fullMatchIndex + pre.length;
+    const hitEnd = hitStart + word.length;
+    const canonical = TRIGGER_WORDS.find(
+      (t) => t.toLowerCase() === word.toLowerCase(),
+    );
+    if (!canonical) continue;
+    out += text.slice(cursor, hitStart) + SUBSTITUTIONS[canonical];
+    matched.push(canonical);
+    cursor = hitEnd;
   }
+  out += text.slice(cursor);
 
-  return { cleaned: result, matched };
+  return { cleaned: out, matched };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -157,9 +179,19 @@ export function assertInvariants(): void {
       throw new Error(`Invariant violation: HARAM_MOTIFS entry "${motif}" has no MOTIF_SUBSTITUTIONS mapping`);
     }
   }
+  for (const key of Object.keys(MOTIF_SUBSTITUTIONS)) {
+    if (!HARAM_MOTIFS.includes(key)) {
+      throw new Error(`Invariant violation: MOTIF_SUBSTITUTIONS key "${key}" is not present in HARAM_MOTIFS`);
+    }
+  }
   for (const trigger of TRIGGER_WORDS) {
     if (!(trigger in SUBSTITUTIONS)) {
       throw new Error(`Invariant violation: TRIGGER_WORDS entry "${trigger}" has no SUBSTITUTIONS mapping`);
+    }
+  }
+  for (const key of Object.keys(SUBSTITUTIONS)) {
+    if (!TRIGGER_WORDS.includes(key)) {
+      throw new Error(`Invariant violation: SUBSTITUTIONS key "${key}" is not present in TRIGGER_WORDS`);
     }
   }
   const triggerLower = TRIGGER_WORDS.map((t) => t.toLowerCase());

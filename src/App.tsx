@@ -2341,7 +2341,9 @@ const App: React.FC = () => {
           const mostRecent = savedProjects[0];
           setCurrentProjectId(mostRecent.id);
           setCurrentProjectName(mostRecent.name || "Untitled Project");
-          setInputs(sanitizeProjectModes(mostRecent.inputs));
+          // Apply the same migration used by loadProject so legacy preferredUniverse values
+          // (e.g. "Premium Sushi Bar") and retargeting-plan normalizations are consistent.
+          setInputs(sanitizeProjectModes(migrateProjectInputs(mostRecent.inputs)));
           setPhase(mostRecent.phase);
           setTovText(mostRecent.tovText);
           setConceptsText(normalizeFieldLabels(mostRecent.conceptsText));
@@ -2961,27 +2963,28 @@ const App: React.FC = () => {
 
   // --- HISTORY ENGINE moved to before render gates ---
 
+  const migrateProjectInputs = (rawInputs: any): any => {
+    if (!rawInputs) return null;
+    const _style = (rawInputs.visualStyleFamily ?? rawInputs.universeMode ?? 'realistic') as 'realistic' | 'fantasy' | 'minimal';
+    const rawUniverse = rawInputs.preferredUniverse;
+    const remappedUniverse = rawUniverse === 'Premium Sushi Bar' ? 'Premium Sushi Counter' : rawUniverse;
+    return {
+      ...rawInputs,
+      preferredUniverse: remappedUniverse,
+      campaignType: canUse(userPlan, 'retargeting') ? (rawInputs.campaignType ?? 'cold') : 'cold',
+      retargetingObjection: canUse(userPlan, 'retargeting') ? (rawInputs.retargetingObjection ?? rawInputs.retargetingObjections?.[0] ?? undefined) : undefined,
+      retargetingObjections: canUse(userPlan, 'retargeting') ? (rawInputs.retargetingObjections ?? (rawInputs.retargetingObjection ? [rawInputs.retargetingObjection] : [])) : [],
+      customObjection: canUse(userPlan, 'retargeting') ? (rawInputs.customObjection ?? '') : '',
+      testimonial: rawInputs.testimonial ?? '',
+      universeMode: _style,
+      visualStyleFamily: _style,
+    };
+  };
+
   const loadProject = (p: SavedProject, targetPhase?: AppPhase) => {
     setCurrentProjectId(p.id);
     setCurrentProjectName(p.name || "Untitled Project");
-    const migratedInputs = p.inputs
-      ? (() => {
-        const _style = ((p.inputs as any).visualStyleFamily ?? (p.inputs as any).universeMode ?? 'realistic') as 'realistic' | 'fantasy' | 'minimal';
-        const rawUniverse = (p.inputs as any).preferredUniverse;
-        const remappedUniverse = rawUniverse === 'Premium Sushi Bar' ? 'Premium Sushi Counter' : rawUniverse;
-        return {
-          ...p.inputs,
-          preferredUniverse: remappedUniverse,
-          campaignType: canUse(userPlan, 'retargeting') ? ((p.inputs as any).campaignType ?? 'cold') : 'cold',
-          retargetingObjection: canUse(userPlan, 'retargeting') ? ((p.inputs as any).retargetingObjection ?? (p.inputs as any).retargetingObjections?.[0] ?? undefined) : undefined,
-          retargetingObjections: canUse(userPlan, 'retargeting') ? ((p.inputs as any).retargetingObjections ?? ((p.inputs as any).retargetingObjection ? [(p.inputs as any).retargetingObjection] : [])) : [],
-          customObjection: canUse(userPlan, 'retargeting') ? ((p.inputs as any).customObjection ?? '') : '',
-          testimonial: (p.inputs as any).testimonial ?? '',
-          universeMode: _style,
-          visualStyleFamily: _style,
-        };
-      })()
-      : null;
+    const migratedInputs = migrateProjectInputs(p.inputs);
 
     setInputs(sanitizeProjectModes(migratedInputs));
     setTovText(p.tovText);

@@ -1205,7 +1205,12 @@ function testIsArabicLocaleGate() {
     assert.equal(isArabic(undefined), false, "undefined → false");
     assert.equal(isArabic(null), false, "null → false");
     assert.equal(isArabic(""), false, "empty string → false");
-    assert.equal(isArabic("arabic"), true, "arabic starts with ar → true (strict prefix rule)");
+    // Intentional: `isArabic` uses a strict string-prefix check per research.md D-1 —
+    // any locale whose code begins with `ar` is Arabic. BCP-47 validity is out of scope
+    // for this predicate; it only has to match the `adLanguage` values the app already
+    // produces (`ar`, `ar_fusha`, `ar-SA`, `ar-EG`, etc.). A pathological input like
+    // "arabic" also passes; this is accepted as an unlikely false-positive, not a bug.
+    assert.equal(isArabic("arabic"), true, "strict prefix: any string starting with 'ar' → true");
 
     console.log("  ✅ testIsArabicLocaleGate: startsWith('ar') applies uniformly");
 }

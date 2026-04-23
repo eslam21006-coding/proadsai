@@ -1,4 +1,8 @@
-// functions/src/__tests__/culturalCompliance.test.ts — unit tests for culturalCompliance.ts
+// functions/src/__tests__/culturalCompliance.test.ts
+// Purpose: unit tests for functions/src/culturalCompliance.ts — verifies the table
+// invariants, the scanAndReplace pure function (single-pass left-to-right scan,
+// case-insensitivity, whole-word boundary, longest-match-first), and the non-fatal
+// invalid-sourceLayer path.
 
 import {
   scanAndReplace,
