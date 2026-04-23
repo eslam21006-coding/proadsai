@@ -123,6 +123,11 @@ export interface ResolutionTrace {
     readonly perSlide?: readonly SlideEntry[];
     launchMatrixCheckPassed: boolean;
     launchMatrixBlockReason?: string;
+    culturalViolation?: {
+        caught: true;
+        matchedWords: string[];
+        sourceLayer: "imagePrompt" | "adCopy" | "both";
+    };
 }
 
 export interface LaunchSurfaceInput {

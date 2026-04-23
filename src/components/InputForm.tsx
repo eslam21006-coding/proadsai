@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useState, useRef } from 'react';
 import type { AdInputs, AdMode, AspectRatio, RetargetingAngle, RetargetingObjectionId, UniverseMode, AudienceAvatar, CompetitorResearch, ColdHookAngle, HookType, AdTone, CopywritingStrategy } from '../types';
 import { OFFER_TYPES, OFFER_CATEGORY_MAP, OFFER_CREATIVE_MODES, CREATIVE_MODE_CONFLICTS, HOOK_ANGLE_MODE_CONFLICTS, ASPECT_RATIOS, RETARGETING_OBJECTIONS, AD_LANGUAGES, FIELD_EXAMPLES, COLD_HOOK_ANGLES, HOOK_TYPES, AD_TONES, COPYWRITING_STRATEGIES, CREATIVE_TABS } from '../constants';
-import { REALISTIC_UNIVERSES as DB_REALISTIC, FANTASY_UNIVERSES as DB_FANTASY } from '../universeDatabase';
+import { REALISTIC_UNIVERSES as DB_REALISTIC, FANTASY_UNIVERSES as DB_FANTASY, isArabic } from '../universeDatabase';
 import { isStrongPair, getBlockedModes, CREATIVE_MODE_CATALOG, type CreativeTab, getBlockedModesForSubStyle, getBlockedSubStylesForModes, validateLaunchSurface, resolveValueStackSlideCount, resolveTestimonialSlideCount } from '../creativeResolver';
 import { ART_DIRECTION_GROUPS, getAvailableCards, getCardById, isSubStyleInFamily, type ArtDirectionCard } from '../artDirectionConfig';
 import { getActiveSections, validateModeFields, type ModeFieldSection, isOfferModeAvailable } from '../modeFieldSchema';
@@ -329,6 +329,14 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
       adFormat: inputs.adMode,
       hookAngle: inputs.coldHookAngle,
   }), [inputs.offerCreativeMode, inputs.campaignType, inputs.adMode, inputs.coldHookAngle]);
+
+  const arabicUniverseBlocked = React.useMemo(() => {
+    if (!isArabic(inputs.adLanguage) || !inputs.preferredUniverse) return false;
+    const entry = [...DB_REALISTIC, ...DB_FANTASY].find(u => u.name === inputs.preferredUniverse);
+    return entry ? !entry.arabicSafe : false;
+  }, [inputs.adLanguage, inputs.preferredUniverse]);
+
+  const generateAllowed = launchSurfaceResult.allowed && !arabicUniverseBlocked;
 
   const personalRef = useRef<HTMLInputElement>(null);
   const brandRef = useRef<HTMLInputElement>(null);
@@ -1383,7 +1391,22 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                   <span className="text-[9px] font-bold text-blue-400 uppercase tracking-widest">{t('form.arabic_dialects')}</span>
                 </div>
                 {AD_LANGUAGES.filter(l => l.group === 'ar').map(lang => (
-                  <button type="button" key={lang.id} onClick={() => { setInputs(prev => ({ ...prev, adLanguage: lang.id })); setShowLangPicker(false); }}
+                  <button type="button" key={lang.id} onClick={() => {
+                    setInputs(prev => {
+                      const prevArabic = isArabic(prev.adLanguage);
+                      const nextArabic = isArabic(lang.id);
+                      const clearing = !prevArabic && nextArabic && prev.preferredUniverse;
+                      const selectedEntry = clearing
+                        ? [...DB_REALISTIC, ...DB_FANTASY].find(u => u.name === prev.preferredUniverse)
+                        : null;
+                      return {
+                        ...prev,
+                        adLanguage: lang.id,
+                        ...(clearing && selectedEntry && !selectedEntry.arabicSafe ? { preferredUniverse: '' } : {}),
+                      };
+                    });
+                    setShowLangPicker(false);
+                  }}
                     className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${inputs.adLanguage === lang.id ? 'bg-blue-600/15 text-blue-400' : 'text-slate-300 hover:bg-slate-800'}`}>
                     <span>{lang.flag}</span>
                     <span className="flex-1 text-right">{lang.label}</span>
@@ -1395,7 +1418,22 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                   <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">{t('form.other_languages')}</span>
                 </div>
                 {AD_LANGUAGES.filter(l => l.group !== 'ar').map(lang => (
-                  <button type="button" key={lang.id} onClick={() => { setInputs(prev => ({ ...prev, adLanguage: lang.id })); setShowLangPicker(false); }}
+                  <button type="button" key={lang.id} onClick={() => {
+                    setInputs(prev => {
+                      const prevArabic = isArabic(prev.adLanguage);
+                      const nextArabic = isArabic(lang.id);
+                      const clearing = !prevArabic && nextArabic && prev.preferredUniverse;
+                      const selectedEntry = clearing
+                        ? [...DB_REALISTIC, ...DB_FANTASY].find(u => u.name === prev.preferredUniverse)
+                        : null;
+                      return {
+                        ...prev,
+                        adLanguage: lang.id,
+                        ...(clearing && selectedEntry && !selectedEntry.arabicSafe ? { preferredUniverse: '' } : {}),
+                      };
+                    });
+                    setShowLangPicker(false);
+                  }}
                     className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${inputs.adLanguage === lang.id ? 'bg-blue-600/15 text-blue-400' : 'text-slate-300 hover:bg-slate-800'}`}>
                     <span>{lang.flag}</span>
                     <span className="flex-1">{lang.label}</span>
@@ -2043,8 +2081,8 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                   <Label>{activeStyle === 'realistic' ? 'Location / Setting' : 'Creative Universe'}</Label>
                   <UniverseDropdown
                     activeStyle={activeStyle}
-                    dbRealistic={DB_REALISTIC}
-                    dbFantasy={DB_FANTASY}
+                    dbRealistic={isArabic(inputs.adLanguage) ? DB_REALISTIC.filter(u => u.arabicSafe) : DB_REALISTIC}
+                    dbFantasy={isArabic(inputs.adLanguage) ? DB_FANTASY.filter(u => u.arabicSafe) : DB_FANTASY}
                     preferredUniverse={inputs.preferredUniverse}
                     onSelect={(u) => setInputs({ ...inputs, preferredUniverse: u })}
                     inputCls={inputCls}
@@ -2053,6 +2091,12 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                   {isCustomUniverse && (
                     <input required value={inputs.customUniverseDetails} onChange={e => setInputs({ ...inputs, customUniverseDetails: e.target.value })} className={`${inputCls} mt-2`}
                       placeholder={activeStyle === 'realistic' ? "Describe your custom location..." : "Describe your custom world..."} />
+                  )}
+                  {isArabic(inputs.adLanguage) && inputs.preferredUniverse && ![...DB_REALISTIC, ...DB_FANTASY].filter(u => u.arabicSafe).some(u => u.name === inputs.preferredUniverse) && (
+                    <p className="text-[10px] text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
+                      <i className="fa-solid fa-triangle-exclamation mr-1.5"></i>
+                      {inputs.adLanguage?.startsWith('ar') ? 'اختر بيئة متوافقة' : 'Pick an Arabic-safe environment'}
+                    </p>
                   )}
                 </div>
               )}
@@ -2300,12 +2344,12 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
             SUBMIT BUTTONS (not sticky — scrolls with page)
         ═══════════════════════════════════════════════════════════════════ */}
         <div className="max-w-lg mx-auto flex flex-col gap-2 pt-6 pb-10">
-          {!launchSurfaceResult.allowed && launchSurfaceResult.reason && (
+          {!generateAllowed && launchSurfaceResult.reason && (
             <div className="px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-200 text-sm text-center">
               {launchSurfaceResult.reason}
             </div>
           )}
-          <button data-tour="submit" type="submit" disabled={!launchSurfaceResult.allowed || !!isTeamViewer} aria-describedby={isTeamViewer ? "viewer-help" : undefined} className={`w-full bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-black py-4 rounded-2xl shadow-xl shadow-emerald-600/20 hover:shadow-emerald-600/30 active:scale-[0.98] transition-all text-sm uppercase tracking-wider flex items-center justify-center gap-2 ${(!launchSurfaceResult.allowed || isTeamViewer) ? 'opacity-50 cursor-not-allowed' : ''}`}>
+          <button data-tour="submit" type="submit" disabled={!generateAllowed || !!isTeamViewer} aria-describedby={isTeamViewer ? "viewer-help" : undefined} className={`w-full bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-black py-4 rounded-2xl shadow-xl shadow-emerald-600/20 hover:shadow-emerald-600/30 active:scale-[0.98] transition-all text-sm uppercase tracking-wider flex items-center justify-center gap-2 ${(!generateAllowed || isTeamViewer) ? 'opacity-50 cursor-not-allowed' : ''}`}>
             <i className="fa-solid fa-bolt"></i> {isTeamViewer ? t('team.viewer_tooltip') : t('form.submit')}
           </button>
           {isTeamViewer && <p id="viewer-help" className="text-center text-[10px] text-amber-400/80 mt-2">{t('team.viewer_tooltip')}</p>}

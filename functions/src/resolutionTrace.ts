@@ -9,6 +9,7 @@ import type {
 type Mutable<T> = { -readonly [P in keyof T]: T[P] extends readonly (infer U)[] ? U[] : T[P] };
 type ResolutionTraceDraft = Partial<Mutable<ResolutionTrace>> & {
     autoSwitchEvents: AutoSwitchEvent[];
+    _culturalViolation?: ResolutionTrace["culturalViolation"];
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -33,6 +34,10 @@ export interface TraceBuilder {
     addAutoSwitchEvent(field: string, from: string, to: string, reason: string): TraceBuilder;
     setPerSlide(slides: SlideEntry[]): TraceBuilder;
     setLaunchCheck(passed: boolean, blockReason?: string): TraceBuilder;
+    setCulturalViolation(params: {
+        matchedWords: string[];
+        sourceLayer: "imagePrompt" | "adCopy" | "both";
+    }): TraceBuilder;
     build(): ResolutionTrace;
 }
 
@@ -100,6 +105,14 @@ export function createTraceBuilder(): TraceBuilder {
             state.launchMatrixBlockReason = blockReason;
             return builder;
         },
+        setCulturalViolation(params) {
+            state._culturalViolation = {
+                caught: true,
+                matchedWords: params.matchedWords,
+                sourceLayer: params.sourceLayer,
+            };
+            return builder;
+        },
         build(): ResolutionTrace {
             if (!state.resolvedCampaignType) throw new Error("TraceBuilder: resolvedCampaignType not set");
             if (!state.resolvedAdMode) throw new Error("TraceBuilder: resolvedAdMode not set");
@@ -133,6 +146,7 @@ export function createTraceBuilder(): TraceBuilder {
                 perSlide: state.perSlide ? [...state.perSlide] : undefined,
                 launchMatrixCheckPassed: state.launchMatrixCheckPassed ?? false,
                 launchMatrixBlockReason: state.launchMatrixBlockReason,
+                culturalViolation: state._culturalViolation,
             });
         },
     };

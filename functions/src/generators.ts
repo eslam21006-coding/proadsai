@@ -29,6 +29,7 @@ import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreserva
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
 import type { FailureClass, CostEstimate } from "./types.js";
 import { GenerationError } from "./types.js";
+import { CULTURAL_COMPLIANCE_BLOCK, ARABIC_WARDROBE_BLOCK, isArabic, scanAndReplace } from "./culturalCompliance.js";
 
 // ─── Ranking Guidance Builder ────────────────────────────────────────────
 // Converts Ticket 2 ranking output into a compact prompt-safe guidance block.
@@ -3418,6 +3419,7 @@ export async function generateBuildPlan(conceptRaw: string, selectedTov: string,
     const prompt = `
   [BUILDER V6.0 — STRUCTURED BUILD PLAN]
       Synthesize this raw concept into a technical rendering blueprint.
+      ${isArabic(inputs.adLanguage) ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n` : ''}
       ${_bpRtBlock ? `
 ${_bpRtBlock}
 ` : ''}
@@ -3463,6 +3465,7 @@ MANDATE:
 - Ensure the "Action Benefit" is treated as a sub-caption for the button, not a replacement.
 - Ensure maximum legibility of all Arabic text layers.
 - Apply costume fusion for ${(() => { const _bpCostSub = resolveVisualSubStyle(inputs); if (_bpCostSub === 'luxury_magazine') return 'LUXURY MAGAZINE COVER (power wardrobe — cover star quality, profession from ' + resolvedUniverse + ', NOT universe environment. Dark solid background, tight crop.)'; if (_bpCostSub === 'clean_corporate') return 'CLEAN CORPORATE (professional wardrobe — profession from ' + resolvedUniverse + ', NOT universe environment)'; if (_bpCostSub === 'ugly_ad') return 'UGLY AD (casual clothing — ignore universe)'; return resolvedUniverse; })()}.
+${isArabic(inputs.adLanguage) ? `\n${ARABIC_WARDROBE_BLOCK}\n` : ''}
 - Maintain 100% face likeness and bone structure from provided photos.
 - BLUEPRINT SIZE LIMIT: blueprint must stay concise and production-usable. Target 12-18 lines, 1200-2600 characters max.
 - Do NOT echo the contract, prompt, schema, JSON rules, or ownership block inside blueprint.
@@ -3792,6 +3795,55 @@ ${JSON.stringify(machinePlan)}`;
         ownership: mergeContentOwnership(ownershipMap, machinePlan.ownership),
     };
 
+    // ── T024: Post-parse cultural scan on technical prompt text ──
+    let imageMatched: string[] = [];
+    let copyMatched: string[] = [];
+    if (isArabic(inputs.adLanguage)) {
+        const tpRaw = extractTechnicalPromptFromBlueprint(finalMachinePlan.blueprint);
+        if (tpRaw) {
+            const { cleaned, matched } = scanAndReplace(tpRaw, "imagePrompt");
+            if (matched.length > 0) {
+                const bp = finalMachinePlan.blueprint;
+                const start = bp.indexOf(TECHNICAL_PROMPT_START);
+                const end = bp.indexOf(TECHNICAL_PROMPT_END);
+                if (start !== -1 && end !== -1 && end > start) {
+                    finalMachinePlan.blueprint =
+                        bp.slice(0, start + TECHNICAL_PROMPT_START.length) +
+                        "\n" + cleaned + "\n" +
+                        bp.slice(end);
+                }
+                imageMatched = matched;
+                console.log(`🕌 Cultural compliance scan (imagePrompt): replaced [${matched.join(", ")}]`);
+            }
+        }
+        // ── T025: Post-parse cultural scan on ad-copy fields ──
+        for (const field of [hookText, subheadText, ctaName, benefitText]) {
+            if (!field) continue;
+            const { matched: fieldMatched } = scanAndReplace(field, "adCopy");
+            if (fieldMatched.length > 0) {
+                copyMatched.push(...fieldMatched);
+            }
+        }
+        if (copyMatched.length > 0) {
+            copyMatched = [...new Set(copyMatched)];
+            console.log(`🕌 Cultural compliance scan (adCopy): detected [${copyMatched.join(", ")}] in build-plan fields`);
+        }
+        // ── T026: Aggregate matches for trace ──
+        if (imageMatched.length > 0 || copyMatched.length > 0) {
+            const allWords = [...new Set([...imageMatched, ...copyMatched])];
+            const sourceLayer = imageMatched.length > 0 && copyMatched.length > 0 ? "both"
+                : imageMatched.length > 0 ? "imagePrompt" : "adCopy";
+            console.log(`🕌 Cultural violation aggregated: words=[${allWords.join(", ")}] layer=${sourceLayer}`);
+        }
+    }
+
+    if (imageMatched.length > 0 || copyMatched.length > 0) {
+        const sourceLayer = imageMatched.length > 0 && copyMatched.length > 0
+            ? "both"
+            : imageMatched.length > 0 ? "imagePrompt" : "adCopy";
+        console.log(`🔒 Cultural compliance scan: sourceLayer=${sourceLayer} matchedWords=[${[...imageMatched, ...copyMatched].join(",")}]`);
+    }
+
     return {
         buildPlan: serializeBuildPlanEnvelope(finalMachinePlan.blueprint, finalMachinePlan),
         copyFidelityWarning,
@@ -3867,7 +3919,10 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
 
     const strippedBlueprint = stripTechnicalPrompt(blueprint);
 
-    const textPrompt = `${coreDesignRules}
+    const _ccBlock = isArabic(inputs.adLanguage) ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n` : "";
+    const _wardrobeBlock = isArabic(inputs.adLanguage) ? `\n${ARABIC_WARDROBE_BLOCK}\n` : "";
+
+    const textPrompt = `${_ccBlock}${coreDesignRules}
 ${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}
 BLUEPRINT: ${strippedBlueprint}
 TEXTS: "${hookText}", "${subheadText}"
@@ -3892,6 +3947,7 @@ ${retargetingDesignHint}
 3. If the blueprint mentions "VISUAL_DIRECTION" or similar — that is an INSTRUCTION TO YOU, not text to render.
 4. NEVER render English words from the blueprint as visible text on the image. The blueprint is a design INSTRUCTION, not content to display.
 5. Each Arabic text string must appear EXACTLY ONCE — never duplicate, never truncate, never rephrase.
+${_wardrobeBlock}${costumeRules}
 `;
 
     const trace: ResolutionTrace = {
@@ -4065,6 +4121,7 @@ If the uploaded photo shows a person in a blue suit, you must NOT default to a b
 3. IF FICTIONAL: The Hero MUST wear a detailed costume matching the universe lore(armor, robes, space suit, etc.)
 4. PRIORITY ORDER: Face identity(from Box A) > Universe - appropriate outfit > Niche uniform
   - Box A = face only.Ignore their clothing completely.
+  ${isArabic(inputs.adLanguage) ? `\n${ARABIC_WARDROBE_BLOCK}` : ""}
   `;
     // ═══ HARD RENDER GATE: Contract compliance check BEFORE prompt assembly ═══
     // Only runs when a structured machine plan is present (Step 3.5 active).
@@ -4195,6 +4252,7 @@ ${_renderRtCtx.testimonial ? `- Testimonial context available — design should 
 
     const coreDesignRules = `
   [ULTRA RENDER V5.0]
+  ${isArabic(inputs.adLanguage) ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n` : ""}
   ${_renderRtDesignHint}
        
         ⚠️⚠️⚠️ ABSOLUTE RULE: ONLY RENDER USER - FACING TEXT ⚠️⚠️⚠️
@@ -4987,6 +5045,10 @@ ${coreDesignRules}
         }
     } else {
         // Carousel style reference: inject anchor slide as visual reference
+        // contracts/cultural-compliance-block.md §1.2 — per-slide compliance block invariant
+        // Both carousel and batch paths route through generateFinalAd. Since CULTURAL_COMPLIANCE_BLOCK
+        // and ARABIC_WARDROBE_BLOCK are injected into coreDesignRules and costumeRules above,
+        // every slide and every batch item receives the compliance guardrails when isArabic is true.
         const carouselAnchorNote = styleReference ? `
 ═══════════════════════════════════════════════════════════════════════════════
 CAROUSEL STYLE ANCHORING (CRITICAL)
@@ -6170,6 +6232,26 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
         });
     }
 
+    // ── T025: Post-generation cultural scan on carousel slide copies ──
+    if (isArabic(inputs.adLanguage)) {
+        for (const copy of copies) {
+            if (copy.hookText) {
+                const { cleaned, matched } = scanAndReplace(copy.hookText, "adCopy");
+                if (matched.length > 0) {
+                    copy.hookText = cleaned;
+                    console.log(`🕌 Cultural compliance scan (carousel hookText): replaced [${matched.join(", ")}]`);
+                }
+            }
+            if (copy.subheadText) {
+                const { cleaned, matched } = scanAndReplace(copy.subheadText, "adCopy");
+                if (matched.length > 0) {
+                    copy.subheadText = cleaned;
+                    console.log(`🕌 Cultural compliance scan (carousel subheadText): replaced [${matched.join(", ")}]`);
+                }
+            }
+        }
+    }
+
     return copies;
 }
 
@@ -6669,7 +6751,17 @@ Position the offer as clearly superior without naming competitors directly. Use 
 
         return result;
     } // end _generateCaptionInner
-    const { text, captionQuality } = await _generateCaptionInner();
+    let { text, captionQuality } = await _generateCaptionInner();
+    // ── T025: Post-generation cultural scan on caption text ──
+    let captionCulturalMatched: string[] = [];
+    if (isArabic(inputs.adLanguage) && text) {
+        const { cleaned, matched } = scanAndReplace(text, "adCopy");
+        if (matched.length > 0) {
+            text = cleaned;
+            captionCulturalMatched = matched;
+            console.log(`🕌 Cultural compliance scan (caption): replaced [${matched.join(", ")}]`);
+        }
+    }
     return { text, rankingGuidance: _captionRankingLinkage, captionQuality };
 }
 

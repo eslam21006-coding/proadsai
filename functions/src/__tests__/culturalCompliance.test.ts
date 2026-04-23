@@ -1,0 +1,109 @@
+// functions/src/__tests__/culturalCompliance.test.ts — unit tests for culturalCompliance.ts
+
+import {
+  scanAndReplace,
+  assertInvariants,
+  TRIGGER_WORDS,
+  SUBSTITUTIONS,
+  HARAM_MOTIFS,
+  MOTIF_SUBSTITUTIONS,
+} from "../culturalCompliance.js";
+
+// ═══════════════════════════════════════════════════════════
+// TABLE INVARIANTS
+// ═══════════════════════════════════════════════════════════
+
+function runTests(): void {
+  let passed = 0;
+  let failed = 0;
+
+  function assert(condition: boolean, label: string): void {
+    if (condition) {
+      passed++;
+    } else {
+      failed++;
+      console.error(`  ✗ ${label}`);
+    }
+  }
+
+  console.log("culturalCompliance tests");
+
+  // ─── Invariants ───
+  console.log("  invariants");
+  try {
+    assertInvariants();
+    assert(true, "assertInvariants does not throw");
+  } catch {
+    assert(false, "assertInvariants does not throw");
+  }
+
+  for (const motif of HARAM_MOTIFS) {
+    assert(motif in MOTIF_SUBSTITUTIONS, `HARAM_MOTIFS "${motif}" has MOTIF_SUBSTITUTIONS entry`);
+  }
+  for (const trigger of TRIGGER_WORDS) {
+    assert(trigger in SUBSTITUTIONS, `TRIGGER_WORDS "${trigger}" has SUBSTITUTIONS entry`);
+  }
+  for (const [, value] of Object.entries(SUBSTITUTIONS)) {
+    for (const trigger of TRIGGER_WORDS) {
+      const re = new RegExp(`(?:^|\\W)${trigger.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\W|$)`, "i");
+      assert(!re.test(value), `substitution "${value}" does not contain trigger "${trigger}"`);
+    }
+  }
+
+  // ─── Empty input ───
+  console.log("  empty input");
+  {
+    const r = scanAndReplace("", "imagePrompt");
+    assert(r.cleaned === "", "empty input returns empty cleaned");
+    assert(r.matched.length === 0, "empty input returns empty matched");
+  }
+
+  // ─── Case insensitivity ───
+  console.log("  case insensitivity");
+  {
+    const r = scanAndReplace("Wine tasting", "imagePrompt");
+    assert(!r.cleaned.includes("Wine"), "title-case Wine is replaced");
+    assert(r.matched.includes("wine"), "matched contains lowercased wine");
+  }
+
+  // ─── Whole-word boundary ───
+  console.log("  whole-word boundary");
+  {
+    const r = scanAndReplace("wineglass holder", "imagePrompt");
+    assert(r.cleaned === "wineglass holder", "substring inside word is not replaced");
+    assert(r.matched.length === 0, "no match inside compound word");
+  }
+
+  // ─── Longest match first ───
+  console.log("  longest match first");
+  {
+    const r = scanAndReplace("bar counter", "imagePrompt");
+    assert(r.cleaned === "service counter", "bar counter replaced as whole phrase");
+    assert(r.matched.length === 1, "only one match for bar counter");
+  }
+
+  // ─── Non-overlapping ───
+  console.log("  non-overlapping");
+  {
+    const r = scanAndReplace("wine and champagne", "imagePrompt");
+    assert(r.matched.length === 2, "two separate matches found");
+    assert(!r.cleaned.includes("wine"), "wine replaced");
+    assert(!r.cleaned.includes("champagne"), "champagne replaced");
+  }
+
+  // ─── No false positive on clean text ───
+  console.log("  clean text");
+  {
+    const r = scanAndReplace("the quick brown fox", "adCopy");
+    assert(r.cleaned === "the quick brown fox", "clean text unchanged");
+    assert(r.matched.length === 0, "no matches on clean text");
+  }
+
+  // ─── Summary ───
+  console.log(`  ${passed} passed, ${failed} failed`);
+  if (failed > 0) {
+    process.exit(1);
+  }
+}
+
+runTests();

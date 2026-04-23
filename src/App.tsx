@@ -2967,8 +2967,11 @@ const App: React.FC = () => {
     const migratedInputs = p.inputs
       ? (() => {
         const _style = ((p.inputs as any).visualStyleFamily ?? (p.inputs as any).universeMode ?? 'realistic') as 'realistic' | 'fantasy' | 'minimal';
+        const rawUniverse = (p.inputs as any).preferredUniverse;
+        const remappedUniverse = rawUniverse === 'Premium Sushi Bar' ? 'Premium Sushi Counter' : rawUniverse;
         return {
           ...p.inputs,
+          preferredUniverse: remappedUniverse,
           campaignType: canUse(userPlan, 'retargeting') ? ((p.inputs as any).campaignType ?? 'cold') : 'cold',
           retargetingObjection: canUse(userPlan, 'retargeting') ? ((p.inputs as any).retargetingObjection ?? (p.inputs as any).retargetingObjections?.[0] ?? undefined) : undefined,
           retargetingObjections: canUse(userPlan, 'retargeting') ? ((p.inputs as any).retargetingObjections ?? ((p.inputs as any).retargetingObjection ? [(p.inputs as any).retargetingObjection] : [])) : [],
