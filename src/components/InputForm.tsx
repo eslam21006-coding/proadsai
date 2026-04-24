@@ -62,6 +62,40 @@ const compressImage = (file: File): Promise<string> => {
   });
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// UNIVERSE SENTINEL IDS
+// ═══════════════════════════════════════════════════════════════════════════
+// These are the stable "sentinel" values that `preferredUniverse` can hold when
+// the user hasn't picked a concrete universe from the DB — they trigger
+// downstream random-pick / custom-description flows. They are stored in
+// application state (and in saved projects) as these exact strings.
+//
+// Today these strings double as user-visible labels, which is why they read
+// like English UI copy. A future refactor can replace the VALUES with opaque
+// ids (e.g. "sentinel:surprise-realistic") and render localized labels via
+// useT(); that change requires migrating saved-project data and updating
+// src/constants.ts (which re-declares "Surprise Me (Random …)" as a legacy
+// compat list). It is intentionally out of scope for this cultural-compliance
+// hotfix. Consumers MUST import these named constants rather than inlining the
+// literals so the future refactor becomes a one-file change.
+const SURPRISE_REALISTIC = 'Surprise Me (Random Realistic)' as const;
+const SURPRISE_FANTASY = 'Surprise Me (Random Fantasy)' as const;
+const CUSTOM_WORLD_EMOJI = '🎨 Custom World' as const;
+const CUSTOM_WORLD = 'Custom World' as const;
+const CUSTOM_ATMOSPHERE = 'Custom / Insert Your Own Atmosphere' as const;
+
+// Set of sentinel ids that pass the Arabic safety gate. They do not resolve to
+// a DB entry but represent placeholder / custom flows — not real environments.
+// The DB lookup in isArabicAllowedUniverse is fail-closed for ALL other unknown
+// names, per research.md D-5 + spec.md FR-007.
+const ARABIC_SAFE_UNIVERSE_SENTINEL_IDS: ReadonlySet<string> = new Set<string>([
+  SURPRISE_REALISTIC,
+  SURPRISE_FANTASY,
+  CUSTOM_WORLD_EMOJI,
+  CUSTOM_WORLD,
+  CUSTOM_ATMOSPHERE,
+]);
+
 const getDefaultInputs = (): AdInputs => ({
   productName: '',
   productCategory: '',
@@ -84,7 +118,7 @@ const getDefaultInputs = (): AdInputs => ({
   universeMode: 'realistic',
   visualStyleFamily: 'realistic',
   visualSubStyle: undefined,
-  preferredUniverse: 'Surprise Me (Random Realistic)',
+  preferredUniverse: SURPRISE_REALISTIC,
   customUniverseDetails: '',
   brandUrl: '',
   brandColorPrimary: '',
@@ -218,8 +252,8 @@ const UniverseDropdown: React.FC<{
   const dropdownRef = React.useRef<HTMLDivElement>(null);
 
   const universeOptions = [
-    activeStyle === 'realistic' ? 'Surprise Me (Random Realistic)' : 'Surprise Me (Random Fantasy)',
-    '🎨 Custom World',
+    activeStyle === 'realistic' ? SURPRISE_REALISTIC : SURPRISE_FANTASY,
+    CUSTOM_WORLD_EMOJI,
     ...(activeStyle === 'realistic' ? dbRealistic : dbFantasy).map(u => u.name),
   ];
   const filteredOptions = universeOptions.filter(u => u.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -330,31 +364,26 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
       hookAngle: inputs.coldHookAngle,
   }), [inputs.offerCreativeMode, inputs.campaignType, inputs.adMode, inputs.coldHookAngle]);
 
-  // Sentinel `preferredUniverse` values that represent UI placeholder choices,
-  // NOT real universe entries. These must pass the Arabic safety gate even
-  // though they do not resolve to a DB entry — they are resolved later in the
-  // pipeline (e.g. "Surprise Me" picks a random Arabic-safe entry, custom/hero
-  // values are user-authored descriptions). Kept in sync with the sentinels
-  // defined elsewhere in this file (see SURPRISE_* + '🎨 Custom World').
-  const ARABIC_SAFE_UNIVERSE_SENTINELS: ReadonlySet<string> = React.useMemo(() => new Set([
-    'Surprise Me (Random Realistic)',
-    'Surprise Me (Random Fantasy)',
-    '🎨 Custom World',
-    'Custom World',
-    'Custom / Insert Your Own Atmosphere',
-  ]), []);
-
   // Single canonical predicate for "is this preferredUniverse value safe to use
   // under an Arabic ad configuration?". Used by: arabicUniverseBlocked (submit
   // gate), handleLanguageSelect (auto-clear on en→ar switch), and the inline
-  // warning below the picker. Fail-closed: unknown / legacy ids that are NOT
-  // sentinels and NOT in DB return false.
+  // warning below the picker.
+  //
+  // Decision tree (fail-closed):
+  //   1. Empty / null / undefined         → true (nothing selected; nothing to block)
+  //   2. Matches a sentinel id            → true (placeholder flow, resolved later)
+  //   3. Matches a DB entry with arabicSafe=true → true
+  //   4. Everything else                  → false (unknown / legacy / arabicSafe=false)
+  //
+  // The sentinel id set is module-level (ARABIC_SAFE_UNIVERSE_SENTINEL_IDS) so
+  // this predicate has no membership-set dependency and the useCallback can be
+  // a stable identity across renders.
   const isArabicAllowedUniverse = React.useCallback((name: string | undefined | null): boolean => {
-    if (!name) return true; // empty = nothing selected; nothing to block
-    if (ARABIC_SAFE_UNIVERSE_SENTINELS.has(name)) return true;
+    if (!name) return true;
+    if (ARABIC_SAFE_UNIVERSE_SENTINEL_IDS.has(name)) return true;
     const entry = [...DB_REALISTIC, ...DB_FANTASY].find(u => u.name === name);
     return entry ? entry.arabicSafe === true : false;
-  }, [ARABIC_SAFE_UNIVERSE_SENTINELS]);
+  }, []);
 
   const arabicUniverseBlocked = React.useMemo(() => {
     if (!isArabic(inputs.adLanguage) || !inputs.preferredUniverse) return false;
@@ -945,7 +974,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
     onDrop: (e: React.DragEvent) => handleDrop(e, category),
   });
 
-  const isCustomUniverse = inputs.preferredUniverse === "🎨 Custom World" || inputs.preferredUniverse === "Custom World" || inputs.preferredUniverse === "Custom / Insert Your Own Atmosphere";
+  const isCustomUniverse = inputs.preferredUniverse === CUSTOM_WORLD_EMOJI || inputs.preferredUniverse === CUSTOM_WORLD || inputs.preferredUniverse === CUSTOM_ATMOSPHERE;
 
   // ─── RENDER ────────────────────────────────────────────────────────────
   return (
@@ -2079,14 +2108,14 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                 <div className="grid grid-cols-3 gap-2">
                   <button type="button" onClick={() => setInputs(prev => {
                     const keepSub = prev.visualSubStyle && isSubStyleInFamily(prev.visualSubStyle, 'realistic') ? prev.visualSubStyle : undefined;
-                    return { ...prev, universeMode: 'realistic' as UniverseMode, visualStyleFamily: 'realistic', visualSubStyle: keepSub as any, preferredUniverse: 'Surprise Me (Random Realistic)' };
+                    return { ...prev, universeMode: 'realistic' as UniverseMode, visualStyleFamily: 'realistic', visualSubStyle: keepSub as any, preferredUniverse: SURPRISE_REALISTIC };
                   })}
                     className={`py-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border ${activeStyle === 'realistic' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20 border-emerald-500' : 'bg-slate-800/40 text-slate-400 hover:text-slate-200 hover:border-slate-600 border-slate-700/50'}`}>
                     <i className="fa-solid fa-building"></i> {appLang === 'ar' ? 'واقعي' : 'Real'}
                   </button>
                   <button type="button" onClick={() => { if (!allowFantasy) return; setInputs(prev => {
                     const keepSub = prev.visualSubStyle && isSubStyleInFamily(prev.visualSubStyle, 'fantasy') ? prev.visualSubStyle : undefined;
-                    return { ...prev, universeMode: 'fantasy' as UniverseMode, visualStyleFamily: 'fantasy', visualSubStyle: keepSub as any, preferredUniverse: 'Surprise Me (Random Fantasy)' };
+                    return { ...prev, universeMode: 'fantasy' as UniverseMode, visualStyleFamily: 'fantasy', visualSubStyle: keepSub as any, preferredUniverse: SURPRISE_FANTASY };
                   }); }}
                     className={`py-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border ${!allowFantasy ? 'bg-slate-900/30 text-slate-600 cursor-not-allowed border-slate-800/30' : activeStyle === 'fantasy' ? 'bg-violet-600 text-white shadow-lg shadow-violet-600/20 border-violet-500' : 'bg-slate-800/40 text-slate-400 hover:text-slate-200 hover:border-slate-600 border-slate-700/50'}`}>
                     <i className="fa-solid fa-wand-sparkles"></i> {appLang === 'ar' ? 'خيالي' : 'Fantasy'}
