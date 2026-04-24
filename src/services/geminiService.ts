@@ -47,8 +47,7 @@ function sanitizeInputs(inputs: AdInputs): Record<string, any> {
   const clean = { ...inputs } as any;
   // Personal photos stay empty — they're sent only for image generation
   clean.personalPhotos = [];
-  // Keep max 1 brand logo
-  clean.brandLogos = (clean.brandLogos || []).slice(0, 1);
+  clean.brandLogos = (clean.brandLogos || []).slice(0, 5);
   // Reference image: KEEP for server-side analysis in all steps
   // The base64 adds ~200-500KB per request but enables real metadata extraction
   return clean;
@@ -260,7 +259,7 @@ Use this information to better understand the brand's positioning, tone, and tar
   ): Promise<{ image: string | null; errorCode?: string; debug?: any }> {
     const inputsWithPhotos = { ...inputs } as any;
     inputsWithPhotos.personalPhotos = (inputs.personalPhotos || []).slice(0, 5);
-    inputsWithPhotos.brandLogos = (inputs.brandLogos || []).slice(0, 1);
+    inputsWithPhotos.brandLogos = (inputs.brandLogos || []).slice(0, 5);
 
     const result = await fnFinalAd({
       buildPlan, approvedTov, inputs: inputsWithPhotos,

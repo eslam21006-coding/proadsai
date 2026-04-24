@@ -2097,7 +2097,7 @@ const App: React.FC = () => {
     ];
     setAbVariations(initial);
     setAbRendering(true);
-    const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 1) || [] };
+    const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 5) || [] };
     for (let i = 0; i < 3; i++) {
       setAbVariations(prev => prev.map((v, idx) => idx === i ? { ...v, status: 'rendering' } : v));
       if (!deductCredits('generateImage')) break;
@@ -3621,7 +3621,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     // ─── SINGLE MODE: Generate concepts directly ─────
     if (!deductCredits('generateConcepts')) return;
     startLoad(`Creating Concepts...`);
-    const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 1) || [] };
+    const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 5) || [] };
     try {
       let res = unwrapGen(await gemini.generateConcepts(variationText, cleanInputs, resolvedUniverse, 'initial', '', globalRefinement));
       res = res ? normalizeFieldLabels(res) : res;
@@ -3643,7 +3643,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     if (!deductCredits('generateConcepts')) return;
     setShowCarouselPreview(false);
     startLoad(`Creating Concepts...`);
-    const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 1) || [] };
+    const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 5) || [] };
     try {
       let res = unwrapGen(await gemini.generateConcepts(selectedTov, cleanInputs, resolvedUniverse, 'initial', '', globalRefinement));
       res = res ? normalizeFieldLabels(res) : res;
@@ -5527,7 +5527,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                             const groups: BatchHookGroup[] = [];
                             setBatchConceptsLoading(true);
                             startLoad(`Generating blueprints for ${hookLetters.length} hooks...`);
-                            const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 1) || [] };
+                            const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 5) || [] };
 
                             for (let i = 0; i < hookLetters.length; i++) {
                               const v = hookLetters[i];

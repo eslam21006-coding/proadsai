@@ -312,7 +312,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
     const sanitized = {
       ...raw,
       personalPhotos: (raw.personalPhotos || []).slice(0, 5),
-      brandLogos: (raw.brandLogos || []).slice(0, 1),
+      brandLogos: (raw.brandLogos || []).slice(0, 5),
     };
     // ═══ LEGACY MODE SANITIZATION ═══
     // Old saved drafts/projects may contain removed modes (premium_package, community_card, etc.)
@@ -838,27 +838,53 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
     if (!files) return;
     setError(null);
     const newFiles = Array.from(files) as File[];
-    const max = category === 'personal' ? 5 : 1;
+    const max = 5;
     const current = category === 'personal' ? (inputs.personalPhotos?.length || 0) : (inputs.brandLogos?.length || 0);
-    if (current + newFiles.length > max) {
-      setError(`Maximum ${max} ${category === 'personal' ? 'photos' : 'logo'} allowed.`);
+    const remaining = max - current;
+    if (newFiles.length <= remaining) {
+      try {
+        const base64Promises = newFiles.map(file => compressImage(file));
+        const base64s = await Promise.all(base64Promises);
+        setInputs(prev => ({
+          ...prev,
+          [category === 'personal' ? 'personalPhotos' : 'brandLogos']: [
+            ...(category === 'personal' ? (prev.personalPhotos || []) : (prev.brandLogos || [])),
+            ...base64s
+          ]
+        }));
+      } catch (err) {
+        console.error("Image processing failed", err);
+        setError("Failed to process one or more images. Please try simpler files.");
+      }
       return;
     }
-    try {
-      const base64Promises = newFiles.map(file => compressImage(file));
-      const base64s = await Promise.all(base64Promises);
-      setInputs(prev => ({
-        ...prev,
-        [category === 'personal' ? 'personalPhotos' : 'brandLogos']: [
-          ...(category === 'personal' ? (prev.personalPhotos || []) : (prev.brandLogos || [])),
-          ...base64s
-        ]
-      }));
-
-    } catch (err) {
-      console.error("Image processing failed", err);
-      setError("Failed to process one or more images. Please try simpler files.");
+    if (remaining > 0) {
+      const accepted = newFiles.slice(0, remaining);
+      const rejectedCount = newFiles.length - remaining;
+      try {
+        const base64Promises = accepted.map(file => compressImage(file));
+        const base64s = await Promise.all(base64Promises);
+        setInputs(prev => ({
+          ...prev,
+          [category === 'personal' ? 'personalPhotos' : 'brandLogos']: [
+            ...(category === 'personal' ? (prev.personalPhotos || []) : (prev.brandLogos || [])),
+            ...base64s
+          ]
+        }));
+        const noun = category === 'personal' ? 'photos' : 'logos';
+        setError(appLang === 'ar'
+          ? `يسمح فقط بـ ${max} ${noun === 'logos' ? 'شعارات' : 'صور'} — تم تجاهل ${rejectedCount} ملف(ات) إضافية.`
+          : `Only ${max} ${noun} allowed — ${rejectedCount} extra file(s) ignored.`);
+      } catch (err) {
+        console.error("Image processing failed", err);
+        setError("Failed to process one or more images. Please try simpler files.");
+      }
+      return;
     }
+    const noun = category === 'personal' ? 'photos' : 'logos';
+    setError(appLang === 'ar'
+      ? `يسمح فقط بـ ${max} ${noun === 'logos' ? 'شعارات' : 'صور'} — تم تجاهل ${newFiles.length} ملف(ات) إضافية.`
+      : `Only ${max} ${noun} allowed — ${newFiles.length} extra file(s) ignored.`);
   };
 
   const removeFile = (idx: number, category: 'personal' | 'brand') => {
@@ -952,26 +978,51 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
     }
 
     // Original personal/brand logic
-    const max = category === 'personal' ? 5 : 1;
+    const max = 5;
     const current = category === 'personal' ? (inputs.personalPhotos?.length || 0) : (inputs.brandLogos?.length || 0);
-    if (current + files.length > max) {
-      setError(`Maximum ${max} ${category === 'personal' ? 'photos' : 'logo'} allowed.`);
+    const remaining = max - current;
+    if (files.length <= remaining) {
+      try {
+        const base64s = await Promise.all(files.map(f => compressImage(f)));
+        setInputs(prev => ({
+          ...prev,
+          [category === 'personal' ? 'personalPhotos' : 'brandLogos']: [
+            ...(category === 'personal' ? (prev.personalPhotos || []) : (prev.brandLogos || [])),
+            ...base64s
+          ]
+        }));
+      } catch (err) {
+        console.error("Drop image processing failed", err);
+        setError("Failed to process dropped images.");
+      }
       return;
     }
-    try {
-      const base64s = await Promise.all(files.map(f => compressImage(f)));
-      setInputs(prev => ({
-        ...prev,
-        [category === 'personal' ? 'personalPhotos' : 'brandLogos']: [
-          ...(category === 'personal' ? (prev.personalPhotos || []) : (prev.brandLogos || [])),
-          ...base64s
-        ]
-      }));
-
-    } catch (err) {
-      console.error("Drop image processing failed", err);
-      setError("Failed to process dropped images.");
+    if (remaining > 0) {
+      const accepted = files.slice(0, remaining);
+      const rejectedCount = files.length - remaining;
+      try {
+        const base64s = await Promise.all(accepted.map(f => compressImage(f)));
+        setInputs(prev => ({
+          ...prev,
+          [category === 'personal' ? 'personalPhotos' : 'brandLogos']: [
+            ...(category === 'personal' ? (prev.personalPhotos || []) : (prev.brandLogos || [])),
+            ...base64s
+          ]
+        }));
+        const noun = category === 'personal' ? 'photos' : 'logos';
+        setError(appLang === 'ar'
+          ? `يسمح فقط بـ ${max} ${noun === 'logos' ? 'شعارات' : 'صور'} — تم تجاهل ${rejectedCount} ملف(ات) إضافية.`
+          : `Only ${max} ${noun} allowed — ${rejectedCount} extra file(s) ignored.`);
+      } catch (err) {
+        console.error("Drop image processing failed", err);
+        setError("Failed to process dropped images.");
+      }
+      return;
     }
+    const noun = category === 'personal' ? 'photos' : 'logos';
+    setError(appLang === 'ar'
+      ? `يسمح فقط بـ ${max} ${noun === 'logos' ? 'شعارات' : 'صور'} — تم تجاهل ${files.length} ملف(ات) إضافية.`
+      : `Only ${max} ${noun} allowed — ${files.length} extra file(s) ignored.`);
   };
 
   const dropZoneProps = (category: 'personal' | 'brand' | 'offer' | 'testimonial' | 'reference' | 'referenceAd') => ({
@@ -2269,7 +2320,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
             SECTION: PHOTOS (always visible)
         ═══════════════════════════════════════════════════════════════════ */}
         <div style={{ animationDelay: '200ms' }} data-tour="photos">
-          <SectionTitle icon="fa-images" title={t('form.photos')} badge={<span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full">{(inputs.personalPhotos?.length || 0)} photos · {(inputs.brandLogos?.length || 0)} logo</span>} />
+          <SectionTitle icon="fa-images" title={t('form.photos')} badge={<span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full">{(inputs.personalPhotos?.length || 0)} photos · {(inputs.brandLogos?.length || 0)} logos</span>} />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
             {/* Personal Photos — hidden in text_only mode */}
@@ -2294,7 +2345,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
 
             {/* Brand Logos */}
             <div className="bg-slate-900/30 rounded-2xl p-5 space-y-4">
-              <SectionTitle icon="fa-copyright" title={t('form.brand_assets')} badge={<span className="text-[9px] text-slate-500">Max 1</span>} />
+              <SectionTitle icon="fa-copyright" title={t('form.brand_assets')} badge={<span className="text-[9px] text-slate-500">Max 5</span>} />
               <div {...dropZoneProps('brand')} onClick={() => brandRef.current?.click()} className={`border border-dashed rounded-xl p-5 text-center cursor-pointer transition-all group ${dragOverZone === 'brand' ? 'border-violet-500 bg-violet-500/10 scale-[1.02]' : 'border-slate-800/60 hover:border-violet-500/40'}`}>
                 <i className={`fa-solid ${dragOverZone === 'brand' ? 'fa-cloud-arrow-down text-violet-400' : 'fa-certificate text-slate-700 group-hover:text-violet-400'} text-xl mb-1 transition-colors`}></i>
                 <p className="text-[10px] text-slate-500">{dragOverZone === 'brand' ? (appLang === 'ar' ? 'أفلت هنا' : 'Drop here') : (appLang === 'ar' ? 'اسحب الشعار أو اضغط للرفع' : 'Drag logo or click to upload')}</p>

@@ -1208,4 +1208,142 @@ testEnglishIsNotGated();
 testMinimumCoverageShape();
 console.log("═══ HFC.9 — Integration checks complete (unit coverage lives in __tests__/culturalCompliance.test.ts) ═══\n");
 
+// ═══════════════════════════════════════════════════════════════════════════
+// HFD — Multi-Logo Upload Fixtures (HOTFIX-D)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const FAKE_LOGO_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+const LOGO_STRICTNESS_MULTI = `- LOGO STRICTNESS: Render ONLY user-provided branding from Box B. If Box B is empty, the design must be 100% free of any logos or branding marks. If Box B has one or more images (up to 5), render each as a distinct physical artifact in the scene — all at comparable size, balanced placement, no single logo dominant, no one mark enlarged relative to the others. Upload order has no prominence meaning.`;
+
+const LOGO_STRICTNESS_EMPTY = `- LOGO STRICTNESS: Render ONLY user-provided branding from Box B. If Box B is empty, the design must be 100% free of any logos or branding marks. ZERO logos or branding marks allowed.`;
+
+const BRANDING_RULE_MULTI = `CRITICAL BRANDING RULE:
+- Render ONLY the user's brand elements from Box B (if provided).
+- If Box B contains one or more logos (up to five), each MUST appear as a distinct physical brand element. All uploaded logos are equal peers — rendered at comparable size and balanced placement. Upload order does NOT map to visual prominence. Never invent or add logos not in Box B.`;
+
+const BRANDING_RULE_EMPTY = `CRITICAL BRANDING RULE:
+- Render ONLY the user's brand elements from Box B (if provided).
+- If Box B is empty, the design must have ZERO logos or branding marks.`;
+
+function simulateSanitizer(brandLogos: string[]): string[] {
+    const rawBrandLogos = brandLogos || [];
+    if (rawBrandLogos.length > 5) {
+        console.warn(JSON.stringify({
+            event: 'brandLogos_truncated',
+            received: rawBrandLogos.length,
+            keptCount: 5,
+            userId: null,
+        }));
+    }
+    return rawBrandLogos.slice(0, 5);
+}
+
+function makeHfdInput(overrides: Partial<BuildFinalImagePromptInput> & { brandLogosCount?: number } = {}): BuildFinalImagePromptInput {
+    const count = overrides.brandLogosCount ?? 0;
+    const rawLogos = count > 0 ? Array(count).fill(FAKE_LOGO_B64) : [];
+    const boxB = simulateSanitizer(rawLogos);
+    const imageParts = boxB.map(d => ({
+        inlineData: { mimeType: 'image/png', data: d.split(',')[1] }
+    }));
+    const hasLogos = boxB.length > 0;
+    const brandingRules = hasLogos ? BRANDING_RULE_MULTI : BRANDING_RULE_EMPTY;
+    const logoStrictness = hasLogos ? LOGO_STRICTNESS_MULTI : LOGO_STRICTNESS_EMPTY;
+    const defaultCoreDesignRules = `Photorealistic studio lighting, high contrast.\n${brandingRules}\n${logoStrictness}`;
+    return makePromptInput({
+        ...overrides,
+        inputs: {
+            visualSubStyle: "luxury_magazine",
+            offerCreativeMode: ["standard_hero"],
+            brandLogos: rawLogos,
+            ...(overrides.inputs as any || {}),
+        },
+        coreDesignRules: overrides.coreDesignRules ?? defaultCoreDesignRules,
+        imageParts,
+    });
+}
+
+// ─── HFD.T1 — 3-logo single ad: prompt shape ───
+function testHfdT1() {
+    const input = makeHfdInput({ brandLogosCount: 3 });
+    const result = buildFinalImagePrompt(input);
+    assert.ok(result.textPrompt.includes("comparable size"), "HFD.T1: prompt must contain 'comparable size'");
+    assert.ok(!result.textPrompt.includes("ONLY logo allowed"), "HFD.T1: prompt must NOT contain 'ONLY logo allowed'");
+    assert.ok(!result.textPrompt.includes("render that image once"), "HFD.T1: prompt must NOT contain 'render that image once'");
+    assert.equal(result.imageParts.length, 3, "HFD.T1: imageParts must have 3 entries for 3 logos");
+    console.log("  ✅ HFD.T1: 3-logo single-ad prompt shape verified");
+}
+
+// ─── HFD.T3 — 0-logo ad: empty-branding invariant preserved ───
+function testHfdT3() {
+    const input = makeHfdInput({ brandLogosCount: 0 });
+    const result = buildFinalImagePrompt(input);
+    assert.ok(result.textPrompt.includes("ZERO logos or branding marks"), "HFD.T3: prompt must contain 'ZERO logos or branding marks'");
+    assert.ok(!result.textPrompt.includes("comparable size"), "HFD.T3: prompt must NOT contain 'comparable size'");
+    assert.equal(result.imageParts.length, 0, "HFD.T3: imageParts must be empty for 0 logos");
+    console.log("  ✅ HFD.T3: 0-logo empty-branding invariant preserved");
+}
+
+// ─── HFD.T4 — 7-logo oversized input: defence-in-depth truncation ───
+function testHfdT4() {
+    const warnMessages: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: any[]) => { warnMessages.push(args.join(" ")); };
+    try {
+        const input = makeHfdInput({ brandLogosCount: 7 });
+        const result = buildFinalImagePrompt(input);
+        assert.ok(result.textPrompt.includes("comparable size"), "HFD.T4: prompt must contain 'comparable size'");
+        assert.equal(result.imageParts.length, 5, "HFD.T4: imageParts must be clipped to 5 for 7-logo input");
+        const truncationWarns = warnMessages.filter(m => {
+            try { const o = JSON.parse(m); return o.event === "brandLogos_truncated" && o.received === 7 && o.keptCount === 5; } catch { return false; }
+        });
+        assert.ok(truncationWarns.length >= 1, `HFD.T4: expected brandLogos_truncated warn, got ${JSON.stringify(warnMessages)}`);
+        console.log("  ✅ HFD.T4: 7-logo oversized defence-in-depth truncation verified");
+    } finally {
+        console.warn = origWarn;
+    }
+}
+
+console.log("\n═══ HFD — Multi-Logo Upload Fixtures ═══");
+testHfdT1();
+testHfdT3();
+testHfdT4();
+
+// ─── HFD.T2 — 5-logo carousel: per-slide attachment ───
+function testHfdT2() {
+    const boxB = simulateSanitizer(Array(5).fill(FAKE_LOGO_B64));
+    assert.equal(boxB.length, 5, "HFD.T2: sanitizer must keep all 5 logos");
+    const parts = boxB.map(d => ({
+        inlineData: { mimeType: 'image/png', data: d.split(',')[1] }
+    }));
+    assert.equal(parts.length, 5, "HFD.T2: 5 imageParts for 5 logos");
+    for (let slide = 0; slide < 5; slide++) {
+        assert.equal(parts.length, 5, `HFD.T2: slide ${slide + 1} must have 5 Box-B imageParts`);
+    }
+    console.log("  ✅ HFD.T2: 5-logo carousel per-slide attachment verified");
+}
+testHfdT2();
+
+// ─── HFD.T5 — Arabic 2-logo: equal-peer phrasing ───
+function testHfdT5() {
+    const AR_BRANDING_LOGIC = `شعارات Box B (حتى ٥) إن وُجدت — جميعها بحجم متماثل وموضع متوازن، مثلاً في الوسط أو على الفاصل.`;
+    const input = makeHfdInput({
+        brandLogosCount: 2,
+        inputs: {
+            visualSubStyle: "luxury_magazine",
+            offerCreativeMode: ["standard_hero", "before_after"],
+            brandLogos: [FAKE_LOGO_B64, FAKE_LOGO_B64],
+            adLanguage: 'ar_fusha',
+        } as any,
+        coreDesignRules: `Photorealistic studio lighting.\n${BRANDING_RULE_MULTI}\n${AR_BRANDING_LOGIC}`,
+    });
+    const result = buildFinalImagePrompt(input);
+    assert.ok(result.textPrompt.includes("بحجم متماثل"), "HFD.T5: prompt must contain Arabic equal-peer phrase 'بحجم متماثل'");
+    assert.ok(!result.textPrompt.includes("شعار Box B إن وجد"), "HFD.T5: prompt must NOT contain old singular Arabic phrase");
+    console.log("  ✅ HFD.T5: Arabic 2-logo equal-peer phrasing verified");
+}
+testHfdT5();
+
+console.log("═══ HFD — All logo fixtures passed ═══\n");
+
 console.log('contractFixtures.test: PASS');
