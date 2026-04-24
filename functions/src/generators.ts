@@ -29,6 +29,7 @@ import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreserva
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
 import type { FailureClass, CostEstimate } from "./types.js";
 import { GenerationError } from "./types.js";
+import { CULTURAL_COMPLIANCE_BLOCK, ARABIC_WARDROBE_BLOCK, isArabic, scanAndReplace } from "./culturalCompliance.js";
 
 // ─── Ranking Guidance Builder ────────────────────────────────────────────
 // Converts Ticket 2 ranking output into a compact prompt-safe guidance block.
@@ -3370,6 +3371,14 @@ Selected modes: [${modes.join(' + ')}]
 export interface GenerateBuildPlanResult {
     buildPlan: string;
     copyFidelityWarning: CopyFidelityResult | null;
+    // Shape MUST mirror ResolutionTrace.culturalViolation in types.ts so the value
+    // can be persisted directly onto the trace via setCulturalViolation(...). Only
+    // present when ≥ 1 trigger word was caught during the Arabic post-parse scan.
+    culturalViolation?: {
+        caught: true;
+        matchedWords: string[];
+        sourceLayer: "imagePrompt" | "adCopy" | "both";
+    };
 }
 
 export async function generateBuildPlan(conceptRaw: string, selectedTov: string, inputs: AdInputs, resolvedUniverse: string, currentAspectRatio: AspectRatio, textOverride?: TextOverride): Promise<GenerateBuildPlanResult> {
@@ -3387,10 +3396,11 @@ export async function generateBuildPlan(conceptRaw: string, selectedTov: string,
     }
 
     const ownedText = resolveOwnedRenderText(selectedTov, inputs, textOverride);
-    const hookText = ownedText.hookText;
-    const subheadText = ownedText.subheadText;
-    const ctaName = ownedText.ctaName;
-    const benefitText = ownedText.benefitText;
+    // `let` so the post-parse ad-copy cultural scan (T025) can write back sanitized text.
+    let hookText = ownedText.hookText;
+    let subheadText = ownedText.subheadText;
+    let ctaName = ownedText.ctaName;
+    let benefitText = ownedText.benefitText;
 
     const _bpRtCtx = buildNormalizedRetargetingContext(inputs as any);
     const _bpRtBlock = getRetargetingPromptBlock(_bpRtCtx);
@@ -3418,6 +3428,7 @@ export async function generateBuildPlan(conceptRaw: string, selectedTov: string,
     const prompt = `
   [BUILDER V6.0 — STRUCTURED BUILD PLAN]
       Synthesize this raw concept into a technical rendering blueprint.
+      ${isArabic(inputs.adLanguage) ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n` : ''}
       ${_bpRtBlock ? `
 ${_bpRtBlock}
 ` : ''}
@@ -3463,6 +3474,7 @@ MANDATE:
 - Ensure the "Action Benefit" is treated as a sub-caption for the button, not a replacement.
 - Ensure maximum legibility of all Arabic text layers.
 - Apply costume fusion for ${(() => { const _bpCostSub = resolveVisualSubStyle(inputs); if (_bpCostSub === 'luxury_magazine') return 'LUXURY MAGAZINE COVER (power wardrobe — cover star quality, profession from ' + resolvedUniverse + ', NOT universe environment. Dark solid background, tight crop.)'; if (_bpCostSub === 'clean_corporate') return 'CLEAN CORPORATE (professional wardrobe — profession from ' + resolvedUniverse + ', NOT universe environment)'; if (_bpCostSub === 'ugly_ad') return 'UGLY AD (casual clothing — ignore universe)'; return resolvedUniverse; })()}.
+${isArabic(inputs.adLanguage) ? `\n${ARABIC_WARDROBE_BLOCK}\n` : ''}
 - Maintain 100% face likeness and bone structure from provided photos.
 - BLUEPRINT SIZE LIMIT: blueprint must stay concise and production-usable. Target 12-18 lines, 1200-2600 characters max.
 - Do NOT echo the contract, prompt, schema, JSON rules, or ownership block inside blueprint.
@@ -3792,9 +3804,127 @@ ${JSON.stringify(machinePlan)}`;
         ownership: mergeContentOwnership(ownershipMap, machinePlan.ownership),
     };
 
+    // ── T024: Post-parse cultural scan on technical prompt text ──
+    const imageMatched: string[] = [];
+    const copyMatched: string[] = [];
+    if (isArabic(inputs.adLanguage)) {
+        const tpRaw = extractTechnicalPromptFromBlueprint(finalMachinePlan.blueprint);
+        if (tpRaw) {
+            const { cleaned, matched } = scanAndReplace(tpRaw, "imagePrompt");
+            if (matched.length > 0) {
+                const bp = finalMachinePlan.blueprint;
+                const start = bp.indexOf(TECHNICAL_PROMPT_START);
+                const end = bp.indexOf(TECHNICAL_PROMPT_END);
+                if (start !== -1 && end !== -1 && end > start) {
+                    finalMachinePlan.blueprint =
+                        bp.slice(0, start + TECHNICAL_PROMPT_START.length) +
+                        "\n" + cleaned + "\n" +
+                        bp.slice(end);
+                }
+                imageMatched.push(...matched);
+                console.log(`🕌 Cultural compliance scan (imagePrompt): replaced [${matched.join(", ")}]`);
+            }
+        }
+        // ── T025: Post-parse cultural scan on ad-copy fields — WRITE CLEANED VALUES BACK. ──
+        // hookText/subheadText/ctaName/benefitText are `let` so the final render uses sanitized text.
+        if (hookText) {
+            const { cleaned, matched } = scanAndReplace(hookText, "adCopy");
+            if (matched.length > 0) {
+                hookText = cleaned;
+                copyMatched.push(...matched);
+                console.log(`🕌 Cultural compliance scan (adCopy/hookText): replaced [${matched.join(", ")}]`);
+            }
+        }
+        if (subheadText) {
+            const { cleaned, matched } = scanAndReplace(subheadText, "adCopy");
+            if (matched.length > 0) {
+                subheadText = cleaned;
+                copyMatched.push(...matched);
+                console.log(`🕌 Cultural compliance scan (adCopy/subheadText): replaced [${matched.join(", ")}]`);
+            }
+        }
+        if (ctaName) {
+            const { cleaned, matched } = scanAndReplace(ctaName, "adCopy");
+            if (matched.length > 0) {
+                ctaName = cleaned;
+                copyMatched.push(...matched);
+                console.log(`🕌 Cultural compliance scan (adCopy/ctaName): replaced [${matched.join(", ")}]`);
+            }
+        }
+        if (benefitText) {
+            const { cleaned, matched } = scanAndReplace(benefitText, "adCopy");
+            if (matched.length > 0) {
+                benefitText = cleaned;
+                copyMatched.push(...matched);
+                console.log(`🕌 Cultural compliance scan (adCopy/benefitText): replaced [${matched.join(", ")}]`);
+            }
+        }
+        // silence unused-warnings where the cleaned fields aren't re-read inside this function;
+        // they are returned-by-closure and re-read by downstream generator paths.
+        void ctaName; void benefitText; void subheadText; void hookText;
+    }
+
+    // ── T026: Aggregate matches — dedupe while preserving first-seen order; expose on result. ──
+    let culturalViolation: GenerateBuildPlanResult["culturalViolation"] | undefined;
+    if (imageMatched.length > 0 || copyMatched.length > 0) {
+        const seen = new Set<string>();
+        const allWords: string[] = [];
+        for (const w of [...imageMatched, ...copyMatched]) {
+            if (!seen.has(w)) { seen.add(w); allWords.push(w); }
+        }
+        const sourceLayer: "imagePrompt" | "adCopy" | "both" =
+            imageMatched.length > 0 && copyMatched.length > 0 ? "both"
+                : imageMatched.length > 0 ? "imagePrompt" : "adCopy";
+        culturalViolation = { caught: true, matchedWords: allWords, sourceLayer };
+        console.log(`🔒 Cultural violation aggregated: matchedWords=[${allWords.join(", ")}] sourceLayer=${sourceLayer}`);
+    }
+
+    // ── Rebuild finalMachinePlan.ownership from the cleaned copy fields so the serialized
+    //    envelope reflects the sanitized hook/subhead/CTA/benefit, not the pre-scan text.
+    //    Also RECOMPUTE copyFidelityWarning against the sanitized blueprint + sanitized copy
+    //    so downstream consumers see an up-to-date fidelity signal (the pre-scan warning
+    //    referenced text that no longer exists in the outgoing plan).
+    let finalCopyFidelityWarning: CopyFidelityResult | null = copyFidelityWarning;
+    if (copyMatched.length > 0 || imageMatched.length > 0) {
+        const sanitizedOwnershipMap = buildContentOwnershipMap(
+            { hookText, subheadText, ctaName, benefitText },
+            inputs,
+        );
+        finalMachinePlan.ownership = mergeContentOwnership(
+            sanitizedOwnershipMap,
+            // Drop the pre-scan machine-plan ownership so the sanitized map wins.
+            null,
+        );
+        // Re-run validateCopyFidelity on the sanitized blueprint + sanitized copy fields.
+        const sanitizedTp = extractTechnicalPromptFromBlueprint(finalMachinePlan.blueprint);
+        const sanitizedCopyFields: CopyFidelityFields = { hookText, subheadText, ctaName, benefitText };
+        if (sanitizedTp) {
+            const recomputed = validateCopyFidelity(sanitizedTp, sanitizedCopyFields);
+            console.log(
+                `🔁 copyFidelityWarning recomputed post-scan: passed=${recomputed.passed}` +
+                (recomputed.passed ? "" : ` failedFields=[${(recomputed.failedFields ?? []).join(", ")}]`),
+            );
+            // Preserve the existing contract: copyFidelityWarning is non-null ONLY when
+            // fidelity FAILED. Callers downstream use `if (copyFidelityWarning)` as a
+            // truthy check to mean "a warning exists"; assigning the passing result as-is
+            // would break that and cause spurious warning paths on successful generations.
+            finalCopyFidelityWarning = recomputed.passed ? null : recomputed;
+        } else {
+            // No technical prompt recoverable from the sanitized blueprint — conservatively
+            // mark all four copy fields as failing so downstream consumers don't trust stale
+            // pre-scan data.
+            finalCopyFidelityWarning = {
+                passed: false,
+                failedFields: (["hookText", "subheadText", "ctaName", "benefitText"] as const).filter(k => sanitizedCopyFields[k]?.trim()),
+            } as CopyFidelityResult;
+            console.warn("⚠️ copyFidelityWarning set to conservative fail: sanitized blueprint has no TECHNICAL_PROMPT region to re-validate against.");
+        }
+    }
+
     return {
         buildPlan: serializeBuildPlanEnvelope(finalMachinePlan.blueprint, finalMachinePlan),
-        copyFidelityWarning,
+        copyFidelityWarning: finalCopyFidelityWarning,
+        culturalViolation,
     };
 }
 
@@ -3867,7 +3997,18 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
 
     const strippedBlueprint = stripTechnicalPrompt(blueprint);
 
-    const textPrompt = `${coreDesignRules}
+    // coreDesignRules already contains CULTURAL_COMPLIANCE_BLOCK and costumeRules already
+    // contains ARABIC_WARDROBE_BLOCK for Arabic ads (see generateFinalAd assembly).
+    // Only prepend the blocks here if — for any reason — the assembled rules have dropped
+    // them. This prevents the duplicate-block injection that would otherwise happen on the
+    // Arabic path, while keeping a safety net if a caller ever passes a minimal rules string.
+    const _isAr = isArabic(inputs.adLanguage);
+    const _ccBlock = _isAr && !coreDesignRules.includes(CULTURAL_COMPLIANCE_BLOCK)
+        ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n` : "";
+    const _wardrobeBlock = _isAr && !costumeRules.includes(ARABIC_WARDROBE_BLOCK)
+        ? `\n${ARABIC_WARDROBE_BLOCK}\n` : "";
+
+    const textPrompt = `${_ccBlock}${coreDesignRules}
 ${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}
 BLUEPRINT: ${strippedBlueprint}
 TEXTS: "${hookText}", "${subheadText}"
@@ -3892,6 +4033,7 @@ ${retargetingDesignHint}
 3. If the blueprint mentions "VISUAL_DIRECTION" or similar — that is an INSTRUCTION TO YOU, not text to render.
 4. NEVER render English words from the blueprint as visible text on the image. The blueprint is a design INSTRUCTION, not content to display.
 5. Each Arabic text string must appear EXACTLY ONCE — never duplicate, never truncate, never rephrase.
+${_wardrobeBlock}${costumeRules}
 `;
 
     const trace: ResolutionTrace = {
@@ -3950,6 +4092,54 @@ export async function generateFinalAd(
     let subheadText = ownedRenderText.subheadText;
     let ctaName = ownedRenderText.ctaName;
     let benefitText = ownedRenderText.benefitText;
+    // ── Cultural sanitization for Arabic ads (defense-in-depth). ──
+    // generateBuildPlan also performs this scan on its local copies, but generateFinalAd
+    // re-derives ad copy from `approvedTov` via resolveOwnedRenderText, so any sanitization
+    // done earlier is lost across the two Cloud Function boundary. Re-apply the same
+    // substitution table here so the final render uses sanitized text regardless of the
+    // client's orchestration path. We scan five surfaces: the four copy fields, the
+    // user-authored badges string, AND the serialized buildPlan blob (in case the caller
+    // bypassed generateBuildPlan — e.g., during an edit flow carrying a pre-hotfix plan).
+    // Every match is console-logged with field context for ops review. The trace builder
+    // is frozen earlier in the resolver pipeline and cannot accept a culturalViolation
+    // here — log-only is the documented gap; the generateBuildPlan path is the trace
+    // writer of record.
+    if (isArabic(inputs.adLanguage)) {
+        for (const key of ["hookText", "subheadText", "ctaName", "benefitText"] as const) {
+            const field = { hookText, subheadText, ctaName, benefitText }[key];
+            if (!field) continue;
+            const { cleaned, matched } = scanAndReplace(field, "adCopy");
+            if (matched.length > 0) {
+                if (key === "hookText") hookText = cleaned;
+                else if (key === "subheadText") subheadText = cleaned;
+                else if (key === "ctaName") ctaName = cleaned;
+                else benefitText = cleaned;
+                console.log(`🕌 Cultural compliance scan (generateFinalAd/${key}): replaced [${matched.join(", ")}]`);
+            }
+        }
+        // Badges — user-authored text surfaced on the final render. Mutate inputs.badges
+        // directly so every downstream prompt-assembly site (which reads `inputs.badges`)
+        // picks up the sanitized value without a per-site change.
+        if (inputs.badges) {
+            const { cleaned, matched } = scanAndReplace(inputs.badges, "adCopy");
+            if (matched.length > 0) {
+                inputs.badges = cleaned;
+                console.log(`🕌 Cultural compliance scan (generateFinalAd/badges): replaced [${matched.join(", ")}]`);
+            }
+        }
+        // buildPlan — the serialized envelope that carries the TECHNICAL_PROMPT. A
+        // whole-word, bounded scan is safe to apply to the whole string because trigger
+        // matches never span envelope delimiters. Reassign the parameter so downstream
+        // parsing (parseBuildPlanEnvelope, the gatedBuildPlan copy, etc.) sees the
+        // sanitized blob.
+        if (buildPlan) {
+            const { cleaned, matched } = scanAndReplace(buildPlan, "imagePrompt");
+            if (matched.length > 0) {
+                buildPlan = cleaned;
+                console.log(`🕌 Cultural compliance scan (generateFinalAd/buildPlan): replaced [${matched.join(", ")}]`);
+            }
+        }
+    }
     const parsedBuildPlan = parseBuildPlanEnvelope(buildPlan);
     let incomingBuildBlueprint = parsedBuildPlan.blueprint || buildPlan;
     const ownershipMap = parsedBuildPlan.machinePlan?.ownership
@@ -4065,6 +4255,7 @@ If the uploaded photo shows a person in a blue suit, you must NOT default to a b
 3. IF FICTIONAL: The Hero MUST wear a detailed costume matching the universe lore(armor, robes, space suit, etc.)
 4. PRIORITY ORDER: Face identity(from Box A) > Universe - appropriate outfit > Niche uniform
   - Box A = face only.Ignore their clothing completely.
+  ${isArabic(inputs.adLanguage) ? `\n${ARABIC_WARDROBE_BLOCK}` : ""}
   `;
     // ═══ HARD RENDER GATE: Contract compliance check BEFORE prompt assembly ═══
     // Only runs when a structured machine plan is present (Step 3.5 active).
@@ -4195,6 +4386,7 @@ ${_renderRtCtx.testimonial ? `- Testimonial context available — design should 
 
     const coreDesignRules = `
   [ULTRA RENDER V5.0]
+  ${isArabic(inputs.adLanguage) ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n` : ""}
   ${_renderRtDesignHint}
        
         ⚠️⚠️⚠️ ABSOLUTE RULE: ONLY RENDER USER - FACING TEXT ⚠️⚠️⚠️
@@ -4987,6 +5179,10 @@ ${coreDesignRules}
         }
     } else {
         // Carousel style reference: inject anchor slide as visual reference
+        // contracts/cultural-compliance-block.md §1.2 — per-slide compliance block invariant
+        // Both carousel and batch paths route through generateFinalAd. Since CULTURAL_COMPLIANCE_BLOCK
+        // and ARABIC_WARDROBE_BLOCK are injected into coreDesignRules and costumeRules above,
+        // every slide and every batch item receives the compliance guardrails when isArabic is true.
         const carouselAnchorNote = styleReference ? `
 ═══════════════════════════════════════════════════════════════════════════════
 CAROUSEL STYLE ANCHORING (CRITICAL)
@@ -6170,6 +6366,40 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
         });
     }
 
+    // ── T025: Post-generation cultural scan on carousel slide copies ──
+    if (isArabic(inputs.adLanguage)) {
+        for (const copy of copies) {
+            if (copy.hookText) {
+                const { cleaned, matched } = scanAndReplace(copy.hookText, "adCopy");
+                if (matched.length > 0) {
+                    copy.hookText = cleaned;
+                    console.log(`🕌 Cultural compliance scan (carousel hookText): replaced [${matched.join(", ")}]`);
+                }
+            }
+            if (copy.subheadText) {
+                const { cleaned, matched } = scanAndReplace(copy.subheadText, "adCopy");
+                if (matched.length > 0) {
+                    copy.subheadText = cleaned;
+                    console.log(`🕌 Cultural compliance scan (carousel subheadText): replaced [${matched.join(", ")}]`);
+                }
+            }
+            if (copy.ctaText) {
+                const { cleaned, matched } = scanAndReplace(copy.ctaText, "adCopy");
+                if (matched.length > 0) {
+                    copy.ctaText = cleaned;
+                    console.log(`🕌 Cultural compliance scan (carousel ctaText): replaced [${matched.join(", ")}]`);
+                }
+            }
+            if (copy.benefitText) {
+                const { cleaned, matched } = scanAndReplace(copy.benefitText, "adCopy");
+                if (matched.length > 0) {
+                    copy.benefitText = cleaned;
+                    console.log(`🕌 Cultural compliance scan (carousel benefitText): replaced [${matched.join(", ")}]`);
+                }
+            }
+        }
+    }
+
     return copies;
 }
 
@@ -6669,7 +6899,29 @@ Position the offer as clearly superior without naming competitors directly. Use 
 
         return result;
     } // end _generateCaptionInner
-    const { text, captionQuality } = await _generateCaptionInner();
+    let { text, captionQuality } = await _generateCaptionInner();
+    // ── T025: Post-generation cultural scan on caption text ──
+    let captionCulturalMatched: string[] = [];
+    if (isArabic(inputs.adLanguage) && text) {
+        const { cleaned, matched } = scanAndReplace(text, "adCopy");
+        if (matched.length > 0) {
+            text = cleaned;
+            captionCulturalMatched = matched;
+            console.log(`🕌 Cultural compliance scan (caption): replaced [${matched.join(", ")}]`);
+            // captionQuality was computed against the pre-scan text. Since scanAndReplace
+            // mutated the caption, the stored checks (length, repetition, language-quality)
+            // may no longer match the final text. Null it out with a stale-marker log so
+            // downstream consumers treat post-scan captions as "quality unknown" rather than
+            // trusting validator signals that refer to the un-sanitized string.
+            // (Full re-validation would require threading headline/subheadline/locale out of
+            // _generateCaptionInner; deferred — see research.md D-6 for the scope note.)
+            if (captionQuality) {
+                console.warn(`⚠️ captionQuality invalidated: text was mutated by cultural scan (matched: [${matched.join(", ")}])`);
+                captionQuality = null;
+            }
+        }
+    }
+    void captionCulturalMatched;
     return { text, rankingGuidance: _captionRankingLinkage, captionQuality };
 }
 

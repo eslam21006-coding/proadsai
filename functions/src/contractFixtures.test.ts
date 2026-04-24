@@ -1161,4 +1161,51 @@ console.log("\n═══ T026a — Cross-module Parity ═══");
 testCrossModuleParity();
 console.log("═══ T026a — Cross-module parity complete ═══\n");
 
+// ═══════════════════════════════════════════════════════════════════════════
+// HFC.9 — Cultural Compliance: pipeline-level / integration assertions only.
+// ───────────────────────────────────────────────────────────────────────────
+// Pure unit checks for scanAndReplace, table invariants, case-handling, and
+// block content live in `__tests__/culturalCompliance.test.ts`. This file
+// only covers the call-site gate (isArabic) and the minimum count/shape
+// guarantees needed by SC-006 / SC-005 so updates to SUBSTITUTIONS,
+// TRIGGER_WORDS, HARAM_MOTIFS, CULTURAL_COMPLIANCE_BLOCK, and
+// ARABIC_WARDROBE_BLOCK only require changes in a single dedicated test file.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import {
+    TRIGGER_WORDS,
+    HARAM_MOTIFS,
+    isArabic,
+    scanAndReplace,
+} from "./culturalCompliance.js";
+
+function testEnglishIsNotGated() {
+    // Clarification Q5 / FR-025 — scanAndReplace is pure and language-agnostic by design;
+    // the `isArabic(adLanguage)` gate lives at each call site (generators.ts). This fixture
+    // proves the gate behavior rather than re-testing the pure function.
+    assert.equal(isArabic("en"), false, "English locale does not trigger the gate");
+    assert.equal(isArabic("en_US"), false, "English-US does not trigger the gate");
+    // If a call site WERE to skip the gate and invoke the scan on English text, the scan
+    // would still fire — this is intentional (no language knob inside the pure function).
+    const { cleaned, matched } = scanAndReplace("wine cellar", "imagePrompt");
+    assert.ok(matched.length > 0, "scan itself is pure — call sites must gate via isArabic");
+    assert.notEqual(cleaned, "wine cellar", "scan replaces when invoked, regardless of language");
+
+    console.log("  ✅ testEnglishIsNotGated: isArabic is the gate; scan itself is pure");
+}
+
+function testMinimumCoverageShape() {
+    // SC-005 / SC-006 shape floor: the round-2 expanded lists must still satisfy the
+    // documented minimums so a future trimming of either array does not silently drop
+    // coverage below the spec baseline.
+    assert.ok(HARAM_MOTIFS.length >= 11, `HARAM_MOTIFS has at least 11 entries (got ${HARAM_MOTIFS.length})`);
+    assert.ok(TRIGGER_WORDS.length >= 29, `TRIGGER_WORDS has at least 29 entries (got ${TRIGGER_WORDS.length})`);
+    console.log(`  ✅ testMinimumCoverageShape: HARAM_MOTIFS=${HARAM_MOTIFS.length}, TRIGGER_WORDS=${TRIGGER_WORDS.length}`);
+}
+
+console.log("\n═══ HFC.9 — Cultural Compliance Integration Checks ═══");
+testEnglishIsNotGated();
+testMinimumCoverageShape();
+console.log("═══ HFC.9 — Integration checks complete (unit coverage lives in __tests__/culturalCompliance.test.ts) ═══\n");
+
 console.log('contractFixtures.test: PASS');

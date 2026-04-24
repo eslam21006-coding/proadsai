@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useState, useRef } from 'react';
 import type { AdInputs, AdMode, AspectRatio, RetargetingAngle, RetargetingObjectionId, UniverseMode, AudienceAvatar, CompetitorResearch, ColdHookAngle, HookType, AdTone, CopywritingStrategy } from '../types';
 import { OFFER_TYPES, OFFER_CATEGORY_MAP, OFFER_CREATIVE_MODES, CREATIVE_MODE_CONFLICTS, HOOK_ANGLE_MODE_CONFLICTS, ASPECT_RATIOS, RETARGETING_OBJECTIONS, AD_LANGUAGES, FIELD_EXAMPLES, COLD_HOOK_ANGLES, HOOK_TYPES, AD_TONES, COPYWRITING_STRATEGIES, CREATIVE_TABS } from '../constants';
-import { REALISTIC_UNIVERSES as DB_REALISTIC, FANTASY_UNIVERSES as DB_FANTASY } from '../universeDatabase';
+import { REALISTIC_UNIVERSES as DB_REALISTIC, FANTASY_UNIVERSES as DB_FANTASY, isArabic } from '../universeDatabase';
 import { isStrongPair, getBlockedModes, CREATIVE_MODE_CATALOG, type CreativeTab, getBlockedModesForSubStyle, getBlockedSubStylesForModes, validateLaunchSurface, resolveValueStackSlideCount, resolveTestimonialSlideCount } from '../creativeResolver';
 import { ART_DIRECTION_GROUPS, getAvailableCards, getCardById, isSubStyleInFamily, type ArtDirectionCard } from '../artDirectionConfig';
 import { getActiveSections, validateModeFields, type ModeFieldSection, isOfferModeAvailable } from '../modeFieldSchema';
@@ -62,6 +62,40 @@ const compressImage = (file: File): Promise<string> => {
   });
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// UNIVERSE SENTINEL IDS
+// ═══════════════════════════════════════════════════════════════════════════
+// These are the stable "sentinel" values that `preferredUniverse` can hold when
+// the user hasn't picked a concrete universe from the DB — they trigger
+// downstream random-pick / custom-description flows. They are stored in
+// application state (and in saved projects) as these exact strings.
+//
+// Today these strings double as user-visible labels, which is why they read
+// like English UI copy. A future refactor can replace the VALUES with opaque
+// ids (e.g. "sentinel:surprise-realistic") and render localized labels via
+// useT(); that change requires migrating saved-project data and updating
+// src/constants.ts (which re-declares "Surprise Me (Random …)" as a legacy
+// compat list). It is intentionally out of scope for this cultural-compliance
+// hotfix. Consumers MUST import these named constants rather than inlining the
+// literals so the future refactor becomes a one-file change.
+const SURPRISE_REALISTIC = 'Surprise Me (Random Realistic)' as const;
+const SURPRISE_FANTASY = 'Surprise Me (Random Fantasy)' as const;
+const CUSTOM_WORLD_EMOJI = '🎨 Custom World' as const;
+const CUSTOM_WORLD = 'Custom World' as const;
+const CUSTOM_ATMOSPHERE = 'Custom / Insert Your Own Atmosphere' as const;
+
+// Set of sentinel ids that pass the Arabic safety gate. They do not resolve to
+// a DB entry but represent placeholder / custom flows — not real environments.
+// The DB lookup in isArabicAllowedUniverse is fail-closed for ALL other unknown
+// names, per research.md D-5 + spec.md FR-007.
+const ARABIC_SAFE_UNIVERSE_SENTINEL_IDS: ReadonlySet<string> = new Set<string>([
+  SURPRISE_REALISTIC,
+  SURPRISE_FANTASY,
+  CUSTOM_WORLD_EMOJI,
+  CUSTOM_WORLD,
+  CUSTOM_ATMOSPHERE,
+]);
+
 const getDefaultInputs = (): AdInputs => ({
   productName: '',
   productCategory: '',
@@ -84,7 +118,7 @@ const getDefaultInputs = (): AdInputs => ({
   universeMode: 'realistic',
   visualStyleFamily: 'realistic',
   visualSubStyle: undefined,
-  preferredUniverse: 'Surprise Me (Random Realistic)',
+  preferredUniverse: SURPRISE_REALISTIC,
   customUniverseDetails: '',
   brandUrl: '',
   brandColorPrimary: '',
@@ -218,8 +252,8 @@ const UniverseDropdown: React.FC<{
   const dropdownRef = React.useRef<HTMLDivElement>(null);
 
   const universeOptions = [
-    activeStyle === 'realistic' ? 'Surprise Me (Random Realistic)' : 'Surprise Me (Random Fantasy)',
-    '🎨 Custom World',
+    activeStyle === 'realistic' ? SURPRISE_REALISTIC : SURPRISE_FANTASY,
+    CUSTOM_WORLD_EMOJI,
     ...(activeStyle === 'realistic' ? dbRealistic : dbFantasy).map(u => u.name),
   ];
   const filteredOptions = universeOptions.filter(u => u.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -330,6 +364,41 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
       hookAngle: inputs.coldHookAngle,
   }), [inputs.offerCreativeMode, inputs.campaignType, inputs.adMode, inputs.coldHookAngle]);
 
+  // Single canonical predicate for "is this preferredUniverse value safe to use
+  // under an Arabic ad configuration?". Used by: arabicUniverseBlocked (submit
+  // gate), handleLanguageSelect (auto-clear on en→ar switch), and the inline
+  // warning below the picker.
+  //
+  // Decision tree (fail-closed):
+  //   1. Empty / null / undefined         → true (nothing selected; nothing to block)
+  //   2. Matches a sentinel id            → true (placeholder flow, resolved later)
+  //   3. Matches a DB entry with arabicSafe=true → true
+  //   4. Everything else                  → false (unknown / legacy / arabicSafe=false)
+  //
+  // The sentinel id set is module-level (ARABIC_SAFE_UNIVERSE_SENTINEL_IDS) so
+  // this predicate has no membership-set dependency and the useCallback can be
+  // a stable identity across renders.
+  const isArabicAllowedUniverse = React.useCallback((name: string | undefined | null): boolean => {
+    if (!name) return true;
+    if (ARABIC_SAFE_UNIVERSE_SENTINEL_IDS.has(name)) return true;
+    const entry = [...DB_REALISTIC, ...DB_FANTASY].find(u => u.name === name);
+    return entry ? entry.arabicSafe === true : false;
+  }, []);
+
+  const arabicUniverseBlocked = React.useMemo(() => {
+    if (!isArabic(inputs.adLanguage)) return false;
+    // Empty / unset preferredUniverse under Arabic is a blocked state, NOT a safe
+    // one. `handleLanguageSelect` auto-clears preferredUniverse on en→ar switches
+    // when the prior value was not Arabic-safe; treating the cleared-empty state
+    // as "allowed" would re-open the submit path with no environment selected.
+    // Fail-closed: require an explicit Arabic-safe selection before generateAllowed
+    // can become true.
+    if (!inputs.preferredUniverse) return true;
+    return !isArabicAllowedUniverse(inputs.preferredUniverse);
+  }, [inputs.adLanguage, inputs.preferredUniverse, isArabicAllowedUniverse]);
+
+  const generateAllowed = launchSurfaceResult.allowed && !arabicUniverseBlocked;
+
   const personalRef = useRef<HTMLInputElement>(null);
   const brandRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -391,6 +460,29 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
   const [showLangPicker, setShowLangPicker] = useState(false);
   const [exampleField, setExampleField] = useState<string | null>(null);
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
+
+  // ─── LANGUAGE-SWITCH HELPER ────────────────────────────────────────────
+  // Single source of the Arabic/English language-switch state transition:
+  // on en→ar transition, auto-clear a preferredUniverse that is not arabicSafe
+  // (FR-009 / clarification Q2); preserve every other field. Also closes the
+  // language picker. Used by both the Arabic-dialects and other-languages lists.
+  const handleLanguageSelect = (nextLangId: string) => {
+    setInputs(prev => {
+      const prevArabic = isArabic(prev.adLanguage);
+      const nextArabic = isArabic(nextLangId);
+      const clearing = !prevArabic && nextArabic && prev.preferredUniverse;
+      // Delegate to the shared predicate so sentinel values ("Surprise Me…",
+      // "🎨 Custom World", etc.) are preserved across en→ar transitions while
+      // real haram or unknown/legacy ids are still cleared fail-closed.
+      const shouldClear = !!clearing && !isArabicAllowedUniverse(prev.preferredUniverse);
+      return {
+        ...prev,
+        adLanguage: nextLangId,
+        ...(shouldClear ? { preferredUniverse: '' } : {}),
+      };
+    });
+    setShowLangPicker(false);
+  };
 
   // ── Progress bar calculation ────────────────────────────────────────
   const progressFields = [
@@ -889,7 +981,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
     onDrop: (e: React.DragEvent) => handleDrop(e, category),
   });
 
-  const isCustomUniverse = inputs.preferredUniverse === "🎨 Custom World" || inputs.preferredUniverse === "Custom World" || inputs.preferredUniverse === "Custom / Insert Your Own Atmosphere";
+  const isCustomUniverse = inputs.preferredUniverse === CUSTOM_WORLD_EMOJI || inputs.preferredUniverse === CUSTOM_WORLD || inputs.preferredUniverse === CUSTOM_ATMOSPHERE;
 
   // ─── RENDER ────────────────────────────────────────────────────────────
   return (
@@ -915,6 +1007,18 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
         onSubmit={(e) => {
           e.preventDefault();
           if (isTeamViewer) return;
+          // Server-side / keyboard-path guard: the disabled-button UI prevents clicks,
+          // but Enter-key or programmatic form.requestSubmit() can still dispatch a
+          // submit event. Re-check generateAllowed (which covers both launch-surface
+          // validity and the Arabic-safe-universe block from arabicUniverseBlocked).
+          if (!generateAllowed) {
+            if (showToast) {
+              const reason = launchSurfaceResult.reason
+                || (arabicUniverseBlocked ? t('form.pick_arabic_safe_environment') : t('form.unknown_error'));
+              showToast(reason, 'error');
+            }
+            return;
+          }
           if (inputs.campaignType === 'retargeting') {
             const hasObj = !!inputs.retargetingObjection;
             const hasCustom = (inputs.customObjection || '').trim().length > 0;
@@ -1383,7 +1487,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                   <span className="text-[9px] font-bold text-blue-400 uppercase tracking-widest">{t('form.arabic_dialects')}</span>
                 </div>
                 {AD_LANGUAGES.filter(l => l.group === 'ar').map(lang => (
-                  <button type="button" key={lang.id} onClick={() => { setInputs(prev => ({ ...prev, adLanguage: lang.id })); setShowLangPicker(false); }}
+                  <button type="button" key={lang.id} onClick={() => handleLanguageSelect(lang.id)}
                     className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${inputs.adLanguage === lang.id ? 'bg-blue-600/15 text-blue-400' : 'text-slate-300 hover:bg-slate-800'}`}>
                     <span>{lang.flag}</span>
                     <span className="flex-1 text-right">{lang.label}</span>
@@ -1395,7 +1499,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                   <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">{t('form.other_languages')}</span>
                 </div>
                 {AD_LANGUAGES.filter(l => l.group !== 'ar').map(lang => (
-                  <button type="button" key={lang.id} onClick={() => { setInputs(prev => ({ ...prev, adLanguage: lang.id })); setShowLangPicker(false); }}
+                  <button type="button" key={lang.id} onClick={() => handleLanguageSelect(lang.id)}
                     className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${inputs.adLanguage === lang.id ? 'bg-blue-600/15 text-blue-400' : 'text-slate-300 hover:bg-slate-800'}`}>
                     <span>{lang.flag}</span>
                     <span className="flex-1">{lang.label}</span>
@@ -2011,14 +2115,14 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                 <div className="grid grid-cols-3 gap-2">
                   <button type="button" onClick={() => setInputs(prev => {
                     const keepSub = prev.visualSubStyle && isSubStyleInFamily(prev.visualSubStyle, 'realistic') ? prev.visualSubStyle : undefined;
-                    return { ...prev, universeMode: 'realistic' as UniverseMode, visualStyleFamily: 'realistic', visualSubStyle: keepSub as any, preferredUniverse: 'Surprise Me (Random Realistic)' };
+                    return { ...prev, universeMode: 'realistic' as UniverseMode, visualStyleFamily: 'realistic', visualSubStyle: keepSub, preferredUniverse: SURPRISE_REALISTIC };
                   })}
                     className={`py-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border ${activeStyle === 'realistic' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20 border-emerald-500' : 'bg-slate-800/40 text-slate-400 hover:text-slate-200 hover:border-slate-600 border-slate-700/50'}`}>
                     <i className="fa-solid fa-building"></i> {appLang === 'ar' ? 'واقعي' : 'Real'}
                   </button>
                   <button type="button" onClick={() => { if (!allowFantasy) return; setInputs(prev => {
                     const keepSub = prev.visualSubStyle && isSubStyleInFamily(prev.visualSubStyle, 'fantasy') ? prev.visualSubStyle : undefined;
-                    return { ...prev, universeMode: 'fantasy' as UniverseMode, visualStyleFamily: 'fantasy', visualSubStyle: keepSub as any, preferredUniverse: 'Surprise Me (Random Fantasy)' };
+                    return { ...prev, universeMode: 'fantasy' as UniverseMode, visualStyleFamily: 'fantasy', visualSubStyle: keepSub, preferredUniverse: SURPRISE_FANTASY };
                   }); }}
                     className={`py-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border ${!allowFantasy ? 'bg-slate-900/30 text-slate-600 cursor-not-allowed border-slate-800/30' : activeStyle === 'fantasy' ? 'bg-violet-600 text-white shadow-lg shadow-violet-600/20 border-violet-500' : 'bg-slate-800/40 text-slate-400 hover:text-slate-200 hover:border-slate-600 border-slate-700/50'}`}>
                     <i className="fa-solid fa-wand-sparkles"></i> {appLang === 'ar' ? 'خيالي' : 'Fantasy'}
@@ -2043,8 +2147,8 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                   <Label>{activeStyle === 'realistic' ? 'Location / Setting' : 'Creative Universe'}</Label>
                   <UniverseDropdown
                     activeStyle={activeStyle}
-                    dbRealistic={DB_REALISTIC}
-                    dbFantasy={DB_FANTASY}
+                    dbRealistic={isArabic(inputs.adLanguage) ? DB_REALISTIC.filter(u => u.arabicSafe) : DB_REALISTIC}
+                    dbFantasy={isArabic(inputs.adLanguage) ? DB_FANTASY.filter(u => u.arabicSafe) : DB_FANTASY}
                     preferredUniverse={inputs.preferredUniverse}
                     onSelect={(u) => setInputs({ ...inputs, preferredUniverse: u })}
                     inputCls={inputCls}
@@ -2053,6 +2157,12 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                   {isCustomUniverse && (
                     <input required value={inputs.customUniverseDetails} onChange={e => setInputs({ ...inputs, customUniverseDetails: e.target.value })} className={`${inputCls} mt-2`}
                       placeholder={activeStyle === 'realistic' ? "Describe your custom location..." : "Describe your custom world..."} />
+                  )}
+                  {isArabic(inputs.adLanguage) && inputs.preferredUniverse && !isArabicAllowedUniverse(inputs.preferredUniverse) && (
+                    <p className="text-[10px] text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
+                      <i className="fa-solid fa-triangle-exclamation mr-1.5"></i>
+                      {t('form.pick_arabic_safe_environment')}
+                    </p>
                   )}
                 </div>
               )}
@@ -2300,12 +2410,12 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
             SUBMIT BUTTONS (not sticky — scrolls with page)
         ═══════════════════════════════════════════════════════════════════ */}
         <div className="max-w-lg mx-auto flex flex-col gap-2 pt-6 pb-10">
-          {!launchSurfaceResult.allowed && launchSurfaceResult.reason && (
-            <div className="px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-200 text-sm text-center">
-              {launchSurfaceResult.reason}
+          {!generateAllowed && (launchSurfaceResult.reason || arabicUniverseBlocked) && (
+            <div id="submit-disabled-reason" className="px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-200 text-sm text-center">
+              {launchSurfaceResult.reason || (arabicUniverseBlocked ? t('form.pick_arabic_safe_environment') : '')}
             </div>
           )}
-          <button data-tour="submit" type="submit" disabled={!launchSurfaceResult.allowed || !!isTeamViewer} aria-describedby={isTeamViewer ? "viewer-help" : undefined} className={`w-full bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-black py-4 rounded-2xl shadow-xl shadow-emerald-600/20 hover:shadow-emerald-600/30 active:scale-[0.98] transition-all text-sm uppercase tracking-wider flex items-center justify-center gap-2 ${(!launchSurfaceResult.allowed || isTeamViewer) ? 'opacity-50 cursor-not-allowed' : ''}`}>
+          <button data-tour="submit" type="submit" disabled={!generateAllowed || !!isTeamViewer} aria-describedby={isTeamViewer ? "viewer-help" : (!generateAllowed && (launchSurfaceResult.reason || arabicUniverseBlocked)) ? "submit-disabled-reason" : undefined} className={`w-full bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-black py-4 rounded-2xl shadow-xl shadow-emerald-600/20 hover:shadow-emerald-600/30 active:scale-[0.98] transition-all text-sm uppercase tracking-wider flex items-center justify-center gap-2 ${(!generateAllowed || isTeamViewer) ? 'opacity-50 cursor-not-allowed' : ''}`}>
             <i className="fa-solid fa-bolt"></i> {isTeamViewer ? t('team.viewer_tooltip') : t('form.submit')}
           </button>
           {isTeamViewer && <p id="viewer-help" className="text-center text-[10px] text-amber-400/80 mt-2">{t('team.viewer_tooltip')}</p>}
