@@ -2105,7 +2105,7 @@ ${(() => {
       HIJAB RULE: If the hero wears Hijab in Box A, maintain it styled appropriately for the universe.
            
       - VISUALS: Plan negative space for Headline, Subheadline, and Action Block.
-      - BRANDING: ${inputs.brandLogos?.length ? "Integrate Box B logos as physical objects (e.g. on laptop, mug, wall)." : "No logos provided."}
+      - BRANDING: ${inputs.brandLogos?.length ? `Integrate ${inputs.brandLogos.length === 1 ? "the Box B logo" : `all ${inputs.brandLogos.length} Box B logos`} as physical objects in the scene. ${inputs.brandLogos.length > 1 ? "All logos are equal peers — rendered at comparable size and balanced placement. Do NOT treat any logo as primary; upload order has no prominence meaning." : ""}` : "No logos provided."}
       ${inputs.brandColorPrimary ? `- BRAND COLORS: Primary ${inputs.brandColorPrimary}${inputs.brandColorSecondary ? `, Secondary ${inputs.brandColorSecondary}` : ''}. Weave these into the COLOR_PALETTE of each concept. VARY their usage across the 3 concepts:
         Concept 1: Use brand primary as CTA button color and subtle accent in environment lighting.
         Concept 2: Use brand primary as headline highlight glow / text accent color.
@@ -2406,7 +2406,7 @@ STILL MANDATORY:
       CRITICAL BRANDING RULE:
     - Render ONLY the user's brand elements from Box B (if provided).
       - If Box B is empty, the design must have ZERO logos or branding marks.
-      - If Box B contains a logo, it is the ONLY logo allowed.
+      - If Box B contains one or more logos (up to five), each MUST appear as a distinct physical brand element. All uploaded logos are equal peers — rendered at comparable size and balanced placement. Upload order does NOT map to visual prominence. Never invent or add logos not in Box B.
       CRITICAL COSTUME RULE:
       ${(() => {
           // ── Ticket 4: Sub-style-aware costume logic ──
@@ -3087,7 +3087,7 @@ MOOD_EMOTION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف
 LIGHTING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إضاءة استوديو مسطحة باردة. النصف الأيمن: إضاءة استوديو ناعمة دافئة. ممنوع: تأثيرات درامية، إضاءة حجمية، الساعة الذهبية.' : 'Left: flat cool studio lighting. Right: soft warm studio lighting. FORBIDDEN: dramatic effects, volumetric light, golden hour, rim light.'}
 TEXT_LAYOUT: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'العنوان يمتد فوق النصفين. فراغ سلبي واسع. الـ CTA في الأسفل.' : 'Headline spans both halves. Generous negative space. CTA at bottom.'}
 BUTTON_POSITION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'أسفل الصورة، كامل العرض.' : 'Bottom of image, full width.'}
-BRANDING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'شعار Box B إن وجد — في الوسط أو على الفاصل.' : 'Box B logo if present — centered or on divider.'}
+BRANDING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'شعارات Box B (حتى ٥) إن وُجدت — جميعها بحجم متماثل وموضع متوازن، مثلاً في الوسط أو على الفاصل.' : 'Box B logos (up to 5) if present — all at comparable size and balanced placement, e.g. centered or on divider.'}
 TECHNICAL_PROMPT: ENGLISH ONLY - SPLIT-SCREEN BEFORE/AFTER composition. MINIMAL STYLE: Both halves use plain solid color backgrounds — LEFT cool grey/blue, RIGHT warm white/beige. Split screen composition with clean vertical divider. Identical soft even studio lighting on both sides. Subject isolated on each side. NO environment scenes, NO cinematic environments, NO atmospheric effects. Style: Premium clean ad. STRICT: Do NOT render any "BEFORE"/"AFTER" text labels.
 CONCEPT_END
   ` : `
@@ -3103,7 +3103,7 @@ MOOD_EMOTION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف
 LIGHTING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'النصف الأيسر: إضاءة قاسية، باردة، مسطحة. النصف الأيمن: إضاءة سينمائية ذهبية دافئة.' : 'Left: harsh, cold, flat lighting. Right: cinematic warm golden lighting.'}
 TEXT_LAYOUT: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'العنوان يمتد فوق النصفين. الـ CTA في الأسفل يمتد على كامل العرض. الفاصل واضح بصرياً.' : 'Headline spans both halves. CTA at bottom full width. Divider visually clear.'}
 BUTTON_POSITION: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'أسفل الصورة، يمتد على كامل العرض فوق خلفية داكنة.' : 'Bottom of image, full width over dark background.'}
-BRANDING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'شعار Box B إن وجد — في الوسط أو على الفاصل.' : 'Box B logo if present — centered or on divider.'}
+BRANDING_LOGIC: ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'شعارات Box B (حتى ٥) إن وُجدت — جميعها بحجم متماثل وموضع متوازن، مثلاً في الوسط أو على الفاصل.' : 'Box B logos (up to 5) if present — all at comparable size and balanced placement, e.g. centered or on divider.'}
 TECHNICAL_PROMPT: ENGLISH ONLY - SPLIT-SCREEN BEFORE/AFTER composition. LEFT half shows struggle scene with dim cold lighting. RIGHT half shows success scene with warm golden lighting. Same hero face in both halves. Diagonal divider separating halves. STRICT: Do NOT render any "BEFORE"/"AFTER" text labels on the image. The visual contrast alone tells the story.
 CONCEPT_END
   `) : `
@@ -3134,7 +3134,7 @@ LIGHTING_LOGIC: [إضاءة سينمائية محددة.استخدم: إضاءة
 })()}
 TEXT_LAYOUT: [صف مناطق "الفراغ السلبي" وترتيب النظر من العنوان للكلمة المميزة للزر.]
 BUTTON_POSITION: [صف مكان زر CTA والنص تحته.]
-BRANDING_LOGIC: [منطق وضع الشعار من Box B إن وجد.]
+BRANDING_LOGIC: [منطق وضع شعارات Box B (حتى ٥) إن وُجدت — جميعها بحجم متماثل وموضع متوازن، بدون شعار مهيمن.]
 ${(() => {
     const _tpSub = resolveVisualSubStyle(inputs);
     const _tpMinimal = resolveStyleFamily(inputs) === 'minimal';
@@ -4189,7 +4189,16 @@ export async function generateFinalAd(
 
     const boxA = (inputs.personalPhotos || []).slice(0, 5);
     const _isTextOnly = isTextOnlyMode(inputs);
-    const boxB = (inputs.brandLogos || []).slice(0, 1);
+    const rawBrandLogos = inputs.brandLogos || [];
+    if (rawBrandLogos.length > 5) {
+        console.warn(JSON.stringify({
+            event: 'brandLogos_truncated',
+            received: rawBrandLogos.length,
+            keptCount: 5,
+            userId: (inputs as any)._userId || null,
+        }));
+    }
+    const boxB = rawBrandLogos.slice(0, 5);
     const boxC = ((inputs as any).offerAssets || []).slice(0, 3); // Offer-specific assets (book cover, dashboard, etc.)
 
     // Helper: extract actual MIME type from base64 data URL
@@ -5068,7 +5077,7 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
 ` : ''}
 
          - COSTUME: ${(() => { const _rendCostSub = resolveVisualSubStyle(inputs); if (_rendCostSub === 'luxury_magazine') return 'Apply MAGAZINE COVER STAR wardrobe — power suit/blazer, impeccably tailored, cover-model quality against dark solid background. NOT universe-themed environment costume.'; if (_rendCostSub === 'clean_corporate') return 'Apply CLEAN CORPORATE professional wardrobe — polished, brand-safe, modern.'; if (_rendCostSub === 'ugly_ad') return 'Apply CASUAL clothing — everyday selfie attire, NOT styled.'; return `Apply the thematic ${resolvedUniverse} outfit from blueprint.`; })()}
-          - LOGO STRICTNESS: Render ONLY user - provided branding from Box B.If Box B is empty, the design must be 100 % free of any logos or branding marks.If Box B has an image, render that image once as a physical artifact in the scene.
+          - LOGO STRICTNESS: Render ONLY user-provided branding from Box B. If Box B is empty, the design must be 100% free of any logos or branding marks. If Box B has one or more images (up to 5), render each as a distinct physical artifact in the scene — all at comparable size, balanced placement, no single logo dominant, no one mark enlarged relative to the others. Upload order has no prominence meaning.
           ${inputs.brandColorPrimary ? `- BRAND COLOR RENDERING (CRITICAL FOR VISUAL IDENTITY):
           The client's brand color is ${inputs.brandColorPrimary}${inputs.brandColorSecondary ? ` (secondary: ${inputs.brandColorSecondary})` : ''}.
           You MUST integrate these colors visibly. Apply ALL of the following:
@@ -5135,7 +5144,7 @@ ABSOLUTE RULES — DO NOT VIOLATE ANY OF THESE:
    Do NOT change, rephrase, translate, or remove any text. Every character must be identical.
 6. SAME TYPOGRAPHY: Same fonts, same font weights, same text colors, same text effects.
 7. SAME STYLE: Same design style, same gradient scrims, same overlays, same decorative elements.
-8. SAME BRAND ELEMENTS: Same logo placement, same brand colors, same badge design.
+8. SAME BRAND ELEMENTS: Same logo placements (for all uploaded logos), same brand colors, same badge design.
 
 WHAT YOU ARE ALLOWED TO CHANGE:
 - Spatial layout ONLY — rearrange the zones (headline, hero, CTA) to fit the new ${currentAspectRatio} ratio
