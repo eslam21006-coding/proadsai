@@ -3899,11 +3899,16 @@ ${JSON.stringify(machinePlan)}`;
         const sanitizedTp = extractTechnicalPromptFromBlueprint(finalMachinePlan.blueprint);
         const sanitizedCopyFields: CopyFidelityFields = { hookText, subheadText, ctaName, benefitText };
         if (sanitizedTp) {
-            finalCopyFidelityWarning = validateCopyFidelity(sanitizedTp, sanitizedCopyFields);
+            const recomputed = validateCopyFidelity(sanitizedTp, sanitizedCopyFields);
             console.log(
-                `🔁 copyFidelityWarning recomputed post-scan: passed=${finalCopyFidelityWarning.passed}` +
-                (finalCopyFidelityWarning.passed ? "" : ` failedFields=[${(finalCopyFidelityWarning.failedFields ?? []).join(", ")}]`),
+                `🔁 copyFidelityWarning recomputed post-scan: passed=${recomputed.passed}` +
+                (recomputed.passed ? "" : ` failedFields=[${(recomputed.failedFields ?? []).join(", ")}]`),
             );
+            // Preserve the existing contract: copyFidelityWarning is non-null ONLY when
+            // fidelity FAILED. Callers downstream use `if (copyFidelityWarning)` as a
+            // truthy check to mean "a warning exists"; assigning the passing result as-is
+            // would break that and cause spurious warning paths on successful generations.
+            finalCopyFidelityWarning = recomputed.passed ? null : recomputed;
         } else {
             // No technical prompt recoverable from the sanitized blueprint — conservatively
             // mark all four copy fields as failing so downstream consumers don't trust stale
@@ -4092,7 +4097,13 @@ export async function generateFinalAd(
     // re-derives ad copy from `approvedTov` via resolveOwnedRenderText, so any sanitization
     // done earlier is lost across the two Cloud Function boundary. Re-apply the same
     // substitution table here so the final render uses sanitized text regardless of the
-    // client's orchestration path.
+    // client's orchestration path. We scan five surfaces: the four copy fields, the
+    // user-authored badges string, AND the serialized buildPlan blob (in case the caller
+    // bypassed generateBuildPlan — e.g., during an edit flow carrying a pre-hotfix plan).
+    // Every match is console-logged with field context for ops review. The trace builder
+    // is frozen earlier in the resolver pipeline and cannot accept a culturalViolation
+    // here — log-only is the documented gap; the generateBuildPlan path is the trace
+    // writer of record.
     if (isArabic(inputs.adLanguage)) {
         for (const key of ["hookText", "subheadText", "ctaName", "benefitText"] as const) {
             const field = { hookText, subheadText, ctaName, benefitText }[key];
@@ -4104,6 +4115,28 @@ export async function generateFinalAd(
                 else if (key === "ctaName") ctaName = cleaned;
                 else benefitText = cleaned;
                 console.log(`🕌 Cultural compliance scan (generateFinalAd/${key}): replaced [${matched.join(", ")}]`);
+            }
+        }
+        // Badges — user-authored text surfaced on the final render. Mutate inputs.badges
+        // directly so every downstream prompt-assembly site (which reads `inputs.badges`)
+        // picks up the sanitized value without a per-site change.
+        if (inputs.badges) {
+            const { cleaned, matched } = scanAndReplace(inputs.badges, "adCopy");
+            if (matched.length > 0) {
+                inputs.badges = cleaned;
+                console.log(`🕌 Cultural compliance scan (generateFinalAd/badges): replaced [${matched.join(", ")}]`);
+            }
+        }
+        // buildPlan — the serialized envelope that carries the TECHNICAL_PROMPT. A
+        // whole-word, bounded scan is safe to apply to the whole string because trigger
+        // matches never span envelope delimiters. Reassign the parameter so downstream
+        // parsing (parseBuildPlanEnvelope, the gatedBuildPlan copy, etc.) sees the
+        // sanitized blob.
+        if (buildPlan) {
+            const { cleaned, matched } = scanAndReplace(buildPlan, "imagePrompt");
+            if (matched.length > 0) {
+                buildPlan = cleaned;
+                console.log(`🕌 Cultural compliance scan (generateFinalAd/buildPlan): replaced [${matched.join(", ")}]`);
             }
         }
     }

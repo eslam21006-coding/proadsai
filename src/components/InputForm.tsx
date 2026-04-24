@@ -386,7 +386,14 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
   }, []);
 
   const arabicUniverseBlocked = React.useMemo(() => {
-    if (!isArabic(inputs.adLanguage) || !inputs.preferredUniverse) return false;
+    if (!isArabic(inputs.adLanguage)) return false;
+    // Empty / unset preferredUniverse under Arabic is a blocked state, NOT a safe
+    // one. `handleLanguageSelect` auto-clears preferredUniverse on en→ar switches
+    // when the prior value was not Arabic-safe; treating the cleared-empty state
+    // as "allowed" would re-open the submit path with no environment selected.
+    // Fail-closed: require an explicit Arabic-safe selection before generateAllowed
+    // can become true.
+    if (!inputs.preferredUniverse) return true;
     return !isArabicAllowedUniverse(inputs.preferredUniverse);
   }, [inputs.adLanguage, inputs.preferredUniverse, isArabicAllowedUniverse]);
 
@@ -2108,14 +2115,14 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                 <div className="grid grid-cols-3 gap-2">
                   <button type="button" onClick={() => setInputs(prev => {
                     const keepSub = prev.visualSubStyle && isSubStyleInFamily(prev.visualSubStyle, 'realistic') ? prev.visualSubStyle : undefined;
-                    return { ...prev, universeMode: 'realistic' as UniverseMode, visualStyleFamily: 'realistic', visualSubStyle: keepSub as any, preferredUniverse: SURPRISE_REALISTIC };
+                    return { ...prev, universeMode: 'realistic' as UniverseMode, visualStyleFamily: 'realistic', visualSubStyle: keepSub, preferredUniverse: SURPRISE_REALISTIC };
                   })}
                     className={`py-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border ${activeStyle === 'realistic' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20 border-emerald-500' : 'bg-slate-800/40 text-slate-400 hover:text-slate-200 hover:border-slate-600 border-slate-700/50'}`}>
                     <i className="fa-solid fa-building"></i> {appLang === 'ar' ? 'واقعي' : 'Real'}
                   </button>
                   <button type="button" onClick={() => { if (!allowFantasy) return; setInputs(prev => {
                     const keepSub = prev.visualSubStyle && isSubStyleInFamily(prev.visualSubStyle, 'fantasy') ? prev.visualSubStyle : undefined;
-                    return { ...prev, universeMode: 'fantasy' as UniverseMode, visualStyleFamily: 'fantasy', visualSubStyle: keepSub as any, preferredUniverse: SURPRISE_FANTASY };
+                    return { ...prev, universeMode: 'fantasy' as UniverseMode, visualStyleFamily: 'fantasy', visualSubStyle: keepSub, preferredUniverse: SURPRISE_FANTASY };
                   }); }}
                     className={`py-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border ${!allowFantasy ? 'bg-slate-900/30 text-slate-600 cursor-not-allowed border-slate-800/30' : activeStyle === 'fantasy' ? 'bg-violet-600 text-white shadow-lg shadow-violet-600/20 border-violet-500' : 'bg-slate-800/40 text-slate-400 hover:text-slate-200 hover:border-slate-600 border-slate-700/50'}`}>
                     <i className="fa-solid fa-wand-sparkles"></i> {appLang === 'ar' ? 'خيالي' : 'Fantasy'}
