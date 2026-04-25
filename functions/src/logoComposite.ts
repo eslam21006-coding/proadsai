@@ -74,28 +74,33 @@ function zoneToPixels(zone: LogoZone, logoWidth: number, logoHeight: number, can
 
 function getTextCollisionRects(contract: FullLayoutContract, canvasWidth: number, canvasHeight: number): Rect[] {
     const rects: Rect[] = [];
-    const zones = (contract as any).zones;
-    if (!zones || typeof zones !== 'object') return rects;
+    const zones = contract.zones;
+    if (!zones) return rects;
 
     const textPriorityIds = new Set(['headline', 'subheadline', 'cta', 'badge', 'event_metadata']);
     const inset = Math.round(canvasWidth * 0.03);
+    // ZoneSpec exposes priority + size hints (minSizePct/maxSizePct), but no per-axis
+    // width/height percentages. We use canvas-relative defaults for rect heights below.
+    const defaultBandHeight = canvasHeight * 0.2;
+    const defaultCtaHeight = canvasHeight * 0.15;
+    const defaultCenterWidth = canvasWidth * 0.6;
+    const defaultCenterHeight = canvasHeight * 0.15;
 
     for (const [id, zone] of Object.entries(zones)) {
-        const z = zone as any;
-        const priority = z.priority ?? 99;
+        const priority = zone.priority ?? 99;
         if (priority > 2 && !textPriorityIds.has(id)) continue;
 
-        const maxW = z.maxWidthPct ? Math.round((z.maxWidthPct / 100) * canvasWidth) : canvasWidth;
-        const maxH = z.maxHeightPct ? Math.round((z.maxHeightPct / 100) * canvasHeight) : canvasHeight * 0.3;
-
         if (id.includes('top') || id.includes('headline')) {
-            rects.push({ x: inset, y: inset, w: canvasWidth - 2 * inset, h: Math.min(maxH, canvasHeight * 0.2) });
+            rects.push({ x: inset, y: inset, w: canvasWidth - 2 * inset, h: defaultBandHeight });
         } else if (id.includes('bottom') || id.includes('cta')) {
-            rects.push({ x: inset, y: canvasHeight - Math.min(maxH, canvasHeight * 0.15) - inset, w: canvasWidth - 2 * inset, h: Math.min(maxH, canvasHeight * 0.15) });
+            rects.push({ x: inset, y: canvasHeight - defaultCtaHeight - inset, w: canvasWidth - 2 * inset, h: defaultCtaHeight });
         } else {
-            const zw = Math.min(maxW, canvasWidth * 0.6);
-            const zh = Math.min(maxH, canvasHeight * 0.15);
-            rects.push({ x: Math.round((canvasWidth - zw) / 2), y: Math.round((canvasHeight - zh) / 2), w: zw, h: zh });
+            rects.push({
+                x: Math.round((canvasWidth - defaultCenterWidth) / 2),
+                y: Math.round((canvasHeight - defaultCenterHeight) / 2),
+                w: defaultCenterWidth,
+                h: defaultCenterHeight,
+            });
         }
     }
 

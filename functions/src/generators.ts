@@ -27,12 +27,11 @@ import { storeCreativeToMemory, retrieveCreativePatterns } from "./creativeMemor
 import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.js";
 import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreservation, type SemanticLock } from "./utils/hookPayload.js";
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
-import type { FailureClass, CostEstimate } from "./types.js";
+import type { FailureClass, CostEstimate, LogoPlacement } from "./types.js";
 import { GenerationError } from "./types.js";
 import { CULTURAL_COMPLIANCE_BLOCK, ARABIC_WARDROBE_BLOCK, isArabic, scanAndReplace } from "./culturalCompliance.js";
 import { compositeUILogos } from "./logoComposite.js";
 import { SCREEN_CONTENT_BAN_BLOCK, UI_LOGO_INSTRUCTION_BLOCK, ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK, MODE_SELECTION_HINT_BLOCK } from "./logoPromptBlocks.js";
-import { validateLogoPlacements } from "./buildPlanSlotMap.js";
 
 // ─── Ranking Guidance Builder ────────────────────────────────────────────
 // Converts Ticket 2 ranking output into a compact prompt-safe guidance block.
@@ -4038,9 +4037,9 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
     const parsedBpForLogos = (() => {
         try { return parseBuildPlanEnvelope(blueprint); } catch { return null; }
     })();
-    const _logoPlacements = parsedBpForLogos?.machinePlan?.logoPlacements || [];
-    const _hasUI = _logoPlacements.some((p: any) => p.mode === 'ui');
-    const _hasEnv = _logoPlacements.some((p: any) => p.mode === 'environmental');
+    const _logoPlacements: LogoPlacement[] = parsedBpForLogos?.machinePlan?.logoPlacements ?? [];
+    const _hasUI = _logoPlacements.some((p) => p.mode === 'ui');
+    const _hasEnv = _logoPlacements.some((p) => p.mode === 'environmental');
     const _logoBlock = `${_hasUI ? UI_LOGO_INSTRUCTION_BLOCK : ''}${_hasEnv ? ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK : ''}`;
 
     const textPrompt = `${_ccBlock}${coreDesignRules}
@@ -4431,9 +4430,17 @@ ${_renderRtCtx.testimonial ? `- Testimonial context available — design should 
 ` : '';
 
     // ═══ HOTFIX-E: per-render logo placement context ═══
-    const _renderLogoPlacements = parsedBuildPlan.machinePlan?.logoPlacements || [];
-    const _renderHasUI = _renderLogoPlacements.some((p: any) => p.mode === 'ui');
-    const _renderHasEnv = _renderLogoPlacements.some((p: any) => p.mode === 'environmental');
+    // Source from gatedBuildPlan (post-gate, post-repair) so we honor any logoPlacements
+    // changes the render gate applied. Fall back to parsedBuildPlan only if gatedBuildPlan
+    // has no machinePlan envelope (legacy / non-structured paths).
+    const _gatedParsed = (() => {
+        try { return parseBuildPlanEnvelope(gatedBuildPlan); } catch { return null; }
+    })();
+    const _renderLogoPlacements: LogoPlacement[] = _gatedParsed?.machinePlan?.logoPlacements
+        ?? parsedBuildPlan.machinePlan?.logoPlacements
+        ?? [];
+    const _renderHasUI = _renderLogoPlacements.some((p) => p.mode === 'ui');
+    const _renderHasEnv = _renderLogoPlacements.some((p) => p.mode === 'environmental');
     const _renderLogoBlock = `${_renderHasUI ? UI_LOGO_INSTRUCTION_BLOCK : ''}${_renderHasEnv ? ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK : ''}`;
 
     const coreDesignRules = `

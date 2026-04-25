@@ -106,4 +106,4 @@ HFE.8 covers the validator end-to-end (see `contracts/ui-logo-compositor.md` for
 - planner emits opacity: 0.5 → validator clamps to 0.85.
 - planner emits a logoIndex of 7 when only 2 logos uploaded → validator drops with `logo_index_out_of_range`.
 - planner emits an entry with mode: 'video' (unrecognized) → validator defaults to `'environmental'`.
-- planner emits a `text_only` build plan with non-empty logoPlacements → validator rejects the build plan.
+- planner emits a `text_only` build plan with non-empty logoPlacements → validator returns an empty `cleanedPlacements` and emits one `softWarnings[]` entry per discarded placement (soft warning, not a hard rejection).

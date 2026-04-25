@@ -1564,12 +1564,11 @@ function testValidatorTextOnly() {
 // ─── Validator: unrecognized mode defaults to environmental ───
 function testValidatorUnrecognizedMode() {
     // Intentional invalid mode 'video' (not in LogoPlacement union) — exercises the
-    // normalizer's default-to-environmental fallback. The 'as any' cast is required
-    // to construct an off-spec planner output for this fixture.
-    const result = validateLogoPlacements(
-        [{ logoIndex: 0, mode: 'video' as any, surface: 'coffee_mug', environmentalContext: '' }],
-        1,
-    );
+    // normalizer's default-to-environmental fallback. The double-cast through unknown
+    // is required to construct an off-spec planner output for this fixture without
+    // a permissive `as any`.
+    const offSpecPlacement = { logoIndex: 0, mode: 'video', surface: 'coffee_mug', environmentalContext: '' } as unknown as LogoPlacement;
+    const result = validateLogoPlacements([offSpecPlacement], 1);
     assert.equal(result.cleanedPlacements[0].mode, 'environmental', "Unrecognized mode defaults to environmental");
     console.log("  ✅ Validator: unrecognized mode='video' defaulted to environmental");
 }

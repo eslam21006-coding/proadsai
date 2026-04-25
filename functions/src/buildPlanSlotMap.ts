@@ -1,3 +1,7 @@
+// functions/src/buildPlanSlotMap.ts
+// Structured build-plan parsing, serialization, slot-map computation,
+// content-ownership merging, and HOTFIX-E logo-placement validation.
+
 import type { FullLayoutContract } from "./layoutContract.js";
 import type { LogoPlacement, LogoPipelineEvents } from "./types.js";
 
@@ -482,8 +486,15 @@ export function validateLogoPlacements(
     const softWarnings: LogoPipelineEvents['softWarnings'] = [];
 
     if (creativeStyle === 'text_only') {
-        if (placements.length > 0) {
-            softWarnings.push({ logoIndex: -1, reason: 'compositor_unavailable', detail: 'text_only style must not have logo placements' });
+        // Emit one soft warning per discarded placement, with the actual logoIndex,
+        // so ops can trace which planner outputs were dropped (no -1 sentinel).
+        for (const entry of placements) {
+            const idx = (typeof entry.logoIndex === 'number' && Number.isFinite(entry.logoIndex)) ? entry.logoIndex : -1;
+            softWarnings.push({
+                logoIndex: idx,
+                reason: 'compositor_unavailable',
+                detail: 'text_only style must not have logo placements',
+            });
         }
         return { cleanedPlacements: [], events: { clamps, drops, softWarnings } };
     }
