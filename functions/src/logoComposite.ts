@@ -10,9 +10,9 @@ import type { FullLayoutContract } from "./layoutContract.js";
 
 let sharp: any = null;
 try {
-    sharp = require('sharp');
+    sharp = require("sharp");
 } catch {
-    console.warn('⚠️ Sharp not available — UI logo compositor disabled. Install: npm install sharp');
+    console.warn("⚠️ Sharp not available — UI logo compositor disabled. Install: npm install sharp");
 }
 
 export interface CompositeUILogosArgs {

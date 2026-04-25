@@ -253,7 +253,7 @@ const BUILD_PLAN_RESPONSE_SCHEMA = {
             },
         },
     },
-    required: ["blueprint", "zones", "overlayAssignments", "mustShowAssignments", "ownership"],
+    required: ["blueprint", "zones", "overlayAssignments", "mustShowAssignments", "ownership", "logoPlacements"],
 };
 
 function buildStructuredBuildPlanReturnBlock(contract: FullLayoutContract, ownershipMap: ReturnType<typeof buildContentOwnershipMap>): string {
@@ -5732,6 +5732,16 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                             canvasHeight: ar.canvasHeight,
                                         });
                                         currentImage = uiResult.image;
+                                        // Surface logoPipeline events to ops logs (FR-024 traceability).
+                                        // Persisted-trace plumbing through generateFinalAd's return type
+                                        // is a follow-up — for now structured logs ensure no event is
+                                        // silently dropped.
+                                        const ev = uiResult.events;
+                                        console.log(`🪧 UI logo pipeline (strict): placed=${ev.perLogo.length} shifts=${ev.autoShifts.length} drops=${ev.drops.length} clamps=${ev.clamps.length} warnings=${ev.softWarnings.length}`);
+                                        for (const w of ev.softWarnings) console.warn(`⚠️ logo[${w.logoIndex}] ${w.reason}${w.detail ? ` — ${w.detail}` : ''}`);
+                                        for (const d of ev.drops) console.warn(`⚠️ logo[${d.logoIndex}] dropped — ${d.reason} (tried: ${d.candidatesExhausted.join(', ') || 'n/a'})`);
+                                        for (const a of ev.autoShifts) console.log(`↪️ logo[${a.logoIndex}] auto-shifted ${a.from} → ${a.to} (${a.reason})`);
+                                        for (const c of ev.clamps) console.log(`🪛 logo[${c.logoIndex}] ${c.field} clamped ${c.rawValue} → ${c.clampedValue}`);
                                     }
                                 } catch (uiLogoErr) {
                                     console.warn('⚠️ UI logo composite failed (non-blocking):', uiLogoErr);
@@ -5861,6 +5871,12 @@ If no monetary numbers are visible, return: []` }
                                         canvasHeight: ar.canvasHeight,
                                     });
                                     currentImage = uiResult.image;
+                                    const ev = uiResult.events;
+                                    console.log(`🪧 UI logo pipeline (non-strict): placed=${ev.perLogo.length} shifts=${ev.autoShifts.length} drops=${ev.drops.length} clamps=${ev.clamps.length} warnings=${ev.softWarnings.length}`);
+                                    for (const w of ev.softWarnings) console.warn(`⚠️ logo[${w.logoIndex}] ${w.reason}${w.detail ? ` — ${w.detail}` : ''}`);
+                                    for (const d of ev.drops) console.warn(`⚠️ logo[${d.logoIndex}] dropped — ${d.reason} (tried: ${d.candidatesExhausted.join(', ') || 'n/a'})`);
+                                    for (const a of ev.autoShifts) console.log(`↪️ logo[${a.logoIndex}] auto-shifted ${a.from} → ${a.to} (${a.reason})`);
+                                    for (const c of ev.clamps) console.log(`🪛 logo[${c.logoIndex}] ${c.field} clamped ${c.rawValue} → ${c.clampedValue}`);
                                 }
                             } catch (uiLogoErr) {
                                 console.warn('⚠️ UI logo composite failed (non-blocking, non-strict):', uiLogoErr);
