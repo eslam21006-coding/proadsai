@@ -61,6 +61,11 @@ All product owner decisions. These are final for launch.
 | Audience Avatars | Reusable brand profiles that pre-fill the form. Starter: 5. Pro: 15. Scale: Unlimited. |
 | Authentication method | **Email + password only**. Google sign-in removed entirely to prevent email mismatch with Stripe. Login page has Login / Create Account tabs on the same page. New account creation checks Firestore for existing Stripe payment — if found, user enters app with trial active. If not found, billing modal opens. |
 | Cultural compliance | **Arabic ads enforce Islamic cultural guardrails.** Universes with alcohol (wine cellars, bars, cigar lounges) are hidden for Arabic languages. Visual motifs sanitized (cocktails → premium beverages, champagne → sparkling drinks). Cultural compliance prompt block injected into build plan + final image prompt. Wardrobe modesty rules enforced. Post-generation validation catches and replaces leaked haram terms. English ads are unaffected. |
+| Logo upload limit | **Box B accepts up to 5 logos.** First logo is primary (most prominent placement). Additional logos render as secondary brand elements (corner badges, supporting surfaces). Prompts instruct hierarchical logo placement. |
+| Multi-hero | **Up to 3 distinct people** per ad. Each hero group has its own photo set and role (Primary / Supporting / Client-testimonial). Face consistency is per-person. `before_after` mode remains single-hero only. Supported in: `standard_hero`, `speaker_card`, `webinar_screen`, `event_ticket`, carousel, and batch. Backward compatible — single hero is the default. |
+| Logo rendering | **Hybrid — mode-per-placement.** Build plan assigns each logo a mode: `ui` (post-composited via Sharp for pixel-perfect corner/badge placement) or `environmental` (Gemini renders as physical object in scene — logo on mug, laptop lid, wall art, t-shirt, signage). AI picks mode based on creative style. **Absolute ban:** no logos, text, charts, or dashboards on any device screen (laptop/monitor/tablet/phone). Screens stay blank or abstract only. |
+| Aspect ratio reflow | **Deterministic two-method reflow.** Small ratio change (<30%) → outpaint-only (extends margins, locks hero/text). Large ratio change → re-render from original build plan at new ratio. No more generative reflow that stretches faces. Auto-routing with user override. |
+| Direct-response design primitives | **6 new enforced rules:** (1) `heroGaze` field directs subject's eyes at headline or CTA, (2) max ONE highlighted element per ad, (3) `priceIsHook` toggle for price-shock creatives, (4) CTA outcome framing required (no generic "join/register"), (5) `visualPromiseMapping` scores hook↔visual alignment, (6) campaign coherence inherits palette/environment from prior ads in same project. |
 
 ---
 
@@ -930,6 +935,12 @@ HOTFIX — Plan Structure Alignment (requires Phase 9, apply BEFORE Phase 10+)
 
 HOTFIX-C — Cultural Compliance (requires Phase 5, apply BEFORE Phase 10+)
 
+HOTFIX-D — Multi-Logo Upload (no dependency)
+
+HOTFIX-E — Deterministic Logo Compositing (CRITICAL P0)
+
+HOTFIX-F — Deterministic Aspect Ratio Reflow (CRITICAL P0)
+
 Phase 10 — Favorites & Workspace (requires Phase 8)
 
 Phase 11 — Magic Edit (requires Phase 5)
@@ -945,6 +956,10 @@ Phase 15 — Brand Colors (requires Phase 5)
 Phase 16 — Creative Modes QA (requires Phase 1 + Phase 3 + Phase 5)
 
 Phase 17 — Resize & Reflow (requires Phase 5 + Phase 15)
+
+Phase 18 — Multi-Hero Support (requires Phase 5 + Phase 11)
+
+Phase 19 — Direct-Response Design Upgrades (requires Phase 5 + HOTFIX-E + HOTFIX-F)
 ```
 
 ---
@@ -976,6 +991,11 @@ Launch is complete when all of the following pass:
 21. Login page has Login / Create Account tabs, no Google sign-in. Stripe-paid users land in app with trial toast. Unpaid users see billing modal.
 22. Batch generation: Pro limited to 4 ads/run, Scale up to 36 ads/run. Carousel: Pro up to 7 slides, Scale up to 10 slides.
 23. Arabic ads: no alcohol, no immodest clothing, no haram elements in any render. Haram universes hidden. Cultural compliance block in every Arabic prompt. English ads unaffected.
+24. Box B accepts up to 5 logos with clear primary/secondary hierarchy in prompts.
+25. Multi-hero support: 1–3 distinct people with per-person face consistency, mode-specific layout rules, backward compatible with single-hero.
+26. Brand logos render via hybrid pipeline: UI-mode logos composited post-render (pixel-perfect), environmental-mode logos rendered by Gemini as physical objects (mug/laptop lid/wall art). No more "SIRM" distortion. Zero fake content on device screens.
+27. Aspect ratio reflow preserves subject proportions — outpaint for small changes, full re-render for large changes. No more stretched faces.
+28. Direct-response design primitives enforced: gaze direction, one-highlight cap, price hierarchy, CTA outcome framing, hook↔visual alignment, campaign coherence.
 
 ---
 
@@ -1001,6 +1021,9 @@ Phase 7   (no dependency — start any time)
 
 HOTFIX    requires Phase 9 complete (apply before Phase 10+)
 HOTFIX-C  requires Phase 5 complete (apply before Phase 10+, can parallel with HOTFIX)
+HOTFIX-D  no dependency — apply any time
+HOTFIX-E  requires Phase 5 (pipeline) — CRITICAL P0
+HOTFIX-F  requires Phase 5 (pipeline) — CRITICAL P0
 Phase 8   requires Phase 2
 Phase 9   requires Phase 8
 Phase 10  requires Phase 8 (billingState for team scoping)
@@ -1011,6 +1034,8 @@ Phase 14  requires Phase 7 + Phase 8 (failure classification + billing)
 Phase 15  requires Phase 5 (build plan pipeline)
 Phase 16  requires Phase 1 + Phase 3 + Phase 5
 Phase 17  requires Phase 5 + Phase 15 (pipeline + brand colors)
+Phase 18  requires Phase 5 + Phase 11 (pipeline + magic edit face consistency)
+Phase 19  requires Phase 5 + HOTFIX-E + HOTFIX-F (pipeline + logos + reflow must be stable)
 ```
 
 Complete all tasks in a phase before starting any phase that depends on it.
@@ -1306,6 +1331,81 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
+## HOTFIX-D — Multi-Logo Upload (Box B → Max 5)
+
+> **Context:** Box B currently hard-limits to 1 logo despite the type definition allowing 5. Users need multiple logos in a single design (e.g., brand logo + certification badge + partner logo). The limit is enforced in 4 separate code locations plus the prompt text.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| HFD.1 | `src/components/InputForm.tsx` | In the avatar/input parse logic (around line 281), change `brandLogos: (raw.brandLogos || []).slice(0, 1)` to `.slice(0, 5)`. Update the upload area label from "1 logo" to "Max 5" in the badge display (around line 2178). | Parse allows up to 5 logos. Badge shows correct count. |
+| HFD.2 | `src/App.tsx` | Find all 4 locations where `brandLogos` is sliced to 1 before sending to generation (lines ~1960, ~3327, ~3349, ~3448). Change every `.slice(0, 1)` to `.slice(0, 5)`. These are in: `handleGenerateHooks`, `handleGenerateConcepts`, `handleRenderDesign`, and any other generation entry point. | `grep "brandLogos.*slice.*1" src/App.tsx` returns zero results. All slices are `.slice(0, 5)`. |
+| HFD.3 | `functions/src/generators.ts` | Change `const boxB = (inputs.brandLogos || []).slice(0, 1)` (line ~4000) to `.slice(0, 5)`. | Backend accepts up to 5 logos. |
+| HFD.4 | `functions/src/generators.ts` | Update all prompt text that references logos. Replace "If Box B contains a logo, it is the ONLY logo allowed" (line ~2406) with: "If Box B contains logos, render each one as a distinct physical brand element in the scene. Place the PRIMARY logo (first in array) most prominently. Secondary logos should be smaller and positioned in supporting areas (corner badge, secondary surface, background element). Maximum 5 logos. If Box B is empty, zero logos or branding marks." Update line ~4877 similarly: "If Box B has images, render the first as the primary brand mark and arrange additional logos as secondary brand elements." Update the branding integration instruction (line ~2105) to: "Integrate Box B logos as physical objects. Primary logo (first) is most prominent. Additional logos as supporting brand marks." | Prompts instruct the model to handle 1–5 logos with clear hierarchy. |
+| HFD.5 | `functions/src/generators.ts` | In carousel and batch flows, ensure all logos are passed to every slide/item prompt — not just the first logo. The full `boxB` array (up to 5) is included in each generation call. | Carousel slide 3 receives all 5 logos. Batch item 2 receives all 5 logos. |
+
+---
+
+## HOTFIX-E — Hybrid Logo Handling (CRITICAL — P0)
+
+> **Context:** Gemini is distorting brand logos into "SIRM" / "SRM" when asked to render them as UI elements (corner logos, top-bar logos). BUT Gemini does a great job placing logos as **physical objects in the scene** (logo on a coffee mug, laptop lid, wall art, t-shirt, signage) because it treats them more like textures than text. The fix is HYBRID, not a ban:
+>
+> **Placement mode decides the pipeline:**
+> - **UI logos** (corner badges, top-bar branding, CTA button logos) → Sharp post-composite (deterministic, pixel-perfect)
+> - **Environmental logos** (mug, laptop lid, wall art, t-shirt, signage, merch) → Gemini renders (natural perspective, scene-appropriate lighting)
+> - **Device screens** (laptop, monitor, tablet, phone) → NEVER render logos or text. Screens stay blank or show abstract content only.
+>
+> This preserves the creative placements users love while fixing the trust-killer distortions.
+
+**What exists:**
+- `offerOverlay.ts` has a working Sharp compositing pipeline for price/totalValue/savings.
+- `textCompositing.ts` has Sharp RTL text compositing for Arabic.
+- `brandLogos` is passed to Gemini as base64 reference images.
+- Current prompt says "Device screen shows content, not blank" (line ~2192) — this INVITES Gemini to hallucinate fake logos on screens.
+
+**What is missing:**
+- No placement-mode classification (UI vs environmental).
+- No Sharp composite path for UI logos.
+- No screen-content ban.
+- No sanity check on Gemini-rendered environmental logos.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| HFE.1 | `functions/src/generators.ts` | In `generateBuildPlan()`, have the AI return a `logoPlacements` array where each entry specifies a placement MODE: `{ logoIndex: number, mode: 'ui' \| 'environmental', zone: string, widthPct: number, opacity: number, environmentalContext?: string }`. For `ui` mode: `zone` is one of `top-left, top-right, top-center, bottom-left, bottom-right, bottom-center, center`. For `environmental` mode: `zone` is the object or surface (e.g. `coffee_mug`, `laptop_lid`, `wall_art`, `tshirt_chest`, `signage_behind`, `book_cover`, `tablet_back`), and `environmentalContext` describes the physical rendering (e.g. "embossed on leather portfolio", "printed on ceramic mug held by hero"). The AI chooses the mode based on the creative style — minimalist/premium → UI logo, lifestyle/authentic → environmental logo, `text_only` → no logos at all. | Build plan JSON has `logoPlacements` with correct mode per entry. |
+| HFE.2 | `functions/src/generators.ts` | Update the prompt with mode-specific instructions: (1) For `ui` mode placements: "Do NOT render this logo in the image. Leave the specified zone CLEAR and unobstructed. It will be composited post-render for pixel-perfect accuracy." (2) For `environmental` mode placements: "Render this logo as a physical object in the scene — on the {object/surface}. Match the object's perspective, lighting, and material. Keep it subtle and natural — part of the environment, not an overlay. Use the uploaded logo image as the visual reference." (3) **NEW ABSOLUTE RULE — SCREEN CONTENT BAN**: "NEVER render logos, text, charts, graphs, dashboards, or any text-based content on laptop screens, monitors, tablets, phones, smartwatches, or any device display. Device screens MUST show one of: (a) completely blank dark screen, (b) abstract gradient, (c) out-of-focus soft glow, (d) dimmed screen with unreadable blur. No exceptions." Remove/soften existing line "Device screen shows content, not blank" (line ~2192). | Prompt distinguishes between UI (render clear zone) and environmental (render natural object placement) and bans screen content entirely. |
+| HFE.3 | `functions/src/logoComposite.ts` | Create this file. Export `compositeUILogos(baseImageBase64: string, logos: string[], placements: LogoPlacement[], canvasWidth: number, canvasHeight: number): Promise<string>`. Uses Sharp to composite ONLY entries where `mode === 'ui'`. For each UI placement: resize the logo to the placement's `widthPct × canvasWidth`, add subtle drop shadow for visibility, composite at zone coordinates with specified opacity, handle PNG transparency. Skip entries where `mode === 'environmental'` — those are already rendered by Gemini. Return composited base64 PNG. | Function composites UI logos only. Environmental logos pass through untouched. |
+| HFE.4 | `functions/src/generators.ts` | After Gemini returns the rendered image: (1) pipe through `compositeUILogos()` — adds any UI-mode logos deterministically, (2) then run text compositing, (3) then offer overlay. Environmental logos were already rendered inside the image by Gemini in step 0 (nothing to do post-render for those). | Final output has UI logos pixel-perfect, environmental logos rendered naturally in-scene, and zero fake screen content. |
+| HFE.5 | `functions/src/logoComposite.ts` | Add safe-zone validation for UI logos. Before compositing, verify each UI placement doesn't collide with text zones from the layout contract. If collision detected, auto-shift to the nearest non-colliding zone and log `logoAutoShifted: true` on the resolution trace. Environmental logos are not validated — Gemini handles their in-scene placement. | UI logos never overlap text. Auto-shifts logged. |
+| HFE.6 | `functions/src/generators.ts` | Add a hint in the build plan prompt for MODE SELECTION: "Choose placement mode based on creative style — Minimalist, corporate, or conference-style ads → prefer UI mode (clean corner placement). Lifestyle, authentic, documentary, or product-focused ads → prefer environmental mode (logo on physical object in scene). For carousel with 5+ slides, mix: first slide UI logo for brand recognition, middle slides environmental for storytelling, last slide UI logo again for CTA. Never use more than 2 UI logos per ad. Environmental logos can be up to 3 if natural to the scene." | AI picks mode appropriate to style. Mixed-mode carousels work correctly. |
+| HFE.7 | `functions/src/generators.ts` | Ensure carousel and batch flows run the UI logo composite pass on every slide/item. Each slide's `logoPlacements` array has its own mode decisions. Environmental logos on slide 3 are rendered by Gemini; UI logos on slide 1 are composited post-render. | Every slide gets correct per-mode handling. |
+| HFE.8 | `functions/src/contractFixtures.test.ts` | Add hybrid logo fixture tests: (a) minimalist ad with 1 UI-mode logo — prompt tells Gemini to leave zone clear, Sharp composite runs, final image has pixel-perfect logo, (b) lifestyle ad with 1 environmental logo — prompt tells Gemini to render on coffee mug, Sharp composite does NOT run for that logo, (c) corporate ad with laptop in scene — prompt BANS logo/text on laptop screen, (d) mixed carousel: slide 1 UI, slide 3 environmental — both handled correctly, (e) ad with 3 logos (2 environmental + 1 UI) — all rendered, each via correct pipeline. | All 5 tests pass. |
+
+---
+
+## HOTFIX-F — Deterministic Aspect Ratio Reflow (CRITICAL — P0)
+
+> **Context:** REFLOW mode (generators.ts line 4913) sends the rendered image back to Gemini as a generative edit to resize the aspect ratio. Gemini's edit model stretches or squashes the subject when the canvas ratio changes by >30% — which is why the face in Image 7 is vertically elongated on the 4:5 → 9:16 reflow. A generative edit is the wrong tool for aspect ratio change. This hotfix replaces generative reflow with a two-option deterministic approach: (A) smart outpaint (extend the scene without touching the subject), or (B) re-render from the original build plan at the new ratio.
+
+**What exists:**
+- REFLOW path around line 4913 uses Gemini generative edit.
+- Original build plan is stored in the generation record.
+- `layoutContract.ts` has per-ratio zone definitions.
+
+**What is missing:**
+- No outpaint-only path (edit the canvas margins only, never touch the hero zone).
+- No re-render-from-plan path (regenerate using the saved build plan at the new ratio).
+- No subject detection to mask the hero zone from edits.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| HFF.1 | `functions/src/generators.ts` | Delete the generative reflow path starting at line 4913. Replace with a router: if the ratio change is small (<30% vertical or horizontal shift), use outpaint. If ≥30%, use re-render from plan. Magnitude calculated from aspect ratio numerical comparison. | Reflow router exists. Small ratio changes go to outpaint. Large go to re-render. |
+| HFF.2 | `functions/src/reflowOutpaint.ts` | Create this file. Export `outpaintReflow(base: string, currentRatio: string, targetRatio: string, inputs: AdInputs): Promise<string>`. Uses a Sharp-based or Gemini outpaint-specific model call to extend the image margins ONLY. The center 70% of the image (which contains the hero and all text) is locked — only the outer 30% padding is regenerated to fit the new canvas. Use a mask that whites out the center region. Prompt: "Extend only the outer edges of this image to fit {targetRatio}. Do NOT touch the center. Continue the existing background seamlessly into the new margins." | Outpaint preserves hero and text exactly. Only margins extended. |
+| HFF.3 | `functions/src/generators.ts` | Add `rerenderFromPlan(generationId, newAspectRatio)` function. Loads the original build plan from the generation record, updates the `aspectRatio` field, calls the full render pipeline fresh (not an edit). Re-composites text and logos at the new ratio's safe zones. Deducts credits. This produces a NEW image that matches the original concept but at the new ratio — no subject stretching possible. | Re-render from plan produces fresh image at new ratio. No generative edit involved. |
+| HFF.4 | `functions/src/index.ts` | Update the `reflowImage` callable (from Phase 17). Accept `method: 'outpaint' \| 'rerender' \| 'auto'`. `auto` uses the magnitude router from HFF.1. Allow user to force a method via UI (for cases where auto picks wrong). | Callable supports both methods and auto-routing. |
+| HFF.5 | `src/App.tsx` (Step 4 UI) | Update the Resize button group. Show a small method selector when user picks a ratio: `○ Quick (outpaint — keeps subject identical, fastest)` `○ Fresh render (regenerates at new ratio — best for dramatic ratio changes)` `○ Auto (recommended)`. Default: Auto. | User can choose reflow method. Auto is default. |
+| HFF.6 | `functions/src/contractFixtures.test.ts` | Add reflow fixture tests: (a) 1:1 → 4:5 with `auto` uses outpaint (small change), (b) 4:5 → 9:16 with `auto` uses rerender (large change), (c) outpaint preserves pixel hash of center 70% of image, (d) rerender at 9:16 produces image with aspect ratio 9:16 and no stretched subject (face height within normal bounds for body proportions). | All 4 tests pass. |
+
+---
+
 ## Phase 10 — Favorites & Workspace
 **Requires:** Phase 8 complete (needs `billingState` for team scoping — which user's favorites to show).
 
@@ -1564,4 +1664,64 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-*Source: `creativeResolver.ts` · `generators.ts` · `entitlements.ts` · `artDirectionConfig.ts` · `retargetingObjections.ts` · `constants.ts` · `types.ts` · `index.ts` · `falEditing.ts` · `MagicSelector.tsx` · `WorkspaceSwitcher.tsx` · `creativeMemory.ts` · `rankingEngine.ts` · `metaService.ts` · `billingState.ts` · `textCompositing.ts` · `layoutContract.ts` · terminal session decisions · product owner decisions v4 · codebase audit April 11, 2026*
+## Phase 18 — Multi-Hero Support
+**Requires:** Phase 5 + Phase 11 complete (pipeline + magic edit — face consistency architecture).
+
+**What already exists:**
+- Box A accepts up to 5 photos — but all are of the SAME person. Used as face reference for consistency.
+- Entire prompt system says "The Hero" (singular), "same face both halves", "Box A = face reference ONLY."
+- `before_after` mode requires "same hero in both halves."
+- Carousel face consistency: "Hero face consistent throughout" (Lane 1, Lane 4).
+- `speaker_card` mode exists but assumes a single speaker.
+- `webinar_screen` mode exists but assumes a single presenter.
+
+**What is missing:**
+- No way to upload photos of multiple distinct people (Hero A, Hero B).
+- No prompt architecture for multi-person compositions (who goes where, which face reference maps to which person).
+- No layout zones for multi-hero (e.g., speaker + host, instructor + student, 2 co-founders).
+- No face consistency rules per person in carousel (Hero A stays Hero A across slides, Hero B stays Hero B).
+- Use cases: mini-course with instructor + student testimonial, webinar with host + guest speaker, event with 2+ speakers, coaching ad with coach + client transformation.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 18.1 | `src/types.ts` | Add `heroGroups?: HeroGroup[]` to `AdInputs`. Define `interface HeroGroup { id: string; label: string; photos: string[]; role: 'primary' \| 'secondary' \| 'testimonial' }`. The `primary` hero is the main subject (coach/speaker). `secondary` is the supporting figure (co-host, guest, student). `testimonial` is a client result showcase. Max 3 hero groups. Max 5 photos per group. | Interface exists. `AdInputs` has `heroGroups`. |
+| 18.2 | `src/components/InputForm.tsx` | Replace the single "Hero Photos" upload area with a dynamic hero group manager. Default state: one group labeled "Hero" (backward compatible — single hero). Add a "＋ Add Another Person" button below the first group. When clicked, adds a second group labeled "Person 2" with its own photo upload zone and a role selector dropdown (Primary / Supporting / Client). Maximum 3 groups. Each group has its own delete button (except the first — always required). Show total photo count across all groups. | User can upload photos for 1–3 distinct people. Each group has its own upload zone and role selector. |
+| 18.3 | `src/components/InputForm.tsx` | Add mode-specific multi-hero suggestions. When `speaker_card` or `webinar_screen` is selected, show a hint below the hero upload area: "Add a second person for host + guest speaker layout." When `before_after` is selected, hide the "Add Another Person" button — before/after requires a single hero. When `text_only` is selected, hide all hero uploads (existing behavior). | Suggestions appear for relevant modes. Before/after blocks multi-hero. |
+| 18.4 | `functions/src/generators.ts` | Update `generateBuildPlan()` to handle `heroGroups`. When `heroGroups.length === 1`, use existing single-hero logic (backward compatible). When `heroGroups.length > 1`, inject a `MULTI-HERO COMPOSITION` block: "This ad features [N] distinct people. HERO A (Primary — [role]): Use photos from Hero Group A as face reference. This person is the dominant subject — larger, more prominent, typically 60% of hero space. HERO B (Secondary — [role]): Use photos from Hero Group B as face reference. This person is the supporting figure — smaller, positioned alongside or behind Hero A. CRITICAL: Each person must match their OWN photo reference. Do NOT blend faces. Do NOT use Hero A's face on Hero B's body." | Single-hero inputs produce unchanged prompts. Multi-hero inputs produce the composition block with per-person instructions. |
+| 18.5 | `functions/src/generators.ts` | Add multi-hero layout rules per creative mode. `speaker_card` + 2 heroes: "Split the speaker zone — Primary speaker larger (60%), secondary speaker smaller (40%). Both face the camera. Name badges for each if provided." `webinar_screen` + 2 heroes: "Split-screen webinar layout — Primary host on left/larger panel, guest speaker on right/smaller panel. Webinar UI frame around both." `standard_hero` + 2 heroes: "Primary hero dominant in foreground, secondary hero in supporting position (slightly behind, slightly smaller, or adjacent)." `event_ticket` + 2 heroes: "Both speakers on the ticket. Primary speaker larger. Both names on the ticket if provided." | Each mode has specific multi-hero layout instructions. |
+| 18.6 | `functions/src/generators.ts` | In carousel generation, enforce per-person face consistency. When multi-hero is active: "FACE CONSISTENCY RULE (MULTI-HERO): Hero A must have the SAME face across ALL slides where they appear. Hero B must have the SAME face across ALL slides where they appear. Hero A and Hero B must NEVER have the same face. Use each person's dedicated photo reference exclusively." Pass each hero group's photos separately to the per-slide generation — do NOT merge all photos into one array. | Carousel with 2 heroes: Hero A's face is consistent, Hero B's face is consistent, they are visually distinct people. |
+| 18.7 | `functions/src/generators.ts` | In batch generation with multi-hero: each batch item receives the same hero groups. The multi-hero composition rules apply per item. Face consistency is per-person within each image (not across batch items — batch items are independent). | Each batch item renders both heroes with correct face references. |
+| 18.8 | `functions/src/generators.ts` | Add `testimonial` hero role handling. When a hero group has `role: 'testimonial'`, inject: "This person is a CLIENT/STUDENT showing results. Render them in a before-and-after or 'result showcase' context — confident expression, transformation props. They are NOT the coach/expert — they are the proof." This is distinct from the `before_after` creative mode — it's a role within a multi-hero composition. | Testimonial-role hero is rendered as a client, not the coach. Visual treatment differs from primary hero. |
+| 18.9 | `functions/src/layoutContract.ts` | Add multi-hero zone definitions. `multiHero2`: Primary hero zone (60% of hero area), Secondary hero zone (40%). `multiHero3`: Primary (50%), Secondary (30%), Tertiary (20%). These zone splits apply WITHIN the existing hero zone — they don't change the overall layout contract (stack zone, CTA zone, etc. remain the same). | Layout contract supports 2-hero and 3-hero zone splits within the hero area. |
+| 18.10 | `functions/src/contractFixtures.test.ts` | Add multi-hero fixture tests: (a) single hero input — prompt uses existing single-hero language (backward compatible), (b) 2-hero `speaker_card` — prompt contains split speaker instructions and both face references, (c) 2-hero carousel — face consistency rules reference Hero A and Hero B separately, (d) `before_after` mode with 2 hero groups — rejected (before/after is single-hero only), (e) 3-hero `standard_hero` — layout contract has `multiHero3` zone split. | All 5 tests pass. |
+
+---
+
+## Phase 19 — Direct-Response Design Upgrades
+**Requires:** Phase 5 + HOTFIX-E + HOTFIX-F complete (pipeline + logos + reflow must be stable first).
+
+**Context:** Direct-response ads live or die on six levers: gaze, contrast, one-highlight discipline, price hierarchy, CTA outcome framing, and hook↔visual alignment. The current pipeline has none of these as enforced primitives — Gemini chooses randomly within style constraints. This phase adds them as deterministic rules in the build plan prompt and post-generation validation.
+
+**What's missing (verified from code audit):**
+- No gaze direction control. Subject's eyes are an arrow being pointed at random elements.
+- No highlight count cap. Gemini highlights every punchy phrase — 3+ highlights on a single ad = 0 highlights.
+- No price visual hierarchy rule. A $19 offer buried in 18pt CTA text is leaving money on the table.
+- No CTA outcome-framing requirement. "Join the training" (description) vs "Reserve my spot — 3 days that change your career" (outcome).
+- No hook↔visual promise validation. Hook says "end your confusion forever"; visual shows man standing in boardroom.
+- No campaign coherence layer. Same offer across 6 ads = 6 different color palettes.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 19.1 | `functions/src/generators.ts` | Add a `GAZE_DIRECTION` rule to `generateBuildPlan()`. Require the build plan JSON to include `heroGaze: 'toward_headline' \| 'toward_cta' \| 'toward_camera' \| 'toward_object'`. Default: `toward_headline` for Step 1 (attention grab), `toward_cta` for CTA-heavy slides (last carousel slide, standard_hero close variants). Include in prompt: "Subject's eyes MUST point toward the [headline zone / CTA zone / camera]. Eyes are the visual arrow that directs viewer attention. Never let the subject look out of frame, at dead space, or down at a device while the headline is above." | Every build plan has `heroGaze` field. Prompt explicitly instructs eye direction. No more ads with hero looking out-of-frame unless deliberate. |
+| 19.2 | `functions/src/generators.ts` | Add a HIGHLIGHT CARDINALITY cap to the highlight rule (line ~4250). Replace existing rule with: "At MOST one highlighted element per ad. Choose the SINGLE most important word or phrase in the headline (typically the emotional payoff or the key number). If you highlight more than one element, you have failed the rule. For Arabic: one complete word OR one complete line OR one underline/background bar. Exactly one, never more." Also require build plan JSON to include `highlightTarget: string` — the exact word/phrase to highlight. | Highlight rule caps at one. Prompt fails if two or more highlights appear. |
+| 19.3 | `functions/src/generators.ts` | Add a PRICE HIERARCHY rule. When `inputs.offerPrice` exists AND the price is considered a hook (build plan can flag `priceIsHook: true`), inject: "The price '{price}' must be the SECOND LARGEST visual element after the headline. Render it as bold accent color, not buried in CTA or subhead. This is a price-shock creative — the price IS the story." When `priceIsHook: false`, keep existing behavior (price inside CTA). The Step 1 UI should add a "This price is my main hook" toggle on the offer price field. | Price-shock variants render the price at 2nd-tier visual hierarchy. Non-price-shock variants unchanged. |
+| 19.4 | `src/components/InputForm.tsx` | Add "This price is my main hook" toggle next to the price field. When enabled, sets `priceIsHook: true` in inputs. Show tooltip: "Use this for $7/$19/$27 offers where price is the attention grabber. The price will be rendered prominently in the design." | Toggle exists. When on, build plan receives `priceIsHook: true`. |
+| 19.5 | `functions/src/generators.ts` | Add CTA OUTCOME FRAMING to `generateCaption()` and CTA generation. When AI generates the CTA button text, require it to follow outcome framing: "NEVER generate CTAs that describe the action ('Join the training', 'Register now', 'Book your seat'). ALWAYS generate CTAs that name the outcome ('Reserve my spot — [benefit]', 'Start [transformation]', 'Fix [pain point] now'). The CTA must echo the headline's emotional promise, not just label the action." Add examples in the prompt. | AI-generated CTAs are outcome-framed. Description-only CTAs are rejected. |
+| 19.6 | `functions/src/generators.ts` | Add HOOK↔VISUAL ALIGNMENT rule to `generateBuildPlan()`. After the AI generates the scene description, require it to articulate a `visualPromiseMapping` field: `{ hookPromise: string, visualExpression: string, alignmentScore: number 1-10 }`. The AI scores how well the scene mirrors the hook's emotional promise. If `alignmentScore < 7`, regenerate the scene once. Examples to include in prompt: "'End your confusion forever' → scene of hero with calm, confident expression and clear visual symbols (checkmarks, ordered elements). NOT generic 'hero in office'. 'Stop wasting months studying' → scene with time-pressure visual cues (clock, calendar, pile of books being pushed aside). NOT 'hero at desk working'." | Build plan has alignment scoring. Low-scoring scenes regenerate. Logged on resolution trace. |
+| 19.7 | `functions/src/generators.ts` | Add CAMPAIGN COHERENCE rule. When generating multiple ads within the same saved project OR the same workspace within the last 24 hours for the same offer, extract the color palette and environment type from the PREVIOUS ad in the project. Inject: "This ad is part of an existing campaign. Use the SAME dominant color palette (Primary: {hex}, Secondary: {hex}) and the SAME environment category ({category}) as the other ads in this campaign. Vary composition, pose, and framing — NOT color scheme or environment type. Campaign consistency is required for Meta delivery optimization." | Subsequent ads in the same project inherit palette and environment from the first ad. |
+| 19.8 | `functions/src/creativeScoringEngine.ts` | Add post-render validation for direct-response design levers. After render completes, scan the build plan and log flags on resolution trace: `highlightCountExceeded: true` (if more than 1 highlight detected in prompt), `gazeDirectionMissing: true` (if no heroGaze field), `ctaNotOutcomeFramed: true` (if CTA contains banned phrases like "join", "register", "book a seat" alone without outcome language), `priceNotProminent: true` (if priceIsHook=true but price doesn't appear in top 2 visual elements). These flags let you track quality over time. | Validation flags logged on every generation. Dashboard can display trends. |
+| 19.9 | `functions/src/contractFixtures.test.ts` | Add direct-response design fixture tests: (a) build plan contains `heroGaze` field with valid value, (b) prompt contains "AT MOST one highlighted element", (c) build plan contains `visualPromiseMapping` with alignmentScore, (d) CTA for "Train with SHRM" generates outcome-framed variant (contains transformation verb, not just "join"), (e) price-shock variant has `priceIsHook: true` → prompt instructs 2nd-tier visual hierarchy, (f) second generation in same project inherits color palette from first. | All 6 tests pass. |
+
+---
+
+*Source: `creativeResolver.ts` · `generators.ts` · `entitlements.ts` · `artDirectionConfig.ts` · `retargetingObjections.ts` · `constants.ts` · `types.ts` · `index.ts` · `falEditing.ts` · `MagicSelector.tsx` · `WorkspaceSwitcher.tsx` · `creativeMemory.ts` · `rankingEngine.ts` · `metaService.ts` · `billingState.ts` · `textCompositing.ts` · `layoutContract.ts` · `logoComposite.ts` · `reflowOutpaint.ts` · terminal session decisions · product owner decisions v4 · codebase audit April 11, 2026*

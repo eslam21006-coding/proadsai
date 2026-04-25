@@ -27,9 +27,11 @@ import { storeCreativeToMemory, retrieveCreativePatterns } from "./creativeMemor
 import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.js";
 import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreservation, type SemanticLock } from "./utils/hookPayload.js";
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
-import type { FailureClass, CostEstimate } from "./types.js";
+import type { FailureClass, CostEstimate, LogoPlacement } from "./types.js";
 import { GenerationError } from "./types.js";
 import { CULTURAL_COMPLIANCE_BLOCK, ARABIC_WARDROBE_BLOCK, isArabic, scanAndReplace } from "./culturalCompliance.js";
+import { compositeUILogos } from "./logoComposite.js";
+import { SCREEN_CONTENT_BAN_BLOCK, UI_LOGO_INSTRUCTION_BLOCK, ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK, MODE_SELECTION_HINT_BLOCK } from "./logoPromptBlocks.js";
 
 // ─── Ranking Guidance Builder ────────────────────────────────────────────
 // Converts Ticket 2 ranking output into a compact prompt-safe guidance block.
@@ -234,8 +236,38 @@ const BUILD_PLAN_RESPONSE_SCHEMA = {
             },
             required: [],
         },
+        logoPlacements: {
+            type: "ARRAY",
+            items: {
+                type: "OBJECT",
+                // Conditional per-mode required fields. Google's GenerativeSchema
+                // accepts oneOf in some SDK versions and ignores it in others; the
+                // application-layer validator (validateLogoPlacements) enforces the
+                // same constraints either way, so this is a defense-in-depth schema.
+                properties: {
+                    logoIndex: { type: "NUMBER" },
+                    mode: { type: "STRING" },
+                    zone: { type: "STRING" },
+                    widthPct: { type: "NUMBER" },
+                    opacity: { type: "NUMBER" },
+                    surface: { type: "STRING" },
+                    environmentalContext: { type: "STRING" },
+                },
+                required: ["logoIndex", "mode"],
+                oneOf: [
+                    {
+                        properties: { mode: { type: "STRING", enum: ["ui"] } },
+                        required: ["logoIndex", "mode", "zone", "widthPct", "opacity"],
+                    },
+                    {
+                        properties: { mode: { type: "STRING", enum: ["environmental"] } },
+                        required: ["logoIndex", "mode", "surface", "environmentalContext"],
+                    },
+                ],
+            },
+        },
     },
-    required: ["blueprint", "zones", "overlayAssignments", "mustShowAssignments", "ownership"],
+    required: ["blueprint", "zones", "overlayAssignments", "mustShowAssignments", "ownership", "logoPlacements"],
 };
 
 function buildStructuredBuildPlanReturnBlock(contract: FullLayoutContract, ownershipMap: ReturnType<typeof buildContentOwnershipMap>): string {
@@ -279,6 +311,12 @@ CANONICAL OWNERSHIP TO COPY:
 - eventLocation: "${ownershipMap.eventLocation || ''}"
 - speakerName: "${ownershipMap.speakerName || ''}"
 - speakerRole: "${ownershipMap.speakerRole || ''}"
+
+LOGO PLACEMENTS (include the logoPlacements field in your JSON response):
+- logoPlacements is a list. For each uploaded logo, include one entry that picks a placement mode.
+- Each UI mode entry must include: logoIndex as a number; mode set to the string ui; zone as one of top-left, top-right, top-center, middle-left, middle-right, middle-center, bottom-left, bottom-right, bottom-center, center; widthPct as a number between 5 and 18 with default 12; opacity as a number between 0.85 and 1.0 with default 1.0.
+- Each environmental mode entry must include: logoIndex as a number; mode set to the string environmental; surface as a string naming the physical object the logo sits on (for example coffee_mug, laptop_lid, tshirt_chest); environmentalContext as a short string describing how the logo is rendered in the scene.
+- If no logos were uploaded, logoPlacements should be an empty list with no entries.
 `;
 }
 
@@ -775,13 +813,12 @@ ${isSquare ? '- 1:1 EXECUTION: Products centered with headline above and CTA bel
         if (!parts.some(p => p.includes('WEBINAR SCREEN'))) {
             parts.push(`
 PAIR EXECUTION — WEBINAR SCREEN (PREMIUM):
-The screen must show REAL CONTENT — not a blank or generic device.
 - Device: REALISTIC laptop/monitor with bezel, shadow, and perspective angle — NOT a flat rectangle
-- Screen content: LEGIBLE webinar title as a styled heading, subtitle line, speaker thumbnail
-- LIVE badge: red dot + "LIVE" text positioned on the screen corner (broadcast overlay style)
-- Hero: presenting gesture beside screen, NOT blocking screen content
-${isTall ? '- 9:16 EXECUTION: Larger screen showing more on-screen detail. Hero beside or above the screen.' : ''}
-${isSquare ? '- 1:1 EXECUTION: Screen center, hero to one side, tighter layout.' : ''}`);
+- SCREEN CONTENT: per SCREEN_CONTENT_BAN — the display MUST be blank dark / abstract gradient / out-of-focus glow / dimmed unreadable blur. NEVER any text, title, logo, chart, dashboard, app UI, or "LIVE" badge ON the screen surface.
+- The "LIVE" indicator (if any) is a small physical-looking sticker or badge on the device BEZEL or in the surrounding scene, NOT on the screen.
+- Hero: presenting gesture beside the device, gesturing toward it as the visual anchor.
+${isTall ? '- 9:16 EXECUTION: Larger device. Hero beside or above. Screen is a glowing surface only.' : ''}
+${isSquare ? '- 1:1 EXECUTION: Device center, hero to one side, tighter layout. Screen glowing/blank.' : ''}`);
         }
     }
 
@@ -800,12 +837,12 @@ ${isSquare ? '- 1:1 EXECUTION: Book center, hero to one side, callouts above or 
     if ((secondaryMode === 'device_mockup' || primaryMode === 'device_mockup') && !parts.some(p => p.includes('DEVICE MOCKUP'))) {
         parts.push(`
 PAIR EXECUTION — DEVICE MOCKUP (PREMIUM):
-The device must show VISIBLE CONTENT on screen — NOT blank.
 - Realistic tablet/phone with bezel, shadow, and perspective
-- Screen content: text layout, section previews, or guide thumbnails — NOT solid color
-- Key insight: floating callout bubble beside device
-${isTall ? '- 9:16 EXECUTION: Larger device showing more screen content.' : ''}
-${isSquare ? '- 1:1 EXECUTION: Device center, hero to side, callout above or below.' : ''}`);
+- SCREEN CONTENT: per SCREEN_CONTENT_BAN — the display MUST be blank dark / abstract gradient / out-of-focus glow / dimmed unreadable blur. NEVER any text layout, section preview, guide thumbnail, dashboard, chart, app UI, or logo ON the screen surface.
+- All informational content lives OUTSIDE the device — in floating callout bubbles, headlines, or scene props beside the device.
+- Key insight: floating callout bubble beside device (not on the screen).
+${isTall ? '- 9:16 EXECUTION: Larger device. Screen glowing/blank only. Callouts in surrounding scene.' : ''}
+${isSquare ? '- 1:1 EXECUTION: Device center, hero to side, callouts above or below — never on the screen.' : ''}`);
     }
 
     // ── OVERLAY SHELL QUALITY ──
@@ -2168,10 +2205,10 @@ BEFORE/AFTER SPLIT — Canvas split into two halves. BEFORE half: hero in proble
                   value_stack: 'This ad has NO hero person. The value stack IS the entire design. Full-width layout with offer items as visual focus. Background is thematic only.',
 
                   event_ticket: 'TICKET-ONLY design. NO presenter visible. The ticket fills the canvas with premium details (date, time, title, seat count).',
-                  webinar_screen: 'SCREEN-ONLY design. Laptop/monitor showing the webinar. NO presenter beside it.',
+                  webinar_screen: 'SCREEN-ONLY design. Laptop/monitor as visual anchor with screen showing only an abstract glow / blank dark surface / out-of-focus blur per SCREEN_CONTENT_BAN — NEVER any text/logo/chart/UI on the screen. NO presenter beside it.',
                   speaker_card: 'SPEAKER PORTRAIT — keynote stage environment mandatory. Dramatic lighting, credentials bar.',
                   book_mockup: 'BOOK-ONLY design. 3D book as centerpiece, NO hero person holding it. Floating in thematic environment.',
-                  device_mockup: 'DEVICE-ONLY design. Tablet/phone showing content, NO hero person. Device is the visual anchor.',
+                  device_mockup: 'DEVICE-ONLY design. Tablet/phone as visual anchor with screen rendered as blank dark / abstract gradient / out-of-focus blur per SCREEN_CONTENT_BAN — NEVER any text/logo/chart/UI on the screen. NO hero person.',
                   text_only: 'TYPOGRAPHY-ONLY design. NO hero person. NO universe environment. The COPY and TYPOGRAPHY ARE the entire visual. Background is color/gradient/texture only. All canvas space is used for typographic layout.',
               };
               return `
@@ -2187,9 +2224,9 @@ ${soloLabels[soloMode] || 'This ad features ONLY this creative element without a
                   event_ticket: 'VISUAL WEIGHT: Hero 40% | Ticket 50% | Text 10%. Ticket must show DATE, TIME, TITLE as READABLE text.',
                   speaker_card: 'VISUAL WEIGHT: Hero 50% | Stage/Credentials 40% | Text 10%. STAGE ENVIRONMENT + lower-third bar MANDATORY.',
 
-                  webinar_screen: 'VISUAL WEIGHT: Hero 40% | Screen 50% | Text 10%. Screen must show LEGIBLE title + LIVE badge.',
+                  webinar_screen: 'VISUAL WEIGHT: Hero 40% | Screen 50% | Text 10%. Screen MUST be blank/abstract per SCREEN_CONTENT_BAN — never any text/logo/chart/UI; the screen reads as a glowing surface only.',
                   book_mockup: 'VISUAL WEIGHT: Hero 45% | Book 45% | Text 10%. 3D book with readable cover title.',
-                  device_mockup: 'VISUAL WEIGHT: Hero 45% | Device 45% | Text 10%. Device screen shows content, not blank.',
+                  device_mockup: 'VISUAL WEIGHT: Hero 45% | Device 45% | Text 10%. Device screen MUST be blank/abstract per SCREEN_CONTENT_BAN — never any text/logo/chart/UI.',
 
               };
               return `
@@ -3455,6 +3492,8 @@ ${_bpEffectiveAngle === 'before_after' ? 'MANDATORY SPLIT COMPOSITION: Create a 
             return nonHero.map((m: string) => getCreativeModeBuildPlanInstruction(m)).filter(Boolean).join(' ');
         })()}
       ${buildModeBlock(inputs)}
+      ${SCREEN_CONTENT_BAN_BLOCK}
+      ${(inputs.brandLogos && inputs.brandLogos.length > 0) ? MODE_SELECTION_HINT_BLOCK : ''}
       CANONICAL CONTENT OWNERSHIP:
       - PRIMARY_HEADLINE: "${ownershipMap.primaryHeadline || hookText}"
       - SUPPORTING_HEADLINE: "${ownershipMap.supportingHeadline || subheadText}"
@@ -4008,7 +4047,17 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
     const _wardrobeBlock = _isAr && !costumeRules.includes(ARABIC_WARDROBE_BLOCK)
         ? `\n${ARABIC_WARDROBE_BLOCK}\n` : "";
 
+    const parsedBpForLogos = (() => {
+        try { return parseBuildPlanEnvelope(blueprint); } catch { return null; }
+    })();
+    const _logoPlacements: LogoPlacement[] = parsedBpForLogos?.machinePlan?.logoPlacements ?? [];
+    const _hasUI = _logoPlacements.some((p) => p.mode === 'ui');
+    const _hasEnv = _logoPlacements.some((p) => p.mode === 'environmental');
+    const _logoBlock = `${_hasUI ? UI_LOGO_INSTRUCTION_BLOCK : ''}${_hasEnv ? ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK : ''}`;
+
     const textPrompt = `${_ccBlock}${coreDesignRules}
+${SCREEN_CONTENT_BAN_BLOCK}
+${_logoBlock}
 ${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}
 BLUEPRINT: ${strippedBlueprint}
 TEXTS: "${hookText}", "${subheadText}"
@@ -4393,9 +4442,25 @@ ${_renderRtCtx.testimonial ? `- Testimonial context available — design should 
 ═══════════════════════════════════
 ` : '';
 
+    // ═══ HOTFIX-E: per-render logo placement context ═══
+    // Source from gatedBuildPlan (post-gate, post-repair) so we honor any logoPlacements
+    // changes the render gate applied. Fall back to parsedBuildPlan only if gatedBuildPlan
+    // has no machinePlan envelope (legacy / non-structured paths).
+    const _gatedParsed = (() => {
+        try { return parseBuildPlanEnvelope(gatedBuildPlan); } catch { return null; }
+    })();
+    const _renderLogoPlacements: LogoPlacement[] = _gatedParsed?.machinePlan?.logoPlacements
+        ?? parsedBuildPlan.machinePlan?.logoPlacements
+        ?? [];
+    const _renderHasUI = _renderLogoPlacements.some((p) => p.mode === 'ui');
+    const _renderHasEnv = _renderLogoPlacements.some((p) => p.mode === 'environmental');
+    const _renderLogoBlock = `${_renderHasUI ? UI_LOGO_INSTRUCTION_BLOCK : ''}${_renderHasEnv ? ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK : ''}`;
+
     const coreDesignRules = `
   [ULTRA RENDER V5.0]
   ${isArabic(inputs.adLanguage) ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n` : ""}
+  ${SCREEN_CONTENT_BAN_BLOCK}
+  ${_renderLogoBlock}
   ${_renderRtDesignHint}
        
         ⚠️⚠️⚠️ ABSOLUTE RULE: ONLY RENDER USER - FACING TEXT ⚠️⚠️⚠️
@@ -5663,6 +5728,39 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                     adLanguage: inputs.adLanguage || 'ar_fusha',
                                     visualStyleFamily: resolveStyleFamily(inputs) || 'realistic',
                                 });
+
+                                // ═══ HOTFIX-E: UI logo composite (before overlay) ═══
+                                try {
+                                    // Use gatedBuildPlan so we read placements from the repaired plan,
+                                    // not the stale original. The render-gate may have rewritten the envelope.
+                                    const parsedGatedPlan = parseBuildPlanEnvelope(gatedBuildPlan);
+                                    const logoPlacements = parsedGatedPlan.machinePlan?.logoPlacements || [];
+                                    if (logoPlacements.length > 0 && inputs.brandLogos && inputs.brandLogos.length > 0) {
+                                        const ar = overlayContract.aspectRatioRules;
+                                        const uiResult = await compositeUILogos({
+                                            baseImageBase64: currentImage,
+                                            brandLogos: inputs.brandLogos,
+                                            placements: logoPlacements,
+                                            layoutContract: overlayContract,
+                                            canvasWidth: ar.canvasWidth,
+                                            canvasHeight: ar.canvasHeight,
+                                        });
+                                        currentImage = uiResult.image;
+                                        // Surface logoPipeline events to ops logs (FR-024 traceability).
+                                        // Persisted-trace plumbing through generateFinalAd's return type
+                                        // is a follow-up — for now structured logs ensure no event is
+                                        // silently dropped.
+                                        const ev = uiResult.events;
+                                        console.log(`🪧 UI logo pipeline (strict): placed=${ev.perLogo.length} shifts=${ev.autoShifts.length} drops=${ev.drops.length} clamps=${ev.clamps.length} warnings=${ev.softWarnings.length}`);
+                                        for (const w of ev.softWarnings) console.warn(`⚠️ logo[${w.logoIndex}] ${w.reason}${w.detail ? ` — ${w.detail}` : ''}`);
+                                        for (const d of ev.drops) console.warn(`⚠️ logo[${d.logoIndex}] dropped — ${d.reason} (tried: ${d.candidatesExhausted.join(', ') || 'n/a'})`);
+                                        for (const a of ev.autoShifts) console.log(`↪️ logo[${a.logoIndex}] auto-shifted ${a.from} → ${a.to} (${a.reason})`);
+                                        for (const c of ev.clamps) console.log(`🪛 logo[${c.logoIndex}] ${c.field} clamped ${c.rawValue} → ${c.clampedValue}`);
+                                    }
+                                } catch (uiLogoErr) {
+                                    console.warn('⚠️ UI logo composite failed (non-blocking):', uiLogoErr);
+                                }
+
                                 if (overlayContract.overlaySlots.length > 0) {
                                     if (!isOverlayAvailable()) {
                                         console.warn('⚠️ OVERLAY: Sharp not installed — skipping overlay, returning image without price compositing.');
@@ -5768,6 +5866,36 @@ If no monetary numbers are visible, return: []` }
                                 adLanguage: inputs.adLanguage || 'ar_fusha',
                                 visualStyleFamily: resolveStyleFamily(inputs) || 'realistic',
                             });
+
+                            // ═══ HOTFIX-E: UI logo composite (non-strict path, before overlay) ═══
+                            // Use gatedBuildPlan for symmetry with the strict path. In the non-strict
+                            // branch the gate doesn't run so gatedBuildPlan === buildPlan today, but
+                            // sourcing from gatedBuildPlan is defensive against any future restructuring.
+                            try {
+                                const parsedGatedPlan = parseBuildPlanEnvelope(gatedBuildPlan);
+                                const logoPlacements = parsedGatedPlan.machinePlan?.logoPlacements || [];
+                                if (logoPlacements.length > 0 && inputs.brandLogos && inputs.brandLogos.length > 0) {
+                                    const ar = overlayContract.aspectRatioRules;
+                                    const uiResult = await compositeUILogos({
+                                        baseImageBase64: currentImage,
+                                        brandLogos: inputs.brandLogos,
+                                        placements: logoPlacements,
+                                        layoutContract: overlayContract,
+                                        canvasWidth: ar.canvasWidth,
+                                        canvasHeight: ar.canvasHeight,
+                                    });
+                                    currentImage = uiResult.image;
+                                    const ev = uiResult.events;
+                                    console.log(`🪧 UI logo pipeline (non-strict): placed=${ev.perLogo.length} shifts=${ev.autoShifts.length} drops=${ev.drops.length} clamps=${ev.clamps.length} warnings=${ev.softWarnings.length}`);
+                                    for (const w of ev.softWarnings) console.warn(`⚠️ logo[${w.logoIndex}] ${w.reason}${w.detail ? ` — ${w.detail}` : ''}`);
+                                    for (const d of ev.drops) console.warn(`⚠️ logo[${d.logoIndex}] dropped — ${d.reason} (tried: ${d.candidatesExhausted.join(', ') || 'n/a'})`);
+                                    for (const a of ev.autoShifts) console.log(`↪️ logo[${a.logoIndex}] auto-shifted ${a.from} → ${a.to} (${a.reason})`);
+                                    for (const c of ev.clamps) console.log(`🪛 logo[${c.logoIndex}] ${c.field} clamped ${c.rawValue} → ${c.clampedValue}`);
+                                }
+                            } catch (uiLogoErr) {
+                                console.warn('⚠️ UI logo composite failed (non-blocking, non-strict):', uiLogoErr);
+                            }
+
                             if (overlayContract.overlaySlots.length > 0 && isOverlayAvailable()) {
                                 const ar = overlayContract.aspectRatioRules;
                                 const isRtl = overlayContract.rtlRules.direction === 'rtl';
