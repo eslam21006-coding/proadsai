@@ -1,4 +1,5 @@
 import type { FullLayoutContract } from "./layoutContract.js";
+import type { LogoPlacement, LogoPipelineEvents } from "./types.js";
 
 export type TextOwnershipSource = 'headline' | 'subheadline' | 'price' | 'bonus' | 'cta' | 'badge' | 'overlay';
 
@@ -102,6 +103,7 @@ export interface StructuredBuildPlanPayload {
     overlayAssignments: StructuredOverlayAssignment[];
     mustShowAssignments: StructuredMustShowAssignment[];
     ownership: ContentOwnershipMap;
+    logoPlacements: LogoPlacement[];
 }
 
 export interface BuildPlanEnvelope {
@@ -311,6 +313,36 @@ function normalizeMachineAssignments<T extends { id: string; source: TextOwnersh
         .filter((item) => item.id && item.value) as T[];
 }
 
+function normalizeLogoPlacements(raw: any[]): LogoPlacement[] {
+    if (!Array.isArray(raw)) return [];
+    return raw
+        .map((entry: any): LogoPlacement | null => {
+            if (!entry || typeof entry !== 'object') return null;
+            const mode = entry.mode === 'ui' ? 'ui' : entry.mode === 'environmental' ? 'environmental' : 'environmental';
+            const logoIndex = typeof entry.logoIndex === 'number' ? entry.logoIndex : 0;
+            if (mode === 'ui') {
+                const validZones = new Set<string>(['top-left', 'top-right', 'top-center', 'bottom-left', 'bottom-right', 'bottom-center', 'center']);
+                const zone = validZones.has(entry.zone) ? entry.zone : undefined;
+                if (!zone) return null;
+                return {
+                    logoIndex,
+                    mode: 'ui' as const,
+                    zone,
+                    widthPct: typeof entry.widthPct === 'number' ? entry.widthPct : 12,
+                    opacity: typeof entry.opacity === 'number' ? entry.opacity : 1.0,
+                };
+            }
+            if (!entry.surface || typeof entry.surface !== 'string' || !entry.surface.trim()) return null;
+            return {
+                logoIndex,
+                mode: 'environmental' as const,
+                surface: entry.surface,
+                environmentalContext: typeof entry.environmentalContext === 'string' ? entry.environmentalContext : '',
+            };
+        })
+        .filter((p): p is LogoPlacement => p !== null);
+}
+
 function normalizeMachinePlan(payload: Partial<StructuredBuildPlanPayload> | null | undefined, fallbackOwnership: ContentOwnershipMap): StructuredBuildPlanPayload {
     return {
         blueprint: compact(payload?.blueprint),
@@ -318,6 +350,7 @@ function normalizeMachinePlan(payload: Partial<StructuredBuildPlanPayload> | nul
         overlayAssignments: normalizeMachineAssignments(payload?.overlayAssignments as StructuredOverlayAssignment[]),
         mustShowAssignments: normalizeMachineAssignments(payload?.mustShowAssignments as StructuredMustShowAssignment[]),
         ownership: mergeContentOwnership(fallbackOwnership, payload?.ownership || {}),
+        logoPlacements: normalizeLogoPlacements((payload as any)?.logoPlacements),
     };
 }
 
@@ -421,6 +454,80 @@ function extractBalancedJsonBlock(raw: string): string {
 export function parseStructuredBuildPlanResponse(rawResponse: string, fallbackOwnership: ContentOwnershipMap): StructuredBuildPlanPayload {
     const parsed = JSON.parse(extractBalancedJsonBlock(rawResponse));
     return normalizeMachinePlan(parsed, fallbackOwnership);
+}
+
+export interface LogoValidationResult {
+    cleanedPlacements: LogoPlacement[];
+    events: Pick<LogoPipelineEvents, 'clamps' | 'drops' | 'softWarnings'>;
+}
+
+const VALID_LOGO_ZONES = new Set<string>(['top-left', 'top-right', 'top-center', 'bottom-left', 'bottom-right', 'bottom-center', 'center']);
+
+export function validateLogoPlacements(
+    placements: LogoPlacement[],
+    brandLogosCount: number,
+    creativeStyle?: string,
+): LogoValidationResult {
+    const clamps: LogoPipelineEvents['clamps'] = [];
+    const drops: LogoPipelineEvents['drops'] = [];
+    const softWarnings: LogoPipelineEvents['softWarnings'] = [];
+
+    if (creativeStyle === 'text_only') {
+        if (placements.length > 0) {
+            softWarnings.push({ logoIndex: -1, reason: 'compositor_unavailable', detail: 'text_only style must not have logo placements' });
+        }
+        return { cleanedPlacements: [], events: { clamps, drops, softWarnings } };
+    }
+
+    let uiCount = 0;
+    let envCount = 0;
+    const cleaned: LogoPlacement[] = [];
+
+    for (const entry of placements) {
+        if (entry.logoIndex < 0 || entry.logoIndex >= brandLogosCount) {
+            drops.push({ logoIndex: entry.logoIndex, reason: 'logo_index_out_of_range', candidatesExhausted: [] });
+            continue;
+        }
+
+        if (entry.mode === 'ui') {
+            uiCount++;
+            if (uiCount > 2) {
+                drops.push({ logoIndex: entry.logoIndex, reason: 'over_ui_cap', candidatesExhausted: [] });
+                continue;
+            }
+            if (!VALID_LOGO_ZONES.has(entry.zone)) {
+                softWarnings.push({ logoIndex: entry.logoIndex, reason: 'composite_failed', detail: `invalid zone: ${entry.zone}` });
+                continue;
+            }
+            let widthPct = entry.widthPct;
+            if (typeof widthPct !== 'number' || isNaN(widthPct)) widthPct = 12;
+            if (widthPct < 5) { clamps.push({ logoIndex: entry.logoIndex, field: 'widthPct', rawValue: widthPct, clampedValue: 5 }); widthPct = 5; }
+            if (widthPct > 18) { clamps.push({ logoIndex: entry.logoIndex, field: 'widthPct', rawValue: widthPct, clampedValue: 18 }); widthPct = 18; }
+            let opacity = entry.opacity;
+            if (typeof opacity !== 'number' || isNaN(opacity)) opacity = 1.0;
+            if (opacity < 0.85) { clamps.push({ logoIndex: entry.logoIndex, field: 'opacity', rawValue: opacity, clampedValue: 0.85 }); opacity = 0.85; }
+            if (opacity > 1.0) { clamps.push({ logoIndex: entry.logoIndex, field: 'opacity', rawValue: opacity, clampedValue: 1.0 }); opacity = 1.0; }
+            cleaned.push({ logoIndex: entry.logoIndex, mode: 'ui', zone: entry.zone, widthPct, opacity });
+        } else {
+            envCount++;
+            if (envCount > 3) {
+                drops.push({ logoIndex: entry.logoIndex, reason: 'over_environmental_cap', candidatesExhausted: [] });
+                continue;
+            }
+            if (!entry.surface || !entry.surface.trim()) {
+                softWarnings.push({ logoIndex: entry.logoIndex, reason: 'missing_source', detail: 'environmental entry missing surface' });
+                continue;
+            }
+            cleaned.push({
+                logoIndex: entry.logoIndex,
+                mode: 'environmental',
+                surface: entry.surface,
+                environmentalContext: entry.environmentalContext || '',
+            });
+        }
+    }
+
+    return { cleanedPlacements: cleaned, events: { clamps, drops, softWarnings } };
 }
 
 export function buildPlanSlotMap(

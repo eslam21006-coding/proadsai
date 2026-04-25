@@ -30,6 +30,9 @@ import { getRankings, type RankingResult, type RankingInput } from "./rankingEng
 import type { FailureClass, CostEstimate } from "./types.js";
 import { GenerationError } from "./types.js";
 import { CULTURAL_COMPLIANCE_BLOCK, ARABIC_WARDROBE_BLOCK, isArabic, scanAndReplace } from "./culturalCompliance.js";
+import { compositeUILogos } from "./logoComposite.js";
+import { SCREEN_CONTENT_BAN_BLOCK, UI_LOGO_INSTRUCTION_BLOCK, ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK, MODE_SELECTION_HINT_BLOCK } from "./logoPromptBlocks.js";
+import { validateLogoPlacements } from "./buildPlanSlotMap.js";
 
 // ─── Ranking Guidance Builder ────────────────────────────────────────────
 // Converts Ticket 2 ranking output into a compact prompt-safe guidance block.
@@ -279,6 +282,12 @@ CANONICAL OWNERSHIP TO COPY:
 - eventLocation: "${ownershipMap.eventLocation || ''}"
 - speakerName: "${ownershipMap.speakerName || ''}"
 - speakerRole: "${ownershipMap.speakerRole || ''}"
+
+LOGO PLACEMENTS (include this array in your JSON response):
+- logoPlacements: array of logo placement objects. For each uploaded logo, assign a mode.
+  UI mode entry: { logoIndex: number, mode: "ui", zone: "top-left"|"top-right"|"top-center"|"bottom-left"|"bottom-right"|"bottom-center"|"center", widthPct: number (5-18, default 12), opacity: number (0.85-1.0, default 1.0) }
+  Environmental mode entry: { logoIndex: number, mode: "environmental", surface: string, environmentalContext: string }
+  If no logos were uploaded, return an empty array: logoPlacements: []
 `;
 }
 
@@ -2189,7 +2198,7 @@ ${soloLabels[soloMode] || 'This ad features ONLY this creative element without a
 
                   webinar_screen: 'VISUAL WEIGHT: Hero 40% | Screen 50% | Text 10%. Screen must show LEGIBLE title + LIVE badge.',
                   book_mockup: 'VISUAL WEIGHT: Hero 45% | Book 45% | Text 10%. 3D book with readable cover title.',
-                  device_mockup: 'VISUAL WEIGHT: Hero 45% | Device 45% | Text 10%. Device screen shows content, not blank.',
+                  device_mockup: 'VISUAL WEIGHT: Hero 45% | Device 45% | Text 10%. Device screen MUST be blank/abstract per SCREEN_CONTENT_BAN — never any text/logo/chart/UI.',
 
               };
               return `
@@ -3455,6 +3464,8 @@ ${_bpEffectiveAngle === 'before_after' ? 'MANDATORY SPLIT COMPOSITION: Create a 
             return nonHero.map((m: string) => getCreativeModeBuildPlanInstruction(m)).filter(Boolean).join(' ');
         })()}
       ${buildModeBlock(inputs)}
+      ${SCREEN_CONTENT_BAN_BLOCK}
+      ${(inputs.brandLogos && inputs.brandLogos.length > 0) ? MODE_SELECTION_HINT_BLOCK : ''}
       CANONICAL CONTENT OWNERSHIP:
       - PRIMARY_HEADLINE: "${ownershipMap.primaryHeadline || hookText}"
       - SUPPORTING_HEADLINE: "${ownershipMap.supportingHeadline || subheadText}"
@@ -4008,7 +4019,17 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
     const _wardrobeBlock = _isAr && !costumeRules.includes(ARABIC_WARDROBE_BLOCK)
         ? `\n${ARABIC_WARDROBE_BLOCK}\n` : "";
 
+    const parsedBpForLogos = (() => {
+        try { return parseBuildPlanEnvelope(blueprint); } catch { return null; }
+    })();
+    const _logoPlacements = parsedBpForLogos?.machinePlan?.logoPlacements || [];
+    const _hasUI = _logoPlacements.some((p: any) => p.mode === 'ui');
+    const _hasEnv = _logoPlacements.some((p: any) => p.mode === 'environmental');
+    const _logoBlock = `${_hasUI ? UI_LOGO_INSTRUCTION_BLOCK : ''}${_hasEnv ? ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK : ''}`;
+
     const textPrompt = `${_ccBlock}${coreDesignRules}
+${SCREEN_CONTENT_BAN_BLOCK}
+${_logoBlock}
 ${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}
 BLUEPRINT: ${strippedBlueprint}
 TEXTS: "${hookText}", "${subheadText}"
@@ -5663,6 +5684,27 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                     adLanguage: inputs.adLanguage || 'ar_fusha',
                                     visualStyleFamily: resolveStyleFamily(inputs) || 'realistic',
                                 });
+
+                                // ═══ HOTFIX-E: UI logo composite (before overlay) ═══
+                                try {
+                                    const parsedBuildPlan = parseBuildPlanEnvelope(buildPlan);
+                                    const logoPlacements = parsedBuildPlan.machinePlan?.logoPlacements || [];
+                                    if (logoPlacements.length > 0 && inputs.brandLogos && inputs.brandLogos.length > 0) {
+                                        const ar = overlayContract.aspectRatioRules;
+                                        const uiResult = await compositeUILogos({
+                                            baseImageBase64: currentImage,
+                                            brandLogos: inputs.brandLogos,
+                                            placements: logoPlacements,
+                                            layoutContract: overlayContract,
+                                            canvasWidth: ar.canvasWidth,
+                                            canvasHeight: ar.canvasHeight,
+                                        });
+                                        currentImage = uiResult.image;
+                                    }
+                                } catch (uiLogoErr) {
+                                    console.warn('⚠️ UI logo composite failed (non-blocking):', uiLogoErr);
+                                }
+
                                 if (overlayContract.overlaySlots.length > 0) {
                                     if (!isOverlayAvailable()) {
                                         console.warn('⚠️ OVERLAY: Sharp not installed — skipping overlay, returning image without price compositing.');
@@ -5768,6 +5810,27 @@ If no monetary numbers are visible, return: []` }
                                 adLanguage: inputs.adLanguage || 'ar_fusha',
                                 visualStyleFamily: resolveStyleFamily(inputs) || 'realistic',
                             });
+
+                            // ═══ HOTFIX-E: UI logo composite (non-strict path, before overlay) ═══
+                            try {
+                                const parsedBuildPlan = parseBuildPlanEnvelope(buildPlan);
+                                const logoPlacements = parsedBuildPlan.machinePlan?.logoPlacements || [];
+                                if (logoPlacements.length > 0 && inputs.brandLogos && inputs.brandLogos.length > 0) {
+                                    const ar = overlayContract.aspectRatioRules;
+                                    const uiResult = await compositeUILogos({
+                                        baseImageBase64: currentImage,
+                                        brandLogos: inputs.brandLogos,
+                                        placements: logoPlacements,
+                                        layoutContract: overlayContract,
+                                        canvasWidth: ar.canvasWidth,
+                                        canvasHeight: ar.canvasHeight,
+                                    });
+                                    currentImage = uiResult.image;
+                                }
+                            } catch (uiLogoErr) {
+                                console.warn('⚠️ UI logo composite failed (non-blocking, non-strict):', uiLogoErr);
+                            }
+
                             if (overlayContract.overlaySlots.length > 0 && isOverlayAvailable()) {
                                 const ar = overlayContract.aspectRatioRules;
                                 const isRtl = overlayContract.rtlRules.direction === 'rtl';

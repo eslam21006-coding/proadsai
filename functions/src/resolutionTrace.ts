@@ -4,12 +4,14 @@ import type {
     ResolutionTrace,
     SlideEntry,
     AutoSwitchEvent,
+    LogoPipelineEvents,
 } from "./types.js";
 
 type Mutable<T> = { -readonly [P in keyof T]: T[P] extends readonly (infer U)[] ? U[] : T[P] };
 type ResolutionTraceDraft = Partial<Mutable<ResolutionTrace>> & {
     autoSwitchEvents: AutoSwitchEvent[];
     _culturalViolation?: ResolutionTrace["culturalViolation"];
+    _logoPipeline?: LogoPipelineEvents;
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -38,6 +40,7 @@ export interface TraceBuilder {
         matchedWords: string[];
         sourceLayer: "imagePrompt" | "adCopy" | "both";
     }): TraceBuilder;
+    setLogoPipeline(events: LogoPipelineEvents): TraceBuilder;
     build(): ResolutionTrace;
 }
 
@@ -113,6 +116,19 @@ export function createTraceBuilder(): TraceBuilder {
             };
             return builder;
         },
+        setLogoPipeline(events) {
+            state._logoPipeline = {
+                perLogo: events.perLogo.map(e => ({ ...e })),
+                autoShifts: events.autoShifts.map(e => ({ ...e })),
+                drops: events.drops.map(e => ({
+                    ...e,
+                    candidatesExhausted: [...e.candidatesExhausted],
+                })),
+                clamps: events.clamps.map(e => ({ ...e })),
+                softWarnings: events.softWarnings.map(e => ({ ...e })),
+            };
+            return builder;
+        },
         build(): ResolutionTrace {
             if (!state.resolvedCampaignType) throw new Error("TraceBuilder: resolvedCampaignType not set");
             if (!state.resolvedAdMode) throw new Error("TraceBuilder: resolvedAdMode not set");
@@ -147,6 +163,7 @@ export function createTraceBuilder(): TraceBuilder {
                 launchMatrixCheckPassed: state.launchMatrixCheckPassed ?? false,
                 launchMatrixBlockReason: state.launchMatrixBlockReason,
                 culturalViolation: state._culturalViolation,
+                logoPipeline: state._logoPipeline,
             });
         },
     };

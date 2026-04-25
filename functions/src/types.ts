@@ -97,6 +97,68 @@ export interface ValueStackAdjustment {
     capped: boolean;
 }
 
+// ─── Logo Placement (HOTFIX-E) ───────────────────────────────────────────
+
+export type LogoZone =
+    | 'top-left'
+    | 'top-right'
+    | 'top-center'
+    | 'bottom-left'
+    | 'bottom-right'
+    | 'bottom-center'
+    | 'center';
+
+export interface UILogoPlacement {
+    logoIndex: number;
+    mode: 'ui';
+    zone: LogoZone;
+    widthPct: number;
+    opacity: number;
+}
+
+export interface EnvironmentalLogoPlacement {
+    logoIndex: number;
+    mode: 'environmental';
+    surface: string;
+    environmentalContext: string;
+}
+
+export type LogoPlacement = UILogoPlacement | EnvironmentalLogoPlacement;
+
+export interface LogoPipelineEvents {
+    perLogo: Array<{
+        logoIndex: number;
+        chosenMode: 'ui' | 'environmental';
+        finalZone?: LogoZone;
+        finalSurface?: string;
+    }>;
+    autoShifts: Array<{
+        logoIndex: number;
+        from: LogoZone;
+        to: LogoZone;
+        reason: 'text_collision' | 'cta_collision';
+    }>;
+    drops: Array<{
+        logoIndex: number;
+        reason: 'no_non_colliding_zone'
+              | 'over_ui_cap'
+              | 'over_environmental_cap'
+              | 'logo_index_out_of_range';
+        candidatesExhausted: LogoZone[];
+    }>;
+    clamps: Array<{
+        logoIndex: number;
+        field: 'widthPct' | 'opacity';
+        rawValue: number;
+        clampedValue: number;
+    }>;
+    softWarnings: Array<{
+        logoIndex: number;
+        reason: 'composite_failed' | 'corrupt_source' | 'unsupported_format' | 'missing_source' | 'compositor_unavailable';
+        detail?: string;
+    }>;
+}
+
 export interface ResolutionTrace {
     resolvedCampaignType: "cold" | "retargeting";
     resolvedAdMode: "single" | "carousel" | "batch";
@@ -128,6 +190,7 @@ export interface ResolutionTrace {
         matchedWords: string[];
         sourceLayer: "imagePrompt" | "adCopy" | "both";
     };
+    logoPipeline?: LogoPipelineEvents;
 }
 
 export interface LaunchSurfaceInput {
