@@ -240,6 +240,10 @@ const BUILD_PLAN_RESPONSE_SCHEMA = {
             type: "ARRAY",
             items: {
                 type: "OBJECT",
+                // Conditional per-mode required fields. Google's GenerativeSchema
+                // accepts oneOf in some SDK versions and ignores it in others; the
+                // application-layer validator (validateLogoPlacements) enforces the
+                // same constraints either way, so this is a defense-in-depth schema.
                 properties: {
                     logoIndex: { type: "NUMBER" },
                     mode: { type: "STRING" },
@@ -250,6 +254,16 @@ const BUILD_PLAN_RESPONSE_SCHEMA = {
                     environmentalContext: { type: "STRING" },
                 },
                 required: ["logoIndex", "mode"],
+                oneOf: [
+                    {
+                        properties: { mode: { type: "STRING", enum: ["ui"] } },
+                        required: ["logoIndex", "mode", "zone", "widthPct", "opacity"],
+                    },
+                    {
+                        properties: { mode: { type: "STRING", enum: ["environmental"] } },
+                        required: ["logoIndex", "mode", "surface", "environmentalContext"],
+                    },
+                ],
             },
         },
     },
@@ -300,7 +314,7 @@ CANONICAL OWNERSHIP TO COPY:
 
 LOGO PLACEMENTS (include the logoPlacements field in your JSON response):
 - logoPlacements is a list. For each uploaded logo, include one entry that picks a placement mode.
-- Each UI mode entry must include: logoIndex as a number; mode set to the string ui; zone as one of top-left, top-right, top-center, bottom-left, bottom-right, bottom-center, center; widthPct as a number between 5 and 18 with default 12; opacity as a number between 0.85 and 1.0 with default 1.0.
+- Each UI mode entry must include: logoIndex as a number; mode set to the string ui; zone as one of top-left, top-right, top-center, middle-left, middle-right, middle-center, bottom-left, bottom-right, bottom-center, center; widthPct as a number between 5 and 18 with default 12; opacity as a number between 0.85 and 1.0 with default 1.0.
 - Each environmental mode entry must include: logoIndex as a number; mode set to the string environmental; surface as a string naming the physical object the logo sits on (for example coffee_mug, laptop_lid, tshirt_chest); environmentalContext as a short string describing how the logo is rendered in the scene.
 - If no logos were uploaded, logoPlacements should be an empty list with no entries.
 `;

@@ -328,7 +328,7 @@ function normalizeLogoPlacements(raw: any[]): LogoPlacement[] {
             const mode = entry.mode === 'ui' ? 'ui' : entry.mode === 'environmental' ? 'environmental' : 'environmental';
             const logoIndex = typeof entry.logoIndex === 'number' ? entry.logoIndex : 0;
             if (mode === 'ui') {
-                const validZones = new Set<string>(['top-left', 'top-right', 'top-center', 'bottom-left', 'bottom-right', 'bottom-center', 'center']);
+                const validZones = new Set<string>(['top-left', 'top-right', 'top-center', 'middle-left', 'middle-right', 'middle-center', 'bottom-left', 'bottom-right', 'bottom-center', 'center']);
                 const zone = validZones.has(entry.zone) ? entry.zone : undefined;
                 if (!zone) {
                     console.warn(`⚠️ normalizeLogoPlacements: dropped UI entry[${idx}] logoIndex=${logoIndex} — invalid/missing zone`);
@@ -474,7 +474,7 @@ export interface LogoValidationResult {
     events: Pick<LogoPipelineEvents, 'clamps' | 'drops' | 'softWarnings'>;
 }
 
-const VALID_LOGO_ZONES = new Set<string>(['top-left', 'top-right', 'top-center', 'bottom-left', 'bottom-right', 'bottom-center', 'center']);
+const VALID_LOGO_ZONES = new Set<string>(['top-left', 'top-right', 'top-center', 'middle-left', 'middle-right', 'middle-center', 'bottom-left', 'bottom-right', 'bottom-center', 'center']);
 
 export function validateLogoPlacements(
     placements: LogoPlacement[],

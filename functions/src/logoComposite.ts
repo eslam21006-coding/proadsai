@@ -7,12 +7,24 @@ import type {
     UILogoPlacement,
 } from "./types.js";
 import type { FullLayoutContract } from "./layoutContract.js";
+import type { Sharp } from "sharp";
 
-let sharp: any = null;
-try {
-    sharp = require("sharp");
-} catch {
-    console.warn("⚠️ Sharp not available — UI logo compositor disabled. Install: npm install sharp");
+// ─── Typed lazy sharp loader (NodeNext-friendly dynamic import with cache) ───
+type SharpFactory = (input?: Buffer | string | { create: { width: number; height: number; channels: 4; background: { r: number; g: number; b: number; alpha: number } } } | Uint8Array, options?: { raw?: { width: number; height: number; channels: 4 } }) => Sharp;
+let sharpInstance: SharpFactory | null = null;
+let sharpLoadAttempted = false;
+async function getSharp(): Promise<SharpFactory | null> {
+    if (sharpLoadAttempted) return sharpInstance;
+    sharpLoadAttempted = true;
+    try {
+        const mod = await import("sharp");
+        // sharp is a CJS module exporting a default function; in NodeNext
+        // ESM interop the default lands on `.default`.
+        sharpInstance = ((mod as unknown as { default?: SharpFactory }).default ?? (mod as unknown as SharpFactory));
+    } catch {
+        console.warn("⚠️ Sharp not available — UI logo compositor disabled. Install: npm install sharp");
+    }
+    return sharpInstance;
 }
 
 export interface CompositeUILogosArgs {
@@ -33,17 +45,31 @@ function emptyEvents(): LogoPipelineEvents {
     return { perLogo: [], autoShifts: [], drops: [], clamps: [], softWarnings: [] };
 }
 
-const TOP_BAND: LogoZone[] = ['top-right', 'top-center', 'top-left'];
-const BOTTOM_BAND: LogoZone[] = ['bottom-right', 'bottom-center', 'bottom-left'];
+const TOP_BAND: LogoZone[] = ["top-right", "top-center", "top-left"];
+const MIDDLE_BAND: LogoZone[] = ["middle-right", "middle-center", "middle-left"];
+const BOTTOM_BAND: LogoZone[] = ["bottom-right", "bottom-center", "bottom-left"];
 
-function getBand(zone: LogoZone): 'top' | 'bottom' | 'center' {
-    if (TOP_BAND.includes(zone)) return 'top';
-    if (BOTTOM_BAND.includes(zone)) return 'bottom';
-    return 'center';
+type Band = "top" | "middle" | "bottom" | "center";
+
+function getBand(zone: LogoZone): Band {
+    if (TOP_BAND.includes(zone)) return "top";
+    if (MIDDLE_BAND.includes(zone)) return "middle";
+    if (BOTTOM_BAND.includes(zone)) return "bottom";
+    return "center";
 }
 
-function getBandCandidates(band: 'top' | 'bottom'): LogoZone[] {
-    return band === 'top' ? [...TOP_BAND] : [...BOTTOM_BAND];
+function getBandCandidates(band: Band): LogoZone[] {
+    if (band === "top") return [...TOP_BAND];
+    if (band === "middle") return [...MIDDLE_BAND];
+    if (band === "bottom") return [...BOTTOM_BAND];
+    return [];
+}
+
+function bandStartAnchor(band: Band): LogoZone | null {
+    if (band === "top") return "top-right";
+    if (band === "middle") return "middle-right";
+    if (band === "bottom") return "bottom-right";
+    return null;
 }
 
 function rotateToStart(candidates: LogoZone[], start: LogoZone): LogoZone[] {
@@ -60,14 +86,21 @@ function rectsOverlap(a: Rect, b: Rect): boolean {
 
 function zoneToPixels(zone: LogoZone, logoWidth: number, logoHeight: number, canvasWidth: number, canvasHeight: number): { top: number; left: number } {
     const margin = Math.round(canvasWidth * 0.03);
+    const midY = Math.round((canvasHeight - logoHeight) / 2);
+    const midX = Math.round((canvasWidth - logoWidth) / 2);
+    const rightX = canvasWidth - logoWidth - margin;
+    const bottomY = canvasHeight - logoHeight - margin;
     switch (zone) {
-        case 'top-left': return { top: margin, left: margin };
-        case 'top-right': return { top: margin, left: canvasWidth - logoWidth - margin };
-        case 'top-center': return { top: margin, left: Math.round((canvasWidth - logoWidth) / 2) };
-        case 'bottom-left': return { top: canvasHeight - logoHeight - margin, left: margin };
-        case 'bottom-right': return { top: canvasHeight - logoHeight - margin, left: canvasWidth - logoWidth - margin };
-        case 'bottom-center': return { top: canvasHeight - logoHeight - margin, left: Math.round((canvasWidth - logoWidth) / 2) };
-        case 'center': return { top: Math.round((canvasHeight - logoHeight) / 2), left: Math.round((canvasWidth - logoWidth) / 2) };
+        case "top-left": return { top: margin, left: margin };
+        case "top-right": return { top: margin, left: rightX };
+        case "top-center": return { top: margin, left: midX };
+        case "middle-left": return { top: midY, left: margin };
+        case "middle-right": return { top: midY, left: rightX };
+        case "middle-center": return { top: midY, left: midX };
+        case "bottom-left": return { top: bottomY, left: margin };
+        case "bottom-right": return { top: bottomY, left: rightX };
+        case "bottom-center": return { top: bottomY, left: midX };
+        case "center": return { top: midY, left: midX };
         default: return { top: margin, left: margin };
     }
 }
@@ -77,10 +110,8 @@ function getTextCollisionRects(contract: FullLayoutContract, canvasWidth: number
     const zones = contract.zones;
     if (!zones) return rects;
 
-    const textPriorityIds = new Set(['headline', 'subheadline', 'cta', 'badge', 'event_metadata']);
+    const textPriorityIds = new Set(["headline", "subheadline", "cta", "badge", "event_metadata"]);
     const inset = Math.round(canvasWidth * 0.03);
-    // ZoneSpec exposes priority + size hints (minSizePct/maxSizePct), but no per-axis
-    // width/height percentages. We use canvas-relative defaults for rect heights below.
     const defaultBandHeight = canvasHeight * 0.2;
     const defaultCtaHeight = canvasHeight * 0.15;
     const defaultCenterWidth = canvasWidth * 0.6;
@@ -90,9 +121,9 @@ function getTextCollisionRects(contract: FullLayoutContract, canvasWidth: number
         const priority = zone.priority ?? 99;
         if (priority > 2 && !textPriorityIds.has(id)) continue;
 
-        if (id.includes('top') || id.includes('headline')) {
+        if (id.includes("top") || id.includes("headline")) {
             rects.push({ x: inset, y: inset, w: canvasWidth - 2 * inset, h: defaultBandHeight });
-        } else if (id.includes('bottom') || id.includes('cta')) {
+        } else if (id.includes("bottom") || id.includes("cta")) {
             rects.push({ x: inset, y: canvasHeight - defaultCtaHeight - inset, w: canvasWidth - 2 * inset, h: defaultCtaHeight });
         } else {
             rects.push({
@@ -120,26 +151,42 @@ function resolveZoneWithCollision(
         return { x: left, y: top, w: logoWidth, h: logoHeight };
     })();
 
-    const hasCollision = collisionRects.some(r => rectsOverlap(plannedRect, r));
+    const hasCollision = collisionRects.some((r) => rectsOverlap(plannedRect, r));
     if (!hasCollision) {
         return { zone: plannedZone, shifted: false, candidatesExhausted: [] };
     }
 
-    if (plannedZone === 'center') {
-        return { zone: plannedZone, shifted: false, candidatesExhausted: ['center'] };
+    if (plannedZone === "center") {
+        return { zone: plannedZone, shifted: false, candidatesExhausted: ["center"] };
     }
 
-    const band = getBand(plannedZone) as 'top' | 'bottom';
+    const band = getBand(plannedZone);
     const sameBandCandidates = rotateToStart(getBandCandidates(band), plannedZone);
-    const otherBand: 'top' | 'bottom' = band === 'top' ? 'bottom' : 'top';
-    const otherBandCandidates = rotateToStart(getBandCandidates(otherBand), otherBand === 'top' ? 'top-right' : 'bottom-right');
-    const allCandidates = [...sameBandCandidates, ...otherBandCandidates];
+
+    // Order other bands by proximity: top → [middle, bottom], middle → [top, bottom],
+    // bottom → [middle, top], center → [middle, top, bottom].
+    const otherBands: Band[] = (() => {
+        if (band === "top") return ["middle", "bottom"];
+        if (band === "middle") return ["top", "bottom"];
+        if (band === "bottom") return ["middle", "top"];
+        return ["middle", "top", "bottom"];
+    })();
+    const otherCandidates: LogoZone[] = [];
+    for (const ob of otherBands) {
+        const anchor = bandStartAnchor(ob);
+        const list = getBandCandidates(ob);
+        if (anchor) otherCandidates.push(...rotateToStart(list, anchor));
+        else otherCandidates.push(...list);
+    }
+
+    const allCandidates = [...sameBandCandidates, ...otherCandidates];
     const exhausted: LogoZone[] = [plannedZone];
 
     for (const candidate of allCandidates) {
+        if (candidate === plannedZone) continue;
         const { top, left } = zoneToPixels(candidate, logoWidth, logoHeight, canvasWidth, canvasHeight);
         const candidateRect: Rect = { x: left, y: top, w: logoWidth, h: logoHeight };
-        const candidateCollision = collisionRects.some(r => rectsOverlap(candidateRect, r));
+        const candidateCollision = collisionRects.some((r) => rectsOverlap(candidateRect, r));
         if (!candidateCollision) {
             return { zone: candidate, shifted: true, candidatesExhausted: exhausted };
         }
@@ -152,39 +199,48 @@ function resolveZoneWithCollision(
 export async function compositeUILogos(args: CompositeUILogosArgs): Promise<CompositeUILogosResult> {
     const events = emptyEvents();
 
+    const sharp = await getSharp();
     if (!sharp) {
-        events.softWarnings.push({ logoIndex: -1, reason: 'compositor_unavailable' });
+        events.softWarnings.push({ logoIndex: -1, reason: "compositor_unavailable" });
         return { image: args.baseImageBase64, events };
     }
 
-    const uiPlacements = args.placements.filter((p): p is UILogoPlacement => p.mode === 'ui');
+    const uiPlacements = args.placements.filter((p): p is UILogoPlacement => p.mode === "ui");
     if (uiPlacements.length === 0) {
         return { image: args.baseImageBase64, events };
     }
 
     let currentB64 = args.baseImageBase64;
-    const rawBase = currentB64.includes(',') ? currentB64.split(',')[1] : currentB64;
+    const rawBase = currentB64.includes(",") ? currentB64.split(",")[1] : currentB64;
     // Collision set starts with text/CTA rects; placed UI logo rects are appended as we go
     // so a later UI logo cannot overlap an earlier one.
     const collisionRects: Rect[] = [...getTextCollisionRects(args.layoutContract, args.canvasWidth, args.canvasHeight)];
 
     try {
-        let currentBuffer = Buffer.from(rawBase, 'base64');
+        // Use a wider Buffer<ArrayBufferLike> type to accept sharp().toBuffer() reassignments
+        // (sharp's typings emit Buffer<ArrayBufferLike> on some Node versions).
+        let currentBuffer: Buffer = Buffer.from(rawBase, "base64");
 
         for (const placement of uiPlacements) {
             const logoSource = args.brandLogos[placement.logoIndex];
             if (!logoSource) {
-                events.softWarnings.push({ logoIndex: placement.logoIndex, reason: 'missing_source' });
+                events.softWarnings.push({ logoIndex: placement.logoIndex, reason: "missing_source" });
+                events.perLogo.push({
+                    logoIndex: placement.logoIndex,
+                    chosenMode: "ui",
+                    outcome: "missing_source",
+                    reason: "missing_source",
+                });
                 continue;
             }
 
             try {
-                const logoB64 = logoSource.includes(',') ? logoSource.split(',')[1] : logoSource;
-                const logoBuffer = Buffer.from(logoB64, 'base64');
+                const logoB64 = logoSource.includes(",") ? logoSource.split(",")[1] : logoSource;
+                const logoBuffer = Buffer.from(logoB64, "base64");
 
                 const targetWidth = Math.round((placement.widthPct / 100) * args.canvasWidth);
                 const resizedLogo = await sharp(logoBuffer)
-                    .resize({ width: targetWidth, fit: 'inside' })
+                    .resize({ width: targetWidth, fit: "inside" })
                     .png()
                     .toBuffer();
 
@@ -200,7 +256,7 @@ export async function compositeUILogos(args: CompositeUILogosArgs): Promise<Comp
                 // on logos with smooth/transparent edges.
                 const blurredAlpha = await sharp(resizedLogo)
                     .ensureAlpha()
-                    .extractChannel('alpha')
+                    .extractChannel("alpha")
                     .blur(shadowSigma)
                     .raw()
                     .toBuffer({ resolveWithObject: true });
@@ -248,8 +304,14 @@ export async function compositeUILogos(args: CompositeUILogosArgs): Promise<Comp
                 if (resolved.candidatesExhausted.length > 0 && !resolved.shifted) {
                     events.drops.push({
                         logoIndex: placement.logoIndex,
-                        reason: 'no_non_colliding_zone',
+                        reason: "no_non_colliding_zone",
                         candidatesExhausted: resolved.candidatesExhausted,
+                    });
+                    events.perLogo.push({
+                        logoIndex: placement.logoIndex,
+                        chosenMode: "ui",
+                        outcome: "no_zone",
+                        reason: "no_non_colliding_zone",
                     });
                     continue;
                 }
@@ -259,14 +321,14 @@ export async function compositeUILogos(args: CompositeUILogosArgs): Promise<Comp
                         logoIndex: placement.logoIndex,
                         from: placement.zone,
                         to: resolved.zone,
-                        reason: 'text_collision',
+                        reason: "text_collision",
                     });
                 }
 
                 const { top, left } = zoneToPixels(resolved.zone, finalW, finalH, args.canvasWidth, args.canvasHeight);
 
                 currentBuffer = await sharp(currentBuffer)
-                    .composite([{ input: padCanvas, top, left, blend: 'over' }])
+                    .composite([{ input: padCanvas, top, left, blend: "over" }])
                     .png()
                     .toBuffer();
 
@@ -276,23 +338,31 @@ export async function compositeUILogos(args: CompositeUILogosArgs): Promise<Comp
 
                 events.perLogo.push({
                     logoIndex: placement.logoIndex,
-                    chosenMode: 'ui',
+                    chosenMode: "ui",
                     finalZone: resolved.zone,
+                    outcome: "placed",
                 });
             } catch (logoErr: unknown) {
+                const detail = logoErr instanceof Error ? logoErr.message : String(logoErr);
                 events.softWarnings.push({
                     logoIndex: placement.logoIndex,
-                    reason: 'composite_failed',
-                    detail: logoErr instanceof Error ? logoErr.message : String(logoErr),
+                    reason: "composite_failed",
+                    detail,
+                });
+                events.perLogo.push({
+                    logoIndex: placement.logoIndex,
+                    chosenMode: "ui",
+                    outcome: "soft_failed",
+                    reason: detail,
                 });
             }
         }
 
-        currentB64 = `data:image/png;base64,${currentBuffer.toString('base64')}`;
+        currentB64 = `data:image/png;base64,${currentBuffer.toString("base64")}`;
     } catch (err: unknown) {
         const detail = err instanceof Error ? err.message : String(err);
-        console.warn('⚠️ UI logo compositor total failure (non-blocking):', detail);
-        events.softWarnings.push({ logoIndex: -1, reason: 'composite_failed', detail });
+        console.warn("⚠️ UI logo compositor total failure (non-blocking):", detail);
+        events.softWarnings.push({ logoIndex: -1, reason: "composite_failed", detail });
     }
 
     return { image: currentB64, events };

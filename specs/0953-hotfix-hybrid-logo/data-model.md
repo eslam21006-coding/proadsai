@@ -16,6 +16,9 @@ export type LogoZone =
     | 'top-left'
     | 'top-right'
     | 'top-center'
+    | 'middle-left'
+    | 'middle-right'
+    | 'middle-center'
     | 'bottom-left'
     | 'bottom-right'
     | 'bottom-center'
@@ -44,7 +47,7 @@ export type LogoPlacement = UILogoPlacement | EnvironmentalLogoPlacement;
 - **Never hard-rejects.** All violations are recorded on `events.drops` or `events.softWarnings` and the cleaned array is returned. The caller never sees an exception.
 - `logoIndex` MUST be a non-negative integer (`Number.isInteger`) < `inputs.brandLogos.length`. Non-integer or out-of-range entries are recorded on `events.drops` with `reason: 'logo_index_out_of_range'`.
 - `mode` MUST be `'ui'` or `'environmental'`. Missing or other values default to `'environmental'` at parse time (`normalizeLogoPlacements`, FR-025 legacy safety).
-- For UI entries: `zone` MUST be one of the seven `LogoZone` values; invalid/missing zones are recorded on `events.softWarnings`. `widthPct` is clamped to `[5, 18]` (default `12` if missing); `opacity` is clamped to `[0.85, 1.0]` (default `1.0` if missing). Clamps are recorded on `events.clamps`, never rejected.
+- For UI entries: `zone` MUST be one of the ten `LogoZone` values (3 top + 3 middle + 3 bottom + center); invalid/missing zones are recorded on `events.softWarnings`. `widthPct` is clamped to `[5, 18]` (default `12` if missing); `opacity` is clamped to `[0.85, 1.0]` (default `1.0` if missing). Clamps are recorded on `events.clamps`, never rejected.
 - For environmental entries: `surface` MUST be a non-empty string (missing/empty surface → `events.softWarnings`). `environmentalContext` may be the empty string `""` — that is allowed and not warned.
 - Across the whole `logoPlacements` array per ad: at most 2 UI and at most 3 environmental entries are kept. Excess entries (after passing the per-entry zone/surface validation) are recorded on `events.drops` with `reason: 'over_ui_cap'` / `'over_environmental_cap'`. Invalid entries do NOT consume cap slots.
 - `text_only` creative style MUST produce zero placements (FR-003). When the validator receives a non-empty `logoPlacements` on a `text_only` ad, it returns an empty `cleanedPlacements` and emits ONE `events.softWarnings` entry — it does NOT hard-reject the build plan or trigger a planner re-prompt.
@@ -82,8 +85,13 @@ export interface LogoPipelineEvents {
     perLogo: Array<{
         logoIndex: number;
         chosenMode: 'ui' | 'environmental';
-        finalZone?: LogoZone;          // present iff chosenMode === 'ui'
-        finalSurface?: string;         // present iff chosenMode === 'environmental'
+        finalZone?: LogoZone;          // present when chosenMode === 'ui' AND outcome === 'placed'
+        finalSurface?: string;         // present when chosenMode === 'environmental'
+        outcome?: 'placed'             // composited successfully
+                | 'missing_source'     // brandLogos[logoIndex] absent
+                | 'no_zone'            // collision exhausted every band
+                | 'soft_failed';       // sharp threw on this logo
+        reason?: string;               // free-form detail keyed to outcome
     }>;
     autoShifts: Array<{
         logoIndex: number;

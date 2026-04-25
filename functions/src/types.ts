@@ -103,6 +103,9 @@ export type LogoZone =
     | "top-left"
     | "top-right"
     | "top-center"
+    | "middle-left"
+    | "middle-right"
+    | "middle-center"
     | "bottom-left"
     | "bottom-right"
     | "bottom-center"
@@ -131,6 +134,10 @@ export interface LogoPipelineEvents {
         chosenMode: "ui" | "environmental";
         finalZone?: LogoZone;
         finalSurface?: string;
+        // outcome + reason are populated for failure/skip branches so
+        // every processed placement has a perLogo record (not just successes).
+        outcome?: "placed" | "missing_source" | "no_zone" | "soft_failed";
+        reason?: string;
     }>;
     autoShifts: Array<{
         logoIndex: number;

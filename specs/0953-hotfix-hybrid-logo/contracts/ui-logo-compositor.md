@@ -46,8 +46,10 @@ export async function compositeUILogos(
 4. **Auto-shift (FR-011, FR-012)**:
    - Compute the candidate list for the placement's vertical band, in clockwise order starting from the planned zone:
      - Top band candidates: `[top-right, top-center, top-left]` rotated to start with the planned zone.
+     - Middle band candidates: `[middle-right, middle-center, middle-left]` rotated to start with the planned zone.
      - Bottom band candidates: `[bottom-right, bottom-center, bottom-left]` rotated to start with the planned zone.
      - Center band: `[center]` only — no shift candidates within the band (per research D8).
+   - Other-band ordering by proximity: top → [middle, bottom]; middle → [top, bottom]; bottom → [middle, top].
    - Iterate the same-band candidates in order; for each, recompute target rectangle, test against text/CTA rectangles. First non-colliding candidate wins; record `autoShifts[i] = { logoIndex, from: planned, to: chosen, reason: 'text_collision' | 'cta_collision' }`.
    - If same-band exhausted: iterate the OTHER band's candidates in the equivalent clockwise order. First non-colliding candidate wins; record `autoShifts[i]` with the cross-band shift.
    - If both bands exhausted: drop this logo. Record `drops[i] = { logoIndex, reason: 'no_non_colliding_zone', candidatesExhausted: [planned, …all candidates tried…] }`. Skip to the next placement.

@@ -10,6 +10,7 @@ This contract defines the per-placement record the planner LLM emits as part of 
 ```ts
 export type LogoZone =
     | 'top-left' | 'top-right' | 'top-center'
+    | 'middle-left' | 'middle-right' | 'middle-center'
     | 'bottom-left' | 'bottom-right' | 'bottom-center'
     | 'center';
 
@@ -48,7 +49,7 @@ export type LogoPlacement = UILogoPlacement | EnvironmentalLogoPlacement;
 ### UI mode — `zone`
 
 - **Type**: enum `LogoZone`.
-- **Allowed**: the seven values listed above.
+- **Allowed**: the ten values listed above (3 top + 3 middle + 3 bottom + center).
 - **Invalid or missing**: drop entry, record one soft warning. Do NOT default a missing zone (no safe default exists — center risks hero collision, corners are arbitrary).
 
 ### UI mode — `widthPct`

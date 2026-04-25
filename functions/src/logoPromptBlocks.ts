@@ -74,9 +74,10 @@ CAPS:
 - Never exceed the number of uploaded logos
 
 UI PLACEMENT FIELDS: logoIndex, mode: 'ui', zone (top-left |
-top-right | top-center | bottom-left | bottom-right |
-bottom-center | center), widthPct (5-18, default 12), opacity
-(0.85-1.0, default 1.0)
+top-right | top-center | middle-left | middle-right |
+middle-center | bottom-left | bottom-right | bottom-center |
+center), widthPct (5-18, default 12), opacity (0.85-1.0,
+default 1.0)
 
 ENVIRONMENTAL PLACEMENT FIELDS: logoIndex, mode: 'environmental',
 surface (coffee_mug | laptop_lid | wall_art | tshirt_chest |
