@@ -316,14 +316,20 @@ function normalizeMachineAssignments<T extends { id: string; source: TextOwnersh
 function normalizeLogoPlacements(raw: any[]): LogoPlacement[] {
     if (!Array.isArray(raw)) return [];
     return raw
-        .map((entry: any): LogoPlacement | null => {
-            if (!entry || typeof entry !== 'object') return null;
+        .map((entry: any, idx: number): LogoPlacement | null => {
+            if (!entry || typeof entry !== 'object') {
+                console.warn(`⚠️ normalizeLogoPlacements: dropped entry[${idx}] — not an object`);
+                return null;
+            }
             const mode = entry.mode === 'ui' ? 'ui' : entry.mode === 'environmental' ? 'environmental' : 'environmental';
             const logoIndex = typeof entry.logoIndex === 'number' ? entry.logoIndex : 0;
             if (mode === 'ui') {
                 const validZones = new Set<string>(['top-left', 'top-right', 'top-center', 'bottom-left', 'bottom-right', 'bottom-center', 'center']);
                 const zone = validZones.has(entry.zone) ? entry.zone : undefined;
-                if (!zone) return null;
+                if (!zone) {
+                    console.warn(`⚠️ normalizeLogoPlacements: dropped UI entry[${idx}] logoIndex=${logoIndex} — invalid/missing zone`);
+                    return null;
+                }
                 return {
                     logoIndex,
                     mode: 'ui' as const,
@@ -332,7 +338,10 @@ function normalizeLogoPlacements(raw: any[]): LogoPlacement[] {
                     opacity: typeof entry.opacity === 'number' ? entry.opacity : 1.0,
                 };
             }
-            if (!entry.surface || typeof entry.surface !== 'string' || !entry.surface.trim()) return null;
+            if (!entry.surface || typeof entry.surface !== 'string' || !entry.surface.trim()) {
+                console.warn(`⚠️ normalizeLogoPlacements: dropped environmental entry[${idx}] logoIndex=${logoIndex} — invalid/missing surface`);
+                return null;
+            }
             return {
                 logoIndex,
                 mode: 'environmental' as const,
@@ -350,7 +359,7 @@ function normalizeMachinePlan(payload: Partial<StructuredBuildPlanPayload> | nul
         overlayAssignments: normalizeMachineAssignments(payload?.overlayAssignments as StructuredOverlayAssignment[]),
         mustShowAssignments: normalizeMachineAssignments(payload?.mustShowAssignments as StructuredMustShowAssignment[]),
         ownership: mergeContentOwnership(fallbackOwnership, payload?.ownership || {}),
-        logoPlacements: normalizeLogoPlacements((payload as any)?.logoPlacements),
+        logoPlacements: normalizeLogoPlacements(payload?.logoPlacements ?? []),
     };
 }
 
@@ -484,17 +493,14 @@ export function validateLogoPlacements(
     const cleaned: LogoPlacement[] = [];
 
     for (const entry of placements) {
-        if (entry.logoIndex < 0 || entry.logoIndex >= brandLogosCount) {
+        if (!Number.isInteger(entry.logoIndex) || entry.logoIndex < 0 || entry.logoIndex >= brandLogosCount) {
             drops.push({ logoIndex: entry.logoIndex, reason: 'logo_index_out_of_range', candidatesExhausted: [] });
             continue;
         }
 
         if (entry.mode === 'ui') {
-            uiCount++;
-            if (uiCount > 2) {
-                drops.push({ logoIndex: entry.logoIndex, reason: 'over_ui_cap', candidatesExhausted: [] });
-                continue;
-            }
+            // Validate zone + clamp BEFORE counting toward the cap.
+            // Invalid entries should not consume cap slots.
             if (!VALID_LOGO_ZONES.has(entry.zone)) {
                 softWarnings.push({ logoIndex: entry.logoIndex, reason: 'composite_failed', detail: `invalid zone: ${entry.zone}` });
                 continue;
@@ -507,17 +513,24 @@ export function validateLogoPlacements(
             if (typeof opacity !== 'number' || isNaN(opacity)) opacity = 1.0;
             if (opacity < 0.85) { clamps.push({ logoIndex: entry.logoIndex, field: 'opacity', rawValue: opacity, clampedValue: 0.85 }); opacity = 0.85; }
             if (opacity > 1.0) { clamps.push({ logoIndex: entry.logoIndex, field: 'opacity', rawValue: opacity, clampedValue: 1.0 }); opacity = 1.0; }
-            cleaned.push({ logoIndex: entry.logoIndex, mode: 'ui', zone: entry.zone, widthPct, opacity });
-        } else {
-            envCount++;
-            if (envCount > 3) {
-                drops.push({ logoIndex: entry.logoIndex, reason: 'over_environmental_cap', candidatesExhausted: [] });
+            // Now check the cap — only valid placements count.
+            if (uiCount >= 2) {
+                drops.push({ logoIndex: entry.logoIndex, reason: 'over_ui_cap', candidatesExhausted: [] });
                 continue;
             }
+            uiCount++;
+            cleaned.push({ logoIndex: entry.logoIndex, mode: 'ui', zone: entry.zone, widthPct, opacity });
+        } else {
+            // Validate surface BEFORE counting toward the cap.
             if (!entry.surface || !entry.surface.trim()) {
                 softWarnings.push({ logoIndex: entry.logoIndex, reason: 'missing_source', detail: 'environmental entry missing surface' });
                 continue;
             }
+            if (envCount >= 3) {
+                drops.push({ logoIndex: entry.logoIndex, reason: 'over_environmental_cap', candidatesExhausted: [] });
+                continue;
+            }
+            envCount++;
             cleaned.push({
                 logoIndex: entry.logoIndex,
                 mode: 'environmental',

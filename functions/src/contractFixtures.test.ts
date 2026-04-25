@@ -1357,12 +1357,9 @@ import {
 } from "./buildPlanSlotMap.js";
 import type {
     LogoPlacement,
-    LogoPipelineEvents,
     LogoZone,
 } from "./types.js";
 import { SCREEN_CONTENT_BAN_BLOCK, UI_LOGO_INSTRUCTION_BLOCK, ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK, MODE_SELECTION_HINT_BLOCK } from "./logoPromptBlocks.js";
-
-const FAKE_LOGO_1x1_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
 // ─── HFE.8.a — Minimalist single ad, 1 UI placement, no collision (T017) ───
 function testHfe8a() {
@@ -1566,6 +1563,9 @@ function testValidatorTextOnly() {
 
 // ─── Validator: unrecognized mode defaults to environmental ───
 function testValidatorUnrecognizedMode() {
+    // Intentional invalid mode 'video' (not in LogoPlacement union) — exercises the
+    // normalizer's default-to-environmental fallback. The 'as any' cast is required
+    // to construct an off-spec planner output for this fixture.
     const result = validateLogoPlacements(
         [{ logoIndex: 0, mode: 'video' as any, surface: 'coffee_mug', environmentalContext: '' }],
         1,

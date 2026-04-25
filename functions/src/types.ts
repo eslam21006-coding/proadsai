@@ -100,17 +100,17 @@ export interface ValueStackAdjustment {
 // ─── Logo Placement (HOTFIX-E) ───────────────────────────────────────────
 
 export type LogoZone =
-    | 'top-left'
-    | 'top-right'
-    | 'top-center'
-    | 'bottom-left'
-    | 'bottom-right'
-    | 'bottom-center'
-    | 'center';
+    | "top-left"
+    | "top-right"
+    | "top-center"
+    | "bottom-left"
+    | "bottom-right"
+    | "bottom-center"
+    | "center";
 
 export interface UILogoPlacement {
     logoIndex: number;
-    mode: 'ui';
+    mode: "ui";
     zone: LogoZone;
     widthPct: number;
     opacity: number;
@@ -118,7 +118,7 @@ export interface UILogoPlacement {
 
 export interface EnvironmentalLogoPlacement {
     logoIndex: number;
-    mode: 'environmental';
+    mode: "environmental";
     surface: string;
     environmentalContext: string;
 }
@@ -128,7 +128,7 @@ export type LogoPlacement = UILogoPlacement | EnvironmentalLogoPlacement;
 export interface LogoPipelineEvents {
     perLogo: Array<{
         logoIndex: number;
-        chosenMode: 'ui' | 'environmental';
+        chosenMode: "ui" | "environmental";
         finalZone?: LogoZone;
         finalSurface?: string;
     }>;
@@ -136,25 +136,25 @@ export interface LogoPipelineEvents {
         logoIndex: number;
         from: LogoZone;
         to: LogoZone;
-        reason: 'text_collision' | 'cta_collision';
+        reason: "text_collision" | "cta_collision";
     }>;
     drops: Array<{
         logoIndex: number;
-        reason: 'no_non_colliding_zone'
-              | 'over_ui_cap'
-              | 'over_environmental_cap'
-              | 'logo_index_out_of_range';
+        reason: "no_non_colliding_zone"
+              | "over_ui_cap"
+              | "over_environmental_cap"
+              | "logo_index_out_of_range";
         candidatesExhausted: LogoZone[];
     }>;
     clamps: Array<{
         logoIndex: number;
-        field: 'widthPct' | 'opacity';
+        field: "widthPct" | "opacity";
         rawValue: number;
         clampedValue: number;
     }>;
     softWarnings: Array<{
         logoIndex: number;
-        reason: 'composite_failed' | 'corrupt_source' | 'unsupported_format' | 'missing_source' | 'compositor_unavailable';
+        reason: "composite_failed" | "corrupt_source" | "unsupported_format" | "missing_source" | "compositor_unavailable";
         detail?: string;
     }>;
 }

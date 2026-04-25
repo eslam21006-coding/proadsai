@@ -16,7 +16,7 @@ description: "Task list for HOTFIX-E — Hybrid Logo Handling"
 
 - **[P]**: Can run in parallel (different files, no dependencies on incomplete tasks in the same phase)
 - **[Story]**: Which user story the task belongs to (US1–US5 per spec.md priorities)
-- All file paths are repo-relative from `D:\proads-worktrees\0953-hotfix-hybrid-logo\`
+- All file paths are repo-relative (treat `repo-root/` as the project root, regardless of where the working tree lives on disk).
 
 ## Path Conventions
 

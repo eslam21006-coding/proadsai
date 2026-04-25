@@ -163,7 +163,13 @@ export function createTraceBuilder(): TraceBuilder {
                 launchMatrixCheckPassed: state.launchMatrixCheckPassed ?? false,
                 launchMatrixBlockReason: state.launchMatrixBlockReason,
                 culturalViolation: state._culturalViolation,
-                logoPipeline: state._logoPipeline,
+                logoPipeline: state._logoPipeline ? {
+                    perLogo: state._logoPipeline.perLogo.map((e) => ({ ...e })),
+                    autoShifts: state._logoPipeline.autoShifts.map((e) => ({ ...e })),
+                    drops: state._logoPipeline.drops.map((e) => ({ ...e, candidatesExhausted: [...e.candidatesExhausted] })),
+                    clamps: state._logoPipeline.clamps.map((e) => ({ ...e })),
+                    softWarnings: state._logoPipeline.softWarnings.map((e) => ({ ...e })),
+                } : undefined,
             });
         },
     };

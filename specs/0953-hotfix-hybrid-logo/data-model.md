@@ -39,14 +39,15 @@ export interface EnvironmentalLogoPlacement {
 export type LogoPlacement = UILogoPlacement | EnvironmentalLogoPlacement;
 ```
 
-**Validation rules** (enforced in `functions/src/buildPlanSlotMap.ts::validateStructuredBuildPlan()`):
+**Validation rules** (enforced in `functions/src/buildPlanSlotMap.ts::validateLogoPlacements()` — note: the older draft of this doc referenced `validateStructuredBuildPlan()`, but the actual exported function is `validateLogoPlacements()`):
 
-- `logoIndex` MUST be a non-negative integer < `inputs.brandLogos.length`. Out-of-range entries are dropped with a soft warning.
-- `mode` MUST be `'ui'` or `'environmental'`. Missing or other values default to `'environmental'` (legacy safety, FR-025) and a soft warning is recorded.
-- For UI entries: `zone` MUST be one of the seven `LogoZone` values; `widthPct` is clamped to `[5, 18]` (default `12` if missing); `opacity` is clamped to `[0.85, 1.0]` (default `1.0` if missing). Clamps are recorded on the resolution trace, not rejected.
-- For environmental entries: `surface` MUST be a non-empty string; `environmentalContext` MUST be a non-empty string.
-- Across the whole `logoPlacements` array per ad: at most 2 UI entries and at most 3 environmental entries (FR-006). Extra entries above the per-mode cap are dropped with a soft warning. Total entries MUST NOT exceed `inputs.brandLogos.length`.
-- `text_only` creative style MUST produce zero placements (FR-003); a non-empty `logoPlacements` on a `text_only` ad is rejected as a planner contract violation.
+- **Never hard-rejects.** All violations are recorded on `events.drops` or `events.softWarnings` and the cleaned array is returned. The caller never sees an exception.
+- `logoIndex` MUST be a non-negative integer (`Number.isInteger`) < `inputs.brandLogos.length`. Non-integer or out-of-range entries are recorded on `events.drops` with `reason: 'logo_index_out_of_range'`.
+- `mode` MUST be `'ui'` or `'environmental'`. Missing or other values default to `'environmental'` at parse time (`normalizeLogoPlacements`, FR-025 legacy safety).
+- For UI entries: `zone` MUST be one of the seven `LogoZone` values; invalid/missing zones are recorded on `events.softWarnings`. `widthPct` is clamped to `[5, 18]` (default `12` if missing); `opacity` is clamped to `[0.85, 1.0]` (default `1.0` if missing). Clamps are recorded on `events.clamps`, never rejected.
+- For environmental entries: `surface` MUST be a non-empty string (missing/empty surface → `events.softWarnings`). `environmentalContext` may be the empty string `""` — that is allowed and not warned.
+- Across the whole `logoPlacements` array per ad: at most 2 UI and at most 3 environmental entries are kept. Excess entries (after passing the per-entry zone/surface validation) are recorded on `events.drops` with `reason: 'over_ui_cap'` / `'over_environmental_cap'`. Invalid entries do NOT consume cap slots.
+- `text_only` creative style MUST produce zero placements (FR-003). When the validator receives a non-empty `logoPlacements` on a `text_only` ad, it returns an empty `cleanedPlacements` and emits ONE `events.softWarnings` entry — it does NOT hard-reject the build plan or trigger a planner re-prompt.
 
 ### 2. `StructuredBuildPlanPayload` — EXTENSION (existing, additive)
 

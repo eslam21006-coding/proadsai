@@ -41,7 +41,8 @@ export async function compositeUILogos(
 2. **Resolve canvas zones**: for each UI placement, look up `zone` in the layout contract's safe-zone map. Compute pixel `x, y, width, height` rectangles for both:
    - The placement's planned target rectangle (using `widthPct × canvasWidth`, aspect-preserved height).
    - All text/CTA collision rectangles from `layoutContract.zones` (any zone with `priority` corresponding to text or CTA).
-3. **Collision detection**: for each UI placement, test the planned target rectangle against every text/CTA rectangle. If any overlap, run auto-shift (step 4). If no collision, proceed to step 5 with the planned zone.
+   - All previously placed UI logo rectangles for this ad — appended to the collision set after each successful composite, so a later UI logo cannot be auto-shifted onto an area an earlier UI logo already occupies.
+3. **Collision detection**: for each UI placement, test the planned target rectangle against every collision rectangle (text/CTA + any prior UI logo rect). If any overlap, run auto-shift (step 4). If no collision, proceed to step 5 with the planned zone.
 4. **Auto-shift (FR-011, FR-012)**:
    - Compute the candidate list for the placement's vertical band, in clockwise order starting from the planned zone:
      - Top band candidates: `[top-right, top-center, top-left]` rotated to start with the planned zone.

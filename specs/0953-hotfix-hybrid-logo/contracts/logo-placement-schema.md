@@ -80,7 +80,7 @@ export type LogoPlacement = UILogoPlacement | EnvironmentalLogoPlacement;
 
 - **Total count**: MUST NOT exceed `inputs.brandLogos.length`. Excess entries (over the upload count) are dropped in order.
 - **Per-mode caps**: at most 2 UI entries, at most 3 environmental entries (FR-006). After reaching a cap, any additional same-mode entries are dropped, recorded as `drops[i] = { logoIndex, reason: 'over_ui_cap' | 'over_environmental_cap', candidatesExhausted: [] }`.
-- **`text_only` style override**: if the resolved creative style is `text_only`, the `logoPlacements` array MUST be empty. A non-empty array on a `text_only` ad is a planner contract violation; the validator rejects the build plan and the planner is re-prompted.
+- **`text_only` style override**: if the resolved creative style is `text_only`, the `logoPlacements` array MUST be empty. When `validateLogoPlacements()` receives a non-empty array on a `text_only` ad, it returns an empty `cleanedPlacements` and emits one `softWarnings[]` entry — it does NOT hard-reject the build plan or re-prompt the planner. Callers should treat this as a non-fatal cleanup step.
 
 ## Persistence
 

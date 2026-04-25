@@ -237,6 +237,22 @@ const BUILD_PLAN_RESPONSE_SCHEMA = {
             },
             required: [],
         },
+        logoPlacements: {
+            type: "ARRAY",
+            items: {
+                type: "OBJECT",
+                properties: {
+                    logoIndex: { type: "NUMBER" },
+                    mode: { type: "STRING" },
+                    zone: { type: "STRING" },
+                    widthPct: { type: "NUMBER" },
+                    opacity: { type: "NUMBER" },
+                    surface: { type: "STRING" },
+                    environmentalContext: { type: "STRING" },
+                },
+                required: ["logoIndex", "mode"],
+            },
+        },
     },
     required: ["blueprint", "zones", "overlayAssignments", "mustShowAssignments", "ownership"],
 };
@@ -2177,10 +2193,10 @@ BEFORE/AFTER SPLIT — Canvas split into two halves. BEFORE half: hero in proble
                   value_stack: 'This ad has NO hero person. The value stack IS the entire design. Full-width layout with offer items as visual focus. Background is thematic only.',
 
                   event_ticket: 'TICKET-ONLY design. NO presenter visible. The ticket fills the canvas with premium details (date, time, title, seat count).',
-                  webinar_screen: 'SCREEN-ONLY design. Laptop/monitor showing the webinar. NO presenter beside it.',
+                  webinar_screen: 'SCREEN-ONLY design. Laptop/monitor as visual anchor with screen showing only an abstract glow / blank dark surface / out-of-focus blur per SCREEN_CONTENT_BAN — NEVER any text/logo/chart/UI on the screen. NO presenter beside it.',
                   speaker_card: 'SPEAKER PORTRAIT — keynote stage environment mandatory. Dramatic lighting, credentials bar.',
                   book_mockup: 'BOOK-ONLY design. 3D book as centerpiece, NO hero person holding it. Floating in thematic environment.',
-                  device_mockup: 'DEVICE-ONLY design. Tablet/phone showing content, NO hero person. Device is the visual anchor.',
+                  device_mockup: 'DEVICE-ONLY design. Tablet/phone as visual anchor with screen rendered as blank dark / abstract gradient / out-of-focus blur per SCREEN_CONTENT_BAN — NEVER any text/logo/chart/UI on the screen. NO hero person.',
                   text_only: 'TYPOGRAPHY-ONLY design. NO hero person. NO universe environment. The COPY and TYPOGRAPHY ARE the entire visual. Background is color/gradient/texture only. All canvas space is used for typographic layout.',
               };
               return `
@@ -2196,7 +2212,7 @@ ${soloLabels[soloMode] || 'This ad features ONLY this creative element without a
                   event_ticket: 'VISUAL WEIGHT: Hero 40% | Ticket 50% | Text 10%. Ticket must show DATE, TIME, TITLE as READABLE text.',
                   speaker_card: 'VISUAL WEIGHT: Hero 50% | Stage/Credentials 40% | Text 10%. STAGE ENVIRONMENT + lower-third bar MANDATORY.',
 
-                  webinar_screen: 'VISUAL WEIGHT: Hero 40% | Screen 50% | Text 10%. Screen must show LEGIBLE title + LIVE badge.',
+                  webinar_screen: 'VISUAL WEIGHT: Hero 40% | Screen 50% | Text 10%. Screen MUST be blank/abstract per SCREEN_CONTENT_BAN — never any text/logo/chart/UI; the screen reads as a glowing surface only.',
                   book_mockup: 'VISUAL WEIGHT: Hero 45% | Book 45% | Text 10%. 3D book with readable cover title.',
                   device_mockup: 'VISUAL WEIGHT: Hero 45% | Device 45% | Text 10%. Device screen MUST be blank/abstract per SCREEN_CONTENT_BAN — never any text/logo/chart/UI.',
 
@@ -4414,9 +4430,17 @@ ${_renderRtCtx.testimonial ? `- Testimonial context available — design should 
 ═══════════════════════════════════
 ` : '';
 
+    // ═══ HOTFIX-E: per-render logo placement context ═══
+    const _renderLogoPlacements = parsedBuildPlan.machinePlan?.logoPlacements || [];
+    const _renderHasUI = _renderLogoPlacements.some((p: any) => p.mode === 'ui');
+    const _renderHasEnv = _renderLogoPlacements.some((p: any) => p.mode === 'environmental');
+    const _renderLogoBlock = `${_renderHasUI ? UI_LOGO_INSTRUCTION_BLOCK : ''}${_renderHasEnv ? ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK : ''}`;
+
     const coreDesignRules = `
   [ULTRA RENDER V5.0]
   ${isArabic(inputs.adLanguage) ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n` : ""}
+  ${SCREEN_CONTENT_BAN_BLOCK}
+  ${_renderLogoBlock}
   ${_renderRtDesignHint}
        
         ⚠️⚠️⚠️ ABSOLUTE RULE: ONLY RENDER USER - FACING TEXT ⚠️⚠️⚠️
@@ -5687,8 +5711,10 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
 
                                 // ═══ HOTFIX-E: UI logo composite (before overlay) ═══
                                 try {
-                                    const parsedBuildPlan = parseBuildPlanEnvelope(buildPlan);
-                                    const logoPlacements = parsedBuildPlan.machinePlan?.logoPlacements || [];
+                                    // Use gatedBuildPlan so we read placements from the repaired plan,
+                                    // not the stale original. The render-gate may have rewritten the envelope.
+                                    const parsedGatedPlan = parseBuildPlanEnvelope(gatedBuildPlan);
+                                    const logoPlacements = parsedGatedPlan.machinePlan?.logoPlacements || [];
                                     if (logoPlacements.length > 0 && inputs.brandLogos && inputs.brandLogos.length > 0) {
                                         const ar = overlayContract.aspectRatioRules;
                                         const uiResult = await compositeUILogos({

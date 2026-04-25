@@ -4,6 +4,7 @@ import type {
     LogoPlacement,
     LogoPipelineEvents,
     LogoZone,
+    UILogoPlacement,
 } from "./types.js";
 import type { FullLayoutContract } from "./layoutContract.js";
 
@@ -34,7 +35,6 @@ function emptyEvents(): LogoPipelineEvents {
 
 const TOP_BAND: LogoZone[] = ['top-right', 'top-center', 'top-left'];
 const BOTTOM_BAND: LogoZone[] = ['bottom-right', 'bottom-center', 'bottom-left'];
-const ALL_CANDIDATES: LogoZone[] = [...TOP_BAND, ...BOTTOM_BAND];
 
 function getBand(zone: LogoZone): 'top' | 'bottom' | 'center' {
     if (TOP_BAND.includes(zone)) return 'top';
@@ -152,21 +152,21 @@ export async function compositeUILogos(args: CompositeUILogosArgs): Promise<Comp
         return { image: args.baseImageBase64, events };
     }
 
-    const uiPlacements = args.placements.filter(p => p.mode === 'ui');
+    const uiPlacements = args.placements.filter((p): p is UILogoPlacement => p.mode === 'ui');
     if (uiPlacements.length === 0) {
         return { image: args.baseImageBase64, events };
     }
 
     let currentB64 = args.baseImageBase64;
     const rawBase = currentB64.includes(',') ? currentB64.split(',')[1] : currentB64;
-    const collisionRects = getTextCollisionRects(args.layoutContract, args.canvasWidth, args.canvasHeight);
+    // Collision set starts with text/CTA rects; placed UI logo rects are appended as we go
+    // so a later UI logo cannot overlap an earlier one.
+    const collisionRects: Rect[] = [...getTextCollisionRects(args.layoutContract, args.canvasWidth, args.canvasHeight)];
 
     try {
         let currentBuffer = Buffer.from(rawBase, 'base64');
 
         for (const placement of uiPlacements) {
-            if (placement.mode !== 'ui') continue;
-
             const logoSource = args.brandLogos[placement.logoIndex];
             if (!logoSource) {
                 events.softWarnings.push({ logoIndex: placement.logoIndex, reason: 'missing_source' });
@@ -190,7 +190,6 @@ export async function compositeUILogos(args: CompositeUILogosArgs): Promise<Comp
                 const shadowOffsetY = 2;
                 const shadowSigma = 2.5;
                 const shadowLogo = await sharp(resizedLogo)
-                    .clone()
                     .threshold(1)
                     .blur(shadowSigma)
                     .ensureAlpha(0.25)
@@ -249,6 +248,10 @@ export async function compositeUILogos(args: CompositeUILogosArgs): Promise<Comp
                     .composite([{ input: padCanvas, top, left, blend: 'over' }])
                     .png()
                     .toBuffer();
+
+                // Append this placed UI logo's rect to the collision set so a later
+                // UI logo can't be auto-shifted onto the same area.
+                collisionRects.push({ x: left, y: top, w: finalW, h: finalH });
 
                 events.perLogo.push({
                     logoIndex: placement.logoIndex,
