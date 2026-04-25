@@ -194,14 +194,30 @@ export async function compositeUILogos(args: CompositeUILogosArgs): Promise<Comp
 
                 const shadowOffsetY = 2;
                 const shadowSigma = 2.5;
-                const shadowLogo = await sharp(resizedLogo)
-                    .threshold(1)
+                const shadowAlpha = 0.25;
+                // Build the shadow from the logo's ALPHA CHANNEL — preserves anti-aliased
+                // edges. threshold(1) would binarize luminance and produce jagged shadows
+                // on logos with smooth/transparent edges.
+                const blurredAlpha = await sharp(resizedLogo)
+                    .ensureAlpha()
+                    .extractChannel('alpha')
                     .blur(shadowSigma)
-                    .ensureAlpha(0.25)
-                    .toBuffer();
-                const shadowMeta = await sharp(shadowLogo).metadata();
-                const shadowW = shadowMeta.width || logoW;
-                const shadowH = shadowMeta.height || logoH;
+                    .raw()
+                    .toBuffer({ resolveWithObject: true });
+                const shadowW = blurredAlpha.info.width;
+                const shadowH = blurredAlpha.info.height;
+                // Construct a black RGBA buffer where R=G=B=0 and A=blurredAlpha*0.25
+                // — yields a soft black shadow that traces the logo's silhouette.
+                const shadowRgba = Buffer.alloc(shadowW * shadowH * 4);
+                for (let i = 0; i < blurredAlpha.data.length; i++) {
+                    shadowRgba[i * 4] = 0;
+                    shadowRgba[i * 4 + 1] = 0;
+                    shadowRgba[i * 4 + 2] = 0;
+                    shadowRgba[i * 4 + 3] = Math.round(blurredAlpha.data[i] * shadowAlpha);
+                }
+                const shadowLogo = await sharp(shadowRgba, {
+                    raw: { width: shadowW, height: shadowH, channels: 4 },
+                }).png().toBuffer();
 
                 const padW = Math.max(logoW, shadowW) + 8;
                 const padH = Math.max(logoH, shadowH) + 8 + shadowOffsetY;
@@ -263,19 +279,20 @@ export async function compositeUILogos(args: CompositeUILogosArgs): Promise<Comp
                     chosenMode: 'ui',
                     finalZone: resolved.zone,
                 });
-            } catch (logoErr: any) {
+            } catch (logoErr: unknown) {
                 events.softWarnings.push({
                     logoIndex: placement.logoIndex,
                     reason: 'composite_failed',
-                    detail: logoErr?.message || String(logoErr),
+                    detail: logoErr instanceof Error ? logoErr.message : String(logoErr),
                 });
             }
         }
 
         currentB64 = `data:image/png;base64,${currentBuffer.toString('base64')}`;
-    } catch (err: any) {
-        console.warn('⚠️ UI logo compositor total failure (non-blocking):', err?.message || err);
-        events.softWarnings.push({ logoIndex: -1, reason: 'composite_failed', detail: err?.message || String(err) });
+    } catch (err: unknown) {
+        const detail = err instanceof Error ? err.message : String(err);
+        console.warn('⚠️ UI logo compositor total failure (non-blocking):', detail);
+        events.softWarnings.push({ logoIndex: -1, reason: 'composite_failed', detail });
     }
 
     return { image: currentB64, events };

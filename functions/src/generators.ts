@@ -298,11 +298,11 @@ CANONICAL OWNERSHIP TO COPY:
 - speakerName: "${ownershipMap.speakerName || ''}"
 - speakerRole: "${ownershipMap.speakerRole || ''}"
 
-LOGO PLACEMENTS (include this array in your JSON response):
-- logoPlacements: array of logo placement objects. For each uploaded logo, assign a mode.
-  UI mode entry: { logoIndex: number, mode: "ui", zone: "top-left"|"top-right"|"top-center"|"bottom-left"|"bottom-right"|"bottom-center"|"center", widthPct: number (5-18, default 12), opacity: number (0.85-1.0, default 1.0) }
-  Environmental mode entry: { logoIndex: number, mode: "environmental", surface: string, environmentalContext: string }
-  If no logos were uploaded, return an empty array: logoPlacements: []
+LOGO PLACEMENTS (include the logoPlacements field in your JSON response):
+- logoPlacements is a list. For each uploaded logo, include one entry that picks a placement mode.
+- Each UI mode entry must include: logoIndex as a number; mode set to the string ui; zone as one of top-left, top-right, top-center, bottom-left, bottom-right, bottom-center, center; widthPct as a number between 5 and 18 with default 12; opacity as a number between 0.85 and 1.0 with default 1.0.
+- Each environmental mode entry must include: logoIndex as a number; mode set to the string environmental; surface as a string naming the physical object the logo sits on (for example coffee_mug, laptop_lid, tshirt_chest); environmentalContext as a short string describing how the logo is rendered in the scene.
+- If no logos were uploaded, logoPlacements should be an empty list with no entries.
 `;
 }
 
@@ -799,13 +799,12 @@ ${isSquare ? '- 1:1 EXECUTION: Products centered with headline above and CTA bel
         if (!parts.some(p => p.includes('WEBINAR SCREEN'))) {
             parts.push(`
 PAIR EXECUTION — WEBINAR SCREEN (PREMIUM):
-The screen must show REAL CONTENT — not a blank or generic device.
 - Device: REALISTIC laptop/monitor with bezel, shadow, and perspective angle — NOT a flat rectangle
-- Screen content: LEGIBLE webinar title as a styled heading, subtitle line, speaker thumbnail
-- LIVE badge: red dot + "LIVE" text positioned on the screen corner (broadcast overlay style)
-- Hero: presenting gesture beside screen, NOT blocking screen content
-${isTall ? '- 9:16 EXECUTION: Larger screen showing more on-screen detail. Hero beside or above the screen.' : ''}
-${isSquare ? '- 1:1 EXECUTION: Screen center, hero to one side, tighter layout.' : ''}`);
+- SCREEN CONTENT: per SCREEN_CONTENT_BAN — the display MUST be blank dark / abstract gradient / out-of-focus glow / dimmed unreadable blur. NEVER any text, title, logo, chart, dashboard, app UI, or "LIVE" badge ON the screen surface.
+- The "LIVE" indicator (if any) is a small physical-looking sticker or badge on the device BEZEL or in the surrounding scene, NOT on the screen.
+- Hero: presenting gesture beside the device, gesturing toward it as the visual anchor.
+${isTall ? '- 9:16 EXECUTION: Larger device. Hero beside or above. Screen is a glowing surface only.' : ''}
+${isSquare ? '- 1:1 EXECUTION: Device center, hero to one side, tighter layout. Screen glowing/blank.' : ''}`);
         }
     }
 
@@ -824,12 +823,12 @@ ${isSquare ? '- 1:1 EXECUTION: Book center, hero to one side, callouts above or 
     if ((secondaryMode === 'device_mockup' || primaryMode === 'device_mockup') && !parts.some(p => p.includes('DEVICE MOCKUP'))) {
         parts.push(`
 PAIR EXECUTION — DEVICE MOCKUP (PREMIUM):
-The device must show VISIBLE CONTENT on screen — NOT blank.
 - Realistic tablet/phone with bezel, shadow, and perspective
-- Screen content: text layout, section previews, or guide thumbnails — NOT solid color
-- Key insight: floating callout bubble beside device
-${isTall ? '- 9:16 EXECUTION: Larger device showing more screen content.' : ''}
-${isSquare ? '- 1:1 EXECUTION: Device center, hero to side, callout above or below.' : ''}`);
+- SCREEN CONTENT: per SCREEN_CONTENT_BAN — the display MUST be blank dark / abstract gradient / out-of-focus glow / dimmed unreadable blur. NEVER any text layout, section preview, guide thumbnail, dashboard, chart, app UI, or logo ON the screen surface.
+- All informational content lives OUTSIDE the device — in floating callout bubbles, headlines, or scene props beside the device.
+- Key insight: floating callout bubble beside device (not on the screen).
+${isTall ? '- 9:16 EXECUTION: Larger device. Screen glowing/blank only. Callouts in surrounding scene.' : ''}
+${isSquare ? '- 1:1 EXECUTION: Device center, hero to side, callouts above or below — never on the screen.' : ''}`);
     }
 
     // ── OVERLAY SHELL QUALITY ──
@@ -5845,9 +5844,12 @@ If no monetary numbers are visible, return: []` }
                             });
 
                             // ═══ HOTFIX-E: UI logo composite (non-strict path, before overlay) ═══
+                            // Use gatedBuildPlan for symmetry with the strict path. In the non-strict
+                            // branch the gate doesn't run so gatedBuildPlan === buildPlan today, but
+                            // sourcing from gatedBuildPlan is defensive against any future restructuring.
                             try {
-                                const parsedBuildPlan = parseBuildPlanEnvelope(buildPlan);
-                                const logoPlacements = parsedBuildPlan.machinePlan?.logoPlacements || [];
+                                const parsedGatedPlan = parseBuildPlanEnvelope(gatedBuildPlan);
+                                const logoPlacements = parsedGatedPlan.machinePlan?.logoPlacements || [];
                                 if (logoPlacements.length > 0 && inputs.brandLogos && inputs.brandLogos.length > 0) {
                                     const ar = overlayContract.aspectRatioRules;
                                     const uiResult = await compositeUILogos({
