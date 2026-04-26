@@ -51,7 +51,7 @@ All three override decisions are funnelled through three small exported helpers 
 
 1. **Arabic uniformity**: the existing Arabic-rendering rule "NEVER partially color Arabic text" (`generators.ts:5151`) is preserved. The brand override only sets the *uniform* headline color; it does not paint individual glyphs.
 2. **Layout integrity**: zone position, size, and alignment come from `textZone` and are never affected by `brand`.
-3. **Contrast**: when `brand.primary` is the CTA background, `brand.ctaTextColor` is the WCAG-luminance-correct contrasting color (white or `#1A1A1A`), so the CTA never becomes unreadable. This is the spec's resolution to clarification Q5.
+3. **Contrast (when the compositor picks)**: when `brand.primary` is the CTA background and `brand.ctaTextColor` is `null`, the compositor (via `pickCtaTextColor`) selects the WCAG-luminance-correct contrasting color (white or `#1A1A1A`), so the CTA never becomes unreadable. This is the spec's resolution to clarification Q5. **When the caller supplies an explicit `brand.ctaTextColor`**, the compositor uses it verbatim and does NOT re-validate contrast — that responsibility moves to the caller (the in-pipeline `resolveBrandColors` already applies the same WCAG-luminance formula, so the normal flow is contrast-safe; a hand-constructed `BrandColorPair` from any other caller is not).
 4. **Fallback symmetry**: every override field is independently optional. A user with only a brand primary still gets a branded CTA but an unchanged headline color. A user with only a brand secondary still gets a branded headline accent but an unchanged CTA.
 
 ## Caller-side change in `generators.ts`
@@ -73,7 +73,7 @@ await compositeArabicText(imageBase64, hookText, zone, style, w, h, resolvedBran
 Reference IDs:
 
 - `COMP-01-no-brand-fallback` — call without `brand` → output identical to today's behavior (golden image diff).
-- `COMP-02-brand-primary-only` — `brand: { primary: '#0A66C2', secondary: null, ctaTextColor: '#FFFFFF', source: 'form' }` → CTA pill is `#0A66C2`, CTA text is white, headline color unchanged from `textStyle.color`.
+- `COMP-02-brand-primary-only` — `brand: { primary: '#0A66C2', secondary: null, ctaTextColor: null, source: 'form' }` → CTA pill is `#0A66C2`, CTA text auto-derives to white via `pickCtaTextColor` (luminance L ≈ 0.13 → white), headline color unchanged from `textStyle.color`. The fixture explicitly leaves `ctaTextColor: null` so it exercises the auto-contrast fallback path.
 - `COMP-03-brand-secondary-only` — `brand: { primary: null, secondary: '#F59E0B', ctaTextColor: null, source: 'form' }` → headline is `#F59E0B`, CTA unchanged from `textStyle`.
 - `COMP-04-brand-both` — both set → CTA pill and text branded, headline branded, all stroke/shadow/layout unchanged.
 - `COMP-05-arabic-uniformity` — Arabic hook with brand secondary → headline rendered in `brand.secondary` *uniformly*, no per-glyph variation, no LTR-style partial coloring.

@@ -156,7 +156,7 @@ After an image is rendered, the system inspects the dominant colors actually pre
 - **SC-002**: 100% of retargeting generations linked to a cold ad with brand colors and submitted without explicit brand colors render with the cold ad's primary and secondary brand colors, verified across a 20-generation sample.
 - **SC-003**: 0 rendered assets in the same 50-generation sample contain any placeholder string such as "[brand color]" or "[primary color]" in visible text or ad copy.
 - **SC-004**: At least 95% of users with brand colors set on their workspace have those colors auto-filled in the form on their next generation without manual re-entry, measured over a 14-day window after launch.
-- **SC-005**: The post-render compliance check never delays the user seeing a finished asset; users perceive no added wait time on generations with brand colors set versus generations without.
+- **SC-005**: Per-asset post-render compliance latency (measured as the wall-clock delta between the render-complete timestamp and the compliance-complete timestamp emitted in the same Cloud Functions log entry) is **≤ 800 ms at p95** and **≤ 1500 ms at p99**, aggregated over a rolling 30-day window across all production generations with brand colors set. CI/ops alerting fires when either threshold is exceeded for two consecutive 24-hour windows.
 - **SC-006**: Automated regression tests for per-slide carousel colors, per-item batch colors, retargeting inheritance, and compliance flagging pass on every CI run; a regression in any of these four guarantees blocks merge.
 
 ## Assumptions

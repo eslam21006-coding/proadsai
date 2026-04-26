@@ -3547,11 +3547,9 @@ ${isArabic(inputs.adLanguage) ? `\n${ARABIC_WARDROBE_BLOCK}\n` : ''}
 - Do NOT echo the contract, prompt, schema, JSON rules, or ownership block inside blueprint.
 - Do NOT repeat zones more than once. One clear instruction per zone.
 - TECHNICAL PROMPT: Inside the blueprint string, include a long-form English rendering instruction that describes the exact visual appearance of the final image. Wrap this instruction between [[TECHNICAL_PROMPT]] and [[/TECHNICAL_PROMPT]] markers. This prompt should be a self-contained, detailed visual description covering composition, lighting, color grading, atmosphere, hero pose, text placement zones, and mood — everything the image model needs to render the ad without seeing the original concept. The hookText "${hookText}" MUST appear verbatim inside this technical prompt.
-${_brandResolved.primary ? `- BRAND COLOR DIRECTIVE: The brand's primary color is ${_brandResolved.primary}${_brandResolved.secondary ? ` and secondary is ${_brandResolved.secondary}` : ''}. Incorporate into the blueprint's color specifications. Choose ONE of these applications per design (rotate for variety):
-  a) CTA button background color
-  b) Headline text accent/highlight color
-  c) Background accent element (neon glow, gradient edge, light streak)
-  d) Environmental prop color (matching the universe)
+${_brandResolved.primary ? `- BRAND COLOR DIRECTIVE: The brand's primary color is ${_brandResolved.primary}${_brandResolved.secondary ? ` and secondary is ${_brandResolved.secondary}` : ''}. Single policy for every concept:
+  • REQUIRED — CTA button background color must be the literal hex ${_brandResolved.primary}.
+  • OPTIONAL — at most ONE additional accent treatment per design, chosen from: headline accent (full line or bar — never split mid-word), background accent (gradient edge, glow, geometric shape), or environmental prop. Do NOT apply more than one of these in the same concept; rotate the choice across concepts for variety.
 Do NOT make the entire design monochromatic with brand color — use it as a strategic accent.
 CRITICAL: write the actual hex code ${_brandResolved.primary} in every color reference. Never substitute a placeholder phrase, the literal brand name, or any bracketed or braced template — only the actual hex value.` : ''}
 ${(() => {
@@ -4140,10 +4138,18 @@ export async function generateFinalAd(
     textOverride?: TextOverride
 ): Promise<{ image: string; failureClass?: "numeric_hallucination"; costEstimate?: CostEstimate } | { image: null; errorCode: string; failureClass?: FailureClass; debug?: FinalAdDebugInfo }> {
     const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
+    // carouselSlideIndex / batchN / batchIndex are runtime-injected by the
+    // per-slide and per-item loop wrappers — they're not on AdInputs proper,
+    // so narrow once into a typed view rather than scattering `as any`.
+    const _multiAssetView = inputs as AdInputs & {
+        carouselSlideIndex?: number;
+        batchN?: number;
+        batchIndex?: number;
+    };
     const _complianceAssetId = inputs.adMode === 'carousel'
-        ? `slide-${(inputs as any).carouselSlideIndex ?? 0}`
-        : (inputs as any).batchN
-            ? `batch-${(inputs as any).batchIndex ?? 0}`
+        ? `slide-${_multiAssetView.carouselSlideIndex ?? 0}`
+        : _multiAssetView.batchN
+            ? `batch-${_multiAssetView.batchIndex ?? 0}`
             : 'single';
     const _runBrandCompliance = async (imageBase64: string): Promise<void> => {
         if (!_brandResolved.primary) return;
@@ -5209,12 +5215,10 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
           - LOGO STRICTNESS: Render ONLY user-provided branding from Box B. If Box B is empty, the design must be 100% free of any logos or branding marks. If Box B has one or more images (up to 5), render each as a distinct physical artifact in the scene — all at comparable size, balanced placement, no single logo dominant, no one mark enlarged relative to the others. Upload order has no prominence meaning.
           ${_brandResolved.primary ? `- BRAND COLOR RENDERING (CRITICAL FOR VISUAL IDENTITY):
           The client's brand color is ${_brandResolved.primary}${_brandResolved.secondary ? ` (secondary: ${_brandResolved.secondary})` : ''}.
-          You MUST integrate these colors visibly. Apply ALL of the following:
-          1. CTA BUTTON: Use brand primary (${_brandResolved.primary}) as the button background color. Text on button should be white or contrasting.
-          2. HEADLINE ACCENT: Apply brand primary as a colored highlight on the ENTIRE FIRST LINE of the headline, or as an underline/background bar behind one complete phrase. NEVER color individual letters or parts of a word — Arabic letters connect and splitting colors mid-word looks broken. Either highlight a COMPLETE LINE or use a background/underline bar.
-          3. SUBHEADLINE: Can use brand secondary ${_brandResolved.secondary ? `(${_brandResolved.secondary})` : 'or a lighter tint of brand primary'} for the entire subheadline text color, or leave white. NEVER partially color Arabic text.
-          4. DECORATIVE ACCENTS: Add brand-colored elements — thin lines, corner accents, subtle glow effects, or geometric shapes that frame the text areas.
-          5. BENEFIT TEXT: The benefit line below CTA can use brand color as text color.
+          Single policy — same as the build plan:
+          • REQUIRED: CTA button background color must be the literal hex ${_brandResolved.primary}. CTA text is white or near-black, whichever has better contrast against ${_brandResolved.primary}.
+          • OPTIONAL: at most ONE additional accent treatment, chosen from: headline accent (apply ${_brandResolved.primary} as a highlight on the ENTIRE FIRST LINE or an underline/background bar — NEVER color individual letters or parts of a word; Arabic letters connect and splitting colors mid-word looks broken), background accent (thin lines, corner accents, subtle glow, or geometric shapes framing the text areas), or environmental prop. Do NOT apply more than one of these in the same render.
+          ${_brandResolved.secondary ? `If secondary ${_brandResolved.secondary} is used, apply it to the entire subheadline text color uniformly (NEVER partially color Arabic text), or leave the subheadline white.` : ''}
           The brand color should be UNMISTAKABLE in the final design — a viewer should be able to guess the brand color from the ad.` : `- COLOR STYLING: ${(() => {
       const sub = resolveVisualSubStyle(inputs);
       if (sub === 'dark_cinematic') return `DARK CINEMATIC PALETTE — Primary text: pure white (#FFFFFF). Accent/keyword color MUST match the scene key light (gold #FFD700, electric blue #00BFFF, or ember #FF4500). Apply accent to the ENTIRE FIRST LINE or a full phrase — NEVER split mid-Arabic-word. CTA button: vivid, saturated, appears to emit light against the dark background. FORBIDDEN: pastel colors, muted tones, desaturated palettes.`;

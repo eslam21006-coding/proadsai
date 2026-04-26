@@ -2441,11 +2441,14 @@ function testComp01NoBrandFallback() {
 }
 
 function testComp02BrandPrimaryOnly() {
-    const brand = { primary: "#0A66C2", secondary: null, ctaTextColor: "#FFFFFF" as const, source: "form" as const };
+    // ctaTextColor explicitly null so the test exercises the compositor's
+    // luminance auto-contrast fallback (not a precomputed value from the
+    // resolver). #0A66C2 has L ≈ 0.13 → white.
+    const brand = { primary: "#0A66C2", secondary: null, ctaTextColor: null, source: "form" as const };
     assert.equal(pickHeadlineColor(_baseStyle, brand), "#FFFFFF"); // unchanged (secondary null)
     assert.equal(pickCtaBgColor(_baseStyle, brand), "#0A66C2");
-    assert.equal(pickCtaTextColor(_baseStyle, brand), "#FFFFFF");
-    console.log("  ✅ COMP-02-brand-primary-only: CTA branded, headline unchanged");
+    assert.equal(pickCtaTextColor(_baseStyle, brand), "#FFFFFF"); // luminance auto-pick
+    console.log("  ✅ COMP-02-brand-primary-only: CTA branded via luminance auto-contrast");
 }
 
 function testComp03BrandSecondaryOnly() {
