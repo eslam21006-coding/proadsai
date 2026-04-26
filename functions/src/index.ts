@@ -32,6 +32,7 @@ import { deriveStatus } from "./savedProjects/projectStatus.js";
 export { getUserProjects } from "./savedProjects/getUserProjects.js";
 import { probeMetaRole } from "./workspaces/metaRoleProbe.js";
 import { writeAuditEntry } from "./workspaces/auditLog.js";
+import { reflowImageHandler } from "./reflowImage.js";
 import { purgeExpiredWorkspaces, cascadeReassignOnDelete, cascadeRevertOnRestore } from "./workspaces/workspacePurge.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3708,6 +3709,17 @@ export const serverGenerateFinalAd = onCall({
         console.error("generateFinalAd error:", error);
         throw new HttpsError("internal", "Image generation failed: " + error.message);
     }
+});
+
+// ─── DETERMINISTIC ASPECT RATIO REFLOW (HOTFIX-F) ──────────────────────
+export const reflowImage = onCall({
+    region: "europe-west1",
+    secrets: [geminiApiKey, openaiApiKey],
+    timeoutSeconds: 300,
+    memory: "2GiB",
+    cors: true,
+}, async (request: CallableRequest) => {
+    return reflowImageHandler(request, { db, admin, geminiApiKey: geminiApiKey.value(), openaiApiKey: openaiApiKey.value() });
 });
 
 // ─── MAGIC SELECTOR: Region-targeted image editing ──────────────────────

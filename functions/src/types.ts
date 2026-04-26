@@ -1,6 +1,55 @@
 // functions/src/types.ts — shared server-side type definitions
 // Subset of frontend types needed by server-side modules
 
+import type { AspectRatio } from "./generators.js";
+
+// ─── Reflow Types (HOTFIX-F) ─────────────────────────────────────────────────
+
+export type ReflowMethod = "auto" | "outpaint" | "rerender";
+
+export type ReflowScope = "single" | "batch_all" | "carousel_all" | "carousel_slide";
+
+export type ReflowFallbackReason =
+    | "engine_error"
+    | "drift"
+    | "no_plan"
+    | "mask_error"
+    | "transient";
+
+export interface ReflowHistoryEntry {
+    timestamp: number;
+    sourceRatio: AspectRatio;
+    targetRatio: AspectRatio;
+    magnitude: number;
+    method: "outpaint" | "rerender";
+    userOverride: "outpaint" | "rerender" | null;
+    fallbackFrom: "outpaint" | "rerender" | null;
+    fallbackReason: ReflowFallbackReason | null;
+    itemIndex: number | null;
+    outputUrl: string | null;
+    creditsCharged: number;
+}
+
+export interface ReflowDecision {
+    sourceRatio: AspectRatio;
+    targetRatio: AspectRatio;
+    magnitude: number;
+    chosenMethod: "outpaint" | "rerender";
+    isUserOverride: boolean;
+}
+
+export interface ReflowOutcome {
+    itemIndex: number | null;
+    success: boolean;
+    method: "outpaint" | "rerender" | null;
+    fallbackFrom: "outpaint" | "rerender" | null;
+    fallbackReason: ReflowFallbackReason | null;
+    outputUrl: string | null;
+    creditsCharged: number;
+    errorCode?: string;
+    errorMessage?: string;
+}
+
 // ─── Failure Classification ──────────────────────────────────────────────────
 
 export type FailureClass =
@@ -198,6 +247,7 @@ export interface ResolutionTrace {
         sourceLayer: "imagePrompt" | "adCopy" | "both";
     };
     logoPipeline?: LogoPipelineEvents;
+    readonly reflowHistory?: readonly ReflowHistoryEntry[];
 }
 
 export interface LaunchSurfaceInput {

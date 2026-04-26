@@ -607,6 +607,60 @@ export interface VariantSpec {
   compositionOverride?: string;
 }
 
+// ─── Reflow Types (HOTFIX-F) ─────────────────────────────────────────────────
+
+export type ReflowMethod = "auto" | "outpaint" | "rerender";
+
+export type ReflowScope = "single" | "batch_all" | "carousel_all" | "carousel_slide";
+
+export type ReflowFallbackReason =
+  | "engine_error"
+  | "drift"
+  | "no_plan"
+  | "mask_error"
+  | "transient";
+
+export interface ReflowHistoryEntry {
+  timestamp: number;
+  sourceRatio: AspectRatio;
+  targetRatio: AspectRatio;
+  magnitude: number;
+  method: "outpaint" | "rerender";
+  userOverride: "outpaint" | "rerender" | null;
+  fallbackFrom: "outpaint" | "rerender" | null;
+  fallbackReason: ReflowFallbackReason | null;
+  itemIndex: number | null;
+  outputUrl: string | null;
+  creditsCharged: number;
+}
+
+export interface ReflowOutcome {
+  itemIndex: number | null;
+  success: boolean;
+  method: "outpaint" | "rerender" | null;
+  fallbackFrom: "outpaint" | "rerender" | null;
+  fallbackReason: ReflowFallbackReason | null;
+  outputUrl: string | null;
+  creditsCharged: number;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+export interface ReflowImageRequest {
+  generationId: string;
+  targetAspectRatio: AspectRatio;
+  method: ReflowMethod;
+  scope: ReflowScope;
+  slideIndex?: number;
+}
+
+export interface ReflowImageResponse {
+  success: true;
+  scope: ReflowScope;
+  outcomes: ReflowOutcome[];
+  totalCreditsCharged: number;
+}
+
 export interface VariantSet {
   setId: string;
   userId: string;

@@ -5188,7 +5188,11 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
         const isReflow = editInstruction?.includes("REFLOW");
 
         if (isReflow) {
-            // REFLOW MODE — strict resize only, preserve everything visual
+            // HOTFIX-F gate: user-facing REFLOW path deprecated — use reflowImage callable instead (FR-026)
+            if (!(editInstruction as any)?._internalReflow) {
+                throw new Error("Deprecated REFLOW path; use reflowImage callable instead (FR-026)");
+            }
+            // REFLOW MODE — strict resize only, preserve everything visual (internal callers only)
             parts.push({
                 text: `
 ⚠️⚠️⚠️ REFLOW / RESIZE MODE — THIS IS NOT A REDESIGN ⚠️⚠️⚠️
