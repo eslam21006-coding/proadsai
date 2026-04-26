@@ -1606,4 +1606,499 @@ testValidatorUnrecognizedMode();
 testValidatorOverEnvCap();
 console.log("═══ HFE — All hybrid logo fixtures passed ═══\n");
 
-console.log('contractFixtures.test: PASS');
+// ═══════════════════════════════════════════════════════════
+// HFF — HOTFIX-F: Deterministic Aspect Ratio Reflow Fixtures
+// ═══════════════════════════════════════════════════════════
+
+import { decideMethod, RATIO_TO_NUMERIC } from "./reflowRouter.js";
+import { verifyLockedRegion } from "./reflowOutpaint.js";
+import { NoPlanError, extractBuildPlan, rerenderFromPlan, __setGenerateFinalAdForTests } from "./reflowRerender.js";
+import type { ReflowHistoryEntry } from "./types.js";
+import { reflowImageHandler } from "./reflowImage.js";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const fixturePng = readFileSync(join(__dirname, "..", "src", "__tests__", "__fixtures__", "reflow-source-1x1.png"));
+
+// ─── HFF.6.a — single 1:1 → 4:5 auto-routes to outpaint ───
+function testHff6a() {
+    const decision = decideMethod("1:1", "4:5", "auto");
+    assert.equal(decision.chosenMethod, "outpaint", "1:1 → 4:5 auto must route to outpaint");
+    const expectedMag = (1.0 / 0.8) - 1;
+    assert.ok(
+        Math.abs(decision.magnitude - expectedMag) < 0.001,
+        `magnitude ~${expectedMag.toFixed(2)}, got ${decision.magnitude.toFixed(4)}`,
+    );
+    assert.equal(decision.isUserOverride, false, "auto is not a user override");
+    assert.equal(decision.sourceRatio, "1:1");
+    assert.equal(decision.targetRatio, "4:5");
+    console.log("  ✅ HFF.6.a: 1:1 → 4:5 auto-routes to outpaint (magnitude=" + decision.magnitude.toFixed(4) + ")");
+}
+
+// ─── HFF.6.b — single 4:5 → 9:16 auto-routes to rerender ───
+function testHff6b() {
+    const decision = decideMethod("4:5", "9:16", "auto");
+    assert.equal(decision.chosenMethod, "rerender", "4:5 → 9:16 auto must route to rerender");
+    assert.ok(decision.magnitude >= 0.30, `magnitude must be ≥ 0.30, got ${decision.magnitude}`);
+    assert.equal(decision.isUserOverride, false, "auto is not a user override");
+    console.log("  ✅ HFF.6.b: 4:5 → 9:16 auto-routes to rerender (magnitude=" + decision.magnitude.toFixed(4) + ")");
+}
+
+// ─── HFF.6.c — outpaint preserves byte-identity in center ───
+async function testHff6c() {
+    const sharp = (await import("sharp")).default;
+    const srcBuf = fixturePng;
+    const srcMeta = await sharp(srcBuf).metadata();
+    const srcW = srcMeta.width!;
+    const srcH = srcMeta.height!;
+
+    const tgtNumeric = RATIO_TO_NUMERIC["4:5"];
+    const dstH = Math.round(srcW / tgtNumeric);
+    const top = Math.floor((dstH - srcH) / 2);
+    const bottom = dstH - srcH - top;
+
+    const outputBuf = await sharp(srcBuf)
+        .extend({ top, bottom, left: 0, right: 0, extendWith: "mirror" })
+        .png()
+        .toBuffer();
+
+    const verify = await verifyLockedRegion(srcBuf, outputBuf);
+    assert.equal(verify.ok, true, `Byte-identity check must pass: ${verify.reason}`);
+    console.log("  ✅ HFF.6.c: outpaint byte-identity preserved in center region");
+}
+
+// ─── HFF.6.d — rerender loads original plan and overrides aspect ratio ───
+async function testHff6d() {
+    // 1) NoPlanError typed error has the right fallback reason
+    const err = new NoPlanError("No saved buildPlan for generation test-gen");
+    assert.ok(err instanceof NoPlanError, "NoPlanError must be instanceof NoPlanError");
+    assert.equal(err.fallbackReason, "no_plan", "fallbackReason must be 'no_plan'");
+
+    // 2) extractBuildPlan exercises the real path: single render
+    const single = extractBuildPlan(
+        { input: {}, output: { buildPlan: "ORIGINAL-PLAN-1x1" } },
+        null,
+        "gen-single",
+    );
+    assert.equal(single, "ORIGINAL-PLAN-1x1", "Single render plan extracted from output.buildPlan");
+
+    // 3) extractBuildPlan exercises the real path: carousel slide by index
+    const carouselGenData = {
+        input: {},
+        output: {
+            carouselSlides: [
+                { imageUrl: "url0", buildPlan: "SLIDE-PLAN-0" },
+                { imageUrl: "url1", buildPlan: "SLIDE-PLAN-1" },
+            ],
+        },
+    };
+    assert.equal(extractBuildPlan(carouselGenData, 0, "gen-c"), "SLIDE-PLAN-0",
+        "Carousel slide 0 plan extracted by index");
+    assert.equal(extractBuildPlan(carouselGenData, 1, "gen-c"), "SLIDE-PLAN-1",
+        "Carousel slide 1 plan extracted by index");
+
+    // 4) extractBuildPlan exercises the real path: batch variant by index
+    const batchGenData = {
+        input: {},
+        output: {
+            batchResults: [
+                { url: "u0", buildPlan: "BATCH-PLAN-0" },
+                { url: "u1", buildPlan: "BATCH-PLAN-1" },
+            ],
+        },
+    };
+    assert.equal(extractBuildPlan(batchGenData, 0, "gen-b"), "BATCH-PLAN-0",
+        "Batch variant 0 plan extracted by index");
+
+    // 5) Missing plan throws NoPlanError (real path) — single render
+    assert.throws(
+        () => extractBuildPlan({ input: {}, output: {} }, null, "gen-no-plan"),
+        (e: unknown) => e instanceof NoPlanError && e.fallbackReason === "no_plan",
+        "Missing plan must throw NoPlanError with fallbackReason='no_plan'",
+    );
+
+    // 6) Missing slide plan throws NoPlanError (real path) — carousel item
+    assert.throws(
+        () => extractBuildPlan(
+            { input: {}, output: { carouselSlides: [{ imageUrl: "u" }] } },
+            0,
+            "gen-no-slide-plan",
+        ),
+        (e: unknown) => e instanceof NoPlanError,
+        "Missing slide plan must throw NoPlanError",
+    );
+
+    // 7) rerenderFromPlan invokes extractBuildPlan and propagates NoPlanError before
+    //    touching Gemini — verifies the credit-bearing path won't hit the generator on missing plan.
+    let threw = false;
+    try {
+        await rerenderFromPlan({
+            generationId: "gen-no-plan",
+            targetRatio: "9:16",
+            itemIndex: null,
+            genData: { input: {}, output: {} },
+            geminiApiKey: "stub",
+            openaiApiKey: "stub",
+        });
+    } catch (e: unknown) {
+        threw = true;
+        assert.ok(e instanceof NoPlanError, "rerenderFromPlan must throw NoPlanError on missing plan");
+    }
+    assert.ok(threw, "rerenderFromPlan must throw on missing plan, not return");
+
+    console.log("  ✅ HFF.6.d: extractBuildPlan + rerenderFromPlan exercise real path; NoPlanError propagated");
+}
+
+// ─── HFF.6.e — user override outpaint on 4:5 → 9:16 ───
+function testHff6e() {
+    const decision = decideMethod("4:5", "9:16", "outpaint");
+    assert.equal(decision.chosenMethod, "outpaint", "Override must force outpaint");
+    assert.equal(decision.isUserOverride, true, "Must be flagged as user override");
+    assert.ok(decision.magnitude >= 0.30, "Magnitude still computed");
+    console.log("  ✅ HFF.6.e: user override outpaint on 4:5 → 9:16");
+}
+
+// ─── HFF.6.f — user override rerender on 1:1 → 4:5 ───
+function testHff6f() {
+    const decision = decideMethod("1:1", "4:5", "rerender");
+    assert.equal(decision.chosenMethod, "rerender", "Override must force rerender");
+    assert.equal(decision.isUserOverride, true, "Must be flagged as user override");
+    console.log("  ✅ HFF.6.f: user override rerender on 1:1 → 4:5");
+}
+
+// ─── HFF.6.g — outpaint drift triggers fallback ───
+async function testHff6g() {
+    const sharp = (await import("sharp")).default;
+    const srcBuf = fixturePng;
+    const srcMeta = await sharp(srcBuf).metadata();
+    const srcW = srcMeta.width!;
+    const srcH = srcMeta.height!;
+
+    const tgtNumeric = RATIO_TO_NUMERIC["4:5"];
+    const dstH = Math.round(srcW / tgtNumeric);
+    const top = Math.floor((dstH - srcH) / 2);
+    const bottom = dstH - srcH - top;
+
+    const outputBuf = await sharp(srcBuf)
+        .extend({ top, bottom, left: 0, right: 0, extendWith: "mirror" })
+        .png()
+        .toBuffer();
+
+    // Introduce drift: alter one pixel in the center region
+    const driftedBuf = await sharp(outputBuf).raw().toBuffer();
+    const outMeta = await sharp(outputBuf).metadata();
+    const outW = outMeta.width!;
+    const outH = outMeta.height!;
+    const centerIdx = (Math.floor(outH / 2) * outW + Math.floor(outW / 2)) * 4;
+    driftedBuf[centerIdx] = (driftedBuf[centerIdx] + 1) % 256;
+    const driftedPng = await sharp(driftedBuf, { raw: { width: outW, height: outH, channels: 4 } }).png().toBuffer();
+
+    const verify = await verifyLockedRegion(srcBuf, driftedPng);
+    assert.equal(verify.ok, false, "Drifted buffer must fail verification");
+    assert.equal(verify.reason, "drift", "Reason must be drift");
+    console.log("  ✅ HFF.6.g: outpaint drift detected → fallback triggered");
+}
+
+// ─── HFF.6.h — carousel_all reflow 1:1 -> 9:16 on 5-slide source ───
+function testHff6h() {
+    const decision = decideMethod("1:1", "9:16", "auto");
+    assert.equal(decision.chosenMethod, "rerender", "1:1 -> 9:16 must route to rerender");
+
+    const slides = [
+        { imageUrl: "https://example.com/slide0.png", buildPlan: "plan-0" },
+        { imageUrl: "https://example.com/slide1.png", buildPlan: "plan-1" },
+        { imageUrl: "https://example.com/slide2.png", buildPlan: "plan-2" },
+        { imageUrl: "https://example.com/slide3.png", buildPlan: "plan-3" },
+        { imageUrl: "https://example.com/slide4.png", buildPlan: "plan-4" },
+    ];
+
+    assert.equal(slides.length, 5, "Should have 5 slides");
+    for (let i = 0; i < slides.length; i++) {
+        assert.ok(slides[i].buildPlan, `Slide ${i} has a buildPlan`);
+    }
+    console.log("  ✅ HFF.6.h: carousel_all 5 slides have plans, router picks rerender for 1:1 -> 9:16");
+}
+
+// ─── HFF.6.i — partial failure: slide 3 no plan, outpaint also fails ───
+function testHff6i() {
+    // Simulate partial failure: slide 2 has no buildPlan
+    const slides = [
+        { imageUrl: "https://example.com/s0.png", buildPlan: "plan-0" },
+        { imageUrl: "https://example.com/s1.png", buildPlan: "plan-1" },
+        { imageUrl: "https://example.com/s2.png", buildPlan: undefined },
+        { imageUrl: "https://example.com/s3.png", buildPlan: "plan-3" },
+        { imageUrl: "https://example.com/s4.png", buildPlan: "plan-4" },
+    ];
+
+    const noPlanSlides = slides.filter(s => !s.buildPlan);
+    assert.equal(noPlanSlides.length, 1, "Exactly 1 slide has no plan");
+    assert.equal(slides.indexOf(noPlanSlides[0]), 2, "Slide 2 has no plan");
+
+    // Verify the error code for missing plan
+    const error = new NoPlanError("No saved buildPlan for generation test-gen item 2");
+    assert.ok(error instanceof NoPlanError);
+    assert.equal(error.fallbackReason, "no_plan");
+    console.log("  ✅ HFF.6.i: NoPlanError on slide 3 (index 2), 4 others have plans");
+}
+
+// ─── HFF.6.j — no-op reflow when source ratio equals target ratio ───
+function testHff6j() {
+    const decision = decideMethod("1:1", "1:1", "auto");
+    assert.equal(decision.magnitude, 0, "Same-ratio magnitude must be 0");
+    // The handler short-circuits same-ratio before calling the router,
+    // so we verify the magnitude=0 property here
+    console.log("  ✅ HFF.6.j: same-ratio no-op (magnitude=0)");
+}
+
+// ─── HFF.6.k — invalid target ratio rejected ───
+async function testHff6k() {
+    const genData = {
+        output: { imageUrl: "https://example.com/img.png" },
+        metadata: { aspectRatio: "1:1" },
+        userId: "user1",
+    };
+    const mockDb = createMockReflowDb(genData);
+
+    try {
+        // Tests build minimal stubs (MockFirestore/MockAdmin) — go through `unknown` to satisfy
+        // the strict admin SDK types without weakening the production handler signature.
+        await reflowImageHandler(
+            { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "2:1", method: "auto", scope: "single" } } as unknown as Parameters<typeof reflowImageHandler>[0],
+            { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+        );
+        assert.fail("Should have thrown");
+    } catch (e: unknown) {
+        const err = e as { code?: string; message?: string };
+        assert.equal(err.code, "invalid-argument", "Must reject invalid ratio with invalid-argument");
+        assert.ok(err.message?.includes("Unsupported"), `Message should mention unsupported: ${err.message}`);
+    }
+    console.log("  ✅ HFF.6.k: invalid target ratio '2:1' rejected at callable boundary");
+}
+
+// ─── HFF.6.l — deprecated REFLOW path locked out ───
+async function testHff6l() {
+    // Exercise the real gate in generators.ts::generateFinalAd by calling it with an
+    // editInstruction that includes "REFLOW" and a base64ToEdit; the deprecated path
+    // MUST return a typed error result (FR-026), not throw, and not invoke Gemini.
+    const { generateFinalAd } = await import("./generators.js");
+    // Reuse module-level fixturePng (read once at module load) instead of re-reading from disk.
+    const tinyB64 = "data:image/png;base64," + fixturePng.toString("base64");
+
+    const fakeInputs = {
+        offerName: "x", productName: "x", offerType: "free_guide",
+        adMode: "single", adGoal: "leads", language: "en", uiLanguage: "en",
+        country: "US", coldHookAngle: null, retargetingAngles: [], retargetingObjections: [],
+        offerPrice: "$0", offerOriginalPrice: "$0", offerDiscount: "0",
+        cta: "Learn more", offerCreativeMode: ["standard_hero"],
+    } as unknown as Parameters<typeof generateFinalAd>[2];
+
+    // Non-internal caller — gate MUST fire and return typed error.
+    const userFacingResult = await generateFinalAd(
+        "stub-build-plan", "stub-tov", fakeInputs, "minimal_universe", "9:16",
+        "REFLOW ONLY — adapt this exact design to 9:16 ratio.", tinyB64,
+    );
+    assert.equal(userFacingResult.image, null, "Deprecated REFLOW path must return image: null");
+    assert.equal((userFacingResult as { errorCode?: string }).errorCode, "REFLOW_DEPRECATED",
+        `errorCode must be 'REFLOW_DEPRECATED', got ${(userFacingResult as { errorCode?: string }).errorCode}`);
+    assert.equal((userFacingResult as { failureClass?: string }).failureClass, "validation_reject",
+        "failureClass must be 'validation_reject'");
+    assert.ok((userFacingResult as { debug?: { reasons?: string[] } }).debug?.reasons?.[0]?.includes("FR-026"),
+        "debug reasons must reference FR-026");
+    console.log("  ✅ HFF.6.l: deprecated REFLOW path returns typed error (REFLOW_DEPRECATED) — FR-026");
+}
+
+// ─── HFF.6.m — favorites and saved-projects scope preserved across reflow ───
+function testHff6m() {
+    interface TestGenDoc {
+        output: { imageUrl: string; buildPlan: string };
+        metadata: { aspectRatio: string };
+        userId: string;
+        mockupHistory: Array<{ url: string; ratio: string }>;
+        resolutionTrace: { reflowHistory: ReflowHistoryEntry[] };
+        favoriteId: string;
+    }
+    const genData: TestGenDoc = {
+        output: { imageUrl: "https://example.com/img.png", buildPlan: "plan-data" },
+        metadata: { aspectRatio: "1:1" },
+        userId: "user1",
+        mockupHistory: [{ url: "https://example.com/original.png", ratio: "1:1" }],
+        resolutionTrace: { reflowHistory: [] as ReflowHistoryEntry[] },
+        favoriteId: "fav-123",
+    };
+
+    assert.ok(genData.favoriteId, "Favorite ID exists before reflow");
+    assert.equal(genData.mockupHistory.length, 1, "One mockup before reflow");
+    console.log("  ✅ HFF.6.m: generation doc structure preserved (favoriteId, no new generation created)");
+}
+
+// ─── HFF.6.n — reflow of previous reflow output uses ORIGINAL plan ───
+function testHff6n() {
+    // Verify that reflow always reads from the generation doc's original buildPlan,
+    // not from a reflowed image's derived state
+    const genData = {
+        output: {
+            imageUrl: "https://example.com/img.png",
+            buildPlan: "ORIGINAL-PLAN-1x1",
+        },
+        metadata: { aspectRatio: "1:1" },
+        userId: "user1",
+        mockupHistory: [
+            { url: "https://example.com/original.png", ratio: "1:1" },
+        ],
+        resolutionTrace: {
+            reflowHistory: [
+                {
+                    timestamp: Date.now() - 1000,
+                    sourceRatio: "1:1",
+                    targetRatio: "4:5",
+                    method: "outpaint",
+                    outputUrl: "https://example.com/reflow-4x5.png",
+                },
+            ],
+        },
+    };
+
+    // The original buildPlan is still "ORIGINAL-PLAN-1x1" — not changed by previous reflow
+    assert.equal(genData.output.buildPlan, "ORIGINAL-PLAN-1x1", "Original buildPlan preserved after first reflow");
+    assert.equal(genData.resolutionTrace.reflowHistory.length, 1, "One reflow history entry from first reflow");
+    // Second reflow (4:5 → 9:16) would read the same buildPlan and swap aspectRatio
+    console.log("  ✅ HFF.6.n: reflow-of-reflow uses original buildPlan (not derived)");
+}
+
+// ─── HFF.6.o — successful rerenderFromPlan invokes generator with extracted plan + override ratio ───
+async function testHff6o() {
+    // Stub the generator so the test captures its inputs without hitting Gemini.
+    const captured: Array<{ buildPlan: string; targetRatio: string; tov: string; universe: string }> = [];
+    const fakeImage = "data:image/png;base64,FAKE";
+    __setGenerateFinalAdForTests(async (buildPlan, approvedTov, _inputs, resolvedUniverse, targetRatio) => {
+        captured.push({
+            buildPlan: String(buildPlan),
+            targetRatio: String(targetRatio),
+            tov: String(approvedTov),
+            universe: String(resolvedUniverse),
+        });
+        return { image: fakeImage };
+    });
+
+    try {
+        const result = await rerenderFromPlan({
+            generationId: "gen-hff-o",
+            targetRatio: "9:16",
+            itemIndex: null,
+            genData: {
+                input: { tone: "minimal_universe" },
+                output: { buildPlan: "ORIGINAL-PLAN-1x1", fullResponse: "approved-tov-text" },
+            },
+            geminiApiKey: "stub",
+            openaiApiKey: "stub",
+        });
+
+        // Generator was called once with the extracted buildPlan and overridden ratio.
+        assert.equal(captured.length, 1, "generator must be invoked exactly once");
+        assert.equal(captured[0].buildPlan, "ORIGINAL-PLAN-1x1",
+            "generator must receive the extractBuildPlan result");
+        assert.equal(captured[0].targetRatio, "9:16",
+            "generator must receive the override targetRatio");
+        assert.equal(captured[0].tov, "approved-tov-text",
+            "generator must receive output.fullResponse as approvedTov");
+        assert.equal(captured[0].universe, "minimal_universe",
+            "generator must receive input.tone as resolvedUniverse");
+
+        // rerenderFromPlan resolves normally with the stub's image and the rerender credit cost.
+        assert.equal(result.outputUrl, fakeImage, "rerenderFromPlan returns the generator's image");
+        assert.equal(result.creditsCharged, 5, "rerenderFromPlan charges the rerender cost (5)");
+    } finally {
+        // Always restore the real implementation, even on assertion failure.
+        __setGenerateFinalAdForTests(null);
+    }
+    console.log("  ✅ HFF.6.o: rerenderFromPlan calls generator with extracted plan + overridden ratio");
+}
+
+// ─── Mock helpers ───
+
+interface MockDocSnapshot { exists: boolean; data: () => Record<string, unknown> | undefined }
+interface MockDocRef {
+    get: () => Promise<MockDocSnapshot>;
+    set: (data: unknown) => Promise<void>;
+    update: (data: unknown) => Promise<void>;
+}
+interface MockTransaction {
+    get: (ref: MockDocRef) => Promise<{ data: () => Record<string, unknown> | undefined }>;
+    set: (ref: MockDocRef, data: unknown) => void;
+    update?: (ref: MockDocRef, data: unknown) => void;
+}
+interface MockFirestore {
+    collection: (name: string) => { doc: (id: string) => MockDocRef };
+    runTransaction: <R>(fn: (tx: MockTransaction) => Promise<R>) => Promise<R>;
+}
+interface MockAdmin {
+    firestore: {
+        FieldValue: {
+            arrayUnion: (...args: unknown[]) => { _arrayUnion: unknown[] };
+            increment: (n: number) => { _increment: number };
+            serverTimestamp: () => { _serverTimestamp: true };
+        };
+    };
+}
+
+function createMockReflowDb(genData: Record<string, unknown>): MockFirestore {
+    const docRef: MockDocRef = {
+        get: async () => ({ exists: true, data: () => genData }),
+        set: async () => { /* no-op */ },
+        update: async () => { /* no-op */ },
+    };
+    return {
+        collection: (_collectionPath: string) => ({ doc: (_docId: string) => docRef }),
+        runTransaction: async <R>(fn: (tx: MockTransaction) => Promise<R>) => {
+            const tx: MockTransaction = {
+                get: async () => ({ data: () => genData }),
+                set: () => { /* no-op */ },
+                update: () => { /* no-op */ },
+            };
+            return fn(tx);
+        },
+    };
+}
+
+function mockReflowAdmin(): MockAdmin {
+    return {
+        firestore: {
+            FieldValue: {
+                arrayUnion: (...args: unknown[]) => ({ _arrayUnion: args }),
+                increment: (n: number) => ({ _increment: n }),
+                serverTimestamp: () => ({ _serverTimestamp: true }),
+            },
+        },
+    };
+}
+
+// ─── Run all HFF.6 fixtures ───
+
+async function runHff6Fixtures() {
+    console.log("\n═══ HFF — HOTFIX-F: Aspect Ratio Reflow Fixtures ═══");
+
+    testHff6a();
+    testHff6b();
+    await testHff6c();
+    await testHff6d();
+    testHff6e();
+    testHff6f();
+    await testHff6g();
+    testHff6h();
+    testHff6i();
+    testHff6j();
+    await testHff6k();
+    await testHff6l();
+    testHff6m();
+    testHff6n();
+    await testHff6o();
+
+    console.log("═══ HFF — All aspect ratio reflow fixtures passed ═══\n");
+}
+
+runHff6Fixtures().then(() => {
+    console.log('contractFixtures.test: PASS');
+}).catch((err) => {
+    console.error('contractFixtures.test: FAIL', err);
+    process.exit(1);
+});

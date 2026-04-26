@@ -5,6 +5,7 @@ import type {
     SlideEntry,
     AutoSwitchEvent,
     LogoPipelineEvents,
+    ReflowHistoryEntry,
 } from "./types.js";
 
 type Mutable<T> = { -readonly [P in keyof T]: T[P] extends readonly (infer U)[] ? U[] : T[P] };
@@ -12,6 +13,7 @@ type ResolutionTraceDraft = Partial<Mutable<ResolutionTrace>> & {
     autoSwitchEvents: AutoSwitchEvent[];
     _culturalViolation?: ResolutionTrace["culturalViolation"];
     _logoPipeline?: LogoPipelineEvents;
+    _reflowHistory?: ReflowHistoryEntry[];
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -41,6 +43,7 @@ export interface TraceBuilder {
         sourceLayer: "imagePrompt" | "adCopy" | "both";
     }): TraceBuilder;
     setLogoPipeline(events: LogoPipelineEvents): TraceBuilder;
+    addReflowHistoryEntry(entry: ReflowHistoryEntry): TraceBuilder;
     build(): ResolutionTrace;
 }
 
@@ -129,6 +132,11 @@ export function createTraceBuilder(): TraceBuilder {
             };
             return builder;
         },
+        addReflowHistoryEntry(entry) {
+            if (!state._reflowHistory) state._reflowHistory = [];
+            state._reflowHistory.push({ ...entry });
+            return builder;
+        },
         build(): ResolutionTrace {
             if (!state.resolvedCampaignType) throw new Error("TraceBuilder: resolvedCampaignType not set");
             if (!state.resolvedAdMode) throw new Error("TraceBuilder: resolvedAdMode not set");
@@ -170,6 +178,7 @@ export function createTraceBuilder(): TraceBuilder {
                     clamps: state._logoPipeline.clamps.map((e) => ({ ...e })),
                     softWarnings: state._logoPipeline.softWarnings.map((e) => ({ ...e })),
                 } : undefined,
+                reflowHistory: state._reflowHistory ? state._reflowHistory.map(e => ({ ...e })) : undefined,
             });
         },
     };
