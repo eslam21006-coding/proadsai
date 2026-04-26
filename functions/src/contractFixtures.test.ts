@@ -1613,6 +1613,7 @@ console.log("═══ HFE — All hybrid logo fixtures passed ═══\n");
 import { decideMethod, RATIO_TO_NUMERIC } from "./reflowRouter.js";
 import { verifyLockedRegion } from "./reflowOutpaint.js";
 import { NoPlanError, extractBuildPlan, rerenderFromPlan } from "./reflowRerender.js";
+import type { ReflowHistoryEntry } from "./types.js";
 import { reflowImageHandler } from "./reflowImage.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -1859,10 +1860,11 @@ async function testHff6k() {
     const mockDb = createMockReflowDb(genData);
 
     try {
-        // Cast to any: tests build a minimal CallableRequest stub without the full AuthData shape (token/rawToken).
+        // Tests build minimal stubs (MockFirestore/MockAdmin) — go through `unknown` to satisfy
+        // the strict admin SDK types without weakening the production handler signature.
         await reflowImageHandler(
-            { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "2:1", method: "auto", scope: "single" } } as Parameters<typeof reflowImageHandler>[0],
-            { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as Parameters<typeof reflowImageHandler>[1],
+            { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "2:1", method: "auto", scope: "single" } } as unknown as Parameters<typeof reflowImageHandler>[0],
+            { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
         );
         assert.fail("Should have thrown");
     } catch (e: unknown) {
@@ -1907,12 +1909,20 @@ async function testHff6l() {
 
 // ─── HFF.6.m — favorites and saved-projects scope preserved across reflow ───
 function testHff6m() {
-    const genData: Record<string, any> = {
+    interface TestGenDoc {
+        output: { imageUrl: string; buildPlan: string };
+        metadata: { aspectRatio: string };
+        userId: string;
+        mockupHistory: Array<{ url: string; ratio: string }>;
+        resolutionTrace: { reflowHistory: ReflowHistoryEntry[] };
+        favoriteId: string;
+    }
+    const genData: TestGenDoc = {
         output: { imageUrl: "https://example.com/img.png", buildPlan: "plan-data" },
         metadata: { aspectRatio: "1:1" },
         userId: "user1",
         mockupHistory: [{ url: "https://example.com/original.png", ratio: "1:1" }],
-        resolutionTrace: { reflowHistory: [] as any[] },
+        resolutionTrace: { reflowHistory: [] as ReflowHistoryEntry[] },
         favoriteId: "fav-123",
     };
 
@@ -1957,39 +1967,60 @@ function testHff6n() {
 
 // ─── Mock helpers ───
 
-function createMockReflowDb(genData: Record<string, any>) {
+interface MockDocSnapshot { exists: boolean; data: () => Record<string, unknown> | undefined }
+interface MockDocRef {
+    get: () => Promise<MockDocSnapshot>;
+    set: (data: unknown) => Promise<void>;
+    update: (data: unknown) => Promise<void>;
+}
+interface MockTransaction {
+    get: (ref: MockDocRef) => Promise<{ data: () => Record<string, unknown> | undefined }>;
+    set: (ref: MockDocRef, data: unknown) => void;
+    update?: (ref: MockDocRef, data: unknown) => void;
+}
+interface MockFirestore {
+    collection: (name: string) => { doc: (id: string) => MockDocRef };
+    runTransaction: <R>(fn: (tx: MockTransaction) => Promise<R>) => Promise<R>;
+}
+interface MockAdmin {
+    firestore: {
+        FieldValue: {
+            arrayUnion: (...args: unknown[]) => { _arrayUnion: unknown[] };
+            increment: (n: number) => { _increment: number };
+            serverTimestamp: () => { _serverTimestamp: true };
+        };
+    };
+}
+
+function createMockReflowDb(genData: Record<string, unknown>): MockFirestore {
+    const docRef: MockDocRef = {
+        get: async () => ({ exists: true, data: () => genData }),
+        set: async () => { /* no-op */ },
+        update: async () => { /* no-op */ },
+    };
     return {
-        collection(_name: string) {
-            return {
-                doc(_id: string) {
-                    return {
-                        get: async () => ({ exists: true, data: () => genData }),
-                        set: async () => {},
-                        update: async () => {},
-                    };
-                },
-            };
-        },
-        runTransaction: async (fn: any) => {
-            const tx = {
+        collection: (_name: string) => ({ doc: (_id: string) => docRef }),
+        runTransaction: async <R>(fn: (tx: MockTransaction) => Promise<R>) => {
+            const tx: MockTransaction = {
                 get: async () => ({ data: () => genData }),
-                set: () => {},
+                set: () => { /* no-op */ },
+                update: () => { /* no-op */ },
             };
             return fn(tx);
         },
-    } as any;
+    };
 }
 
-function mockReflowAdmin() {
+function mockReflowAdmin(): MockAdmin {
     return {
         firestore: {
             FieldValue: {
-                arrayUnion: (...args: any[]) => ({ _arrayUnion: args }),
+                arrayUnion: (...args: unknown[]) => ({ _arrayUnion: args }),
                 increment: (n: number) => ({ _increment: n }),
                 serverTimestamp: () => ({ _serverTimestamp: true }),
             },
         },
-    } as any;
+    };
 }
 
 // ─── Run all HFF.6 fixtures ───

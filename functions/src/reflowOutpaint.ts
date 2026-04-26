@@ -45,7 +45,8 @@ export function resolveStoragePath(url: string, bucketName: string): string | nu
     const m2 = url.match(/^https?:\/\/storage\.googleapis\.com\/([^/]+)\/(.+)$/);
     if (m2) {
         const [, urlBucket, object] = m2;
-        if (!bucketName || urlBucket === bucketName) return decodeURIComponent(object);
+        // If bucketName is known, refuse cross-bucket reads as a safety guard.
+        if (bucketName && urlBucket !== bucketName) return null;
         return decodeURIComponent(object);
     }
     // Form 3: https://<bucket>.storage.googleapis.com/<object>

@@ -5189,11 +5189,23 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
 
         if (isReflow) {
             // HOTFIX-F gate (FR-026): generative-edit REFLOW path is deprecated for user-facing
-            // reflows. Callers MUST use the `reflowImage` callable. Internal callers can pass an
-            // explicit literal escape token in editInstruction; otherwise return a typed error
-            // result so callers handle this like any other generation failure (no thrown exception).
+            // reflows. Callers MUST use the `reflowImage` callable. Three escape hatches survive
+            // for backend-internal direct callers (frontend httpsCallable serialization drops
+            // non-string properties, so frontend callers MUST use the literal token):
+            //   1. primitive string containing INTERNAL_REFLOW_TOKEN
+            //   2. boxed `String` object whose .toString() contains INTERNAL_REFLOW_TOKEN
+            //      (used by callers that wrap via Object.assign(string, { _internalReflow: true }))
+            //   3. object carrying a truthy `_internalReflow` property
+            // Otherwise return a typed error result (no thrown exception).
             const INTERNAL_REFLOW_TOKEN = "__INTERNAL_REFLOW_BYPASS__";
-            const isInternalReflow = typeof editInstruction === "string" && editInstruction.includes(INTERNAL_REFLOW_TOKEN);
+            const ei: unknown = editInstruction;
+            const eiStringValue =
+                typeof ei === "string" ? ei :
+                ei instanceof String ? ei.toString() :
+                "";
+            const eiInternalFlag =
+                ei != null && typeof ei === "object" && (ei as { _internalReflow?: unknown })._internalReflow ? true : false;
+            const isInternalReflow = eiStringValue.includes(INTERNAL_REFLOW_TOKEN) || eiInternalFlag;
             if (!isInternalReflow) {
                 console.warn("🛑 Deprecated REFLOW path invoked — use reflowImage callable (FR-026).");
                 return {

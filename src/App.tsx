@@ -3776,7 +3776,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   pushMockup(reflowRes.data.outcomes[0].outputUrl, extraRatio as AspectRatio);
                 }
               } else {
+                // No persisted generation id — reflowImage requires one (FR-029, FR-030 keep
+                // reflows scoped to a source generation). Skip rather than fall back to a stale
+                // renderGenerationId from a different render, which would reflow the wrong plan.
                 console.warn(`Auto-reflow to ${extraRatio} skipped: no generation id available (saveGeneration failed or user not logged in).`);
+                showToast(`Could not save extra ${extraRatio} variant — please retry from the Resize control.`, 'info');
               }
             } catch (e) { console.error(`Auto-reflow to ${extraRatio} failed:`, e); }
           }
@@ -4470,6 +4474,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
       setCurrentAspectRatio(newRatio);
       startLoad(`Reflowing ${doneSlides.length} slides to ${newRatio}...`);
+      // Optimistic local deduction so the credit bar mirrors what the backend will charge
+      // (the reflowImage callable performs the authoritative atomic deduction; this only
+      // keeps the UI in sync). Refund per-item below for any slide that ultimately failed.
+      const callableDeducted = renderGenerationId ? deductCredits('reflowImage', doneSlides.length) : false;
+      if (renderGenerationId && !callableDeducted) { stopLoad(); return; }
       try {
         if (renderGenerationId) {
           const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
@@ -4480,15 +4489,24 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             scope: 'carousel_all',
           });
           if (result.data.success) {
+            // Carousel reflows update slide state only — do NOT push every slide into the
+            // single-image mockupHistory (would advance historyIndex/currentMockup with
+            // intermediate carousel outputs and confuse the back/forward UI). The user's
+            // active selection drives any single-image history changes elsewhere.
+            let failedCount = 0;
             for (const outcome of result.data.outcomes) {
               if (outcome.success && outcome.outputUrl && outcome.itemIndex !== null) {
                 const slideIdx = outcome.itemIndex;
                 setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: outcome.outputUrl, status: 'done' as const } : s));
-                pushMockup(outcome.outputUrl, newRatio);
               } else if (!outcome.success && outcome.itemIndex !== null) {
+                failedCount++;
                 setCarouselSlides(prev => prev.map((s, idx) => idx === outcome.itemIndex ? { ...s, status: 'error' as const } : s));
               }
             }
+            if (failedCount > 0) refundCredits('reflowImage', failedCount);
+          } else {
+            // Whole call failed — refund optimistic deductions.
+            refundCredits('reflowImage', doneSlides.length);
           }
         } else {
           for (const slide of carouselSlides) {
@@ -4517,6 +4535,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             if (slide.index < carouselSlides.length) await new Promise(r => setTimeout(r, 500));
           }
         }
+      } catch (e) {
+        if (callableDeducted) refundCredits('reflowImage', doneSlides.length);
+        handleApiError(e);
       } finally { stopLoad(); }
       return;
     }

@@ -10,7 +10,7 @@ import type {
 } from "./types.js";
 import { decideMethod } from "./reflowRouter.js";
 import { rerenderFromPlan, NoPlanError, type RerenderGenData } from "./reflowRerender.js";
-import { outpaintReflow, verifyLockedRegion } from "./reflowOutpaint.js";
+import { outpaintReflow, verifyLockedRegion, OUTPAINT_CREDIT_COST } from "./reflowOutpaint.js";
 
 export interface ReflowImageRequest {
     generationId: string;
@@ -65,7 +65,7 @@ export class OutpaintEngineError extends Error {
 
 const SUPPORTED_RATIOS: AspectRatio[] = ["1:1", "4:5", "3:4", "4:3", "9:16", "16:9"];
 const RERENDER_CREDIT_COST = 5;
-const OUTPAINT_CREDIT_COST = 2;
+// OUTPAINT_CREDIT_COST is owned by reflowOutpaint.ts and imported above (single source of truth).
 
 function costForMethod(method: "outpaint" | "rerender"): number {
     return method === "outpaint" ? OUTPAINT_CREDIT_COST : RERENDER_CREDIT_COST;
@@ -310,7 +310,7 @@ async function executeItemReflow(args: {
     }
 }
 
-async function runWithConcurrency<T>(
+async function runWithConcurrency<T extends { itemIndex: number | null }>(
     items: T[],
     cap: number,
     worker: (item: T) => Promise<ReflowOutcome>,
@@ -325,8 +325,11 @@ async function runWithConcurrency<T>(
                 results[idx] = await worker(items[idx]);
             } catch (error: unknown) {
                 const message = error instanceof Error ? error.message : String(error);
+                // Use the item's logical itemIndex so carousel_slide (where idx=0 but logical
+                // index could be 5) reports correctly. Fall back to array position if absent.
+                const logicalItemIndex = items[idx].itemIndex ?? idx;
                 results[idx] = {
-                    itemIndex: idx, success: false, method: null,
+                    itemIndex: logicalItemIndex, success: false, method: null,
                     fallbackFrom: null, fallbackReason: null,
                     outputUrl: null, creditsCharged: 0,
                     errorCode: "unexpected", errorMessage: message,
