@@ -80,12 +80,12 @@ Given a source `(srcW, srcH)` PNG and a target ratio, compute the new canvas `(d
 
 For all 6 outpaint-eligible ordered pairs (1:1↔4:5 in both directions, 4:5↔3:4 in both directions), the source's locked center 70 % rectangle fits within the target canvas. Verified analytically:
 
-| Pair | Source dims (1024-base) | Locked rect (70%) | Target dims | Fits? |
+| Pair | Source dims (1024-base) | Locked rect (70%) | Target dims (R1: srcH preserved, dstW = srcH × targetRatio when wider; srcW preserved, dstH = srcW / targetRatio when taller) | Fits? |
 |---|---|---|---|---|
-| 1:1 → 4:5 | 1024×1024 | 716.8×716.8 | 1024×1280 | YES (inset 153/281) |
-| 4:5 → 1:1 | 1024×1280 | 716.8×896 | 1024×1024 (crop) | locked W < 1024 ✓; locked H 896 < 1024 ✓ |
-| 4:5 → 3:4 | 1024×1280 | 716.8×896 | 1024×1365 | YES |
-| 3:4 → 4:5 | 1024×1365 | 716.8×955.5 | 1024×1280 (crop) | locked H 955.5 < 1280 ✓ |
+| 1:1 → 4:5 (taller) | 1024×1024 | 716.8×716.8 | srcW preserved → 1024×1280 | YES (locked 716.8 < 1024 W and < 1280 H) |
+| 4:5 → 1:1 (wider) | 1024×1280 | 716.8×896 | srcH preserved → 1280×1280 (width extended from 1024 to 1280) | YES (locked 716.8 < 1280 W and 896 < 1280 H) |
+| 4:5 → 3:4 (taller) | 1024×1280 | 716.8×896 | srcW preserved → 1024×1365 | YES (locked 716.8 < 1024 W and 896 < 1365 H) |
+| 3:4 → 4:5 (wider) | 1024×1365 | 716.8×955.5 | srcH preserved → 1092×1365 (width extended from 1024 to 1092) | YES (locked 716.8 < 1092 W and 955.5 < 1365 H) |
 
 **No outpaint pair triggers a "locked region exceeds target canvas" geometry conflict.** This is a consequence of the 30 % threshold being correctly chosen. Reverse pairs that would be problematic (e.g. 4:3 → 1:1, source 1024×768, locked 716.8×537.6, target 1024×1024 — would still fit, but this pair routes to rerender at 33.3 % so the geometry check is moot anyway) all fall above the threshold.
 

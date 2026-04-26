@@ -13,20 +13,36 @@ export class NoPlanError extends Error {
 
 const REFLOW_CREDIT_COST = 5;
 
-export async function rerenderFromPlan(args: {
-    generationId: string;
-    targetRatio: AspectRatio;
-    itemIndex: number | null;
-    genData: Record<string, any>;
-    geminiApiKey: string;
-    openaiApiKey: string;
-}): Promise<{ outputUrl: string; creditsCharged: number }> {
-    const { generationId, targetRatio, itemIndex, genData, geminiApiKey, openaiApiKey } = args;
+/**
+ * Generation document shape used by rerenderFromPlan. Loose by design — generation
+ * docs evolved over multiple phases and we read defensively.
+ */
+export interface RerenderGenData {
+    input?: {
+        tone?: string;
+        [k: string]: unknown;
+    };
+    output?: {
+        buildPlan?: string;
+        fullResponse?: string;
+        carouselSlides?: Array<{ buildPlan?: string; imageUrl?: string }>;
+        batchResults?: Array<{ buildPlan?: string; url?: string }>;
+        [k: string]: unknown;
+    };
+    [k: string]: unknown;
+}
 
+/**
+ * Pure plan-extraction helper exported for testability. Returns the saved buildPlan
+ * for a single render, a carousel slide, or a batch variant. Throws NoPlanError if
+ * the source generation lacks a plan at the requested location (FR-015 trigger).
+ */
+export function extractBuildPlan(
+    genData: RerenderGenData,
+    itemIndex: number | null,
+    generationId: string,
+): string {
     let buildPlan: string | undefined;
-    const inputs: Record<string, unknown> = genData.input ?? {};
-    const approvedTov: string = genData.output?.fullResponse ?? "";
-    const resolvedUniverse: string = genData.input?.tone ?? "";
 
     if (itemIndex !== null) {
         const slides = genData.output?.carouselSlides;
@@ -47,27 +63,46 @@ export async function rerenderFromPlan(args: {
             (itemIndex !== null ? ` item ${itemIndex}` : "")
         );
     }
+    return buildPlan;
+}
+
+export async function rerenderFromPlan(args: {
+    generationId: string;
+    targetRatio: AspectRatio;
+    itemIndex: number | null;
+    genData: RerenderGenData;
+    geminiApiKey: string;
+    openaiApiKey: string;
+}): Promise<{ outputUrl: string; creditsCharged: number }> {
+    const { generationId, targetRatio, itemIndex, genData, geminiApiKey, openaiApiKey } = args;
+
+    const inputs: Record<string, unknown> = (genData.input ?? {}) as Record<string, unknown>;
+    const approvedTov: string = genData.output?.fullResponse ?? "";
+    const resolvedUniverse: string = genData.input?.tone ?? "";
+
+    const buildPlan = extractBuildPlan(genData, itemIndex, generationId);
 
     const { setGeminiCaller, setOpenAIKey } = await import("./generators.js");
     const { GoogleGenerativeAI } = await import("@google/generative-ai");
     const genAI = new GoogleGenerativeAI(geminiApiKey);
-    const caller: (params: { model: string; contents: any; config?: any }) => Promise<any> =
-        (params) => genAI.getGenerativeModel({ model: params.model, ...params.config }).generateContent(params.contents);
+    // setGeminiCaller defines the caller's exact shape; reuse it via Parameters<> to avoid local `any`.
+    type GeminiCaller = Parameters<typeof setGeminiCaller>[0];
+    const caller: GeminiCaller = (params) =>
+        genAI.getGenerativeModel({ model: params.model, ...params.config }).generateContent(params.contents);
     setGeminiCaller(caller);
     setOpenAIKey(openaiApiKey);
 
     const result = await generateFinalAd(
         buildPlan,
         approvedTov,
-        inputs,
+        inputs as Parameters<typeof generateFinalAd>[2],
         resolvedUniverse,
         targetRatio,
     );
 
     if (!result.image) {
-        throw new Error(
-            `Rerender failed for generation ${generationId}: ${(result as any).errorCode || "unknown"}`
-        );
+        const errorCode = "errorCode" in result && typeof result.errorCode === "string" ? result.errorCode : "unknown";
+        throw new Error(`Rerender failed for generation ${generationId}: ${errorCode}`);
     }
 
     return {

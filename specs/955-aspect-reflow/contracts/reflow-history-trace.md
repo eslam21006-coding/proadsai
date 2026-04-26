@@ -4,7 +4,7 @@
 
 ## Summary
 
-Extend the existing `ResolutionTrace` (defined in `functions/src/types.ts`, built in `functions/src/resolutionTrace.ts`) with one optional new field: `reflowHistory: ReflowHistoryEntry[]`. Every executed reflow item appends one entry. This is the FR-024 / FR-025 traceability surface for the new reflow router.
+Extend the existing `ResolutionTrace` (defined in `functions/src/types.ts`, built in `functions/src/resolutionTrace.ts`) with one optional new field: `reflowHistory: ReflowHistoryEntry[]`. Every **successful** reflow item appends one entry — failed items surface their error via the per-item `ReflowOutcome` payload returned to the caller, but do NOT write a `reflowHistory` entry. This keeps the persisted history canonical (only entries with a real `outputUrl` and `creditsCharged > 0`) and is the FR-024 / FR-025 traceability surface for the new reflow router.
 
 ## Schema
 
@@ -23,8 +23,8 @@ interface ReflowHistoryEntry {
     fallbackReason: ReflowFallbackReason | null;
 
     itemIndex: number | null;                       // null for scope='single'
-    outputUrl: string | null;                       // null only if both routes failed
-    creditsCharged: number;
+    outputUrl: string;                               // always populated; failed items are not persisted as entries
+    creditsCharged: number;                          // always > 0 (no-op short-circuits do not produce entries)
 }
 
 type ReflowFallbackReason = 'engine_error' | 'drift' | 'no_plan' | 'mask_error' | 'transient';
@@ -113,8 +113,8 @@ This contract intentionally exposes the data; consumption is left to follow-up p
 | `fallbackFrom` and `fallbackReason` MUST be both null or both non-null. | (data integrity) |
 | When `userOverride !== null`, `fallbackFrom` MUST be null (no fallback on user override). | research.md R6 |
 | `itemIndex` MUST be null for `scope === 'single'` and a non-negative integer for multi-item scopes. | (data integrity) |
-| `outputUrl !== null` MUST hold when the corresponding `ReflowOutcome.success === true`. | FR-014, FR-029 |
-| `creditsCharged === 0` MUST hold for failed entries (entries where both routes failed). | FR-019 |
+| `outputUrl` MUST be populated and non-empty (only successful items persist entries). | FR-014, FR-029 |
+| `creditsCharged > 0` MUST hold (no-op short-circuits do not produce entries; failed items return `ReflowOutcome.success === false` with no entry). | FR-018, FR-019 |
 
 ## Backward compatibility
 

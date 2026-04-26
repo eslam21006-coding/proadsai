@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useState, useEffect, useMemo, useRef, useCallback, Suspense } from 'react';
-import type { AdInputs, AdMode, AppPhase, AspectRatio, ABVariation, BatchResult, BatchHookGroup, CarouselSlide, CarouselSlideCopy, ChatMessage, TextOverride, VisualPolish, Toast, SavedProject, AudienceAvatar, CompetitorResearch, SemanticLock, TovEditIntent, RewriteScope, Workspace, ReflowImageRequest, ReflowImageResponse } from './types';
+import type { AdInputs, AdMode, AppPhase, AspectRatio, ABVariation, BatchResult, BatchHookGroup, CarouselSlide, CarouselSlideCopy, TextOverride, VisualPolish, Toast, SavedProject, AudienceAvatar, CompetitorResearch, SemanticLock, TovEditIntent, RewriteScope, Workspace, ReflowImageRequest, ReflowImageResponse } from './types';
 // --- FIREBASE IMPORTS ---
 import { auth, db, functions, storage } from './firebase';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signOut, onAuthStateChanged, type User } from 'firebase/auth';
@@ -3732,17 +3732,20 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         pushMockup(mockup, primaryRatio);
         setVisualPolishes([]);
         // ─── SAVE RENDER FOR FEEDBACK (non-blocking — must not prevent phase transition) ─────────
+        // Capture the freshly returned id locally; React state setter is async and the auto-reflow
+        // loop below would otherwise read a stale renderGenerationId from the previous render.
+        let savedGenId: string | null = null;
         if (user) {
           try {
-            const genId = await feedbackService.saveGeneration(
+            savedGenId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
               { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500) },
               conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
               canUseWorkspaces ? activeWorkspaceId : null
             );
-            setRenderGenerationId(genId);
-            if (loadedFavoriteId && genId) {
-              setFavUpdatePrompt({ phase: 'render', newGenId: genId });
+            setRenderGenerationId(savedGenId);
+            if (loadedFavoriteId && savedGenId) {
+              setFavUpdatePrompt({ phase: 'render', newGenId: savedGenId });
             }
           } catch (saveErr) {
             console.error('Non-blocking: failed to save render generation record:', saveErr);
@@ -3752,7 +3755,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         updateHighestUnlocked('render_studio');
         awardMilestone('designGenerated');
 
-        // Auto-reflow to extra selected sizes from Step 3
+        // Auto-reflow to extra selected sizes from Step 3 — use local savedGenId (stable),
+        // not renderGenerationId (state, async-updated).
         if (extraSizes.length > 0) {
           stopLoad();
           for (let ei = 0; ei < extraSizes.length; ei++) {
@@ -3760,10 +3764,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             startLoad(`Reflowing to ${extraRatio}... (${ei + 1}/${extraSizes.length})`);
             try {
               await new Promise(r => setTimeout(r, 500));
-              if (renderGenerationId) {
+              if (savedGenId) {
                 const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
                 const reflowRes = await reflowFn({
-                  generationId: renderGenerationId,
+                  generationId: savedGenId,
                   targetAspectRatio: extraRatio as AspectRatio,
                   method: 'auto',
                   scope: 'single',
@@ -3772,8 +3776,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   pushMockup(reflowRes.data.outcomes[0].outputUrl, extraRatio as AspectRatio);
                 }
               } else {
-                const reflowResult = await gemini.generateFinalAd(conceptRaw, selectedTov, inputs, resolvedUniverse, extraRatio, Object.assign("REFLOW ONLY — adapt this exact design to " + extraRatio + " ratio. Keep ALL text identical word-for-word. Keep the SAME hero, visual elements, colors, and composition. Fill the entire canvas proportionally — no large empty areas. The hero, headline, subheadline, CTA, benefit line, and all elements must be VISIBLE and properly sized for the new ratio. Scale and reposition elements to use the full canvas.", { _internalReflow: true }), mockup);
-                if (reflowResult.image) { pushMockup(reflowResult.image, extraRatio as AspectRatio); }
+                console.warn(`Auto-reflow to ${extraRatio} skipped: no generation id available (saveGeneration failed or user not logged in).`);
               }
             } catch (e) { console.error(`Auto-reflow to ${extraRatio} failed:`, e); }
           }
@@ -7058,19 +7061,19 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 {/* Reflow Rescaling */}
                 <div className="bg-slate-900/50 rounded-2xl border border-slate-800/40 p-4 space-y-4">
                   <div className="flex items-center justify-between">
-                    <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center flex-1"><i className="fa-solid fa-crop-simple mr-2 text-blue-500"></i>Reflow Rescaling</h4>
+                    <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center flex-1"><i className="fa-solid fa-crop-simple mr-2 text-blue-500"></i>{t('studio.reflow')}</h4>
                     <button onClick={() => setShowMethodSelector(!showMethodSelector)}
                       className="text-[8px] text-slate-500 hover:text-slate-300 flex items-center gap-1 transition-all">
-                      <span>Method: {reflowMethod === 'auto' ? 'Auto' : reflowMethod === 'outpaint' ? 'Quick' : 'Fresh'}</span>
+                      <span>{t('studio.reflow.method_label')}: {reflowMethod === 'auto' ? t('studio.reflow.method_auto') : reflowMethod === 'outpaint' ? t('studio.reflow.method_quick') : t('studio.reflow.method_fresh')}</span>
                       <i className={`fa-solid fa-chevron-${showMethodSelector ? 'up' : 'down'} text-[6px]`}></i>
                     </button>
                   </div>
                   {showMethodSelector && (
                     <div className="flex gap-2">
                       {([
-                        { value: 'auto' as const, label: 'Auto', desc: 'Recommended', icon: 'fa-wand-magic-sparkles' },
-                        { value: 'outpaint' as const, label: 'Quick', desc: 'Fast, keeps subject', icon: 'fa-bolt' },
-                        { value: 'rerender' as const, label: 'Fresh', desc: 'Best for big changes', icon: 'fa-rotate' },
+                        { value: 'auto' as const, label: t('studio.reflow.method_auto'), desc: t('studio.reflow.method_auto_desc'), icon: 'fa-wand-magic-sparkles' },
+                        { value: 'outpaint' as const, label: t('studio.reflow.method_quick'), desc: t('studio.reflow.method_quick_desc'), icon: 'fa-bolt' },
+                        { value: 'rerender' as const, label: t('studio.reflow.method_fresh'), desc: t('studio.reflow.method_fresh_desc'), icon: 'fa-rotate' },
                       ]).map(opt => (
                         <button key={opt.value} onClick={() => { setReflowMethod(opt.value); setShowMethodSelector(false); }}
                           className={`flex-1 py-2 rounded-lg border text-center transition-all ${reflowMethod === opt.value ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>

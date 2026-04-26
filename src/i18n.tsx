@@ -279,6 +279,13 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'studio.regenerate_suggestions': 'Regenerate All AI Suggestions',
         'studio.text_layout': 'Text Layout',
         'studio.reflow': 'Reflow Rescaling',
+        'studio.reflow.method_label': 'Method',
+        'studio.reflow.method_auto': 'Auto',
+        'studio.reflow.method_quick': 'Quick',
+        'studio.reflow.method_fresh': 'Fresh',
+        'studio.reflow.method_auto_desc': 'Recommended',
+        'studio.reflow.method_quick_desc': 'Fast, keeps subject',
+        'studio.reflow.method_fresh_desc': 'Best for big changes',
 
         // ── Step 5: Script ──
         'script.title': 'Primary Script',
@@ -966,6 +973,13 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'studio.regenerate_suggestions': 'إعادة توليد كل الاقتراحات',
         'studio.text_layout': 'تخطيط النص',
         'studio.reflow': 'إعادة تحجيم',
+        'studio.reflow.method_label': 'الطريقة',
+        'studio.reflow.method_auto': 'تلقائي',
+        'studio.reflow.method_quick': 'سريع',
+        'studio.reflow.method_fresh': 'إعادة إنشاء',
+        'studio.reflow.method_auto_desc': 'موصى به',
+        'studio.reflow.method_quick_desc': 'سريع، يحافظ على البطل',
+        'studio.reflow.method_fresh_desc': 'الأفضل للتغييرات الكبيرة',
 
         // ── Step 5: Script ──
         'script.title': 'النص الأساسي',

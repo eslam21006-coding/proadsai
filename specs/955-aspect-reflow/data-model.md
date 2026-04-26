@@ -63,9 +63,8 @@ export interface ReflowHistoryEntry {
     userOverride: 'outpaint' | 'rerender' | null;
 
     /**
-     * The route the system attempted FIRST. Populated only when a
-     * fallback occurred (`fallbackFrom !== null`); equal to `method`
-     * when no fallback happened.
+     * Populated only when a fallback occurred (contains the first
+     * attempted route), otherwise null.
      */
     fallbackFrom: 'outpaint' | 'rerender' | null;
 

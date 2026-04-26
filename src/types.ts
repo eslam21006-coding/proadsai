@@ -646,13 +646,15 @@ export interface ReflowOutcome {
   errorMessage?: string;
 }
 
-export interface ReflowImageRequest {
+interface ReflowImageRequestBase {
   generationId: string;
   targetAspectRatio: AspectRatio;
   method: ReflowMethod;
-  scope: ReflowScope;
-  slideIndex?: number;
 }
+
+export type ReflowImageRequest =
+  | (ReflowImageRequestBase & { scope: "single" | "batch_all" | "carousel_all"; slideIndex?: undefined })
+  | (ReflowImageRequestBase & { scope: "carousel_slide"; slideIndex: number });
 
 export interface ReflowImageResponse {
   success: true;

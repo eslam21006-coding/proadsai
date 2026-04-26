@@ -6,7 +6,7 @@ This recipe walks an engineer through verifying the HOTFIX-F changes locally end
 
 ## Prerequisites
 
-- Node ≥ 18, `npm` installed.
+- Node ≥ 20.19 (or 22.12+), `npm` installed (Vite 7 minimum).
 - Firebase emulator suite (`firebase` CLI ≥ 13).
 - Repo cloned, this branch checked out: `955-aspect-reflow`.
 - Sharp built for the local platform (already a project dep; `cd functions && npm install` if missing).
@@ -15,7 +15,7 @@ This recipe walks an engineer through verifying the HOTFIX-F changes locally end
 ## Step 1 — Build & start emulators
 
 ```bash
-cd D:/proads-worktrees/0954-hotfix-aspect-reflow
+cd <repo-root>
 
 # Frontend
 npm install
@@ -155,7 +155,7 @@ The frontend no longer constructs `REFLOW: Ratio …` prompts; all user-facing r
 ## Step 10 — Lint, typecheck, and final test pass
 
 ```bash
-cd D:/proads-worktrees/0954-hotfix-aspect-reflow
+cd <repo-root>
 npm run lint
 cd functions
 npm run build         # tsc strict mode passes

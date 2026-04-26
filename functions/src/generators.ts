@@ -5188,9 +5188,20 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
         const isReflow = editInstruction?.includes("REFLOW");
 
         if (isReflow) {
-            // HOTFIX-F gate: user-facing REFLOW path deprecated — use reflowImage callable instead (FR-026)
-            if (!(editInstruction as any)?._internalReflow) {
-                throw new Error("Deprecated REFLOW path; use reflowImage callable instead (FR-026)");
+            // HOTFIX-F gate (FR-026): generative-edit REFLOW path is deprecated for user-facing
+            // reflows. Callers MUST use the `reflowImage` callable. Internal callers can pass an
+            // explicit literal escape token in editInstruction; otherwise return a typed error
+            // result so callers handle this like any other generation failure (no thrown exception).
+            const INTERNAL_REFLOW_TOKEN = "__INTERNAL_REFLOW_BYPASS__";
+            const isInternalReflow = typeof editInstruction === "string" && editInstruction.includes(INTERNAL_REFLOW_TOKEN);
+            if (!isInternalReflow) {
+                console.warn("🛑 Deprecated REFLOW path invoked — use reflowImage callable (FR-026).");
+                return {
+                    image: null,
+                    errorCode: "REFLOW_DEPRECATED",
+                    failureClass: "validation_reject" as FailureClass,
+                    debug: { validator: "creative_mode", reasons: ["Deprecated REFLOW path; use reflowImage callable instead (FR-026)"] },
+                };
             }
             // REFLOW MODE — strict resize only, preserve everything visual (internal callers only)
             parts.push({

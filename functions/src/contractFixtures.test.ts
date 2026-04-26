@@ -1612,7 +1612,7 @@ console.log("═══ HFE — All hybrid logo fixtures passed ═══\n");
 
 import { decideMethod, RATIO_TO_NUMERIC } from "./reflowRouter.js";
 import { verifyLockedRegion } from "./reflowOutpaint.js";
-import { NoPlanError } from "./reflowRerender.js";
+import { NoPlanError, extractBuildPlan, rerenderFromPlan } from "./reflowRerender.js";
 import { reflowImageHandler } from "./reflowImage.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -1667,19 +1667,22 @@ async function testHff6c() {
 }
 
 // ─── HFF.6.d — rerender loads original plan and overrides aspect ratio ───
-function testHff6d() {
-    // Test 1: NoPlanError properties when plan is missing
+async function testHff6d() {
+    // 1) NoPlanError typed error has the right fallback reason
     const err = new NoPlanError("No saved buildPlan for generation test-gen");
     assert.ok(err instanceof NoPlanError, "NoPlanError must be instanceof NoPlanError");
     assert.equal(err.fallbackReason, "no_plan", "fallbackReason must be 'no_plan'");
-    assert.ok(err.message.includes("No saved buildPlan"), "Message describes missing plan");
 
-    // Test 2: Plan extraction logic — verify genData.output.buildPlan is the source
-    const genDataWithPlan = { input: {}, output: { buildPlan: "ORIGINAL-PLAN" } };
-    assert.equal(genDataWithPlan.output.buildPlan, "ORIGINAL-PLAN", "buildPlan extracted from output");
+    // 2) extractBuildPlan exercises the real path: single render
+    const single = extractBuildPlan(
+        { input: {}, output: { buildPlan: "ORIGINAL-PLAN-1x1" } },
+        null,
+        "gen-single",
+    );
+    assert.equal(single, "ORIGINAL-PLAN-1x1", "Single render plan extracted from output.buildPlan");
 
-    // Test 3: Carousel item plan extraction
-    const genDataCarousel = {
+    // 3) extractBuildPlan exercises the real path: carousel slide by index
+    const carouselGenData = {
         input: {},
         output: {
             carouselSlides: [
@@ -1688,8 +1691,61 @@ function testHff6d() {
             ],
         },
     };
-    assert.equal(genDataCarousel.output.carouselSlides[1].buildPlan, "SLIDE-PLAN-1", "Carousel slide plan extracted by index");
-    console.log("  ✅ HFF.6.d: NoPlanError on missing plan, plan extraction verified");
+    assert.equal(extractBuildPlan(carouselGenData, 0, "gen-c"), "SLIDE-PLAN-0",
+        "Carousel slide 0 plan extracted by index");
+    assert.equal(extractBuildPlan(carouselGenData, 1, "gen-c"), "SLIDE-PLAN-1",
+        "Carousel slide 1 plan extracted by index");
+
+    // 4) extractBuildPlan exercises the real path: batch variant by index
+    const batchGenData = {
+        input: {},
+        output: {
+            batchResults: [
+                { url: "u0", buildPlan: "BATCH-PLAN-0" },
+                { url: "u1", buildPlan: "BATCH-PLAN-1" },
+            ],
+        },
+    };
+    assert.equal(extractBuildPlan(batchGenData, 0, "gen-b"), "BATCH-PLAN-0",
+        "Batch variant 0 plan extracted by index");
+
+    // 5) Missing plan throws NoPlanError (real path) — single render
+    assert.throws(
+        () => extractBuildPlan({ input: {}, output: {} }, null, "gen-no-plan"),
+        (e: unknown) => e instanceof NoPlanError && e.fallbackReason === "no_plan",
+        "Missing plan must throw NoPlanError with fallbackReason='no_plan'",
+    );
+
+    // 6) Missing slide plan throws NoPlanError (real path) — carousel item
+    assert.throws(
+        () => extractBuildPlan(
+            { input: {}, output: { carouselSlides: [{ imageUrl: "u" }] } },
+            0,
+            "gen-no-slide-plan",
+        ),
+        (e: unknown) => e instanceof NoPlanError,
+        "Missing slide plan must throw NoPlanError",
+    );
+
+    // 7) rerenderFromPlan invokes extractBuildPlan and propagates NoPlanError before
+    //    touching Gemini — verifies the credit-bearing path won't hit the generator on missing plan.
+    let threw = false;
+    try {
+        await rerenderFromPlan({
+            generationId: "gen-no-plan",
+            targetRatio: "9:16",
+            itemIndex: null,
+            genData: { input: {}, output: {} },
+            geminiApiKey: "stub",
+            openaiApiKey: "stub",
+        });
+    } catch (e: unknown) {
+        threw = true;
+        assert.ok(e instanceof NoPlanError, "rerenderFromPlan must throw NoPlanError on missing plan");
+    }
+    assert.ok(threw, "rerenderFromPlan must throw on missing plan, not return");
+
+    console.log("  ✅ HFF.6.d: extractBuildPlan + rerenderFromPlan exercise real path; NoPlanError propagated");
 }
 
 // ─── HFF.6.e — user override outpaint on 4:5 → 9:16 ───
@@ -1803,40 +1859,50 @@ async function testHff6k() {
     const mockDb = createMockReflowDb(genData);
 
     try {
+        // Cast to any: tests build a minimal CallableRequest stub without the full AuthData shape (token/rawToken).
         await reflowImageHandler(
-            { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "2:1", method: "auto", scope: "single" } },
-            { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" },
+            { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "2:1", method: "auto", scope: "single" } } as Parameters<typeof reflowImageHandler>[0],
+            { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as Parameters<typeof reflowImageHandler>[1],
         );
         assert.fail("Should have thrown");
-    } catch (e: any) {
-        assert.equal(e.code, "invalid-argument", "Must reject invalid ratio with invalid-argument");
-        assert.ok(e.message.includes("Unsupported"), `Message should mention unsupported: ${e.message}`);
+    } catch (e: unknown) {
+        const err = e as { code?: string; message?: string };
+        assert.equal(err.code, "invalid-argument", "Must reject invalid ratio with invalid-argument");
+        assert.ok(err.message?.includes("Unsupported"), `Message should mention unsupported: ${err.message}`);
     }
     console.log("  ✅ HFF.6.k: invalid target ratio '2:1' rejected at callable boundary");
 }
 
 // ─── HFF.6.l — deprecated REFLOW path locked out ───
-function testHff6l() {
-    // Test that the gate in generators.ts throws when editInstruction
-    // contains "REFLOW" but lacks the _internalReflow flag
-    const editInstruction = "REFLOW ONLY — adapt this exact design to 9:16 ratio.";
-    const hasReflow = editInstruction.includes("REFLOW");
-    assert.ok(hasReflow, "Test string must contain REFLOW");
+async function testHff6l() {
+    // Exercise the real gate in generators.ts::generateFinalAd by calling it with an
+    // editInstruction that includes "REFLOW" and a base64ToEdit; the deprecated path
+    // MUST return a typed error result (FR-026), not throw, and not invoke Gemini.
+    const { generateFinalAd } = await import("./generators.js");
+    const tinyPng = readFileSync(join(__dirname, "..", "src", "__tests__", "__fixtures__", "reflow-source-1x1.png"));
+    const tinyB64 = "data:image/png;base64," + tinyPng.toString("base64");
 
-    // Simulate the gate logic:
-    const internalFlag = (editInstruction as any)?._internalReflow;
-    if (hasReflow && !internalFlag) {
-        // This is the gate path — would throw
-        assert.ok(true, "Gate would fire for non-internal REFLOW instruction");
-    } else {
-        assert.fail("Gate should fire");
-    }
+    const fakeInputs = {
+        offerName: "x", productName: "x", offerType: "free_guide",
+        adMode: "single", adGoal: "leads", language: "en", uiLanguage: "en",
+        country: "US", coldHookAngle: null, retargetingAngles: [], retargetingObjections: [],
+        offerPrice: "$0", offerOriginalPrice: "$0", offerDiscount: "0",
+        cta: "Learn more", offerCreativeMode: ["standard_hero"],
+    } as unknown as Parameters<typeof generateFinalAd>[2];
 
-    // Verify internal callers pass through:
-    const internalInstruction = Object.assign("REFLOW ONLY — adapt", { _internalReflow: true });
-    const internalFlag2 = (internalInstruction as any)?._internalReflow;
-    assert.ok(internalFlag2, "Internal callers have _internalReflow flag");
-    console.log("  ✅ HFF.6.l: deprecated REFLOW path locked out for non-internal callers");
+    // Non-internal caller — gate MUST fire and return typed error.
+    const userFacingResult = await generateFinalAd(
+        "stub-build-plan", "stub-tov", fakeInputs, "minimal_universe", "9:16",
+        "REFLOW ONLY — adapt this exact design to 9:16 ratio.", tinyB64,
+    );
+    assert.equal(userFacingResult.image, null, "Deprecated REFLOW path must return image: null");
+    assert.equal((userFacingResult as { errorCode?: string }).errorCode, "REFLOW_DEPRECATED",
+        `errorCode must be 'REFLOW_DEPRECATED', got ${(userFacingResult as { errorCode?: string }).errorCode}`);
+    assert.equal((userFacingResult as { failureClass?: string }).failureClass, "validation_reject",
+        "failureClass must be 'validation_reject'");
+    assert.ok((userFacingResult as { debug?: { reasons?: string[] } }).debug?.reasons?.[0]?.includes("FR-026"),
+        "debug reasons must reference FR-026");
+    console.log("  ✅ HFF.6.l: deprecated REFLOW path returns typed error (REFLOW_DEPRECATED) — FR-026");
 }
 
 // ─── HFF.6.m — favorites and saved-projects scope preserved across reflow ───
@@ -1934,7 +2000,7 @@ async function runHff6Fixtures() {
     testHff6a();
     testHff6b();
     await testHff6c();
-    testHff6d();
+    await testHff6d();
     testHff6e();
     testHff6f();
     await testHff6g();
@@ -1942,7 +2008,7 @@ async function runHff6Fixtures() {
     testHff6i();
     testHff6j();
     await testHff6k();
-    testHff6l();
+    await testHff6l();
     testHff6m();
     testHff6n();
 

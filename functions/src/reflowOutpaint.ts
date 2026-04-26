@@ -26,6 +26,38 @@ async function getSharp(): Promise<SharpFactory> {
 
 const OUTPAINT_CREDIT_COST = 2;
 
+/**
+ * Extract the GCS object path from any of the URL shapes the codebase emits:
+ *   1. firebasestorage.googleapis.com/.../o/{encodedObject}?alt=media&token=...
+ *   2. https://storage.googleapis.com/<bucket>/<object>
+ *   3. https://<bucket>.storage.googleapis.com/<object>
+ *   4. <object> (bare object path — pass-through)
+ * Returns null if none of the patterns match.
+ */
+export function resolveStoragePath(url: string, bucketName: string): string | null {
+    if (!url) return null;
+    // Form 1: firebasestorage download URL
+    if (url.includes("/o/")) {
+        const after = url.split("/o/")[1];
+        if (after) return decodeURIComponent(after.split("?")[0]);
+    }
+    // Form 2: https://storage.googleapis.com/<bucket>/<object>
+    const m2 = url.match(/^https?:\/\/storage\.googleapis\.com\/([^/]+)\/(.+)$/);
+    if (m2) {
+        const [, urlBucket, object] = m2;
+        if (!bucketName || urlBucket === bucketName) return decodeURIComponent(object);
+        return decodeURIComponent(object);
+    }
+    // Form 3: https://<bucket>.storage.googleapis.com/<object>
+    const m3 = url.match(/^https?:\/\/([^.]+)\.storage\.googleapis\.com\/(.+)$/);
+    if (m3) {
+        return decodeURIComponent(m3[2]);
+    }
+    // Form 4: bare object path
+    if (!url.startsWith("http")) return url;
+    return null;
+}
+
 export async function outpaintReflow(args: {
     sourceImageUrl: string;
     sourceRatio: AspectRatio;
@@ -41,7 +73,10 @@ export async function outpaintReflow(args: {
     } else {
         const admin = await import("firebase-admin");
         const bucket = admin.storage().bucket();
-        const path = decodeURIComponent(args.sourceImageUrl.split("/o/")[1]?.split("?")[0] || "");
+        const path = resolveStoragePath(args.sourceImageUrl, bucket.name);
+        if (!path) {
+            throw new Error(`Cannot resolve Storage object path from URL: ${args.sourceImageUrl}`);
+        }
         const [fileBuf] = await bucket.file(path).download();
         srcBuf = fileBuf;
     }
@@ -90,7 +125,9 @@ export async function verifyLockedRegion(
 ): Promise<{ ok: boolean; reason: "drift" | "shape_mismatch" | null }> {
     const sharp = await getSharp();
 
-    const srcRaw = await sharp(sourceBuffer).raw().toBuffer();
+    // ensureAlpha() guarantees 4 bytes/pixel (RGBA) so the (y * width + x) * 4
+    // stride math below is correct regardless of whether the source PNG was RGB or RGBA.
+    const srcRaw = await sharp(sourceBuffer).ensureAlpha().raw().toBuffer();
     const srcMeta = await sharp(sourceBuffer).metadata();
     const srcW = srcMeta.width!;
     const srcH = srcMeta.height!;
@@ -99,7 +136,7 @@ export async function verifyLockedRegion(
     const outW = outMeta.width!;
     const outH = outMeta.height!;
 
-    const outRaw = await sharp(outputBuffer).raw().toBuffer();
+    const outRaw = await sharp(outputBuffer).ensureAlpha().raw().toBuffer();
 
     const padLeft = Math.floor((outW - srcW) / 2);
     const padTop = Math.floor((outH - srcH) / 2);

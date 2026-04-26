@@ -1,5 +1,6 @@
 // functions/src/reflowImage.ts — onCall handler for deterministic aspect ratio reflow (HOTFIX-F)
 
+import type { CallableRequest } from "firebase-functions/v2/https";
 import type { AspectRatio } from "./generators.js";
 import type {
     ReflowOutcome,
@@ -8,8 +9,43 @@ import type {
     ReflowScope,
 } from "./types.js";
 import { decideMethod } from "./reflowRouter.js";
-import { rerenderFromPlan, NoPlanError } from "./reflowRerender.js";
+import { rerenderFromPlan, NoPlanError, type RerenderGenData } from "./reflowRerender.js";
 import { outpaintReflow, verifyLockedRegion } from "./reflowOutpaint.js";
+
+export interface ReflowImageRequest {
+    generationId: string;
+    targetAspectRatio: string;
+    method: ReflowMethod;
+    scope: ReflowScope;
+    slideIndex?: number;
+}
+
+export interface ReflowImageResponse {
+    success: true;
+    scope: ReflowScope;
+    outcomes: ReflowOutcome[];
+    totalCreditsCharged: number;
+}
+
+export interface ReflowImageDeps {
+    db: FirebaseFirestore.Firestore;
+    admin: typeof import("firebase-admin");
+    geminiApiKey: string;
+    openaiApiKey: string;
+}
+
+/**
+ * Generation document shape used by the reflow handler. Loose by design —
+ * generation docs evolved over multiple phases and we read defensively.
+ */
+export interface ReflowGenerationDoc extends RerenderGenData {
+    userId?: string;
+    metadata?: { aspectRatio?: AspectRatio };
+    output?: RerenderGenData["output"] & {
+        imageUrl?: string;
+    };
+    mockupHistory?: Array<{ url: string; ratio: AspectRatio }>;
+}
 
 export class OutpaintDriftError extends Error {
     public readonly fallbackReason = "drift" as const;
@@ -28,22 +64,17 @@ export class OutpaintEngineError extends Error {
 }
 
 const SUPPORTED_RATIOS: AspectRatio[] = ["1:1", "4:5", "3:4", "4:3", "9:16", "16:9"];
-const REFLOW_CREDIT_COST = 5;
+const RERENDER_CREDIT_COST = 5;
+const OUTPAINT_CREDIT_COST = 2;
+
+function costForMethod(method: "outpaint" | "rerender"): number {
+    return method === "outpaint" ? OUTPAINT_CREDIT_COST : RERENDER_CREDIT_COST;
+}
 
 export async function reflowImageHandler(
-    request: any,
-    deps: {
-        db: any;
-        admin: any;
-        geminiApiKey: string;
-        openaiApiKey: string;
-    },
-): Promise<{
-    success: true;
-    scope: ReflowScope;
-    outcomes: ReflowOutcome[];
-    totalCreditsCharged: number;
-}> {
+    request: CallableRequest<ReflowImageRequest>,
+    deps: ReflowImageDeps,
+): Promise<ReflowImageResponse> {
     const { db, admin, geminiApiKey, openaiApiKey } = deps;
 
     if (!request.auth) {
@@ -52,19 +83,7 @@ export async function reflowImageHandler(
     }
     const callerId = request.auth.uid;
 
-    const {
-        generationId,
-        targetAspectRatio,
-        method,
-        scope,
-        slideIndex,
-    }: {
-        generationId: string;
-        targetAspectRatio: string;
-        method: ReflowMethod;
-        scope: ReflowScope;
-        slideIndex?: number;
-    } = request.data;
+    const { generationId, targetAspectRatio, method, scope, slideIndex } = request.data;
 
     const { HttpsError } = await import("firebase-functions/v2/https");
 
@@ -95,7 +114,7 @@ export async function reflowImageHandler(
     if (!genDoc.exists) {
         throw new HttpsError("not-found", "Generation not found.");
     }
-    const genData = genDoc.data();
+    const genData = genDoc.data() as ReflowGenerationDoc;
     if (genData.userId !== creditOwnerUid) {
         throw new HttpsError("not-found", "Generation not found.");
     }
@@ -113,7 +132,7 @@ export async function reflowImageHandler(
 
     if (scope === "single") {
         const sourceUrl = genData.output?.imageUrl ||
-            (genData.mockupHistory?.length > 0
+            (genData.mockupHistory && genData.mockupHistory.length > 0
                 ? genData.mockupHistory[genData.mockupHistory.length - 1].url
                 : null);
         items = [{ itemIndex: null, sourceImageUrl: sourceUrl, buildPlan: genData.output?.buildPlan }];
@@ -122,13 +141,13 @@ export async function reflowImageHandler(
         if (!Array.isArray(slides) || slides.length === 0) {
             throw new HttpsError("failed-precondition", "Source generation has no carousel slides.");
         }
-        items = slides.map((s: any, i: number) => ({
+        items = slides.map((s, i) => ({
             itemIndex: i,
             sourceImageUrl: s.imageUrl || null,
             buildPlan: s.buildPlan || undefined,
         }));
     } else if (scope === "carousel_slide") {
-        if (typeof slideIndex !== "number" || slideIndex < 0) {
+        if (typeof slideIndex !== "number" || !Number.isInteger(slideIndex) || slideIndex < 0) {
             throw new HttpsError("invalid-argument", "slideIndex is required for carousel_slide scope.");
         }
         const slides = genData.output?.carouselSlides;
@@ -142,7 +161,7 @@ export async function reflowImageHandler(
         if (!Array.isArray(batchResults) || batchResults.length === 0) {
             throw new HttpsError("failed-precondition", "Source generation has no batch results.");
         }
-        items = batchResults.map((r: any, i: number) => ({
+        items = batchResults.map((r, i) => ({
             itemIndex: i,
             sourceImageUrl: r.url || null,
             buildPlan: r.buildPlan || undefined,
@@ -164,8 +183,17 @@ export async function reflowImageHandler(
         creditsCharged: 0,
     }));
 
-    // ─── Pre-flight credit check ───
-    const maxCost = REFLOW_CREDIT_COST * activeItems.length;
+    // ─── Decide route first so credit pre-check uses the correct per-route cost ───
+    const decision = decideMethod(sourceRatio, targetRatio, method);
+
+    // ─── Pre-flight credit check (FR-017): charge by chosen route, not by upper bound ───
+    // For auto-routed runs that may fall back, the worst-case cost is the rerender cost
+    // (a fallback either ends at outpaint or rerender, both bounded by RERENDER_CREDIT_COST).
+    // For user-override runs, no fallback occurs, so the cost is exactly the chosen route's cost.
+    const perItemCost = decision.isUserOverride
+        ? costForMethod(decision.chosenMethod)
+        : RERENDER_CREDIT_COST;
+    const maxCost = perItemCost * activeItems.length;
     const userRef = db.collection("users").doc(creditOwnerUid);
     if (maxCost > 0) {
         const userDoc = await userRef.get();
@@ -174,8 +202,6 @@ export async function reflowImageHandler(
             throw new HttpsError("resource-exhausted", `Insufficient credits. Need ${maxCost}.`);
         }
     }
-
-    const decision = decideMethod(sourceRatio, targetRatio, method);
 
     const activeOutcomes = await runWithConcurrency(
         activeItems,
@@ -222,7 +248,7 @@ async function executeItemReflow(args: {
     generationId: string;
     targetRatio: AspectRatio;
     sourceRatio: AspectRatio;
-    genData: Record<string, any>;
+    genData: ReflowGenerationDoc;
     decision: { magnitude: number; chosenMethod: "outpaint" | "rerender"; isUserOverride: boolean };
     geminiApiKey: string;
     openaiApiKey: string;
@@ -300,7 +326,7 @@ async function runWithConcurrency<T>(
             } catch (error: unknown) {
                 const message = error instanceof Error ? error.message : String(error);
                 results[idx] = {
-                    itemIndex: null, success: false, method: null,
+                    itemIndex: idx, success: false, method: null,
                     fallbackFrom: null, fallbackReason: null,
                     outputUrl: null, creditsCharged: 0,
                     errorCode: "unexpected", errorMessage: message,
@@ -315,16 +341,17 @@ async function runWithConcurrency<T>(
 }
 
 async function executeOutpaint(
-    genData: Record<string, any>,
+    genData: ReflowGenerationDoc,
     sourceRatio: AspectRatio,
     targetRatio: AspectRatio,
     itemIndex: number | null = null,
     overrideSourceUrl: string | null = null,
 ): Promise<ReflowOutcome> {
+    const history = genData.mockupHistory;
     const sourceImageUrl: string | null = overrideSourceUrl ||
         genData.output?.imageUrl ||
-        (genData.mockupHistory?.length > 0
-            ? genData.mockupHistory[genData.mockupHistory.length - 1].url
+        (Array.isArray(history) && history.length > 0
+            ? history[history.length - 1].url
             : null);
 
     if (!sourceImageUrl) {
@@ -374,7 +401,7 @@ async function executeOutpaint(
 async function executeRerender(
     generationId: string,
     targetRatio: AspectRatio,
-    genData: Record<string, any>,
+    genData: ReflowGenerationDoc,
     geminiApiKey: string,
     openaiApiKey: string,
     itemIndex: number | null = null,
@@ -420,9 +447,15 @@ async function deductAndPersist(args: {
         creditsCharged,
     };
 
+    // Single atomic transaction: history + credit deduction succeed-or-rollback together (FR-017).
     await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
-        const snap = await tx.get(genRef);
-        const existing = snap.data()?.resolutionTrace?.reflowHistory ?? [];
+        const [genSnap, userSnap] = await Promise.all([tx.get(genRef), tx.get(userRef)]);
+        const existing = (genSnap.data()?.resolutionTrace?.reflowHistory as ReflowHistoryEntry[] | undefined) ?? [];
+        const currentCredits = (userSnap.data()?.credits as number | undefined) ?? 0;
+        if (currentCredits < creditsCharged) {
+            // Concurrent reflow drained credits between pre-flight and now; abort cleanly.
+            throw new Error(`Insufficient credits at commit time (have ${currentCredits}, need ${creditsCharged}).`);
+        }
 
         tx.set(
             genRef,
@@ -437,11 +470,11 @@ async function deductAndPersist(args: {
             },
             { merge: true },
         );
-    });
 
-    await userRef.update({
-        credits: admin.firestore.FieldValue.increment(-creditsCharged),
-        lastActivity: admin.firestore.FieldValue.serverTimestamp(),
+        tx.update(userRef, {
+            credits: admin.firestore.FieldValue.increment(-creditsCharged),
+            lastActivity: admin.firestore.FieldValue.serverTimestamp(),
+        });
     });
 
     console.log(`✅ Reflow ${sourceRatio}→${targetRatio} (${outcome.method}) for gen ${genRef.id}, charged ${creditsCharged}`);

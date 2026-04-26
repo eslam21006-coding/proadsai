@@ -81,9 +81,9 @@ functions/                                # Backend — Cloud Functions v2
     ├── reflowRouter.ts                   # NEW — auto-router: symmetric fold-change formula + magnitude threshold + fallback chain
     ├── reflowImage.ts                    # NEW — onCall handler (extracted module, registered from index.ts for testability)
     ├── generators.ts                     # MODIFY — gate off the user-facing generative-edit REFLOW path at lines 5181-5230 (FR-026)
-    ├── resolutionTrace.ts                # MODIFY — TraceBuilder: add setReflowHistory(entries), wire build()
+    ├── resolutionTrace.ts                # MODIFY — TraceBuilder: add addReflowHistoryEntry(entry), wire build()
     ├── types.ts                          # MODIFY — add ReflowHistoryEntry, ReflowMethod, ReflowDecision, ReflowOutcome; extend ResolutionTrace
-    ├── index.ts                          # MODIFY — register reflowImage onCall (region europe-west1, 2GiB memory, 300s timeout, geminiApiKey secret)
+    ├── index.ts                          # MODIFY — register reflowImage onCall (region europe-west1, 2GiB memory, 300s timeout, geminiApiKey + openaiApiKey secrets)
     └── contractFixtures.test.ts          # MODIFY — add HFF fixture suite
 
 src/                                      # Frontend — React 19 + Vite
