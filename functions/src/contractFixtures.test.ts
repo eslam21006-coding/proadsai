@@ -1999,7 +1999,7 @@ function createMockReflowDb(genData: Record<string, unknown>): MockFirestore {
         update: async () => { /* no-op */ },
     };
     return {
-        collection: (_name: string) => ({ doc: (_id: string) => docRef }),
+        collection: (_: string) => ({ doc: (_2: string) => docRef }),
         runTransaction: async <R>(fn: (tx: MockTransaction) => Promise<R>) => {
             const tx: MockTransaction = {
                 get: async () => ({ data: () => genData }),

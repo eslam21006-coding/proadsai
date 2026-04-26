@@ -271,7 +271,15 @@ async function executeItemReflow(args: {
                         fallbackReason: outcome.errorMessage?.includes("drift") ? "drift" : "engine_error",
                     };
                 }
-            } catch { /* fallback also failed, keep outpaint outcome */ }
+            } catch (fallbackError: unknown) {
+                // Fallback rerender also failed — keep the original outpaint outcome but
+                // log the secondary failure for diagnostics (auto mode, item idx, both reasons).
+                const fallbackMsg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+                console.warn(
+                    `[reflowImage] auto-fallback rerender failed after outpaint failure for gen=${generationId} item=${idx}; ` +
+                    `outpaint reason="${outcome.errorMessage ?? "unknown"}", rerender reason="${fallbackMsg}". Returning outpaint outcome.`,
+                );
+            }
         }
         return outcome;
     }

@@ -5185,26 +5185,32 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
     const parts: any[] = [];
     if (base64ToEdit) {
         parts.push({ inlineData: { mimeType: "image/png", data: base64ToEdit.split(',')[1] } });
-        const isReflow = editInstruction?.includes("REFLOW");
+
+        // ─── Normalize editInstruction once (HOTFIX-F gate / FR-026) ───
+        // editInstruction may arrive as a primitive string (frontend callable), a boxed String
+        // object (Object.assign(string, { _internalReflow: true }) — used by some legacy
+        // backend callers), or an object carrying a truthy `_internalReflow` flag. Calling
+        // `.includes(...)` directly on a plain object would throw, so derive the string view
+        // and bypass flag once and reuse them everywhere below.
+        const INTERNAL_REFLOW_TOKEN = "__INTERNAL_REFLOW_BYPASS__";
+        const ei: unknown = editInstruction;
+        const eiStringValue =
+            typeof ei === "string" ? ei :
+            ei instanceof String ? ei.toString() :
+            "";
+        const eiInternalFlag =
+            ei != null && typeof ei === "object" && (ei as { _internalReflow?: unknown })._internalReflow ? true : false;
+
+        const isReflow = eiStringValue.includes("REFLOW") || eiInternalFlag;
 
         if (isReflow) {
-            // HOTFIX-F gate (FR-026): generative-edit REFLOW path is deprecated for user-facing
-            // reflows. Callers MUST use the `reflowImage` callable. Three escape hatches survive
-            // for backend-internal direct callers (frontend httpsCallable serialization drops
-            // non-string properties, so frontend callers MUST use the literal token):
+            // Three escape hatches survive for backend-internal direct callers (frontend
+            // httpsCallable serialization drops non-string properties, so frontend callers
+            // MUST use the literal token):
             //   1. primitive string containing INTERNAL_REFLOW_TOKEN
             //   2. boxed `String` object whose .toString() contains INTERNAL_REFLOW_TOKEN
-            //      (used by callers that wrap via Object.assign(string, { _internalReflow: true }))
             //   3. object carrying a truthy `_internalReflow` property
             // Otherwise return a typed error result (no thrown exception).
-            const INTERNAL_REFLOW_TOKEN = "__INTERNAL_REFLOW_BYPASS__";
-            const ei: unknown = editInstruction;
-            const eiStringValue =
-                typeof ei === "string" ? ei :
-                ei instanceof String ? ei.toString() :
-                "";
-            const eiInternalFlag =
-                ei != null && typeof ei === "object" && (ei as { _internalReflow?: unknown })._internalReflow ? true : false;
             const isInternalReflow = eiStringValue.includes(INTERNAL_REFLOW_TOKEN) || eiInternalFlag;
             if (!isInternalReflow) {
                 console.warn("🛑 Deprecated REFLOW path invoked — use reflowImage callable (FR-026).");

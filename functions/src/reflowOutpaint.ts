@@ -15,16 +15,21 @@ async function getSharp(): Promise<SharpFactory> {
         throw new Error("Sharp not available — reflowOutpaint disabled");
     }
     sharpLoadAttempted = true;
+    let candidate: SharpFactory | null = null;
     try {
         const mod = await import("sharp");
-        sharpInstance = ((mod as unknown as { default?: SharpFactory }).default ?? (mod as unknown as SharpFactory));
+        candidate = ((mod as unknown as { default?: SharpFactory }).default ?? (mod as unknown as SharpFactory));
     } catch {
         throw new Error("Sharp not available — reflowOutpaint disabled");
     }
-    return sharpInstance!;
+    if (typeof candidate !== "function") {
+        throw new Error("Sharp module malformed — reflowOutpaint disabled");
+    }
+    sharpInstance = candidate;
+    return sharpInstance;
 }
 
-const OUTPAINT_CREDIT_COST = 2;
+export const OUTPAINT_CREDIT_COST = 2;
 
 /**
  * Extract the GCS object path from any of the URL shapes the codebase emits:
@@ -52,6 +57,8 @@ export function resolveStoragePath(url: string, bucketName: string): string | nu
     // Form 3: https://<bucket>.storage.googleapis.com/<object>
     const m3 = url.match(/^https?:\/\/([^.]+)\.storage\.googleapis\.com\/(.+)$/);
     if (m3) {
+        // Match Form 2 behaviour: refuse cross-bucket reads when bucketName is known.
+        if (bucketName && m3[1] !== bucketName) return null;
         return decodeURIComponent(m3[2]);
     }
     // Form 4: bare object path
@@ -68,12 +75,14 @@ export async function outpaintReflow(args: {
     const { sourceRatio, targetRatio } = args;
     const sharp = await getSharp();
 
+    // Single firebase-admin import for both download (when needed) and upload below.
+    const admin = await import("firebase-admin");
+    const bucket = admin.storage().bucket();
+
     let srcBuf: Buffer;
     if (args.sourceBuffer) {
         srcBuf = args.sourceBuffer;
     } else {
-        const admin = await import("firebase-admin");
-        const bucket = admin.storage().bucket();
         const path = resolveStoragePath(args.sourceImageUrl, bucket.name);
         if (!path) {
             throw new Error(`Cannot resolve Storage object path from URL: ${args.sourceImageUrl}`);
@@ -83,11 +92,21 @@ export async function outpaintReflow(args: {
     }
 
     const srcMeta = await sharp(srcBuf).metadata();
-    const srcW = srcMeta.width!;
-    const srcH = srcMeta.height!;
+    if (!srcMeta.width || !srcMeta.height || srcMeta.width <= 0 || srcMeta.height <= 0) {
+        throw new Error(
+            `Source image metadata invalid (width=${srcMeta.width}, height=${srcMeta.height}); cannot outpaint.`,
+        );
+    }
+    const srcW = srcMeta.width;
+    const srcH = srcMeta.height;
 
     const srcNumeric = RATIO_TO_NUMERIC[sourceRatio];
     const tgtNumeric = RATIO_TO_NUMERIC[targetRatio];
+    if (!Number.isFinite(srcNumeric) || !Number.isFinite(tgtNumeric)) {
+        throw new Error(
+            `RATIO_TO_NUMERIC lookup failed (sourceRatio=${sourceRatio}→${srcNumeric}, targetRatio=${targetRatio}→${tgtNumeric}); cannot outpaint.`,
+        );
+    }
 
     let dstW: number, dstH: number;
     if (tgtNumeric < srcNumeric) {
@@ -108,8 +127,6 @@ export async function outpaintReflow(args: {
         .png()
         .toBuffer();
 
-    const admin = await import("firebase-admin");
-    const bucket = admin.storage().bucket();
     const newId = `reflow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
     const uploadPath = `reflows/${newId}`;
     const file = bucket.file(uploadPath);
@@ -126,17 +143,26 @@ export async function verifyLockedRegion(
 ): Promise<{ ok: boolean; reason: "drift" | "shape_mismatch" | null }> {
     const sharp = await getSharp();
 
+    const srcMeta = await sharp(sourceBuffer).metadata();
+    if (!srcMeta.width || !srcMeta.height || srcMeta.width <= 0 || srcMeta.height <= 0) {
+        throw new Error(
+            `verifyLockedRegion: source metadata invalid (width=${srcMeta.width}, height=${srcMeta.height}).`,
+        );
+    }
+    const outMeta = await sharp(outputBuffer).metadata();
+    if (!outMeta.width || !outMeta.height || outMeta.width <= 0 || outMeta.height <= 0) {
+        throw new Error(
+            `verifyLockedRegion: output metadata invalid (width=${outMeta.width}, height=${outMeta.height}).`,
+        );
+    }
+    const srcW = srcMeta.width;
+    const srcH = srcMeta.height;
+    const outW = outMeta.width;
+    const outH = outMeta.height;
+
     // ensureAlpha() guarantees 4 bytes/pixel (RGBA) so the (y * width + x) * 4
     // stride math below is correct regardless of whether the source PNG was RGB or RGBA.
     const srcRaw = await sharp(sourceBuffer).ensureAlpha().raw().toBuffer();
-    const srcMeta = await sharp(sourceBuffer).metadata();
-    const srcW = srcMeta.width!;
-    const srcH = srcMeta.height!;
-
-    const outMeta = await sharp(outputBuffer).metadata();
-    const outW = outMeta.width!;
-    const outH = outMeta.height!;
-
     const outRaw = await sharp(outputBuffer).ensureAlpha().raw().toBuffer();
 
     const padLeft = Math.floor((outW - srcW) / 2);
@@ -163,5 +189,3 @@ export async function verifyLockedRegion(
 
     return { ok: true, reason: null };
 }
-
-export { OUTPAINT_CREDIT_COST };

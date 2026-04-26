@@ -3779,8 +3779,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 // No persisted generation id — reflowImage requires one (FR-029, FR-030 keep
                 // reflows scoped to a source generation). Skip rather than fall back to a stale
                 // renderGenerationId from a different render, which would reflow the wrong plan.
+                // Credits were pre-deducted for this extra in `totalNeeded` above; refund the
+                // unrenderable size so the UI balance matches what the backend actually charged.
                 console.warn(`Auto-reflow to ${extraRatio} skipped: no generation id available (saveGeneration failed or user not logged in).`);
-                showToast(`Could not save extra ${extraRatio} variant — please retry from the Resize control.`, 'info');
+                setUserCredits(prev => prev + CREDIT_COSTS.generateImage);
+                showToast(`Could not save extra ${extraRatio} variant — credits refunded.`, 'info');
               }
             } catch (e) { console.error(`Auto-reflow to ${extraRatio} failed:`, e); }
           }
@@ -4474,11 +4477,20 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
       setCurrentAspectRatio(newRatio);
       startLoad(`Reflowing ${doneSlides.length} slides to ${newRatio}...`);
-      // Optimistic local deduction so the credit bar mirrors what the backend will charge
-      // (the reflowImage callable performs the authoritative atomic deduction; this only
-      // keeps the UI in sync). Refund per-item below for any slide that ultimately failed.
-      const callableDeducted = renderGenerationId ? deductCredits('reflowImage', doneSlides.length) : false;
-      if (renderGenerationId && !callableDeducted) { stopLoad(); return; }
+      // Optimistic UI-only decrement: the reflowImage callable performs the authoritative
+      // atomic deduction backend-side, so we MUST NOT call deductCredits() here (it would
+      // hit deductCreditsServer and double-bill). After the callable returns, reconcile
+      // the displayed balance with the actual charge from result.data.totalCreditsCharged.
+      const optimisticCost = renderGenerationId ? CREDIT_COSTS.reflowImage * doneSlides.length : 0;
+      if (renderGenerationId) {
+        if (userCredits < optimisticCost) {
+          setUpgradeReason(`You need ${optimisticCost} credits but only have ${userCredits}.`);
+          setShowUpgradeModal(true);
+          stopLoad();
+          return;
+        }
+        setUserCredits(prev => prev - optimisticCost);
+      }
       try {
         if (renderGenerationId) {
           const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
@@ -4488,25 +4500,26 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             method: reflowMethod,
             scope: 'carousel_all',
           });
+          // Reconcile: replace the optimistic estimate with the actual charge reported
+          // by the backend (covers fallback-routed items charging at outpaint vs rerender,
+          // partial failures that aren't billed, no-op short-circuits, etc.).
+          if (typeof result.data.totalCreditsCharged === 'number') {
+            const delta = optimisticCost - result.data.totalCreditsCharged;
+            if (delta !== 0) setUserCredits(prev => prev + delta);
+          }
           if (result.data.success) {
             // Carousel reflows update slide state only — do NOT push every slide into the
             // single-image mockupHistory (would advance historyIndex/currentMockup with
             // intermediate carousel outputs and confuse the back/forward UI). The user's
             // active selection drives any single-image history changes elsewhere.
-            let failedCount = 0;
             for (const outcome of result.data.outcomes) {
               if (outcome.success && outcome.outputUrl && outcome.itemIndex !== null) {
                 const slideIdx = outcome.itemIndex;
                 setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: outcome.outputUrl, status: 'done' as const } : s));
               } else if (!outcome.success && outcome.itemIndex !== null) {
-                failedCount++;
                 setCarouselSlides(prev => prev.map((s, idx) => idx === outcome.itemIndex ? { ...s, status: 'error' as const } : s));
               }
             }
-            if (failedCount > 0) refundCredits('reflowImage', failedCount);
-          } else {
-            // Whole call failed — refund optimistic deductions.
-            refundCredits('reflowImage', doneSlides.length);
           }
         } else {
           for (const slide of carouselSlides) {
@@ -4536,7 +4549,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           }
         }
       } catch (e) {
-        if (callableDeducted) refundCredits('reflowImage', doneSlides.length);
+        // Restore optimistic decrement on transport / callable exception.
+        if (optimisticCost > 0) setUserCredits(prev => prev + optimisticCost);
         handleApiError(e);
       } finally { stopLoad(); }
       return;
@@ -4544,9 +4558,24 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
     // ─── SINGLE MODE: Reflow one image via reflowImage callable (HOTFIX-F) ─────
     if (!selectedConcept || !currentMockup || !buildPlan) return;
-    if (!deductCredits('reflowImage')) return;
     setCurrentAspectRatio(newRatio);
     startLoad(`Reflowing to ${newRatio}...`);
+    // Optimistic UI-only decrement (callable backend performs the authoritative deduction;
+    // calling deductCredits() here would invoke deductCreditsServer and double-bill).
+    const singleOptimisticCost = renderGenerationId ? CREDIT_COSTS.reflowImage : 0;
+    if (renderGenerationId) {
+      if (userCredits < singleOptimisticCost) {
+        setUpgradeReason(`You need ${singleOptimisticCost} credits but only have ${userCredits}.`);
+        setShowUpgradeModal(true);
+        stopLoad();
+        return;
+      }
+      setUserCredits(prev => prev - singleOptimisticCost);
+    } else {
+      // Legacy fallback (image-only, no generation id) still uses the old metered path
+      // because gemini.generateFinalAd does NOT charge backend-side; the frontend deducts here.
+      if (!deductCredits('reflowImage')) { stopLoad(); return; }
+    }
     try {
       if (renderGenerationId) {
         const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
@@ -4556,6 +4585,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           method: reflowMethod,
           scope: 'single',
         });
+        // Reconcile optimistic estimate with the actual backend charge.
+        if (typeof result.data.totalCreditsCharged === 'number') {
+          const delta = singleOptimisticCost - result.data.totalCreditsCharged;
+          if (delta !== 0) setUserCredits(prev => prev + delta);
+        }
         if (result.data.success && result.data.outcomes[0]?.outputUrl) {
           pushMockup(result.data.outcomes[0].outputUrl, newRatio);
         } else {
@@ -4565,7 +4599,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         const res = (await gemini.generateFinalAd(buildPlan, selectedTov, inputs, resolvedUniverse, newRatio, "REFLOW ONLY — adapt this exact design to " + newRatio + " ratio. Keep ALL text identical word-for-word. Keep the SAME hero, visual elements, colors, and composition. Fill the entire canvas proportionally — no large empty areas. The hero, headline, subheadline, CTA, benefit line, and all elements must be VISIBLE and properly sized for the new ratio. Scale and reposition elements to use the full canvas.", (currentRawBase64 || currentMockup) || undefined)).image;
         pushMockup(res, newRatio);
       }
-    } catch (e) { refundCredits('reflowImage'); handleApiError(e); } finally { stopLoad(); }
+    } catch (e) {
+      if (renderGenerationId) {
+        // Restore optimistic UI decrement on callable exception.
+        if (singleOptimisticCost > 0) setUserCredits(prev => prev + singleOptimisticCost);
+      } else {
+        refundCredits('reflowImage');
+      }
+      handleApiError(e);
+    } finally { stopLoad(); }
   };
 
   // ═══ SHARED HELPERS: Deployment metadata + Design favorite ═══
