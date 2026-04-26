@@ -28,6 +28,9 @@ import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.
 import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreservation, type SemanticLock } from "./utils/hookPayload.js";
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
 import type { FailureClass, CostEstimate, LogoPlacement } from "./types.js";
+import { resolveBrandColors } from "./brandColorResolver.js";
+import { checkBrandColorCompliance } from "./brandColorCompliance.js";
+import type { BrandColorPair } from "./types.js";
 import { GenerationError } from "./types.js";
 import { CULTURAL_COMPLIANCE_BLOCK, ARABIC_WARDROBE_BLOCK, isArabic, scanAndReplace } from "./culturalCompliance.js";
 import { compositeUILogos } from "./logoComposite.js";
@@ -931,6 +934,13 @@ export async function generateTOV(inputs: AdInputs, resolvedUniverse: string, mo
         }
 
         let modeInstruction = "";
+        const _brandResolved = resolveBrandColors({
+            formPrimary: inputs.brandColorPrimary,
+            formSecondary: inputs.brandColorSecondary,
+            avatar: (inputs as any)._avatarBrandColors || null,
+            sourceColdAd: (inputs as any)._sourceColdAdBrandColors || null,
+            workspace: (inputs as any)._workspaceBrandColors || null,
+        });
         const _hookRtCtx = buildNormalizedRetargetingContext(inputs as any);
         const campaignType = (inputs as any).campaignType || 'cold';
         const isRetargeting = _hookRtCtx.isRetargeting;
@@ -1086,7 +1096,7 @@ MINIMAL STYLE HOOK BIAS:
       - Product: ${inputs.productName}
       - Brand URL: ${inputs.brandUrl}
       ${websiteContext ? websiteContext : '(Analyze the URL domain to infer extra context/niche if no website data provided)'}
-      ${inputs.brandColorPrimary ? `- Brand Colors: Primary ${inputs.brandColorPrimary}${inputs.brandColorSecondary ? `, Secondary ${inputs.brandColorSecondary}` : ''}
+      ${_brandResolved.primary ? `- Brand Colors: Primary ${_brandResolved.primary}${_brandResolved.secondary ? `, Secondary ${_brandResolved.secondary}` : ''}
       (Reference these colors in VISUAL DIRECTION notes. Suggest using brand colors for CTA buttons, accent text highlights, or background elements. Vary usage across hooks so designs feel diverse.)` : ''}
       - Universe Context: ${universePrompt}${isMinimal ? '' : ' (You MUST integrate this theme into the copy).'} 
 ${minimalHookBias}
@@ -2010,6 +2020,13 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
 export async function generateConcepts(approvedTov: string, inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', _previousOutput?: string, _globalRefinement?: string, editFeedback?: string, editIndex?: string): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
     let _conceptsRankingLinkage: RankingLinkage | null = null;
     async function _generateConceptsInner(): Promise<string> {
+        const _brandResolved = resolveBrandColors({
+            formPrimary: inputs.brandColorPrimary,
+            formSecondary: inputs.brandColorSecondary,
+            avatar: (inputs as any)._avatarBrandColors || null,
+            sourceColdAd: (inputs as any)._sourceColdAdBrandColors || null,
+            workspace: (inputs as any)._workspaceBrandColors || null,
+        });
         // ═══ CREATIVE MODE VALIDATION (fail-closed) ═══
         const _selectedModes = (inputs as any).offerCreativeMode || ['standard_hero'];
         const _comboCheck = validateCombination(_selectedModes, inputs.coldHookAngle);
@@ -2143,12 +2160,12 @@ ${(() => {
            
       - VISUALS: Plan negative space for Headline, Subheadline, and Action Block.
       - BRANDING: ${inputs.brandLogos?.length ? `Integrate ${inputs.brandLogos.length === 1 ? "the Box B logo" : `all ${inputs.brandLogos.length} Box B logos`} as physical objects in the scene. ${inputs.brandLogos.length > 1 ? "All logos are equal peers — rendered at comparable size and balanced placement. Do NOT treat any logo as primary; upload order has no prominence meaning." : ""}` : "No logos provided."}
-      ${inputs.brandColorPrimary ? `- BRAND COLORS: Primary ${inputs.brandColorPrimary}${inputs.brandColorSecondary ? `, Secondary ${inputs.brandColorSecondary}` : ''}. Weave these into the COLOR_PALETTE of each concept. VARY their usage across the 3 concepts:
+      ${_brandResolved.primary ? `- BRAND COLORS: Primary ${_brandResolved.primary}${_brandResolved.secondary ? `, Secondary ${_brandResolved.secondary}` : ''}. Weave these into the COLOR_PALETTE of each concept. VARY their usage across the 3 concepts:
         Concept 1: Use brand primary as CTA button color and subtle accent in environment lighting.
         Concept 2: Use brand primary as headline highlight glow / text accent color.
         Concept 3: Use brand colors as dominant environment tones (neon signs, ambient light, props).
         This ensures brand recognition while keeping each concept visually distinct.
-        ⚠️ CRITICAL: ALWAYS write the ACTUAL hex code (e.g. "${inputs.brandColorPrimary}") in your output. NEVER write placeholder text like "[brand_name primary color]" or "[brand color]" or "[primary color]". The designer cannot interpret placeholders — only exact hex values like ${inputs.brandColorPrimary}.` : ''} `;
+        ⚠️ CRITICAL: ALWAYS write the ACTUAL hex code (e.g. "${_brandResolved.primary}") in your output. NEVER write placeholder text like "[brand_name primary color]" or "[brand color]" or "[primary color]". The designer cannot interpret placeholders — only exact hex values like ${_brandResolved.primary}.` : ''} `;
 
         } else if (mode === 'precision') {
             modeInstruction = `SURGICAL EDIT [SINGLE CONCEPT PATCH]:
@@ -3419,6 +3436,13 @@ export interface GenerateBuildPlanResult {
 }
 
 export async function generateBuildPlan(conceptRaw: string, selectedTov: string, inputs: AdInputs, resolvedUniverse: string, currentAspectRatio: AspectRatio, textOverride?: TextOverride): Promise<GenerateBuildPlanResult> {
+    const _brandResolved = resolveBrandColors({
+        formPrimary: inputs.brandColorPrimary,
+        formSecondary: inputs.brandColorSecondary,
+        avatar: (inputs as any)._avatarBrandColors || null,
+        sourceColdAd: (inputs as any)._sourceColdAdBrandColors || null,
+        workspace: (inputs as any)._workspaceBrandColors || null,
+    });
     const _bpModes = (inputs as any).offerCreativeMode || ['standard_hero'];
     const _bpCheck = validateCombination(_bpModes, inputs.coldHookAngle);
     console.log(`🎨 CREATIVE MODE AUDIT [generateBuildPlan]: modes=[${_bpModes.join(',')}] tab=${_bpCheck.resolvedTab || 'none'} valid=${_bpCheck.valid}${_bpCheck.errors.length ? ' errors: ' + _bpCheck.errors.join('; ') : ''}`);
@@ -3519,13 +3543,13 @@ ${isArabic(inputs.adLanguage) ? `\n${ARABIC_WARDROBE_BLOCK}\n` : ''}
 - Do NOT echo the contract, prompt, schema, JSON rules, or ownership block inside blueprint.
 - Do NOT repeat zones more than once. One clear instruction per zone.
 - TECHNICAL PROMPT: Inside the blueprint string, include a long-form English rendering instruction that describes the exact visual appearance of the final image. Wrap this instruction between [[TECHNICAL_PROMPT]] and [[/TECHNICAL_PROMPT]] markers. This prompt should be a self-contained, detailed visual description covering composition, lighting, color grading, atmosphere, hero pose, text placement zones, and mood — everything the image model needs to render the ad without seeing the original concept. The hookText "${hookText}" MUST appear verbatim inside this technical prompt.
-${inputs.brandColorPrimary ? `- BRAND COLOR DIRECTIVE: The brand's primary color is ${inputs.brandColorPrimary}${inputs.brandColorSecondary ? ` and secondary is ${inputs.brandColorSecondary}` : ''}. Incorporate into the blueprint's color specifications. Choose ONE of these applications per design (rotate for variety):
+${_brandResolved.primary ? `- BRAND COLOR DIRECTIVE: The brand's primary color is ${_brandResolved.primary}${_brandResolved.secondary ? ` and secondary is ${_brandResolved.secondary}` : ''}. Incorporate into the blueprint's color specifications. Choose ONE of these applications per design (rotate for variety):
   a) CTA button background color
   b) Headline text accent/highlight color
   c) Background accent element (neon glow, gradient edge, light streak)
   d) Environmental prop color (matching the universe)
 Do NOT make the entire design monochromatic with brand color — use it as a strategic accent.
-⚠️ ALWAYS write the exact hex code (e.g. "${inputs.brandColorPrimary}") in color references. NEVER write "[brand_name primary color]" or any placeholder — only the actual hex value.` : ''}
+⚠️ ALWAYS write the exact hex code (e.g. "${_brandResolved.primary}") in color references. NEVER write "[brand_name primary color]" or any placeholder — only the actual hex value.` : ''}
 ${(() => {
     // ── Ticket 2: Sub-style build plan constraints ──
     const sub = resolveVisualSubStyle(inputs);
@@ -4034,6 +4058,14 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
         imageParts,
     } = params;
 
+    const _brandResolved = resolveBrandColors({
+        formPrimary: inputs.brandColorPrimary,
+        formSecondary: inputs.brandColorSecondary,
+        avatar: (inputs as any)._avatarBrandColors || null,
+        sourceColdAd: (inputs as any)._sourceColdAdBrandColors || null,
+        workspace: (inputs as any)._workspaceBrandColors || null,
+    });
+
     const strippedBlueprint = stripTechnicalPrompt(blueprint);
 
     // coreDesignRules already contains CULTURAL_COMPLIANCE_BLOCK and costumeRules already
@@ -4106,6 +4138,32 @@ export async function generateFinalAd(
     styleReference?: string,
     textOverride?: TextOverride
 ): Promise<{ image: string; failureClass?: "numeric_hallucination"; costEstimate?: CostEstimate } | { image: null; errorCode: string; failureClass?: FailureClass; debug?: FinalAdDebugInfo }> {
+    const _brandResolved = resolveBrandColors({
+        formPrimary: inputs.brandColorPrimary,
+        formSecondary: inputs.brandColorSecondary,
+        avatar: (inputs as any)._avatarBrandColors || null,
+        sourceColdAd: (inputs as any)._sourceColdAdBrandColors || null,
+        workspace: (inputs as any)._workspaceBrandColors || null,
+    });
+    const _complianceAssetId = inputs.adMode === 'carousel'
+        ? `slide-${(inputs as any).carouselSlideIndex ?? 0}`
+        : (inputs as any).batchN
+            ? `batch-${(inputs as any).batchIndex ?? 0}`
+            : 'single';
+    const _runBrandCompliance = async (imageBase64: string): Promise<void> => {
+        if (!_brandResolved.primary) return;
+        try {
+            const buf = Buffer.from(imageBase64, "base64");
+            const entry = await checkBrandColorCompliance(buf, _brandResolved.primary, _complianceAssetId);
+            if (entry.present) {
+                console.log(`🎨 Brand color compliance PASSED [${_complianceAssetId}]: ΔE=${entry.deltaE?.toFixed(1)}`);
+            } else {
+                console.warn(`⚠️ Brand color compliance MISSED [${_complianceAssetId}]: ΔE=${entry.deltaE?.toFixed(1)} threshold=15`);
+            }
+        } catch (e) {
+            console.warn(`⚠️ Brand color compliance check failed [${_complianceAssetId}] (non-blocking):`, e);
+        }
+    };
     // ═══ RETARGETING CONTEXT (normalized) ═══
     const _renderRtCtx = buildNormalizedRetargetingContext(inputs as any);
     const _renderEffectiveAngle = _renderRtCtx.isRetargeting ? null : inputs.coldHookAngle;
@@ -5143,12 +5201,12 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
 
          - COSTUME: ${(() => { const _rendCostSub = resolveVisualSubStyle(inputs); if (_rendCostSub === 'luxury_magazine') return 'Apply MAGAZINE COVER STAR wardrobe — power suit/blazer, impeccably tailored, cover-model quality against dark solid background. NOT universe-themed environment costume.'; if (_rendCostSub === 'clean_corporate') return 'Apply CLEAN CORPORATE professional wardrobe — polished, brand-safe, modern.'; if (_rendCostSub === 'ugly_ad') return 'Apply CASUAL clothing — everyday selfie attire, NOT styled.'; return `Apply the thematic ${resolvedUniverse} outfit from blueprint.`; })()}
           - LOGO STRICTNESS: Render ONLY user-provided branding from Box B. If Box B is empty, the design must be 100% free of any logos or branding marks. If Box B has one or more images (up to 5), render each as a distinct physical artifact in the scene — all at comparable size, balanced placement, no single logo dominant, no one mark enlarged relative to the others. Upload order has no prominence meaning.
-          ${inputs.brandColorPrimary ? `- BRAND COLOR RENDERING (CRITICAL FOR VISUAL IDENTITY):
-          The client's brand color is ${inputs.brandColorPrimary}${inputs.brandColorSecondary ? ` (secondary: ${inputs.brandColorSecondary})` : ''}.
+          ${_brandResolved.primary ? `- BRAND COLOR RENDERING (CRITICAL FOR VISUAL IDENTITY):
+          The client's brand color is ${_brandResolved.primary}${_brandResolved.secondary ? ` (secondary: ${_brandResolved.secondary})` : ''}.
           You MUST integrate these colors visibly. Apply ALL of the following:
-          1. CTA BUTTON: Use brand primary (${inputs.brandColorPrimary}) as the button background color. Text on button should be white or contrasting.
+          1. CTA BUTTON: Use brand primary (${_brandResolved.primary}) as the button background color. Text on button should be white or contrasting.
           2. HEADLINE ACCENT: Apply brand primary as a colored highlight on the ENTIRE FIRST LINE of the headline, or as an underline/background bar behind one complete phrase. NEVER color individual letters or parts of a word — Arabic letters connect and splitting colors mid-word looks broken. Either highlight a COMPLETE LINE or use a background/underline bar.
-          3. SUBHEADLINE: Can use brand secondary ${inputs.brandColorSecondary ? `(${inputs.brandColorSecondary})` : 'or a lighter tint of brand primary'} for the entire subheadline text color, or leave white. NEVER partially color Arabic text.
+          3. SUBHEADLINE: Can use brand secondary ${_brandResolved.secondary ? `(${_brandResolved.secondary})` : 'or a lighter tint of brand primary'} for the entire subheadline text color, or leave white. NEVER partially color Arabic text.
           4. DECORATIVE ACCENTS: Add brand-colored elements — thin lines, corner accents, subtle glow effects, or geometric shapes that frame the text areas.
           5. BENEFIT TEXT: The benefit line below CTA can use brand color as text color.
           The brand color should be UNMISTAKABLE in the final design — a viewer should be able to guess the brand color from the ad.` : `- COLOR STYLING: ${(() => {
@@ -5306,6 +5364,23 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
 ═══════════════════════════════════════════════════════════════════════════════
 ` : '';
 
+        const _isBatchCall = inputs.adMode !== 'carousel' && inputs.adMode !== 'single' && !!(inputs as any).batchN;
+        const _brandConsistencyInstruction = _brandResolved.primary
+            ? _isBatchCall
+                ? `\n════════════════════════════════════════════════════════════════════════════════
+BRAND COLOR CONSISTENCY (CRITICAL)
+════════════════════════════════════════════════════════════════════════════════
+This is part of a batch of ${(inputs as any).batchN || 'multiple'} ad variations. All variations MUST use the same brand color palette anchored by primary ${_brandResolved.primary}${_brandResolved.secondary ? ` and secondary ${_brandResolved.secondary}` : ''}. Vary composition and messaging, NOT the color scheme.
+════════════════════════════════════════════════════════════════════════════════\n`
+                : inputs.adMode === 'carousel'
+                    ? `\n════════════════════════════════════════════════════════════════════════════════
+BRAND COLOR CONSISTENCY (CRITICAL)
+════════════════════════════════════════════════════════════════════════════════
+CRITICAL: Maintain brand color consistency across all carousel slides. Primary brand color ${_brandResolved.primary} must appear in every slide (CTA button, accent, or heading highlight).${_brandResolved.secondary ? ` Secondary color ${_brandResolved.secondary} used as supporting accent.` : ''} This creates visual cohesion when swiping.
+════════════════════════════════════════════════════════════════════════════════\n`
+                    : ''
+            : '';
+
         // Sanitize buildPlan: strip system instruction markers and stray English that the image AI renders as visible text
         const cleanBuildPlan = gatedBlueprint
             .replace(/TECHNICAL_PROMPT[:\s].*$/gm, '')
@@ -5322,7 +5397,7 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
             .trim();
 
         parts.push({
-            text: `BLUEPRINT: ${cleanBuildPlan} \nTEXTS: "${hookText}", "${subheadText}"\nBUTTON: "${ctaName}"\n${carouselAnchorNote}\n${coreDesignRules}
+            text: `BLUEPRINT: ${cleanBuildPlan} \nTEXTS: "${hookText}", "${subheadText}"\nBUTTON: "${ctaName}"\n${carouselAnchorNote}\n${_brandConsistencyInstruction}\n${coreDesignRules}
 
 ⚠️ CRITICAL TEXT RENDERING RULES:
 1. ONLY render these EXACT text strings on the image — NOTHING ELSE:
@@ -5876,6 +5951,7 @@ If no monetary numbers are visible, return: []` }
                                         }
 
                                         console.log('✅ Deterministic offer overlay applied and verified.');
+                                        await _runBrandCompliance(overlaid);
                                         return { image: overlaid, ..._nhResult };
                                     } catch (overlayErr) {
                                         console.warn('⚠️ Overlay compositing failed (non-blocking). Returning image without overlay.', overlayErr);
@@ -5951,7 +6027,9 @@ If no monetary numbers are visible, return: []` }
                         }
                     }
 
+                    await _runBrandCompliance(currentImage);
                     return { image: currentImage };
+
                 }
             }
         }
@@ -6073,6 +6151,13 @@ export async function generateCarouselAngles(
     globalRefinement?: string,
     plan?: StoredPlan
 ): Promise<string> {
+    const _brandResolved = resolveBrandColors({
+        formPrimary: inputs.brandColorPrimary,
+        formSecondary: inputs.brandColorSecondary,
+        avatar: (inputs as any)._avatarBrandColors || null,
+        sourceColdAd: (inputs as any)._sourceColdAdBrandColors || null,
+        workspace: (inputs as any)._workspaceBrandColors || null,
+    });
     const carouselDecision = resolveEntitlement({ plan: plan || "none", feature: "carouselSlides", quantity: slideCount });
     if (!carouselDecision.allowed) {
         throw new HttpsError("permission-denied", carouselDecision.reason || "carousel_limit_exceeded");
@@ -6148,7 +6233,7 @@ CONTEXT
 Product: "${inputs.productName}"
 ${inputs.brandUrl ? `Brand URL: ${inputs.brandUrl}` : ''}
 ${websiteContext || ''}
-${inputs.brandColorPrimary ? `Brand Colors: Primary ${inputs.brandColorPrimary}${inputs.brandColorSecondary ? `, Secondary ${inputs.brandColorSecondary}` : ''} (mention in visual direction notes)` : ''}
+${_brandResolved.primary ? `Brand Colors: Primary ${_brandResolved.primary}${_brandResolved.secondary ? `, Secondary ${_brandResolved.secondary}` : ''} (mention in visual direction notes)` : ''}
 Audience: "${inputs.targetAudience}"
 Challenge: "${inputs.challenges}"
 Transformation: "${inputs.transformation}"

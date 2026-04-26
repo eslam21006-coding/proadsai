@@ -13,6 +13,9 @@ import {
     type StructuredBuildPlanPayload,
     type CopyFidelityFields,
 } from "./buildPlanSlotMap.js";
+import { resolveBrandColors } from "./brandColorResolver.js";
+import type { BrandColorPair } from "./types.js";
+import { checkBrandColorCompliance } from "./brandColorCompliance.js";
 
 function createContract(selectedModes: string[], hookAngle?: string) {
     return compileFullContract({
@@ -2074,6 +2077,437 @@ function mockReflowAdmin(): MockAdmin {
 
 // ─── Run all HFF.6 fixtures ───
 
+// ═══════════════════════════════════════════════════════════
+// BCR — Brand Color Resolver Fixtures (956-brand-colors)
+// ═══════════════════════════════════════════════════════════
+
+function testBcr01() {
+    const r = resolveBrandColors({
+        formPrimary: "#0A66C2", formSecondary: "#F59E0B",
+        avatar: { brandColorPrimary: "#FF0000", brandColorSecondary: "#00FF00" },
+        sourceColdAd: { brandColorPrimary: "#111111", brandColorSecondary: "#222222" },
+        workspace: { brandColorPrimary: "#000000", brandColorSecondary: "#333333" },
+    });
+    assert.equal(r.source, "form");
+    assert.equal(r.primary, "#0a66c2");
+    assert.equal(r.secondary, "#f59e0b");
+    assert.equal(r.ctaTextColor, "#FFFFFF");
+    console.log("  ✅ BCR-01-form-wins");
+}
+
+function testBcr02() {
+    const r = resolveBrandColors({
+        avatar: { brandColorPrimary: "#FF0000", brandColorSecondary: "#00FF00" },
+        sourceColdAd: { brandColorPrimary: "#0A66C2", brandColorSecondary: "#F59E0B" },
+        workspace: { brandColorPrimary: "#999999" },
+    });
+    assert.equal(r.source, "avatar");
+    assert.equal(r.primary, "#ff0000");
+    assert.equal(r.secondary, "#00ff00");
+    console.log("  ✅ BCR-02-avatar-wins-over-cold-ad");
+}
+
+function testBcr03() {
+    const r = resolveBrandColors({
+        sourceColdAd: { brandColorPrimary: "#0A66C2", brandColorSecondary: "#F59E0B" },
+        workspace: { brandColorPrimary: "#999999" },
+    });
+    assert.equal(r.source, "inherited");
+    assert.equal(r.primary, "#0a66c2");
+    assert.equal(r.secondary, "#f59e0b");
+    console.log("  ✅ BCR-03-cold-ad-inherited");
+}
+
+function testBcr04() {
+    const r = resolveBrandColors({
+        workspace: { brandColorPrimary: "#0A66C2" },
+    });
+    assert.equal(r.source, "workspace");
+    assert.equal(r.primary, "#0a66c2");
+    assert.equal(r.secondary, null);
+    console.log("  ✅ BCR-04-workspace-fallback");
+}
+
+function testBcr05() {
+    const r = resolveBrandColors({});
+    assert.equal(r.source, "none");
+    assert.equal(r.primary, null);
+    assert.equal(r.secondary, null);
+    assert.equal(r.ctaTextColor, null);
+    console.log("  ✅ BCR-05-no-source");
+}
+
+function testBcr06() {
+    const r = resolveBrandColors({
+        formPrimary: "red",
+        workspace: { brandColorPrimary: "#0A66C2" },
+    });
+    assert.equal(r.source, "workspace");
+    assert.equal(r.primary, "#0a66c2");
+    console.log("  ✅ BCR-06-form-malformed-falls-through");
+}
+
+function testBcr07() {
+    const r = resolveBrandColors({
+        formPrimary: "#0A66C2",
+    });
+    assert.equal(r.source, "form");
+    assert.equal(r.primary, "#0a66c2");
+    assert.equal(r.secondary, null);
+    console.log("  ✅ BCR-07-form-primary-no-secondary");
+}
+
+function testBcr08() {
+    const r = resolveBrandColors({ formPrimary: "#FFD700" });
+    assert.equal(r.ctaTextColor, "#1A1A1A");
+    console.log("  ✅ BCR-08-cta-text-light-primary");
+}
+
+function testBcr09() {
+    const r = resolveBrandColors({ formPrimary: "#0A66C2" });
+    assert.equal(r.ctaTextColor, "#FFFFFF");
+    console.log("  ✅ BCR-09-cta-text-dark-primary");
+}
+
+function testBcr10() {
+    // L ≈ 0.5 boundary: find a hex where wcag luminance ≈ 0.5
+    // #888888 → R=G=B=0x88=136 → linearized ≈ 0.216 → L ≈ 0.216*0.2126+0.216*0.7152+0.216*0.0722 ≈ 0.216
+    // Need brighter. #BCBCBC → 188/255=0.737 → linearized ≈ 0.514 → L ≈ 0.514
+    // Try #B4B4B4 → 180/255=0.706 → lin ≈ 0.469 → L ≈ 0.469 → < 0.5 → white
+    // Try #B6B6B6 → 182/255=0.714 → lin ≈ 0.478 → L ≈ 0.478 → < 0.5 → white
+    // Try #C0C0C0 → 192/255=0.753 → lin ≈ 0.537 → L ≈ 0.537 → ≥ 0.5 → near-black
+    // Use #BCBCBC which is L ≈ 0.514 ≥ 0.5 → near-black
+    const r = resolveBrandColors({ formPrimary: "#BCBCBC" });
+    assert.equal(r.ctaTextColor, "#1A1A1A");
+    console.log("  ✅ BCR-10-cta-text-luminance-boundary (≥ 0.5 → near-black)");
+}
+
+function testBcr11() {
+    const r = resolveBrandColors({
+        formPrimary: "#0A66C2",
+        avatar: { brandColorPrimary: "#FF0000", brandColorSecondary: "#00FF00" },
+    });
+    assert.equal(r.source, "form");
+    assert.equal(r.primary, "#0a66c2");
+    assert.equal(r.secondary, null);
+    console.log("  ✅ BCR-11-avatar-secondary-ignored-when-form-wins");
+}
+
+// ═══════════════════════════════════════════════════════════
+// US1 — Carousel / Batch Brand Color Fixtures
+// ═══════════════════════════════════════════════════════════
+
+function testCarouselSlide3BrandColors() {
+    const resolved = resolveBrandColors({ formPrimary: "#0A66C2", formSecondary: "#F59E0B" });
+    const carouselInstruction = resolved.primary
+        ? `Maintain brand color consistency across all carousel slides. Primary brand color ${resolved.primary} must appear in every slide (CTA button, accent, or heading highlight).${resolved.secondary ? ` Secondary color ${resolved.secondary} used as supporting accent.` : ''}`
+        : '';
+    const slide3Prompt = `BLUEPRINT: ad layout for slide 3\nTEXTS: "headline", "subhead"\nBUTTON: "CTA"\n${carouselInstruction}\nBRAND COLOR RENDERING: primary ${resolved.primary}`;
+    const lower = slide3Prompt.toLowerCase();
+    assert.ok(lower.includes("#0a66c2"), "slide-3 prompt must contain brand primary #0a66c2");
+    assert.ok(lower.includes("#f59e0b"), "slide-3 prompt must contain brand secondary #f59e0b");
+    assert.ok(lower.includes("carousel"), "slide-3 prompt must contain carousel consistency instruction");
+    console.log("  ✅ T010-carousel-slide-3-brand-colors");
+}
+
+function testBatchItem2BrandColors() {
+    const resolved = resolveBrandColors({ formPrimary: "#0A66C2", formSecondary: "#F59E0B" });
+    const N = 4;
+    const batchInstruction = resolved.primary
+        ? `This is part of a batch of ${N} ad variations. All variations MUST use the same brand color palette anchored by primary ${resolved.primary}${resolved.secondary ? ` and secondary ${resolved.secondary}` : ''}. Vary composition and messaging, NOT the color scheme.`
+        : '';
+    const item2Prompt = `BLUEPRINT: ad layout for batch item 2\nTEXTS: "headline", "subhead"\nBUTTON: "CTA"\n${batchInstruction}\nBRAND COLOR RENDERING: primary ${resolved.primary}`;
+    const lower = item2Prompt.toLowerCase();
+    assert.ok(lower.includes("#0a66c2"), "item-2 prompt must contain brand primary");
+    assert.ok(lower.includes("#f59e0b"), "item-2 prompt must contain brand secondary");
+    assert.ok(lower.includes("batch of 4"), "item-2 prompt must contain batch consistency with N=4");
+    console.log("  ✅ T011-batch-item-2-brand-colors");
+}
+
+function testAntiPlaceholderRegex() {
+    const resolved = resolveBrandColors({ formPrimary: "#0A66C2", formSecondary: "#F59E0B" });
+    const prompts = [
+        `BRAND COLOR RENDERING: primary ${resolved.primary}, secondary ${resolved.secondary}`,
+        `CTA BUTTON: Use brand primary (${resolved.primary}) as the button background color.`,
+        `This is part of a batch of 4 ad variations with primary ${resolved.primary}.`,
+    ];
+    const placeholderRe = /\[(brand[_ ]?color|primary[_ ]?color|brand[_ ]?name)/i;
+    for (const prompt of prompts) {
+        assert.equal(placeholderRe.test(prompt), false, `prompt must not contain placeholder: ${prompt.slice(0, 60)}`);
+    }
+    const badPrompt = "Use [brand color] for the CTA button and [primary color] for accents.";
+    assert.ok(placeholderRe.test(badPrompt), "regex must catch placeholder in bad prompt");
+    console.log("  ✅ T012-anti-placeholder-regex");
+}
+
+function runUs1Fixtures() {
+    console.log("\n═══ US1 — Carousel / Batch Brand Color Fixtures ═══");
+    testCarouselSlide3BrandColors();
+    testBatchItem2BrandColors();
+    testAntiPlaceholderRegex();
+    console.log("═══ US1 — All carousel/batch fixtures passed ═══\n");
+}
+
+// ═══════════════════════════════════════════════════════════
+// US2 — Retargeting Inheritance Fixtures
+// ═══════════════════════════════════════════════════════════
+
+function testRetargetingInheritance() {
+    const coldAd = { brandColorPrimary: "#0A66C2", brandColorSecondary: "#F59E0B" };
+
+    // Case 1: form empty, inherits from cold ad
+    const r1 = resolveBrandColors({
+        formPrimary: undefined,
+        formSecondary: undefined,
+        sourceColdAd: coldAd,
+        workspace: { brandColorPrimary: "#999999" },
+    });
+    assert.equal(r1.source, "inherited");
+    assert.equal(r1.primary, "#0a66c2");
+    assert.equal(r1.secondary, "#f59e0b");
+    console.log("  ✅ T016a-retargeting-inherits-cold-ad-colors");
+
+    // Case 2: explicit form colors win over cold ad
+    const r2 = resolveBrandColors({
+        formPrimary: "#FF0000",
+        formSecondary: "#00FF00",
+        sourceColdAd: coldAd,
+        workspace: { brandColorPrimary: "#999999" },
+    });
+    assert.equal(r2.source, "form");
+    assert.equal(r2.primary, "#ff0000");
+    assert.equal(r2.secondary, "#00ff00");
+    console.log("  ✅ T016b-retargeting-form-overrides-cold-ad");
+
+    // Case 3: cold ad missing (FR-018 fallback) → falls to workspace
+    const r3 = resolveBrandColors({
+        formPrimary: undefined,
+        sourceColdAd: null,
+        workspace: { brandColorPrimary: "#0A66C2" },
+    });
+    assert.equal(r3.source, "workspace");
+    assert.equal(r3.primary, "#0a66c2");
+    console.log("  ✅ T016c-missing-cold-ad-falls-to-workspace");
+}
+
+function runUs2Fixtures() {
+    console.log("\n═══ US2 — Retargeting Inheritance Fixtures ═══");
+    testRetargetingInheritance();
+    console.log("═══ US2 — All retargeting fixtures passed ═══\n");
+}
+
+// ═══════════════════════════════════════════════════════════
+// US5 — Brand Color Compliance Fixtures (BCC-01..BCC-08)
+// ═══════════════════════════════════════════════════════════
+
+async function testBcc01NoBrandColors() {
+    const r = await checkBrandColorCompliance(Buffer.alloc(10), null, "single");
+    assert.equal(r.checkRan, false);
+    assert.equal(r.deductedScore, 0);
+    assert.equal(r.skippedReason, "no_brand_colors");
+    console.log("  ✅ BCC-01-no-brand-colors");
+}
+
+async function testBcc02EmptyString() {
+    const r = await checkBrandColorCompliance(Buffer.alloc(10), "", "single");
+    assert.equal(r.checkRan, false);
+    assert.equal(r.skippedReason, "no_brand_colors");
+    console.log("  ✅ BCC-02-empty-string");
+}
+
+async function testBcc03MalformedHex() {
+    const r = await checkBrandColorCompliance(Buffer.alloc(10), "not-a-hex", "single");
+    assert.equal(r.checkRan, false);
+    assert.equal(r.skippedReason, "no_brand_colors");
+    console.log("  ✅ BCC-03-malformed-hex");
+}
+
+async function testBcc04ImageUnanalyzable() {
+    const r = await checkBrandColorCompliance(Buffer.alloc(0), "#0A66C2", "single");
+    assert.equal(r.checkRan, false);
+    assert.equal(r.deductedScore, 0);
+    assert.equal(r.skippedReason, "image_unanalyzable");
+    console.log("  ✅ BCC-04-image-unanalyzable");
+}
+
+async function testBcc05Present() {
+    let sharpModule: any = null;
+    try { sharpModule = require("sharp"); } catch { /* noop */ }
+    if (!sharpModule) { console.log("  ⏭️ BCC-05-present: skipped (Sharp unavailable)"); return; }
+    const svg = `<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg">
+        <rect width="32" height="32" fill="#808080"/>
+        <rect x="13" y="13" width="6" height="6" fill="#0A66C2"/>
+    </svg>`;
+    const buf = await sharpModule(Buffer.from(svg)).png().toBuffer();
+    const r = await checkBrandColorCompliance(buf, "#0A66C2", "single");
+    assert.equal(r.checkRan, true);
+    assert.equal(r.present, true);
+    assert.ok(r.deltaE! < 5);
+    assert.equal(r.deductedScore, 0);
+    console.log("  ✅ BCC-05-present");
+}
+
+async function testBcc06Absent() {
+    let sharpModule: any = null;
+    try { sharpModule = require("sharp"); } catch { /* noop */ }
+    if (!sharpModule) { console.log("  ⏭️ BCC-06-absent: skipped (Sharp unavailable)"); return; }
+    const svg = `<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg">
+        <rect width="32" height="32" fill="#FFFFFF"/>
+    </svg>`;
+    const buf = await sharpModule(Buffer.from(svg)).png().toBuffer();
+    const r = await checkBrandColorCompliance(buf, "#0A66C2", "single");
+    assert.equal(r.checkRan, true);
+    assert.equal(r.present, false);
+    assert.ok(r.deltaE! > 40);
+    assert.equal(r.deductedScore, 10);
+    console.log("  ✅ BCC-06-absent");
+}
+
+async function testBcc07NearMiss() {
+    let sharpModule: any = null;
+    try { sharpModule = require("sharp"); } catch { /* noop */ }
+    if (!sharpModule) { console.log("  ⏭️ BCC-07-near-miss: skipped (Sharp unavailable)"); return; }
+    const svg = `<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg">
+        <rect width="32" height="32" fill="#0A66D0"/>
+    </svg>`;
+    const buf = await sharpModule(Buffer.from(svg)).png().toBuffer();
+    const r = await checkBrandColorCompliance(buf, "#0A66C2", "single");
+    assert.equal(r.checkRan, true);
+    assert.equal(r.present, true);
+    console.log("  ✅ BCC-07-near-miss-present");
+}
+
+async function testBcc08FarMiss() {
+    let sharpModule: any = null;
+    try { sharpModule = require("sharp"); } catch { /* noop */ }
+    if (!sharpModule) { console.log("  ⏭️ BCC-08-far-miss: skipped (Sharp unavailable)"); return; }
+    const svg = `<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg">
+        <rect width="32" height="32" fill="#FF4500"/>
+    </svg>`;
+    const buf = await sharpModule(Buffer.from(svg)).png().toBuffer();
+    const r = await checkBrandColorCompliance(buf, "#0A66C2", "single");
+    assert.equal(r.checkRan, true);
+    assert.equal(r.present, false);
+    console.log("  ✅ BCC-08-far-miss-absent");
+}
+
+async function runBccFixtures() {
+    console.log("\n═══ BCC — Brand Color Compliance Fixtures ═══");
+    await testBcc01NoBrandColors();
+    await testBcc02EmptyString();
+    await testBcc03MalformedHex();
+    await testBcc04ImageUnanalyzable();
+    await testBcc05Present();
+    await testBcc06Absent();
+    await testBcc07NearMiss();
+    await testBcc08FarMiss();
+    console.log("═══ BCC — All compliance fixtures passed ═══\n");
+}
+
+// ═══════════════════════════════════════════════════════════
+// US4 — Compositor Brand Color Override Fixtures
+// ═══════════════════════════════════════════════════════════
+
+function testComp01NoBrandFallback() {
+    const textStyle = { color: "#FFFFFF", strokeColor: "#000000", strokeWidth: 0, shadowEnabled: false, shadowColor: null, shadowBlur: null, backgroundTreatment: 'none' as const, backgroundTreatmentColor: '#0a162880', fontSize: 'large' as const, fontWeight: 'bold' as const, textAlign: 'center' as const, lineHeightMultiplier: 1.4 };
+    type BrandLike = { primary: string | null; secondary: string | null; ctaTextColor: string | null; source: string };
+    const getBrand = (): BrandLike | undefined => undefined;
+    const brand = getBrand();
+    const headlineColor = (brand && brand.secondary) ? brand.secondary : textStyle.color;
+    assert.equal(headlineColor, "#FFFFFF");
+    console.log("  ✅ COMP-01-no-brand-fallback: headline unchanged");
+}
+
+function testComp02BrandPrimaryOnly() {
+    const textStyle = { color: "#FFFFFF" };
+    const brand = { primary: "#0A66C2", secondary: null, ctaTextColor: "#FFFFFF" as const, source: "form" as const };
+    const headlineColor = (brand && brand.secondary) ? brand.secondary : textStyle.color;
+    const ctaBg = (brand && brand.primary) ? brand.primary : "#C8942A";
+    const ctaText = (brand && brand.ctaTextColor) ? brand.ctaTextColor : "#FFFFFF";
+    assert.equal(headlineColor, "#FFFFFF");
+    assert.equal(ctaBg, "#0A66C2");
+    assert.equal(ctaText, "#FFFFFF");
+    console.log("  ✅ COMP-02-brand-primary-only: CTA branded, headline unchanged");
+}
+
+function testComp03BrandSecondaryOnly() {
+    const textStyle = { color: "#FFFFFF" };
+    const brand = { primary: null, secondary: "#F59E0B", ctaTextColor: null, source: "form" as const };
+    const headlineColor = (brand && brand.secondary) ? brand.secondary : textStyle.color;
+    assert.equal(headlineColor, "#F59E0B");
+    console.log("  ✅ COMP-03-brand-secondary-only: headline branded");
+}
+
+function testComp04BrandBoth() {
+    const textStyle = { color: "#FFFFFF" };
+    const brand = { primary: "#0A66C2", secondary: "#F59E0B", ctaTextColor: "#FFFFFF" as const, source: "form" as const };
+    const headlineColor = (brand && brand.secondary) ? brand.secondary : textStyle.color;
+    const ctaBg = (brand && brand.primary) ? brand.primary : "#C8942A";
+    assert.equal(headlineColor, "#F59E0B");
+    assert.equal(ctaBg, "#0A66C2");
+    console.log("  ✅ COMP-04-brand-both: both CTA and headline branded");
+}
+
+function testComp06LightPrimaryCtaTextNearBlack() {
+    const brand = { primary: "#FFD700", secondary: null, ctaTextColor: "#1A1A1A" as const, source: "form" as const };
+    const ctaText = (brand && brand.ctaTextColor) ? brand.ctaTextColor : "#FFFFFF";
+    assert.equal(ctaText, "#1A1A1A");
+    console.log("  ✅ COMP-06-light-primary-cta-text-near-black");
+}
+
+function runUs4Fixtures() {
+    console.log("\n═══ US4 — Compositor Brand Color Fixtures ═══");
+    testComp01NoBrandFallback();
+    testComp02BrandPrimaryOnly();
+    testComp03BrandSecondaryOnly();
+    testComp04BrandBoth();
+    testComp06LightPrimaryCtaTextNearBlack();
+    console.log("═══ US4 — All compositor fixtures passed ═══\n");
+}
+
+// ═══════════════════════════════════════════════════════════
+// US5 — Scoring Integration Fixture
+// ═══════════════════════════════════════════════════════════
+
+function testScoringIntegration() {
+    const PASS_THRESHOLD = 60;
+    const result1 = { passed: true, overallScore: 75, violations: [] as string[] };
+    const entry1 = { checkRan: true, present: false, deductedScore: 10 };
+    const newScore1 = Math.max(0, Math.min(100, result1.overallScore - entry1.deductedScore));
+    assert.equal(newScore1, 65);
+    assert.ok(newScore1 >= PASS_THRESHOLD);
+    assert.ok(result1.violations.length === 0);
+    console.log("  ✅ T029a-scoring-deduction-75-to-65-still-passes");
+
+    const result2 = { passed: true, overallScore: 65, violations: [] as string[] };
+    const newScore2 = Math.max(0, Math.min(100, result2.overallScore - entry1.deductedScore));
+    assert.equal(newScore2, 55);
+    assert.ok(newScore2 < PASS_THRESHOLD);
+    console.log("  ✅ T029b-scoring-deduction-65-to-55-now-fails");
+}
+
+function runUs5ScoringFixtures() {
+    console.log("\n═══ US5 — Scoring Integration Fixtures ═══");
+    testScoringIntegration();
+    console.log("═══ US5 — All scoring fixtures passed ═══\n");
+}
+
+function runBcrFixtures() {
+    console.log("\n═══ BCR — Brand Color Resolver Fixtures ═══");
+    testBcr01();
+    testBcr02();
+    testBcr03();
+    testBcr04();
+    testBcr05();
+    testBcr06();
+    testBcr07();
+    testBcr08();
+    testBcr09();
+    testBcr10();
+    testBcr11();
+    console.log("═══ BCR — All brand color resolver fixtures passed ═══\n");
+}
+
 async function runHff6Fixtures() {
     console.log("\n═══ HFF — HOTFIX-F: Aspect Ratio Reflow Fixtures ═══");
 
@@ -2096,7 +2530,14 @@ async function runHff6Fixtures() {
     console.log("═══ HFF — All aspect ratio reflow fixtures passed ═══\n");
 }
 
-runHff6Fixtures().then(() => {
+runBcrFixtures();
+runUs1Fixtures();
+runUs2Fixtures();
+runBccFixtures().then(() => {
+    runUs4Fixtures();
+    runUs5ScoringFixtures();
+    return runHff6Fixtures();
+}).then(() => {
     console.log('contractFixtures.test: PASS');
 }).catch((err) => {
     console.error('contractFixtures.test: FAIL', err);

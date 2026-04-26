@@ -6,6 +6,8 @@ import type {
     AutoSwitchEvent,
     LogoPipelineEvents,
     ReflowHistoryEntry,
+    BrandColorSource,
+    BrandColorComplianceEntry,
 } from "./types.js";
 
 type Mutable<T> = { -readonly [P in keyof T]: T[P] extends readonly (infer U)[] ? U[] : T[P] };
@@ -14,6 +16,8 @@ type ResolutionTraceDraft = Partial<Mutable<ResolutionTrace>> & {
     _culturalViolation?: ResolutionTrace["culturalViolation"];
     _logoPipeline?: LogoPipelineEvents;
     _reflowHistory?: ReflowHistoryEntry[];
+    _brandColorSource?: BrandColorSource;
+    _brandColorCompliance?: BrandColorComplianceEntry[];
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -44,6 +48,8 @@ export interface TraceBuilder {
     }): TraceBuilder;
     setLogoPipeline(events: LogoPipelineEvents): TraceBuilder;
     addReflowHistoryEntry(entry: ReflowHistoryEntry): TraceBuilder;
+    setBrandColorSource(source: BrandColorSource): TraceBuilder;
+    addBrandColorComplianceEntry(entry: BrandColorComplianceEntry): TraceBuilder;
     build(): ResolutionTrace;
 }
 
@@ -137,6 +143,15 @@ export function createTraceBuilder(): TraceBuilder {
             state._reflowHistory.push({ ...entry });
             return builder;
         },
+        setBrandColorSource(source) {
+            state._brandColorSource = source;
+            return builder;
+        },
+        addBrandColorComplianceEntry(entry) {
+            if (!state._brandColorCompliance) state._brandColorCompliance = [];
+            state._brandColorCompliance.push({ ...entry });
+            return builder;
+        },
         build(): ResolutionTrace {
             if (!state.resolvedCampaignType) throw new Error("TraceBuilder: resolvedCampaignType not set");
             if (!state.resolvedAdMode) throw new Error("TraceBuilder: resolvedAdMode not set");
@@ -179,6 +194,10 @@ export function createTraceBuilder(): TraceBuilder {
                     softWarnings: state._logoPipeline.softWarnings.map((e) => ({ ...e })),
                 } : undefined,
                 reflowHistory: state._reflowHistory ? state._reflowHistory.map(e => ({ ...e })) : undefined,
+                brandColorSource: state._brandColorSource,
+                brandColorCompliance: state._brandColorCompliance
+                    ? state._brandColorCompliance.map(e => ({ ...e }))
+                    : undefined,
             });
         },
     };

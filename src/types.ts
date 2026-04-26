@@ -438,6 +438,9 @@ export interface SavedProject {
 
 export type AppPhase = 'input' | 'tov_review' | 'concept_review' | 'render_studio' | 'primary_text';
 
+// ─── Brand Colors (956-brand-colors) ─────────────────────────────────────────
+export type BrandColorSource = 'form' | 'avatar' | 'inherited' | 'workspace' | 'none';
+
 // ─── AUDIENCE AVATAR ─────────────────────────────────────────────────────────
 // Stores reusable audience profiles that pre-populate the input form.
 export interface AudienceAvatar {

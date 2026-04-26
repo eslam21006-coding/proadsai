@@ -248,6 +248,8 @@ export interface ResolutionTrace {
     };
     logoPipeline?: LogoPipelineEvents;
     readonly reflowHistory?: readonly ReflowHistoryEntry[];
+    brandColorSource?: BrandColorSource;
+    brandColorCompliance?: BrandColorComplianceEntry[];
 }
 
 export interface LaunchSurfaceInput {
@@ -289,4 +291,30 @@ export interface TestimonialCarouselResult {
     detectedPlatforms: PlatformType[];
     totalSlides: number;
     visualStyleFamily: VisualStyleFamily;
+}
+
+// ─── Brand Colors (956-brand-colors) ─────────────────────────────────────────
+
+export type BrandColorSource =
+    | "form"
+    | "avatar"
+    | "inherited"
+    | "workspace"
+    | "none";
+
+export interface BrandColorPair {
+    primary: string | null;
+    secondary: string | null;
+    ctaTextColor: "#FFFFFF" | "#1A1A1A" | null;
+    source: BrandColorSource;
+}
+
+export interface BrandColorComplianceEntry {
+    assetId: string;
+    checkRan: boolean;
+    present: boolean;
+    deltaE: number | null;
+    dominantSwatch: string | null;
+    deductedScore: number;
+    skippedReason?: "no_brand_colors" | "image_unanalyzable";
 }
