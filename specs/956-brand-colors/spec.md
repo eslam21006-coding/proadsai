@@ -113,7 +113,7 @@ After an image is rendered, the system inspects the dominant colors actually pre
 - A carousel or batch is partially generated when an error occurs on one item. Items that did succeed must already be on-brand; the consistency contract applies per successful item and is not weakened by sibling failures.
 - The post-render compliance check encounters an image it cannot color-analyse (corrupt or zero-byte file). It records that the check could not run rather than producing a false flag, and does not block the asset from shipping.
 - Two user-supplied brand colors are nearly identical. The carousel/batch consistency rules still apply; downstream behaviour does not require visual distinguishability between primary and secondary.
-- The user picks a brand primary that is mid-luminance (neither clearly light nor clearly dark). The auto-contrast rule for CTA text MUST still produce a deterministic choice (the higher-contrast of white vs near-black) rather than oscillating or returning a mid-gray that would itself be illegible.
+- The user picks a brand primary that is mid-luminance (neither clearly light nor clearly dark). The auto-contrast rule for CTA text MUST still produce a deterministic choice — specifically, white when WCAG relative luminance L < 0.5, else near-black `#1A1A1A` (per research.md Decision 3, with the boundary at exactly L = 0.5 falling into the ≥-clause that picks near-black). Never a mid-gray that would itself be illegible, never an oscillating output for the same input.
 
 ## Requirements *(mandatory)*
 

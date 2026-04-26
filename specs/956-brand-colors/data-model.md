@@ -120,16 +120,16 @@ export interface ResolveBrandColorsInput {
 export function resolveBrandColors(input: ResolveBrandColorsInput): BrandColorPair;
 ```
 
-Algorithm (single pure function, no I/O):
+Algorithm (single pure function, no I/O) — **independent per-slot precedence**:
 
-1. For each of the four sources in precedence order — `form` → `avatar` → `sourceColdAd` → `workspace` — normalize and validate the primary hex. Pick the first source whose primary is non-empty, valid hex.
-2. If no source had a valid primary → return `{ primary: null, secondary: null, ctaTextColor: null, source: 'none' }`.
-3. Otherwise, take the secondary from the **same** source that supplied the primary. (Sources are atomic: you don't mix a primary from form with a secondary from workspace.)
-4. Validate the secondary; null it if invalid.
-5. Compute `ctaTextColor` from the primary's WCAG relative luminance (Decision 3).
-6. Return the pair with the resolved `source`.
+1. Normalize and validate each source's primary and secondary hex strings (trim whitespace, match `/^#[0-9A-Fa-f]{6}$/`, lowercase the body to `#rrggbb`; anything that fails becomes `null`).
+2. Resolve `primary` by scanning the four sources in precedence order `form` → `avatar` → `sourceColdAd` → `workspace`. Pick the first source whose primary is non-null.
+3. **Independently** resolve `secondary` by scanning the same four sources in the same precedence order. Pick the first source whose secondary is non-null. This may be a *different* source than the one that supplied the primary — a higher-precedence source supplying only a primary does NOT block a lower-precedence source's secondary from being inherited (and vice versa).
+4. If no source had a valid primary → return `{ primary: null, secondary: null, ctaTextColor: null, source: 'none' }` (regardless of any source's secondary).
+5. Compute `ctaTextColor` from the resolved primary's WCAG relative luminance (Decision 3).
+6. Set `BrandColorPair.source` to the precedence label of the source that supplied the **primary**. The secondary's source is intentionally not surfaced — auditors who need that detail read the trace plus the input snapshot.
 
-Determinism: the function is referentially transparent. Same inputs → same outputs. No Date.now, no random, no I/O.
+Determinism: the function is referentially transparent. Same inputs → same outputs. No `Date.now`, no random, no I/O.
 
 ---
 
@@ -183,7 +183,7 @@ Override rules when `brand` is supplied:
 - Headline accent (the headline text color the function would have read from `textStyle.color`): replaced by `brand.secondary` when non-null; otherwise unchanged.
 - CTA pill background (the function's CTA `backgroundTreatmentColor`): replaced by `brand.primary` when non-null; otherwise unchanged.
 - CTA text color (the function's CTA text color): replaced by `brand.ctaTextColor` when non-null; otherwise unchanged.
-- All Arabic-text rules from `generators.ts:5146-5151` continue to apply on top — no partial coloring of Arabic text, etc. The `brand` parameter only sets the *uniform* color of the headline; the function never paints individual glyphs differently.
+- The existing Arabic uniformity contract in `generators.ts` continues to apply on top — no partial coloring of Arabic text, etc. The `brand` parameter only sets the *uniform* color of the headline; the function never paints individual glyphs differently.
 
 ---
 

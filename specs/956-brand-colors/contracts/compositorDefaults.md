@@ -83,4 +83,4 @@ Reference IDs:
 
 - The compositor's image-decoding, font-loading, RTL handling, and Sharp pipeline are unchanged.
 - `TextStyle` and `TextZone` are not extended — the brand override happens at parameter level, not by mutating the style object.
-- No new exports, no new helper functions visible to other modules.
+- The only new exports are the three pure decision helpers (`pickHeadlineColor`, `pickCtaBgColor`, `pickCtaTextColor`) called out above; these exist so the test suite can exercise the same code path the compositor runs internally. No other helpers, no module-level state, no new public surface.

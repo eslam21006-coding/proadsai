@@ -28,11 +28,32 @@ import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.
 import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreservation, type SemanticLock } from "./utils/hookPayload.js";
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
 import type { FailureClass, CostEstimate, LogoPlacement } from "./types.js";
-import { resolveBrandColors } from "./brandColorResolver.js";
+import { resolveBrandColors, type ResolveBrandColorsInput } from "./brandColorResolver.js";
 import { buildCarouselBrandConsistencyBlock, buildBatchBrandConsistencyBlock } from "./brandPromptBlocks.js";
 import { checkBrandColorCompliance } from "./brandColorCompliance.js";
-import type { BrandColorPair } from "./types.js";
 import { GenerationError } from "./types.js";
+
+// ─── Typed precedence-resolver argument builder ─────────────────────────────
+// Centralises the 4-source precedence shape so all 6 prompt-build sites and
+// the compliance call site stay in lockstep. Earlier copies of this object
+// duplicated the (inputs as any) cast 5× per site.
+type _BrandPrecedenceInputs = {
+    brandColorPrimary?: string;
+    brandColorSecondary?: string;
+    _avatarBrandColors?: { brandColorPrimary?: string; brandColorSecondary?: string } | null;
+    _sourceColdAdBrandColors?: { brandColorPrimary?: string; brandColorSecondary?: string } | null;
+    _workspaceBrandColors?: { brandColorPrimary?: string; brandColorSecondary?: string } | null;
+};
+function buildBrandResolverArgs(inputs: AdInputs): ResolveBrandColorsInput {
+    const i = inputs as AdInputs & _BrandPrecedenceInputs;
+    return {
+        formPrimary: i.brandColorPrimary,
+        formSecondary: i.brandColorSecondary,
+        avatar: i._avatarBrandColors ?? null,
+        sourceColdAd: i._sourceColdAdBrandColors ?? null,
+        workspace: i._workspaceBrandColors ?? null,
+    };
+}
 import { CULTURAL_COMPLIANCE_BLOCK, ARABIC_WARDROBE_BLOCK, isArabic, scanAndReplace } from "./culturalCompliance.js";
 import { compositeUILogos } from "./logoComposite.js";
 import { SCREEN_CONTENT_BAN_BLOCK, UI_LOGO_INSTRUCTION_BLOCK, ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK, MODE_SELECTION_HINT_BLOCK } from "./logoPromptBlocks.js";
@@ -935,13 +956,7 @@ export async function generateTOV(inputs: AdInputs, resolvedUniverse: string, mo
         }
 
         let modeInstruction = "";
-        const _brandResolved = resolveBrandColors({
-            formPrimary: inputs.brandColorPrimary,
-            formSecondary: inputs.brandColorSecondary,
-            avatar: (inputs as any)._avatarBrandColors || null,
-            sourceColdAd: (inputs as any)._sourceColdAdBrandColors || null,
-            workspace: (inputs as any)._workspaceBrandColors || null,
-        });
+        const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
         const _hookRtCtx = buildNormalizedRetargetingContext(inputs as any);
         const campaignType = (inputs as any).campaignType || 'cold';
         const isRetargeting = _hookRtCtx.isRetargeting;
@@ -2021,13 +2036,7 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
 export async function generateConcepts(approvedTov: string, inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', _previousOutput?: string, _globalRefinement?: string, editFeedback?: string, editIndex?: string): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
     let _conceptsRankingLinkage: RankingLinkage | null = null;
     async function _generateConceptsInner(): Promise<string> {
-        const _brandResolved = resolveBrandColors({
-            formPrimary: inputs.brandColorPrimary,
-            formSecondary: inputs.brandColorSecondary,
-            avatar: (inputs as any)._avatarBrandColors || null,
-            sourceColdAd: (inputs as any)._sourceColdAdBrandColors || null,
-            workspace: (inputs as any)._workspaceBrandColors || null,
-        });
+        const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
         // ═══ CREATIVE MODE VALIDATION (fail-closed) ═══
         const _selectedModes = (inputs as any).offerCreativeMode || ['standard_hero'];
         const _comboCheck = validateCombination(_selectedModes, inputs.coldHookAngle);
@@ -2166,7 +2175,7 @@ ${(() => {
         Concept 2: Use brand primary as headline highlight glow / text accent color.
         Concept 3: Use brand colors as dominant environment tones (neon signs, ambient light, props).
         This ensures brand recognition while keeping each concept visually distinct.
-        ⚠️ CRITICAL: ALWAYS write the ACTUAL hex code (e.g. "${_brandResolved.primary}") in your output. NEVER write placeholder text like "[brand_name primary color]" or "[brand color]" or "[primary color]". The designer cannot interpret placeholders — only exact hex values like ${_brandResolved.primary}.` : ''} `;
+        CRITICAL: write the actual hex code ${_brandResolved.primary} in every color reference. Never write a placeholder phrase, never wrap a colour in brackets or braces, never substitute the literal brand name for the hex. The designer can only interpret real hex values.` : ''} `;
 
         } else if (mode === 'precision') {
             modeInstruction = `SURGICAL EDIT [SINGLE CONCEPT PATCH]:
@@ -3437,13 +3446,7 @@ export interface GenerateBuildPlanResult {
 }
 
 export async function generateBuildPlan(conceptRaw: string, selectedTov: string, inputs: AdInputs, resolvedUniverse: string, currentAspectRatio: AspectRatio, textOverride?: TextOverride): Promise<GenerateBuildPlanResult> {
-    const _brandResolved = resolveBrandColors({
-        formPrimary: inputs.brandColorPrimary,
-        formSecondary: inputs.brandColorSecondary,
-        avatar: (inputs as any)._avatarBrandColors || null,
-        sourceColdAd: (inputs as any)._sourceColdAdBrandColors || null,
-        workspace: (inputs as any)._workspaceBrandColors || null,
-    });
+    const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
     const _bpModes = (inputs as any).offerCreativeMode || ['standard_hero'];
     const _bpCheck = validateCombination(_bpModes, inputs.coldHookAngle);
     console.log(`🎨 CREATIVE MODE AUDIT [generateBuildPlan]: modes=[${_bpModes.join(',')}] tab=${_bpCheck.resolvedTab || 'none'} valid=${_bpCheck.valid}${_bpCheck.errors.length ? ' errors: ' + _bpCheck.errors.join('; ') : ''}`);
@@ -3550,7 +3553,7 @@ ${_brandResolved.primary ? `- BRAND COLOR DIRECTIVE: The brand's primary color i
   c) Background accent element (neon glow, gradient edge, light streak)
   d) Environmental prop color (matching the universe)
 Do NOT make the entire design monochromatic with brand color — use it as a strategic accent.
-⚠️ ALWAYS write the exact hex code (e.g. "${_brandResolved.primary}") in color references. NEVER write "[brand_name primary color]" or any placeholder — only the actual hex value.` : ''}
+CRITICAL: write the actual hex code ${_brandResolved.primary} in every color reference. Never substitute a placeholder phrase, the literal brand name, or any bracketed or braced template — only the actual hex value.` : ''}
 ${(() => {
     // ── Ticket 2: Sub-style build plan constraints ──
     const sub = resolveVisualSubStyle(inputs);
@@ -4059,14 +4062,11 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
         imageParts,
     } = params;
 
-    const _brandResolved = resolveBrandColors({
-        formPrimary: inputs.brandColorPrimary,
-        formSecondary: inputs.brandColorSecondary,
-        avatar: (inputs as any)._avatarBrandColors || null,
-        sourceColdAd: (inputs as any)._sourceColdAdBrandColors || null,
-        workspace: (inputs as any)._workspaceBrandColors || null,
-    });
-
+    // Brand-color injection happens upstream via the per-prompt blocks built
+    // by generateBuildPlan / generateConcepts / generateFinalAd; those blocks
+    // are already concatenated into `coreDesignRules`, `costumeRules`, and
+    // the technicalPrompt by the time control reaches buildFinalImagePrompt.
+    // No need to re-resolve here.
     const strippedBlueprint = stripTechnicalPrompt(blueprint);
 
     // coreDesignRules already contains CULTURAL_COMPLIANCE_BLOCK and costumeRules already
@@ -4139,13 +4139,7 @@ export async function generateFinalAd(
     styleReference?: string,
     textOverride?: TextOverride
 ): Promise<{ image: string; failureClass?: "numeric_hallucination"; costEstimate?: CostEstimate } | { image: null; errorCode: string; failureClass?: FailureClass; debug?: FinalAdDebugInfo }> {
-    const _brandResolved = resolveBrandColors({
-        formPrimary: inputs.brandColorPrimary,
-        formSecondary: inputs.brandColorSecondary,
-        avatar: (inputs as any)._avatarBrandColors || null,
-        sourceColdAd: (inputs as any)._sourceColdAdBrandColors || null,
-        workspace: (inputs as any)._workspaceBrandColors || null,
-    });
+    const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
     const _complianceAssetId = inputs.adMode === 'carousel'
         ? `slide-${(inputs as any).carouselSlideIndex ?? 0}`
         : (inputs as any).batchN
@@ -4160,10 +4154,17 @@ export async function generateFinalAd(
                 : imageBase64;
             const buf = Buffer.from(_payload, "base64");
             const entry = await checkBrandColorCompliance(buf, _brandResolved.primary, _complianceAssetId);
+            // checkRan: false means the check could NOT run (image_unanalyzable
+            // or no_brand_colors). That is NOT a "miss" — distinguish it in
+            // logs so a corrupt image isn't conflated with off-brand output.
+            if (!entry.checkRan) {
+                console.log(`ℹ️ Brand color compliance SKIPPED [${_complianceAssetId}]: reason=${entry.skippedReason}`);
+                return;
+            }
             if (entry.present) {
                 console.log(`🎨 Brand color compliance PASSED [${_complianceAssetId}]: ΔE=${entry.deltaE?.toFixed(1)}`);
             } else {
-                console.warn(`⚠️ Brand color compliance MISSED [${_complianceAssetId}]: ΔE=${entry.deltaE?.toFixed(1)} threshold=15`);
+                console.warn(`⚠️ Brand color compliance MISSED [${_complianceAssetId}]: ΔE=${entry.deltaE?.toFixed(1)} threshold=15 dominant=${entry.dominantSwatch}`);
             }
         } catch (e) {
             console.warn(`⚠️ Brand color compliance check failed [${_complianceAssetId}] (non-blocking):`, e);
@@ -5867,6 +5868,7 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                 if (overlayContract.overlaySlots.length > 0) {
                                     if (!isOverlayAvailable()) {
                                         console.warn('⚠️ OVERLAY: Sharp not installed — skipping overlay, returning image without price compositing.');
+                                        await _runBrandCompliance(currentImage);
                                         return { image: currentImage, ..._nhResult };
                                     }
 
@@ -5874,6 +5876,7 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                     const preFacts = extractOfferFacts(inputs);
                                     if (!preFacts) {
                                         console.warn('⚠️ OVERLAY: facts extraction returned null — skipping overlay, returning image without price compositing.');
+                                        await _runBrandCompliance(currentImage);
                                         return { image: currentImage, ..._nhResult };
                                     }
 
@@ -5891,6 +5894,7 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                         );
                                         if (!overlaid) {
                                             console.warn('⚠️ OVERLAY: compositor returned null — returning image without price compositing.');
+                                            await _runBrandCompliance(currentImage);
                                             return { image: currentImage, ..._nhResult };
                                         }
 
@@ -5950,13 +5954,16 @@ If no monetary numbers are visible, return: []` }
                                         return { image: overlaid, ..._nhResult };
                                     } catch (overlayErr) {
                                         console.warn('⚠️ Overlay compositing failed (non-blocking). Returning image without overlay.', overlayErr);
+                                        await _runBrandCompliance(currentImage);
                                         return { image: currentImage, ..._nhResult };
                                     }
                                 }
                             }
+                            await _runBrandCompliance(currentImage);
                             return { image: currentImage, ..._nhResult };
                         }
                         // Safety net — should not reach here, but return image if we have one
+                        await _runBrandCompliance(currentImage || imageBase64);
                         return { image: currentImage || imageBase64, ...(_numericHallucination ? { failureClass: 'numeric_hallucination' as const, costEstimate: getCostEstimate() } : {}) };
                     }
 
@@ -6147,13 +6154,7 @@ export async function generateCarouselAngles(
     globalRefinement?: string,
     plan?: StoredPlan
 ): Promise<string> {
-    const _brandResolved = resolveBrandColors({
-        formPrimary: inputs.brandColorPrimary,
-        formSecondary: inputs.brandColorSecondary,
-        avatar: (inputs as any)._avatarBrandColors || null,
-        sourceColdAd: (inputs as any)._sourceColdAdBrandColors || null,
-        workspace: (inputs as any)._workspaceBrandColors || null,
-    });
+    const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
     const carouselDecision = resolveEntitlement({ plan: plan || "none", feature: "carouselSlides", quantity: slideCount });
     if (!carouselDecision.allowed) {
         throw new HttpsError("permission-denied", carouselDecision.reason || "carousel_limit_exceeded");

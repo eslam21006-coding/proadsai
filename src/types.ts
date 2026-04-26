@@ -264,6 +264,7 @@ export interface AdInputs {
   brandUrl?: string;
   brandColorPrimary?: string;   // Optional hex color e.g. "#FF6B00"
   brandColorSecondary?: string; // Optional hex color e.g. "#1A1A2E"
+  brandColorSource?: BrandColorSource; // Set server-side at submit time; mirrors resolutionTrace.brandColorSource
   badges?: string;          // New Badge Field
   adLanguage?: string;      // Content language e.g. "ar_fusha", "ar_egyptian", "en", "fr"
   adMode?: AdMode;          // Single image or carousel
