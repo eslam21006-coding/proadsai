@@ -3783,7 +3783,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 // unrenderable size so the UI balance matches what the backend actually charged.
                 console.warn(`Auto-reflow to ${extraRatio} skipped: no generation id available (saveGeneration failed or user not logged in).`);
                 setUserCredits(prev => prev + CREDIT_COSTS.generateImage);
-                showToast(`Could not save extra ${extraRatio} variant — credits refunded.`, 'info');
+                showToast(t('studio.reflow.refunded_extra').replace('{ratio}', extraRatio), 'info');
               }
             } catch (e) { console.error(`Auto-reflow to ${extraRatio} failed:`, e); }
           }
@@ -4471,12 +4471,17 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       const doneSlides = carouselSlides.filter(s => s.status === 'done' && s.imageUrl);
       const totalCost = CREDIT_COSTS.reflowImage * doneSlides.length;
       if (userCredits < totalCost) {
-        setUpgradeReason(`Reflowing ${doneSlides.length} slides needs ${totalCost} credits but you have ${userCredits}.`);
+        setUpgradeReason(t('studio.reflow.upgrade_carousel_credits')
+          .replace('{count}', String(doneSlides.length))
+          .replace('{cost}', String(totalCost))
+          .replace('{have}', String(userCredits)));
         setShowUpgradeModal(true);
         return;
       }
       setCurrentAspectRatio(newRatio);
-      startLoad(`Reflowing ${doneSlides.length} slides to ${newRatio}...`);
+      startLoad(t('studio.reflow.loading_carousel')
+        .replace('{count}', String(doneSlides.length))
+        .replace('{ratio}', newRatio));
       // Optimistic UI-only decrement: the reflowImage callable performs the authoritative
       // atomic deduction backend-side, so we MUST NOT call deductCredits() here (it would
       // hit deductCreditsServer and double-bill). After the callable returns, reconcile
@@ -4484,7 +4489,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       const optimisticCost = renderGenerationId ? CREDIT_COSTS.reflowImage * doneSlides.length : 0;
       if (renderGenerationId) {
         if (userCredits < optimisticCost) {
-          setUpgradeReason(`You need ${optimisticCost} credits but only have ${userCredits}.`);
+          setUpgradeReason(t('studio.reflow.upgrade_single_credits')
+            .replace('{cost}', String(optimisticCost))
+            .replace('{have}', String(userCredits)));
           setShowUpgradeModal(true);
           stopLoad();
           return;
@@ -4559,13 +4566,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     // ─── SINGLE MODE: Reflow one image via reflowImage callable (HOTFIX-F) ─────
     if (!selectedConcept || !currentMockup || !buildPlan) return;
     setCurrentAspectRatio(newRatio);
-    startLoad(`Reflowing to ${newRatio}...`);
+    startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
     // Optimistic UI-only decrement (callable backend performs the authoritative deduction;
     // calling deductCredits() here would invoke deductCreditsServer and double-bill).
     const singleOptimisticCost = renderGenerationId ? CREDIT_COSTS.reflowImage : 0;
     if (renderGenerationId) {
       if (userCredits < singleOptimisticCost) {
-        setUpgradeReason(`You need ${singleOptimisticCost} credits but only have ${userCredits}.`);
+        setUpgradeReason(t('studio.reflow.upgrade_single_credits')
+          .replace('{cost}', String(singleOptimisticCost))
+          .replace('{have}', String(userCredits)));
         setShowUpgradeModal(true);
         stopLoad();
         return;

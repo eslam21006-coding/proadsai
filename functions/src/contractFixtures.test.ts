@@ -1612,7 +1612,7 @@ console.log("═══ HFE — All hybrid logo fixtures passed ═══\n");
 
 import { decideMethod, RATIO_TO_NUMERIC } from "./reflowRouter.js";
 import { verifyLockedRegion } from "./reflowOutpaint.js";
-import { NoPlanError, extractBuildPlan, rerenderFromPlan } from "./reflowRerender.js";
+import { NoPlanError, extractBuildPlan, rerenderFromPlan, __setGenerateFinalAdForTests } from "./reflowRerender.js";
 import type { ReflowHistoryEntry } from "./types.js";
 import { reflowImageHandler } from "./reflowImage.js";
 import { readFileSync } from "node:fs";
@@ -1881,8 +1881,8 @@ async function testHff6l() {
     // editInstruction that includes "REFLOW" and a base64ToEdit; the deprecated path
     // MUST return a typed error result (FR-026), not throw, and not invoke Gemini.
     const { generateFinalAd } = await import("./generators.js");
-    const tinyPng = readFileSync(join(__dirname, "..", "src", "__tests__", "__fixtures__", "reflow-source-1x1.png"));
-    const tinyB64 = "data:image/png;base64," + tinyPng.toString("base64");
+    // Reuse module-level fixturePng (read once at module load) instead of re-reading from disk.
+    const tinyB64 = "data:image/png;base64," + fixturePng.toString("base64");
 
     const fakeInputs = {
         offerName: "x", productName: "x", offerType: "free_guide",
@@ -1965,6 +1965,55 @@ function testHff6n() {
     console.log("  ✅ HFF.6.n: reflow-of-reflow uses original buildPlan (not derived)");
 }
 
+// ─── HFF.6.o — successful rerenderFromPlan invokes generator with extracted plan + override ratio ───
+async function testHff6o() {
+    // Stub the generator so the test captures its inputs without hitting Gemini.
+    const captured: Array<{ buildPlan: string; targetRatio: string; tov: string; universe: string }> = [];
+    const fakeImage = "data:image/png;base64,FAKE";
+    __setGenerateFinalAdForTests(async (buildPlan, approvedTov, _inputs, resolvedUniverse, targetRatio) => {
+        captured.push({
+            buildPlan: String(buildPlan),
+            targetRatio: String(targetRatio),
+            tov: String(approvedTov),
+            universe: String(resolvedUniverse),
+        });
+        return { image: fakeImage };
+    });
+
+    try {
+        const result = await rerenderFromPlan({
+            generationId: "gen-hff-o",
+            targetRatio: "9:16",
+            itemIndex: null,
+            genData: {
+                input: { tone: "minimal_universe" },
+                output: { buildPlan: "ORIGINAL-PLAN-1x1", fullResponse: "approved-tov-text" },
+            },
+            geminiApiKey: "stub",
+            openaiApiKey: "stub",
+        });
+
+        // Generator was called once with the extracted buildPlan and overridden ratio.
+        assert.equal(captured.length, 1, "generator must be invoked exactly once");
+        assert.equal(captured[0].buildPlan, "ORIGINAL-PLAN-1x1",
+            "generator must receive the extractBuildPlan result");
+        assert.equal(captured[0].targetRatio, "9:16",
+            "generator must receive the override targetRatio");
+        assert.equal(captured[0].tov, "approved-tov-text",
+            "generator must receive output.fullResponse as approvedTov");
+        assert.equal(captured[0].universe, "minimal_universe",
+            "generator must receive input.tone as resolvedUniverse");
+
+        // rerenderFromPlan resolves normally with the stub's image and the rerender credit cost.
+        assert.equal(result.outputUrl, fakeImage, "rerenderFromPlan returns the generator's image");
+        assert.equal(result.creditsCharged, 5, "rerenderFromPlan charges the rerender cost (5)");
+    } finally {
+        // Always restore the real implementation, even on assertion failure.
+        __setGenerateFinalAdForTests(null);
+    }
+    console.log("  ✅ HFF.6.o: rerenderFromPlan calls generator with extracted plan + overridden ratio");
+}
+
 // ─── Mock helpers ───
 
 interface MockDocSnapshot { exists: boolean; data: () => Record<string, unknown> | undefined }
@@ -2042,6 +2091,7 @@ async function runHff6Fixtures() {
     await testHff6l();
     testHff6m();
     testHff6n();
+    await testHff6o();
 
     console.log("═══ HFF — All aspect ratio reflow fixtures passed ═══\n");
 }

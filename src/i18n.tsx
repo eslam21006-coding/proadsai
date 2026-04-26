@@ -286,6 +286,11 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'studio.reflow.method_auto_desc': 'Recommended',
         'studio.reflow.method_quick_desc': 'Fast, keeps subject',
         'studio.reflow.method_fresh_desc': 'Best for big changes',
+        'studio.reflow.upgrade_carousel_credits': 'Reflowing {count} slides needs {cost} credits but you have {have}.',
+        'studio.reflow.upgrade_single_credits': 'You need {cost} credits but only have {have}.',
+        'studio.reflow.loading_carousel': 'Reflowing {count} slides to {ratio}...',
+        'studio.reflow.loading_single': 'Reflowing to {ratio}...',
+        'studio.reflow.refunded_extra': 'Could not save extra {ratio} variant — credits refunded.',
 
         // ── Step 5: Script ──
         'script.title': 'Primary Script',
@@ -980,6 +985,11 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'studio.reflow.method_auto_desc': 'موصى به',
         'studio.reflow.method_quick_desc': 'سريع، يحافظ على البطل',
         'studio.reflow.method_fresh_desc': 'الأفضل للتغييرات الكبيرة',
+        'studio.reflow.upgrade_carousel_credits': 'إعادة تحجيم {count} شرائح يحتاج {cost} رصيد ولديك {have}.',
+        'studio.reflow.upgrade_single_credits': 'تحتاج {cost} رصيد ولديك {have} فقط.',
+        'studio.reflow.loading_carousel': 'إعادة تحجيم {count} شرائح إلى {ratio}...',
+        'studio.reflow.loading_single': 'إعادة تحجيم إلى {ratio}...',
+        'studio.reflow.refunded_extra': 'تعذر حفظ نسخة {ratio} الإضافية — تمت إعادة الرصيد.',
 
         // ── Step 5: Script ──
         'script.title': 'النص الأساسي',

@@ -66,6 +66,17 @@ export function extractBuildPlan(
     return buildPlan;
 }
 
+/**
+ * Test seam: replace the real `generateFinalAd` with a stub. NOT for production use —
+ * tests inject a stub to verify rerenderFromPlan's argument-passing contract without
+ * triggering Gemini calls. Pass `null` to restore the real implementation.
+ */
+export type GenerateFinalAdImpl = typeof generateFinalAd;
+let _generateFinalAdOverride: GenerateFinalAdImpl | null = null;
+export function __setGenerateFinalAdForTests(impl: GenerateFinalAdImpl | null): void {
+    _generateFinalAdOverride = impl;
+}
+
 export async function rerenderFromPlan(args: {
     generationId: string;
     targetRatio: AspectRatio;
@@ -82,17 +93,20 @@ export async function rerenderFromPlan(args: {
 
     const buildPlan = extractBuildPlan(genData, itemIndex, generationId);
 
-    const { setGeminiCaller, setOpenAIKey } = await import("./generators.js");
-    const { GoogleGenerativeAI } = await import("@google/generative-ai");
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
-    // setGeminiCaller defines the caller's exact shape; reuse it via Parameters<> to avoid local `any`.
-    type GeminiCaller = Parameters<typeof setGeminiCaller>[0];
-    const caller: GeminiCaller = (params) =>
-        genAI.getGenerativeModel({ model: params.model, ...params.config }).generateContent(params.contents);
-    setGeminiCaller(caller);
-    setOpenAIKey(openaiApiKey);
+    const generate = _generateFinalAdOverride ?? generateFinalAd;
+    if (!_generateFinalAdOverride) {
+        // Real path — wire the gemini caller and openai key. Tests skip this branch.
+        const { setGeminiCaller, setOpenAIKey } = await import("./generators.js");
+        const { GoogleGenerativeAI } = await import("@google/generative-ai");
+        const genAI = new GoogleGenerativeAI(geminiApiKey);
+        type GeminiCaller = Parameters<typeof setGeminiCaller>[0];
+        const caller: GeminiCaller = (params) =>
+            genAI.getGenerativeModel({ model: params.model, ...params.config }).generateContent(params.contents);
+        setGeminiCaller(caller);
+        setOpenAIKey(openaiApiKey);
+    }
 
-    const result = await generateFinalAd(
+    const result = await generate(
         buildPlan,
         approvedTov,
         inputs as Parameters<typeof generateFinalAd>[2],

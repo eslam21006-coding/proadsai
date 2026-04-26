@@ -77,15 +77,20 @@ export async function reflowImageHandler(
 ): Promise<ReflowImageResponse> {
     const { db, admin, geminiApiKey, openaiApiKey } = deps;
 
+    const { HttpsError } = await import("firebase-functions/v2/https");
+
     if (!request.auth) {
-        const { HttpsError } = await import("firebase-functions/v2/https");
         throw new HttpsError("unauthenticated", "Login required.");
     }
     const callerId = request.auth.uid;
 
-    const { generationId, targetAspectRatio, method, scope, slideIndex } = request.data;
+    // Guard request.data before destructuring — a null/non-object payload would otherwise
+    // surface as a raw TypeError and reject the callable with a generic 'internal' error.
+    if (typeof request.data !== "object" || request.data === null) {
+        throw new HttpsError("invalid-argument", "request.data must be an object.");
+    }
 
-    const { HttpsError } = await import("firebase-functions/v2/https");
+    const { generationId, targetAspectRatio, method, scope, slideIndex } = request.data;
 
     if (!generationId || typeof generationId !== "string") {
         throw new HttpsError("invalid-argument", "generationId is required.");
@@ -186,13 +191,13 @@ export async function reflowImageHandler(
     // ─── Decide route first so credit pre-check uses the correct per-route cost ───
     const decision = decideMethod(sourceRatio, targetRatio, method);
 
-    // ─── Pre-flight credit check (FR-017): charge by chosen route, not by upper bound ───
-    // For auto-routed runs that may fall back, the worst-case cost is the rerender cost
-    // (a fallback either ends at outpaint or rerender, both bounded by RERENDER_CREDIT_COST).
-    // For user-override runs, no fallback occurs, so the cost is exactly the chosen route's cost.
-    const perItemCost = decision.isUserOverride
-        ? costForMethod(decision.chosenMethod)
-        : RERENDER_CREDIT_COST;
+    // ─── Pre-flight credit check (FR-017): charge by the route the router actually chose ───
+    // Reserving the rerender bound for every auto-routed outpaint would falsely reject users
+    // who have enough credits for the chosen route but not the higher fallback route. If a
+    // fallback is later needed and credits run short, the per-item atomic transaction's
+    // commit-time re-check (deductAndPersist) catches it and that single item fails cleanly
+    // (best-effort partial persistence), without blocking sibling items.
+    const perItemCost = costForMethod(decision.chosenMethod);
     const maxCost = perItemCost * activeItems.length;
     const userRef = db.collection("users").doc(creditOwnerUid);
     if (maxCost > 0) {
@@ -220,15 +225,40 @@ export async function reflowImageHandler(
         },
     );
 
-    // ─── Persist successful outcomes ───
-    for (const outcome of activeOutcomes) {
-        if (outcome.success && outcome.outputUrl) {
+    // ─── Persist successful outcomes (per-item try/catch so one Firestore commit failure
+    //     does not abort delivery of the other items — best-effort partial persistence) ───
+    for (let i = 0; i < activeOutcomes.length; i++) {
+        const outcome = activeOutcomes[i];
+        if (!outcome.success || !outcome.outputUrl) continue;
+        try {
             await deductAndPersist({
                 db, admin, genRef, userRef,
                 creditsCharged: outcome.creditsCharged,
                 outputUrl: outcome.outputUrl,
                 targetRatio, sourceRatio, decision, outcome,
             });
+        } catch (persistErr: unknown) {
+            const persistMsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+            console.warn(
+                `[reflowImage] persistence failed for gen=${genRef.id} item=${outcome.itemIndex}; ` +
+                `route=${outcome.method} reason="${persistMsg}". Item is converted to a failed outcome ` +
+                `(no charge, no history entry) so siblings can still ship.`,
+            );
+            // Convert this item's outcome from success → failure: clear outputUrl, zero out
+            // creditsCharged (since the transactional deduction never committed), and surface
+            // a clear errorCode/errorMessage to the caller. Mutating the array entry in place
+            // keeps slide-order ordering intact for carousel reflows.
+            activeOutcomes[i] = {
+                itemIndex: outcome.itemIndex,
+                success: false,
+                method: null,
+                fallbackFrom: outcome.fallbackFrom,
+                fallbackReason: outcome.fallbackReason,
+                outputUrl: null,
+                creditsCharged: 0,
+                errorCode: "persist_failed",
+                errorMessage: persistMsg,
+            };
         }
     }
 

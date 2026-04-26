@@ -55,7 +55,9 @@ export function resolveStoragePath(url: string, bucketName: string): string | nu
         return decodeURIComponent(object);
     }
     // Form 3: https://<bucket>.storage.googleapis.com/<object>
-    const m3 = url.match(/^https?:\/\/([^.]+)\.storage\.googleapis\.com\/(.+)$/);
+    // Bucket names can contain dots (e.g. `my-project.appspot.com`), so the host capture
+    // must be a non-greedy `(.+?)` rather than `[^.]+`.
+    const m3 = url.match(/^https?:\/\/(.+?)\.storage\.googleapis\.com\/(.+)$/);
     if (m3) {
         // Match Form 2 behaviour: refuse cross-bucket reads when bucketName is known.
         if (bucketName && m3[1] !== bucketName) return null;
