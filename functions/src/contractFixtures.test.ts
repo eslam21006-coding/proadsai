@@ -2048,7 +2048,7 @@ function createMockReflowDb(genData: Record<string, unknown>): MockFirestore {
         update: async () => { /* no-op */ },
     };
     return {
-        collection: (_: string) => ({ doc: (_2: string) => docRef }),
+        collection: (_collectionPath: string) => ({ doc: (_docId: string) => docRef }),
         runTransaction: async <R>(fn: (tx: MockTransaction) => Promise<R>) => {
             const tx: MockTransaction = {
                 get: async () => ({ data: () => genData }),

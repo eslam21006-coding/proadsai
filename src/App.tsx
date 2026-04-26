@@ -3762,6 +3762,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           for (let ei = 0; ei < extraSizes.length; ei++) {
             const extraRatio = extraSizes[ei];
             startLoad(`Reflowing to ${extraRatio}... (${ei + 1}/${extraSizes.length})`);
+            // Credits for this extra were pre-deducted in `totalNeeded` (line 3708).
+            // Refund the deduction whenever the variant is NOT produced — whether the
+            // callable succeeded with no image, returned success=false, threw, or was
+            // skipped because no generation id was available. The UI balance must match
+            // what the backend actually charged (reflowImage charges per-item only on
+            // committed outcomes, so a missing/failed outcome means no backend charge).
+            let variantProduced = false;
             try {
               await new Promise(r => setTimeout(r, 500));
               if (savedGenId) {
@@ -3774,18 +3781,23 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 });
                 if (reflowRes.data.success && reflowRes.data.outcomes[0]?.outputUrl) {
                   pushMockup(reflowRes.data.outcomes[0].outputUrl, extraRatio as AspectRatio);
+                  variantProduced = true;
+                } else {
+                  console.warn(`Auto-reflow to ${extraRatio} returned no image: success=${reflowRes.data.success}, errorCode=${reflowRes.data.outcomes[0]?.errorCode ?? 'none'}`);
                 }
               } else {
                 // No persisted generation id — reflowImage requires one (FR-029, FR-030 keep
                 // reflows scoped to a source generation). Skip rather than fall back to a stale
                 // renderGenerationId from a different render, which would reflow the wrong plan.
-                // Credits were pre-deducted for this extra in `totalNeeded` above; refund the
-                // unrenderable size so the UI balance matches what the backend actually charged.
                 console.warn(`Auto-reflow to ${extraRatio} skipped: no generation id available (saveGeneration failed or user not logged in).`);
-                setUserCredits(prev => prev + CREDIT_COSTS.generateImage);
-                showToast(t('studio.reflow.refunded_extra').replace('{ratio}', extraRatio), 'info');
               }
-            } catch (e) { console.error(`Auto-reflow to ${extraRatio} failed:`, e); }
+            } catch (e) {
+              console.error(`Auto-reflow to ${extraRatio} failed:`, e);
+            }
+            if (!variantProduced) {
+              setUserCredits(prev => prev + CREDIT_COSTS.generateImage);
+              showToast(t('studio.reflow.refunded_extra').replace('{ratio}', extraRatio), 'info');
+            }
           }
           showToast(`Rendered ${sizesToRender.length} sizes!`, 'success');
         }
