@@ -37,13 +37,15 @@ Backwards compatibility: existing call sites that do not pass `brand` continue t
 
 When `brand` is supplied AND the relevant field is non-null, the function uses brand-derived colors *instead of* the values from `textStyle`. Otherwise the existing `textStyle` value is used.
 
-| Surface | Today's color source | New override (when `brand` is supplied) |
-|---|---|---|
-| Headline text color | `textStyle.color` | `brand.secondary` (if non-null) — else unchanged |
-| CTA pill background | `textStyle.backgroundTreatmentColor` | `brand.primary` (if non-null) — else unchanged |
-| CTA text color | derived from CTA-bg luminance inside the existing function (or fixed white) | `brand.ctaTextColor` (if non-null) — else unchanged |
-| Stroke / shadow / weight | `textStyle.strokeColor`, `textStyle.shadowColor`, etc. | unchanged — never overridden by brand |
-| Background treatment style (none/pill/gradient) | `textStyle.backgroundTreatment` | unchanged — brand only sets the color, not the *shape* of the treatment |
+All three override decisions are funnelled through three small exported helpers in `textCompositing.ts` so the test suite calls the exact same code path as the compositor: `pickHeadlineColor(textStyle, brand)`, `pickCtaBgColor(textStyle, brand)`, `pickCtaTextColor(textStyle, brand)`.
+
+| Surface | Helper | Brand-set value | Fallback (brand absent or field null) |
+|---|---|---|---|
+| Headline text color | `pickHeadlineColor` | `brand.secondary` | `textStyle.color` |
+| CTA pill background | `pickCtaBgColor` | `brand.primary` | `textStyle.backgroundTreatmentColor`, then `'#C8942A'` if even that is empty |
+| CTA text color | `pickCtaTextColor` | `brand.ctaTextColor` | WCAG-luminance auto-contrast against the resolved CTA bg (white if L < 0.5, else `#1A1A1A`) |
+| Stroke / shadow / weight | (no helper) | unchanged — never overridden by brand | `textStyle.strokeColor`, `textStyle.shadowColor`, etc. |
+| Background treatment style (none/pill/gradient) | (no helper) | unchanged | `textStyle.backgroundTreatment` |
 
 ## Hard guarantees that the override does NOT break
 

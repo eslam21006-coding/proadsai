@@ -173,7 +173,7 @@ The Firestore checks in US1 already confirmed `present: true` on all assets. Tha
 |---|---|
 | Brand primary set, secondary empty | Generate single ad with only primary; confirm CTA is branded and headline is unchanged from AI-chosen palette. |
 | Malformed hex in form | Type `red` into the primary picker hex field; submit; confirm `inputs.brandColorSource` falls through to whatever next source has valid colors (workspace, in this case). |
-| Mid-luminance primary (`#888888`) | Set primary to `#888888`; confirm CTA text is `#1A1A1A` (deterministic at L = 0.5). |
+| Mid-luminance primary (`#BCBCBC`) | Set primary to `#BCBCBC` (L ≈ 0.51, just past the 0.5 boundary); confirm CTA text is `#1A1A1A` (≥-clause picks near-black). |
 | Retargeting with deleted cold ad | Manually orphan a retargeting record (or use a non-existent `retargetingSourceId`); confirm generation still succeeds with `brandColorSource: 'workspace'` (or `'none'` if no workspace either). |
 | Carousel with one rendered slide failing decode | Inject a corrupt image into one slide buffer; confirm that slide's compliance entry has `checkRan: false, skippedReason: 'image_unanalyzable'`, sibling slides scored normally. |
 

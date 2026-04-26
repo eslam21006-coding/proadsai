@@ -10,10 +10,11 @@ This document resolves all open implementation-tunable values flagged in `spec.m
 ## Decision 1 — Color-extraction algorithm and tolerance
 
 **Decision**:
-- Resize the rendered PNG/JPEG to **32×32** with `sharp(buffer).resize(32, 32, { fit: 'fill' })` and read raw RGB via `.raw().toBuffer()`.
-- Run **5-color k-means** quantization on the 1024 pixels (k=5, 10 iterations max, single random seed for determinism).
-- For each of the 5 dominant cluster centers, compute **CIEDE2000 (ΔE-2000)** distance against the brand primary in CIELAB color space.
-- The brand primary is **present** when the minimum ΔE across the 5 centers is **< 15**.
+- Resize the rendered PNG/JPEG to **32×32** with `sharp(buffer).resize(32, 32, { fit: 'fill' }).removeAlpha()` and read raw RGB via `.raw().toBuffer()` (alpha removed so the buffer is exactly 1024 × 3 bytes).
+- Run **5-color k-means** quantization on the 1024 pixels with **deterministic pixel-index seeding**: initial cluster centers are taken from pixel indices `floor(i × 1024 / 5)` for `i ∈ {0,1,2,3,4}` (no random seed — same input always produces the same centers). Up to 10 iterations; squared-Euclidean assignment in raw RGB.
+- For each of the 5 cluster centers, compute **CIEDE2000 (ΔE-2000)** distance against the brand primary in CIELAB color space (D65 white point).
+- **Per-pixel fallback**: if no cluster center is within `DELTA_E_THRESHOLD = 15`, iterate raw pixels (deduplicated to 5-bit-per-channel buckets) and check each unique color's ΔE against the brand primary. This catches small brand accents (CTA pills, logo glyphs, single headlines) that get absorbed into a larger centroid.
+- The brand primary is **present** when the minimum ΔE across centers OR any unique pixel is **strictly < 15** (the constant `DELTA_E_THRESHOLD = 15` lives at the top of `brandColorCompliance.ts`).
 
 **Rationale**:
 - 32×32 resize makes k-means O(1) regardless of source resolution and stays under 800 ms p95 on a Cloud Function with the 2 GiB / 1 vCPU profile already used by image jobs.

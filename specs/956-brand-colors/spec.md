@@ -163,8 +163,8 @@ After an image is rendered, the system inspects the dominant colors actually pre
 
 - Brand color data is already captured at the workspace, audience avatar, and per-generation form layers; no new data-entry surface is required beyond the in-form preview swatches.
 - The single-image generation path already injects brand colors with an anti-placeholder guard and does not need to be re-specified by this feature; the gap is in carousel, batch, retargeting, text compositing, UI preview, and post-render verification.
-- "Perceptual tolerance" for the post-render compliance check is a small, fixed perceptual-distance threshold — the exact numeric value is an implementation detail that can be tuned without changing the user-visible behaviour described here.
-- The fixed creative-score deduction for a brand-color-missing flag is a small, documented constant; the precise number can be tuned without changing the user-visible behaviour described here.
+- "Perceptual tolerance" for the post-render compliance check is **CIEDE2000 (ΔE-2000) strictly < 15**, computed in CIELAB against the brand primary. This value is fixed by contract — the fixture suite asserts the boundary cases (near-miss ΔE ≈ 2 → present; far-miss ΔE ≈ 17 → absent).
+- The fixed creative-score deduction for a brand-color-missing flag is **10 points**, subtracted from `overallScore` (out of 100). This value is fixed by contract — the fixture suite asserts both the still-passes case (75 → 65) and the now-fails case (65 → 55) at the existing 60-point pass threshold.
 - Users editing brand colors mid-generation accept that the in-flight generation keeps the colors that were active at submission; only future generations pick up the new defaults.
 - The retargeting-to-cold-ad link already exists in the data model and can be used to look up the source ad's brand colors at retargeting time.
 - This feature is a prerequisite for Phase 17 (Resize & Reflow), which depends on brand color data being reliably present and trusted on every generation record.

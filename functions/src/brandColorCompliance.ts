@@ -1,8 +1,26 @@
 // functions/src/brandColorCompliance.ts — per-asset brand color compliance check
 
+import type { Sharp } from "sharp";
 import type { BrandColorComplianceEntry } from "./types.js";
 
 const HEX_RE = /^#[0-9a-f]{6}$/i;
+const DELTA_E_THRESHOLD = 15;
+
+// ─── Typed lazy sharp loader (matches logoComposite.ts / reflowOutpaint.ts) ──
+type SharpFactory = (input?: Buffer | string | Uint8Array) => Sharp;
+let sharpInstance: SharpFactory | null = null;
+let sharpLoadAttempted = false;
+async function getSharp(): Promise<SharpFactory | null> {
+    if (sharpLoadAttempted) return sharpInstance;
+    sharpLoadAttempted = true;
+    try {
+        const mod = await import("sharp");
+        sharpInstance = ((mod as unknown as { default?: SharpFactory }).default ?? (mod as unknown as SharpFactory));
+    } catch {
+        console.warn("⚠️ Sharp not available — brand color compliance disabled. Install: npm install sharp");
+    }
+    return sharpInstance;
+}
 
 function srgbToLinear(c: number): number {
     const normalized = c / 255;
@@ -146,15 +164,14 @@ export async function checkBrandColorCompliance(
         return skipNoBrand(assetId);
     }
 
+    const sharp = await getSharp();
+    if (!sharp) return skipUnanalyzable(assetId);
+
     let pixels: Buffer;
     try {
-        let sharpModule: any = null;
-        try { sharpModule = require("sharp"); } catch { /* noop */ }
-        if (!sharpModule) return skipUnanalyzable(assetId);
-
-        let pipeline: any;
+        let pipeline: Sharp;
         try {
-            pipeline = sharpModule(imageBuffer);
+            pipeline = sharp(imageBuffer);
         } catch {
             return skipUnanalyzable(assetId);
         }
@@ -230,14 +247,43 @@ export async function checkBrandColorCompliance(
         }
     }
 
-    const present = minDeltaE < 15;
+    let present = minDeltaE < DELTA_E_THRESHOLD;
+    let dominantSwatchRgb: [number, number, number] = centers[closestIdx];
+    let reportedDeltaE = minDeltaE;
+
+    // Per-pixel fallback: catches small brand-color accents (CTA buttons,
+    // logo glyphs, single-line headlines) that get absorbed into a larger
+    // centroid. Quantize each pixel to a 32-step bucket so we evaluate at
+    // most 32^3 = 32768 unique buckets in the worst case; in practice an
+    // ad image collapses to a few hundred. Early-return on the first hit.
+    if (!present) {
+        const seen = new Set<number>();
+        for (let p = 0; p < totalPixels; p++) {
+            const pr = pixels[p * 3];
+            const pg = pixels[p * 3 + 1];
+            const pb = pixels[p * 3 + 2];
+            const bucket = ((pr >> 3) << 10) | ((pg >> 3) << 5) | (pb >> 3);
+            if (seen.has(bucket)) continue;
+            seen.add(bucket);
+            const pixLab = srgbToLab(pr, pg, pb);
+            const de = ciede2000(pixLab, brandLab);
+            if (de < reportedDeltaE) {
+                reportedDeltaE = de;
+                dominantSwatchRgb = [pr, pg, pb];
+            }
+            if (de < DELTA_E_THRESHOLD) {
+                present = true;
+                break;
+            }
+        }
+    }
 
     return {
         assetId,
         checkRan: true,
         present,
-        deltaE: Math.round(minDeltaE * 100) / 100,
-        dominantSwatch: rgbToHex(centers[closestIdx][0], centers[closestIdx][1], centers[closestIdx][2]),
+        deltaE: Math.round(reportedDeltaE * 100) / 100,
+        dominantSwatch: rgbToHex(dominantSwatchRgb[0], dominantSwatchRgb[1], dominantSwatchRgb[2]),
         deductedScore: present ? 0 : 10,
     };
 }

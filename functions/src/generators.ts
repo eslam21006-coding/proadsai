@@ -29,6 +29,7 @@ import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreserva
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
 import type { FailureClass, CostEstimate, LogoPlacement } from "./types.js";
 import { resolveBrandColors } from "./brandColorResolver.js";
+import { buildCarouselBrandConsistencyBlock, buildBatchBrandConsistencyBlock } from "./brandPromptBlocks.js";
 import { checkBrandColorCompliance } from "./brandColorCompliance.js";
 import type { BrandColorPair } from "./types.js";
 import { GenerationError } from "./types.js";
@@ -4153,7 +4154,11 @@ export async function generateFinalAd(
     const _runBrandCompliance = async (imageBase64: string): Promise<void> => {
         if (!_brandResolved.primary) return;
         try {
-            const buf = Buffer.from(imageBase64, "base64");
+            const _commaIdx = imageBase64.indexOf(",");
+            const _payload = (imageBase64.startsWith("data:") && _commaIdx > -1)
+                ? imageBase64.slice(_commaIdx + 1)
+                : imageBase64;
+            const buf = Buffer.from(_payload, "base64");
             const entry = await checkBrandColorCompliance(buf, _brandResolved.primary, _complianceAssetId);
             if (entry.present) {
                 console.log(`🎨 Brand color compliance PASSED [${_complianceAssetId}]: ΔE=${entry.deltaE?.toFixed(1)}`);
@@ -5365,21 +5370,11 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
 ` : '';
 
         const _isBatchCall = inputs.adMode !== 'carousel' && inputs.adMode !== 'single' && !!(inputs as any).batchN;
-        const _brandConsistencyInstruction = _brandResolved.primary
-            ? _isBatchCall
-                ? `\n════════════════════════════════════════════════════════════════════════════════
-BRAND COLOR CONSISTENCY (CRITICAL)
-════════════════════════════════════════════════════════════════════════════════
-This is part of a batch of ${(inputs as any).batchN || 'multiple'} ad variations. All variations MUST use the same brand color palette anchored by primary ${_brandResolved.primary}${_brandResolved.secondary ? ` and secondary ${_brandResolved.secondary}` : ''}. Vary composition and messaging, NOT the color scheme.
-════════════════════════════════════════════════════════════════════════════════\n`
-                : inputs.adMode === 'carousel'
-                    ? `\n════════════════════════════════════════════════════════════════════════════════
-BRAND COLOR CONSISTENCY (CRITICAL)
-════════════════════════════════════════════════════════════════════════════════
-CRITICAL: Maintain brand color consistency across all carousel slides. Primary brand color ${_brandResolved.primary} must appear in every slide (CTA button, accent, or heading highlight).${_brandResolved.secondary ? ` Secondary color ${_brandResolved.secondary} used as supporting accent.` : ''} This creates visual cohesion when swiping.
-════════════════════════════════════════════════════════════════════════════════\n`
-                    : ''
-            : '';
+        const _brandConsistencyInstruction = _isBatchCall
+            ? buildBatchBrandConsistencyBlock(_brandResolved, (inputs as any).batchN || 'multiple')
+            : inputs.adMode === 'carousel'
+                ? buildCarouselBrandConsistencyBlock(_brandResolved)
+                : '';
 
         // Sanitize buildPlan: strip system instruction markers and stray English that the image AI renders as visible text
         const cleanBuildPlan = gatedBlueprint
@@ -5892,7 +5887,7 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                             ar.canvasWidth,
                                             ar.canvasHeight,
                                             isRtl,
-                                            inputs.brandColorPrimary || undefined,
+                                            _brandResolved.primary || undefined,
                                         );
                                         if (!overlaid) {
                                             console.warn('⚠️ OVERLAY: compositor returned null — returning image without price compositing.');
@@ -6015,10 +6010,11 @@ If no monetary numbers are visible, return: []` }
                                     ar.canvasWidth,
                                     ar.canvasHeight,
                                     isRtl,
-                                    inputs.brandColorPrimary || undefined,
+                                    _brandResolved.primary || undefined,
                                 );
                                 if (overlaid) {
                                     console.log('✅ Deterministic offer overlay applied (non-strict path).');
+                                    await _runBrandCompliance(overlaid);
                                     return { image: overlaid };
                                 }
                             }

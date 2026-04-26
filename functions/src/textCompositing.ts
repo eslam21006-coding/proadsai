@@ -11,6 +11,42 @@ import * as fs from "fs";
 import * as path from "path";
 import type { BrandColorPair } from "./types.js";
 
+// ─── Pure brand-override helpers (exported for unit testability) ─────────────
+// Both compositors below thread these through their SVG assembly so the
+// override behavior is single-source-of-truth and trivially regression-tested.
+
+const HEX_RE = /^#[0-9A-Fa-f]{6}$/;
+
+function _luminance(hex: string): number {
+    if (!HEX_RE.test(hex)) return 0;
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
+    const lin = (c: number) => c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+export function pickHeadlineColor(textStyle: { color: string }, brand?: BrandColorPair): string {
+    return (brand && brand.secondary) ? brand.secondary : textStyle.color;
+}
+
+export function pickCtaBgColor(
+    textStyle: { backgroundTreatmentColor?: string },
+    brand?: BrandColorPair,
+): string {
+    if (brand && brand.primary) return brand.primary;
+    return textStyle.backgroundTreatmentColor || "#C8942A";
+}
+
+export function pickCtaTextColor(
+    textStyle: { backgroundTreatmentColor?: string },
+    brand?: BrandColorPair,
+): string {
+    if (brand && brand.ctaTextColor) return brand.ctaTextColor;
+    const bg = pickCtaBgColor(textStyle, brand);
+    return _luminance(bg) < 0.5 ? "#FFFFFF" : "#1A1A1A";
+}
+
 let sharp: any = null;
 try {
     sharp = require('sharp');
@@ -208,7 +244,7 @@ export async function compositeArabicText(
             : '';
 
         const fontFamily = fontB64 ? 'CairoBold' : "Cairo, Tajawal, 'Noto Kufi Arabic', Arial, sans-serif";
-        const _headlineColor = (brand && brand.secondary) ? brand.secondary : textStyle.color;
+        const _headlineColor = pickHeadlineColor(textStyle, brand);
 
         // 5a. Background treatment
         if (textStyle.backgroundTreatment !== 'none') {
@@ -418,9 +454,9 @@ export async function compositeFullAdText(
         const zoneBottom = zoneY + zoneH; // absolute bottom boundary
         let cursorY = zoneY + Math.round(16 * scale); // start with some top padding
 
-        const _headlineColor = (brand && brand.secondary) ? brand.secondary : textStyle.color;
-        const _ctaBgColor = (brand && brand.primary) ? brand.primary : "#C8942A";
-        const _ctaTextColor = (brand && brand.ctaTextColor) ? brand.ctaTextColor : "#FFFFFF";
+        const _headlineColor = pickHeadlineColor(textStyle, brand);
+        const _ctaBgColor = pickCtaBgColor(textStyle, brand);
+        const _ctaTextColor = pickCtaTextColor(textStyle, brand);
 
         // Stroke attributes for main text
         const strokeAttrs = textStyle.strokeWidth > 0

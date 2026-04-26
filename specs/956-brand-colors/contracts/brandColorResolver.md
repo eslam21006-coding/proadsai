@@ -29,20 +29,20 @@ interface BrandColorPair {
 
 | Input shape | Expected output |
 |---|---|
-| `{ formPrimary: '#0A66C2', formSecondary: '#F59E0B', workspace: { brandColorPrimary: '#000000' } }` | `{ primary: '#0A66C2', secondary: '#F59E0B', ctaTextColor: '#FFFFFF', source: 'form' }` |
-| `{ formPrimary: '', avatar: { brandColorPrimary: '#FF0000', brandColorSecondary: '#00FF00' }, workspace: { brandColorPrimary: '#000000' } }` | `{ primary: '#FF0000', secondary: '#00FF00', ctaTextColor: '#FFFFFF', source: 'avatar' }` |
-| `{ sourceColdAd: { brandColorPrimary: '#0A66C2', brandColorSecondary: '#F59E0B' }, workspace: { brandColorPrimary: '#999999' } }` | `{ primary: '#0A66C2', secondary: '#F59E0B', ctaTextColor: '#FFFFFF', source: 'inherited' }` |
-| `{ workspace: { brandColorPrimary: '#0A66C2' } }` | `{ primary: '#0A66C2', secondary: null, ctaTextColor: '#FFFFFF', source: 'workspace' }` |
+| `{ formPrimary: '#0A66C2', formSecondary: '#F59E0B', workspace: { brandColorPrimary: '#000000' } }` | `{ primary: '#0a66c2', secondary: '#f59e0b', ctaTextColor: '#FFFFFF', source: 'form' }` |
+| `{ formPrimary: '', avatar: { brandColorPrimary: '#FF0000', brandColorSecondary: '#00FF00' }, workspace: { brandColorPrimary: '#000000' } }` | `{ primary: '#ff0000', secondary: '#00ff00', ctaTextColor: '#FFFFFF', source: 'avatar' }` |
+| `{ sourceColdAd: { brandColorPrimary: '#0A66C2', brandColorSecondary: '#F59E0B' }, workspace: { brandColorPrimary: '#999999' } }` | `{ primary: '#0a66c2', secondary: '#f59e0b', ctaTextColor: '#FFFFFF', source: 'inherited' }` |
+| `{ workspace: { brandColorPrimary: '#0A66C2' } }` | `{ primary: '#0a66c2', secondary: null, ctaTextColor: '#FFFFFF', source: 'workspace' }` |
 | `{}` | `{ primary: null, secondary: null, ctaTextColor: null, source: 'none' }` |
-| `{ formPrimary: '   ', formSecondary: 'not-a-hex', workspace: { brandColorPrimary: '#0A66C2' } }` | `{ primary: '#0A66C2', secondary: null, ctaTextColor: '#FFFFFF', source: 'workspace' }` (form values are invalid → fall through) |
-| `{ formPrimary: '#FFD700' }` (light primary) | `{ primary: '#FFD700', secondary: null, ctaTextColor: '#1A1A1A', source: 'form' }` |
-| `{ formPrimary: '#0A66C2', avatar: { brandColorPrimary: '#FF0000' } }` (form wins; avatar's secondary IGNORED even if present) | `{ primary: '#0A66C2', secondary: null, ctaTextColor: '#FFFFFF', source: 'form' }` |
-| `{ formPrimary: '#888888' }` (mid-luminance edge case from spec edge case bullet) | `ctaTextColor === '#1A1A1A'` (deterministic at L = 0.5: ≥-clause picks near-black) |
+| `{ formPrimary: '   ', formSecondary: 'not-a-hex', workspace: { brandColorPrimary: '#0A66C2' } }` | `{ primary: '#0a66c2', secondary: null, ctaTextColor: '#FFFFFF', source: 'workspace' }` (form values are invalid → fall through) |
+| `{ formPrimary: '#FFD700' }` (light primary) | `{ primary: '#ffd700', secondary: null, ctaTextColor: '#1A1A1A', source: 'form' }` |
+| `{ formPrimary: '#0A66C2', avatar: { brandColorPrimary: '#FF0000', brandColorSecondary: '#00FF00' } }` (form supplies primary only; avatar's secondary inherited independently) | `{ primary: '#0a66c2', secondary: '#00ff00', ctaTextColor: '#FFFFFF', source: 'form' }` |
+| `{ formPrimary: '#BCBCBC' }` (mid-luminance boundary case, L ≈ 0.51) | `{ primary: '#bcbcbc', ctaTextColor: '#1A1A1A', source: 'form' }` (≥-clause picks near-black) |
 
 ## Validation rules
 
-1. **Hex normalization**: input strings are trimmed, then matched against `/^#[0-9A-Fa-f]{6}$/`. The output is normalized to `#RRGGBB` with the leading `#` plus 6 lowercase hex digits.
-2. **Atomicity**: when source X supplies the primary, source X also supplies the secondary (or null if X has no valid secondary). Sources are not mixed. This is the spec's "the others are ignored" rule (FR-005, Key Entities).
+1. **Hex normalization**: input strings are trimmed, then matched against `/^#[0-9A-Fa-f]{6}$/`. The output is normalized to `#RRGGBB` with the leading `#` plus 6 lowercase hex digits (e.g., `#0a66c2`, never `#0A66C2`).
+2. **Independent precedence (primary vs secondary)**: each of the two slots resolves independently against the precedence ladder `form > avatar > inherited > workspace`. The resolver picks the *first* source with a non-null primary, and *separately* picks the first source with a non-null secondary. This means a higher-precedence source supplying only a primary does **not** block a lower-precedence source's secondary from being inherited (and vice versa). The `source` label always reflects where the primary came from. (Pre-Phase 15 the contract was atomic; clarification refinement added during implementation review per the user-directed change.)
 3. **Anti-placeholder**: the function never returns a string containing brackets, the substring `brand`, or the substring `placeholder`. The output is hex-only (or null). This is enforced by FR-009 at the *prompt-build* layer; the resolver does its part by never emitting anything but normalized hex.
 4. **Determinism**: same input → same output, every call. No `Date.now()`, no `Math.random()`, no module-level mutable state.
 
@@ -63,8 +63,8 @@ Reference IDs that the test file MUST use so the tests are unambiguous:
 - `BCR-07-form-primary-no-secondary` — form has primary only → `source: 'form'`, `secondary: null`.
 - `BCR-08-cta-text-light-primary` — primary `#FFD700` → `ctaTextColor: '#1A1A1A'`.
 - `BCR-09-cta-text-dark-primary` — primary `#0A66C2` → `ctaTextColor: '#FFFFFF'`.
-- `BCR-10-cta-text-luminance-boundary` — primary that yields exactly L = 0.5 → `ctaTextColor: '#1A1A1A'` (≥-clause).
-- `BCR-11-avatar-secondary-ignored-when-form-wins` — form has primary only, avatar has primary+secondary → resolved secondary is `null`, NOT the avatar's secondary (atomicity rule).
+- `BCR-10-cta-text-luminance-boundary` — primary `#BCBCBC` (L ≈ 0.51, just past the 0.5 boundary) → `ctaTextColor: '#1A1A1A'` (≥-clause picks near-black).
+- `BCR-11-secondary-falls-through-independently` — form has primary only, avatar has primary+secondary → resolved primary is form's, resolved secondary is avatar's, `source` reflects the primary's source (`'form'`).
 
 ## Call sites (where the resolver MUST be invoked)
 

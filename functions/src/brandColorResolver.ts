@@ -61,16 +61,22 @@ export function resolveBrandColors(input: ResolveBrandColorsInput): BrandColorPa
         },
     ];
 
-    for (const slot of sources) {
-        if (slot.primary !== null) {
-            return {
-                primary: slot.primary,
-                secondary: slot.secondary,
-                ctaTextColor: ctaTextColor(slot.primary),
-                source: slot.label,
-            };
-        }
+    // Resolve primary and secondary INDEPENDENTLY by precedence — a higher-
+    // precedence source supplying only a primary does not block a lower-
+    // precedence source's secondary from being inherited (and vice versa).
+    // The `source` label always reflects where the primary came from; if no
+    // source has a primary the entire pair is "none".
+    const primarySlot = sources.find((s) => s.primary !== null) ?? null;
+    const secondarySlot = sources.find((s) => s.secondary !== null) ?? null;
+
+    if (!primarySlot) {
+        return { primary: null, secondary: null, ctaTextColor: null, source: "none" };
     }
 
-    return { primary: null, secondary: null, ctaTextColor: null, source: "none" };
+    return {
+        primary: primarySlot.primary,
+        secondary: secondarySlot ? secondarySlot.secondary : null,
+        ctaTextColor: ctaTextColor(primarySlot.primary!),
+        source: primarySlot.label,
+    };
 }

@@ -38,8 +38,9 @@ export interface BrandColorPair {
 ```
 
 Validation rules (enforced by the resolver):
-- Hex strings MUST match `/^#[0-9A-Fa-f]{6}$/` after normalizing (trimming whitespace, lowercasing the leading `#` to upper, lowercasing the body to lower-case digits). Anything else → treated as empty per FR-017.
-- `secondary` MAY be null even when `primary` is non-null.
+- Hex strings MUST match `/^#[0-9A-Fa-f]{6}$/` after normalizing (trim whitespace, then lowercase the body to `#rrggbb`). Anything else → treated as empty per FR-017.
+- `primary` and `secondary` are resolved **independently** by precedence (form > avatar > inherited > workspace). A higher-precedence source supplying only a primary does NOT block a lower-precedence source's secondary from being inherited (and vice versa). The `source` label tracks the primary's source.
+- `secondary` MAY be null even when `primary` is non-null (no source had a valid secondary anywhere in the precedence chain).
 - `ctaTextColor` is computed iff `primary` is non-null; null otherwise.
 - `source: 'none'` ⇔ `primary === null && secondary === null && ctaTextColor === null`.
 
@@ -137,22 +138,23 @@ Determinism: the function is referentially transparent. Same inputs → same out
 ```ts
 export async function checkBrandColorCompliance(
     imageBuffer: Buffer,
-    brandPrimary: string,
+    brandPrimary: string | null,
     assetId: string,
 ): Promise<BrandColorComplianceEntry>;
 ```
 
 Algorithm:
 
-1. If `brandPrimary` is null/empty/invalid → return `{ assetId, checkRan: false, present: false, deltaE: null, dominantSwatch: null, deductedScore: 0, skippedReason: 'no_brand_colors' }`.
-2. Try to load the image via `sharp(imageBuffer).resize(32, 32, { fit: 'fill' }).raw().toBuffer()`. On any error → return `{ assetId, checkRan: false, ..., skippedReason: 'image_unanalyzable' }`.
-3. Run 5-color k-means on the 1024 RGB pixels (deterministic seed = first 16 pixels' RGB sum modulo a fixed prime). Get 5 cluster centers in RGB.
-4. Convert each center and `brandPrimary` to CIELAB.
-5. Compute ΔE-2000 between `brandPrimary`-Lab and each center-Lab. Find the minimum.
-6. `present = (minDeltaE < 15)`.
-7. Return `{ assetId, checkRan: true, present, deltaE: minDeltaE, dominantSwatch: rgbToHex(closestCenter), deductedScore: present ? 0 : 10 }`.
+1. If `brandPrimary` is null / empty / not a `#RRGGBB` hex → return `{ assetId, checkRan: false, present: false, deltaE: null, dominantSwatch: null, deductedScore: 0, skippedReason: 'no_brand_colors' }`.
+2. Try to load the image via `sharp(imageBuffer).resize(32, 32, { fit: 'fill' }).removeAlpha().raw().toBuffer()` (alpha is removed before raw decode so the 1024-pixel buffer is exactly 3 bytes per pixel). On any error → return `{ assetId, checkRan: false, ..., skippedReason: 'image_unanalyzable' }`.
+3. Run 5-color k-means on the 1024 RGB pixels with **deterministic pixel-index seeding**: initial cluster centers are taken from pixel indices `floor(i × 1024 / 5)` for `i ∈ {0,1,2,3,4}`. Up to 10 iterations; squared-Euclidean assignment in raw RGB.
+4. Convert each cluster center and `brandPrimary` to CIELAB (D65 white point).
+5. Compute ΔE-2000 between `brandPrimary`-Lab and each center-Lab. Track the minimum and the closest center.
+6. **Per-pixel fallback**: if no center is within `DELTA_E_THRESHOLD` (15), iterate raw pixels (deduplicated via 5-bit-per-channel buckets so we evaluate at most a few hundred unique colors per ad). For each unique pixel, compute ΔE-2000 against `brandPrimary`-Lab; if any pixel is `< 15` set `present = true` and break. This catches small accents (CTA pills, logo glyphs) that get absorbed into a larger centroid.
+7. `present = (minDeltaE < DELTA_E_THRESHOLD) || any-pixel-within-threshold`.
+8. Return `{ assetId, checkRan: true, present, deltaE: rounded-min, dominantSwatch: rgbToHex(closest pixel-or-center), deductedScore: present ? 0 : 10 }`.
 
-The function is `async` only because Sharp's pipeline is. The k-means, color-space conversion, and ΔE math are sync.
+The function is `async` only because Sharp's pipeline is. The k-means, color-space conversion, and ΔE math are sync. Sharp itself is loaded lazily via a typed `getSharp()` factory (matches `logoComposite.ts`/`reflowOutpaint.ts`); if Sharp is unavailable the function returns the `image_unanalyzable` skip entry rather than throwing.
 
 ---
 

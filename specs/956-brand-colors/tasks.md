@@ -143,8 +143,9 @@ This is a web application monorepo:
 
 **Purpose**: End-to-end validation across all stories.
 
+- [x] T030a **Mandatory backend rebuild before any deploy/demo.** From repo root run `rm -rf functions/lib && cd functions && npm run build` (or PowerShell-equivalent `Remove-Item -Recurse -Force functions/lib; cd functions; npm run build`). The functions emulator and `firebase deploy --only functions` both serve from `functions/lib` — without a clean rebuild, code edits to `functions/src/*.ts` will NOT reach the running function. Always re-run this between code changes.
 - [x] T030 Run the full quickstart.md walk-through (US3 → US1 → US2 → US4 → US5 + edge-case spot checks + regression smoke) per [quickstart.md](./quickstart.md) — capture screenshots of swatches and rendered ads; record any deviations from expected behavior
-- [x] T031 [P] Run `cd functions && npm test` from repo root — confirm all new fixtures pass: BCR-01..BCR-11 (T006), carousel slide-3 (T010), batch item-2 (T011), anti-placeholder regex (T012), retargeting inheritance (T016), COMP-01..COMP-06 (T023), BCC-01..BCC-08 (T028), scoring-integration (T029); confirm no pre-existing tests regressed vs the baseline captured in T001
+- [x] T031 [P] After T030a's rebuild, run `cd functions && npm test` from repo root — confirm all new fixtures pass: BCR-01..BCR-11 (T006), carousel slide-3 (T010), batch item-2 (T011), anti-placeholder regex (T012), retargeting inheritance (T016), COMP-01..COMP-06 (T023), BCC-01..BCC-08 (T028), scoring-integration (T029); confirm no pre-existing tests regressed vs the baseline captured in T001
 - [x] T032 [P] Run `npm run build` and `npm run lint` from repo root — confirm frontend type-checks green after BrandColorSwatchPreview (T017) and InputForm changes (T018, T019); confirm ESLint passes; confirm the new `src/utils/wcagContrast.ts` helper (if added in T018) passes lint
 
 ---
@@ -220,17 +221,20 @@ Coordination point: T022 (US4) depends on the call sites added by T008/T009 (US1
 1. Complete Phase 1: Setup (T001)
 2. Complete Phase 2: Foundational (T002–T007) — CRITICAL, blocks all stories
 3. Complete Phase 3: User Story 1 (T008–T012)
-4. **STOP and VALIDATE**: Run quickstart.md US1 carousel + batch verification only
-5. Deploy/demo if ready — carousel and batch consistency is the headline gap and is shippable on its own
+4. **MANDATORY: rebuild backend** — `rm -rf functions/lib && cd functions && npm run build` (Phase 8 / T030a). Skipping this means the emulator and any deploy will run stale `functions/lib/*.js` and your changes will not take effect.
+5. **STOP and VALIDATE**: Run quickstart.md US1 carousel + batch verification only
+6. Deploy/demo if ready — carousel and batch consistency is the headline gap and is shippable on its own
 
 ### Incremental Delivery
 
+Every "Deploy/Demo" step below MUST be preceded by the T030a backend rebuild — emulators and `firebase deploy --only functions` both serve from `functions/lib`, so without a fresh rebuild the changes do not reach the running function.
+
 1. Setup + Foundational → Foundation ready
-2. Add US1 → Test independently → Deploy/Demo (MVP — carousel/batch on-brand)
-3. Add US2 → Test independently → Deploy/Demo (retargeting + magic-edit + remix on-brand)
-4. Add US3 → Test independently → Deploy/Demo (in-form preview)
-5. Add US4 → Test independently → Deploy/Demo (CTA + headline branded by default)
-6. Add US5 → Test independently → Deploy/Demo (compliance flagging + scoring deduction)
+2. Add US1 → rebuild → Test independently → Deploy/Demo (MVP — carousel/batch on-brand)
+3. Add US2 → rebuild → Test independently → Deploy/Demo (retargeting + magic-edit + remix on-brand)
+4. Add US3 → Test independently → Deploy/Demo (in-form preview; frontend-only, no backend rebuild needed)
+5. Add US4 → rebuild → Test independently → Deploy/Demo (CTA + headline branded by default)
+6. Add US5 → rebuild → Test independently → Deploy/Demo (compliance flagging + scoring deduction)
 7. Polish (Phase 8) → ship-ready
 
 ### Parallel Team Strategy
