@@ -9,6 +9,43 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import type { BrandColorPair } from "./types.js";
+
+// ─── Pure brand-override helpers (exported for unit testability) ─────────────
+// Both compositors below thread these through their SVG assembly so the
+// override behavior is single-source-of-truth and trivially regression-tested.
+
+const HEX_RE = /^#[0-9A-Fa-f]{6}$/;
+
+function _luminance(hex: string): number {
+    if (!HEX_RE.test(hex)) return 0;
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
+    const lin = (c: number) => c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+export function pickHeadlineColor(textStyle: { color: string }, brand?: BrandColorPair): string {
+    return (brand && brand.secondary) ? brand.secondary : textStyle.color;
+}
+
+export function pickCtaBgColor(
+    textStyle: { backgroundTreatmentColor?: string },
+    brand?: BrandColorPair,
+): string {
+    if (brand && brand.primary) return brand.primary;
+    return textStyle.backgroundTreatmentColor || "#C8942A";
+}
+
+export function pickCtaTextColor(
+    textStyle: { backgroundTreatmentColor?: string },
+    brand?: BrandColorPair,
+): string {
+    if (brand && brand.ctaTextColor) return brand.ctaTextColor;
+    const bg = pickCtaBgColor(textStyle, brand);
+    return _luminance(bg) < 0.5 ? "#FFFFFF" : "#1A1A1A";
+}
 
 let sharp: any = null;
 try {
@@ -146,6 +183,7 @@ export async function compositeArabicText(
     textStyle: TextStyle,
     canvasWidth: number,
     canvasHeight: number,
+    brand?: BrandColorPair,
 ): Promise<string | null> {
     if (!sharp) {
         console.warn('⚠️ Sharp not available — text compositing skipped.');
@@ -206,6 +244,7 @@ export async function compositeArabicText(
             : '';
 
         const fontFamily = fontB64 ? 'CairoBold' : "Cairo, Tajawal, 'Noto Kufi Arabic', Arial, sans-serif";
+        const _headlineColor = pickHeadlineColor(textStyle, brand);
 
         // 5a. Background treatment
         if (textStyle.backgroundTreatment !== 'none') {
@@ -238,7 +277,7 @@ export async function compositeArabicText(
                 : '';
 
             svgElements.push(
-                `<text x="${textX}" y="${lineY}" fill="${textStyle.color}" ` +
+                `<text x="${textX}" y="${lineY}" fill="${_headlineColor}" ` +
                 `font-size="${scaledFontSize}" font-weight="${textStyle.fontWeight === 'bold' ? 700 : 400}" ` +
                 `font-family="${fontFamily}" ` +
                 `text-anchor="${anchor}" dominant-baseline="central" ` +
@@ -348,6 +387,7 @@ export async function compositeFullAdText(
     textStyle: TextStyle,
     canvasWidth: number,
     canvasHeight: number,
+    brand?: BrandColorPair,
 ): Promise<string | null> {
     if (!sharp) {
         console.warn('⚠️ Sharp not available — full text compositing skipped.');
@@ -414,6 +454,10 @@ export async function compositeFullAdText(
         const zoneBottom = zoneY + zoneH; // absolute bottom boundary
         let cursorY = zoneY + Math.round(16 * scale); // start with some top padding
 
+        const _headlineColor = pickHeadlineColor(textStyle, brand);
+        const _ctaBgColor = pickCtaBgColor(textStyle, brand);
+        const _ctaTextColor = pickCtaTextColor(textStyle, brand);
+
         // Stroke attributes for main text
         const strokeAttrs = textStyle.strokeWidth > 0
             ? ` stroke="${textStyle.strokeColor}" stroke-width="${textStyle.strokeWidth}" paint-order="stroke fill"`
@@ -470,7 +514,7 @@ export async function compositeFullAdText(
                 cursorY += lineHeight;
                 if (cursorY > zoneBottom + lineHeight) break; // hard stop
                 svgElements.push(
-                    `<text x="${textX}" y="${cursorY}" fill="${textStyle.color}" ` +
+                    `<text x="${textX}" y="${cursorY}" fill="${_headlineColor}" ` +
                     `font-size="${sHook}" font-weight="700" ` +
                     `font-family="${fontFamily}" text-anchor="${anchor}" ` +
                     `dominant-baseline="central" direction="rtl" xml:lang="ar"` +
@@ -521,13 +565,13 @@ export async function compositeFullAdText(
             if (pillY + pillH <= zoneBottom + sGap) {
                 ctaElements.push(
                     `<rect x="${pillX}" y="${pillY}" width="${pillW}" height="${pillH}" ` +
-                    `rx="${Math.round(CTA_RADIUS * fontScale)}" ry="${Math.round(CTA_RADIUS * fontScale)}" fill="#C8942A" />`
+                    `rx="${Math.round(CTA_RADIUS * fontScale)}" ry="${Math.round(CTA_RADIUS * fontScale)}" fill="${_ctaBgColor}" />`
                 );
 
                 const ctaTextX = pillX + pillW / 2;
                 const ctaTextY = pillY + pillH / 2;
                 ctaElements.push(
-                    `<text x="${ctaTextX}" y="${ctaTextY}" fill="#FFFFFF" ` +
+                    `<text x="${ctaTextX}" y="${ctaTextY}" fill="${_ctaTextColor}" ` +
                     `font-size="${sCta}" font-weight="700" ` +
                     `font-family="${fontFamily}" text-anchor="middle" ` +
                     `dominant-baseline="central" direction="rtl" xml:lang="ar">${escapeXml(fullText.ctaText)}</text>`

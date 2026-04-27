@@ -28,7 +28,32 @@ import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.
 import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreservation, type SemanticLock } from "./utils/hookPayload.js";
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
 import type { FailureClass, CostEstimate, LogoPlacement } from "./types.js";
+import { resolveBrandColors, type ResolveBrandColorsInput } from "./brandColorResolver.js";
+import { buildCarouselBrandConsistencyBlock, buildBatchBrandConsistencyBlock } from "./brandPromptBlocks.js";
+import { checkBrandColorCompliance } from "./brandColorCompliance.js";
 import { GenerationError } from "./types.js";
+
+// ─── Typed precedence-resolver argument builder ─────────────────────────────
+// Centralises the 4-source precedence shape so all 6 prompt-build sites and
+// the compliance call site stay in lockstep. Earlier copies of this object
+// duplicated the (inputs as any) cast 5× per site.
+interface BrandPrecedenceInputs {
+    brandColorPrimary?: string;
+    brandColorSecondary?: string;
+    _avatarBrandColors?: { brandColorPrimary?: string; brandColorSecondary?: string } | null;
+    _sourceColdAdBrandColors?: { brandColorPrimary?: string; brandColorSecondary?: string } | null;
+    _workspaceBrandColors?: { brandColorPrimary?: string; brandColorSecondary?: string } | null;
+}
+function buildBrandResolverArgs(inputs: AdInputs): ResolveBrandColorsInput {
+    const i = inputs as AdInputs & BrandPrecedenceInputs;
+    return {
+        formPrimary: i.brandColorPrimary,
+        formSecondary: i.brandColorSecondary,
+        avatar: i._avatarBrandColors ?? null,
+        sourceColdAd: i._sourceColdAdBrandColors ?? null,
+        workspace: i._workspaceBrandColors ?? null,
+    };
+}
 import { CULTURAL_COMPLIANCE_BLOCK, ARABIC_WARDROBE_BLOCK, isArabic, scanAndReplace } from "./culturalCompliance.js";
 import { compositeUILogos } from "./logoComposite.js";
 import { SCREEN_CONTENT_BAN_BLOCK, UI_LOGO_INSTRUCTION_BLOCK, ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK, MODE_SELECTION_HINT_BLOCK } from "./logoPromptBlocks.js";
@@ -931,6 +956,7 @@ export async function generateTOV(inputs: AdInputs, resolvedUniverse: string, mo
         }
 
         let modeInstruction = "";
+        const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
         const _hookRtCtx = buildNormalizedRetargetingContext(inputs as any);
         const campaignType = (inputs as any).campaignType || 'cold';
         const isRetargeting = _hookRtCtx.isRetargeting;
@@ -1086,7 +1112,7 @@ MINIMAL STYLE HOOK BIAS:
       - Product: ${inputs.productName}
       - Brand URL: ${inputs.brandUrl}
       ${websiteContext ? websiteContext : '(Analyze the URL domain to infer extra context/niche if no website data provided)'}
-      ${inputs.brandColorPrimary ? `- Brand Colors: Primary ${inputs.brandColorPrimary}${inputs.brandColorSecondary ? `, Secondary ${inputs.brandColorSecondary}` : ''}
+      ${_brandResolved.primary ? `- Brand Colors: Primary ${_brandResolved.primary}${_brandResolved.secondary ? `, Secondary ${_brandResolved.secondary}` : ''}
       (Reference these colors in VISUAL DIRECTION notes. Suggest using brand colors for CTA buttons, accent text highlights, or background elements. Vary usage across hooks so designs feel diverse.)` : ''}
       - Universe Context: ${universePrompt}${isMinimal ? '' : ' (You MUST integrate this theme into the copy).'} 
 ${minimalHookBias}
@@ -2010,6 +2036,7 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
 export async function generateConcepts(approvedTov: string, inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', _previousOutput?: string, _globalRefinement?: string, editFeedback?: string, editIndex?: string): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
     let _conceptsRankingLinkage: RankingLinkage | null = null;
     async function _generateConceptsInner(): Promise<string> {
+        const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
         // ═══ CREATIVE MODE VALIDATION (fail-closed) ═══
         const _selectedModes = (inputs as any).offerCreativeMode || ['standard_hero'];
         const _comboCheck = validateCombination(_selectedModes, inputs.coldHookAngle);
@@ -2143,12 +2170,18 @@ ${(() => {
            
       - VISUALS: Plan negative space for Headline, Subheadline, and Action Block.
       - BRANDING: ${inputs.brandLogos?.length ? `Integrate ${inputs.brandLogos.length === 1 ? "the Box B logo" : `all ${inputs.brandLogos.length} Box B logos`} as physical objects in the scene. ${inputs.brandLogos.length > 1 ? "All logos are equal peers — rendered at comparable size and balanced placement. Do NOT treat any logo as primary; upload order has no prominence meaning." : ""}` : "No logos provided."}
-      ${inputs.brandColorPrimary ? `- BRAND COLORS: Primary ${inputs.brandColorPrimary}${inputs.brandColorSecondary ? `, Secondary ${inputs.brandColorSecondary}` : ''}. Weave these into the COLOR_PALETTE of each concept. VARY their usage across the 3 concepts:
+      ${_brandResolved.primary ? (inputs.cta && String(inputs.cta).trim()
+        ? `- BRAND COLORS: Primary ${_brandResolved.primary}${_brandResolved.secondary ? `, Secondary ${_brandResolved.secondary}` : ''}. Weave these into the COLOR_PALETTE of each concept. VARY their usage across the 3 concepts:
         Concept 1: Use brand primary as CTA button color and subtle accent in environment lighting.
         Concept 2: Use brand primary as headline highlight glow / text accent color.
         Concept 3: Use brand colors as dominant environment tones (neon signs, ambient light, props).
         This ensures brand recognition while keeping each concept visually distinct.
-        ⚠️ CRITICAL: ALWAYS write the ACTUAL hex code (e.g. "${inputs.brandColorPrimary}") in your output. NEVER write placeholder text like "[brand_name primary color]" or "[brand color]" or "[primary color]". The designer cannot interpret placeholders — only exact hex values like ${inputs.brandColorPrimary}.` : ''} `;
+        CRITICAL: write the actual hex code ${_brandResolved.primary} in every color reference. Never write a placeholder phrase, never wrap a colour in brackets or braces, never substitute the literal brand name for the hex. The designer can only interpret real hex values.`
+        : `- BRAND COLORS: Primary ${_brandResolved.primary}${_brandResolved.secondary ? `, Secondary ${_brandResolved.secondary}` : ''}. Weave these into the COLOR_PALETTE of each concept (no CTA in this ad — apply as accent only). VARY their usage across the 3 concepts:
+        Concept 1: Use brand primary as a subtle accent in environment lighting.
+        Concept 2: Use brand primary as headline highlight glow / text accent color.
+        Concept 3: Use brand colors as dominant environment tones (neon signs, ambient light, props).
+        This ensures brand recognition while keeping each concept visually distinct.`) : ''} `;
 
         } else if (mode === 'precision') {
             modeInstruction = `SURGICAL EDIT [SINGLE CONCEPT PATCH]:
@@ -3419,6 +3452,7 @@ export interface GenerateBuildPlanResult {
 }
 
 export async function generateBuildPlan(conceptRaw: string, selectedTov: string, inputs: AdInputs, resolvedUniverse: string, currentAspectRatio: AspectRatio, textOverride?: TextOverride): Promise<GenerateBuildPlanResult> {
+    const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
     const _bpModes = (inputs as any).offerCreativeMode || ['standard_hero'];
     const _bpCheck = validateCombination(_bpModes, inputs.coldHookAngle);
     console.log(`🎨 CREATIVE MODE AUDIT [generateBuildPlan]: modes=[${_bpModes.join(',')}] tab=${_bpCheck.resolvedTab || 'none'} valid=${_bpCheck.valid}${_bpCheck.errors.length ? ' errors: ' + _bpCheck.errors.join('; ') : ''}`);
@@ -3519,13 +3553,11 @@ ${isArabic(inputs.adLanguage) ? `\n${ARABIC_WARDROBE_BLOCK}\n` : ''}
 - Do NOT echo the contract, prompt, schema, JSON rules, or ownership block inside blueprint.
 - Do NOT repeat zones more than once. One clear instruction per zone.
 - TECHNICAL PROMPT: Inside the blueprint string, include a long-form English rendering instruction that describes the exact visual appearance of the final image. Wrap this instruction between [[TECHNICAL_PROMPT]] and [[/TECHNICAL_PROMPT]] markers. This prompt should be a self-contained, detailed visual description covering composition, lighting, color grading, atmosphere, hero pose, text placement zones, and mood — everything the image model needs to render the ad without seeing the original concept. The hookText "${hookText}" MUST appear verbatim inside this technical prompt.
-${inputs.brandColorPrimary ? `- BRAND COLOR DIRECTIVE: The brand's primary color is ${inputs.brandColorPrimary}${inputs.brandColorSecondary ? ` and secondary is ${inputs.brandColorSecondary}` : ''}. Incorporate into the blueprint's color specifications. Choose ONE of these applications per design (rotate for variety):
-  a) CTA button background color
-  b) Headline text accent/highlight color
-  c) Background accent element (neon glow, gradient edge, light streak)
-  d) Environmental prop color (matching the universe)
+${_brandResolved.primary ? `- BRAND COLOR DIRECTIVE: The brand's primary color is ${_brandResolved.primary}${_brandResolved.secondary ? ` and secondary is ${_brandResolved.secondary}` : ''}. Single policy for every concept:
+  • REQUIRED — CTA button background color must be the literal hex ${_brandResolved.primary}.
+  • OPTIONAL — at most ONE additional accent treatment per design, chosen from: headline accent (full line or bar — never split mid-word), background accent (gradient edge, glow, geometric shape), or environmental prop. Do NOT apply more than one of these in the same concept; rotate the choice across concepts for variety.
 Do NOT make the entire design monochromatic with brand color — use it as a strategic accent.
-⚠️ ALWAYS write the exact hex code (e.g. "${inputs.brandColorPrimary}") in color references. NEVER write "[brand_name primary color]" or any placeholder — only the actual hex value.` : ''}
+CRITICAL: write the actual hex code ${_brandResolved.primary} in every color reference. Never substitute a placeholder phrase, the literal brand name, or any bracketed or braced template — only the actual hex value.` : ''}
 ${(() => {
     // ── Ticket 2: Sub-style build plan constraints ──
     const sub = resolveVisualSubStyle(inputs);
@@ -4034,6 +4066,11 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
         imageParts,
     } = params;
 
+    // Brand-color injection happens upstream via the per-prompt blocks built
+    // by generateBuildPlan / generateConcepts / generateFinalAd; those blocks
+    // are already concatenated into `coreDesignRules`, `costumeRules`, and
+    // the technicalPrompt by the time control reaches buildFinalImagePrompt.
+    // No need to re-resolve here.
     const strippedBlueprint = stripTechnicalPrompt(blueprint);
 
     // coreDesignRules already contains CULTURAL_COMPLIANCE_BLOCK and costumeRules already
@@ -4106,6 +4143,45 @@ export async function generateFinalAd(
     styleReference?: string,
     textOverride?: TextOverride
 ): Promise<{ image: string; failureClass?: "numeric_hallucination"; costEstimate?: CostEstimate } | { image: null; errorCode: string; failureClass?: FailureClass; debug?: FinalAdDebugInfo }> {
+    const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
+    // carouselSlideIndex / batchN / batchIndex are runtime-injected by the
+    // per-slide and per-item loop wrappers — they're not on AdInputs proper,
+    // so narrow once into a typed view rather than scattering `as any`.
+    const _multiAssetView = inputs as AdInputs & {
+        carouselSlideIndex?: number;
+        batchN?: number;
+        batchIndex?: number;
+    };
+    const _complianceAssetId = inputs.adMode === 'carousel'
+        ? `slide-${_multiAssetView.carouselSlideIndex ?? 0}`
+        : _multiAssetView.batchN
+            ? `batch-${_multiAssetView.batchIndex ?? 0}`
+            : 'single';
+    const _runBrandCompliance = async (imageBase64: string): Promise<void> => {
+        if (!_brandResolved.primary) return;
+        try {
+            const _commaIdx = imageBase64.indexOf(",");
+            const _payload = (imageBase64.startsWith("data:") && _commaIdx > -1)
+                ? imageBase64.slice(_commaIdx + 1)
+                : imageBase64;
+            const buf = Buffer.from(_payload, "base64");
+            const entry = await checkBrandColorCompliance(buf, _brandResolved.primary, _complianceAssetId);
+            // checkRan: false means the check could NOT run (image_unanalyzable
+            // or no_brand_colors). That is NOT a "miss" — distinguish it in
+            // logs so a corrupt image isn't conflated with off-brand output.
+            if (!entry.checkRan) {
+                console.log(`ℹ️ Brand color compliance SKIPPED [${_complianceAssetId}]: reason=${entry.skippedReason}`);
+                return;
+            }
+            if (entry.present) {
+                console.log(`🎨 Brand color compliance PASSED [${_complianceAssetId}]: ΔE=${entry.deltaE?.toFixed(1)}`);
+            } else {
+                console.warn(`⚠️ Brand color compliance MISSED [${_complianceAssetId}]: ΔE=${entry.deltaE?.toFixed(1)} threshold=15 dominant=${entry.dominantSwatch}`);
+            }
+        } catch (e) {
+            console.warn(`⚠️ Brand color compliance check failed [${_complianceAssetId}] (non-blocking):`, e);
+        }
+    };
     // ═══ RETARGETING CONTEXT (normalized) ═══
     const _renderRtCtx = buildNormalizedRetargetingContext(inputs as any);
     const _renderEffectiveAngle = _renderRtCtx.isRetargeting ? null : inputs.coldHookAngle;
@@ -5143,14 +5219,12 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
 
          - COSTUME: ${(() => { const _rendCostSub = resolveVisualSubStyle(inputs); if (_rendCostSub === 'luxury_magazine') return 'Apply MAGAZINE COVER STAR wardrobe — power suit/blazer, impeccably tailored, cover-model quality against dark solid background. NOT universe-themed environment costume.'; if (_rendCostSub === 'clean_corporate') return 'Apply CLEAN CORPORATE professional wardrobe — polished, brand-safe, modern.'; if (_rendCostSub === 'ugly_ad') return 'Apply CASUAL clothing — everyday selfie attire, NOT styled.'; return `Apply the thematic ${resolvedUniverse} outfit from blueprint.`; })()}
           - LOGO STRICTNESS: Render ONLY user-provided branding from Box B. If Box B is empty, the design must be 100% free of any logos or branding marks. If Box B has one or more images (up to 5), render each as a distinct physical artifact in the scene — all at comparable size, balanced placement, no single logo dominant, no one mark enlarged relative to the others. Upload order has no prominence meaning.
-          ${inputs.brandColorPrimary ? `- BRAND COLOR RENDERING (CRITICAL FOR VISUAL IDENTITY):
-          The client's brand color is ${inputs.brandColorPrimary}${inputs.brandColorSecondary ? ` (secondary: ${inputs.brandColorSecondary})` : ''}.
-          You MUST integrate these colors visibly. Apply ALL of the following:
-          1. CTA BUTTON: Use brand primary (${inputs.brandColorPrimary}) as the button background color. Text on button should be white or contrasting.
-          2. HEADLINE ACCENT: Apply brand primary as a colored highlight on the ENTIRE FIRST LINE of the headline, or as an underline/background bar behind one complete phrase. NEVER color individual letters or parts of a word — Arabic letters connect and splitting colors mid-word looks broken. Either highlight a COMPLETE LINE or use a background/underline bar.
-          3. SUBHEADLINE: Can use brand secondary ${inputs.brandColorSecondary ? `(${inputs.brandColorSecondary})` : 'or a lighter tint of brand primary'} for the entire subheadline text color, or leave white. NEVER partially color Arabic text.
-          4. DECORATIVE ACCENTS: Add brand-colored elements — thin lines, corner accents, subtle glow effects, or geometric shapes that frame the text areas.
-          5. BENEFIT TEXT: The benefit line below CTA can use brand color as text color.
+          ${_brandResolved.primary ? `- BRAND COLOR RENDERING (CRITICAL FOR VISUAL IDENTITY):
+          The client's brand color is ${_brandResolved.primary}${_brandResolved.secondary ? ` (secondary: ${_brandResolved.secondary})` : ''}.
+          Single policy — same as the build plan:
+          • REQUIRED: CTA button background color must be the literal hex ${_brandResolved.primary}. CTA text is white or near-black, whichever has better contrast against ${_brandResolved.primary}.
+          • OPTIONAL: at most ONE additional accent treatment, chosen from: headline accent (apply ${_brandResolved.primary} as a highlight on the ENTIRE FIRST LINE or an underline/background bar — NEVER color individual letters or parts of a word; Arabic letters connect and splitting colors mid-word looks broken), background accent (thin lines, corner accents, subtle glow, or geometric shapes framing the text areas), or environmental prop. Do NOT apply more than one of these in the same render.
+          ${_brandResolved.secondary ? `If secondary ${_brandResolved.secondary} is used, apply it to the entire subheadline text color uniformly (NEVER partially color Arabic text), or leave the subheadline white.` : ''}
           The brand color should be UNMISTAKABLE in the final design — a viewer should be able to guess the brand color from the ad.` : `- COLOR STYLING: ${(() => {
       const sub = resolveVisualSubStyle(inputs);
       if (sub === 'dark_cinematic') return `DARK CINEMATIC PALETTE — Primary text: pure white (#FFFFFF). Accent/keyword color MUST match the scene key light (gold #FFD700, electric blue #00BFFF, or ember #FF4500). Apply accent to the ENTIRE FIRST LINE or a full phrase — NEVER split mid-Arabic-word. CTA button: vivid, saturated, appears to emit light against the dark background. FORBIDDEN: pastel colors, muted tones, desaturated palettes.`;
@@ -5306,6 +5380,13 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
 ═══════════════════════════════════════════════════════════════════════════════
 ` : '';
 
+        const _isBatchCall = inputs.adMode !== 'carousel' && inputs.adMode !== 'single' && !!_multiAssetView.batchN;
+        const _brandConsistencyInstruction = _isBatchCall
+            ? buildBatchBrandConsistencyBlock(_brandResolved, _multiAssetView.batchN || 'multiple')
+            : inputs.adMode === 'carousel'
+                ? buildCarouselBrandConsistencyBlock(_brandResolved)
+                : '';
+
         // Sanitize buildPlan: strip system instruction markers and stray English that the image AI renders as visible text
         const cleanBuildPlan = gatedBlueprint
             .replace(/TECHNICAL_PROMPT[:\s].*$/gm, '')
@@ -5322,7 +5403,7 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
             .trim();
 
         parts.push({
-            text: `BLUEPRINT: ${cleanBuildPlan} \nTEXTS: "${hookText}", "${subheadText}"\nBUTTON: "${ctaName}"\n${carouselAnchorNote}\n${coreDesignRules}
+            text: `BLUEPRINT: ${cleanBuildPlan} \nTEXTS: "${hookText}", "${subheadText}"\nBUTTON: "${ctaName}"\n${carouselAnchorNote}\n${_brandConsistencyInstruction}\n${coreDesignRules}
 
 ⚠️ CRITICAL TEXT RENDERING RULES:
 1. ONLY render these EXACT text strings on the image — NOTHING ELSE:
@@ -5797,6 +5878,7 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                 if (overlayContract.overlaySlots.length > 0) {
                                     if (!isOverlayAvailable()) {
                                         console.warn('⚠️ OVERLAY: Sharp not installed — skipping overlay, returning image without price compositing.');
+                                        await _runBrandCompliance(currentImage);
                                         return { image: currentImage, ..._nhResult };
                                     }
 
@@ -5804,6 +5886,7 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                     const preFacts = extractOfferFacts(inputs);
                                     if (!preFacts) {
                                         console.warn('⚠️ OVERLAY: facts extraction returned null — skipping overlay, returning image without price compositing.');
+                                        await _runBrandCompliance(currentImage);
                                         return { image: currentImage, ..._nhResult };
                                     }
 
@@ -5817,10 +5900,11 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                             ar.canvasWidth,
                                             ar.canvasHeight,
                                             isRtl,
-                                            inputs.brandColorPrimary || undefined,
+                                            _brandResolved.primary || undefined,
                                         );
                                         if (!overlaid) {
                                             console.warn('⚠️ OVERLAY: compositor returned null — returning image without price compositing.');
+                                            await _runBrandCompliance(currentImage);
                                             return { image: currentImage, ..._nhResult };
                                         }
 
@@ -5876,16 +5960,20 @@ If no monetary numbers are visible, return: []` }
                                         }
 
                                         console.log('✅ Deterministic offer overlay applied and verified.');
+                                        await _runBrandCompliance(overlaid);
                                         return { image: overlaid, ..._nhResult };
                                     } catch (overlayErr) {
                                         console.warn('⚠️ Overlay compositing failed (non-blocking). Returning image without overlay.', overlayErr);
+                                        await _runBrandCompliance(currentImage);
                                         return { image: currentImage, ..._nhResult };
                                     }
                                 }
                             }
+                            await _runBrandCompliance(currentImage);
                             return { image: currentImage, ..._nhResult };
                         }
                         // Safety net — should not reach here, but return image if we have one
+                        await _runBrandCompliance(currentImage || imageBase64);
                         return { image: currentImage || imageBase64, ...(_numericHallucination ? { failureClass: 'numeric_hallucination' as const, costEstimate: getCostEstimate() } : {}) };
                     }
 
@@ -5939,10 +6027,11 @@ If no monetary numbers are visible, return: []` }
                                     ar.canvasWidth,
                                     ar.canvasHeight,
                                     isRtl,
-                                    inputs.brandColorPrimary || undefined,
+                                    _brandResolved.primary || undefined,
                                 );
                                 if (overlaid) {
                                     console.log('✅ Deterministic offer overlay applied (non-strict path).');
+                                    await _runBrandCompliance(overlaid);
                                     return { image: overlaid };
                                 }
                             }
@@ -5951,7 +6040,9 @@ If no monetary numbers are visible, return: []` }
                         }
                     }
 
+                    await _runBrandCompliance(currentImage);
                     return { image: currentImage };
+
                 }
             }
         }
@@ -6073,6 +6164,7 @@ export async function generateCarouselAngles(
     globalRefinement?: string,
     plan?: StoredPlan
 ): Promise<string> {
+    const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
     const carouselDecision = resolveEntitlement({ plan: plan || "none", feature: "carouselSlides", quantity: slideCount });
     if (!carouselDecision.allowed) {
         throw new HttpsError("permission-denied", carouselDecision.reason || "carousel_limit_exceeded");
@@ -6148,7 +6240,7 @@ CONTEXT
 Product: "${inputs.productName}"
 ${inputs.brandUrl ? `Brand URL: ${inputs.brandUrl}` : ''}
 ${websiteContext || ''}
-${inputs.brandColorPrimary ? `Brand Colors: Primary ${inputs.brandColorPrimary}${inputs.brandColorSecondary ? `, Secondary ${inputs.brandColorSecondary}` : ''} (mention in visual direction notes)` : ''}
+${_brandResolved.primary ? `Brand Colors: Primary ${_brandResolved.primary}${_brandResolved.secondary ? `, Secondary ${_brandResolved.secondary}` : ''} (mention in visual direction notes)` : ''}
 Audience: "${inputs.targetAudience}"
 Challenge: "${inputs.challenges}"
 Transformation: "${inputs.transformation}"

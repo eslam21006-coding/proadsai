@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useState, useRef } from 'react';
-import type { AdInputs, AdMode, AspectRatio, RetargetingAngle, RetargetingObjectionId, UniverseMode, AudienceAvatar, CompetitorResearch, ColdHookAngle, HookType, AdTone, CopywritingStrategy } from '../types';
+import type { AdInputs, AdMode, AspectRatio, RetargetingAngle, RetargetingObjectionId, UniverseMode, AudienceAvatar, CompetitorResearch, ColdHookAngle, HookType, AdTone, CopywritingStrategy, Workspace } from '../types';
 import { OFFER_TYPES, OFFER_CATEGORY_MAP, OFFER_CREATIVE_MODES, CREATIVE_MODE_CONFLICTS, HOOK_ANGLE_MODE_CONFLICTS, ASPECT_RATIOS, RETARGETING_OBJECTIONS, AD_LANGUAGES, FIELD_EXAMPLES, COLD_HOOK_ANGLES, HOOK_TYPES, AD_TONES, COPYWRITING_STRATEGIES, CREATIVE_TABS } from '../constants';
 import { REALISTIC_UNIVERSES as DB_REALISTIC, FANTASY_UNIVERSES as DB_FANTASY, isArabic } from '../universeDatabase';
 import { isStrongPair, getBlockedModes, CREATIVE_MODE_CATALOG, type CreativeTab, getBlockedModesForSubStyle, getBlockedSubStylesForModes, validateLaunchSurface, resolveValueStackSlideCount, resolveTestimonialSlideCount } from '../creativeResolver';
@@ -12,6 +12,8 @@ import type { StoredPlan } from '../../functions/src/entitlements';
 import { useT } from '../i18n';
 import { gemini, type RankingResultCompact } from '../services/geminiService';
 import { getAuth } from 'firebase/auth';
+import BrandColorSwatchPreview from './BrandColorSwatchPreview';
+import { ctaTextColor } from '../utils/wcagContrast';
 
 interface Props {
   onSubmit: (inputs: AdInputs) => void;
@@ -28,6 +30,7 @@ interface Props {
   onRefreshResearch: (formData: AdInputs) => void;
   onRankingsLoaded?: (rankings: RankingResultCompact | null) => void;
   isTeamViewer?: boolean;
+  activeWorkspace?: Workspace | null;
 }
 
 // --- AUTOMATIC COMPRESSION UTILITY ---
@@ -290,7 +293,7 @@ const UniverseDropdown: React.FC<{
   );
 };
 
-const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialValues, userPlan, avatars, onSaveAvatar, onUpdateAvatar, onDeleteAvatar, competitorData, competitorLoading, onRefreshResearch, onRankingsLoaded, isTeamViewer }) => {
+const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialValues, userPlan, avatars, onSaveAvatar, onUpdateAvatar, onDeleteAvatar, competitorData, competitorLoading, onRefreshResearch, onRankingsLoaded, isTeamViewer, activeWorkspace }) => {
   const { t, lang: appLang } = useT();
   const getInitialInputs = (): AdInputs => {
     if (initialValues) return initialValues;
@@ -550,6 +553,16 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
       setInputs(prev => ({ ...prev, visualSubStyle: undefined as any }));
     }
   }, [activeStyle, inputs.offerCreativeMode, (inputs as any).visualSubStyle, isTextOnlyActive]);
+
+  React.useEffect(() => {
+    if (!activeWorkspace?.brandColorPrimary) return;
+    if (inputs.brandColorPrimary || inputs.brandColorSecondary) return;
+    setInputs(prev => ({
+      ...prev,
+      brandColorPrimary: activeWorkspace.brandColorPrimary || '',
+      brandColorSecondary: activeWorkspace.brandColorSecondary || '',
+    }));
+  }, [activeWorkspace?.id]);
 
   const allowedRatios = ASPECT_RATIOS.filter(r => canUseRatio(userPlan, r.value));
 
@@ -1690,6 +1703,27 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                       </button>
                     )}
                   </div>
+                </div>
+                <div className="flex items-center gap-3 mt-1.5">
+                  <BrandColorSwatchPreview
+                    primary={inputs.brandColorPrimary || null}
+                    secondary={inputs.brandColorSecondary || null}
+                    ctaTextColor={inputs.brandColorPrimary ? ctaTextColor(inputs.brandColorPrimary) : null}
+                  />
+                  {activeWorkspace?.brandColorPrimary && activeWorkspace?.brandColorSecondary
+                    && inputs.brandColorPrimary?.toLowerCase() === activeWorkspace.brandColorPrimary.toLowerCase()
+                    && inputs.brandColorSecondary?.toLowerCase() === activeWorkspace.brandColorSecondary.toLowerCase() && (
+                    <span className="text-[10px] text-slate-500 flex items-center gap-1">
+                      <i className="fa-solid fa-palette text-slate-600"></i>
+                      Using workspace colors
+                    </span>
+                  )}
+                  {inputs.campaignType === 'retargeting' && !inputs.brandColorPrimary && !inputs.brandColorSecondary && (
+                    <span className="text-[10px] text-purple-400/70 flex items-center gap-1">
+                      <i className="fa-solid fa-link text-purple-500/50"></i>
+                      Inheriting brand colors from the linked cold ad
+                    </span>
+                  )}
                 </div>
               </div>
             </div>

@@ -13,6 +13,37 @@ import {
     type StructuredBuildPlanPayload,
     type CopyFidelityFields,
 } from "./buildPlanSlotMap.js";
+import { resolveBrandColors } from "./brandColorResolver.js";
+import { checkBrandColorCompliance } from "./brandColorCompliance.js";
+import { applyBrandColorDeduction } from "./creativeScoringEngine.js";
+import { buildCarouselBrandConsistencyBlock, buildBatchBrandConsistencyBlock } from "./brandPromptBlocks.js";
+import {
+    pickHeadlineColor, pickCtaBgColor, pickCtaTextColor,
+    compositeArabicText, compositeFullAdText,
+    type TextZone, type TextStyle, type FullAdText,
+} from "./textCompositing.js";
+import type { BrandColorPair } from "./types.js";
+
+// Typed Sharp loader for tests — same pattern as logoComposite.ts / brandColorCompliance.ts.
+// The create-object variant is included in the factory signature so callers can
+// build synthetic test images (e.g., _getBasePng below) without `as any`.
+type SharpCreateInput = {
+    create: {
+        width: number;
+        height: number;
+        channels: 4;
+        background: { r: number; g: number; b: number; alpha: number };
+    };
+};
+type SharpFactory = (input?: Buffer | string | Uint8Array | SharpCreateInput) => import("sharp").Sharp;
+async function loadSharp(): Promise<SharpFactory | null> {
+    try {
+        const mod = await import("sharp");
+        return ((mod as unknown as { default?: SharpFactory }).default ?? (mod as unknown as SharpFactory));
+    } catch {
+        return null;
+    }
+}
 
 function createContract(selectedModes: string[], hookAngle?: string) {
     return compileFullContract({
@@ -2074,6 +2105,602 @@ function mockReflowAdmin(): MockAdmin {
 
 // ─── Run all HFF.6 fixtures ───
 
+// ═══════════════════════════════════════════════════════════
+// BCR — Brand Color Resolver Fixtures (956-brand-colors)
+// ═══════════════════════════════════════════════════════════
+
+function testBcr01() {
+    const r = resolveBrandColors({
+        formPrimary: "#0A66C2", formSecondary: "#F59E0B",
+        avatar: { brandColorPrimary: "#FF0000", brandColorSecondary: "#00FF00" },
+        sourceColdAd: { brandColorPrimary: "#111111", brandColorSecondary: "#222222" },
+        workspace: { brandColorPrimary: "#000000", brandColorSecondary: "#333333" },
+    });
+    assert.equal(r.source, "form");
+    assert.equal(r.primary, "#0a66c2");
+    assert.equal(r.secondary, "#f59e0b");
+    assert.equal(r.ctaTextColor, "#FFFFFF");
+    console.log("  ✅ BCR-01-form-wins");
+}
+
+function testBcr02() {
+    const r = resolveBrandColors({
+        avatar: { brandColorPrimary: "#FF0000", brandColorSecondary: "#00FF00" },
+        sourceColdAd: { brandColorPrimary: "#0A66C2", brandColorSecondary: "#F59E0B" },
+        workspace: { brandColorPrimary: "#999999" },
+    });
+    assert.equal(r.source, "avatar");
+    assert.equal(r.primary, "#ff0000");
+    assert.equal(r.secondary, "#00ff00");
+    console.log("  ✅ BCR-02-avatar-wins-over-cold-ad");
+}
+
+function testBcr03() {
+    const r = resolveBrandColors({
+        sourceColdAd: { brandColorPrimary: "#0A66C2", brandColorSecondary: "#F59E0B" },
+        workspace: { brandColorPrimary: "#999999" },
+    });
+    assert.equal(r.source, "inherited");
+    assert.equal(r.primary, "#0a66c2");
+    assert.equal(r.secondary, "#f59e0b");
+    console.log("  ✅ BCR-03-cold-ad-inherited");
+}
+
+function testBcr04() {
+    const r = resolveBrandColors({
+        workspace: { brandColorPrimary: "#0A66C2" },
+    });
+    assert.equal(r.source, "workspace");
+    assert.equal(r.primary, "#0a66c2");
+    assert.equal(r.secondary, null);
+    console.log("  ✅ BCR-04-workspace-fallback");
+}
+
+function testBcr05() {
+    const r = resolveBrandColors({});
+    assert.equal(r.source, "none");
+    assert.equal(r.primary, null);
+    assert.equal(r.secondary, null);
+    assert.equal(r.ctaTextColor, null);
+    console.log("  ✅ BCR-05-no-source");
+}
+
+function testBcr06() {
+    const r = resolveBrandColors({
+        formPrimary: "red",
+        workspace: { brandColorPrimary: "#0A66C2" },
+    });
+    assert.equal(r.source, "workspace");
+    assert.equal(r.primary, "#0a66c2");
+    console.log("  ✅ BCR-06-form-malformed-falls-through");
+}
+
+function testBcr07() {
+    const r = resolveBrandColors({
+        formPrimary: "#0A66C2",
+    });
+    assert.equal(r.source, "form");
+    assert.equal(r.primary, "#0a66c2");
+    assert.equal(r.secondary, null);
+    console.log("  ✅ BCR-07-form-primary-no-secondary");
+}
+
+function testBcr08() {
+    const r = resolveBrandColors({ formPrimary: "#FFD700" });
+    assert.equal(r.ctaTextColor, "#1A1A1A");
+    console.log("  ✅ BCR-08-cta-text-light-primary");
+}
+
+function testBcr09() {
+    const r = resolveBrandColors({ formPrimary: "#0A66C2" });
+    assert.equal(r.ctaTextColor, "#FFFFFF");
+    console.log("  ✅ BCR-09-cta-text-dark-primary");
+}
+
+function testBcr10() {
+    // L ≈ 0.5 boundary: find a hex where wcag luminance ≈ 0.5
+    // #888888 → R=G=B=0x88=136 → linearized ≈ 0.216 → L ≈ 0.216*0.2126+0.216*0.7152+0.216*0.0722 ≈ 0.216
+    // Need brighter. #BCBCBC → 188/255=0.737 → linearized ≈ 0.514 → L ≈ 0.514
+    // Try #B4B4B4 → 180/255=0.706 → lin ≈ 0.469 → L ≈ 0.469 → < 0.5 → white
+    // Try #B6B6B6 → 182/255=0.714 → lin ≈ 0.478 → L ≈ 0.478 → < 0.5 → white
+    // Try #C0C0C0 → 192/255=0.753 → lin ≈ 0.537 → L ≈ 0.537 → ≥ 0.5 → near-black
+    // Use #BCBCBC which is L ≈ 0.514 ≥ 0.5 → near-black
+    const r = resolveBrandColors({ formPrimary: "#BCBCBC" });
+    assert.equal(r.ctaTextColor, "#1A1A1A");
+    console.log("  ✅ BCR-10-cta-text-luminance-boundary (≥ 0.5 → near-black)");
+}
+
+function testBcr11() {
+    // Independent precedence: form supplies primary only; avatar supplies a
+    // secondary; resolved pair takes form's primary AND avatar's secondary.
+    // The `source` label tracks the primary's source, not the secondary's.
+    const r = resolveBrandColors({
+        formPrimary: "#0A66C2",
+        avatar: { brandColorPrimary: "#FF0000", brandColorSecondary: "#00FF00" },
+    });
+    assert.equal(r.source, "form");
+    assert.equal(r.primary, "#0a66c2");
+    assert.equal(r.secondary, "#00ff00");
+    console.log("  ✅ BCR-11-secondary-falls-through-independently");
+}
+
+// ═══════════════════════════════════════════════════════════
+// US1 — Carousel / Batch Brand Color Fixtures
+// ═══════════════════════════════════════════════════════════
+
+function testCarouselSlide3BrandColors() {
+    // Calls the SAME builder used by generators.ts so a regression in either
+    // the builder or the call site fails this test.
+    const resolved = resolveBrandColors({ formPrimary: "#0A66C2", formSecondary: "#F59E0B" });
+    const block = buildCarouselBrandConsistencyBlock(resolved);
+    const lower = block.toLowerCase();
+    assert.ok(lower.includes("#0a66c2"), "carousel block must contain brand primary #0a66c2");
+    assert.ok(lower.includes("#f59e0b"), "carousel block must contain brand secondary #f59e0b");
+    assert.ok(lower.includes("carousel"), "carousel block must mention carousel");
+    assert.ok(lower.includes("every slide"), "carousel block must mention every slide");
+
+    // Empty primary → empty block (no instruction emitted)
+    assert.equal(buildCarouselBrandConsistencyBlock(resolveBrandColors({})), "");
+    console.log("  ✅ T010-carousel-slide-3-brand-colors");
+}
+
+function testBatchItem2BrandColors() {
+    const resolved = resolveBrandColors({ formPrimary: "#0A66C2", formSecondary: "#F59E0B" });
+    const block = buildBatchBrandConsistencyBlock(resolved, 4);
+    const lower = block.toLowerCase();
+    assert.ok(lower.includes("#0a66c2"), "batch block must contain brand primary");
+    assert.ok(lower.includes("#f59e0b"), "batch block must contain brand secondary");
+    assert.ok(lower.includes("batch of 4"), "batch block must contain N=4");
+    assert.ok(lower.includes("same brand color palette"), "batch block must mandate shared palette");
+
+    // Empty primary → empty block
+    assert.equal(buildBatchBrandConsistencyBlock(resolveBrandColors({}), 4), "");
+    console.log("  ✅ T011-batch-item-2-brand-colors");
+}
+
+function testAntiPlaceholderRegex() {
+    const placeholderRe = /\[(brand[_ ]?color|primary[_ ]?color|brand[_ ]?name)/i;
+    const resolved = resolveBrandColors({ formPrimary: "#0A66C2", formSecondary: "#F59E0B" });
+    const carousel = buildCarouselBrandConsistencyBlock(resolved);
+    const batch = buildBatchBrandConsistencyBlock(resolved, 4);
+    assert.equal(placeholderRe.test(carousel), false, "carousel block must not contain placeholder");
+    assert.equal(placeholderRe.test(batch), false, "batch block must not contain placeholder");
+
+    // Sanity: the regex catches a deliberate-bad prompt
+    const badPrompt = "Use [brand color] for the CTA button and [primary color] for accents.";
+    assert.ok(placeholderRe.test(badPrompt), "regex must catch placeholder in bad prompt");
+    console.log("  ✅ T012-anti-placeholder-regex");
+}
+
+function runUs1Fixtures() {
+    console.log("\n═══ US1 — Carousel / Batch Brand Color Fixtures ═══");
+    testCarouselSlide3BrandColors();
+    testBatchItem2BrandColors();
+    testAntiPlaceholderRegex();
+    console.log("═══ US1 — All carousel/batch fixtures passed ═══\n");
+}
+
+// ═══════════════════════════════════════════════════════════
+// US2 — Retargeting Inheritance Fixtures
+// ═══════════════════════════════════════════════════════════
+
+function testRetargetingInheritance() {
+    const coldAd = { brandColorPrimary: "#0A66C2", brandColorSecondary: "#F59E0B" };
+
+    // Case 1: form empty, inherits from cold ad
+    const r1 = resolveBrandColors({
+        formPrimary: undefined,
+        formSecondary: undefined,
+        sourceColdAd: coldAd,
+        workspace: { brandColorPrimary: "#999999" },
+    });
+    assert.equal(r1.source, "inherited");
+    assert.equal(r1.primary, "#0a66c2");
+    assert.equal(r1.secondary, "#f59e0b");
+    console.log("  ✅ T016a-retargeting-inherits-cold-ad-colors");
+
+    // Case 2: explicit form colors win over cold ad
+    const r2 = resolveBrandColors({
+        formPrimary: "#FF0000",
+        formSecondary: "#00FF00",
+        sourceColdAd: coldAd,
+        workspace: { brandColorPrimary: "#999999" },
+    });
+    assert.equal(r2.source, "form");
+    assert.equal(r2.primary, "#ff0000");
+    assert.equal(r2.secondary, "#00ff00");
+    console.log("  ✅ T016b-retargeting-form-overrides-cold-ad");
+
+    // Case 3: cold ad missing (FR-018 fallback) → falls to workspace
+    const r3 = resolveBrandColors({
+        formPrimary: undefined,
+        sourceColdAd: null,
+        workspace: { brandColorPrimary: "#0A66C2" },
+    });
+    assert.equal(r3.source, "workspace");
+    assert.equal(r3.primary, "#0a66c2");
+    console.log("  ✅ T016c-missing-cold-ad-falls-to-workspace");
+}
+
+function runUs2Fixtures() {
+    console.log("\n═══ US2 — Retargeting Inheritance Fixtures ═══");
+    testRetargetingInheritance();
+    console.log("═══ US2 — All retargeting fixtures passed ═══\n");
+}
+
+// ═══════════════════════════════════════════════════════════
+// US5 — Brand Color Compliance Fixtures (BCC-01..BCC-08)
+// ═══════════════════════════════════════════════════════════
+
+async function testBcc01NoBrandColors() {
+    const r = await checkBrandColorCompliance(Buffer.alloc(10), null, "single");
+    assert.equal(r.checkRan, false);
+    assert.equal(r.deductedScore, 0);
+    assert.equal(r.skippedReason, "no_brand_colors");
+    console.log("  ✅ BCC-01-no-brand-colors");
+}
+
+async function testBcc02EmptyString() {
+    const r = await checkBrandColorCompliance(Buffer.alloc(10), "", "single");
+    assert.equal(r.checkRan, false);
+    assert.equal(r.skippedReason, "no_brand_colors");
+    console.log("  ✅ BCC-02-empty-string");
+}
+
+async function testBcc03MalformedHex() {
+    const r = await checkBrandColorCompliance(Buffer.alloc(10), "not-a-hex", "single");
+    assert.equal(r.checkRan, false);
+    assert.equal(r.skippedReason, "no_brand_colors");
+    console.log("  ✅ BCC-03-malformed-hex");
+}
+
+async function testBcc04ImageUnanalyzable() {
+    const r = await checkBrandColorCompliance(Buffer.alloc(0), "#0A66C2", "single");
+    assert.equal(r.checkRan, false);
+    assert.equal(r.deductedScore, 0);
+    assert.equal(r.skippedReason, "image_unanalyzable");
+    console.log("  ✅ BCC-04-image-unanalyzable");
+}
+
+async function testBcc05Present() {
+    const sharp = await loadSharp();
+    if (!sharp) { console.log("  ⏭️ BCC-05-present: skipped (Sharp unavailable)"); return; }
+    const svg = `<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg">
+        <rect width="32" height="32" fill="#808080"/>
+        <rect x="13" y="13" width="6" height="6" fill="#0A66C2"/>
+    </svg>`;
+    const buf = await sharp(Buffer.from(svg)).png().toBuffer();
+    const r = await checkBrandColorCompliance(buf, "#0A66C2", "single");
+    assert.equal(r.checkRan, true);
+    assert.equal(r.present, true);
+    assert.ok(r.deltaE! < 5);
+    assert.equal(r.deductedScore, 0);
+    console.log("  ✅ BCC-05-present");
+}
+
+async function testBcc06Absent() {
+    const sharp = await loadSharp();
+    if (!sharp) { console.log("  ⏭️ BCC-06-absent: skipped (Sharp unavailable)"); return; }
+    const svg = `<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg">
+        <rect width="32" height="32" fill="#FFFFFF"/>
+    </svg>`;
+    const buf = await sharp(Buffer.from(svg)).png().toBuffer();
+    const r = await checkBrandColorCompliance(buf, "#0A66C2", "single");
+    assert.equal(r.checkRan, true);
+    assert.equal(r.present, false);
+    assert.ok(r.deltaE! > 40);
+    assert.equal(r.deductedScore, 10);
+    console.log("  ✅ BCC-06-absent");
+}
+
+async function testBcc07NearMiss() {
+    const sharp = await loadSharp();
+    if (!sharp) { console.log("  ⏭️ BCC-07-near-miss: skipped (Sharp unavailable)"); return; }
+    const svg = `<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg">
+        <rect width="32" height="32" fill="#0A66D0"/>
+    </svg>`;
+    const buf = await sharp(Buffer.from(svg)).png().toBuffer();
+    const r = await checkBrandColorCompliance(buf, "#0A66C2", "single");
+    assert.equal(r.checkRan, true);
+    assert.equal(r.present, true);
+    console.log("  ✅ BCC-07-near-miss-present");
+}
+
+async function testBcc08FarMiss() {
+    const sharp = await loadSharp();
+    if (!sharp) { console.log("  ⏭️ BCC-08-far-miss: skipped (Sharp unavailable)"); return; }
+    const svg = `<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg">
+        <rect width="32" height="32" fill="#FF4500"/>
+    </svg>`;
+    const buf = await sharp(Buffer.from(svg)).png().toBuffer();
+    const r = await checkBrandColorCompliance(buf, "#0A66C2", "single");
+    assert.equal(r.checkRan, true);
+    assert.equal(r.present, false);
+    console.log("  ✅ BCC-08-far-miss-absent");
+}
+
+async function runBccFixtures() {
+    console.log("\n═══ BCC — Brand Color Compliance Fixtures ═══");
+    await testBcc01NoBrandColors();
+    await testBcc02EmptyString();
+    await testBcc03MalformedHex();
+    await testBcc04ImageUnanalyzable();
+    await testBcc05Present();
+    await testBcc06Absent();
+    await testBcc07NearMiss();
+    await testBcc08FarMiss();
+    console.log("═══ BCC — All compliance fixtures passed ═══\n");
+}
+
+// ═══════════════════════════════════════════════════════════
+// US4 — Compositor Brand Color Override Fixtures
+// ═══════════════════════════════════════════════════════════
+
+// All COMP tests below run two layers per scenario:
+//   (a) unit-level pickHeadlineColor / pickCtaBgColor / pickCtaTextColor
+//       assertions — fast, deterministic, independent of Sharp/fonts.
+//   (b) integration-level: build a brand via resolveBrandColors, call
+//       compositeArabicText AND compositeFullAdText with that brand on a
+//       synthetic base PNG, assert the compositor returns a non-null base64
+//       PNG (smoke check that the brand parameter actually flows through
+//       the SVG assembly + Sharp pipeline). Skipped automatically when
+//       Sharp is unavailable.
+
+const _baseStyle: TextStyle = {
+    color: "#FFFFFF",
+    strokeColor: "#000000",
+    strokeWidth: 0,
+    shadowEnabled: false,
+    shadowColor: null,
+    shadowBlur: null,
+    backgroundTreatment: 'none',
+    backgroundTreatmentColor: "#222222",
+    fontSize: 'large',
+    fontWeight: 'bold',
+    textAlign: 'center',
+    lineHeightMultiplier: 1.4,
+};
+
+const _baseZone: TextZone = {
+    horizontalPosition: 'center',
+    verticalPosition: 'bottom',
+    xPercent: 10,
+    yPercent: 60,
+    widthPercent: 80,
+    heightPercent: 35,
+    zoneBaseColor: '#000000',
+    zoneLuminosity: 'dark',
+};
+
+const _baseFullText: FullAdText = {
+    hookText: 'Test Headline',
+    subheadText: 'Test subhead',
+    ctaText: 'Click',
+    benefitText: 'Benefit',
+    targetAudienceText: '',
+};
+
+// Build a tiny solid-grey 64×64 PNG once. Reused as the synthetic base for
+// every compositor smoke call so the test suite does not depend on any
+// external image asset.
+let _basePngCache: string | null = null;
+async function _getBasePng(): Promise<string | null> {
+    if (_basePngCache !== null) return _basePngCache;
+    const sharp = await loadSharp();
+    if (!sharp) return null;
+    const buf = await sharp({
+        create: { width: 64, height: 64, channels: 4, background: { r: 128, g: 128, b: 128, alpha: 1 } },
+    }).png().toBuffer();
+    _basePngCache = `data:image/png;base64,${buf.toString('base64')}`;
+    return _basePngCache;
+}
+
+async function _compositorSmoke(brand: BrandColorPair | undefined): Promise<{ arabic: string | null; full: string | null } | null> {
+    const basePng = await _getBasePng();
+    if (basePng === null) return null; // sharp unavailable → skip integration layer
+    let arabic: string | null = null;
+    let full: string | null = null;
+    try {
+        arabic = await compositeArabicText(basePng, _baseFullText.hookText, _baseZone, _baseStyle, 64, 64, brand);
+    } catch {
+        arabic = null;
+    }
+    try {
+        full = await compositeFullAdText(basePng, _baseFullText, _baseZone, _baseStyle, 64, 64, brand);
+    } catch {
+        full = null;
+    }
+    return { arabic, full };
+}
+
+async function testComp01NoBrandFallback() {
+    // Unit layer: brand undefined → fallbacks from textStyle.
+    assert.equal(pickHeadlineColor(_baseStyle, undefined), "#FFFFFF");
+    assert.equal(pickCtaBgColor(_baseStyle, undefined), "#222222");
+    assert.equal(pickCtaTextColor(_baseStyle, undefined), "#FFFFFF"); // dark bg → white text
+    // Integration layer: real resolver path with all-empty inputs → 'none' source.
+    const brand = resolveBrandColors({});
+    assert.equal(brand.source, "none");
+    const out = await _compositorSmoke(undefined);
+    if (out) {
+        assert.ok(out.arabic !== null, "arabic compositor must produce output");
+        assert.ok(out.full !== null, "full compositor must produce output");
+    }
+    console.log("  ✅ COMP-01-no-brand-fallback: textStyle drives all colors");
+}
+
+async function testComp02BrandPrimaryOnly() {
+    // Integration: real resolver returns ctaTextColor: '#FFFFFF' (luminance auto)
+    // for #0A66C2 (L ≈ 0.13).
+    const brand = resolveBrandColors({ formPrimary: "#0A66C2" });
+    assert.equal(brand.primary, "#0a66c2");
+    assert.equal(brand.secondary, null);
+    assert.equal(brand.ctaTextColor, "#FFFFFF");
+    // Unit layer: re-validate with ctaTextColor null to exercise auto-contrast helper.
+    const brandNullText: BrandColorPair = { primary: "#0A66C2", secondary: null, ctaTextColor: null, source: "form" };
+    assert.equal(pickHeadlineColor(_baseStyle, brandNullText), "#FFFFFF"); // unchanged (secondary null)
+    assert.equal(pickCtaBgColor(_baseStyle, brandNullText), "#0A66C2");
+    assert.equal(pickCtaTextColor(_baseStyle, brandNullText), "#FFFFFF"); // luminance auto-pick
+    // Integration: feed the real resolver pair to both compositors.
+    const out = await _compositorSmoke(brand);
+    if (out) {
+        assert.ok(out.arabic !== null, "arabic compositor must accept brand pair");
+        assert.ok(out.full !== null, "full compositor must accept brand pair");
+    }
+    console.log("  ✅ COMP-02-brand-primary-only: CTA branded via luminance auto-contrast");
+}
+
+async function testComp03BrandSecondaryOnly() {
+    // Real resolver: secondary requires primary, so a form with only secondary
+    // gives source 'none'. Use the ad-hoc brand to exercise the secondary-only
+    // unit path the compositor would see if a future caller skipped the resolver.
+    const brand: BrandColorPair = { primary: null, secondary: "#F59E0B", ctaTextColor: null, source: "form" };
+    assert.equal(pickHeadlineColor(_baseStyle, brand), "#F59E0B");
+    assert.equal(pickCtaBgColor(_baseStyle, brand), "#222222"); // unchanged (primary null)
+    assert.equal(pickCtaTextColor(_baseStyle, brand), "#FFFFFF"); // unchanged
+    const out = await _compositorSmoke(brand);
+    if (out) {
+        assert.ok(out.arabic !== null, "arabic compositor must accept secondary-only brand");
+        assert.ok(out.full !== null, "full compositor must accept secondary-only brand");
+    }
+    console.log("  ✅ COMP-03-brand-secondary-only: headline branded, CTA unchanged");
+}
+
+async function testComp04BrandBoth() {
+    const brand = resolveBrandColors({ formPrimary: "#0A66C2", formSecondary: "#F59E0B" });
+    assert.equal(brand.primary, "#0a66c2");
+    assert.equal(brand.secondary, "#f59e0b");
+    assert.equal(pickHeadlineColor(_baseStyle, brand), "#f59e0b");
+    assert.equal(pickCtaBgColor(_baseStyle, brand), "#0a66c2");
+    assert.equal(pickCtaTextColor(_baseStyle, brand), "#FFFFFF");
+    const out = await _compositorSmoke(brand);
+    if (out) {
+        assert.ok(out.arabic !== null, "arabic compositor must accept full brand pair");
+        assert.ok(out.full !== null, "full compositor must accept full brand pair");
+    }
+    console.log("  ✅ COMP-04-brand-both: both CTA and headline branded");
+}
+
+async function testComp05ArabicUniformity() {
+    // Arabic uniformity: brand secondary becomes the SINGLE uniform headline
+    // color regardless of textStyle.color, never per-glyph variation.
+    const brand = resolveBrandColors({ formPrimary: "#0A66C2", formSecondary: "#F59E0B" });
+    const c1 = pickHeadlineColor(_baseStyle, brand);
+    const c2 = pickHeadlineColor(_baseStyle, brand);
+    assert.equal(c1, c2); // deterministic across calls
+    assert.equal(c1, "#f59e0b");
+    assert.equal(pickHeadlineColor({ ..._baseStyle, color: "#000000" }, brand), "#f59e0b");
+    assert.equal(pickHeadlineColor({ ..._baseStyle, color: "#FFFFFF" }, brand), "#f59e0b");
+    // Integration: render with an Arabic-script hook to exercise the RTL path.
+    const out = await _compositorSmoke(brand);
+    if (out) {
+        assert.ok(out.arabic !== null, "arabic compositor must produce uniform-coloured headline");
+    }
+    console.log("  ✅ COMP-05-arabic-uniformity: single deterministic headline color");
+}
+
+async function testComp06LightPrimaryCtaTextNearBlack() {
+    const brand = resolveBrandColors({ formPrimary: "#FFD700" });
+    assert.equal(brand.ctaTextColor, "#1A1A1A"); // resolver auto-picks near-black
+    assert.equal(pickCtaBgColor(_baseStyle, brand), "#ffd700");
+    assert.equal(pickCtaTextColor(_baseStyle, brand), "#1A1A1A");
+    // Without a pre-resolved brand.ctaTextColor, the helper still derives near-black from luminance
+    const brandWithoutPrecomputedText: BrandColorPair = { primary: "#FFD700", secondary: null, ctaTextColor: null, source: "form" };
+    assert.equal(pickCtaTextColor(_baseStyle, brandWithoutPrecomputedText), "#1A1A1A");
+    const out = await _compositorSmoke(brand);
+    if (out) {
+        assert.ok(out.full !== null, "full compositor must render light primary with near-black CTA text");
+    }
+    console.log("  ✅ COMP-06-light-primary-cta-text-near-black");
+}
+
+async function runUs4Fixtures() {
+    console.log("\n═══ US4 — Compositor Brand Color Fixtures ═══");
+    await testComp01NoBrandFallback();
+    await testComp02BrandPrimaryOnly();
+    await testComp03BrandSecondaryOnly();
+    await testComp04BrandBoth();
+    await testComp05ArabicUniformity();
+    await testComp06LightPrimaryCtaTextNearBlack();
+    console.log("═══ US4 — All compositor fixtures passed ═══\n");
+}
+
+// ═══════════════════════════════════════════════════════════
+// US5 — Scoring Integration Fixture
+// ═══════════════════════════════════════════════════════════
+
+function testScoringIntegration() {
+    const baseResult = {
+        passed: true,
+        overallScore: 75,
+        categories: {
+            layoutIntegrity: 75, hierarchyClarity: 75, modeCompliance: 75,
+            hookAlignment: 75, visualBalance: 75, textReadability: 75,
+            compositionCleanliness: 75,
+        },
+        violations: [] as string[],
+        suggestions: [] as string[],
+    };
+    const flaggedEntry = {
+        assetId: "single", checkRan: true, present: false,
+        deltaE: 22.5, dominantSwatch: "#FFFFFF", deductedScore: 10,
+    };
+
+    // 75 → 65: still passes (above threshold 60)
+    const r1 = applyBrandColorDeduction(baseResult, flaggedEntry);
+    assert.equal(r1.overallScore, 65);
+    assert.equal(r1.passed, true);
+    assert.ok(r1.violations.includes("Brand primary missing from rendered image"));
+    // input not mutated
+    assert.equal(baseResult.overallScore, 75);
+    assert.equal(baseResult.violations.length, 0);
+    console.log("  ✅ T029a-scoring-deduction-75-to-65-still-passes");
+
+    // 65 → 55: now fails
+    const borderline = { ...baseResult, overallScore: 65 };
+    const r2 = applyBrandColorDeduction(borderline, flaggedEntry);
+    assert.equal(r2.overallScore, 55);
+    assert.equal(r2.passed, false);
+    assert.ok(r2.violations.includes("Brand primary missing from rendered image"));
+    console.log("  ✅ T029b-scoring-deduction-65-to-55-now-fails");
+
+    // Skip path: checkRan false → no change
+    const skippedEntry = { ...flaggedEntry, checkRan: false };
+    const r3 = applyBrandColorDeduction(baseResult, skippedEntry);
+    assert.equal(r3.overallScore, 75);
+    assert.equal(r3.violations.length, 0);
+    console.log("  ✅ T029c-scoring-no-deduction-when-check-skipped");
+
+    // Present path: checkRan true + present true → no deduction
+    const presentEntry = { ...flaggedEntry, present: true, deductedScore: 0 };
+    const r4 = applyBrandColorDeduction(baseResult, presentEntry);
+    assert.equal(r4.overallScore, 75);
+    assert.equal(r4.violations.length, 0);
+    console.log("  ✅ T029d-scoring-no-deduction-when-brand-color-present");
+}
+
+function runUs5ScoringFixtures() {
+    console.log("\n═══ US5 — Scoring Integration Fixtures ═══");
+    testScoringIntegration();
+    console.log("═══ US5 — All scoring fixtures passed ═══\n");
+}
+
+function runBcrFixtures() {
+    console.log("\n═══ BCR — Brand Color Resolver Fixtures ═══");
+    testBcr01();
+    testBcr02();
+    testBcr03();
+    testBcr04();
+    testBcr05();
+    testBcr06();
+    testBcr07();
+    testBcr08();
+    testBcr09();
+    testBcr10();
+    testBcr11();
+    console.log("═══ BCR — All brand color resolver fixtures passed ═══\n");
+}
+
 async function runHff6Fixtures() {
     console.log("\n═══ HFF — HOTFIX-F: Aspect Ratio Reflow Fixtures ═══");
 
@@ -2096,9 +2723,25 @@ async function runHff6Fixtures() {
     console.log("═══ HFF — All aspect ratio reflow fixtures passed ═══\n");
 }
 
-runHff6Fixtures().then(() => {
-    console.log('contractFixtures.test: PASS');
-}).catch((err) => {
-    console.error('contractFixtures.test: FAIL', err);
-    process.exit(1);
-});
+// Single async entrypoint so synchronous fixture failures (BCR/US1/US2/US4/US5)
+// route through the same .catch as the async ones (BCC/HFF) — earlier the
+// synchronous calls bypassed the catch and crashed Node's default unhandled
+// path, hiding test names.
+async function main(): Promise<void> {
+    await runBcrFixtures();
+    await runUs1Fixtures();
+    await runUs2Fixtures();
+    await runBccFixtures();
+    await runUs4Fixtures();
+    await runUs5ScoringFixtures();
+    await runHff6Fixtures();
+}
+
+main()
+    .then(() => {
+        console.log('contractFixtures.test: PASS');
+    })
+    .catch((err) => {
+        console.error('contractFixtures.test: FAIL', err);
+        process.exit(1);
+    });

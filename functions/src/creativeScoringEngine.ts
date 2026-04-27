@@ -6,6 +6,7 @@
  */
 
 import { type LayoutContract } from "./layoutTemplates";
+import type { BrandColorComplianceEntry } from "./types.js";
 
 export interface CreativeScoreResult {
     passed: boolean;
@@ -200,6 +201,23 @@ export function parseScoringResponse(responseText: string): CreativeScoreResult 
             suggestions: [],
         };
     }
+}
+
+export function applyBrandColorDeduction(
+    result: CreativeScoreResult,
+    complianceEntry: BrandColorComplianceEntry,
+): CreativeScoreResult {
+    if (!complianceEntry.checkRan || complianceEntry.present) {
+        return result;
+    }
+
+    const newScore = clamp(result.overallScore - complianceEntry.deductedScore);
+    return {
+        ...result,
+        overallScore: newScore,
+        passed: newScore >= PASS_THRESHOLD,
+        violations: [...result.violations, "Brand primary missing from rendered image"],
+    };
 }
 
 function clamp(value: number): number {
