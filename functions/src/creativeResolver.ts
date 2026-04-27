@@ -217,6 +217,7 @@ export const ALLOWED_PAIRS: AllowedPair[] = [
     { a: 'standard_hero', b: 'webinar_screen', tab: 'live_events', layoutKey: 'hero_screen', templateNeeds: ['dashboard_product'], pairValidity: 'Must show hero with screen framing.' },
     { a: 'standard_hero', b: 'speaker_card', tab: 'live_events', layoutKey: 'hero_speaker', templateNeeds: ['authority_proof', 'event_ticket'], pairValidity: 'Must show hero and speaker identity block.' },
     { a: 'event_ticket', b: 'speaker_card', tab: 'live_events', layoutKey: 'ticket_speaker', templateNeeds: ['event_ticket'], pairValidity: 'Must show ticket and speaker identity.' },
+    { a: 'event_ticket', b: 'webinar_screen', tab: 'live_events', layoutKey: 'ticket_screen', templateNeeds: ['event_ticket', 'dashboard_product'], pairValidity: 'Must show ticket structure with screen element.' },
     { a: 'webinar_screen', b: 'speaker_card', tab: 'live_events', layoutKey: 'screen_speaker', templateNeeds: ['dashboard_product'], pairValidity: 'Must show screen with speaker identity.' },
     // Free Guide
     { a: 'standard_hero', b: 'book_mockup', tab: 'free_guide', layoutKey: 'hero_book', templateNeeds: ['dashboard_product'], pairValidity: 'Must show hero with real book mockup.' },
@@ -224,9 +225,7 @@ export const ALLOWED_PAIRS: AllowedPair[] = [
     { a: 'book_mockup', b: 'device_mockup', tab: 'free_guide', layoutKey: 'book_device', templateNeeds: ['device_stack'], pairValidity: 'Must show both book and device packaging.' },
 ];
 
-export const DISALLOWED_PAIRS: { a: CreativeModeId; b: CreativeModeId; reason: string }[] = [
-    { a: 'event_ticket', b: 'webinar_screen', reason: 'Two anchor structures compete and create clutter.' },
-];
+export const DISALLOWED_PAIRS: { a: CreativeModeId; b: CreativeModeId; reason: string }[] = [];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // COMBINATION VALIDATOR
@@ -400,6 +399,17 @@ const PAIR_SPECS: Record<string, PairSpec> = {
         visualHierarchy: ['ticket_structure', 'speaker_identity_within_ticket', 'credentials_strip', 'cta_bottom'],
         textPlacementRules: ['event_title_top', 'speaker_center', 'credentials_below_speaker', 'cta_bottom'],
         captionAnchors: ['featuring speaker', 'register', 'event'],
+    },
+
+    'event_ticket+webinar_screen': {
+        layoutKey: 'ticket_screen', labelEn: 'Event Ticket + Screen', labelAr: 'تذكرة + شاشة',
+        blueprintEn: 'Event ticket with screen element — ticket structure with embedded screen showing event broadcast details.',
+        blueprintAr: 'تذكرة حدث مع عنصر شاشة — هيكل تذكرة مع شاشة مضمنة تعرض تفاصيل البث.',
+        mustShow: ['ticket_frame', 'event_title', 'screen_or_device', 'date_time_row', 'live_badge'],
+        mustAvoid: ['generic_hero_standing', 'value_stack_items', 'before_after_split', 'blank_screen'],
+        visualHierarchy: ['ticket_structure', 'screen_within_ticket', 'event_metadata', 'cta_bottom'],
+        textPlacementRules: ['event_title_top', 'screen_center', 'date_time_below_screen', 'cta_bottom'],
+        captionAnchors: ['live event', 'register', 'watch live'],
     },
 
     'webinar_screen+speaker_card': {
@@ -712,6 +722,73 @@ export function getTabForOfferType(offerType: string): CreativeTab {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// MODE-FORMAT-CAMPAIGN VALIDATOR (T014 — single source of truth)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type ModeFormatValidationResult =
+    | { valid: true }
+    | { valid: false; reason: string };
+
+export interface ModeFormatValidationInput {
+    modes: string[];
+    adFormat: "single" | "carousel" | "batch";
+    campaignType: "cold" | "retargeting";
+}
+
+const LAUNCHED_MODE_SET = new Set<string>([
+    "standard_hero", "value_stack", "event_ticket", "webinar_screen",
+    "speaker_card", "book_mockup", "device_mockup", "testimonial_carousel",
+    "text_only", "before_after",
+]);
+
+export function validateModeFormatCombination(
+    input: ModeFormatValidationInput,
+): ModeFormatValidationResult {
+    const { modes, adFormat, campaignType } = input;
+    const filtered = (modes || []).filter(Boolean);
+
+    if (filtered.includes("before_after") && filtered.length > 1) {
+        return { valid: false, reason: "Before/After is single-image only — defines the entire canvas." };
+    }
+    if (filtered.includes("before_after") && adFormat !== "single") {
+        return { valid: false, reason: "Before/After is single-image only." };
+    }
+    if (filtered.includes("text_only") && filtered.length > 1) {
+        return { valid: false, reason: "Text-only mode is mutually exclusive — it defines the entire canvas." };
+    }
+    if (filtered.includes("testimonial_carousel") && adFormat !== "carousel") {
+        return { valid: false, reason: "Testimonial Carousel requires carousel format." };
+    }
+
+    if (filtered.length === 1) {
+        const mode = filtered[0];
+        if (!LAUNCHED_MODE_SET.has(mode)) {
+            return { valid: false, reason: "Combination is not in the launch surface." };
+        }
+        if (mode === "before_after" && adFormat !== "single") {
+            return { valid: false, reason: "Before/After is single-image only." };
+        }
+        if (mode === "testimonial_carousel" && adFormat !== "carousel") {
+            return { valid: false, reason: "Testimonial Carousel requires carousel format." };
+        }
+        return { valid: true };
+    }
+
+    if (filtered.length === 2) {
+        const [a, b] = filtered;
+        const isAllowed = ALLOWED_PAIRS.some(
+            (p) => (p.a === a && p.b === b) || (p.a === b && p.b === a),
+        );
+        if (!isAllowed) {
+            return { valid: false, reason: "Combination is not in the launch surface." };
+        }
+        return { valid: true };
+    }
+
+    return { valid: false, reason: "Combination is not in the launch surface." };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // LAUNCH SURFACE VALIDATOR (Phase 1 — Resolver Foundation)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -735,13 +812,21 @@ export function validateLaunchSurface(inputs: {
         }
     }
 
+    // Single-source-of-truth gate (FR-010, SC-007): the mode-format-campaign
+    // validator runs FIRST so its verbatim reasons win over the older combination
+    // validator's wording. The frontend mirror of this function does the same.
+    const fmtResult = validateModeFormatCombination({
+        modes,
+        adFormat: (inputs.adFormat as "single" | "carousel" | "batch") || "single",
+        campaignType: (inputs.campaignType as "cold" | "retargeting") || "cold",
+    });
+    if (!fmtResult.valid) {
+        return { allowed: false, reason: fmtResult.reason };
+    }
+
     const combo = validateCombination(modes, inputs.hookAngle);
     if (!combo.valid) {
         return { allowed: false, reason: combo.errors[0] || "Invalid combination." };
-    }
-
-    if (inputs.adFormat === 'carousel' && modes.includes('before_after')) {
-        return { allowed: false, reason: 'before_after is not compatible with carousel format.' };
     }
 
     return { allowed: true };
@@ -1161,6 +1246,12 @@ Credentials in delicate handwritten-feel type. Think: artist's self-portrait wit
         'watercolor_dreamscape__book_mockup': `WATERCOLOR × BOOK MOCKUP FUSION:
 Book rendered as PAINTED ILLUSTRATION of a book — soft watercolor cover art, painted paper texture.
 Think: hand-illustrated book cover for an artisan publication.`,
+
+        // ── CINEMATIC FILM STILL fusions (matrix § 11) ──
+        'cinematic_film_still__value_stack': `CINEMATIC FILM STILL × VALUE STACK FUSION:
+Stack zone rendered as LOWER-THIRD CRAWL TREATMENT — items appear as a film-style chyron
+or end-credits crawl across the bottom third of the frame. 35mm grain across entire frame.
+Subtle motion blur on the crawl text. Think: a movie title card presenting the offer.`,
     };
 
     return fusions[key] || '';

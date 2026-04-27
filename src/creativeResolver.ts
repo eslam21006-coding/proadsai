@@ -205,11 +205,10 @@ export const ALLOWED_PAIRS: AllowedPair[] = [
     { a: 'standard_hero', b: 'book_mockup', tab: 'free_guide', layoutKey: 'hero_book', templateNeeds: ['dashboard_product'], pairValidity: 'Must show hero with real book mockup.' },
     { a: 'standard_hero', b: 'device_mockup', tab: 'free_guide', layoutKey: 'hero_device', templateNeeds: ['dashboard_product', 'device_stack'], pairValidity: 'Must show hero with real device mockup.' },
     { a: 'book_mockup', b: 'device_mockup', tab: 'free_guide', layoutKey: 'book_device', templateNeeds: ['device_stack'], pairValidity: 'Must show both book and device packaging.' },
+    { a: 'event_ticket', b: 'webinar_screen', tab: 'live_events', layoutKey: 'ticket_screen', templateNeeds: ['event_ticket'], pairValidity: 'Must show ticket structure with webinar screen framing.' },
 ];
 
-export const DISALLOWED_PAIRS: { a: CreativeModeId; b: CreativeModeId; reason: string }[] = [
-    { a: 'event_ticket', b: 'webinar_screen', reason: 'Two anchor structures compete and create clutter.' },
-];
+export const DISALLOWED_PAIRS: { a: CreativeModeId; b: CreativeModeId; reason: string }[] = [];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // COMBINATION VALIDATOR
@@ -509,6 +508,71 @@ export function resolveCreativeSpec(input: ResolverInput): ResolvedCreativeSpec 
     };
 }
 
+// ─── MODE-FORMAT-CAMPAIGN VALIDATOR (FR-003) ─────────────────────────────
+
+export type ModeFormatValidationResult =
+    | { valid: true }
+    | { valid: false; reason: string };
+
+export interface ModeFormatValidationInput {
+    modes: string[];
+    adFormat: "single" | "carousel" | "batch";
+    campaignType: "cold" | "retargeting";
+}
+
+const LAUNCHED_MODE_SET = new Set<string>([
+    "standard_hero", "value_stack", "event_ticket", "webinar_screen",
+    "speaker_card", "book_mockup", "device_mockup", "testimonial_carousel",
+    "text_only", "before_after",
+]);
+
+export function validateModeFormatCombination(
+    input: ModeFormatValidationInput,
+): ModeFormatValidationResult {
+    const { modes, adFormat } = input;
+    const filtered = (modes || []).filter(Boolean);
+
+    if (filtered.includes("before_after") && filtered.length > 1) {
+        return { valid: false, reason: "Before/After is single-image only — defines the entire canvas." };
+    }
+    if (filtered.includes("before_after") && adFormat !== "single") {
+        return { valid: false, reason: "Before/After is single-image only." };
+    }
+    if (filtered.includes("text_only") && filtered.length > 1) {
+        return { valid: false, reason: "Text-only mode is mutually exclusive — it defines the entire canvas." };
+    }
+    if (filtered.includes("testimonial_carousel") && adFormat !== "carousel") {
+        return { valid: false, reason: "Testimonial Carousel requires carousel format." };
+    }
+
+    if (filtered.length === 1) {
+        const mode = filtered[0];
+        if (!LAUNCHED_MODE_SET.has(mode)) {
+            return { valid: false, reason: "Combination is not in the launch surface." };
+        }
+        if (mode === "before_after" && adFormat !== "single") {
+            return { valid: false, reason: "Before/After is single-image only." };
+        }
+        if (mode === "testimonial_carousel" && adFormat !== "carousel") {
+            return { valid: false, reason: "Testimonial Carousel requires carousel format." };
+        }
+        return { valid: true };
+    }
+
+    if (filtered.length === 2) {
+        const [a, b] = filtered;
+        const isAllowed = ALLOWED_PAIRS.some(
+            (p) => (p.a === a && p.b === b) || (p.a === b && p.b === a),
+        );
+        if (!isAllowed) {
+            return { valid: false, reason: "Combination is not in the launch surface." };
+        }
+        return { valid: true };
+    }
+
+    return { valid: false, reason: "Combination is not in the launch surface." };
+}
+
 export interface LaunchSurfaceResult {
     allowed: boolean;
     reason?: string;
@@ -534,12 +598,13 @@ export function validateLaunchSurface(inputs: {
         return { allowed: false, reason: combo.errors[0] || 'Invalid combination.' };
     }
 
-    if (inputs.adFormat === 'carousel') {
-        for (const m of modes) {
-            if (CREATIVE_MODE_CATALOG[m]?.soloOnly) {
-                return { allowed: false, reason: `${CREATIVE_MODE_CATALOG[m].labelEn} is single-image only.` };
-            }
-        }
+    const fmtResult = validateModeFormatCombination({
+        modes,
+        adFormat: (inputs.adFormat as "single" | "carousel" | "batch") || "single",
+        campaignType: (inputs.campaignType as "cold" | "retargeting") || "cold",
+    });
+    if (!fmtResult.valid) {
+        return { allowed: false, reason: (fmtResult as { valid: false; reason: string }).reason };
     }
 
     return { allowed: true };

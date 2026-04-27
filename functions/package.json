@@ -9,7 +9,7 @@
     "test:savedProjects": "npm run build && node lib/__tests__/savedProjects.projectStatus.test.js",
     "test:quota": "npm run build && node lib/__tests__/savedProjects.projectQuota.test.js",
     "test:cultural": "npm run build && node lib/__tests__/culturalCompliance.test.js && node lib/contractFixtures.test.js",
-    "test": "npm run build && node lib/__tests__/savedProjects.projectStatus.test.js && node lib/__tests__/savedProjects.projectQuota.test.js && node lib/__tests__/culturalCompliance.test.js && node lib/contractFixtures.test.js",
+    "test": "npm run build && node lib/__tests__/savedProjects.projectStatus.test.js && node lib/__tests__/savedProjects.projectQuota.test.js && node lib/__tests__/culturalCompliance.test.js && node lib/__tests__/modeFormatValidator.test.js && node lib/contractFixtures.test.js",
     "build:watch": "tsc --watch",
     "serve": "npm run build && firebase emulators:start --only functions",
     "shell": "npm run build && firebase functions:shell",

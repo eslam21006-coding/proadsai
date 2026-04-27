@@ -66,6 +66,8 @@ All product owner decisions. These are final for launch.
 | Logo rendering | **Hybrid — mode-per-placement.** Build plan assigns each logo a mode: `ui` (post-composited via Sharp for pixel-perfect corner/badge placement) or `environmental` (Gemini renders as physical object in scene — logo on mug, laptop lid, wall art, t-shirt, signage). AI picks mode based on creative style. **Absolute ban:** no logos, text, charts, or dashboards on any device screen (laptop/monitor/tablet/phone). Screens stay blank or abstract only. |
 | Aspect ratio reflow | **Deterministic two-method reflow.** Small ratio change (<30%) → outpaint-only (extends margins, locks hero/text). Large ratio change → re-render from original build plan at new ratio. No more generative reflow that stretches faces. Auto-routing with user override. |
 | Direct-response design primitives | **6 new enforced rules:** (1) `heroGaze` field directs subject's eyes at headline or CTA, (2) max ONE highlighted element per ad, (3) `priceIsHook` toggle for price-shock creatives, (4) CTA outcome framing required (no generic "join/register"), (5) `visualPromiseMapping` scores hook↔visual alignment, (6) campaign coherence inherits palette/environment from prior ads in same project. |
+| Concept differentiation | **Two hidden backend stages + one hidden checker.** Concept Director (GPT-5, runs 3× sequential per batch) produces specialized brief per ad with explicit visual metaphor, headline architecture, forbidden props, gaze direction. Variance Validator (deterministic, no AI) blocks duplicate metaphor/layout/headline tokens with max 1 retry. Selection Reviewer (Gemini 2.5 Flash) catches strong incoherences in user brief BEFORE generation. All three are fail-open — pipeline runs unchanged on error. Remote Config kill switch. Per-user feature flag. **Engineering names** (Concept Director, Variance Validator, Selection Reviewer) NEVER appear in UI. **User-facing names**: "Brief Coherence Check" (live banner) + "Variance Mode" (workspace toggle: Balanced/Aggressive). |
+| FLUX deletion | `falGeneration.ts` and `falEditing.ts` are orphaned dead code (zero imports). Deleted in HOTFIX-G. Magic Edit (Phase 11) migrated to Gemini's edit endpoint. |
 
 ---
 
@@ -941,6 +943,8 @@ HOTFIX-E — Deterministic Logo Compositing (CRITICAL P0)
 
 HOTFIX-F — Deterministic Aspect Ratio Reflow (CRITICAL P0)
 
+HOTFIX-G — FLUX Cleanup (prerequisite for Phase 20)
+
 Phase 10 — Favorites & Workspace (requires Phase 8)
 
 Phase 11 — Magic Edit (requires Phase 5)
@@ -960,6 +964,8 @@ Phase 17 — Resize & Reflow (requires Phase 5 + Phase 15)
 Phase 18 — Multi-Hero Support (requires Phase 5 + Phase 11)
 
 Phase 19 — Direct-Response Design Upgrades (requires Phase 5 + HOTFIX-E + HOTFIX-F)
+
+Phase 20 — Concept Director + Brief Coherence Check (requires Phase 5 + Phase 14 + HOTFIX-G)
 ```
 
 ---
@@ -996,6 +1002,11 @@ Launch is complete when all of the following pass:
 26. Brand logos render via hybrid pipeline: UI-mode logos composited post-render (pixel-perfect), environmental-mode logos rendered by Gemini as physical objects (mug/laptop lid/wall art). No more "SIRM" distortion. Zero fake content on device screens.
 27. Aspect ratio reflow preserves subject proportions — outpaint for small changes, full re-render for large changes. No more stretched faces.
 28. Direct-response design primitives enforced: gaze direction, one-highlight cap, price hierarchy, CTA outcome framing, hook↔visual alignment, campaign coherence.
+29. Three sibling concepts in a batch differ on metaphor + headline architecture + layout (balanced mode) or every axis (aggressive mode). No more "every ad looks the same" output.
+30. Brief Coherence Check (live banner + soft-block modal) catches strong selection mismatches before generation. Fires on ~1 in 10 generations. Fail-open on errors.
+31. Concept Director, Variance Validator, and Selection Reviewer are fully invisible to users. Engineering names never appear in UI.
+32. Remote Config kill switch can disable all new pipeline stages within 60s. Per-user feature flag enables A/B rollout.
+33. FLUX (`falGeneration.ts`, `falEditing.ts`) deleted. Magic Edit migrated to Gemini's edit endpoint.
 
 ---
 
@@ -1024,6 +1035,7 @@ HOTFIX-C  requires Phase 5 complete (apply before Phase 10+, can parallel with H
 HOTFIX-D  no dependency — apply any time
 HOTFIX-E  requires Phase 5 (pipeline) — CRITICAL P0
 HOTFIX-F  requires Phase 5 (pipeline) — CRITICAL P0
+HOTFIX-G  no dependency — apply before Phase 20 (FLUX cleanup)
 Phase 8   requires Phase 2
 Phase 9   requires Phase 8
 Phase 10  requires Phase 8 (billingState for team scoping)
@@ -1036,6 +1048,7 @@ Phase 16  requires Phase 1 + Phase 3 + Phase 5
 Phase 17  requires Phase 5 + Phase 15 (pipeline + brand colors)
 Phase 18  requires Phase 5 + Phase 11 (pipeline + magic edit face consistency)
 Phase 19  requires Phase 5 + HOTFIX-E + HOTFIX-F (pipeline + logos + reflow must be stable)
+Phase 20  requires Phase 5 + Phase 14 + HOTFIX-G (pipeline + creative memory + FLUX cleanup)
 ```
 
 Complete all tasks in a phase before starting any phase that depends on it.
@@ -1606,6 +1619,8 @@ These are manual steps for Eslam to complete before any code tasks begin.
 ## Phase 16 — Creative Modes & Art Direction QA
 **Requires:** Phase 1 + Phase 3 + Phase 5 complete.
 
+**Status:** ✅ Implemented — 43 fixtures green; FR-009 self-correction live; adapt-state audit clean; validateModeFormatCombination enforced on both frontend and backend.
+
 **What already exists:**
 - All 10 creative modes in `creativeResolver.ts` with compatibility rules, required elements, and validation.
 - Mode pairs per tab (Section 2.3) with layout keys.
@@ -1724,4 +1739,109 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-*Source: `creativeResolver.ts` · `generators.ts` · `entitlements.ts` · `artDirectionConfig.ts` · `retargetingObjections.ts` · `constants.ts` · `types.ts` · `index.ts` · `falEditing.ts` · `MagicSelector.tsx` · `WorkspaceSwitcher.tsx` · `creativeMemory.ts` · `rankingEngine.ts` · `metaService.ts` · `billingState.ts` · `textCompositing.ts` · `layoutContract.ts` · `logoComposite.ts` · `reflowOutpaint.ts` · terminal session decisions · product owner decisions v4 · codebase audit April 11, 2026*
+## HOTFIX-G — FLUX Cleanup (Prerequisite for Phase 20)
+
+> **Context:** `falGeneration.ts`, `falEditing.ts`, and their compiled `.js` counterparts in `functions/lib/` are orphaned dead code. Audit confirmed zero imports across `functions/src/`. FLUX was a failed trial — Gemini handles face fidelity via the Box A reference photo pattern. Removing these unblocks the dependency on `@fal-ai/serverless-client` and prevents confusion when Phase 20 wires in new pipeline stages.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| HFG.1 | `functions/src/falGeneration.ts` | Delete the file. | File no longer exists. |
+| HFG.2 | `functions/src/falEditing.ts` | Delete the file. | File no longer exists. |
+| HFG.3 | `functions/lib/falGeneration.js` | Delete the compiled artifact. | File no longer exists. |
+| HFG.4 | `functions/lib/falEditing.js` | Delete the compiled artifact. | File no longer exists. |
+| HFG.5 | `functions/package.json` | Remove `@fal-ai/serverless-client` from dependencies. Run `npm install` after removal. | Package no longer in `node_modules`. `npm run build` succeeds with zero errors. |
+| HFG.6 | Deploy | Standard sequence: `Remove-Item -Recurse -Force lib` → `npm run build` → `firebase deploy --only functions`. | Deploy succeeds. No broken imports in production. |
+
+> **Note on Phase 11 (Magic Edit):** Phase 11 was originally specified to use `falEditing.ts` and FLUX Kontext. After this hotfix, the Magic Edit pipeline is migrated to use Gemini's edit endpoint (which already handles face fidelity via Box A reference photos in the existing pipeline). Phase 11 task descriptions referencing FLUX should be reinterpreted as: **edit endpoint = Gemini's image edit with Box A reference, not FLUX**. The atomic logic of Phase 11 (lasso → mask → edit prompt → text re-composite) is unchanged; only the underlying model call is.
+
+---
+
+## Phase 20 — Concept Director + Brief Coherence Check
+**Requires:** Phase 5 + Phase 14 (Creative Memory must be feeding generations) + HOTFIX-G (FLUX cleanup) complete.
+
+> **Context:** The current pipeline (`Inputs → Hook Lab → Visual Plan → Art Direction → Render → Caption`) optimizes for constraint compliance, not creative differentiation. Three sibling concepts in a batch differ in pose but share metaphor, layout, and headline architecture — every ad looks like the same machine made it. The Visual Architect V5.0 step generates **layout archetypes** (where the hero stands), not **visual concepts** (what the ad is about). The hookType→visualDirection mapping in `hookTypesKnowledge.ts` is a 12-template lookup that returns identical visual direction for every hook of the same type.
+>
+> This phase adds two hidden backend stages and one hidden coherence checker — none of which are user-visible:
+>
+> - **Concept Director** (engineering name) — runs 3× per batch, sequential, sees siblings. Produces a specialized brief per ad with explicit fields for visual metaphor, headline architecture, forbidden props, and gaze direction. GPT-5.
+> - **Variance Validator** (engineering name) — deterministic check that 3 sibling concepts are not the same shape with different finishes. Triggers max 1 retry on duplicate axes. No AI call.
+> - **Selection Reviewer** (engineering name) — catches strong incoherences in user brief BEFORE generation. Runs live in Step 1 + pre-flight on Step 1 exit. Gemini 2.5 Flash.
+>
+> **User-facing names** (used ONLY in UI strings): "Brief Coherence Check" (the live banner) and "Variance Mode" (workspace toggle). The names "Concept Director", "Variance Validator", "Selection Reviewer" NEVER appear in user-facing copy, marketing, or support docs.
+>
+> **Architectural principle:** Both stages are additive and fail-open. If they fail, error out, or return fallback, the existing pipeline runs unchanged. Zero regression risk. A Remote Config kill switch disables both stages instantly.
+>
+> **Cost impact:** ~$0.046 added per generation (~5–12% of revenue at $19–$55 ARPU, 50 generations/month).
+
+### 20.A — Engineering: Selection Reviewer (Brief Coherence Check)
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 20.A.1 | `functions/src/selectionReviewer.ts` | Create file. Export `reviewSelection(input: SelectionReviewerInput): Promise<SelectionReviewerOutput>`. Input includes hookText, hookType, hookAngle, adTone, copywritingStrategy, subStyle, creativeMode, language, aspectRatio, audience, optional offerPrice/offerType/brandPrimaryColor. Output: `{ flagged, state: 'green' \| 'yellow' \| 'red', mismatches: [{ fieldA, fieldB, tension, severity, suggestion }] }`. Uses Gemini 2.5 Flash. Max 2 mismatches per review. Only flags strong mismatches. Returns empty array on uncertainty. Calibration target: fires on ~1 in 10 generations. | Function returns valid output schema for sample inputs. JSON-only response, no preamble. |
+| 20.A.2 | `functions/src/selectionReviewer.ts` | Write the evaluation prompt. Reviews 6 pairs in priority order: (1) Tone × Hook Angle, (2) Sub-style × Creative Mode, (3) Sub-style × Audience price tier, (4) Hook Type × Hook Text, (5) Language × Audience, (6) Offer Price × Offer Type. Tension explanation written in user's language (Arabic if `language` starts with `ar_`). Severity: `strong` blocks; `moderate` warns. State: no mismatches → `green`; moderate only → `yellow`; any strong → `red`. | Prompt produces correctly-formatted JSON. Tension sentences are in user's language. |
+| 20.A.3 | `functions/src/selectionReviewer.ts` | Add timeout/error handling. Fail-open: API timeout (>3s in live mode, >5s in pre-flight) or any error → return `{ flagged: false, state: 'green', mismatches: [] }`. Never throw. Log errors for telemetry. | API failure does not block generation. Logs show error context. |
+| 20.A.4 | `functions/src/index.ts` | Export `reviewSelectionCallable` as a callable Cloud Function. Validates auth. Reads `cultureKill` Remote Config flag — if killed, returns green immediately. Calls `reviewSelection()` with input. Returns output to frontend. | Callable returns valid output. Kill switch returns green without invoking AI. |
+
+### 20.B — Engineering: Concept Director
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 20.B.1 | `functions/src/conceptDirector.ts` | Create file. Export `directConcept(input: ConceptDirectorInput): Promise<ConceptDirectorOutput \| ConceptDirectorFallback>`. Input includes the brief (hookText, hookType, hookAngle, adTone, copywritingStrategy, audience, offer fields), user's INVIOLABLE choices (subStyle, creativeMode, language, aspectRatio, brand colors/logo), variance enforcement (conceptIndex 0/1/2, siblingConcepts array, varianceMode), and pass-through context (reviewerFlags, pastWinningAds — last 5 from `creativeMemory.ts`). Uses GPT-5. | Function returns valid `ConceptDirectorOutput` for sample inputs. |
+| 20.B.2 | `functions/src/conceptDirector.ts` | Define output schema with these required fields: `visualMetaphor: { description, keyVisualElement, emotionalReason }`, `headlineArchitecture` (one of 8: manifesto / editorial / annotated / dual_state / oversized_question / numerical_anchor / ellipsis_tease / stacked_weight), `highlightCardinality: { count: 0\|1\|2, phrases, treatment }`, `layoutArchetype` (one of 7: asymmetric_void / central_headroom / central_baseweight / environmental_canvas / split_dual_state / typography_dominant / editorial_columns), `heroPresence` (present / absent / partial / multiple_subjects), `heroGazeDirection` (toward_headline / toward_cta / direct_camera / off_frame_intentional / downward_introspective), `heroPoseSpecific: string`, `propsAllowed: string[]`, `propsForbidden: string[]` (min 3 items), `backgroundComplexity` (minimal / moderate / rich), `accentBehavior: { primaryUse, secondaryUse, cardinality: 1\|2\|3 }`, `logoTreatment` (composite_post / absent_this_concept / corner_subtle), `subStyleSpecialization: { inheritedFrom, specializedAs, keyDeparture }`, `restraintRules: string[]` (min 2 items), `conceptIndex: number`, `varianceAxes: { metaphorToken, layoutToken, headlineToken }`. | Output schema validated. Hard constraints enforced (count ≤ 2, propsForbidden ≥ 3, restraintRules ≥ 2, subStyleSpecialization.inheritedFrom equals user's exact subStyle choice). |
+| 20.B.3 | `functions/src/conceptDirector.ts` | Write the reasoning prompt with 7-step internal reasoning: (1) emotional core of the hook, (2) concrete visual metaphor (concrete image, NOT abstract concept), (3) headline architecture choice, (4) sub-style interpretation (specialized within user's choice — never override), (5) focal point and composition, (6) forbidden props (min 3), (7) accent placement (max 3 places brand color appears). All text fields in user's language EXCEPT enum values (which stay English for downstream pipeline). | Prompt produces JSON-only output matching schema. Sample outputs have concrete visualMetaphor.description (e.g. "newspaper folded on subway seat" not "media is dying"). |
+| 20.B.4 | `functions/src/conceptDirector.ts` | Define variance modes. `conservative`: siblings differ on hero pose + composition only. `balanced` (default): + metaphor + headline architecture + layout archetype. `aggressive`: + composition strategy + accent behavior + backgroundComplexity + heroPresence. Each mode parameterizes the prompt — sibling concepts MUST differ on the listed axes. Pass `siblingConcepts` array in prompt so concept N sees concepts 0..N-1 and avoids their `varianceAxes` tokens. | Three sequential calls produce concepts that differ on the axes specified by varianceMode. |
+| 20.B.5 | `functions/src/conceptDirector.ts` | Add fallback behavior. Return `{ fallback: true, reason: string }` on: API call fails, timeout (>15s), JSON parse fails, schema validation fails, or hard constraint violation (e.g. count > 2, propsForbidden < 3). Log fallback for prompt iteration. The downstream code uses fallback as a signal to run existing Visual Architect V5.0 logic for that concept. | Fallback returns valid shape. Downstream pipeline continues without erroring. Fallback events logged. |
+
+### 20.C — Engineering: Variance Validator
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 20.C.1 | `functions/src/varianceValidator.ts` | Create file. Export `validateBatchVariance(concepts: ConceptDirectorOutput[], varianceMode: VarianceMode): VarianceValidationResult`. No AI call — purely deterministic comparison of `varianceAxes` tokens across the 3 sibling concepts. Output: `{ passed: boolean, violations: [{ axis, duplicateConceptIndices, severity: 'block' \| 'warn' }] }`. | Function correctly identifies duplicates per mode (see 20.C.2). Returns within 5ms. |
+| 20.C.2 | `functions/src/varianceValidator.ts` | Encode rejection criteria. **Conservative**: BLOCK if `metaphorToken` identical across all 3 concepts. **Balanced**: BLOCK if `metaphorToken` identical across 2+ concepts, OR `layoutToken` identical across all 3, OR `headlineToken` identical across all 3. **Aggressive**: balanced rules + BLOCK if `backgroundComplexity` identical across all 3. WARN-level violations log but don't trigger retry. | All rejection rules correctly fire on test fixtures. |
+| 20.C.3 | `functions/src/index.ts` | After Concept Director loop, call `validateBatchVariance(concepts, varianceMode)`. If `passed === true`, proceed to Visual Architect. If `passed === false` AND no retry has happened yet for this batch, regenerate the offending concept(s) by calling `directConcept()` with the rejected concept's tokens added to the siblings-to-avoid list. **Max 1 retry per concept.** If retry also fails validation, ship as-is and log failure. **Never block the user.** | Retry triggers on duplicate detection. Max 1 retry enforced. Failed retries log but don't block. |
+
+### 20.D — Engineering: Pipeline Integration
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 20.D.1 | `functions/src/layoutContract.ts` | Add 8 new text-zone presets corresponding to the new headline architectures: `manifesto_zone` (60%+ canvas coverage, centered, single weight), `editorial_zone` (top masthead + body column structure), `annotated_zone` (standard headline + annotation overlay positions), `dual_state_zones` (mirrored zones for split composition), `oversized_question_zone` (one giant word + small supporting text), `numerical_anchor_zone` (huge number + caption position), `ellipsis_tease_zone` (off-center, mid-thought placement), `stacked_weight_zone` (3 vertical bands for 3 weight levels). Each zone needs definitions across all 6 aspect ratios (1:1, 4:5, 3:4, 4:3, 9:16, 16:9). | All 8 zones defined with x/y/width/height for all 6 ratios. Sharp can composite text into them correctly. |
+| 20.D.2 | `functions/src/generators.ts` | Modify Visual Architect V5.0 to read Concept Director output if present. Use `visualMetaphor.description` to inform scene description (currently inferred from hook + hookType). Use `layoutArchetype` to override the default 3-archetype rotation. Use `propsForbidden` to populate the FORBIDDEN block in the Gemini prompt. Use `heroGazeDirection` and `heroPoseSpecific` to override the current generic anti-robotic-pose rules. If Concept Director returned `fallback: true` for a concept, run existing logic for that concept only. **All existing logic remains as fallback path.** | Visual Architect uses Concept Director output when present. Falls back to existing logic when not. |
+| 20.D.3 | `functions/src/generators.ts` | Update `quickRejectCheck` and `validateBlueprintMinimalStyle` to accept `headlineArchitecture` parameter. Validators check against the *intended* shape, not assume standard headline. Whitelist novel architectures (manifesto, oversized_question, numerical_anchor, etc.) so they don't trigger false positives. | Validators no longer reject manifesto-style or numerical-anchor builds as "broken". |
+| 20.D.4 | `functions/src/index.ts` | Wire the new pipeline order: Hook Lab → **Concept Director loop (3× sequential, each sees siblings)** → **Variance Validator (with max 1 retry)** → Visual Architect V5.0 → Art Direction → Render → Caption. Add Selection Reviewer pre-flight check before Concept Director runs (if `state === 'red'` and user pressed "Generate anyway", proceed; otherwise this branch isn't reached because frontend already gates it). | Pipeline order matches spec. Logs show Concept Director and Variance Validator running before render. |
+| 20.D.5 | `functions/src/index.ts` | Add feature flag: `conceptDirectorEnabled` boolean field on `users/{uid}` Firestore doc. Default `false` for all users. When `false`, skip Concept Director and Variance Validator entirely — pipeline runs old path. When `true`, new path runs. Allows per-user A/B rollout. | Flag controls whether new stages run. Default `false`. |
+| 20.D.6 | `functions/src/index.ts` | Add Remote Config kill switch: `conceptDirectorKillSwitch` boolean. When `true`, ALL users skip new stages regardless of their `conceptDirectorEnabled` flag. Read at the start of every generation call. Cache for 60 seconds to avoid hammering Remote Config. | Kill switch globally disables new stages within 60s of being flipped. |
+| 20.D.7 | `functions/src/conceptDirector.ts` | Wire `pastWinningAds` to `creativeMemory.ts`. Before each Concept Director call, fetch `getRAGContext(userId, { hookAngle, mode, dialect, styleFamily, subStyle })` (Phase 14 task 14.4). If `topPerformers` array has ≥3 entries, pass last 5 as `pastWinningAds` to Concept Director. Concept Director prompt includes: "Past winning ads from this user. Use these as positive reference for what works in this user's market — but generate something NEW, not a clone." | Concept Director receives last 5 winners when available. Falls back gracefully when memory has <3 entries. |
+
+### 20.E — Frontend: Brief Coherence Check (User-Facing)
+
+> **User-facing name:** "Brief Coherence Check". Engineering name (Selection Reviewer) NEVER appears in UI.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 20.E.1 | `src/App.tsx` (or `Step1Form.tsx`) | Add a persistent banner above the Step 1 form. Three states: `green` ("Your brief looks coherent" / "بريفك متكامل"), `yellow` ("Two of your selections may interact unexpectedly" + 1-sentence tension), `red` ("Strong mismatch detected" + 1-sentence tension + suggested change). Banner uses small icon (✓ / ⚠ / ⛔) and brief text. **Never** mentions "Selection Reviewer" or "AI" or "Gemini". | Banner renders in all three states. Text is in the user's language. |
+| 20.E.2 | `src/App.tsx` | Wire banner to `reviewSelectionCallable`. Debounce 800ms after the user's last selection change. Hash-based cache keyed on the selection combo — skip API call if same combo was reviewed within last 30s. **Fail-open**: if callable times out (>3s) or errors, render no banner (treat as green). | Banner updates within 1.5s of user stopping. Cache prevents duplicate calls. Network errors hide the banner instead of breaking the form. |
+| 20.E.3 | `src/App.tsx` | Add soft-block confirmation modal on Step 1 exit. Triggered when user clicks "Next" / "Generate" while banner state is `red`. Modal copy: *"Your [fieldA] and [fieldB] strongly conflict. [tension explanation]. Generate anyway?"* — Two buttons: `[Go back and adjust]` (default focus) and `[Generate anyway]`. "Generate anyway" sets a session flag so the same combo doesn't re-trigger the modal. If state is `yellow` or `green`: proceed without modal. | Modal fires only on red state. Bypassing it once silences it for the same combo in that session. Default button focus is "Go back". |
+| 20.E.4 | `src/i18n/*` | Add bilingual strings: banner text for all three states, tension explanation template, modal title/body/buttons, "Brief Coherence Check" label (for accessibility / aria attributes). Both Arabic and English versions. | All strings have AR + EN. No hardcoded text in the banner or modal. |
+
+### 20.F — Frontend: Variance Mode Toggle (User-Facing)
+
+> **User-facing name:** "Variance Mode". Engineering name (Concept Director / Variance Validator) NEVER appears in UI.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 20.F.1 | `src/components/WorkspaceSettingsModal.tsx` | Add a "Variance Mode" toggle section. Two options: `Balanced` (default) and `Aggressive`. Toggle updates the workspace doc's `varianceMode` field. Info tooltip (i icon): *"Balanced: 3 concepts share voice, differ in metaphor and layout. Aggressive: 3 concepts differ on every axis — best for paid social A/B testing."* — In Arabic for AR users. **Never** mentions "Concept Director" or "Variance Validator". | Toggle exists. Default is Balanced. Tooltip shows in user's language. Setting saves to Firestore. |
+| 20.F.2 | `functions/src/index.ts` | Read `varianceMode` from the workspace doc when starting a generation. Pass to Concept Director loop. If unset, default to `balanced`. | Generation honors the user's variance mode setting. |
+| 20.F.3 | `src/i18n/*` | Add bilingual strings: "Variance Mode" label, "Balanced" / "Aggressive" option labels, info tooltip text. | All strings have AR + EN. |
+
+### 20.G — Tests + Telemetry
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 20.G.1 | `functions/src/contractFixtures.test.ts` | Add Concept Director fixture tests: (a) 3 concepts in balanced mode have distinct `metaphorToken` values, (b) propsForbidden has ≥3 items in every concept, (c) subStyleSpecialization.inheritedFrom equals user's subStyle exactly, (d) fallback returns `{ fallback: true }` when GPT call fails (mock failure), (e) heroGazeDirection is one of the valid enum values, (f) when fallback for one concept, the other two still proceed normally. | All 6 tests pass. |
+| 20.G.2 | `functions/src/contractFixtures.test.ts` | Add Variance Validator fixture tests: (a) balanced mode blocks when `metaphorToken` matches in 2 of 3 concepts, (b) aggressive mode blocks when `backgroundComplexity` is identical across all 3, (c) conservative mode does NOT block when only `layoutToken` matches, (d) retry triggers when validation fails, (e) ship-as-is after 1 retry that also fails. | All 5 tests pass. |
+| 20.G.3 | `functions/src/contractFixtures.test.ts` | Add Selection Reviewer fixture tests: (a) "luxury_magazine" subStyle + "$19 offer" + Egyptian audience flags as red (price tier mismatch), (b) "comedic" tone + "fear-based" hook angle flags as red (tone × angle mismatch), (c) "vintage_bw" subStyle + "tech-savvy young professional" audience flags yellow at most, (d) coherent brief returns green with empty mismatches, (e) Arabic input produces tension explanations in Arabic, (f) API failure returns green (fail-open). | All 6 tests pass. |
+| 20.G.4 | `functions/src/index.ts` | Add telemetry. Log to a `pipelineTelemetry` Firestore collection per generation: `{ generationId, conceptDirectorRan, conceptDirectorFallbacks: number, varianceValidatorTriggered, varianceRetries: number, selectionReviewerState, modalShownToUser, userBypassedModal, totalLatencyMs }`. Used to monitor rollout health and Concept Director quality over time. | Every generation writes a telemetry row. Dashboard can query rollback signals (high fallback rate, high modal-bypass rate). |
+
+---
+
+*Source: `creativeResolver.ts` · `generators.ts` · `entitlements.ts` · `artDirectionConfig.ts` · `retargetingObjections.ts` · `constants.ts` · `types.ts` · `index.ts` · `MagicSelector.tsx` · `WorkspaceSwitcher.tsx` · `creativeMemory.ts` · `rankingEngine.ts` · `metaService.ts` · `billingState.ts` · `textCompositing.ts` · `layoutContract.ts` · `logoComposite.ts` · `reflowOutpaint.ts` · `selectionReviewer.ts` · `conceptDirector.ts` · `varianceValidator.ts` · terminal session decisions · product owner decisions v4 · codebase audit April 11, 2026*

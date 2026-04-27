@@ -3553,6 +3553,21 @@ export const serverGetRecommendationEvents = onCall({
 });
 
 // ─── GENERATE TOV / HOOKS ────────────────────────────────────────────────
+// ─── MODE-FORMAT-CAMPAIGN VALIDATION (FR-003) ─────────────────────────────
+// Single source-of-truth gate: must run BEFORE entitlement checks / credit deduction.
+async function enforceModeFormatGate(inputs: any): Promise<void> {
+    const { validateModeFormatCombination } = await import("./creativeResolver.js");
+    const fmtCheck = validateModeFormatCombination({
+        modes: inputs?.offerCreativeMode || ["standard_hero"],
+        adFormat: inputs?.adMode || "single",
+        campaignType: inputs?.campaignType || "cold",
+    });
+    if (!fmtCheck.valid) {
+        console.error(`🛑 Mode-format validation failed: ${fmtCheck.reason}`);
+        throw new HttpsError("invalid-argument", fmtCheck.reason, { code: "invalid_mode_format" });
+    }
+}
+
 export const serverGenerateTOV = onCall({
     region: "europe-west1",
     secrets: [geminiApiKey],
@@ -3564,6 +3579,7 @@ export const serverGenerateTOV = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, editIntent, rewriteScope, semanticLock, activeWorkspaceId } = request.data;
     void activeWorkspaceId;
+    await enforceModeFormatGate(inputs);
     // ═══ ENTITLEMENT: Check retargeting gate on hook generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
@@ -3589,6 +3605,7 @@ export const serverGenerateConcepts = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, activeWorkspaceId } = request.data;
     void activeWorkspaceId;
+    await enforceModeFormatGate(inputs);
     // ═══ ENTITLEMENT: Check retargeting gate on concept generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
@@ -3614,6 +3631,7 @@ export const serverGenerateBuildPlan = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride, activeWorkspaceId } = request.data;
     void activeWorkspaceId;
+    await enforceModeFormatGate(inputs);
     // ═══ ENTITLEMENT ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
@@ -3638,6 +3656,10 @@ export const serverGenerateFinalAd = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId } = request.data;
     void activeWorkspaceId;
+    // ═══ MODE-FORMAT GATE (before any credit spend) ═══
+    if (!editInstruction && !base64ToEdit) {
+        await enforceModeFormatGate(inputs);
+    }
     // ═══ ENTITLEMENT: Check retargeting + aspect ratio gates ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireAspectRatio: currentAspectRatio,
@@ -3855,6 +3877,7 @@ export const serverGenerateCarouselAngles = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { inputs, resolvedUniverse, slideCount, globalRefinement, activeWorkspaceId } = request.data;
     void activeWorkspaceId;
+    await enforceModeFormatGate(inputs);
     // ═══ ENTITLEMENT: Check carousel access + slide count ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireCarousel: true,
@@ -3890,6 +3913,7 @@ export const serverGenerateCarouselSlideCopies = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { approvedTov, inputs, slideCount, resolvedUniverse, refinement, activeWorkspaceId } = request.data;
     void activeWorkspaceId;
+    await enforceModeFormatGate(inputs);
     // ═══ ENTITLEMENT: Check carousel access ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireCarousel: true,
@@ -3924,6 +3948,7 @@ export const serverGenerateTestimonialCarousel = onCall({
     if (!selectedModes.includes('testimonial_carousel')) {
         throw new HttpsError("invalid-argument", "testimonial_carousel mode must be selected.");
     }
+    await enforceModeFormatGate(inputs);
     // ═══ ENTITLEMENT: Check carousel access ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireCarousel: true,
@@ -3952,6 +3977,7 @@ export const serverGenerateCaption = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan, activeWorkspaceId } = request.data;
     void activeWorkspaceId;
+    await enforceModeFormatGate(inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateCaption(mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan);
@@ -3974,6 +4000,7 @@ export const serverGenerateVisualPolishes = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { currentRender, inputs } = request.data;
+    await enforceModeFormatGate(inputs);
     // ═══ ENTITLEMENT: Check visual polishes access ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireVisualPolishes: true,
