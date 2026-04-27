@@ -39,8 +39,10 @@ export interface BrandColorPair {
 
 Validation rules (enforced by the resolver):
 - Hex strings MUST match `/^#[0-9A-Fa-f]{6}$/` after normalizing (trim whitespace, then lowercase the body to `#rrggbb`). Anything else → treated as empty per FR-017.
-- `primary` and `secondary` are resolved **independently** by precedence: `form` (input field `formPrimary`/`formSecondary`) > `avatar` (input field `avatar`) > `inherited` (input field **`sourceColdAd`** — a retargeting/remix link to a previous generation; the input parameter is named `sourceColdAd` but the resolved `BrandColorSource` label is `'inherited'`) > `workspace` (input field `workspace`). A higher-precedence source supplying only a primary does NOT block a lower-precedence source's secondary from being inherited (and vice versa). The `source` label tracks the primary's source.
+- `primary` and `secondary` are scanned **independently** by precedence: `form` (input field `formPrimary`/`formSecondary`) > `avatar` (input field `avatar`) > `inherited` (input field **`sourceColdAd`** — a retargeting/remix link to a previous generation; the input parameter is named `sourceColdAd` but the resolved `BrandColorSource` label is `'inherited'`) > `workspace` (input field `workspace`). A higher-precedence source supplying only a primary does NOT block a lower-precedence source's secondary from being inherited.
+- **Secondary requires primary**: the resolver only surfaces a `secondary` in the returned `BrandColorPair` when a valid `primary` was also resolved. If the precedence scan finds no valid primary in any source, the resolver returns `{ primary: null, secondary: null, ctaTextColor: null, source: 'none' }` even when one of the sources had a valid secondary. A "secondary-only" output is not a valid resolver state.
 - `secondary` MAY be null even when `primary` is non-null (no source had a valid secondary anywhere in the precedence chain).
+- The `source` label always tracks the **primary's** source. The secondary's source is intentionally not surfaced in `BrandColorPair`.
 - `ctaTextColor` is computed iff `primary` is non-null; null otherwise.
 - `source: 'none'` ⇔ `primary === null && secondary === null && ctaTextColor === null`.
 

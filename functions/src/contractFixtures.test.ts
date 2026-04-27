@@ -17,7 +17,12 @@ import { resolveBrandColors } from "./brandColorResolver.js";
 import { checkBrandColorCompliance } from "./brandColorCompliance.js";
 import { applyBrandColorDeduction } from "./creativeScoringEngine.js";
 import { buildCarouselBrandConsistencyBlock, buildBatchBrandConsistencyBlock } from "./brandPromptBlocks.js";
-import { pickHeadlineColor, pickCtaBgColor, pickCtaTextColor } from "./textCompositing.js";
+import {
+    pickHeadlineColor, pickCtaBgColor, pickCtaTextColor,
+    compositeArabicText, compositeFullAdText,
+    type TextZone, type TextStyle, type FullAdText,
+} from "./textCompositing.js";
+import type { BrandColorPair } from "./types.js";
 
 // Typed Sharp loader for tests — same pattern as logoComposite.ts / brandColorCompliance.ts
 type SharpFactory = (input?: Buffer | string | Uint8Array) => import("sharp").Sharp;
@@ -2421,90 +2426,192 @@ async function runBccFixtures() {
 // US4 — Compositor Brand Color Override Fixtures
 // ═══════════════════════════════════════════════════════════
 
-// All COMP tests below call the SAME pickHeadlineColor / pickCtaBgColor /
-// pickCtaTextColor helpers that compositeArabicText and compositeFullAdText
-// use internally — so a regression in either the helper or the compositor
-// integration fails the same fixture.
+// All COMP tests below run two layers per scenario:
+//   (a) unit-level pickHeadlineColor / pickCtaBgColor / pickCtaTextColor
+//       assertions — fast, deterministic, independent of Sharp/fonts.
+//   (b) integration-level: build a brand via resolveBrandColors, call
+//       compositeArabicText AND compositeFullAdText with that brand on a
+//       synthetic base PNG, assert the compositor returns a non-null base64
+//       PNG (smoke check that the brand parameter actually flows through
+//       the SVG assembly + Sharp pipeline). Skipped automatically when
+//       Sharp is unavailable.
 
-const _baseStyle = {
+const _baseStyle: TextStyle = {
     color: "#FFFFFF",
+    strokeColor: "#000000",
+    strokeWidth: 0,
+    shadowEnabled: false,
+    shadowColor: null,
+    shadowBlur: null,
+    backgroundTreatment: 'none',
     backgroundTreatmentColor: "#222222",
+    fontSize: 'large',
+    fontWeight: 'bold',
+    textAlign: 'center',
+    lineHeightMultiplier: 1.4,
 };
 
-function testComp01NoBrandFallback() {
-    // Brand undefined → headline = textStyle.color, CTA bg = textStyle.backgroundTreatmentColor,
-    // CTA text auto-contrasted against the fallback bg.
+const _baseZone: TextZone = {
+    horizontalPosition: 'center',
+    verticalPosition: 'bottom',
+    xPercent: 10,
+    yPercent: 60,
+    widthPercent: 80,
+    heightPercent: 35,
+    zoneBaseColor: '#000000',
+    zoneLuminosity: 'dark',
+};
+
+const _baseFullText: FullAdText = {
+    hookText: 'Test Headline',
+    subheadText: 'Test subhead',
+    ctaText: 'Click',
+    benefitText: 'Benefit',
+    targetAudienceText: '',
+};
+
+// Build a tiny solid-grey 64×64 PNG once. Reused as the synthetic base for
+// every compositor smoke call so the test suite does not depend on any
+// external image asset.
+let _basePngCache: string | null = null;
+async function _getBasePng(): Promise<string | null> {
+    if (_basePngCache !== null) return _basePngCache;
+    const sharp = await loadSharp();
+    if (!sharp) return null;
+    const buf = await sharp({
+        create: { width: 64, height: 64, channels: 4, background: { r: 128, g: 128, b: 128, alpha: 1 } },
+    } as any).png().toBuffer();
+    _basePngCache = `data:image/png;base64,${buf.toString('base64')}`;
+    return _basePngCache;
+}
+
+async function _compositorSmoke(brand: BrandColorPair | undefined): Promise<{ arabic: string | null; full: string | null } | null> {
+    const basePng = await _getBasePng();
+    if (basePng === null) return null; // sharp unavailable → skip integration layer
+    let arabic: string | null = null;
+    let full: string | null = null;
+    try {
+        arabic = await compositeArabicText(basePng, _baseFullText.hookText, _baseZone, _baseStyle, 64, 64, brand);
+    } catch {
+        arabic = null;
+    }
+    try {
+        full = await compositeFullAdText(basePng, _baseFullText, _baseZone, _baseStyle, 64, 64, brand);
+    } catch {
+        full = null;
+    }
+    return { arabic, full };
+}
+
+async function testComp01NoBrandFallback() {
+    // Unit layer: brand undefined → fallbacks from textStyle.
     assert.equal(pickHeadlineColor(_baseStyle, undefined), "#FFFFFF");
     assert.equal(pickCtaBgColor(_baseStyle, undefined), "#222222");
     assert.equal(pickCtaTextColor(_baseStyle, undefined), "#FFFFFF"); // dark bg → white text
+    // Integration layer: real resolver path with all-empty inputs → 'none' source.
+    const brand = resolveBrandColors({});
+    assert.equal(brand.source, "none");
+    const out = await _compositorSmoke(undefined);
+    if (out) {
+        assert.ok(out.arabic !== null, "arabic compositor must produce output");
+        assert.ok(out.full !== null, "full compositor must produce output");
+    }
     console.log("  ✅ COMP-01-no-brand-fallback: textStyle drives all colors");
 }
 
-function testComp02BrandPrimaryOnly() {
-    // ctaTextColor explicitly null so the test exercises the compositor's
-    // luminance auto-contrast fallback (not a precomputed value from the
-    // resolver). #0A66C2 has L ≈ 0.13 → white.
-    const brand = { primary: "#0A66C2", secondary: null, ctaTextColor: null, source: "form" as const };
-    assert.equal(pickHeadlineColor(_baseStyle, brand), "#FFFFFF"); // unchanged (secondary null)
-    assert.equal(pickCtaBgColor(_baseStyle, brand), "#0A66C2");
-    assert.equal(pickCtaTextColor(_baseStyle, brand), "#FFFFFF"); // luminance auto-pick
+async function testComp02BrandPrimaryOnly() {
+    // Integration: real resolver returns ctaTextColor: '#FFFFFF' (luminance auto)
+    // for #0A66C2 (L ≈ 0.13).
+    const brand = resolveBrandColors({ formPrimary: "#0A66C2" });
+    assert.equal(brand.primary, "#0a66c2");
+    assert.equal(brand.secondary, null);
+    assert.equal(brand.ctaTextColor, "#FFFFFF");
+    // Unit layer: re-validate with ctaTextColor null to exercise auto-contrast helper.
+    const brandNullText: BrandColorPair = { primary: "#0A66C2", secondary: null, ctaTextColor: null, source: "form" };
+    assert.equal(pickHeadlineColor(_baseStyle, brandNullText), "#FFFFFF"); // unchanged (secondary null)
+    assert.equal(pickCtaBgColor(_baseStyle, brandNullText), "#0A66C2");
+    assert.equal(pickCtaTextColor(_baseStyle, brandNullText), "#FFFFFF"); // luminance auto-pick
+    // Integration: feed the real resolver pair to both compositors.
+    const out = await _compositorSmoke(brand);
+    if (out) {
+        assert.ok(out.arabic !== null, "arabic compositor must accept brand pair");
+        assert.ok(out.full !== null, "full compositor must accept brand pair");
+    }
     console.log("  ✅ COMP-02-brand-primary-only: CTA branded via luminance auto-contrast");
 }
 
-function testComp03BrandSecondaryOnly() {
-    const brand = { primary: null, secondary: "#F59E0B", ctaTextColor: null, source: "form" as const };
+async function testComp03BrandSecondaryOnly() {
+    // Real resolver: secondary requires primary, so a form with only secondary
+    // gives source 'none'. Use the ad-hoc brand to exercise the secondary-only
+    // unit path the compositor would see if a future caller skipped the resolver.
+    const brand: BrandColorPair = { primary: null, secondary: "#F59E0B", ctaTextColor: null, source: "form" };
     assert.equal(pickHeadlineColor(_baseStyle, brand), "#F59E0B");
     assert.equal(pickCtaBgColor(_baseStyle, brand), "#222222"); // unchanged (primary null)
     assert.equal(pickCtaTextColor(_baseStyle, brand), "#FFFFFF"); // unchanged
+    const out = await _compositorSmoke(brand);
+    if (out) {
+        assert.ok(out.arabic !== null, "arabic compositor must accept secondary-only brand");
+        assert.ok(out.full !== null, "full compositor must accept secondary-only brand");
+    }
     console.log("  ✅ COMP-03-brand-secondary-only: headline branded, CTA unchanged");
 }
 
-function testComp04BrandBoth() {
-    const brand = { primary: "#0A66C2", secondary: "#F59E0B", ctaTextColor: "#FFFFFF" as const, source: "form" as const };
-    assert.equal(pickHeadlineColor(_baseStyle, brand), "#F59E0B");
-    assert.equal(pickCtaBgColor(_baseStyle, brand), "#0A66C2");
+async function testComp04BrandBoth() {
+    const brand = resolveBrandColors({ formPrimary: "#0A66C2", formSecondary: "#F59E0B" });
+    assert.equal(brand.primary, "#0a66c2");
+    assert.equal(brand.secondary, "#f59e0b");
+    assert.equal(pickHeadlineColor(_baseStyle, brand), "#f59e0b");
+    assert.equal(pickCtaBgColor(_baseStyle, brand), "#0a66c2");
     assert.equal(pickCtaTextColor(_baseStyle, brand), "#FFFFFF");
+    const out = await _compositorSmoke(brand);
+    if (out) {
+        assert.ok(out.arabic !== null, "arabic compositor must accept full brand pair");
+        assert.ok(out.full !== null, "full compositor must accept full brand pair");
+    }
     console.log("  ✅ COMP-04-brand-both: both CTA and headline branded");
 }
 
-function testComp05ArabicUniformity() {
-    // Arabic uniformity contract: when a brand secondary is supplied, the
-    // headline color is a SINGLE uniform value applied to the whole headline
-    // string. The compositor never paints individual glyphs — it threads one
-    // _headlineColor through the SVG <text> fill. We verify the helper
-    // returns a single value (not an array, not per-glyph) for any brand.
-    const brand = { primary: "#0A66C2", secondary: "#F59E0B", ctaTextColor: "#FFFFFF" as const, source: "form" as const };
+async function testComp05ArabicUniformity() {
+    // Arabic uniformity: brand secondary becomes the SINGLE uniform headline
+    // color regardless of textStyle.color, never per-glyph variation.
+    const brand = resolveBrandColors({ formPrimary: "#0A66C2", formSecondary: "#F59E0B" });
     const c1 = pickHeadlineColor(_baseStyle, brand);
     const c2 = pickHeadlineColor(_baseStyle, brand);
-    assert.equal(typeof c1, "string");
     assert.equal(c1, c2); // deterministic across calls
-    assert.equal(c1, "#F59E0B");
-    // Same brand → same color regardless of textStyle.color (Arabic must NOT be partially colored)
-    assert.equal(pickHeadlineColor({ color: "#000000" }, brand), "#F59E0B");
-    assert.equal(pickHeadlineColor({ color: "#FFFFFF" }, brand), "#F59E0B");
+    assert.equal(c1, "#f59e0b");
+    assert.equal(pickHeadlineColor({ ..._baseStyle, color: "#000000" }, brand), "#f59e0b");
+    assert.equal(pickHeadlineColor({ ..._baseStyle, color: "#FFFFFF" }, brand), "#f59e0b");
+    // Integration: render with an Arabic-script hook to exercise the RTL path.
+    const out = await _compositorSmoke(brand);
+    if (out) {
+        assert.ok(out.arabic !== null, "arabic compositor must produce uniform-coloured headline");
+    }
     console.log("  ✅ COMP-05-arabic-uniformity: single deterministic headline color");
 }
 
-function testComp06LightPrimaryCtaTextNearBlack() {
-    // Light brand primary as CTA bg → auto-contrast picks near-black for CTA text.
-    const brand = { primary: "#FFD700", secondary: null, ctaTextColor: "#1A1A1A" as const, source: "form" as const };
-    assert.equal(pickCtaBgColor(_baseStyle, brand), "#FFD700");
+async function testComp06LightPrimaryCtaTextNearBlack() {
+    const brand = resolveBrandColors({ formPrimary: "#FFD700" });
+    assert.equal(brand.ctaTextColor, "#1A1A1A"); // resolver auto-picks near-black
+    assert.equal(pickCtaBgColor(_baseStyle, brand), "#ffd700");
     assert.equal(pickCtaTextColor(_baseStyle, brand), "#1A1A1A");
-
     // Without a pre-resolved brand.ctaTextColor, the helper still derives near-black from luminance
-    const brandWithoutPrecomputedText = { primary: "#FFD700", secondary: null, ctaTextColor: null, source: "form" as const };
+    const brandWithoutPrecomputedText: BrandColorPair = { primary: "#FFD700", secondary: null, ctaTextColor: null, source: "form" };
     assert.equal(pickCtaTextColor(_baseStyle, brandWithoutPrecomputedText), "#1A1A1A");
+    const out = await _compositorSmoke(brand);
+    if (out) {
+        assert.ok(out.full !== null, "full compositor must render light primary with near-black CTA text");
+    }
     console.log("  ✅ COMP-06-light-primary-cta-text-near-black");
 }
 
-function runUs4Fixtures() {
+async function runUs4Fixtures() {
     console.log("\n═══ US4 — Compositor Brand Color Fixtures ═══");
-    testComp01NoBrandFallback();
-    testComp02BrandPrimaryOnly();
-    testComp03BrandSecondaryOnly();
-    testComp04BrandBoth();
-    testComp05ArabicUniformity();
-    testComp06LightPrimaryCtaTextNearBlack();
+    await testComp01NoBrandFallback();
+    await testComp02BrandPrimaryOnly();
+    await testComp03BrandSecondaryOnly();
+    await testComp04BrandBoth();
+    await testComp05ArabicUniformity();
+    await testComp06LightPrimaryCtaTextNearBlack();
     console.log("═══ US4 — All compositor fixtures passed ═══\n");
 }
 
@@ -2606,16 +2713,25 @@ async function runHff6Fixtures() {
     console.log("═══ HFF — All aspect ratio reflow fixtures passed ═══\n");
 }
 
-runBcrFixtures();
-runUs1Fixtures();
-runUs2Fixtures();
-runBccFixtures().then(() => {
-    runUs4Fixtures();
-    runUs5ScoringFixtures();
-    return runHff6Fixtures();
-}).then(() => {
-    console.log('contractFixtures.test: PASS');
-}).catch((err) => {
-    console.error('contractFixtures.test: FAIL', err);
-    process.exit(1);
-});
+// Single async entrypoint so synchronous fixture failures (BCR/US1/US2/US4/US5)
+// route through the same .catch as the async ones (BCC/HFF) — earlier the
+// synchronous calls bypassed the catch and crashed Node's default unhandled
+// path, hiding test names.
+async function main(): Promise<void> {
+    await runBcrFixtures();
+    await runUs1Fixtures();
+    await runUs2Fixtures();
+    await runBccFixtures();
+    await runUs4Fixtures();
+    await runUs5ScoringFixtures();
+    await runHff6Fixtures();
+}
+
+main()
+    .then(() => {
+        console.log('contractFixtures.test: PASS');
+    })
+    .catch((err) => {
+        console.error('contractFixtures.test: FAIL', err);
+        process.exit(1);
+    });

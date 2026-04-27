@@ -37,15 +37,15 @@ import { GenerationError } from "./types.js";
 // Centralises the 4-source precedence shape so all 6 prompt-build sites and
 // the compliance call site stay in lockstep. Earlier copies of this object
 // duplicated the (inputs as any) cast 5× per site.
-type _BrandPrecedenceInputs = {
+interface BrandPrecedenceInputs {
     brandColorPrimary?: string;
     brandColorSecondary?: string;
     _avatarBrandColors?: { brandColorPrimary?: string; brandColorSecondary?: string } | null;
     _sourceColdAdBrandColors?: { brandColorPrimary?: string; brandColorSecondary?: string } | null;
     _workspaceBrandColors?: { brandColorPrimary?: string; brandColorSecondary?: string } | null;
-};
+}
 function buildBrandResolverArgs(inputs: AdInputs): ResolveBrandColorsInput {
-    const i = inputs as AdInputs & _BrandPrecedenceInputs;
+    const i = inputs as AdInputs & BrandPrecedenceInputs;
     return {
         formPrimary: i.brandColorPrimary,
         formSecondary: i.brandColorSecondary,
@@ -2170,12 +2170,18 @@ ${(() => {
            
       - VISUALS: Plan negative space for Headline, Subheadline, and Action Block.
       - BRANDING: ${inputs.brandLogos?.length ? `Integrate ${inputs.brandLogos.length === 1 ? "the Box B logo" : `all ${inputs.brandLogos.length} Box B logos`} as physical objects in the scene. ${inputs.brandLogos.length > 1 ? "All logos are equal peers — rendered at comparable size and balanced placement. Do NOT treat any logo as primary; upload order has no prominence meaning." : ""}` : "No logos provided."}
-      ${_brandResolved.primary ? `- BRAND COLORS: Primary ${_brandResolved.primary}${_brandResolved.secondary ? `, Secondary ${_brandResolved.secondary}` : ''}. Weave these into the COLOR_PALETTE of each concept. VARY their usage across the 3 concepts:
+      ${_brandResolved.primary ? (inputs.cta && String(inputs.cta).trim()
+        ? `- BRAND COLORS: Primary ${_brandResolved.primary}${_brandResolved.secondary ? `, Secondary ${_brandResolved.secondary}` : ''}. Weave these into the COLOR_PALETTE of each concept. VARY their usage across the 3 concepts:
         Concept 1: Use brand primary as CTA button color and subtle accent in environment lighting.
         Concept 2: Use brand primary as headline highlight glow / text accent color.
         Concept 3: Use brand colors as dominant environment tones (neon signs, ambient light, props).
         This ensures brand recognition while keeping each concept visually distinct.
-        CRITICAL: write the actual hex code ${_brandResolved.primary} in every color reference. Never write a placeholder phrase, never wrap a colour in brackets or braces, never substitute the literal brand name for the hex. The designer can only interpret real hex values.` : ''} `;
+        CRITICAL: write the actual hex code ${_brandResolved.primary} in every color reference. Never write a placeholder phrase, never wrap a colour in brackets or braces, never substitute the literal brand name for the hex. The designer can only interpret real hex values.`
+        : `- BRAND COLORS: Primary ${_brandResolved.primary}${_brandResolved.secondary ? `, Secondary ${_brandResolved.secondary}` : ''}. Weave these into the COLOR_PALETTE of each concept (no CTA in this ad — apply as accent only). VARY their usage across the 3 concepts:
+        Concept 1: Use brand primary as a subtle accent in environment lighting.
+        Concept 2: Use brand primary as headline highlight glow / text accent color.
+        Concept 3: Use brand colors as dominant environment tones (neon signs, ambient light, props).
+        This ensures brand recognition while keeping each concept visually distinct.`) : ''} `;
 
         } else if (mode === 'precision') {
             modeInstruction = `SURGICAL EDIT [SINGLE CONCEPT PATCH]:
@@ -5374,9 +5380,9 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
 ═══════════════════════════════════════════════════════════════════════════════
 ` : '';
 
-        const _isBatchCall = inputs.adMode !== 'carousel' && inputs.adMode !== 'single' && !!(inputs as any).batchN;
+        const _isBatchCall = inputs.adMode !== 'carousel' && inputs.adMode !== 'single' && !!_multiAssetView.batchN;
         const _brandConsistencyInstruction = _isBatchCall
-            ? buildBatchBrandConsistencyBlock(_brandResolved, (inputs as any).batchN || 'multiple')
+            ? buildBatchBrandConsistencyBlock(_brandResolved, _multiAssetView.batchN || 'multiple')
             : inputs.adMode === 'carousel'
                 ? buildCarouselBrandConsistencyBlock(_brandResolved)
                 : '';
