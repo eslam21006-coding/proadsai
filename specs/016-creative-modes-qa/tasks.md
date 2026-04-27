@@ -16,7 +16,7 @@ description: "Phase 16 — Creative Modes & Art Direction QA tasks"
 
 - **[P]**: Can run in parallel (different files, no dependencies)
 - **[Story]**: User Story label (US1, US2, US3) — required for story-phase tasks
-- File paths are absolute-ish from repo root `D:\proads-worktrees\016-creative-modes-qa`
+- File paths are repo-relative from the worktree root (`./functions/src/...`, `./src/components/...`, `./specs/016-creative-modes-qa/...`).
 
 ## Path Conventions
 

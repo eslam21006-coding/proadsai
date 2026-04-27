@@ -9,12 +9,12 @@
 ## Prerequisites
 
 - Repository cloned, on branch `016-creative-modes-qa`.
-- Node 20+ installed.
+- Use the Node version specified in `functions/package.json` (Node 24). The repo's `engines.node` field is `"24"` — older versions may fail before fixtures run.
 - Firebase CLI installed (only needed if you also want to run the function locally; not required for the fixture suite).
 
 ```bash
 git checkout 016-creative-modes-qa
-cd D:\proads-worktrees\016-creative-modes-qa     # or wherever the worktree lives
+cd <repo-root>     # the worktree root that contains functions/ and src/
 ```
 
 ## Step 1 — Install dependencies
@@ -29,20 +29,13 @@ npm install
 cd ..
 ```
 
-## Step 2 — Run the existing test suite (baseline)
+## Step 2 — Run the full test suite
 
-Confirm the existing 81 fixtures still pass before any Phase 16 changes are layered in.
-
-```bash
-cd functions
-npm test
-```
-
-Expected: all 4 test files complete, **zero** failures, pass count ≥ 81.
-
-## Step 3 — Run the Phase 16 fixture suite
-
-Once Phase 16 tasks have been implemented (`/speckit.tasks` → `/speckit.implement`), the same command runs the new fixtures alongside the existing ones.
+`npm test` runs every test file (including the new `modeFormatValidator` unit tests
+and the Phase 16 fixtures inside `contractFixtures.test.ts`). There is no
+"baseline-only" subset because the Phase 16 work is integrated into the
+existing harness — once the tasks land, Phase 16 fixtures run as part of
+every `npm test` invocation.
 
 ```bash
 cd functions
@@ -50,10 +43,11 @@ npm test
 ```
 
 Expected, after Phase 16 lands:
-- Pass count = 81 (existing) + 43 (Phase 16) = 124+. Exact count depends on whether any sub-fixtures are split.
+- All test files complete, **zero** failures, exit code 0.
+- `contractFixtures.test.ts` reports 81 pre-existing fixtures plus 43 Phase 16 fixtures (124+ in total; exact count depends on whether any sub-fixtures are split).
 - Console output prints a coverage summary at the end: `Phase 16: 10 solo modes ✓, 10 approved pairs ✓, 4 blocked ✓, 4 carousel-specific ✓, 3 batch-specific ✓, 2 retargeting-specific ✓, 1 self-correction ✓, 8 adapt states ✓, 1 audit ✓`.
 - The adapt-state audit prints `audit: 8/8 strings free of cultural-compliance trigger words ✓`.
-- Process exit code = 0.
+- The `modeFormatValidator` unit tests print all 7 decision-table rows + the fuzz pass.
 
 ## Step 4 — Reproduce a runtime self-correction case (optional manual check)
 

@@ -3555,12 +3555,17 @@ export const serverGetRecommendationEvents = onCall({
 // ─── GENERATE TOV / HOOKS ────────────────────────────────────────────────
 // ─── MODE-FORMAT-CAMPAIGN VALIDATION (FR-003) ─────────────────────────────
 // Single source-of-truth gate: must run BEFORE entitlement checks / credit deduction.
-async function enforceModeFormatGate(inputs: any): Promise<void> {
+// Carousel-only callables pass `overrideFormat: "carousel"` so a spoofed
+// inputs.adMode cannot bypass carousel-only restrictions on a carousel endpoint.
+async function enforceModeFormatGate(
+    inputs: { offerCreativeMode?: string[]; adMode?: string; campaignType?: string },
+    options?: { overrideFormat?: "single" | "carousel" | "batch" },
+): Promise<void> {
     const { validateModeFormatCombination } = await import("./creativeResolver.js");
     const fmtCheck = validateModeFormatCombination({
         modes: inputs?.offerCreativeMode || ["standard_hero"],
-        adFormat: inputs?.adMode || "single",
-        campaignType: inputs?.campaignType || "cold",
+        adFormat: options?.overrideFormat ?? (inputs?.adMode as "single" | "carousel" | "batch" | undefined) ?? "single",
+        campaignType: (inputs?.campaignType as "cold" | "retargeting" | undefined) ?? "cold",
     });
     if (!fmtCheck.valid) {
         console.error(`🛑 Mode-format validation failed: ${fmtCheck.reason}`);
@@ -3657,9 +3662,11 @@ export const serverGenerateFinalAd = onCall({
     const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId } = request.data;
     void activeWorkspaceId;
     // ═══ MODE-FORMAT GATE (before any credit spend) ═══
-    if (!editInstruction && !base64ToEdit) {
-        await enforceModeFormatGate(inputs);
-    }
+    // Always run — even on edit/regen paths. An edit request that arrives with
+    // an unlaunched mode/format combo is itself invalid and should be rejected
+    // before any credit deduction. The legacy bypass that skipped on edits
+    // allowed spoofed-input replays to render with invalid combos.
+    await enforceModeFormatGate(inputs);
     // ═══ ENTITLEMENT: Check retargeting + aspect ratio gates ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireAspectRatio: currentAspectRatio,
@@ -3877,7 +3884,9 @@ export const serverGenerateCarouselAngles = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { inputs, resolvedUniverse, slideCount, globalRefinement, activeWorkspaceId } = request.data;
     void activeWorkspaceId;
-    await enforceModeFormatGate(inputs);
+    // Carousel-only callable: pin adFormat to "carousel" so a spoofed inputs.adMode
+    // cannot bypass carousel-only restrictions on this endpoint.
+    await enforceModeFormatGate(inputs, { overrideFormat: "carousel" });
     // ═══ ENTITLEMENT: Check carousel access + slide count ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireCarousel: true,
@@ -3913,7 +3922,8 @@ export const serverGenerateCarouselSlideCopies = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { approvedTov, inputs, slideCount, resolvedUniverse, refinement, activeWorkspaceId } = request.data;
     void activeWorkspaceId;
-    await enforceModeFormatGate(inputs);
+    // Carousel-only callable: pin adFormat to "carousel".
+    await enforceModeFormatGate(inputs, { overrideFormat: "carousel" });
     // ═══ ENTITLEMENT: Check carousel access ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireCarousel: true,
@@ -3948,7 +3958,8 @@ export const serverGenerateTestimonialCarousel = onCall({
     if (!selectedModes.includes('testimonial_carousel')) {
         throw new HttpsError("invalid-argument", "testimonial_carousel mode must be selected.");
     }
-    await enforceModeFormatGate(inputs);
+    // Carousel-only callable: pin adFormat to "carousel".
+    await enforceModeFormatGate(inputs, { overrideFormat: "carousel" });
     // ═══ ENTITLEMENT: Check carousel access ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireCarousel: true,

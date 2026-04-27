@@ -741,11 +741,25 @@ const LAUNCHED_MODE_SET = new Set<string>([
     "text_only", "before_after",
 ]);
 
+const ALLOWED_AD_FORMATS = new Set<string>(["single", "carousel", "batch"]);
+const ALLOWED_CAMPAIGN_TYPES = new Set<string>(["cold", "retargeting"]);
+
 export function validateModeFormatCombination(
     input: ModeFormatValidationInput,
 ): ModeFormatValidationResult {
     const { modes, adFormat, campaignType } = input;
     const filtered = (modes || []).filter(Boolean);
+
+    // Runtime guards: callers may pass spoofed/typo'd values. Reject before any
+    // type-narrowing comparisons so an unknown adFormat doesn't silently slip
+    // through (e.g. adFormat === "feed" would not match any of the explicit
+    // checks below and would fall through as valid). Same for campaignType.
+    if (!ALLOWED_AD_FORMATS.has(adFormat)) {
+        return { valid: false, reason: "Invalid adFormat" };
+    }
+    if (!ALLOWED_CAMPAIGN_TYPES.has(campaignType)) {
+        return { valid: false, reason: "Invalid campaignType" };
+    }
 
     if (filtered.includes("before_after") && filtered.length > 1) {
         return { valid: false, reason: "Before/After is single-image only — defines the entire canvas." };

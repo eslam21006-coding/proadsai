@@ -172,7 +172,15 @@ export function createTraceBuilder(): TraceBuilder {
             return builder;
         },
         recordAdaptStateAudit(result) {
-            state._adaptStateAudit = { ...result, entries: result.entries.map(e => ({ ...e })) };
+            state._adaptStateAudit = {
+                ...result,
+                entries: result.entries.map(e => ({
+                    ...e,
+                    triggerWordsFound: Array.isArray(e.triggerWordsFound)
+                        ? [...e.triggerWordsFound]
+                        : e.triggerWordsFound,
+                })),
+            };
             return builder;
         },
         build(): ResolutionTrace {

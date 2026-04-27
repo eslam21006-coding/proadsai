@@ -802,8 +802,12 @@ Combined ticket-and-speaker layout — the speaker identity is INTEGRATED into t
 - Layout: ticket takes 70% of canvas, with speaker identity filling the main ticket area
 ${isTall ? '- 9:16 EXECUTION: Extended ticket with speaker portrait prominent, credentials below, full event metadata row.' : ''}
 ${isSquare ? '- 1:1 EXECUTION: Compact ticket, speaker portrait centered within ticket frame, metadata around it.' : ''}`);
-        }
-        parts.push(`
+        } else {
+            // Standalone speaker_card guidance — only emit when NOT paired with event_ticket,
+            // because the ticket+speaker combo above replaces the stage-environment rules
+            // (speaker is on a ticket, not a stage). Mixing both blocks produces conflicting
+            // direction (stage spotlight vs ticket frame) for the model.
+            parts.push(`
 PAIR EXECUTION — SPEAKER CARD (PREMIUM):
 This is a KEYNOTE SPEAKER presentation — not a generic portrait.
 - STAGE ENVIRONMENT is mandatory: dramatic spotlight, dark auditorium, podium or stage edge visible
@@ -813,6 +817,7 @@ This is a KEYNOTE SPEAKER presentation — not a generic portrait.
 - Rim lighting on hero (back-lit edge glow) for cinematic depth
 ${isTall ? '- 9:16 EXECUTION: Full dramatic stage depth — audience at very bottom, hero in spotlight center, credentials bar across middle. Use height for stage grandeur.' : ''}
 ${isSquare ? '- 1:1 EXECUTION: Tighter crop, hero upper 60%, credentials bar across lower third. Audience hints in bottom corners.' : ''}`);
+        }
     }
 
     if (secondaryMode === 'event_ticket' || primaryMode === 'event_ticket') {
@@ -829,8 +834,12 @@ Ticket structure with embedded broadcast screen — the screen element is integr
 ${isTall ? '- 9:16 EXECUTION: Larger ticket with screen as an embedded panel within the ticket area.' : ''}
 ${isSquare ? '- 1:1 EXECUTION: Compact ticket, small screen inset in corner of ticket layout.' : ''}`);
             }
-        }
-        parts.push(`
+        } else {
+            // Standalone event_ticket guidance — only emit when NOT paired with
+            // webinar_screen, because the ticket+screen combo above replaces the
+            // speaker-portrait rules (the ticket houses a screen, not a portrait).
+            // Mixing both blocks produces conflicting portrait/screen instructions.
+            parts.push(`
 PAIR EXECUTION — EVENT TICKET (PREMIUM):
 This must look like a REAL designed premium ticket — not a generic ad with event text.
 - Ticket structure: visible BORDER/FRAME with ticket-specific decorations (perforated edge, barcode strip, serial number)
@@ -840,6 +849,7 @@ This must look like a REAL designed premium ticket — not a generic ad with eve
 - Ticket should feel like something you'd screenshot and share — collectible quality
 ${isTall ? '- 9:16 EXECUTION: Larger ticket with MORE detail — extended perforations, more metadata space, larger speaker portrait. Use height for dramatic ticket proportions.' : ''}
 ${isSquare ? '- 1:1 EXECUTION: Compact ticket, tighter spacing. Portrait smaller. Focus on event title and metadata readability.' : ''}`);
+        }
     }
 
 
@@ -4072,11 +4082,22 @@ ${JSON.stringify(machinePlan)}`;
 // one reinforcement directive per missing slot.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// CTA presence is intentionally NOT a required slot for standard_hero — many
+// hero variants don't render a button (the headline IS the CTA, or the offer
+// price is the focus). Including CTA as required would force the validator to
+// reinforce a button onto every CTA-less render. Modes whose layout requires
+// a button (event_ticket / webinar_screen via "register"/"join", value_stack
+// via price panel) keep their action-surface synonyms.
+const MODE_OPTIONAL_SLOTS: Record<string, string[][]> = {
+    standard_hero: [
+        ["cta zone", "cta button", "call to action"],
+    ],
+};
+
 const MODE_REQUIRED_SLOTS: Record<string, string[][]> = {
     standard_hero: [
         ["hero portrait", "hero zone", "coach portrait", "person portrait", "hero_dominant"],
         ["headline zone", "headline"],
-        ["cta zone", "cta button", "call to action"],
     ],
     value_stack: [
         ["stack zone", "stack cards", "stack items", "value items", "item rows", "item cards", "structured_list_area", "visible_item_rows"],
@@ -4087,10 +4108,13 @@ const MODE_REQUIRED_SLOTS: Record<string, string[][]> = {
         ["date", "time"],
         ["seat", "register", "registration", "rsvp"],
     ],
+    // SCREEN_CONTENT_BAN: device screens MUST NOT render text/logos/charts.
+    // The required slots therefore stay non-textual — no "session title", no
+    // "live badge". The slot is "live indicator" (a visual cue: red dot, glow,
+    // broadcast presence) which the model can render without rendering UI text.
     webinar_screen: [
         ["screen", "device", "laptop", "monitor", "screen_or_device"],
-        ["session title", "webinar title"],
-        ["live badge", "live broadcast", "broadcast indicator"],
+        ["live indicator", "live signal", "broadcast presence", "session graphic", "broadcast indicator"],
     ],
     speaker_card: [
         ["speaker", "speaker_identity"],
@@ -4101,9 +4125,11 @@ const MODE_REQUIRED_SLOTS: Record<string, string[][]> = {
         ["book", "3d book", "book mockup", "pdf mockup", "book_mockup"],
         ["book cover", "cover visual", "book_cover"],
     ],
+    // SCREEN_CONTENT_BAN applies here too — "guide content on screen" would
+    // imply readable text on the device. Use a non-text visual descriptor.
     device_mockup: [
         ["device", "tablet", "phone", "device frame", "device_mockup"],
-        ["guide content", "content on screen"],
+        ["content placeholder", "guide visual", "content area"],
     ],
     text_only: [
         ["typography", "text layout", "headline"],

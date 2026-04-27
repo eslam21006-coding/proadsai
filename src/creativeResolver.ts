@@ -205,7 +205,7 @@ export const ALLOWED_PAIRS: AllowedPair[] = [
     { a: 'standard_hero', b: 'book_mockup', tab: 'free_guide', layoutKey: 'hero_book', templateNeeds: ['dashboard_product'], pairValidity: 'Must show hero with real book mockup.' },
     { a: 'standard_hero', b: 'device_mockup', tab: 'free_guide', layoutKey: 'hero_device', templateNeeds: ['dashboard_product', 'device_stack'], pairValidity: 'Must show hero with real device mockup.' },
     { a: 'book_mockup', b: 'device_mockup', tab: 'free_guide', layoutKey: 'book_device', templateNeeds: ['device_stack'], pairValidity: 'Must show both book and device packaging.' },
-    { a: 'event_ticket', b: 'webinar_screen', tab: 'live_events', layoutKey: 'ticket_screen', templateNeeds: ['event_ticket'], pairValidity: 'Must show ticket structure with webinar screen framing.' },
+    { a: 'event_ticket', b: 'webinar_screen', tab: 'live_events', layoutKey: 'ticket_screen', templateNeeds: ['event_ticket', 'dashboard_product'], pairValidity: 'Must show ticket structure with webinar screen framing.' },
 ];
 
 export const DISALLOWED_PAIRS: { a: CreativeModeId; b: CreativeModeId; reason: string }[] = [];
@@ -399,6 +399,17 @@ const PAIR_SPECS: Record<string, PairSpec> = {
         captionAnchors: ['live with', 'presented by', 'webinar'],
     },
 
+    'event_ticket+webinar_screen': {
+        layoutKey: 'ticket_screen', labelEn: 'Event Ticket + Screen', labelAr: 'تذكرة + شاشة',
+        blueprintEn: 'Event ticket with screen element — ticket structure with embedded screen showing event broadcast details.',
+        blueprintAr: 'تذكرة حدث مع عنصر شاشة — هيكل تذكرة مع شاشة مضمنة تعرض تفاصيل البث.',
+        mustShow: ['ticket_frame', 'event_title', 'screen_or_device', 'date_time_row', 'live_badge'],
+        mustAvoid: ['generic_hero_standing', 'value_stack_items', 'before_after_split', 'blank_screen'],
+        visualHierarchy: ['ticket_structure', 'screen_within_ticket', 'event_metadata', 'cta_bottom'],
+        textPlacementRules: ['event_title_top', 'screen_center', 'date_time_below_screen', 'cta_bottom'],
+        captionAnchors: ['live event', 'register', 'watch live'],
+    },
+
     'standard_hero+book_mockup': {
         layoutKey: 'hero_book', labelEn: 'Hero + Book Mockup', labelAr: 'بطل + نموذج كتاب',
         blueprintEn: 'Hero standing beside or holding a prominent 3D book/ebook mockup with visible cover.',
@@ -526,11 +537,24 @@ const LAUNCHED_MODE_SET = new Set<string>([
     "text_only", "before_after",
 ]);
 
+const ALLOWED_AD_FORMATS = new Set<string>(["single", "carousel", "batch"]);
+const ALLOWED_CAMPAIGN_TYPES = new Set<string>(["cold", "retargeting"]);
+
 export function validateModeFormatCombination(
     input: ModeFormatValidationInput,
 ): ModeFormatValidationResult {
-    const { modes, adFormat } = input;
+    const { modes, adFormat, campaignType } = input;
     const filtered = (modes || []).filter(Boolean);
+
+    // Runtime guards: reject unknown adFormat / campaignType before falling
+    // through into the type-narrowing checks below. Mirrors the backend
+    // validator in functions/src/creativeResolver.ts.
+    if (!ALLOWED_AD_FORMATS.has(adFormat)) {
+        return { valid: false, reason: "Invalid adFormat" };
+    }
+    if (!ALLOWED_CAMPAIGN_TYPES.has(campaignType)) {
+        return { valid: false, reason: "Invalid campaignType" };
+    }
 
     if (filtered.includes("before_after") && filtered.length > 1) {
         return { valid: false, reason: "Before/After is single-image only — defines the entire canvas." };

@@ -12,9 +12,21 @@ const ALL_MODES = [
 const FORMATS = ["single", "carousel", "batch"] as const;
 const CAMPAIGNS = ["cold", "retargeting"] as const;
 
+// subsets() is exponential: 2^n - 1 = 1023 for ALL_MODES (n=10), all sizes.
+// At n=10 the test runs 1023 * 3 formats * 2 campaigns = 6138 cases — fast.
+// If ALL_MODES grows past ~12 modes, edit MAX_SUBSETS or restrict minSize/maxSize
+// before this fuzz becomes slow or memory-heavy.
+const MAX_SUBSETS = 4096;
 function subsets<T>(arr: readonly T[], minSize: number, maxSize: number): T[][] {
-  const result: T[][] = [];
   const n = arr.length;
+  const totalSubsets = (1 << n) - 1;
+  if (totalSubsets > MAX_SUBSETS) {
+    throw new Error(
+      `subsets(): ${totalSubsets} subsets for n=${n} exceeds MAX_SUBSETS=${MAX_SUBSETS}. ` +
+      `Reduce ALL_MODES.length or raise MAX_SUBSETS — but verify the cartesian product won't slow the suite.`,
+    );
+  }
+  const result: T[][] = [];
   for (let mask = 1; mask < (1 << n); mask++) {
     const sub: T[] = [];
     for (let i = 0; i < n; i++) {

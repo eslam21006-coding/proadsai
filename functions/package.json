@@ -22,7 +22,6 @@
   },
   "main": "lib/index.js",
   "dependencies": {
-    "@fal-ai/client": "^1.2.0",
     "@google/genai": "^1.44.0",
     "@google/generative-ai": "^0.24.1",
     "@paddle/paddle-node-sdk": "^3.7.0",

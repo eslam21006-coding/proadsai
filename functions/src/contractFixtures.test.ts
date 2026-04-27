@@ -225,10 +225,10 @@ import {
     validateModeFormatCombination,
     ALLOWED_PAIRS,
     getSubStyleModeFusion,
-    type CreativeModeId,
 } from "./creativeResolver.js";
 import { validateModeComposition } from "./generators.js";
 import { auditAdaptStates } from "./adaptStateAudit.js";
+import { createTraceBuilder } from "./resolutionTrace.js";
 
 // ─── Lane 1 — Retargeting + Carousel (T023) ───
 function testLane1RetargetingCarousel() {
@@ -2915,6 +2915,34 @@ cta zone bottom: reserve your seat button
     }
     assert.ok(reinforced.includes("CRITICAL: This ad MUST include"), "Self-correction: reinforcement directive present");
     assert.ok(reinforced.includes(vsWarning!.missingElements[0]), "Self-correction: reinforcement names the missing slot");
+
+    // Trace-writing path: record each warning on a TraceBuilder and assert the
+    // resolutionTrace.modeComposition.missing entry survives end-to-end. This
+    // is the FR-009 contract on the persistence side — fixture will fail if
+    // the writer or the type extension regresses.
+    const tb = createTraceBuilder()
+        .setResolved({
+            campaignType: "cold",
+            adMode: "single",
+            creativeModes: ["value_stack", "standard_hero"],
+            styleFamily: "realistic",
+            subStyle: null,
+        })
+        .setLaunchCheck(true);
+    for (const w of driftResult.missing) {
+        tb.recordModeCompositionMissing(w.mode, w.missingElements);
+    }
+    const trace = tb.build();
+    assert.ok(trace.modeComposition, "Self-correction: trace.modeComposition exists");
+    assert.equal(trace.modeComposition!.reinforced, true, "Self-correction: trace.modeComposition.reinforced = true");
+    const tracedVs = trace.modeComposition!.missing.find(e => e.mode === "value_stack");
+    assert.ok(tracedVs, "Self-correction: trace.modeComposition.missing has value_stack entry");
+    assert.ok(tracedVs!.missingElements.length > 0, "Self-correction: trace entry has missingElements");
+    assert.deepStrictEqual(
+        tracedVs!.missingElements,
+        vsWarning!.missingElements,
+        "Self-correction: traced missingElements match the validator's missingElements",
+    );
 
     // No-drift positive case: a complete value_stack plan must NOT trigger any warnings.
     const cleanPlan = createBuildPlanForMode("value_stack");
