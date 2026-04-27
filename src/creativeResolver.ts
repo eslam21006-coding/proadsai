@@ -1,4 +1,4 @@
-// creativeResolver.ts
+// src/creativeResolver.ts — frontend creative mode resolver mirror, launch-surface validator, and UI gating helpers (sourced from functions/src/creativeResolver.ts).
 // ═══════════════════════════════════════════════════════════════════════════
 // CREATIVE MODE RESOLVER — Single Source of Truth (v2: Tab + Role System)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -617,11 +617,9 @@ export function validateLaunchSurface(inputs: {
         }
     }
 
-    const combo = validateCombination(modes, inputs.hookAngle);
-    if (!combo.valid) {
-        return { allowed: false, reason: combo.errors[0] || 'Invalid combination.' };
-    }
-
+    // Single-source-of-truth gate (FR-010, SC-007): the mode-format-campaign
+    // validator runs FIRST so its verbatim reasons win over the older
+    // combination validator's wording. Mirrors functions/src/creativeResolver.ts.
     const fmtResult = validateModeFormatCombination({
         modes,
         adFormat: (inputs.adFormat as "single" | "carousel" | "batch") || "single",
@@ -629,6 +627,11 @@ export function validateLaunchSurface(inputs: {
     });
     if (!fmtResult.valid) {
         return { allowed: false, reason: (fmtResult as { valid: false; reason: string }).reason };
+    }
+
+    const combo = validateCombination(modes, inputs.hookAngle);
+    if (!combo.valid) {
+        return { allowed: false, reason: combo.errors[0] || 'Invalid combination.' };
     }
 
     return { allowed: true };

@@ -2904,7 +2904,9 @@ cta zone bottom: reserve your seat button
     const vsWarning = driftResult.missing.find(w => w.mode === "value_stack");
     assert.ok(vsWarning, "Self-correction: value_stack warning present");
     assert.ok(vsWarning!.missingElements.length > 0, "Self-correction: has missing elements");
-    assert.equal(vsWarning!.reinforcementInjected, true, "Self-correction: reinforcement flagged");
+    // The validator only DETECTS — reinforcement happens at the caller site.
+    // Therefore reinforcementInjected starts false on the freshly-returned warning.
+    assert.equal(vsWarning!.reinforcementInjected, false, "Self-correction: validator returns reinforcementInjected=false (detection-only)");
     // standard_hero present in this drift prompt should NOT be flagged
     const hWarning = driftResult.missing.find(w => w.mode === "standard_hero");
     assert.ok(!hWarning, "Self-correction: standard_hero NOT flagged when its slots are present");
@@ -2913,8 +2915,12 @@ cta zone bottom: reserve your seat button
     for (const slot of vsWarning!.missingElements) {
         reinforced += `\n\nCRITICAL: This ad MUST include ${slot}. Do not omit it.`;
     }
+    // Now that the caller has appended directives, mark the warning as reinforced.
+    // (In production this happens in T007's wiring inside generateImage().)
+    vsWarning!.reinforcementInjected = true;
     assert.ok(reinforced.includes("CRITICAL: This ad MUST include"), "Self-correction: reinforcement directive present");
     assert.ok(reinforced.includes(vsWarning!.missingElements[0]), "Self-correction: reinforcement names the missing slot");
+    assert.equal(vsWarning!.reinforcementInjected, true, "Self-correction: reinforcementInjected flips to true after caller appends directives");
 
     // Trace-writing path: record each warning on a TraceBuilder and assert the
     // resolutionTrace.modeComposition.missing entry survives end-to-end. This

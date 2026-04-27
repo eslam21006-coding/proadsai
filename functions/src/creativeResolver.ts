@@ -1,4 +1,4 @@
-// creativeResolver.ts
+// functions/src/creativeResolver.ts — server-side creative mode resolver, launch-surface validator, and pair/sub-style spec catalog.
 // ═══════════════════════════════════════════════════════════════════════════
 // CREATIVE MODE RESOLVER — Single Source of Truth (v2: Tab + Role System)
 // ═══════════════════════════════════════════════════════════════════════════

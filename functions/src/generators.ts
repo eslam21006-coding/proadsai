@@ -908,7 +908,13 @@ Hero presenting a real 3D book/ebook mockup — the book IS the product being of
 ${isTall ? '- 9:16 EXECUTION: Hero upper portion, larger book below with callouts stacked vertically.' : ''}
 ${isSquare ? '- 1:1 EXECUTION: Hero to one side, book center-right, callouts above or below.' : ''}`);
         }
-        parts.push(`
+        // Skip the standalone BOOK MOCKUP block when the HERO + BOOK pair was
+        // already emitted — the pair block already covers the book composition
+        // in the context of a hero, so emitting both is duplicative and the
+        // generic block's "Cover: professional design with title text readable"
+        // can conflict with the pair's "presenting or holding the book" pose.
+        if (!parts.some(p => p.includes('HERO + BOOK'))) {
+            parts.push(`
 PAIR EXECUTION — BOOK MOCKUP (PREMIUM):
 The book must be a REAL 3D rendered object with perspective and shadow — not a flat rectangle.
 - 3D perspective: visible spine, slight tilt, shadow cast on surface
@@ -917,6 +923,7 @@ The book must be a REAL 3D rendered object with perspective and shadow — not a
 - Chapter callouts: 1-2 floating bubbles beside the book with chapter titles
 ${isTall ? '- 9:16 EXECUTION: Larger book using vertical space, callout bubbles stacked vertically.' : ''}
 ${isSquare ? '- 1:1 EXECUTION: Book center, hero to one side, callouts above or below.' : ''}`);
+        }
     }
 
     if ((secondaryMode === 'device_mockup' || primaryMode === 'device_mockup') && !parts.some(p => p.includes('DEVICE MOCKUP'))) {
@@ -931,7 +938,10 @@ Hero presenting a real device showing guide content — the device IS the produc
 ${isTall ? '- 9:16 EXECUTION: Hero upper portion, larger device below with callout beside it.' : ''}
 ${isSquare ? '- 1:1 EXECUTION: Hero to one side, device center-right, callouts above or below.' : ''}`);
         }
-        parts.push(`
+        // Skip the standalone DEVICE MOCKUP block when the HERO + DEVICE pair
+        // was already emitted — same rationale as BOOK above.
+        if (!parts.some(p => p.includes('HERO + DEVICE'))) {
+            parts.push(`
 PAIR EXECUTION — DEVICE MOCKUP (PREMIUM):
 - Realistic tablet/phone with bezel, shadow, and perspective
 - SCREEN CONTENT: per SCREEN_CONTENT_BAN — the display MUST be blank dark / abstract gradient / out-of-focus glow / dimmed unreadable blur. NEVER any text layout, section preview, guide thumbnail, dashboard, chart, app UI, or logo ON the screen surface.
@@ -939,6 +949,7 @@ PAIR EXECUTION — DEVICE MOCKUP (PREMIUM):
 - Key insight: floating callout bubble beside device (not on the screen).
 ${isTall ? '- 9:16 EXECUTION: Larger device. Screen glowing/blank only. Callouts in surrounding scene.' : ''}
 ${isSquare ? '- 1:1 EXECUTION: Device center, hero to side, callouts above or below — never on the screen.' : ''}`);
+        }
     }
 
     // ── OVERLAY SHELL QUALITY ──
@@ -4128,7 +4139,10 @@ const MODE_REQUIRED_SLOTS: Record<string, string[][]> = {
     ],
     text_only: [
         ["typography", "text layout", "headline"],
-        ["color background", "solid color", "solid background"],
+        // Background may be solid color, gradient, textured, or pattern — all are
+        // valid for text-only renders. Don't fire missing-slot reinforcement on
+        // compliant gradient / textured backdrops.
+        ["color background", "solid color", "solid background", "gradient", "textured", "texture", "pattern"],
     ],
     before_after: [
         ["before"],
@@ -4166,10 +4180,15 @@ export function validateModeComposition(
             }
         }
         if (missingSlots.length > 0) {
+            // reinforcementInjected starts false — the validator only DETECTS
+            // missing slots. The caller is responsible for actually appending
+            // CRITICAL directives to the prompt and flipping this flag to true
+            // (see the T007 wiring in generateImage and the trace-writer in
+            // resolutionTrace.ts::recordModeCompositionMissing).
             warnings.push({
                 mode,
                 missingElements: missingSlots,
-                reinforcementInjected: true,
+                reinforcementInjected: false,
                 detectedAt: "post_build_plan",
             });
         }
@@ -4686,6 +4705,9 @@ ${JSON.stringify(parsedBuildPlan.machinePlan || {})}`;
                     for (const slot of warning.missingElements) {
                         gatedBlueprint += `\n\nCRITICAL: This ad MUST include ${slot}. Do not omit it.`;
                     }
+                    // Flag this warning as reinforced now that the directives have been
+                    // appended (the validator left it false since detection-only).
+                    warning.reinforcementInjected = true;
                 }
             }
         }
