@@ -24,8 +24,18 @@ import {
 } from "./textCompositing.js";
 import type { BrandColorPair } from "./types.js";
 
-// Typed Sharp loader for tests — same pattern as logoComposite.ts / brandColorCompliance.ts
-type SharpFactory = (input?: Buffer | string | Uint8Array) => import("sharp").Sharp;
+// Typed Sharp loader for tests — same pattern as logoComposite.ts / brandColorCompliance.ts.
+// The create-object variant is included in the factory signature so callers can
+// build synthetic test images (e.g., _getBasePng below) without `as any`.
+type SharpCreateInput = {
+    create: {
+        width: number;
+        height: number;
+        channels: 4;
+        background: { r: number; g: number; b: number; alpha: number };
+    };
+};
+type SharpFactory = (input?: Buffer | string | Uint8Array | SharpCreateInput) => import("sharp").Sharp;
 async function loadSharp(): Promise<SharpFactory | null> {
     try {
         const mod = await import("sharp");
@@ -2480,7 +2490,7 @@ async function _getBasePng(): Promise<string | null> {
     if (!sharp) return null;
     const buf = await sharp({
         create: { width: 64, height: 64, channels: 4, background: { r: 128, g: 128, b: 128, alpha: 1 } },
-    } as any).png().toBuffer();
+    }).png().toBuffer();
     _basePngCache = `data:image/png;base64,${buf.toString('base64')}`;
     return _basePngCache;
 }
