@@ -67,7 +67,7 @@ All product owner decisions. These are final for launch.
 | Aspect ratio reflow | **Deterministic two-method reflow.** Small ratio change (<30%) → outpaint-only (extends margins, locks hero/text). Large ratio change → re-render from original build plan at new ratio. No more generative reflow that stretches faces. Auto-routing with user override. |
 | Direct-response design primitives | **6 new enforced rules:** (1) `heroGaze` field directs subject's eyes at headline or CTA, (2) max ONE highlighted element per ad, (3) `priceIsHook` toggle for price-shock creatives, (4) CTA outcome framing required (no generic "join/register"), (5) `visualPromiseMapping` scores hook↔visual alignment, (6) campaign coherence inherits palette/environment from prior ads in same project. |
 | Concept differentiation | **Two hidden backend stages + one hidden checker.** Concept Director (Gemini 3.1, runs 3× sequential per batch) produces specialized brief per ad with explicit visual metaphor, headline architecture, forbidden props, gaze direction. Variance Validator (deterministic, no AI) blocks duplicate metaphor/layout/headline tokens with max 1 retry. Selection Reviewer (Gemini 3.1) catches strong incoherences in user brief BEFORE generation. All three are fail-open — pipeline runs unchanged on error. Remote Config kill switch. Per-user feature flag. **Engineering names** (Concept Director, Variance Validator, Selection Reviewer) NEVER appear in UI. **User-facing names**: "Brief Coherence Check" (live banner) + "Variance Mode" (workspace toggle: Balanced/Aggressive). |
-| FLUX deletion | `falGeneration.ts` and `falEditing.ts` are orphaned dead code (zero imports across `functions/src/`). HOTFIX-G is the dedicated cleanup task that removes the files and the `@fal-ai/client` dependency from `functions/package.json`. Magic Edit (Phase 11) migrates to Gemini's edit endpoint as part of HOTFIX-G. |
+| FLUX deletion | `falGeneration.ts` and `falEditing.ts` were orphaned dead code (zero imports across `functions/src/`). **Removed** as part of HOTFIX-G alongside the `@fal-ai/client` dependency from `functions/package.json`. Magic Edit (Phase 11) migrates to Gemini's edit endpoint. |
 
 ---
 
@@ -1739,17 +1739,17 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## HOTFIX-G — FLUX Cleanup (Prerequisite for Phase 20)
+## HOTFIX-G — FLUX Cleanup (Prerequisite for Phase 20) — ✅ COMPLETE
 
-> **Context:** `falGeneration.ts`, `falEditing.ts`, and their compiled `.js` counterparts in `functions/lib/` are orphaned dead code. Audit confirmed zero imports across `functions/src/`. FLUX was a failed trial — Gemini handles face fidelity via the Box A reference photo pattern. Removing these unblocks the dependency on `@fal-ai/serverless-client` and prevents confusion when Phase 20 wires in new pipeline stages.
+> **Context:** `falGeneration.ts`, `falEditing.ts`, and their compiled `.js` counterparts in `functions/lib/` were orphaned dead code. Audit confirmed zero imports across `functions/src/`. FLUX was a failed trial — Gemini handles face fidelity via the Box A reference photo pattern. The actual dependency in `functions/package.json` was `@fal-ai/client` (not the older `@fal-ai/serverless-client` referenced in earlier drafts of this doc). Removing the orphaned files unblocks Phase 20 from confusion when new pipeline stages are wired in.
 
 | # | File | Action | Done when |
 |---|---|---|---|
-| HFG.1 | `functions/src/falGeneration.ts` | Delete the file. | File no longer exists. |
-| HFG.2 | `functions/src/falEditing.ts` | Delete the file. | File no longer exists. |
-| HFG.3 | `functions/lib/falGeneration.js` | Delete the compiled artifact. | File no longer exists. |
-| HFG.4 | `functions/lib/falEditing.js` | Delete the compiled artifact. | File no longer exists. |
-| HFG.5 | `functions/package.json` | Remove `@fal-ai/serverless-client` from dependencies. Run `npm install` after removal. | Package no longer in `node_modules`. `npm run build` succeeds with zero errors. |
+| HFG.1 | `functions/src/falGeneration.ts` | ✅ Deleted. | File no longer exists. |
+| HFG.2 | `functions/src/falEditing.ts` | ✅ Deleted. | File no longer exists. |
+| HFG.3 | `functions/lib/falGeneration.js` | ✅ Deleted (compiled artifact). | File no longer exists. |
+| HFG.4 | `functions/lib/falEditing.js` | ✅ Deleted (compiled artifact). | File no longer exists. |
+| HFG.5 | `functions/package.json` | ✅ Removed `@fal-ai/client` from dependencies (the actual package present in this repo; earlier doc drafts had referred to `@fal-ai/serverless-client`). Ran `npm install` to sync `package-lock.json`. | Package no longer in `node_modules`. `npm run build` succeeds with zero errors. |
 | HFG.6 | Deploy | Standard sequence: `Remove-Item -Recurse -Force lib` → `npm run build` → `firebase deploy --only functions`. | Deploy succeeds. No broken imports in production. |
 
 > **Note on Phase 11 (Magic Edit):** Phase 11 was originally specified to use `falEditing.ts` and FLUX Kontext. After this hotfix, the Magic Edit pipeline is migrated to use Gemini's edit endpoint (which already handles face fidelity via Box A reference photos in the existing pipeline). Phase 11 task descriptions referencing FLUX should be reinterpreted as: **edit endpoint = Gemini's image edit with Box A reference, not FLUX**. The atomic logic of Phase 11 (lasso → mask → edit prompt → text re-composite) is unchanged; only the underlying model call is.

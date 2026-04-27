@@ -686,14 +686,40 @@ export function getCaptionCreativeModeAnchors(spec: ResolvedCreativeSpec): strin
 }
 
 // ─── BACKWARD COMPAT ────────────────────────────────────────────────────
+// CONFLICT_MAP is derived from the launch surface itself — a pair (A, B) is in
+// conflict iff (1) A or B is `soloOnly`, OR (2) A and B share no launch tab,
+// OR (3) A and B share a tab but the pair is NOT in ALLOWED_PAIRS. This means
+// legacy consumers that consult CONFLICT_MAP see the same conflict decisions
+// as the new validateModeFormatCombination single-source-of-truth, without
+// requiring DISALLOWED_PAIRS to be hand-maintained.
 export const CONFLICT_MAP: Record<string, Set<string>> = (() => {
     const map: Record<string, Set<string>> = {};
     for (const id of Object.keys(CREATIVE_MODE_CATALOG)) { map[id] = new Set<string>(); }
-    for (const d of DISALLOWED_PAIRS) { map[d.a]?.add(d.b); map[d.b]?.add(d.a); }
+
     for (const [idA, metaA] of Object.entries(CREATIVE_MODE_CATALOG)) {
         for (const [idB, metaB] of Object.entries(CREATIVE_MODE_CATALOG)) {
             if (idA === idB) continue;
-            if (metaA.tabs.filter(t => metaB.tabs.includes(t)).length === 0) { map[idA]?.add(idB); }
+
+            // (1) soloOnly: a soloOnly mode conflicts with every other mode.
+            if (metaA.soloOnly || metaB.soloOnly) {
+                map[idA]?.add(idB);
+                continue;
+            }
+
+            // (2) cross-tab: modes that share no launch tab cannot pair.
+            const sharesTab = metaA.tabs.some(t => metaB.tabs.includes(t));
+            if (!sharesTab) {
+                map[idA]?.add(idB);
+                continue;
+            }
+
+            // (3) same-tab but pair not in ALLOWED_PAIRS.
+            const isAllowedPair = ALLOWED_PAIRS.some(
+                p => (p.a === idA && p.b === idB) || (p.a === idB && p.b === idA),
+            );
+            if (!isAllowedPair) {
+                map[idA]?.add(idB);
+            }
         }
     }
     return map;

@@ -4086,14 +4086,8 @@ ${JSON.stringify(machinePlan)}`;
 // hero variants don't render a button (the headline IS the CTA, or the offer
 // price is the focus). Including CTA as required would force the validator to
 // reinforce a button onto every CTA-less render. Modes whose layout requires
-// a button (event_ticket / webinar_screen via "register"/"join", value_stack
-// via price panel) keep their action-surface synonyms.
-const MODE_OPTIONAL_SLOTS: Record<string, string[][]> = {
-    standard_hero: [
-        ["cta zone", "cta button", "call to action"],
-    ],
-};
-
+// an action surface (event_ticket via "register"/"rsvp", value_stack via
+// price panel) keep their action-surface synonyms in their required-slot list.
 const MODE_REQUIRED_SLOTS: Record<string, string[][]> = {
     standard_hero: [
         ["hero portrait", "hero zone", "coach portrait", "person portrait", "hero_dominant"],
@@ -4105,7 +4099,8 @@ const MODE_REQUIRED_SLOTS: Record<string, string[][]> = {
     ],
     event_ticket: [
         ["ticket frame", "ticket structure", "event ticket", "ticket_frame"],
-        ["date", "time"],
+        ["date"],
+        ["time"],
         ["seat", "register", "registration", "rsvp"],
     ],
     // SCREEN_CONTENT_BAN: device screens MUST NOT render text/logos/charts.

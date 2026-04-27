@@ -180,7 +180,13 @@ function testRow7(): void {
 function testFuzz(): void {
   console.log("  fuzz: cartesian product over mode subsets × formats × campaigns");
   let count = 0;
-  const modeSubsets = subsets(ALL_MODES, 1, ALL_MODES.length);
+  // Include empty-modes case explicitly — totality requires the validator to
+  // handle modes: [] without throwing. subsets() starts at size 1 by design,
+  // so we prepend [] here.
+  const modeSubsets: string[][] = [
+    [],
+    ...subsets(ALL_MODES, 1, ALL_MODES.length).map(s => [...s]),
+  ];
   for (const modeSubset of modeSubsets) {
     for (const fmt of FORMATS) {
       for (const camp of CAMPAIGNS) {
