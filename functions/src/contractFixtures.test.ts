@@ -2764,6 +2764,11 @@ async function runPhase16Fixtures(): Promise<void> {
         assert.equal(fmtVal.valid, true, `Solo ${mode}: format combination valid`);
         const catalog = CREATIVE_MODE_CATALOG[mode as keyof typeof CREATIVE_MODE_CATALOG];
         assert.ok(catalog, `Solo ${mode}: in catalog`);
+        assert.ok(catalog.validity, `Solo ${mode}: catalog.validity defined`);
+        assert.ok(
+            Array.isArray(catalog.validity.requiredElements),
+            `Solo ${mode}: requiredElements is an array`,
+        );
         assert.ok(catalog.validity.requiredElements.length > 0, `Solo ${mode}: has requiredElements`);
         const plan = createBuildPlanForMode(mode);
         const comp = validateModeComposition(plan, [mode]);

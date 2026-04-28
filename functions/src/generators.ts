@@ -926,7 +926,15 @@ ${isSquare ? '- 1:1 EXECUTION: Book center, hero to one side, callouts above or 
         }
     }
 
-    if ((secondaryMode === 'device_mockup' || primaryMode === 'device_mockup') && !parts.some(p => p.includes('DEVICE MOCKUP'))) {
+    // Outer guard suppresses re-entry when ANY device-bearing composition has
+    // already been emitted: the standalone DEVICE MOCKUP block, the HERO + DEVICE
+    // pair block, or the BOOK + DEVICE bundle block. Without checking for
+    // BUNDLE here, the standalone fires alongside the bundle when book+device
+    // is selected — duplicating screen / bezel / callout rules.
+    if (
+        (secondaryMode === 'device_mockup' || primaryMode === 'device_mockup') &&
+        !parts.some(p => p.includes('DEVICE MOCKUP') || p.includes('HERO + DEVICE') || p.includes('BOOK + DEVICE'))
+    ) {
         if ((secondaryMode === 'standard_hero' || primaryMode === 'standard_hero') && !parts.some(p => p.includes('HERO + DEVICE'))) {
             parts.push(`
 PAIR EXECUTION — HERO + DEVICE MOCKUP (PREMIUM):
@@ -938,9 +946,9 @@ Hero presenting a real device showing guide content — the device IS the produc
 ${isTall ? '- 9:16 EXECUTION: Hero upper portion, larger device below with callout beside it.' : ''}
 ${isSquare ? '- 1:1 EXECUTION: Hero to one side, device center-right, callouts above or below.' : ''}`);
         }
-        // Skip the standalone DEVICE MOCKUP block when the HERO + DEVICE pair
-        // was already emitted — same rationale as BOOK above.
-        if (!parts.some(p => p.includes('HERO + DEVICE'))) {
+        // Skip the standalone DEVICE MOCKUP block when EITHER the HERO + DEVICE
+        // pair block OR the BOOK + DEVICE bundle block was already emitted.
+        if (!parts.some(p => p.includes('HERO + DEVICE') || p.includes('BOOK + DEVICE'))) {
             parts.push(`
 PAIR EXECUTION — DEVICE MOCKUP (PREMIUM):
 - Realistic tablet/phone with bezel, shadow, and perspective
@@ -4162,19 +4170,55 @@ export interface ModeCompositionWarning {
     detectedAt: "post_build_plan";
 }
 
+// Build a word-boundary regex per pattern so substring matches inside larger
+// words don't count (e.g. "time" must not match "downtime", "live" must not
+// match "delivery", "day" must not match "today"). Cached via a Map keyed by
+// the lowercased pattern so we don't recompile on every fixture run.
+const SLOT_PATTERN_REGEX_CACHE = new Map<string, RegExp>();
+function slotPatternRegex(pattern: string): RegExp {
+    const key = pattern.toLowerCase();
+    let re = SLOT_PATTERN_REGEX_CACHE.get(key);
+    if (!re) {
+        const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        re = new RegExp(`\\b${escaped}\\b`, "i");
+        SLOT_PATTERN_REGEX_CACHE.set(key, re);
+    }
+    return re;
+}
+
 export function validateModeComposition(
     technicalPrompt: string,
     activeModes: string[],
 ): { missing: ModeCompositionWarning[] } {
     const warnings: ModeCompositionWarning[] = [];
-    const promptLower = technicalPrompt.toLowerCase();
+
+    // Pair-aware slot relaxation: when a mode is paired with event_ticket, the
+    // pair-execution block in getPairRenderExecution() replaces the standalone
+    // composition rules — the speaker is on the ticket (not on a stage), the
+    // screen is inset in the ticket (with a "LIVE" badge, not a "live signal").
+    // Skipping the relaxed slots avoids spurious reinforcement directives that
+    // would contradict the pair-execution block.
+    const isPairedWithTicket = activeModes.includes("event_ticket") && activeModes.length > 1;
+    const RELAXED_SLOT_INDEX_WHEN_TICKET_PAIRED: Record<string, number[]> = {
+        // speaker_card slot 3 (stage/spotlight/audience) is replaced by ticket-frame embedding.
+        speaker_card: [2],
+        // webinar_screen slot 2 (live indicator) is satisfied by the "LIVE" badge in the ticket header.
+        webinar_screen: [1],
+    };
 
     for (const mode of activeModes) {
         const slots = MODE_REQUIRED_SLOTS[mode];
         if (!slots || slots.length === 0) continue;
+
+        const relaxedIndices = isPairedWithTicket
+            ? new Set(RELAXED_SLOT_INDEX_WHEN_TICKET_PAIRED[mode] || [])
+            : new Set<number>();
+
         const missingSlots: string[] = [];
-        for (const synonyms of slots) {
-            const filled = synonyms.some((pattern) => promptLower.includes(pattern.toLowerCase()));
+        for (let i = 0; i < slots.length; i++) {
+            if (relaxedIndices.has(i)) continue;
+            const synonyms = slots[i];
+            const filled = synonyms.some((pattern) => slotPatternRegex(pattern).test(technicalPrompt));
             if (!filled) {
                 missingSlots.push(synonyms[0]); // canonical label = first synonym
             }

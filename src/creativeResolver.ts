@@ -574,12 +574,10 @@ export function validateModeFormatCombination(
         if (!LAUNCHED_MODE_SET.has(mode)) {
             return { valid: false, reason: "Combination is not in the launch surface." };
         }
-        // before_after format check is already handled by the early
-        // `filtered.includes("before_after") && adFormat !== "single"` rule
-        // above — no need to repeat it here.
-        if (mode === "testimonial_carousel" && adFormat !== "carousel") {
-            return { valid: false, reason: "Testimonial Carousel requires carousel format." };
-        }
+        // The earlier rules already handle:
+        //   - before_after + non-single → caught by `filtered.includes("before_after") && adFormat !== "single"`.
+        //   - testimonial_carousel + non-carousel → caught by `filtered.includes("testimonial_carousel") && adFormat !== "carousel"`.
+        // No additional per-mode format checks are needed here.
         return { valid: true };
     }
 
