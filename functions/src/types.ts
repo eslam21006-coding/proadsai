@@ -250,6 +250,36 @@ export interface ResolutionTrace {
     readonly reflowHistory?: readonly ReflowHistoryEntry[];
     brandColorSource?: BrandColorSource;
     brandColorCompliance?: BrandColorComplianceEntry[];
+    modeComposition?: ModeCompositionTrace;
+    adaptStateAudit?: AdaptStateAuditResult;
+}
+
+export interface ModeCompositionTrace {
+    missing: ModeCompositionWarning[];
+    reinforced: boolean;
+}
+
+export interface ModeCompositionWarning {
+    mode: string;
+    missingElements: string[];
+    reinforcementInjected: boolean;
+    detectedAt: "post_build_plan";
+}
+
+export interface AdaptStateAuditEntry {
+    subStyleId: string;
+    modeId: string;
+    fusionPromptHash: string;
+    triggerWordsFound: string[];
+    passed: boolean;
+}
+
+export interface AdaptStateAuditResult {
+    ranAt: string;
+    totalChecked: number;
+    passed: number;
+    failed: number;
+    entries: AdaptStateAuditEntry[];
 }
 
 export interface LaunchSurfaceInput {

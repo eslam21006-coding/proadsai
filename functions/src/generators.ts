@@ -764,7 +764,7 @@ function sanitizeInfluenceFields(influence: ReferenceInfluence): ReferenceInflue
 // ─── Pair-Specific Render Execution Rules ────────────────────────────────────
 // Returns premium execution guidance for specific mode pairs and aspect ratios.
 // Injected into the render prompt AFTER the contract block.
-function getPairRenderExecution(primaryMode: string, secondaryMode: string | null, aspectRatio: string, hasOverlaySlots: boolean, hasReferenceAd: boolean): string {
+export function getPairRenderExecution(primaryMode: string, secondaryMode: string | null, aspectRatio: string, hasOverlaySlots: boolean, hasReferenceAd: boolean): string {
     const parts: string[] = [];
     const isWide = aspectRatio === '16:9';
     const isTall = aspectRatio === '9:16';
@@ -791,7 +791,23 @@ ${isWide ? '- 16:9 EXECUTION: Hero left 45%, stack right 45% — generous horizo
 
 
     if (secondaryMode === 'speaker_card' || primaryMode === 'speaker_card') {
-        parts.push(`
+        if (secondaryMode === 'event_ticket' || primaryMode === 'event_ticket') {
+            parts.push(`
+PAIR EXECUTION — EVENT TICKET + SPEAKER CARD (PREMIUM):
+Combined ticket-and-speaker layout — the speaker identity is INTEGRATED into the ticket structure.
+- Ticket frame: premium event ticket with perforated edge, barcode strip, serial number
+- Speaker portrait: HEAD/SHOULDERS ONLY in bordered circular frame WITHIN the ticket — speaker IS the event headliner
+- Credentials bar: rendered as TICKET METADATA STRIP below the portrait (name, title, expertise)
+- Event info row: DATE | TIME | "LIVE" badge — inside the ticket frame
+- Layout: ticket takes 70% of canvas, with speaker identity filling the main ticket area
+${isTall ? '- 9:16 EXECUTION: Extended ticket with speaker portrait prominent, credentials below, full event metadata row.' : ''}
+${isSquare ? '- 1:1 EXECUTION: Compact ticket, speaker portrait centered within ticket frame, metadata around it.' : ''}`);
+        } else {
+            // Standalone speaker_card guidance — only emit when NOT paired with event_ticket,
+            // because the ticket+speaker combo above replaces the stage-environment rules
+            // (speaker is on a ticket, not a stage). Mixing both blocks produces conflicting
+            // direction (stage spotlight vs ticket frame) for the model.
+            parts.push(`
 PAIR EXECUTION — SPEAKER CARD (PREMIUM):
 This is a KEYNOTE SPEAKER presentation — not a generic portrait.
 - STAGE ENVIRONMENT is mandatory: dramatic spotlight, dark auditorium, podium or stage edge visible
@@ -801,10 +817,29 @@ This is a KEYNOTE SPEAKER presentation — not a generic portrait.
 - Rim lighting on hero (back-lit edge glow) for cinematic depth
 ${isTall ? '- 9:16 EXECUTION: Full dramatic stage depth — audience at very bottom, hero in spotlight center, credentials bar across middle. Use height for stage grandeur.' : ''}
 ${isSquare ? '- 1:1 EXECUTION: Tighter crop, hero upper 60%, credentials bar across lower third. Audience hints in bottom corners.' : ''}`);
+        }
     }
 
     if (secondaryMode === 'event_ticket' || primaryMode === 'event_ticket') {
-        parts.push(`
+        if (secondaryMode === 'webinar_screen' || primaryMode === 'webinar_screen') {
+            if (!parts.some(p => p.includes('TICKET + SCREEN'))) {
+                parts.push(`
+PAIR EXECUTION — EVENT TICKET + WEBINAR SCREEN (PREMIUM):
+Ticket structure with embedded broadcast screen — the screen element is integrated into the ticket design.
+- Ticket frame: premium event ticket with perforated edges and decorations
+- Screen element: SMALL realistic device/screen showing abstract glow (per SCREEN_CONTENT_BAN), embedded WITHIN the ticket layout
+- The screen is a SUPPORTING element inside the ticket — the ticket structure dominates
+- Event info row: DATE | TIME | "LIVE" badge — prominent ticket metadata
+- Layout: ticket frame 80%, with screen as a small inset within the ticket design
+${isTall ? '- 9:16 EXECUTION: Larger ticket with screen as an embedded panel within the ticket area.' : ''}
+${isSquare ? '- 1:1 EXECUTION: Compact ticket, small screen inset in corner of ticket layout.' : ''}`);
+            }
+        } else {
+            // Standalone event_ticket guidance — only emit when NOT paired with
+            // webinar_screen, because the ticket+screen combo above replaces the
+            // speaker-portrait rules (the ticket houses a screen, not a portrait).
+            // Mixing both blocks produces conflicting portrait/screen instructions.
+            parts.push(`
 PAIR EXECUTION — EVENT TICKET (PREMIUM):
 This must look like a REAL designed premium ticket — not a generic ad with event text.
 - Ticket structure: visible BORDER/FRAME with ticket-specific decorations (perforated edge, barcode strip, serial number)
@@ -814,6 +849,7 @@ This must look like a REAL designed premium ticket — not a generic ad with eve
 - Ticket should feel like something you'd screenshot and share — collectible quality
 ${isTall ? '- 9:16 EXECUTION: Larger ticket with MORE detail — extended perforations, more metadata space, larger speaker portrait. Use height for dramatic ticket proportions.' : ''}
 ${isSquare ? '- 1:1 EXECUTION: Compact ticket, tighter spacing. Portrait smaller. Focus on event title and metadata readability.' : ''}`);
+        }
     }
 
 
@@ -835,6 +871,18 @@ ${isSquare ? '- 1:1 EXECUTION: Products centered with headline above and CTA bel
 
 
     if (secondaryMode === 'webinar_screen' || primaryMode === 'webinar_screen') {
+        if ((secondaryMode === 'speaker_card' || primaryMode === 'speaker_card') && !parts.some(p => p.includes('SCREEN + SPEAKER'))) {
+            parts.push(`
+PAIR EXECUTION — WEBINAR SCREEN + SPEAKER CARD (PREMIUM):
+Screen and speaker identity combined — hero presenting on stage with screen element showing broadcast.
+- Device: REALISTIC laptop/monitor with blank/glowing screen (per SCREEN_CONTENT_BAN)
+- Speaker: presenting pose beside the device, stage spotlight
+- Credentials bar: TV-STYLE LOWER-THIRD with speaker name and title
+- Layout: speaker left 45%, screen right 45%, credentials spanning bottom
+- The speaker IS the webinar presenter — show them actively presenting, not just standing
+${isTall ? '- 9:16 EXECUTION: Speaker upper half with screen, credentials bar spanning width.' : ''}
+${isSquare ? '- 1:1 EXECUTION: Tighter layout — speaker and screen side by side, credentials below.' : ''}`);
+        }
         if (!parts.some(p => p.includes('WEBINAR SCREEN'))) {
             parts.push(`
 PAIR EXECUTION — WEBINAR SCREEN (PREMIUM):
@@ -848,7 +896,25 @@ ${isSquare ? '- 1:1 EXECUTION: Device center, hero to one side, tighter layout. 
     }
 
     if ((secondaryMode === 'book_mockup' || primaryMode === 'book_mockup') && !parts.some(p => p.includes('BOOK'))) {
-        parts.push(`
+        if ((secondaryMode === 'standard_hero' || primaryMode === 'standard_hero') && !parts.some(p => p.includes('HERO + BOOK'))) {
+            parts.push(`
+PAIR EXECUTION — HERO + BOOK MOCKUP (PREMIUM):
+Hero presenting a real 3D book/ebook mockup — the book IS the product being offered.
+- Hero: portrait-style pose, presenting or holding the book mockup
+- Book: REAL 3D rendered object with visible cover, spine, slight tilt, shadow
+- Layout: hero left 40%, book right 40% — balanced product-hero composition
+- "FREE" badge: floating ribbon or sticker on the book corner
+- Chapter callouts: 1-2 floating bubbles beside the book with chapter titles
+${isTall ? '- 9:16 EXECUTION: Hero upper portion, larger book below with callouts stacked vertically.' : ''}
+${isSquare ? '- 1:1 EXECUTION: Hero to one side, book center-right, callouts above or below.' : ''}`);
+        }
+        // Skip the standalone BOOK MOCKUP block when the HERO + BOOK pair was
+        // already emitted — the pair block already covers the book composition
+        // in the context of a hero, so emitting both is duplicative and the
+        // generic block's "Cover: professional design with title text readable"
+        // can conflict with the pair's "presenting or holding the book" pose.
+        if (!parts.some(p => p.includes('HERO + BOOK'))) {
+            parts.push(`
 PAIR EXECUTION — BOOK MOCKUP (PREMIUM):
 The book must be a REAL 3D rendered object with perspective and shadow — not a flat rectangle.
 - 3D perspective: visible spine, slight tilt, shadow cast on surface
@@ -857,10 +923,33 @@ The book must be a REAL 3D rendered object with perspective and shadow — not a
 - Chapter callouts: 1-2 floating bubbles beside the book with chapter titles
 ${isTall ? '- 9:16 EXECUTION: Larger book using vertical space, callout bubbles stacked vertically.' : ''}
 ${isSquare ? '- 1:1 EXECUTION: Book center, hero to one side, callouts above or below.' : ''}`);
+        }
     }
 
-    if ((secondaryMode === 'device_mockup' || primaryMode === 'device_mockup') && !parts.some(p => p.includes('DEVICE MOCKUP'))) {
-        parts.push(`
+    // Outer guard suppresses re-entry when ANY device-bearing composition has
+    // already been emitted: the standalone DEVICE MOCKUP block, the HERO + DEVICE
+    // pair block, or the BOOK + DEVICE bundle block. Without checking for
+    // BUNDLE here, the standalone fires alongside the bundle when book+device
+    // is selected — duplicating screen / bezel / callout rules.
+    if (
+        (secondaryMode === 'device_mockup' || primaryMode === 'device_mockup') &&
+        !parts.some(p => p.includes('DEVICE MOCKUP') || p.includes('HERO + DEVICE') || p.includes('BOOK + DEVICE'))
+    ) {
+        if ((secondaryMode === 'standard_hero' || primaryMode === 'standard_hero') && !parts.some(p => p.includes('HERO + DEVICE'))) {
+            parts.push(`
+PAIR EXECUTION — HERO + DEVICE MOCKUP (PREMIUM):
+Hero presenting a real device showing guide content — the device IS the product delivery method.
+- Hero: portrait-style pose, holding or presenting a realistic tablet/phone
+- Device: realistic tablet/phone with bezel, shadow, and perspective — screen glowing/blank per SCREEN_CONTENT_BAN
+- Key insight: floating callout bubble beside device (not on screen)
+- Layout: hero left 40%, device right 40% — balanced product-hero composition
+${isTall ? '- 9:16 EXECUTION: Hero upper portion, larger device below with callout beside it.' : ''}
+${isSquare ? '- 1:1 EXECUTION: Hero to one side, device center-right, callouts above or below.' : ''}`);
+        }
+        // Skip the standalone DEVICE MOCKUP block when EITHER the HERO + DEVICE
+        // pair block OR the BOOK + DEVICE bundle block was already emitted.
+        if (!parts.some(p => p.includes('HERO + DEVICE') || p.includes('BOOK + DEVICE'))) {
+            parts.push(`
 PAIR EXECUTION — DEVICE MOCKUP (PREMIUM):
 - Realistic tablet/phone with bezel, shadow, and perspective
 - SCREEN CONTENT: per SCREEN_CONTENT_BAN — the display MUST be blank dark / abstract gradient / out-of-focus glow / dimmed unreadable blur. NEVER any text layout, section preview, guide thumbnail, dashboard, chart, app UI, or logo ON the screen surface.
@@ -868,6 +957,7 @@ PAIR EXECUTION — DEVICE MOCKUP (PREMIUM):
 - Key insight: floating callout bubble beside device (not on the screen).
 ${isTall ? '- 9:16 EXECUTION: Larger device. Screen glowing/blank only. Callouts in surrounding scene.' : ''}
 ${isSquare ? '- 1:1 EXECUTION: Device center, hero to side, callouts above or below — never on the screen.' : ''}`);
+        }
     }
 
     // ── OVERLAY SHELL QUALITY ──
@@ -4000,6 +4090,157 @@ ${JSON.stringify(machinePlan)}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// MODE COMPOSITION VALIDATOR (T006 — FR-009 post-build-plan check)
+//
+// Each mode has a set of REQUIRED SLOTS. Each slot is backed by accepted
+// natural-language synonyms. A slot is "filled" iff the prompt contains at
+// least one of its synonyms (case-insensitive substring). A mode flags
+// `mode_composition_missing` iff ANY ONE of its required slots is unfilled —
+// per FR-009 ("If any one required element is absent…"). The warning lists
+// the canonical label of EACH missing slot so the caller in T007 can append
+// one reinforcement directive per missing slot.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// CTA presence is intentionally NOT a required slot for standard_hero — many
+// hero variants don't render a button (the headline IS the CTA, or the offer
+// price is the focus). Including CTA as required would force the validator to
+// reinforce a button onto every CTA-less render. Modes whose layout requires
+// an action surface (event_ticket via "register"/"rsvp", value_stack via
+// price panel) keep their action-surface synonyms in their required-slot list.
+const MODE_REQUIRED_SLOTS: Record<string, string[][]> = {
+    standard_hero: [
+        ["hero portrait", "hero zone", "coach portrait", "person portrait", "hero_dominant"],
+        ["headline zone", "headline"],
+    ],
+    value_stack: [
+        ["stack zone", "stack cards", "stack items", "value items", "item rows", "item cards", "structured_list_area", "visible_item_rows"],
+        ["price", "total value", "price panel", "price reveal", "savings"],
+    ],
+    event_ticket: [
+        ["ticket frame", "ticket structure", "event ticket", "ticket_frame"],
+        ["date"],
+        ["time"],
+        ["seat", "register", "registration", "rsvp"],
+    ],
+    // SCREEN_CONTENT_BAN: device screens MUST NOT render text/logos/charts.
+    // The required slots therefore stay non-textual — no "session title", no
+    // "live badge". The slot is "live indicator" (a visual cue: red dot, glow,
+    // broadcast presence) which the model can render without rendering UI text.
+    webinar_screen: [
+        ["screen", "device", "laptop", "monitor", "screen_or_device"],
+        ["live indicator", "live signal", "broadcast presence", "session graphic", "broadcast indicator"],
+    ],
+    speaker_card: [
+        ["speaker", "speaker_identity"],
+        ["credentials"],
+        ["stage", "spotlight", "presentation context", "audience"],
+    ],
+    book_mockup: [
+        ["book", "3d book", "book mockup", "pdf mockup", "book_mockup"],
+        ["book cover", "cover visual", "book_cover"],
+    ],
+    // SCREEN_CONTENT_BAN applies here too — "guide content on screen" would
+    // imply readable text on the device. Use a non-text visual descriptor.
+    device_mockup: [
+        ["device", "tablet", "phone", "device frame", "device_mockup"],
+        ["content placeholder", "guide visual", "content area"],
+    ],
+    text_only: [
+        ["typography", "text layout", "headline"],
+        // Background may be solid color, gradient, textured, or pattern — all are
+        // valid for text-only renders. Don't fire missing-slot reinforcement on
+        // compliant gradient / textured backdrops.
+        ["color background", "solid color", "solid background", "gradient", "textured", "texture", "pattern"],
+    ],
+    before_after: [
+        ["before"],
+        ["after"],
+        ["divider", "split"],
+    ],
+    testimonial_carousel: [
+        ["testimonial"],
+        ["platform frame", "platform mockup"],
+    ],
+};
+
+export interface ModeCompositionWarning {
+    mode: string;
+    missingElements: string[];
+    reinforcementInjected: boolean;
+    detectedAt: "post_build_plan";
+}
+
+// Build a word-boundary regex per pattern so substring matches inside larger
+// words don't count (e.g. "time" must not match "downtime", "live" must not
+// match "delivery", "day" must not match "today"). Cached via a Map keyed by
+// the lowercased pattern so we don't recompile on every fixture run.
+const SLOT_PATTERN_REGEX_CACHE = new Map<string, RegExp>();
+function slotPatternRegex(pattern: string): RegExp {
+    const key = pattern.toLowerCase();
+    let re = SLOT_PATTERN_REGEX_CACHE.get(key);
+    if (!re) {
+        const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        re = new RegExp(`\\b${escaped}\\b`, "i");
+        SLOT_PATTERN_REGEX_CACHE.set(key, re);
+    }
+    return re;
+}
+
+export function validateModeComposition(
+    technicalPrompt: string,
+    activeModes: string[],
+): { missing: ModeCompositionWarning[] } {
+    const warnings: ModeCompositionWarning[] = [];
+
+    // Pair-aware slot relaxation: when a mode is paired with event_ticket, the
+    // pair-execution block in getPairRenderExecution() replaces the standalone
+    // composition rules — the speaker is on the ticket (not on a stage), the
+    // screen is inset in the ticket (with a "LIVE" badge, not a "live signal").
+    // Skipping the relaxed slots avoids spurious reinforcement directives that
+    // would contradict the pair-execution block.
+    const isPairedWithTicket = activeModes.includes("event_ticket") && activeModes.length > 1;
+    const RELAXED_SLOT_INDEX_WHEN_TICKET_PAIRED: Record<string, number[]> = {
+        // speaker_card slot 3 (stage/spotlight/audience) is replaced by ticket-frame embedding.
+        speaker_card: [2],
+        // webinar_screen slot 2 (live indicator) is satisfied by the "LIVE" badge in the ticket header.
+        webinar_screen: [1],
+    };
+
+    for (const mode of activeModes) {
+        const slots = MODE_REQUIRED_SLOTS[mode];
+        if (!slots || slots.length === 0) continue;
+
+        const relaxedIndices = isPairedWithTicket
+            ? new Set(RELAXED_SLOT_INDEX_WHEN_TICKET_PAIRED[mode] || [])
+            : new Set<number>();
+
+        const missingSlots: string[] = [];
+        for (let i = 0; i < slots.length; i++) {
+            if (relaxedIndices.has(i)) continue;
+            const synonyms = slots[i];
+            const filled = synonyms.some((pattern) => slotPatternRegex(pattern).test(technicalPrompt));
+            if (!filled) {
+                missingSlots.push(synonyms[0]); // canonical label = first synonym
+            }
+        }
+        if (missingSlots.length > 0) {
+            // reinforcementInjected starts false — the validator only DETECTS
+            // missing slots. The caller is responsible for actually appending
+            // CRITICAL directives to the prompt and flipping this flag to true
+            // (see the T007 wiring in generateImage and the trace-writer in
+            // resolutionTrace.ts::recordModeCompositionMissing).
+            warnings.push({
+                mode,
+                missingElements: missingSlots,
+                reinforcementInjected: false,
+                detectedAt: "post_build_plan",
+            });
+        }
+    }
+    return { missing: warnings };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // RESOLUTION TRACE — per-generation audit record (FR-007)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -4491,6 +4732,40 @@ ${JSON.stringify(parsedBuildPlan.machinePlan || {})}`;
         }
     }
     // ═══ END HARD RENDER GATE ═══
+
+    // ═══ T007: MODE COMPOSITION VALIDATOR (FR-009 — post-build-plan self-correction) ═══
+    if (!editInstruction && !base64ToEdit) {
+        const _mcModes: string[] = Array.isArray((inputs as { offerCreativeMode?: unknown }).offerCreativeMode)
+            ? [...((inputs as { offerCreativeMode: string[] }).offerCreativeMode)]
+            : ['standard_hero'];
+        // Legacy compat: before_after used to be a hook angle (per matrix § 2.7
+        // it is now a creative mode). `selectLayoutTemplate` in layoutTemplates.ts
+        // still treats `hookAngle === 'before_after'` as a layout override —
+        // when that fires, the rendered ad is a split before/after canvas even
+        // if `offerCreativeMode` doesn't include 'before_after'. Inject it into
+        // _mcModes so the validator checks the before/after slots.
+        const _mcLegacyHookAngle = (inputs as { coldHookAngle?: unknown }).coldHookAngle;
+        if (_mcLegacyHookAngle === 'before_after' && !_mcModes.includes('before_after')) {
+            _mcModes.push('before_after');
+        }
+        const _mcTechnicalPrompt = gatedBlueprint;
+        if (_mcTechnicalPrompt) {
+            const _mcResult = validateModeComposition(_mcTechnicalPrompt, _mcModes);
+            if (_mcResult.missing.length > 0) {
+                console.log(`🔍 Mode composition validator detected ${_mcResult.missing.length} mode(s) with missing slots`);
+                for (const warning of _mcResult.missing) {
+                    console.log(`   ↳ ${warning.mode}: missing [${warning.missingElements.join(', ')}] — reinforcing prompt`);
+                    // Append one CRITICAL directive per missing slot (FR-009: verbatim per-slot reinforcement).
+                    for (const slot of warning.missingElements) {
+                        gatedBlueprint += `\n\nCRITICAL: This ad MUST include ${slot}. Do not omit it.`;
+                    }
+                    // Flag this warning as reinforced now that the directives have been
+                    // appended (the validator left it false since detection-only).
+                    warning.reinforcementInjected = true;
+                }
+            }
+        }
+    }
 
     if (containsUnresolvedCommercialPlaceholders(gatedBlueprint)) {
         console.error('🛑 RENDER GATE HARD REJECT: unresolved commercial placeholder text detected in build plan.');

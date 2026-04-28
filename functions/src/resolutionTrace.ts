@@ -8,6 +8,8 @@ import type {
     ReflowHistoryEntry,
     BrandColorSource,
     BrandColorComplianceEntry,
+    ModeCompositionWarning,
+    AdaptStateAuditResult,
 } from "./types.js";
 
 type Mutable<T> = { -readonly [P in keyof T]: T[P] extends readonly (infer U)[] ? U[] : T[P] };
@@ -18,6 +20,8 @@ type ResolutionTraceDraft = Partial<Mutable<ResolutionTrace>> & {
     _reflowHistory?: ReflowHistoryEntry[];
     _brandColorSource?: BrandColorSource;
     _brandColorCompliance?: BrandColorComplianceEntry[];
+    _modeComposition?: { missing: ModeCompositionWarning[]; reinforced: boolean };
+    _adaptStateAudit?: AdaptStateAuditResult;
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -50,6 +54,8 @@ export interface TraceBuilder {
     addReflowHistoryEntry(entry: ReflowHistoryEntry): TraceBuilder;
     setBrandColorSource(source: BrandColorSource): TraceBuilder;
     addBrandColorComplianceEntry(entry: BrandColorComplianceEntry): TraceBuilder;
+    recordModeCompositionMissing(mode: string, missingElements: string[]): TraceBuilder;
+    recordAdaptStateAudit(result: AdaptStateAuditResult): TraceBuilder;
     build(): ResolutionTrace;
 }
 
@@ -152,6 +158,31 @@ export function createTraceBuilder(): TraceBuilder {
             state._brandColorCompliance.push({ ...entry });
             return builder;
         },
+        recordModeCompositionMissing(mode, missingElements) {
+            if (!state._modeComposition) {
+                state._modeComposition = { missing: [], reinforced: false };
+            }
+            state._modeComposition.missing.push({
+                mode,
+                missingElements: [...missingElements],
+                reinforcementInjected: true,
+                detectedAt: "post_build_plan",
+            });
+            state._modeComposition.reinforced = true;
+            return builder;
+        },
+        recordAdaptStateAudit(result) {
+            state._adaptStateAudit = {
+                ...result,
+                entries: result.entries.map(e => ({
+                    ...e,
+                    triggerWordsFound: Array.isArray(e.triggerWordsFound)
+                        ? [...e.triggerWordsFound]
+                        : e.triggerWordsFound,
+                })),
+            };
+            return builder;
+        },
         build(): ResolutionTrace {
             if (!state.resolvedCampaignType) throw new Error("TraceBuilder: resolvedCampaignType not set");
             if (!state.resolvedAdMode) throw new Error("TraceBuilder: resolvedAdMode not set");
@@ -198,6 +229,10 @@ export function createTraceBuilder(): TraceBuilder {
                 brandColorCompliance: state._brandColorCompliance
                     ? state._brandColorCompliance.map(e => ({ ...e }))
                     : undefined,
+                modeComposition: state._modeComposition
+                    ? { missing: state._modeComposition.missing.map(e => ({ ...e })), reinforced: state._modeComposition.reinforced }
+                    : undefined,
+                adaptStateAudit: state._adaptStateAudit,
             });
         },
     };

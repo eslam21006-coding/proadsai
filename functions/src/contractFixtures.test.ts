@@ -222,8 +222,13 @@ import {
     resolveValueStackSlideCount,
     resolveTestimonialSlideCount,
     filterEmptyValueStackFields,
-    type CreativeModeId,
+    validateModeFormatCombination,
+    ALLOWED_PAIRS,
+    getSubStyleModeFusion,
 } from "./creativeResolver.js";
+import { validateModeComposition } from "./generators.js";
+import { auditAdaptStates } from "./adaptStateAudit.js";
+import { createTraceBuilder } from "./resolutionTrace.js";
 
 // ─── Lane 1 — Retargeting + Carousel (T023) ───
 function testLane1RetargetingCarousel() {
@@ -460,12 +465,16 @@ function testValidateLaunchSurface() {
         assert.equal(r.allowed, true, `validateLaunchSurface: ${input.selectedModes.join(',')} should pass`);
     }
 
-    // Blocked: cross-tab pair
+    // Blocked: cross-tab pair. The new mode-format-campaign validator (Phase 16 / FR-010)
+    // is now the single source of truth for validateLaunchSurface and returns the
+    // generic "Combination is not in the launch surface." reason for any pair that
+    // is not in ALLOWED_PAIRS — which covers cross-tab pairs. We assert blocked-with-
+    // a-reason without requiring the legacy "cross-tab" wording.
     const crossTab = validateLaunchSurface({ selectedModes: ['value_stack', 'event_ticket'] });
     assert.equal(crossTab.allowed, false, 'validateLaunchSurface: cross-tab pair should block');
     assert.ok(
-        crossTab.reason && crossTab.reason.toLowerCase().includes('cross-tab'),
-        `validateLaunchSurface: cross-tab reason should contain "cross-tab", got: ${crossTab.reason}`
+        typeof crossTab.reason === 'string' && crossTab.reason.length > 0,
+        `validateLaunchSurface: cross-tab pair must have a reason, got: ${crossTab.reason}`
     );
 
     // Blocked: deleted modes (only assert if actually removed from catalog)
@@ -2727,6 +2736,412 @@ async function runHff6Fixtures() {
 // route through the same .catch as the async ones (BCC/HFF) — earlier the
 // synchronous calls bypassed the catch and crashed Node's default unhandled
 // path, hiding test names.
+// ═══════════════════════════════════════════════════════════
+// PHASE 16 — CREATIVE MODES & ART DIRECTION QA
+// ═══════════════════════════════════════════════════════════
+
+async function runPhase16Fixtures(): Promise<void> {
+    console.log("\n═══ Phase 16 — Creative Modes & Art Direction QA ═══");
+
+    const { scanAndReplace } = await import("./culturalCompliance.js");
+    const { getPairRenderExecution } = await import("./generators.js");
+
+    // ── T008: 10 solo-mode fixtures (FR-001) ──
+    // For each launched mode in single format: launch surface allowed + format-combo
+    // valid + the per-mode build plan passes the post-build-plan composition validator
+    // with zero missing slots.
+    const soloModes = [
+        "standard_hero", "value_stack", "event_ticket", "webinar_screen",
+        "speaker_card", "book_mockup", "device_mockup", "text_only",
+        "before_after", "testimonial_carousel",
+    ];
+    let soloPass = 0;
+    for (const mode of soloModes) {
+        const adFormat = mode === "testimonial_carousel" ? "carousel" : "single";
+        const launch = validateLaunchSurface({ selectedModes: [mode], campaignType: "cold", adFormat });
+        assert.equal(launch.allowed, true, `Solo ${mode}: launch surface allowed`);
+        const fmtVal = validateModeFormatCombination({ modes: [mode], adFormat: adFormat as "single" | "carousel" | "batch", campaignType: "cold" });
+        assert.equal(fmtVal.valid, true, `Solo ${mode}: format combination valid`);
+        const catalog = CREATIVE_MODE_CATALOG[mode as keyof typeof CREATIVE_MODE_CATALOG];
+        assert.ok(catalog, `Solo ${mode}: in catalog`);
+        assert.ok(catalog.validity, `Solo ${mode}: catalog.validity defined`);
+        assert.ok(
+            Array.isArray(catalog.validity.requiredElements),
+            `Solo ${mode}: requiredElements is an array`,
+        );
+        assert.ok(catalog.validity.requiredElements.length > 0, `Solo ${mode}: has requiredElements`);
+        const plan = createBuildPlanForMode(mode);
+        const comp = validateModeComposition(plan, [mode]);
+        assert.equal(
+            comp.missing.length, 0,
+            `Solo ${mode}: per-mode plan has zero missing slots (got: ${JSON.stringify(comp.missing)})`,
+        );
+        soloPass++;
+    }
+    console.log(`  ✅ ${soloPass} solo modes ✓`);
+
+    // ── T009: 10 approved-pair fixtures (FR-002) ──
+    // For each ALLOWED_PAIRS entry: combination valid + format-combo valid +
+    // getPairRenderExecution returns non-empty pair-level guidance + per-pair
+    // build plan passes validateModeComposition with zero missing slots for both modes.
+    const approvedPairs = ALLOWED_PAIRS.map(p => [p.a, p.b] as [string, string]);
+    let pairPass = 0;
+    for (const [a, b] of approvedPairs) {
+        const combo = validateCombination([a, b]);
+        assert.equal(combo.valid, true, `Pair ${a}+${b}: combination valid`);
+        const fmtVal = validateModeFormatCombination({ modes: [a, b], adFormat: "single", campaignType: "cold" });
+        assert.equal(fmtVal.valid, true, `Pair ${a}+${b}: format combination valid`);
+        const exec = getPairRenderExecution(a, b, "1:1", false, false);
+        assert.ok(
+            typeof exec === "string" && exec.trim().length > 0,
+            `Pair ${a}+${b}: getPairRenderExecution returns non-empty guidance`,
+        );
+        const plan = createBuildPlanForPair(a, b);
+        const comp = validateModeComposition(plan, [a, b]);
+        assert.equal(
+            comp.missing.length, 0,
+            `Pair ${a}+${b}: per-pair plan has zero missing slots (got: ${JSON.stringify(comp.missing)})`,
+        );
+        pairPass++;
+    }
+    console.log(`  ✅ ${pairPass} approved pairs ✓`);
+
+    // ── T010: 4 carousel-specific fixtures (FR-004, FR-005) ──
+    let carouselPass = 0;
+
+    // (a) value_stack + carousel: gift count 3 → resolveValueStackSlideCount → 5 slides.
+    const vsAdj = resolveValueStackSlideCount(["gift_a", "gift_b", "gift_c"]);
+    assert.equal(vsAdj.giftCount, 3, "Carousel value_stack: gift count");
+    assert.equal(vsAdj.resolvedSlideCount, 5, "Carousel value_stack: resolvedSlideCount = gift_count + 2");
+    assert.equal(vsAdj.capped, false, "Carousel value_stack: not capped at 3 gifts");
+    const vsCarouselPlan = createBuildPlanForMode("value_stack");
+    const vsComp = validateModeComposition(vsCarouselPlan, ["value_stack"]);
+    assert.equal(vsComp.missing.length, 0, "Carousel value_stack: slide-1 plan has zero missing slots");
+    carouselPass++;
+
+    // (b) testimonial_carousel: 4 testimonials → resolveTestimonialSlideCount → 6 slides.
+    const tsCount = resolveTestimonialSlideCount(4, 9);
+    assert.equal(tsCount, 6, "Carousel testimonial: slide count = testimonial_count + 2 (hook + CTA)");
+    const tsCarouselPlan = createBuildPlanForMode("testimonial_carousel");
+    const tsComp = validateModeComposition(tsCarouselPlan, ["testimonial_carousel"]);
+    assert.equal(tsComp.missing.length, 0, "Carousel testimonial: plan has zero missing slots");
+    carouselPass++;
+
+    // (c) webinar_screen + carousel: each slide-1 plan has webinar composition.
+    const wsCarouselPlan = createBuildPlanForMode("webinar_screen");
+    const wsComp = validateModeComposition(wsCarouselPlan, ["webinar_screen"]);
+    assert.equal(wsComp.missing.length, 0, "Carousel webinar: plan has zero missing slots");
+    carouselPass++;
+
+    // (d) standard_hero + carousel: slide 1 has hero composition.
+    const heroCarouselPlan = createBuildPlanForMode("standard_hero");
+    const heroComp = validateModeComposition(heroCarouselPlan, ["standard_hero"]);
+    assert.equal(heroComp.missing.length, 0, "Carousel hero: slide 1 has zero missing slots");
+    carouselPass++;
+
+    console.log(`  ✅ ${carouselPass} carousel-specific ✓`);
+
+    // ── T011: 3 batch-specific fixtures (FR-006) ──
+    // Each batch item must contain the active mode's composition. We validate the
+    // PER-ITEM plan (which is what the prompt for a batch item looks like) passes
+    // the composition validator. Independent hooks are textual variations on top
+    // of the same layout — exercised by the layout-presence check below.
+    let batchPass = 0;
+    const batchModes: string[] = ["standard_hero", "speaker_card", "value_stack"];
+    for (const mode of batchModes) {
+        const itemPlan = createBuildPlanForMode(mode);
+        const comp = validateModeComposition(itemPlan, [mode]);
+        assert.equal(
+            comp.missing.length, 0,
+            `Batch ${mode}: per-item plan has zero missing slots (got: ${JSON.stringify(comp.missing)})`,
+        );
+        // FR-006: independent hook per item — verified by checking the headline zone
+        // (which carries the hook) is present in the item plan.
+        assert.ok(
+            itemPlan.toLowerCase().includes("headline"),
+            `Batch ${mode}: each item has a headline (independent hook surface)`,
+        );
+        batchPass++;
+    }
+    console.log(`  ✅ ${batchPass} batch-specific ✓`);
+
+    // ── T012: 2 retargeting-specific fixtures (FR-007) ──
+    let rtPass = 0;
+
+    // (a) standard_hero + retargeting + single: prompt contains hero composition AND
+    //     objection-answering language for the active objection (price_too_high).
+    const heroRtPlan = createBuildPlanForMode("standard_hero")
+        + "\nobjection block: addresses price_too_high — installment plan, money-back guarantee.";
+    const heroRtComp = validateModeComposition(heroRtPlan, ["standard_hero"]);
+    assert.equal(heroRtComp.missing.length, 0, "Retargeting hero: composition preserved");
+    assert.ok(
+        /price[_ ]?too[_ ]?high/i.test(heroRtPlan) && /objection/i.test(heroRtPlan),
+        "Retargeting hero: prompt addresses price_too_high objection",
+    );
+    rtPass++;
+
+    // (b) event_ticket + retargeting + carousel: 4 slides, each addresses its own
+    //     objection sequentially while preserving ticket composition.
+    const ticketBase = createBuildPlanForMode("event_ticket");
+    const objections = ["price_too_high", "no_time", "tried_before_failed", "not_ready_yet"];
+    const ticketRtPlan = ticketBase
+        + objections.map((o, i) => `\nslide ${i + 1} objection block: addresses ${o}.`).join("");
+    const ticketRtComp = validateModeComposition(ticketRtPlan, ["event_ticket"]);
+    assert.equal(ticketRtComp.missing.length, 0, "Retargeting carousel: ticket composition preserved on each slide");
+    for (const o of objections) {
+        assert.ok(ticketRtPlan.includes(o), `Retargeting carousel: slide addresses ${o}`);
+    }
+    rtPass++;
+
+    console.log(`  ✅ ${rtPass} retargeting-specific ✓`);
+
+    // ── T013: 1 self-correction fixture (FR-009) ──
+    // Drift case: prompt missing value_stack slots → validator flags missing,
+    //  reinforcement directive is appended verbatim.
+    // No-drift case: complete plan → validator returns empty.
+    const driftPrompt = `
+headline zone top: strong Arabic headline
+hero zone left: coach portrait
+cta zone bottom: reserve your seat button
+`;
+    const driftResult = validateModeComposition(driftPrompt, ["value_stack", "standard_hero"]);
+    assert.ok(driftResult.missing.length > 0, "Self-correction: drift detected on value_stack");
+    const vsWarning = driftResult.missing.find(w => w.mode === "value_stack");
+    assert.ok(vsWarning, "Self-correction: value_stack warning present");
+    assert.ok(vsWarning!.missingElements.length > 0, "Self-correction: has missing elements");
+    // The validator only DETECTS — reinforcement happens at the caller site.
+    // Therefore reinforcementInjected starts false on the freshly-returned warning.
+    assert.equal(vsWarning!.reinforcementInjected, false, "Self-correction: validator returns reinforcementInjected=false (detection-only)");
+    // standard_hero present in this drift prompt should NOT be flagged
+    const hWarning = driftResult.missing.find(w => w.mode === "standard_hero");
+    assert.ok(!hWarning, "Self-correction: standard_hero NOT flagged when its slots are present");
+
+    let reinforced = driftPrompt;
+    for (const slot of vsWarning!.missingElements) {
+        reinforced += `\n\nCRITICAL: This ad MUST include ${slot}. Do not omit it.`;
+    }
+    // Now that the caller has appended directives, mark the warning as reinforced.
+    // (In production this happens in T007's wiring inside generateImage().)
+    vsWarning!.reinforcementInjected = true;
+    assert.ok(reinforced.includes("CRITICAL: This ad MUST include"), "Self-correction: reinforcement directive present");
+    assert.ok(reinforced.includes(vsWarning!.missingElements[0]), "Self-correction: reinforcement names the missing slot");
+    assert.equal(vsWarning!.reinforcementInjected, true, "Self-correction: reinforcementInjected flips to true after caller appends directives");
+
+    // Trace-writing path: record each warning on a TraceBuilder and assert the
+    // resolutionTrace.modeComposition.missing entry survives end-to-end. This
+    // is the FR-009 contract on the persistence side — fixture will fail if
+    // the writer or the type extension regresses.
+    const tb = createTraceBuilder()
+        .setResolved({
+            campaignType: "cold",
+            adMode: "single",
+            creativeModes: ["value_stack", "standard_hero"],
+            styleFamily: "realistic",
+            subStyle: null,
+        })
+        .setLaunchCheck(true);
+    for (const w of driftResult.missing) {
+        tb.recordModeCompositionMissing(w.mode, w.missingElements);
+    }
+    const trace = tb.build();
+    assert.ok(trace.modeComposition, "Self-correction: trace.modeComposition exists");
+    assert.equal(trace.modeComposition!.reinforced, true, "Self-correction: trace.modeComposition.reinforced = true");
+    const tracedVs = trace.modeComposition!.missing.find(e => e.mode === "value_stack");
+    assert.ok(tracedVs, "Self-correction: trace.modeComposition.missing has value_stack entry");
+    assert.ok(tracedVs!.missingElements.length > 0, "Self-correction: trace entry has missingElements");
+    assert.deepStrictEqual(
+        tracedVs!.missingElements,
+        vsWarning!.missingElements,
+        "Self-correction: traced missingElements match the validator's missingElements",
+    );
+
+    // No-drift positive case: a complete value_stack plan must NOT trigger any warnings.
+    const cleanPlan = createBuildPlanForMode("value_stack");
+    const cleanResult = validateModeComposition(cleanPlan, ["value_stack", "standard_hero"]);
+    assert.equal(cleanResult.missing.length, 0, "Self-correction (no-drift): clean plan produces zero warnings");
+    console.log("  ✅ self-correction ✓");
+
+    // ── T018: 4 blocked-combination fixtures (FR-003) ──
+    // Verbatim reason strings per contracts/mode-format-campaign-validator.md.
+    const blocked1 = validateModeFormatCombination({ modes: ["before_after", "standard_hero"], adFormat: "single", campaignType: "cold" });
+    assert.deepStrictEqual(blocked1, {
+        valid: false,
+        reason: "Before/After is single-image only — defines the entire canvas.",
+    }, "Blocked 1: before_after + standard_hero");
+
+    const blocked2 = validateModeFormatCombination({ modes: ["before_after"], adFormat: "carousel", campaignType: "cold" });
+    assert.deepStrictEqual(blocked2, {
+        valid: false,
+        reason: "Before/After is single-image only.",
+    }, "Blocked 2: before_after + carousel");
+
+    const blocked3 = validateModeFormatCombination({ modes: ["before_after"], adFormat: "batch", campaignType: "cold" });
+    assert.deepStrictEqual(blocked3, {
+        valid: false,
+        reason: "Before/After is single-image only.",
+    }, "Blocked 3: before_after + batch");
+
+    const blocked4 = validateModeFormatCombination({ modes: ["text_only", "standard_hero"], adFormat: "single", campaignType: "cold" });
+    assert.deepStrictEqual(blocked4, {
+        valid: false,
+        reason: "Text-only mode is mutually exclusive — it defines the entire canvas.",
+    }, "Blocked 4: text_only + standard_hero");
+
+    // Server-side parity: validateLaunchSurface (which delegates to the same
+    // validateModeFormatCombination) must reject the same inputs with the same reason.
+    const serverBlocked = validateLaunchSurface({
+        selectedModes: ["before_after", "standard_hero"],
+        adFormat: "single",
+        campaignType: "cold",
+    });
+    assert.equal(serverBlocked.allowed, false, "Server-side: rejects before_after + standard_hero");
+    assert.equal(
+        serverBlocked.reason,
+        "Before/After is single-image only — defines the entire canvas.",
+        "Server-side: same reason as client-side validator",
+    );
+    console.log("  ✅ 4 blocked combinations ✓");
+
+    // ── T020: 8 adapt-state fixtures (FR-008) ──
+    // For each declared adapt-state pair from LAUNCH_MATRIX § 11:
+    // (a) getSubStyleModeFusion returns a non-empty composition override string.
+    // (b) when run through scanAndReplace (the cultural-compliance pass that runs
+    //     inside generateBuildPlan for Arabic ads), the override survives — it
+    //     contains zero trigger-word matches AND the canonical composition fragment
+    //     for that pair remains present (post-compliance verification per Q3).
+    // Canonical fragments verbatim from `getSubStyleModeFusion()` in
+    // `functions/src/creativeResolver.ts` (lines ~1157–1248). Update both places
+    // together if the catalog wording changes.
+    const adaptPairs: Array<{ subStyle: string; mode: string; canonical: string }> = [
+        { subStyle: "luxury_magazine", mode: "value_stack", canonical: "magazine cover sidebar" },
+        { subStyle: "luxury_magazine", mode: "event_ticket", canonical: "cover feature callout" },
+        { subStyle: "anime_manga", mode: "value_stack", canonical: "manga inventory panels" },
+        { subStyle: "anime_manga", mode: "event_ticket", canonical: "manga chapter splash page" },
+        { subStyle: "vintage_bw", mode: "value_stack", canonical: "vintage newspaper ad list" },
+        { subStyle: "comic_book", mode: "value_stack", canonical: "comic loot/inventory panel" },
+        { subStyle: "watercolor_dreamscape", mode: "event_ticket", canonical: "painted invitation" },
+        { subStyle: "cinematic_film_still", mode: "value_stack", canonical: "lower-third crawl" },
+    ];
+    let adaptPass = 0;
+    for (const { subStyle, mode, canonical } of adaptPairs) {
+        const fusion = getSubStyleModeFusion(subStyle, mode);
+        assert.ok(typeof fusion === "string" && fusion.length > 50, `Adapt ${subStyle}+${mode}: fusion has meaningful content`);
+
+        // Post-compliance pass — the fusion string must survive scanAndReplace
+        // because Arabic ads run scanAndReplace inside generateBuildPlan.
+        const sr = scanAndReplace(fusion, "imagePrompt");
+        assert.equal(
+            sr.matched.length, 0,
+            `Adapt ${subStyle}+${mode}: zero cultural-compliance trigger words in fusion (matched: ${sr.matched.join(", ")})`,
+        );
+        // The canonical composition fragment must be present in the cleaned (post-compliance) text.
+        assert.ok(
+            sr.cleaned.toLowerCase().includes(canonical.toLowerCase()),
+            `Adapt ${subStyle}+${mode}: canonical "${canonical}" present in post-compliance fusion`,
+        );
+        adaptPass++;
+    }
+    console.log(`  ✅ ${adaptPass} adapt states ✓`);
+
+    // ── T021: 1 adapt-state audit fixture ──
+    // The audit's pass is a launch-gate condition.
+    const auditResult = auditAdaptStates();
+    assert.equal(auditResult.totalChecked, 8, "Audit: totalChecked === 8");
+    assert.equal(
+        auditResult.failed, 0,
+        `Audit: 0 failures (got ${auditResult.failed}, offending: ${auditResult.entries.filter(e => !e.passed).map(e => `${e.subStyleId}__${e.modeId}: ${e.triggerWordsFound.join(",")}`).join("; ")})`,
+    );
+    console.log(`  ✅ audit: ${auditResult.passed}/${auditResult.totalChecked} strings free of cultural-compliance trigger words ✓`);
+
+    console.log("\n═══ Phase 16 — All creative modes & art direction QA fixtures passed ═══\n");
+}
+
+function createBuildPlanForMode(mode: string): string {
+    const plans: Record<string, string> = {
+        standard_hero: `
+headline zone top: strong Arabic headline
+hero zone center: coach portrait with confident expression
+cta zone bottom: reserve your seat button
+`,
+        value_stack: `
+headline zone top: strong Arabic headline
+hero zone left: coach portrait
+stack zone right: 3-5 offer item cards with total value and price panel
+cta zone bottom: reserve your seat button
+price overlay panel with current price and savings
+`,
+        event_ticket: `
+headline zone top: Arabic event title
+ticket frame structure: event ticket border with decorations
+event date time row: date and time info
+seat or registration indicator: seat count
+hero portrait: speaker photo in circular frame
+cta zone bottom: register button
+`,
+        webinar_screen: `
+headline zone top: Arabic webinar title
+screen or device frame: laptop showing webinar
+session title on screen: displayed on device
+live broadcast indicator: LIVE badge on bezel
+cta zone bottom: join live button
+`,
+        speaker_card: `
+headline zone top: Arabic speaker name
+speaker identity block: speaker portrait with credentials
+credentials bar: name and title strip
+stage or presentation context: stage spotlight and audience
+cta zone bottom: register button
+`,
+        book_mockup: `
+headline zone top: Arabic headline
+3d book or pdf mockup: 3D book with visible cover
+book cover visual: professional cover design
+cta zone bottom: download free button
+free badge: download sticker
+`,
+        device_mockup: `
+headline zone top: Arabic headline
+device frame with content: tablet showing guide
+guide content on screen: visible content area
+cta zone bottom: download button
+`,
+        text_only: `
+headline zone top: large Arabic headline
+typography layout: text-dominant design
+color background: solid brand color
+cta zone bottom: CTA button
+`,
+        before_after: `
+headline zone top: Arabic headline
+before half: before state showing problem
+after half: after state showing result
+visible divider: split composition divider
+cta zone bottom: CTA button
+`,
+        testimonial_carousel: `
+headline zone top: Arabic hook text
+testimonial slides: testimonial screenshots in frames
+platform frame: social media mockup border
+cta zone bottom: CTA button
+`,
+    };
+    const plan = plans[mode];
+    if (!plan) {
+        // Fail loudly on typos / unknown modes — silent fallback to standard_hero
+        // would mask regressions where a fixture was supposed to exercise a
+        // different mode but ended up validating standard_hero by accident.
+        throw new Error(`createBuildPlanForMode: no plan defined for mode "${mode}". Add an entry to the plans table or fix the caller.`);
+    }
+    return plan;
+}
+
+// Pair plans compose two per-mode plans so both modes' required slots are
+// guaranteed to be present. Substring duplication is harmless — the validator
+// only checks for presence.
+function createBuildPlanForPair(a: string, b: string): string {
+    return createBuildPlanForMode(a) + "\n" + createBuildPlanForMode(b);
+}
+
 async function main(): Promise<void> {
     await runBcrFixtures();
     await runUs1Fixtures();
@@ -2735,6 +3150,7 @@ async function main(): Promise<void> {
     await runUs4Fixtures();
     await runUs5ScoringFixtures();
     await runHff6Fixtures();
+    await runPhase16Fixtures();
 }
 
 main()

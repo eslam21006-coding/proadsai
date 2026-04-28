@@ -1,4 +1,4 @@
-// creativeResolver.ts
+// src/creativeResolver.ts — frontend creative mode resolver mirror, launch-surface validator, and UI gating helpers (sourced from functions/src/creativeResolver.ts).
 // ═══════════════════════════════════════════════════════════════════════════
 // CREATIVE MODE RESOLVER — Single Source of Truth (v2: Tab + Role System)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -205,11 +205,10 @@ export const ALLOWED_PAIRS: AllowedPair[] = [
     { a: 'standard_hero', b: 'book_mockup', tab: 'free_guide', layoutKey: 'hero_book', templateNeeds: ['dashboard_product'], pairValidity: 'Must show hero with real book mockup.' },
     { a: 'standard_hero', b: 'device_mockup', tab: 'free_guide', layoutKey: 'hero_device', templateNeeds: ['dashboard_product', 'device_stack'], pairValidity: 'Must show hero with real device mockup.' },
     { a: 'book_mockup', b: 'device_mockup', tab: 'free_guide', layoutKey: 'book_device', templateNeeds: ['device_stack'], pairValidity: 'Must show both book and device packaging.' },
+    { a: 'event_ticket', b: 'webinar_screen', tab: 'live_events', layoutKey: 'ticket_screen', templateNeeds: ['event_ticket', 'dashboard_product'], pairValidity: 'Must show ticket structure with screen element.' },
 ];
 
-export const DISALLOWED_PAIRS: { a: CreativeModeId; b: CreativeModeId; reason: string }[] = [
-    { a: 'event_ticket', b: 'webinar_screen', reason: 'Two anchor structures compete and create clutter.' },
-];
+export const DISALLOWED_PAIRS: { a: CreativeModeId; b: CreativeModeId; reason: string }[] = [];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // COMBINATION VALIDATOR
@@ -400,6 +399,17 @@ const PAIR_SPECS: Record<string, PairSpec> = {
         captionAnchors: ['live with', 'presented by', 'webinar'],
     },
 
+    'event_ticket+webinar_screen': {
+        layoutKey: 'ticket_screen', labelEn: 'Event Ticket + Screen', labelAr: 'تذكرة + شاشة',
+        blueprintEn: 'Event ticket with screen element — ticket structure with embedded screen showing event broadcast details.',
+        blueprintAr: 'تذكرة حدث مع عنصر شاشة — هيكل تذكرة مع شاشة مضمنة تعرض تفاصيل البث.',
+        mustShow: ['ticket_frame', 'event_title', 'screen_or_device', 'date_time_row', 'live_badge'],
+        mustAvoid: ['generic_hero_standing', 'value_stack_items', 'before_after_split', 'blank_screen'],
+        visualHierarchy: ['ticket_structure', 'screen_within_ticket', 'event_metadata', 'cta_bottom'],
+        textPlacementRules: ['event_title_top', 'screen_center', 'date_time_below_screen', 'cta_bottom'],
+        captionAnchors: ['live event', 'register', 'watch live'],
+    },
+
     'standard_hero+book_mockup': {
         layoutKey: 'hero_book', labelEn: 'Hero + Book Mockup', labelAr: 'بطل + نموذج كتاب',
         blueprintEn: 'Hero standing beside or holding a prominent 3D book/ebook mockup with visible cover.',
@@ -509,6 +519,82 @@ export function resolveCreativeSpec(input: ResolverInput): ResolvedCreativeSpec 
     };
 }
 
+// ─── MODE-FORMAT-CAMPAIGN VALIDATOR (FR-003) ─────────────────────────────
+
+export type ModeFormatValidationResult =
+    | { valid: true }
+    | { valid: false; reason: string };
+
+export interface ModeFormatValidationInput {
+    modes: string[];
+    adFormat: "single" | "carousel" | "batch";
+    campaignType: "cold" | "retargeting";
+}
+
+const LAUNCHED_MODE_SET = new Set<string>([
+    "standard_hero", "value_stack", "event_ticket", "webinar_screen",
+    "speaker_card", "book_mockup", "device_mockup", "testimonial_carousel",
+    "text_only", "before_after",
+]);
+
+const ALLOWED_AD_FORMATS = new Set<string>(["single", "carousel", "batch"]);
+const ALLOWED_CAMPAIGN_TYPES = new Set<string>(["cold", "retargeting"]);
+
+export function validateModeFormatCombination(
+    input: ModeFormatValidationInput,
+): ModeFormatValidationResult {
+    const { modes, adFormat, campaignType } = input;
+    const filtered = (modes || []).filter(Boolean);
+
+    // Runtime guards: reject unknown adFormat / campaignType before falling
+    // through into the type-narrowing checks below. Mirrors the backend
+    // validator in functions/src/creativeResolver.ts.
+    if (!ALLOWED_AD_FORMATS.has(adFormat)) {
+        return { valid: false, reason: "Invalid adFormat" };
+    }
+    if (!ALLOWED_CAMPAIGN_TYPES.has(campaignType)) {
+        return { valid: false, reason: "Invalid campaignType" };
+    }
+
+    if (filtered.includes("before_after") && filtered.length > 1) {
+        return { valid: false, reason: "Before/After is single-image only — defines the entire canvas." };
+    }
+    if (filtered.includes("before_after") && adFormat !== "single") {
+        return { valid: false, reason: "Before/After is single-image only." };
+    }
+    if (filtered.includes("text_only") && filtered.length > 1) {
+        return { valid: false, reason: "Text-only mode is mutually exclusive — it defines the entire canvas." };
+    }
+    if (filtered.includes("testimonial_carousel") && adFormat !== "carousel") {
+        return { valid: false, reason: "Testimonial Carousel requires carousel format." };
+    }
+
+    if (filtered.length === 1) {
+        const mode = filtered[0];
+        if (!LAUNCHED_MODE_SET.has(mode)) {
+            return { valid: false, reason: "Combination is not in the launch surface." };
+        }
+        // The earlier rules already handle:
+        //   - before_after + non-single → caught by `filtered.includes("before_after") && adFormat !== "single"`.
+        //   - testimonial_carousel + non-carousel → caught by `filtered.includes("testimonial_carousel") && adFormat !== "carousel"`.
+        // No additional per-mode format checks are needed here.
+        return { valid: true };
+    }
+
+    if (filtered.length === 2) {
+        const [a, b] = filtered;
+        const isAllowed = ALLOWED_PAIRS.some(
+            (p) => (p.a === a && p.b === b) || (p.a === b && p.b === a),
+        );
+        if (!isAllowed) {
+            return { valid: false, reason: "Combination is not in the launch surface." };
+        }
+        return { valid: true };
+    }
+
+    return { valid: false, reason: "Combination is not in the launch surface." };
+}
+
 export interface LaunchSurfaceResult {
     allowed: boolean;
     reason?: string;
@@ -529,17 +615,21 @@ export function validateLaunchSurface(inputs: {
         }
     }
 
+    // Single-source-of-truth gate (FR-010, SC-007): the mode-format-campaign
+    // validator runs FIRST so its verbatim reasons win over the older
+    // combination validator's wording. Mirrors functions/src/creativeResolver.ts.
+    const fmtResult = validateModeFormatCombination({
+        modes,
+        adFormat: (inputs.adFormat as "single" | "carousel" | "batch") || "single",
+        campaignType: (inputs.campaignType as "cold" | "retargeting") || "cold",
+    });
+    if (!fmtResult.valid) {
+        return { allowed: false, reason: (fmtResult as { valid: false; reason: string }).reason };
+    }
+
     const combo = validateCombination(modes, inputs.hookAngle);
     if (!combo.valid) {
         return { allowed: false, reason: combo.errors[0] || 'Invalid combination.' };
-    }
-
-    if (inputs.adFormat === 'carousel') {
-        for (const m of modes) {
-            if (CREATIVE_MODE_CATALOG[m]?.soloOnly) {
-                return { allowed: false, reason: `${CREATIVE_MODE_CATALOG[m].labelEn} is single-image only.` };
-            }
-        }
     }
 
     return { allowed: true };
@@ -596,14 +686,34 @@ export function getCaptionCreativeModeAnchors(spec: ResolvedCreativeSpec): strin
 }
 
 // ─── BACKWARD COMPAT ────────────────────────────────────────────────────
+// Mirrors the backend CONFLICT_MAP (functions/src/creativeResolver.ts):
+// derived from soloOnly + tab membership + ALLOWED_PAIRS so legacy consumers
+// reflect the same conflict decisions as validateModeFormatCombination.
 export const CONFLICT_MAP: Record<string, Set<string>> = (() => {
     const map: Record<string, Set<string>> = {};
     for (const id of Object.keys(CREATIVE_MODE_CATALOG)) { map[id] = new Set<string>(); }
-    for (const d of DISALLOWED_PAIRS) { map[d.a]?.add(d.b); map[d.b]?.add(d.a); }
+
     for (const [idA, metaA] of Object.entries(CREATIVE_MODE_CATALOG)) {
         for (const [idB, metaB] of Object.entries(CREATIVE_MODE_CATALOG)) {
             if (idA === idB) continue;
-            if (metaA.tabs.filter(t => metaB.tabs.includes(t)).length === 0) { map[idA]?.add(idB); }
+
+            if (metaA.soloOnly || metaB.soloOnly) {
+                map[idA]?.add(idB);
+                continue;
+            }
+
+            const sharesTab = metaA.tabs.some(t => metaB.tabs.includes(t));
+            if (!sharesTab) {
+                map[idA]?.add(idB);
+                continue;
+            }
+
+            const isAllowedPair = ALLOWED_PAIRS.some(
+                p => (p.a === idA && p.b === idB) || (p.a === idB && p.b === idA),
+            );
+            if (!isAllowedPair) {
+                map[idA]?.add(idB);
+            }
         }
     }
     return map;
