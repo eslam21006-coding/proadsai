@@ -3120,7 +3120,14 @@ platform frame: social media mockup border
 cta zone bottom: CTA button
 `,
     };
-    return plans[mode] || plans["standard_hero"];
+    const plan = plans[mode];
+    if (!plan) {
+        // Fail loudly on typos / unknown modes — silent fallback to standard_hero
+        // would mask regressions where a fixture was supposed to exercise a
+        // different mode but ended up validating standard_hero by accident.
+        throw new Error(`createBuildPlanForMode: no plan defined for mode "${mode}". Add an entry to the plans table or fix the caller.`);
+    }
+    return plan;
 }
 
 // Pair plans compose two per-mode plans so both modes' required slots are

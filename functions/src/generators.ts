@@ -4692,8 +4692,18 @@ ${JSON.stringify(parsedBuildPlan.machinePlan || {})}`;
     // ═══ T007: MODE COMPOSITION VALIDATOR (FR-009 — post-build-plan self-correction) ═══
     if (!editInstruction && !base64ToEdit) {
         const _mcModes: string[] = Array.isArray((inputs as { offerCreativeMode?: unknown }).offerCreativeMode)
-            ? ((inputs as { offerCreativeMode: string[] }).offerCreativeMode)
+            ? [...((inputs as { offerCreativeMode: string[] }).offerCreativeMode)]
             : ['standard_hero'];
+        // Legacy compat: before_after used to be a hook angle (per matrix § 2.7
+        // it is now a creative mode). `selectLayoutTemplate` in layoutTemplates.ts
+        // still treats `hookAngle === 'before_after'` as a layout override —
+        // when that fires, the rendered ad is a split before/after canvas even
+        // if `offerCreativeMode` doesn't include 'before_after'. Inject it into
+        // _mcModes so the validator checks the before/after slots.
+        const _mcLegacyHookAngle = (inputs as { coldHookAngle?: unknown }).coldHookAngle;
+        if (_mcLegacyHookAngle === 'before_after' && !_mcModes.includes('before_after')) {
+            _mcModes.push('before_after');
+        }
         const _mcTechnicalPrompt = gatedBlueprint;
         if (_mcTechnicalPrompt) {
             const _mcResult = validateModeComposition(_mcTechnicalPrompt, _mcModes);

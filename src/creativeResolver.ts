@@ -205,7 +205,7 @@ export const ALLOWED_PAIRS: AllowedPair[] = [
     { a: 'standard_hero', b: 'book_mockup', tab: 'free_guide', layoutKey: 'hero_book', templateNeeds: ['dashboard_product'], pairValidity: 'Must show hero with real book mockup.' },
     { a: 'standard_hero', b: 'device_mockup', tab: 'free_guide', layoutKey: 'hero_device', templateNeeds: ['dashboard_product', 'device_stack'], pairValidity: 'Must show hero with real device mockup.' },
     { a: 'book_mockup', b: 'device_mockup', tab: 'free_guide', layoutKey: 'book_device', templateNeeds: ['device_stack'], pairValidity: 'Must show both book and device packaging.' },
-    { a: 'event_ticket', b: 'webinar_screen', tab: 'live_events', layoutKey: 'ticket_screen', templateNeeds: ['event_ticket', 'dashboard_product'], pairValidity: 'Must show ticket structure with webinar screen framing.' },
+    { a: 'event_ticket', b: 'webinar_screen', tab: 'live_events', layoutKey: 'ticket_screen', templateNeeds: ['event_ticket', 'dashboard_product'], pairValidity: 'Must show ticket structure with screen element.' },
 ];
 
 export const DISALLOWED_PAIRS: { a: CreativeModeId; b: CreativeModeId; reason: string }[] = [];
@@ -574,9 +574,9 @@ export function validateModeFormatCombination(
         if (!LAUNCHED_MODE_SET.has(mode)) {
             return { valid: false, reason: "Combination is not in the launch surface." };
         }
-        if (mode === "before_after" && adFormat !== "single") {
-            return { valid: false, reason: "Before/After is single-image only." };
-        }
+        // before_after format check is already handled by the early
+        // `filtered.includes("before_after") && adFormat !== "single"` rule
+        // above — no need to repeat it here.
         if (mode === "testimonial_carousel" && adFormat !== "carousel") {
             return { valid: false, reason: "Testimonial Carousel requires carousel format." };
         }
