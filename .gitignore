@@ -60,3 +60,8 @@ lerna-debug.log*
 .DS_Store
 Thumbs.db
 Desktop.ini
+# Local backup archives
+*.rar
+*.zip.bak
+*.7z
+
