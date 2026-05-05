@@ -45,9 +45,9 @@ All product owner decisions. These are final for launch.
 | Testimonial carousel | New feature — user uploads testimonial screenshots, each rendered as platform mockup slide. Cold + Retargeting. |
 | value_stack + carousel | Item-per-slide. Slide count auto-adjusted to gift count + 2. User's original selection overridden with notification. |
 | value_stack empty fields | Never rendered. Never mentioned. If a field is empty it does not exist in the blueprint, contract, or image. |
-| Billing provider | **Stripe** for payment processing (Checkout Sessions, Customer Portal, subscriptions). GHL stays as CRM — receives post-payment webhooks from Firebase for automations (welcome email, dunning, tags). Flow: Stripe Checkout → Stripe webhook → Firebase → update user + notify GHL. |
-| Magic Edit engine | **fal.ai FLUX Kontext** for inpainting/outpainting. Lasso selection → mask → Kontext pipeline. Text compositing re-runs after every edit. Quality restoration pass after 3+ edits. |
-| Magic Edit scope | Single, batch (apply-to-all), carousel (per-slide). Undo stack of 10. Modes: erase, add object, style/color change, environment replacement. Text edits handled by textCompositing only — never sent to Kontext. |
+| Billing provider | **Stripe** for payment processing (Checkout Sessions, Customer Portal, subscriptions). GHL stays as CRM — receives post-payment webhooks from Firebase for automations (welcome email, dunning, tags). Flow: Stripe Checkout → Stripe webhook → Firebase → update user + notify GHL. **NOTE:** Phase 8 implementation diverged from this spec and used Paddle. Migration to Stripe handled in Phase 21. |
+| Magic Edit engine | **Gemini image edit endpoint** with Box A reference for face fidelity. Lasso selection → mask → edit prompt → Gemini → text re-composite. FLUX/`falEditing.ts` deleted in HOTFIX-G. |
+| Magic Edit scope | Single, batch (apply-to-all), carousel (per-slide). Undo stack of 10. Modes: erase, add object, style/color change, environment replacement. Text edits handled by textCompositing only — never sent to Gemini edit. |
 | Workspace Meta linking | Each workspace has its own `metaAdAccountId`. Generations from that workspace push to that account. Team members see only workspaces they have access to. |
 | Saved project navigation | Step-by-step dot navigator. User can click any completed step to resume from there. Thumbnail from first render persisted. Status: draft / rendered / published. |
 | RAG feedback loop | `metaDailySync` pulls Meta Insights API daily. Performance data (CTR/CPC/ROAS) feeds back into generation prompts via `getRAGContext()`. Minimum 10 records before RAG injection activates. |
@@ -62,16 +62,77 @@ All product owner decisions. These are final for launch.
 | Authentication method | **Email + password only**. Google sign-in removed entirely to prevent email mismatch with Stripe. Login page has Login / Create Account tabs on the same page. New account creation checks Firestore for existing Stripe payment — if found, user enters app with trial active. If not found, billing modal opens. |
 | Cultural compliance | **Arabic ads enforce Islamic cultural guardrails.** Universes with alcohol (wine cellars, bars, cigar lounges) are hidden for Arabic languages. Visual motifs sanitized (cocktails → premium beverages, champagne → sparkling drinks). Cultural compliance prompt block injected into build plan + final image prompt. Wardrobe modesty rules enforced. Post-generation validation catches and replaces leaked haram terms. English ads are unaffected. |
 | Logo upload limit | **Box B accepts up to 5 logos.** First logo is primary (most prominent placement). Additional logos render as secondary brand elements (corner badges, supporting surfaces). Prompts instruct hierarchical logo placement. |
-| Multi-hero | **Up to 3 distinct people** per ad. Each hero group has its own photo set and role (Primary / Supporting / Client-testimonial). Face consistency is per-person. `before_after` mode remains single-hero only. Supported in: `standard_hero`, `speaker_card`, `webinar_screen`, `event_ticket`, carousel, and batch. Backward compatible — single hero is the default. |
+| Multi-hero | **Up to 5 distinct people** per ad. Each hero group has its own photo set and role (Primary / Supporting / Client-testimonial / Speaker). **Two render pipelines:** 1–3 people use single-pass rendering with face reinforcement prompts. 4–5 people use multi-pass pipeline — render scene with placeholders first, then insert each face individually with only their own reference (eliminates Gemini face hallucination). `before_after` remains single-hero only. **Photo caps:** 1 person → up to 5 photos. 2–3 people → up to 3 each. 4–5 people → up to 2 each. **Credit cost scales:** base + 1 credit per additional person beyond the first. UI shows live credit preview as user adds people. Backward compatible — single hero is the default. |
 | Logo rendering | **Hybrid — mode-per-placement.** Build plan assigns each logo a mode: `ui` (post-composited via Sharp for pixel-perfect corner/badge placement) or `environmental` (Gemini renders as physical object in scene — logo on mug, laptop lid, wall art, t-shirt, signage). AI picks mode based on creative style. **Absolute ban:** no logos, text, charts, or dashboards on any device screen (laptop/monitor/tablet/phone). Screens stay blank or abstract only. |
 | Aspect ratio reflow | **Deterministic two-method reflow.** Small ratio change (<30%) → outpaint-only (extends margins, locks hero/text). Large ratio change → re-render from original build plan at new ratio. No more generative reflow that stretches faces. Auto-routing with user override. |
 | Direct-response design primitives | **6 new enforced rules:** (1) `heroGaze` field directs subject's eyes at headline or CTA, (2) max ONE highlighted element per ad, (3) `priceIsHook` toggle for price-shock creatives, (4) CTA outcome framing required (no generic "join/register"), (5) `visualPromiseMapping` scores hook↔visual alignment, (6) campaign coherence inherits palette/environment from prior ads in same project. |
-| Concept differentiation | **Two hidden backend stages + one hidden checker.** Concept Director (Gemini 3.1, runs 3× sequential per batch) produces specialized brief per ad with explicit visual metaphor, headline architecture, forbidden props, gaze direction. Variance Validator (deterministic, no AI) blocks duplicate metaphor/layout/headline tokens with max 1 retry. Selection Reviewer (Gemini 3.1) catches strong incoherences in user brief BEFORE generation. All three are fail-open — pipeline runs unchanged on error. Remote Config kill switch. Per-user feature flag. **Engineering names** (Concept Director, Variance Validator, Selection Reviewer) NEVER appear in UI. **User-facing names**: "Brief Coherence Check" (live banner) + "Variance Mode" (workspace toggle: Balanced/Aggressive). |
-| FLUX deletion | `falGeneration.ts` and `falEditing.ts` were orphaned dead code (zero imports across `functions/src/`). **Removed** as part of HOTFIX-G alongside the `@fal-ai/client` dependency from `functions/package.json`. Magic Edit (Phase 11) migrates to Gemini's edit endpoint. |
+| Concept differentiation | **Two hidden backend stages + one hidden checker.** Concept Director (GPT-5, runs 3× sequential per batch) produces specialized brief per ad with explicit visual metaphor, headline architecture, forbidden props, gaze direction. Variance Validator (deterministic, no AI) blocks duplicate metaphor/layout/headline tokens with max 1 retry. Selection Reviewer (Gemini 2.5 Flash) catches strong incoherences in user brief BEFORE generation. All three are fail-open — pipeline runs unchanged on error. Remote Config kill switch. Per-user feature flag. **Engineering names** (Concept Director, Variance Validator, Selection Reviewer) NEVER appear in UI. **User-facing names**: "Brief Coherence Check" (live banner) + "Variance Mode" (workspace toggle: Balanced/Aggressive). |
+| FLUX deletion | `falGeneration.ts` and `falEditing.ts` are orphaned dead code (zero imports). Deleted in HOTFIX-G. Magic Edit (Phase 11) migrated to Gemini's edit endpoint. |
 
 ---
 
-## SECTION 1 — WHAT EXISTS (DO NOT REBUILD)
+## SECTION 0.5 — IMPLEMENTATION STATUS DASHBOARD
+
+> **Last updated:** Cross-referenced against Eslam's specs folder (Speckit). Status is confirmed when the matching `specs/NNN-spec-name/` folder exists and was implemented.
+
+### ⚠️ Needs Re-Verification After Phase 21
+
+These phases were marked Done against the old Paddle-backed billingState. They likely still work after Phase 21 ships (the field names matter, the behavior doesn't), but each needs a smoke test against the new Stripe-backed billingState before marking truly Done.
+
+| Phase | What to re-verify |
+|---|---|
+| Phase 9 — Team Management | `isTeamOwner`, `isTeamMember`, `maxTeamMembers` populate correctly from Stripe billingState. Team invite flow works end-to-end. |
+| Phase 10 — Favorites & Workspace | Workspace scoping works. Team members see shared favorites. |
+| Phase 12 — Workspace Logic | `createWorkspace` rejects below-Scale plans correctly. Meta ad account linking works. |
+| Phase 13 — Saved Projects | Per-plan project limits enforced (10/30/Unlimited). Status filter works. |
+
+### ✅ Done (16 items)
+
+| Item | Spec folder | Notes |
+|---|---|---|
+| Phase 1 — Resolver Foundation | `001-resolver-completeness-trace` | |
+| Phase 2 — Frontend Enforcement | `002-frontend-filter-qa` | |
+| Phase 3 — QA Fixtures | `003-qa-fixtures` | |
+| Phase 4 — Testimonial Carousel | `004-testimonial-carousel` | |
+| Phase 5 — Blueprint → Render Pipeline | `005-render-prompt-pipeline` | |
+| Phase 6 — Language Quality Contracts | `008-lang-quality-contracts` | |
+| Phase 7 — Failure Classification | `007-failure-classification` | |
+| Phase 9 — Team Management | `006-team-management` | |
+| Phase 10 — Favorites & Workspace | `010-favorites-workspace` | |
+| Phase 12 — Workspace Logic | `012-workspace-logic` | |
+| Phase 13 — Saved Projects | `013-saved-projects` | |
+| Phase 15 — Brand Colors | `956-brand-colors` | |
+| Phase 16 — Creative Modes QA | `016-creative-modes-qa` | |
+| HOTFIX (plan alignment) | `09.50-hotfix-plan-alignment` | |
+| HOTFIX-C (cultural compliance) | `0951-hotfix-cultural-compliance` | |
+| HOTFIX-D (multi-logo) | `953-hotfix-multi-logo` | |
+| HOTFIX-E (hybrid logo) | `0953-hotfix-hybrid-logo` | |
+| HOTFIX-F (aspect reflow) | `955-aspect-reflow` | |
+| HOTFIX-G (FLUX cleanup) | `0955-hotfix-flux-cleanup` | Deploy crash fixed via lazy-access pattern. |
+
+### ⏳ TODO — Critical (build first)
+
+| Item | Why critical |
+|---|---|
+| **Phase 21 — Stripe Migration** | **CRITICAL #1 — blocks production launch.** Phase 8 implementation diverged from spec — code is on Paddle, matrix specified Stripe. Pre-launch is the cheapest moment to fix this. After Phase 21: re-verify Phases 9, 10, 12, 13. Behavioral spec at `specs/009-billing-plan-access/` is reused. New spec authored at `specs/021-stripe-migration/`. |
+| **Phase 19 — Direct-Response Design Upgrades** | Single biggest paid-traffic conversion lever. Adds gaze direction, one-highlight cap, price hierarchy, CTA outcome framing, hook↔visual alignment, campaign coherence. **Independent of billing — can run in parallel with Phase 21.** |
+| **Phase 20 — Concept Director + Brief Coherence Check** | Solves "every ad looks like the same machine made it." User-facing impact: Brief Coherence Check (live banner) + Variance Mode (Balanced/Aggressive). Backend stays hidden. **Depends on Phase 14 (which depends on Phase 21).** |
+
+### ⏳ TODO — Major
+
+| Item | Why major |
+|---|---|
+| **Phase 11 — Magic Edit** | Re-spec'd to use Gemini's edit endpoint after HOTFIX-G. User-facing feature: lasso → edit → text re-composite. Pro+ gated. |
+| **Phase 14 — RAG + Meta Reporting** | Required by Phase 20 (`pastWinningAds` feeds Concept Director). Daily Meta Insights sync + RAG context injection into prompts. **Blocked until Phase 21 ships** (user data shape may shift). |
+| **Phase 18 — Multi-Hero Support** | Up to 5 distinct people per ad. Required for webinar / mini-course / co-host / summit / speaker-grid use cases. |
+
+### ⏳ TODO — Minor
+
+| Item | Why minor |
+|---|---|
+| **Phase 17 — Resize & Reflow** | Mostly subsumed by HOTFIX-F (which already replaced generative reflow with deterministic outpaint + re-render). Remaining work: batch reflow UI, carousel slide selector, CSS preview. |
+
+---
 
 | Area | Key File(s) | Status |
 |---|---|---|
@@ -86,9 +147,8 @@ All product owner decisions. These are final for launch.
 | Creative memory + RAG | `functions/src/creativeMemory.ts`, `rankingEngine.ts`, `recommendationTracking.ts` | Exists — no daily sync or prompt injection yet |
 | Zustand store | `src/store.ts` | Exists |
 | Generation run records | `generations` Firestore collection | Exists |
-| Magic Edit (FAL Kontext) | `functions/src/falEditing.ts` (161 lines) | Exists — erase/style only, no batch/carousel/add/environment |
+| Magic Edit (Gemini edit) | TBD — implemented in Phase 11 using Gemini edit endpoint after HOTFIX-G | Not yet built. Old `falEditing.ts` will be deleted. |
 | Magic Selector UI | `src/components/MagicSelector.tsx` (334 lines) | Exists — lasso + erase + style, no add/environment/undo/batch |
-| FAL image generation | `functions/src/falGeneration.ts` (128 lines) | Exists |
 | Text compositing | `functions/src/textCompositing.ts` (631 lines) | Exists |
 | Workspace switcher | `src/components/WorkspaceSwitcher.tsx` (91 lines) | Exists — no Meta account linking, no team scoping |
 | Workspace settings | `src/components/WorkspaceSettingsModal.tsx` (170 lines) | Exists — no Meta account field |
@@ -929,9 +989,9 @@ Phase 6 — Language Quality Contracts (independent)
 
 Phase 7 — Failure Classification (independent)
 
-Phase 8 — Billing: Stripe + GHL Sync (requires Phase 2)
+Phase 8 — Billing: ROLLED BACK (was specified Stripe, implemented Paddle, superseded by Phase 21)
 
-Phase 9 — Team Management (requires Phase 8)
+Phase 9 — Team Management (requires Phase 8 OR Phase 21 to ship billing) — done, needs re-verification post-21
 
 HOTFIX — Plan Structure Alignment (requires Phase 9, apply BEFORE Phase 10+)
 
@@ -966,6 +1026,8 @@ Phase 18 — Multi-Hero Support (requires Phase 5 + Phase 11)
 Phase 19 — Direct-Response Design Upgrades (requires Phase 5 + HOTFIX-E + HOTFIX-F)
 
 Phase 20 — Concept Director + Brief Coherence Check (requires Phase 5 + Phase 14 + HOTFIX-G)
+
+Phase 21 — Stripe Migration (CRITICAL — replaces Phase 8, no production users yet, do BEFORE launch)
 ```
 
 ---
@@ -985,7 +1047,7 @@ Launch is complete when all of the following pass:
 9. Art Direction section labeled correctly, Fantasy and Realistic each have their own card sets
 10. Fixes require full evidence pack before closure
 11. 7 launch languages visible. 5 non-launch languages hidden entirely.
-12. Stripe billing handles subscribe, cancel, top-up, past-due with GHL CRM sync for automations
+12. **Stripe billing migration complete** (Phase 21). All Paddle code removed. Stripe Checkout, Customer Portal, webhook signature verification, dual-write `pending_plans`, GHL sync all functional. Phases 9, 10, 12, 13 re-verified against new billingState shape.
 13. Plan structure is 3 plans only (Starter/Pro/Scale). No Creator plan. All creative engine features fully ungated on all plans.
 14. Magic Edit works in single, batch, and carousel modes with undo support (Pro+ only)
 15. Each workspace is linked to its own Meta ad account, team visibility is role-scoped
@@ -998,7 +1060,7 @@ Launch is complete when all of the following pass:
 22. Batch generation: Pro limited to 4 ads/run, Scale up to 36 ads/run. Carousel: Pro up to 7 slides, Scale up to 10 slides.
 23. Arabic ads: no alcohol, no immodest clothing, no haram elements in any render. Haram universes hidden. Cultural compliance block in every Arabic prompt. English ads unaffected.
 24. Box B accepts up to 5 logos with clear primary/secondary hierarchy in prompts.
-25. Multi-hero support: 1–3 distinct people with per-person face consistency, mode-specific layout rules, backward compatible with single-hero.
+25. Multi-hero support: 1–5 distinct people. 1–3 people use single-pass rendering. 4–5 people use multi-pass pipeline (scene render + per-hero face insertion) — eliminates face hallucination. Per-person face consistency. Credit cost scales linearly. Live cost preview in UI.
 26. Brand logos render via hybrid pipeline: UI-mode logos composited post-render (pixel-perfect), environmental-mode logos rendered by Gemini as physical objects (mug/laptop lid/wall art). No more "SIRM" distortion. Zero fake content on device screens.
 27. Aspect ratio reflow preserves subject proportions — outpaint for small changes, full re-render for large changes. No more stretched faces.
 28. Direct-response design primitives enforced: gaze direction, one-highlight cap, price hierarchy, CTA outcome framing, hook↔visual alignment, campaign coherence.
@@ -1036,19 +1098,20 @@ HOTFIX-D  no dependency — apply any time
 HOTFIX-E  requires Phase 5 (pipeline) — CRITICAL P0
 HOTFIX-F  requires Phase 5 (pipeline) — CRITICAL P0
 HOTFIX-G  no dependency — apply before Phase 20 (FLUX cleanup)
-Phase 8   requires Phase 2
+Phase 8   ROLLED BACK — see Phase 21
 Phase 9   requires Phase 8
 Phase 10  requires Phase 8 (billingState for team scoping)
 Phase 11  requires Phase 5 (render pipeline must be stable)
-Phase 12  requires Phase 8 + Phase 9 (billing + team must exist)
+Phase 12  was built against Phase 8 (Paddle), needs re-verification after Phase 21 ships
 Phase 13  requires Phase 10 (favorites + workspace scoping)
-Phase 14  requires Phase 7 + Phase 8 (failure classification + billing)
+Phase 14  requires Phase 7 + Phase 21 (failure classification + Stripe billing)
 Phase 15  requires Phase 5 (build plan pipeline)
 Phase 16  requires Phase 1 + Phase 3 + Phase 5
 Phase 17  requires Phase 5 + Phase 15 (pipeline + brand colors)
 Phase 18  requires Phase 5 + Phase 11 (pipeline + magic edit face consistency)
 Phase 19  requires Phase 5 + HOTFIX-E + HOTFIX-F (pipeline + logos + reflow must be stable)
 Phase 20  requires Phase 5 + Phase 14 + HOTFIX-G (pipeline + creative memory + FLUX cleanup)
+Phase 21  requires nothing in matrix — pre-launch migration, blocks production launch
 ```
 
 Complete all tasks in a phase before starting any phase that depends on it.
@@ -1066,7 +1129,7 @@ If a task would require creating a sub-plan, the task description is wrong — f
 
 ---
 
-## Phase 1 — Resolver Foundation
+## Phase 1 — Resolver Foundation ✅ DONE
 **Requires:** Nothing.
 **Blocks:** Phase 2, Phase 3, Phase 4, Phase 5.
 
@@ -1084,7 +1147,7 @@ If a task would require creating a sub-plan, the task description is wrong — f
 
 ---
 
-## Phase 2 — Frontend Enforcement
+## Phase 2 — Frontend Enforcement ✅ DONE
 **Requires:** Phase 1 complete.
 **Blocks:** Phase 8.
 
@@ -1103,7 +1166,7 @@ If a task would require creating a sub-plan, the task description is wrong — f
 
 ---
 
-## Phase 3 — QA Fixtures
+## Phase 3 — QA Fixtures ✅ DONE
 **Requires:** Phase 1 complete.
 
 | # | File | Action | Done when |
@@ -1117,7 +1180,7 @@ If a task would require creating a sub-plan, the task description is wrong — f
 
 ---
 
-## Phase 4 — Testimonial Carousel
+## Phase 4 — Testimonial Carousel ✅ DONE
 **Requires:** Phase 1 complete.
 
 | # | File | Action | Done when |
@@ -1131,7 +1194,7 @@ If a task would require creating a sub-plan, the task description is wrong — f
 
 ---
 
-## Phase 5 — Blueprint → Render Prompt Pipeline
+## Phase 5 — Blueprint → Render Prompt Pipeline ✅ DONE
 **Requires:** Phase 1 complete.
 
 | # | File | Action | Done when |
@@ -1146,7 +1209,7 @@ If a task would require creating a sub-plan, the task description is wrong — f
 
 ---
 
-## Phase 6 — Language Quality Contracts
+## Phase 6 — Language Quality Contracts ✅ DONE
 **Requires:** Nothing — start any time.
 
 | # | File | Action | Done when |
@@ -1159,7 +1222,7 @@ If a task would require creating a sub-plan, the task description is wrong — f
 
 ---
 
-## Phase 7 — Failure Classification
+## Phase 7 — Failure Classification ✅ DONE
 **Requires:** Nothing — start any time.
 
 | # | File | Action | Done when |
@@ -1170,9 +1233,28 @@ If a task would require creating a sub-plan, the task description is wrong — f
 
 ---
 
-## Phase 8 — Billing (Stripe + GHL Sync)
+## Phase 8 — Billing (Stripe + GHL Sync) ❌ ROLLED BACK — Implementation diverged from spec, see Phase 21
 **Requires:** Phase 2 complete.
 **Blocks:** Phase 9, Phase 12, Phase 14.
+
+> **⚠️ STATUS UPDATE — codebase audit revealed Phase 8 implementation diverged from spec.**
+>
+> The matrix specified Stripe + GHL Sync. The actual implementation in `functions/src/paddle/` and `functions/src/billing/paddleWebhook.ts` is on **Paddle**, not Stripe. The spec at `specs/009-billing-plan-access/` is correct behaviorally (user stories, FRs, state transitions, GHL sync rules, dual-write pending_plans pattern, mandatory billing modal) but the billing engine wired underneath it is the wrong one.
+>
+> **What's actually in production code (Paddle):**
+> - `functions/src/billing/paddleWebhook.ts` — Paddle webhook handler with `paddle.webhooks.unmarshal()`
+> - `functions/src/paddle/*` — Paddle SDK integration files
+> - `paddleSubscriptionId`, `paddleCustomerId`, `paddleUpdatePaymentMethod`, `paddleCancelUrl` fields throughout `billingState.ts`, `billingLogger.ts`, `ghlBillingSync.ts`
+> - `@paddle/paddle-node-sdk` dependency in `functions/package.json`
+> - 9 Cloud Functions exported via `index.ts` reference Paddle
+>
+> **What this means:**
+> - Phase 8.A (Stripe Dashboard Setup), 8.B (GHL Setup), 8.C (Code Tasks), 8.E (Stripe Live Wiring) — **NONE of these are actually implemented**. The matrix tasks describe Stripe, the code is Paddle.
+> - Phase 8.D (Email-Only Auth) — **partially implemented** but wired to Paddle webhooks, not Stripe.
+>
+> **Resolution:** All Stripe migration work is now consolidated in **Phase 21 — Stripe Migration**. The behavioral spec at `specs/009-billing-plan-access/` is reused (FRs, user stories, state transitions). Only the billing engine swaps. The original Phase 8 task tables below are kept for historical reference only — do NOT execute them. Execute Phase 21 instead.
+>
+> **Why this happened:** During earlier matrix iterations, the spec was rewritten from Paddle → Stripe but the implementation work continued on the original Paddle path without being re-aligned. The matrix and the code drifted apart silently.
 
 **Architecture:** Stripe handles payment processing (Checkout Sessions, Customer Portal, subscription management). GHL remains the CRM — it receives post-payment webhooks from Firebase to trigger automations (welcome email, onboarding, tag updates, dunning). The flow is: User clicks subscribe → Stripe Checkout → Stripe processes payment → Stripe sends webhook to Firebase Cloud Function → Firebase updates user doc + sends webhook to GHL inbound webhook URL.
 
@@ -1262,10 +1344,98 @@ These are manual steps for Eslam to complete before any code tasks begin.
 | 8.D.13 | `src/App.tsx` | In the `onAuthStateChanged` handler, after a `pending_plans` doc is consumed and the user doc is created (around line 1090): show welcome toast using the existing toast system: `"Welcome! Your 7-day trial has started."` (use `login.welcomeTrial` translation key). Only show on the FIRST login after account creation — check `createdAt` is within the last 60 seconds to avoid showing on subsequent logins. | First login after Stripe payment shows welcome toast. Subsequent logins do not. |
 | 8.D.14 | `src/App.tsx` | Add `showBillingModal` state (default `false`). When `showBillingModal` is true, render a fullscreen modal overlay with `<PricingTable />` inside. The modal has no close button — user must pick a plan. After Stripe Checkout completes and the webhook fires, `useBillingState` will update `plan` from `'none'` to the new plan. Add a `useEffect` that watches `billingState.plan`: when it changes from `'none'` to any real plan, set `showBillingModal: false` and show welcome toast. | Unpaid user sees mandatory billing modal. After paying, modal auto-closes and app loads. |
 
+### 8.E — Stripe Live Wiring Checklist (Owner Steps — Activation)
+
+> **Context:** Phase 8 code (8.A–8.D) is implemented and deployed. But until the items below are configured in the Stripe dashboard, GHL, and Firebase secrets, **no real payment will succeed end-to-end**. This section is the activation checklist — every box must be ticked before launching to paid traffic.
+>
+> Order matters. Start in Stripe test mode. Verify everything works with a test card. Only then flip to live keys.
+
+#### 8.E.1 — Stripe Products & Prices (verify all 3 plans exist)
+
+| # | Where | Action | Done when |
+|---|---|---|---|
+| 8.E.1.a | Stripe Dashboard → Products | Verify 3 active subscription products exist: **Starter**, **Pro**, **Scale**. Each has at least one recurring price. | All 3 products visible in dashboard. Each has `Active: Yes`. |
+| 8.E.1.b | Stripe Dashboard → Products | Verify each product has BOTH a monthly AND an annual price (annual = 2 months free per the pricing table). Note all 6 price IDs (`price_xxx`) — 3 monthly, 3 annual. | 6 price IDs documented. Annual prices match: Starter $290/yr, Pro $790/yr, Scale $1970/yr. |
+| 8.E.1.c | Stripe Dashboard → Products | Verify the one-time **Credit Top-Up** product exists with 3 prices (100 / 300 / 800 credits). Note the 3 price IDs. | 9 total price IDs documented (6 subscription + 3 top-up). |
+| 8.E.1.d | `src/planconfig.ts` | Verify `paddlePriceId` field has been removed and replaced with `stripePriceId`. Verify each plan entry has the correct monthly + annual `stripePriceId` from the dashboard. Verify `stripeTopUpPriceIds` map is populated with the 3 top-up prices. | `grep "paddle" src/planconfig.ts` returns zero. All Stripe price IDs match the dashboard. |
+| 8.E.1.e | `src/components/PricingTable.tsx` | Open the rendered pricing page. Click each plan's "Subscribe" button. Each click should redirect to Stripe Checkout with the correct plan name + price displayed. | All 3 subscription buttons + 3 top-up buttons open Stripe Checkout with correct prices. |
+
+#### 8.E.2 — Stripe Webhook Endpoint (verify events are firing)
+
+| # | Where | Action | Done when |
+|---|---|---|---|
+| 8.E.2.a | Stripe Dashboard → Developers → Webhooks | Verify webhook endpoint exists at `https://europe-west1-proadsai-saas.cloudfunctions.net/stripeWebhook` (or correct region). Status: `Enabled`. | Endpoint visible. Status enabled. |
+| 8.E.2.b | Stripe Dashboard → Developers → Webhooks | Verify these 5 events are subscribed: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_succeeded`, `invoice.payment_failed`. | All 5 events appear in the endpoint's "Listening to" list. |
+| 8.E.2.c | Stripe Dashboard → Developers → Webhooks | Click "Send test webhook" → pick `checkout.session.completed` → send. Check the endpoint's "Recent events" tab — the test event should show `200 OK` response. | Test webhook returns 200. Firebase logs show `paddleWebhook handler` (or `stripeWebhook handler`) received the event. |
+| 8.E.2.d | Firebase Console → Functions → Logs | After the test webhook in 8.E.2.c, check the Cloud Function log. It should log: signature verified → event type identified → handler executed (even if user lookup fails because it's a test event with no real user). No 400/500 errors. | Logs show successful signature verification. |
+| 8.E.2.e | Stripe Dashboard → Developers → Webhooks | Copy the **Signing secret** (`whsec_xxx`). | Signing secret copied. |
+| 8.E.2.f | Firebase Console → Functions → Configuration | Verify `STRIPE_WEBHOOK_SECRET` secret is set with the value from 8.E.2.e. Run `firebase functions:secrets:access STRIPE_WEBHOOK_SECRET` to confirm. | Secret matches the dashboard value exactly. |
+
+#### 8.E.3 — Stripe Customer Portal (verify users can manage subscription)
+
+| # | Where | Action | Done when |
+|---|---|---|---|
+| 8.E.3.a | Stripe Dashboard → Settings → Customer portal | Verify "Activated" status. Configuration enabled. | Customer portal status shows "Activated". |
+| 8.E.3.b | Stripe Dashboard → Settings → Customer portal | Verify these are enabled: **Cancel subscriptions**, **Update payment method**, **Update billing address**, **Switch plans** (so users can upgrade Starter → Pro → Scale from inside the portal), **Invoice history**. | All 5 capabilities enabled. |
+| 8.E.3.c | Stripe Dashboard → Settings → Customer portal | Verify "Plan switching" allows the 3 products (Starter/Pro/Scale) with both monthly and annual prices. Set proration: "Charge prorated amount immediately" for upgrades; "Credit unused time at next renewal" for downgrades. | Plan switching matrix shows all 3 plans with both billing intervals. Proration set correctly. |
+| 8.E.3.d | Stripe Dashboard → Settings → Customer portal | Verify **return URL** is set to `https://app.proadsai.com/billing`. | Return URL matches. |
+| 8.E.3.e | App → Billing page | Test as a real subscribed user: click "Manage Subscription". Should redirect to Stripe portal. Should be able to update card, switch plan, cancel. After clicking "Return", lands back on `/billing`. | Full round-trip works in test mode. |
+
+#### 8.E.4 — Trial + Free-User Behavior (verify the "no plan" branch works)
+
+| # | Where | Action | Done when |
+|---|---|---|---|
+| 8.E.4.a | Stripe Dashboard → Products | Decide: do new subscriptions include a trial? If yes, set `Free trial: 7 days` on each subscription product. The pricing table promises "7-day free trial on all plans" — Stripe must honor this OR the app must enforce it via custom logic. | Trial setting matches what the pricing page promises. |
+| 8.E.4.b | `functions/src/billing/stripeWebhook.ts` | Verify task 8.C.2 reads `subscription.trial_end` and sets `isTrial: true` on the user doc when present. Verify it sets `credits: 50` (the trial credit allocation per Section 0). | Trial subscriptions get `isTrial: true` and 50 credits. Confirmed in Firestore after a test trial subscription. |
+| 8.E.4.c | App test | Subscribe with a test card (use Stripe test card `4242 4242 4242 4242`). Verify the user doc shows trial flag, 50 credits, plan name, and `billingStatus: 'active'` within 5 seconds of payment. | All 4 fields populated correctly after test payment. |
+| 8.E.4.d | App test | Wait for the 7-day trial to elapse (or use Stripe's "advance test clock" feature). Verify the subscription transitions to paid and credits reset to the plan's allocation. | Trial → paid transition works. Credits reset correctly. |
+
+#### 8.E.5 — GHL Webhook Sync (verify Firebase → GHL flow)
+
+| # | Where | Action | Done when |
+|---|---|---|---|
+| 8.E.5.a | GHL → Automation → Workflows | Verify "Stripe Payment Received" workflow exists with inbound webhook trigger. URL matches `GHL_STRIPE_SYNC_WEBHOOK_URL` in Firebase secrets. | Workflow exists. URL matches. |
+| 8.E.5.b | GHL → Automation → Workflows | Verify the workflow has these actions: (1) Update Contact custom fields `plan`, `billing_status`, (2) Add tag `paid_{{plan}}`, (3) Conditional welcome email on `event = checkout.session.completed`, (4) Conditional win-back email on `event = customer.subscription.deleted`. | All 4 actions visible in the workflow editor. |
+| 8.E.5.c | GHL → Automation → Workflows | Verify "Stripe Payment Failed" workflow exists. URL matches `GHL_STRIPE_FAILED_WEBHOOK_URL` in Firebase secrets. Action: dunning email with `{{portalUrl}}`. | Workflow exists. URL matches. Dunning email configured. |
+| 8.E.5.d | App test | Subscribe a test contact in GHL with the test email. Then make a test Stripe payment. Within 30 seconds, the GHL contact should: (1) have `plan = pro` (or whatever was purchased), (2) have tag `paid_pro`, (3) have received the welcome email. | All 3 GHL automations fire after a test payment. |
+| 8.E.5.e | App test | Cancel the test subscription in Stripe portal. Within 30 seconds, the GHL contact should: (1) have `plan = none`, (2) tag `paid_pro` removed, (3) win-back automation triggered. | All 3 cancellation effects fire. |
+| 8.E.5.f | Firebase Console → Functions → Logs | Verify GHL sync calls log success. If GHL is unreachable, the log should show the failure but the Cloud Function should NOT throw — Stripe webhook processing must complete regardless. | Logs show GHL sync attempts. Failures are logged but don't break Stripe flow. |
+
+#### 8.E.6 — Live Mode Cutover (final step before launch)
+
+| # | Where | Action | Done when |
+|---|---|---|---|
+| 8.E.6.a | Stripe Dashboard | Switch from Test mode to Live mode. Verify all 3 products + top-up product exist in Live mode (products don't auto-copy from test — recreate them). | All products visible in Live mode. |
+| 8.E.6.b | Stripe Dashboard → Developers → API keys | Generate Live mode Secret key (`sk_live_xxx`) and Publishable key (`pk_live_xxx`). | Both keys generated. |
+| 8.E.6.c | Stripe Dashboard → Developers → Webhooks | Create a separate Live mode webhook endpoint pointing to the same Cloud Function URL. Subscribe to the same 5 events. Copy its NEW signing secret. | Live webhook exists with new signing secret. |
+| 8.E.6.d | Firebase Console → Functions → Configuration | Update `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` to the LIVE values. Redeploy: `firebase deploy --only functions`. | Secrets updated. Functions redeployed. |
+| 8.E.6.e | `src/planconfig.ts` | Update `stripePriceId` values to the LIVE mode price IDs from 8.E.6.a. Redeploy frontend. | Frontend uses live price IDs. |
+| 8.E.6.f | App → Pricing page | Make a real $1 subscription with a real card (your own card, immediately cancel after). Verify: payment succeeds → user doc updated → GHL contact updated → cancel works → user doc shows `plan: 'none'`. | Full real-money flow verified. Refund yourself the $1. |
+| 8.E.6.g | Stripe Dashboard → Developers → Webhooks (Live) | Verify Live webhook shows successful events from the test in 8.E.6.f. No failed deliveries. | Live webhook events visible with 200 OK responses. |
+
+#### 8.E.7 — Edge Case Coverage (verify before paid traffic)
+
+| # | What | Test method | Done when |
+|---|---|---|---|
+| 8.E.7.a | Failed payment → past due | Use Stripe test card `4000 0000 0000 0341` (charges, then fails on next renewal). Advance time. Verify `billingStatus: 'past_due'` is set on user doc, credits NOT zeroed yet. GHL dunning email triggered. | All 3 effects confirmed. |
+| 8.E.7.b | Plan upgrade mid-cycle | Subscribe to Starter, then upgrade to Pro from the Customer Portal. Verify: user doc plan updates from `starter` → `pro`, credits change from 800 → 2500, Stripe handles proration. | Plan + credits update within 10 seconds of upgrade. Stripe shows prorated charge. |
+| 8.E.7.c | Top-up while subscribed | While on Pro plan, buy a 300-credit top-up. Verify: credits go from 2500 → 2800. Plan stays `pro`. No double-charge. | Top-up adds credits without affecting subscription. |
+| 8.E.7.d | Webhook signature mismatch | Manually POST to `stripeWebhook` URL with invalid signature. Should return 400. | 400 response. No user doc mutation. |
+| 8.E.7.e | New user paid before signup | Pay via Stripe Checkout WITHOUT being logged in (no `client_reference_id`). Verify `pending_plans/{email}` doc is created. Then sign up with the same email. Verify the pending plan is consumed and the user enters with `plan` set. | Pending plan flow works end-to-end. |
+| 8.E.7.f | Monthly credit reset | Use a Pro user. Reset their `lastCreditReset` to 32 days ago in Firestore. Wait for the scheduled `monthlyCreditsReset` Cloud Function to run (or trigger manually). Verify credits reset to 2500. | Monthly reset confirmed. |
+
+#### 8.E.8 — Customer-Facing Trust Signals
+
+| # | Where | Action | Done when |
+|---|---|---|---|
+| 8.E.8.a | App pricing page footer | Add Stripe trust badge (`Powered by Stripe`). Stripe provides this asset in their brand library. | Badge visible on pricing page. |
+| 8.E.8.b | App billing page | Verify subscription details display: current plan, next billing date, last 4 of card, "Manage Subscription" button. All read from `billingState`. | Billing page shows accurate subscription info pulled from Stripe via webhook → user doc → `billingState`. |
+| 8.E.8.c | Email | Configure Stripe to send: payment receipts, payment failure notices, subscription cancellation confirmations. Stripe Dashboard → Settings → Emails. | All 3 email types enabled. |
+
 
 ---
 
-## Phase 9 — Team Management
+## Phase 9 — Team Management ⚠️ DONE — Needs re-verification after Phase 21
 **Requires:** Phase 8 complete.
 
 | # | File | Action | Done when |
@@ -1288,7 +1458,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## HOTFIX — Plan Structure Alignment (Apply to Phases 1–9)
+## HOTFIX — Plan Structure Alignment (Apply to Phases 1–9) ✅ DONE
 
 > **Context:** The pricing table has been finalized with **3 plans** (Starter/Pro/Scale), not 4. The Creator plan no longer exists. Phases 1–9 were built with a 4-plan structure. These hotfixes align already-shipped code with the final pricing.
 
@@ -1307,7 +1477,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## HOTFIX-C — Cultural Compliance (Arabic Market Guardrails)
+## HOTFIX-C — Cultural Compliance (Arabic Market Guardrails) ✅ DONE
 
 > **Context:** Pro Ads AI is an Arabic-first app targeting coaches and consultants in the GCC/Gulf market. The pipeline currently has ZERO cultural guardrails — the universe database contains environments with alcohol (wine cellars, rooftop bars, cigar lounges with whiskey), the visual motifs inject haram elements (cocktails, champagne, whiskey) directly into image prompts, and there are no wardrobe modesty rules for Arabic audiences. This causes renders to show wine glasses, bar scenes, revealing clothing, and other culturally inappropriate elements. This must be fixed before ANY new user-facing feature ships.
 
@@ -1344,7 +1514,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## HOTFIX-D — Multi-Logo Upload (Box B → Max 5)
+## HOTFIX-D — Multi-Logo Upload (Box B → Max 5) ✅ DONE
 
 > **Context:** Box B currently hard-limits to 1 logo despite the type definition allowing 5. Users need multiple logos in a single design (e.g., brand logo + certification badge + partner logo). The limit is enforced in 4 separate code locations plus the prompt text.
 
@@ -1358,7 +1528,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## HOTFIX-E — Hybrid Logo Handling (CRITICAL — P0)
+## HOTFIX-E — Hybrid Logo Handling (CRITICAL — P0) ✅ DONE
 
 > **Context:** Gemini is distorting brand logos into "SIRM" / "SRM" when asked to render them as UI elements (corner logos, top-bar logos). BUT Gemini does a great job placing logos as **physical objects in the scene** (logo on a coffee mug, laptop lid, wall art, t-shirt, signage) because it treats them more like textures than text. The fix is HYBRID, not a ban:
 >
@@ -1394,7 +1564,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## HOTFIX-F — Deterministic Aspect Ratio Reflow (CRITICAL — P0)
+## HOTFIX-F — Deterministic Aspect Ratio Reflow (CRITICAL — P0) ✅ DONE
 
 > **Context:** REFLOW mode (generators.ts line 4913) sends the rendered image back to Gemini as a generative edit to resize the aspect ratio. Gemini's edit model stretches or squashes the subject when the canvas ratio changes by >30% — which is why the face in Image 7 is vertically elongated on the 4:5 → 9:16 reflow. A generative edit is the wrong tool for aspect ratio change. This hotfix replaces generative reflow with a two-option deterministic approach: (A) smart outpaint (extend the scene without touching the subject), or (B) re-render from the original build plan at the new ratio.
 
@@ -1419,7 +1589,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## Phase 10 — Favorites & Workspace
+## Phase 10 — Favorites & Workspace ⚠️ DONE — Needs re-verification after Phase 21
 **Requires:** Phase 8 complete (needs `billingState` for team scoping — which user's favorites to show).
 
 **What already exists:**
@@ -1452,11 +1622,11 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## Phase 11 — Magic Edit
+## Phase 11 — Magic Edit ⏳ TODO — MAJOR
 **Requires:** Phase 5 complete (render pipeline must be stable).
 
 **What already exists:**
-- `falEditing.ts` (161L) — `editWithFalKontext()` sends image + English edit prompt to fal.ai FLUX Kontext. Returns edited image base64. Text overlay is stripped before edit and re-composited after.
+- HOTFIX-G has deleted `falEditing.ts` — Magic Edit will be built fresh on Gemini's edit endpoint with Box A reference photos for face consistency.
 - `MagicSelector.tsx` (334L) — Canvas overlay with lasso drawing tool. Computes selection region as `{ xPct, yPct, widthPct, heightPct }`. Supports three edit modes: `text` (replace/remove text in region), `erase` (remove object), `style` (change color/style). Emits `onEditRequest` callback with mode, region, and payload.
 - `textCompositing.ts` (631L) — Sharp-based Arabic text rendering. Re-runs after any edit to re-apply text overlay.
 
@@ -1467,29 +1637,29 @@ These are manual steps for Eslam to complete before any code tasks begin.
 - No carousel per-slide edit routing (edit one slide, maintain carousel coherence).
 - No retargeting edit mode (edit must preserve objection-answering visual cues).
 - No edit history/undo stack (each edit is destructive).
-- No quality-preservation guard for repeated edits (repeated Kontext calls degrade image).
+- No quality-preservation guard for repeated edits (repeated Gemini edit calls degrade image).
 - No mask-to-prompt translation for complex lasso shapes.
-- `textCompositing` is not automatically re-triggered after `editWithFalKontext` returns.
+- `textCompositing` is not automatically re-triggered after Gemini edit returns.
 
 | # | File | Action | Done when |
 |---|---|---|---|
-| 11.1 | `functions/src/falEditing.ts` | Add function `editWithFalKontextInpaint(imageBase64, maskBase64, editPrompt, falApiKey): Promise<FalEditResult>`. This variant accepts a binary mask (white = edit region, black = keep) alongside the text prompt. Used when lasso selection is non-rectangular. Convert lasso polygon points to a Sharp-rendered mask PNG before calling. | Function accepts mask + prompt and returns edited image. Non-rectangular selections produce correct mask. |
-| 11.2 | `functions/src/falEditing.ts` | Add function `buildEditPrompt(editMode, payload, currentBuildPlan): string`. Translates UI edit actions into English Kontext prompts: `erase` → "Remove the [object description] from the image, fill with surrounding context". `add` → "Add [payload.description] at [region description]". `style` → "Change the color of [region description] to [payload.colorHex]". `environment` → "Replace the background/environment with [payload.environmentDescription], keep the foreground subject intact". `text` → NO Kontext call (handled by textCompositing only). Uses `currentBuildPlan` to extract scene context for better prompt grounding. | Each edit mode produces a coherent English prompt. Text mode returns null (no Kontext call needed). |
-| 11.3 | `functions/src/falEditing.ts` | Add function `preserveQuality(originalBase64, editedBase64, editCount): Promise<string>`. If `editCount >= 3`, run a quality-restoration pass: send the edited image back through Kontext with prompt "Enhance image quality, sharpen details, restore color vibrancy, maintain all content exactly as-is". Return the quality-restored base64. If `editCount < 3`, return editedBase64 unchanged. Store `editCount` on the generation record. | After 3+ edits, output image has visibly sharper details than without the restoration pass. |
-| 11.4 | `functions/src/index.ts` | Create callable `magicEditImage({ generationId, editMode, region, payload, slideIndex? })`. **Plan gate: Pro+ only** — if `billingState.plan === 'starter'`, throw `HttpsError('permission-denied', 'pro_plan_required')`. Flow: (1) load generation record, (2) get clean image (pre-text-overlay) from `output.cleanImageBase64` or `output.cleanImageUrl`, (3) if region is non-rectangular, render mask via 11.1, else use standard Kontext call, (4) build prompt via 11.2, (5) call Kontext, (6) run `preserveQuality` via 11.3, (7) re-run `compositeArabicText()` on edited image, (8) save edited image to Storage, (9) update generation record with new URLs and increment `editCount`, (10) return new image URL. | Starter user gets `pro_plan_required` error. Pro+ user gets edited image with text re-composited. |
+| 11.1 | `functions/src/geminiEdit.ts` | Create file. Export `editWithGeminiInpaint(imageBase64, maskBase64, editPrompt, boxAPhotos): Promise<GeminiEditResult>`. Sends image + binary mask (white = edit region, black = keep) + text prompt + Box A reference photos to Gemini's image edit endpoint. Convert lasso polygon points to Sharp-rendered mask PNG before calling. Box A photos preserve face fidelity in regions adjacent to or containing the hero. | Function accepts mask + prompt + Box A and returns edited image. Non-rectangular selections produce correct mask. Hero face fidelity preserved. |
+| 11.2 | `functions/src/geminiEdit.ts` | Add function `buildEditPrompt(editMode, payload, currentBuildPlan): string`. Translates UI edit actions into Gemini edit prompts: `erase` → "Remove the [object description] from the image, fill with surrounding context naturally". `add` → "Add [payload.description] at [region description]". `style` → "Change the color of [region description] to [payload.colorHex]". `environment` → "Replace the background/environment with [payload.environmentDescription], keep the foreground subject intact". `text` → NO Gemini call (handled by textCompositing only). Uses `currentBuildPlan` for scene grounding. | Each edit mode produces a coherent prompt. Text mode returns null. |
+| 11.3 | `functions/src/geminiEdit.ts` | Add function `preserveQuality(originalBase64, editedBase64, editCount): Promise<string>`. If `editCount >= 3`, run a quality-restoration pass: send the edited image back through Gemini edit with prompt "Enhance image quality, sharpen details, restore color vibrancy, maintain all content exactly as-is". Return the quality-restored base64. If `editCount < 3`, return editedBase64 unchanged. Store `editCount` on the generation record. | After 3+ edits, output image has visibly sharper details. |
+| 11.4 | `functions/src/index.ts` | Create callable `magicEditImage({ generationId, editMode, region, payload, slideIndex? })`. **Plan gate: Pro+ only** — if `billingState.plan === 'starter'`, throw `HttpsError('permission-denied', 'pro_plan_required')`. Flow: (1) load generation record, (2) get clean image (pre-text-overlay) from `output.cleanImageBase64` or `output.cleanImageUrl`, (3) if region is non-rectangular, render mask via 11.1, else use standard Gemini edit call, (4) build prompt via 11.2, (5) call Gemini edit, (6) run `preserveQuality` via 11.3, (7) re-run `compositeArabicText()` on edited image, (8) save edited image to Storage, (9) update generation record with new URLs and increment `editCount`, (10) return new image URL. | Starter user gets `pro_plan_required` error. Pro+ user gets edited image with text re-composited. |
 | 11.5 | `functions/src/index.ts` | In `magicEditImage`, add `slideIndex` parameter support. If `slideIndex` is provided, load the carousel slide's individual clean image from `output.carouselSlides[slideIndex].cleanImageBase64`. After editing, write back to the same slide index. Do not re-render other slides. | Editing carousel slide 3 only affects slide 3. Other slides remain unchanged. |
-| 11.6 | `functions/src/index.ts` | In `magicEditImage`, add batch edit support. If `payload.applyToAll === true` AND the generation is a batch (`output.batchResults` exists), iterate over all batch images and apply the same Kontext edit to each. Use `Promise.allSettled` for parallel execution. Return array of results with per-image success/failure. | Batch edit with `applyToAll: true` edits all N images. Partial failures don't block successful edits. |
+| 11.6 | `functions/src/index.ts` | In `magicEditImage`, add batch edit support. If `payload.applyToAll === true` AND the generation is a batch (`output.batchResults` exists), iterate over all batch images and apply the same Gemini edit to each. Use `Promise.allSettled` for parallel execution. Return array of results with per-image success/failure. | Batch edit with `applyToAll: true` edits all N images. Partial failures don't block successful edits. |
 | 11.7 | `src/components/MagicSelector.tsx` | Add "Add Object" tool alongside existing erase/style tools. When selected, show a text input for object description (e.g., "a laptop on the desk") and let user lasso the region where the object should appear. Emit `onEditRequest({ mode: 'add', region, payload: { description } })`. | User can select "Add" tool, draw a lasso region, type a description, and submit. |
 | 11.8 | `src/components/MagicSelector.tsx` | Add "Change Environment" tool. When selected, show a text input for new environment description (e.g., "luxury office with floor-to-ceiling windows"). No lasso needed — applies to full background. Emit `onEditRequest({ mode: 'environment', region: null, payload: { environmentDescription } })`. | User can select "Environment" tool, type description, and submit without drawing a region. |
 | 11.9 | `src/components/MagicSelector.tsx` | Add edit history stack. Store up to 10 previous `cleanImageBase64` states in component state. Add "Undo" button that reverts to previous state and decrements `editCount`. Add "Redo" button. History resets when user navigates away from the step. | Undo reverts the last edit visually. Redo re-applies it. History is capped at 10. |
 | 11.10 | `src/components/MagicSelector.tsx` | Add batch edit toggle. When the current generation is batch mode (`batchResults` exists), show a checkbox: "Apply this edit to all [N] images". When checked, the `onEditRequest` payload includes `applyToAll: true`. Show a progress indicator during batch processing with per-image status. | Checkbox appears in batch mode. Checking it and editing applies to all images with progress feedback. |
 | 11.11 | `src/components/MagicSelector.tsx` | Add carousel slide selector. When the current generation is carousel mode, show a horizontal strip of slide thumbnails above the edit canvas. Clicking a thumbnail loads that slide's clean image into the editor. The `onEditRequest` payload includes `slideIndex`. | User can switch between carousel slides and edit each individually. |
 | 11.12 | `functions/src/generators.ts` | In the generation pipeline, after rendering the final image, persist the clean (pre-text-overlay) image separately as `output.cleanImageBase64` (or upload to Storage as `output.cleanImageUrl`). This is the image that Magic Edit operates on. For carousel, store per-slide: `output.carouselSlides[i].cleanImageUrl`. | Every rendered image has a corresponding clean version stored. Magic Edit can retrieve it without re-rendering. |
-| 11.13 | `functions/src/contractFixtures.test.ts` | Add magic edit fixture tests: (a) `magicEditImage` with `mode: 'erase'` returns new URL different from original, (b) `magicEditImage` with `slideIndex: 2` only modifies slide 2, (c) `magicEditImage` with `applyToAll: true` returns array with length equal to batch size, (d) `preserveQuality` with `editCount: 5` produces output different from input (quality pass ran). | All four tests pass. |
+| 11.13 | `functions/src/contractFixtures.test.ts` | Add magic edit fixture tests: (a) `magicEditImage` with `mode: 'erase'` returns new URL different from original, (b) `magicEditImage` with `slideIndex: 2` only modifies slide 2, (c) `magicEditImage` with `applyToAll: true` returns array with length equal to batch size, (d) `preserveQuality` with `editCount: 5` produces output different from input (Gemini quality pass ran). | All four tests pass. |
 
 ---
 
-## Phase 12 — Workspace Logic (Scale Mode)
+## Phase 12 — Workspace Logic (Scale Mode) ⚠️ DONE — Needs re-verification after Phase 21
 **Requires:** Phase 8 + Phase 9 complete (billing + team management).
 
 **What already exists:**
@@ -1525,7 +1695,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## Phase 13 — Saved Projects
+## Phase 13 — Saved Projects ⚠️ DONE — Needs re-verification after Phase 21
 **Requires:** Phase 10 complete (favorites + workspace scoping).
 
 **What already exists:**
@@ -1560,7 +1730,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## Phase 14 — RAG + Meta Reporting Feedback Loop
+## Phase 14 — RAG + Meta Reporting Feedback Loop ⏳ TODO — MAJOR
 **Requires:** Phase 7 (failure classification) + Phase 8 (billing) complete.
 
 **What already exists:**
@@ -1594,7 +1764,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## Phase 15 — Brand Colors
+## Phase 15 — Brand Colors ✅ DONE
 **Requires:** Phase 5 complete (build plan pipeline).
 
 **What already exists:**
@@ -1616,10 +1786,8 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## Phase 16 — Creative Modes & Art Direction QA
+## Phase 16 — Creative Modes & Art Direction QA ✅ DONE
 **Requires:** Phase 1 + Phase 3 + Phase 5 complete.
-
-**Status:** ✅ Implemented — 43 fixtures green; FR-009 self-correction live; adapt-state audit clean; validateModeFormatCombination enforced on both frontend and backend.
 
 **What already exists:**
 - All 10 creative modes in `creativeResolver.ts` with compatibility rules, required elements, and validation.
@@ -1646,7 +1814,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## Phase 17 — Resize & Reflow
+## Phase 17 — Resize & Reflow ⏳ TODO — MINOR
 **Requires:** Phase 5 + Phase 15 complete (pipeline + brand colors).
 
 **What already exists:**
@@ -1679,7 +1847,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## Phase 18 — Multi-Hero Support
+## Phase 18 — Multi-Hero Support ⏳ TODO — MAJOR
 **Requires:** Phase 5 + Phase 11 complete (pipeline + magic edit — face consistency architecture).
 
 **What already exists:**
@@ -1699,20 +1867,29 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 | # | File | Action | Done when |
 |---|---|---|---|
-| 18.1 | `src/types.ts` | Add `heroGroups?: HeroGroup[]` to `AdInputs`. Define `interface HeroGroup { id: string; label: string; photos: string[]; role: 'primary' \| 'secondary' \| 'testimonial' }`. The `primary` hero is the main subject (coach/speaker). `secondary` is the supporting figure (co-host, guest, student). `testimonial` is a client result showcase. Max 3 hero groups. Max 5 photos per group. | Interface exists. `AdInputs` has `heroGroups`. |
-| 18.2 | `src/components/InputForm.tsx` | Replace the single "Hero Photos" upload area with a dynamic hero group manager. Default state: one group labeled "Hero" (backward compatible — single hero). Add a "＋ Add Another Person" button below the first group. When clicked, adds a second group labeled "Person 2" with its own photo upload zone and a role selector dropdown (Primary / Supporting / Client). Maximum 3 groups. Each group has its own delete button (except the first — always required). Show total photo count across all groups. | User can upload photos for 1–3 distinct people. Each group has its own upload zone and role selector. |
+| 18.1 | `src/types.ts` | Add `heroGroups?: HeroGroup[]` to `AdInputs`. Define `interface HeroGroup { id: string; label: string; photos: string[]; role: 'primary' \| 'secondary' \| 'testimonial' \| 'speaker' }`. The `primary` hero is the main subject (coach/speaker). `secondary` is the supporting figure (co-host, guest, student). `testimonial` is a client result showcase. `speaker` is for summit/event grids where multiple people are equally weighted. **Max 5 hero groups.** Photo caps scale by count: 1 person → up to 5 photos. 2–3 people → up to 3 photos each. 4–5 people → up to 2 photos each. Total reference images capped at ~10 to preserve Gemini face fidelity. | Interface exists. `AdInputs` has `heroGroups`. Photo caps enforced at the type level. |
+| 18.2 | `src/components/InputForm.tsx` | Replace the single "Hero Photos" upload area with a dynamic hero group manager. Default state: one group labeled "Hero" (backward compatible — single hero). Add a "＋ Add Another Person" button below the first group. When clicked, adds a second group labeled "Person 2" with its own photo upload zone and a role selector dropdown (Primary / Supporting / Client / Speaker). **Maximum 5 groups.** Each group has its own delete button (except the first — always required). When user adds a 4th or 5th person, show inline tip: "Tip — at 4+ people, upload 1–2 best photos per person. Quality over quantity preserves face accuracy." Auto-cap the per-group photo upload based on current group count (5 / 3 / 2). Show total photo count across all groups in the header. | User can upload photos for 1–5 distinct people. Each group has its own upload zone and role selector. Photo caps enforced per group. |
 | 18.3 | `src/components/InputForm.tsx` | Add mode-specific multi-hero suggestions. When `speaker_card` or `webinar_screen` is selected, show a hint below the hero upload area: "Add a second person for host + guest speaker layout." When `before_after` is selected, hide the "Add Another Person" button — before/after requires a single hero. When `text_only` is selected, hide all hero uploads (existing behavior). | Suggestions appear for relevant modes. Before/after blocks multi-hero. |
-| 18.4 | `functions/src/generators.ts` | Update `generateBuildPlan()` to handle `heroGroups`. When `heroGroups.length === 1`, use existing single-hero logic (backward compatible). When `heroGroups.length > 1`, inject a `MULTI-HERO COMPOSITION` block: "This ad features [N] distinct people. HERO A (Primary — [role]): Use photos from Hero Group A as face reference. This person is the dominant subject — larger, more prominent, typically 60% of hero space. HERO B (Secondary — [role]): Use photos from Hero Group B as face reference. This person is the supporting figure — smaller, positioned alongside or behind Hero A. CRITICAL: Each person must match their OWN photo reference. Do NOT blend faces. Do NOT use Hero A's face on Hero B's body." | Single-hero inputs produce unchanged prompts. Multi-hero inputs produce the composition block with per-person instructions. |
+| 18.4 | `functions/src/generators.ts` | Update `generateBuildPlan()` to handle `heroGroups`. When `heroGroups.length === 1`, use existing single-hero logic (backward compatible). When `heroGroups.length > 1`, inject a `MULTI-HERO COMPOSITION` block dynamically scaled by count. For 2–3 people: hierarchical composition (Hero A is dominant subject, Hero B/C are supporting). For 4–5 people: equal-weight grid composition (all heroes face the camera at similar prominence — summit/speaker-card style). Per-person instruction: "HERO [A-E] ([role]): Use photos from Hero Group [N] as face reference. CRITICAL: Each person must match their OWN photo reference. Do NOT blend faces. Do NOT use one person's face on another's body. Maintain distinct facial features per person." | Single-hero unchanged. 2–3 people get hierarchical composition. 4–5 people get equal-weight grid. Per-person face fidelity instruction always present. |
 | 18.5 | `functions/src/generators.ts` | Add multi-hero layout rules per creative mode. `speaker_card` + 2 heroes: "Split the speaker zone — Primary speaker larger (60%), secondary speaker smaller (40%). Both face the camera. Name badges for each if provided." `webinar_screen` + 2 heroes: "Split-screen webinar layout — Primary host on left/larger panel, guest speaker on right/smaller panel. Webinar UI frame around both." `standard_hero` + 2 heroes: "Primary hero dominant in foreground, secondary hero in supporting position (slightly behind, slightly smaller, or adjacent)." `event_ticket` + 2 heroes: "Both speakers on the ticket. Primary speaker larger. Both names on the ticket if provided." | Each mode has specific multi-hero layout instructions. |
 | 18.6 | `functions/src/generators.ts` | In carousel generation, enforce per-person face consistency. When multi-hero is active: "FACE CONSISTENCY RULE (MULTI-HERO): Hero A must have the SAME face across ALL slides where they appear. Hero B must have the SAME face across ALL slides where they appear. Hero A and Hero B must NEVER have the same face. Use each person's dedicated photo reference exclusively." Pass each hero group's photos separately to the per-slide generation — do NOT merge all photos into one array. | Carousel with 2 heroes: Hero A's face is consistent, Hero B's face is consistent, they are visually distinct people. |
 | 18.7 | `functions/src/generators.ts` | In batch generation with multi-hero: each batch item receives the same hero groups. The multi-hero composition rules apply per item. Face consistency is per-person within each image (not across batch items — batch items are independent). | Each batch item renders both heroes with correct face references. |
 | 18.8 | `functions/src/generators.ts` | Add `testimonial` hero role handling. When a hero group has `role: 'testimonial'`, inject: "This person is a CLIENT/STUDENT showing results. Render them in a before-and-after or 'result showcase' context — confident expression, transformation props. They are NOT the coach/expert — they are the proof." This is distinct from the `before_after` creative mode — it's a role within a multi-hero composition. | Testimonial-role hero is rendered as a client, not the coach. Visual treatment differs from primary hero. |
-| 18.9 | `functions/src/layoutContract.ts` | Add multi-hero zone definitions. `multiHero2`: Primary hero zone (60% of hero area), Secondary hero zone (40%). `multiHero3`: Primary (50%), Secondary (30%), Tertiary (20%). These zone splits apply WITHIN the existing hero zone — they don't change the overall layout contract (stack zone, CTA zone, etc. remain the same). | Layout contract supports 2-hero and 3-hero zone splits within the hero area. |
-| 18.10 | `functions/src/contractFixtures.test.ts` | Add multi-hero fixture tests: (a) single hero input — prompt uses existing single-hero language (backward compatible), (b) 2-hero `speaker_card` — prompt contains split speaker instructions and both face references, (c) 2-hero carousel — face consistency rules reference Hero A and Hero B separately, (d) `before_after` mode with 2 hero groups — rejected (before/after is single-hero only), (e) 3-hero `standard_hero` — layout contract has `multiHero3` zone split. | All 5 tests pass. |
+| 18.9 | `functions/src/layoutContract.ts` | Add multi-hero zone definitions. `multiHero2`: Primary 60% / Secondary 40% (hierarchical). `multiHero3`: Primary 50% / Secondary 30% / Tertiary 20% (hierarchical). `multiHero4`: 2×2 grid, equal cells (25% each — summit-style equal weighting). `multiHero5`: 1 large center hero + 4 surrounding (40% center, 15% each in corners) OR 5-cell horizontal strip depending on aspect ratio. These zone splits apply WITHIN the existing hero zone — they don't change the overall layout contract (stack zone, CTA zone, etc. remain the same). For 9:16 portrait: 4-person uses vertical 2×2, 5-person uses 1+4 layout. For 16:9 landscape: 4-person and 5-person use horizontal strips. | Layout contract supports 2/3/4/5-hero zone splits with aspect-ratio-aware grid choices. |
+| 18.10 | `functions/src/contractFixtures.test.ts` | Add multi-hero fixture tests: (a) single hero — prompt uses existing single-hero language (backward compatible), (b) 2-hero `speaker_card` — hierarchical split, both face refs, (c) 2-hero carousel — face consistency rules reference Hero A and B separately, (d) `before_after` + 2 hero groups → rejected (single-hero only), (e) 3-hero `standard_hero` → `multiHero3` zone split, (f) 5-hero `speaker_card` → `multiHero5` zone split, equal-weight grid composition, photo cap of 2/person enforced, (g) 6-hero input → rejected with `max_5_heroes` error, (h) 5-hero with 3 photos per person → rejected with `photo_cap_exceeded` error. | All 8 tests pass. |
+| 18.11 | `functions/src/creativeResolver.ts` | Add `summit` as a new creative mode (or alias `speaker_card` to handle 4–5 person grids). When 4+ heroes are uploaded, auto-suggest `speaker_card` mode if user is on a different mode — show inline hint: "You uploaded 4 people. Want to switch to Speaker Grid mode for a summit-style layout?" Don't force the switch. | 4+ hero count triggers mode suggestion. User can accept or keep their current mode. |
+| 18.12 | `functions/src/generators.ts` | Add face fidelity reinforcement for 2–3 person ads (single-pass mode). Inject into prompt: "This ad has [N] distinct people. Pay maximum attention to keeping each face true to its specific reference photo. If two faces start to look similar, ADJUST until they are distinguishably different. Use the uploaded reference photos as absolute ground truth." Also reduce sub-style intensity by 10% to free attention budget for face accuracy. **Note:** 2–3 person ads continue using single-pass rendering. 4–5 person ads use the multi-pass pipeline (tasks 18.13–18.17). | 2–3 person prompts include reinforcement. Sub-style softened. |
+| 18.13 | `functions/src/multiHeroRender.ts` | Create file. Implement multi-pass rendering for 4–5 person ads. Step 1: Render the SCENE only (environment, composition, props, lighting) with EMPTY hero zones — placeholder shapes (gray silhouettes) at the positions defined by `multiHero4` / `multiHero5` zones. The prompt explicitly says "Render this scene with [N] gray silhouette placeholders at positions [X1,Y1], [X2,Y2]... Do NOT render any faces or detailed people. The placeholders will be replaced with real people in a later step." Returns `sceneBase64` + per-hero zone coordinates. | Scene renders cleanly with placeholder shapes. No face hallucination because no faces were rendered. |
+| 18.14 | `functions/src/multiHeroRender.ts` | Implement per-hero face insertion pass. For each hero zone, run a Gemini edit call: input is the scene base64 + a binary mask covering ONLY that one hero's zone + that one hero's reference photos + an English prompt: "Replace the gray silhouette in the masked region with a person matching these reference photos. Match the lighting, perspective, and style of the surrounding scene. The person should appear naturally integrated, not pasted." Each pass only ever has ONE face reference active. Run 4–5 passes sequentially (not parallel — Gemini is more accurate when not racing). | Each hero face gets inserted using only their own reference. No cross-contamination possible. |
+| 18.15 | `functions/src/multiHeroRender.ts` | Add quality validation between passes. After each per-hero pass, run a lightweight Gemini Flash check: "Does this face match the reference photo in identity, age range, and key features? Yes/no/uncertain." If `no` or `uncertain`, retry that single pass once with a stronger prompt: "EXACT IDENTITY MATCH REQUIRED. Replace with this specific person, not a similar-looking person." Max 1 retry per hero. If retry also fails, log `faceFailedHeroN: true` on the resolution trace and continue (ship as-is, never block user). | Per-hero quality check runs. Failed faces get one retry. Failures logged but don't block. |
+| 18.16 | `functions/src/generators.ts` | Update the multi-hero routing logic. When `heroGroups.length >= 4`, call `multiHeroRender()` instead of single-pass generation. When `heroGroups.length <= 3`, use existing single-pass logic with 18.12 reinforcement. The pipeline: build plan (with `multiHero4` or `multiHero5` zones) → scene render with placeholders → per-hero insertion (4 or 5 passes) → text composite → logo composite → final output. | Routing splits at 4-hero threshold. 1–3 person ads use single-pass; 4–5 person ads use multi-pass. |
+| 18.17 | `functions/src/generators.ts` | Add per-hero credit cost calculation. Total credits for a multi-hero generation = base cost (current per-ad cost) + (1 credit × number of heroes beyond 1). 1 person = base. 2 people = base + 1. 3 people = base + 2. 4 people = base + 3. 5 people = base + 4. Reflects the actual API cost (each additional hero is one extra Gemini edit pass). | Credit cost scales linearly with hero count. Cost shown to user before generation. |
+| 18.18 | `src/components/InputForm.tsx` | Add credit cost preview. As the user adds people (clicks "+ Add Another Person" or removes a person), update a "This generation will cost X credits" display in real time. Match Higgsfield-style UX — explicit upfront cost. Default state with 1 person shows base cost. Each additional person adds 1 credit. Show a tooltip on the "+" button at 4–5 people: "Adding more people uses additional credits because each face is rendered with extra accuracy passes." | Credit display updates as person count changes. Tooltip explains why cost increases. |
+| 18.19 | `functions/src/contractFixtures.test.ts` | Add multi-pass fixture tests: (a) 4-hero generation runs scene-render + 4 face-insertion passes (5 total Gemini calls), (b) 5-hero generation runs 6 total calls, (c) face validation retry triggers and counts toward the credit cost (or doesn't — confirm decision), (d) all 4 hero faces in a 4-person grid match their references when validated by GPT-4o-mini visual check, (e) credit cost preview matches actual deducted credits. | All 5 tests pass. |
 
 ---
 
-## Phase 19 — Direct-Response Design Upgrades
+## Phase 19 — Direct-Response Design Upgrades ⏳ TODO — CRITICAL
 **Requires:** Phase 5 + HOTFIX-E + HOTFIX-F complete (pipeline + logos + reflow must be stable first).
 
 **Context:** Direct-response ads live or die on six levers: gaze, contrast, one-highlight discipline, price hierarchy, CTA outcome framing, and hook↔visual alignment. The current pipeline has none of these as enforced primitives — Gemini chooses randomly within style constraints. This phase adds them as deterministic rules in the build plan prompt and post-generation validation.
@@ -1739,33 +1916,33 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## HOTFIX-G — FLUX Cleanup (Prerequisite for Phase 20) — ✅ COMPLETE
+## HOTFIX-G — FLUX Cleanup (Prerequisite for Phase 20) ✅ DONE
 
-> **Context:** `falGeneration.ts`, `falEditing.ts`, and their compiled `.js` counterparts in `functions/lib/` were orphaned dead code. Audit confirmed zero imports across `functions/src/`. FLUX was a failed trial — Gemini handles face fidelity via the Box A reference photo pattern. The actual dependency in `functions/package.json` was `@fal-ai/client` (not the older `@fal-ai/serverless-client` referenced in earlier drafts of this doc). Removing the orphaned files unblocks Phase 20 from confusion when new pipeline stages are wired in.
+> **Context:** `falGeneration.ts`, `falEditing.ts`, and their compiled `.js` counterparts in `functions/lib/` are orphaned dead code. Audit confirmed zero imports across `functions/src/`. FLUX was a failed trial — Gemini handles face fidelity via the Box A reference photo pattern. Removing these unblocks the dependency on `@fal-ai/serverless-client` and prevents confusion when Phase 20 wires in new pipeline stages.
 
 | # | File | Action | Done when |
 |---|---|---|---|
-| HFG.1 | `functions/src/falGeneration.ts` | ✅ Deleted. | File no longer exists. |
-| HFG.2 | `functions/src/falEditing.ts` | ✅ Deleted. | File no longer exists. |
-| HFG.3 | `functions/lib/falGeneration.js` | ✅ Deleted (compiled artifact). | File no longer exists. |
-| HFG.4 | `functions/lib/falEditing.js` | ✅ Deleted (compiled artifact). | File no longer exists. |
-| HFG.5 | `functions/package.json` | ✅ Removed `@fal-ai/client` from dependencies (the actual package present in this repo; earlier doc drafts had referred to `@fal-ai/serverless-client`). Ran `npm install` to sync `package-lock.json`. | Package no longer in `node_modules`. `npm run build` succeeds with zero errors. |
+| HFG.1 | `functions/src/falGeneration.ts` | Delete the file. | File no longer exists. |
+| HFG.2 | `functions/src/falEditing.ts` | Delete the file. | File no longer exists. |
+| HFG.3 | `functions/lib/falGeneration.js` | Delete the compiled artifact. | File no longer exists. |
+| HFG.4 | `functions/lib/falEditing.js` | Delete the compiled artifact. | File no longer exists. |
+| HFG.5 | `functions/package.json` | Remove `@fal-ai/serverless-client` from dependencies. Run `npm install` after removal. | Package no longer in `node_modules`. `npm run build` succeeds with zero errors. |
 | HFG.6 | Deploy | Standard sequence: `Remove-Item -Recurse -Force lib` → `npm run build` → `firebase deploy --only functions`. | Deploy succeeds. No broken imports in production. |
 
 > **Note on Phase 11 (Magic Edit):** Phase 11 was originally specified to use `falEditing.ts` and FLUX Kontext. After this hotfix, the Magic Edit pipeline is migrated to use Gemini's edit endpoint (which already handles face fidelity via Box A reference photos in the existing pipeline). Phase 11 task descriptions referencing FLUX should be reinterpreted as: **edit endpoint = Gemini's image edit with Box A reference, not FLUX**. The atomic logic of Phase 11 (lasso → mask → edit prompt → text re-composite) is unchanged; only the underlying model call is.
 
 ---
 
-## Phase 20 — Concept Director + Brief Coherence Check
+## Phase 20 — Concept Director + Brief Coherence Check ⏳ TODO — CRITICAL
 **Requires:** Phase 5 + Phase 14 (Creative Memory must be feeding generations) + HOTFIX-G (FLUX cleanup) complete.
 
 > **Context:** The current pipeline (`Inputs → Hook Lab → Visual Plan → Art Direction → Render → Caption`) optimizes for constraint compliance, not creative differentiation. Three sibling concepts in a batch differ in pose but share metaphor, layout, and headline architecture — every ad looks like the same machine made it. The Visual Architect V5.0 step generates **layout archetypes** (where the hero stands), not **visual concepts** (what the ad is about). The hookType→visualDirection mapping in `hookTypesKnowledge.ts` is a 12-template lookup that returns identical visual direction for every hook of the same type.
 >
 > This phase adds two hidden backend stages and one hidden coherence checker — none of which are user-visible:
 >
-> - **Concept Director** (engineering name) — runs 3× per batch, sequential, sees siblings. Produces a specialized brief per ad with explicit fields for visual metaphor, headline architecture, forbidden props, and gaze direction. Gemini 3.1.
+> - **Concept Director** (engineering name) — runs 3× per batch, sequential, sees siblings. Produces a specialized brief per ad with explicit fields for visual metaphor, headline architecture, forbidden props, and gaze direction. GPT-5.
 > - **Variance Validator** (engineering name) — deterministic check that 3 sibling concepts are not the same shape with different finishes. Triggers max 1 retry on duplicate axes. No AI call.
-> - **Selection Reviewer** (engineering name) — catches strong incoherences in user brief BEFORE generation. Runs live in Step 1 + pre-flight on Step 1 exit. Gemini 3.1.
+> - **Selection Reviewer** (engineering name) — catches strong incoherences in user brief BEFORE generation. Runs live in Step 1 + pre-flight on Step 1 exit. Gemini 2.5 Flash.
 >
 > **User-facing names** (used ONLY in UI strings): "Brief Coherence Check" (the live banner) and "Variance Mode" (workspace toggle). The names "Concept Director", "Variance Validator", "Selection Reviewer" NEVER appear in user-facing copy, marketing, or support docs.
 >
@@ -1777,7 +1954,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 | # | File | Action | Done when |
 |---|---|---|---|
-| 20.A.1 | `functions/src/selectionReviewer.ts` | Create file. Export `reviewSelection(input: SelectionReviewerInput): Promise<SelectionReviewerOutput>`. Input includes hookText, hookType, hookAngle, adTone, copywritingStrategy, subStyle, creativeMode, language, aspectRatio, audience, optional offerPrice/offerType/brandPrimaryColor. Output: `{ flagged, state: 'green' \| 'yellow' \| 'red', mismatches: [{ fieldA, fieldB, tension, severity, suggestion }] }`. Uses Gemini 3.1. Max 2 mismatches per review. Only flags strong mismatches. Returns empty array on uncertainty. Calibration target: fires on ~1 in 10 generations. | Function returns valid output schema for sample inputs. JSON-only response, no preamble. |
+| 20.A.1 | `functions/src/selectionReviewer.ts` | Create file. Export `reviewSelection(input: SelectionReviewerInput): Promise<SelectionReviewerOutput>`. Input includes hookText, hookType, hookAngle, adTone, copywritingStrategy, subStyle, creativeMode, language, aspectRatio, audience, optional offerPrice/offerType/brandPrimaryColor. Output: `{ flagged, state: 'green' \| 'yellow' \| 'red', mismatches: [{ fieldA, fieldB, tension, severity, suggestion }] }`. Uses Gemini 2.5 Flash. Max 2 mismatches per review. Only flags strong mismatches. Returns empty array on uncertainty. Calibration target: fires on ~1 in 10 generations. | Function returns valid output schema for sample inputs. JSON-only response, no preamble. |
 | 20.A.2 | `functions/src/selectionReviewer.ts` | Write the evaluation prompt. Reviews 6 pairs in priority order: (1) Tone × Hook Angle, (2) Sub-style × Creative Mode, (3) Sub-style × Audience price tier, (4) Hook Type × Hook Text, (5) Language × Audience, (6) Offer Price × Offer Type. Tension explanation written in user's language (Arabic if `language` starts with `ar_`). Severity: `strong` blocks; `moderate` warns. State: no mismatches → `green`; moderate only → `yellow`; any strong → `red`. | Prompt produces correctly-formatted JSON. Tension sentences are in user's language. |
 | 20.A.3 | `functions/src/selectionReviewer.ts` | Add timeout/error handling. Fail-open: API timeout (>3s in live mode, >5s in pre-flight) or any error → return `{ flagged: false, state: 'green', mismatches: [] }`. Never throw. Log errors for telemetry. | API failure does not block generation. Logs show error context. |
 | 20.A.4 | `functions/src/index.ts` | Export `reviewSelectionCallable` as a callable Cloud Function. Validates auth. Reads `cultureKill` Remote Config flag — if killed, returns green immediately. Calls `reviewSelection()` with input. Returns output to frontend. | Callable returns valid output. Kill switch returns green without invoking AI. |
@@ -1786,7 +1963,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 | # | File | Action | Done when |
 |---|---|---|---|
-| 20.B.1 | `functions/src/conceptDirector.ts` | Create file. Export `directConcept(input: ConceptDirectorInput): Promise<ConceptDirectorOutput \| ConceptDirectorFallback>`. Input includes the brief (hookText, hookType, hookAngle, adTone, copywritingStrategy, audience, offer fields), user's INVIOLABLE choices (subStyle, creativeMode, language, aspectRatio, brand colors/logo), variance enforcement (conceptIndex 0/1/2, siblingConcepts array, varianceMode), and pass-through context (reviewerFlags, pastWinningAds — last 5 from `creativeMemory.ts`). Uses Gemini 3.1. | Function returns valid `ConceptDirectorOutput` for sample inputs. |
+| 20.B.1 | `functions/src/conceptDirector.ts` | Create file. Export `directConcept(input: ConceptDirectorInput): Promise<ConceptDirectorOutput \| ConceptDirectorFallback>`. Input includes the brief (hookText, hookType, hookAngle, adTone, copywritingStrategy, audience, offer fields), user's INVIOLABLE choices (subStyle, creativeMode, language, aspectRatio, brand colors/logo), variance enforcement (conceptIndex 0/1/2, siblingConcepts array, varianceMode), and pass-through context (reviewerFlags, pastWinningAds — last 5 from `creativeMemory.ts`). Uses GPT-5. | Function returns valid `ConceptDirectorOutput` for sample inputs. |
 | 20.B.2 | `functions/src/conceptDirector.ts` | Define output schema with these required fields: `visualMetaphor: { description, keyVisualElement, emotionalReason }`, `headlineArchitecture` (one of 8: manifesto / editorial / annotated / dual_state / oversized_question / numerical_anchor / ellipsis_tease / stacked_weight), `highlightCardinality: { count: 0\|1\|2, phrases, treatment }`, `layoutArchetype` (one of 7: asymmetric_void / central_headroom / central_baseweight / environmental_canvas / split_dual_state / typography_dominant / editorial_columns), `heroPresence` (present / absent / partial / multiple_subjects), `heroGazeDirection` (toward_headline / toward_cta / direct_camera / off_frame_intentional / downward_introspective), `heroPoseSpecific: string`, `propsAllowed: string[]`, `propsForbidden: string[]` (min 3 items), `backgroundComplexity` (minimal / moderate / rich), `accentBehavior: { primaryUse, secondaryUse, cardinality: 1\|2\|3 }`, `logoTreatment` (composite_post / absent_this_concept / corner_subtle), `subStyleSpecialization: { inheritedFrom, specializedAs, keyDeparture }`, `restraintRules: string[]` (min 2 items), `conceptIndex: number`, `varianceAxes: { metaphorToken, layoutToken, headlineToken }`. | Output schema validated. Hard constraints enforced (count ≤ 2, propsForbidden ≥ 3, restraintRules ≥ 2, subStyleSpecialization.inheritedFrom equals user's exact subStyle choice). |
 | 20.B.3 | `functions/src/conceptDirector.ts` | Write the reasoning prompt with 7-step internal reasoning: (1) emotional core of the hook, (2) concrete visual metaphor (concrete image, NOT abstract concept), (3) headline architecture choice, (4) sub-style interpretation (specialized within user's choice — never override), (5) focal point and composition, (6) forbidden props (min 3), (7) accent placement (max 3 places brand color appears). All text fields in user's language EXCEPT enum values (which stay English for downstream pipeline). | Prompt produces JSON-only output matching schema. Sample outputs have concrete visualMetaphor.description (e.g. "newspaper folded on subway seat" not "media is dying"). |
 | 20.B.4 | `functions/src/conceptDirector.ts` | Define variance modes. `conservative`: siblings differ on hero pose + composition only. `balanced` (default): + metaphor + headline architecture + layout archetype. `aggressive`: + composition strategy + accent behavior + backgroundComplexity + heroPresence. Each mode parameterizes the prompt — sibling concepts MUST differ on the listed axes. Pass `siblingConcepts` array in prompt so concept N sees concepts 0..N-1 and avoids their `varianceAxes` tokens. | Three sequential calls produce concepts that differ on the axes specified by varianceMode. |
@@ -1841,6 +2018,118 @@ These are manual steps for Eslam to complete before any code tasks begin.
 | 20.G.2 | `functions/src/contractFixtures.test.ts` | Add Variance Validator fixture tests: (a) balanced mode blocks when `metaphorToken` matches in 2 of 3 concepts, (b) aggressive mode blocks when `backgroundComplexity` is identical across all 3, (c) conservative mode does NOT block when only `layoutToken` matches, (d) retry triggers when validation fails, (e) ship-as-is after 1 retry that also fails. | All 5 tests pass. |
 | 20.G.3 | `functions/src/contractFixtures.test.ts` | Add Selection Reviewer fixture tests: (a) "luxury_magazine" subStyle + "$19 offer" + Egyptian audience flags as red (price tier mismatch), (b) "comedic" tone + "fear-based" hook angle flags as red (tone × angle mismatch), (c) "vintage_bw" subStyle + "tech-savvy young professional" audience flags yellow at most, (d) coherent brief returns green with empty mismatches, (e) Arabic input produces tension explanations in Arabic, (f) API failure returns green (fail-open). | All 6 tests pass. |
 | 20.G.4 | `functions/src/index.ts` | Add telemetry. Log to a `pipelineTelemetry` Firestore collection per generation: `{ generationId, conceptDirectorRan, conceptDirectorFallbacks: number, varianceValidatorTriggered, varianceRetries: number, selectionReviewerState, modalShownToUser, userBypassedModal, totalLatencyMs }`. Used to monitor rollout health and Concept Director quality over time. | Every generation writes a telemetry row. Dashboard can query rollback signals (high fallback rate, high modal-bypass rate). |
+
+---
+
+
+---
+
+## Phase 21 — Stripe Migration ⏳ TODO — CRITICAL (REPLACES PHASE 8)
+**Requires:** Pre-launch (no production users yet — cleanest moment to migrate).
+**Blocks:** Re-verification of Phases 9, 10, 12, 13. Phase 14. Production launch.
+
+> **Context:** Phase 8 was specified as Stripe but implemented as Paddle. This phase performs a clean migration from Paddle to Stripe — gut the Paddle implementation, rewire to Stripe Checkout + Customer Portal + webhooks, and verify behavioral parity with the original Phase 8 spec at `specs/009-billing-plan-access/`.
+>
+> **Why a separate phase, not just "re-do Phase 8":** A new spec (`specs/021-stripe-migration/`) lets us reuse the behavioral FRs and user stories from `009-billing-plan-access/spec.md` (which are still correct) without re-creating them. Only the billing engine swaps. The auth flow, mandatory billing modal, dual-write `pending_plans` pattern, GHL sync, idempotency rules, plan gating — all stay behaviorally identical.
+>
+> **Why now and not later:** Pre-launch (zero paying customers) is the cheapest possible moment for a billing migration. Every day after launch makes it 10x harder. Doing it now also avoids re-verifying Phases 9, 10, 12, 13 twice.
+>
+> **What stays:** All behavioral specs at `specs/009-billing-plan-access/` (user stories, FRs, state transitions, GHL sync rules, mandatory billing modal, email-only auth flow). The behavior is correct. Only the billing engine changes.
+>
+> **What gets gutted:**
+> - `functions/src/paddle/` (entire folder)
+> - `functions/src/billing/paddleWebhook.ts`
+> - `paddleSubscriptionId`, `paddleCustomerId`, `paddleUpdatePaymentMethod`, `paddleCancelUrl` fields across `billingState.ts`, `billingLogger.ts`, `ghlBillingSync.ts`
+> - `@paddle/paddle-node-sdk` dependency in `functions/package.json`
+> - All Paddle webhook event handlers and Paddle-specific UI references
+
+### 21.A — Spec Investigation (Owner + Claude Code)
+
+| # | Where | Action | Done when |
+|---|---|---|---|
+| 21.A.1 | Claude Code session | Read all files in `specs/009-billing-plan-access/` (spec.md, plan.md, tasks.md, data-model.md, quickstart.md, research.md, contracts/). Identify every behavior tied specifically to Paddle (managementUrls pattern, overlay checkout, webhook events, idempotency keys, etc.) that needs a Stripe equivalent designed. | Inventory of Paddle-specific behaviors documented. |
+| 21.A.2 | Claude Code session | Produce a checklist of decisions the product owner needs to make before writing the new Stripe spec: Checkout Sessions vs Payment Element, Customer Portal vs custom UI, webhook events to subscribe to, idempotency strategy, pending_plans dual-write under Stripe, trial enforcement (Stripe-native vs custom), proration policy. | Decision checklist exists. |
+| 21.A.3 | Owner | Answer the decisions in 21.A.2. When uncertain, default to: Checkout Sessions, Stripe-hosted Customer Portal, native trial, "charge prorated immediately on upgrade / credit on downgrade." | All decisions have answers. |
+
+### 21.B — New Spec Authoring
+
+| # | Where | Action | Done when |
+|---|---|---|---|
+| 21.B.1 | `specs/021-stripe-migration/spec.md` | Author the spec, modeled on the structure of `specs/009-billing-plan-access/spec.md`. Reuse FRs and user stories where behavior is identical. Add Stripe-specific FRs for: Checkout Session creation, Customer Portal redirect, webhook signature via `stripe.webhooks.constructEvent`, supported events (`checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_succeeded`, `invoice.payment_failed`), `client_reference_id` for uid pass-through, `metadata.isTopUp` for one-time payments, `pending_plans/{email}` dual-write when client_reference_id is missing. | Spec covers all behaviors with Stripe-specific implementation. |
+| 21.B.2 | `specs/021-stripe-migration/plan.md` | Implementation plan: order of operations (Paddle removal → Stripe SDK install → webhook rewrite → checkout creation → Customer Portal → frontend wiring → secrets → deploy → smoke test). Includes the dependency on Phase 9, 10, 12, 13 re-verification. | Plan exists with ordered phases. |
+| 21.B.3 | `specs/021-stripe-migration/tasks.md` | Atomic task breakdown — each task is one file, one action, one done condition. Modeled on the format of `specs/009-billing-plan-access/tasks.md`. | Task list exists. |
+| 21.B.4 | `specs/021-stripe-migration/data-model.md` | Define the Stripe-specific shape of `users/{uid}.billingState`: `{ plan, credits, billingStatus, isTrial, stripeSubscriptionId, stripeCustomerId, stripeCustomerPortalUrl, isTeamOwner, isTeamMember, teamOwnerName, teamMemberCount, teamOpenInvites, maxTeamMembers, savedProjectLimit, audienceAvatarLimit, batchConfig, carouselMaxSlides }`. Document migration of any existing Paddle field → Stripe equivalent. | Data model documented. |
+| 21.B.5 | `specs/021-stripe-migration/quickstart.md` | Manual validation checklist: Stripe test mode card flow, plan upgrade mid-cycle, top-up while subscribed, webhook signature mismatch returns 400, paid-before-signup `pending_plans` flow, monthly credit reset, trial expiration, GHL contact updates fire correctly. | Quickstart exists. |
+
+### 21.C — Stripe Dashboard Setup (Owner)
+
+Same as old Phase 8.A but executed for real:
+- Create 3 subscription products (Starter $29, Pro $79, Scale $197) with monthly + annual variants.
+- Create 1 one-time top-up product with 3 prices (100/300/800 credits).
+- Configure 7-day trial on subscription products.
+- Generate Test mode API keys (`sk_test_...`, `pk_test_...`).
+- Set up webhook endpoint `https://europe-west1-proadsai-saas.cloudfunctions.net/stripeWebhook` subscribed to 5 events.
+- Activate Customer Portal with cancel/update payment/switch plans/invoice history. Set return URL `https://app.proadsai.com/billing`.
+
+### 21.D — GHL Setup (Owner)
+
+Same as old Phase 8.B:
+- Create "Stripe Payment Received" inbound webhook workflow with welcome email + tag automation.
+- Create "Stripe Payment Failed" inbound webhook workflow with dunning email.
+- Copy both URLs into Firebase secrets.
+
+### 21.E — Code Migration (Claude + GLM)
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 21.E.1 | `functions/src/paddle/` | Delete entire folder. | Folder no longer exists. |
+| 21.E.2 | `functions/src/billing/paddleWebhook.ts` | Delete file. | File no longer exists. |
+| 21.E.3 | `functions/package.json` | Remove `@paddle/paddle-node-sdk`. Add `stripe`. Run `npm install`. | Stripe SDK installed, Paddle SDK removed. |
+| 21.E.4 | `functions/src/billing/stripeWebhook.ts` | Create the Stripe webhook handler per the spec at `specs/021-stripe-migration/spec.md`. | Function verifies signature, routes 5 events, writes correct fields. |
+| 21.E.5 | `functions/src/billing/billingState.ts` | Replace all Paddle field names with Stripe equivalents. Remove `paddleSubscriptionId`, `paddleCustomerId`, `paddleUpdatePaymentMethod`, `paddleCancelUrl`. Add `stripeSubscriptionId`, `stripeCustomerId`, `stripeCustomerPortalUrl`. | Zero Paddle field references. |
+| 21.E.6 | `functions/src/billing/billingLogger.ts` | Same field renames. | Zero Paddle field references. |
+| 21.E.7 | `functions/src/billing/ghlBillingSync.ts` | Update payload field names to match Stripe shape. Update GHL secret names from `GHL_PADDLE_SYNC_WEBHOOK_URL` to `GHL_STRIPE_SYNC_WEBHOOK_URL`. Same for failed URL. | GHL sync uses Stripe field names + new secret names. |
+| 21.E.8 | `functions/src/index.ts` | Replace Paddle Cloud Function exports (`paddleWebhook`, `createPaddleCheckout`, `createPaddleTopUp`) with Stripe equivalents (`stripeWebhook`, `createStripeCheckoutSession`, `createStripePortalSession`). Update `defineSecret()` declarations: drop `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`; add `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`. | Index has Stripe exports + secrets only. |
+| 21.E.9 | `src/planconfig.ts` | Replace `paddlePriceId` fields with `stripePriceId: { monthly, annual }`. Add `stripeTopUpPriceIds`. Remove any Paddle product IDs. | planconfig uses Stripe IDs only. |
+| 21.E.10 | `src/components/PricingTable.tsx`, `src/pages/Billing.tsx`, `src/components/billing/MandatoryBillingModal.tsx` | Replace any Paddle checkout calls with `createStripeCheckoutSession`. Replace any Paddle URL references with `stripeCustomerPortalUrl`. Remove Paddle.js script tag if present. | Frontend uses Stripe callables only. |
+| 21.E.11 | `src/firebase.ts` or wherever client-side Stripe loads | Add Stripe.js client (or use stripe-js): load `https://js.stripe.com/v3/` and initialize with publishable key from env. | Stripe.js loads on app init. |
+| 21.E.12 | Firebase secrets | Set: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `GHL_STRIPE_SYNC_WEBHOOK_URL`, `GHL_STRIPE_FAILED_WEBHOOK_URL`. Verify with `firebase functions:secrets:access`. | All 4 secrets set and accessible. |
+
+### 21.F — Phase 8.D Email-Only Auth Re-Wire
+
+The behavioral logic of email-only auth is correct but currently wired to Paddle webhooks. Re-point to Stripe.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 21.F.1 | `src/App.tsx` | In the `onAuthStateChanged` handler, the `pending_plans/{email}` consumption logic should already work — but verify the field names being read match the Stripe webhook output (stripeCustomerId, stripeSubscriptionId, not paddleCustomerId). | Field reads match Stripe shape. |
+| 21.F.2 | `functions/src/billing/stripeWebhook.ts` | In `checkout.session.completed` handler: dual-write logic. If `client_reference_id` exists (logged-in user), write to `users/{uid}`. If missing (paid before signup), write to `pending_plans/{email.toLowerCase()}`. This matches the original Phase 8.D behavior. | Both paths verified with smoke test. |
+
+### 21.G — Build, Deploy, Smoke Test
+
+| # | Where | Action | Done when |
+|---|---|---|---|
+| 21.G.1 | functions/ | `npm run build` — zero TypeScript errors, zero Paddle imports remain. | Build passes. |
+| 21.G.2 | repo root | `firebase deploy --only functions` — successful deploy. No `app/no-app` errors. No missing-secret errors. | Deploy succeeds. |
+| 21.G.3 | Browser | Smoke test in test mode: pricing page → click Subscribe Pro → Stripe Checkout opens → use card `4242 4242 4242 4242` → return to app → user doc shows `plan: 'pro'`, `credits: 2500`, `billingStatus: 'active'` within 30 seconds. | Full flow works. |
+| 21.G.4 | Browser | Cancel test: click Manage Subscription → opens Stripe Customer Portal → cancel → return → user doc shows `plan: 'none'` within 30 seconds. GHL contact tag `paid_pro` removed. | Cancel flow works. |
+| 21.G.5 | Browser | Top-up test: while on Pro, click "Buy 300 credits" → checkout completes → credits go from 2500 → 2800. Plan stays `pro`. | Top-up works. |
+| 21.G.6 | Stripe Dashboard | Verify webhook endpoint shows successful delivery (200) for all test events. | All events deliver successfully. |
+
+### 21.H — Re-verify Affected Phases
+
+After Phase 21 deploys to test mode and smoke tests pass:
+
+| # | Phase | What to verify |
+|---|---|---|
+| 21.H.1 | Phase 9 (Team Management) | Team invite flow still works. `billingState.isTeamOwner`, `isTeamMember`, `maxTeamMembers` populate correctly from new Stripe-backed billingState. |
+| 21.H.2 | Phase 10 (Favorites & Workspace) | Workspace scoping works. Team members see shared favorites. |
+| 21.H.3 | Phase 12 (Workspace Logic) | `createWorkspace` callable rejects below-Scale plans. Linking Meta ad account still works. |
+| 21.H.4 | Phase 13 (Saved Projects) | Per-plan project limits still enforced. Search/filter still works. |
+| 21.H.5 | All phases | `grep -ri "paddle" functions/src src` returns zero results. No stale references. |
+
+### 21.I — Live Mode Cutover
+
+Same checklist as the old Phase 8.E.6 — recreate products in Live mode, generate live API keys, create live webhook endpoint, update Firebase secrets, redeploy. Done in the final pre-launch week.
 
 ---
 
