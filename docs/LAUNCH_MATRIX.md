@@ -53,7 +53,7 @@ All product owner decisions. These are final for launch.
 | RAG feedback loop | `metaDailySync` pulls Meta Insights API daily. Performance data (CTR/CPC/ROAS) feeds back into generation prompts via `getRAGContext()`. Minimum 10 records before RAG injection activates. |
 | Brand color enforcement | Brand colors injected per-slide in carousel, per-item in batch, inherited from cold ad in retargeting. Text compositing uses brand primary for CTA, brand secondary for headlines. |
 | Resize / reflow | Reflow available for single, batch (all N), carousel (all slides). Text compositing re-runs after reflow with safe-zone re-validation. CSS preview costs 0 credits. |
-| Plan structure | **3 plans only**: Starter ($29/mo), Pro ($79/mo), Scale ($197/mo). The Creator plan has been removed. All references to "Creator" or 4-plan structure are obsolete. Annual billing saves 2 months. |
+| Plan structure | **3 plans only**: Starter ($29/mo), Pro ($79/mo), Scale ($179/mo). The Creator plan has been removed. All references to "Creator" or 4-plan structure are obsolete. Annual billing is **20% off** (Starter $23.20/mo, Pro $63.20/mo, Scale $143.20/mo when billed annually). |
 | Feature gating philosophy | All creative engine features (hook angles, hook types, ad tones, copywriting strategies, creative modes) are **fully ungated on ALL plans** including Starter. Gating applies only to: production features (batch, carousel, retargeting, Meta push, creative memory), visual premium features (fantasy universes, art direction, reference ad, auto-optimized creatives), and intelligence features (predictive CTR, variant exploration, smart recommendations, multi-brand workspaces). |
 | Carousel slide limits | Pro: up to 7 slides. Scale: up to 10 slides. (Previously Pro: 2–5, Scaling: 2–9.) |
 | Batch generation | **Pro gets batch** (limited: up to 4 ads/run = 1 size × 2 hooks × 2 concepts). **Scale gets full batch** (up to 36 ads/run = 3 sizes × 4 hooks × 3 concepts). Batch is no longer Scale-only. |
@@ -991,7 +991,7 @@ Phase 7 — Failure Classification (independent)
 
 Phase 8 — Billing: ROLLED BACK (was specified Stripe, implemented Paddle, superseded by Phase 21)
 
-Phase 9 — Team Management (requires Phase 8 OR Phase 21 to ship billing) — done, needs re-verification post-21
+Phase 9 — Team Management (requires Phase 21 to ship billing — was Phase 8 pre-rollback) — done, needs re-verification post-21
 
 HOTFIX — Plan Structure Alignment (requires Phase 9, apply BEFORE Phase 10+)
 
@@ -1005,15 +1005,15 @@ HOTFIX-F — Deterministic Aspect Ratio Reflow (CRITICAL P0)
 
 HOTFIX-G — FLUX Cleanup (prerequisite for Phase 20)
 
-Phase 10 — Favorites & Workspace (requires Phase 8)
+Phase 10 — Favorites & Workspace (requires Phase 21 — billingState; was Phase 8 pre-rollback)
 
 Phase 11 — Magic Edit (requires Phase 5)
 
-Phase 12 — Workspace Logic (requires Phase 8 + Phase 9)
+Phase 12 — Workspace Logic (requires Phase 21 + Phase 9 — was Phase 8 + Phase 9 pre-rollback)
 
 Phase 13 — Saved Projects (requires Phase 10)
 
-Phase 14 — RAG + Meta Reporting (requires Phase 7 + Phase 8)
+Phase 14 — RAG + Meta Reporting (requires Phase 7 + Phase 21 — billingState; was Phase 7 + Phase 8 pre-rollback)
 
 Phase 15 — Brand Colors (requires Phase 5)
 
@@ -1084,9 +1084,9 @@ Launch is complete when all of the following pass:
 ### Dependency Map
 
 ```
-Phase 1  ──► Phase 2  ──► Phase 8  ──► Phase 9  ──► HOTFIX (plan alignment)
-         ──► Phase 3             └──► Phase 10
-         ──► Phase 4             └──► Phase 12 (Workspace)
+Phase 1  ──► Phase 2  ──► Phase 21 ──► Phase 9  ──► HOTFIX (plan alignment)
+         ──► Phase 3                └──► Phase 10
+         ──► Phase 4                └──► Phase 12 (Workspace)
          ──► Phase 5
 
 Phase 6   (no dependency — start any time)
@@ -1098,12 +1098,13 @@ HOTFIX-D  no dependency — apply any time
 HOTFIX-E  requires Phase 5 (pipeline) — CRITICAL P0
 HOTFIX-F  requires Phase 5 (pipeline) — CRITICAL P0
 HOTFIX-G  no dependency — apply before Phase 20 (FLUX cleanup)
-Phase 8   ROLLED BACK — see Phase 21
-Phase 9   requires Phase 8
-Phase 10  requires Phase 8 (billingState for team scoping)
+HOTFIX-H  no dependency — final pricing & naming alignment (apply before launch)
+Phase 8   ROLLED BACK — see Phase 21 (billingState now sourced from Stripe)
+Phase 9   requires Phase 21 (billingState — was Phase 8 pre-rollback). Re-verify after Phase 21 ships.
+Phase 10  requires Phase 21 (billingState for team scoping — was Phase 8 pre-rollback). Re-verify after Phase 21 ships.
 Phase 11  requires Phase 5 (render pipeline must be stable)
-Phase 12  was built against Phase 8 (Paddle), needs re-verification after Phase 21 ships
-Phase 13  requires Phase 10 (favorites + workspace scoping)
+Phase 12  requires Phase 21 + Phase 9 (was built against Phase 8/Paddle — re-verify after Phase 21 ships)
+Phase 13  requires Phase 10 (favorites + workspace scoping — billingState comes via Phase 21)
 Phase 14  requires Phase 7 + Phase 21 (failure classification + Stripe billing)
 Phase 15  requires Phase 5 (build plan pipeline)
 Phase 16  requires Phase 1 + Phase 3 + Phase 5
@@ -1149,7 +1150,7 @@ If a task would require creating a sub-plan, the task description is wrong — f
 
 ## Phase 2 — Frontend Enforcement ✅ DONE
 **Requires:** Phase 1 complete.
-**Blocks:** Phase 8.
+**Blocks:** Phase 21 (billing — was Phase 8 pre-rollback).
 
 | # | File | Action | Done when |
 |---|---|---|---|
@@ -1277,7 +1278,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 | # | Where | Action | Done when |
 |---|---|---|---|
 | 8.A.1 | Stripe Dashboard | Log in to stripe.com. Ensure account is activated. Switch to **Test mode** for development. | Stripe account exists. Test mode is active. |
-| 8.A.2 | Stripe Dashboard → Products | Create 3 subscription products: **Starter** ($29/monthly), **Pro** ($79/monthly), **Scale** ($197/monthly). Set prices in USD. Also create annual variants for each (Starter $290/yr, Pro $790/yr, Scale $1,970/yr — 2 months free). Note down the **Price ID** for each monthly and annual variant (format: `price_xxxxx`). | 3 products exist with 6 price IDs recorded (3 monthly + 3 annual). |
+| 8.A.2 | Stripe Dashboard → Products | Create 3 subscription products: **Starter** ($29/monthly), **Pro** ($79/monthly), **Scale** ($179/monthly). Set prices in USD. Also create annual variants for each (Starter $278.40/yr, Pro $758.40/yr, Scale $1,718.40/yr — 20% off). Note down the **Price ID** for each monthly and annual variant (format: `price_xxxxx`). | 3 products exist with 6 price IDs recorded (3 monthly + 3 annual). |
 | 8.A.3 | Stripe Dashboard → Products | Create 1 one-time product: **Credit Top-Up**. Create 3 prices: 100 credits, 300 credits, 800 credits. Note down each Price ID. | Top-up product exists with 3 price IDs recorded. |
 | 8.A.4 | Stripe Dashboard → Developers → API keys | Copy the **Secret key** (`sk_test_xxxxx` for test, `sk_live_xxxxx` for production). This is `STRIPE_SECRET_KEY`. Copy the **Publishable key** (`pk_test_xxxxx`). This is used frontend-side for Stripe.js. | Both keys saved. |
 | 8.A.5 | Stripe Dashboard → Developers → Webhooks | Click "Add endpoint". URL: `https://europe-west1-proadsai-saas.cloudfunctions.net/stripeWebhook` (update region if different). Select events: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_succeeded`, `invoice.payment_failed`. Copy the **Signing secret** (format: `whsec_xxxxx`). This is `STRIPE_WEBHOOK_SECRET`. | Webhook endpoint exists. Signing secret saved. All 5 events subscribed. |
@@ -1355,7 +1356,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 | # | Where | Action | Done when |
 |---|---|---|---|
 | 8.E.1.a | Stripe Dashboard → Products | Verify 3 active subscription products exist: **Starter**, **Pro**, **Scale**. Each has at least one recurring price. | All 3 products visible in dashboard. Each has `Active: Yes`. |
-| 8.E.1.b | Stripe Dashboard → Products | Verify each product has BOTH a monthly AND an annual price (annual = 2 months free per the pricing table). Note all 6 price IDs (`price_xxx`) — 3 monthly, 3 annual. | 6 price IDs documented. Annual prices match: Starter $290/yr, Pro $790/yr, Scale $1970/yr. |
+| 8.E.1.b | Stripe Dashboard → Products | Verify each product has BOTH a monthly AND an annual price (annual = 20% off per the pricing table). Note all 6 price IDs (`price_xxx`) — 3 monthly, 3 annual. | 6 price IDs documented. Annual prices match: Starter $278.40/yr, Pro $758.40/yr, Scale $1,718.40/yr. |
 | 8.E.1.c | Stripe Dashboard → Products | Verify the one-time **Credit Top-Up** product exists with 3 prices (100 / 300 / 800 credits). Note the 3 price IDs. | 9 total price IDs documented (6 subscription + 3 top-up). |
 | 8.E.1.d | `src/planconfig.ts` | Verify `paddlePriceId` field has been removed and replaced with `stripePriceId`. Verify each plan entry has the correct monthly + annual `stripePriceId` from the dashboard. Verify `stripeTopUpPriceIds` map is populated with the 3 top-up prices. | `grep "paddle" src/planconfig.ts` returns zero. All Stripe price IDs match the dashboard. |
 | 8.E.1.e | `src/components/PricingTable.tsx` | Open the rendered pricing page. Click each plan's "Subscribe" button. Each click should redirect to Stripe Checkout with the correct plan name + price displayed. | All 3 subscription buttons + 3 top-up buttons open Stripe Checkout with correct prices. |
@@ -1436,7 +1437,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 ---
 
 ## Phase 9 — Team Management ⚠️ DONE — Needs re-verification after Phase 21
-**Requires:** Phase 8 complete.
+**Requires:** Phase 21 complete (Stripe billingState — was Phase 8 pre-rollback).
 
 | # | File | Action | Done when |
 |---|---|---|---|
@@ -1590,7 +1591,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 ---
 
 ## Phase 10 — Favorites & Workspace ⚠️ DONE — Needs re-verification after Phase 21
-**Requires:** Phase 8 complete (needs `billingState` for team scoping — which user's favorites to show).
+**Requires:** Phase 21 complete (needs `billingState` for team scoping — which user's favorites to show; was Phase 8 pre-rollback).
 
 **What already exists:**
 - `feedbackService.toggleFavorite(generationId, isFavorite)` — writes `feedback.savedToFavorites` to Firestore. Works.
@@ -1660,7 +1661,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 ---
 
 ## Phase 12 — Workspace Logic (Scale Mode) ⚠️ DONE — Needs re-verification after Phase 21
-**Requires:** Phase 8 + Phase 9 complete (billing + team management).
+**Requires:** Phase 21 + Phase 9 complete (billing + team management; was Phase 8 + Phase 9 pre-rollback).
 
 **What already exists:**
 - `Workspace` interface: `id, name, brandName, brandUrl?, brandColorPrimary?, brandColorSecondary?, logoUrl?, createdAt, isDefault`.
@@ -1731,7 +1732,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 ---
 
 ## Phase 14 — RAG + Meta Reporting Feedback Loop ⏳ TODO — MAJOR
-**Requires:** Phase 7 (failure classification) + Phase 8 (billing) complete.
+**Requires:** Phase 7 (failure classification) + Phase 21 (billing — was Phase 8 pre-rollback) complete.
 
 **What already exists:**
 - `creativeMemory.ts` (432L) — full memory record schema with performance scores. `storeCreativeMemory()` writes record. `updateCreativePerformance()` accepts CTR/CPC/ROAS and recalculates composite score. Index aggregation by dimension combinations.
@@ -1933,6 +1934,33 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
+## HOTFIX-H — Final Pricing & Naming Alignment (Pre-Launch) ⏳ TODO
+
+> **Context:** Documentation alignment pass (021-stripe-migration branch) corrected all spec/doc references to the final pricing ($29/$79/$179, 20% annual savings) and renamed the user-facing label "Creative Scoring Engine" → "Predictive CTR Engine". Three code files were left untouched per the "no code changes outside docs/specs" rule of that pass. This hotfix closes the remaining code gap so the live app, the pricing page, and the docs all agree.
+>
+> **Scope:** User-facing labels and Starter price only. The internal TypeScript field name `creativeScoringEngine` and the file `functions/src/creativeScoringEngine.ts` are NOT renamed — those stay as-is. This is a marketing/UI alignment, not a refactor.
+>
+> **Why pre-launch and not deferred:** Pricing on `app.proadsai.com` must match what GHL charges at checkout. A user paying $29 on GHL but seeing `$19/mo` on the in-app pricing card creates a refund risk and a trust break.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| HFH.1 | `src/planconfig.ts` | In the `starter` plan object, change `priceMonthly: 19` to `priceMonthly: 29` and `priceAnnualPerMonth: 15.20` to `priceAnnualPerMonth: 23.20`. Pro and Scale prices are already correct ($79 / $63.20 and $179 / $143.20). Do NOT touch any other field on the Starter plan (credits, limits, features all stay). | `PLANS.starter.priceMonthly === 29 && PLANS.starter.priceAnnualPerMonth === 23.20`. Pro and Scale unchanged. |
+| HFH.2 | `src/planconfig.ts` | Search the file for the user-facing string `'Creative Scoring Engine'` (in `buildFeatureLabels()` or any feature-label array). Rename to `'Predictive CTR Engine'`. Do NOT rename the field name `creativeScoringEngine` (boolean entitlement key) or any reference to the file `creativeScoringEngine.ts`. | `grep "Creative Scoring Engine" src/planconfig.ts` returns 0 matches. `grep "Predictive CTR Engine" src/planconfig.ts` returns at least 1 match. The field name `creativeScoringEngine` still exists. |
+| HFH.3 | `src/components/PricingTable.tsx` | In the `plans` array, update the Starter entry: change `monthly: 19, annual: 15.20` to `monthly: 29, annual: 23.20`. Pro and Scale entries unchanged. | The Starter column header in the rendered pricing table shows `$29/mo` (monthly toggle) and `$23.20/mo` (annual toggle). |
+| HFH.4 | `src/components/PricingTable.tsx` | In the `featureRows` array, find the row labeled `'Offer Creative Modes'` and change `values: ['All 18+', 'All 18+', 'All 18+']` to `values: ['6', 'All 21', 'All 21']`. This makes the marketing page reflect the actual `maxOfferModes` from `planconfig.ts` (Starter 6, Pro/Scale 21). | The Offer Creative Modes row renders `6 / All 21 / All 21`. |
+| HFH.5 | `src/components/PricingTable.tsx` | In the `featureRows` array, locate the `'Batch Rendering'` row currently in section `'scale'`. Change its `section` value from `'scale'` to `'studio'` and physically move the row to appear immediately after the `'Carousel Ads'` row inside the Render Studio section. Values stay: `[false, 'Up to 4 ads / run', { text: 'Up to 36 ads / run', emphasis: true }]`. | Batch Rendering renders inside Render Studio (between Carousel Ads and the next section). Scale Exclusives section no longer contains Batch Rendering. |
+| HFH.6 | `src/components/PricingTable.tsx` | In the `featureRows` array, rename the row label `'Creative Scoring Engine'` to `'Predictive CTR Engine'`. The note text, section, and values stay unchanged. | The Scale Exclusives section header text reads `Predictive CTR Engine`. `grep "Creative Scoring Engine" src/components/PricingTable.tsx` returns 0 matches. |
+| HFH.7 | `src/components/PricingTable.tsx` | In the `featureRows` array, find the `'Multi-Brand Workspaces'` row's third value (the Scale cell). Remove the `soon: true` property from the value object. Multi-Brand Workspaces is live (Phase 12 shipped per Section 0.5). | The Multi-Brand Workspaces row no longer renders the `Soon` badge in the Scale column. |
+| HFH.8 | Verification | Run `npm run lint && npm run typecheck && npm run build` from the project root. Then run the same in `functions/`. Then grep the entire `src/` and `functions/src/` trees for the strings `"$197"`, `"15.20"`, `"$19/mo"`, `"Creative Scoring Engine"`, `"2 months free"` — all must return 0 matches in user-facing code paths (test fixtures may keep historical references). | Lint, typecheck, and build all pass. All 5 grep checks return 0 matches outside `**/__tests__/**` and `**/*.test.ts`. |
+
+> **Out of scope (do NOT touch in this hotfix):**
+> - The internal field name `creativeScoringEngine` in `planconfig.ts`, `entitlements.ts`, or `useBillingState.ts` — that's a separate, larger refactor.
+> - The file `functions/src/creativeScoringEngine.ts` — internal name, never user-visible.
+> - The marketing site at `proadsai.com` (GHL) — handled separately via the GHL admin console.
+> - Stripe price IDs — those are created in Phase 21 (Stripe migration), not this hotfix. Phase 21 already references the corrected $29/$79/$179 amounts after the doc alignment pass.
+
+---
+
 ## Phase 20 — Concept Director + Brief Coherence Check ⏳ TODO — CRITICAL
 **Requires:** Phase 5 + Phase 14 (Creative Memory must be feeding generations) + HOTFIX-G (FLUX cleanup) complete.
 
@@ -2064,7 +2092,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 ### 21.C — Stripe Dashboard Setup (Owner)
 
 Same as old Phase 8.A but executed for real:
-- Create 3 subscription products (Starter $29, Pro $79, Scale $197) with monthly + annual variants.
+- Create 3 subscription products (Starter $29, Pro $79, Scale $179) with monthly + annual variants.
 - Create 1 one-time top-up product with 3 prices (100/300/800 credits).
 - Configure 7-day trial on subscription products.
 - Generate Test mode API keys (`sk_test_...`, `pk_test_...`).

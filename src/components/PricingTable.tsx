@@ -20,7 +20,7 @@ type BillingMode = 'monthly' | 'annual';
 
 // PADDLE: CTA buttons call createPaddleCheckout callable
 const plans = [
-  { key: 'starter', name: 'Starter', sub: 'Get hooked', monthly: 19, annual: 15.20, badge: null, ctaLabel: 'Start Creating', micro: 'Your first 25 ads', cls: '', ctaCls: '' },
+  { key: 'starter', name: 'Starter', sub: 'Get hooked', monthly: 29, annual: 23.20, badge: null, ctaLabel: 'Start Creating', micro: 'Your first 25 ads', cls: '', ctaCls: '' },
   { key: 'pro', name: 'Pro', sub: 'Full production', monthly: 79, annual: 63.20, badge: { text: 'Most Popular', cls: 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,.35)]' }, ctaLabel: 'Go Full Production', micro: 'Carousels + Meta + intelligence', cls: 'highlight-col', ctaCls: 'pro' },
   { key: 'scale', name: 'Scale', sub: 'AI runs the show', monthly: 179, annual: 143.20, badge: { text: 'AI-Powered', cls: 'bg-amber-500 text-gray-900' }, ctaLabel: 'Let AI Optimize', micro: '5 exclusives no other plan gets', cls: 'scale-col', ctaCls: 'scale' },
 ];
@@ -43,7 +43,7 @@ const featureRows: FeatureRow[] = [
   { section: 'engine', label: 'Hook Delivery Styles', note: 'Comedic, controversial, question\u2026', values: ['All 12', 'All 12', 'All 12'] },
   { section: 'engine', label: 'Ad Tones', note: 'Formal, bold, mentor, luxury CEO\u2026', values: ['All 11', 'All 11', 'All 11'] },
   { section: 'engine', label: 'Copywriting Strategies', note: 'Pattern interrupt, myth busting\u2026', values: ['All 8', 'All 8', 'All 8'] },
-  { section: 'engine', label: 'Offer Creative Modes', note: 'Value stack, event ticket, book mockup\u2026', values: ['All 18+', 'All 18+', 'All 18+'] },
+  { section: 'engine', label: 'Offer Creative Modes', note: 'Value stack, event ticket, book mockup\u2026', values: ['6', 'All 21', 'All 21'] },
   { section: 'visual', label: 'Brand URL Scraping', note: 'Auto-extract colors, tone, and assets', values: [true, true, true] },
   { section: 'visual', label: 'Realistic Universes', values: [true, true, true] },
   { section: 'visual', label: 'Bilingual UI (Arabic + English)', note: 'Full RTL support', values: [true, true, true] },
@@ -56,15 +56,15 @@ const featureRows: FeatureRow[] = [
   { section: 'studio', label: 'A/B Variation Testing', note: 'Auto-generate 3 creative variants', values: [false, true, true] },
   { section: 'studio', label: 'Region Editing', note: 'Edit specific zones of the rendered image', values: [false, true, true] },
   { section: 'studio', label: 'Carousel Ads', values: [false, 'Up to 7 slides', 'Up to 10 slides'] },
+  { section: 'studio', label: 'Batch Rendering', note: 'All hooks \u00d7 concepts \u00d7 sizes in one flow', values: [false, 'Up to 4 ads / run', { text: 'Up to 36 ads / run', emphasis: true }] },
   { section: 'production', label: 'Competitor Intelligence', note: 'Research competitors + differentiation angles', values: [false, true, true] },
   { section: 'production', label: 'Push to Meta Ads', note: 'One-click push creatives to your ad account', values: [false, true, true] },
   { section: 'production', label: 'Creative Memory', note: 'AI remembers your past generations', values: [false, true, true] },
   { section: 'production', label: 'Performance Dashboard', note: 'Track CTR, CPC, ROAS by dimension', values: [false, 'Overview', { text: 'Full breakdown', emphasis: true }] },
-  { section: 'scale', label: 'Batch Rendering', note: 'All hooks \u00d7 concepts \u00d7 sizes in one flow', values: [false, 'Up to 4 ads / run', { text: 'Up to 36 ads / run', emphasis: true }] },
-  { section: 'scale', label: 'Creative Scoring Engine', note: 'AI ranks your creatives by predicted CTR', values: [false, false, { text: '\u2713 Scale only', emphasis: true }] },
+  { section: 'scale', label: 'Predictive CTR Engine', note: 'AI ranks your creatives by predicted CTR', values: [false, false, { text: '\u2713 Scale only', emphasis: true }] },
   { section: 'scale', label: 'Smart Recommendations', note: 'AI suggests your next best creative combo', values: [false, false, { text: '\u2713 Scale only', emphasis: true }] },
   { section: 'scale', label: 'Variant Exploration Engine', note: 'Multi-dimensional testing with winner tracking', values: [false, false, { text: '\u2713 Scale only', emphasis: true }] },
-  { section: 'scale', label: 'Multi-Brand Workspaces', note: 'Separate environments per client brand', values: [false, false, { text: '\u2713 Scale only', emphasis: true, soon: true }] },
+  { section: 'scale', label: 'Multi-Brand Workspaces', note: 'Separate environments per client brand', values: [false, false, { text: '\u2713 Scale only', emphasis: true }] },
   { section: 'team', label: 'Team Members', note: 'Shared credit pool (owner + invitees)', values: ['1', '3', '10'] },
 ];
 

@@ -137,7 +137,7 @@ function buildFeatureLabels(plan: {
         { key: 'performanceDashboard', label: 'Performance Dashboard', value: f.performanceDashboard === 'none' ? false : f.performanceDashboard === 'full' ? 'Full breakdown' : 'Overview', category: 'advanced' },
         { key: 'batchGeneration', label: 'Batch Generation', value: f.batchGeneration, category: 'advanced' },
         // Scaling Exclusives
-        { key: 'creativeScoringEngine', label: 'Creative Scoring Engine', value: f.creativeScoringEngine, category: 'scaling' },
+        { key: 'creativeScoringEngine', label: 'Predictive CTR Engine', value: f.creativeScoringEngine, category: 'scaling' },
         { key: 'smartRecommendations', label: 'Smart Recommendations', value: f.smartRecommendations, category: 'scaling' },
         { key: 'variantExploration', label: 'Variant Exploration Engine', value: f.variantExploration, category: 'scaling' },
         { key: 'multiBrandWorkspaces', label: 'Multi-Brand Workspaces', value: f.multiBrandWorkspaces, category: 'scaling' },
@@ -168,7 +168,7 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
         featureLabels: [],
     },
     starter: {
-        id: 'starter', name: 'Starter', subtitle: 'For solopreneurs', monthlyCredits: 800, trialCredits: 50, priceMonthly: 19, priceAnnualPerMonth: 15.20,
+        id: 'starter', name: 'Starter', subtitle: 'For solopreneurs', monthlyCredits: 800, trialCredits: 50, priceMonthly: 29, priceAnnualPerMonth: 23.20,
         savedProjectLimit: 10, audienceAvatarLimit: 5, carouselMaxSlides: null, batchConfig: null, workspaceLimit: 1,
         paddlePriceId: { monthly: 'pri_01knz7v1rr3eehbe12s214ba0t', yearly: 'pri_01knz7wz5cpvv2fx6334wv822e' },
         features: {
