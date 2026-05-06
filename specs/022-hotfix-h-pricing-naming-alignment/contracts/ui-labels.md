@@ -76,7 +76,7 @@ After the hotfix, the following strings MUST NOT appear anywhere the user sees:
 - `2 months free` — discontinued annual-savings phrasing
 - `Soon` badge in the Multi-Brand Workspaces / Scale cell
 
-These are also the five strings the HFH.8 grep gate enforces on shipped code (excluding `**/__tests__/**` and `**/*.test.ts`).
+The five string-form items above are enforced by the HFH.8 grep gate on shipped code (excluding `**/__tests__/**` and `**/*.test.ts`). The "Soon" badge assertion is a structural/UI check — verified by manual UI QA per Section 5, not by the grep gate.
 
 ## 5. Contract Validation Method
 

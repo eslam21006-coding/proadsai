@@ -88,7 +88,7 @@ description: "Task list for HOTFIX-H — Final Pricing & Naming Alignment"
 
 ### Implementation for User Story 3
 
-- [ ] T009 [P] [US3] **HFH.8 (root build)** — From the repository root `D:\proads-worktrees\proadsai-hotfix-h`, run `npm run lint && npm run typecheck && npm run build`. All three commands must exit 0. Any TypeScript or ESLint error indicates a typo in one of the 7 edits (most likely a stray comma, missing quote, or wrong type) — read the error, fix the offending line in the named file, re-run. Do NOT add new dependencies, do NOT modify scripts, do NOT touch CI config.
+- [ ] T009 [P] [US3] **HFH.8 (root build)** — From the repository root, run `npm run lint && npm run typecheck && npm run build`. All three commands must exit 0. Any TypeScript or ESLint error indicates a typo in one of the 7 edits (most likely a stray comma, missing quote, or wrong type) — read the error, fix the offending line in the named file, re-run. Do NOT add new dependencies, do NOT modify scripts, do NOT touch CI config.
 
 - [ ] T010 [P] [US3] **HFH.8 (functions build)** — From the `functions/` directory, run `npm run lint && npm run typecheck && npm run build`. All three commands must exit 0. (`functions/` is not edited by this hotfix; this is a no-regression check that no downstream backend file silently depends on a frontend type or constant that changed.)
 
@@ -100,7 +100,7 @@ description: "Task list for HOTFIX-H — Final Pricing & Naming Alignment"
   5. `"2 months free"` (discontinued annual-savings phrasing)
 
   Equivalently, run from repo root:
-  ```
+  ```bash
   git grep --untracked '\$197' -- 'src/' 'functions/src/' ':!src/**/__tests__/**' ':!functions/src/**/__tests__/**' ':!**/*.test.ts'
   git grep --untracked '15\.20' -- 'src/' 'functions/src/' ':!src/**/__tests__/**' ':!functions/src/**/__tests__/**' ':!**/*.test.ts'
   git grep --untracked '\$19/mo' -- 'src/' 'functions/src/' ':!src/**/__tests__/**' ':!functions/src/**/__tests__/**' ':!**/*.test.ts'
