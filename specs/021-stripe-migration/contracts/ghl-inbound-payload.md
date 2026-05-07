@@ -28,7 +28,9 @@ The payload shape is identical across all six events. Fields not applicable to a
   "currency": "USD",
   "amount": 79.00,
   "trial_end_date": "2026-05-21T00:00:00Z",
+  "trial_end_date_human": "May 21, 2026",
   "next_billing_date": "2026-06-07T00:00:00Z",
+  "next_billing_date_human": "June 7, 2026",
   "portal_url": "https://billing.stripe.com/p/session/...",
   "cancel_at": null,
   "cancellation_reason": null
@@ -56,12 +58,14 @@ The payload shape is identical across all six events. Fields not applicable to a
 | `currency` | string | required, enum (`USD`) | Always `USD` at launch (R-016) | all events |
 | `amount` | number | required | Charge amount in major units (e.g., `79.00`, not `7900`). For `payment.failed`, the failed renewal amount. For `subscription.cancelled`, the most recent invoice amount. | all events |
 | `trial_end_date` | ISO 8601 string \| null | nullable | UTC, `Z`-suffixed. Set to `subscription.trial_end` on `trial.started`. `null` on all paid events. | `trial.started` only |
+| `trial_end_date_human` | string \| null | nullable | Pre-formatted human-readable date in `MMMM D, YYYY` format (e.g., `"May 21, 2026"`). `null` when `trial_end_date` is null. Used by GHL email templates. | `trial.started` only |
 | `next_billing_date` | ISO 8601 string \| null | nullable | `subscription.current_period_end`. `null` for `subscription.cancelled` and `top_up.completed`. | `trial.started`, `subscription.created`, `payment.recovered`, `payment.failed` |
+| `next_billing_date_human` | string \| null | nullable | Pre-formatted human-readable date in `MMMM D, YYYY` format (e.g., `"June 7, 2026"`). `null` when `next_billing_date` is null. Used by GHL email templates. | `trial.started`, `subscription.created`, `payment.recovered`, `payment.failed` |
 | `portal_url` | string \| null | nullable | Transient Stripe Customer Portal session URL generated just before the POST via `stripe.billingPortal.sessions.create({ customer, return_url: 'https://app.proadsai.com/billing' })`. `null` if portal generation failed (logged as `portal_session_generation_failed`). | all events — populated when `stripe_customer_id` resolves successfully |
 | `cancel_at` | ISO 8601 string \| null | nullable | `subscription.cancel_at` when the subscription was scheduled to cancel at period end. Populated only on `subscription.cancelled`. `null` otherwise. | `subscription.cancelled` only |
 | `cancellation_reason` | string \| null | nullable | Free-text reason from `cancellation_logs/{uid}_{ts}` (in-app cancel flow) or Stripe portal cancellation reason. `null` if not provided. | `subscription.cancelled` only |
 
-**Stable-column rule**: every field is always present in the payload. Fields not applicable to a given event are sent as `null`, never omitted. This guarantees GHL's inbound-webhook field mapper sees the same column set every time and does not silently drop mappings on subsequent events.
+**Stable-column rule**: every field is always present in the payload. Fields not applicable to a given event are sent as `null`, never omitted. This guarantees GHL's inbound-webhook field mapper sees the same column set every time and does not silently drop mappings on subsequent events. Both ISO and human-readable date fields are always present together; if the ISO date is `null`, the human-readable variant is also `null`.
 
 ---
 
