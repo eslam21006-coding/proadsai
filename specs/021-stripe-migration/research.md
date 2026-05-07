@@ -88,20 +88,18 @@ Application-level dedup: when `customer.subscription.created` fires for a subscr
 - Reject on collision (409): Rejected — blocks the user, requires manual support intervention.
 - Merge / preserve higher tier: Rejected — complexity without clear user benefit.
 
-## R-008: GHL Sync with Dual Identifier (uid or email) and Transient Portal URL
+## R-008: GHL Sync via Per-Event Routing to 6 Inbound Webhook URLs
 
-**Decision**: The `notifyGHL(identifier, event)` and `notifyGHLFailed(identifier, event, extras)` helpers accept either a Firebase `uid` or a raw `email` string. For uid, the helper reads `users/{uid}` for email, displayName, and `stripeCustomerId`. For email, it sends the email directly (used for `pending_plans` users).
+**Decision**: The `notifyGHL(identifier, eventType, payloadFields)` helper accepts either a Firebase `uid` or a raw `email` string and a normalized `event_type` from a closed set of 6 values. It selects the destination URL from a per-event-type map (`URL_BY_EVENT`) and POSTs a single canonical JSON payload — see `contracts/ghl-inbound-payload.md` for the full schema and routing table. Each of the 6 destination URLs is a Firebase Cloud Functions secret: `GHL_TRIAL_STARTED_URL`, `GHL_PAYMENT_RECEIVED_URL`, `GHL_RECOVERED_URL`, `GHL_OVERDUE_FAILED_URL`, `GHL_CANCELLED_URL`, `GHL_TOPUP_URL`.
 
-**Success-sync** (`notifyGHL`) payload: `{ email, contactName, plan, billingStatus, event, credits, stripeSubscriptionId }` — `portalUrl` is **OMITTED** because GHL's success automations (welcome email, win-back, plan-change confirmation) don't need it.
+For uid identifiers, the helper reads `users/{uid}` for `email`, `displayName`, and `stripeCustomerId`. For email identifiers, the email is sent directly (used for `pending_plans` users who haven't signed up yet). `portal_url` is generated transiently for every event by calling `stripe.billingPortal.sessions.create({ customer: stripeCustomerId, return_url })` just before the POST. If portal generation fails, log `portal_session_generation_failed` and POST with `portal_url: null` (the field is always present, never omitted — see the stable-column rule in §2 of the contract). If the POST itself fails, log `ghl_sync_failed` and don't throw — fire-and-forget semantics are preserved.
 
-**Failed-sync** (`notifyGHLFailed`) payload: `{ email, contactName, event, portalUrl, amount?, reason? }` — `portalUrl` is generated transiently by calling `stripe.billingPortal.sessions.create({ customer: stripeCustomerId, return_url })` just before the POST. If portal generation fails, log `portal_session_generation_failed` and POST without `portalUrl`. If the POST itself fails, log `ghl_sync_failed` and don't throw.
-
-**Rationale**: Avoids burning Stripe portal sessions on every successful subscription event (cost + latency). Dunning and refund emails need a working URL; transient generation guarantees freshness. Fire-and-forget pattern preserved from Phase 8.
+**Rationale**: The prior 2-URL design required each GHL workflow to branch internally on a single `event` discriminator field, which made the workflow editor hard to maintain. Splitting the 6 events to 6 dedicated GHL workflows (each with its own inbound URL) eliminates the branching and gives the merchant team one workflow per business event. Generating `portal_url` for every event (rather than only failed-syncs) is a deliberate change from the prior design — GHL email templates can now embed a working "Manage Subscription" link in any of the 6 emails without bespoke logic.
 
 **Alternatives Considered**:
-- Generate portal URL for every sync: Rejected — adds ~300ms per webhook, ~100% extra Stripe API quota.
-- Cache portal URL on `users/{uid}` for ~23h: Rejected — cached URLs may expire before users open the GHL email.
-- Retry queue via Cloud Tasks: Deferred — logged failures suffice for launch.
+- Stay on the 2-URL design: Rejected — workflow branching is brittle when each branch has its own automation tree.
+- Generate one URL per Firebase deploy and send all events there with branching in Cloud Functions: Rejected — the merchant team needs the per-event GHL workflow editor, not Cloud Functions branching.
+- Skip `portal_url` on success events to save Stripe API quota: Rejected — the cost (~6 portal-session calls per paying customer per year) is negligible and the operational simplicity in GHL is worth it.
 
 ## R-009: Customer Reuse on In-App Upgrades and Top-Ups
 
@@ -230,7 +228,7 @@ All three branches emit a structured log entry with refund amount, charge ID, an
 | FR-014 | R-003 (event coverage) |
 | FR-015 | R-001 (signature verification) |
 | FR-016 | R-004 (idempotency) |
-| FR-018 | R-008 (GHL sync), R-002 (transient portal) |
+| FR-018 | R-008 (per-event GHL routing — see contracts/ghl-inbound-payload.md), R-002 (transient portal) |
 | FR-019 | R-009 (customer reuse), R-013 (trial), R-014 (top-up) |
 | FR-024a | R-010 (modal CTA) |
 | FR-027 | R-012 (Stripe Tax) |

@@ -130,31 +130,33 @@ Go to **Settings → Billing → Customer portal**. Configure:
 
 **Acceptance**: Funnel CTAs lead to GHL-hosted checkout form. Form is wired to the correct Stripe price IDs.
 
-### B.3 — GHL Inbound Webhook Workflows
+### B.3 — GHL Inbound Webhook Workflows (6 workflows, one per event type)
 
-1. **"Stripe Payment Received"** workflow:
-   - Trigger: Inbound Webhook
-   - GHL generates a unique URL (format: `https://services.leadconnectorhq.com/hooks/xxxxx`). Save as `GHL_STRIPE_SYNC_WEBHOOK_URL`.
-   - Actions: parse `event` field, branch into automations:
-     - `subscription.created` → tag contact with plan, send welcome email
-     - `subscription.deleted` → start win-back automation
-     - `subscription.updated` → update contact tags
-     - `topup` → log top-up purchase
-2. **"Stripe Payment Failed / Refund"** workflow:
-   - Trigger: Inbound Webhook
-   - Save URL as `GHL_STRIPE_FAILED_WEBHOOK_URL`.
-   - Actions: parse `event` field, branch:
-     - `past_due` → send dunning email with `{{portalUrl}}` placeholder
-     - `refund_processed` → send refund acknowledgement email
-3. Both URLs are stored as Firebase Cloud Functions secrets.
+Per `contracts/ghl-inbound-payload.md`, Firebase POSTs to one of six dedicated GHL workflows depending on `event_type`. Each workflow uses the same payload schema (paste from §1 of the contract as the Mapping Reference). Create six "Inbound Webhook" workflows:
 
-**Acceptance**: Two workflows exist with inbound webhook triggers. URLs saved. Test by sending a manual POST to each and confirming GHL automations fire.
+| GHL Workflow Name | Listens for `event_type` | Save URL as |
+|---|---|---|
+| Stripe — Trial Started | `trial.started` | `GHL_TRIAL_STARTED_URL` |
+| Stripe — Payment Received | `subscription.created` | `GHL_PAYMENT_RECEIVED_URL` |
+| Stripe — Payment Recovered | `payment.recovered` | `GHL_RECOVERED_URL` |
+| Stripe — Payment Overdue / Failed | `payment.failed` | `GHL_OVERDUE_FAILED_URL` |
+| Stripe — Subscription Cancelled | `subscription.cancelled` | `GHL_CANCELLED_URL` |
+| Stripe — Top-Up Completed | `top_up.completed` | `GHL_TOPUP_URL` |
+
+For each workflow:
+1. Trigger: Inbound Webhook
+2. Copy the GHL-generated URL (format: `https://services.leadconnectorhq.com/hooks/xxxxx`)
+3. Paste the JSON schema from `contracts/ghl-inbound-payload.md` §1 into the Mapping Reference field so GHL knows the column shape
+4. Add the per-event automations (welcome email, win-back, dunning, etc.) — no `event` field branching needed because each workflow only ever receives one event type
+5. All 6 URLs are stored as Firebase Cloud Functions secrets — see section C
+
+**Acceptance**: Six GHL workflows exist, each with an inbound webhook trigger and a unique URL. All 6 URLs saved. Test each by sending a manual POST with the contract's example payload (adjust `event_type` to match each workflow) and confirm the matching automation fires.
 
 ### B.4 — GHL Email Template Sanity
 
-The dunning email template should reference `{{portalUrl}}` AND handle the case where `portalUrl` is missing (in case `portal_session_generation_failed` was logged inside the failed-sync helper). Recommended fallback: "Click here to update your payment method" linking to `https://app.proadsai.com/billing`.
+Email templates in any of the 6 workflows that reference `{{portal_url}}` should handle the case where `portal_url` is `null` (logged as `portal_session_generation_failed` inside the helper). Recommended fallback: render "Click here to manage your subscription" linking to `https://app.proadsai.com/billing` when `portal_url` is null/empty. The dunning email in **Stripe — Payment Overdue / Failed** is the most operationally important consumer of `portal_url`; the others may use it for convenience.
 
-**Acceptance**: Email templates handle missing portalUrl gracefully.
+**Acceptance**: Email templates handle missing `portal_url` gracefully across all 6 workflows.
 
 ---
 
@@ -165,11 +167,15 @@ Set the following secrets via `firebase functions:secrets:set`:
 ```bash
 firebase functions:secrets:set STRIPE_SECRET_KEY
 firebase functions:secrets:set STRIPE_WEBHOOK_SECRET
-firebase functions:secrets:set GHL_STRIPE_SYNC_WEBHOOK_URL
-firebase functions:secrets:set GHL_STRIPE_FAILED_WEBHOOK_URL
+firebase functions:secrets:set GHL_TRIAL_STARTED_URL
+firebase functions:secrets:set GHL_PAYMENT_RECEIVED_URL
+firebase functions:secrets:set GHL_RECOVERED_URL
+firebase functions:secrets:set GHL_OVERDUE_FAILED_URL
+firebase functions:secrets:set GHL_CANCELLED_URL
+firebase functions:secrets:set GHL_TOPUP_URL
 ```
 
-Remove the following (Phase 8 / Paddle):
+Remove the following (Phase 8 / Paddle, plus the superseded 2-URL Stripe-era pair):
 
 ```bash
 firebase functions:secrets:destroy PADDLE_API_KEY
@@ -178,7 +184,9 @@ firebase functions:secrets:destroy GHL_PADDLE_SYNC_WEBHOOK_URL
 firebase functions:secrets:destroy GHL_PADDLE_FAILED_WEBHOOK_URL
 ```
 
-**Acceptance**: Stripe secrets set. Paddle secrets destroyed. Verified via `firebase functions:secrets:list`.
+(If `GHL_STRIPE_SYNC_WEBHOOK_URL` / `GHL_STRIPE_FAILED_WEBHOOK_URL` were created during an earlier draft of this migration, destroy them too — they are superseded by the 6 per-event URLs above per `contracts/ghl-inbound-payload.md`.)
+
+**Acceptance**: Stripe secrets set (2 Stripe + 6 GHL = 8 total). Paddle secrets destroyed. Verified via `firebase functions:secrets:list`.
 
 ---
 
