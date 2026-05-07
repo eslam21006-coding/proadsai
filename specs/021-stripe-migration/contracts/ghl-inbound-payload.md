@@ -18,7 +18,8 @@ The payload shape is identical across all six events. Fields not applicable to a
   "stripe_customer_id": "cus_AbcDef",
   "stripe_subscription_id": "sub_AbcDef",
   "email": "user@example.com",
-  "name": "User Name",
+  "first_name": "User",
+  "last_name": "Name",
   "plan": "pro",
   "billing_status": "active",
   "is_trial": false,
@@ -45,7 +46,8 @@ The payload shape is identical across all six events. Fields not applicable to a
 | `stripe_customer_id` | string | required | `cus_xxx` from the Stripe Customer | all events |
 | `stripe_subscription_id` | string \| null | nullable | `sub_xxx` from the Stripe Subscription. `null` for `top_up.completed` (top-ups have no subscription). | subscription events; `null` for top-up |
 | `email` | string | required | Lowercased email from `users/{uid}.email` (or `customer.email` for pre-signup pending plans) | all events |
-| `name` | string \| null | nullable | `users/{uid}.displayName`; `null` if the user has not set a name | all events |
+| `first_name` | string \| null | nullable | First token of `users/{uid}.displayName`, split on the first whitespace. If `displayName` has no whitespace, `first_name` is the entire string. `null` if `displayName` is null. | all events |
+| `last_name` | string \| null | nullable | Remainder of `users/{uid}.displayName` after the first whitespace (preserves any further whitespace verbatim — e.g., `"de la Cruz"` for `"María de la Cruz"`). `null` if `displayName` has no whitespace or is null. | all events |
 | `plan` | string | required, enum (`none` \| `starter` \| `pro` \| `scale`) | Current plan AFTER the event was applied. For `subscription.cancelled` this is `none`. For `top_up.completed` this is the user's existing plan (top-ups don't change plan). | all events |
 | `billing_status` | string | required, enum (`trialing` \| `active` \| `past_due` \| `cancelling` \| `cancelled` \| `none`) | Current `billingStatus` AFTER the event was applied | all events |
 | `is_trial` | boolean | required | `true` only when `billing_status === 'trialing'`. `false` on `payment.recovered`, `payment.failed`, `subscription.cancelled`, `top_up.completed`. | all events |
