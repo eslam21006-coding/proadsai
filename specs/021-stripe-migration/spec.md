@@ -1,6 +1,7 @@
 # Feature Specification: Stripe Migration — Replace Paddle with Stripe as Billing Provider
 
 **Feature Branch**: `021-stripe-migration`
+**Pre-implementation QA observations**: see /MANUAL_QA_LOG.md (top of file → most recent entry) for bugs found in current code that must be addressed during this migration.
 **Created**: 2026-05-05
 **Status**: Draft
 **Input**: User description: "Phase 21 — Stripe Migration. Replace the existing Paddle billing engine (`functions/src/paddle/`, `functions/src/billing/paddleWebhook.ts`, Paddle fields in `billing/billingState.ts`, `billing/billingLogger.ts`, `billing/ghlBillingSync.ts`, and 9 Paddle Cloud Functions in `functions/src/index.ts`) with Stripe. Reuse the Phase 8 behavioral spec at `specs/009-billing-plan-access/` (user stories, FRs, state transitions, GHL sync rules, dual-write `pending_plans` pattern, mandatory billing modal, email-only auth). Only the billing engine changes."
