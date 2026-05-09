@@ -81,6 +81,30 @@ service cloud.firestore {
       allow create, update: if false;
     }
 
+    // Stripe event idempotency — written by Cloud Functions only
+    match /stripe_events/{eventId} {
+      allow write: if false;
+      allow read: if false;
+    }
+
+    // Cancellation logs — written by Cloud Functions and client (reason dialog)
+    // The owning user MAY read their own entries
+    match /cancellation_logs/{logId} {
+      allow read: if request.auth != null
+                  && resource.data.uid == request.auth.uid;
+      allow create: if request.auth != null
+                    && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Refund logs — admin-only writes (Cloud Functions Admin SDK; no client writes)
+    // The owning user MAY read their own entries
+    match /refund_logs/{logId} {
+      allow read: if request.auth != null
+                  && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+
     // Generations collection (feedback system)
     match /generations/{genId} {
       allow read: if request.auth != null && resource.data.userId == request.auth.uid;
