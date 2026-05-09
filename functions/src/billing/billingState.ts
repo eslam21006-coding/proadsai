@@ -6,17 +6,17 @@ import { Firestore, type Timestamp, FieldValue } from "firebase-admin/firestore"
 // TYPES
 // ═══════════════════════════════════════════════════════════
 
+export type BillingStatus = "trialing" | "active" | "past_due" | "cancelling" | "cancelled" | "none";
+
 export interface BillingState {
     plan: string;
     isTrial: boolean;
     credits: number;
     creditsPerMonth: number;
-    billingStatus: "active" | "past_due" | "cancelled" | "cancelling" | "trialing";
+    billingStatus: BillingStatus;
     nextResetDate: { seconds: number; nanoseconds: number } | null;
-    paddleCustomerId: string | null;
-    paddleSubscriptionId: string | null;
-    paddleUpdatePaymentUrl: string | null;
-    paddleCancelUrl: string | null;
+    stripeCustomerId: string | null;
+    stripeSubscriptionId: string | null;
     canUpgrade: boolean;
     canTopUp: boolean;
     isTeamMember: boolean;
@@ -26,6 +26,14 @@ export interface BillingState {
     gracePeriodEndsAt: { seconds: number; nanoseconds: number } | null;
     pendingPlan: string | null;
     pendingPlanEffectiveAt: { seconds: number; nanoseconds: number } | null;
+    /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
+    paddleCustomerId?: string | null;
+    /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
+    paddleSubscriptionId?: string | null;
+    /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
+    paddleUpdatePaymentUrl?: string | null;
+    /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
+    paddleCancelUrl?: string | null;
 }
 
 interface UserData {
@@ -37,9 +45,15 @@ interface UserData {
     isTeamMember?: boolean;
     teamOwnerUid?: string;
     teamOwnerName?: string;
+    stripeCustomerId?: string;
+    stripeSubscriptionId?: string;
+    /** @deprecated Paddle field */
     paddleCustomerId?: string;
+    /** @deprecated Paddle field */
     paddleSubscriptionId?: string;
+    /** @deprecated Paddle field */
     paddleUpdatePaymentUrl?: string;
+    /** @deprecated Paddle field */
     paddleCancelUrl?: string;
     cancelAtPeriodEnd?: boolean;
     cancelAt?: Timestamp | null;
@@ -126,10 +140,8 @@ export function buildBillingState(data: UserData): BillingState {
         creditsPerMonth,
         billingStatus,
         nextResetDate: tsToObj(data.nextCreditReset),
-        paddleCustomerId: data.paddleCustomerId || null,
-        paddleSubscriptionId: data.paddleSubscriptionId || null,
-        paddleUpdatePaymentUrl: data.paddleUpdatePaymentUrl || null,
-        paddleCancelUrl: data.paddleCancelUrl || null,
+        stripeCustomerId: data.stripeCustomerId || null,
+        stripeSubscriptionId: data.stripeSubscriptionId || null,
         canUpgrade,
         canTopUp,
         isTeamMember,
@@ -139,6 +151,10 @@ export function buildBillingState(data: UserData): BillingState {
         gracePeriodEndsAt: tsToObj(data.gracePeriodEndsAt),
         pendingPlan: data.pendingPlan || null,
         pendingPlanEffectiveAt: tsToObj(data.pendingPlanEffectiveAt),
+        paddleCustomerId: data.paddleCustomerId || null,
+        paddleSubscriptionId: data.paddleSubscriptionId || null,
+        paddleUpdatePaymentUrl: data.paddleUpdatePaymentUrl || null,
+        paddleCancelUrl: data.paddleCancelUrl || null,
     };
 }
 
@@ -161,11 +177,16 @@ export async function writeBillingState(uid: string, db: Firestore): Promise<voi
 }
 
 // ═══════════════════════════════════════════════════════════
-// IDEMPOTENCY — paddle_events/{eventId}
+// IDEMPOTENCY — paddle_events/{eventId} (legacy) + stripe_events/{eventId} (new)
 // ═══════════════════════════════════════════════════════════
 
 export async function isEventProcessed(eventId: string, db: Firestore): Promise<boolean> {
     const doc = await db.collection("paddle_events").doc(eventId).get();
+    return doc.exists;
+}
+
+export async function isStripeEventProcessed(eventId: string, db: Firestore): Promise<boolean> {
+    const doc = await db.collection("stripe_events").doc(eventId).get();
     return doc.exists;
 }
 
@@ -185,6 +206,27 @@ export async function markEventProcessed(
         processedAt: FieldValue.serverTimestamp(),
         paddleCustomerId: metadata.paddleCustomerId || null,
         paddleSubscriptionId: metadata.paddleSubscriptionId || null,
+        email: metadata.email || null,
+        result: metadata.result,
+    });
+}
+
+export async function markStripeEventProcessed(
+    eventId: string,
+    eventType: string,
+    metadata: {
+        stripeCustomerId?: string;
+        stripeSubscriptionId?: string;
+        email?: string;
+        result: "applied" | "duplicate" | "noop_dual_event" | "ignored" | "partial_refund_logged";
+    },
+    db: Firestore,
+): Promise<void> {
+    await db.collection("stripe_events").doc(eventId).set({
+        eventType,
+        processedAt: FieldValue.serverTimestamp(),
+        stripeCustomerId: metadata.stripeCustomerId || null,
+        stripeSubscriptionId: metadata.stripeSubscriptionId || null,
         email: metadata.email || null,
         result: metadata.result,
     });

@@ -18,13 +18,11 @@ export interface BillingState {
   isTrial: boolean;
   credits: number;
   creditsPerMonth: number;
-  billingStatus: "active" | "past_due" | "cancelled" | "cancelling" | "trialing";
+  billingStatus: "active" | "past_due" | "cancelled" | "cancelling" | "trialing" | "none";
   nextResetDate: { seconds: number; nanoseconds: number } | null;
   billingType: string | null;
-  paddleCustomerId: string | null;
-  paddleSubscriptionId: string | null;
-  paddleUpdatePaymentUrl: string | null;
-  paddleCancelUrl: string | null;
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
   canUpgrade: boolean;
   canTopUp: boolean;
   isTeamMember: boolean;
@@ -34,6 +32,14 @@ export interface BillingState {
   gracePeriodEndsAt: { seconds: number; nanoseconds: number } | null;
   pendingPlan: string | null;
   pendingPlanEffectiveAt: { seconds: number; nanoseconds: number } | null;
+  /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
+  paddleCustomerId?: string | null;
+  /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
+  paddleSubscriptionId?: string | null;
+  /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
+  paddleUpdatePaymentUrl?: string | null;
+  /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
+  paddleCancelUrl?: string | null;
 }
 
 export function useBillingState() {

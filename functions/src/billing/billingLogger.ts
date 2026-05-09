@@ -1,14 +1,22 @@
 // functions/src/billing/billingLogger.ts — structured logging for all billing pipeline steps
 
 export type BillingErrorCode =
+    // Paddle-era codes (kept for backward compat during migration)
     | "paddle_signature_invalid"
     | "paddle_event_duplicate"
     | "paddle_event_unknown"
     | "paddle_price_unmapped"
+    // Stripe-era codes (FR-026 vocabulary)
+    | "stripe_signature_invalid"
+    | "stripe_event_duplicate"
+    | "stripe_event_unknown"
+    | "stripe_price_unmapped"
     | "ghl_sync_failed"
+    | "portal_session_generation_failed"
     | "user_doc_missing"
     | "pending_plan_write_failed"
-    | "billing_state_write_failed";
+    | "billing_state_write_failed"
+    | "refund_processed";
 
 export interface BillingLogEntry {
     step: string;
