@@ -19,6 +19,13 @@ admin.initializeApp({
     storageBucket: "proadsai-saas.firebasestorage.app",
 });
 
+// Print the resolved project ID up front so the operator can sanity-check
+// they are pointed at the right project (dev vs live) before any data
+// mutation. Kept permanently — this is the last line of defense against
+// running --apply against the wrong Firebase project, especially during
+// Phase 15 (live cutover) when the same script runs against production.
+console.log(`Connecting to Firebase project: ${admin.app().options.projectId}`);
+
 const db = admin.firestore();
 
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
