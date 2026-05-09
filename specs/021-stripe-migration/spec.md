@@ -352,7 +352,7 @@ Path B is also the path for in-app upgrades by users who already have a paid pla
 - **SC-006**: Plan downgrade feature enforcement takes effect within 5 seconds of the billing state change — no stale feature access after downgrade.
 - **SC-007**: Low-credits banner appears for 100% of users whose credits drop below the 20% threshold, with no false positives.
 - **SC-008**: 100% of Stripe webhook events are signature-verified before processing — no unverified webhook can modify billing state.
-- **SC-009**: 100% of successful Stripe webhooks result in a GHL sync attempt (success or logged failure) — no silent drops.
+- **SC-009**: 100% of successful Stripe webhooks for the 6 routable event_types result in a GHL sync attempt; top-up refunds and partial refunds are documented skips per FR-032 (b)/(c).
 - **SC-010**: Users can complete Stripe-hosted payment method updates or cancellations in a single click from the Billing page (no intermediate loading screens, direct portal redirect).
 - **SC-011**: 100% of new Firebase Auth accounts created for paid GHL-funnel users (pending_plans document exists) are correctly linked to their existing plan data on first sign-in — no paid user sees the mandatory billing modal instead of the app.
 - **SC-012**: The login screen contains zero Google sign-in references, buttons, provider imports, or error messages.
