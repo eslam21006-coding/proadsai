@@ -164,11 +164,11 @@ For uid identifiers, the helper reads `users/{uid}` for `email`, `displayName`, 
 
 **Decision**: The `charge.refunded` handler distinguishes three cases:
 
-1. **Full refund of a subscription invoice** (`amount_refunded === amount` AND the charge's invoice has `subscription` set): Programmatically cancel via `stripe.subscriptions.cancel(subscription)`. Stripe then fires `customer.subscription.deleted`, which runs the existing cancel flow (`plan='none'`, `credits=0`, `billingStatus='cancelled'`). POST `refund_processed` event to GHL failed-sync URL with the refunded amount and reason.
+1. **Full refund of a subscription invoice** (`amount_refunded === amount` AND the charge's invoice has `subscription` set): Programmatically cancel via `stripe.subscriptions.cancel(subscription)`. Stripe then fires `customer.subscription.deleted`, which runs the existing cancel flow (`plan='none'`, `credits=0`, `billingStatus='cancelled'`) and emits a single GHL POST routed as `event_type: 'subscription.cancelled'` to `GHL_CANCELLED_URL` per `contracts/ghl-inbound-payload.md` §3 — no separate refund-event POST is emitted. The handler also writes `cancellation_logs/{uid}_{ts}` with `reason: 'refund'` BEFORE invoking `stripe.subscriptions.cancel(...)` so refund-driven cancellations appear in cancellation analytics alongside user-initiated ones, and so the subsequent GHL POST can read `cancellation_reason` from the log.
 
-2. **Full refund of a top-up transaction** (`amount_refunded === amount` AND the charge's payment intent's session has `metadata.isTopUp === 'true'`): Atomically deduct the refunded `metadata.creditAmount` from `users/{uid}.credits` (clamp at zero) via Firestore transaction. POST `refund_processed` event to GHL failed-sync URL.
+2. **Full refund of a top-up transaction** (`amount_refunded === amount` AND the charge's payment intent's session has `metadata.isTopUp === 'true'`): Atomically deduct the refunded `metadata.creditAmount` from `users/{uid}.credits` (clamp at zero) via Firestore transaction and write `refund_logs/{uid}_{ts}` (a dedicated collection separate from `cancellation_logs`). **No GHL POST is emitted** — top-up refunds are silent at the CRM layer.
 
-3. **Partial refund** (`amount_refunded < amount`): Log only with classification code `refund_processed`, source `partial`. No plan or credit change. Manual support follow-up if the merchant team chooses.
+3. **Partial refund** (`amount_refunded < amount`): Log only with classification code `refund_processed`, source `partial`, and write `result: 'partial_refund_logged'` to `stripe_events/{eventId}`. No plan or credit change. **No GHL POST.** Manual support follow-up if the merchant team chooses.
 
 All three branches emit a structured log entry with refund amount, charge ID, and source.
 

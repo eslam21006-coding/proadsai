@@ -263,17 +263,17 @@ Run before merging the migration PR. All tests use Stripe test cards (`4242 4242
 ### E.6 — Refund (Subscription)
 
 1. As a paid user, in Stripe Dashboard, issue a full refund for the latest subscription invoice.
-2. **Expected**: `charge.refunded` fires → handler calls `stripe.subscriptions.cancel(stripeSubscriptionId)` → `customer.subscription.deleted` fires → plan='none', credits=0, billingStatus='cancelled'. GHL receives `refund_processed` event with amount + reason.
+2. **Expected**: `charge.refunded` fires → handler writes `cancellation_logs/{uid}_{ts}` with `reason: 'refund'`, then calls `stripe.subscriptions.cancel(stripeSubscriptionId)` → `customer.subscription.deleted` fires → plan='none', credits=0, billingStatus='cancelled'. GHL receives a single `subscription.cancelled` event at `GHL_CANCELLED_URL` per the per-event routing contract (no separate refund-event POST is emitted).
 
 ### E.7 — Refund (Top-Up)
 
 1. As a paid user with credits from a top-up, in Stripe Dashboard, issue a full refund for the top-up payment.
-2. **Expected**: `charge.refunded` fires → handler atomically deducts the top-up's `creditAmount` from `users/{uid}.credits` (clamped at zero). GHL receives `refund_processed`.
+2. **Expected**: `charge.refunded` fires → handler atomically deducts the top-up's `creditAmount` from `users/{uid}.credits` (clamped at zero) → `refund_logs/{uid}_{ts}` entry is written. **NO GHL POST is emitted.**
 
 ### E.8 — Refund (Partial)
 
 1. Issue a partial refund (e.g., 50% of a subscription invoice).
-2. **Expected**: handler logs `refund_processed` with source `partial`. No plan change. No credit change. `stripe_events/{eventId}.result = 'partial_refund_logged'`.
+2. **Expected**: handler logs `refund_processed` with source `partial`. No plan change. No credit change. **No GHL POST.** `stripe_events/{eventId}.result = 'partial_refund_logged'`.
 
 ### E.9 — Webhook Replay
 

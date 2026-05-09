@@ -138,13 +138,30 @@ The recurring billing relationship managed by Stripe, including billing cycle, p
 
 ### 8. GHL Sync Event (external — reference only)
 
-Best-effort outbound POST from Firebase to a GHL inbound webhook URL. Not persisted in Firestore — only the emission is logged with classification code (FR-026). Two distinct webhook URLs:
-- `GHL_STRIPE_SYNC_WEBHOOK_URL` — success events; payload omits `portalUrl`.
-- `GHL_STRIPE_FAILED_WEBHOOK_URL` — `invoice.payment_failed` and `charge.refunded`; payload includes transiently-generated `portalUrl`.
+Best-effort outbound POST from Firebase to one of six GHL inbound webhook URLs, routed by normalized `event_type` per `contracts/ghl-inbound-payload.md`. Not persisted in Firestore — only the emission is logged with classification code (FR-026). The 6 URLs (`GHL_TRIAL_STARTED_URL`, `GHL_PAYMENT_RECEIVED_URL`, `GHL_RECOVERED_URL`, `GHL_OVERDUE_FAILED_URL`, `GHL_CANCELLED_URL`, `GHL_TOPUP_URL`) each correspond to one `event_type`. Payload is the canonical 21-field shape from contract §1; `portal_url` is generated transiently for every event. Top-up refunds and partial refunds do NOT emit a GHL POST.
 
 ### 9. Mandatory Billing Modal (UI state — not persisted)
 
 A fullscreen dismiss-proof React modal containing the pricing table. Shown when `billingState.plan === 'none'` AND `!isTeamMember` AND no valid pending team invite exists. CTA invokes `createStripeCheckoutSession` (in-app Stripe Checkout, never GHL). Closes automatically when the listener detects a plan transition.
+
+### 10. Refund Record (`refund_logs/{uid}_{timestamp}`)
+
+Analytics collection for top-up refund events. Written by the `charge.refunded` handler when the refunded charge is identified as a top-up (`mode='payment'` with `metadata.isTopUp='true'`). Distinct from `cancellation_logs`, which is reserved strictly for plan-cancellation events (user-initiated or refund-driven). Schema:
+
+| Field | Type | Description |
+|---|---|---|
+| `uid` | string | User ID |
+| `email` | string | User email |
+| `chargeId` | string | Stripe charge ID (`ch_xxx`) |
+| `paymentIntentId` | string? | Stripe payment intent ID |
+| `sessionId` | string? | Originating Stripe Checkout Session ID |
+| `creditAmountDeducted` | number | Credits decremented from balance (clamped at 0; MAY be less than `metadata.creditAmount` if the user had already spent some) |
+| `amount` | number | Refund amount in major USD units (e.g., `9.00`) |
+| `reason` | string? | Refund reason from Stripe `metadata.reason` if present |
+| `createdAt` | Timestamp | When the refund was processed |
+| `sourceEventId` | string | Stripe event ID (`evt_xxx`) for traceability against `stripe_events/{eventId}` |
+
+No GHL POST is emitted for entries in this collection (per FR-032 (b)).
 
 ## State Transitions
 
@@ -242,7 +259,7 @@ Stripe Subscription (n) ──── 1:n ──── Stripe Customer (history o
 - Once `users/{uid}.stripeCustomerId` is set, it MUST NOT be overwritten with a different value by a subsequent webhook (defensive guard against Stripe-side bugs or impersonation)
 - `stripe_events/{eventId}` document ID MUST equal the Stripe `event.id` (natural dedup key)
 - `pending_plans/{email}` document ID MUST be the lowercased email
-- `cancellationReason` MUST be one of: `'too_expensive'`, `'not_using_enough'`, `'switching_competitor'`, `'missing_features'`, `'other'`
+- `cancellationReason` MUST be one of: `'too_expensive'`, `'not_using_enough'`, `'switching_competitor'`, `'missing_features'`, `'other'`, `'refund'` (the `'refund'` value is reserved for system-written `cancellation_logs` entries created by the `charge.refunded` handler per FR-032 (a))
 - Team members (`isTeamMember: true`) MUST NOT have their own subscription — they use the owner's
 - Credit deductions MUST be atomic (Firestore transaction)
 - `billingState` writes MUST be atomic with the underlying field changes (same transaction)
@@ -251,3 +268,5 @@ Stripe Subscription (n) ──── 1:n ──── Stripe Customer (history o
 - The mandatory billing modal MUST only render when `billingState.plan === 'none'` AND `!isTeamMember` AND no valid pending team invite exists for the user's email
 - Application-level dedup: when `customer.subscription.created` arrives for a subscription whose `subscription.id` is already on `users/{uid}.stripeSubscriptionId`, the handler MUST exit without re-applying state and write `result: 'noop_dual_event'` to `stripe_events/{eventId}`
 - Refund handler `charge.refunded` MUST distinguish full vs partial via `amount_refunded === amount` and subscription vs top-up via the underlying invoice/session metadata (R-015)
+- For a full subscription refund, the handler MUST write `cancellation_logs/{uid}_{ts}` with `reason: 'refund'` BEFORE invoking `stripe.subscriptions.cancel(...)` so the subsequent `customer.subscription.deleted` GHL POST can read `cancellation_reason` from the log
+- For a full top-up refund, the handler MUST write `refund_logs/{uid}_{ts}` (NOT `cancellation_logs`) and MUST NOT emit a GHL POST

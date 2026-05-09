@@ -7,7 +7,7 @@
 **Type**: HTTP POST (Firebase Cloud Functions v2 `onRequest`)
 **URL**: `https://europe-west1-proadsai-saas.cloudfunctions.net/stripeWebhook`
 **Authentication**: Stripe webhook signature verification via SDK (`stripe.webhooks.constructEvent`)
-**Secrets**: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `GHL_STRIPE_SYNC_WEBHOOK_URL`, `GHL_STRIPE_FAILED_WEBHOOK_URL`
+**Secrets**: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, plus the 6 per-event GHL URL secrets per `contracts/ghl-inbound-payload.md` §3 (`GHL_TRIAL_STARTED_URL`, `GHL_PAYMENT_RECEIVED_URL`, `GHL_RECOVERED_URL`, `GHL_OVERDUE_FAILED_URL`, `GHL_CANCELLED_URL`, `GHL_TOPUP_URL`)
 **Stripe API version pin**: `apiVersion: '2025-01-27.acacia'` (R-019)
 
 ### Request
@@ -35,9 +35,9 @@
 | `invoice.payment_succeeded` | `billing_reason='subscription_create'` | Skip (initial invoice — credits already set by `checkout.session.completed`) | No change |
 | `invoice.payment_succeeded` | `billing_reason='subscription_cycle'` | Reset `credits` to plan allocation; update `nextResetDate` | No status change |
 | `invoice.payment_failed` | — | Set `billingStatus='past_due'`; start grace period countdown | `billingStatus` → `past_due` |
-| `charge.refunded` | Full subscription refund | `stripe.subscriptions.cancel(subscription)` → `customer.subscription.deleted` fires | `billingStatus` → `cancelled` |
-| `charge.refunded` | Full top-up refund | Atomically deduct `metadata.creditAmount` (clamped at 0) | No status change |
-| `charge.refunded` | Partial refund | Log only with `result: 'partial_refund_logged'` | No change |
+| `charge.refunded` | Full subscription refund | Write `cancellation_logs/{uid}_{ts}` with `reason: 'refund'`; call `stripe.subscriptions.cancel(subscription)` → `customer.subscription.deleted` fires → routes single GHL POST as `subscription.cancelled` to `GHL_CANCELLED_URL` (no separate refund-event POST) | `billingStatus` → `cancelled` |
+| `charge.refunded` | Full top-up refund | Atomically deduct `metadata.creditAmount` (clamped at 0); write `refund_logs/{uid}_{ts}`; **no GHL POST** | No status change |
+| `charge.refunded` | Partial refund | Log only with `result: 'partial_refund_logged'`; **no GHL POST** | No change |
 
 ### Processing Pipeline (per webhook)
 
@@ -49,7 +49,7 @@
 6. Apply state changes per handler (with Firestore transaction for credit changes)
 7. Mark event as processed (`stripe_events/{eventId}.result = 'applied'`)
 8. Call `writeBillingState(uid)` (for users with a `uid`) or skip (for pending plans)
-9. Fire-and-forget GHL sync via `notifyGHL` (success path) or `notifyGHLFailed` (dunning + refund paths)
+9. Fire-and-forget GHL sync via `notifyGHL(identifier, eventType, payloadFields)` — selects the matching URL among the 6 per `contracts/ghl-inbound-payload.md` §3. Top-up refunds (FR-032 b) and partial refunds (FR-032 c) skip this step entirely.
 10. Log success with step, event ID, duration, result
 11. Return 200
 
@@ -224,81 +224,42 @@ return { portalUrl: portalSession.url };
 
 ---
 
-## Helper: `notifyGHL(identifier, event)`
+## Helper: `notifyGHL(identifier, eventType, payloadFields)`
 
 **Type**: Internal helper in `functions/src/billing/ghlBillingSync.ts`
-**Invocation**: Called from Stripe webhook handlers after billing state is written for success-path events
-**Secrets**: `GHL_STRIPE_SYNC_WEBHOOK_URL`
+**Invocation**: Called from Stripe webhook handlers after billing state is written, for the 6 routable `event_type` values defined in `contracts/ghl-inbound-payload.md` §3.
+**Secrets**: `STRIPE_SECRET_KEY` (for transient portal session generation), plus the 6 per-event GHL URL secrets.
 
 ### Signature
 
 ```typescript
 notifyGHL(
   identifier: string,
-  event: 'subscription.created' | 'subscription.updated' | 'subscription.deleted' | 'topup'
+  eventType:
+    | 'trial.started'
+    | 'subscription.created'
+    | 'payment.recovered'
+    | 'payment.failed'
+    | 'subscription.cancelled'
+    | 'top_up.completed',
+  payloadFields: Partial<GHLInboundPayload>
 ): Promise<void>
 ```
 
-`identifier` is either:
-- A Firebase `uid` (looks up `users/{uid}` for email and displayName)
-- A raw `email` string (for pre-signup users in `pending_plans`)
+`identifier` is either a Firebase `uid` (looks up `users/{uid}` for `email`, `displayName`, `stripeCustomerId`) or a raw `email` string (pre-signup users in `pending_plans`). `displayName` is split on the first whitespace into `first_name` / `last_name` per the contract.
 
 ### POST Payload
 
-```typescript
-{
-  email: string;
-  contactName?: string;
-  plan: string;
-  billingStatus: string;
-  event: string;
-  credits: number;
-  stripeSubscriptionId?: string;
-  // portalUrl is INTENTIONALLY OMITTED from success-sync payloads (R-008)
-}
-```
+The full 21-field stable-column shape from `contracts/ghl-inbound-payload.md` §1. Every field is always present; inapplicable fields are sent as `null`. Both ISO and `_human` date variants are populated together.
 
 ### Behavior
 
-Fire-and-forget POST to `GHL_STRIPE_SYNC_WEBHOOK_URL`. Errors logged with code `ghl_sync_failed` but NEVER thrown. Must never block the webhook processing pipeline.
+1. Resolve `email`, `displayName`, `stripeCustomerId` from identifier.
+2. If `stripeCustomerId` is available, call `stripe.billingPortal.sessions.create({ customer, return_url: 'https://app.proadsai.com/billing' })` to generate `portal_url`. On failure, log `portal_session_generation_failed` and POST with `portal_url: null`.
+3. Select the destination URL from the `URL_BY_EVENT` map keyed on `eventType`.
+4. Fire-and-forget POST. Errors on the POST itself logged with `ghl_sync_failed` but NEVER thrown.
 
----
-
-## Helper: `notifyGHLFailed(identifier, event, extras?)`
-
-**Type**: Internal helper in `functions/src/billing/ghlBillingSync.ts`
-**Invocation**: Called from `invoice.payment_failed` and `charge.refunded` handlers
-**Secrets**: `GHL_STRIPE_FAILED_WEBHOOK_URL`, `STRIPE_SECRET_KEY` (for transient portal session generation)
-
-### Signature
-
-```typescript
-notifyGHLFailed(
-  identifier: string,
-  event: 'past_due' | 'refund_processed',
-  extras?: { amount?: number; reason?: string }
-): Promise<void>
-```
-
-### POST Payload
-
-```typescript
-{
-  email: string;
-  contactName?: string;
-  event: string;
-  portalUrl?: string;  // generated transiently via stripe.billingPortal.sessions.create just before POST
-  amount?: number;     // for refund events: amount refunded in cents
-  reason?: string;     // for refund events: refund reason
-}
-```
-
-### Behavior
-
-1. Resolve `email`, `contactName`, `stripeCustomerId` from identifier
-2. If `stripeCustomerId` is available, call `stripe.billingPortal.sessions.create({ customer, return_url: 'https://app.proadsai.com/billing' })` to generate a fresh portal URL. On failure, log `portal_session_generation_failed` and proceed with `portalUrl` undefined.
-3. Fire-and-forget POST to `GHL_STRIPE_FAILED_WEBHOOK_URL` with the payload above.
-4. Errors on the POST itself logged with code `ghl_sync_failed` but NEVER thrown.
+**Skipped invocations**: Top-up refunds (FR-032 b) and partial refunds (FR-032 c) do NOT call `notifyGHL` — there is no event_type that maps to a refund event under the 6-URL routing.
 
 ---
 
