@@ -60,6 +60,16 @@ const paddleWebhookSecret = defineSecret("PADDLE_WEBHOOK_SECRET");
 const ghlPaddleSyncUrl = defineSecret("GHL_PADDLE_SYNC_WEBHOOK_URL");
 const ghlPaddleFailedUrl = defineSecret("GHL_PADDLE_FAILED_WEBHOOK_URL");
 
+// ─── STRIPE SECRETS ──────────────────────────────────────────────────────────
+// stripeWebhookSecret is declared later near the deprecated stripeWebhook function (line ~1030)
+// and reused by the new Stripe webhook handler.
+const ghlTrialStartedUrl = defineSecret("GHL_TRIAL_STARTED_URL");
+const ghlPaymentReceivedUrl = defineSecret("GHL_PAYMENT_RECEIVED_URL");
+const ghlRecoveredUrl = defineSecret("GHL_RECOVERED_URL");
+const ghlOverdueFailedUrl = defineSecret("GHL_OVERDUE_FAILED_URL");
+const ghlCancelledUrl = defineSecret("GHL_CANCELLED_URL");
+const ghlTopupUrl = defineSecret("GHL_TOPUP_URL");
+
 // ─── CONFIGURATION ──────────────────────────────────────────────────────────
 const PLAN_MAP: Record<string, { plan: string; credits: number; isTrial?: boolean }> = {
     // Simple names (for GHL automations)
