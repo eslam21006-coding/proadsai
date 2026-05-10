@@ -6,7 +6,7 @@ import { Firestore } from "firebase-admin/firestore";
 import * as admin from "firebase-admin";
 import { isEventProcessed, markEventProcessed, writeBillingState } from "./billingState.js";
 import { logBillingStep } from "./billingLogger.js";
-import { notifyGHL, notifyGHLFailed } from "./ghlBillingSync.js";
+import { notifyGHLFailed } from "./ghlBillingSync.js";
 
 export interface PaddleWebhookDeps {
     db: Firestore;
@@ -169,13 +169,7 @@ async function handleSubscriptionCreated(event: any, deps: PaddleWebhookDeps): P
         });
         await deps.db.collection("users").doc(firebaseUid).update(updateFields);
         await writeBillingState(firebaseUid, deps.db);
-        notifyGHL(firebaseUid, "subscription.created", deps.ghlSyncUrl, {
-            plan: planMapping.plan,
-            billingStatus: "active",
-            credits: planMapping.credits,
-            paddleSubscriptionId,
-            updatePaymentUrl: managementUrls.updatePaymentMethod,
-        }).catch(() => {});
+        notifyGHLFailed(firebaseUid, "subscription.created", deps.ghlSyncUrl).catch(() => {});
     } else if (email) {
         const normalizedEmail = email.toLowerCase().trim();
         logBillingStep("subscription_created_pending", event.eventId, "success", undefined, {
@@ -188,12 +182,7 @@ async function handleSubscriptionCreated(event: any, deps: PaddleWebhookDeps): P
             purchasedAt: admin.firestore.FieldValue.serverTimestamp(),
             sourceEventId: event.eventId,
         }, { merge: true });
-        notifyGHL(normalizedEmail, "subscription.created", deps.ghlSyncUrl, {
-            plan: planMapping.plan,
-            billingStatus: "active",
-            credits: planMapping.credits,
-            paddleSubscriptionId,
-        }).catch(() => {});
+        notifyGHLFailed(normalizedEmail, "subscription.created", deps.ghlSyncUrl).catch(() => {});
     }
 }
 
@@ -248,13 +237,7 @@ async function handleSubscriptionUpdated(event: any, deps: PaddleWebhookDeps): P
 
     await deps.db.collection("users").doc(uid).update(updateFields);
     await writeBillingState(uid, deps.db);
-    notifyGHL(uid, "subscription.updated", deps.ghlSyncUrl, {
-        plan: updateFields.plan || userData.plan,
-        billingStatus: updateFields.billingStatus || userData.billingStatus || "active",
-        credits: updateFields.credits || userData.credits,
-        paddleSubscriptionId,
-        updatePaymentUrl: managementUrls.updatePaymentMethod,
-    }).catch(() => {});
+    notifyGHLFailed(uid, "subscription.updated", deps.ghlSyncUrl).catch(() => {});
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -290,12 +273,7 @@ async function handleSubscriptionCanceled(event: any, deps: PaddleWebhookDeps): 
 
     logBillingStep("subscription_canceled", event.eventId, "success", undefined, { uid });
     await writeBillingState(uid, deps.db);
-    notifyGHL(uid, "subscription.canceled", deps.ghlSyncUrl, {
-        plan: "none",
-        billingStatus: "cancelled",
-        credits: 0,
-        paddleSubscriptionId,
-    }).catch(() => {});
+    notifyGHLFailed(uid, "subscription.canceled", deps.ghlSyncUrl).catch(() => {});
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -382,9 +360,7 @@ async function handleTransactionCompleted(event: any, deps: PaddleWebhookDeps): 
         creditAmount,
     });
     await writeBillingState(firebaseUid, deps.db);
-    notifyGHL(firebaseUid, "topup", deps.ghlSyncUrl, {
-        credits: creditAmount,
-    }).catch(() => {});
+    notifyGHLFailed(firebaseUid, "topup", deps.ghlSyncUrl).catch(() => {});
 }
 
 // ═══════════════════════════════════════════════════════════

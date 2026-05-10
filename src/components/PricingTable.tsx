@@ -3,7 +3,7 @@ import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
 import { PLANS } from '../planconfig';
 
-const createPaddleCheckoutFn = httpsCallable(functions, "createPaddleCheckout");
+const createStripeCheckoutFn = httpsCallable(functions, "createStripeCheckoutSession");
 
 const SECTIONS = [
   { id: 'usage', label: 'Usage', defaultOpen: true },
@@ -204,22 +204,17 @@ export default function PricingTable() {
               <div className="border-r border-white/[0.06]"></div>
               {plans.map(p => {
                 const planConfig = PLANS[p.key as keyof typeof PLANS];
-                const priceId = billing === 'annual' ? planConfig?.paddlePriceId?.yearly : planConfig?.paddlePriceId?.monthly;
+                const priceId = billing === 'annual' ? planConfig?.stripePriceId?.annual : planConfig?.stripePriceId?.monthly;
                 return (
                 <div key={p.key} className={`p-[18px] text-center border-r border-white/[0.06] last:border-r-0 transition-all hover:-translate-y-0.5 ${p.ctaCls === 'pro' ? 'bg-blue-600/[0.08]' : p.ctaCls === 'scale' ? 'bg-amber-500/[0.06]' : ''}`}>
                   <button
                     onClick={async () => {
                       if (!priceId) return;
                       try {
-                        const result = await createPaddleCheckoutFn({ priceId });
+                        const result = await createStripeCheckoutFn({ priceId });
                         const data = result.data as any;
-                        if (data?.transactionId && (window as any).Paddle) {
-                          (window as any).Paddle.Checkout.open({
-                            settings: { displayMode: 'overlay' },
-                            transactionId: data.transactionId,
-                          });
-                        } else if (data?.checkoutUrl) {
-                          window.open(data.checkoutUrl, "_blank");
+                        if (data?.checkoutUrl) {
+                          window.location.href = data.checkoutUrl;
                         }
                       } catch (e: any) {
                         console.error("Checkout error:", e);

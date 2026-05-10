@@ -1,14 +1,17 @@
-// src/components/billing/CancelDialog.tsx — 2-step cancellation dialog with reason logging
+// src/components/billing/CancelDialog.tsx — 2-step cancellation dialog with reason logging + Stripe portal
 
 import React, { useState } from "react";
 import { useT } from "../../i18n";
 import { doc, setDoc } from "firebase/firestore";
 import { db } from "../../firebase";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "../../firebase";
 import type { CancellationReason } from "../../hooks/useBillingState";
+
+const createStripePortalFn = httpsCallable(functions, "createStripePortalSession");
 
 interface CancelDialogProps {
   cancelAt: string | null;
-  paddleCancelUrl: string | null;
   uid: string;
   email: string | null;
   plan: string;
@@ -27,7 +30,6 @@ const REASONS: { value: CancellationReason; labelKey: string }[] = [
 
 export const CancelDialog: React.FC<CancelDialogProps> = ({
   cancelAt,
-  paddleCancelUrl,
   uid,
   email,
   plan,
@@ -46,7 +48,6 @@ export const CancelDialog: React.FC<CancelDialogProps> = ({
 
   const handleSubmit = async () => {
     if (!reason) return;
-    // Write cancellation log
     try {
       await setDoc(doc(db, "cancellation_logs", `${uid}_${Date.now()}`), {
         uid,
@@ -59,9 +60,13 @@ export const CancelDialog: React.FC<CancelDialogProps> = ({
     } catch (e) {
       console.warn("Failed to write cancellation log:", e);
     }
-    // Open Paddle cancel page
-    if (paddleCancelUrl) {
-      window.open(paddleCancelUrl, "_blank");
+    try {
+      const result = await createStripePortalFn({ flow: "subscription_cancel" }) as any;
+      if (result.data?.portalUrl) {
+        window.open(result.data.portalUrl, "_blank");
+      }
+    } catch (e: any) {
+      console.error("Failed to open Stripe portal:", e);
     }
     onConfirm(reason as CancellationReason, feedback || undefined);
   };

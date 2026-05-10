@@ -1185,11 +1185,8 @@ const App: React.FC = () => {
               };
               if (initialBillingType) userDoc.billingType = initialBillingType;
               if (initialNextReset) userDoc.nextCreditReset = initialNextReset;
-              if (pending.paddleCustomerId) userDoc.paddleCustomerId = pending.paddleCustomerId;
-              if (pending.paddleSubscriptionId) userDoc.paddleSubscriptionId = pending.paddleSubscriptionId;
-              if (pending.paddleUpdatePaymentUrl) userDoc.paddleUpdatePaymentUrl = pending.paddleUpdatePaymentUrl;
-              if (pending.paddleCancelUrl) userDoc.paddleCancelUrl = pending.paddleCancelUrl;
               if (pending.stripeCustomerId) userDoc.stripeCustomerId = pending.stripeCustomerId;
+              if (pending.stripeSubscriptionId) userDoc.stripeSubscriptionId = pending.stripeSubscriptionId;
 
               await setDoc(userRef, userDoc);
               setUser(currentUser);
@@ -1563,7 +1560,7 @@ const App: React.FC = () => {
   const [userPlan, setUserPlan] = useState<UserPlan>('none');
   const [isTrialUser, setIsTrialUser] = useState(false);
   const [hasVaultData, setHasVaultData] = useState(false);
-  const [billingStatus, setBillingStatus] = useState<'active' | 'past_due' | 'cancelled'>('active');
+  const [billingStatus, setBillingStatus] = useState<'trialing' | 'active' | 'past_due' | 'cancelling' | 'cancelled' | 'none'>('active');
   const [teamOwnerUid, setTeamOwnerUid] = useState<string | null>(null);
   const [teamRole, setTeamRole] = useState<string | null>(null);
   const isTeamViewer = teamRole === 'viewer';

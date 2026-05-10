@@ -1,4 +1,4 @@
-// src/pages/Billing.tsx — Billing dashboard page
+// src/pages/Billing.tsx — Billing dashboard page (Stripe)
 
 import React, { useState, useCallback } from "react";
 import { useBillingState } from "../hooks/useBillingState";
@@ -13,8 +13,8 @@ import { useT } from "../i18n";
 import { PLANS, type UserPlan } from "../planconfig";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "../firebase";
-
-const createPaddleCheckoutFn = httpsCallable(functions, "createPaddleCheckout");
+const createStripeCheckoutFn = httpsCallable(functions, "createStripeCheckoutSession");
+const createStripePortalFn = httpsCallable(functions, "createStripePortalSession");
 
 function formatDate(ts: { seconds: number; nanoseconds: number } | null): string | null {
   if (!ts) return null;
@@ -31,6 +31,22 @@ export const Billing: React.FC = () => {
   const [cancelling, setCancelling] = useState(false);
   const prevCreditsRef = React.useRef<number | null>(null);
 
+  // Handle URL query params (?paid=1, ?topup=1, etc.)
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("paid") === "1") {
+      showToast(t("billing.subscriptionActivated"), "success");
+      params.delete("paid");
+    }
+    if (params.get("topup") === "1") {
+      showToast(t("billing.creditsAdded"), "success");
+      params.delete("topup");
+    }
+    const cleaned = params.toString();
+    const newUrl = cleaned ? `${window.location.pathname}?${cleaned}` : window.location.pathname;
+    window.history.replaceState({}, "", newUrl);
+  }, []);
+
   // Detect top-up success: credits increased without a local generation action
   React.useEffect(() => {
     if (!billingState) return;
@@ -43,15 +59,12 @@ export const Billing: React.FC = () => {
   }, [billingState?.credits]);
 
   const handleTopUp = useCallback(async (packId: string) => {
-    // Success toast fires when billingState.credits increases (detected by useEffect above)
+    // Success toast fires when billingState.credits increases
   }, []);
 
   const handleCancel = useCallback(async (reason: string, feedback?: string) => {
     setCancelling(true);
     try {
-      if (billingState?.paddleCancelUrl) {
-        window.open(billingState.paddleCancelUrl, "_blank");
-      }
       setShowCancelDialog(false);
       showToast(t("billing.cancelScheduled"), "success");
     } catch (e: any) {
@@ -85,7 +98,6 @@ export const Billing: React.FC = () => {
     plan, isTrial, credits, creditsPerMonth, billingStatus,
     billingType, cancelAt, canUpgrade, canTopUp,
     isTeamMember, teamOwnerName, gracePeriodEndsAt,
-    paddleUpdatePaymentUrl, paddleCancelUrl,
     pendingPlan, pendingPlanEffectiveAt, nextResetDate,
   } = billingState;
 
@@ -134,8 +146,13 @@ export const Billing: React.FC = () => {
       {billingStatus === "past_due" && (
         <PaymentFailedAlert
           gracePeriodEndsAt={gracePeriodEndsAt}
-          onUpdatePayment={() => {
-            if (paddleUpdatePaymentUrl) window.open(paddleUpdatePaymentUrl, "_blank");
+          onUpdatePayment={async () => {
+            try {
+              const result = await createStripePortalFn({ flow: "payment_method_update" }) as any;
+              if (result.data?.portalUrl) window.open(result.data.portalUrl, "_blank");
+            } catch (e: any) {
+              showToast(e?.message || "Failed to open portal", "error");
+            }
           }}
         />
       )}
@@ -146,7 +163,7 @@ export const Billing: React.FC = () => {
           <p className="text-yellow-300 font-semibold">
             {t("billing.cancelledUntil").replace("{date}", formatDate(cancelAt) || "")}
           </p>
-          <ReactivateButton paddleUpdatePaymentUrl={paddleUpdatePaymentUrl || null} />
+          <ReactivateButton />
         </div>
       )}
 
@@ -205,17 +222,11 @@ export const Billing: React.FC = () => {
             <button
               onClick={async () => {
                 try {
-                  const priceId = nextPlan?.paddlePriceId?.monthly;
+                  const priceId = nextPlan?.stripePriceId?.monthly;
                   if (!priceId) return;
-                  const result = await createPaddleCheckoutFn({ priceId }) as any;
-                  const data = result.data as any;
-                  if (data?.transactionId && (window as any).Paddle) {
-                    (window as any).Paddle.Checkout.open({
-                      settings: { displayMode: "overlay" },
-                      transactionId: data.transactionId,
-                    });
-                  } else if (data?.checkoutUrl) {
-                    window.open(data.checkoutUrl, "_blank");
+                  const result = await createStripeCheckoutFn({ priceId }) as any;
+                  if (result.data?.checkoutUrl) {
+                    window.location.href = result.data.checkoutUrl;
                   }
                 } catch (e: any) {
                   showToast(e?.message || t("billing.error.unknown"), "error");
@@ -234,13 +245,20 @@ export const Billing: React.FC = () => {
         <div className="space-y-4">
           <TopUpSelector canTopUp={canTopUp} onBuy={handleTopUp} />
 
-          {/* Update Payment Method */}
-          {paddleUpdatePaymentUrl && (
+          {/* Manage Subscription */}
+          {billingState.stripeCustomerId && (
             <button
-              onClick={() => window.open(paddleUpdatePaymentUrl, "_blank")}
+              onClick={async () => {
+                try {
+                  const result = await createStripePortalFn({}) as any;
+                  if (result.data?.portalUrl) window.open(result.data.portalUrl, "_blank");
+                } catch (e: any) {
+                  showToast(e?.message || "Failed to open portal", "error");
+                }
+              }}
               className="w-full py-2.5 rounded-lg border border-slate-700 text-slate-300 hover:text-white hover:border-slate-500 text-sm font-medium transition-all"
             >
-              {t("billing.manage.updatePayment")}
+              {t("billing.manageSubscription")}
             </button>
           )}
 
@@ -259,7 +277,6 @@ export const Billing: React.FC = () => {
       {showCancelDialog && (
         <CancelDialog
           cancelAt={formatDate(cancelAt)}
-          paddleCancelUrl={paddleCancelUrl || null}
           uid={user?.uid || ""}
           email={user?.email || null}
           plan={plan}

@@ -34,6 +34,12 @@ import { probeMetaRole } from "./workspaces/metaRoleProbe.js";
 import { writeAuditEntry } from "./workspaces/auditLog.js";
 import { reflowImageHandler } from "./reflowImage.js";
 import { purgeExpiredWorkspaces, cascadeReassignOnDelete, cascadeRevertOnRestore } from "./workspaces/workspacePurge.js";
+import { handleStripeWebhook, setNotifyGHL } from "./billing/stripeWebhook.js";
+import { createStripeCheckoutSessionImpl, createStripeTopUpSessionImpl } from "./stripe/stripeCheckout.js";
+import { createStripePortalSessionImpl } from "./stripe/stripePortal.js";
+import { notifyGHL, URL_BY_EVENT_TEMPLATE } from "./billing/ghlBillingSync.js";
+import type { GHLEventType } from "./billing/ghlBillingSync.js";
+import { STRIPE_PRICE_TO_PLAN } from "./stripe/stripeClient.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
@@ -757,7 +763,7 @@ CRITICAL:
 // The stripeCustomerId is automatically saved when GHL webhook fires (see section 3 above).
 // ═══════════════════════════════════════════════════════════════════════════
 // DEPRECATED: replaced by Paddle management URLs
-const createStripePortalSession = onCall({
+const _deprecatedCreateStripePortalSession = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
     cors: true,
@@ -1032,7 +1038,7 @@ const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
 const ghlCancelWebhookUrl = defineSecret("GHL_CANCEL_WEBHOOK_URL");
 
 // DEPRECATED: replaced by paddleWebhook
-const stripeWebhook = onRequest({
+const _deprecatedStripeWebhook = onRequest({
     region: "europe-west1",
     secrets: [stripeSecretKey, stripeWebhookSecret],
 }, async (req, res) => {
@@ -2112,6 +2118,121 @@ export const paddleWebhook = onRequest({
         ghlFailedUrl: ghlPaddleFailedUrl.value(),
         priceToPlan: PADDLE_PRICE_TO_PLAN,
         topupPrices: PADDLE_TOPUP_PRICES,
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STRIPE BILLING (new — replaces Paddle)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ghlUrlByEvent: Record<GHLEventType, () => string> = {
+    "trial.started": () => ghlTrialStartedUrl.value(),
+    "subscription.created": () => ghlPaymentReceivedUrl.value(),
+    "payment.recovered": () => ghlRecoveredUrl.value(),
+    "payment.failed": () => ghlOverdueFailedUrl.value(),
+    "subscription.cancelled": () => ghlCancelledUrl.value(),
+    "top_up.completed": () => ghlTopupUrl.value(),
+};
+
+setNotifyGHL((identifier: string, eventType: GHLEventType, payloadFields: any) => {
+    return notifyGHL(identifier, eventType, payloadFields, {
+        stripeSecretKey: stripeSecretKey.value(),
+        urlByEvent: ghlUrlByEvent,
+    });
+});
+
+export const createStripeCheckoutSession = onCall({
+    region: "europe-west1",
+    secrets: [stripeSecretKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const uid = request.auth.uid;
+    const email = request.auth.token?.email;
+    const priceId = request.data?.priceId as string;
+    if (!priceId) throw new HttpsError("invalid-argument", "Missing priceId.");
+
+    const planInfo = STRIPE_PRICE_TO_PLAN[priceId];
+    if (!planInfo || planInfo.plan === "keep_current") {
+        throw new HttpsError("invalid-argument", "Invalid priceId.");
+    }
+
+    const userDoc = await db.collection("users").doc(uid).get();
+    if (userDoc.data()?.isTeamMember) {
+        throw new HttpsError("failed-precondition", "Team members cannot subscribe directly.");
+    }
+
+    try {
+        return await createStripeCheckoutSessionImpl(uid, email ?? "", priceId, stripeSecretKey.value());
+    } catch (err: any) {
+        throw new HttpsError("internal", err.message);
+    }
+});
+
+export const createStripeTopUpSession = onCall({
+    region: "europe-west1",
+    secrets: [stripeSecretKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
+    const uid = request.auth.uid;
+    const email = request.auth.token?.email;
+    const creditAmount = request.data?.creditAmount as number;
+    const priceId = request.data?.priceId as string;
+
+    if (![100, 300, 800].includes(creditAmount)) {
+        throw new HttpsError("invalid-argument", "Invalid creditAmount.");
+    }
+
+    const userDoc = await db.collection("users").doc(uid).get();
+    const userData = userDoc.data();
+    if (userData?.isTeamMember) {
+        throw new HttpsError("failed-precondition", "Team members cannot purchase top-ups.");
+    }
+    if (userData?.billingStatus === "past_due") {
+        throw new HttpsError("failed-precondition", "Resolve payment issue first.");
+    }
+    if (!userData?.stripeSubscriptionId && !userData?.plan || userData?.plan === "none") {
+        throw new HttpsError("failed-precondition", "Active subscription required for top-ups.");
+    }
+
+    try {
+        return await createStripeTopUpSessionImpl(uid, email ?? "", creditAmount, priceId, stripeSecretKey.value());
+    } catch (err: any) {
+        throw new HttpsError("internal", err.message);
+    }
+});
+
+export const createStripePortalSession = onCall({
+    region: "europe-west1",
+    secrets: [stripeSecretKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Login required.");
+    }
+
+    const uid = request.auth.uid;
+    const flow = request.data?.flow as "subscription_cancel" | "payment_method_update" | undefined;
+    const returnUrl = request.data?.returnUrl as string | undefined;
+
+    try {
+        return await createStripePortalSessionImpl(uid, flow, returnUrl, stripeSecretKey.value());
+    } catch (err: any) {
+        throw new HttpsError(err.code === "failed-precondition" ? "failed-precondition" : "internal", err.message);
+    }
+});
+
+export const stripeWebhook = onRequest({
+    region: "europe-west1",
+    secrets: [stripeSecretKey, stripeWebhookSecret, ghlTrialStartedUrl, ghlPaymentReceivedUrl, ghlRecoveredUrl, ghlOverdueFailedUrl, ghlCancelledUrl, ghlTopupUrl],
+    cors: true,
+}, async (req, res) => {
+    await handleStripeWebhook(req, res, {
+        stripeSecretKey: stripeSecretKey.value(),
+        stripeWebhookSecret: stripeWebhookSecret.value(),
     });
 });
 
