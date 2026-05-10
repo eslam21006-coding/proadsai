@@ -171,7 +171,7 @@ Web application:
 - [x] T060 [US1] Update `src/pages/Billing.tsx` to read `useBillingState()` (already updated in T022); render plan name, credit bar `credits / creditsPerMonth`, `nextResetDate`, `billingStatus`; conditionally show trial label, low-credits banner, payment-failed alert; remove any Paddle URL reads
 - [x] T061 [US1] Update `src/components/billing/PlanCard.tsx`: read `stripeCustomerId` / `stripeSubscriptionId` for debug only; "Manage Subscription" button calls `createStripePortalSession({})` and opens `portalUrl` in a new tab
 - [x] T062 [US1] Update `src/components/billing/CreditBar.tsx`: no behavior change; verify it reads `credits` and `creditsPerMonth` from `billingState`
-- [ ] T063 [US1] Verify `src/hooks/useBillingState.ts` switches its listener to `users/{teamOwnerUid}` when `isTeamMember` is true and overlays read-only fields (FR-012)
+- [x] T063 [US1] Verify `src/hooks/useBillingState.ts` switches its listener to `users/{teamOwnerUid}` when `isTeamMember` is true and overlays read-only fields (FR-012)
 
 **Checkpoint**: Billing page renders correctly for all status states. Portal opens with one click. Real-time updates work.
 
@@ -198,7 +198,7 @@ Web application:
 
 - [x] T066 [US6] Update `src/components/billing/CancelDialog.tsx` two-step flow: step 1 unchanged (confirmation + reason + feedback); step 2 calls `createStripePortalSession({ flow: 'subscription_cancel' })` and `window.open(data.portalUrl, '_blank')`; remove Paddle cancel URL usage (FR-010)
 - [x] T067 [US6] Verify `cancellation_logs/{uid}_{ts}` write happens before the portal redirect (FR-010)
-- [ ] T068 [US9] Update `src/components/billing/PlanCard.tsx` "Upgrade" button (or wherever upgrade CTA lives): call `createStripeCheckoutSession` with the target plan's `priceId`; redirect to `checkoutUrl` (FR-019)
+- [x] T068 [US9] Update `src/components/billing/PlanCard.tsx` "Upgrade" button (or wherever upgrade CTA lives): call `createStripeCheckoutSession` with the target plan's `priceId`; redirect to `checkoutUrl` (FR-019)
 - [x] T069 [US9] Update `src/components/billing/ReactivateButton.tsx`: call `createStripePortalSession({})` (no flow) and open portal home; user clears `cancel_at_period_end` themselves in the portal
 
 **Checkpoint**: Cancel and upgrade both work via in-app initiation + Stripe-hosted completion. Webhooks propagate state changes back to the app.
@@ -211,8 +211,8 @@ Web application:
 
 **Independent Test**: Simulate `invoice.payment_failed`; verify Billing page shows alert; click "Update payment method"; verify portal opens to payment_method_update flow; verify GHL receives dunning sync with transient `portalUrl`.
 
-- [ ] T070 [US11] Update `src/components/billing/PaymentFailedAlert.tsx`: render when `billingStatus === 'past_due'`; show countdown using `gracePeriodEndsAt`; "Update payment method" button calls `createStripePortalSession({ flow: 'payment_method_update' })` and opens `portalUrl` in new tab (FR-013)
-- [ ] T071 [US11] Verify recovery handling: `invoice.payment_succeeded` handler in `functions/src/billing/stripeWebhook.ts` (T035) clears `gracePeriodEndsAt`, restores `billingStatus='active'`; alert disappears via real-time listener
+- [x] T070 [US11] Update `src/components/billing/PaymentFailedAlert.tsx`: render when `billingStatus === 'past_due'`; show countdown using `gracePeriodEndsAt`; "Update payment method" button calls `createStripePortalSession({ flow: 'payment_method_update' })` and opens `portalUrl` in new tab (FR-013)
+- [x] T071 [US11] Verify recovery handling: `invoice.payment_succeeded` handler in `functions/src/billing/stripeWebhook.ts` (T035) clears `gracePeriodEndsAt`, restores `billingStatus='active'`; alert disappears via real-time listener
 
 **Checkpoint**: Payment failure surfaced to user, recovery surfaced to user, GHL dunning sync flows through.
 

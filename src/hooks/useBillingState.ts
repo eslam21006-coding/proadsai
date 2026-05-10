@@ -32,14 +32,6 @@ export interface BillingState {
   gracePeriodEndsAt: { seconds: number; nanoseconds: number } | null;
   pendingPlan: string | null;
   pendingPlanEffectiveAt: { seconds: number; nanoseconds: number } | null;
-  /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
-  paddleCustomerId?: string | null;
-  /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
-  paddleSubscriptionId?: string | null;
-  /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
-  paddleUpdatePaymentUrl?: string | null;
-  /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
-  paddleCancelUrl?: string | null;
 }
 
 export function useBillingState() {
@@ -56,12 +48,53 @@ export function useBillingState() {
       return;
     }
 
+    let innerUnsub: (() => void) | null = null;
+
     const unsub = onSnapshot(
       doc(db, "users", user.uid),
       (snap) => {
         if (snap.exists()) {
           const data = snap.data();
-          setBillingState((data.billingState as BillingState) || null);
+          const isTeamMember = data.isTeamMember === true;
+          const teamOwnerUid = data.teamOwnerUid as string | null;
+
+          if (isTeamMember && teamOwnerUid) {
+            if (innerUnsub) innerUnsub();
+            innerUnsub = onSnapshot(
+              doc(db, "users", teamOwnerUid),
+              (ownerSnap) => {
+                if (ownerSnap.exists()) {
+                  const ownerData = ownerSnap.data();
+                  const ownerBilling = (ownerData.billingState as BillingState) || null;
+                  if (ownerBilling) {
+                    ownerBilling.isTeamMember = true;
+                    ownerBilling.teamOwnerUid = teamOwnerUid;
+                    ownerBilling.teamOwnerName = ownerData.displayName ?? null;
+                    ownerBilling.canUpgrade = false;
+                    ownerBilling.canTopUp = false;
+                  }
+                  setBillingState(ownerBilling);
+                } else {
+                  setBillingState(null);
+                }
+                setLoading(false);
+                setError(null);
+              },
+              (err) => {
+                setError(err);
+                setBillingState(null);
+                setLoading(false);
+              },
+            );
+          } else {
+            const bs = (data.billingState as BillingState) || null;
+            if (bs) {
+              bs.isTeamMember = false;
+              bs.teamOwnerUid = null;
+              bs.teamOwnerName = null;
+            }
+            setBillingState(bs);
+          }
         } else {
           setBillingState(null);
         }
@@ -75,7 +108,10 @@ export function useBillingState() {
       },
     );
 
-    return () => unsub();
+    return () => {
+      unsub();
+      if (innerUnsub) innerUnsub();
+    };
   }, [user]);
 
   return { billingState, loading, error };
