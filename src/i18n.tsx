@@ -441,6 +441,15 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'billing.cancelScheduled': 'Cancellation scheduled',
         'billing.cancelledUntil': 'Cancelled — access until {date}',
         'billing.trialBadge': 'Trial',
+        'billing.monthly': 'Monthly',
+        'billing.annual': 'Annual',
+        'billing.annualSavings': 'Save 2 months',
+        'billing.subscriptionActivated': 'Subscription activated.',
+        'billing.creditsAdded': '{n} credits added to your account.',
+        'billing.refundProcessed': 'Refund processed.',
+        'billing.trialEnded': 'Your trial has ended — upgrade to keep generating.',
+        'billing.gracePeriod': '{days} days remaining to update your payment method',
+        'billing.welcomeTrial': 'Welcome! Your 7-day trial has started.',
         'plan.upgradeTo': 'Upgrade to {plan}',
 
         // ── Login / Auth ──
@@ -1140,6 +1149,15 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'billing.cancelScheduled': 'تم جدولة الإلغاء',
         'billing.cancelledUntil': 'ملغى — الوصول حتى {date}',
         'billing.trialBadge': 'تجريبي',
+        'billing.monthly': 'شهري',
+        'billing.annual': 'سنوي',
+        'billing.annualSavings': 'وفّر شهرين',
+        'billing.subscriptionActivated': 'تم تفعيل الاشتراك.',
+        'billing.creditsAdded': 'تمت إضافة {n} رصيد لحسابك.',
+        'billing.refundProcessed': 'تم معالجة الاسترداد.',
+        'billing.trialEnded': 'انتهت تجربتك — قم بالترقية للاستمرار.',
+        'billing.gracePeriod': 'متبقي {days} يوم لتحديث طريقة الدفع',
+        'billing.welcomeTrial': 'أهلاً! بدأت تجربتك المجانية لمدة 7 أيام.',
         'plan.upgradeTo': 'الترقية إلى {plan}',
 
         // ── Login / Auth ──

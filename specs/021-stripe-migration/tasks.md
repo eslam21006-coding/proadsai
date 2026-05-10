@@ -295,8 +295,8 @@ Web application:
 
 **Purpose**: i18n updates, smoke tests from `quickstart.md` sections E.1–E.10, final audits.
 
-- [ ] T090 [P] Update `src/i18n.tsx`: review all `billing.*`, `cancelDialog.*`, `login.*`, `auth.*` keys; replace any "Paddle" copy with "Stripe" or generic terms; verify Arabic translations cover all new key paths (FR-025); add new keys per contracts/frontend-hooks.md if missing (`billing.refundProcessed`, `billing.subscriptionActivated`, `billing.creditsAdded`, `billing.annualSavings`)
-- [ ] T091 [P] Run `npm run build` (frontend) and confirm no errors after all field-rename and import updates
+- [x] T090 [P] Update `src/i18n.tsx`: review all `billing.*`, `cancelDialog.*`, `login.*`, `auth.*` keys; replace any "Paddle" copy with "Stripe" or generic terms; verify Arabic translations cover all new key paths (FR-025); add new keys per contracts/frontend-hooks.md if missing (`billing.refundProcessed`, `billing.subscriptionActivated`, `billing.creditsAdded`, `billing.annualSavings`)
+- [x] T091 [P] Run `npm run build` (frontend) and confirm no errors after all field-rename and import updates
 - [ ] T092 Run quickstart.md smoke test E.1 — In-App Subscription (Path B): fresh signup → mandatory modal → Pro Monthly Checkout → expect dual-event dedup, welcome toast fires, modal auto-closes
 - [ ] T093 Run quickstart.md smoke test E.2 — GHL Funnel Subscription (Path A): incognito GHL pay → `pending_plans` written → app signup with same email → consume flow runs
 - [ ] T094 Run quickstart.md smoke test E.3 — Top-Up: 100-credit top-up flow round-trip; credit balance increments
@@ -308,8 +308,8 @@ Web application:
 - [ ] T100 Run quickstart.md smoke test E.9 — Webhook Replay: re-send already-delivered event → `stripe_event_duplicate` log, no state change
 - [ ] T101 Run quickstart.md smoke test E.10 — Idempotency Under Load: Stripe CLI 5x trigger of same event → only first applies
 - [ ] T102 Run jest test suite in `functions/`: `npm test` — all webhook + callable + GHL sync tests pass
-- [ ] T103 [P] Update `MEMORY.md` (if applicable) and `CLAUDE.md` "Recent Changes" section with the migration summary and the date
-- [ ] T104 Final audit: SC-016 (`paddle` zero hits), SC-017 (Stripe Tax on every Checkout Session), SC-018 (modal CTA never redirects to GHL), SC-019 (USD-only price audit)
+- [x] T103 [P] Update `MEMORY.md` (if applicable) and `CLAUDE.md` "Recent Changes" section with the migration summary and the date
+- [x] T104 Final audit: SC-016 (`paddle` zero hits), SC-017 (Stripe Tax on every Checkout Session), SC-018 (modal CTA never redirects to GHL), SC-019 (USD-only price audit)
 - [ ] T105 Tag the migration commit / PR description with the test sequence run results, and link to the green Stripe Dashboard webhook log
 
 **Checkpoint**: Migration is launch-ready. All 10 smoke tests pass. Audits clean. PR ready for merge.
