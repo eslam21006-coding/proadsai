@@ -224,8 +224,8 @@ Web application:
 
 **Independent Test**: Create a trial user; deplete credits to 0; verify the banner appears on every page; verify generation actions are rejected server-side.
 
-- [ ] T072 [US7] Verify `src/components/billing/TrialExpiredBanner.tsx`: render when `isTrial && credits === 0` OR `billingStatus === 'cancelled' && plan === 'none'` immediately after a trial; uses i18n key `billing.trialEnded` (FR-007)
-- [ ] T073 [US7] Verify server-side block in `functions/src/index.ts` `deductCreditsServer` (existing from Phase 8): rejects with `trial_expired` when `isTrial && credits === 0` (FR-007)
+- [x] T072 [US7] Verify `src/components/billing/TrialExpiredBanner.tsx`: render when `isTrial && credits === 0` OR `billingStatus === 'cancelled' && plan === 'none'` immediately after a trial; uses i18n key `billing.trialEnded` (FR-007)
+- [x] T073 [US7] Verify server-side block in `functions/src/index.ts` `deductCreditsServer` (existing from Phase 8): rejects with `trial_expired` when `isTrial && credits === 0` (FR-007)
 
 **Checkpoint**: Trial end is visible to user and enforced on the server.
 
@@ -237,7 +237,7 @@ Web application:
 
 **Independent Test**: Reduce a Pro user's credits to 350 (out of 2,000 = 17.5%); verify banner appears; top up to above 20%; verify banner disappears.
 
-- [ ] T074 [US10] Verify `src/components/billing/LowCreditsWarning.tsx`: render when `credits / creditsPerMonth < 0.2`; uses i18n key `billing.lowCredits`; CTA links to top-up section (FR-011)
+- [x] T074 [US10] Verify `src/components/billing/LowCreditsWarning.tsx`: render when `credits / creditsPerMonth < 0.2`; uses i18n key `billing.lowCredits`; CTA links to top-up section (FR-011)
 
 **Checkpoint**: Low-credits warning fires correctly.
 
@@ -249,8 +249,8 @@ Web application:
 
 **Independent Test**: Downgrade a user from Pro to Starter; attempt a carousel generation; verify server rejects with `plan_downgraded`; verify the carousel button is hidden in the UI within 5 seconds without refresh.
 
-- [ ] T075 [US3] Verify `functions/src/index.ts` `deductCreditsServer` (or equivalent) checks `ACTION_FEATURE_MAP[action]` against the user's current plan entitlements before deducting; rejects with `plan_downgraded` on mismatch (FR-005)
-- [ ] T076 [US8] Verify frontend feature visibility logic reads `useCanUse(action)` (real-time) so plan downgrades hide/disable features without page refresh (FR-008)
+- [x] T075 [US3] Verify `functions/src/index.ts` `deductCreditsServer` (or equivalent) checks `ACTION_FEATURE_MAP[action]` against the user's current plan entitlements before deducting; rejects with `plan_downgraded` on mismatch (FR-005)
+- [x] T076 [US8] Verify frontend feature visibility logic reads `useCanUse(action)` (real-time) so plan downgrades hide/disable features without page refresh (FR-008)
 
 **Checkpoint**: Plan gate enforced server-side; UI re-evaluates in real time.
 
@@ -262,7 +262,7 @@ Web application:
 
 **Independent Test**: (a) Create a new account with a fresh email; verify email verification gate. (b) Enter an unknown email on Login; verify auto-switch to Create Account. (c) Click "Forgot Password?"; verify Firebase password reset email arrives.
 
-- [ ] T077 [US13] Smoke-test the existing `src/components/auth/LoginTab.tsx`, `CreateAccountTab.tsx`, `VerifyEmailScreen.tsx`, `ForgotPasswordDialog.tsx` against the new `pending_plans` shape (with Stripe fields) — no code changes expected, but confirm acceptance scenarios from US13 still pass after Phase 2/3 changes (FR-020, FR-021, FR-022, FR-022a, FR-023, FR-023a)
+- [x] T077 [US13] Smoke-test the existing `src/components/auth/LoginTab.tsx`, `CreateAccountTab.tsx`, `VerifyEmailScreen.tsx`, `ForgotPasswordDialog.tsx` against the new `pending_plans` shape (with Stripe fields) — no code changes expected, but confirm acceptance scenarios from US13 still pass after Phase 2/3 changes (FR-020, FR-021, FR-022, FR-022a, FR-023, FR-023a)
 
 **Checkpoint**: Email-only auth verified against Stripe-backed pending_plans.
 
