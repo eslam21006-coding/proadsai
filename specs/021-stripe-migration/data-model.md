@@ -12,7 +12,7 @@ Existing Firestore document. Paddle-specific fields are removed and replaced wit
 
 | Field | Type | Description | Change vs Phase 8 |
 |---|---|---|---|
-| `plan` | string | `'starter'` \| `'pro'` \| `'scale'` \| `'none'` | UNCHANGED |
+| `plan` | string | `'starter'` \| `'pro'` \| `'scale'` \| `'none'` — mirrored at `billingState.plan`; see "Two-field plan mirroring" callout in entity 2 | UNCHANGED |
 | `credits` | number | Current credit balance | UNCHANGED |
 | `isTrial` | boolean | Whether user is on trial | UNCHANGED |
 | `billingStatus` | string | `'trialing'` \| `'active'` \| `'past_due'` \| `'cancelling'` \| `'cancelled'` \| `'none'` | UNCHANGED |
@@ -76,6 +76,8 @@ Written by `writeBillingState(uid)` on every billing event. Read by the frontend
 | `pendingPlanEffectiveAt` | Date? | When pending downgrade takes effect |
 
 **Removed from billingState** (vs Phase 8): `paddleUpdatePaymentUrl`, `paddleCancelUrl`. Portal URLs are generated on demand by `createStripePortalSession` callable; never stored.
+
+**Two-field plan mirroring**: The `plan` value lives at TWO locations in `users/{uid}` — the top-level field (read by server-side code like `entitlements.ts`) and the nested `billingState.plan` (read by the realtime listener in `useBillingState.ts`). Both must agree. The `writeBillingState()` function is responsible for writing both atomically. Any data migration script that touches `plan` MUST query and rewrite both fields. Detected during M1 backfill — single-field migration left `billingState.plan` stale until the script was updated to handle both.
 
 ### 3. Pending Plan (`pending_plans/{email.toLowerCase()}`)
 
