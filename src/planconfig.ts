@@ -67,8 +67,6 @@ export interface PlanConfig {
     carouselMaxSlides: number | null;
     batchConfig: BatchConfig | null;
     stripePriceId: { monthly: string; annual: string };
-    /** @deprecated Paddle price ID — kept for backward compat, removed in M5 */
-    paddlePriceId?: { monthly: string; yearly: string };
     features: {
         retargeting: boolean;
         fantasyUniverses: boolean;
@@ -161,7 +159,6 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
         id: 'none', name: 'No Plan', subtitle: '', monthlyCredits: 0, trialCredits: 0, priceMonthly: 0, priceAnnualPerMonth: 0,
         savedProjectLimit: 0, audienceAvatarLimit: 0, carouselMaxSlides: null, batchConfig: null, workspaceLimit: 1,
         stripePriceId: { monthly: '', annual: '' },
-        paddlePriceId: { monthly: '', yearly: '' },
         features: {
             retargeting: false, fantasyUniverses: false, aspectRatios: [], visualPolishes: false, brandUrlScraping: false, competitorResearch: false, carousel: false, batchGeneration: false, maxTeamMembers: 0,
             abVariationTesting: false, regionEditing: false, referenceAdUpload: false, pushToMeta: false, performanceDashboard: 'none', creativeMemory: false, creativeScoringEngine: false, smartRecommendations: false, variantExploration: false, multiBrandWorkspaces: false,
@@ -174,7 +171,6 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
         id: 'starter', name: 'Starter', subtitle: 'For solopreneurs', monthlyCredits: 800, trialCredits: 50, priceMonthly: 29, priceAnnualPerMonth: 23.20,
         savedProjectLimit: 10, audienceAvatarLimit: 5, carouselMaxSlides: null, batchConfig: null, workspaceLimit: 1,
         stripePriceId: { monthly: 'price_starter_monthly', annual: 'price_starter_annual' },
-        paddlePriceId: { monthly: 'pri_01knz7v1rr3eehbe12s214ba0t', yearly: 'pri_01knz7wz5cpvv2fx6334wv822e' },
         features: {
             retargeting: false, fantasyUniverses: false, aspectRatios: ALL_RATIOS, visualPolishes: false, brandUrlScraping: true, competitorResearch: false, carousel: false, batchGeneration: false, maxTeamMembers: 1,
             abVariationTesting: false, regionEditing: false, referenceAdUpload: false, pushToMeta: false, performanceDashboard: 'none', creativeMemory: false, creativeScoringEngine: false, smartRecommendations: false, variantExploration: false, multiBrandWorkspaces: false,
@@ -188,7 +184,6 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
         savedProjectLimit: 30, audienceAvatarLimit: 15, carouselMaxSlides: 7, workspaceLimit: 1,
         batchConfig: { maxSizes: 1, maxHooks: 2, maxConcepts: 2, maxAdsPerRun: 4 },
         stripePriceId: { monthly: 'price_pro_monthly', annual: 'price_pro_annual' },
-        paddlePriceId: { monthly: 'pri_01knz7zpgfbek52zm0n012jqn0', yearly: 'pri_01knz82jwdxjph1mpny39jnxqg' },
         features: {
             retargeting: true, fantasyUniverses: true, aspectRatios: ALL_RATIOS, visualPolishes: true, brandUrlScraping: true, competitorResearch: true, carousel: true, batchGeneration: true, maxTeamMembers: 3,
             abVariationTesting: true, regionEditing: true, referenceAdUpload: true, pushToMeta: true, performanceDashboard: 'overview', creativeMemory: true, creativeScoringEngine: false, smartRecommendations: false, variantExploration: false, multiBrandWorkspaces: false,
@@ -202,7 +197,6 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
         savedProjectLimit: Infinity, audienceAvatarLimit: Infinity, carouselMaxSlides: 10, workspaceLimit: 10,
         batchConfig: { maxSizes: 3, maxHooks: 4, maxConcepts: 3, maxAdsPerRun: 36 },
         stripePriceId: { monthly: 'price_scale_monthly', annual: 'price_scale_annual' },
-        paddlePriceId: { monthly: 'pri_01knz80jr5m4ey3wrskpvgbrh4', yearly: 'pri_01knz81pexff8h8wbwq44cy0j3' },
         features: {
             retargeting: true, fantasyUniverses: true, aspectRatios: ALL_RATIOS, visualPolishes: true, brandUrlScraping: true, competitorResearch: true, carousel: true, batchGeneration: true, maxTeamMembers: 10,
             abVariationTesting: true, regionEditing: true, referenceAdUpload: true, pushToMeta: true, performanceDashboard: 'full', creativeMemory: true, creativeScoringEngine: true, smartRecommendations: true, variantExploration: true, multiBrandWorkspaces: true,
@@ -302,12 +296,6 @@ export const TOPUP_PACKS = [
     { id: 'medium', credits: 300, price: 17, label: '300 Credits' },
     { id: 'large', credits: 800, price: 39, label: '800 Credits' },
 ] as const;
-
-export const PADDLE_TOPUP_PRICE_IDS: Record<number, string> = {
-    100: 'pri_01knz87qc1ezrb84gtffpmtjdq',
-    300: 'pri_01knz898vrhxyge632scazjn2z',
-    800: 'pri_01knz8a0s0f2je5rgrk2y62b0n',
-};
 
 export const TOPUP_PRICES: Record<number, string> = {
     100: 'price_topup_100',

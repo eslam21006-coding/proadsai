@@ -274,18 +274,18 @@ Web application:
 
 **⚠️ CRITICAL**: Run only after Phases 3–12 are verified working in Stripe Test mode. SC-016 enforces zero remaining `paddle`/`Paddle` matches in `functions/src/` and `src/` after this phase.
 
-- [ ] T078 Delete directory `functions/src/paddle/` (4 files: `paddleCheckout.ts`, `paddleClient.ts`, `paddlePortal.ts`, `paddleSubscriptions.ts`)
-- [ ] T079 Delete `functions/src/billing/paddleWebhook.ts`
-- [ ] T080 Delete `functions/src/billing/__tests__/paddleWebhook.test.ts` (if it exists)
-- [ ] T081 Remove all 9 Paddle Cloud Functions from `functions/src/index.ts`: `paddleGetSub`, `paddleCancelSub`, `paddleReactivateSub`, `paddleChangePlanFn`, `paddleTopupCheckout`, `paddlePortalSession`, `createPaddleCheckout`, `createPaddleTopUp`, `paddleWebhook`
-- [ ] T082 Remove all Paddle imports from `functions/src/index.ts` (the 5 `import` statements at lines 23–27 referencing `./paddle/...` and `./billing/paddleWebhook.js`)
-- [ ] T083 Remove Paddle secret declarations from `functions/src/index.ts`: `paddleApiKey`, `paddleWebhookSecret`, `ghlPaddleSyncUrl`, `ghlPaddleFailedUrl`
-- [ ] T084 Remove all DEPRECATED comment blocks in `functions/src/index.ts` that reference Paddle replacements (cleanup of stale historical commentary)
-- [ ] T085 Remove `@paddle/paddle-node-sdk` from `functions/package.json` (this is the actual removal — T015 deliberately deferred it to here); run `npm prune` in `functions/`. Safe now because T078–T084 deleted all Paddle source code.
+- [x] T078 Delete directory `functions/src/paddle/` (4 files: `paddleCheckout.ts`, `paddleClient.ts`, `paddlePortal.ts`, `paddleSubscriptions.ts`)
+- [x] T079 Delete `functions/src/billing/paddleWebhook.ts`
+- [x] T080 Delete `functions/src/billing/__tests__/paddleWebhook.test.ts` (if it exists)
+- [x] T081 Remove all 9 Paddle Cloud Functions from `functions/src/index.ts`: `paddleGetSub`, `paddleCancelSub`, `paddleReactivateSub`, `paddleChangePlanFn`, `paddleTopupCheckout`, `paddlePortalSession`, `createPaddleCheckout`, `createPaddleTopUp`, `paddleWebhook`
+- [x] T082 Remove all Paddle imports from `functions/src/index.ts` (the 5 `import` statements at lines 23–27 referencing `./paddle/...` and `./billing/paddleWebhook.js`)
+- [x] T083 Remove Paddle secret declarations from `functions/src/index.ts`: `paddleApiKey`, `paddleWebhookSecret`, `ghlPaddleSyncUrl`, `ghlPaddleFailedUrl`
+- [x] T084 Remove all DEPRECATED comment blocks in `functions/src/index.ts` that reference Paddle replacements (cleanup of stale historical commentary)
+- [x] T085 Remove `@paddle/paddle-node-sdk` from `functions/package.json` (this is the actual removal — T015 deliberately deferred it to here); run `npm prune` in `functions/`. Safe now because T078–T084 deleted all Paddle source code.
 - [ ] T086 Destroy Paddle secrets via `firebase functions:secrets:destroy PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `GHL_PADDLE_SYNC_WEBHOOK_URL`, `GHL_PADDLE_FAILED_WEBHOOK_URL`
-- [ ] T087 Run `npm run build` in `functions/` and root; fix any remaining TypeScript errors caused by dropped imports
-- [ ] T088 Run `npm run lint` and fix any unused-import warnings
-- [ ] T089 Audit: confirm zero matches for `paddle`/`Paddle` in `functions/src/` and `src/` (excluding `specs/`) — SC-016
+- [x] T087 Run `npm run build` in `functions/` and root; fix any remaining TypeScript errors caused by dropped imports
+- [x] T088 Run `npm run lint` and fix any unused-import warnings
+- [x] T089 Audit: confirm zero matches for `paddle`/`Paddle` in `functions/src/` and `src/` (excluding `specs/`) — SC-016
 
 **Checkpoint**: All Paddle code deleted. Build is green. Audit confirms zero Paddle references.
 

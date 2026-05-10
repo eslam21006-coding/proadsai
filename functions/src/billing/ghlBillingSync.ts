@@ -167,15 +167,3 @@ export const URL_BY_EVENT_TEMPLATE: Record<GHLEventType, string> = {
     "subscription.cancelled": "GHL_CANCELLED_URL",
     "top_up.completed": "GHL_TOPUP_URL",
 };
-
-// ─── Backward compat for paddleWebhook (Paddle code still imports these) ───
-// These will be removed in Phase 13 when Paddle code is deleted.
-
-export async function notifyGHLFailed(
-    _identifier: string,
-    _event: string,
-    _webhookUrl: string,
-    _updatePaymentUrl?: string,
-): Promise<void> {
-    // No-op: Paddle GHL sync replaced by Stripe-based notifyGHL
-}

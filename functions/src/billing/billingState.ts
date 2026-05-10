@@ -26,14 +26,6 @@ export interface BillingState {
     gracePeriodEndsAt: { seconds: number; nanoseconds: number } | null;
     pendingPlan: string | null;
     pendingPlanEffectiveAt: { seconds: number; nanoseconds: number } | null;
-    /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
-    paddleCustomerId?: string | null;
-    /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
-    paddleSubscriptionId?: string | null;
-    /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
-    paddleUpdatePaymentUrl?: string | null;
-    /** @deprecated Paddle field — kept for backward compat during migration, removed in M5 */
-    paddleCancelUrl?: string | null;
 }
 
 interface UserData {
@@ -47,14 +39,6 @@ interface UserData {
     teamOwnerName?: string;
     stripeCustomerId?: string;
     stripeSubscriptionId?: string;
-    /** @deprecated Paddle field */
-    paddleCustomerId?: string;
-    /** @deprecated Paddle field */
-    paddleSubscriptionId?: string;
-    /** @deprecated Paddle field */
-    paddleUpdatePaymentUrl?: string;
-    /** @deprecated Paddle field */
-    paddleCancelUrl?: string;
     cancelAtPeriodEnd?: boolean;
     cancelAt?: Timestamp | null;
     pendingPlan?: string;
@@ -151,10 +135,6 @@ export function buildBillingState(data: UserData): BillingState {
         gracePeriodEndsAt: tsToObj(data.gracePeriodEndsAt),
         pendingPlan: data.pendingPlan || null,
         pendingPlanEffectiveAt: tsToObj(data.pendingPlanEffectiveAt),
-        paddleCustomerId: data.paddleCustomerId || null,
-        paddleSubscriptionId: data.paddleSubscriptionId || null,
-        paddleUpdatePaymentUrl: data.paddleUpdatePaymentUrl || null,
-        paddleCancelUrl: data.paddleCancelUrl || null,
     };
 }
 
@@ -177,38 +157,12 @@ export async function writeBillingState(uid: string, db: Firestore): Promise<voi
 }
 
 // ═══════════════════════════════════════════════════════════
-// IDEMPOTENCY — paddle_events/{eventId} (legacy) + stripe_events/{eventId} (new)
+// IDEMPOTENCY — stripe_events/{eventId}
 // ═══════════════════════════════════════════════════════════
-
-export async function isEventProcessed(eventId: string, db: Firestore): Promise<boolean> {
-    const doc = await db.collection("paddle_events").doc(eventId).get();
-    return doc.exists;
-}
 
 export async function isStripeEventProcessed(eventId: string, db: Firestore): Promise<boolean> {
     const doc = await db.collection("stripe_events").doc(eventId).get();
     return doc.exists;
-}
-
-export async function markEventProcessed(
-    eventId: string,
-    eventType: string,
-    metadata: {
-        paddleCustomerId?: string;
-        paddleSubscriptionId?: string;
-        email?: string;
-        result: "applied" | "duplicate" | "ignored";
-    },
-    db: Firestore,
-): Promise<void> {
-    await db.collection("paddle_events").doc(eventId).set({
-        eventType,
-        processedAt: FieldValue.serverTimestamp(),
-        paddleCustomerId: metadata.paddleCustomerId || null,
-        paddleSubscriptionId: metadata.paddleSubscriptionId || null,
-        email: metadata.email || null,
-        result: metadata.result,
-    });
 }
 
 export async function markStripeEventProcessed(

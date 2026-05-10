@@ -33,14 +33,6 @@ export interface BillingStateShape {
     gracePeriodEndsAt: Date | null;
     pendingPlan: Plan | null;
     pendingPlanEffectiveAt: Date | null;
-    /** @deprecated Paddle field — kept for backward compat during migration */
-    paddleCustomerId?: string | null;
-    /** @deprecated Paddle field — kept for backward compat during migration */
-    paddleSubscriptionId?: string | null;
-    /** @deprecated Paddle field — kept for backward compat during migration */
-    paddleUpdatePaymentUrl?: string | null;
-    /** @deprecated Paddle field — kept for backward compat during migration */
-    paddleCancelUrl?: string | null;
 }
 
 export const STRIPE_WEBHOOK_EVENTS = [

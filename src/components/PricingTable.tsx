@@ -18,7 +18,6 @@ const SECTIONS = [
 
 type BillingMode = 'monthly' | 'annual';
 
-// PADDLE: CTA buttons call createPaddleCheckout callable
 const plans = [
   { key: 'starter', name: 'Starter', sub: 'Get hooked', monthly: 29, annual: 23.20, badge: null, ctaLabel: 'Start Creating', micro: 'Your first 25 ads', cls: '', ctaCls: '' },
   { key: 'pro', name: 'Pro', sub: 'Full production', monthly: 79, annual: 63.20, badge: { text: 'Most Popular', cls: 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,.35)]' }, ctaLabel: 'Go Full Production', micro: 'Carousels + Meta + intelligence', cls: 'highlight-col', ctaCls: 'pro' },

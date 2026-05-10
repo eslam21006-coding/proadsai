@@ -28,7 +28,7 @@ import { feedbackService, type NegativeFeedbackTag } from './services/feedbackSe
 import { metaService, type MetaConnection } from './services/metaService';
 import { ASPECT_RATIOS, COLD_HOOK_ANGLES, OFFER_TYPES, getRandomUniverse } from './constants';
 import type { UserPlan } from './planconfig';
-import { PLANS, CREDIT_COSTS, TOPUP_PACKS, CREDITS_PER_AD, canUse, canUseRatio, requiredPlanFor, requiredPlanForRatio, hasCredits, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
+import { PLANS, CREDIT_COSTS, TOPUP_PACKS, TOPUP_PRICES, CREDITS_PER_AD, canUse, canUseRatio, requiredPlanFor, requiredPlanForRatio, hasCredits, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
 import { LanguageProvider, useT, type UILanguage } from './i18n';
 import { deriveStatus } from './lib/projectStatus';
 import { resolveCoverImage } from './lib/projectCoverImage';
@@ -1041,7 +1041,7 @@ const App: React.FC = () => {
   const [milestones, setMilestones] = useState<Milestones>(EMPTY_MILESTONES);
   const [showVideoPopup, setShowVideoPopup] = useState(false);
 
-  // 1. Check for topup return from Paddle
+  // 1. Check for topup return
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('topup') === 'success') {
@@ -1070,7 +1070,7 @@ const App: React.FC = () => {
       window.history.replaceState({}, '', window.location.pathname);
     }
 
-    // Restore session after returning from Paddle billing portal
+    // Restore session after returning from Stripe checkout
     const savedPhase = sessionStorage.getItem('proads_return_phase');
     if (savedPhase) {
       sessionStorage.removeItem('proads_return_phase');
@@ -1148,7 +1148,7 @@ const App: React.FC = () => {
           setMilestones(loadedMilestones);
           setTourCompleted(userSnap.data().tourCompleted === true);
           const hasAnyMilestone = loadedMilestones.watchVideo || loadedMilestones.hooksGenerated || loadedMilestones.conceptsGenerated || loadedMilestones.designGenerated || loadedMilestones.copyGenerated;
-          // Check if user is returning from Paddle billing/topup
+          // Check if user is returning from Stripe checkout/topup
           const pendingPhase = sessionStorage.getItem('proads_pending_phase');
           if (pendingPhase) {
             sessionStorage.removeItem('proads_pending_phase');
@@ -1664,7 +1664,7 @@ const App: React.FC = () => {
   const [editHookData, setEditHookData] = useState<{ hookText: string; subhead: string; cta: string; benefit: string }>({ hookText: '', subhead: '', cta: '', benefit: '' });
   const accountMenuRef = useRef<HTMLDivElement>(null);
 
-  // ─── PADDLE CHECKOUT URLS (PADDLE TODO: replace with Paddle checkout page URLs) ───
+  // ─── GHL CHECKOUT URLS (external marketing funnel) ───
   const GHL_URLS: Record<string, string> = {
     starter_monthly: 'https://proadsai.com/checkout/starter',
     starter_annual: 'https://proadsai.com/checkout/starter',
@@ -1873,15 +1873,13 @@ const App: React.FC = () => {
   const handleManageBilling = async () => {
     setBillingTab('manage');
     setShowBillingModal(true);
-    // Fetch subscription data from Cloud Function
     setBillingLoading(true);
     try {
-      const getSubscription = httpsCallable(functions, 'paddleGetSub');
-      const result = await getSubscription();
-      setBillingData(result.data);
+      const createPortal = httpsCallable(functions, 'createStripePortalSession');
+      const result = await createPortal({});
+      setBillingData((result.data as any) || null);
     } catch (error: any) {
-      console.warn('Could not fetch subscription data:', error.message);
-      // Still show modal with Firestore data as fallback
+      console.warn('Could not open billing portal:', error.message);
       setBillingData(null);
     } finally {
       setBillingLoading(false);
@@ -1892,16 +1890,15 @@ const App: React.FC = () => {
     if (!cancelReason) { showToast('Please select a reason.', 'error'); return; }
     setCancelLoading(true);
     try {
-      const cancelSub = httpsCallable(functions, 'paddleCancelSub');
-      const result = await cancelSub({ reason: cancelReason, feedback: cancelFeedback });
+      const createPortal = httpsCallable(functions, 'createStripePortalSession');
+      const result = await createPortal({ flow: 'subscription_cancel' });
       const data = result.data as any;
-      showToast(`Subscription cancelled. Access continues until ${new Date(data.currentPeriodEnd * 1000).toLocaleDateString()}.`, 'info');
+      if (data?.portalUrl) window.open(data.portalUrl, '_blank');
+      showToast('Redirecting to cancellation portal...', 'info');
       setShowCancelFlow(false);
       setCancelStep(1);
       setCancelReason('');
       setCancelFeedback('');
-      // Refresh billing data
-      handleManageBilling();
     } catch (error: any) {
       showToast(`Cancel failed: ${error.message}`, 'error');
     } finally {
@@ -1912,12 +1909,13 @@ const App: React.FC = () => {
   const handleReactivate = async () => {
     setBillingLoading(true);
     try {
-      const reactivate = httpsCallable(functions, 'paddleReactivateSub');
-      await reactivate();
-      showToast('Subscription reactivated!', 'success');
-      handleManageBilling();
+      const createPortal = httpsCallable(functions, 'createStripePortalSession');
+      const result = await createPortal({});
+      const data = result.data as any;
+      if (data?.portalUrl) window.open(data.portalUrl, '_blank');
+      showToast('Opening subscription management portal...', 'success');
     } catch (error: any) {
-      showToast(`Reactivate failed: ${error.message}`, 'error');
+      showToast(`Failed: ${error.message}`, 'error');
     } finally {
       setBillingLoading(false);
     }
@@ -8149,8 +8147,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                       <div className="bg-blue-500/5 border border-blue-500/20 rounded-2xl p-5 text-center space-y-3">
                         <i className="fa-solid fa-lock text-blue-400/40 text-lg"></i>
-                        <p className="text-[11px] text-slate-400">Payment method updates will be available when Paddle integration is active.</p>
-                        <p className="text-[9px] text-slate-600">Encrypted & secure. Powered by Paddle.</p>
+                        <p className="text-[11px] text-slate-400">Update your payment method via the billing portal.</p>
+                        <p className="text-[9px] text-slate-600">Encrypted & secure. Powered by Stripe.</p>
                       </div>
                     </div>
                   )}
@@ -8189,10 +8187,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       onClick={async () => {
                         setTopupLoading(pack.id);
                         try {
-                          const createCheckout = httpsCallable(functions, 'paddleTopupCheckout');
-                          const result = await createCheckout({ packId: `topup_${pack.credits}` });
-                          const data = result.data as { url: string };
-                          if (data.url) window.location.href = data.url;
+                          const createTopUp = httpsCallable(functions, 'createStripeTopUpSession');
+                          const result = await createTopUp({ creditAmount: pack.credits, priceId: TOPUP_PRICES[pack.credits] });
+                          const data = result.data as { checkoutUrl: string };
+                          if (data.checkoutUrl) window.location.href = data.checkoutUrl;
                         } catch (e: any) {
                           showToast(`Top-up failed: ${e.message}`, 'error');
                         } finally {
@@ -8213,7 +8211,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     </button>
                   ))}
                 </div>
-                <p className="text-[8px] text-slate-600 text-center mt-2"><i className="fa-solid fa-lock mr-1"></i>Secure checkout powered by Paddle · Card saved for future purchases</p>
+                <p className="text-[8px] text-slate-600 text-center mt-2"><i className="fa-solid fa-lock mr-1"></i>Secure checkout powered by Stripe</p>
               </div>
 
               {/* Upgrade Plan — only shown when triggered from Upgrade menu or feature gates */}
