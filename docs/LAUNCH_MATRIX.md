@@ -1,4 +1,4 @@
-# Pro Ads AI — Launch Matrix
+ # Pro Ads AI — Launch Matrix
 ## Single Source of Truth for Launch Scope, Approved Combinations, and Behavior Contracts
 
 > **Authority**: This file overrides all older behavior assumptions, the Compatibility Matrix v2, and the ChatGPT master plan for launch scope.
