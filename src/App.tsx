@@ -2312,6 +2312,7 @@ const App: React.FC = () => {
   // ─── MULTI-SIZE SELECTION (Step 3 → Step 4) ─────────────────────
   const [selectedSizes, setSelectedSizes] = useState<Set<AspectRatio>>(new Set(['1:1'] as AspectRatio[]));
   const [singleSelectedConcepts, setSingleSelectedConcepts] = useState<Set<number>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   // --- RENDER GATES (after all hooks) ---
 
@@ -2984,7 +2985,10 @@ const App: React.FC = () => {
   // Plan-agnostic shape migration: universe remap (r_sushi_bar → r_sushi_counter,
   // "Premium Sushi Bar" → "Premium Sushi Counter") and style/universe mode normalization.
   // Safe to run before userPlan is resolved (i.e., on the startup auto-restore path).
-  const migrateProjectInputsShape = (rawInputs: any): any => {
+  // Declared as a function (not const arrow) so it hoists to the top of App — render
+  // gates above this line would otherwise leave it in TDZ when the auto-restore
+  // useEffect callback fires.
+  function migrateProjectInputsShape(rawInputs: any): any {
     if (!rawInputs) return null;
     const _style = (rawInputs.visualStyleFamily ?? rawInputs.universeMode ?? 'realistic') as 'realistic' | 'fantasy' | 'minimal';
     const rawUniverse = rawInputs.preferredUniverse;
@@ -2996,7 +3000,7 @@ const App: React.FC = () => {
       universeMode: _style,
       visualStyleFamily: _style,
     };
-  };
+  }
 
   // Plan-aware migration: calls the shape migration first, then enforces retargeting
   // entitlement based on the explicit `plan` argument. MUST NOT be called before
@@ -3103,8 +3107,6 @@ const App: React.FC = () => {
       resetToBlankProject();
     }
   };
-
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const deleteProject = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
