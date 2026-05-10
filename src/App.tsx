@@ -2312,6 +2312,7 @@ const App: React.FC = () => {
   // ─── MULTI-SIZE SELECTION (Step 3 → Step 4) ─────────────────────
   const [selectedSizes, setSelectedSizes] = useState<Set<AspectRatio>>(new Set(['1:1'] as AspectRatio[]));
   const [singleSelectedConcepts, setSingleSelectedConcepts] = useState<Set<number>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   // --- RENDER GATES (after all hooks) ---
 
@@ -3106,8 +3107,6 @@ const App: React.FC = () => {
       resetToBlankProject();
     }
   };
-
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const deleteProject = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
