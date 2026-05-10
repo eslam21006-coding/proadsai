@@ -115,3 +115,12 @@ Any data migration script that touches `plan` MUST run two separate queries (Fir
 - Production state after this M1 deploy: live + M1 additions only (Phase 12 still pending)
 - When Phase 12 is validated post-audit: a future `firebase deploy --only firestore:rules` from this branch (or a successor) will land the workspace tightening
 - Pattern note: 3 examples now of "marked Done ≠ deployed" (Paddle drift, scaling drift, Phase 12 rule drift). Post-21 audit must explicitly verify infrastructure deploy state for every phase, not just code state.
+
+## M2 Deferred Items (2026-05-10)
+
+- T063: useBillingState does not swap listener to teamOwnerUid for team members.
+  Hook subscribes unconditionally to users/{user.uid}. Defer to post-MVP smoke tests.
+
+- M3 minor: top_up.completed and subscription.created GHL payloads send amount=0.
+  Dollar value requires session.amount_total — not passed at call site.
+  Defer to post-21 audit.
