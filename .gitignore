@@ -65,3 +65,7 @@ Desktop.ini
 *.zip.bak
 *.7z
 
+# Local operational artifacts (test fixtures, scratch files)
+test-payload.json
+test-payload*.json
+*.test-payload.json
