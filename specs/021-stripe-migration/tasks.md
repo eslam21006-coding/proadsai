@@ -80,6 +80,8 @@ Web application:
 
 **Independent Test**: (a) Trigger a GHL funnel checkout with a fresh email; verify `pending_plans/{email}` is created. (b) Create a Firebase Auth account with that email; verify the pending doc is consumed. (c) Separately create a fresh Firebase Auth account with no pending plan; verify the mandatory billing modal appears. (d) Click a plan in the modal; verify the user is redirected to a Stripe-hosted Checkout Session (NOT GHL); verify the webhook writes to `users/{uid}` and the modal auto-closes.
 
+**M2 review checklist (added during M1 close-out, 2026-05-10)**: When verifying the new Stripe webhook handler's `writeBillingState()` invocations during M2 audit, confirm BOTH `users/{uid}.plan` AND `users/{uid}.billingState.plan` are written atomically. The existing implementation should preserve this dual-write guarantee, but the M1 backfill (commit `d9ed612`) discovered drift was possible. M2 audit must explicitly verify code paths that touch `plan`.
+
 ### Tests for User Story 14 + 2
 
 - [ ] T024 [US2] (a) Create `functions/src/billing/__tests__/stripeWebhook.test.ts` with 9 webhook scenarios stub (subscription create in-app, subscription create GHL, dual-event dedup, subscription update plan-change, subscription update trial→active, subscription deleted, payment_succeeded renewal, payment_failed, charge.refunded subscription full); (b) rewrite `functions/src/billing/__tests__/billingState.test.ts` — drop Paddle field assertions (`paddleCustomerId`, `paddleSubscriptionId`, `paddleUpdatePaymentUrl`, `paddleCancelUrl`), add Stripe-shape assertions (`stripeCustomerId`, `stripeSubscriptionId`), update mock Subscription objects to Stripe shape per data-model.md
