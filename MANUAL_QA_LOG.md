@@ -32,6 +32,7 @@
 
 Both blockers must be resolved before live cutover.
 
+HEAD
 
 
 \---
@@ -97,4 +98,10 @@ Audit deliverable: pass/fail per phase with specific failures listed; failures b
 
 
 This commitment is non-negotiable. New feature work is gated on completion of this audit.
+
+**[2026-05-10] GOTCHA: `plan` field exists in two Firestore locations**
+- Top-level: `users/{uid}.plan` (read by server-side code, including `entitlements.ts`)
+- Nested: `users/{uid}.billingState.plan` (read by realtime listener `useBillingState.ts`)
+Any data migration script that touches `plan` MUST run two separate queries (Firestore can't OR cheaply across different field paths) and rewrite both atomically per document. The M1 backfill script (`functions/scripts/backfillScalingPlan.ts`) at commit `d9ed612` is the canonical pattern. Detected during M1 paranoid checkpoint #1 — first version of the script (commit `85c0b39`) only touched the top-level field, leaving `billingState.plan` stale on all 3 migrated docs. Required a second `--apply` run to fix.
+06f5c2e (qa-log(M1): document plan two-field gotcha discovered during backfill)
 
