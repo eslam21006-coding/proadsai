@@ -1921,13 +1921,23 @@ const App: React.FC = () => {
   const handleReactivate = async () => {
     setBillingLoading(true);
     try {
-      const createPortal = httpsCallable(functions, 'createStripePortalSession');
+      const createPortal = httpsCallable<
+        { flow?: string; returnUrl?: string },
+        { portalUrl?: string }
+      >(functions, 'createStripePortalSession');
       const result = await createPortal({});
-      const data = result.data as any;
-      if (data?.portalUrl) window.open(data.portalUrl, '_blank');
-      showToast('Opening subscription management portal...', 'success');
-    } catch (error: any) {
-      showToast(`Failed: ${error.message}`, 'error');
+      const portalUrl = result.data?.portalUrl;
+      if (portalUrl) {
+        window.open(portalUrl, '_blank');
+        showToast(t('billing.redirectingPortal'), 'success');
+      } else {
+        console.error('createStripePortalSession returned no portalUrl');
+        showToast(t('billing.failedOpenPortal'), 'error');
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('Reactivate failed:', message);
+      showToast(t('billing.failedOpenPortal'), 'error');
     } finally {
       setBillingLoading(false);
     }
@@ -8159,8 +8169,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                       <div className="bg-blue-500/5 border border-blue-500/20 rounded-2xl p-5 text-center space-y-3">
                         <i className="fa-solid fa-lock text-blue-400/40 text-lg"></i>
-                        <p className="text-[11px] text-slate-400">Update your payment method via the billing portal.</p>
-                        <p className="text-[9px] text-slate-600">Encrypted & secure. Powered by Stripe.</p>
+                        <p className="text-[11px] text-slate-400">{t('billing.updatePaymentInPortal')}</p>
+                        <p className="text-[9px] text-slate-600">{t('billing.encryptedSecurePoweredByStripe')}</p>
                       </div>
                     </div>
                   )}
@@ -8239,7 +8249,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     </button>
                   ))}
                 </div>
-                <p className="text-[8px] text-slate-600 text-center mt-2"><i className="fa-solid fa-lock mr-1"></i>Secure checkout powered by Stripe</p>
+                <p className="text-[8px] text-slate-600 text-center mt-2"><i className="fa-solid fa-lock mr-1"></i>{t('billing.secureCheckoutByStripe')}</p>
               </div>
 
               {/* Upgrade Plan — only shown when triggered from Upgrade menu or feature gates */}

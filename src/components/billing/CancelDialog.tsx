@@ -52,13 +52,18 @@ export const CancelDialog: React.FC<CancelDialogProps> = ({
   const [step, setStep] = useState<1 | 2>(1);
   const [reason, setReason] = useState<CancellationReason | "">("");
   const [feedback, setFeedback] = useState("");
+  // Re-entrancy guard — the parent's `loading` prop only flips after onConfirm
+  // fires, so a rapid double-click here could otherwise produce two
+  // cancellation_logs entries and two portal sessions.
+  const [submitting, setSubmitting] = useState(false);
 
   const dateText = cancelAt
     ? t("billing.cancel.periodEnd") + " " + cancelAt
     : t("billing.cancel.periodEnd");
 
   const handleSubmit = async () => {
-    if (!reason) return;
+    if (!reason || submitting) return;
+    setSubmitting(true);
     try {
       await setDoc(doc(db, "cancellation_logs", `${uid}_${Date.now()}`), {
         uid,
@@ -90,6 +95,8 @@ export const CancelDialog: React.FC<CancelDialogProps> = ({
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       console.error("Failed to open Stripe portal:", message);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -146,11 +153,11 @@ export const CancelDialog: React.FC<CancelDialogProps> = ({
                 Back
               </button>
               <button
-                disabled={!reason || loading}
+                disabled={!reason || loading || submitting}
                 onClick={handleSubmit}
                 className="flex-1 py-2.5 rounded-lg bg-red-600 hover:bg-red-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-sm font-semibold transition-all"
               >
-                {loading ? "Cancelling..." : t("billing.cancel.submit")}
+                {loading || submitting ? "Cancelling..." : t("billing.cancel.submit")}
               </button>
             </div>
           </>
