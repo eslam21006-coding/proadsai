@@ -9,7 +9,9 @@ import { writeBillingState, markStripeEventProcessed, isStripeEventProcessed, PL
 import { logBillingStep } from "./billingLogger.js";
 import type { notifyGHL } from "./ghlBillingSync.js";
 
-const db = admin.firestore();
+// NOTE: Do NOT cache `admin.firestore()` at module load — this file is imported
+// before `admin.initializeApp()` runs, which fails Firebase deploy analysis.
+// Always call inline.
 
 type NotifyGHLFn = typeof notifyGHL;
 
@@ -78,7 +80,7 @@ export async function handleStripeWebhook(
 
     // ─── Step 2: Event-ID idempotency check (atomic .create) ───
     try {
-        await db.collection("stripe_events").doc(event.id).create({
+        await admin.firestore().collection("stripe_events").doc(event.id).create({
             eventType: event.type,
             receivedAt: FieldValue.serverTimestamp(),
         });
@@ -125,7 +127,7 @@ export async function handleStripeWebhook(
                 logBillingStep("stripe_event_unknown", event.id, "ignored", "stripe_event_unknown", {
                     eventType,
                 });
-                await markStripeEventProcessed(event.id, eventType, { result: "ignored" }, db);
+                await markStripeEventProcessed(event.id, eventType, { result: "ignored" }, admin.firestore());
                 res.status(200).send("OK (unknown event)");
                 return;
         }
@@ -158,7 +160,7 @@ async function handleCheckoutSessionCompleted(event: Stripe.Event, stripe: Strip
     } else if (mode === "payment") {
         await handlePaymentCheckout(session, event, stripe);
     } else {
-        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, db);
+        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, admin.firestore());
     }
 }
 
@@ -193,7 +195,7 @@ async function handleSubscriptionCheckout(
             stripeCustomerId: stripeCustomerId ?? undefined,
             email: customerEmail,
             result: "ignored",
-        }, db);
+        }, admin.firestore());
         return;
     }
 
@@ -205,9 +207,9 @@ async function handleSubscriptionCheckout(
     if (clientRefId) {
         // ─── In-app authenticated user (Path B) ───
         const uid = clientRefId;
-        const userRef = db.collection("users").doc(uid);
+        const userRef = admin.firestore().collection("users").doc(uid);
 
-        await db.runTransaction(async (tx) => {
+        await admin.firestore().runTransaction(async (tx) => {
             const snap = await tx.get(userRef);
             const existing = snap.exists ? snap.data() : {};
             const updateData: Record<string, any> = {
@@ -229,13 +231,13 @@ async function handleSubscriptionCheckout(
             tx.set(userRef, updateData, { merge: true });
         });
 
-        await writeBillingState(uid, db);
+        await writeBillingState(uid, admin.firestore());
         await markStripeEventProcessed(event.id, event.type, {
             stripeCustomerId: stripeCustomerId ?? undefined,
             stripeSubscriptionId: stripeSubscriptionId ?? undefined,
             email: customerEmail,
             result: "applied",
-        }, db);
+        }, admin.firestore());
 
         logBillingStep("stripe_checkout_inapp", event.id, "success", undefined, {
             uid,
@@ -259,7 +261,7 @@ async function handleSubscriptionCheckout(
         } catch { /* fire-and-forget */ }
     } else if (customerEmail) {
         // ─── GHL funnel user (Path A) — write to pending_plans ───
-        await db.collection("pending_plans").doc(customerEmail).set({
+        await admin.firestore().collection("pending_plans").doc(customerEmail).set({
             email: customerEmail,
             plan,
             credits,
@@ -276,7 +278,7 @@ async function handleSubscriptionCheckout(
             stripeSubscriptionId: stripeSubscriptionId ?? undefined,
             email: customerEmail,
             result: "applied",
-        }, db);
+        }, admin.firestore());
 
         logBillingStep("stripe_checkout_pending", event.id, "success", undefined, {
             email: customerEmail,
@@ -298,7 +300,7 @@ async function handleSubscriptionCheckout(
             });
         } catch { /* fire-and-forget */ }
     } else {
-        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, db);
+        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, admin.firestore());
     }
 }
 
@@ -309,7 +311,7 @@ async function handlePaymentCheckout(
 ): Promise<void> {
     const isTopUp = session.metadata?.isTopUp === "true";
     if (!isTopUp) {
-        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, db);
+        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, admin.firestore());
         return;
     }
 
@@ -320,12 +322,12 @@ async function handlePaymentCheckout(
         logBillingStep("stripe_topup_metadata", event.id, "error", undefined, {
             metadata: session.metadata,
         });
-        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, db);
+        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, admin.firestore());
         return;
     }
 
-    const userRef = db.collection("users").doc(uid);
-    await db.runTransaction(async (tx) => {
+    const userRef = admin.firestore().collection("users").doc(uid);
+    await admin.firestore().runTransaction(async (tx) => {
         const snap = await tx.get(userRef);
         if (!snap.exists) {
             throw new Error(`User ${uid} not found`);
@@ -338,11 +340,11 @@ async function handlePaymentCheckout(
         });
     });
 
-    await writeBillingState(uid, db);
+    await writeBillingState(uid, admin.firestore());
     await markStripeEventProcessed(event.id, event.type, {
         email: session.metadata?.firebaseUid,
         result: "applied",
-    }, db);
+    }, admin.firestore());
 
     logBillingStep("stripe_topup_applied", event.id, "success", undefined, {
         uid,
@@ -370,7 +372,7 @@ async function handleSubscriptionCreated(event: Stripe.Event, stripe: Stripe): P
 
     if (firebaseUid) {
         // ─── Application-level dedup ───
-        const userDoc = await db.collection("users").doc(firebaseUid).get();
+        const userDoc = await admin.firestore().collection("users").doc(firebaseUid).get();
         if (userDoc.exists && userDoc.data()?.stripeSubscriptionId === stripeSubscriptionId) {
             logBillingStep("stripe_sub_created_dedup", event.id, "duplicate", "stripe_event_duplicate", {
                 uid: firebaseUid,
@@ -380,7 +382,7 @@ async function handleSubscriptionCreated(event: Stripe.Event, stripe: Stripe): P
                 stripeCustomerId: stripeCustomerId ?? undefined,
                 stripeSubscriptionId,
                 result: "noop_dual_event",
-            }, db);
+            }, admin.firestore());
             return;
         }
 
@@ -389,7 +391,7 @@ async function handleSubscriptionCreated(event: Stripe.Event, stripe: Stripe): P
                 stripeCustomerId: stripeCustomerId ?? undefined,
                 stripeSubscriptionId,
                 result: "ignored",
-            }, db);
+            }, admin.firestore());
             return;
         }
 
@@ -398,8 +400,8 @@ async function handleSubscriptionCreated(event: Stripe.Event, stripe: Stripe): P
         const isTrial = subscription.status === "trialing";
         const credits = isTrial ? 50 : (PLAN_CREDITS[plan] ?? 0);
 
-        const userRef = db.collection("users").doc(firebaseUid);
-        await db.runTransaction(async (tx) => {
+        const userRef = admin.firestore().collection("users").doc(firebaseUid);
+        await admin.firestore().runTransaction(async (tx) => {
             const snap = await tx.get(userRef);
             const existing = snap.exists ? snap.data() : {};
             const updateData: Record<string, any> = {
@@ -419,13 +421,13 @@ async function handleSubscriptionCreated(event: Stripe.Event, stripe: Stripe): P
             tx.set(userRef, updateData, { merge: true });
         });
 
-        await writeBillingState(firebaseUid, db);
+        await writeBillingState(firebaseUid, admin.firestore());
         await markStripeEventProcessed(event.id, event.type, {
             stripeCustomerId: stripeCustomerId ?? undefined,
             stripeSubscriptionId,
             email: undefined,
             result: "applied",
-        }, db);
+        }, admin.firestore());
 
         logBillingStep("stripe_sub_created_inapp", event.id, "success", undefined, {
             uid: firebaseUid,
@@ -445,7 +447,7 @@ async function handleSubscriptionCreated(event: Stripe.Event, stripe: Stripe): P
             const isTrial = subscription.status === "trialing";
             const credits = isTrial ? 50 : (PLAN_CREDITS[plan] ?? 0);
 
-            await db.collection("pending_plans").doc(email).set({
+            await admin.firestore().collection("pending_plans").doc(email).set({
                 email,
                 plan,
                 credits,
@@ -462,17 +464,17 @@ async function handleSubscriptionCreated(event: Stripe.Event, stripe: Stripe): P
                 stripeSubscriptionId,
                 email,
                 result: "applied",
-            }, db);
+            }, admin.firestore());
         } else {
             await markStripeEventProcessed(event.id, event.type, {
                 stripeCustomerId,
                 stripeSubscriptionId,
                 email,
                 result: "ignored",
-            }, db);
+            }, admin.firestore());
         }
     } else {
-        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, db);
+        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, admin.firestore());
     }
 }
 
@@ -487,7 +489,7 @@ async function handleSubscriptionUpdated(event: Stripe.Event, _stripe: Stripe): 
     const planInfo = priceId ? STRIPE_PRICE_TO_PLAN[priceId] : undefined;
 
     // Find user by stripeCustomerId
-    const usersSnap = await db.collection("users")
+    const usersSnap = await admin.firestore().collection("users")
         .where("stripeCustomerId", "==", stripeCustomerId)
         .limit(1)
         .get();
@@ -497,7 +499,7 @@ async function handleSubscriptionUpdated(event: Stripe.Event, _stripe: Stripe): 
             stripeCustomerId: stripeCustomerId ?? undefined,
             stripeSubscriptionId,
             result: "ignored",
-        }, db);
+        }, admin.firestore());
         return;
     }
 
@@ -542,15 +544,15 @@ async function handleSubscriptionUpdated(event: Stripe.Event, _stripe: Stripe): 
     }
 
     if (Object.keys(updateData).length > 0) {
-        await db.collection("users").doc(uid).update(updateData);
-        await writeBillingState(uid, db);
+        await admin.firestore().collection("users").doc(uid).update(updateData);
+        await writeBillingState(uid, admin.firestore());
     }
 
     await markStripeEventProcessed(event.id, event.type, {
         stripeCustomerId: stripeCustomerId ?? undefined,
         stripeSubscriptionId,
         result: "applied",
-    }, db);
+    }, admin.firestore());
 
     // GHL sync — subscription.created on trial→active conversion
     if (previousIsTrial && status === "active") {
@@ -576,7 +578,7 @@ async function handleSubscriptionDeleted(event: Stripe.Event, _stripe: Stripe): 
     const subscription = event.data.object as Stripe.Subscription;
     const stripeCustomerId = typeof subscription.customer === "string" ? subscription.customer : subscription.customer?.id;
 
-    const usersSnap = await db.collection("users")
+    const usersSnap = await admin.firestore().collection("users")
         .where("stripeCustomerId", "==", stripeCustomerId)
         .limit(1)
         .get();
@@ -586,13 +588,13 @@ async function handleSubscriptionDeleted(event: Stripe.Event, _stripe: Stripe): 
             stripeCustomerId: stripeCustomerId ?? undefined,
             stripeSubscriptionId: subscription.id,
             result: "ignored",
-        }, db);
+        }, admin.firestore());
         return;
     }
 
     const uid = usersSnap.docs[0].id;
 
-    await db.collection("users").doc(uid).update({
+    await admin.firestore().collection("users").doc(uid).update({
         plan: "none",
         credits: 0,
         billingStatus: "cancelled",
@@ -604,12 +606,12 @@ async function handleSubscriptionDeleted(event: Stripe.Event, _stripe: Stripe): 
         planUpdatedAt: FieldValue.serverTimestamp(),
     });
 
-    await writeBillingState(uid, db);
+    await writeBillingState(uid, admin.firestore());
     await markStripeEventProcessed(event.id, event.type, {
         stripeCustomerId: stripeCustomerId ?? undefined,
         stripeSubscriptionId: subscription.id,
         result: "applied",
-    }, db);
+    }, admin.firestore());
 
     logBillingStep("stripe_sub_deleted", event.id, "success", undefined, { uid });
 
@@ -621,7 +623,7 @@ async function handleSubscriptionDeleted(event: Stripe.Event, _stripe: Stripe): 
         let cancellationReason: string | null = null;
         let cancelAt: string | null = null;
         try {
-            const logsSnap = await db.collection("cancellation_logs")
+            const logsSnap = await admin.firestore().collection("cancellation_logs")
                 .where("uid", "==", uid)
                 .orderBy("createdAt", "desc")
                 .limit(1)
@@ -652,13 +654,13 @@ async function handleInvoicePaymentSucceeded(event: Stripe.Event, _stripe: Strip
 
     // Skip initial subscription_create — credits already set by checkout.session.completed
     if (billingReason === "subscription_create") {
-        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, db);
+        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, admin.firestore());
         return;
     }
 
     // Only reset credits on subscription_cycle renewals
     if (billingReason !== "subscription_cycle") {
-        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, db);
+        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, admin.firestore());
         logBillingStep("stripe_payment_succeeded_skip", event.id, "ignored", undefined, {
             billingReason: billingReason ?? "unknown",
         });
@@ -667,11 +669,11 @@ async function handleInvoicePaymentSucceeded(event: Stripe.Event, _stripe: Strip
 
     const stripeCustomerId = typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
     if (!stripeCustomerId) {
-        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, db);
+        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, admin.firestore());
         return;
     }
 
-    const usersSnap = await db.collection("users")
+    const usersSnap = await admin.firestore().collection("users")
         .where("stripeCustomerId", "==", stripeCustomerId)
         .limit(1)
         .get();
@@ -680,7 +682,7 @@ async function handleInvoicePaymentSucceeded(event: Stripe.Event, _stripe: Strip
         await markStripeEventProcessed(event.id, event.type, {
             stripeCustomerId,
             result: "ignored",
-        }, db);
+        }, admin.firestore());
         return;
     }
 
@@ -696,9 +698,9 @@ async function handleInvoicePaymentSucceeded(event: Stripe.Event, _stripe: Strip
     // Renewal: reset credits inside a transaction so an in-flight top-up's increment
     // is not silently overwritten. Preserve any excess (current > planAllocation) — that
     // excess is paid-for top-up balance that should carry across the cycle boundary.
-    const userRef = db.collection("users").doc(uid);
+    const userRef = admin.firestore().collection("users").doc(uid);
     let credits = planAllocation;
-    await db.runTransaction(async (tx) => {
+    await admin.firestore().runTransaction(async (tx) => {
         const snap = await tx.get(userRef);
         if (!snap.exists) return;
         const currentCredits = snap.data()?.credits ?? 0;
@@ -718,11 +720,11 @@ async function handleInvoicePaymentSucceeded(event: Stripe.Event, _stripe: Strip
         tx.update(userRef, update);
     });
 
-    await writeBillingState(uid, db);
+    await writeBillingState(uid, admin.firestore());
     await markStripeEventProcessed(event.id, event.type, {
         stripeCustomerId,
         result: "applied",
-    }, db);
+    }, admin.firestore());
 
     logBillingStep("stripe_payment_succeeded", event.id, "success", undefined, {
         uid,
@@ -749,11 +751,11 @@ async function handleInvoicePaymentFailed(event: Stripe.Event, _stripe: Stripe):
     const stripeCustomerId = typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
 
     if (!stripeCustomerId) {
-        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, db);
+        await markStripeEventProcessed(event.id, event.type, { result: "ignored" }, admin.firestore());
         return;
     }
 
-    const usersSnap = await db.collection("users")
+    const usersSnap = await admin.firestore().collection("users")
         .where("stripeCustomerId", "==", stripeCustomerId)
         .limit(1)
         .get();
@@ -762,25 +764,25 @@ async function handleInvoicePaymentFailed(event: Stripe.Event, _stripe: Stripe):
         await markStripeEventProcessed(event.id, event.type, {
             stripeCustomerId,
             result: "ignored",
-        }, db);
+        }, admin.firestore());
         return;
     }
 
     const uid = usersSnap.docs[0].id;
     const gracePeriodEndsAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
 
-    await db.collection("users").doc(uid).update({
+    await admin.firestore().collection("users").doc(uid).update({
         billingStatus: "past_due",
         billingIssueAt: FieldValue.serverTimestamp(),
         billingIssueType: "payment_failed",
         gracePeriodEndsAt: admin.firestore.Timestamp.fromDate(gracePeriodEndsAt),
     });
 
-    await writeBillingState(uid, db);
+    await writeBillingState(uid, admin.firestore());
     await markStripeEventProcessed(event.id, event.type, {
         stripeCustomerId,
         result: "applied",
-    }, db);
+    }, admin.firestore());
 
     logBillingStep("stripe_payment_failed", event.id, "success", undefined, { uid });
 
@@ -809,7 +811,7 @@ async function handleChargeRefunded(event: Stripe.Event, stripe: Stripe): Promis
         });
         await markStripeEventProcessed(event.id, event.type, {
             result: "partial_refund_logged",
-        }, db);
+        }, admin.firestore());
         return;
     }
 
@@ -824,8 +826,8 @@ async function handleChargeRefunded(event: Stripe.Event, stripe: Stripe): Promis
 
         if (uid && creditAmount > 0) {
             let deducted = 0;
-            await db.runTransaction(async (tx) => {
-                const userRef = db.collection("users").doc(uid);
+            await admin.firestore().runTransaction(async (tx) => {
+                const userRef = admin.firestore().collection("users").doc(uid);
                 const snap = await tx.get(userRef);
                 if (!snap.exists) return;
                 const currentCredits = snap.data()?.credits ?? 0;
@@ -833,10 +835,10 @@ async function handleChargeRefunded(event: Stripe.Event, stripe: Stripe): Promis
                 tx.update(userRef, { credits: currentCredits - deducted });
             });
 
-            await writeBillingState(uid, db);
+            await writeBillingState(uid, admin.firestore());
 
             // Write refund_logs
-            await db.collection("refund_logs").doc(`${uid}_${Date.now()}`).set({
+            await admin.firestore().collection("refund_logs").doc(`${uid}_${Date.now()}`).set({
                 uid,
                 email: metadata.email ?? null,
                 chargeId: charge.id,
@@ -857,14 +859,14 @@ async function handleChargeRefunded(event: Stripe.Event, stripe: Stripe): Promis
             });
         }
         // NO GHL POST for top-up refunds
-        await markStripeEventProcessed(event.id, event.type, { result: "applied" }, db);
+        await markStripeEventProcessed(event.id, event.type, { result: "applied" }, admin.firestore());
     } else {
         // ─── Full subscription refund ───
         const stripeCustomerId = typeof charge.customer === "string" ? charge.customer : undefined;
         let uid: string | undefined;
 
         if (stripeCustomerId) {
-            const usersSnap = await db.collection("users")
+            const usersSnap = await admin.firestore().collection("users")
                 .where("stripeCustomerId", "==", stripeCustomerId)
                 .limit(1)
                 .get();
@@ -876,11 +878,11 @@ async function handleChargeRefunded(event: Stripe.Event, stripe: Stripe): Promis
         if (uid) {
             // Single user-doc read — reused for both the cancellation_logs entry and the
             // stripe.subscriptions.cancel call below.
-            const userSnap = await db.collection("users").doc(uid).get();
+            const userSnap = await admin.firestore().collection("users").doc(uid).get();
             const userData = userSnap.data();
 
             // Write cancellation_logs BEFORE cancelling (so GHL can read reason)
-            await db.collection("cancellation_logs").doc(`${uid}_${Date.now()}`).set({
+            await admin.firestore().collection("cancellation_logs").doc(`${uid}_${Date.now()}`).set({
                 uid,
                 email: metadata.email ?? null,
                 plan: userData?.plan ?? "none",
@@ -908,6 +910,6 @@ async function handleChargeRefunded(event: Stripe.Event, stripe: Stripe): Promis
             amount: refundAmount,
             source: "subscription",
         });
-        await markStripeEventProcessed(event.id, event.type, { result: "applied" }, db);
+        await markStripeEventProcessed(event.id, event.type, { result: "applied" }, admin.firestore());
     }
 }

@@ -4,7 +4,9 @@ import type Stripe from "stripe";
 import * as admin from "firebase-admin";
 import { createStripeClient, STRIPE_PRICE_TO_PLAN, STRIPE_TOPUP_PRICES } from "./stripeClient.js";
 
-const db = admin.firestore();
+// NOTE: Do NOT cache `admin.firestore()` at module load — this file is imported
+// before `admin.initializeApp()` runs, which fails Firebase deploy analysis.
+// Always call inline.
 
 export async function createStripeCheckoutSessionImpl(
     uid: string,
@@ -18,7 +20,7 @@ export async function createStripeCheckoutSessionImpl(
     }
 
     const stripe = createStripeClient(stripeSecretKey);
-    const userDoc = await db.collection("users").doc(uid).get();
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
     const userData = userDoc.exists ? userDoc.data() : {};
     const existingCustomerId = userData?.stripeCustomerId as string | undefined;
 
@@ -66,7 +68,7 @@ export async function createStripeTopUpSessionImpl(
     }
 
     const stripe = createStripeClient(stripeSecretKey);
-    const userDoc = await db.collection("users").doc(uid).get();
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
     const userData = userDoc.exists ? userDoc.data() : {};
     const existingCustomerId = userData?.stripeCustomerId as string | undefined;
 

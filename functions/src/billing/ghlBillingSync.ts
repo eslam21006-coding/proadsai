@@ -4,7 +4,9 @@ import * as admin from "firebase-admin";
 import { logBillingStep } from "./billingLogger.js";
 import { createStripeClient } from "../stripe/stripeClient.js";
 
-const db = admin.firestore();
+// NOTE: Do NOT cache `admin.firestore()` at module load — this file is imported
+// before `admin.initializeApp()` runs, which fails Firebase deploy analysis
+// with "The default Firebase app does not exist". Always call inline.
 
 export type GHLEventType =
     | "trial.started"
@@ -48,7 +50,7 @@ async function resolveUser(identifier: string): Promise<ResolvedUser> {
     }
 
     try {
-        const doc = await db.collection("users").doc(identifier).get();
+        const doc = await admin.firestore().collection("users").doc(identifier).get();
         if (doc.exists) {
             const data = doc.data()!;
             return {

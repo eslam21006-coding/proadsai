@@ -4,7 +4,10 @@ import * as functions from "firebase-functions";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
 
-const db = admin.firestore();
+// NOTE: Do NOT cache `admin.firestore()` at module load — this file is imported
+// before `admin.initializeApp()` runs, which fails Firebase deploy analysis.
+// Always call inline.
+
 const THIRTY_DAYS_MS = 30 * 24 * 3600 * 1000;
 const PAGE_SIZE = 400;
 const PURGE_BATCH_SIZE = 200;
@@ -38,7 +41,7 @@ export const purgeExpiredWorkspaces = onSchedule(
 
     try {
       while (summary.workspacesChecked < MAX_ITEMS_PER_INVOCATION) {
-        let q: admin.firestore.Query = db
+        let q: admin.firestore.Query = admin.firestore()
           .collectionGroup("workspaces")
           .where("deletedAt", "<=", cutoff)
           .orderBy("deletedAt", "asc")
@@ -105,7 +108,7 @@ async function paginatedUpdate(
   while (true) {
     const snap = await buildQuery(cursor).get();
     if (snap.empty) break;
-    const batch = db.batch();
+    const batch = admin.firestore().batch();
     for (const doc of snap.docs) {
       batch.update(doc.ref, applyUpdate(doc));
     }
@@ -123,7 +126,7 @@ export async function cascadeReassignOnDelete(
   // Generations — scope by owner AND workspaceId so another owner's records never leak into the update.
   await paginatedUpdate(
     (cursor) => {
-      let q: admin.firestore.Query = db
+      let q: admin.firestore.Query = admin.firestore()
         .collection("generations")
         .where("userId", "==", ownerUid)
         .where("workspaceId", "==", deletedWorkspaceId)
@@ -140,7 +143,7 @@ export async function cascadeReassignOnDelete(
   // Saved projects under this owner only.
   await paginatedUpdate(
     (cursor) => {
-      let q: admin.firestore.Query = db
+      let q: admin.firestore.Query = admin.firestore()
         .collection(`users/${ownerUid}/projects`)
         .where("workspaceId", "==", deletedWorkspaceId)
         .limit(PAGE_SIZE);
@@ -154,12 +157,12 @@ export async function cascadeReassignOnDelete(
   );
 
   // Team members — bounded small list, one batch is fine.
-  const teamSnap = await db
+  const teamSnap = await admin.firestore()
     .collection(`users/${ownerUid}/team`)
     .where("workspaceAccess", "array-contains", deletedWorkspaceId)
     .get();
   if (!teamSnap.empty) {
-    const batch = db.batch();
+    const batch = admin.firestore().batch();
     for (const doc of teamSnap.docs) {
       const data = doc.data();
       const access: string[] = data.workspaceAccess ?? [];
@@ -173,7 +176,7 @@ export async function cascadeReassignOnDelete(
   }
 
   // Clear the pending flag only after every page has been processed.
-  await db
+  await admin.firestore()
     .collection(`users/${ownerUid}/workspaces`)
     .doc(deletedWorkspaceId)
     .update({ pendingReassign: false });
@@ -185,7 +188,7 @@ export async function cascadeRevertOnRestore(
 ): Promise<void> {
   await paginatedUpdate(
     (cursor) => {
-      let q: admin.firestore.Query = db
+      let q: admin.firestore.Query = admin.firestore()
         .collection("generations")
         .where("userId", "==", ownerUid)
         .where("reassignedFromWorkspaceId", "==", restoredWorkspaceId)
@@ -201,7 +204,7 @@ export async function cascadeRevertOnRestore(
 
   await paginatedUpdate(
     (cursor) => {
-      let q: admin.firestore.Query = db
+      let q: admin.firestore.Query = admin.firestore()
         .collection(`users/${ownerUid}/projects`)
         .where("reassignedFromWorkspaceId", "==", restoredWorkspaceId)
         .limit(PAGE_SIZE);
@@ -216,12 +219,12 @@ export async function cascadeRevertOnRestore(
 
   // Mirror the reassign cascade: filter team docs server-side via array-contains
   // on removedWorkspaceAccessByDelete so we don't fetch every member doc.
-  const teamSnap = await db
+  const teamSnap = await admin.firestore()
     .collection(`users/${ownerUid}/team`)
     .where("removedWorkspaceAccessByDelete", "array-contains", restoredWorkspaceId)
     .get();
   if (!teamSnap.empty) {
-    const batch = db.batch();
+    const batch = admin.firestore().batch();
     let pending = 0;
     for (const doc of teamSnap.docs) {
       const data = doc.data();
@@ -238,7 +241,7 @@ export async function cascadeRevertOnRestore(
     if (pending > 0) await batch.commit();
   }
 
-  await db
+  await admin.firestore()
     .collection(`users/${ownerUid}/workspaces`)
     .doc(restoredWorkspaceId)
     .update({ pendingRestore: false });

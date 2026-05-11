@@ -5,7 +5,9 @@ import * as admin from "firebase-admin";
 import { resolveCallerScope } from "../workspaces/workspacePolicy.js";
 import { stepsWithData } from "./projectStepsData.js";
 
-const db = admin.firestore();
+// NOTE: Do NOT cache `admin.firestore()` at module load — this file is imported
+// before `admin.initializeApp()` runs, which fails Firebase deploy analysis.
+// Always call inline.
 
 interface GetRequest {
   workspaceId?: string;
@@ -45,7 +47,7 @@ export const getUserProjects = onCall({ region: "europe-west1" }, async (request
 
   // Fetch one extra row so we can tell "exactly N items returned" apart from
   // "there's a next page" without an extra round-trip.
-  let q: admin.firestore.Query = db.collection(`users/${ownerUid}/projects`)
+  let q: admin.firestore.Query = admin.firestore().collection(`users/${ownerUid}/projects`)
     .orderBy("timestamp", "desc")
     .orderBy("id", "desc")
     .limit(effectivePageSize + 1);
@@ -68,7 +70,7 @@ export const getUserProjects = onCall({ region: "europe-west1" }, async (request
   }
 
   if (cursorData) {
-    const cursorDoc = await db.collection(`users/${ownerUid}/projects`)
+    const cursorDoc = await admin.firestore().collection(`users/${ownerUid}/projects`)
       .where("timestamp", "==", cursorData.timestamp)
       .where("id", "==", cursorData.id)
       .limit(1).get();

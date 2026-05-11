@@ -2,7 +2,9 @@
 
 import * as admin from "firebase-admin";
 
-const db = admin.firestore();
+// NOTE: Do NOT cache `admin.firestore()` at module load — this file is imported
+// before `admin.initializeApp()` runs, which fails Firebase deploy analysis.
+// Always call inline.
 
 interface AuditEntry {
   actorUid: string;
@@ -45,7 +47,7 @@ export async function writeAuditEntry(
     timestamp: Date.now(),
     planSnapshot: params.planSnapshot,
   };
-  const ref = db
+  const ref = admin.firestore()
     .collection(`users/${params.ownerUid}/workspace_access_audit`)
     .doc(entryId);
   txn.create(ref, entry);

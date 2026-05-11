@@ -3,7 +3,9 @@
 import { createStripeClient } from "./stripeClient.js";
 import * as admin from "firebase-admin";
 
-const db = admin.firestore();
+// NOTE: Do NOT cache `admin.firestore()` at module load — this file is imported
+// before `admin.initializeApp()` runs, which fails Firebase deploy analysis.
+// Always call inline.
 
 export async function createStripePortalSessionImpl(
     uid: string,
@@ -15,7 +17,7 @@ export async function createStripePortalSessionImpl(
         throw new Error("stripeSecretKey is required");
     }
 
-    const userDoc = await db.collection("users").doc(uid).get();
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
     const userData: Record<string, any> = userDoc.exists ? (userDoc.data() as Record<string, any>) : {};
     const stripeCustomerId = userData.stripeCustomerId as string | undefined;
 

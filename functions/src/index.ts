@@ -42,7 +42,10 @@ admin.initializeApp({
     storageBucket: "proadsai-saas.firebasestorage.app"
 });
 
-const db = admin.firestore();
+// NOTE: Do NOT cache `admin.firestore()` at module load — this file is imported
+// before `admin.initializeApp()` runs in Firebase deploy analysis, which fails
+// with "The default Firebase app does not exist". Always call inline.
+
 const geminiApiKey = defineSecret("GEMINI_API_KEY");
 const ghlWebhookSecret = defineSecret("GHL_WEBHOOK_SECRET");
 const stripeSecretKey = defineSecret("STRIPE_SECRET_KEY");
@@ -143,8 +146,8 @@ export const generateCreative = onCall({
 
     try {
         // Transaction: Deduct Credits from correct account (owner for team members)
-        await db.runTransaction(async (transaction) => {
-            const userRef = db.collection("users").doc(creditOwnerUid);
+        await admin.firestore().runTransaction(async (transaction) => {
+            const userRef = admin.firestore().collection("users").doc(creditOwnerUid);
             const userDoc = await transaction.get(userRef);
             if (!userDoc.exists) throw new HttpsError("not-found", "User not found.");
 
@@ -343,7 +346,7 @@ const ghlpaymentwebhook = onRequest({
 
         if (existingUser) {
             // ═══ User already signed into app → update "users" collection directly ═══
-            const userRef = db.collection("users").doc(existingUser.uid);
+            const userRef = admin.firestore().collection("users").doc(existingUser.uid);
 
             if (isTopup) {
                 const topupData: Record<string, any> = {
@@ -353,7 +356,7 @@ const ghlpaymentwebhook = onRequest({
                 if (stripeCustomerId) topupData.stripeCustomerId = stripeCustomerId;
                 await userRef.update(topupData);
                 console.log(`Top-up: +${finalCredits} credits for ${normalizedEmail}`);
-                await writeBillingState(existingUser.uid, db);
+                await writeBillingState(existingUser.uid, admin.firestore());
             } else {
                 await userRef.set({
                     plan: finalPlan,
@@ -365,12 +368,12 @@ const ghlpaymentwebhook = onRequest({
                     ...(stripeCustomerId ? { stripeCustomerId } : {}),
                 }, { merge: true });
                 console.log(`Plan set: ${normalizedEmail} → ${finalPlan}${isTrial ? ' (trial)' : ''} (${finalCredits} credits)${stripeCustomerId ? ` [Stripe: ${stripeCustomerId}]` : ''}`);
-                await writeBillingState(existingUser.uid, db);
+                await writeBillingState(existingUser.uid, admin.firestore());
             }
         } else {
             // ═══ User hasn't signed into app yet → save to "pending_plans" ═══
             // App.tsx checks this collection on first sign-in
-            await db.collection("pending_plans").doc(normalizedEmail).set({
+            await admin.firestore().collection("pending_plans").doc(normalizedEmail).set({
                 plan: isTopup ? "none" : finalPlan,
                 credits: finalCredits,
                 isTopup: isTopup,
@@ -392,7 +395,7 @@ const ghlpaymentwebhook = onRequest({
         let stripeSubscriptionId: string | null = null;
         if (existingUser) {
             try {
-                const snap = await db.collection("users").doc(existingUser.uid).get();
+                const snap = await admin.firestore().collection("users").doc(existingUser.uid).get();
                 const userData = snap.data() ?? {};
                 const split = splitDisplayName(userData.displayName);
                 firstName = split.first_name;
@@ -463,7 +466,7 @@ export const monthlyCreditsReset = onSchedule({
     };
 
     // ═══ RESET PAID USERS ═══
-    const usersSnap = await db.collection('users')
+    const usersSnap = await admin.firestore().collection('users')
         .where('plan', 'in', ['starter', 'pro', 'scale'])
         .get();
 
@@ -472,7 +475,7 @@ export const monthlyCreditsReset = onSchedule({
         const docs = usersSnap.docs;
 
         for (let i = 0; i < docs.length; i += batchSize) {
-            const batch = db.batch();
+            const batch = admin.firestore().batch();
             const chunk = docs.slice(i, i + batchSize);
 
             for (const userDoc of chunk) {
@@ -495,7 +498,7 @@ export const monthlyCreditsReset = onSchedule({
             for (const userDoc of chunk) {
                 const data = userDoc.data();
                 if (!data.isTeamMember && data.isTrial !== true && PLAN_LIMITS[data.plan]) {
-                    await writeBillingState(userDoc.id, db).catch((e: any) =>
+                    await writeBillingState(userDoc.id, admin.firestore()).catch((e: any) =>
                         console.warn(`⚠️ writeBillingState failed for ${userDoc.id}:`, e.message)
                     );
                 }
@@ -562,7 +565,7 @@ const ghlCancellationWebhook = onRequest({
         let stripeCustomerId: string | null = null;
 
         if (existingUser) {
-            const userRef = db.collection("users").doc(existingUser.uid);
+            const userRef = admin.firestore().collection("users").doc(existingUser.uid);
             await userRef.update({
                 billingStatus: 'cancelled',
                 plan: "none",
@@ -571,7 +574,7 @@ const ghlCancellationWebhook = onRequest({
                 cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
             });
             console.log(`Cancelled ${normalizedEmail} → billingStatus: cancelled, plan: none.`);
-            await writeBillingState(existingUser.uid, db);
+            await writeBillingState(existingUser.uid, admin.firestore());
 
             try {
                 const snap = await userRef.get();
@@ -583,7 +586,7 @@ const ghlCancellationWebhook = onRequest({
                 stripeCustomerId = userData.stripeCustomerId ?? null;
             } catch { /* non-critical — fields stay null */ }
         } else {
-            await db.collection("pending_plans").doc(normalizedEmail).delete();
+            await admin.firestore().collection("pending_plans").doc(normalizedEmail).delete();
             console.log(`Removed pending plan for ${normalizedEmail}`);
         }
 
@@ -650,17 +653,17 @@ const ghlPaymentFailedWebhook = onRequest({
 
         if (existingUser) {
             const gracePeriodEndsAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000); // 2 days
-            await db.collection("users").doc(existingUser.uid).update({
+            await admin.firestore().collection("users").doc(existingUser.uid).update({
                 billingStatus: 'past_due',
                 billingIssueAt: admin.firestore.FieldValue.serverTimestamp(),
                 billingIssueType: 'payment_failed',
                 gracePeriodEndsAt: admin.firestore.Timestamp.fromDate(gracePeriodEndsAt),
             });
             console.log(`Set ${normalizedEmail} → billingStatus: past_due, grace until ${gracePeriodEndsAt.toISOString()}`);
-            await writeBillingState(existingUser.uid, db);
+            await writeBillingState(existingUser.uid, admin.firestore());
 
             try {
-                const snap = await db.collection("users").doc(existingUser.uid).get();
+                const snap = await admin.firestore().collection("users").doc(existingUser.uid).get();
                 const userData = snap.data() ?? {};
                 const split = splitDisplayName(userData.displayName);
                 firstName = split.first_name;
@@ -734,7 +737,7 @@ export const ghlPaymentRecoveredWebhook = onRequest({
         let isTrial = false;
 
         if (existingUser) {
-            await db.collection("users").doc(existingUser.uid).update({
+            await admin.firestore().collection("users").doc(existingUser.uid).update({
                 billingStatus: 'active',
                 billingIssueAt: admin.firestore.FieldValue.delete(),
                 billingIssueType: admin.firestore.FieldValue.delete(),
@@ -742,10 +745,10 @@ export const ghlPaymentRecoveredWebhook = onRequest({
                 lastPaymentRecoveredAt: admin.firestore.FieldValue.serverTimestamp(),
             });
             console.log(`Restored ${normalizedEmail} → billingStatus: active`);
-            await writeBillingState(existingUser.uid, db);
+            await writeBillingState(existingUser.uid, admin.firestore());
 
             try {
-                const snap = await db.collection("users").doc(existingUser.uid).get();
+                const snap = await admin.firestore().collection("users").doc(existingUser.uid).get();
                 const userData = snap.data() ?? {};
                 const split = splitDisplayName(userData.displayName);
                 firstName = split.first_name;
@@ -812,7 +815,7 @@ export const competitorResearch = onCall({
     }
 
     // Credit check — use the resolved credit owner
-    const creditOwnerRef = db.collection("users").doc(entitlement.creditOwnerUid);
+    const creditOwnerRef = admin.firestore().collection("users").doc(entitlement.creditOwnerUid);
     const creditOwnerDoc = await creditOwnerRef.get();
     const creditOwnerData = creditOwnerDoc.data();
     const competitorCost = COSTS['competitorResearch'] || 5;
@@ -942,7 +945,7 @@ CRITICAL:
 
         // Deduct credits (server-side, onSnapshot updates client)
         // Use entitlement.creditOwnerUid for team member support
-        await db.collection("users").doc(entitlement.creditOwnerUid).update({
+        await admin.firestore().collection("users").doc(entitlement.creditOwnerUid).update({
             credits: admin.firestore.FieldValue.increment(-(COSTS['competitorResearch'] || 5)),
         });
 
@@ -995,7 +998,7 @@ const _deprecatedCreateStripePortalSession = onCall({
     console.log(`Portal request from uid=${uid}, provided stripeCustomerId=${stripeCustomerId}`);
 
     // 2. Get user doc
-    const userDoc = await db.collection("users").doc(uid).get();
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
     const userData = userDoc.data();
     if (!userData) {
         throw new HttpsError("not-found", "User not found in Firestore.");
@@ -1027,7 +1030,7 @@ const _deprecatedCreateStripePortalSession = onCall({
                     stripeCustomerId = customers.data[0].id;
                     resolvedStripeId = stripeCustomerId;
                     // Save for future use
-                    await db.collection("users").doc(uid).update({ stripeCustomerId });
+                    await admin.firestore().collection("users").doc(uid).update({ stripeCustomerId });
                     console.log(`Auto-resolved Stripe ID for ${email}: ${stripeCustomerId}`);
                 } else {
                     console.error(`No Stripe customer found for email: ${email}`);
@@ -1084,7 +1087,7 @@ export const backfillStripeCustomerIds = onRequest({
 }, async (req, res) => {
     const stripe = new Stripe(stripeSecretKey.value());
 
-    const usersSnap = await db.collection("users").get();
+    const usersSnap = await admin.firestore().collection("users").get();
     let updated = 0;
     let skipped = 0;
     let notFound = 0;
@@ -1175,7 +1178,7 @@ const createTopupCheckout = onCall({
     }
 
     // Get user doc for stripeCustomerId and email
-    const userDoc = await db.collection("users").doc(uid).get();
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
     const userData = userDoc.data();
     if (!userData) {
         throw new HttpsError("not-found", "User not found.");
@@ -1200,7 +1203,7 @@ const createTopupCheckout = onCall({
             customerId = newCustomer.id;
         }
         // Save to Firestore
-        await db.collection("users").doc(uid).update({ stripeCustomerId: customerId });
+        await admin.firestore().collection("users").doc(uid).update({ stripeCustomerId: customerId });
     }
 
     try {
@@ -1305,7 +1308,7 @@ const _deprecatedStripeWebhook = onRequest({
 
         try {
             // Add credits to user
-            const userRef = db.collection("users").doc(uid);
+            const userRef = admin.firestore().collection("users").doc(uid);
             await userRef.update({
                 credits: admin.firestore.FieldValue.increment(credits),
                 lastTopup: admin.firestore.FieldValue.serverTimestamp(),
@@ -1318,7 +1321,7 @@ const _deprecatedStripeWebhook = onRequest({
 
             // Update billing state asynchronously — DB write already succeeded
             try {
-                await writeBillingState(uid, db);
+                await writeBillingState(uid, admin.firestore());
             } catch (bsErr: any) {
                 console.warn(`⚠️ writeBillingState failed after topup for ${uid}:`, bsErr.message);
             }
@@ -1345,7 +1348,7 @@ const _deprecatedStripeWebhook = onRequest({
             // Grace period: 7 days from now (Stripe manages dunning/retries separately)
             const graceEnd = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
             try {
-                const usersSnap = await db.collection("users")
+                const usersSnap = await admin.firestore().collection("users")
                     .where("stripeCustomerId", "==", stripeCustomerId)
                     .limit(1).get();
                 if (!usersSnap.empty) {
@@ -1354,7 +1357,7 @@ const _deprecatedStripeWebhook = onRequest({
                         billingStatus: 'past_due',
                         gracePeriodEndsAt: graceEnd,
                     });
-                    await writeBillingState(userDoc.id, db);
+                    await writeBillingState(userDoc.id, admin.firestore());
                     console.log(`⚠️ Subscription past_due: ${userDoc.id}`);
                 }
             } catch (e: any) {
@@ -1392,7 +1395,7 @@ const _deprecatedStripeWebhook = onRequest({
 
         try {
             // Find user by stripeCustomerId
-            const usersSnap = await db.collection("users")
+            const usersSnap = await admin.firestore().collection("users")
                 .where("stripeCustomerId", "==", stripeCustomerId)
                 .limit(1)
                 .get();
@@ -1402,7 +1405,7 @@ const _deprecatedStripeWebhook = onRequest({
                 const customer = await stripe.customers.retrieve(stripeCustomerId) as any;
                 if (customer.email) {
                     const userRecord = await admin.auth().getUserByEmail(customer.email.toLowerCase().trim());
-                    await db.collection("users").doc(userRecord.uid).update({
+                    await admin.firestore().collection("users").doc(userRecord.uid).update({
                         plan: planInfo.plan,
                         credits: planInfo.credits,
                         isTrial: false,
@@ -1414,7 +1417,7 @@ const _deprecatedStripeWebhook = onRequest({
                         planSource: 'stripe_portal',
                     });
                     console.log(`✅ Portal plan change (via email): ${customer.email} → ${planInfo.plan} (${planInfo.credits} credits)`);
-                    await writeBillingState(userRecord.uid, db);
+                    await writeBillingState(userRecord.uid, admin.firestore());
                 } else {
                     console.error(`No user found for stripeCustomerId: ${stripeCustomerId}`);
                 }
@@ -1432,7 +1435,7 @@ const _deprecatedStripeWebhook = onRequest({
                     planSource: 'stripe_portal',
                 });
                 console.log(`✅ Portal plan change: ${userDoc.id} → ${planInfo.plan} (${planInfo.credits} credits)`);
-                await writeBillingState(userDoc.id, db);
+                await writeBillingState(userDoc.id, admin.firestore());
             }
             res.status(200).send('OK');
         } catch (err: any) {
@@ -1451,7 +1454,7 @@ const _deprecatedStripeWebhook = onRequest({
         }
 
         try {
-            const usersSnap = await db.collection("users")
+            const usersSnap = await admin.firestore().collection("users")
                 .where("stripeCustomerId", "==", stripeCustomerId)
                 .limit(1)
                 .get();
@@ -1468,7 +1471,7 @@ const _deprecatedStripeWebhook = onRequest({
                     planSource: 'stripe_cancellation',
                 });
                 console.log(`✅ Subscription cancelled: ${userDoc.id} → none (0 credits)`);
-                await writeBillingState(userDoc.id, db);
+                await writeBillingState(userDoc.id, admin.firestore());
             } else {
                 // Fallback via email
                 const stripe = new Stripe(stripeSecretKey.value());
@@ -1476,7 +1479,7 @@ const _deprecatedStripeWebhook = onRequest({
                 if (customer.email) {
                     try {
                         const userRecord = await admin.auth().getUserByEmail(customer.email.toLowerCase().trim());
-                        await db.collection("users").doc(userRecord.uid).update({
+                        await admin.firestore().collection("users").doc(userRecord.uid).update({
                             billingStatus: 'cancelled',
                             plan: 'none',
                             credits: 0,
@@ -1486,7 +1489,7 @@ const _deprecatedStripeWebhook = onRequest({
                             planSource: 'stripe_cancellation',
                         });
                         console.log(`✅ Subscription cancelled (via email): ${customer.email} → none`);
-                        await writeBillingState(userRecord.uid, db);
+                        await writeBillingState(userRecord.uid, admin.firestore());
                     } catch { console.error(`No Firebase user for: ${customer.email}`); }
                 }
             }
@@ -1519,7 +1522,7 @@ export const deductCreditsServer = onCall({
     // If team member, deduct from owner's account (verify membership first)
     let targetUid = callerId;
     if (onBehalfOf && onBehalfOf !== callerId) {
-        const callerDoc = await db.collection("users").doc(callerId).get();
+        const callerDoc = await admin.firestore().collection("users").doc(callerId).get();
         const callerData = callerDoc.data();
         if (!callerData?.isTeamMember || callerData?.teamOwnerUid !== onBehalfOf) {
             throw new HttpsError("permission-denied", "Not authorized to use this team's credits.");
@@ -1544,8 +1547,8 @@ export const deductCreditsServer = onCall({
         }
     }
 
-    const newBalance = await db.runTransaction(async (tx) => {
-        const userRef = db.collection("users").doc(targetUid);
+    const newBalance = await admin.firestore().runTransaction(async (tx) => {
+        const userRef = admin.firestore().collection("users").doc(targetUid);
         const snap = await tx.get(userRef);
         if (!snap.exists) throw new HttpsError("not-found", "User not found.");
         const userData = snap.data()!;
@@ -1585,7 +1588,7 @@ export const deductCreditsServer = onCall({
         return after;
     });
 
-    await writeBillingState(targetUid, db);
+    await writeBillingState(targetUid, admin.firestore());
     return { success: true, creditsRemaining: newBalance, deducted: cost };
 });
 
@@ -1605,14 +1608,14 @@ export const refundCreditsServer = onCall({
     // If team member, refund to owner's account
     let targetUid = callerId;
     if (onBehalfOf && onBehalfOf !== callerId) {
-        const callerDoc = await db.collection("users").doc(callerId).get();
+        const callerDoc = await admin.firestore().collection("users").doc(callerId).get();
         if (callerDoc.data()?.isTeamMember && callerDoc.data()?.teamOwnerUid === onBehalfOf) {
             targetUid = onBehalfOf;
         }
     }
 
-    const newBalance = await db.runTransaction(async (tx) => {
-        const userRef = db.collection("users").doc(targetUid);
+    const newBalance = await admin.firestore().runTransaction(async (tx) => {
+        const userRef = admin.firestore().collection("users").doc(targetUid);
         const snap = await tx.get(userRef);
         if (!snap.exists) throw new HttpsError("not-found", "User not found.");
 
@@ -1622,7 +1625,7 @@ export const refundCreditsServer = onCall({
         return after;
     });
 
-    await writeBillingState(targetUid, db);
+    await writeBillingState(targetUid, admin.firestore());
     return { success: true, creditsRemaining: newBalance, refunded: cost };
 });
 
@@ -1645,8 +1648,8 @@ export const awardMilestoneServer = onCall({
     const reward = MILESTONE_REWARDS[milestone as string];
     if (!reward && reward !== 0) throw new HttpsError("invalid-argument", `Unknown milestone: ${milestone}`);
 
-    const result = await db.runTransaction(async (tx) => {
-        const userRef = db.collection("users").doc(userId);
+    const result = await admin.firestore().runTransaction(async (tx) => {
+        const userRef = admin.firestore().collection("users").doc(userId);
         const snap = await tx.get(userRef);
         if (!snap.exists) throw new HttpsError("not-found", "User not found.");
 
@@ -1676,7 +1679,7 @@ export const awardMilestoneServer = onCall({
     });
 
     if (!result.alreadyEarned) {
-        await writeBillingState(userId, db);
+        await writeBillingState(userId, admin.firestore());
     }
     return { success: true, ...result };
 });
@@ -1689,7 +1692,7 @@ export const awardMilestoneServer = onCall({
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function resolveStripeCustomerId(uid: string, stripe: Stripe): Promise<string> {
-    const userDoc = await db.collection("users").doc(uid).get();
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
     const userData = userDoc.data();
     if (!userData) throw new HttpsError("not-found", "User not found.");
 
@@ -1703,7 +1706,7 @@ async function resolveStripeCustomerId(uid: string, stripe: Stripe): Promise<str
     const customers = await stripe.customers.list({ email: email.toLowerCase().trim(), limit: 1 });
     if (customers.data.length > 0) {
         const customerId = customers.data[0].id;
-        await db.collection("users").doc(uid).update({ stripeCustomerId: customerId });
+        await admin.firestore().collection("users").doc(uid).update({ stripeCustomerId: customerId });
         return customerId;
     }
 
@@ -1786,11 +1789,11 @@ export const cancelSubscription = onCall({
     }) as any;
 
     // 2. Get user data for GHL
-    const userDoc = await db.collection("users").doc(uid).get();
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
     const userData = userDoc.data() || {};
 
     // 3. Save cancellation data to Firestore
-    await db.collection("users").doc(uid).update({
+    await admin.firestore().collection("users").doc(uid).update({
         cancelAtPeriodEnd: true,
         billingStatus: 'cancelling',
         cancelAt: admin.firestore.Timestamp.fromDate(new Date(updated.current_period_end * 1000)),
@@ -1825,7 +1828,7 @@ export const cancelSubscription = onCall({
 
     console.log(`❌ Cancellation scheduled: ${userData.email} → ends ${new Date(updated.current_period_end * 1000).toISOString()}`);
 
-    await writeBillingState(uid, db);
+    await writeBillingState(uid, admin.firestore());
 
     return {
         success: true,
@@ -1844,7 +1847,7 @@ export const reactivateSubscription = onCall({
 
     const uid = request.auth.uid;
 
-    const callerDoc = await db.collection("users").doc(uid).get();
+    const callerDoc = await admin.firestore().collection("users").doc(uid).get();
     const callerData = callerDoc.data();
     if (callerData?.isTeamMember) {
         throw new HttpsError("failed-precondition", "Team members cannot manage billing.");
@@ -1873,7 +1876,7 @@ export const reactivateSubscription = onCall({
         cancel_at_period_end: false,
     });
 
-    await db.collection("users").doc(uid).update({
+    await admin.firestore().collection("users").doc(uid).update({
         billingStatus: 'active',
         cancelAtPeriodEnd: false,
         cancelledAt: admin.firestore.FieldValue.delete(),
@@ -1886,7 +1889,7 @@ export const reactivateSubscription = onCall({
     });
 
     console.log(`✅ Reactivated subscription for uid=${uid}`);
-    await writeBillingState(uid, db);
+    await writeBillingState(uid, admin.firestore());
     return { success: true };
 });
 
@@ -1910,7 +1913,7 @@ export const applyRetentionDiscount = onCall({
     const uid = request.auth.uid;
 
     // Check if user already used a retention discount (prevent abuse)
-    const userDoc = await db.collection("users").doc(uid).get();
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
     const userData = userDoc.data();
     if (userData?.retentionCouponUsed) {
         throw new HttpsError("already-exists", "You've already used a retention discount.");
@@ -1936,7 +1939,7 @@ export const applyRetentionDiscount = onCall({
         cancel_at_period_end: false,
     });
 
-    await db.collection("users").doc(uid).update({
+    await admin.firestore().collection("users").doc(uid).update({
         retentionCouponUsed: true,
         retentionCouponId: couponId,
         cancelAtPeriodEnd: false,
@@ -1947,7 +1950,7 @@ export const applyRetentionDiscount = onCall({
         cancellationDate: admin.firestore.FieldValue.delete(),
     });
 
-    await writeBillingState(uid, db);
+    await writeBillingState(uid, admin.firestore());
     console.log(`💰 Retention coupon applied: ${couponId} for uid=${uid}`);
     return { success: true, couponApplied: couponId };
 });
@@ -2073,7 +2076,7 @@ export const updatePaymentMethod = onCall({
 
     // Get new card details to save to Firestore
     const pm = await stripe.paymentMethods.retrieve(paymentMethodId);
-    await db.collection("users").doc(uid).update({
+    await admin.firestore().collection("users").doc(uid).update({
         paymentMethodLast4: pm.card?.last4 || '',
         paymentMethodBrand: pm.card?.brand || '',
         paymentMethodExpiry: `${pm.card?.exp_month}/${pm.card?.exp_year}`,
@@ -2135,7 +2138,7 @@ export const changePlan = onCall({
     // The Stripe webhook (customer.subscription.updated) will update Firestore
     // with the new plan and credits, so we don't need to do it here.
     // But let's clear cancellation flags just in case.
-    await db.collection("users").doc(uid).update({
+    await admin.firestore().collection("users").doc(uid).update({
         cancelAtPeriodEnd: false,
     });
 
@@ -2187,7 +2190,7 @@ export const createStripeCheckoutSession = onCall({
         throw new HttpsError("invalid-argument", "Invalid priceId.");
     }
 
-    const userDoc = await db.collection("users").doc(uid).get();
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
     if (userDoc.data()?.isTeamMember) {
         throw new HttpsError("failed-precondition", "Team members cannot subscribe directly.");
     }
@@ -2215,7 +2218,7 @@ export const createStripeTopUpSession = onCall({
         throw new HttpsError("invalid-argument", "Invalid creditAmount.");
     }
 
-    const userDoc = await db.collection("users").doc(uid).get();
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
     const userData = userDoc.data();
     if (userData?.isTeamMember) {
         throw new HttpsError("failed-precondition", "Team members cannot purchase top-ups.");
@@ -2308,11 +2311,11 @@ interface TeamInvite {
 
 async function countReservedSeats(ownerUid: string): Promise<number> {
     // Active members
-    const teamSnap = await db.collection("users").doc(ownerUid).collection("team").get();
+    const teamSnap = await admin.firestore().collection("users").doc(ownerUid).collection("team").get();
     const activeMembers = teamSnap.size;
 
     // Open invites (pending/sent/failed)
-    const inviteSnap = await db.collection("team_invites")
+    const inviteSnap = await admin.firestore().collection("team_invites")
         .where("ownerId", "==", ownerUid)
         .where("status", "in", OPEN_INVITE_STATUSES)
         .get();
@@ -2362,7 +2365,7 @@ export const createTeamInvite = onCall({
 
     const normalizedEmail = email.toLowerCase().trim();
     const auth = admin.auth();
-    const ownerDoc = await db.collection("users").doc(ownerUid).get();
+    const ownerDoc = await admin.firestore().collection("users").doc(ownerUid).get();
     const ownerData = ownerDoc.data();
     if (!ownerData) throw new HttpsError("not-found", "Owner account not found.");
 
@@ -2388,12 +2391,12 @@ export const createTeamInvite = onCall({
     }
 
     // Check if already an active team member of THIS owner
-    const existingMember = await db.collection("users").doc(ownerUid).collection("team")
+    const existingMember = await admin.firestore().collection("users").doc(ownerUid).collection("team")
         .where("email", "==", normalizedEmail).get();
     if (!existingMember.empty) throw new HttpsError("already-exists", "This person is already on your team.");
 
     // Check if already an active team member of ANY other owner (one-team-per-user model)
-    const existingMembership = await db.collection("teamMemberships").doc(normalizedEmail).get();
+    const existingMembership = await admin.firestore().collection("teamMemberships").doc(normalizedEmail).get();
     if (existingMembership.exists) {
         const mData = existingMembership.data();
         if (mData && mData.ownerUid !== ownerUid) {
@@ -2402,7 +2405,7 @@ export const createTeamInvite = onCall({
     }
 
     // Dedupe: check for existing open invite
-    const existingInvites = await db.collection("team_invites")
+    const existingInvites = await admin.firestore().collection("team_invites")
         .where("ownerId", "==", ownerUid)
         .where("inviteeEmailNormalized", "==", normalizedEmail)
         .where("status", "in", OPEN_INVITE_STATUSES)
@@ -2427,7 +2430,7 @@ export const createTeamInvite = onCall({
         });
     } else {
         // Create new invite
-        inviteRef = db.collection("team_invites").doc();
+        inviteRef = admin.firestore().collection("team_invites").doc();
         inviteId = inviteRef.id;
         const invite: TeamInvite = {
             inviteId,
@@ -2505,7 +2508,7 @@ export const resendTeamInvite = onCall({
     const { inviteId } = request.data;
     if (!inviteId) throw new HttpsError("invalid-argument", "inviteId required.");
 
-    const inviteRef = db.collection("team_invites").doc(inviteId);
+    const inviteRef = admin.firestore().collection("team_invites").doc(inviteId);
     const inviteSnap = await inviteRef.get();
     if (!inviteSnap.exists) throw new HttpsError("not-found", "Invite not found.");
 
@@ -2544,7 +2547,7 @@ export const revokeTeamInvite = onCall({
     const { inviteId } = request.data;
     if (!inviteId) throw new HttpsError("invalid-argument", "inviteId required.");
 
-    const inviteRef = db.collection("team_invites").doc(inviteId);
+    const inviteRef = admin.firestore().collection("team_invites").doc(inviteId);
     const inviteSnap = await inviteRef.get();
     if (!inviteSnap.exists) throw new HttpsError("not-found", "Invite not found.");
 
@@ -2573,12 +2576,12 @@ export const claimTeamInvite = onCall({
     if (!callerEmail) throw new HttpsError("failed-precondition", "No email on account.");
 
     // Check if already on a team (one-team-per-user model)
-    const existingMembership = await db.collection("teamMemberships").doc(callerEmail).get();
+    const existingMembership = await admin.firestore().collection("teamMemberships").doc(callerEmail).get();
     if (existingMembership.exists) {
         return { success: false, claimed: 0, message: 'Already a member of a team.' };
     }
 
-    const invites = await db.collection("team_invites")
+    const invites = await admin.firestore().collection("team_invites")
         .where("inviteeEmailNormalized", "==", callerEmail)
         .where("status", "in", OPEN_INVITE_STATUSES)
         .get();
@@ -2607,7 +2610,7 @@ export const claimTeamInvite = onCall({
     let claimed = 0;
 
     try {
-        await db.runTransaction(async (txn) => {
+        await admin.firestore().runTransaction(async (txn) => {
             // Re-read invite inside transaction to prevent race
             const freshSnap = await txn.get(target.doc.ref);
             if (!freshSnap.exists) return;
@@ -2617,12 +2620,12 @@ export const claimTeamInvite = onCall({
             if (freshInvite.status === 'accepted' || freshInvite.status === 'revoked' || freshInvite.status === 'expired') return;
 
             // Double-check reverse lookup inside transaction
-            const membershipSnap = await txn.get(db.collection("teamMemberships").doc(callerEmail));
+            const membershipSnap = await txn.get(admin.firestore().collection("teamMemberships").doc(callerEmail));
             if (membershipSnap.exists) return; // another claim won the race
 
             // Check if caller is already an active member for this owner (duplicate guard)
             const existingMember = await txn.get(
-                db.collection("users").doc(freshInvite.ownerId).collection("team")
+                admin.firestore().collection("users").doc(freshInvite.ownerId).collection("team")
                     .where("email", "==", callerEmail).limit(1)
             );
             if (!existingMember.empty) {
@@ -2632,7 +2635,7 @@ export const claimTeamInvite = onCall({
             }
 
             // Create team member doc
-            const memberRef = db.collection("users").doc(freshInvite.ownerId).collection("team").doc();
+            const memberRef = admin.firestore().collection("users").doc(freshInvite.ownerId).collection("team").doc();
             txn.set(memberRef, {
                 name: freshInvite.inviteeName,
                 email: freshInvite.inviteeEmailNormalized,
@@ -2645,7 +2648,7 @@ export const claimTeamInvite = onCall({
             });
 
             // Create reverse-lookup
-            const membershipRef = db.collection("teamMemberships").doc(freshInvite.inviteeEmailNormalized);
+            const membershipRef = admin.firestore().collection("teamMemberships").doc(freshInvite.inviteeEmailNormalized);
             txn.set(membershipRef, {
                 ownerUid: freshInvite.ownerId,
                 ownerEmail: freshInvite.ownerEmail,
@@ -2657,7 +2660,7 @@ export const claimTeamInvite = onCall({
             });
 
             // Mark user as team member
-            const userRef = db.collection("users").doc(callerUid);
+            const userRef = admin.firestore().collection("users").doc(callerUid);
             txn.set(userRef, {
                 plan: "none", credits: 0,
                 teamOwnerUid: freshInvite.ownerId,
@@ -2708,7 +2711,7 @@ export const getTeamInvites = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Must be logged in.");
     const ownerUid = request.auth.uid;
 
-    const snap = await db.collection("team_invites")
+    const snap = await admin.firestore().collection("team_invites")
         .where("ownerId", "==", ownerUid)
         .get();
 
@@ -2744,7 +2747,7 @@ export const createTeamMember = onCall({
     // Delegate to the same logic
     const normalizedEmail = email.toLowerCase().trim();
     const authSvc = admin.auth();
-    const ownerDoc = await db.collection("users").doc(ownerUid).get();
+    const ownerDoc = await admin.firestore().collection("users").doc(ownerUid).get();
     const ownerData = ownerDoc.data();
     if (!ownerData) throw new HttpsError("not-found", "Owner account not found.");
     const ownerPlan = ownerData.plan || "none";
@@ -2762,12 +2765,12 @@ export const createTeamMember = onCall({
     }
 
     // Check already active on this team
-    const existingMember = await db.collection("users").doc(ownerUid).collection("team")
+    const existingMember = await admin.firestore().collection("users").doc(ownerUid).collection("team")
         .where("email", "==", normalizedEmail).get();
     if (!existingMember.empty) throw new HttpsError("already-exists", "This person is already on your team.");
 
     // Check already active on another team (one-team-per-user model)
-    const existingMembership = await db.collection("teamMemberships").doc(normalizedEmail).get();
+    const existingMembership = await admin.firestore().collection("teamMemberships").doc(normalizedEmail).get();
     if (existingMembership.exists) {
         const mData = existingMembership.data();
         if (mData && mData.ownerUid !== ownerUid) {
@@ -2776,7 +2779,7 @@ export const createTeamMember = onCall({
     }
 
     // Create invite
-    const existingInvites = await db.collection("team_invites")
+    const existingInvites = await admin.firestore().collection("team_invites")
         .where("ownerId", "==", ownerUid)
         .where("inviteeEmailNormalized", "==", normalizedEmail)
         .where("status", "in", OPEN_INVITE_STATUSES)
@@ -2792,7 +2795,7 @@ export const createTeamMember = onCall({
         inviteId = existingInvites.docs[0].id;
         await inviteRef.update({ inviteeName: name, role, teamPlan: ownerPlan, updatedAt: now, expiresAt, status: 'pending' });
     } else {
-        inviteRef = db.collection("team_invites").doc();
+        inviteRef = admin.firestore().collection("team_invites").doc();
         inviteId = inviteRef.id;
         await inviteRef.set({
             inviteId, ownerId: ownerUid, ownerEmail: ownerRecord.email || '', ownerName: ownerRecord.displayName || '',
@@ -2840,23 +2843,23 @@ export const removeTeamMember = onCall({
     if (!memberId) throw new HttpsError("invalid-argument", "Member ID required.");
 
     // Get member doc
-    const memberDoc = await db.collection("users").doc(ownerUid).collection("team").doc(memberId).get();
+    const memberDoc = await admin.firestore().collection("users").doc(ownerUid).collection("team").doc(memberId).get();
     if (!memberDoc.exists) throw new HttpsError("not-found", "Team member not found.");
 
     const memberData = memberDoc.data()!;
     const memberEmail = memberData.email;
 
     // Delete team doc
-    await db.collection("users").doc(ownerUid).collection("team").doc(memberId).delete();
+    await admin.firestore().collection("users").doc(ownerUid).collection("team").doc(memberId).delete();
 
     // Delete reverse-lookup
     try {
-        await db.collection("teamMemberships").doc(memberEmail).delete();
+        await admin.firestore().collection("teamMemberships").doc(memberEmail).delete();
     } catch (e) { /* non-blocking */ }
 
     // Remove team flags from member's user doc
     if (memberData.uid) {
-        await db.collection("users").doc(memberData.uid).update({
+        await admin.firestore().collection("users").doc(memberData.uid).update({
             isTeamMember: admin.firestore.FieldValue.delete(),
             teamOwnerUid: admin.firestore.FieldValue.delete(),
             teamRole: admin.firestore.FieldValue.delete(),
@@ -2973,7 +2976,7 @@ export const metaOAuthCallback = onRequest({
         const encryptedToken = encryptToken(longLivedToken, appSecret);
         const expiresAt = Date.now() + (expiresIn * 1000);
 
-        await db.collection("metaConnections").doc(state).set({
+        await admin.firestore().collection("metaConnections").doc(state).set({
             userId: state,
             encryptedToken,
             expiresAt,
@@ -3001,7 +3004,7 @@ export const getMetaConnection = onCall({
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const uid = request.auth.uid;
 
-    const doc = await db.collection("metaConnections").doc(uid).get();
+    const doc = await admin.firestore().collection("metaConnections").doc(uid).get();
     if (!doc.exists) return { connected: false };
 
     const data = doc.data()!;
@@ -3026,7 +3029,7 @@ export const metaSelectAccount = onCall({
     const { accountId } = request.data;
     if (!accountId) throw new HttpsError("invalid-argument", "Missing accountId");
 
-    await db.collection("metaConnections").doc(uid).update({
+    await admin.firestore().collection("metaConnections").doc(uid).update({
         selectedAccountId: accountId,
     });
     return { success: true };
@@ -3041,11 +3044,11 @@ export const metaDisconnect = onCall({
     const uid = request.auth.uid;
 
     // Delete connection
-    await db.collection("metaConnections").doc(uid).delete();
+    await admin.firestore().collection("metaConnections").doc(uid).delete();
 
     // Delete all performance data
-    const perfDocs = await db.collection("adPerformance").where("userId", "==", uid).get();
-    const batch = db.batch();
+    const perfDocs = await admin.firestore().collection("adPerformance").where("userId", "==", uid).get();
+    const batch = admin.firestore().batch();
     perfDocs.docs.forEach(doc => batch.delete(doc.ref));
     if (perfDocs.size > 0) await batch.commit();
 
@@ -3064,7 +3067,7 @@ export const metaSyncPerformance = onCall({
     const uid = request.auth.uid;
     const workspaceId = request.data?.workspaceId || null;
 
-    const connDoc = await db.collection("metaConnections").doc(uid).get();
+    const connDoc = await admin.firestore().collection("metaConnections").doc(uid).get();
     if (!connDoc.exists) throw new HttpsError("not-found", "No Meta connection found.");
 
     const conn = connDoc.data()!;
@@ -3105,7 +3108,7 @@ export const metaSyncPerformance = onCall({
         }
 
         const ads = insightsData.data || [];
-        const batch = db.batch();
+        const batch = admin.firestore().batch();
         let syncCount = 0;
 
         for (const ad of ads) {
@@ -3151,11 +3154,11 @@ export const metaSyncPerformance = onCall({
 
             // Store latest performance (for dashboard display)
             const docId = `${uid}_${ad.ad_id}`;
-            batch.set(db.collection("adPerformance").doc(docId), perfDoc, { merge: true });
+            batch.set(admin.firestore().collection("adPerformance").doc(docId), perfDoc, { merge: true });
 
             // Store time-aware snapshot (for historical analysis — never overwrites)
             const snapshotId = `${uid}_${ad.ad_id}_${since}_${until}`;
-            batch.set(db.collection("adPerformanceHistory").doc(snapshotId), {
+            batch.set(admin.firestore().collection("adPerformanceHistory").doc(snapshotId), {
                 ...perfDoc,
                 snapshotDate: new Date().toISOString().split("T")[0],
             });
@@ -3166,7 +3169,7 @@ export const metaSyncPerformance = onCall({
 
                 // 1. Try metaAdId first (strongest — direct Meta identity)
                 if (ad.ad_id) {
-                    const byAdId = await db.collection("creativeDeployments")
+                    const byAdId = await admin.firestore().collection("creativeDeployments")
                         .where("userId", "==", uid)
                         .where("adAccountId", "==", accountId)
                         .where("metaAdId", "==", ad.ad_id)
@@ -3177,7 +3180,7 @@ export const metaSyncPerformance = onCall({
 
                 // 2. Try imageHash if available on the ad insights
                 if (!deployDoc && (ad as any).image_hash) {
-                    const byHash = await db.collection("creativeDeployments")
+                    const byHash = await admin.firestore().collection("creativeDeployments")
                         .where("userId", "==", uid)
                         .where("adAccountId", "==", accountId)
                         .where("imageHash", "==", (ad as any).image_hash)
@@ -3188,7 +3191,7 @@ export const metaSyncPerformance = onCall({
 
                 // 3. Fallback to adName (weakest — may have duplicates), scoped by account
                 if (!deployDoc && ad.ad_name) {
-                    const byName = await db.collection("creativeDeployments")
+                    const byName = await admin.firestore().collection("creativeDeployments")
                         .where("userId", "==", uid)
                         .where("adAccountId", "==", accountId)
                         .where("adName", "==", ad.ad_name)
@@ -3216,7 +3219,7 @@ export const metaSyncPerformance = onCall({
         } // end for-each account
 
         // Update last sync time
-        await db.collection("metaConnections").doc(uid).update({
+        await admin.firestore().collection("metaConnections").doc(uid).update({
             lastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
         });
 
@@ -3246,7 +3249,7 @@ export const metaPushCreative = onCall({
     if (!imageBase64) throw new HttpsError("invalid-argument", "Missing image data.");
 
     // Get user's Meta connection
-    const connDoc = await db.collection("metaConnections").doc(uid).get();
+    const connDoc = await admin.firestore().collection("metaConnections").doc(uid).get();
     if (!connDoc.exists) throw new HttpsError("not-found", "No Meta connection found. Please reconnect.");
 
     const conn = connDoc.data()!;
@@ -3309,7 +3312,7 @@ export const metaPushCreative = onCall({
         const deploymentId = `${uid}_${Date.now()}_${imageHash.substring(0, 8)}`;
         const { adName: pushAdName, designId, projectId, hookMetadata, conceptMetadata, copySnapshot, language, mode, ratio, format, selectedModes, contractTemplateId, numericFidelity, offerFactsHash, workspaceId } = request.data;
         try {
-            await db.collection("creativeDeployments").doc(deploymentId).set({
+            await admin.firestore().collection("creativeDeployments").doc(deploymentId).set({
                 deploymentId,
                 userId: uid,
                 adAccountId: accountId,
@@ -3603,7 +3606,7 @@ export const scheduledPatternReconcile = onSchedule({
     // ═══ WINNING PRINCIPLES VAULT: Nightly consolidation ═══
     try {
         const { consolidateVault } = await import("./principleVault.js");
-        const vaultSnap = await db.collectionGroup('principles')
+        const vaultSnap = await admin.firestore().collectionGroup('principles')
             .where('active', '==', true)
             .select('userId')
             .limit(500)
@@ -3908,7 +3911,7 @@ export const reflowImage = onCall({
     memory: "2GiB",
     cors: true,
 }, async (request: CallableRequest) => {
-    return reflowImageHandler(request, { db, admin, geminiApiKey: geminiApiKey.value(), openaiApiKey: openaiApiKey.value() });
+    return reflowImageHandler(request, { db: admin.firestore(), admin, geminiApiKey: geminiApiKey.value(), openaiApiKey: openaiApiKey.value() });
 });
 
 // ─── MAGIC SELECTOR: Region-targeted image editing ──────────────────────
@@ -4376,7 +4379,7 @@ export const triggerVaultExtraction = onCall({
     if (!generationId || !signal) throw new HttpsError("invalid-argument", "generationId and signal required.");
 
     // Debounce: collect recent signals, process when batch >= 3 or forced
-    const vaultRef = db.collection('principleVaults').doc(userId);
+    const vaultRef = admin.firestore().collection('principleVaults').doc(userId);
     const pendingRef = vaultRef.collection('pendingSignals');
 
     // Store the signal
@@ -4422,7 +4425,7 @@ export const triggerVaultExtraction = onCall({
     }
 
     // Clear processed pending signals
-    const batch = db.batch();
+    const batch = admin.firestore().batch();
     for (const doc of pendingSnap.docs) {
         batch.delete(doc.ref);
     }
@@ -4538,7 +4541,7 @@ export const metaPushCreativePack = onCall({
     if (!imageBase64) throw new HttpsError("invalid-argument", "Missing image data.");
     if (!primaryText) throw new HttpsError("invalid-argument", "Missing ad copy text.");
 
-    const connDoc = await db.collection("metaConnections").doc(uid).get();
+    const connDoc = await admin.firestore().collection("metaConnections").doc(uid).get();
     if (!connDoc.exists) throw new HttpsError("not-found", "No Meta connection found.");
     const conn = connDoc.data()!;
     if (!conn.selectedAccountId) throw new HttpsError("failed-precondition", "No ad account selected.");
@@ -4636,7 +4639,7 @@ export const metaDailySync = onSchedule({
 }, async () => {
     console.log("🔄 Starting daily Meta performance sync...");
 
-    const connections = await db.collection("metaConnections")
+    const connections = await admin.firestore().collection("metaConnections")
         .where("status", "==", "active")
         .get();
 
@@ -4688,7 +4691,7 @@ export const metaDailySync = onSchedule({
             }
 
             // Look up workspaceId from deployment records for each ad
-            const deploySnap = await db.collection("creativeDeployments")
+            const deploySnap = await admin.firestore().collection("creativeDeployments")
                 .where("userId", "==", uid)
                 .where("adAccountId", "==", accountId)
                 .select("metaAdId", "adName", "workspaceId")
@@ -4700,11 +4703,11 @@ export const metaDailySync = onSchedule({
                 if (dd.adName) deployWsMap.set(`name:${dd.adName}`, dd.workspaceId || null);
             }
 
-            const batch = db.batch();
+            const batch = admin.firestore().batch();
             for (const ad of (data.data || [])) {
                 const roas = (ad.purchase_roas || []).length > 0 ? parseFloat(ad.purchase_roas[0].value) : null;
                 const adWsId = deployWsMap.get(ad.ad_id) ?? deployWsMap.get(`name:${ad.ad_name}`) ?? null;
-                batch.set(db.collection("adPerformance").doc(`${uid}_${ad.ad_id}`), {
+                batch.set(admin.firestore().collection("adPerformance").doc(`${uid}_${ad.ad_id}`), {
                     userId: uid, adAccountId: accountId, workspaceId: adWsId, adId: ad.ad_id, adName: ad.ad_name || "",
                     impressions: parseInt(ad.impressions || "0"),
                     clicks: parseInt(ad.clicks || "0"),
@@ -4724,7 +4727,7 @@ export const metaDailySync = onSchedule({
 
             // ═══ CREATIVE MEMORY: Update memory with performance + rebuild indexes ═══
             // Build a workspace lookup from all deployment records for this user
-            const allDeploymentsSnap = await db.collection("creativeDeployments")
+            const allDeploymentsSnap = await admin.firestore().collection("creativeDeployments")
                 .where("userId", "==", uid).select("metaAdId", "adName", "workspaceId").limit(500).get();
             const adWsLookup = new Map<string, string | null>();
             for (const d of allDeploymentsSnap.docs) {
@@ -4783,7 +4786,7 @@ export const metaDailySync = onSchedule({
                         const adRevenue = adRoas * adSpend;
 
                         // Find matching generation in creativeDeployments
-                        const deploySnap = await db.collection('creativeDeployments')
+                        const deploySnap = await admin.firestore().collection('creativeDeployments')
                             .where('userId', '==', uid)
                             .where('adName', '==', ad.ad_name || '')
                             .limit(1).get();
@@ -4865,7 +4868,7 @@ export const metaRefreshTokens = onSchedule({
 
     // Find tokens expiring within 15 days
     const expiryThreshold = Date.now() + (15 * 24 * 60 * 60 * 1000);
-    const expiring = await db.collection("metaConnections")
+    const expiring = await admin.firestore().collection("metaConnections")
         .where("status", "==", "active")
         .where("expiresAt", "<", expiryThreshold)
         .get();
@@ -4925,16 +4928,16 @@ export const metaDataDeletion = onRequest({
 
         // Find and delete all connections for this Meta user
         // Note: We store by Firebase UID, not Meta user ID, so we search all connections
-        const connections = await db.collection("metaConnections").get();
+        const connections = await admin.firestore().collection("metaConnections").get();
         const confirmationCode = `PROADSAI_DEL_${Date.now()}`;
 
         for (const doc of connections.docs) {
             // Delete connection
             await doc.ref.delete();
             // Delete performance data
-            const perfDocs = await db.collection("adPerformance")
+            const perfDocs = await admin.firestore().collection("adPerformance")
                 .where("userId", "==", doc.id).get();
-            const batch = db.batch();
+            const batch = admin.firestore().batch();
             perfDocs.docs.forEach(d => batch.delete(d.ref));
             if (perfDocs.size > 0) await batch.commit();
         }
@@ -4994,7 +4997,7 @@ export const analyzeWebsite = onCall({
     const parsedUrl = new URL(normalizedUrl);
     const cacheKey = (parsedUrl.origin + parsedUrl.pathname.replace(/\/$/, '')).toLowerCase();
     const urlHash = Buffer.from(cacheKey).toString('base64url').slice(0, 128);
-    const cacheRef = db.collection("users").doc(entitlement.creditOwnerUid).collection("analyzedUrls").doc(urlHash);
+    const cacheRef = admin.firestore().collection("users").doc(entitlement.creditOwnerUid).collection("analyzedUrls").doc(urlHash);
     const cacheDoc = await cacheRef.get();
 
     if (cacheDoc.exists) {
@@ -5005,8 +5008,8 @@ export const analyzeWebsite = onCall({
 
     // First analysis of this URL — deduct credits atomically
     const scrapeCost = COSTS['brandUrlScraping'] || 3;
-    await db.runTransaction(async (tx) => {
-        const userRef = db.collection("users").doc(entitlement.creditOwnerUid);
+    await admin.firestore().runTransaction(async (tx) => {
+        const userRef = admin.firestore().collection("users").doc(entitlement.creditOwnerUid);
         const snap = await tx.get(userRef);
         const current = snap.data()?.credits ?? 0;
         if (current < scrapeCost) {
@@ -5407,7 +5410,7 @@ export const deleteWorkspace = onCall({
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
-    const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
+    const wsSnap = await admin.firestore().collection(`users/${uid}/workspaces`).doc(workspaceId).get();
     if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found or already deleted.");
     const wsData = wsSnap.data()!;
 
@@ -5453,7 +5456,7 @@ export const restoreWorkspace = onCall({
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
-    const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
+    const wsSnap = await admin.firestore().collection(`users/${uid}/workspaces`).doc(workspaceId).get();
     if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
     const wsData = wsSnap.data()!;
 
@@ -5501,11 +5504,11 @@ export const linkMetaAccountToWorkspace = onCall({
     const metaAdAccountId = requireNonEmptyString(data.metaAdAccountId, "metaAdAccountId");
     const metaAdAccountName = typeof data.metaAdAccountName === "string" ? data.metaAdAccountName : "";
 
-    const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
+    const wsSnap = await admin.firestore().collection(`users/${uid}/workspaces`).doc(workspaceId).get();
     if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
     assertWorkspaceActive(wsSnap);
 
-    const connDoc = await db.collection("metaConnections").doc(uid).get();
+    const connDoc = await admin.firestore().collection("metaConnections").doc(uid).get();
     const conn = connDoc.exists ? connDoc.data() : null;
     if (!conn?.encryptedToken) {
         throw new HttpsError("failed-precondition", "Connect your Meta account first.");
@@ -5541,7 +5544,7 @@ export const unlinkMetaAccountFromWorkspace = onCall({
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
-    const wsSnap = await db.collection(`users/${uid}/workspaces`).doc(workspaceId).get();
+    const wsSnap = await admin.firestore().collection(`users/${uid}/workspaces`).doc(workspaceId).get();
     if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
 
     await wsSnap.ref.update({
@@ -5577,16 +5580,16 @@ export const setTeamMemberWorkspaceAccess = onCall({
         ),
     ].sort();
 
-    const memberRef = db.collection(`users/${uid}/team`).doc(memberDocId);
+    const memberRef = admin.firestore().collection(`users/${uid}/team`).doc(memberDocId);
 
     // Snapshot the plan outside the txn — it is not part of the concurrent access diff.
-    const userSnap = await db.collection("users").doc(uid).get();
+    const userSnap = await admin.firestore().collection("users").doc(uid).get();
     const planSnapshot = userSnap.data()?.billingState?.plan ?? userSnap.data()?.plan ?? "none";
 
     // The whole diff + audit write happens inside one transaction so that two
     // concurrent setTeamMemberWorkspaceAccess calls cannot compute their granted/revoked
     // deltas against the same stale pre-txn snapshot and double-emit audit entries.
-    const result = await db.runTransaction(async (txn) => {
+    const result = await admin.firestore().runTransaction(async (txn) => {
         const memberSnap = await txn.get(memberRef);
         if (!memberSnap.exists) {
             throw new HttpsError("not-found", "Team member not found.");
@@ -5601,7 +5604,7 @@ export const setTeamMemberWorkspaceAccess = onCall({
         // of a workspace can't slip through after our pre-txn check.
         const wsCache = new Map<string, admin.firestore.DocumentSnapshot>();
         for (const wsId of workspaceAccess) {
-            const wsSnap = await txn.get(db.collection(`users/${uid}/workspaces`).doc(wsId));
+            const wsSnap = await txn.get(admin.firestore().collection(`users/${uid}/workspaces`).doc(wsId));
             if (!wsSnap.exists || wsSnap.data()?.deletedAt != null) {
                 throw new HttpsError("failed-precondition", "One or more workspace IDs are invalid or soft-deleted.");
             }
@@ -5610,7 +5613,7 @@ export const setTeamMemberWorkspaceAccess = onCall({
         // Also read workspaces that are being revoked so we can record their name at event.
         for (const wsId of revoked) {
             if (wsCache.has(wsId)) continue;
-            const wsSnap = await txn.get(db.collection(`users/${uid}/workspaces`).doc(wsId));
+            const wsSnap = await txn.get(admin.firestore().collection(`users/${uid}/workspaces`).doc(wsId));
             wsCache.set(wsId, wsSnap);
         }
 
@@ -5668,7 +5671,7 @@ export const getWorkspaceGenerations = onCall({
     const reqLimit = validatePositiveIntLimit(data.limit, "limit", 50);
     const cursor = validateTimestampIdCursor(data.cursor, "cursor");
 
-    const wsSnap = await db.collectionGroup("workspaces").where(admin.firestore.FieldPath.documentId(), "==", workspaceId).limit(1).get();
+    const wsSnap = await admin.firestore().collectionGroup("workspaces").where(admin.firestore.FieldPath.documentId(), "==", workspaceId).limit(1).get();
     if (wsSnap.empty) throw new HttpsError("not-found", "Workspace not found.");
 
     const wsDoc = wsSnap.docs[0];
@@ -5679,7 +5682,7 @@ export const getWorkspaceGenerations = onCall({
     if (uid !== ownerUid) {
         // Team docs are auto-IDed; member doc stores the teammate's auth uid as `uid`
         // (see createTeamInvite accept path — txn.set({ uid: callerUid, ... })).
-        const memberQuery = await db
+        const memberQuery = await admin.firestore()
             .collection(`users/${ownerUid}/team`)
             .where("uid", "==", uid)
             .limit(1)
@@ -5700,7 +5703,7 @@ export const getWorkspaceGenerations = onCall({
     // including when results from the primary and legacy (workspaceId===null)
     // queries are merged for the default workspace.
     const buildQuery = (wsFilter: string | null) => {
-        let q: admin.firestore.Query = db.collection("generations")
+        let q: admin.firestore.Query = admin.firestore().collection("generations")
             .where("userId", "==", ownerUid)
             .where("workspaceId", "==", wsFilter)
             .orderBy("timestamp", "desc")
@@ -5760,7 +5763,7 @@ export const getWorkspaceAccessAuditLog = onCall({
     const filterWorkspaceId = typeof data.filterWorkspaceId === "string" && data.filterWorkspaceId.length > 0 ? data.filterWorkspaceId : undefined;
 
     const effectiveLimit = reqLimit ?? 50;
-    let q: admin.firestore.Query = db.collection(`users/${uid}/workspace_access_audit`)
+    let q: admin.firestore.Query = admin.firestore().collection(`users/${uid}/workspace_access_audit`)
         .orderBy("timestamp", "desc")
         .orderBy(admin.firestore.FieldPath.documentId(), "desc");
 
@@ -5801,17 +5804,15 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
         throw new HttpsError("invalid-argument", "project.id required");
     }
 
-    const db = admin.firestore();
-
     // Quota check, plan resolution, status latch read, and project write must
     // all happen inside ONE transaction (FR-006/FR-007/SC-005, Constitution
     // principle XI). Otherwise two parallel saves at cap-1 can both pass the
     // count check and both write, AND a concurrent plan downgrade between the
     // out-of-txn plan read and the txn could let the user slip past their
     // new lower cap.
-    const status = await db.runTransaction(async (txn) => {
-        const projectRef = db.doc(`users/${uid}/projects/${project.id}`);
-        const userRef = db.doc(`users/${uid}`);
+    const status = await admin.firestore().runTransaction(async (txn) => {
+        const projectRef = admin.firestore().doc(`users/${uid}/projects/${project.id}`);
+        const userRef = admin.firestore().doc(`users/${uid}`);
 
         // All reads first (Firestore txn requirement). Existing project doc
         // gives us isNew + the prev status for the latch; user doc gives us
