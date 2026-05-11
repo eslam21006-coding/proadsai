@@ -26,6 +26,10 @@ interface GHLPayloadFields {
     creditAmount?: number;
     eventId?: string;
     amount?: number;
+    /** ISO date string — rendered into trial_end_date_human via formatDateHuman. */
+    trialEndDate?: string | null;
+    /** ISO date string — rendered into next_billing_date_human via formatDateHuman. */
+    nextBillingDate?: string | null;
 }
 
 interface ResolvedUser {
@@ -128,10 +132,10 @@ export async function notifyGHL(
             billing_type: payloadFields.billingType ?? "monthly",
             currency: "USD",
             amount: payloadFields.amount ?? 0,
-            trial_end_date: null,
-            trial_end_date_human: null,
-            next_billing_date: null,
-            next_billing_date_human: null,
+            trial_end_date: payloadFields.trialEndDate ?? null,
+            trial_end_date_human: formatDateHuman(payloadFields.trialEndDate ?? null),
+            next_billing_date: payloadFields.nextBillingDate ?? null,
+            next_billing_date_human: formatDateHuman(payloadFields.nextBillingDate ?? null),
             portal_url,
             cancel_at: payloadFields.cancelAt ?? null,
             cancellation_reason: payloadFields.cancellationReason ?? null,

@@ -1045,12 +1045,12 @@ const App: React.FC = () => {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('topup') === 'success') {
-      const credits = params.get('credits');
-      showToast(`🎉 +${credits || ''} credits added! Your balance will update shortly.`, 'success');
+      const credits = params.get('credits') || '';
+      showToast(t('billing.creditsAdded').replace('{n}', credits), 'success');
       // Clean URL
       window.history.replaceState({}, '', window.location.pathname);
     } else if (params.get('topup') === 'cancelled') {
-      showToast('Top-up cancelled.', 'error');
+      showToast(t('billing.topupCancelled'), 'error');
       window.history.replaceState({}, '', window.location.pathname);
     }
 
@@ -1877,10 +1877,17 @@ const App: React.FC = () => {
     try {
       const createPortal = httpsCallable(functions, 'createStripePortalSession');
       const result = await createPortal({});
-      setBillingData((result.data as any) || null);
+      const data = (result.data as any) || null;
+      setBillingData(data);
+      if (data?.portalUrl) {
+        window.open(data.portalUrl, '_blank');
+      } else {
+        showToast(t('billing.failedOpenPortal'), 'error');
+      }
     } catch (error: any) {
-      console.warn('Could not open billing portal:', error.message);
+      console.warn('Could not open billing portal:', error?.message);
       setBillingData(null);
+      showToast(t('billing.failedOpenPortal'), 'error');
     } finally {
       setBillingLoading(false);
     }
@@ -1893,14 +1900,19 @@ const App: React.FC = () => {
       const createPortal = httpsCallable(functions, 'createStripePortalSession');
       const result = await createPortal({ flow: 'subscription_cancel' });
       const data = result.data as any;
-      if (data?.portalUrl) window.open(data.portalUrl, '_blank');
-      showToast('Redirecting to cancellation portal...', 'info');
-      setShowCancelFlow(false);
-      setCancelStep(1);
-      setCancelReason('');
-      setCancelFeedback('');
+      if (data?.portalUrl) {
+        window.open(data.portalUrl, '_blank');
+        showToast(t('billing.redirectingPortal'), 'info');
+        setShowCancelFlow(false);
+        setCancelStep(1);
+        setCancelReason('');
+        setCancelFeedback('');
+      } else {
+        showToast(t('billing.cancelFailed'), 'error');
+      }
     } catch (error: any) {
-      showToast(`Cancel failed: ${error.message}`, 'error');
+      console.error('Cancel subscription failed:', error);
+      showToast(t('billing.cancelFailed'), 'error');
     } finally {
       setCancelLoading(false);
     }

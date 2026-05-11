@@ -26,9 +26,13 @@ export const TopUpSelector: React.FC<TopUpSelectorProps> = ({ canTopUp, onBuy })
       const result = await createStripeTopUpFn({ creditAmount: credits, priceId }) as any;
       const data = result.data as any;
       if (data?.checkoutUrl) {
+        // Notify parent only when the Stripe Checkout URL is in hand — keeps the
+        // parent's success-toast / state-machine in lockstep with what actually happened.
+        onBuy(`topup_${credits}`);
         window.location.href = data.checkoutUrl;
+      } else {
+        console.error("createStripeTopUpSession returned no checkoutUrl");
       }
-      onBuy(`topup_${credits}`);
     } catch (e: any) {
       console.error("Top-up checkout failed:", e);
     } finally {

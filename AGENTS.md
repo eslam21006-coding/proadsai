@@ -227,6 +227,5 @@ logEventToAnalytics(payload).catch(() => {});
 ## Recent Changes
 
 - **2026-05-10**: Stripe migration (Phase 13–14). Paddle billing provider fully removed and replaced with Stripe. All Paddle code, imports, secrets, and SDK dependency deleted. Frontend uses Stripe Checkout Sessions, Customer Portal, and Top-Up Sessions via Cloud Function callables. GHL sync uses per-event-type routing with 6 dedicated webhook URLs. Stripe Tax enabled on all Checkout Sessions. SC-016 (zero Paddle refs), SC-017 (Stripe Tax), SC-018 (no GHL modal redirects), SC-019 (USD-only) all pass.
-```
 
 Never surface raw error objects to the user — always show a localized string via `useT()`.

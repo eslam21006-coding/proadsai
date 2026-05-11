@@ -5,7 +5,7 @@ import type Stripe from "stripe";
 import * as admin from "firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { createStripeClient, STRIPE_PRICE_TO_PLAN } from "../stripe/stripeClient.js";
-import { writeBillingState, markStripeEventProcessed, isStripeEventProcessed } from "./billingState.js";
+import { writeBillingState, markStripeEventProcessed, isStripeEventProcessed, PLAN_CREDITS } from "./billingState.js";
 import { logBillingStep } from "./billingLogger.js";
 import type { notifyGHL } from "./ghlBillingSync.js";
 
@@ -25,12 +25,6 @@ function getNotifyGHL(): NotifyGHLFn {
     }
     return _notifyGHL;
 }
-
-const PLAN_CREDITS: Record<string, number> = {
-    starter: 800,
-    pro: 2500,
-    scale: 6500,
-};
 
 async function isSubscriptionTrialing(stripe: Stripe, subscriptionId: string): Promise<boolean> {
     try {
@@ -695,25 +689,34 @@ async function handleInvoicePaymentSucceeded(event: Stripe.Event, _stripe: Strip
     const previousStatus = userData.billingStatus as string;
 
     const plan = userData.plan as string;
-    const credits = PLAN_CREDITS[plan] ?? 0;
+    const planAllocation = PLAN_CREDITS[plan] ?? 0;
     const periodEnd = invoice.lines?.data?.[0]?.period?.end || Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
     const nextResetDate = admin.firestore.Timestamp.fromDate(new Date(periodEnd * 1000));
 
-    await db.collection("users").doc(uid).update({
-        credits,
-        nextCreditReset: nextResetDate,
-        lastCreditReset: FieldValue.serverTimestamp(),
+    // Renewal: reset credits inside a transaction so an in-flight top-up's increment
+    // is not silently overwritten. Preserve any excess (current > planAllocation) — that
+    // excess is paid-for top-up balance that should carry across the cycle boundary.
+    const userRef = db.collection("users").doc(uid);
+    let credits = planAllocation;
+    await db.runTransaction(async (tx) => {
+        const snap = await tx.get(userRef);
+        if (!snap.exists) return;
+        const currentCredits = snap.data()?.credits ?? 0;
+        credits = Math.max(currentCredits, planAllocation);
+        const update: Record<string, any> = {
+            credits,
+            nextCreditReset: nextResetDate,
+            lastCreditReset: FieldValue.serverTimestamp(),
+        };
+        // Clear past_due fields atomically with the credits reset if recovering.
+        if (previousStatus === "past_due") {
+            update.billingStatus = "active";
+            update.billingIssueAt = FieldValue.delete();
+            update.billingIssueType = FieldValue.delete();
+            update.gracePeriodEndsAt = FieldValue.delete();
+        }
+        tx.update(userRef, update);
     });
-
-    // Clear past_due if this is a recovery
-    if (previousStatus === "past_due") {
-        await db.collection("users").doc(uid).update({
-            billingStatus: "active",
-            billingIssueAt: FieldValue.delete(),
-            billingIssueType: FieldValue.delete(),
-            gracePeriodEndsAt: FieldValue.delete(),
-        });
-    }
 
     await writeBillingState(uid, db);
     await markStripeEventProcessed(event.id, event.type, {
@@ -871,11 +874,16 @@ async function handleChargeRefunded(event: Stripe.Event, stripe: Stripe): Promis
         }
 
         if (uid) {
+            // Single user-doc read — reused for both the cancellation_logs entry and the
+            // stripe.subscriptions.cancel call below.
+            const userSnap = await db.collection("users").doc(uid).get();
+            const userData = userSnap.data();
+
             // Write cancellation_logs BEFORE cancelling (so GHL can read reason)
             await db.collection("cancellation_logs").doc(`${uid}_${Date.now()}`).set({
                 uid,
                 email: metadata.email ?? null,
-                plan: (await db.collection("users").doc(uid).get()).data()?.plan ?? "none",
+                plan: userData?.plan ?? "none",
                 reason: "refund",
                 feedback: metadata.reason ?? null,
                 cancelAt: null,
@@ -883,7 +891,7 @@ async function handleChargeRefunded(event: Stripe.Event, stripe: Stripe): Promis
             });
 
             // Cancel subscription via Stripe API → customer.subscription.deleted fires → GHL POST
-            const stripeSubscriptionId = (await db.collection("users").doc(uid).get()).data()?.stripeSubscriptionId;
+            const stripeSubscriptionId = userData?.stripeSubscriptionId;
             if (stripeSubscriptionId) {
                 try {
                     await stripe.subscriptions.cancel(stripeSubscriptionId);

@@ -48,7 +48,8 @@ interface UserData {
     cancelledAt?: Timestamp | null;
 }
 
-const PLAN_CREDITS: Record<string, number> = {
+// Shared with stripeWebhook.ts — single source of truth for plan→credit allocations.
+export const PLAN_CREDITS: Record<string, number> = {
     starter: 800,
     pro: 2500,
     scale: 6500,

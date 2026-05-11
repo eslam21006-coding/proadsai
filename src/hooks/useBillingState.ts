@@ -65,15 +65,20 @@ export function useBillingState() {
               (ownerSnap) => {
                 if (ownerSnap.exists()) {
                   const ownerData = ownerSnap.data();
-                  const ownerBilling = (ownerData.billingState as BillingState) || null;
+                  const ownerBilling = ownerData.billingState as BillingState | undefined;
                   if (ownerBilling) {
-                    ownerBilling.isTeamMember = true;
-                    ownerBilling.teamOwnerUid = teamOwnerUid;
-                    ownerBilling.teamOwnerName = ownerData.displayName ?? null;
-                    ownerBilling.canUpgrade = false;
-                    ownerBilling.canTopUp = false;
+                    // Build an immutable copy — never mutate the Firestore snapshot return.
+                    setBillingState({
+                      ...ownerBilling,
+                      isTeamMember: true,
+                      teamOwnerUid,
+                      teamOwnerName: ownerData.displayName ?? null,
+                      canUpgrade: false,
+                      canTopUp: false,
+                    });
+                  } else {
+                    setBillingState(null);
                   }
-                  setBillingState(ownerBilling);
                 } else {
                   setBillingState(null);
                 }
@@ -87,13 +92,18 @@ export function useBillingState() {
               },
             );
           } else {
-            const bs = (data.billingState as BillingState) || null;
+            const bs = data.billingState as BillingState | undefined;
             if (bs) {
-              bs.isTeamMember = false;
-              bs.teamOwnerUid = null;
-              bs.teamOwnerName = null;
+              // Build an immutable copy — never mutate the Firestore snapshot return.
+              setBillingState({
+                ...bs,
+                isTeamMember: false,
+                teamOwnerUid: null,
+                teamOwnerName: null,
+              });
+            } else {
+              setBillingState(null);
             }
-            setBillingState(bs);
           }
         } else {
           setBillingState(null);

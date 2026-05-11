@@ -60,15 +60,24 @@ export const CancelDialog: React.FC<CancelDialogProps> = ({
     } catch (e) {
       console.warn("Failed to write cancellation log:", e);
     }
+    // Only advance the parent flow to "cancelled" state if the Stripe portal
+    // actually opened — otherwise the user has not started the cancellation.
     try {
       const result = await createStripePortalFn({ flow: "subscription_cancel" }) as any;
-      if (result.data?.portalUrl) {
-        window.open(result.data.portalUrl, "_blank");
+      const portalUrl = result?.data?.portalUrl;
+      if (!portalUrl) {
+        console.error("createStripePortalSession returned no portalUrl");
+        return;
       }
+      const win = window.open(portalUrl, "_blank");
+      if (!win) {
+        console.error("Stripe portal popup was blocked");
+        return;
+      }
+      onConfirm(reason as CancellationReason, feedback || undefined);
     } catch (e: any) {
       console.error("Failed to open Stripe portal:", e);
     }
-    onConfirm(reason as CancellationReason, feedback || undefined);
   };
 
   return (

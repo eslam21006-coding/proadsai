@@ -303,8 +303,13 @@ export const TOPUP_PRICES: Record<number, string> = {
     800: 'price_topup_800',
 };
 
-// Mirror of functions/src/stripe/stripeClient.ts STRIPE_PRICE_TO_PLAN
-// Single source of truth lives in the backend file; this is a derived const for frontend use.
+// Frontend mapping of Stripe price IDs to plans. Built at module load from the PLANS
+// table above. There is a SEPARATE backend mapping in
+// functions/src/stripe/stripeClient.ts (STRIPE_PRICE_TO_PLAN) used by webhook handlers.
+// The two are independent and MUST be kept in sync manually — whenever you change a
+// Stripe price ID or plan key here, update functions/src/stripe/stripeClient.ts to
+// match, otherwise Checkout will succeed but the webhook will reject the price as
+// `stripe_price_unmapped`.
 export const STRIPE_PRICE_TO_PLAN: Record<string, { plan: keyof typeof PLANS; billingType: 'monthly' | 'annual' }> = {};
 for (const [planId, config] of Object.entries(PLANS)) {
     if (planId === 'none') continue;

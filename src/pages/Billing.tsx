@@ -149,9 +149,14 @@ export const Billing: React.FC = () => {
           onUpdatePayment={async () => {
             try {
               const result = await createStripePortalFn({ flow: "payment_method_update" }) as any;
-              if (result.data?.portalUrl) window.open(result.data.portalUrl, "_blank");
+              if (result.data?.portalUrl) {
+                window.open(result.data.portalUrl, "_blank");
+              } else {
+                showToast(t("billing.failedOpenPortal"), "error");
+              }
             } catch (e: any) {
-              showToast(e?.message || "Failed to open portal", "error");
+              console.error("Failed to open Stripe portal:", e);
+              showToast(t("billing.failedOpenPortal"), "error");
             }
           }}
         />
@@ -251,9 +256,14 @@ export const Billing: React.FC = () => {
               onClick={async () => {
                 try {
                   const result = await createStripePortalFn({}) as any;
-                  if (result.data?.portalUrl) window.open(result.data.portalUrl, "_blank");
+                  if (result.data?.portalUrl) {
+                    window.open(result.data.portalUrl, "_blank");
+                  } else {
+                    showToast(t("billing.failedOpenPortal"), "error");
+                  }
                 } catch (e: any) {
-                  showToast(e?.message || "Failed to open portal", "error");
+                  console.error("Failed to open Stripe portal:", e);
+                  showToast(t("billing.failedOpenPortal"), "error");
                 }
               }}
               className="w-full py-2.5 rounded-lg border border-slate-700 text-slate-300 hover:text-white hover:border-slate-500 text-sm font-medium transition-all"

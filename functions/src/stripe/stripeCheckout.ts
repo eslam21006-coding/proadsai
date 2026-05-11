@@ -57,6 +57,14 @@ export async function createStripeTopUpSessionImpl(
         throw new Error("Invalid top-up priceId");
     }
 
+    // Enforce creditAmount ↔ priceId pairing — otherwise a caller could pay for the
+    // 100-credit pack but request 800 credits in metadata, and the refund/audit trail
+    // would be inconsistent with what Stripe actually charged.
+    const expectedPriceId = STRIPE_TOPUP_PRICES[creditAmount];
+    if (expectedPriceId !== priceId) {
+        throw new Error("Credit amount does not match price ID");
+    }
+
     const stripe = createStripeClient(stripeSecretKey);
     const userDoc = await db.collection("users").doc(uid).get();
     const userData = userDoc.exists ? userDoc.data() : {};
