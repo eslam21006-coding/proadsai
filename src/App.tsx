@@ -8199,12 +8199,28 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       onClick={async () => {
                         setTopupLoading(pack.id);
                         try {
-                          const createTopUp = httpsCallable(functions, 'createStripeTopUpSession');
-                          const result = await createTopUp({ creditAmount: pack.credits, priceId: TOPUP_PRICES[pack.credits] });
-                          const data = result.data as { checkoutUrl: string };
-                          if (data.checkoutUrl) window.location.href = data.checkoutUrl;
-                        } catch (e: any) {
-                          showToast(`Top-up failed: ${e.message}`, 'error');
+                          const priceId = TOPUP_PRICES[pack.credits];
+                          if (!priceId) {
+                            console.error(`No price ID configured for ${pack.credits} credits`);
+                            showToast(t('billing.topupFailed'), 'error');
+                            return;
+                          }
+                          const createTopUp = httpsCallable<
+                            { creditAmount: number; priceId: string },
+                            { checkoutUrl?: string }
+                          >(functions, 'createStripeTopUpSession');
+                          const result = await createTopUp({ creditAmount: pack.credits, priceId });
+                          const checkoutUrl = result.data?.checkoutUrl;
+                          if (checkoutUrl) {
+                            window.location.href = checkoutUrl;
+                          } else {
+                            console.error('createStripeTopUpSession returned no checkoutUrl');
+                            showToast(t('billing.topupFailed'), 'error');
+                          }
+                        } catch (e: unknown) {
+                          const message = e instanceof Error ? e.message : String(e);
+                          console.error('Top-up checkout failed:', message);
+                          showToast(t('billing.topupFailed'), 'error');
                         } finally {
                           setTopupLoading(null);
                         }

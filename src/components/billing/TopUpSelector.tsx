@@ -6,7 +6,18 @@ import { TOPUP_PACKS, TOPUP_PRICES } from "../../planconfig";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "../../firebase";
 
-const createStripeTopUpFn = httpsCallable(functions, "createStripeTopUpSession");
+interface CreateStripeTopUpRequest {
+  creditAmount: number;
+  priceId: string;
+}
+interface CreateStripeTopUpResponse {
+  checkoutUrl: string;
+}
+
+const createStripeTopUpFn = httpsCallable<CreateStripeTopUpRequest, CreateStripeTopUpResponse>(
+  functions,
+  "createStripeTopUpSession",
+);
 
 interface TopUpSelectorProps {
   canTopUp: boolean;
@@ -23,18 +34,23 @@ export const TopUpSelector: React.FC<TopUpSelectorProps> = ({ canTopUp, onBuy })
     setLoadingPack(String(credits));
     try {
       const priceId = TOPUP_PRICES[credits];
-      const result = await createStripeTopUpFn({ creditAmount: credits, priceId }) as any;
-      const data = result.data as any;
-      if (data?.checkoutUrl) {
+      if (!priceId) {
+        console.error(`No price ID configured for ${credits} credits`);
+        return;
+      }
+      const result = await createStripeTopUpFn({ creditAmount: credits, priceId });
+      const checkoutUrl = result.data?.checkoutUrl;
+      if (checkoutUrl) {
         // Notify parent only when the Stripe Checkout URL is in hand — keeps the
         // parent's success-toast / state-machine in lockstep with what actually happened.
         onBuy(`topup_${credits}`);
-        window.location.href = data.checkoutUrl;
+        window.location.href = checkoutUrl;
       } else {
         console.error("createStripeTopUpSession returned no checkoutUrl");
       }
-    } catch (e: any) {
-      console.error("Top-up checkout failed:", e);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("Top-up checkout failed:", message);
     } finally {
       setLoadingPack(null);
     }

@@ -13,8 +13,13 @@ export type CancellationReason =
   | "missing_features"
   | "other";
 
+// Mirrors UserPlanValue in functions/src/billing/billingState.ts (Constitution XI).
+// Backend buildBillingState forces any unknown legacy plan string to 'none', so the
+// narrowed union is safe to consume directly here without further runtime checks.
+export type UserPlanValue = "none" | "starter" | "pro" | "scale";
+
 export interface BillingState {
-  plan: string;
+  plan: UserPlanValue;
   isTrial: boolean;
   credits: number;
   creditsPerMonth: number;

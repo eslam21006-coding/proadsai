@@ -8,7 +8,18 @@ import { httpsCallable } from "firebase/functions";
 import { functions } from "../../firebase";
 import type { CancellationReason } from "../../hooks/useBillingState";
 
-const createStripePortalFn = httpsCallable(functions, "createStripePortalSession");
+interface StripePortalRequest {
+  flow?: "subscription_cancel" | "payment_method_update";
+  returnUrl?: string;
+}
+interface StripePortalResponse {
+  portalUrl: string;
+}
+
+const createStripePortalFn = httpsCallable<StripePortalRequest, StripePortalResponse>(
+  functions,
+  "createStripePortalSession",
+);
 
 interface CancelDialogProps {
   cancelAt: string | null;
@@ -60,23 +71,25 @@ export const CancelDialog: React.FC<CancelDialogProps> = ({
     } catch (e) {
       console.warn("Failed to write cancellation log:", e);
     }
-    // Only advance the parent flow to "cancelled" state if the Stripe portal
-    // actually opened — otherwise the user has not started the cancellation.
+    // Always advance the parent flow once we know the user can reach the portal —
+    // either the popup opened or we're about to navigate the current tab as a
+    // fallback. Popup-blocker dead-end is avoided by the same-tab fallback below.
     try {
-      const result = await createStripePortalFn({ flow: "subscription_cancel" }) as any;
-      const portalUrl = result?.data?.portalUrl;
+      const result = await createStripePortalFn({ flow: "subscription_cancel" });
+      const portalUrl = result.data?.portalUrl;
       if (!portalUrl) {
         console.error("createStripePortalSession returned no portalUrl");
         return;
       }
-      const win = window.open(portalUrl, "_blank");
-      if (!win) {
-        console.error("Stripe portal popup was blocked");
-        return;
-      }
+      const win = window.open(portalUrl, "_blank", "noopener,noreferrer");
       onConfirm(reason as CancellationReason, feedback || undefined);
-    } catch (e: any) {
-      console.error("Failed to open Stripe portal:", e);
+      if (!win) {
+        // Popup blocked — navigate current tab so the user still reaches Stripe.
+        window.location.href = portalUrl;
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("Failed to open Stripe portal:", message);
     }
   };
 
