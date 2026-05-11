@@ -28,7 +28,7 @@ import { feedbackService, type NegativeFeedbackTag } from './services/feedbackSe
 import { metaService, type MetaConnection } from './services/metaService';
 import { ASPECT_RATIOS, COLD_HOOK_ANGLES, OFFER_TYPES, getRandomUniverse } from './constants';
 import type { UserPlan } from './planconfig';
-import { PLANS, CREDIT_COSTS, TOPUP_PACKS, CREDITS_PER_AD, canUse, canUseRatio, requiredPlanFor, requiredPlanForRatio, hasCredits, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
+import { PLANS, CREDIT_COSTS, TOPUP_PACKS, TOPUP_PRICES, CREDITS_PER_AD, canUse, canUseRatio, requiredPlanFor, requiredPlanForRatio, hasCredits, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
 import { LanguageProvider, useT, type UILanguage } from './i18n';
 import { deriveStatus } from './lib/projectStatus';
 import { resolveCoverImage } from './lib/projectCoverImage';
@@ -1041,16 +1041,16 @@ const App: React.FC = () => {
   const [milestones, setMilestones] = useState<Milestones>(EMPTY_MILESTONES);
   const [showVideoPopup, setShowVideoPopup] = useState(false);
 
-  // 1. Check for topup return from Paddle
+  // 1. Check for topup return
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('topup') === 'success') {
-      const credits = params.get('credits');
-      showToast(`🎉 +${credits || ''} credits added! Your balance will update shortly.`, 'success');
+      const credits = params.get('credits') || '';
+      showToast(t('billing.creditsAdded').replace('{n}', credits), 'success');
       // Clean URL
       window.history.replaceState({}, '', window.location.pathname);
     } else if (params.get('topup') === 'cancelled') {
-      showToast('Top-up cancelled.', 'error');
+      showToast(t('billing.topupCancelled'), 'error');
       window.history.replaceState({}, '', window.location.pathname);
     }
 
@@ -1070,7 +1070,7 @@ const App: React.FC = () => {
       window.history.replaceState({}, '', window.location.pathname);
     }
 
-    // Restore session after returning from Paddle billing portal
+    // Restore session after returning from Stripe checkout
     const savedPhase = sessionStorage.getItem('proads_return_phase');
     if (savedPhase) {
       sessionStorage.removeItem('proads_return_phase');
@@ -1148,7 +1148,7 @@ const App: React.FC = () => {
           setMilestones(loadedMilestones);
           setTourCompleted(userSnap.data().tourCompleted === true);
           const hasAnyMilestone = loadedMilestones.watchVideo || loadedMilestones.hooksGenerated || loadedMilestones.conceptsGenerated || loadedMilestones.designGenerated || loadedMilestones.copyGenerated;
-          // Check if user is returning from Paddle billing/topup
+          // Check if user is returning from Stripe checkout/topup
           const pendingPhase = sessionStorage.getItem('proads_pending_phase');
           if (pendingPhase) {
             sessionStorage.removeItem('proads_pending_phase');
@@ -1185,11 +1185,8 @@ const App: React.FC = () => {
               };
               if (initialBillingType) userDoc.billingType = initialBillingType;
               if (initialNextReset) userDoc.nextCreditReset = initialNextReset;
-              if (pending.paddleCustomerId) userDoc.paddleCustomerId = pending.paddleCustomerId;
-              if (pending.paddleSubscriptionId) userDoc.paddleSubscriptionId = pending.paddleSubscriptionId;
-              if (pending.paddleUpdatePaymentUrl) userDoc.paddleUpdatePaymentUrl = pending.paddleUpdatePaymentUrl;
-              if (pending.paddleCancelUrl) userDoc.paddleCancelUrl = pending.paddleCancelUrl;
               if (pending.stripeCustomerId) userDoc.stripeCustomerId = pending.stripeCustomerId;
+              if (pending.stripeSubscriptionId) userDoc.stripeSubscriptionId = pending.stripeSubscriptionId;
 
               await setDoc(userRef, userDoc);
               setUser(currentUser);
@@ -1563,7 +1560,7 @@ const App: React.FC = () => {
   const [userPlan, setUserPlan] = useState<UserPlan>('none');
   const [isTrialUser, setIsTrialUser] = useState(false);
   const [hasVaultData, setHasVaultData] = useState(false);
-  const [billingStatus, setBillingStatus] = useState<'active' | 'past_due' | 'cancelled'>('active');
+  const [billingStatus, setBillingStatus] = useState<'trialing' | 'active' | 'past_due' | 'cancelling' | 'cancelled' | 'none'>('active');
   const [teamOwnerUid, setTeamOwnerUid] = useState<string | null>(null);
   const [teamRole, setTeamRole] = useState<string | null>(null);
   const isTeamViewer = teamRole === 'viewer';
@@ -1667,7 +1664,7 @@ const App: React.FC = () => {
   const [editHookData, setEditHookData] = useState<{ hookText: string; subhead: string; cta: string; benefit: string }>({ hookText: '', subhead: '', cta: '', benefit: '' });
   const accountMenuRef = useRef<HTMLDivElement>(null);
 
-  // ─── PADDLE CHECKOUT URLS (PADDLE TODO: replace with Paddle checkout page URLs) ───
+  // ─── GHL CHECKOUT URLS (external marketing funnel) ───
   const GHL_URLS: Record<string, string> = {
     starter_monthly: 'https://proadsai.com/checkout/starter',
     starter_annual: 'https://proadsai.com/checkout/starter',
@@ -1876,16 +1873,21 @@ const App: React.FC = () => {
   const handleManageBilling = async () => {
     setBillingTab('manage');
     setShowBillingModal(true);
-    // Fetch subscription data from Cloud Function
     setBillingLoading(true);
     try {
-      const getSubscription = httpsCallable(functions, 'paddleGetSub');
-      const result = await getSubscription();
-      setBillingData(result.data);
+      const createPortal = httpsCallable(functions, 'createStripePortalSession');
+      const result = await createPortal({});
+      const data = (result.data as any) || null;
+      setBillingData(data);
+      if (data?.portalUrl) {
+        window.open(data.portalUrl, '_blank');
+      } else {
+        showToast(t('billing.failedOpenPortal'), 'error');
+      }
     } catch (error: any) {
-      console.warn('Could not fetch subscription data:', error.message);
-      // Still show modal with Firestore data as fallback
+      console.warn('Could not open billing portal:', error?.message);
       setBillingData(null);
+      showToast(t('billing.failedOpenPortal'), 'error');
     } finally {
       setBillingLoading(false);
     }
@@ -1895,18 +1897,22 @@ const App: React.FC = () => {
     if (!cancelReason) { showToast('Please select a reason.', 'error'); return; }
     setCancelLoading(true);
     try {
-      const cancelSub = httpsCallable(functions, 'paddleCancelSub');
-      const result = await cancelSub({ reason: cancelReason, feedback: cancelFeedback });
+      const createPortal = httpsCallable(functions, 'createStripePortalSession');
+      const result = await createPortal({ flow: 'subscription_cancel' });
       const data = result.data as any;
-      showToast(`Subscription cancelled. Access continues until ${new Date(data.currentPeriodEnd * 1000).toLocaleDateString()}.`, 'info');
-      setShowCancelFlow(false);
-      setCancelStep(1);
-      setCancelReason('');
-      setCancelFeedback('');
-      // Refresh billing data
-      handleManageBilling();
+      if (data?.portalUrl) {
+        window.open(data.portalUrl, '_blank');
+        showToast(t('billing.redirectingPortal'), 'info');
+        setShowCancelFlow(false);
+        setCancelStep(1);
+        setCancelReason('');
+        setCancelFeedback('');
+      } else {
+        showToast(t('billing.cancelFailed'), 'error');
+      }
     } catch (error: any) {
-      showToast(`Cancel failed: ${error.message}`, 'error');
+      console.error('Cancel subscription failed:', error);
+      showToast(t('billing.cancelFailed'), 'error');
     } finally {
       setCancelLoading(false);
     }
@@ -1915,12 +1921,23 @@ const App: React.FC = () => {
   const handleReactivate = async () => {
     setBillingLoading(true);
     try {
-      const reactivate = httpsCallable(functions, 'paddleReactivateSub');
-      await reactivate();
-      showToast('Subscription reactivated!', 'success');
-      handleManageBilling();
-    } catch (error: any) {
-      showToast(`Reactivate failed: ${error.message}`, 'error');
+      const createPortal = httpsCallable<
+        { flow?: string; returnUrl?: string },
+        { portalUrl?: string }
+      >(functions, 'createStripePortalSession');
+      const result = await createPortal({});
+      const portalUrl = result.data?.portalUrl;
+      if (portalUrl) {
+        window.open(portalUrl, '_blank');
+        showToast(t('billing.redirectingPortal'), 'success');
+      } else {
+        console.error('createStripePortalSession returned no portalUrl');
+        showToast(t('billing.failedOpenPortal'), 'error');
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('Reactivate failed:', message);
+      showToast(t('billing.failedOpenPortal'), 'error');
     } finally {
       setBillingLoading(false);
     }
@@ -8152,8 +8169,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                       <div className="bg-blue-500/5 border border-blue-500/20 rounded-2xl p-5 text-center space-y-3">
                         <i className="fa-solid fa-lock text-blue-400/40 text-lg"></i>
-                        <p className="text-[11px] text-slate-400">Payment method updates will be available when Paddle integration is active.</p>
-                        <p className="text-[9px] text-slate-600">Encrypted & secure. Powered by Paddle.</p>
+                        <p className="text-[11px] text-slate-400">{t('billing.updatePaymentInPortal')}</p>
+                        <p className="text-[9px] text-slate-600">{t('billing.encryptedSecurePoweredByStripe')}</p>
                       </div>
                     </div>
                   )}
@@ -8192,12 +8209,28 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       onClick={async () => {
                         setTopupLoading(pack.id);
                         try {
-                          const createCheckout = httpsCallable(functions, 'paddleTopupCheckout');
-                          const result = await createCheckout({ packId: `topup_${pack.credits}` });
-                          const data = result.data as { url: string };
-                          if (data.url) window.location.href = data.url;
-                        } catch (e: any) {
-                          showToast(`Top-up failed: ${e.message}`, 'error');
+                          const priceId = TOPUP_PRICES[pack.credits];
+                          if (!priceId) {
+                            console.error(`No price ID configured for ${pack.credits} credits`);
+                            showToast(t('billing.topupFailed'), 'error');
+                            return;
+                          }
+                          const createTopUp = httpsCallable<
+                            { creditAmount: number; priceId: string },
+                            { checkoutUrl?: string }
+                          >(functions, 'createStripeTopUpSession');
+                          const result = await createTopUp({ creditAmount: pack.credits, priceId });
+                          const checkoutUrl = result.data?.checkoutUrl;
+                          if (checkoutUrl) {
+                            window.location.href = checkoutUrl;
+                          } else {
+                            console.error('createStripeTopUpSession returned no checkoutUrl');
+                            showToast(t('billing.topupFailed'), 'error');
+                          }
+                        } catch (e: unknown) {
+                          const message = e instanceof Error ? e.message : String(e);
+                          console.error('Top-up checkout failed:', message);
+                          showToast(t('billing.topupFailed'), 'error');
                         } finally {
                           setTopupLoading(null);
                         }
@@ -8216,7 +8249,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     </button>
                   ))}
                 </div>
-                <p className="text-[8px] text-slate-600 text-center mt-2"><i className="fa-solid fa-lock mr-1"></i>Secure checkout powered by Paddle · Card saved for future purchases</p>
+                <p className="text-[8px] text-slate-600 text-center mt-2"><i className="fa-solid fa-lock mr-1"></i>{t('billing.secureCheckoutByStripe')}</p>
               </div>
 
               {/* Upgrade Plan — only shown when triggered from Upgrade menu or feature gates */}

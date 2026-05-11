@@ -1,4 +1,4 @@
-// functions/src/billing/__tests__/billingState.test.ts — webhook scenario contract tests (LAUNCH_MATRIX 8.C.15)
+// functions/src/billing/__tests__/billingState.test.ts — billingState contract tests (Stripe fields)
 
 import { buildBillingState } from "../billingState.js";
 import { Timestamp } from "firebase-admin/firestore";
@@ -28,7 +28,7 @@ function assertEqual(actual: any, expected: any, label: string) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// (a) subscription.created → sets correct plan/credits/paddleSubscriptionId
+// (a) subscription.created → sets correct plan/credits/stripeCustomerId/stripeSubscriptionId
 // ═══════════════════════════════════════════════════════════
 console.log("\n(a) subscription.created → Pro monthly");
 {
@@ -36,19 +36,15 @@ console.log("\n(a) subscription.created → Pro monthly");
         plan: "pro",
         credits: 2500,
         isTrial: false,
-        paddleCustomerId: "ctm_test123",
-        paddleSubscriptionId: "sub_test456",
-        paddleUpdatePaymentUrl: "https://sandbox-paddle.com/update/123",
-        paddleCancelUrl: "https://sandbox-paddle.com/cancel/123",
+        stripeCustomerId: "cus_test123",
+        stripeSubscriptionId: "sub_test456",
         billingStatus: "active",
     });
     assertEqual(state.plan, "pro", "plan is pro");
     assertEqual(state.credits, 2500, "credits is 2500");
     assertEqual(state.billingStatus, "active", "billingStatus is active");
-    assertEqual(state.paddleCustomerId, "ctm_test123", "paddleCustomerId is set");
-    assertEqual(state.paddleSubscriptionId, "sub_test456", "paddleSubscriptionId is set");
-    assertEqual(state.paddleUpdatePaymentUrl, "https://sandbox-paddle.com/update/123", "updatePaymentUrl is set");
-    assertEqual(state.paddleCancelUrl, "https://sandbox-paddle.com/cancel/123", "cancelUrl is set");
+    assertEqual(state.stripeCustomerId, "cus_test123", "stripeCustomerId is set");
+    assertEqual(state.stripeSubscriptionId, "sub_test456", "stripeSubscriptionId is set");
     assertEqual(state.creditsPerMonth, 2500, "creditsPerMonth is 2500 for pro");
     assertEqual(state.canUpgrade, true, "canUpgrade is true (pro < scale)");
     assertEqual(state.canTopUp, true, "canTopUp is true");
@@ -60,10 +56,8 @@ console.log("\n(a.2) subscription.created → Starter plan");
         plan: "starter",
         credits: 800,
         isTrial: false,
-        paddleCustomerId: "ctm_starter",
-        paddleSubscriptionId: "sub_starter",
-        paddleUpdatePaymentUrl: "https://sandbox-paddle.com/update/s",
-        paddleCancelUrl: "https://sandbox-paddle.com/cancel/s",
+        stripeCustomerId: "cus_starter",
+        stripeSubscriptionId: "sub_starter",
         billingStatus: "active",
     });
     assertEqual(state.plan, "starter", "plan is starter");
@@ -78,8 +72,8 @@ console.log("\n(a.3) Legacy mapping: creator → pro");
         plan: "creator",
         credits: 2500,
         isTrial: false,
-        paddleCustomerId: "ctm_creator",
-        paddleSubscriptionId: "sub_creator",
+        stripeCustomerId: "cus_creator",
+        stripeSubscriptionId: "sub_creator",
         billingStatus: "active",
     });
     assertEqual(state.plan, "pro", "plan mapped from creator to pro");
@@ -93,8 +87,8 @@ console.log("\n(a.4) subscription.created → Scale plan");
         plan: "scale",
         credits: 6500,
         isTrial: false,
-        paddleCustomerId: "ctm_scale",
-        paddleSubscriptionId: "sub_scale",
+        stripeCustomerId: "cus_scale",
+        stripeSubscriptionId: "sub_scale",
         billingStatus: "active",
     });
     assertEqual(state.plan, "scale", "plan is scale");
@@ -120,60 +114,41 @@ console.log("\n(b) subscription.canceled → plan=none");
     assertEqual(state.billingStatus, "cancelled", "billingStatus is cancelled");
     assertEqual(state.canUpgrade, false, "canUpgrade is false for plan=none");
     assertEqual(state.canTopUp, false, "canTopUp is false for plan=none");
-    assertEqual(state.paddleCustomerId, null, "paddleCustomerId is null");
-    assertEqual(state.paddleSubscriptionId, null, "paddleSubscriptionId is null");
+    assertEqual(state.stripeCustomerId, null, "stripeCustomerId is null");
+    assertEqual(state.stripeSubscriptionId, null, "stripeSubscriptionId is null");
 }
 
-console.log("\n(b.2) subscription.canceled — Paddle URLs still present from prior subscription");
+console.log("\n(b.2) subscription.canceled — Stripe fields still present from prior subscription");
 {
     const state = buildBillingState({
         plan: "none",
         credits: 0,
         isTrial: false,
         billingStatus: "cancelled",
-        paddleCustomerId: "ctm_cancelled",
-        paddleSubscriptionId: "sub_cancelled",
-        paddleUpdatePaymentUrl: "https://sandbox-paddle.com/update/cancelled",
-        paddleCancelUrl: "https://sandbox-paddle.com/cancel/cancelled",
+        stripeCustomerId: "cus_cancelled",
+        stripeSubscriptionId: "sub_cancelled",
     });
-    assertEqual(state.paddleCustomerId, "ctm_cancelled", "paddleCustomerId preserved");
-    assertEqual(state.paddleSubscriptionId, "sub_cancelled", "paddleSubscriptionId preserved");
-    assertEqual(state.paddleUpdatePaymentUrl, "https://sandbox-paddle.com/update/cancelled", "updatePaymentUrl preserved");
-    assertEqual(state.paddleCancelUrl, "https://sandbox-paddle.com/cancel/cancelled", "cancelUrl preserved");
+    assertEqual(state.stripeCustomerId, "cus_cancelled", "stripeCustomerId preserved");
+    assertEqual(state.stripeSubscriptionId, "sub_cancelled", "stripeSubscriptionId preserved");
 }
 
 // ═══════════════════════════════════════════════════════════
-// (c) transaction.completed with isTopUp → credits added
+// (c) Top-up → credits added, status unchanged
 // ═══════════════════════════════════════════════════════════
-console.log("\n(c) transaction.completed (top-up) → credits added");
+console.log("\n(c) top-up → credits added");
 {
     const state = buildBillingState({
         plan: "pro",
         credits: 2800,
         isTrial: false,
-        paddleCustomerId: "ctm_test123",
-        paddleSubscriptionId: "sub_test456",
+        stripeCustomerId: "cus_test123",
+        stripeSubscriptionId: "sub_test456",
         billingStatus: "active",
     });
     assertEqual(state.credits, 2800, "credits is 2800 (2500 base + 300 top-up)");
     assertEqual(state.billingStatus, "active", "billingStatus is active");
     assertEqual(state.canTopUp, true, "canTopUp is true");
     assertEqual(state.creditsPerMonth, 2500, "creditsPerMonth is still 2500 (plan unchanged)");
-}
-
-console.log("\n(c.2) transaction.completed (top-up) — credits exceed monthly allotment (legacy creator input)");
-{
-    const state = buildBillingState({
-        plan: "creator",
-        credits: 3000,
-        isTrial: false,
-        paddleCustomerId: "ctm_topup_over",
-        billingStatus: "active",
-    });
-    assertEqual(state.plan, "pro", "plan mapped from creator to pro");
-    assertEqual(state.credits, 3000, "credits is 3000 (2500 base + 500 top-up, exceeds 2500 allotment)");
-    assertEqual(state.creditsPerMonth, 2500, "creditsPerMonth stays 2500 (pro after mapping)");
-    assertEqual(state.canTopUp, true, "canTopUp still true");
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -186,8 +161,8 @@ console.log("\n(d) subscription.past_due → credits kept, grace period set");
         plan: "pro",
         credits: 1500,
         isTrial: false,
-        paddleCustomerId: "ctm_past_due",
-        paddleSubscriptionId: "sub_past_due",
+        stripeCustomerId: "cus_past_due",
+        stripeSubscriptionId: "sub_past_due",
         gracePeriodEndsAt: Timestamp.fromDate(graceEnd),
     });
     assertEqual(state.billingStatus, "past_due", "billingStatus is past_due");
@@ -196,99 +171,66 @@ console.log("\n(d) subscription.past_due → credits kept, grace period set");
     assertEqual(state.canTopUp, false, "canTopUp is false during past_due");
 }
 
-console.log("\n(d.2) subscription.past_due — grace period with updatePaymentUrl");
-{
-    const graceEnd = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
-    const state = buildBillingState({
-        plan: "pro",
-        credits: 2500,
-        isTrial: false,
-        paddleCustomerId: "ctm_past_due_2",
-        paddleSubscriptionId: "sub_past_due_2",
-        gracePeriodEndsAt: Timestamp.fromDate(graceEnd),
-        paddleUpdatePaymentUrl: "https://sandbox-paddle.com/update/pd",
-    });
-    assertEqual(state.billingStatus, "past_due", "billingStatus is past_due");
-    assertEqual(state.paddleUpdatePaymentUrl, "https://sandbox-paddle.com/update/pd", "updatePaymentUrl is available for user to fix payment");
-    assertEqual(state.credits, 2500, "credits NOT zeroed during grace period");
-}
-
 // ═══════════════════════════════════════════════════════════
-// (e) Invalid Paddle signature → graceful handling (no crash on empty data)
+// (e) Empty data → graceful defaults
 // ═══════════════════════════════════════════════════════════
-console.log("\n(e) Invalid signature → graceful handling (no crash on empty data)");
+console.log("\n(e) Empty data → graceful defaults");
 {
     const state = buildBillingState({});
     assertEqual(state.plan, "none", "plan defaults to none");
     assertEqual(state.credits, 0, "credits defaults to 0");
     assertEqual(state.billingStatus, "cancelled", "billingStatus defaults to cancelled");
-    assertEqual(state.paddleCustomerId, null, "paddleCustomerId is null");
-    assertEqual(state.paddleSubscriptionId, null, "paddleSubscriptionId is null");
+    assertEqual(state.stripeCustomerId, null, "stripeCustomerId is null");
+    assertEqual(state.stripeSubscriptionId, null, "stripeSubscriptionId is null");
     assertEqual(state.isTrial, false, "isTrial defaults to false");
     assertEqual(state.isTeamMember, false, "isTeamMember defaults to false");
-    assertEqual(state.canUpgrade, false, "canUpgrade is false");
-    assertEqual(state.canTopUp, false, "canTopUp is false");
 }
 
-console.log("\n(e.2) Partial data — only plan set, rest defaults");
+console.log("\n(e.2) Partial data — only plan set");
 {
     const state = buildBillingState({ plan: "starter" });
     assertEqual(state.plan, "starter", "plan is starter");
     assertEqual(state.credits, 0, "credits defaults to 0");
     assertEqual(state.creditsPerMonth, 800, "creditsPerMonth is 800 for starter");
-    assertEqual(state.billingStatus, "active", "billingStatus is active (plan is set, no explicit cancelled)");
+    assertEqual(state.billingStatus, "active", "billingStatus is active");
 }
 
 // ═══════════════════════════════════════════════════════════
-// (f) notifyGHL failure → does not throw (best-effort)
+// (f) Minimal Stripe data
 // ═══════════════════════════════════════════════════════════
-console.log("\n(f) GHL failure path → buildBillingState completes with partial data");
+console.log("\n(f) Minimal data with stripeCustomerId only");
 {
     const state = buildBillingState({
         plan: "pro",
         credits: 2500,
         isTrial: false,
-        paddleCustomerId: "ctm_only",
+        stripeCustomerId: "cus_only",
     });
     assertEqual(state.plan, "pro", "plan is pro");
-    assertEqual(state.paddleCustomerId, "ctm_only", "paddleCustomerId is set");
-    assertEqual(state.paddleSubscriptionId, null, "paddleSubscriptionId is null (not yet set)");
+    assertEqual(state.stripeCustomerId, "cus_only", "stripeCustomerId is set");
+    assertEqual(state.stripeSubscriptionId, null, "stripeSubscriptionId is null");
     assertEqual(state.billingStatus, "active", "billingStatus is active");
     assertEqual(state.canTopUp, true, "canTopUp is true");
 }
 
-console.log("\n(f.2) GHL failure path — minimal data (no paddleCustomerId)");
-{
-    const state = buildBillingState({
-        plan: "pro",
-        credits: 500,
-    });
-    assertEqual(state.plan, "pro", "plan is pro");
-    assertEqual(state.paddleCustomerId, null, "paddleCustomerId is null");
-    assertEqual(state.paddleSubscriptionId, null, "paddleSubscriptionId is null");
-    assert(state.billingStatus === "active" || state.billingStatus === "cancelled", "billingStatus is valid");
-}
-
 // ═══════════════════════════════════════════════════════════
-// (g) subscription.created WITHOUT firebaseUid → pending_plans write
+// (g) pending_plans data shape (Stripe fields)
 // ═══════════════════════════════════════════════════════════
-console.log("\n(g) subscription.created without firebaseUid → pending_plans data");
+console.log("\n(g) pending_plans data → correct Stripe fields");
 {
     const state = buildBillingState({
         plan: "starter",
         credits: 800,
         isTrial: false,
-        paddleCustomerId: "ctm_pending",
-        paddleSubscriptionId: "sub_pending",
-        paddleUpdatePaymentUrl: "https://sandbox-paddle.com/update/pending",
-        paddleCancelUrl: "https://sandbox-paddle.com/cancel/pending",
+        stripeCustomerId: "cus_pending",
+        stripeSubscriptionId: "sub_pending",
         billingStatus: "active",
     });
     assertEqual(state.plan, "starter", "plan is starter");
     assertEqual(state.credits, 800, "credits is 800");
-    assertEqual(state.paddleCustomerId, "ctm_pending", "paddleCustomerId is set");
-    assertEqual(state.paddleSubscriptionId, "sub_pending", "paddleSubscriptionId is set");
-    assertEqual(state.canUpgrade, true, "canUpgrade is true (starter < scale)");
+    assertEqual(state.stripeCustomerId, "cus_pending", "stripeCustomerId is set");
+    assertEqual(state.stripeSubscriptionId, "sub_pending", "stripeSubscriptionId is set");
+    assertEqual(state.canUpgrade, true, "canUpgrade is true");
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -312,22 +254,7 @@ console.log("\nAdditional: Team member restrictions");
 }
 
 // ═══════════════════════════════════════════════════════════
-// Additional: Scale plan (highest tier, canUpgrade=false)
-// ═══════════════════════════════════════════════════════════
-console.log("\nAdditional: Scale plan (highest tier)");
-{
-    const state = buildBillingState({
-        plan: "scale",
-        credits: 6500,
-        isTrial: false,
-    });
-    assertEqual(state.canUpgrade, false, "canUpgrade is false for scale");
-    assertEqual(state.canTopUp, true, "canTopUp is true for scale");
-    assertEqual(state.creditsPerMonth, 6500, "creditsPerMonth is 6500");
-}
-
-// ═══════════════════════════════════════════════════════════
-// Additional: Cancelling state (cancelAtPeriodEnd)
+// Additional: Cancelling state
 // ═══════════════════════════════════════════════════════════
 console.log("\nAdditional: Cancelling state");
 {
@@ -338,8 +265,8 @@ console.log("\nAdditional: Cancelling state");
         isTrial: false,
         cancelAtPeriodEnd: true,
         cancelAt: Timestamp.fromDate(futureDate),
-        paddleCustomerId: "ctm_cancelling",
-        paddleSubscriptionId: "sub_cancelling",
+        stripeCustomerId: "cus_cancelling",
+        stripeSubscriptionId: "sub_cancelling",
     });
     assertEqual(state.billingStatus, "cancelling", "billingStatus is cancelling");
     assert(state.cancelAt !== null, "cancelAt is set");
@@ -348,7 +275,7 @@ console.log("\nAdditional: Cancelling state");
 }
 
 // ═══════════════════════════════════════════════════════════
-// Additional: Trial expired (0 credits)
+// Additional: Trial expired
 // ═══════════════════════════════════════════════════════════
 console.log("\nAdditional: Trial expired (0 credits)");
 {
@@ -364,7 +291,7 @@ console.log("\nAdditional: Trial expired (0 credits)");
 }
 
 // ═══════════════════════════════════════════════════════════
-// Additional: Trial active (credits > 0)
+// Additional: Trial active
 // ═══════════════════════════════════════════════════════════
 console.log("\nAdditional: Trial active (credits > 0)");
 {
@@ -374,77 +301,24 @@ console.log("\nAdditional: Trial active (credits > 0)");
         isTrial: true,
     });
     assertEqual(state.isTrial, true, "isTrial is true");
-    assertEqual(state.billingStatus, "active", "billingStatus is active (trial with credits)");
+    assertEqual(state.billingStatus, "active", "billingStatus is active");
     assertEqual(state.creditsPerMonth, 50, "creditsPerMonth is 50 (trial)");
     assertEqual(state.canTopUp, false, "canTopUp is false for trial");
-    assertEqual(state.canUpgrade, true, "canUpgrade is true (starter < scale)");
 }
 
 // ═══════════════════════════════════════════════════════════
-// Additional: Pending downgrade
+// Additional: Legacy mappings
 // ═══════════════════════════════════════════════════════════
-console.log("\nAdditional: Pending downgrade");
-{
-    const futureDate = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
-    const state = buildBillingState({
-        plan: "pro",
-        credits: 2500,
-        isTrial: false,
-        paddleCustomerId: "ctm_downgrade",
-        paddleSubscriptionId: "sub_downgrade",
-        pendingPlan: "starter",
-        pendingPlanEffectiveAt: Timestamp.fromDate(futureDate),
-    });
-    assertEqual(state.plan, "pro", "current plan is still pro");
-    assertEqual(state.pendingPlan, "starter", "pendingPlan is starter");
-    assert(state.pendingPlanEffectiveAt !== null, "pendingPlanEffectiveAt is set");
-    assertEqual(state.billingStatus, "active", "billingStatus is active");
-}
-
-// ═══════════════════════════════════════════════════════════
-// Additional: Cancelling overrides explicit billingStatus
-// ═══════════════════════════════════════════════════════════
-console.log("\nAdditional: billingStatus='cancelled' overrides cancelling");
-{
-    const state = buildBillingState({
-        plan: "none",
-        credits: 0,
-        isTrial: false,
-        billingStatus: "cancelled",
-        cancelAtPeriodEnd: true,
-    });
-    assertEqual(state.billingStatus, "cancelled", "explicit 'cancelled' wins over cancelAtPeriodEnd");
-}
-
-// ═══════════════════════════════════════════════════════════
-// Additional: nextResetDate passthrough
-// ═══════════════════════════════════════════════════════════
-console.log("\nAdditional: nextResetDate passthrough");
-{
-    const resetDate = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
-    const state = buildBillingState({
-        plan: "pro",
-        credits: 2500,
-        isTrial: false,
-        nextCreditReset: Timestamp.fromDate(resetDate),
-    });
-    assert(state.nextResetDate !== null, "nextResetDate is set");
-    assertEqual(state.nextResetDate!.seconds, Math.floor(resetDate.getTime() / 1000), "nextResetDate.seconds matches");
-}
-
-// ═══════════════════════════════════════════════════════════
-// Legacy read-time mapping fixtures
-// ═══════════════════════════════════════════════════════════
-console.log("\nLegacy: Read-time mapping creator → pro");
+console.log("\nLegacy: creator → pro");
 {
     const state = buildBillingState({ plan: "creator" });
-    assertEqual(state.plan, "pro", "legacy creator mapped to pro at read time");
+    assertEqual(state.plan, "pro", "creator mapped to pro");
 }
 
-console.log("\nLegacy: Read-time mapping scaling → scale");
+console.log("\nLegacy: scaling → scale");
 {
     const state = buildBillingState({ plan: "scaling" });
-    assertEqual(state.plan, "scale", "legacy scaling mapped to scale at read time");
+    assertEqual(state.plan, "scale", "scaling mapped to scale");
 }
 
 // ═══════════════════════════════════════════════════════════

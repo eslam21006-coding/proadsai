@@ -8,8 +8,6 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { defineSecret } from "firebase-functions/params";
 import * as admin from "firebase-admin";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-// DEPRECATED: Stripe import — only used by deprecated functions kept for reference.
-// Active code uses Paddle via @paddle/paddle-node-sdk.
 import Stripe from "stripe";
 import * as crypto from "crypto";
 import {
@@ -20,11 +18,6 @@ import {
 } from "./entitlements.js";
 import { validateSelector } from "./selectorLimits.js";
 import { writeBillingState } from "./billing/billingState.js";
-import { paddleGetSubscription, paddleCancelSubscription, paddleReactivateSubscription, paddleChangePlan } from "./paddle/paddleSubscriptions.js";
-import { paddleCreateTopupCheckout } from "./paddle/paddleCheckout.js";
-import { paddleCreatePortalSession } from "./paddle/paddlePortal.js";
-import { handlePaddleWebhook } from "./billing/paddleWebhook.js";
-import { createPaddleClient, PADDLE_PRICE_TO_PLAN } from "./paddle/paddleClient.js";
 import { assertOwner, assertWorkspaceActive, createWorkspaceWithLimit, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
 import { enforceProjectQuota } from "./savedProjects/projectQuota.js";
 import { deriveStatus } from "./savedProjects/projectStatus.js";
@@ -34,6 +27,12 @@ import { probeMetaRole } from "./workspaces/metaRoleProbe.js";
 import { writeAuditEntry } from "./workspaces/auditLog.js";
 import { reflowImageHandler } from "./reflowImage.js";
 import { purgeExpiredWorkspaces, cascadeReassignOnDelete, cascadeRevertOnRestore } from "./workspaces/workspacePurge.js";
+import { handleStripeWebhook, setNotifyGHL } from "./billing/stripeWebhook.js";
+import { createStripeCheckoutSessionImpl, createStripeTopUpSessionImpl } from "./stripe/stripeCheckout.js";
+import { createStripePortalSessionImpl } from "./stripe/stripePortal.js";
+import { notifyGHL, URL_BY_EVENT_TEMPLATE } from "./billing/ghlBillingSync.js";
+import type { GHLEventType } from "./billing/ghlBillingSync.js";
+import { STRIPE_PRICE_TO_PLAN } from "./stripe/stripeClient.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
@@ -46,7 +45,6 @@ admin.initializeApp({
 const db = admin.firestore();
 const geminiApiKey = defineSecret("GEMINI_API_KEY");
 const ghlWebhookSecret = defineSecret("GHL_WEBHOOK_SECRET");
-// DEPRECATED: only used by deprecated Stripe functions kept for reference
 const stripeSecretKey = defineSecret("STRIPE_SECRET_KEY");
 const metaAppId = defineSecret("META_APP_ID");
 const ghlTeamInviteUrl = defineSecret("GHL_TEAM_INVITE_WEBHOOK_URL");
@@ -54,11 +52,15 @@ const metaAppSecret = defineSecret("META_APP_SECRET");
 const openaiApiKey = defineSecret("OPENAI_API_KEY");
 const falApiKey = defineSecret("FAL_API_KEY");
 
-// ─── PADDLE SECRETS ──────────────────────────────────────────────────────────
-const paddleApiKey = defineSecret("PADDLE_API_KEY");
-const paddleWebhookSecret = defineSecret("PADDLE_WEBHOOK_SECRET");
-const ghlPaddleSyncUrl = defineSecret("GHL_PADDLE_SYNC_WEBHOOK_URL");
-const ghlPaddleFailedUrl = defineSecret("GHL_PADDLE_FAILED_WEBHOOK_URL");
+// ─── STRIPE SECRETS ──────────────────────────────────────────────────────────
+// stripeWebhookSecret is declared later near the deprecated stripeWebhook function
+// and reused by the new Stripe webhook handler.
+const ghlTrialStartedUrl = defineSecret("GHL_TRIAL_STARTED_URL");
+const ghlPaymentReceivedUrl = defineSecret("GHL_PAYMENT_RECEIVED_URL");
+const ghlRecoveredUrl = defineSecret("GHL_RECOVERED_URL");
+const ghlOverdueFailedUrl = defineSecret("GHL_OVERDUE_FAILED_URL");
+const ghlCancelledUrl = defineSecret("GHL_CANCELLED_URL");
+const ghlTopupUrl = defineSecret("GHL_TOPUP_URL");
 
 // ─── CONFIGURATION ──────────────────────────────────────────────────────────
 const PLAN_MAP: Record<string, { plan: string; credits: number; isTrial?: boolean }> = {
@@ -81,14 +83,6 @@ const PLAN_MAP: Record<string, { plan: string; credits: number; isTrial?: boolea
     'topup_100': { plan: 'keep_current', credits: 100 },
     'topup_300': { plan: 'keep_current', credits: 300 },
     'topup_800': { plan: 'keep_current', credits: 800 },
-};
-
-// PADDLE_PRICE_TO_PLAN is imported from ./paddle/paddleClient (single source of truth).
-
-const PADDLE_TOPUP_PRICES: Record<string, { priceId: string; credits: number }> = {
-    topup_100: { priceId: "pri_01knz87qc1ezrb84gtffpmtjdq", credits: 100 },
-    topup_300: { priceId: "pri_01knz898vrhxyge632scazjn2z", credits: 300 },
-    topup_800: { priceId: "pri_01knz8a0s0f2je5rgrk2y62b0n", credits: 800 },
 };
 
 // All costs are strictly linear: unit cost × count. No bundling, no discounts.
@@ -184,7 +178,7 @@ export const generateCreative = onCall({
 // ═══════════════════════════════════════════════════════════════════════════
 // 3. THE GHL PAYMENT WEBHOOK (The "Cash Register")
 // ═══════════════════════════════════════════════════════════════════════════
-// DEPRECATED: replaced by paddleWebhook + notifyGHL
+// DEPRECATED: replaced by Stripe webhook + notifyGHL
 const ghlpaymentwebhook = onRequest({
     region: "europe-west1",
     cors: true,
@@ -394,7 +388,7 @@ export const monthlyCreditsReset = onSchedule({
 //   Headers: x-ghl-secret: YOUR_SECRET
 //   Body: { "email": "{{contact.email}}" }
 // ═══════════════════════════════════════════════════════════════════════════
-// DEPRECATED: replaced by paddleWebhook + notifyGHLFailed
+// DEPRECATED: replaced by Stripe webhook + notifyGHLFailed
 const ghlCancellationWebhook = onRequest({
     region: "europe-west1",
     cors: true,
@@ -460,7 +454,7 @@ const ghlCancellationWebhook = onRequest({
 //   Headers: x-ghl-secret: YOUR_SECRET
 //   Body: { "email": "{{contact.email}}" }
 // ═══════════════════════════════════════════════════════════════════════════
-// DEPRECATED: replaced by paddleWebhook + notifyGHLFailed
+// DEPRECATED: replaced by Stripe webhook + notifyGHLFailed
 const ghlPaymentFailedWebhook = onRequest({
     region: "europe-west1",
     cors: true,
@@ -729,8 +723,6 @@ CRITICAL:
 // ═══════════════════════════════════════════════════════════════════════════
 // @LEGACY — STRIPE BILLING (7–19)
 // These functions use Stripe and are preserved for backward compatibility.
-// Paddle equivalents are registered below. Migrate frontend to Paddle callables,
-// then remove this entire section.
 // ═══════════════════════════════════════════════════════════════════════════
 // 7. STRIPE CUSTOMER PORTAL
 // ═══════════════════════════════════════════════════════════════════════════
@@ -746,8 +738,8 @@ CRITICAL:
 //
 // The stripeCustomerId is automatically saved when GHL webhook fires (see section 3 above).
 // ═══════════════════════════════════════════════════════════════════════════
-// DEPRECATED: replaced by Paddle management URLs
-const createStripePortalSession = onCall({
+// DEPRECATED: preserved for reference only
+const _deprecatedCreateStripePortalSession = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
     cors: true,
@@ -836,7 +828,7 @@ const createStripePortalSession = onCall({
 // ═══════════════════════════════════════════════════════════════════════════
 // 8. ONE-TIME BACKFILL: Add stripeCustomerId to existing users
 // ═══════════════════════════════════════════════════════════════════════════
-// DEPRECATED: Stripe backfill — no longer needed with Paddle migration.
+// DEPRECATED: Stripe backfill — no longer needed.
 // Run this ONCE after deploying by visiting:
 //   https://europe-west1-proadsai-saas.cloudfunctions.net/backfillStripeCustomerIds
 //
@@ -924,7 +916,7 @@ const TOPUP_PRICES: Record<string, { priceId: string; credits: number }> = {
     'topup_800': { priceId: 'price_1T4zgC4MIh5WD4bvYtG2UB4K', credits: 800 },
 };
 
-// DEPRECATED: replaced by createPaddleTopUp
+// DEPRECATED: replaced by createStripeTopUpSession
 const createTopupCheckout = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1019,10 +1011,9 @@ const createTopupCheckout = onCall({
 // ═══════════════════════════════════════════════════════════════════════════
 
 const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
-const ghlCancelWebhookUrl = defineSecret("GHL_CANCEL_WEBHOOK_URL");
 
-// DEPRECATED: replaced by paddleWebhook
-const stripeWebhook = onRequest({
+// DEPRECATED: replaced by stripeWebhook
+const _deprecatedStripeWebhook = onRequest({
     region: "europe-west1",
     secrets: [stripeSecretKey, stripeWebhookSecret],
 }, async (req, res) => {
@@ -1479,7 +1470,7 @@ async function resolveStripeCustomerId(uid: string, stripe: Stripe): Promise<str
     throw new HttpsError("not-found", "No Stripe customer found. If you subscribed recently, please contact support.");
 }
 
-// DEPRECATED: replaced by Paddle management URLs — getSubscription uses Stripe
+// DEPRECATED: preserved for reference only — getSubscription
 export const getSubscription = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1522,10 +1513,10 @@ export const getSubscription = onCall({
     };
 });
 
-// DEPRECATED: replaced by Paddle cancel URL — cancelSubscription uses Stripe
+// DEPRECATED: preserved for reference only — cancelSubscription
 export const cancelSubscription = onCall({
     region: "europe-west1",
-    secrets: [stripeSecretKey, ghlCancelWebhookUrl],
+    secrets: [stripeSecretKey],
     cors: true,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
@@ -1569,7 +1560,7 @@ export const cancelSubscription = onCall({
     });
 
     // 5. Notify GHL so CRM automations fire (emails, tags, pipeline)
-    const ghlUrl = ghlCancelWebhookUrl.value();
+    const ghlUrl = process.env.GHL_CANCEL_WEBHOOK_URL || '';
     if (ghlUrl) {
         try {
             await fetch(ghlUrl, {
@@ -1603,7 +1594,7 @@ export const cancelSubscription = onCall({
     };
 });
 
-// DEPRECATED: replaced by Paddle reactivation URL — reactivateSubscription uses Stripe
+// DEPRECATED: preserved for reference only — reactivateSubscription
 export const reactivateSubscription = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1659,7 +1650,7 @@ export const reactivateSubscription = onCall({
     return { success: true };
 });
 
-// DEPRECATED: replaced by Paddle billing — applyRetentionDiscount uses Stripe coupons
+// DEPRECATED: preserved for reference only — applyRetentionDiscount
 export const applyRetentionDiscount = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1721,7 +1712,7 @@ export const applyRetentionDiscount = onCall({
     return { success: true, couponApplied: couponId };
 });
 
-// DEPRECATED: replaced by Paddle invoice delivery — getInvoices uses Stripe
+// DEPRECATED: preserved for reference only — getInvoices
 export const getInvoices = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1753,7 +1744,7 @@ export const getInvoices = onCall({
     };
 });
 
-// DEPRECATED: replaced by Paddle — retryInvoice uses Stripe
+// DEPRECATED: preserved for reference only — retryInvoice
 export const retryInvoice = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1788,7 +1779,7 @@ export const retryInvoice = onCall({
     }
 });
 
-// DEPRECATED: replaced by Paddle — createSetupIntent uses Stripe
+// DEPRECATED: preserved for reference only — createSetupIntent
 export const createSetupIntent = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1808,7 +1799,7 @@ export const createSetupIntent = onCall({
     return { clientSecret: setupIntent.client_secret };
 });
 
-// DEPRECATED: replaced by Paddle management URLs — updatePaymentMethod uses Stripe
+// DEPRECATED: preserved for reference only — updatePaymentMethod
 export const updatePaymentMethod = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1858,7 +1849,7 @@ export const updatePaymentMethod = onCall({
     };
 });
 
-// DEPRECATED: replaced by createPaddleCheckout — changePlan uses Stripe
+// DEPRECATED: preserved for reference only — changePlan
 export const changePlan = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
@@ -1920,188 +1911,117 @@ export const changePlan = onCall({
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PADDLE BILLING (active)
+// STRIPE BILLING
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const paddleGetSub = onCall({
-    region: "europe-west1",
-    secrets: [paddleApiKey],
-    cors: true,
-}, async (request: CallableRequest) => {
-    return paddleGetSubscription(request, paddleApiKey.value(), db);
+const ghlUrlByEvent: Record<GHLEventType, () => string> = {
+    "trial.started": () => ghlTrialStartedUrl.value(),
+    "subscription.created": () => ghlPaymentReceivedUrl.value(),
+    "payment.recovered": () => ghlRecoveredUrl.value(),
+    "payment.failed": () => ghlOverdueFailedUrl.value(),
+    "subscription.cancelled": () => ghlCancelledUrl.value(),
+    "top_up.completed": () => ghlTopupUrl.value(),
+};
+
+setNotifyGHL((identifier: string, eventType: GHLEventType, payloadFields: any) => {
+    return notifyGHL(identifier, eventType, payloadFields, {
+        stripeSecretKey: stripeSecretKey.value(),
+        urlByEvent: ghlUrlByEvent,
+    });
 });
 
-export const paddleCancelSub = onCall({
+export const createStripeCheckoutSession = onCall({
     region: "europe-west1",
-    secrets: [paddleApiKey, ghlCancelWebhookUrl],
-    cors: true,
-}, async (request: CallableRequest) => {
-    return paddleCancelSubscription(request, paddleApiKey.value(), ghlCancelWebhookUrl.value(), db);
-});
-
-export const paddleReactivateSub = onCall({
-    region: "europe-west1",
-    secrets: [paddleApiKey],
-    cors: true,
-}, async (request: CallableRequest) => {
-    return paddleReactivateSubscription(request, paddleApiKey.value(), db);
-});
-
-export const paddleChangePlanFn = onCall({
-    region: "europe-west1",
-    secrets: [paddleApiKey],
-    cors: true,
-}, async (request: CallableRequest) => {
-    return paddleChangePlan(request, paddleApiKey.value(), db);
-});
-
-export const paddleTopupCheckout = onCall({
-    region: "europe-west1",
-    secrets: [paddleApiKey],
-    cors: true,
-}, async (request: CallableRequest) => {
-    return paddleCreateTopupCheckout(request, paddleApiKey.value(), db);
-});
-
-export const paddlePortalSession = onCall({
-    region: "europe-west1",
-    secrets: [paddleApiKey],
-    cors: true,
-}, async (request: CallableRequest) => {
-    return paddleCreatePortalSession(request, paddleApiKey.value(), db);
-});
-
-export const createPaddleCheckout = onCall({
-    region: "europe-west1",
-    secrets: [paddleApiKey],
+    secrets: [stripeSecretKey],
     cors: true,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
     const uid = request.auth.uid;
     const email = request.auth.token?.email;
     const priceId = request.data?.priceId as string;
     if (!priceId) throw new HttpsError("invalid-argument", "Missing priceId.");
 
+    const planInfo = STRIPE_PRICE_TO_PLAN[priceId];
+    if (!planInfo || planInfo.plan === "keep_current") {
+        throw new HttpsError("invalid-argument", "Invalid priceId.");
+    }
+
     const userDoc = await db.collection("users").doc(uid).get();
-    const userData = userDoc.data();
-    if (userData?.isTeamMember) {
+    if (userDoc.data()?.isTeamMember) {
         throw new HttpsError("failed-precondition", "Team members cannot subscribe directly.");
     }
 
-    const paddle = createPaddleClient(paddleApiKey.value());
-
-    let customerId = userData?.paddleCustomerId;
-    if (!customerId) {
-        try {
-            const existing = paddle.customers.list({ email: [email?.toLowerCase().trim() || ""], perPage: 1 });
-            const items = await existing.next();
-            if (items && items.length > 0) {
-                customerId = items[0].id;
-            } else {
-                const newCustomer = await paddle.customers.create({
-                    email: email?.toLowerCase().trim() ?? "",
-                    customData: { firebaseUid: uid },
-                });
-                customerId = newCustomer.id;
-            }
-            await db.collection("users").doc(uid).update({ paddleCustomerId: customerId });
-        } catch (err: any) {
-            console.error("Failed to create/find Paddle customer:", err.message);
-            throw new HttpsError("internal", "Failed to set up billing customer.");
-        }
-    }
-
     try {
-        const tx = await paddle.transactions.create({
-            customerId,
-            items: [{ priceId, quantity: 1 }],
-            customData: { firebaseUid: uid },
-        });
-        return {
-            checkoutUrl: tx.checkout?.url || null,
-            transactionId: tx.id,
-        };
+        return await createStripeCheckoutSessionImpl(uid, email ?? "", priceId, stripeSecretKey.value());
     } catch (err: any) {
-        console.error("Paddle checkout error:", err.message);
-        throw new HttpsError("internal", "Failed to create checkout: " + err.message);
+        throw new HttpsError("internal", err.message);
     }
 });
 
-export const createPaddleTopUp = onCall({
+export const createStripeTopUpSession = onCall({
     region: "europe-west1",
-    secrets: [paddleApiKey],
+    secrets: [stripeSecretKey],
     cors: true,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+
     const uid = request.auth.uid;
     const email = request.auth.token?.email;
-    const packId = request.data?.packId as string;
-    if (!packId) throw new HttpsError("invalid-argument", "Missing packId.");
+    const creditAmount = request.data?.creditAmount as number;
+    const priceId = request.data?.priceId as string;
 
-    const pack = PADDLE_TOPUP_PRICES[packId];
-    if (!pack) throw new HttpsError("invalid-argument", `Unknown top-up pack: ${packId}`);
+    if (![100, 300, 800].includes(creditAmount)) {
+        throw new HttpsError("invalid-argument", "Invalid creditAmount.");
+    }
 
     const userDoc = await db.collection("users").doc(uid).get();
     const userData = userDoc.data();
     if (userData?.isTeamMember) {
-        throw new HttpsError("failed-precondition", "Team members cannot purchase top-ups directly.");
+        throw new HttpsError("failed-precondition", "Team members cannot purchase top-ups.");
     }
     if (userData?.billingStatus === "past_due") {
-        throw new HttpsError("failed-precondition", "Resolve your payment issue before purchasing credits.");
+        throw new HttpsError("failed-precondition", "Resolve payment issue first.");
     }
-
-    const paddle = createPaddleClient(paddleApiKey.value());
-
-    let customerId = userData?.paddleCustomerId;
-    if (!customerId) {
-        try {
-            const existing = paddle.customers.list({ email: [email?.toLowerCase().trim() || ""], perPage: 1 });
-            const items = await existing.next();
-            if (items && items.length > 0) {
-                customerId = items[0].id;
-            } else {
-                const newCustomer = await paddle.customers.create({
-                    email: email?.toLowerCase().trim() ?? "",
-                    customData: { firebaseUid: uid },
-                });
-                customerId = newCustomer.id;
-            }
-            await db.collection("users").doc(uid).update({ paddleCustomerId: customerId });
-        } catch (err: any) {
-            console.error("Failed to create/find Paddle customer:", err.message);
-            throw new HttpsError("internal", "Failed to set up billing customer.");
-        }
+    if (!userData?.stripeSubscriptionId && !userData?.plan || userData?.plan === "none") {
+        throw new HttpsError("failed-precondition", "Active subscription required for top-ups.");
     }
 
     try {
-        const tx = await paddle.transactions.create({
-            customerId,
-            items: [{ priceId: pack.priceId, quantity: 1 }],
-            customData: { firebaseUid: uid, isTopUp: true, creditAmount: pack.credits },
-        });
-        return {
-            checkoutUrl: tx.checkout?.url || null,
-            transactionId: tx.id,
-        };
+        return await createStripeTopUpSessionImpl(uid, email ?? "", creditAmount, priceId, stripeSecretKey.value());
     } catch (err: any) {
-        console.error("Paddle top-up checkout error:", err.message);
-        throw new HttpsError("internal", "Failed to create top-up checkout: " + err.message);
+        throw new HttpsError("internal", err.message);
     }
 });
 
-export const paddleWebhook = onRequest({
+export const createStripePortalSession = onCall({
     region: "europe-west1",
-    secrets: [paddleApiKey, paddleWebhookSecret, ghlPaddleSyncUrl, ghlPaddleFailedUrl],
+    secrets: [stripeSecretKey],
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Login required.");
+    }
+
+    const uid = request.auth.uid;
+    const flow = request.data?.flow as "subscription_cancel" | "payment_method_update" | undefined;
+    const returnUrl = request.data?.returnUrl as string | undefined;
+
+    try {
+        return await createStripePortalSessionImpl(uid, flow, returnUrl, stripeSecretKey.value());
+    } catch (err: any) {
+        throw new HttpsError(err.code === "failed-precondition" ? "failed-precondition" : "internal", err.message);
+    }
+});
+
+export const stripeWebhook = onRequest({
+    region: "europe-west1",
+    secrets: [stripeSecretKey, stripeWebhookSecret, ghlTrialStartedUrl, ghlPaymentReceivedUrl, ghlRecoveredUrl, ghlOverdueFailedUrl, ghlCancelledUrl, ghlTopupUrl],
     cors: true,
 }, async (req, res) => {
-    await handlePaddleWebhook(req, res, {
-        db,
-        paddleApiKey: paddleApiKey.value(),
-        webhookSecret: paddleWebhookSecret.value(),
-        ghlSyncUrl: ghlPaddleSyncUrl.value(),
-        ghlFailedUrl: ghlPaddleFailedUrl.value(),
-        priceToPlan: PADDLE_PRICE_TO_PLAN,
-        topupPrices: PADDLE_TOPUP_PRICES,
+    await handleStripeWebhook(req, res, {
+        stripeSecretKey: stripeSecretKey.value(),
+        stripeWebhookSecret: stripeWebhookSecret.value(),
     });
 });
 

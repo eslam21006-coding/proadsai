@@ -32,6 +32,7 @@
 
 Both blockers must be resolved before live cutover.
 
+HEAD
 
 
 \---
@@ -98,3 +99,28 @@ Audit deliverable: pass/fail per phase with specific failures listed; failures b
 
 This commitment is non-negotiable. New feature work is gated on completion of this audit.
 
+**[2026-05-10] GOTCHA: `plan` field exists in two Firestore locations**
+- Top-level: `users/{uid}.plan` (read by server-side code, including `entitlements.ts`)
+- Nested: `users/{uid}.billingState.plan` (read by realtime listener `useBillingState.ts`)
+Any data migration script that touches `plan` MUST run two separate queries (Firestore can't OR cheaply across different field paths) and rewrite both atomically per document. The M1 backfill script (`functions/scripts/backfillScalingPlan.ts`) at commit `d9ed612` is the canonical pattern. Detected during M1 paranoid checkpoint #1 — first version of the script (commit `85c0b39`) only touched the top-level field, leaving `billingState.plan` stale on all 3 migrated docs. Required a second `--apply` run to fix.
+06f5c2e (qa-log(M1): document plan two-field gotcha discovered during backfill)
+
+**[2026-05-10] FINDING: Phase 12 workspace rule tightening was committed but never deployed**
+- Source: commit `5f4c52b` on main (2026-03-24, "feat: workspace logic Phase 12 — multi-workspace scale plan + meta binding + team access")
+- Discovered: during M1 paranoid checkpoint #2, fetching live ruleset via Firebase Management API
+- Deferred: full Phase 12 deploy is gated on the post-Phase-21 audit (see commitment above)
+- Rationale: pre-Phase 12 frontend code was never tested against the tightened rules; deploying tonight risks breaking team-member workspace functionality without warning
+- M1 deployed: hybrid ruleset = live + (stripe_events, cancellation_logs, refund_logs). Workspace block remained at the older permissive state.
+- Source `firestore.rules` in HEAD: contains BOTH M1 additions AND Phase 12 tightening — represents the desired end state once Phase 12 frontend is validated during the audit
+- Production state after this M1 deploy: live + M1 additions only (Phase 12 still pending)
+- When Phase 12 is validated post-audit: a future `firebase deploy --only firestore:rules` from this branch (or a successor) will land the workspace tightening
+- Pattern note: 3 examples now of "marked Done ≠ deployed" (Paddle drift, scaling drift, Phase 12 rule drift). Post-21 audit must explicitly verify infrastructure deploy state for every phase, not just code state.
+
+## M2 Deferred Items (2026-05-10)
+
+- T063: useBillingState does not swap listener to teamOwnerUid for team members.
+  Hook subscribes unconditionally to users/{user.uid}. Defer to post-MVP smoke tests.
+
+- M3 minor: top_up.completed and subscription.created GHL payloads send amount=0.
+  Dollar value requires session.amount_total — not passed at call site.
+  Defer to post-21 audit.

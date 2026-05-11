@@ -1,12 +1,23 @@
-// src/components/billing/TopUpSelector.tsx — credit top-up pack selection via Paddle checkout
+// src/components/billing/TopUpSelector.tsx — credit top-up pack selection via Stripe Checkout
 
 import React, { useState } from "react";
 import { useT } from "../../i18n";
-import { TOPUP_PACKS } from "../../planconfig";
+import { TOPUP_PACKS, TOPUP_PRICES } from "../../planconfig";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "../../firebase";
 
-const createTopUpFn = httpsCallable(functions, "createPaddleTopUp");
+interface CreateStripeTopUpRequest {
+  creditAmount: number;
+  priceId: string;
+}
+interface CreateStripeTopUpResponse {
+  checkoutUrl: string;
+}
+
+const createStripeTopUpFn = httpsCallable<CreateStripeTopUpRequest, CreateStripeTopUpResponse>(
+  functions,
+  "createStripeTopUpSession",
+);
 
 interface TopUpSelectorProps {
   canTopUp: boolean;
@@ -19,22 +30,27 @@ export const TopUpSelector: React.FC<TopUpSelectorProps> = ({ canTopUp, onBuy })
 
   if (!canTopUp) return null;
 
-  const handleBuy = async (packId: string) => {
-    setLoadingPack(packId);
+  const handleBuy = async (credits: number) => {
+    setLoadingPack(String(credits));
     try {
-      const result = await createTopUpFn({ packId }) as any;
-      const data = result.data as any;
-      if (data?.transactionId && (window as any).Paddle) {
-        (window as any).Paddle.Checkout.open({
-          settings: { displayMode: "overlay" },
-          transactionId: data.transactionId,
-        });
-      } else if (data?.checkoutUrl) {
-        window.open(data.checkoutUrl, "_blank");
+      const priceId = TOPUP_PRICES[credits];
+      if (!priceId) {
+        console.error(`No price ID configured for ${credits} credits`);
+        return;
       }
-      onBuy(packId);
-    } catch (e: any) {
-      console.error("Top-up checkout failed:", e);
+      const result = await createStripeTopUpFn({ creditAmount: credits, priceId });
+      const checkoutUrl = result.data?.checkoutUrl;
+      if (checkoutUrl) {
+        // Notify parent only when the Stripe Checkout URL is in hand — keeps the
+        // parent's success-toast / state-machine in lockstep with what actually happened.
+        onBuy(`topup_${credits}`);
+        window.location.href = checkoutUrl;
+      } else {
+        console.error("createStripeTopUpSession returned no checkoutUrl");
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("Top-up checkout failed:", message);
     } finally {
       setLoadingPack(null);
     }
@@ -47,7 +63,7 @@ export const TopUpSelector: React.FC<TopUpSelectorProps> = ({ canTopUp, onBuy })
         {TOPUP_PACKS.map((pack) => (
           <button
             key={pack.id}
-            onClick={() => handleBuy(`topup_${pack.credits}`)}
+            onClick={() => handleBuy(pack.credits)}
             disabled={loadingPack !== null}
             className="bg-slate-800/60 border border-slate-700/50 rounded-lg p-3 text-center hover:border-amber-500/50 hover:bg-amber-500/5 transition-all disabled:opacity-50"
           >

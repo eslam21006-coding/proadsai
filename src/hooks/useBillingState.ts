@@ -13,18 +13,21 @@ export type CancellationReason =
   | "missing_features"
   | "other";
 
+// Mirrors UserPlanValue in functions/src/billing/billingState.ts (Constitution XI).
+// Backend buildBillingState forces any unknown legacy plan string to 'none', so the
+// narrowed union is safe to consume directly here without further runtime checks.
+export type UserPlanValue = "none" | "starter" | "pro" | "scale";
+
 export interface BillingState {
-  plan: string;
+  plan: UserPlanValue;
   isTrial: boolean;
   credits: number;
   creditsPerMonth: number;
-  billingStatus: "active" | "past_due" | "cancelled" | "cancelling" | "trialing";
+  billingStatus: "active" | "past_due" | "cancelled" | "cancelling" | "trialing" | "none";
   nextResetDate: { seconds: number; nanoseconds: number } | null;
   billingType: string | null;
-  paddleCustomerId: string | null;
-  paddleSubscriptionId: string | null;
-  paddleUpdatePaymentUrl: string | null;
-  paddleCancelUrl: string | null;
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
   canUpgrade: boolean;
   canTopUp: boolean;
   isTeamMember: boolean;
@@ -50,12 +53,63 @@ export function useBillingState() {
       return;
     }
 
+    let innerUnsub: (() => void) | null = null;
+
     const unsub = onSnapshot(
       doc(db, "users", user.uid),
       (snap) => {
         if (snap.exists()) {
           const data = snap.data();
-          setBillingState((data.billingState as BillingState) || null);
+          const isTeamMember = data.isTeamMember === true;
+          const teamOwnerUid = data.teamOwnerUid as string | null;
+
+          if (isTeamMember && teamOwnerUid) {
+            if (innerUnsub) innerUnsub();
+            innerUnsub = onSnapshot(
+              doc(db, "users", teamOwnerUid),
+              (ownerSnap) => {
+                if (ownerSnap.exists()) {
+                  const ownerData = ownerSnap.data();
+                  const ownerBilling = ownerData.billingState as BillingState | undefined;
+                  if (ownerBilling) {
+                    // Build an immutable copy — never mutate the Firestore snapshot return.
+                    setBillingState({
+                      ...ownerBilling,
+                      isTeamMember: true,
+                      teamOwnerUid,
+                      teamOwnerName: ownerData.displayName ?? null,
+                      canUpgrade: false,
+                      canTopUp: false,
+                    });
+                  } else {
+                    setBillingState(null);
+                  }
+                } else {
+                  setBillingState(null);
+                }
+                setLoading(false);
+                setError(null);
+              },
+              (err) => {
+                setError(err);
+                setBillingState(null);
+                setLoading(false);
+              },
+            );
+          } else {
+            const bs = data.billingState as BillingState | undefined;
+            if (bs) {
+              // Build an immutable copy — never mutate the Firestore snapshot return.
+              setBillingState({
+                ...bs,
+                isTeamMember: false,
+                teamOwnerUid: null,
+                teamOwnerName: null,
+              });
+            } else {
+              setBillingState(null);
+            }
+          }
         } else {
           setBillingState(null);
         }
@@ -69,7 +123,10 @@ export function useBillingState() {
       },
     );
 
-    return () => unsub();
+    return () => {
+      unsub();
+      if (innerUnsub) innerUnsub();
+    };
   }, [user]);
 
   return { billingState, loading, error };

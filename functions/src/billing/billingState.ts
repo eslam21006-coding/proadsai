@@ -6,17 +6,19 @@ import { Firestore, type Timestamp, FieldValue } from "firebase-admin/firestore"
 // TYPES
 // ═══════════════════════════════════════════════════════════
 
+export type BillingStatus = "trialing" | "active" | "past_due" | "cancelling" | "cancelled" | "none";
+
+export type UserPlanValue = "none" | "starter" | "pro" | "scale";
+
 export interface BillingState {
-    plan: string;
+    plan: UserPlanValue;
     isTrial: boolean;
     credits: number;
     creditsPerMonth: number;
-    billingStatus: "active" | "past_due" | "cancelled" | "cancelling" | "trialing";
+    billingStatus: BillingStatus;
     nextResetDate: { seconds: number; nanoseconds: number } | null;
-    paddleCustomerId: string | null;
-    paddleSubscriptionId: string | null;
-    paddleUpdatePaymentUrl: string | null;
-    paddleCancelUrl: string | null;
+    stripeCustomerId: string | null;
+    stripeSubscriptionId: string | null;
     canUpgrade: boolean;
     canTopUp: boolean;
     isTeamMember: boolean;
@@ -37,10 +39,8 @@ interface UserData {
     isTeamMember?: boolean;
     teamOwnerUid?: string;
     teamOwnerName?: string;
-    paddleCustomerId?: string;
-    paddleSubscriptionId?: string;
-    paddleUpdatePaymentUrl?: string;
-    paddleCancelUrl?: string;
+    stripeCustomerId?: string;
+    stripeSubscriptionId?: string;
     cancelAtPeriodEnd?: boolean;
     cancelAt?: Timestamp | null;
     pendingPlan?: string;
@@ -50,7 +50,8 @@ interface UserData {
     cancelledAt?: Timestamp | null;
 }
 
-const PLAN_CREDITS: Record<string, number> = {
+// Shared with stripeWebhook.ts — single source of truth for plan→credit allocations.
+export const PLAN_CREDITS: Record<string, number> = {
     starter: 800,
     pro: 2500,
     scale: 6500,
@@ -77,8 +78,12 @@ function tsToObj(ts: Timestamp | null | undefined): { seconds: number; nanosecon
     return null;
 }
 
+const VALID_PLAN_VALUES: ReadonlySet<UserPlanValue> = new Set<UserPlanValue>([
+    "none", "starter", "pro", "scale",
+]);
+
 export function buildBillingState(data: UserData): BillingState {
-    let plan = data.plan || "none";
+    let plan: string = data.plan || "none";
 
     // ── Legacy read-time mapping (creator → pro, scaling → scale) ──
     if (plan === "creator") {
@@ -89,10 +94,17 @@ export function buildBillingState(data: UserData): BillingState {
         plan = "scale";
     }
 
+    // ── Force any unknown plan string to 'none' so the narrowed union holds ──
+    if (!VALID_PLAN_VALUES.has(plan as UserPlanValue)) {
+        console.log(JSON.stringify({ event: "plan.unknown_coerced_to_none", legacy: plan }));
+        plan = "none";
+    }
+    const narrowedPlan = plan as UserPlanValue;
+
     const isTrial = data.isTrial === true;
     const isTeamMember = data.isTeamMember === true;
     const rawCredits = data.credits ?? 0;
-    const planCredits = PLAN_CREDITS[plan] ?? 0;
+    const planCredits = PLAN_CREDITS[narrowedPlan] ?? 0;
     const creditsPerMonth = isTrial ? TRIAL_CREDITS : planCredits;
 
     let billingStatus: BillingState["billingStatus"] = "active";
@@ -107,7 +119,7 @@ export function buildBillingState(data: UserData): BillingState {
         billingStatus = "cancelled";
     }
 
-    if (plan === "none" && rawCredits === 0 && !isTrial) {
+    if (narrowedPlan === "none" && rawCredits === 0 && !isTrial) {
         billingStatus = "cancelled";
     }
 
@@ -115,21 +127,19 @@ export function buildBillingState(data: UserData): BillingState {
         billingStatus = "cancelled";
     }
 
-    const currentRank = PLAN_HIERARCHY[plan] ?? 0;
+    const currentRank = PLAN_HIERARCHY[narrowedPlan] ?? 0;
     const canUpgrade = !isTeamMember && currentRank < PLAN_HIERARCHY["scale"] && currentRank >= PLAN_HIERARCHY["starter"];
-    const canTopUp = !isTeamMember && !isTrial && plan !== "none" && billingStatus !== "cancelled" && billingStatus !== "past_due";
+    const canTopUp = !isTeamMember && !isTrial && narrowedPlan !== "none" && billingStatus !== "cancelled" && billingStatus !== "past_due";
 
     return {
-        plan,
+        plan: narrowedPlan,
         isTrial,
         credits: rawCredits,
         creditsPerMonth,
         billingStatus,
         nextResetDate: tsToObj(data.nextCreditReset),
-        paddleCustomerId: data.paddleCustomerId || null,
-        paddleSubscriptionId: data.paddleSubscriptionId || null,
-        paddleUpdatePaymentUrl: data.paddleUpdatePaymentUrl || null,
-        paddleCancelUrl: data.paddleCancelUrl || null,
+        stripeCustomerId: data.stripeCustomerId || null,
+        stripeSubscriptionId: data.stripeSubscriptionId || null,
         canUpgrade,
         canTopUp,
         isTeamMember,
@@ -161,30 +171,30 @@ export async function writeBillingState(uid: string, db: Firestore): Promise<voi
 }
 
 // ═══════════════════════════════════════════════════════════
-// IDEMPOTENCY — paddle_events/{eventId}
+// IDEMPOTENCY — stripe_events/{eventId}
 // ═══════════════════════════════════════════════════════════
 
-export async function isEventProcessed(eventId: string, db: Firestore): Promise<boolean> {
-    const doc = await db.collection("paddle_events").doc(eventId).get();
+export async function isStripeEventProcessed(eventId: string, db: Firestore): Promise<boolean> {
+    const doc = await db.collection("stripe_events").doc(eventId).get();
     return doc.exists;
 }
 
-export async function markEventProcessed(
+export async function markStripeEventProcessed(
     eventId: string,
     eventType: string,
     metadata: {
-        paddleCustomerId?: string;
-        paddleSubscriptionId?: string;
+        stripeCustomerId?: string;
+        stripeSubscriptionId?: string;
         email?: string;
-        result: "applied" | "duplicate" | "ignored";
+        result: "applied" | "duplicate" | "noop_dual_event" | "ignored" | "partial_refund_logged";
     },
     db: Firestore,
 ): Promise<void> {
-    await db.collection("paddle_events").doc(eventId).set({
+    await db.collection("stripe_events").doc(eventId).set({
         eventType,
         processedAt: FieldValue.serverTimestamp(),
-        paddleCustomerId: metadata.paddleCustomerId || null,
-        paddleSubscriptionId: metadata.paddleSubscriptionId || null,
+        stripeCustomerId: metadata.stripeCustomerId || null,
+        stripeSubscriptionId: metadata.stripeSubscriptionId || null,
         email: metadata.email || null,
         result: metadata.result,
     });

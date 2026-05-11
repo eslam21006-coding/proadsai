@@ -1,14 +1,28 @@
-// src/components/billing/CancelDialog.tsx — 2-step cancellation dialog with reason logging
+// src/components/billing/CancelDialog.tsx — 2-step cancellation dialog with reason logging + Stripe portal
 
 import React, { useState } from "react";
 import { useT } from "../../i18n";
 import { doc, setDoc } from "firebase/firestore";
 import { db } from "../../firebase";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "../../firebase";
 import type { CancellationReason } from "../../hooks/useBillingState";
+
+interface StripePortalRequest {
+  flow?: "subscription_cancel" | "payment_method_update";
+  returnUrl?: string;
+}
+interface StripePortalResponse {
+  portalUrl: string;
+}
+
+const createStripePortalFn = httpsCallable<StripePortalRequest, StripePortalResponse>(
+  functions,
+  "createStripePortalSession",
+);
 
 interface CancelDialogProps {
   cancelAt: string | null;
-  paddleCancelUrl: string | null;
   uid: string;
   email: string | null;
   plan: string;
@@ -27,7 +41,6 @@ const REASONS: { value: CancellationReason; labelKey: string }[] = [
 
 export const CancelDialog: React.FC<CancelDialogProps> = ({
   cancelAt,
-  paddleCancelUrl,
   uid,
   email,
   plan,
@@ -39,14 +52,18 @@ export const CancelDialog: React.FC<CancelDialogProps> = ({
   const [step, setStep] = useState<1 | 2>(1);
   const [reason, setReason] = useState<CancellationReason | "">("");
   const [feedback, setFeedback] = useState("");
+  // Re-entrancy guard — the parent's `loading` prop only flips after onConfirm
+  // fires, so a rapid double-click here could otherwise produce two
+  // cancellation_logs entries and two portal sessions.
+  const [submitting, setSubmitting] = useState(false);
 
   const dateText = cancelAt
     ? t("billing.cancel.periodEnd") + " " + cancelAt
     : t("billing.cancel.periodEnd");
 
   const handleSubmit = async () => {
-    if (!reason) return;
-    // Write cancellation log
+    if (!reason || submitting) return;
+    setSubmitting(true);
     try {
       await setDoc(doc(db, "cancellation_logs", `${uid}_${Date.now()}`), {
         uid,
@@ -59,11 +76,28 @@ export const CancelDialog: React.FC<CancelDialogProps> = ({
     } catch (e) {
       console.warn("Failed to write cancellation log:", e);
     }
-    // Open Paddle cancel page
-    if (paddleCancelUrl) {
-      window.open(paddleCancelUrl, "_blank");
+    // Always advance the parent flow once we know the user can reach the portal —
+    // either the popup opened or we're about to navigate the current tab as a
+    // fallback. Popup-blocker dead-end is avoided by the same-tab fallback below.
+    try {
+      const result = await createStripePortalFn({ flow: "subscription_cancel" });
+      const portalUrl = result.data?.portalUrl;
+      if (!portalUrl) {
+        console.error("createStripePortalSession returned no portalUrl");
+        return;
+      }
+      const win = window.open(portalUrl, "_blank", "noopener,noreferrer");
+      onConfirm(reason as CancellationReason, feedback || undefined);
+      if (!win) {
+        // Popup blocked — navigate current tab so the user still reaches Stripe.
+        window.location.href = portalUrl;
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("Failed to open Stripe portal:", message);
+    } finally {
+      setSubmitting(false);
     }
-    onConfirm(reason as CancellationReason, feedback || undefined);
   };
 
   return (
@@ -119,11 +153,11 @@ export const CancelDialog: React.FC<CancelDialogProps> = ({
                 Back
               </button>
               <button
-                disabled={!reason || loading}
+                disabled={!reason || loading || submitting}
                 onClick={handleSubmit}
                 className="flex-1 py-2.5 rounded-lg bg-red-600 hover:bg-red-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-sm font-semibold transition-all"
               >
-                {loading ? "Cancelling..." : t("billing.cancel.submit")}
+                {loading || submitting ? "Cancelling..." : t("billing.cancel.submit")}
               </button>
             </div>
           </>
