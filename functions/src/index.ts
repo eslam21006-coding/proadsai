@@ -182,7 +182,7 @@ export const generateCreative = onCall({
 const ghlpaymentwebhook = onRequest({
     region: "europe-west1",
     cors: true,
-    secrets: [ghlWebhookSecret, stripeSecretKey],
+    secrets: [ghlWebhookSecret, stripeSecretKey, ghlTrialStartedUrl, ghlPaymentReceivedUrl, ghlTopupUrl],
 }, async (req, res) => {
     // ═══ SECURITY: Only accept POST with valid secret ═══
     if (req.method !== 'POST') {
@@ -301,6 +301,42 @@ const ghlpaymentwebhook = onRequest({
                 purchasedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
             console.log(`Pending plan saved: ${normalizedEmail} → plan:${finalPlan}, credits:${finalCredits}, product_id:${productId}`);
+        }
+
+        // ═══ Route 3: notify GHL inbound webhook so CRM automations fire ═══
+        // GHL order forms charge through their own Stripe connection, so our
+        // stripeWebhook handler never sees these events and notifyGHL() is never
+        // called. Replicate that hop here as fire-and-forget — log on failure
+        // but never block the 200 response back to GHL.
+        try {
+            let ghlInboundUrl: string;
+            if (isTrial) {
+                ghlInboundUrl = ghlTrialStartedUrl.value();
+            } else if (isTopup) {
+                ghlInboundUrl = ghlTopupUrl.value();
+            } else {
+                ghlInboundUrl = ghlPaymentReceivedUrl.value();
+            }
+            const inboundPayload = {
+                email: normalizedEmail,
+                plan: finalPlan,
+                credits: finalCredits,
+                is_trial: isTrial,
+                contact_id: data.contact_id || "",
+                stripe_customer_id: stripeCustomerId || "",
+            };
+            const inboundRes = await fetch(ghlInboundUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(inboundPayload),
+            });
+            if (!inboundRes.ok) {
+                console.warn(`⚠️ GHL inbound notify failed (${inboundRes.status}) for ${normalizedEmail}`);
+            } else {
+                console.log(`📤 GHL inbound notify sent for ${normalizedEmail} (${isTrial ? "trial.started" : isTopup ? "top_up.completed" : "payment.received"})`);
+            }
+        } catch (ghlErr: any) {
+            console.warn("⚠️ GHL inbound notify error (non-critical):", ghlErr?.message ?? ghlErr);
         }
 
         res.status(200).send({ success: true, email: normalizedEmail, credits: finalCredits, plan: finalPlan });
