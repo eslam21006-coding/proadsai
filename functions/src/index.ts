@@ -79,6 +79,13 @@ const PLAN_MAP: Record<string, { plan: string; credits: number; isTrial?: boolea
     'pro_annual': { plan: 'pro', credits: 2500 },
     'scale_monthly': { plan: 'scale', credits: 6500 },
     'scale_annual': { plan: 'scale', credits: 6500 },
+    // GHL display-name variants (Title Case with space) — sent verbatim by some GHL product configs
+    'Starter Monthly': { plan: 'starter', credits: 800 },
+    'Starter Annual': { plan: 'starter', credits: 800 },
+    'Pro Monthly': { plan: 'pro', credits: 2500 },
+    'Pro Annual': { plan: 'pro', credits: 2500 },
+    'Scale Monthly': { plan: 'scale', credits: 6500 },
+    'Scale Annual': { plan: 'scale', credits: 6500 },
     // Top-ups
     'topup_100': { plan: 'keep_current', credits: 100 },
     'topup_300': { plan: 'keep_current', credits: 300 },
@@ -174,6 +181,78 @@ export const generateCreative = onCall({
         throw new HttpsError("internal", "AI Failed: " + error.message);
     }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Shared helpers for Route 3 hybrid (GHL native trigger → Firebase → GHL inbound)
+// ═══════════════════════════════════════════════════════════════════════════
+// Split a Firestore-stored displayName on the first space.
+// If there is no space, first_name = full string, last_name = null.
+// If displayName is null/undefined, both are null.
+function splitDisplayName(displayName: string | undefined | null): {
+    first_name: string | null;
+    last_name: string | null;
+} {
+    if (!displayName) return { first_name: null, last_name: null };
+    const idx = displayName.indexOf(" ");
+    if (idx === -1) return { first_name: displayName, last_name: null };
+    return { first_name: displayName.substring(0, idx), last_name: displayName.substring(idx + 1) };
+}
+
+// Build the canonical 21-field GHL inbound payload and POST it fire-and-forget.
+// Caller must handle: any user-doc reads, plan/credits resolution, and stripeCustomerId
+// lookup. This helper is intentionally dumb — it just shapes and sends.
+async function postGHLInboundPayload(opts: {
+    url: string;
+    event_type: string;
+    email: string;
+    plan: string;
+    credits: number;
+    billing_status: string;
+    is_trial: boolean;
+    amount: number;
+    stripe_customer_id?: string | null;
+    stripe_subscription_id?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+}): Promise<void> {
+    try {
+        const payload = {
+            event_type: opts.event_type,
+            event_id: "ghl_" + Date.now(),
+            stripe_customer_id: opts.stripe_customer_id ?? null,
+            stripe_subscription_id: opts.stripe_subscription_id ?? null,
+            email: opts.email,
+            first_name: opts.first_name ?? null,
+            last_name: opts.last_name ?? null,
+            plan: opts.plan,
+            billing_status: opts.billing_status,
+            is_trial: opts.is_trial,
+            credits: opts.credits,
+            billing_type: "subscription",
+            currency: "USD",
+            amount: opts.amount,
+            trial_end_date: null,
+            trial_end_date_human: null,
+            next_billing_date: null,
+            next_billing_date_human: null,
+            portal_url: null,
+            cancel_at: null,
+            cancellation_reason: null,
+        };
+        const res = await fetch(opts.url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+            console.warn(`⚠️ GHL inbound notify failed (${res.status}) for ${opts.email} [${opts.event_type}]`);
+        } else {
+            console.log(`📤 GHL inbound notify sent: ${opts.event_type} for ${opts.email}`);
+        }
+    } catch (err: any) {
+        console.warn(`⚠️ GHL inbound notify error (${opts.event_type}, non-critical):`, err?.message ?? err);
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 3. THE GHL PAYMENT WEBHOOK (The "Cash Register")
@@ -306,38 +385,58 @@ const ghlpaymentwebhook = onRequest({
         // ═══ Route 3: notify GHL inbound webhook so CRM automations fire ═══
         // GHL order forms charge through their own Stripe connection, so our
         // stripeWebhook handler never sees these events and notifyGHL() is never
-        // called. Replicate that hop here as fire-and-forget — log on failure
-        // but never block the 200 response back to GHL.
-        try {
-            let ghlInboundUrl: string;
-            if (isTrial) {
-                ghlInboundUrl = ghlTrialStartedUrl.value();
-            } else if (isTopup) {
-                ghlInboundUrl = ghlTopupUrl.value();
-            } else {
-                ghlInboundUrl = ghlPaymentReceivedUrl.value();
-            }
-            const inboundPayload = {
-                email: normalizedEmail,
-                plan: finalPlan,
-                credits: finalCredits,
-                is_trial: isTrial,
-                contact_id: data.contact_id || "",
-                stripe_customer_id: stripeCustomerId || "",
-            };
-            const inboundRes = await fetch(ghlInboundUrl, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(inboundPayload),
-            });
-            if (!inboundRes.ok) {
-                console.warn(`⚠️ GHL inbound notify failed (${inboundRes.status}) for ${normalizedEmail}`);
-            } else {
-                console.log(`📤 GHL inbound notify sent for ${normalizedEmail} (${isTrial ? "trial.started" : isTopup ? "top_up.completed" : "payment.received"})`);
-            }
-        } catch (ghlErr: any) {
-            console.warn("⚠️ GHL inbound notify error (non-critical):", ghlErr?.message ?? ghlErr);
+        // called. Replicate that hop here with the full 21-field payload.
+        // Fire-and-forget — log on failure but never block the 200 response.
+        let firstName: string | null = null;
+        let lastName: string | null = null;
+        let stripeSubscriptionId: string | null = null;
+        if (existingUser) {
+            try {
+                const snap = await db.collection("users").doc(existingUser.uid).get();
+                const userData = snap.data() ?? {};
+                const split = splitDisplayName(userData.displayName);
+                firstName = split.first_name;
+                lastName = split.last_name;
+                stripeSubscriptionId = userData.stripeSubscriptionId ?? null;
+            } catch { /* non-critical — fields stay null */ }
         }
+
+        let ghlInboundUrl: string;
+        let eventType: string;
+        let billingStatus: string;
+        if (isTrial) {
+            ghlInboundUrl = ghlTrialStartedUrl.value();
+            eventType = "trial.started";
+            billingStatus = "trialing";
+        } else if (isTopup) {
+            ghlInboundUrl = ghlTopupUrl.value();
+            eventType = "top_up.completed";
+            billingStatus = "active";
+        } else {
+            ghlInboundUrl = ghlPaymentReceivedUrl.value();
+            eventType = "payment.received";
+            billingStatus = "active";
+        }
+
+        const rawAmount = data.amount ?? customData.amount;
+        const amount = typeof rawAmount === "number"
+            ? rawAmount
+            : (parseFloat(rawAmount ?? "0") || 0);
+
+        await postGHLInboundPayload({
+            url: ghlInboundUrl,
+            event_type: eventType,
+            email: normalizedEmail,
+            plan: finalPlan,
+            credits: finalCredits,
+            billing_status: billingStatus,
+            is_trial: isTrial,
+            amount,
+            stripe_customer_id: stripeCustomerId || null,
+            stripe_subscription_id: stripeSubscriptionId,
+            first_name: firstName,
+            last_name: lastName,
+        });
 
         res.status(200).send({ success: true, email: normalizedEmail, credits: finalCredits, plan: finalPlan });
 
@@ -428,7 +527,7 @@ export const monthlyCreditsReset = onSchedule({
 const ghlCancellationWebhook = onRequest({
     region: "europe-west1",
     cors: true,
-    secrets: [ghlWebhookSecret],
+    secrets: [ghlWebhookSecret, ghlCancelledUrl],
 }, async (req, res) => {
     if (req.method !== 'POST') {
         res.status(405).send('Method Not Allowed');
@@ -457,6 +556,11 @@ const ghlCancellationWebhook = onRequest({
             // User not found in Firebase Auth
         }
 
+        let firstName: string | null = null;
+        let lastName: string | null = null;
+        let stripeSubscriptionId: string | null = null;
+        let stripeCustomerId: string | null = null;
+
         if (existingUser) {
             const userRef = db.collection("users").doc(existingUser.uid);
             await userRef.update({
@@ -468,10 +572,36 @@ const ghlCancellationWebhook = onRequest({
             });
             console.log(`Cancelled ${normalizedEmail} → billingStatus: cancelled, plan: none.`);
             await writeBillingState(existingUser.uid, db);
+
+            try {
+                const snap = await userRef.get();
+                const userData = snap.data() ?? {};
+                const split = splitDisplayName(userData.displayName);
+                firstName = split.first_name;
+                lastName = split.last_name;
+                stripeSubscriptionId = userData.stripeSubscriptionId ?? null;
+                stripeCustomerId = userData.stripeCustomerId ?? null;
+            } catch { /* non-critical — fields stay null */ }
         } else {
             await db.collection("pending_plans").doc(normalizedEmail).delete();
             console.log(`Removed pending plan for ${normalizedEmail}`);
         }
+
+        // ═══ Route 3: notify GHL inbound webhook so CRM automations fire ═══
+        await postGHLInboundPayload({
+            url: ghlCancelledUrl.value(),
+            event_type: "subscription.cancelled",
+            email: normalizedEmail,
+            plan: "none",
+            credits: 0,
+            billing_status: "cancelled",
+            is_trial: false,
+            amount: 0,
+            stripe_customer_id: stripeCustomerId,
+            stripe_subscription_id: stripeSubscriptionId,
+            first_name: firstName,
+            last_name: lastName,
+        });
 
         res.status(200).json({ success: true, email: normalizedEmail, action: "cancelled" });
     } catch (error: any) {
@@ -494,7 +624,7 @@ const ghlCancellationWebhook = onRequest({
 const ghlPaymentFailedWebhook = onRequest({
     region: "europe-west1",
     cors: true,
-    secrets: [ghlWebhookSecret],
+    secrets: [ghlWebhookSecret, ghlOverdueFailedUrl],
 }, async (req, res) => {
     if (req.method !== 'POST') { res.status(405).send('Method Not Allowed'); return; }
     const secret = req.headers['x-ghl-secret'];
@@ -510,6 +640,14 @@ const ghlPaymentFailedWebhook = onRequest({
         let existingUser: admin.auth.UserRecord | null = null;
         try { existingUser = await admin.auth().getUserByEmail(normalizedEmail); } catch { /* not found */ }
 
+        let firstName: string | null = null;
+        let lastName: string | null = null;
+        let stripeSubscriptionId: string | null = null;
+        let stripeCustomerId: string | null = null;
+        let plan = "none";
+        let credits = 0;
+        let isTrial = false;
+
         if (existingUser) {
             const gracePeriodEndsAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000); // 2 days
             await db.collection("users").doc(existingUser.uid).update({
@@ -520,7 +658,36 @@ const ghlPaymentFailedWebhook = onRequest({
             });
             console.log(`Set ${normalizedEmail} → billingStatus: past_due, grace until ${gracePeriodEndsAt.toISOString()}`);
             await writeBillingState(existingUser.uid, db);
+
+            try {
+                const snap = await db.collection("users").doc(existingUser.uid).get();
+                const userData = snap.data() ?? {};
+                const split = splitDisplayName(userData.displayName);
+                firstName = split.first_name;
+                lastName = split.last_name;
+                stripeSubscriptionId = userData.stripeSubscriptionId ?? null;
+                stripeCustomerId = userData.stripeCustomerId ?? null;
+                plan = userData.plan ?? "none";
+                credits = typeof userData.credits === "number" ? userData.credits : 0;
+                isTrial = userData.isTrial === true;
+            } catch { /* non-critical — fields stay at defaults */ }
         }
+
+        // ═══ Route 3: notify GHL inbound webhook so CRM automations fire ═══
+        await postGHLInboundPayload({
+            url: ghlOverdueFailedUrl.value(),
+            event_type: "payment.failed",
+            email: normalizedEmail,
+            plan,
+            credits,
+            billing_status: "past_due",
+            is_trial: isTrial,
+            amount: 0,
+            stripe_customer_id: stripeCustomerId,
+            stripe_subscription_id: stripeSubscriptionId,
+            first_name: firstName,
+            last_name: lastName,
+        });
 
         res.status(200).json({ success: true, email: normalizedEmail, action: "past_due" });
     } catch (error: any) {
@@ -542,7 +709,7 @@ const ghlPaymentFailedWebhook = onRequest({
 export const ghlPaymentRecoveredWebhook = onRequest({
     region: "europe-west1",
     cors: true,
-    secrets: [ghlWebhookSecret],
+    secrets: [ghlWebhookSecret, ghlRecoveredUrl],
 }, async (req, res) => {
     if (req.method !== 'POST') { res.status(405).send('Method Not Allowed'); return; }
     const secret = req.headers['x-ghl-secret'];
@@ -558,6 +725,14 @@ export const ghlPaymentRecoveredWebhook = onRequest({
         let existingUser: admin.auth.UserRecord | null = null;
         try { existingUser = await admin.auth().getUserByEmail(normalizedEmail); } catch { /* not found */ }
 
+        let firstName: string | null = null;
+        let lastName: string | null = null;
+        let stripeSubscriptionId: string | null = null;
+        let stripeCustomerId: string | null = null;
+        let plan = "none";
+        let credits = 0;
+        let isTrial = false;
+
         if (existingUser) {
             await db.collection("users").doc(existingUser.uid).update({
                 billingStatus: 'active',
@@ -568,7 +743,36 @@ export const ghlPaymentRecoveredWebhook = onRequest({
             });
             console.log(`Restored ${normalizedEmail} → billingStatus: active`);
             await writeBillingState(existingUser.uid, db);
+
+            try {
+                const snap = await db.collection("users").doc(existingUser.uid).get();
+                const userData = snap.data() ?? {};
+                const split = splitDisplayName(userData.displayName);
+                firstName = split.first_name;
+                lastName = split.last_name;
+                stripeSubscriptionId = userData.stripeSubscriptionId ?? null;
+                stripeCustomerId = userData.stripeCustomerId ?? null;
+                plan = userData.plan ?? "none";
+                credits = typeof userData.credits === "number" ? userData.credits : 0;
+                isTrial = userData.isTrial === true;
+            } catch { /* non-critical — fields stay at defaults */ }
         }
+
+        // ═══ Route 3: notify GHL inbound webhook so CRM automations fire ═══
+        await postGHLInboundPayload({
+            url: ghlRecoveredUrl.value(),
+            event_type: "payment.recovered",
+            email: normalizedEmail,
+            plan,
+            credits,
+            billing_status: "active",
+            is_trial: isTrial,
+            amount: 0,
+            stripe_customer_id: stripeCustomerId,
+            stripe_subscription_id: stripeSubscriptionId,
+            first_name: firstName,
+            last_name: lastName,
+        });
 
         res.status(200).json({ success: true, email: normalizedEmail, action: "recovered" });
     } catch (error: any) {
