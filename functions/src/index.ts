@@ -285,6 +285,7 @@ const ghlpaymentwebhook = onRequest({
     const customData = data.customData || {};
     const email = data.email || customData.email || '';
     const productId = data.product_id || customData.product_id || '';
+    const contactId = data.contact_id || customData.contact_id || '';
     const rawCredits = data.credits || customData.credits || 0;
 
     if (!email) {
@@ -298,8 +299,8 @@ const ghlpaymentwebhook = onRequest({
     let isTopup = false;
     let isTrial = false;
 
-    // Check if GHL sends trial flag directly
-    const rawIsTrial = data.is_trial || customData.is_trial || data.isTrial || customData.isTrial || false;
+    // Check if GHL sends trial flag directly — use ?? so an explicit `false` is honored.
+    const rawIsTrial = data.is_trial ?? customData.is_trial ?? false;
     if (rawIsTrial === true || rawIsTrial === 'true' || rawIsTrial === '1') {
         isTrial = true;
     }
@@ -364,7 +365,7 @@ const ghlpaymentwebhook = onRequest({
                     isTrial: isTrial,
                     billingStatus: 'active',
                     planUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                    ghlContactId: data.contact_id || "",
+                    ghlContactId: contactId,
                     ...(stripeCustomerId ? { stripeCustomerId } : {}),
                 }, { merge: true });
                 console.log(`Plan set: ${normalizedEmail} → ${finalPlan}${isTrial ? ' (trial)' : ''} (${finalCredits} credits)${stripeCustomerId ? ` [Stripe: ${stripeCustomerId}]` : ''}`);
@@ -378,7 +379,7 @@ const ghlpaymentwebhook = onRequest({
                 credits: finalCredits,
                 isTopup: isTopup,
                 isTrial: isTrial,
-                ghlContactId: data.contact_id || "",
+                ghlContactId: contactId,
                 ...(stripeCustomerId ? { stripeCustomerId } : {}),
                 purchasedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
@@ -421,7 +422,7 @@ const ghlpaymentwebhook = onRequest({
             billingStatus = "active";
         }
 
-        const rawAmount = data.amount ?? customData.amount;
+        const rawAmount = data.amount || customData.amount || 0;
         const amount = typeof rawAmount === "number"
             ? rawAmount
             : (parseFloat(rawAmount ?? "0") || 0);
@@ -542,14 +543,18 @@ const ghlCancellationWebhook = onRequest({
         return;
     }
 
-    const { email } = req.body;
+    // GHL sends custom fields inside customData — extract from both places
+    const data = req.body;
+    const customData = data.customData || {};
+    const email = data.email || customData.email || '';
+    const contactId = data.contact_id || customData.contact_id || '';
     if (!email) {
         res.status(400).send({ status: "FAIL", message: "Missing email" });
         return;
     }
 
     const normalizedEmail = email.toLowerCase().trim();
-    console.log(`❌ FINAL cancellation received for: ${normalizedEmail}`);
+    console.log(`❌ FINAL cancellation received for: ${normalizedEmail} (contact: ${contactId})`);
 
     try {
         let existingUser: admin.auth.UserRecord | null = null;
@@ -633,11 +638,15 @@ const ghlPaymentFailedWebhook = onRequest({
     const secret = req.headers['x-ghl-secret'];
     if (secret !== ghlWebhookSecret.value()) { res.status(401).send('Unauthorized'); return; }
 
-    const { email } = req.body;
+    // GHL sends custom fields inside customData — extract from both places
+    const data = req.body;
+    const customData = data.customData || {};
+    const email = data.email || customData.email || '';
+    const contactId = data.contact_id || customData.contact_id || '';
     if (!email) { res.status(400).send({ status: "FAIL", message: "Missing email" }); return; }
 
     const normalizedEmail = email.toLowerCase().trim();
-    console.log(`⚠️ Payment failed for: ${normalizedEmail}`);
+    console.log(`⚠️ Payment failed for: ${normalizedEmail} (contact: ${contactId})`);
 
     try {
         let existingUser: admin.auth.UserRecord | null = null;
@@ -718,11 +727,15 @@ export const ghlPaymentRecoveredWebhook = onRequest({
     const secret = req.headers['x-ghl-secret'];
     if (secret !== ghlWebhookSecret.value()) { res.status(401).send('Unauthorized'); return; }
 
-    const { email } = req.body;
+    // GHL sends custom fields inside customData — extract from both places
+    const data = req.body;
+    const customData = data.customData || {};
+    const email = data.email || customData.email || '';
+    const contactId = data.contact_id || customData.contact_id || '';
     if (!email) { res.status(400).send({ status: "FAIL", message: "Missing email" }); return; }
 
     const normalizedEmail = email.toLowerCase().trim();
-    console.log(`✅ Payment recovered for: ${normalizedEmail}`);
+    console.log(`✅ Payment recovered for: ${normalizedEmail} (contact: ${contactId})`);
 
     try {
         let existingUser: admin.auth.UserRecord | null = null;
