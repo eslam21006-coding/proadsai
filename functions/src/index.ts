@@ -260,8 +260,11 @@ async function postGHLInboundPayload(opts: {
 // ═══════════════════════════════════════════════════════════════════════════
 // 3. THE GHL PAYMENT WEBHOOK (The "Cash Register")
 // ═══════════════════════════════════════════════════════════════════════════
+// Route 3 hybrid: GHL order forms charge via GHL's own Stripe connection (our
+// stripeWebhook never fires), so this function still runs in production and must
+// be exported. The "DEPRECATED" note below predates the Route-3 design.
 // DEPRECATED: replaced by Stripe webhook + notifyGHL
-const ghlpaymentwebhook = onRequest({
+export const ghlpaymentwebhook = onRequest({
     region: "europe-west1",
     cors: true,
     secrets: [ghlWebhookSecret, stripeSecretKey, ghlTrialStartedUrl, ghlPaymentReceivedUrl, ghlTopupUrl],
@@ -527,8 +530,9 @@ export const monthlyCreditsReset = onSchedule({
 //   Headers: x-ghl-secret: YOUR_SECRET
 //   Body: { "email": "{{contact.email}}" }
 // ═══════════════════════════════════════════════════════════════════════════
+// Route 3 hybrid: still wired up for the GHL cancellation flow.
 // DEPRECATED: replaced by Stripe webhook + notifyGHLFailed
-const ghlCancellationWebhook = onRequest({
+export const ghlCancellationWebhook = onRequest({
     region: "europe-west1",
     cors: true,
     secrets: [ghlWebhookSecret, ghlCancelledUrl],
@@ -628,8 +632,9 @@ const ghlCancellationWebhook = onRequest({
 //   Headers: x-ghl-secret: YOUR_SECRET
 //   Body: { "email": "{{contact.email}}" }
 // ═══════════════════════════════════════════════════════════════════════════
+// Route 3 hybrid: still wired up for the GHL dunning flow.
 // DEPRECATED: replaced by Stripe webhook + notifyGHLFailed
-const ghlPaymentFailedWebhook = onRequest({
+export const ghlPaymentFailedWebhook = onRequest({
     region: "europe-west1",
     cors: true,
     secrets: [ghlWebhookSecret, ghlOverdueFailedUrl],
