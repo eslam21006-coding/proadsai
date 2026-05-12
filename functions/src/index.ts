@@ -1178,7 +1178,7 @@ const TOPUP_PRICES: Record<string, { priceId: string; credits: number }> = {
 };
 
 // DEPRECATED: replaced by createStripeTopUpSession
-const createTopupCheckout = onCall({
+export const createTopupCheckout = onCall({
     region: "europe-west1",
     secrets: [stripeSecretKey],
     cors: true,
