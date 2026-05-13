@@ -1085,10 +1085,16 @@ const App: React.FC = () => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         // ─── T047: Email verification gate ───
+        // First fire after signup carries a stale token where emailVerified can
+        // be false even right after the user clicked the verification link.
+        // Reload once before bailing so the consume flow runs on the same tick.
         if (!currentUser.emailVerified) {
-          setUser(currentUser);
-          setLoadingAuth(false);
-          return;
+          await currentUser.reload();
+          if (!auth.currentUser?.emailVerified) {
+            setUser(currentUser);
+            setLoadingAuth(false);
+            return;
+          }
         }
 
         // Email verified — proceed to Firestore lookup
