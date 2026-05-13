@@ -66,6 +66,17 @@ const ghlCancelledUrl = defineSecret("GHL_CANCELLED_URL");
 const ghlTopupUrl = defineSecret("GHL_TOPUP_URL");
 
 // ─── CONFIGURATION ──────────────────────────────────────────────────────────
+// Monthly credit allocation per paid-plan tier. Used by the GHL Route-3 webhooks
+// to populate `creditsPerMonth` on user docs / pending_plans so the frontend
+// progress bar has a non-zero denominator even before the first Stripe renewal
+// invoice lands. Trial users still get `creditsPerMonth` of their target plan
+// (not the 50-credit trial pool) so the bar reads as "50 of 800" etc.
+const CREDITS_PER_MONTH: Record<string, number> = {
+    starter: 800,
+    pro: 2500,
+    scale: 6500,
+};
+
 const PLAN_MAP: Record<string, { plan: string; credits: number; isTrial?: boolean }> = {
     // Simple names (for GHL automations)
     'starter': { plan: 'starter', credits: 800 },
@@ -365,6 +376,7 @@ export const ghlpaymentwebhook = onRequest({
                 await userRef.set({
                     plan: finalPlan,
                     credits: finalCredits,
+                    creditsPerMonth: CREDITS_PER_MONTH[finalPlan] ?? 0,
                     isTrial: isTrial,
                     billingStatus: 'active',
                     planUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -380,6 +392,7 @@ export const ghlpaymentwebhook = onRequest({
             await admin.firestore().collection("pending_plans").doc(normalizedEmail).set({
                 plan: isTopup ? "none" : finalPlan,
                 credits: finalCredits,
+                creditsPerMonth: CREDITS_PER_MONTH[isTopup ? "none" : finalPlan] ?? 0,
                 isTopup: isTopup,
                 isTrial: isTrial,
                 ghlContactId: contactId,
@@ -755,18 +768,13 @@ export const ghlPaymentRecoveredWebhook = onRequest({
         let isTrial = false;
 
         if (existingUser) {
-            await admin.firestore().collection("users").doc(existingUser.uid).update({
-                billingStatus: 'active',
-                billingIssueAt: admin.firestore.FieldValue.delete(),
-                billingIssueType: admin.firestore.FieldValue.delete(),
-                gracePeriodEndsAt: admin.firestore.FieldValue.delete(),
-                lastPaymentRecoveredAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-            console.log(`Restored ${normalizedEmail} → billingStatus: active`);
-            await writeBillingState(existingUser.uid, admin.firestore());
+            const userRef = admin.firestore().collection("users").doc(existingUser.uid);
 
+            // Read user data BEFORE the recovery update so we can compute
+            // creditsPerMonth from the user's current plan and bundle it into
+            // the same write.
             try {
-                const snap = await admin.firestore().collection("users").doc(existingUser.uid).get();
+                const snap = await userRef.get();
                 const userData = snap.data() ?? {};
                 const split = splitDisplayName(userData.displayName);
                 firstName = split.first_name;
@@ -777,6 +785,17 @@ export const ghlPaymentRecoveredWebhook = onRequest({
                 credits = typeof userData.credits === "number" ? userData.credits : 0;
                 isTrial = userData.isTrial === true;
             } catch { /* non-critical — fields stay at defaults */ }
+
+            await userRef.update({
+                billingStatus: 'active',
+                billingIssueAt: admin.firestore.FieldValue.delete(),
+                billingIssueType: admin.firestore.FieldValue.delete(),
+                gracePeriodEndsAt: admin.firestore.FieldValue.delete(),
+                lastPaymentRecoveredAt: admin.firestore.FieldValue.serverTimestamp(),
+                creditsPerMonth: CREDITS_PER_MONTH[plan] ?? 0,
+            });
+            console.log(`Restored ${normalizedEmail} → billingStatus: active`);
+            await writeBillingState(existingUser.uid, admin.firestore());
         }
 
         // ═══ Route 3: notify GHL inbound webhook so CRM automations fire ═══
