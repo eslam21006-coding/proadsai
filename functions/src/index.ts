@@ -311,13 +311,13 @@ export const ghlpaymentwebhook = onRequest({
     let finalCredits = typeof rawCredits === 'string' ? parseInt(rawCredits) || 0 : rawCredits;
     let finalPlan = data.plan || customData.plan || 'starter';
     let isTopup = false;
-    let isTrial = false;
 
-    // Check if GHL sends trial flag directly — use ?? so an explicit `false` is honored.
+    // Check if GHL sends trial flag directly — parse as string OR boolean (GHL
+    // serializes booleans as the literal strings "true"/"false" in customData).
+    // `let` because the PLAN_MAP block below can still flip this to true when
+    // the product itself is a trial SKU.
     const rawIsTrial = data.is_trial ?? customData.is_trial ?? false;
-    if (rawIsTrial === true || rawIsTrial === 'true' || rawIsTrial === '1') {
-        isTrial = true;
-    }
+    let isTrial = rawIsTrial === true || rawIsTrial === 'true';
 
     if (productId && PLAN_MAP[productId]) {
         const mapped = PLAN_MAP[productId];
