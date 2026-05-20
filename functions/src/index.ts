@@ -77,33 +77,33 @@ const CREDITS_PER_MONTH: Record<string, number> = {
     scale: 6500,
 };
 
-const PLAN_MAP: Record<string, { plan: string; credits: number; isTrial?: boolean }> = {
+const PLAN_MAP: Record<string, { plan: string; credits: number; isTrial?: boolean; billingType: 'monthly' | 'annual' | 'one_time' }> = {
     // Simple names (for GHL automations)
-    'starter': { plan: 'starter', credits: 800 },
-    'pro': { plan: 'pro', credits: 2500 },
-    'scale': { plan: 'scale', credits: 6500 },
+    'starter': { plan: 'starter', credits: 800, billingType: 'monthly' },
+    'pro': { plan: 'pro', credits: 2500, billingType: 'monthly' },
+    'scale': { plan: 'scale', credits: 6500, billingType: 'monthly' },
     // Trial plans — full features, 50 credits
-    'starter_trial': { plan: 'starter', credits: 50, isTrial: true },
-    'pro_trial': { plan: 'pro', credits: 50, isTrial: true },
-    'scale_trial': { plan: 'scale', credits: 50, isTrial: true },
+    'starter_trial': { plan: 'starter', credits: 50, isTrial: true, billingType: 'monthly' },
+    'pro_trial': { plan: 'pro', credits: 50, isTrial: true, billingType: 'monthly' },
+    'scale_trial': { plan: 'scale', credits: 50, isTrial: true, billingType: 'monthly' },
     // Full names
-    'starter_monthly': { plan: 'starter', credits: 800 },
-    'starter_annual': { plan: 'starter', credits: 800 },
-    'pro_monthly': { plan: 'pro', credits: 2500 },
-    'pro_annual': { plan: 'pro', credits: 2500 },
-    'scale_monthly': { plan: 'scale', credits: 6500 },
-    'scale_annual': { plan: 'scale', credits: 6500 },
+    'starter_monthly': { plan: 'starter', credits: 800, billingType: 'monthly' },
+    'starter_annual': { plan: 'starter', credits: 800, billingType: 'annual' },
+    'pro_monthly': { plan: 'pro', credits: 2500, billingType: 'monthly' },
+    'pro_annual': { plan: 'pro', credits: 2500, billingType: 'annual' },
+    'scale_monthly': { plan: 'scale', credits: 6500, billingType: 'monthly' },
+    'scale_annual': { plan: 'scale', credits: 6500, billingType: 'annual' },
     // GHL display-name variants (Title Case with space) — sent verbatim by some GHL product configs
-    'Starter Monthly': { plan: 'starter', credits: 800 },
-    'Starter Annual': { plan: 'starter', credits: 800 },
-    'Pro Monthly': { plan: 'pro', credits: 2500 },
-    'Pro Annual': { plan: 'pro', credits: 2500 },
-    'Scale Monthly': { plan: 'scale', credits: 6500 },
-    'Scale Annual': { plan: 'scale', credits: 6500 },
+    'Starter Monthly': { plan: 'starter', credits: 800, billingType: 'monthly' },
+    'Starter Annual': { plan: 'starter', credits: 800, billingType: 'annual' },
+    'Pro Monthly': { plan: 'pro', credits: 2500, billingType: 'monthly' },
+    'Pro Annual': { plan: 'pro', credits: 2500, billingType: 'annual' },
+    'Scale Monthly': { plan: 'scale', credits: 6500, billingType: 'monthly' },
+    'Scale Annual': { plan: 'scale', credits: 6500, billingType: 'annual' },
     // Top-ups
-    'topup_100': { plan: 'keep_current', credits: 100 },
-    'topup_300': { plan: 'keep_current', credits: 300 },
-    'topup_800': { plan: 'keep_current', credits: 800 },
+    'topup_100': { plan: 'keep_current', credits: 100, billingType: 'one_time' },
+    'topup_300': { plan: 'keep_current', credits: 300, billingType: 'one_time' },
+    'topup_800': { plan: 'keep_current', credits: 800, billingType: 'one_time' },
 };
 
 // All costs are strictly linear: unit cost × count. No bundling, no discounts.
@@ -226,8 +226,13 @@ async function postGHLInboundPayload(opts: {
     amount: number;
     stripe_customer_id?: string | null;
     stripe_subscription_id?: string | null;
+    ghl_contact_id?: string | null;
+    billing_type?: string;
     first_name?: string | null;
     last_name?: string | null;
+    previous_plan?: string | null;
+    cancel_at?: string | null;
+    cancellation_reason?: string | null;
 }): Promise<void> {
     try {
         const payload = {
@@ -235,14 +240,16 @@ async function postGHLInboundPayload(opts: {
             event_id: "ghl_" + Date.now(),
             stripe_customer_id: opts.stripe_customer_id ?? null,
             stripe_subscription_id: opts.stripe_subscription_id ?? null,
+            contact_id: opts.ghl_contact_id ?? null,
             email: opts.email,
             first_name: opts.first_name ?? null,
             last_name: opts.last_name ?? null,
             plan: opts.plan,
+            previous_plan: opts.previous_plan ?? null,
             billing_status: opts.billing_status,
             is_trial: opts.is_trial,
             credits: opts.credits,
-            billing_type: "subscription",
+            billing_type: opts.billing_type ?? "monthly",
             currency: "USD",
             amount: opts.amount,
             trial_end_date: null,
@@ -250,8 +257,8 @@ async function postGHLInboundPayload(opts: {
             next_billing_date: null,
             next_billing_date_human: null,
             portal_url: null,
-            cancel_at: null,
-            cancellation_reason: null,
+            cancel_at: opts.cancel_at ?? null,
+            cancellation_reason: opts.cancellation_reason ?? null,
         };
         const res = await fetch(opts.url, {
             method: "POST",
@@ -311,6 +318,7 @@ export const ghlpaymentwebhook = onRequest({
     let finalCredits = typeof rawCredits === 'string' ? parseInt(rawCredits) || 0 : rawCredits;
     let finalPlan = data.plan || customData.plan || 'starter';
     let isTopup = false;
+    let billingTypeValue: 'monthly' | 'annual' | 'one_time' = 'monthly';
 
     // Check if GHL sends trial flag directly — parse as string OR boolean (GHL
     // serializes booleans as the literal strings "true"/"false" in customData).
@@ -322,6 +330,7 @@ export const ghlpaymentwebhook = onRequest({
     if (productId && PLAN_MAP[productId]) {
         const mapped = PLAN_MAP[productId];
         finalCredits = mapped.credits;
+        billingTypeValue = mapped.billingType;
         if (mapped.isTrial) isTrial = true;
         if (mapped.plan === 'keep_current') {
             isTopup = true;
@@ -379,6 +388,7 @@ export const ghlpaymentwebhook = onRequest({
                     creditsPerMonth: CREDITS_PER_MONTH[finalPlan] ?? 0,
                     isTrial: isTrial,
                     billingStatus: 'active',
+                    billingType: billingTypeValue,
                     planUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
                     ghlContactId: contactId,
                     ...(stripeCustomerId ? { stripeCustomerId } : {}),
@@ -395,6 +405,7 @@ export const ghlpaymentwebhook = onRequest({
                 creditsPerMonth: CREDITS_PER_MONTH[isTopup ? "none" : finalPlan] ?? 0,
                 isTopup: isTopup,
                 isTrial: isTrial,
+                billingType: billingTypeValue,
                 ghlContactId: contactId,
                 ...(stripeCustomerId ? { stripeCustomerId } : {}),
                 purchasedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -410,6 +421,7 @@ export const ghlpaymentwebhook = onRequest({
         let firstName: string | null = null;
         let lastName: string | null = null;
         let stripeSubscriptionId: string | null = null;
+        let ghlContactIdValue: string | null = contactId || null;
         if (existingUser) {
             try {
                 const snap = await admin.firestore().collection("users").doc(existingUser.uid).get();
@@ -418,6 +430,7 @@ export const ghlpaymentwebhook = onRequest({
                 firstName = split.first_name;
                 lastName = split.last_name;
                 stripeSubscriptionId = userData.stripeSubscriptionId ?? null;
+                ghlContactIdValue = userData.ghlContactId ?? ghlContactIdValue;
             } catch { /* non-critical — fields stay null */ }
         }
 
@@ -454,6 +467,8 @@ export const ghlpaymentwebhook = onRequest({
             amount,
             stripe_customer_id: stripeCustomerId || null,
             stripe_subscription_id: stripeSubscriptionId,
+            ghl_contact_id: ghlContactIdValue,
+            billing_type: billingTypeValue,
             first_name: firstName,
             last_name: lastName,
         });
@@ -585,9 +600,28 @@ export const ghlCancellationWebhook = onRequest({
         let lastName: string | null = null;
         let stripeSubscriptionId: string | null = null;
         let stripeCustomerId: string | null = null;
+        let ghlContactIdValue: string | null = contactId || null;
+        let billingTypeValue: string = 'monthly';
+
+        let previousPlan: string | null = null;
 
         if (existingUser) {
             const userRef = admin.firestore().collection("users").doc(existingUser.uid);
+
+            // Capture pre-update state for GHL previous_plan + identity fields.
+            try {
+                const snap = await userRef.get();
+                const userData = snap.data() ?? {};
+                previousPlan = (userData.plan as string) ?? null;
+                const split = splitDisplayName(userData.displayName);
+                firstName = split.first_name;
+                lastName = split.last_name;
+                stripeSubscriptionId = userData.stripeSubscriptionId ?? null;
+                stripeCustomerId = userData.stripeCustomerId ?? null;
+                ghlContactIdValue = userData.ghlContactId ?? ghlContactIdValue;
+                billingTypeValue = userData.billingType ?? billingTypeValue;
+            } catch { /* non-critical — fields stay null */ }
+
             await userRef.update({
                 billingStatus: 'cancelled',
                 plan: "none",
@@ -597,20 +631,15 @@ export const ghlCancellationWebhook = onRequest({
             });
             console.log(`Cancelled ${normalizedEmail} → billingStatus: cancelled, plan: none.`);
             await writeBillingState(existingUser.uid, admin.firestore());
-
-            try {
-                const snap = await userRef.get();
-                const userData = snap.data() ?? {};
-                const split = splitDisplayName(userData.displayName);
-                firstName = split.first_name;
-                lastName = split.last_name;
-                stripeSubscriptionId = userData.stripeSubscriptionId ?? null;
-                stripeCustomerId = userData.stripeCustomerId ?? null;
-            } catch { /* non-critical — fields stay null */ }
         } else {
             await admin.firestore().collection("pending_plans").doc(normalizedEmail).delete();
             console.log(`Removed pending plan for ${normalizedEmail}`);
         }
+
+        const cancellationReasonInbound: string | null =
+            customData.reason ?? customData.cancellation_reason ?? data.cancellation_reason ?? null;
+        const cancelAtInbound: string | null =
+            customData.cancel_at ?? data.cancel_at ?? null;
 
         // ═══ Route 3: notify GHL inbound webhook so CRM automations fire ═══
         await postGHLInboundPayload({
@@ -624,8 +653,13 @@ export const ghlCancellationWebhook = onRequest({
             amount: 0,
             stripe_customer_id: stripeCustomerId,
             stripe_subscription_id: stripeSubscriptionId,
+            ghl_contact_id: ghlContactIdValue,
+            billing_type: billingTypeValue,
             first_name: firstName,
             last_name: lastName,
+            previous_plan: previousPlan,
+            cancel_at: cancelAtInbound,
+            cancellation_reason: cancellationReasonInbound,
         });
 
         res.status(200).json({ success: true, email: normalizedEmail, action: "cancelled" });
@@ -677,6 +711,8 @@ export const ghlPaymentFailedWebhook = onRequest({
         let plan = "none";
         let credits = 0;
         let isTrial = false;
+        let ghlContactIdValue: string | null = contactId || null;
+        let billingTypeValue: string = 'monthly';
 
         if (existingUser) {
             const gracePeriodEndsAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000); // 2 days
@@ -700,6 +736,8 @@ export const ghlPaymentFailedWebhook = onRequest({
                 plan = userData.plan ?? "none";
                 credits = typeof userData.credits === "number" ? userData.credits : 0;
                 isTrial = userData.isTrial === true;
+                ghlContactIdValue = userData.ghlContactId ?? ghlContactIdValue;
+                billingTypeValue = userData.billingType ?? billingTypeValue;
             } catch { /* non-critical — fields stay at defaults */ }
         }
 
@@ -715,6 +753,8 @@ export const ghlPaymentFailedWebhook = onRequest({
             amount: 0,
             stripe_customer_id: stripeCustomerId,
             stripe_subscription_id: stripeSubscriptionId,
+            ghl_contact_id: ghlContactIdValue,
+            billing_type: billingTypeValue,
             first_name: firstName,
             last_name: lastName,
         });
@@ -766,6 +806,8 @@ export const ghlPaymentRecoveredWebhook = onRequest({
         let plan = "none";
         let credits = 0;
         let isTrial = false;
+        let ghlContactIdValue: string | null = contactId || null;
+        let billingTypeValue: string = 'monthly';
 
         if (existingUser) {
             const userRef = admin.firestore().collection("users").doc(existingUser.uid);
@@ -784,6 +826,8 @@ export const ghlPaymentRecoveredWebhook = onRequest({
                 plan = userData.plan ?? "none";
                 credits = typeof userData.credits === "number" ? userData.credits : 0;
                 isTrial = userData.isTrial === true;
+                ghlContactIdValue = userData.ghlContactId ?? ghlContactIdValue;
+                billingTypeValue = userData.billingType ?? billingTypeValue;
             } catch { /* non-critical — fields stay at defaults */ }
 
             await userRef.update({
@@ -810,6 +854,8 @@ export const ghlPaymentRecoveredWebhook = onRequest({
             amount: 0,
             stripe_customer_id: stripeCustomerId,
             stripe_subscription_id: stripeSubscriptionId,
+            ghl_contact_id: ghlContactIdValue,
+            billing_type: billingTypeValue,
             first_name: firstName,
             last_name: lastName,
         });

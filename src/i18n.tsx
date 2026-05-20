@@ -19,6 +19,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'close': 'Close',
         'search': 'Search...',
         'skip': 'Skip',
+        'browse_plans': 'Browse Plans',
 
         // ── Auth / Login ──
         'login.or_email': 'or continue with email',
@@ -735,6 +736,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'close': 'إغلاق',
         'search': 'بحث...',
         'skip': 'تخطي',
+        'browse_plans': 'تصفح الخطط',
 
         // ── Auth / Login ──
         'login.or_email': 'أو تابع بالبريد الإلكتروني',
@@ -1473,6 +1475,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     React.useEffect(() => {
         document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
         document.documentElement.lang = lang;
+        if (!localStorage.getItem('proads_ui_lang')) { localStorage.setItem('proads_ui_lang', 'en'); }
     }, [lang]);
 
     const t = useCallback((key: string, params?: Record<string, string | number>): string => {

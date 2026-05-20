@@ -5,6 +5,7 @@ import { useT } from "../../i18n";
 import { TOPUP_PACKS, TOPUP_PRICES } from "../../planconfig";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "../../firebase";
+import { useBillingState } from "../../hooks/useBillingState";
 
 interface CreateStripeTopUpRequest {
   creditAmount: number;
@@ -26,11 +27,16 @@ interface TopUpSelectorProps {
 
 export const TopUpSelector: React.FC<TopUpSelectorProps> = ({ canTopUp, onBuy }) => {
   const { t } = useT();
+  const { billingState } = useBillingState();
   const [loadingPack, setLoadingPack] = useState<string | null>(null);
 
   if (!canTopUp) return null;
 
   const handleBuy = async (credits: number) => {
+    if (billingState?.isTrial) {
+      alert('Top-ups are not available during your free trial. Your trial will convert to a paid plan after 7 days.');
+      return;
+    }
     setLoadingPack(String(credits));
     try {
       const priceId = TOPUP_PRICES[credits];

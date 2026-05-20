@@ -32,12 +32,14 @@ interface GHLPayloadFields {
     trialEndDate?: string | null;
     /** ISO date string — rendered into next_billing_date_human via formatDateHuman. */
     nextBillingDate?: string | null;
+    previousPlan?: string | null;
 }
 
 interface ResolvedUser {
     email: string;
     displayName: string | null;
     stripeCustomerId: string | null;
+    ghlContactId: string | null;
 }
 
 async function resolveUser(identifier: string): Promise<ResolvedUser> {
@@ -46,6 +48,7 @@ async function resolveUser(identifier: string): Promise<ResolvedUser> {
             email: identifier.toLowerCase().trim(),
             displayName: null,
             stripeCustomerId: null,
+            ghlContactId: null,
         };
     }
 
@@ -55,19 +58,20 @@ async function resolveUser(identifier: string): Promise<ResolvedUser> {
             const data = doc.data()!;
             return {
                 email: (data.email || "").toLowerCase().trim(),
-                displayName: data.displayName ?? data.email ?? null,
+                displayName: data.displayName ?? null,
                 stripeCustomerId: data.stripeCustomerId ?? null,
+                ghlContactId: data.ghlContactId ?? null,
             };
         }
     } catch { /* user doc read failed */ }
 
-    return { email: identifier, displayName: null, stripeCustomerId: null };
+    return { email: identifier, displayName: null, stripeCustomerId: null, ghlContactId: null };
 }
 
-function splitName(displayName: string | null): { first_name: string | null; last_name: string | null } {
-    if (!displayName) return { first_name: null, last_name: null };
+function splitName(displayName: string | null): { first_name: string; last_name: string } {
+    if (!displayName) return { first_name: "", last_name: "" };
     const idx = displayName.indexOf(" ");
-    if (idx === -1) return { first_name: displayName, last_name: null };
+    if (idx === -1) return { first_name: displayName, last_name: "" };
     return { first_name: displayName.substring(0, idx), last_name: displayName.substring(idx + 1) };
 }
 
@@ -124,10 +128,12 @@ export async function notifyGHL(
             event_id: payloadFields.eventId ?? "",
             stripe_customer_id: stripeCustomerId,
             stripe_subscription_id: payloadFields.stripeSubscriptionId ?? null,
+            contact_id: user.ghlContactId,
             email: user.email,
             first_name,
             last_name,
             plan: payloadFields.plan ?? "none",
+            previous_plan: payloadFields.previousPlan ?? null,
             billing_status: payloadFields.billingStatus ?? "none",
             is_trial: payloadFields.billingStatus === "trialing",
             credits: payloadFields.credits ?? 0,

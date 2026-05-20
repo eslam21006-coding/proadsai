@@ -217,6 +217,7 @@ export default function PricingTable() {
                         }
                       } catch (e: any) {
                         console.error("Checkout error:", e);
+                        alert('Checkout could not be started. Please try again.');
                       }
                     }}
                     className={`block w-full py-3.5 px-4 rounded-xl no-underline text-white font-extrabold transition-all hover:-translate-y-0.5 hover:opacity-95 cursor-pointer border-0 ${p.ctaCls === 'pro' ? 'bg-blue-600 shadow-[0_0_25px_rgba(37,99,235,.28)]' : p.ctaCls === 'scale' ? 'bg-amber-500 !text-gray-900 shadow-[0_0_25px_rgba(245,158,11,.22)]' : 'bg-white/[0.08]'}`}>

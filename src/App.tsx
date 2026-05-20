@@ -4,7 +4,7 @@ import type { AdInputs, AdMode, AppPhase, AspectRatio, ABVariation, BatchResult,
 // --- FIREBASE IMPORTS ---
 import { auth, db, functions, storage } from './firebase';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signOut, onAuthStateChanged, type User } from 'firebase/auth';
-import { doc, getDoc, setDoc, deleteDoc, updateDoc, onSnapshot, collection, addDoc, getDocs, query, orderBy, where, limit } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, updateDoc, onSnapshot, collection, addDoc, getDocs, query, orderBy, where, limit, serverTimestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { ref as storageRef, deleteObject } from 'firebase/storage';
 import { gemini, type GenerationResult } from './services/geminiService';
@@ -2583,12 +2583,43 @@ const App: React.FC = () => {
     <VerifyEmailScreen
       email={user.email ?? ''}
       onResend={async () => { await sendEmailVerification(user); }}
-      onCheckVerified={async () => { await user.reload(); if (auth.currentUser) setUser({ ...auth.currentUser }); }}
+      onCheckVerified={async () => {
+        await user.reload();
+        const refreshed = auth.currentUser;
+        if (!refreshed) return;
+        setUser({ ...refreshed });
+        if (!refreshed.emailVerified) return;
+
+        // Manually run pending plan consumption since onAuthStateChanged won't re-fire
+        const userRef = doc(db, 'users', refreshed.uid);
+        const userSnap = await getDoc(userRef);
+        if (!userSnap.exists() && refreshed.email) {
+          const pendingRef = doc(db, 'pending_plans', refreshed.email.toLowerCase());
+          const pendingSnap = await getDoc(pendingRef);
+          if (pendingSnap.exists()) {
+            const pending = pendingSnap.data();
+            await setDoc(userRef, {
+              email: refreshed.email,
+              displayName: refreshed.displayName || '',
+              plan: pending.plan || 'starter',
+              credits: pending.credits ?? 50,
+              creditsPerMonth: pending.creditsPerMonth ?? pending.credits ?? 50,
+              isTrial: pending.isTrial ?? false,
+              isTopup: false,
+              billingType: pending.billingType ?? 'monthly',
+              ghlContactId: pending.ghlContactId || '',
+              purchasedAt: pending.purchasedAt || null,
+              createdAt: serverTimestamp(),
+            });
+            await deleteDoc(pendingRef);
+          }
+        }
+      }}
       onSignOut={async () => { await signOut(auth); setUser(null); setShowMandatoryBilling(false); }}
     />
   );
 
-  if (showMandatoryBilling && userPlan === 'none') return <MandatoryBillingModal />;
+  if (!loadingAuth && userPlan === 'none' && !teamOwnerUid) return <MandatoryBillingModal />;
 
   const trialBanner = isTrialUser && userCredits === 0 && !showMandatoryBilling
     ? <TrialExpiredBanner onUpgrade={() => window.location.hash = '#/billing'} />
