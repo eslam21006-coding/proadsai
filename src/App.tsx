@@ -2606,7 +2606,9 @@ const App: React.FC = () => {
             await setDoc(userRef, {
               email: refreshed.email,
               displayName: refreshed.displayName || '',
-              plan: pending.plan || 'starter',
+              // Match the main bootstrap fallback ('none') so a legacy/malformed pending_plans
+              // record can't silently grant Starter entitlements.
+              plan: pending.plan || 'none',
               credits: pending.credits ?? 50,
               creditsPerMonth: pending.creditsPerMonth ?? pending.credits ?? 50,
               isTrial: pending.isTrial ?? false,

@@ -534,6 +534,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
 
         // ── Join ──
         'join.title': 'Join Team',
+        'join.fallback.title': 'Couldn’t load the invite page',
+        'join.fallback.body': 'Please check your connection and refresh, or open the link again.',
         'join.expired': 'This invite has expired. Ask your team owner to resend it.',
         'join.revoked': 'This invite is no longer valid.',
         'join.claimed': 'This invite has already been claimed.',
@@ -1253,6 +1255,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
 
         // ── Join ──
         'join.title': 'انضم للفريق',
+        'join.fallback.title': 'تعذّر تحميل صفحة الدعوة',
+        'join.fallback.body': 'يرجى التحقق من اتصالك وإعادة تحميل الصفحة، أو فتح الرابط مرة أخرى.',
         'join.expired': 'انتهت صلاحية الدعوة. اطلب من مالك الفريق إعادة إرسالها.',
         'join.revoked': 'هذه الدعوة لم تعد صالحة.',
         'join.claimed': 'تم قبول هذه الدعوة بالفعل.',

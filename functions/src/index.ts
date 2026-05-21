@@ -216,13 +216,18 @@ function splitDisplayName(displayName: string | undefined | null): {
 // customer creates an account. The GHL cancel/failed/recovered webhooks read users/{uid}
 // for their payload fields; when no auth user exists yet, fall back to this so those events
 // still carry the real plan/billing_type instead of empty defaults.
-async function loadPendingPlan(normalizedEmail: string): Promise<Record<string, any> | null> {
-    try {
-        const snap = await admin.firestore().collection("pending_plans").doc(normalizedEmail).get();
-        return snap.exists ? (snap.data() ?? null) : null;
-    } catch {
-        return null;
-    }
+interface PendingPlanDoc {
+    plan?: string;
+    credits?: number;
+    isTrial?: boolean;
+    billingType?: string;
+}
+
+async function loadPendingPlan(normalizedEmail: string): Promise<PendingPlanDoc | null> {
+    // No blanket catch: a missing doc returns null, while a real Firestore failure propagates to
+    // the caller's handler-level try/catch so lookup failures are surfaced, not silently hidden.
+    const snap = await admin.firestore().collection("pending_plans").doc(normalizedEmail).get();
+    return snap.exists ? (snap.data() as PendingPlanDoc) : null;
 }
 
 // Build the canonical 21-field GHL inbound payload and POST it fire-and-forget.
