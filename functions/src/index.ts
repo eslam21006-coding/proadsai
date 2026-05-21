@@ -657,7 +657,7 @@ export const ghlCancellationWebhook = onRequest({
             if (pending) {
                 previousPlan = (pending.plan as string) ?? previousPlan;
                 billingTypeValue = (pending.billingType as string) ?? billingTypeValue;
-                ghlContactIdValue = pending.ghlContactId ?? ghlContactIdValue;
+                if (pending.ghlContactId) ghlContactIdValue = pending.ghlContactId;
             }
             await admin.firestore().collection("pending_plans").doc(normalizedEmail).delete();
             console.log(`Removed pending plan for ${normalizedEmail}`);
@@ -775,7 +775,7 @@ export const ghlPaymentFailedWebhook = onRequest({
                 credits = typeof pending.credits === "number" ? pending.credits : credits;
                 isTrial = pending.isTrial === true;
                 billingTypeValue = (pending.billingType as string) ?? billingTypeValue;
-                ghlContactIdValue = pending.ghlContactId ?? ghlContactIdValue;
+                if (pending.ghlContactId) ghlContactIdValue = pending.ghlContactId;
             }
         }
 
@@ -887,7 +887,7 @@ export const ghlPaymentRecoveredWebhook = onRequest({
                 credits = typeof pending.credits === "number" ? pending.credits : credits;
                 isTrial = pending.isTrial === true;
                 billingTypeValue = (pending.billingType as string) ?? billingTypeValue;
-                ghlContactIdValue = pending.ghlContactId ?? ghlContactIdValue;
+                if (pending.ghlContactId) ghlContactIdValue = pending.ghlContactId;
             }
         }
 
