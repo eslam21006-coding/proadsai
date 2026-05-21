@@ -48,22 +48,22 @@ description: "Task list for Post-Phase-21 Drift Audit Remediation"
 - [x] T008 [P] [US1] Add `/join` route in `src/main.tsx` rendering `JoinTeam.tsx` (FR-101). Done: `/join?inviteId=…` renders the join page, not the app.
 - [x] T009 [P] [US1] Fix `src/pages/JoinTeam.tsx` query param `?id` → `?inviteId` (FR-102). Done: page loads details for a real invite link.
 - [x] T010 [US1] Gate the Team nav button to `isTeamOwner` in `src/App.tsx` (FR-105). Done: non-owners do not see it.
-- [ ] T011 [US1] Add "removed from team" overlay on `isTeamMember` true→false in `src/App.tsx` (FR-106). Done: removed member sees the overlay on next action.
-- [ ] T012 [US1] SMOKE: invite → `/join` → claim end-to-end in emulator (acceptance scenario 1). Done: a new invitee completes a join.
+- [x] T011 [US1] Add "removed from team" overlay on `isTeamMember` true→false in `src/App.tsx` (FR-106). Done: removed member sees the overlay on next action.
+- [x] T012 [US1] SMOKE: invite → `/join` → claim end-to-end in emulator (acceptance scenario 1). Done: a new invitee completes a join.
 
 ### Phase 4 — Testimonial carousel (highest severity)
 
-- [ ] T013 [P] [US1] Register `serverGenerateTestimonialCarousel` in `src/services/geminiService.ts` callable registry (FR-111). Done: registry exposes it.
-- [ ] T014 [US1] Dispatch to `serverGenerateTestimonialCarousel` in `src/App.tsx` when `offerCreativeMode` includes `testimonial_carousel` + carousel (FR-112). Done: smoke shows the dedicated pipeline runs (platform detection), not the generic path.
-- [ ] T015 [US1] Fire `showToast(t('override.testimonial_requires_carousel'))` on single→carousel auto-switch in `src/App.tsx`/`InputForm.tsx` (FR-113). Done: toast fires on auto-switch.
-- [ ] T016 [US1] Render the `override.carousel_adjusted_testimonials` inline notice on slide-count adjust in `src/App.tsx` (FR-114). Done: notice renders.
-- [ ] T017 [US1] Unify testimonial slide-count to `+2` in `src/components/InputForm.tsx` (remove `+1` at `:1131`) (FR-115). Done: both sites compute `testimonialCount+2`.
+- [x] T013 [P] [US1] Register `serverGenerateTestimonialCarousel` in `src/services/geminiService.ts` callable registry (FR-111). Done: registry exposes it.
+- [x] T014 [US1] Dispatch to `serverGenerateTestimonialCarousel` in `src/App.tsx` when `offerCreativeMode` includes `testimonial_carousel` + carousel (FR-112). Done: smoke shows the dedicated pipeline runs (platform detection), not the generic path.
+- [x] T015 [US1] Fire `showToast(t('override.testimonial_requires_carousel'))` on single→carousel auto-switch in `src/App.tsx`/`InputForm.tsx` (FR-113). Done: toast fires on auto-switch.
+- [x] T016 [US1] Render the `override.carousel_adjusted_testimonials` inline notice on slide-count adjust in `src/App.tsx` (FR-114). Done: notice renders.
+- [x] T017 [US1] Unify testimonial slide-count to `+2` in `src/components/InputForm.tsx` (remove `+1` at `:1131`) (FR-115). Done: both sites compute `testimonialCount+2`.
 
 ### Phase 7 — Credit refund on failed generations (CRITICAL; gated by T004)
 
-- [ ] T018 [US1] Add catch-block failure integration to every generation callable in `functions/src/index.ts`: call `classifyError`, build the failure record, write `generations/{auto-id}` (FR-107). Done: forced failure writes a doc with `failureClass`.
-- [ ] T019 [US1] Wire credit refund for hard failures (`model_error`/`validation_reject`/`slot_repair_failed`) in `functions/src/index.ts`, skip pre-deduction + soft-fail (FR-108). Done: hard failure refunds; `credit_insufficient` does not.
-- [ ] T020 [US1] Add `costEstimate` to every generation callable success response in `functions/src/index.ts` (FR-109). Done: response carries `costEstimate`.
+- [x] T018 [US1] Add catch-block failure integration to every generation callable in `functions/src/index.ts`: call `classifyError`, build the failure record, write `generations/{auto-id}` (FR-107). Done: forced failure writes a doc with `failureClass`.
+- [x] T019 [US1] Wire credit refund for hard failures (`model_error`/`validation_reject`/`slot_repair_failed`) in `functions/src/index.ts`, skip pre-deduction + soft-fail (FR-108). Done: hard failure refunds; `credit_insufficient` does not.
+- [x] T020 [US1] Add `costEstimate` to every generation callable success response in `functions/src/index.ts` (FR-109). Done: response carries `costEstimate`.
 - [ ] T021 [US1] Pass `costEstimate`/`failureClass:null` to `saveGeneration` in `src/App.tsx`/`src/services/feedbackService.ts` (FR-110). Done: persisted record carries non-null `costEstimate`.
 
 ### Phase 5 — Copy-fidelity warning banner

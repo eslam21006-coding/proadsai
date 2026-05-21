@@ -1297,6 +1297,7 @@ const App: React.FC = () => {
       if (snap.exists()) {
         const data = snap.data();
         if (data.isTeamMember && data.teamOwnerUid) {
+          wasTeamMemberRef.current = true;
           // Team member: listen to owner doc for credits/plan/billing
           const ownerRef = doc(db, 'users', data.teamOwnerUid);
           getDoc(ownerRef).then(ownerSnap => {
@@ -1311,6 +1312,10 @@ const App: React.FC = () => {
             }
           }).catch(() => { /* non-blocking */ });
           return;
+        }
+        if (wasTeamMemberRef.current && !data.isTeamMember) {
+          setRemovedFromTeam(true);
+          wasTeamMemberRef.current = false;
         }
         setUserCredits(data.credits ?? 0);
         const effectivePlan = ((data.plan ?? 'none') as UserPlan);
@@ -1569,6 +1574,7 @@ const App: React.FC = () => {
   const [billingStatus, setBillingStatus] = useState<'trialing' | 'active' | 'past_due' | 'cancelling' | 'cancelled' | 'none'>('active');
   const [teamOwnerUid, setTeamOwnerUid] = useState<string | null>(null);
   const [teamRole, setTeamRole] = useState<string | null>(null);
+  const [removedFromTeam, setRemovedFromTeam] = useState(false);
   const isTeamViewer = teamRole === 'viewer';
   // For team members, use the owner's UID for all avatar/project Firestore operations
   const effectiveUid = teamOwnerUid || user?.uid || null;
@@ -1603,6 +1609,7 @@ const App: React.FC = () => {
   // FR-024b: fires once when users/{uid}.createdAt is within 60s AND welcomeToastShown !== true.
   // Covers both pending_plans consumption and mandatory-modal → paid transitions.
   const welcomeToastFiredRef = React.useRef(false);
+  const wasTeamMemberRef = React.useRef(false);
   useEffect(() => {
     if (!user) return;
     if (welcomeToastFiredRef.current) return;
@@ -3356,7 +3363,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
 
       let res: string;
-      if (formData.adMode === 'carousel' && (formData.slideCount || 1) > 1) {
+      if (selectedModes.includes('testimonial_carousel') && formData.adMode === 'carousel') {
+        // TESTIMONIAL CAROUSEL: Use the dedicated pipeline (platform detection + mockup frames)
+        const testimonialScreenshots = (formData as any).testimonialScreenshots || [];
+        const testimonialResult = await gemini.generateTestimonialCarousel(
+          cleanInputs, testimonialScreenshots, activeWorkspaceId ?? undefined
+        );
+        res = testimonialResult.text;
+      } else if (formData.adMode === 'carousel' && (formData.slideCount || 1) > 1) {
         // CAROUSEL MODE: Generate 4 story angles instead of 4 single-image hooks
         res = await gemini.generateCarouselAngles(cleanInputs, universe, formData.slideCount || 5, globalRefinement);
       } else {
@@ -8226,6 +8240,23 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ REMOVED FROM TEAM OVERLAY ═══ */}
+      {removedFromTeam && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm"></div>
+          <div className="relative bg-slate-950 border border-red-500/30 rounded-3xl shadow-2xl max-w-md w-full mx-4 p-8 text-center" onClick={(e) => e.stopPropagation()}>
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-500/10 flex items-center justify-center">
+              <i className="fa-solid fa-user-xmark text-red-400 text-2xl"></i>
+            </div>
+            <h2 className="text-lg font-black text-white mb-2">{t('team.removed_message')}</h2>
+            <p className="text-xs text-slate-400 mb-6">You have been removed from the team. You are now operating under your own account.</p>
+            <button onClick={() => { setRemovedFromTeam(false); setTeamOwnerUid(null); setTeamRole(null); }} className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-bold transition-all">
+              Continue
+            </button>
           </div>
         </div>
       )}

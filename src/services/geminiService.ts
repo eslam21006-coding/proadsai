@@ -21,6 +21,7 @@ const fnVisualPolishes = httpsCallable(functions, 'serverGenerateVisualPolishes'
 const fnDesignCritique = httpsCallable(functions, 'designCritique', { timeout: 30000 });
 const fnGetRankings = httpsCallable(functions, 'serverGetRankings', { timeout: 30000 });
 const fnEditRegion = httpsCallable(functions, 'serverEditRegion', { timeout: 120000 });
+const fnTestimonialCarousel = httpsCallable(functions, 'serverGenerateTestimonialCarousel', { timeout: 300000 });
 // ─── Ranking result types (subset of backend types for frontend use) ────
 export interface RankedCandidateCompact {
   family: string;
@@ -374,6 +375,23 @@ Use this information to better understand the brand's positioning, tone, and tar
     const raw = data.imageBase64 || null;
     const image = (typeof raw === 'string' && raw.startsWith('data:image/')) ? raw : null;
     return { image, errorCode: data.errorCode || (!image ? 'edit_failed' : undefined) };
+  }
+
+  // ─── TESTIMONIAL CAROUSEL GENERATION ───────────────────────────────────
+  async generateTestimonialCarousel(
+    inputs: AdInputs,
+    screenshots: string[],
+    activeWorkspaceId?: string
+  ): Promise<{ text: string; platform?: string; mockupFrames?: any[] }> {
+    const result = await fnTestimonialCarousel({
+      inputs: sanitizeInputs(inputs), screenshots, activeWorkspaceId,
+    });
+    const data = result.data as any;
+    return {
+      text: data.text || '',
+      platform: data.platform,
+      mockupFrames: data.mockupFrames,
+    };
   }
 }
 
