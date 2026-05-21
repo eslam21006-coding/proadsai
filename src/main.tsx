@@ -10,8 +10,19 @@ if (!rootElement) {
 }
 
 const root = ReactDOM.createRoot(rootElement);
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+
+if (window.location.pathname === '/join') {
+  import('./pages/JoinTeam').then(({ default: JoinTeam }) => {
+    root.render(
+      <React.StrictMode>
+        <JoinTeam />
+      </React.StrictMode>
+    );
+  });
+} else {
+  root.render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  );
+}

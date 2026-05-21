@@ -19,9 +19,9 @@ description: "Task list for Post-Phase-21 Drift Audit Remediation"
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-- [ ] T001 Capture baseline: run `cd functions && npm run build && npm test`; record pass count + note the crashing `test:workspace` (FR-123 target) and absent lang/team suites (FR-203/205 targets).
-- [ ] T002 [P] Start/verify Firebase Local Emulator Suite (functions + firestore + storage) so callable/Firestore/Storage fixes can be smoke-verified per the proof protocol.
-- [ ] T003 [P] Confirm root frontend build green: `npm run build`.
+- [x] T001 Capture baseline: run `cd functions && npm run build && npm test`; record pass count + note the crashing `test:workspace` (FR-123 target) and absent lang/team suites (FR-203/205 targets).
+- [x] T002 [P] Start/verify Firebase Local Emulator Suite (functions + firestore + storage) so callable/Firestore/Storage fixes can be smoke-verified per the proof protocol.
+- [x] T003 [P] Confirm root frontend build green: `npm run build`.
 
 ---
 
@@ -30,7 +30,7 @@ description: "Task list for Post-Phase-21 Drift Audit Remediation"
 **Note**: The Stripe gate that previously sequenced the billing-touching tasks is CLEARED (see T004); those tasks proceed as specified.
 
 - [x] T004 Stripe gate CLEARED — Phase 21 / Stripe-migration confirmed merged, deployed, and smoke-tested (2026-05-21). The billing-touching fixes T018/T019 (FR-107/108) and T041/T042 (FR-134/136) proceed against current code as specified; no re-sequencing or post-migration re-verification is needed.
-- [ ] T005 [P] Create emulator seed helpers (team invite, team member with `workspaceAccess`, workspace with `metaAdAccountId`, generation with build plan) used by the per-tier smoke verifications.
+- [x] T005 [P] Create emulator seed helpers (team invite, team member with `workspaceAccess`, workspace with `metaAdAccountId`, generation with build plan) used by the per-tier smoke verifications.
 
 **Checkpoint**: Baseline captured, emulator ready, Stripe gate cleared → Tier 1 may begin.
 
@@ -43,11 +43,11 @@ description: "Task list for Post-Phase-21 Drift Audit Remediation"
 
 ### Phase 9 — Team invites (highest severity)
 
-- [ ] T006 [US1] Re-implement + export `getInviteDetails` onCall in `functions/src/index.ts` (FR-103). Done: emulator round-trip returns details (not `functions/not-found`); `export const getInviteDetails` present.
-- [ ] T007 [US1] Re-implement + export `updateTeamMemberRole` onCall in `functions/src/index.ts` (FR-104). Done: emulator role change succeeds; `teamService.ts:14` resolves.
-- [ ] T008 [P] [US1] Add `/join` route in `src/main.tsx` rendering `JoinTeam.tsx` (FR-101). Done: `/join?inviteId=…` renders the join page, not the app.
-- [ ] T009 [P] [US1] Fix `src/pages/JoinTeam.tsx` query param `?id` → `?inviteId` (FR-102). Done: page loads details for a real invite link.
-- [ ] T010 [US1] Gate the Team nav button to `isTeamOwner` in `src/App.tsx` (FR-105). Done: non-owners do not see it.
+- [x] T006 [US1] Re-implement + export `getInviteDetails` onCall in `functions/src/index.ts` (FR-103). Done: emulator round-trip returns details (not `functions/not-found`); `export const getInviteDetails` present.
+- [x] T007 [US1] Re-implement + export `updateTeamMemberRole` onCall in `functions/src/index.ts` (FR-104). Done: emulator role change succeeds; `teamService.ts:14` resolves.
+- [x] T008 [P] [US1] Add `/join` route in `src/main.tsx` rendering `JoinTeam.tsx` (FR-101). Done: `/join?inviteId=…` renders the join page, not the app.
+- [x] T009 [P] [US1] Fix `src/pages/JoinTeam.tsx` query param `?id` → `?inviteId` (FR-102). Done: page loads details for a real invite link.
+- [x] T010 [US1] Gate the Team nav button to `isTeamOwner` in `src/App.tsx` (FR-105). Done: non-owners do not see it.
 - [ ] T011 [US1] Add "removed from team" overlay on `isTeamMember` true→false in `src/App.tsx` (FR-106). Done: removed member sees the overlay on next action.
 - [ ] T012 [US1] SMOKE: invite → `/join` → claim end-to-end in emulator (acceptance scenario 1). Done: a new invitee completes a join.
 

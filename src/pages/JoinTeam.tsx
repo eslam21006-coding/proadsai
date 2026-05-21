@@ -17,7 +17,7 @@ type InviteStatus = 'loading' | 'valid' | 'expired' | 'revoked' | 'accepted' | '
 const JoinTeamInner: React.FC = () => {
   const { t, lang } = useT();
   const searchParams = new URLSearchParams(window.location.search);
-  const inviteId = searchParams.get('id') || '';
+  const inviteId = searchParams.get('inviteId') || '';
 
   const [inviteStatus, setInviteStatus] = useState<InviteStatus>('loading');
   const [inviteData, setInviteData] = useState<InviteDetailsResult | null>(null);

@@ -4864,13 +4864,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 <p className="text-[8px] text-slate-500">Email, password, preferences</p>
               </div>
             </button>
-            <button onClick={() => { setShowSidebar(false); setShowTeamModal(true); loadTeamMembers(); loadTeamInvites(); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
+            {!teamOwnerUid && <button onClick={() => { setShowSidebar(false); setShowTeamModal(true); loadTeamMembers(); loadTeamInvites(); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
               <span className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center"><i className="fa-solid fa-user-plus text-emerald-400 text-xs"></i></span>
               <div>
                 <p className="text-[11px] font-bold text-white group-hover:text-emerald-400 transition-colors">Team</p>
                 <p className="text-[8px] text-slate-500">Invite &amp; manage members</p>
               </div>
-            </button>
+            </button>}
             {/* ─── META ADS CONNECTION ───── */}
             {metaConnection?.connected ? (
               <div className="w-full px-4 py-3 rounded-xl bg-blue-500/5 border border-blue-500/10">
