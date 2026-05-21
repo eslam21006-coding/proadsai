@@ -20,7 +20,7 @@ if (window.location.pathname === '/join') {
       </React.StrictMode>
     );
   }).catch((err) => {
-    console.error('Failed to load JoinTeam page:', err);
+    console.error('❌ Failed to load JoinTeam page:', err);
     root.render(
       <React.StrictMode>
         <JoinFallback />

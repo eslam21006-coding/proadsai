@@ -1487,7 +1487,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             if (!localStorage.getItem('proads_ui_lang')) { localStorage.setItem('proads_ui_lang', 'en'); }
         } catch (err) {
             // localStorage can throw in restricted contexts (private mode, blocked cookies) — non-fatal.
-            console.warn('i18n: unable to access localStorage for default UI language', err);
+            console.warn('⚠️ i18n: unable to access localStorage for default UI language', err);
         }
     }, [lang]);
 

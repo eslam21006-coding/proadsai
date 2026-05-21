@@ -221,6 +221,7 @@ interface PendingPlanDoc {
     credits?: number;
     isTrial?: boolean;
     billingType?: string;
+    ghlContactId?: string;
 }
 
 async function loadPendingPlan(normalizedEmail: string): Promise<PendingPlanDoc | null> {
@@ -656,6 +657,7 @@ export const ghlCancellationWebhook = onRequest({
             if (pending) {
                 previousPlan = (pending.plan as string) ?? previousPlan;
                 billingTypeValue = (pending.billingType as string) ?? billingTypeValue;
+                ghlContactIdValue = pending.ghlContactId ?? ghlContactIdValue;
             }
             await admin.firestore().collection("pending_plans").doc(normalizedEmail).delete();
             console.log(`Removed pending plan for ${normalizedEmail}`);
@@ -773,6 +775,7 @@ export const ghlPaymentFailedWebhook = onRequest({
                 credits = typeof pending.credits === "number" ? pending.credits : credits;
                 isTrial = pending.isTrial === true;
                 billingTypeValue = (pending.billingType as string) ?? billingTypeValue;
+                ghlContactIdValue = pending.ghlContactId ?? ghlContactIdValue;
             }
         }
 
@@ -884,6 +887,7 @@ export const ghlPaymentRecoveredWebhook = onRequest({
                 credits = typeof pending.credits === "number" ? pending.credits : credits;
                 isTrial = pending.isTrial === true;
                 billingTypeValue = (pending.billingType as string) ?? billingTypeValue;
+                ghlContactIdValue = pending.ghlContactId ?? ghlContactIdValue;
             }
         }
 
