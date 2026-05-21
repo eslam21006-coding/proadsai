@@ -80,22 +80,22 @@ description: "Task list for Post-Phase-21 Drift Audit Remediation"
 - [ ] T028 [US1] Pass `hasInProgressWork` to `<WorkspaceSwitcher>` at its render site in `src/App.tsx` (FR-121 cont.). Done: switching mid-generation opens the guard.
 - [ ] T029 [US1] Remove direct `addDoc`/`setDoc` workspace writes in `src/App.tsx` (`:1729,1746`); route through `createWorkspace`/`updateWorkspace` callables (FR-124). Done: non-Scale/over-cap user cannot create a workspace client-side.
 - [ ] T030 [US1] Pass `plan` + `metaAdAccounts` props to `WorkspaceSettingsModal` at `src/App.tsx:8681` (FR-125). Done: Scale gate + Meta section render per plan.
-- [ ] T031 [P] [US1] Fix the crashing workspace test suite (`functions/src/__tests__/workspace.test.ts:114` TypeError) (FR-123). Done: `npm run test:workspace` exits 0 with assertions.
-- [ ] T032 [P] [US1] Verify committed `firestore.rules` + `firestore.indexes.json` in the emulator/rules-playground (FR-122). Done: rules/indexes pass emulator verification (production deploy is the owner's separate step).
+- [x] T031 [P] [US1] Fix the crashing workspace test suite (`functions/src/__tests__/workspace.test.ts:114` TypeError) (FR-123). Done: `npm run test:workspace` exits 0 with assertions.
+- [x] T032 [P] [US1] Verify committed `firestore.rules` + `firestore.indexes.json` in the emulator/rules-playground (FR-122). Done: rules/indexes pass emulator verification (production deploy is the owner's separate step).
 
 ### Phase 15 — Brand colors (false promise)
 
-- [ ] T033 [US1] Gate the "Inheriting brand colors…" label in `src/components/InputForm.tsx` (T019a) so it shows only when `retargetingSourceId` resolves to a cold ad with colors (FR-126). Done: label appears only when inheritance will occur.
-- [ ] T034 [US1] Populate `_sourceColdAdBrandColors` from a `retargetingSourceId` doc lookup so `resolveBrandColors` inherits, in `functions/src/generators.ts` (FR-127). Done: retargeting with empty pickers inherits the cold ad's colors.
-- [ ] T035 [P] [US1] Call `applyBrandColorDeduction` from `_runBrandCompliance` and feed it into scoring in `functions/src/creativeScoringEngine.ts` (FR-128). Done: brand-primary-missing render reduces `overallScore` by 10 + records violation.
+- [x] T033 [US1] Gate the "Inheriting brand colors…" label in `src/components/InputForm.tsx` (T019a) so it shows only when `retargetingSourceId` resolves to a cold ad with colors (FR-126). Done: label appears only when inheritance will occur.
+- [x] T034 [US1] Populate `_sourceColdAdBrandColors` from a `retargetingSourceId` doc lookup so `resolveBrandColors` inherits, in `functions/src/generators.ts` (FR-127). Done: retargeting with empty pickers inherits the cold ad's colors.
+- [x] T035 [P] [US1] Call `applyBrandColorDeduction` from `_runBrandCompliance` and feed it into scoring in `functions/src/creativeScoringEngine.ts` (FR-128). Done: brand-primary-missing render reduces `overallScore` by 10 + records violation.
 
 ### HOTFIX-F — Aspect reflow (face stretching)
 
-- [ ] T036 [US1] Remove the `_internalReflow:true` bypass at `src/App.tsx:2274,4023,4075,4616`; route auto-variants through the `reflowImage` callable (FR-129). Done: grep — zero generative-edit REFLOW invocations from user flows.
-- [ ] T037 [US1] Fix the legacy single-reflow branch `src/App.tsx:4676` to call `reflowImage` `scope:'single'` (FR-130). Done: legacy single reflow runs the backend fallback chain, not an error.
-- [ ] T038 [P] [US1] Add bilingual i18n keys `reflow.fallbackToRerender`/`reflow.fallbackToOutpaint` in `src/i18n.tsx` + render the notice in `src/App.tsx` on `reflowResult.fallbackFrom` (FR-131). Done: an auto-fallback shows the dismissable notice.
-- [ ] T039 [US1] Replace carousel per-item retry (`handleCarouselSlideRetry`, `src/App.tsx:4200-4259`) with `reflowImage` `scope:'carousel_slide'` (FR-132). Done: retry invokes the deterministic router.
-- [ ] T040 [US1] Reset `reflowMethod` to `'auto'` on Step-4 navigation in `src/App.tsx` (FR-133). Done: returning to Step 4 shows Auto.
+- [x] T036 [US1] Remove the `_internalReflow:true` bypass at `src/App.tsx:2274,4023,4075,4616`; route auto-variants through the `reflowImage` callable (FR-129). Done: grep — zero generative-edit REFLOW invocations from user flows.
+- [x] T037 [US1] Fix the legacy single-reflow branch `src/App.tsx:4676` to call `reflowImage` `scope:'single'` (FR-130). Done: legacy single reflow runs the backend fallback chain, not an error.
+- [x] T038 [P] [US1] Add bilingual i18n keys `reflow.fallbackToRerender`/`reflow.fallbackToOutpaint` in `src/i18n.tsx` + render the notice in `src/App.tsx` on `reflowResult.fallbackFrom` (FR-131). Done: an auto-fallback shows the dismissable notice.
+- [x] T039 [US1] Replace carousel per-item retry (`handleCarouselSlideRetry`, `src/App.tsx:4200-4259`) with `reflowImage` `scope:'carousel_slide'` (FR-132). Done: retry invokes the deterministic router.
+- [x] T040 [US1] Reset `reflowMethod` to `'auto'` on Step-4 navigation in `src/App.tsx` (FR-133). Done: returning to Step 4 shows Auto.
 
 ### Hotfix-09.50 — Plan-naming leaks (T042 gated by T004)
 

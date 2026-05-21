@@ -2201,6 +2201,7 @@ const App: React.FC = () => {
   const [studioTweak, setStudioTweak] = useState('');
   const [reflowMethod, setReflowMethod] = useState<'auto' | 'outpaint' | 'rerender'>('auto');
   const [showMethodSelector, setShowMethodSelector] = useState(false);
+  const [reflowFallbackNotice, setReflowFallbackNotice] = useState<'outpaint' | 'rerender' | null>(null);
   const [visualPolishes, setVisualPolishes] = useState<VisualPolish[]>([]);
   const [selectedPolishIds, setSelectedPolishIds] = useState<Set<string>>(new Set());
   // ─── EDIT TARGET — tracks which exact design is being edited ─────
@@ -2295,14 +2296,7 @@ const App: React.FC = () => {
                   pushMockup(reflowRes.data.outcomes[0].outputUrl, extraRatio as AspectRatio);
                 }
               } else {
-                const reflowResult = await gemini.generateFinalAd(
-                  buildPlan, selectedTov, inputs, resolvedUniverse, extraRatio,
-                  Object.assign("REFLOW ONLY — adapt this exact design to " + extraRatio + " ratio. Keep ALL text identical word-for-word. Keep the SAME hero, visual elements, colors, and composition. Fill the entire canvas proportionally — no large empty areas. The hero, headline, subheadline, CTA, benefit line, and all elements must be VISIBLE and properly sized for the new ratio. Scale and reposition elements to use the full canvas. Apply the same visual changes from the source image.", { _internalReflow: true }),
-                  result.image
-                );
-                if (reflowResult.image) {
-                  pushMockup(reflowResult.image, extraRatio as AspectRatio);
-                }
+                console.warn(`Skipping auto-reflow to ${extraRatio} — no generation ID for reflowImage callable`);
               }
             } catch (e) {
               console.warn(`Auto-reflow to ${extraRatio} failed:`, e);
@@ -3063,7 +3057,7 @@ const App: React.FC = () => {
     if (phase === 'tov_review') setPhase('input');
     else if (phase === 'concept_review') setPhase('tov_review');
     else if (phase === 'render_studio') setPhase('concept_review');
-    else if (phase === 'primary_text') setPhase('render_studio');
+    else if (phase === 'primary_text') { setPhase('render_studio'); setReflowMethod('auto'); }
   };
 
   const togglePolish = (id: string) => {
@@ -3861,6 +3855,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           }
         }
         setPhase('render_studio');
+        setReflowMethod('auto');
         updateHighestUnlocked('render_studio');
         awardMilestone('designGenerated');
 
@@ -4039,6 +4034,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     setBatchRendering(true);
     setCurrentAspectRatio(primaryRatio);
     setPhase('render_studio');
+    setReflowMethod('auto');
     updateHighestUnlocked('render_studio');
 
     const newCredits = userCredits - totalCost;
@@ -4073,8 +4069,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         if (primaryUrl) {
           try {
             await new Promise(r => setTimeout(r, 500));
-            const reflowed = (await gemini.generateFinalAd(combo.conceptText, combo.hookText, inputs, resolvedUniverse, extraRatio, Object.assign("REFLOW ONLY — adapt this exact design to " + extraRatio + " ratio. Keep ALL text identical word-for-word. Keep the SAME hero, visual elements, colors, and composition. Fill the entire canvas proportionally — no large empty areas. The hero, headline, subheadline, CTA, benefit line, and all elements must be VISIBLE and properly sized for the new ratio. Scale and reposition elements to use the full canvas.", { _internalReflow: true }), primaryUrl)).image;
-            setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, buildPlan: combo.conceptText, url: reflowed, status: reflowed ? 'done' : 'error' } : r));
+            console.warn(`Skipping batch reflow to ${extraRatio} — reflowImage callable required`);
+            setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'error' } : r));
           } catch (e) {
             console.error(`Batch reflow ${ci + 1} to ${extraRatio} failed:`, e);
             setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'error' } : r));
@@ -4125,12 +4121,27 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         ? `LOCAL REFINEMENT (apply to THIS image only): ${localRefinement.trim()}`
         : '';
 
-      const reflowInstruction = Object.assign(`REFLOW ONLY — adapt this exact design to ${itemRatio} ratio. Keep ALL text identical word-for-word. Keep the SAME hero, visual elements, colors, and composition. Fill the entire canvas proportionally — no large empty areas. The hero, headline, subheadline, CTA, benefit line, and all elements must be VISIBLE and properly sized for the new ratio. Scale and reposition elements to use the full canvas.${refinementNote ? ' ' + refinementNote : ''}`, { _internalReflow: true });
-      const variationInstruction = `IMPORTANT: This is a RETRY — you MUST generate a DIFFERENT composition, layout, camera angle, and color palette from previous attempts. Vary the hero pose, background elements, and text placement while keeping the same concept and Arabic text strings. Do NOT reproduce the same design.${refinementNote ? ' ' + refinementNote : ''}`;
-      const renderInstruction = isReflow ? reflowInstruction : variationInstruction;
-      const sourceImage = isReflow && item.url ? item.url : undefined;
-      const retryResult = await gemini.generateFinalAd(item.conceptText, item.hookText || selectedTov, inputs, resolvedUniverse, itemRatio, renderInstruction, sourceImage);
-      const mockup = retryResult.image;
+      let mockup: string | null = null;
+
+      if (isReflow && renderGenerationId) {
+        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+        const reflowRes = await reflowFn({
+          generationId: renderGenerationId,
+          targetAspectRatio: itemRatio,
+          method: 'auto',
+          scope: 'single',
+        });
+        mockup = reflowRes.data.success && reflowRes.data.outcomes[0]?.outputUrl
+          ? reflowRes.data.outcomes[0].outputUrl : null;
+      } else {
+        const variationInstruction = `IMPORTANT: This is a RETRY — you MUST generate a DIFFERENT composition, layout, camera angle, and color palette from previous attempts. Vary the hero pose, background elements, and text placement while keeping the same concept and Arabic text strings. Do NOT reproduce the same design.${refinementNote ? ' ' + refinementNote : ''}`;
+        const renderInstruction = isReflow
+          ? `REFLOW ONLY — adapt this exact design to ${itemRatio} ratio. Keep ALL text identical word-for-word.${refinementNote ? ' ' + refinementNote : ''}`
+          : variationInstruction;
+        const sourceImage = isReflow && item.url ? item.url : undefined;
+        const retryResult = await gemini.generateFinalAd(item.conceptText, item.hookText || selectedTov, inputs, resolvedUniverse, itemRatio, renderInstruction, sourceImage);
+        mockup = retryResult.image;
+      }
 
       // Update ONLY this image — siblings completely untouched
       setBatchResults(prev => prev.map((r, idx) => idx === index ? {
@@ -4233,6 +4244,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
 
       setPhase('render_studio');
+      setReflowMethod('auto');
       updateHighestUnlocked('render_studio');
       awardMilestone('designGenerated');
     } catch (e: any) {
@@ -4252,63 +4264,51 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   // ─── CAROUSEL: Regenerate a single slide ─────────────────────────────
   const handleCarouselSlideRetry = async (slideIndex: number) => {
     if (!inputs || !selectedTov || !carouselConceptRaw) return;
-    const totalNeeded = CREDIT_COSTS.generateImage;
+    if (!renderGenerationId) {
+      showToast(t('studio.reflow.no_generation_id') || 'Retry requires a saved generation — try generating again first.', 'error');
+      return;
+    }
+
+    const totalNeeded = CREDIT_COSTS.reflowImage;
     if (userCredits < totalNeeded) {
-      setUpgradeReason(`Regenerating 1 slide needs ${totalNeeded} credits.`);
+      setUpgradeReason(`Retrying 1 slide needs ${totalNeeded} credits.`);
       setShowUpgradeModal(true);
       return;
     }
 
     const startingCredits = userCredits;
-    const afterDeduction = startingCredits - totalNeeded;
-    setUserCredits(afterDeduction);
-
+    setUserCredits(startingCredits - totalNeeded);
     setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, status: 'rendering' } : s));
 
     let success = false;
 
     try {
-      const copy = carouselCopies[slideIndex];
-      const isLastSlide = slideIndex === carouselCopies.length - 1;
-      const txOverride: TextOverride = {
-        hookText: (copy.hookText || '').replace(/\|\|\|/g, '').trim(),
-        subheadText: (copy.subheadText || '').replace(/\|\|\|/g, '').trim(),
-        ctaName: isLastSlide ? (copy.ctaText || inputs.cta).replace(/\|\|\|/g, '').trim() : '',
-        benefitText: isLastSlide ? (copy.benefitText || '').replace(/\|\|\|/g, '').trim() : '',
-      };
+      const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+      const result = await reflowFn({
+        generationId: renderGenerationId,
+        targetAspectRatio: currentAspectRatio,
+        method: reflowMethod,
+        scope: 'carousel_slide',
+        slideIndex,
+      });
 
-      const slideCount = carouselCopies.length;
-      const isLastSlideRetry = slideIndex === slideCount - 1;
-      const slideInstruction = slideIndex === 0
-        ? `This is SLIDE 1 (the HOOK slide) of a ${slideCount}-slide carousel. Hero pose: CONFIDENT STANCE — arms relaxed, looking at camera. NO pointing.`
-        : isLastSlideRetry
-          ? `This is SLIDE ${slideIndex + 1} (FINAL SLIDE) of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: INVITING GESTURE — open palm. This slide HAS a CTA button. Show logo ONLY on this final slide.`
-          : `This is SLIDE ${slideIndex + 1} of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: VARIED — different from slide 1. NO pointing. NO CTA button. NO logo. NO promo badge.`;
-
-      const slideConceptText = carouselConceptRaw + `\n\n[CAROUSEL SLIDE ${slideIndex + 1}/${slideCount}]: ${slideInstruction}`;
-
-      // Use slide 1 as style reference for slides 2+
-      const anchorImage = slideIndex > 0 ? carouselSlides[0]?.imageUrl : undefined;
-
-      const mockup = (await gemini.generateFinalAd(
-        slideConceptText, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
-        undefined, undefined, anchorImage || undefined, txOverride
-      )).image;
-
-      if (mockup) {
-        success = true;
+      if (typeof result.data.totalCreditsCharged === 'number') {
+        const delta = totalNeeded - result.data.totalCreditsCharged;
+        if (delta !== 0) setUserCredits(prev => prev + delta);
       }
 
-      setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, buildPlan: slideConceptText, imageUrl: mockup, status: mockup ? 'done' : 'error' } : s));
+      const imageUrl = result.data.success && result.data.outcomes[0]?.outputUrl;
+      if (imageUrl) {
+        success = true;
+        if (result.data.outcomes[0].fallbackFrom) {
+          setReflowFallbackNotice(result.data.outcomes[0].fallbackFrom);
+        }
+      }
+      setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, imageUrl: imageUrl || null, status: imageUrl ? 'done' : 'error' } : s));
     } catch (e: any) {
       handleApiError(e);
+      setUserCredits(startingCredits);
       setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, status: 'error' } : s));
-    } finally {
-      // ── CREDIT RECONCILIATION ──
-      if (!success) {
-        setUserCredits(startingCredits);
-        showToast(`Slide ${slideIndex + 1} failed. ${totalNeeded} credits refunded.`, 'error');
-      }
     }
   };
 
@@ -4664,11 +4664,16 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             };
             try {
               if (!deductCredits('reflowImage')) break;
-              const res = (await gemini.generateFinalAd(
-                slide.buildPlan, selectedTov, inputs, resolvedUniverse, newRatio,
-                Object.assign("REFLOW ONLY — adapt this exact design to " + newRatio + " ratio. Keep ALL text identical word-for-word. Keep the SAME hero, visual elements, colors, and composition. Fill the entire canvas proportionally — no large empty areas. The hero, headline, subheadline, CTA, benefit line, and all elements must be VISIBLE and properly sized for the new ratio. Scale and reposition elements to use the full canvas.", { _internalReflow: true }), slide.imageUrl, undefined, txOverride
-              )).image;
-              setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: res, status: res ? 'done' : 'error' } : s));
+              const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+              const reflowRes = await reflowFn({
+                generationId: renderGenerationId || '',
+                targetAspectRatio: newRatio as AspectRatio,
+                method: 'auto',
+                scope: 'carousel_slide',
+                slideIndex: slideIdx,
+              });
+              const res = reflowRes.data.success && reflowRes.data.outcomes[0]?.outputUrl;
+              setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: res || null, status: res ? 'done' : 'error' } : s));
             } catch {
               refundCredits('reflowImage');
               setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, status: 'error' } : s));
@@ -4702,9 +4707,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
       setUserCredits(prev => prev - singleOptimisticCost);
     } else {
-      // Legacy fallback (image-only, no generation id) still uses the old metered path
-      // because gemini.generateFinalAd does NOT charge backend-side; the frontend deducts here.
-      if (!deductCredits('reflowImage')) { stopLoad(); return; }
+      showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation — try generating again first.', 'error');
+      stopLoad();
+      return;
     }
     try {
       if (renderGenerationId) {
@@ -4721,13 +4726,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           if (delta !== 0) setUserCredits(prev => prev + delta);
         }
         if (result.data.success && result.data.outcomes[0]?.outputUrl) {
+          if (result.data.outcomes[0].fallbackFrom) {
+            setReflowFallbackNotice(result.data.outcomes[0].fallbackFrom);
+          }
           pushMockup(result.data.outcomes[0].outputUrl, newRatio);
         } else {
           throw new Error(result.data.outcomes[0]?.errorMessage || 'Reflow returned no image');
         }
       } else {
-        const res = (await gemini.generateFinalAd(buildPlan, selectedTov, inputs, resolvedUniverse, newRatio, "REFLOW ONLY — adapt this exact design to " + newRatio + " ratio. Keep ALL text identical word-for-word. Keep the SAME hero, visual elements, colors, and composition. Fill the entire canvas proportionally — no large empty areas. The hero, headline, subheadline, CTA, benefit line, and all elements must be VISIBLE and properly sized for the new ratio. Scale and reposition elements to use the full canvas.", (currentRawBase64 || currentMockup) || undefined)).image;
-        pushMockup(res, newRatio);
+        showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation — try generating again first.', 'error');
       }
     } catch (e) {
       if (renderGenerationId) {
@@ -8295,6 +8302,21 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 {t('fidelity.cancel')}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ REFLOW FALLBACK NOTICE ═══ */}
+      {reflowFallbackNotice && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[150] max-w-md w-full mx-4">
+          <div className="bg-slate-900 border border-amber-500/30 rounded-2xl shadow-2xl px-5 py-4 flex items-center gap-3">
+            <i className="fa-solid fa-triangle-exclamation text-amber-400 text-sm shrink-0"></i>
+            <p className="text-xs text-slate-300 flex-1">
+              {reflowFallbackNotice === 'rerender' ? t('reflow.fallbackToRerender') : t('reflow.fallbackToOutpaint')}
+            </p>
+            <button onClick={() => setReflowFallbackNotice(null)} className="text-slate-500 hover:text-white text-xs font-bold shrink-0">
+              {t('reflow.fallback_dismiss')}
+            </button>
           </div>
         </div>
       )}

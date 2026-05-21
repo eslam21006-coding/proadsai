@@ -3585,6 +3585,31 @@ import * as generators from "./generators.js";
 // entries the classifier never returns (safety maps to model_error).
 const HARD_FAILURE_CLASSES = ["model_error", "validation_reject", "slot_repair_failed"] as const;
 
+async function populateSourceColdAdBrandColors(uid: string, inputs: any): Promise<void> {
+    if (inputs?.campaignType !== "retargeting") return;
+    if ((inputs as any)._sourceColdAdBrandColors) return;
+    try {
+        const snap = await admin.firestore().collection("generations")
+            .where("userId", "==", uid)
+            .where("input.campaignType", "==", "cold")
+            .orderBy("timestamp", "desc")
+            .limit(1)
+            .get();
+        if (!snap.empty) {
+            const doc = snap.docs[0].data();
+            const input = doc.input || {};
+            if (input.brandColorPrimary || input.brandColorSecondary) {
+                (inputs as any)._sourceColdAdBrandColors = {
+                    brandColorPrimary: input.brandColorPrimary || undefined,
+                    brandColorSecondary: input.brandColorSecondary || undefined,
+                };
+            }
+        }
+    } catch {
+        void 0;
+    }
+}
+
 async function recordGenerationFailure(params: {
     uid: string;
     error: any;
@@ -4126,6 +4151,7 @@ export const serverGenerateFinalAd = onCall({
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setOpenAIKey(openaiApiKey.value());
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    await populateSourceColdAdBrandColors(request.auth.uid, inputs);
 
     // ═══ CREATIVE MODE VALIDATION: fail-closed for invalid combinations ═══
     if (!editInstruction && !base64ToEdit) {

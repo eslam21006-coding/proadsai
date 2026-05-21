@@ -1722,12 +1722,6 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                       Using workspace colors
                     </span>
                   )}
-                  {inputs.campaignType === 'retargeting' && !inputs.brandColorPrimary && !inputs.brandColorSecondary && (
-                    <span className="text-[10px] text-purple-400/70 flex items-center gap-1">
-                      <i className="fa-solid fa-link text-purple-500/50"></i>
-                      Inheriting brand colors from the linked cold ad
-                    </span>
-                  )}
                 </div>
               </div>
             </div>

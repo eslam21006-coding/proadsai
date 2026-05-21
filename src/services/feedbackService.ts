@@ -79,6 +79,8 @@ export interface GenerationRecord {
         retargetingObjections?: string[];  // Legacy — read-compat for old saved records
         customObjection?: string;
         testimonial?: string;
+        brandColorPrimary?: string | null;
+        brandColorSecondary?: string | null;
     };
     output: {
         phase: 'hooks' | 'concepts' | 'render' | 'caption';
@@ -176,6 +178,8 @@ class FeedbackService {
                 retargetingObjection: (inputs as any).retargetingObjection || ((inputs as any).retargetingObjections || [])[0] || null,
                 customObjection: (inputs as any).customObjection || null,
                 testimonial: (inputs as any).testimonial || null,
+                brandColorPrimary: inputs.brandColorPrimary || null,
+                brandColorSecondary: inputs.brandColorSecondary || null,
             },
             output: {
                 phase,

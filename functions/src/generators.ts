@@ -22,7 +22,8 @@ import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, pars
 import { compileModePayload, getModePayloadPromptBlock, getModePayloadPromptBlock_RenderSafe, getModePayloadCaptionAnchors, extractAuthorizedNumbers, getNumericFidelityPolicy, type ModePayload, type NumericFidelityPolicy } from "./modeFieldSchema.js";
 import { compositeOfferOverlay, isOverlayAvailable, extractOfferFacts, validateResolvedOfferFacts } from "./offerOverlay.js";
 import { validateCaption, validateArabicCompliance, validateBlueprintLanguage, validateBlueprintModeContribution, validateBlueprintMinimalStyle, sanitizeReferenceAdSummary, validateLanguageQuality, type CaptionValidationInput, type CaptionQualityResult, type CaptionQualityCheck } from "./captionValidator.js";
-import { validateBuildPlanAgainstContract, buildScoringPrompt, parseScoringResponse, quickRejectCheck } from "./creativeScoringEngine.js";
+import { validateBuildPlanAgainstContract, buildScoringPrompt, parseScoringResponse, quickRejectCheck, applyBrandColorDeduction } from "./creativeScoringEngine.js";
+import type { BrandColorComplianceEntry } from "./types.js";
 import { storeCreativeToMemory, retrieveCreativePatterns } from "./creativeMemory.js";
 import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.js";
 import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreservation, type SemanticLock } from "./utils/hookPayload.js";
@@ -4398,8 +4399,9 @@ export async function generateFinalAd(
         : _multiAssetView.batchN
             ? `batch-${_multiAssetView.batchIndex ?? 0}`
             : 'single';
-    const _runBrandCompliance = async (imageBase64: string): Promise<void> => {
-        if (!_brandResolved.primary) return;
+    let _lastBrandComplianceEntry: BrandColorComplianceEntry | null = null;
+    const _runBrandCompliance = async (imageBase64: string): Promise<BrandColorComplianceEntry | null> => {
+        if (!_brandResolved.primary) return null;
         try {
             const _commaIdx = imageBase64.indexOf(",");
             const _payload = (imageBase64.startsWith("data:") && _commaIdx > -1)
@@ -4407,20 +4409,20 @@ export async function generateFinalAd(
                 : imageBase64;
             const buf = Buffer.from(_payload, "base64");
             const entry = await checkBrandColorCompliance(buf, _brandResolved.primary, _complianceAssetId);
-            // checkRan: false means the check could NOT run (image_unanalyzable
-            // or no_brand_colors). That is NOT a "miss" — distinguish it in
-            // logs so a corrupt image isn't conflated with off-brand output.
             if (!entry.checkRan) {
                 console.log(`ℹ️ Brand color compliance SKIPPED [${_complianceAssetId}]: reason=${entry.skippedReason}`);
-                return;
+                return entry;
             }
             if (entry.present) {
                 console.log(`🎨 Brand color compliance PASSED [${_complianceAssetId}]: ΔE=${entry.deltaE?.toFixed(1)}`);
             } else {
                 console.warn(`⚠️ Brand color compliance MISSED [${_complianceAssetId}]: ΔE=${entry.deltaE?.toFixed(1)} threshold=15 dominant=${entry.dominantSwatch}`);
+                _lastBrandComplianceEntry = entry;
             }
+            return entry;
         } catch (e) {
             console.warn(`⚠️ Brand color compliance check failed [${_complianceAssetId}] (non-blocking):`, e);
+            return null;
         }
     };
     // ═══ RETARGETING CONTEXT (normalized) ═══
@@ -5771,6 +5773,16 @@ If the asset is not clearly visible and prominent in the final render, the outpu
                             const critique = await critiqueDesign(
                                 currentImage, hookText, subheadText, ctaName, benefitText, currentAspectRatio, inputs
                             );
+
+                            if (_lastBrandComplianceEntry && critique) {
+                                const baseScore = { overallScore: critique.score * 10, passed: !critique.needsRevision, violations: critique.fixes, suggestions: critique.fixes };
+                                const adjusted = applyBrandColorDeduction(baseScore as any, _lastBrandComplianceEntry);
+                                if (adjusted.overallScore !== baseScore.overallScore) {
+                                    console.log(`🎨 Brand color deduction applied: ${baseScore.overallScore} → ${adjusted.overallScore}`);
+                                    critique.score = Math.round(adjusted.overallScore / 10);
+                                    critique.needsRevision = !adjusted.passed;
+                                }
+                            }
 
                             if (critique && critique.needsRevision && critique.fixes.length > 0) {
                                 console.log(`🎨 Design Critic found ${critique.fixes.length} issues — auto-fixing...`);

@@ -103,8 +103,7 @@ function resetStore() {
     for (const k of Object.keys(stubStore)) stubStore[k].clear();
 }
 
-// Replace admin.firestore with the stub (CJS mutation survives the ESM namespace).
-admin.firestore = () => ({
+const stubFirestore = () => ({
     collection: (path: string) => new StubCollection(path, bucket(path)),
     runTransaction: async (fn: (txn: any) => Promise<unknown>) => {
         const txn = {
@@ -115,6 +114,12 @@ admin.firestore = () => ({
         };
         return fn(txn);
     },
+});
+
+Object.defineProperty(admin, "firestore", {
+    value: stubFirestore,
+    writable: true,
+    configurable: true,
 });
 admin.firestore.FieldPath = { documentId: () => "__name__" };
 admin.firestore.FieldValue = {

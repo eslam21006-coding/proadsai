@@ -292,6 +292,9 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'studio.reflow.loading_carousel': 'Reflowing {count} slides to {ratio}...',
         'studio.reflow.loading_single': 'Reflowing to {ratio}...',
         'studio.reflow.refunded_extra': 'Could not save extra {ratio} variant — credits refunded.',
+        'reflow.fallbackToRerender': 'Auto-reflow fell back to a fresh render for this image.',
+        'reflow.fallbackToOutpaint': 'Auto-reflow fell back to outpainting for this image.',
+        'reflow.fallback_dismiss': 'Dismiss',
 
         // ── Step 5: Script ──
         'script.title': 'Primary Script',
@@ -1020,6 +1023,9 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'studio.reflow.loading_carousel': 'إعادة تحجيم {count} شرائح إلى {ratio}...',
         'studio.reflow.loading_single': 'إعادة تحجيم إلى {ratio}...',
         'studio.reflow.refunded_extra': 'تعذر حفظ نسخة {ratio} الإضافية — تمت إعادة الرصيد.',
+        'reflow.fallbackToRerender': 'تم الرجوع إلى إعادة الرسم الكامل تلقائيًا لهذه الصورة.',
+        'reflow.fallbackToOutpaint': 'تم الرجوع إلى توسيع الصورة تلقائيًا لهذه الصورة.',
+        'reflow.fallback_dismiss': 'إغلاق',
 
         // ── Step 5: Script ──
         'script.title': 'النص الأساسي',

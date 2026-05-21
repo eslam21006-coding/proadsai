@@ -124,3 +124,6 @@ Any data migration script that touches `plan` MUST run two separate queries (Fir
 - M3 minor: top_up.completed and subscription.created GHL payloads send amount=0.
   Dollar value requires session.amount_total — not passed at call site.
   Defer to post-21 audit.
+
+**[2026-05-21] FINDING: Phase 5 (Blueprint → Render Pipeline) — T023 copy-fidelity banner deferred**
+T023 copy-fidelity banner cannot be wired post-render because generateFinalAd never produces copyFidelityWarning — that value is only computed inside generateBuildPlan which is not called in the live flow. generateConcepts produces the internal long prompt directly; generateFinalAd renders it without a separate build-plan validation step. Full fix requires either (A) adding validateCopyFidelity inside generateFinalAd or (B) reintroducing generateBuildPlan as a separate client step. Both touch the core render path. Deferred to a future spec. Banner code in App.tsx is ready and waiting. No code changed.
