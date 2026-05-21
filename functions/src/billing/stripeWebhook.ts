@@ -204,9 +204,11 @@ async function handleSubscriptionCheckout(
     let isTrial = false;
     let trialEndDate: string | null = null;
     let nextBillingDate: string | null = null;
-    if (session.subscription) {
+    if (stripeSubscriptionId) {
         try {
-            const sub = await stripe.subscriptions.retrieve(session.subscription as string);
+            // Use the id narrowed above (line ~175) — session.subscription may already be an
+            // expanded Subscription object, so casting it to string would break the retrieve.
+            const sub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
             isTrial = sub.status === "trialing";
             trialEndDate = sub.trial_end ? new Date(sub.trial_end * 1000).toISOString() : null;
             const periodEnd = (sub as any).current_period_end ?? sub.items?.data?.[0]?.current_period_end;
@@ -586,6 +588,7 @@ async function handleSubscriptionUpdated(event: Stripe.Event, _stripe: Stripe): 
                 plan: updateData.plan ?? existingData.plan,
                 billingStatus: "active",
                 credits: updateData.credits ?? existingData.credits,
+                billingType: updateData.billingType ?? existingData.billingType,
                 stripeSubscriptionId,
                 previousPlan: existingData.plan ?? null,
                 eventId: event.id,

@@ -65,7 +65,9 @@ async function resolveUser(identifier: string): Promise<ResolvedUser> {
         }
     } catch { /* user doc read failed */ }
 
-    return { email: identifier, displayName: null, stripeCustomerId: null, ghlContactId: null };
+    // No user doc found for this UID — return an empty email (NOT the UID) so callers
+    // like notifyGHL skip the sync path instead of poisoning GHL with a UID-as-email.
+    return { email: "", displayName: null, stripeCustomerId: null, ghlContactId: null };
 }
 
 function splitName(displayName: string | null): { first_name: string; last_name: string } {

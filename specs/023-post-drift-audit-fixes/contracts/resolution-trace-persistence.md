@@ -5,7 +5,7 @@
 ## Trace persistence (FR-301 — keystone)
 
 Replicate the `reflowImage` transaction pattern onto the main generation-completion path:
-```
+```pseudo
 db.runTransaction(tx => {
   const snap = tx.get(generations/{genId})
   tx.set(generations/{genId}, { resolutionTrace: <built trace> }, { merge: true })

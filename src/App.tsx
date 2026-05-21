@@ -2587,10 +2587,15 @@ const App: React.FC = () => {
         await user.reload();
         const refreshed = auth.currentUser;
         if (!refreshed) return;
-        setUser({ ...refreshed });
+        // Keep the real Firebase User instance (no spread) so its methods
+        // (sendEmailVerification, reload, …) and prototype getters stay intact.
+        setUser(refreshed);
         if (!refreshed.emailVerified) return;
 
-        // Manually run pending plan consumption since onAuthStateChanged won't re-fire
+        // Manually run pending plan consumption since onAuthStateChanged won't re-fire.
+        // Mirror the field set written by the main onAuthStateChanged migration so a
+        // user who verifies via this button gets an identical, complete user doc
+        // (billingStatus + onboardingComplete + stripe fields drive downstream gating).
         const userRef = doc(db, 'users', refreshed.uid);
         const userSnap = await getDoc(userRef);
         if (!userSnap.exists() && refreshed.email) {
@@ -2606,9 +2611,14 @@ const App: React.FC = () => {
               creditsPerMonth: pending.creditsPerMonth ?? pending.credits ?? 50,
               isTrial: pending.isTrial ?? false,
               isTopup: false,
+              billingStatus: 'active',
+              onboardingComplete: false,
               billingType: pending.billingType ?? 'monthly',
               ghlContactId: pending.ghlContactId || '',
               purchasedAt: pending.purchasedAt || null,
+              ...(pending.nextCreditReset ? { nextCreditReset: pending.nextCreditReset } : {}),
+              ...(pending.stripeCustomerId ? { stripeCustomerId: pending.stripeCustomerId } : {}),
+              ...(pending.stripeSubscriptionId ? { stripeSubscriptionId: pending.stripeSubscriptionId } : {}),
               createdAt: serverTimestamp(),
             });
             await deleteDoc(pendingRef);

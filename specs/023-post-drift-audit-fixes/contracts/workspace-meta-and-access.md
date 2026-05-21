@@ -7,7 +7,7 @@
 ## Meta routing (FR-118)
 
 `metaPushCreativePack` resolves the target ad account as:
-```
+```text
 target = workspace.metaAdAccountId ?? conn.selectedAccountId   // workspace-first, user-default fallback
 ```
 Today it always uses `conn.selectedAccountId` (`index.ts:4612` area). No schema change; read-path only.

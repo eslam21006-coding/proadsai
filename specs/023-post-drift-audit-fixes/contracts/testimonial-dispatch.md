@@ -7,7 +7,7 @@
 - **FR-111**: register `serverGenerateTestimonialCarousel` in the `geminiService.ts` callable registry (the dedicated, already-deployed-and-correct backend callable).
 - **FR-112**: in `App.tsx` generation dispatch, when `offerCreativeMode` includes `testimonial_carousel` AND format is carousel → call `serverGenerateTestimonialCarousel(inputs, screenshots)` **instead of** the generic carousel path (`serverGenerateCarouselAngles → CarouselSlideCopies → FinalAd`).
 
-```
+```pseudo
 if modes.includes('testimonial_carousel') && adMode === 'carousel':
     result = serverGenerateTestimonialCarousel({ inputs, screenshots })   // platform detection + mockup frames + hook/close
 else:

@@ -34,7 +34,7 @@ export const TopUpSelector: React.FC<TopUpSelectorProps> = ({ canTopUp, onBuy })
 
   const handleBuy = async (credits: number) => {
     if (billingState?.isTrial) {
-      alert('Top-ups are not available during your free trial. Your trial will convert to a paid plan after 7 days.');
+      alert(t('billing.trialTopUpBlocked'));
       return;
     }
     setLoadingPack(String(credits));

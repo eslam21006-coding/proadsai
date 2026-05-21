@@ -6,7 +6,7 @@
 
 ## Failure path (catch block of every serverGenerate* callable)
 
-```
+```pseudo
 on caught error:
   failureClass = classifyError(error, errorCode)          // FR-107
   costEstimate = buildCostEstimate(modelTier, retries, usageMetadata)
@@ -19,7 +19,7 @@ on caught error:
 
 ## Success path (response shape delta)
 
-```
+```json
 { ...existing fields, costEstimate: { modelTier, retryCount, estimatedTokens } }   // FR-109
 ```
 

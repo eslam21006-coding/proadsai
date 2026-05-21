@@ -4,7 +4,7 @@
 
 ## getInviteDetails (FR-103) — re-implement + export
 
-```
+```text
 onCall getInviteDetails(req: { inviteId: string }) → 
   { success: true, ownerName, inviteeEmail, inviteeName, teamPlan, role, status, expiresAt }
   | { success: false, status: 'expired'|'revoked'|'accepted'|'not_found', message }
@@ -14,7 +14,7 @@ onCall getInviteDetails(req: { inviteId: string }) →
 
 ## updateTeamMemberRole (FR-104) — re-implement + export
 
-```
+```text
 onCall updateTeamMemberRole(req: { memberDocId: string, role: 'editor'|'viewer' }) → { success: true }
 ```
 - Owner-only. **Done proof**: emulator role change succeeds; `export const updateTeamMemberRole` present; `teamService.ts:14` resolves.

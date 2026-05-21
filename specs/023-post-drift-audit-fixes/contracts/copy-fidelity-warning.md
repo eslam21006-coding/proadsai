@@ -6,7 +6,7 @@
 
 `copyFidelityWarning` is computed today in `generators.ts:3942-3947` but dropped at the boundary. Surface it:
 
-```
+```text
 serverGenerateBuildPlan(...) → { ...existing, warningCode?: 'copy_fidelity_degraded', failedFields?: string[] }
 ```
 Set only when fidelity is degraded after the retry budget is exhausted.

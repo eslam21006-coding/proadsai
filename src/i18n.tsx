@@ -404,6 +404,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'billing.pendingDowngrade.notice': 'Your plan will change to {plan} on {date}',
         'billing.upgrade.cta': 'Upgrade to {plan}',
         'billing.topup.title': 'Buy more credits',
+        'billing.trialTopUpBlocked': 'Top-ups are not available during your free trial. Your trial will convert to a paid plan after 7 days.',
+        'checkout.failed': 'Checkout could not be started. Please try again.',
         'billing.topup.pack100': '100 Credits — $9',
         'billing.topup.pack300': '300 Credits — $17',
         'billing.topup.pack800': '800 Credits — $39',
@@ -1121,6 +1123,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'billing.pendingDowngrade.notice': 'ستتغير خطتك إلى {plan} في {date}',
         'billing.upgrade.cta': 'الترقية إلى {plan}',
         'billing.topup.title': 'شراء أرصدة إضافية',
+        'billing.trialTopUpBlocked': 'شراء الأرصدة الإضافية غير متاح خلال الفترة التجريبية المجانية. سيتحوّل اشتراكك التجريبي إلى خطة مدفوعة بعد ٧ أيام.',
+        'checkout.failed': 'تعذّر بدء عملية الدفع. يرجى المحاولة مرة أخرى.',
         'billing.topup.pack100': '100 رصيد — $9',
         'billing.topup.pack300': '300 رصيد — $17',
         'billing.topup.pack800': '800 رصيد — $39',
@@ -1475,7 +1479,12 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     React.useEffect(() => {
         document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
         document.documentElement.lang = lang;
-        if (!localStorage.getItem('proads_ui_lang')) { localStorage.setItem('proads_ui_lang', 'en'); }
+        try {
+            if (!localStorage.getItem('proads_ui_lang')) { localStorage.setItem('proads_ui_lang', 'en'); }
+        } catch (err) {
+            // localStorage can throw in restricted contexts (private mode, blocked cookies) — non-fatal.
+            console.warn('i18n: unable to access localStorage for default UI language', err);
+        }
     }, [lang]);
 
     const t = useCallback((key: string, params?: Record<string, string | number>): string => {

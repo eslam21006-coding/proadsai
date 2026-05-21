@@ -212,6 +212,19 @@ function splitDisplayName(displayName: string | undefined | null): {
     return { first_name: displayName.substring(0, idx), last_name: displayName.substring(idx + 1) };
 }
 
+// Pre-signup purchases live in pending_plans/{email} (keyed by lowercase email) until the
+// customer creates an account. The GHL cancel/failed/recovered webhooks read users/{uid}
+// for their payload fields; when no auth user exists yet, fall back to this so those events
+// still carry the real plan/billing_type instead of empty defaults.
+async function loadPendingPlan(normalizedEmail: string): Promise<Record<string, any> | null> {
+    try {
+        const snap = await admin.firestore().collection("pending_plans").doc(normalizedEmail).get();
+        return snap.exists ? (snap.data() ?? null) : null;
+    } catch {
+        return null;
+    }
+}
+
 // Build the canonical 21-field GHL inbound payload and POST it fire-and-forget.
 // Caller must handle: any user-doc reads, plan/credits resolution, and stripeCustomerId
 // lookup. This helper is intentionally dumb — it just shapes and sends.
@@ -632,6 +645,13 @@ export const ghlCancellationWebhook = onRequest({
             console.log(`Cancelled ${normalizedEmail} → billingStatus: cancelled, plan: none.`);
             await writeBillingState(existingUser.uid, admin.firestore());
         } else {
+            // Pre-signup cancellation — pull previous_plan/billing_type from the pending purchase
+            // before removing it, so GHL gets accurate fields (state itself stays cancelled: none/0).
+            const pending = await loadPendingPlan(normalizedEmail);
+            if (pending) {
+                previousPlan = (pending.plan as string) ?? previousPlan;
+                billingTypeValue = (pending.billingType as string) ?? billingTypeValue;
+            }
             await admin.firestore().collection("pending_plans").doc(normalizedEmail).delete();
             console.log(`Removed pending plan for ${normalizedEmail}`);
         }
@@ -739,6 +759,16 @@ export const ghlPaymentFailedWebhook = onRequest({
                 ghlContactIdValue = userData.ghlContactId ?? ghlContactIdValue;
                 billingTypeValue = userData.billingType ?? billingTypeValue;
             } catch { /* non-critical — fields stay at defaults */ }
+        } else {
+            // Pre-signup payment failure — populate plan/credits/trial/billing_type from the
+            // pending purchase so GHL reflects the real subscription, not empty defaults.
+            const pending = await loadPendingPlan(normalizedEmail);
+            if (pending) {
+                plan = (pending.plan as string) ?? plan;
+                credits = typeof pending.credits === "number" ? pending.credits : credits;
+                isTrial = pending.isTrial === true;
+                billingTypeValue = (pending.billingType as string) ?? billingTypeValue;
+            }
         }
 
         // ═══ Route 3: notify GHL inbound webhook so CRM automations fire ═══
@@ -840,6 +870,16 @@ export const ghlPaymentRecoveredWebhook = onRequest({
             });
             console.log(`Restored ${normalizedEmail} → billingStatus: active`);
             await writeBillingState(existingUser.uid, admin.firestore());
+        } else {
+            // Pre-signup recovery — populate plan/credits/trial/billing_type from the pending
+            // purchase so GHL reflects the real subscription, not empty defaults.
+            const pending = await loadPendingPlan(normalizedEmail);
+            if (pending) {
+                plan = (pending.plan as string) ?? plan;
+                credits = typeof pending.credits === "number" ? pending.credits : credits;
+                isTrial = pending.isTrial === true;
+                billingTypeValue = (pending.billingType as string) ?? billingTypeValue;
+            }
         }
 
         // ═══ Route 3: notify GHL inbound webhook so CRM automations fire ═══
@@ -2975,6 +3015,11 @@ export const getInviteDetails = onCall({
         return { success: false, status: "accepted", message: "This invite has already been claimed" };
     }
     if (invite.expiresAt < now) {
+        // Persist the expiry (lazy-expire, same pattern as claimTeamInvite) so
+        // countReservedSeats() no longer counts this invite as a reserved seat.
+        if (invite.status !== "expired") {
+            await inviteDoc.ref.update({ status: "expired", updatedAt: Date.now() });
+        }
         return { success: false, status: "expired", message: "This invite has expired" };
     }
 
@@ -3001,20 +3046,20 @@ export const updateTeamMemberRole = onCall({
     if (!memberId || !role) throw new HttpsError("invalid-argument", "Member ID and role are required.");
     if (!["editor", "viewer"].includes(role)) throw new HttpsError("invalid-argument", "Role must be editor or viewer.");
 
-    const memberDoc = await admin.firestore().collection("users").doc(ownerUid).collection("team").doc(memberId).get();
+    const memberRef = admin.firestore().collection("users").doc(ownerUid).collection("team").doc(memberId);
+    const memberDoc = await memberRef.get();
     if (!memberDoc.exists) throw new HttpsError("not-found", "Team member not found.");
 
-    await admin.firestore().collection("users").doc(ownerUid).collection("team").doc(memberId).update({
-        role,
-        updatedAt: Date.now(),
-    });
-
     const memberData = memberDoc.data()!;
-    if (memberData.uid) {
-        await admin.firestore().collection("users").doc(memberData.uid).update({
-            teamRole: role,
-        });
-    }
+    // Fail fast if the member has no linked user uid — otherwise the role would update on the
+    // team doc but never propagate to the member's user doc, leaving the two out of sync.
+    if (!memberData.uid) throw new HttpsError("failed-precondition", "Team member has no linked account.");
+
+    // Apply both writes atomically so neither lands without the other.
+    const batch = admin.firestore().batch();
+    batch.update(memberRef, { role, updatedAt: Date.now() });
+    batch.update(admin.firestore().collection("users").doc(memberData.uid), { teamRole: role });
+    await batch.commit();
 
     console.log(`👥 Team member role updated: ${memberData.email} → ${role} by owner ${ownerUid}`);
     return { success: true, message: `Role updated to ${role}.` };

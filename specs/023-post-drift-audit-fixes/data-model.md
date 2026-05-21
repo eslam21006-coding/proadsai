@@ -26,7 +26,7 @@ A failed generation writes a `generations/{auto-id}` doc (per the existing 007 c
 
 **Canonical model** (the one actually written elsewhere, e.g. by `setTeamMemberWorkspaceAccess` and read by `getWorkspaceGenerations`):
 
-```
+```text
 users/{ownerUid}/team/{autoId}  →  { uid: <memberUid>, role, workspaceAccess: string[], ... }
 ```
 
