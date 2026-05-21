@@ -1709,10 +1709,16 @@ const App: React.FC = () => {
             name: 'Default Workspace', brandName: user?.displayName || 'My Brand',
             createdAt: Date.now(), isDefault: true,
           };
-          const docRef = await addDoc(wsRef, defaultWs);
-          const created = { id: docRef.id, ...defaultWs } as Workspace;
-          setWorkspacesLocal([created]);
-          setActiveWorkspaceIdLocal(created.id);
+          // FR-124: route the default-workspace bootstrap through the createWorkspace callable
+          // (server-side plan/cap enforcement) instead of a direct client-side addDoc.
+          const { workspaceService } = await import('./services/workspaceService');
+          const result = await workspaceService.createWorkspace({ name: defaultWs.name, brandName: defaultWs.brandName });
+          const workspaceId = (result.data as any)?.workspaceId;
+          if (workspaceId) {
+            const created = { id: workspaceId, ...defaultWs } as Workspace;
+            setWorkspacesLocal([created]);
+            setActiveWorkspaceIdLocal(created.id);
+          }
         } else {
           setWorkspacesLocal(wsList);
           if (!activeWorkspaceId) {
@@ -1732,11 +1738,14 @@ const App: React.FC = () => {
     const uid = effectiveUidRef.current;
     if (!uid) return;
     try {
-      const wsRef = collection(db, 'users', uid, 'workspaces');
-      const docRef = await addDoc(wsRef, { ...data, createdAt: Date.now() });
-      const created = { id: docRef.id, ...data, createdAt: Date.now() } as Workspace;
-      setWorkspacesLocal(prev => [created, ...prev]);
-      setActiveWorkspaceIdLocal(created.id);
+      const { workspaceService } = await import('./services/workspaceService');
+      const result = await workspaceService.createWorkspace(data as any);
+      const workspaceId = (result.data as any)?.workspaceId;
+      if (workspaceId) {
+        const created = { id: workspaceId, ...data, createdAt: Date.now() } as Workspace;
+        setWorkspacesLocal(prev => [created, ...prev]);
+        setActiveWorkspaceIdLocal(created.id);
+      }
       setShowWorkspaceModal(false);
       setEditingWorkspace(null);
       showToast(`Workspace "${data.name}" created`, 'success');
@@ -1749,8 +1758,8 @@ const App: React.FC = () => {
     const uid = effectiveUidRef.current;
     if (!uid || !editingWorkspace) return;
     try {
-      const wsDoc = doc(db, 'users', uid, 'workspaces', editingWorkspace.id);
-      await setDoc(wsDoc, { ...data, createdAt: editingWorkspace.createdAt }, { merge: true });
+      const { workspaceService } = await import('./services/workspaceService');
+      await workspaceService.updateWorkspace({ workspaceId: editingWorkspace.id, ...data } as any);
       setWorkspacesLocal(prev => prev.map(w => w.id === editingWorkspace.id ? { ...w, ...data } : w));
       setShowWorkspaceModal(false);
       setEditingWorkspace(null);
@@ -2101,6 +2110,16 @@ const App: React.FC = () => {
   const [tovText, setTovText] = useState('');
   const [conceptsText, setConceptsText] = useState('');
   const [buildPlan, setBuildPlan] = useState('');
+  const [copyFidelityWarning, setCopyFidelityWarning] = useState<{ warningCode: string; failedFields: string[] } | null>(null);
+  const [fidelityRetrying, setFidelityRetrying] = useState(false);
+  const fidelityResolverRef = useRef<((action: 'continue' | 'retry' | 'cancel') => void) | null>(null);
+  const resolveFidelityAction = useCallback((action: 'continue' | 'retry' | 'cancel') => {
+    fidelityResolverRef.current?.(action);
+    fidelityResolverRef.current = null;
+  }, []);
+  const waitForFidelityDecision = useCallback(() => new Promise<'continue' | 'retry' | 'cancel'>((resolve) => {
+    fidelityResolverRef.current = resolve;
+  }), []);
   const [mockupHistory, setMockupHistory] = useState<{ url: string; ratio: AspectRatio; rawBase64?: string }[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [captionText, setCaptionText] = useState('');
@@ -3363,6 +3382,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
 
       let res: string;
+      let hookCostEstimate: any = null;
       if (selectedModes.includes('testimonial_carousel') && formData.adMode === 'carousel') {
         // TESTIMONIAL CAROUSEL: Use the dedicated pipeline (platform detection + mockup frames)
         const testimonialScreenshots = (formData as any).testimonialScreenshots || [];
@@ -3370,12 +3390,17 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           cleanInputs, testimonialScreenshots, activeWorkspaceId ?? undefined
         );
         res = testimonialResult.text;
+        hookCostEstimate = testimonialResult.costEstimate;
       } else if (formData.adMode === 'carousel' && (formData.slideCount || 1) > 1) {
         // CAROUSEL MODE: Generate 4 story angles instead of 4 single-image hooks
-        res = await gemini.generateCarouselAngles(cleanInputs, universe, formData.slideCount || 5, globalRefinement);
+        const carouselResult = await gemini.generateCarouselAngles(cleanInputs, universe, formData.slideCount || 5, globalRefinement);
+        res = carouselResult.text;
+        hookCostEstimate = carouselResult.costEstimate;
       } else {
         // SINGLE MODE: Standard 4 hooks
-        res = unwrapGen(await gemini.generateTOV(cleanInputs, universe, 'initial', '', globalRefinement));
+        const tovResult = await gemini.generateTOV(cleanInputs, universe, 'initial', '', globalRefinement);
+        res = unwrapGen(tovResult);
+        hookCostEstimate = tovResult.costEstimate;
       }
 
       // ─── HOOK VALIDATION GATE ─────────────────────────────────────────
@@ -3416,7 +3441,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 user.uid, cleanInputs, 'hooks',
                 { hookText: ht, subhead: sh, ctaText: cleanInputs.cta },
                 hookRaw, universe, 'gemini-3-flash', 0, undefined, buildCreativeIdentity(),
-                canUseWorkspaces ? activeWorkspaceId : null
+                canUseWorkspaces ? activeWorkspaceId : null,
+                null, hookCostEstimate
               );
               if (genId) hookIds[v] = genId;
             }
@@ -3449,7 +3475,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     try {
       let res: string;
       if (inputs.adMode === 'carousel' && (inputs.slideCount || 1) > 1) {
-        res = await gemini.generateCarouselAngles(inputs, newUniverse, inputs.slideCount || 5, globalRefinement);
+        res = (await gemini.generateCarouselAngles(inputs, newUniverse, inputs.slideCount || 5, globalRefinement)).text;
       } else {
         res = unwrapGen(await gemini.generateTOV(inputs, newUniverse, 'initial', '', globalRefinement));
       }
@@ -3487,7 +3513,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     try {
       let res: string;
       if (inputs.adMode === 'carousel' && (inputs.slideCount || 1) > 1) {
-        res = await gemini.generateCarouselAngles(inputs, resolvedUniverse, inputs.slideCount || 5, globalRefinement);
+        res = (await gemini.generateCarouselAngles(inputs, resolvedUniverse, inputs.slideCount || 5, globalRefinement)).text;
       } else {
         // If no refinement text, generate completely fresh hooks (initial mode) instead of refining existing ones
         // ALWAYS pass previous hooks so the model can explicitly avoid repeating them
@@ -3823,7 +3849,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               user.uid, inputs, 'render',
               { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500) },
               conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
-              canUseWorkspaces ? activeWorkspaceId : null
+              canUseWorkspaces ? activeWorkspaceId : null,
+              null, null
             );
             setRenderGenerationId(savedGenId);
             if (loadedFavoriteId && savedGenId) {
@@ -5055,6 +5082,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 onSwitch={setActiveWorkspaceIdLocal}
                 onCreateNew={() => { setEditingWorkspace(null); setShowWorkspaceModal(true); }}
                 onEditWorkspace={(ws) => { setEditingWorkspace(ws); setShowWorkspaceModal(true); }}
+                hasInProgressWork={isLoading || !!tovText || !!conceptsText || !!buildPlan || mockupHistory.length > 0 || carouselSlides.length > 0 || batchResults.length > 0}
               />
             )}
           </div>
@@ -5693,7 +5721,7 @@ ${tovText.substring(0, 1500)}
 Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote it.`;
                                 const isCarousel = inputs.adMode === 'carousel' && (inputs.slideCount || 1) > 1;
                                 const res = isCarousel
-                                  ? await gemini.generateCarouselAngles(inputs, resolvedUniverse, inputs.slideCount || 5, likeThisPrompt)
+                                  ? (await gemini.generateCarouselAngles(inputs, resolvedUniverse, inputs.slideCount || 5, likeThisPrompt)).text
                                   : unwrapGen(await gemini.generateTOV(inputs, resolvedUniverse, 'refresh', tovText, likeThisPrompt));
                                 if (res) {
                                   // Validate the new hooks before appending
@@ -8244,6 +8272,33 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         </div>
       )}
 
+      {/* ═══ COPY FIDELITY WARNING BANNER ═══ */}
+      {copyFidelityWarning && (
+        <div className="fixed inset-0 z-[250] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+          <div className="relative bg-slate-950 border border-amber-500/30 rounded-3xl shadow-2xl max-w-md w-full mx-4 p-8 text-center" onClick={(e) => e.stopPropagation()}>
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-500/10 flex items-center justify-center">
+              <i className="fa-solid fa-triangle-exclamation text-amber-400 text-2xl"></i>
+            </div>
+            <h2 className="text-lg font-black text-white mb-2">{t('fidelity.title')}</h2>
+            <p className="text-xs text-slate-400 mb-6">
+              {t('fidelity.description').replace('{fields}', copyFidelityWarning.failedFields.map((f: string) => t(`fidelity.${f}`) || f).join(', '))}
+            </p>
+            <div className="flex gap-3 justify-center">
+              <button onClick={() => { setCopyFidelityWarning(null); resolveFidelityAction('continue'); }} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-bold transition-all">
+                {t('fidelity.continue')}
+              </button>
+              <button onClick={async () => { setFidelityRetrying(true); resolveFidelityAction('retry'); }} disabled={fidelityRetrying} className="px-5 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-sm font-bold transition-all disabled:opacity-50">
+                {fidelityRetrying ? t('fidelity.retrying') : t('fidelity.retry')}
+              </button>
+              <button onClick={() => { setCopyFidelityWarning(null); resolveFidelityAction('cancel'); }} className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-bold transition-all">
+                {t('fidelity.cancel')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ═══ REMOVED FROM TEAM OVERLAY ═══ */}
       {removedFromTeam && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center">
@@ -8726,6 +8781,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           onSave={editingWorkspace ? handleUpdateWorkspace : handleCreateWorkspace}
           onDelete={handleDeleteWorkspace}
           onClose={() => { setShowWorkspaceModal(false); setEditingWorkspace(null); }}
+          plan={userPlan}
+          metaAdAccounts={metaConnection?.adAccounts?.map((a: any) => ({ id: a.id, name: a.name })) || []}
         />
       )}
 

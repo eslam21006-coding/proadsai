@@ -68,6 +68,7 @@ export interface GenerationResult {
   rankingRequestId: string | null;
   rankingRequestFingerprint: string | null;
   rankingAppliedSummary: string | null;
+  costEstimate: { modelTier: string | null; retryCount: number; estimatedTokens: number } | null;
 }
 
 function parseGenerationResult(data: any): GenerationResult {
@@ -76,6 +77,7 @@ function parseGenerationResult(data: any): GenerationResult {
     rankingRequestId: data?.rankingRequestId || null,
     rankingRequestFingerprint: data?.rankingRequestFingerprint || null,
     rankingAppliedSummary: data?.rankingAppliedSummary || null,
+    costEstimate: data?.costEstimate || null,
   };
 }
 
@@ -303,12 +305,12 @@ Use this information to better understand the brand's positioning, tone, and tar
     inputs: AdInputs, resolvedUniverse: string,
     slideCount: number, globalRefinement?: string,
     activeWorkspaceId?: string
-  ): Promise<string> {
+  ): Promise<GenerationResult> {
     const result = await fnCarouselAngles({
       inputs: sanitizeInputs(inputs), resolvedUniverse,
       slideCount, globalRefinement, activeWorkspaceId,
     });
-    return (result.data as any).text || '';
+    return parseGenerationResult(result.data);
   }
 
   async generateCarouselSlideCopies(
@@ -382,7 +384,7 @@ Use this information to better understand the brand's positioning, tone, and tar
     inputs: AdInputs,
     screenshots: string[],
     activeWorkspaceId?: string
-  ): Promise<{ text: string; platform?: string; mockupFrames?: any[] }> {
+  ): Promise<{ text: string; platform?: string; mockupFrames?: any[]; costEstimate: any | null }> {
     const result = await fnTestimonialCarousel({
       inputs: sanitizeInputs(inputs), screenshots, activeWorkspaceId,
     });
@@ -391,6 +393,7 @@ Use this information to better understand the brand's positioning, tone, and tar
       text: data.text || '',
       platform: data.platform,
       mockupFrames: data.mockupFrames,
+      costEstimate: data.costEstimate || null,
     };
   }
 }

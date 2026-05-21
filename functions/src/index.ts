@@ -4085,7 +4085,12 @@ export const serverGenerateBuildPlan = onCall({
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateBuildPlan(conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride);
-        return { success: true, text: result, errorCode: null, costEstimate: generators.getCostEstimate() };
+        const response: Record<string, any> = { success: true, text: result.buildPlan || result, errorCode: null, costEstimate: generators.getCostEstimate() };
+        if (result.copyFidelityWarning && !result.copyFidelityWarning.passed) {
+            response.warningCode = "copy_fidelity_degraded";
+            response.failedFields = result.copyFidelityWarning.failedFields;
+        }
+        return response;
     } catch (error: any) {
         console.error("generateBuildPlan error:", error);
         const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateBuildPlan", inputs });
@@ -4843,7 +4848,7 @@ export const metaPushCreativePack = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const uid = request.auth.uid;
-    const { imageBase64, adName, primaryText, pageId } = request.data;
+    const { imageBase64, adName, primaryText, pageId, activeWorkspaceId } = request.data;
 
     if (!imageBase64) throw new HttpsError("invalid-argument", "Missing image data.");
     if (!primaryText) throw new HttpsError("invalid-argument", "Missing ad copy text.");
@@ -4851,11 +4856,22 @@ export const metaPushCreativePack = onCall({
     const connDoc = await admin.firestore().collection("metaConnections").doc(uid).get();
     if (!connDoc.exists) throw new HttpsError("not-found", "No Meta connection found.");
     const conn = connDoc.data()!;
-    if (!conn.selectedAccountId) throw new HttpsError("failed-precondition", "No ad account selected.");
+
+    let accountId: string | null = null;
+    if (activeWorkspaceId) {
+        const wsDoc = await admin.firestore().collection("users").doc(uid).collection("workspaces").doc(activeWorkspaceId).get();
+        if (wsDoc.exists) {
+            const ws = wsDoc.data()!;
+            accountId = ws.metaAdAccountId || null;
+        }
+    }
+    if (!accountId) {
+        accountId = conn.selectedAccountId || null;
+    }
+    if (!accountId) throw new HttpsError("failed-precondition", "No ad account selected.");
 
     try {
         const token = decryptToken(conn.encryptedToken, metaAppSecret.value());
-        const accountId = conn.selectedAccountId;
 
         // Step 1: Upload image
         let rawBase64 = imageBase64;

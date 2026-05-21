@@ -298,3 +298,15 @@ export const useAppStore = create<AppState>((set, get) => ({
         loadedFavoriteId: null,
     }),
 }));
+
+export function selectHasInProgressWork(state: AppState): boolean {
+    return state.isLoading
+        || state.competitorLoading
+        || !!state.tovText
+        || !!state.conceptsText
+        || !!state.buildPlan
+        || state.mockupHistory.length > 0
+        || state.carouselSlides.length > 0
+        || state.batchResults.length > 0
+        || !!state.captionText;
+}
