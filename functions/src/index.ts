@@ -3579,6 +3579,73 @@ export const metaPushCreative = onCall({
 
 import * as generators from "./generators.js";
 
+// FR-108 / data-model.md: refund only for these hard-failure classes (the generation
+// genuinely produced nothing usable). These are exactly the non-model_error values
+// classifyError can emit besides model_error; "safety_blocked"/"timeout" were dead
+// entries the classifier never returns (safety maps to model_error).
+const HARD_FAILURE_CLASSES = ["model_error", "validation_reject", "slot_repair_failed"] as const;
+
+async function recordGenerationFailure(params: {
+    uid: string;
+    error: any;
+    callableName: string;
+    inputs?: any;
+    failureClass?: string;
+    creditAction?: string;
+    creditCost?: number;
+    targetUid?: string;
+}): Promise<{ failureClass: string; costEstimate: { modelTier: string | null; retryCount: number; estimatedTokens: number } }> {
+    const fc = params.failureClass || generators.classifyError(params.error);
+    const costEstimate = generators.getCostEstimate();
+    const failureRecord: Record<string, any> = {
+        uid: params.uid,
+        callable: params.callableName,
+        failureClass: fc,
+        costEstimate,
+        errorMessage: params.error?.message || String(params.error).substring(0, 500),
+        createdAt: Date.now(),
+        status: "failed",
+    };
+    if (params.inputs) {
+        failureRecord.offerCreativeMode = params.inputs.offerCreativeMode || null;
+        failureRecord.adMode = params.inputs.adMode || null;
+        failureRecord.aspectRatio = params.inputs.currentAspectRatio || null;
+    }
+    admin.firestore().collection("generations").add(failureRecord).catch((e: any) =>
+        console.warn("⚠️ Failed to write failure record (non-blocking):", e.message)
+    );
+    return { failureClass: fc, costEstimate };
+}
+
+async function refundCreditsDirect(params: {
+    uid: string;
+    action: string;
+    count?: number;
+    targetUid?: string;
+}): Promise<void> {
+    const count = params.count || 1;
+    const COSTS: Record<string, number> = {
+        generateHooks: 1, generateConcepts: 1, generateBuildPlan: 1,
+        generateFinalAd: 3, generateCarousel: 2, generateCaption: 1,
+        generateCarouselCopies: 1,
+    };
+    const unitCost = COSTS[params.action] || 1;
+    const cost = unitCost * count;
+    const targetUid = params.targetUid || params.uid;
+    try {
+        await admin.firestore().runTransaction(async (tx) => {
+            const userRef = admin.firestore().collection("users").doc(targetUid);
+            const snap = await tx.get(userRef);
+            if (!snap.exists) return;
+            const current = snap.data()?.credits ?? 0;
+            tx.update(userRef, { credits: current + cost });
+        });
+        console.log(`💰 Credits refunded: ${cost} for ${params.action} to ${targetUid}`);
+    } catch (e: any) {
+        console.warn("⚠️ Credit refund failed (non-blocking):", e.message);
+    }
+}
+
 /**
  * Enforces entitlement for server generation endpoints.
  * Checks feature gates based on the action being performed and input data.
@@ -3959,9 +4026,13 @@ export const serverGenerateTOV = onCall({
     try {
         const result = await generators.generateTOV(inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, editIntent, rewriteScope, semanticLock);
         const rg = result.rankingGuidance;
-        return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null };
+        return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateTOV error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateTOV", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateHooks" });
+        }
         throw new HttpsError("internal", "Hook generation failed: " + error.message);
     }
 });
@@ -3985,9 +4056,13 @@ export const serverGenerateConcepts = onCall({
     try {
         const result = await generators.generateConcepts(approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex);
         const rg = result.rankingGuidance;
-        return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null };
+        return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateConcepts error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateConcepts", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateConcepts" });
+        }
         throw new HttpsError("internal", "Concept generation failed: " + error.message);
     }
 });
@@ -4010,9 +4085,13 @@ export const serverGenerateBuildPlan = onCall({
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateBuildPlan(conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride);
-        return { success: true, text: result, errorCode: null };
+        return { success: true, text: result, errorCode: null, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateBuildPlan error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateBuildPlan", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateBuildPlan" });
+        }
         throw new HttpsError("internal", "Build plan generation failed: " + error.message);
     }
 });
@@ -4093,7 +4172,7 @@ export const serverGenerateFinalAd = onCall({
         }
 
         if (result.image) {
-            return { success: true, imageBase64: result.image, errorCode: null };
+            return { success: true, imageBase64: result.image, errorCode: null, costEstimate: generators.getCostEstimate() };
         } else {
             return {
                 success: false,
@@ -4104,6 +4183,10 @@ export const serverGenerateFinalAd = onCall({
         }
     } catch (error: any) {
         console.error("generateFinalAd error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateFinalAd", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateFinalAd" });
+        }
         throw new HttpsError("internal", "Image generation failed: " + error.message);
     }
 });
@@ -4271,9 +4354,13 @@ export const serverGenerateCarouselAngles = onCall({
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateCarouselAngles(inputs, resolvedUniverse, slideCount, globalRefinement, entitlement.basePlan);
-        return { success: true, text: result };
+        return { success: true, text: result, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateCarouselAngles error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateCarouselAngles", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCarousel" });
+        }
         throw new HttpsError("internal", "Carousel angle generation failed: " + error.message);
     }
 });
@@ -4300,9 +4387,13 @@ export const serverGenerateCarouselSlideCopies = onCall({
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateCarouselSlideCopies(approvedTov, inputs, slideCount, resolvedUniverse, refinement, entitlement.basePlan);
-        return { success: true, copies: result };
+        return { success: true, copies: result, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateCarouselSlideCopies error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateCarouselSlideCopies", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCarouselCopies" });
+        }
         throw new HttpsError("internal", "Carousel copy generation failed: " + error.message);
     }
 });
@@ -4337,9 +4428,13 @@ export const serverGenerateTestimonialCarousel = onCall({
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateTestimonialCarousel(inputs, screenshots, maxSlides);
-        return { success: true, ...result };
+        return { success: true, ...result, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateTestimonialCarousel error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateTestimonialCarousel", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCarousel" });
+        }
         throw new HttpsError("internal", "Testimonial carousel generation failed: " + error.message);
     }
 });
@@ -4361,9 +4456,13 @@ export const serverGenerateCaption = onCall({
     try {
         const result = await generators.generateCaption(mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan);
         const rg = result.rankingGuidance;
-        return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null };
+        return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateCaption error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateCaption", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCaption" });
+        }
         throw new HttpsError("internal", "Caption generation failed: " + error.message);
     }
 });
@@ -4387,9 +4486,12 @@ export const serverGenerateVisualPolishes = onCall({
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateVisualPolishes(currentRender, inputs);
-        return { success: true, polishes: result };
+        return { success: true, polishes: result, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateVisualPolishes error:", error);
+        // T018: write a failure record for observability. No refund here — the polish-critique
+        // step does not pre-deduct credits (deduction happens later, on polishImage apply).
+        await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateVisualPolishes", inputs });
         throw new HttpsError("internal", "Polish generation failed: " + error.message);
     }
 });

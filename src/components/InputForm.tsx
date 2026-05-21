@@ -531,6 +531,9 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
     const updates: Partial<AdInputs> = {};
     if (inputs.adMode !== 'carousel') {
       updates.adMode = 'carousel' as AdMode;
+      // FR-113: notify on the actual reactive auto-switch (the submit-path toast never
+      // fires because adMode is already 'carousel' by the time the user submits).
+      if (showToast) showToast(t('override.testimonial_requires_carousel'), 'info');
     }
     const maxSlides = getMaxSlides(userPlan);
     const resolved = resolveTestimonialSlideCount(screenshots.length, maxSlides);
@@ -1128,7 +1131,8 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
             // Auto-switch to carousel if not already
             if (inputs.adMode !== 'carousel') {
               inputs.adMode = 'carousel' as any;
-              inputs.slideCount = Math.min(screenshots.length + 1, 5); // +1 for hook slide
+              inputs.slideCount = Math.min(screenshots.length + 2, 5);
+              if (showToast) showToast(t('override.testimonial_requires_carousel'), 'info');
             }
           }
           {/* Spec G: when testimonial screenshots are uploaded AND adMode === 'single', auto-switch to carousel: setInputs(prev => ({ ...prev, adMode: 'carousel', slideCount: Math.min(3, getMaxSlides(userPlan)) })); if (showToast) showToast(t('override.testimonial_requires_carousel'), 'info'); */}
@@ -2103,6 +2107,14 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                                 <div className="text-[7px] text-slate-600 mt-0.5 capitalize">{t.platform}</div>
                               </div>
                             ))}
+                          </div>
+                        )}
+                        {inputs.adMode === 'carousel' && ((inputs as any).testimonialScreenshots || []).length > 0 && (
+                          <div className="flex items-center gap-2 p-2 bg-blue-500/10 rounded-lg border border-blue-500/20 mt-2">
+                            <i className="fa-solid fa-circle-info text-blue-400 text-xs"></i>
+                            <span className="text-[9px] text-blue-300">
+                              {t('override.carousel_adjusted_testimonials').replace("{count}", String(Math.min(((inputs as any).testimonialScreenshots || []).length + 2, 5)))}
+                            </span>
                           </div>
                         )}
                       </div>
