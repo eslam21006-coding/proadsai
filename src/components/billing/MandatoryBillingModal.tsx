@@ -1,5 +1,7 @@
 // src/components/billing/MandatoryBillingModal.tsx — dismiss-proof fullscreen billing modal for unpaid users
 import React, { useEffect } from "react";
+import { signOut } from "firebase/auth";
+import { auth } from "../../firebase";
 import { useT } from "../../i18n";
 import PricingTable from "../PricingTable";
 
@@ -10,7 +12,7 @@ interface MandatoryBillingModalProps {
 export const MandatoryBillingModal: React.FC<MandatoryBillingModalProps> = ({
   onPlanActivated,
 }) => {
-  const { t } = useT();
+  const { t, lang } = useT();
 
   useEffect(() => {
     const swallowEscape = (e: KeyboardEvent) => {
@@ -42,6 +44,16 @@ export const MandatoryBillingModal: React.FC<MandatoryBillingModalProps> = ({
         <div className="w-full max-w-[1200px]">
           <PricingTable />
         </div>
+
+        {/* Subtle escape hatch: lets a user who signed in with the wrong account
+            sign out and try again, without making it a prominent CTA. */}
+        <button
+          type="button"
+          onClick={() => { void signOut(auth); }}
+          className="mt-8 text-xs text-slate-500 hover:text-slate-300 underline underline-offset-2 transition-colors"
+        >
+          {lang === "ar" ? "تسجيل الخروج" : "Sign out"}
+        </button>
       </div>
     </div>
   );

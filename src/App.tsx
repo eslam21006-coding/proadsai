@@ -2657,7 +2657,10 @@ const App: React.FC = () => {
     />
   );
 
-  if (!loadingAuth && userPlan === 'none' && !teamOwnerUid) return <MandatoryBillingModal />;
+  // Billing modal is gated on an authenticated user with a valid uid. Unauthenticated
+  // users are already routed to <LoginScreen> by the `!user` early return above; this
+  // explicit `user?.uid` guard ensures the modal can never render for a logged-out user.
+  if (!loadingAuth && user?.uid && userPlan === 'none' && !teamOwnerUid) return <MandatoryBillingModal />;
 
   const trialBanner = isTrialUser && userCredits === 0 && !showMandatoryBilling
     ? <TrialExpiredBanner onUpgrade={() => window.location.hash = '#/billing'} />
