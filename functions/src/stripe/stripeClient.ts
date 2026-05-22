@@ -27,22 +27,22 @@ export function createStripeClient(secretKey: string): Stripe {
 
 export const STRIPE_PRICE_TO_PLAN: Record<string, { plan: string; billingType: "monthly" | "annual" | "one_time"; credits?: number }> = {
     // Starter subscription — monthly + annual
-    price_starter_monthly: { plan: "starter", billingType: "monthly" },
-    price_starter_annual: { plan: "starter", billingType: "annual" },
+    price_1TTqaDKXgskM9FYIiuhc4KWJ: { plan: "starter", billingType: "monthly" },
+    price_1TTqbpKXgskM9FYIs0w4YvML: { plan: "starter", billingType: "annual" },
     // Pro subscription — monthly + annual
-    price_pro_monthly: { plan: "pro", billingType: "monthly" },
-    price_pro_annual: { plan: "pro", billingType: "annual" },
+    price_1TR7S0KXgskM9FYIqJgTQN4z: { plan: "pro", billingType: "monthly" },
+    price_1TR7S0KXgskM9FYIFJWukf50: { plan: "pro", billingType: "annual" },
     // Scale subscription — monthly + annual
-    price_scale_monthly: { plan: "scale", billingType: "monthly" },
-    price_scale_annual: { plan: "scale", billingType: "annual" },
+    price_1TTyxMKXgskM9FYIlR7h0sru: { plan: "scale", billingType: "monthly" },
+    price_1TTyxsKXgskM9FYIkIfqkIr3: { plan: "scale", billingType: "annual" },
     // Top-up packs — one_time
-    price_topup_100: { plan: "keep_current", billingType: "one_time", credits: 100 },
-    price_topup_300: { plan: "keep_current", billingType: "one_time", credits: 300 },
-    price_topup_800: { plan: "keep_current", billingType: "one_time", credits: 800 },
+    price_1TR7yLKXgskM9FYIWCz5CLXA: { plan: "keep_current", billingType: "one_time", credits: 100 },
+    price_1TR7z9KXgskM9FYI0jb1lrWu: { plan: "keep_current", billingType: "one_time", credits: 300 },
+    price_1TR80YKXgskM9FYIyV7xAo66: { plan: "keep_current", billingType: "one_time", credits: 800 },
 };
 
 export const STRIPE_TOPUP_PRICES: Record<number, string> = {
-    100: "price_topup_100",
-    300: "price_topup_300",
-    800: "price_topup_800",
+    100: "price_1TR7yLKXgskM9FYIWCz5CLXA",
+    300: "price_1TR7z9KXgskM9FYI0jb1lrWu",
+    800: "price_1TR80YKXgskM9FYIyV7xAo66",
 };

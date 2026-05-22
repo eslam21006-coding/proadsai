@@ -18,11 +18,12 @@ import { getCopywritingStrategyPrompt, getCopywritingStrategyCaptionStructure, g
 import { getOfferHookPsychology, getCreativeModeConceptInstruction, getCreativeModeBuildPlanInstruction, getOfferCaptionStructure } from "./knowledge/offerCreativeModes.js";
 import { resolveCreativeSpec, getResolvedSpecPromptBlock, getCaptionCreativeModeAnchors, validateCombination, CREATIVE_MODE_CATALOG as _MODE_CATALOG, type ResolvedCreativeSpec, getSubStyleModeFusion, getBeforeAfterSubStyleFusion } from "./creativeResolver.js";
 import { compileFullContract, getContractRenderBlock, getContractCaptionBlock, getContractForScoring, type FullLayoutContract, type OverlayDataFilter } from "./layoutContract.js";
-import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, parseBuildPlanEnvelope, parseStructuredBuildPlanResponse, serializeBuildPlanEnvelope, validateStructuredBuildPlan, validateCopyFidelity, stripTechnicalPrompt, TECHNICAL_PROMPT_START, TECHNICAL_PROMPT_END, type BuildPlanSlotMap, type ContractCheckResult, type StructuredBuildPlanPayload, type CopyFidelityFields, type CopyFidelityResult } from "./buildPlanSlotMap.js";
+import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, parseBuildPlanEnvelope, parseStructuredBuildPlanResponse, serializeBuildPlanEnvelope, validateStructuredBuildPlan, validateCopyFidelity, stripTechnicalPrompt, validateLogoPlacements, TECHNICAL_PROMPT_START, TECHNICAL_PROMPT_END, type BuildPlanSlotMap, type ContractCheckResult, type StructuredBuildPlanPayload, type CopyFidelityFields, type CopyFidelityResult } from "./buildPlanSlotMap.js";
 import { compileModePayload, getModePayloadPromptBlock, getModePayloadPromptBlock_RenderSafe, getModePayloadCaptionAnchors, extractAuthorizedNumbers, getNumericFidelityPolicy, type ModePayload, type NumericFidelityPolicy } from "./modeFieldSchema.js";
 import { compositeOfferOverlay, isOverlayAvailable, extractOfferFacts, validateResolvedOfferFacts } from "./offerOverlay.js";
 import { validateCaption, validateArabicCompliance, validateBlueprintLanguage, validateBlueprintModeContribution, validateBlueprintMinimalStyle, sanitizeReferenceAdSummary, validateLanguageQuality, type CaptionValidationInput, type CaptionQualityResult, type CaptionQualityCheck } from "./captionValidator.js";
-import { validateBuildPlanAgainstContract, buildScoringPrompt, parseScoringResponse, quickRejectCheck } from "./creativeScoringEngine.js";
+import { validateBuildPlanAgainstContract, buildScoringPrompt, parseScoringResponse, quickRejectCheck, applyBrandColorDeduction } from "./creativeScoringEngine.js";
+import type { BrandColorComplianceEntry } from "./types.js";
 import { storeCreativeToMemory, retrieveCreativePatterns } from "./creativeMemory.js";
 import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.js";
 import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreservation, type SemanticLock } from "./utils/hookPayload.js";
@@ -77,6 +78,22 @@ interface RankingGuidance {
 /** Resolve visual style family from inputs — canonical field with universeMode fallback */
 function resolveStyleFamily(inputs: AdInputs): 'realistic' | 'fantasy' | 'minimal' {
     return ((inputs as any).visualStyleFamily || (inputs as any).universeMode || 'realistic') as 'realistic' | 'fantasy' | 'minimal';
+}
+
+function buildResolverExtra(inputs: AdInputs): {
+    campaignType?: "cold" | "retargeting";
+    visualStyleFamily?: "realistic" | "fantasy" | "minimal";
+    referenceAdUsed?: boolean;
+    selectedSubStyle?: string | null;
+    selectedUniverse?: string | null;
+} {
+    return {
+        campaignType: (inputs as any).campaignType,
+        visualStyleFamily: resolveStyleFamily(inputs),
+        referenceAdUsed: !!(inputs as any).referenceAd,
+        selectedSubStyle: resolveVisualSubStyle(inputs),
+        selectedUniverse: (inputs as any).preferredUniverse || (inputs as any).resolvedUniverse || null,
+    };
 }
 
 /** Returns the active visual sub-style for the current style family, or null if not applicable */
@@ -396,7 +413,7 @@ async function buildRankingGuidance(inputs: AdInputs, step: 'hooks' | 'concepts'
             if (sortedPair) rankingInput.pairCandidates = [sortedPair];
             // Template candidate derived from creative spec resolution
             try {
-                const spec = resolveCreativeSpec({ selectedModes: modes, hookAngle: inputs.coldHookAngle });
+                const spec = resolveCreativeSpec({ selectedModes: modes, hookAngle: inputs.coldHookAngle, ...buildResolverExtra(inputs) });
                 if (spec.resolvedLayoutKey) rankingInput.templateCandidates = [spec.resolvedLayoutKey];
             } catch { /* non-blocking — spec resolution may fail for invalid combos */ }
         }
@@ -596,6 +613,16 @@ export function getCostEstimate(): CostEstimate {
         retryCount: _costTracker.retryCount,
         estimatedTokens: _costTracker.totalPromptTokens + _costTracker.totalCandidateTokens,
     };
+}
+
+let _lastResolutionTrace: any = null;
+
+export function getLastResolutionTrace(): any {
+    return _lastResolutionTrace;
+}
+
+export function resetResolutionTrace(): void {
+    _lastResolutionTrace = null;
 }
 
 // ─── Failure Classification Helpers ─────────────────────────────────────────
@@ -2431,6 +2458,7 @@ BEFORE/AFTER SPLIT COMPOSITION (MANDATORY):
                 const spec = resolveCreativeSpec({
                     selectedModes: (inputs as any).offerCreativeMode || ['standard_hero'],
                     hookAngle: _effectiveColdHookAngle || undefined,
+                    ...buildResolverExtra(inputs),
                 });
                 const specBlock = getResolvedSpecPromptBlock(spec);
                 // Also include the original per-mode instructions for richness
@@ -4385,6 +4413,17 @@ export async function generateFinalAd(
     textOverride?: TextOverride
 ): Promise<{ image: string; failureClass?: "numeric_hallucination"; costEstimate?: CostEstimate } | { image: null; errorCode: string; failureClass?: FailureClass; debug?: FinalAdDebugInfo }> {
     const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
+    resetResolutionTrace();
+    const _resolverSpec = resolveCreativeSpec({
+        selectedModes: (inputs as any).offerCreativeMode || ['standard_hero'],
+        hookAngle: (inputs as any).coldHookAngle || undefined,
+        ...buildResolverExtra(inputs),
+    });
+    _lastResolutionTrace = _resolverSpec.resolutionTrace ?? null;
+    const _referenceAdOverrideActive = _resolverSpec.resolutionTrace?.referenceAdOverrideActive ?? false;
+    const _artDirectionCleared = _resolverSpec.resolutionTrace?.artDirectionCleared ?? false;
+    if (_artDirectionCleared) console.log(`⚠️ Art direction cleared by resolver: ${_resolverSpec.resolutionTrace?.artDirectionClearedReason || 'unknown'}`);
+    if (_referenceAdOverrideActive) console.log(`📷 Reference ad override active per resolver trace`);
     // carouselSlideIndex / batchN / batchIndex are runtime-injected by the
     // per-slide and per-item loop wrappers — they're not on AdInputs proper,
     // so narrow once into a typed view rather than scattering `as any`.
@@ -4398,8 +4437,9 @@ export async function generateFinalAd(
         : _multiAssetView.batchN
             ? `batch-${_multiAssetView.batchIndex ?? 0}`
             : 'single';
-    const _runBrandCompliance = async (imageBase64: string): Promise<void> => {
-        if (!_brandResolved.primary) return;
+    let _lastBrandComplianceEntry: BrandColorComplianceEntry | null = null;
+    const _runBrandCompliance = async (imageBase64: string): Promise<BrandColorComplianceEntry | null> => {
+        if (!_brandResolved.primary) return null;
         try {
             const _commaIdx = imageBase64.indexOf(",");
             const _payload = (imageBase64.startsWith("data:") && _commaIdx > -1)
@@ -4407,20 +4447,20 @@ export async function generateFinalAd(
                 : imageBase64;
             const buf = Buffer.from(_payload, "base64");
             const entry = await checkBrandColorCompliance(buf, _brandResolved.primary, _complianceAssetId);
-            // checkRan: false means the check could NOT run (image_unanalyzable
-            // or no_brand_colors). That is NOT a "miss" — distinguish it in
-            // logs so a corrupt image isn't conflated with off-brand output.
             if (!entry.checkRan) {
                 console.log(`ℹ️ Brand color compliance SKIPPED [${_complianceAssetId}]: reason=${entry.skippedReason}`);
-                return;
+                return entry;
             }
             if (entry.present) {
                 console.log(`🎨 Brand color compliance PASSED [${_complianceAssetId}]: ΔE=${entry.deltaE?.toFixed(1)}`);
             } else {
                 console.warn(`⚠️ Brand color compliance MISSED [${_complianceAssetId}]: ΔE=${entry.deltaE?.toFixed(1)} threshold=15 dominant=${entry.dominantSwatch}`);
+                _lastBrandComplianceEntry = entry;
             }
+            return entry;
         } catch (e) {
             console.warn(`⚠️ Brand color compliance check failed [${_complianceAssetId}] (non-blocking):`, e);
+            return null;
         }
     };
     // ═══ RETARGETING CONTEXT (normalized) ═══
@@ -4608,7 +4648,7 @@ export async function generateFinalAd(
           const note = notes[sub];
           return note ? `\n${note}` : '';
       })()}
-      ANALYZE CONTEXT: Universe: "${(() => { const _rcSub = resolveVisualSubStyle(inputs); if (_rcSub === 'luxury_magazine') return 'LUXURY MAGAZINE COVER (bold dark background — ' + resolvedUniverse + ' determines profession/wardrobe only, NOT environment)'; if (_rcSub === 'clean_corporate') return 'CLEAN CORPORATE STUDIO (neutral gradient — ' + resolvedUniverse + ' determines profession only)'; if (_rcSub === 'ugly_ad') return 'UGLY AD / RAW (ignore universe)'; return resolvedUniverse; })()}" | Niche: "${inputs.targetAudience}"
+      ANALYZE CONTEXT: Universe: "${_artDirectionCleared ? 'SUPPRESSED (art direction cleared by creative resolver)' : (() => { const _rcSub = resolveVisualSubStyle(inputs); if (_rcSub === 'luxury_magazine') return 'LUXURY MAGAZINE COVER (bold dark background — ' + resolvedUniverse + ' determines profession/wardrobe only, NOT environment)'; if (_rcSub === 'clean_corporate') return 'CLEAN CORPORATE STUDIO (neutral gradient — ' + resolvedUniverse + ' determines profession only)'; if (_rcSub === 'ugly_ad') return 'UGLY AD / RAW (ignore universe)'; return resolvedUniverse; })()}" | Niche: "${inputs.targetAudience}"
 
 ⚠️ CRITICAL CLOTHING RULE ⚠️
 The photos in Box A are for FACE IDENTITY ONLY.Do NOT copy the clothing, outfit, or accessories from Box A photos.
@@ -4944,7 +4984,7 @@ BEFORE/AFTER CONNECTED STORY RULES:
             }
             
             const hasOverlay = !valueStackIsEmpty && renderContract.overlaySlots && renderContract.overlaySlots.length > 0;
-            const hasRefAd = !!(inputs as any).referenceAd;
+            const hasRefAd = _referenceAdOverrideActive && !!(inputs as any).referenceAd;
             const pairExecution = getPairRenderExecution(primaryM, secondaryM, currentAspectRatio, hasOverlay, hasRefAd);
             const valueStackOverride = valueStackIsEmpty ? `\n⚠️ VALUE STACK MODE WAS SELECTED BUT NO ITEMS WERE PROVIDED.\nRender as a STANDARD HERO layout instead — full hero prominence, no stack cards, no placeholder panels, no empty card shapes. Clean hero-focused design.` : '';
 
@@ -5677,26 +5717,32 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
             .replace(/\b(branding|logic|brand|scene|description|style|reference|concept|prompt|direction)\b/gi, '')
             .trim();
 
-        parts.push({
-            text: `BLUEPRINT: ${cleanBuildPlan} \nTEXTS: "${hookText}", "${subheadText}"\nBUTTON: "${ctaName}"\n${carouselAnchorNote}\n${_brandConsistencyInstruction}\n${coreDesignRules}
+        const _promptResult = buildFinalImagePrompt({
+            technicalPrompt: '',
+            blueprint: cleanBuildPlan,
+            contract: {} as any,
+            inputs,
+            aspectRatio: currentAspectRatio,
+            hookText,
+            subheadText,
+            ctaName,
+            benefitText,
+            badges: inputs.badges,
+            resolvedUniverse,
+            costumeRules: costumeRules + (_brandConsistencyInstruction ? `\n${_brandConsistencyInstruction}` : ''),
+            coreDesignRules,
+            carouselAnchorNote,
+            retargetingDesignHint: '',
+            imageParts: [],
+        });
 
-⚠️ CRITICAL TEXT RENDERING RULES:
-1. ONLY render these EXACT text strings on the image — NOTHING ELSE:
-   - Headline: "${hookText}"
-   - Subheadline: "${subheadText}"
-   ${ctaName ? `- Button: "${ctaName}"` : ''}
-   ${benefitText ? `- Benefit: "${benefitText}"` : ''}
-2. DO NOT render ANY of these on the image:
-   - System instructions, marker labels, or field names
-   - "VISUAL_DIRECTION:", "TECHNICAL_PROMPT:", "CONCEPT_START", etc.
-   - "**" symbols, "═══" lines, or any formatting markers
-   - English technical instructions or camera settings
-   - ANY English text, brand names, watermarks, or labels
-   - Any text that is NOT one of the 4 strings listed above
-3. If the blueprint mentions "VISUAL_DIRECTION" or similar — that is an INSTRUCTION TO YOU, not text to render.
-4. NEVER render English words from the blueprint as visible text on the image. The blueprint is a design INSTRUCTION, not content to display.
-5. Each Arabic text string must appear EXACTLY ONCE — never duplicate, never truncate, never rephrase.
-` });
+        parts.push({ text: _promptResult.textPrompt });
+        _lastResolutionTrace = {
+            ...(_lastResolutionTrace || {}),
+            blueprintText: _promptResult.trace.blueprintText,
+            resolvedImagePrompt: _promptResult.trace.resolvedImagePrompt,
+            technicalPrompt: _promptResult.trace.technicalPrompt,
+        };
 
         // If style reference provided (carousel slides 2+), inject it BEFORE personal photos
         if (styleReference) {
@@ -5716,6 +5762,7 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
                 const spec = resolveCreativeSpec({
                     selectedModes: (inputs as any).offerCreativeMode || ['standard_hero'],
                     hookAngle: inputs.coldHookAngle || undefined,
+                    ...buildResolverExtra(inputs),
                 });
                 const modeLabel = spec.primaryMode !== 'standard_hero' ? spec.resolvedLabelEn.toUpperCase() : 'PRODUCT';
                 parts.push({
@@ -5771,6 +5818,16 @@ If the asset is not clearly visible and prominent in the final render, the outpu
                             const critique = await critiqueDesign(
                                 currentImage, hookText, subheadText, ctaName, benefitText, currentAspectRatio, inputs
                             );
+
+                            if (_lastBrandComplianceEntry && critique) {
+                                const baseScore = { overallScore: critique.score * 10, passed: !critique.needsRevision, violations: critique.fixes, suggestions: critique.fixes };
+                                const adjusted = applyBrandColorDeduction(baseScore as any, _lastBrandComplianceEntry);
+                                if (adjusted.overallScore !== baseScore.overallScore) {
+                                    console.log(`🎨 Brand color deduction applied: ${baseScore.overallScore} → ${adjusted.overallScore}`);
+                                    critique.score = Math.round(adjusted.overallScore / 10);
+                                    critique.needsRevision = !adjusted.passed;
+                                }
+                            }
 
                             if (critique && critique.needsRevision && critique.fixes.length > 0) {
                                 console.log(`🎨 Design Critic found ${critique.fixes.length} issues — auto-fixing...`);
@@ -6123,7 +6180,10 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                     // Use gatedBuildPlan so we read placements from the repaired plan,
                                     // not the stale original. The render-gate may have rewritten the envelope.
                                     const parsedGatedPlan = parseBuildPlanEnvelope(gatedBuildPlan);
-                                    const logoPlacements = parsedGatedPlan.machinePlan?.logoPlacements || [];
+                                    const rawLogoPlacements = parsedGatedPlan.machinePlan?.logoPlacements || [];
+                                    const { cleanedPlacements: logoPlacements } = inputs.brandLogos && inputs.brandLogos.length > 0
+                                        ? validateLogoPlacements(rawLogoPlacements, inputs.brandLogos.length, resolveStyleFamily(inputs))
+                                        : { cleanedPlacements: [] };
                                     if (logoPlacements.length > 0 && inputs.brandLogos && inputs.brandLogos.length > 0) {
                                         const ar = overlayContract.aspectRatioRules;
                                         const uiResult = await compositeUILogos({
@@ -6269,7 +6329,10 @@ If no monetary numbers are visible, return: []` }
                             // sourcing from gatedBuildPlan is defensive against any future restructuring.
                             try {
                                 const parsedGatedPlan = parseBuildPlanEnvelope(gatedBuildPlan);
-                                const logoPlacements = parsedGatedPlan.machinePlan?.logoPlacements || [];
+                                const rawLogoPlacements = parsedGatedPlan.machinePlan?.logoPlacements || [];
+                                const { cleanedPlacements: logoPlacements } = inputs.brandLogos && inputs.brandLogos.length > 0
+                                    ? validateLogoPlacements(rawLogoPlacements, inputs.brandLogos.length, resolveStyleFamily(inputs))
+                                    : { cleanedPlacements: [] };
                                 if (logoPlacements.length > 0 && inputs.brandLogos && inputs.brandLogos.length > 0) {
                                     const ar = overlayContract.aspectRatioRules;
                                     const uiResult = await compositeUILogos({

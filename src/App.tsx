@@ -4,7 +4,7 @@ import type { AdInputs, AdMode, AppPhase, AspectRatio, ABVariation, BatchResult,
 // --- FIREBASE IMPORTS ---
 import { auth, db, functions, storage } from './firebase';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signOut, onAuthStateChanged, type User } from 'firebase/auth';
-import { doc, getDoc, setDoc, deleteDoc, updateDoc, onSnapshot, collection, addDoc, getDocs, query, orderBy, where, limit } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, updateDoc, onSnapshot, collection, addDoc, getDocs, query, orderBy, where, limit, serverTimestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { ref as storageRef, deleteObject } from 'firebase/storage';
 import { gemini, type GenerationResult } from './services/geminiService';
@@ -1297,6 +1297,7 @@ const App: React.FC = () => {
       if (snap.exists()) {
         const data = snap.data();
         if (data.isTeamMember && data.teamOwnerUid) {
+          wasTeamMemberRef.current = true;
           // Team member: listen to owner doc for credits/plan/billing
           const ownerRef = doc(db, 'users', data.teamOwnerUid);
           getDoc(ownerRef).then(ownerSnap => {
@@ -1311,6 +1312,10 @@ const App: React.FC = () => {
             }
           }).catch(() => { /* non-blocking */ });
           return;
+        }
+        if (wasTeamMemberRef.current && !data.isTeamMember) {
+          setRemovedFromTeam(true);
+          wasTeamMemberRef.current = false;
         }
         setUserCredits(data.credits ?? 0);
         const effectivePlan = ((data.plan ?? 'none') as UserPlan);
@@ -1348,7 +1353,7 @@ const App: React.FC = () => {
     // Enforce plan limit (allow overwrites but block new saves)
     const maxAvatars = getAudienceAvatarLimit(userPlan);
     if (avatars.length >= maxAvatars) {
-      showToast(`Avatar limit reached (${maxAvatars} on your plan). Upgrade to save more.`, 'error');
+      showToast(t('billing.audienceAvatarOverLimit').replace('{limit}', String(maxAvatars)), 'error');
       return;
     }
     try {
@@ -1569,6 +1574,7 @@ const App: React.FC = () => {
   const [billingStatus, setBillingStatus] = useState<'trialing' | 'active' | 'past_due' | 'cancelling' | 'cancelled' | 'none'>('active');
   const [teamOwnerUid, setTeamOwnerUid] = useState<string | null>(null);
   const [teamRole, setTeamRole] = useState<string | null>(null);
+  const [removedFromTeam, setRemovedFromTeam] = useState(false);
   const isTeamViewer = teamRole === 'viewer';
   // For team members, use the owner's UID for all avatar/project Firestore operations
   const effectiveUid = teamOwnerUid || user?.uid || null;
@@ -1603,6 +1609,7 @@ const App: React.FC = () => {
   // FR-024b: fires once when users/{uid}.createdAt is within 60s AND welcomeToastShown !== true.
   // Covers both pending_plans consumption and mandatory-modal → paid transitions.
   const welcomeToastFiredRef = React.useRef(false);
+  const wasTeamMemberRef = React.useRef(false);
   useEffect(() => {
     if (!user) return;
     if (welcomeToastFiredRef.current) return;
@@ -1702,10 +1709,16 @@ const App: React.FC = () => {
             name: 'Default Workspace', brandName: user?.displayName || 'My Brand',
             createdAt: Date.now(), isDefault: true,
           };
-          const docRef = await addDoc(wsRef, defaultWs);
-          const created = { id: docRef.id, ...defaultWs } as Workspace;
-          setWorkspacesLocal([created]);
-          setActiveWorkspaceIdLocal(created.id);
+          // FR-124: route the default-workspace bootstrap through the createWorkspace callable
+          // (server-side plan/cap enforcement) instead of a direct client-side addDoc.
+          const { workspaceService } = await import('./services/workspaceService');
+          const result = await workspaceService.createWorkspace({ name: defaultWs.name, brandName: defaultWs.brandName });
+          const workspaceId = (result.data as any)?.workspaceId;
+          if (workspaceId) {
+            const created = { id: workspaceId, ...defaultWs } as Workspace;
+            setWorkspacesLocal([created]);
+            setActiveWorkspaceIdLocal(created.id);
+          }
         } else {
           setWorkspacesLocal(wsList);
           if (!activeWorkspaceId) {
@@ -1725,11 +1738,14 @@ const App: React.FC = () => {
     const uid = effectiveUidRef.current;
     if (!uid) return;
     try {
-      const wsRef = collection(db, 'users', uid, 'workspaces');
-      const docRef = await addDoc(wsRef, { ...data, createdAt: Date.now() });
-      const created = { id: docRef.id, ...data, createdAt: Date.now() } as Workspace;
-      setWorkspacesLocal(prev => [created, ...prev]);
-      setActiveWorkspaceIdLocal(created.id);
+      const { workspaceService } = await import('./services/workspaceService');
+      const result = await workspaceService.createWorkspace(data as any);
+      const workspaceId = (result.data as any)?.workspaceId;
+      if (workspaceId) {
+        const created = { id: workspaceId, ...data, createdAt: Date.now() } as Workspace;
+        setWorkspacesLocal(prev => [created, ...prev]);
+        setActiveWorkspaceIdLocal(created.id);
+      }
       setShowWorkspaceModal(false);
       setEditingWorkspace(null);
       showToast(`Workspace "${data.name}" created`, 'success');
@@ -1742,8 +1758,8 @@ const App: React.FC = () => {
     const uid = effectiveUidRef.current;
     if (!uid || !editingWorkspace) return;
     try {
-      const wsDoc = doc(db, 'users', uid, 'workspaces', editingWorkspace.id);
-      await setDoc(wsDoc, { ...data, createdAt: editingWorkspace.createdAt }, { merge: true });
+      const { workspaceService } = await import('./services/workspaceService');
+      await workspaceService.updateWorkspace({ workspaceId: editingWorkspace.id, ...data } as any);
       setWorkspacesLocal(prev => prev.map(w => w.id === editingWorkspace.id ? { ...w, ...data } : w));
       setShowWorkspaceModal(false);
       setEditingWorkspace(null);
@@ -2094,6 +2110,16 @@ const App: React.FC = () => {
   const [tovText, setTovText] = useState('');
   const [conceptsText, setConceptsText] = useState('');
   const [buildPlan, setBuildPlan] = useState('');
+  const [copyFidelityWarning, setCopyFidelityWarning] = useState<{ warningCode: string; failedFields: string[] } | null>(null);
+  const [fidelityRetrying, setFidelityRetrying] = useState(false);
+  const fidelityResolverRef = useRef<((action: 'continue' | 'retry' | 'cancel') => void) | null>(null);
+  const resolveFidelityAction = useCallback((action: 'continue' | 'retry' | 'cancel') => {
+    fidelityResolverRef.current?.(action);
+    fidelityResolverRef.current = null;
+  }, []);
+  const waitForFidelityDecision = useCallback(() => new Promise<'continue' | 'retry' | 'cancel'>((resolve) => {
+    fidelityResolverRef.current = resolve;
+  }), []);
   const [mockupHistory, setMockupHistory] = useState<{ url: string; ratio: AspectRatio; rawBase64?: string }[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [captionText, setCaptionText] = useState('');
@@ -2175,6 +2201,7 @@ const App: React.FC = () => {
   const [studioTweak, setStudioTweak] = useState('');
   const [reflowMethod, setReflowMethod] = useState<'auto' | 'outpaint' | 'rerender'>('auto');
   const [showMethodSelector, setShowMethodSelector] = useState(false);
+  const [reflowFallbackNotice, setReflowFallbackNotice] = useState<'outpaint' | 'rerender' | null>(null);
   const [visualPolishes, setVisualPolishes] = useState<VisualPolish[]>([]);
   const [selectedPolishIds, setSelectedPolishIds] = useState<Set<string>>(new Set());
   // ─── EDIT TARGET — tracks which exact design is being edited ─────
@@ -2269,14 +2296,7 @@ const App: React.FC = () => {
                   pushMockup(reflowRes.data.outcomes[0].outputUrl, extraRatio as AspectRatio);
                 }
               } else {
-                const reflowResult = await gemini.generateFinalAd(
-                  buildPlan, selectedTov, inputs, resolvedUniverse, extraRatio,
-                  Object.assign("REFLOW ONLY — adapt this exact design to " + extraRatio + " ratio. Keep ALL text identical word-for-word. Keep the SAME hero, visual elements, colors, and composition. Fill the entire canvas proportionally — no large empty areas. The hero, headline, subheadline, CTA, benefit line, and all elements must be VISIBLE and properly sized for the new ratio. Scale and reposition elements to use the full canvas. Apply the same visual changes from the source image.", { _internalReflow: true }),
-                  result.image
-                );
-                if (reflowResult.image) {
-                  pushMockup(reflowResult.image, extraRatio as AspectRatio);
-                }
+                console.warn(`Skipping auto-reflow to ${extraRatio} — no generation ID for reflowImage callable`);
               }
             } catch (e) {
               console.warn(`Auto-reflow to ${extraRatio} failed:`, e);
@@ -2363,10 +2383,16 @@ const App: React.FC = () => {
       try {
         // Load from both sources and merge (cloud is source of truth)
         // Use effectiveUid so team members see the owner's projects
-        const [localProjects, cloudProjects] = await Promise.all([
-          getAllProjectsFromDB(effectiveUid),
-          getAllProjectsFromFirestore(effectiveUid),
-        ]);
+        // Team members route through getUserProjects callable for workspace-access control
+        let cloudProjects: SavedProject[];
+        if (teamOwnerUid) {
+          const { workspaceService } = await import('./services/workspaceService');
+          const result = await workspaceService.getUserProjects({ pageSize: 100 });
+          cloudProjects = (result.data?.projects ?? []) as SavedProject[];
+        } else {
+          cloudProjects = await getAllProjectsFromFirestore(effectiveUid);
+        }
+        const localProjects = await getAllProjectsFromDB(effectiveUid);
         const savedProjects = mergeProjects(cloudProjects, localProjects);
         // Sync any cloud-only projects to local IndexedDB for offline access
         for (const cp of cloudProjects) {
@@ -2451,7 +2477,7 @@ const App: React.FC = () => {
         // just wrote was a brand-new doc, never an update.
         deleteProjectFromDB(project.id).catch(() => {});
         setProjects((prev: SavedProject[]) => prev.filter((p: SavedProject) => p.id !== project.id));
-        showToast(`Project limit reached (${details.limit || 'plan cap'} on your plan). Upgrade to save more.`, 'error');
+        showToast(t('billing.savedProjectOverLimit').replace('{limit}', String(details.limit || 'plan cap')), 'error');
         return;
       }
       throw firestoreErr;
@@ -2500,7 +2526,7 @@ const App: React.FC = () => {
     if (isNewProject) {
       const maxProjects = getSavedProjectLimit(userPlan);
       if (Number.isFinite(maxProjects) && projects.length >= maxProjects) {
-        showToast(`Project limit reached (${maxProjects} on your plan). Upgrade to save more.`, 'error');
+        showToast(t('billing.savedProjectOverLimit').replace('{limit}', String(maxProjects)), 'error');
         return;
       }
     }
@@ -2583,12 +2609,55 @@ const App: React.FC = () => {
     <VerifyEmailScreen
       email={user.email ?? ''}
       onResend={async () => { await sendEmailVerification(user); }}
-      onCheckVerified={async () => { await user.reload(); if (auth.currentUser) setUser({ ...auth.currentUser }); }}
+      onCheckVerified={async () => {
+        await user.reload();
+        const refreshed = auth.currentUser;
+        if (!refreshed) return;
+        // Keep the real Firebase User instance (no spread) so its methods
+        // (sendEmailVerification, reload, …) and prototype getters stay intact.
+        setUser(refreshed);
+        if (!refreshed.emailVerified) return;
+
+        // Manually run pending plan consumption since onAuthStateChanged won't re-fire.
+        // Mirror the field set written by the main onAuthStateChanged migration so a
+        // user who verifies via this button gets an identical, complete user doc
+        // (billingStatus + onboardingComplete + stripe fields drive downstream gating).
+        const userRef = doc(db, 'users', refreshed.uid);
+        const userSnap = await getDoc(userRef);
+        if (!userSnap.exists() && refreshed.email) {
+          const pendingRef = doc(db, 'pending_plans', refreshed.email.toLowerCase());
+          const pendingSnap = await getDoc(pendingRef);
+          if (pendingSnap.exists()) {
+            const pending = pendingSnap.data();
+            await setDoc(userRef, {
+              email: refreshed.email,
+              displayName: refreshed.displayName || '',
+              // Match the main bootstrap fallback ('none') so a legacy/malformed pending_plans
+              // record can't silently grant Starter entitlements.
+              plan: pending.plan || 'none',
+              credits: pending.credits ?? 50,
+              creditsPerMonth: pending.creditsPerMonth ?? pending.credits ?? 50,
+              isTrial: pending.isTrial ?? false,
+              isTopup: false,
+              billingStatus: 'active',
+              onboardingComplete: false,
+              billingType: pending.billingType ?? 'monthly',
+              ghlContactId: pending.ghlContactId || '',
+              purchasedAt: pending.purchasedAt || null,
+              ...(pending.nextCreditReset ? { nextCreditReset: pending.nextCreditReset } : {}),
+              ...(pending.stripeCustomerId ? { stripeCustomerId: pending.stripeCustomerId } : {}),
+              ...(pending.stripeSubscriptionId ? { stripeSubscriptionId: pending.stripeSubscriptionId } : {}),
+              createdAt: serverTimestamp(),
+            });
+            await deleteDoc(pendingRef);
+          }
+        }
+      }}
       onSignOut={async () => { await signOut(auth); setUser(null); setShowMandatoryBilling(false); }}
     />
   );
 
-  if (showMandatoryBilling && userPlan === 'none') return <MandatoryBillingModal />;
+  if (!loadingAuth && userPlan === 'none' && !teamOwnerUid) return <MandatoryBillingModal />;
 
   const trialBanner = isTrialUser && userCredits === 0 && !showMandatoryBilling
     ? <TrialExpiredBanner onUpgrade={() => window.location.hash = '#/billing'} />
@@ -2994,7 +3063,7 @@ const App: React.FC = () => {
     if (phase === 'tov_review') setPhase('input');
     else if (phase === 'concept_review') setPhase('tov_review');
     else if (phase === 'render_studio') setPhase('concept_review');
-    else if (phase === 'primary_text') setPhase('render_studio');
+    else if (phase === 'primary_text') { setPhase('render_studio'); setReflowMethod('auto'); }
   };
 
   const togglePolish = (id: string) => {
@@ -3313,12 +3382,25 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
 
       let res: string;
-      if (formData.adMode === 'carousel' && (formData.slideCount || 1) > 1) {
+      let hookCostEstimate: any = null;
+      if (selectedModes.includes('testimonial_carousel') && formData.adMode === 'carousel') {
+        // TESTIMONIAL CAROUSEL: Use the dedicated pipeline (platform detection + mockup frames)
+        const testimonialScreenshots = (formData as any).testimonialScreenshots || [];
+        const testimonialResult = await gemini.generateTestimonialCarousel(
+          cleanInputs, testimonialScreenshots, activeWorkspaceId ?? undefined
+        );
+        res = testimonialResult.text;
+        hookCostEstimate = testimonialResult.costEstimate;
+      } else if (formData.adMode === 'carousel' && (formData.slideCount || 1) > 1) {
         // CAROUSEL MODE: Generate 4 story angles instead of 4 single-image hooks
-        res = await gemini.generateCarouselAngles(cleanInputs, universe, formData.slideCount || 5, globalRefinement);
+        const carouselResult = await gemini.generateCarouselAngles(cleanInputs, universe, formData.slideCount || 5, globalRefinement);
+        res = carouselResult.text;
+        hookCostEstimate = carouselResult.costEstimate;
       } else {
         // SINGLE MODE: Standard 4 hooks
-        res = unwrapGen(await gemini.generateTOV(cleanInputs, universe, 'initial', '', globalRefinement));
+        const tovResult = await gemini.generateTOV(cleanInputs, universe, 'initial', '', globalRefinement);
+        res = unwrapGen(tovResult);
+        hookCostEstimate = tovResult.costEstimate;
       }
 
       // ─── HOOK VALIDATION GATE ─────────────────────────────────────────
@@ -3359,7 +3441,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 user.uid, cleanInputs, 'hooks',
                 { hookText: ht, subhead: sh, ctaText: cleanInputs.cta },
                 hookRaw, universe, 'gemini-3-flash', 0, undefined, buildCreativeIdentity(),
-                canUseWorkspaces ? activeWorkspaceId : null
+                canUseWorkspaces ? activeWorkspaceId : null,
+                null, hookCostEstimate
               );
               if (genId) hookIds[v] = genId;
             }
@@ -3392,7 +3475,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     try {
       let res: string;
       if (inputs.adMode === 'carousel' && (inputs.slideCount || 1) > 1) {
-        res = await gemini.generateCarouselAngles(inputs, newUniverse, inputs.slideCount || 5, globalRefinement);
+        res = (await gemini.generateCarouselAngles(inputs, newUniverse, inputs.slideCount || 5, globalRefinement)).text;
       } else {
         res = unwrapGen(await gemini.generateTOV(inputs, newUniverse, 'initial', '', globalRefinement));
       }
@@ -3430,7 +3513,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     try {
       let res: string;
       if (inputs.adMode === 'carousel' && (inputs.slideCount || 1) > 1) {
-        res = await gemini.generateCarouselAngles(inputs, resolvedUniverse, inputs.slideCount || 5, globalRefinement);
+        res = (await gemini.generateCarouselAngles(inputs, resolvedUniverse, inputs.slideCount || 5, globalRefinement)).text;
       } else {
         // If no refinement text, generate completely fresh hooks (initial mode) instead of refining existing ones
         // ALWAYS pass previous hooks so the model can explicitly avoid repeating them
@@ -3674,6 +3757,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       setPhase('concept_review');
       updateHighestUnlocked('concept_review');
       awardMilestone('conceptsGenerated');
+      if (loadedFavoriteId) {
+        setFavUpdatePrompt({ phase: 'concepts', newGenId: Date.now().toString() });
+      }
     } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
   };
 
@@ -3766,7 +3852,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               user.uid, inputs, 'render',
               { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500) },
               conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
-              canUseWorkspaces ? activeWorkspaceId : null
+              canUseWorkspaces ? activeWorkspaceId : null,
+              null, null, mockupResult.resolutionTrace
             );
             setRenderGenerationId(savedGenId);
             if (loadedFavoriteId && savedGenId) {
@@ -3777,6 +3864,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           }
         }
         setPhase('render_studio');
+        setReflowMethod('auto');
         updateHighestUnlocked('render_studio');
         awardMilestone('designGenerated');
 
@@ -3955,6 +4043,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     setBatchRendering(true);
     setCurrentAspectRatio(primaryRatio);
     setPhase('render_studio');
+    setReflowMethod('auto');
     updateHighestUnlocked('render_studio');
 
     const newCredits = userCredits - totalCost;
@@ -3971,7 +4060,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       const primaryIdx = resultIdx;
       setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, status: 'rendering' } : r));
       try {
-        const genResult = await gemini.generateFinalAd(combo.conceptText, combo.hookText, inputs, resolvedUniverse, primaryRatio);
+        const genResult = await gemini.generateFinalAd(combo.conceptText, combo.hookText, inputs, resolvedUniverse, primaryRatio, undefined, undefined, undefined, undefined, undefined, combos.length * allSizes.length);
         primaryUrl = genResult.image;
         setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, buildPlan: combo.conceptText, url: primaryUrl, status: primaryUrl ? 'done' : 'error' } : r));
       } catch (e) {
@@ -3989,8 +4078,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         if (primaryUrl) {
           try {
             await new Promise(r => setTimeout(r, 500));
-            const reflowed = (await gemini.generateFinalAd(combo.conceptText, combo.hookText, inputs, resolvedUniverse, extraRatio, Object.assign("REFLOW ONLY — adapt this exact design to " + extraRatio + " ratio. Keep ALL text identical word-for-word. Keep the SAME hero, visual elements, colors, and composition. Fill the entire canvas proportionally — no large empty areas. The hero, headline, subheadline, CTA, benefit line, and all elements must be VISIBLE and properly sized for the new ratio. Scale and reposition elements to use the full canvas.", { _internalReflow: true }), primaryUrl)).image;
-            setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, buildPlan: combo.conceptText, url: reflowed, status: reflowed ? 'done' : 'error' } : r));
+            console.warn(`Skipping batch reflow to ${extraRatio} — reflowImage callable required`);
+            setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'error' } : r));
           } catch (e) {
             console.error(`Batch reflow ${ci + 1} to ${extraRatio} failed:`, e);
             setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'error' } : r));
@@ -4041,12 +4130,27 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         ? `LOCAL REFINEMENT (apply to THIS image only): ${localRefinement.trim()}`
         : '';
 
-      const reflowInstruction = Object.assign(`REFLOW ONLY — adapt this exact design to ${itemRatio} ratio. Keep ALL text identical word-for-word. Keep the SAME hero, visual elements, colors, and composition. Fill the entire canvas proportionally — no large empty areas. The hero, headline, subheadline, CTA, benefit line, and all elements must be VISIBLE and properly sized for the new ratio. Scale and reposition elements to use the full canvas.${refinementNote ? ' ' + refinementNote : ''}`, { _internalReflow: true });
-      const variationInstruction = `IMPORTANT: This is a RETRY — you MUST generate a DIFFERENT composition, layout, camera angle, and color palette from previous attempts. Vary the hero pose, background elements, and text placement while keeping the same concept and Arabic text strings. Do NOT reproduce the same design.${refinementNote ? ' ' + refinementNote : ''}`;
-      const renderInstruction = isReflow ? reflowInstruction : variationInstruction;
-      const sourceImage = isReflow && item.url ? item.url : undefined;
-      const retryResult = await gemini.generateFinalAd(item.conceptText, item.hookText || selectedTov, inputs, resolvedUniverse, itemRatio, renderInstruction, sourceImage);
-      const mockup = retryResult.image;
+      let mockup: string | null = null;
+
+      if (isReflow && renderGenerationId) {
+        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+        const reflowRes = await reflowFn({
+          generationId: renderGenerationId,
+          targetAspectRatio: itemRatio,
+          method: 'auto',
+          scope: 'single',
+        });
+        mockup = reflowRes.data.success && reflowRes.data.outcomes[0]?.outputUrl
+          ? reflowRes.data.outcomes[0].outputUrl : null;
+      } else {
+        const variationInstruction = `IMPORTANT: This is a RETRY — you MUST generate a DIFFERENT composition, layout, camera angle, and color palette from previous attempts. Vary the hero pose, background elements, and text placement while keeping the same concept and Arabic text strings. Do NOT reproduce the same design.${refinementNote ? ' ' + refinementNote : ''}`;
+        const renderInstruction = isReflow
+          ? `REFLOW ONLY — adapt this exact design to ${itemRatio} ratio. Keep ALL text identical word-for-word.${refinementNote ? ' ' + refinementNote : ''}`
+          : variationInstruction;
+        const sourceImage = isReflow && item.url ? item.url : undefined;
+        const retryResult = await gemini.generateFinalAd(item.conceptText, item.hookText || selectedTov, inputs, resolvedUniverse, itemRatio, renderInstruction, sourceImage);
+        mockup = retryResult.image;
+      }
 
       // Update ONLY this image — siblings completely untouched
       setBatchResults(prev => prev.map((r, idx) => idx === index ? {
@@ -4149,6 +4253,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
 
       setPhase('render_studio');
+      setReflowMethod('auto');
       updateHighestUnlocked('render_studio');
       awardMilestone('designGenerated');
     } catch (e: any) {
@@ -4168,63 +4273,51 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   // ─── CAROUSEL: Regenerate a single slide ─────────────────────────────
   const handleCarouselSlideRetry = async (slideIndex: number) => {
     if (!inputs || !selectedTov || !carouselConceptRaw) return;
-    const totalNeeded = CREDIT_COSTS.generateImage;
+    if (!renderGenerationId) {
+      showToast(t('studio.reflow.no_generation_id') || 'Retry requires a saved generation — try generating again first.', 'error');
+      return;
+    }
+
+    const totalNeeded = CREDIT_COSTS.reflowImage;
     if (userCredits < totalNeeded) {
-      setUpgradeReason(`Regenerating 1 slide needs ${totalNeeded} credits.`);
+      setUpgradeReason(`Retrying 1 slide needs ${totalNeeded} credits.`);
       setShowUpgradeModal(true);
       return;
     }
 
     const startingCredits = userCredits;
-    const afterDeduction = startingCredits - totalNeeded;
-    setUserCredits(afterDeduction);
-
+    setUserCredits(startingCredits - totalNeeded);
     setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, status: 'rendering' } : s));
 
     let success = false;
 
     try {
-      const copy = carouselCopies[slideIndex];
-      const isLastSlide = slideIndex === carouselCopies.length - 1;
-      const txOverride: TextOverride = {
-        hookText: (copy.hookText || '').replace(/\|\|\|/g, '').trim(),
-        subheadText: (copy.subheadText || '').replace(/\|\|\|/g, '').trim(),
-        ctaName: isLastSlide ? (copy.ctaText || inputs.cta).replace(/\|\|\|/g, '').trim() : '',
-        benefitText: isLastSlide ? (copy.benefitText || '').replace(/\|\|\|/g, '').trim() : '',
-      };
+      const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+      const result = await reflowFn({
+        generationId: renderGenerationId,
+        targetAspectRatio: currentAspectRatio,
+        method: reflowMethod,
+        scope: 'carousel_slide',
+        slideIndex,
+      });
 
-      const slideCount = carouselCopies.length;
-      const isLastSlideRetry = slideIndex === slideCount - 1;
-      const slideInstruction = slideIndex === 0
-        ? `This is SLIDE 1 (the HOOK slide) of a ${slideCount}-slide carousel. Hero pose: CONFIDENT STANCE — arms relaxed, looking at camera. NO pointing.`
-        : isLastSlideRetry
-          ? `This is SLIDE ${slideIndex + 1} (FINAL SLIDE) of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: INVITING GESTURE — open palm. This slide HAS a CTA button. Show logo ONLY on this final slide.`
-          : `This is SLIDE ${slideIndex + 1} of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: VARIED — different from slide 1. NO pointing. NO CTA button. NO logo. NO promo badge.`;
-
-      const slideConceptText = carouselConceptRaw + `\n\n[CAROUSEL SLIDE ${slideIndex + 1}/${slideCount}]: ${slideInstruction}`;
-
-      // Use slide 1 as style reference for slides 2+
-      const anchorImage = slideIndex > 0 ? carouselSlides[0]?.imageUrl : undefined;
-
-      const mockup = (await gemini.generateFinalAd(
-        slideConceptText, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
-        undefined, undefined, anchorImage || undefined, txOverride
-      )).image;
-
-      if (mockup) {
-        success = true;
+      if (typeof result.data.totalCreditsCharged === 'number') {
+        const delta = totalNeeded - result.data.totalCreditsCharged;
+        if (delta !== 0) setUserCredits(prev => prev + delta);
       }
 
-      setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, buildPlan: slideConceptText, imageUrl: mockup, status: mockup ? 'done' : 'error' } : s));
+      const imageUrl = result.data.success && result.data.outcomes[0]?.outputUrl;
+      if (imageUrl) {
+        success = true;
+        if (result.data.outcomes[0].fallbackFrom) {
+          setReflowFallbackNotice(result.data.outcomes[0].fallbackFrom);
+        }
+      }
+      setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, imageUrl: imageUrl || null, status: imageUrl ? 'done' : 'error' } : s));
     } catch (e: any) {
       handleApiError(e);
+      setUserCredits(startingCredits);
       setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, status: 'error' } : s));
-    } finally {
-      // ── CREDIT RECONCILIATION ──
-      if (!success) {
-        setUserCredits(startingCredits);
-        showToast(`Slide ${slideIndex + 1} failed. ${totalNeeded} credits refunded.`, 'error');
-      }
     }
   };
 
@@ -4580,11 +4673,16 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             };
             try {
               if (!deductCredits('reflowImage')) break;
-              const res = (await gemini.generateFinalAd(
-                slide.buildPlan, selectedTov, inputs, resolvedUniverse, newRatio,
-                Object.assign("REFLOW ONLY — adapt this exact design to " + newRatio + " ratio. Keep ALL text identical word-for-word. Keep the SAME hero, visual elements, colors, and composition. Fill the entire canvas proportionally — no large empty areas. The hero, headline, subheadline, CTA, benefit line, and all elements must be VISIBLE and properly sized for the new ratio. Scale and reposition elements to use the full canvas.", { _internalReflow: true }), slide.imageUrl, undefined, txOverride
-              )).image;
-              setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: res, status: res ? 'done' : 'error' } : s));
+              const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+              const reflowRes = await reflowFn({
+                generationId: renderGenerationId || '',
+                targetAspectRatio: newRatio as AspectRatio,
+                method: 'auto',
+                scope: 'carousel_slide',
+                slideIndex: slideIdx,
+              });
+              const res = reflowRes.data.success && reflowRes.data.outcomes[0]?.outputUrl;
+              setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: res || null, status: res ? 'done' : 'error' } : s));
             } catch {
               refundCredits('reflowImage');
               setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, status: 'error' } : s));
@@ -4618,9 +4716,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
       setUserCredits(prev => prev - singleOptimisticCost);
     } else {
-      // Legacy fallback (image-only, no generation id) still uses the old metered path
-      // because gemini.generateFinalAd does NOT charge backend-side; the frontend deducts here.
-      if (!deductCredits('reflowImage')) { stopLoad(); return; }
+      showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation — try generating again first.', 'error');
+      stopLoad();
+      return;
     }
     try {
       if (renderGenerationId) {
@@ -4637,13 +4735,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           if (delta !== 0) setUserCredits(prev => prev + delta);
         }
         if (result.data.success && result.data.outcomes[0]?.outputUrl) {
+          if (result.data.outcomes[0].fallbackFrom) {
+            setReflowFallbackNotice(result.data.outcomes[0].fallbackFrom);
+          }
           pushMockup(result.data.outcomes[0].outputUrl, newRatio);
         } else {
           throw new Error(result.data.outcomes[0]?.errorMessage || 'Reflow returned no image');
         }
       } else {
-        const res = (await gemini.generateFinalAd(buildPlan, selectedTov, inputs, resolvedUniverse, newRatio, "REFLOW ONLY — adapt this exact design to " + newRatio + " ratio. Keep ALL text identical word-for-word. Keep the SAME hero, visual elements, colors, and composition. Fill the entire canvas proportionally — no large empty areas. The hero, headline, subheadline, CTA, benefit line, and all elements must be VISIBLE and properly sized for the new ratio. Scale and reposition elements to use the full canvas.", (currentRawBase64 || currentMockup) || undefined)).image;
-        pushMockup(res, newRatio);
+        showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation — try generating again first.', 'error');
       }
     } catch (e) {
       if (renderGenerationId) {
@@ -4833,13 +4933,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 <p className="text-[8px] text-slate-500">Email, password, preferences</p>
               </div>
             </button>
-            <button onClick={() => { setShowSidebar(false); setShowTeamModal(true); loadTeamMembers(); loadTeamInvites(); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
+            {!teamOwnerUid && <button onClick={() => { setShowSidebar(false); setShowTeamModal(true); loadTeamMembers(); loadTeamInvites(); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
               <span className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center"><i className="fa-solid fa-user-plus text-emerald-400 text-xs"></i></span>
               <div>
                 <p className="text-[11px] font-bold text-white group-hover:text-emerald-400 transition-colors">Team</p>
                 <p className="text-[8px] text-slate-500">Invite &amp; manage members</p>
               </div>
-            </button>
+            </button>}
             {/* ─── META ADS CONNECTION ───── */}
             {metaConnection?.connected ? (
               <div className="w-full px-4 py-3 rounded-xl bg-blue-500/5 border border-blue-500/10">
@@ -4998,6 +5098,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 onSwitch={setActiveWorkspaceIdLocal}
                 onCreateNew={() => { setEditingWorkspace(null); setShowWorkspaceModal(true); }}
                 onEditWorkspace={(ws) => { setEditingWorkspace(ws); setShowWorkspaceModal(true); }}
+                hasInProgressWork={isLoading || !!tovText || !!conceptsText || !!buildPlan || mockupHistory.length > 0 || carouselSlides.length > 0 || batchResults.length > 0}
               />
             )}
           </div>
@@ -5571,6 +5672,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                             <FeedbackButtons
                               generationId={hookGenerationIds[v] || ''}
                               compact={true}
+                              initialFavorite={favoriteIds.has(hookGenerationIds[v] || '')}
                               onRegenerate={(tags, freeText) => {
                                 const context = feedbackService.buildRegenerationContext(raw, tags, freeText);
                                 handlePrecisionHookEdit(v, context);
@@ -5636,7 +5738,7 @@ ${tovText.substring(0, 1500)}
 Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote it.`;
                                 const isCarousel = inputs.adMode === 'carousel' && (inputs.slideCount || 1) > 1;
                                 const res = isCarousel
-                                  ? await gemini.generateCarouselAngles(inputs, resolvedUniverse, inputs.slideCount || 5, likeThisPrompt)
+                                  ? (await gemini.generateCarouselAngles(inputs, resolvedUniverse, inputs.slideCount || 5, likeThisPrompt)).text
                                   : unwrapGen(await gemini.generateTOV(inputs, resolvedUniverse, 'refresh', tovText, likeThisPrompt));
                                 if (res) {
                                   // Validate the new hooks before appending
@@ -6917,6 +7019,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     <FeedbackButtons
                       generationId={renderGenerationId}
                       showUsedThis={true}
+                      initialFavorite={favoriteIds.has(renderGenerationId || '')}
                     />
                   </div>
                 )}
@@ -7320,6 +7423,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         generationId={captionGenerationId}
                         showUsedThis={true}
                         compact={true}
+                        initialFavorite={favoriteIds.has(captionGenerationId || '')}
                       />
                     </div>
                   )}
@@ -7606,7 +7710,13 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           isOpen={openFavoritesPhase === 'concepts'}
           onClose={() => setOpenFavoritesPhase(null)}
           workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
-          onLoad={(record) => {
+          onLoad={async (record) => {
+            if (conceptsText && user) {
+              const existingConceptGenId = conceptsFavs.find(f => f.output?.conceptText === conceptsText)?.id;
+              if (existingConceptGenId) {
+                await feedbackService.toggleFavorite(existingConceptGenId, true).catch(() => {});
+              }
+            }
             if (record.output?.conceptText) setConceptsText(record.output.conceptText);
             if (record.output?.buildPlan) setBuildPlan(record.output.buildPlan);
             // Rewind downstream: a loaded concept is a new branch. Strand
@@ -8187,6 +8297,65 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         </div>
       )}
 
+      {/* ═══ COPY FIDELITY WARNING BANNER ═══ */}
+      {copyFidelityWarning && (
+        <div className="fixed inset-0 z-[250] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+          <div className="relative bg-slate-950 border border-amber-500/30 rounded-3xl shadow-2xl max-w-md w-full mx-4 p-8 text-center" onClick={(e) => e.stopPropagation()}>
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-500/10 flex items-center justify-center">
+              <i className="fa-solid fa-triangle-exclamation text-amber-400 text-2xl"></i>
+            </div>
+            <h2 className="text-lg font-black text-white mb-2">{t('fidelity.title')}</h2>
+            <p className="text-xs text-slate-400 mb-6">
+              {t('fidelity.description').replace('{fields}', copyFidelityWarning.failedFields.map((f: string) => t(`fidelity.${f}`) || f).join(', '))}
+            </p>
+            <div className="flex gap-3 justify-center">
+              <button onClick={() => { setCopyFidelityWarning(null); resolveFidelityAction('continue'); }} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-bold transition-all">
+                {t('fidelity.continue')}
+              </button>
+              <button onClick={async () => { setFidelityRetrying(true); resolveFidelityAction('retry'); }} disabled={fidelityRetrying} className="px-5 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-sm font-bold transition-all disabled:opacity-50">
+                {fidelityRetrying ? t('fidelity.retrying') : t('fidelity.retry')}
+              </button>
+              <button onClick={() => { setCopyFidelityWarning(null); resolveFidelityAction('cancel'); }} className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-bold transition-all">
+                {t('fidelity.cancel')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ REFLOW FALLBACK NOTICE ═══ */}
+      {reflowFallbackNotice && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[150] max-w-md w-full mx-4">
+          <div className="bg-slate-900 border border-amber-500/30 rounded-2xl shadow-2xl px-5 py-4 flex items-center gap-3">
+            <i className="fa-solid fa-triangle-exclamation text-amber-400 text-sm shrink-0"></i>
+            <p className="text-xs text-slate-300 flex-1">
+              {reflowFallbackNotice === 'rerender' ? t('reflow.fallbackToRerender') : t('reflow.fallbackToOutpaint')}
+            </p>
+            <button onClick={() => setReflowFallbackNotice(null)} className="text-slate-500 hover:text-white text-xs font-bold shrink-0">
+              {t('reflow.fallback_dismiss')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ REMOVED FROM TEAM OVERLAY ═══ */}
+      {removedFromTeam && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm"></div>
+          <div className="relative bg-slate-950 border border-red-500/30 rounded-3xl shadow-2xl max-w-md w-full mx-4 p-8 text-center" onClick={(e) => e.stopPropagation()}>
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-500/10 flex items-center justify-center">
+              <i className="fa-solid fa-user-xmark text-red-400 text-2xl"></i>
+            </div>
+            <h2 className="text-lg font-black text-white mb-2">{t('team.removed_message')}</h2>
+            <p className="text-xs text-slate-400 mb-6">You have been removed from the team. You are now operating under your own account.</p>
+            <button onClick={() => { setRemovedFromTeam(false); setTeamOwnerUid(null); setTeamRole(null); }} className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-bold transition-all">
+              Continue
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ═══ UPGRADE MODAL (inlined) ═══ */}
       {showUpgradeModal && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={() => setShowUpgradeModal(false)}>
@@ -8652,6 +8821,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           onSave={editingWorkspace ? handleUpdateWorkspace : handleCreateWorkspace}
           onDelete={handleDeleteWorkspace}
           onClose={() => { setShowWorkspaceModal(false); setEditingWorkspace(null); }}
+          plan={userPlan}
+          metaAdAccounts={metaConnection?.adAccounts?.map((a: any) => ({ id: a.id, name: a.name })) || []}
         />
       )}
 

@@ -531,6 +531,9 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
     const updates: Partial<AdInputs> = {};
     if (inputs.adMode !== 'carousel') {
       updates.adMode = 'carousel' as AdMode;
+      // FR-113: notify on the actual reactive auto-switch (the submit-path toast never
+      // fires because adMode is already 'carousel' by the time the user submits).
+      if (showToast) showToast(t('override.testimonial_requires_carousel'), 'info');
     }
     const maxSlides = getMaxSlides(userPlan);
     const resolved = resolveTestimonialSlideCount(screenshots.length, maxSlides);
@@ -1102,7 +1105,9 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
             return;
           }
 
-          // Apply safe downgrades (swap mode but don't block)
+          // Apply safe downgrades (swap mode but don't block). Build a local submit copy and
+          // update React state via setInputs — never mutate the useState value in place.
+          let submitInputs = inputs;
           if (modeValidation.downgrades.length > 0) {
             let modesChanged: string[] = [...selectedModes];
             for (const dg of modeValidation.downgrades) {
@@ -1114,25 +1119,28 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                 'info'
               );
             }
-            inputs.offerCreativeMode = [...new Set(modesChanged)] as typeof inputs.offerCreativeMode;
+            const dedupedModes = [...new Set(modesChanged)] as typeof inputs.offerCreativeMode;
+            setInputs(prev => ({ ...prev, offerCreativeMode: dedupedModes }));
+            // setInputs is async; keep this submit's local copy in sync so onSubmit below sees it.
+            submitInputs = { ...submitInputs, offerCreativeMode: dedupedModes };
           }
 
           // Testimonial Wall: enforce carousel + require screenshots
-          const hasMode = (id: string) => (inputs.offerCreativeMode || []).includes(id as any);
+          const hasMode = (id: string) => (submitInputs.offerCreativeMode || []).includes(id as any);
           if (hasMode('testimonial_carousel')) {
-            const screenshots = (inputs as any).testimonialScreenshots || [];
+            const screenshots = (submitInputs as any).testimonialScreenshots || [];
             if (screenshots.length === 0) {
               if (showToast) showToast(appLang === 'ar' ? 'ارفع لقطة شاشة واحدة على الأقل للشهادات' : 'Upload at least one testimonial screenshot.', 'error');
               return;
             }
-            // Auto-switch to carousel if not already
-            if (inputs.adMode !== 'carousel') {
-              inputs.adMode = 'carousel' as any;
-              inputs.slideCount = Math.min(screenshots.length + 1, 5); // +1 for hook slide
+            // Auto-switch to carousel if not already (local submit copy only — no in-place mutation)
+            if (submitInputs.adMode !== 'carousel') {
+              submitInputs = { ...submitInputs, adMode: 'carousel' as AdMode, slideCount: Math.min(screenshots.length + 2, 5) };
+              if (showToast) showToast(t('override.testimonial_requires_carousel'), 'info');
             }
           }
           {/* Spec G: when testimonial screenshots are uploaded AND adMode === 'single', auto-switch to carousel: setInputs(prev => ({ ...prev, adMode: 'carousel', slideCount: Math.min(3, getMaxSlides(userPlan)) })); if (showToast) showToast(t('override.testimonial_requires_carousel'), 'info'); */}
-          onSubmit(inputs);
+          onSubmit(submitInputs);
         }}
         className="space-y-6 pb-32"
       >
@@ -1718,12 +1726,6 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                       Using workspace colors
                     </span>
                   )}
-                  {inputs.campaignType === 'retargeting' && !inputs.brandColorPrimary && !inputs.brandColorSecondary && (
-                    <span className="text-[10px] text-purple-400/70 flex items-center gap-1">
-                      <i className="fa-solid fa-link text-purple-500/50"></i>
-                      Inheriting brand colors from the linked cold ad
-                    </span>
-                  )}
                 </div>
               </div>
             </div>
@@ -1846,7 +1848,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                         const isFull = !isSelected && selected.length >= 2;
                         const isDisabled = isBlocked || isFull;
                         const roleLabel = getRoleLabel(m.id);
-                        const reason = isPlanLocked ? `Upgrade to ${getFeatureLimit(userPlan, 'maxOfferModes') < 12 ? 'Creator' : 'Pro'}` : isBlockedBySubStyle ? `Not compatible with ${((inputs as any).visualSubStyle || '').replace(/_/g, ' ')} style` : isBlocked ? blockReasons[m.id] || 'Not available' : isFull ? 'Max 2 selected' : '';
+                        const reason = isPlanLocked ? `Upgrade to ${getFeatureLimit(userPlan, 'maxOfferModes') < 12 ? 'Starter' : 'Pro'}` : isBlockedBySubStyle ? `Not compatible with ${((inputs as any).visualSubStyle || '').replace(/_/g, ' ')} style` : isBlocked ? blockReasons[m.id] || 'Not available' : isFull ? 'Max 2 selected' : '';
                         return (
                           <button key={m.id} type="button" disabled={isDisabled}
                             onClick={() => {
@@ -2103,6 +2105,14 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                                 <div className="text-[7px] text-slate-600 mt-0.5 capitalize">{t.platform}</div>
                               </div>
                             ))}
+                          </div>
+                        )}
+                        {inputs.adMode === 'carousel' && ((inputs as any).testimonialScreenshots || []).length > 0 && (
+                          <div className="flex items-center gap-2 p-2 bg-blue-500/10 rounded-lg border border-blue-500/20 mt-2">
+                            <i className="fa-solid fa-circle-info text-blue-400 text-xs"></i>
+                            <span className="text-[9px] text-blue-300">
+                              {t('override.carousel_adjusted_testimonials').replace("{count}", String(Math.min(((inputs as any).testimonialScreenshots || []).length + 2, 5)))}
+                            </span>
                           </div>
                         )}
                       </div>

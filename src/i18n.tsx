@@ -19,6 +19,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'close': 'Close',
         'search': 'Search...',
         'skip': 'Skip',
+        'browse_plans': 'Browse Plans',
 
         // ── Auth / Login ──
         'login.or_email': 'or continue with email',
@@ -291,6 +292,9 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'studio.reflow.loading_carousel': 'Reflowing {count} slides to {ratio}...',
         'studio.reflow.loading_single': 'Reflowing to {ratio}...',
         'studio.reflow.refunded_extra': 'Could not save extra {ratio} variant — credits refunded.',
+        'reflow.fallbackToRerender': 'Auto-reflow fell back to a fresh render for this image.',
+        'reflow.fallbackToOutpaint': 'Auto-reflow fell back to outpainting for this image.',
+        'reflow.fallback_dismiss': 'Dismiss',
 
         // ── Step 5: Script ──
         'script.title': 'Primary Script',
@@ -403,6 +407,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'billing.pendingDowngrade.notice': 'Your plan will change to {plan} on {date}',
         'billing.upgrade.cta': 'Upgrade to {plan}',
         'billing.topup.title': 'Buy more credits',
+        'billing.trialTopUpBlocked': 'Top-ups are not available during your free trial. Your trial will convert to a paid plan after 7 days.',
+        'checkout.failed': 'Checkout could not be started. Please try again.',
         'billing.topup.pack100': '100 Credits — $9',
         'billing.topup.pack300': '300 Credits — $17',
         'billing.topup.pack800': '800 Credits — $39',
@@ -511,6 +517,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'billing.status.past_due': 'Past Due',
         'billing.status.cancelling': 'Cancelling',
         'billing.status.cancelled': 'Cancelled',
+        'billing.savedProjectOverLimit': 'Project limit reached ({limit} on your plan). Upgrade to save more.',
+        'billing.audienceAvatarOverLimit': 'Avatar limit reached ({limit} on your plan). Upgrade to save more.',
 
         // ── Team ──
         'team.title': 'Team',
@@ -531,6 +539,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
 
         // ── Join ──
         'join.title': 'Join Team',
+        'join.fallback.title': 'Couldn’t load the invite page',
+        'join.fallback.body': 'Please check your connection and refresh, or open the link again.',
         'join.expired': 'This invite has expired. Ask your team owner to resend it.',
         'join.revoked': 'This invite is no longer valid.',
         'join.claimed': 'This invite has already been claimed.',
@@ -587,6 +597,13 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'team.role_owner_perms': 'Full access, billing, invite members',
         'team.role_editor_perms': 'Create projects, render ads, write scripts',
         'team.role_viewer_perms': 'View projects and designs only',
+        'team.ws_access_title': 'Workspace Access',
+        'team.ws_member_col': 'Member',
+        'team.ws_grant': 'Grant access',
+        'team.ws_revoke': 'Revoke access',
+        'team.ws_access_granted': 'Workspace access granted',
+        'team.ws_access_revoked': 'Workspace access revoked',
+        'team.ws_access_failed': 'Failed to update workspace access',
         'team.remove_member_title': 'Remove Member',
         'team.revoke_invite_title': 'Revoke Invite',
         'team.processing': 'Processing...',
@@ -634,6 +651,11 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'fav.empty_desc': 'Click the bookmark icon on any {label} to save it here',
         'fav.load': 'Load',
         'fav.remove': 'Remove',
+        'fav.deleted_title': 'No longer available',
+        'fav.deleted_desc': 'This saved item was removed. You can dismiss it from your bookmarks.',
+        'fav.deleted_dismiss': 'Remove bookmark',
+        'fav.schema_mismatch_title': 'Partial data',
+        'fav.schema_mismatch_desc': 'This saved item was created with an older format. Some fields may be missing.',
         'fav.show_older': 'Show older',
         'fav.loading_more': 'Loading...',
         'fav.used_badge': 'Used',
@@ -735,6 +757,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'close': 'إغلاق',
         'search': 'بحث...',
         'skip': 'تخطي',
+        'browse_plans': 'تصفح الخطط',
 
         // ── Auth / Login ──
         'login.or_email': 'أو تابع بالبريد الإلكتروني',
@@ -1007,6 +1030,9 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'studio.reflow.loading_carousel': 'إعادة تحجيم {count} شرائح إلى {ratio}...',
         'studio.reflow.loading_single': 'إعادة تحجيم إلى {ratio}...',
         'studio.reflow.refunded_extra': 'تعذر حفظ نسخة {ratio} الإضافية — تمت إعادة الرصيد.',
+        'reflow.fallbackToRerender': 'تم الرجوع إلى إعادة الرسم الكامل تلقائيًا لهذه الصورة.',
+        'reflow.fallbackToOutpaint': 'تم الرجوع إلى توسيع الصورة تلقائيًا لهذه الصورة.',
+        'reflow.fallback_dismiss': 'إغلاق',
 
         // ── Step 5: Script ──
         'script.title': 'النص الأساسي',
@@ -1119,6 +1145,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'billing.pendingDowngrade.notice': 'ستتغير خطتك إلى {plan} في {date}',
         'billing.upgrade.cta': 'الترقية إلى {plan}',
         'billing.topup.title': 'شراء أرصدة إضافية',
+        'billing.trialTopUpBlocked': 'شراء الأرصدة الإضافية غير متاح خلال الفترة التجريبية المجانية. سيتحوّل اشتراكك التجريبي إلى خطة مدفوعة بعد ٧ أيام.',
+        'checkout.failed': 'تعذّر بدء عملية الدفع. يرجى المحاولة مرة أخرى.',
         'billing.topup.pack100': '100 رصيد — $9',
         'billing.topup.pack300': '300 رصيد — $17',
         'billing.topup.pack800': '800 رصيد — $39',
@@ -1227,6 +1255,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'billing.status.past_due': 'متأخر',
         'billing.status.cancelling': 'قيد الإلغاء',
         'billing.status.cancelled': 'ملغى',
+        'billing.savedProjectOverLimit': 'تم بلوغ حد المشاريع ({limit} في خطتك). قم بالترقية للحفظ.',
+        'billing.audienceAvatarOverLimit': 'تم بلوغ حد الأفاتار ({limit} في خطتك). قم بالترقية للحفظ.',
 
         // ── Team ──
         'team.title': 'الفريق',
@@ -1247,6 +1277,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
 
         // ── Join ──
         'join.title': 'انضم للفريق',
+        'join.fallback.title': 'تعذّر تحميل صفحة الدعوة',
+        'join.fallback.body': 'يرجى التحقق من اتصالك وإعادة تحميل الصفحة، أو فتح الرابط مرة أخرى.',
         'join.expired': 'انتهت صلاحية الدعوة. اطلب من مالك الفريق إعادة إرسالها.',
         'join.revoked': 'هذه الدعوة لم تعد صالحة.',
         'join.claimed': 'تم قبول هذه الدعوة بالفعل.',
@@ -1303,6 +1335,13 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'team.role_owner_perms': 'وصول كامل، الفوترة، دعوة أعضاء',
         'team.role_editor_perms': 'إنشاء مشاريع، توليد إعلانات، كتابة نصوص',
         'team.role_viewer_perms': 'عرض المشاريع والتصميمات فقط',
+        'team.ws_access_title': 'صلاحيات مساحات العمل',
+        'team.ws_member_col': 'العضو',
+        'team.ws_grant': 'منح صلاحية',
+        'team.ws_revoke': 'إلغاء صلاحية',
+        'team.ws_access_granted': 'تم منح صلاحية مساحة العمل',
+        'team.ws_access_revoked': 'تم إلغاء صلاحية مساحة العمل',
+        'team.ws_access_failed': 'فشل تحديث صلاحية مساحة العمل',
         'team.remove_member_title': 'إزالة عضو',
         'team.revoke_invite_title': 'إلغاء الدعوة',
         'team.processing': 'جارٍ المعالجة...',
@@ -1350,6 +1389,11 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'fav.empty_desc': 'انقر على أيقونة الحفظ في أي {label} لحفظها هنا',
         'fav.load': 'تحميل',
         'fav.remove': 'حذف',
+        'fav.deleted_title': 'لم يعد متاحاً',
+        'fav.deleted_desc': 'تم حذف هذا العنصر المحفوظ. يمكنك إزالته من المفضلات.',
+        'fav.deleted_dismiss': 'إزالة من المفضلات',
+        'fav.schema_mismatch_title': 'بيانات غير مكتملة',
+        'fav.schema_mismatch_desc': 'تم إنشاء هذا العنصر المحفوظ بتنسيق قديم. قد تكون بعض الحقول مفقودة.',
         'fav.show_older': 'عرض الأقدم',
         'fav.loading_more': 'جارٍ التحميل...',
         'fav.used_badge': 'مُستخدم',
@@ -1473,6 +1517,12 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     React.useEffect(() => {
         document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
         document.documentElement.lang = lang;
+        try {
+            if (!localStorage.getItem('proads_ui_lang')) { localStorage.setItem('proads_ui_lang', 'en'); }
+        } catch (err) {
+            // localStorage can throw in restricted contexts (private mode, blocked cookies) — non-fatal.
+            console.warn('⚠️ i18n: unable to access localStorage for default UI language', err);
+        }
     }, [lang]);
 
     const t = useCallback((key: string, params?: Record<string, string | number>): string => {

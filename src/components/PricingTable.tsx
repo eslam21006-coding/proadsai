@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
 import { PLANS } from '../planconfig';
+import { useT } from '../i18n';
 
 const createStripeCheckoutFn = httpsCallable(functions, "createStripeCheckoutSession");
 
@@ -85,6 +86,7 @@ function CellContent({ val, highlight }: { val: CellValue; highlight: string }) 
 }
 
 export default function PricingTable() {
+  const { t } = useT();
   const [billing, setBilling] = useState<BillingMode>('monthly');
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(
     Object.fromEntries(SECTIONS.map(s => [s.id, s.defaultOpen]))
@@ -217,6 +219,7 @@ export default function PricingTable() {
                         }
                       } catch (e: any) {
                         console.error("Checkout error:", e);
+                        alert(t('checkout.failed'));
                       }
                     }}
                     className={`block w-full py-3.5 px-4 rounded-xl no-underline text-white font-extrabold transition-all hover:-translate-y-0.5 hover:opacity-95 cursor-pointer border-0 ${p.ctaCls === 'pro' ? 'bg-blue-600 shadow-[0_0_25px_rgba(37,99,235,.28)]' : p.ctaCls === 'scale' ? 'bg-amber-500 !text-gray-900 shadow-[0_0_25px_rgba(245,158,11,.22)]' : 'bg-white/[0.08]'}`}>

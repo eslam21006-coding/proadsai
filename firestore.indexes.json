@@ -347,16 +347,6 @@
       ]
     },
     {
-      "collectionGroup": "workspaces",
-      "queryScope": "COLLECTION_GROUP",
-      "fields": [
-        {
-          "fieldPath": "deletedAt",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
       "collectionGroup": "projects",
       "queryScope": "COLLECTION",
       "fields": [

@@ -170,7 +170,7 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
     starter: {
         id: 'starter', name: 'Starter', subtitle: 'For solopreneurs', monthlyCredits: 800, trialCredits: 50, priceMonthly: 29, priceAnnualPerMonth: 23.20,
         savedProjectLimit: 10, audienceAvatarLimit: 5, carouselMaxSlides: null, batchConfig: null, workspaceLimit: 1,
-        stripePriceId: { monthly: 'price_starter_monthly', annual: 'price_starter_annual' },
+        stripePriceId: { monthly: 'price_1TTqaDKXgskM9FYIiuhc4KWJ', annual: 'price_1TTqbpKXgskM9FYIs0w4YvML' },
         features: {
             retargeting: false, fantasyUniverses: false, aspectRatios: ALL_RATIOS, visualPolishes: false, brandUrlScraping: true, competitorResearch: false, carousel: false, batchGeneration: false, maxTeamMembers: 1,
             abVariationTesting: false, regionEditing: false, referenceAdUpload: false, pushToMeta: false, performanceDashboard: 'none', creativeMemory: false, creativeScoringEngine: false, smartRecommendations: false, variantExploration: false, multiBrandWorkspaces: false,
@@ -183,7 +183,7 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
         id: 'pro', name: 'Pro', subtitle: 'For serious marketers', monthlyCredits: 2500, trialCredits: 50, priceMonthly: 79, priceAnnualPerMonth: 63.20,
         savedProjectLimit: 30, audienceAvatarLimit: 15, carouselMaxSlides: 7, workspaceLimit: 1,
         batchConfig: { maxSizes: 1, maxHooks: 2, maxConcepts: 2, maxAdsPerRun: 4 },
-        stripePriceId: { monthly: 'price_pro_monthly', annual: 'price_pro_annual' },
+        stripePriceId: { monthly: 'price_1TR7S0KXgskM9FYIqJgTQN4z', annual: 'price_1TR7S0KXgskM9FYIFJWukf50' },
         features: {
             retargeting: true, fantasyUniverses: true, aspectRatios: ALL_RATIOS, visualPolishes: true, brandUrlScraping: true, competitorResearch: true, carousel: true, batchGeneration: true, maxTeamMembers: 3,
             abVariationTesting: true, regionEditing: true, referenceAdUpload: true, pushToMeta: true, performanceDashboard: 'overview', creativeMemory: true, creativeScoringEngine: false, smartRecommendations: false, variantExploration: false, multiBrandWorkspaces: false,
@@ -196,7 +196,7 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
         id: 'scale', name: 'Scale', subtitle: 'For high-volume ad testing', monthlyCredits: 6500, trialCredits: 50, priceMonthly: 179, priceAnnualPerMonth: 143.20,
         savedProjectLimit: Infinity, audienceAvatarLimit: Infinity, carouselMaxSlides: 10, workspaceLimit: 10,
         batchConfig: { maxSizes: 3, maxHooks: 4, maxConcepts: 3, maxAdsPerRun: 36 },
-        stripePriceId: { monthly: 'price_scale_monthly', annual: 'price_scale_annual' },
+        stripePriceId: { monthly: 'price_1TTyxMKXgskM9FYIlR7h0sru', annual: 'price_1TTyxsKXgskM9FYIkIfqkIr3' },
         features: {
             retargeting: true, fantasyUniverses: true, aspectRatios: ALL_RATIOS, visualPolishes: true, brandUrlScraping: true, competitorResearch: true, carousel: true, batchGeneration: true, maxTeamMembers: 10,
             abVariationTesting: true, regionEditing: true, referenceAdUpload: true, pushToMeta: true, performanceDashboard: 'full', creativeMemory: true, creativeScoringEngine: true, smartRecommendations: true, variantExploration: true, multiBrandWorkspaces: true,
@@ -293,14 +293,14 @@ export const showBranding = (_plan: UserPlan, isTrial: boolean): boolean => isTr
 // ─── CREDIT TOP-UP PACKS ────────────────────────────────────────────────────
 export const TOPUP_PACKS = [
     { id: 'small', credits: 100, price: 9, label: '100 Credits' },
-    { id: 'medium', credits: 300, price: 17, label: '300 Credits' },
-    { id: 'large', credits: 800, price: 39, label: '800 Credits' },
+    { id: 'medium', credits: 300, price: 24, label: '300 Credits' },
+    { id: 'large', credits: 800, price: 59, label: '800 Credits' },
 ] as const;
 
 export const TOPUP_PRICES: Record<number, string> = {
-    100: 'price_topup_100',
-    300: 'price_topup_300',
-    800: 'price_topup_800',
+    100: 'price_1TR7yLKXgskM9FYIWCz5CLXA',
+    300: 'price_1TR7z9KXgskM9FYI0jb1lrWu',
+    800: 'price_1TR80YKXgskM9FYIyV7xAo66',
 };
 
 // Frontend mapping of Stripe price IDs to plans. Built at module load from the PLANS

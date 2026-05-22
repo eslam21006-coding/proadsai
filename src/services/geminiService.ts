@@ -21,6 +21,7 @@ const fnVisualPolishes = httpsCallable(functions, 'serverGenerateVisualPolishes'
 const fnDesignCritique = httpsCallable(functions, 'designCritique', { timeout: 30000 });
 const fnGetRankings = httpsCallable(functions, 'serverGetRankings', { timeout: 30000 });
 const fnEditRegion = httpsCallable(functions, 'serverEditRegion', { timeout: 120000 });
+const fnTestimonialCarousel = httpsCallable(functions, 'serverGenerateTestimonialCarousel', { timeout: 300000 });
 // ─── Ranking result types (subset of backend types for frontend use) ────
 export interface RankedCandidateCompact {
   family: string;
@@ -67,6 +68,7 @@ export interface GenerationResult {
   rankingRequestId: string | null;
   rankingRequestFingerprint: string | null;
   rankingAppliedSummary: string | null;
+  costEstimate: { modelTier: string | null; retryCount: number; estimatedTokens: number } | null;
 }
 
 function parseGenerationResult(data: any): GenerationResult {
@@ -75,6 +77,7 @@ function parseGenerationResult(data: any): GenerationResult {
     rankingRequestId: data?.rankingRequestId || null,
     rankingRequestFingerprint: data?.rankingRequestFingerprint || null,
     rankingAppliedSummary: data?.rankingAppliedSummary || null,
+    costEstimate: data?.costEstimate || null,
   };
 }
 
@@ -255,8 +258,8 @@ Use this information to better understand the brand's positioning, tone, and tar
     resolvedUniverse: string, currentAspectRatio: AspectRatio,
     editInstruction?: string, base64ToEdit?: string,
     styleReference?: string, textOverride?: TextOverride,
-    activeWorkspaceId?: string
-  ): Promise<{ image: string | null; errorCode?: string; debug?: any }> {
+    activeWorkspaceId?: string, batchTotal?: number
+  ): Promise<{ image: string | null; errorCode?: string; debug?: any; resolutionTrace?: any }> {
     const inputsWithPhotos = { ...inputs } as any;
     inputsWithPhotos.personalPhotos = (inputs.personalPhotos || []).slice(0, 5);
     inputsWithPhotos.brandLogos = (inputs.brandLogos || []).slice(0, 5);
@@ -265,6 +268,7 @@ Use this information to better understand the brand's positioning, tone, and tar
       buildPlan, approvedTov, inputs: inputsWithPhotos,
       resolvedUniverse, currentAspectRatio,
       editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId,
+      _batchTotal: batchTotal,
     });
     const data = result.data as any;
     if (import.meta.env.DEV && data.debug) {
@@ -277,6 +281,7 @@ Use this information to better understand the brand's positioning, tone, and tar
       image,
       errorCode: data.errorCode || (raw && !image ? 'invalid_image_format' : undefined),
       debug: data.debug || null,
+      resolutionTrace: data.resolutionTrace || null,
     };
   }
 
@@ -302,12 +307,12 @@ Use this information to better understand the brand's positioning, tone, and tar
     inputs: AdInputs, resolvedUniverse: string,
     slideCount: number, globalRefinement?: string,
     activeWorkspaceId?: string
-  ): Promise<string> {
+  ): Promise<GenerationResult> {
     const result = await fnCarouselAngles({
       inputs: sanitizeInputs(inputs), resolvedUniverse,
       slideCount, globalRefinement, activeWorkspaceId,
     });
-    return (result.data as any).text || '';
+    return parseGenerationResult(result.data);
   }
 
   async generateCarouselSlideCopies(
@@ -374,6 +379,24 @@ Use this information to better understand the brand's positioning, tone, and tar
     const raw = data.imageBase64 || null;
     const image = (typeof raw === 'string' && raw.startsWith('data:image/')) ? raw : null;
     return { image, errorCode: data.errorCode || (!image ? 'edit_failed' : undefined) };
+  }
+
+  // ─── TESTIMONIAL CAROUSEL GENERATION ───────────────────────────────────
+  async generateTestimonialCarousel(
+    inputs: AdInputs,
+    screenshots: string[],
+    activeWorkspaceId?: string
+  ): Promise<{ text: string; platform?: string; mockupFrames?: any[]; costEstimate: any | null }> {
+    const result = await fnTestimonialCarousel({
+      inputs: sanitizeInputs(inputs), screenshots, activeWorkspaceId,
+    });
+    const data = result.data as any;
+    return {
+      text: data.text || '',
+      platform: data.platform,
+      mockupFrames: data.mockupFrames,
+      costEstimate: data.costEstimate || null,
+    };
   }
 }
 

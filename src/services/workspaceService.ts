@@ -106,4 +106,10 @@ export const workspaceService = {
       GetWorkspaceAccessAuditLogRequest,
       { entries: WorkspaceAccessAuditEntry[]; nextCursor: AuditLogCursor | null }
     >(functions, "getWorkspaceAccessAuditLog")(req ?? {}),
+
+  getUserProjects: (req?: { workspaceId?: string; status?: string; pageSize?: number; cursor?: string }) =>
+    httpsCallable<
+      { workspaceId?: string; status?: string; pageSize?: number; cursor?: string },
+      { projects: any[]; nextCursor: string | null }
+    >(functions, "getUserProjects")(req ?? {}),
 };

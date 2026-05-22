@@ -170,7 +170,7 @@ class MetaService {
         }
     }
     // ═══ 7. PUSH CREATIVE PACK (Image + Copy paired) ═══
-    async pushCreativePack(imageSource: string, adName: string, primaryText: string, pageId?: string): Promise<{ success: boolean; message: string; imageHash?: string; creativeId?: string }> {
+    async pushCreativePack(imageSource: string, adName: string, primaryText: string, pageId?: string, activeWorkspaceId?: string): Promise<{ success: boolean; message: string; imageHash?: string; creativeId?: string }> {
         try {
             let imageBase64 = imageSource;
 
@@ -191,7 +191,7 @@ class MetaService {
             }
 
             const fn = httpsCallable(functions, 'metaPushCreativePack');
-            const result = await fn({ imageBase64, adName, primaryText, pageId });
+            const result = await fn({ imageBase64, adName, primaryText, pageId, activeWorkspaceId });
             return result.data as { success: boolean; message: string; imageHash?: string; creativeId?: string };
         } catch (err: any) {
             console.error('Failed to push creative pack:', err);

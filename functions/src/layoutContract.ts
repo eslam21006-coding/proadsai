@@ -418,6 +418,10 @@ export interface CompileContractInput {
     visualStyleFamily?: 'realistic' | 'fantasy' | 'minimal';
     /** Pre-analyzed reference image influence (optional) */
     referenceInfluence?: ReferenceInfluence | null;
+    campaignType?: "cold" | "retargeting";
+    referenceAd?: string;
+    selectedSubStyle?: string | null;
+    selectedUniverse?: string | null;
 }
 
 /**
@@ -444,6 +448,11 @@ export function compileFullContract(input: CompileContractInput): FullLayoutCont
     const spec = resolveCreativeSpec({
         selectedModes: input.selectedModes,
         hookAngle,
+        campaignType: input.campaignType,
+        visualStyleFamily: input.visualStyleFamily,
+        referenceAdUsed: !!input.referenceAd,
+        selectedSubStyle: input.selectedSubStyle || null,
+        selectedUniverse: input.selectedUniverse || null,
     });
 
     // 2. Compile base layout contract (zones, template, urgency)

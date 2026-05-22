@@ -39,7 +39,7 @@ export const MandatoryBillingModal: React.FC<MandatoryBillingModalProps> = ({
           </p>
         </div>
 
-        <div className="w-full max-w-5xl">
+        <div className="w-full max-w-[1200px]">
           <PricingTable />
         </div>
       </div>

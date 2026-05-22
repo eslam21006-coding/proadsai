@@ -79,6 +79,8 @@ export interface GenerationRecord {
         retargetingObjections?: string[];  // Legacy — read-compat for old saved records
         customObjection?: string;
         testimonial?: string;
+        brandColorPrimary?: string | null;
+        brandColorSecondary?: string | null;
     };
     output: {
         phase: 'hooks' | 'concepts' | 'render' | 'caption';
@@ -154,7 +156,8 @@ class FeedbackService {
         creativeIdentity?: GenerationRecord['creativeIdentity'],
         workspaceId?: string | null,
         failureClass: FailureClass | null = null,
-        costEstimate: CostEstimate | null = null
+        costEstimate: CostEstimate | null = null,
+        resolutionTrace?: any | null
     ): Promise<string> {
         const record: Omit<GenerationRecord, 'id'> & { workspaceId?: string | null } = {
             userId,
@@ -176,6 +179,8 @@ class FeedbackService {
                 retargetingObjection: (inputs as any).retargetingObjection || ((inputs as any).retargetingObjections || [])[0] || null,
                 customObjection: (inputs as any).customObjection || null,
                 testimonial: (inputs as any).testimonial || null,
+                brandColorPrimary: inputs.brandColorPrimary || null,
+                brandColorSecondary: inputs.brandColorSecondary || null,
             },
             output: {
                 phase,
@@ -195,6 +200,7 @@ class FeedbackService {
                 aspectRatio,
             },
             ...(creativeIdentity ? { creativeIdentity } : {}),
+            ...(resolutionTrace ? { resolutionTrace } : {}),
         };
 
         try {

@@ -201,7 +201,20 @@ async function handleSubscriptionCheckout(
 
     const plan = planInfo.plan;
     const billingType = planInfo.billingType as string;
-    const isTrial = session.subscription != null && (await isSubscriptionTrialing(stripe, session.subscription as string));
+    let isTrial = false;
+    let trialEndDate: string | null = null;
+    let nextBillingDate: string | null = null;
+    if (stripeSubscriptionId) {
+        try {
+            // Use the id narrowed above (line ~175) — session.subscription may already be an
+            // expanded Subscription object, so casting it to string would break the retrieve.
+            const sub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
+            isTrial = sub.status === "trialing";
+            trialEndDate = sub.trial_end ? new Date(sub.trial_end * 1000).toISOString() : null;
+            const periodEnd = (sub as any).current_period_end ?? sub.items?.data?.[0]?.current_period_end;
+            nextBillingDate = periodEnd ? new Date((periodEnd as number) * 1000).toISOString() : null;
+        } catch { /* fallback to non-trial, no dates */ }
+    }
     const credits = isTrial ? 50 : (PLAN_CREDITS[plan] ?? 0);
 
     if (clientRefId) {
@@ -256,6 +269,8 @@ async function handleSubscriptionCheckout(
                 billingType,
                 stripeCustomerId: stripeCustomerId ?? null,
                 stripeSubscriptionId: stripeSubscriptionId ?? null,
+                trialEndDate,
+                nextBillingDate,
                 eventId: event.id,
             });
         } catch { /* fire-and-forget */ }
@@ -296,6 +311,8 @@ async function handleSubscriptionCheckout(
                 billingType,
                 stripeCustomerId: stripeCustomerId ?? null,
                 stripeSubscriptionId: stripeSubscriptionId ?? null,
+                trialEndDate,
+                nextBillingDate,
                 eventId: event.id,
             });
         } catch { /* fire-and-forget */ }
@@ -354,7 +371,16 @@ async function handlePaymentCheckout(
     // GHL sync — top_up.completed
     try {
         const notify = getNotifyGHL();
+        const userSnap = await admin.firestore().collection("users").doc(uid).get();
+        const userData = userSnap.data() ?? {};
+        const amount = typeof session.amount_total === "number" ? session.amount_total / 100 : 0;
         await notify(uid, "top_up.completed", {
+            plan: userData.plan as string | undefined,
+            billingStatus: userData.billingStatus as string | undefined,
+            credits: typeof userData.credits === "number" ? userData.credits : 0,
+            billingType: (userData.billingType as string | undefined) ?? "monthly",
+            stripeSubscriptionId: userData.stripeSubscriptionId ?? null,
+            amount,
             creditAmount,
             eventId: event.id,
         });
@@ -562,6 +588,9 @@ async function handleSubscriptionUpdated(event: Stripe.Event, _stripe: Stripe): 
                 plan: updateData.plan ?? existingData.plan,
                 billingStatus: "active",
                 credits: updateData.credits ?? existingData.credits,
+                billingType: updateData.billingType ?? existingData.billingType,
+                stripeSubscriptionId,
+                previousPlan: existingData.plan ?? null,
                 eventId: event.id,
             });
         } catch { /* fire-and-forget */ }
@@ -593,6 +622,9 @@ async function handleSubscriptionDeleted(event: Stripe.Event, _stripe: Stripe): 
     }
 
     const uid = usersSnap.docs[0].id;
+    const existingUserData = usersSnap.docs[0].data() ?? {};
+    const previousPlan: string | null = existingUserData.plan ?? null;
+    const previousBillingType: string = existingUserData.billingType ?? "monthly";
 
     await admin.firestore().collection("users").doc(uid).update({
         plan: "none",
@@ -641,9 +673,12 @@ async function handleSubscriptionDeleted(event: Stripe.Event, _stripe: Stripe): 
             plan: "none",
             billingStatus: "cancelled",
             credits: 0,
+            billingType: previousBillingType,
+            stripeSubscriptionId: subscription.id,
             cancelAt,
             cancellationReason,
             eventId: event.id,
+            previousPlan: previousPlan,
         });
     } catch { /* fire-and-forget */ }
 }
@@ -739,6 +774,9 @@ async function handleInvoicePaymentSucceeded(event: Stripe.Event, _stripe: Strip
                 plan,
                 billingStatus: "active",
                 credits,
+                billingType: userData.billingType ?? "monthly",
+                stripeSubscriptionId: userData.stripeSubscriptionId ?? null,
+                nextBillingDate: new Date(periodEnd * 1000).toISOString(),
                 eventId: event.id,
                 amount: invoice.amount_paid ? invoice.amount_paid / 100 : undefined,
             });
@@ -769,6 +807,9 @@ async function handleInvoicePaymentFailed(event: Stripe.Event, _stripe: Stripe):
     }
 
     const uid = usersSnap.docs[0].id;
+    const userData = usersSnap.docs[0].data();
+    const plan = userData.plan as string;
+    const credits = userData.credits as number;
     const gracePeriodEndsAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
 
     await admin.firestore().collection("users").doc(uid).update({
@@ -790,7 +831,11 @@ async function handleInvoicePaymentFailed(event: Stripe.Event, _stripe: Stripe):
     try {
         const notify = getNotifyGHL();
         await notify(uid, "payment.failed", {
+            plan,
             billingStatus: "past_due",
+            credits,
+            billingType: userData.billingType ?? "monthly",
+            stripeSubscriptionId: userData.stripeSubscriptionId ?? null,
             eventId: event.id,
             amount: invoice.amount_due ? invoice.amount_due / 100 : undefined,
         });

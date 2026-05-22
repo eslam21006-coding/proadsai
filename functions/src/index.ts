@@ -12,7 +12,7 @@ import Stripe from "stripe";
 import * as crypto from "crypto";
 import {
     resolveFirestoreEntitlement, checkFeature, checkCarouselSlides,
-    checkAspectRatio, resolveCreditOwner, resolveEntitlement,
+    checkAspectRatio, resolveCreditOwner,
     PLAN_CREDITS, TRIAL_CREDITS,
     type GatedFeature, type ResolvedEntitlement,
 } from "./entitlements.js";
@@ -77,33 +77,33 @@ const CREDITS_PER_MONTH: Record<string, number> = {
     scale: 6500,
 };
 
-const PLAN_MAP: Record<string, { plan: string; credits: number; isTrial?: boolean }> = {
+const PLAN_MAP: Record<string, { plan: string; credits: number; isTrial?: boolean; billingType: 'monthly' | 'annual' | 'one_time' }> = {
     // Simple names (for GHL automations)
-    'starter': { plan: 'starter', credits: 800 },
-    'pro': { plan: 'pro', credits: 2500 },
-    'scale': { plan: 'scale', credits: 6500 },
+    'starter': { plan: 'starter', credits: 800, billingType: 'monthly' },
+    'pro': { plan: 'pro', credits: 2500, billingType: 'monthly' },
+    'scale': { plan: 'scale', credits: 6500, billingType: 'monthly' },
     // Trial plans — full features, 50 credits
-    'starter_trial': { plan: 'starter', credits: 50, isTrial: true },
-    'pro_trial': { plan: 'pro', credits: 50, isTrial: true },
-    'scale_trial': { plan: 'scale', credits: 50, isTrial: true },
+    'starter_trial': { plan: 'starter', credits: 50, isTrial: true, billingType: 'monthly' },
+    'pro_trial': { plan: 'pro', credits: 50, isTrial: true, billingType: 'monthly' },
+    'scale_trial': { plan: 'scale', credits: 50, isTrial: true, billingType: 'monthly' },
     // Full names
-    'starter_monthly': { plan: 'starter', credits: 800 },
-    'starter_annual': { plan: 'starter', credits: 800 },
-    'pro_monthly': { plan: 'pro', credits: 2500 },
-    'pro_annual': { plan: 'pro', credits: 2500 },
-    'scale_monthly': { plan: 'scale', credits: 6500 },
-    'scale_annual': { plan: 'scale', credits: 6500 },
+    'starter_monthly': { plan: 'starter', credits: 800, billingType: 'monthly' },
+    'starter_annual': { plan: 'starter', credits: 800, billingType: 'annual' },
+    'pro_monthly': { plan: 'pro', credits: 2500, billingType: 'monthly' },
+    'pro_annual': { plan: 'pro', credits: 2500, billingType: 'annual' },
+    'scale_monthly': { plan: 'scale', credits: 6500, billingType: 'monthly' },
+    'scale_annual': { plan: 'scale', credits: 6500, billingType: 'annual' },
     // GHL display-name variants (Title Case with space) — sent verbatim by some GHL product configs
-    'Starter Monthly': { plan: 'starter', credits: 800 },
-    'Starter Annual': { plan: 'starter', credits: 800 },
-    'Pro Monthly': { plan: 'pro', credits: 2500 },
-    'Pro Annual': { plan: 'pro', credits: 2500 },
-    'Scale Monthly': { plan: 'scale', credits: 6500 },
-    'Scale Annual': { plan: 'scale', credits: 6500 },
+    'Starter Monthly': { plan: 'starter', credits: 800, billingType: 'monthly' },
+    'Starter Annual': { plan: 'starter', credits: 800, billingType: 'annual' },
+    'Pro Monthly': { plan: 'pro', credits: 2500, billingType: 'monthly' },
+    'Pro Annual': { plan: 'pro', credits: 2500, billingType: 'annual' },
+    'Scale Monthly': { plan: 'scale', credits: 6500, billingType: 'monthly' },
+    'Scale Annual': { plan: 'scale', credits: 6500, billingType: 'annual' },
     // Top-ups
-    'topup_100': { plan: 'keep_current', credits: 100 },
-    'topup_300': { plan: 'keep_current', credits: 300 },
-    'topup_800': { plan: 'keep_current', credits: 800 },
+    'topup_100': { plan: 'keep_current', credits: 100, billingType: 'one_time' },
+    'topup_300': { plan: 'keep_current', credits: 300, billingType: 'one_time' },
+    'topup_800': { plan: 'keep_current', credits: 800, billingType: 'one_time' },
 };
 
 // All costs are strictly linear: unit cost × count. No bundling, no discounts.
@@ -212,6 +212,25 @@ function splitDisplayName(displayName: string | undefined | null): {
     return { first_name: displayName.substring(0, idx), last_name: displayName.substring(idx + 1) };
 }
 
+// Pre-signup purchases live in pending_plans/{email} (keyed by lowercase email) until the
+// customer creates an account. The GHL cancel/failed/recovered webhooks read users/{uid}
+// for their payload fields; when no auth user exists yet, fall back to this so those events
+// still carry the real plan/billing_type instead of empty defaults.
+interface PendingPlanDoc {
+    plan?: string;
+    credits?: number;
+    isTrial?: boolean;
+    billingType?: string;
+    ghlContactId?: string;
+}
+
+async function loadPendingPlan(normalizedEmail: string): Promise<PendingPlanDoc | null> {
+    // No blanket catch: a missing doc returns null, while a real Firestore failure propagates to
+    // the caller's handler-level try/catch so lookup failures are surfaced, not silently hidden.
+    const snap = await admin.firestore().collection("pending_plans").doc(normalizedEmail).get();
+    return snap.exists ? (snap.data() as PendingPlanDoc) : null;
+}
+
 // Build the canonical 21-field GHL inbound payload and POST it fire-and-forget.
 // Caller must handle: any user-doc reads, plan/credits resolution, and stripeCustomerId
 // lookup. This helper is intentionally dumb — it just shapes and sends.
@@ -226,8 +245,13 @@ async function postGHLInboundPayload(opts: {
     amount: number;
     stripe_customer_id?: string | null;
     stripe_subscription_id?: string | null;
+    ghl_contact_id?: string | null;
+    billing_type?: string;
     first_name?: string | null;
     last_name?: string | null;
+    previous_plan?: string | null;
+    cancel_at?: string | null;
+    cancellation_reason?: string | null;
 }): Promise<void> {
     try {
         const payload = {
@@ -235,14 +259,16 @@ async function postGHLInboundPayload(opts: {
             event_id: "ghl_" + Date.now(),
             stripe_customer_id: opts.stripe_customer_id ?? null,
             stripe_subscription_id: opts.stripe_subscription_id ?? null,
+            contact_id: opts.ghl_contact_id ?? null,
             email: opts.email,
             first_name: opts.first_name ?? null,
             last_name: opts.last_name ?? null,
             plan: opts.plan,
+            previous_plan: opts.previous_plan ?? null,
             billing_status: opts.billing_status,
             is_trial: opts.is_trial,
             credits: opts.credits,
-            billing_type: "subscription",
+            billing_type: opts.billing_type ?? "monthly",
             currency: "USD",
             amount: opts.amount,
             trial_end_date: null,
@@ -250,8 +276,8 @@ async function postGHLInboundPayload(opts: {
             next_billing_date: null,
             next_billing_date_human: null,
             portal_url: null,
-            cancel_at: null,
-            cancellation_reason: null,
+            cancel_at: opts.cancel_at ?? null,
+            cancellation_reason: opts.cancellation_reason ?? null,
         };
         const res = await fetch(opts.url, {
             method: "POST",
@@ -311,6 +337,7 @@ export const ghlpaymentwebhook = onRequest({
     let finalCredits = typeof rawCredits === 'string' ? parseInt(rawCredits) || 0 : rawCredits;
     let finalPlan = data.plan || customData.plan || 'starter';
     let isTopup = false;
+    let billingTypeValue: 'monthly' | 'annual' | 'one_time' = 'monthly';
 
     // Check if GHL sends trial flag directly — parse as string OR boolean (GHL
     // serializes booleans as the literal strings "true"/"false" in customData).
@@ -322,6 +349,7 @@ export const ghlpaymentwebhook = onRequest({
     if (productId && PLAN_MAP[productId]) {
         const mapped = PLAN_MAP[productId];
         finalCredits = mapped.credits;
+        billingTypeValue = mapped.billingType;
         if (mapped.isTrial) isTrial = true;
         if (mapped.plan === 'keep_current') {
             isTopup = true;
@@ -379,6 +407,7 @@ export const ghlpaymentwebhook = onRequest({
                     creditsPerMonth: CREDITS_PER_MONTH[finalPlan] ?? 0,
                     isTrial: isTrial,
                     billingStatus: 'active',
+                    billingType: billingTypeValue,
                     planUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
                     ghlContactId: contactId,
                     ...(stripeCustomerId ? { stripeCustomerId } : {}),
@@ -395,6 +424,7 @@ export const ghlpaymentwebhook = onRequest({
                 creditsPerMonth: CREDITS_PER_MONTH[isTopup ? "none" : finalPlan] ?? 0,
                 isTopup: isTopup,
                 isTrial: isTrial,
+                billingType: billingTypeValue,
                 ghlContactId: contactId,
                 ...(stripeCustomerId ? { stripeCustomerId } : {}),
                 purchasedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -410,6 +440,7 @@ export const ghlpaymentwebhook = onRequest({
         let firstName: string | null = null;
         let lastName: string | null = null;
         let stripeSubscriptionId: string | null = null;
+        let ghlContactIdValue: string | null = contactId || null;
         if (existingUser) {
             try {
                 const snap = await admin.firestore().collection("users").doc(existingUser.uid).get();
@@ -418,6 +449,7 @@ export const ghlpaymentwebhook = onRequest({
                 firstName = split.first_name;
                 lastName = split.last_name;
                 stripeSubscriptionId = userData.stripeSubscriptionId ?? null;
+                ghlContactIdValue = userData.ghlContactId ?? ghlContactIdValue;
             } catch { /* non-critical — fields stay null */ }
         }
 
@@ -454,6 +486,8 @@ export const ghlpaymentwebhook = onRequest({
             amount,
             stripe_customer_id: stripeCustomerId || null,
             stripe_subscription_id: stripeSubscriptionId,
+            ghl_contact_id: ghlContactIdValue,
+            billing_type: billingTypeValue,
             first_name: firstName,
             last_name: lastName,
         });
@@ -585,9 +619,28 @@ export const ghlCancellationWebhook = onRequest({
         let lastName: string | null = null;
         let stripeSubscriptionId: string | null = null;
         let stripeCustomerId: string | null = null;
+        let ghlContactIdValue: string | null = contactId || null;
+        let billingTypeValue: string = 'monthly';
+
+        let previousPlan: string | null = null;
 
         if (existingUser) {
             const userRef = admin.firestore().collection("users").doc(existingUser.uid);
+
+            // Capture pre-update state for GHL previous_plan + identity fields.
+            try {
+                const snap = await userRef.get();
+                const userData = snap.data() ?? {};
+                previousPlan = (userData.plan as string) ?? null;
+                const split = splitDisplayName(userData.displayName);
+                firstName = split.first_name;
+                lastName = split.last_name;
+                stripeSubscriptionId = userData.stripeSubscriptionId ?? null;
+                stripeCustomerId = userData.stripeCustomerId ?? null;
+                ghlContactIdValue = userData.ghlContactId ?? ghlContactIdValue;
+                billingTypeValue = userData.billingType ?? billingTypeValue;
+            } catch { /* non-critical — fields stay null */ }
+
             await userRef.update({
                 billingStatus: 'cancelled',
                 plan: "none",
@@ -597,20 +650,23 @@ export const ghlCancellationWebhook = onRequest({
             });
             console.log(`Cancelled ${normalizedEmail} → billingStatus: cancelled, plan: none.`);
             await writeBillingState(existingUser.uid, admin.firestore());
-
-            try {
-                const snap = await userRef.get();
-                const userData = snap.data() ?? {};
-                const split = splitDisplayName(userData.displayName);
-                firstName = split.first_name;
-                lastName = split.last_name;
-                stripeSubscriptionId = userData.stripeSubscriptionId ?? null;
-                stripeCustomerId = userData.stripeCustomerId ?? null;
-            } catch { /* non-critical — fields stay null */ }
         } else {
+            // Pre-signup cancellation — pull previous_plan/billing_type from the pending purchase
+            // before removing it, so GHL gets accurate fields (state itself stays cancelled: none/0).
+            const pending = await loadPendingPlan(normalizedEmail);
+            if (pending) {
+                previousPlan = (pending.plan as string) ?? previousPlan;
+                billingTypeValue = (pending.billingType as string) ?? billingTypeValue;
+                if (pending.ghlContactId) ghlContactIdValue = pending.ghlContactId;
+            }
             await admin.firestore().collection("pending_plans").doc(normalizedEmail).delete();
             console.log(`Removed pending plan for ${normalizedEmail}`);
         }
+
+        const cancellationReasonInbound: string | null =
+            customData.reason ?? customData.cancellation_reason ?? data.cancellation_reason ?? null;
+        const cancelAtInbound: string | null =
+            customData.cancel_at ?? data.cancel_at ?? null;
 
         // ═══ Route 3: notify GHL inbound webhook so CRM automations fire ═══
         await postGHLInboundPayload({
@@ -624,8 +680,13 @@ export const ghlCancellationWebhook = onRequest({
             amount: 0,
             stripe_customer_id: stripeCustomerId,
             stripe_subscription_id: stripeSubscriptionId,
+            ghl_contact_id: ghlContactIdValue,
+            billing_type: billingTypeValue,
             first_name: firstName,
             last_name: lastName,
+            previous_plan: previousPlan,
+            cancel_at: cancelAtInbound,
+            cancellation_reason: cancellationReasonInbound,
         });
 
         res.status(200).json({ success: true, email: normalizedEmail, action: "cancelled" });
@@ -677,6 +738,8 @@ export const ghlPaymentFailedWebhook = onRequest({
         let plan = "none";
         let credits = 0;
         let isTrial = false;
+        let ghlContactIdValue: string | null = contactId || null;
+        let billingTypeValue: string = 'monthly';
 
         if (existingUser) {
             const gracePeriodEndsAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000); // 2 days
@@ -700,7 +763,20 @@ export const ghlPaymentFailedWebhook = onRequest({
                 plan = userData.plan ?? "none";
                 credits = typeof userData.credits === "number" ? userData.credits : 0;
                 isTrial = userData.isTrial === true;
+                ghlContactIdValue = userData.ghlContactId ?? ghlContactIdValue;
+                billingTypeValue = userData.billingType ?? billingTypeValue;
             } catch { /* non-critical — fields stay at defaults */ }
+        } else {
+            // Pre-signup payment failure — populate plan/credits/trial/billing_type from the
+            // pending purchase so GHL reflects the real subscription, not empty defaults.
+            const pending = await loadPendingPlan(normalizedEmail);
+            if (pending) {
+                plan = (pending.plan as string) ?? plan;
+                credits = typeof pending.credits === "number" ? pending.credits : credits;
+                isTrial = pending.isTrial === true;
+                billingTypeValue = (pending.billingType as string) ?? billingTypeValue;
+                if (pending.ghlContactId) ghlContactIdValue = pending.ghlContactId;
+            }
         }
 
         // ═══ Route 3: notify GHL inbound webhook so CRM automations fire ═══
@@ -715,6 +791,8 @@ export const ghlPaymentFailedWebhook = onRequest({
             amount: 0,
             stripe_customer_id: stripeCustomerId,
             stripe_subscription_id: stripeSubscriptionId,
+            ghl_contact_id: ghlContactIdValue,
+            billing_type: billingTypeValue,
             first_name: firstName,
             last_name: lastName,
         });
@@ -766,6 +844,8 @@ export const ghlPaymentRecoveredWebhook = onRequest({
         let plan = "none";
         let credits = 0;
         let isTrial = false;
+        let ghlContactIdValue: string | null = contactId || null;
+        let billingTypeValue: string = 'monthly';
 
         if (existingUser) {
             const userRef = admin.firestore().collection("users").doc(existingUser.uid);
@@ -784,6 +864,8 @@ export const ghlPaymentRecoveredWebhook = onRequest({
                 plan = userData.plan ?? "none";
                 credits = typeof userData.credits === "number" ? userData.credits : 0;
                 isTrial = userData.isTrial === true;
+                ghlContactIdValue = userData.ghlContactId ?? ghlContactIdValue;
+                billingTypeValue = userData.billingType ?? billingTypeValue;
             } catch { /* non-critical — fields stay at defaults */ }
 
             await userRef.update({
@@ -796,6 +878,17 @@ export const ghlPaymentRecoveredWebhook = onRequest({
             });
             console.log(`Restored ${normalizedEmail} → billingStatus: active`);
             await writeBillingState(existingUser.uid, admin.firestore());
+        } else {
+            // Pre-signup recovery — populate plan/credits/trial/billing_type from the pending
+            // purchase so GHL reflects the real subscription, not empty defaults.
+            const pending = await loadPendingPlan(normalizedEmail);
+            if (pending) {
+                plan = (pending.plan as string) ?? plan;
+                credits = typeof pending.credits === "number" ? pending.credits : credits;
+                isTrial = pending.isTrial === true;
+                billingTypeValue = (pending.billingType as string) ?? billingTypeValue;
+                if (pending.ghlContactId) ghlContactIdValue = pending.ghlContactId;
+            }
         }
 
         // ═══ Route 3: notify GHL inbound webhook so CRM automations fire ═══
@@ -810,6 +903,8 @@ export const ghlPaymentRecoveredWebhook = onRequest({
             amount: 0,
             stripe_customer_id: stripeCustomerId,
             stripe_subscription_id: stripeSubscriptionId,
+            ghl_contact_id: ghlContactIdValue,
+            billing_type: billingTypeValue,
             first_name: firstName,
             last_name: lastName,
         });
@@ -2308,7 +2403,7 @@ export const stripeWebhook = onRequest({
 // ═══════════════════════════════════════════════════════════════════════════
 // TEAM MANAGEMENT: Create Team Member
 // ═══════════════════════════════════════════════════════════════════════════
-const PLAN_TEAM_LIMITS: Record<string, number> = {
+export const PLAN_TEAM_LIMITS: Record<string, number> = {
     none: 0, starter: 1, pro: 3, scale: 10,
 };
 
@@ -2320,8 +2415,53 @@ const PLAN_TEAM_LIMITS: Record<string, number> = {
 // Final membership created only on acceptance/claim.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const INVITE_EXPIRY_DAYS = 7;
-const OPEN_INVITE_STATUSES = ['pending', 'sent', 'failed'];
+export const INVITE_EXPIRY_DAYS = 7;
+export const OPEN_INVITE_STATUSES = ['pending', 'sent', 'failed'];
+
+export function canCreateInvite(plan: string, currentMembers: number, openInvites: number): { allowed: boolean; reason?: string } {
+    const max = PLAN_TEAM_LIMITS[plan] ?? 0;
+    if (max === 0) return { allowed: false, reason: "Team invites not available on this plan." };
+    if (currentMembers + openInvites >= max) {
+        return { allowed: false, reason: `Your ${plan} plan allows ${max} members.` };
+    }
+    return { allowed: true };
+}
+
+export function isClaimable(invite: { inviteeEmailNormalized: string; status: string; expiresAt: number }, callerEmail: string, now: number): { claimable: boolean; reason?: string } {
+    if (invite.inviteeEmailNormalized !== callerEmail) {
+        return { claimable: false, reason: "Email mismatch." };
+    }
+    if (!OPEN_INVITE_STATUSES.includes(invite.status)) {
+        return { claimable: false, reason: `Invite is ${invite.status}.` };
+    }
+    if (invite.expiresAt < now) {
+        return { claimable: false, reason: "Expired." };
+    }
+    return { claimable: true };
+}
+
+export function deductCreditsViewerCheck(isTeamMember: boolean, teamRole: string | null): { allowed: boolean } {
+    if (isTeamMember && teamRole === "viewer") {
+        return { allowed: false };
+    }
+    return { allowed: true };
+}
+
+export function getInviteDetailsLogic(invite: { status: string; expiresAt: number } | null, now: number): { success: boolean; status?: string; message?: string } {
+    if (!invite) {
+        return { success: false, status: "not_found", message: "Invite not found" };
+    }
+    if (invite.status === "revoked") {
+        return { success: false, status: "revoked", message: "This invite is no longer valid" };
+    }
+    if (invite.status === "accepted") {
+        return { success: false, status: "accepted", message: "This invite has already been claimed" };
+    }
+    if (invite.expiresAt < now) {
+        return { success: false, status: "expired", message: "This invite has expired" };
+    }
+    return { success: true };
+}
 
 interface TeamInvite {
     inviteId: string;
@@ -2906,6 +3046,79 @@ export const removeTeamMember = onCall({
     console.log(`👥 Team member removed: ${memberEmail} from owner ${ownerUid}`);
     return { success: true, message: `${memberData.name} has been removed from your team.` };
 });
+
+// ─── GET INVITE DETAILS (public, for join page) ──────────────────────────
+export const getInviteDetails = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    const { inviteId } = request.data;
+    if (!inviteId) throw new HttpsError("invalid-argument", "inviteId is required.");
+
+    const inviteDoc = await admin.firestore().collection("team_invites").doc(inviteId).get();
+    if (!inviteDoc.exists) {
+        return { success: false, status: "not_found", message: "Invite not found" };
+    }
+    const invite = inviteDoc.data() as TeamInvite;
+    const now = Date.now();
+
+    if (invite.status === "revoked") {
+        return { success: false, status: "revoked", message: "This invite is no longer valid" };
+    }
+    if (invite.status === "accepted") {
+        return { success: false, status: "accepted", message: "This invite has already been claimed" };
+    }
+    if (invite.expiresAt < now) {
+        // Persist the expiry (lazy-expire, same pattern as claimTeamInvite) so
+        // countReservedSeats() no longer counts this invite as a reserved seat.
+        if (invite.status !== "expired") {
+            await inviteDoc.ref.update({ status: "expired", updatedAt: Date.now() });
+        }
+        return { success: false, status: "expired", message: "This invite has expired" };
+    }
+
+    return {
+        success: true,
+        ownerName: invite.ownerName,
+        inviteeEmail: invite.inviteeEmail,
+        inviteeName: invite.inviteeName,
+        teamPlan: invite.teamPlan,
+        role: invite.role,
+        expiresAt: invite.expiresAt,
+    };
+});
+
+// ─── UPDATE TEAM MEMBER ROLE ─────────────────────────────────────────────
+export const updateTeamMemberRole = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be logged in.");
+    const { memberId, role } = request.data;
+    const ownerUid = request.auth.uid;
+
+    if (!memberId || !role) throw new HttpsError("invalid-argument", "Member ID and role are required.");
+    if (!["editor", "viewer"].includes(role)) throw new HttpsError("invalid-argument", "Role must be editor or viewer.");
+
+    const memberRef = admin.firestore().collection("users").doc(ownerUid).collection("team").doc(memberId);
+    const memberDoc = await memberRef.get();
+    if (!memberDoc.exists) throw new HttpsError("not-found", "Team member not found.");
+
+    const memberData = memberDoc.data()!;
+    // Fail fast if the member has no linked user uid — otherwise the role would update on the
+    // team doc but never propagate to the member's user doc, leaving the two out of sync.
+    if (!memberData.uid) throw new HttpsError("failed-precondition", "Team member has no linked account.");
+
+    // Apply both writes atomically so neither lands without the other.
+    const batch = admin.firestore().batch();
+    batch.update(memberRef, { role, updatedAt: Date.now() });
+    batch.update(admin.firestore().collection("users").doc(memberData.uid), { teamRole: role });
+    await batch.commit();
+
+    console.log(`👥 Team member role updated: ${memberData.email} → ${role} by owner ${ownerUid}`);
+    return { success: true, message: `Role updated to ${role}.` };
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // META ADS API INTEGRATION — PHASE 2
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3411,6 +3624,98 @@ export const metaPushCreative = onCall({
 
 import * as generators from "./generators.js";
 
+// FR-108 / data-model.md: refund only for these hard-failure classes (the generation
+// genuinely produced nothing usable). These are exactly the non-model_error values
+// classifyError can emit besides model_error; "safety_blocked"/"timeout" were dead
+// entries the classifier never returns (safety maps to model_error).
+const HARD_FAILURE_CLASSES = ["model_error", "validation_reject", "slot_repair_failed"] as const;
+
+async function populateSourceColdAdBrandColors(uid: string, inputs: any): Promise<void> {
+    if (inputs?.campaignType !== "retargeting") return;
+    if ((inputs as any)._sourceColdAdBrandColors) return;
+    try {
+        const snap = await admin.firestore().collection("generations")
+            .where("userId", "==", uid)
+            .where("input.campaignType", "==", "cold")
+            .orderBy("timestamp", "desc")
+            .limit(1)
+            .get();
+        if (!snap.empty) {
+            const doc = snap.docs[0].data();
+            const input = doc.input || {};
+            if (input.brandColorPrimary || input.brandColorSecondary) {
+                (inputs as any)._sourceColdAdBrandColors = {
+                    brandColorPrimary: input.brandColorPrimary || undefined,
+                    brandColorSecondary: input.brandColorSecondary || undefined,
+                };
+            }
+        }
+    } catch {
+        void 0;
+    }
+}
+
+async function recordGenerationFailure(params: {
+    uid: string;
+    error: any;
+    callableName: string;
+    inputs?: any;
+    failureClass?: string;
+    creditAction?: string;
+    creditCost?: number;
+    targetUid?: string;
+}): Promise<{ failureClass: string; costEstimate: { modelTier: string | null; retryCount: number; estimatedTokens: number } }> {
+    const fc = params.failureClass || generators.classifyError(params.error);
+    const costEstimate = generators.getCostEstimate();
+    const failureRecord: Record<string, any> = {
+        uid: params.uid,
+        callable: params.callableName,
+        failureClass: fc,
+        costEstimate,
+        errorMessage: params.error?.message || String(params.error).substring(0, 500),
+        createdAt: Date.now(),
+        status: "failed",
+    };
+    if (params.inputs) {
+        failureRecord.offerCreativeMode = params.inputs.offerCreativeMode || null;
+        failureRecord.adMode = params.inputs.adMode || null;
+        failureRecord.aspectRatio = params.inputs.currentAspectRatio || null;
+    }
+    admin.firestore().collection("generations").add(failureRecord).catch((e: any) =>
+        console.warn("⚠️ Failed to write failure record (non-blocking):", e.message)
+    );
+    return { failureClass: fc, costEstimate };
+}
+
+async function refundCreditsDirect(params: {
+    uid: string;
+    action: string;
+    count?: number;
+    targetUid?: string;
+}): Promise<void> {
+    const count = params.count || 1;
+    const COSTS: Record<string, number> = {
+        generateHooks: 1, generateConcepts: 1, generateBuildPlan: 1,
+        generateFinalAd: 3, generateCarousel: 2, generateCaption: 1,
+        generateCarouselCopies: 1,
+    };
+    const unitCost = COSTS[params.action] || 1;
+    const cost = unitCost * count;
+    const targetUid = params.targetUid || params.uid;
+    try {
+        await admin.firestore().runTransaction(async (tx) => {
+            const userRef = admin.firestore().collection("users").doc(targetUid);
+            const snap = await tx.get(userRef);
+            if (!snap.exists) return;
+            const current = snap.data()?.credits ?? 0;
+            tx.update(userRef, { credits: current + cost });
+        });
+        console.log(`💰 Credits refunded: ${cost} for ${params.action} to ${targetUid}`);
+    } catch (e: any) {
+        console.warn("⚠️ Credit refund failed (non-blocking):", e.message);
+    }
+}
+
 /**
  * Enforces entitlement for server generation endpoints.
  * Checks feature gates based on the action being performed and input data.
@@ -3467,10 +3772,10 @@ async function enforceGenerationEntitlement(
             }));
         }
         if (options.batchQuantity) {
-            const batchDecision = resolveEntitlement({ plan: entitlement.basePlan, feature: "batchRun", quantity: options.batchQuantity });
-            if (!batchDecision.allowed) {
-                throw new HttpsError("permission-denied", batchDecision.reason || "batch_limit_exceeded");
-            }
+            // FR-136: enforce the per-plan batch cap (Pro 4 / Scale 36) via the canonical
+            // generators.validateBatchRunEntitlement helper. batchQuantity is the precomputed
+            // sizes×hooks×concepts total, so it is passed as the single dimension.
+            generators.validateBatchRunEntitlement(entitlement.basePlan, options.batchQuantity, 1, 1);
         }
     }
 
@@ -3791,9 +4096,13 @@ export const serverGenerateTOV = onCall({
     try {
         const result = await generators.generateTOV(inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, editIntent, rewriteScope, semanticLock);
         const rg = result.rankingGuidance;
-        return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null };
+        return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateTOV error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateTOV", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateHooks" });
+        }
         throw new HttpsError("internal", "Hook generation failed: " + error.message);
     }
 });
@@ -3817,9 +4126,13 @@ export const serverGenerateConcepts = onCall({
     try {
         const result = await generators.generateConcepts(approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex);
         const rg = result.rankingGuidance;
-        return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null };
+        return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateConcepts error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateConcepts", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateConcepts" });
+        }
         throw new HttpsError("internal", "Concept generation failed: " + error.message);
     }
 });
@@ -3842,9 +4155,26 @@ export const serverGenerateBuildPlan = onCall({
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateBuildPlan(conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride);
-        return { success: true, text: result, errorCode: null };
+        const response: Record<string, any> = { success: true, text: result.buildPlan || result, errorCode: null, costEstimate: generators.getCostEstimate() };
+        if (result.copyFidelityWarning && !result.copyFidelityWarning.passed) {
+            response.warningCode = "copy_fidelity_degraded";
+            response.failedFields = result.copyFidelityWarning.failedFields;
+        }
+        if (result.culturalViolation) {
+            admin.firestore().collection("generations").add({
+                userId: request.auth.uid,
+                timestamp: Date.now(),
+                output: { phase: "build_plan" },
+                culturalViolation: result.culturalViolation,
+            }).catch(() => {});
+        }
+        return response;
     } catch (error: any) {
         console.error("generateBuildPlan error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateBuildPlan", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateBuildPlan" });
+        }
         throw new HttpsError("internal", "Build plan generation failed: " + error.message);
     }
 });
@@ -3859,7 +4189,7 @@ export const serverGenerateFinalAd = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId } = request.data;
+    const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId, _batchTotal } = request.data;
     void activeWorkspaceId;
     // ═══ MODE-FORMAT GATE (before any credit spend) ═══
     // Always run — even on edit/regen paths. An edit request that arrives with
@@ -3870,10 +4200,13 @@ export const serverGenerateFinalAd = onCall({
     // ═══ ENTITLEMENT: Check retargeting + aspect ratio gates ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireAspectRatio: currentAspectRatio,
+        requireBatch: _batchTotal != null,
+        batchQuantity: _batchTotal ?? undefined,
     });
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setOpenAIKey(openaiApiKey.value());
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    await populateSourceColdAdBrandColors(request.auth.uid, inputs);
 
     // ═══ CREATIVE MODE VALIDATION: fail-closed for invalid combinations ═══
     if (!editInstruction && !base64ToEdit) {
@@ -3898,6 +4231,11 @@ export const serverGenerateFinalAd = onCall({
             const spec = resolveCreativeSpec({
                 selectedModes: inputs?.offerCreativeMode || ['standard_hero'],
                 hookAngle: inputs?.coldHookAngle || undefined,
+                campaignType: inputs?.campaignType,
+                visualStyleFamily: inputs?.visualStyleFamily || inputs?.universeMode || 'realistic',
+                referenceAdUsed: !!inputs?.referenceAd,
+                selectedSubStyle: inputs?.visualSubStyle || null,
+                selectedUniverse: inputs?.preferredUniverse || inputs?.resolvedUniverse || null,
             });
             const templateId = selectLayoutTemplate(spec.primaryMode, spec.secondaryMode, inputs?.coldHookAngle, currentAspectRatio);
             // Extract TECHNICAL_PROMPT for resolvedImagePrompt, strip it for blueprintText
@@ -3925,7 +4263,8 @@ export const serverGenerateFinalAd = onCall({
         }
 
         if (result.image) {
-            return { success: true, imageBase64: result.image, errorCode: null };
+            const trace = generators.getLastResolutionTrace();
+            return { success: true, imageBase64: result.image, errorCode: null, costEstimate: generators.getCostEstimate(), resolutionTrace: trace };
         } else {
             return {
                 success: false,
@@ -3936,6 +4275,10 @@ export const serverGenerateFinalAd = onCall({
         }
     } catch (error: any) {
         console.error("generateFinalAd error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateFinalAd", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateFinalAd" });
+        }
         throw new HttpsError("internal", "Image generation failed: " + error.message);
     }
 });
@@ -4103,9 +4446,13 @@ export const serverGenerateCarouselAngles = onCall({
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateCarouselAngles(inputs, resolvedUniverse, slideCount, globalRefinement, entitlement.basePlan);
-        return { success: true, text: result };
+        return { success: true, text: result, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateCarouselAngles error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateCarouselAngles", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCarousel" });
+        }
         throw new HttpsError("internal", "Carousel angle generation failed: " + error.message);
     }
 });
@@ -4132,9 +4479,13 @@ export const serverGenerateCarouselSlideCopies = onCall({
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateCarouselSlideCopies(approvedTov, inputs, slideCount, resolvedUniverse, refinement, entitlement.basePlan);
-        return { success: true, copies: result };
+        return { success: true, copies: result, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateCarouselSlideCopies error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateCarouselSlideCopies", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCarouselCopies" });
+        }
         throw new HttpsError("internal", "Carousel copy generation failed: " + error.message);
     }
 });
@@ -4169,9 +4520,13 @@ export const serverGenerateTestimonialCarousel = onCall({
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateTestimonialCarousel(inputs, screenshots, maxSlides);
-        return { success: true, ...result };
+        return { success: true, ...result, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateTestimonialCarousel error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateTestimonialCarousel", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCarousel" });
+        }
         throw new HttpsError("internal", "Testimonial carousel generation failed: " + error.message);
     }
 });
@@ -4193,9 +4548,13 @@ export const serverGenerateCaption = onCall({
     try {
         const result = await generators.generateCaption(mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan);
         const rg = result.rankingGuidance;
-        return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null };
+        return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateCaption error:", error);
+        const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateCaption", inputs });
+        if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCaption" });
+        }
         throw new HttpsError("internal", "Caption generation failed: " + error.message);
     }
 });
@@ -4219,9 +4578,12 @@ export const serverGenerateVisualPolishes = onCall({
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateVisualPolishes(currentRender, inputs);
-        return { success: true, polishes: result };
+        return { success: true, polishes: result, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateVisualPolishes error:", error);
+        // T018: write a failure record for observability. No refund here — the polish-critique
+        // step does not pre-deduct credits (deduction happens later, on polishImage apply).
+        await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateVisualPolishes", inputs });
         throw new HttpsError("internal", "Polish generation failed: " + error.message);
     }
 });
@@ -4573,7 +4935,7 @@ export const metaPushCreativePack = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const uid = request.auth.uid;
-    const { imageBase64, adName, primaryText, pageId } = request.data;
+    const { imageBase64, adName, primaryText, pageId, activeWorkspaceId } = request.data;
 
     if (!imageBase64) throw new HttpsError("invalid-argument", "Missing image data.");
     if (!primaryText) throw new HttpsError("invalid-argument", "Missing ad copy text.");
@@ -4581,11 +4943,22 @@ export const metaPushCreativePack = onCall({
     const connDoc = await admin.firestore().collection("metaConnections").doc(uid).get();
     if (!connDoc.exists) throw new HttpsError("not-found", "No Meta connection found.");
     const conn = connDoc.data()!;
-    if (!conn.selectedAccountId) throw new HttpsError("failed-precondition", "No ad account selected.");
+
+    let accountId: string | null = null;
+    if (activeWorkspaceId) {
+        const wsDoc = await admin.firestore().collection("users").doc(uid).collection("workspaces").doc(activeWorkspaceId).get();
+        if (wsDoc.exists) {
+            const ws = wsDoc.data()!;
+            accountId = ws.metaAdAccountId || null;
+        }
+    }
+    if (!accountId) {
+        accountId = conn.selectedAccountId || null;
+    }
+    if (!accountId) throw new HttpsError("failed-precondition", "No ad account selected.");
 
     try {
         const token = decryptToken(conn.encryptedToken, metaAppSecret.value());
-        const accountId = conn.selectedAccountId;
 
         // Step 1: Upload image
         let rawBase64 = imageBase64;
