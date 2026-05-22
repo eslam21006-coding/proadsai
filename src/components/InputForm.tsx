@@ -1844,7 +1844,7 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                         const isFull = !isSelected && selected.length >= 2;
                         const isDisabled = isBlocked || isFull;
                         const roleLabel = getRoleLabel(m.id);
-                        const reason = isPlanLocked ? `Upgrade to ${getFeatureLimit(userPlan, 'maxOfferModes') < 12 ? 'Creator' : 'Pro'}` : isBlockedBySubStyle ? `Not compatible with ${((inputs as any).visualSubStyle || '').replace(/_/g, ' ')} style` : isBlocked ? blockReasons[m.id] || 'Not available' : isFull ? 'Max 2 selected' : '';
+                        const reason = isPlanLocked ? `Upgrade to ${getFeatureLimit(userPlan, 'maxOfferModes') < 12 ? 'Starter' : 'Pro'}` : isBlockedBySubStyle ? `Not compatible with ${((inputs as any).visualSubStyle || '').replace(/_/g, ' ')} style` : isBlocked ? blockReasons[m.id] || 'Not available' : isFull ? 'Max 2 selected' : '';
                         return (
                           <button key={m.id} type="button" disabled={isDisabled}
                             onClick={() => {

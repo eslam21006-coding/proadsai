@@ -1353,7 +1353,7 @@ const App: React.FC = () => {
     // Enforce plan limit (allow overwrites but block new saves)
     const maxAvatars = getAudienceAvatarLimit(userPlan);
     if (avatars.length >= maxAvatars) {
-      showToast(`Avatar limit reached (${maxAvatars} on your plan). Upgrade to save more.`, 'error');
+      showToast(t('billing.audienceAvatarOverLimit').replace('{limit}', String(maxAvatars)), 'error');
       return;
     }
     try {
@@ -2471,7 +2471,7 @@ const App: React.FC = () => {
         // just wrote was a brand-new doc, never an update.
         deleteProjectFromDB(project.id).catch(() => {});
         setProjects((prev: SavedProject[]) => prev.filter((p: SavedProject) => p.id !== project.id));
-        showToast(`Project limit reached (${details.limit || 'plan cap'} on your plan). Upgrade to save more.`, 'error');
+        showToast(t('billing.savedProjectOverLimit').replace('{limit}', String(details.limit || 'plan cap')), 'error');
         return;
       }
       throw firestoreErr;
@@ -2520,7 +2520,7 @@ const App: React.FC = () => {
     if (isNewProject) {
       const maxProjects = getSavedProjectLimit(userPlan);
       if (Number.isFinite(maxProjects) && projects.length >= maxProjects) {
-        showToast(`Project limit reached (${maxProjects} on your plan). Upgrade to save more.`, 'error');
+        showToast(t('billing.savedProjectOverLimit').replace('{limit}', String(maxProjects)), 'error');
         return;
       }
     }
@@ -4051,7 +4051,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       const primaryIdx = resultIdx;
       setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, status: 'rendering' } : r));
       try {
-        const genResult = await gemini.generateFinalAd(combo.conceptText, combo.hookText, inputs, resolvedUniverse, primaryRatio);
+        const genResult = await gemini.generateFinalAd(combo.conceptText, combo.hookText, inputs, resolvedUniverse, primaryRatio, undefined, undefined, undefined, undefined, undefined, combos.length * allSizes.length);
         primaryUrl = genResult.image;
         setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, buildPlan: combo.conceptText, url: primaryUrl, status: primaryUrl ? 'done' : 'error' } : r));
       } catch (e) {

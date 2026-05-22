@@ -258,7 +258,7 @@ Use this information to better understand the brand's positioning, tone, and tar
     resolvedUniverse: string, currentAspectRatio: AspectRatio,
     editInstruction?: string, base64ToEdit?: string,
     styleReference?: string, textOverride?: TextOverride,
-    activeWorkspaceId?: string
+    activeWorkspaceId?: string, batchTotal?: number
   ): Promise<{ image: string | null; errorCode?: string; debug?: any }> {
     const inputsWithPhotos = { ...inputs } as any;
     inputsWithPhotos.personalPhotos = (inputs.personalPhotos || []).slice(0, 5);
@@ -268,6 +268,7 @@ Use this information to better understand the brand's positioning, tone, and tar
       buildPlan, approvedTov, inputs: inputsWithPhotos,
       resolvedUniverse, currentAspectRatio,
       editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId,
+      _batchTotal: batchTotal,
     });
     const data = result.data as any;
     if (import.meta.env.DEV && data.debug) {

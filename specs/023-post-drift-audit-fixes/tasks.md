@@ -99,14 +99,14 @@ description: "Task list for Post-Phase-21 Drift Audit Remediation"
 
 ### Hotfix-09.50 — Plan-naming leaks (T042 gated by T004)
 
-- [ ] T041 [P] [US1] Replace `'Creator'` at `src/components/InputForm.tsx:1849` with the correct current plan name (FR-134). Done: upgrade text names a real plan.
-- [ ] T042 [US1] Wire `validateBatchRunEntitlement` into the batch generation path in `functions/src/index.ts`/`generators.ts` so Pro 4 / Scale 36 are server-enforced (FR-136). Done: a server-side over-cap batch is rejected.
-- [ ] T043 [P] [US1] Add bilingual `billing.savedProjectOverLimit`/`billing.audienceAvatarOverLimit` keys in `src/i18n.tsx` and use them for the over-limit toasts (FR-135). Done: hitting either cap shows a translated toast.
+- [x] T041 [P] [US1] Replace `'Creator'` at `src/components/InputForm.tsx:1849` with the correct current plan name (FR-134). Done: upgrade text names a real plan.
+- [x] T042 [US1] Wire `validateBatchRunEntitlement` into the batch generation path in `functions/src/index.ts`/`generators.ts` so Pro 4 / Scale 36 are server-enforced (FR-136). Done: a server-side over-cap batch is rejected.
+- [x] T043 [P] [US1] Add bilingual `billing.savedProjectOverLimit`/`billing.audienceAvatarOverLimit` keys in `src/i18n.tsx` and use them for the over-limit toasts (FR-135). Done: hitting either cap shows a translated toast.
 
 ### Hotfix-0951 + Hotfix-E
 
-- [ ] T044 [US1] Invert `culturalViolation`: persist to `generations/{genId}` and strip from the client response in `functions/src/index.ts`/`generators.ts` (FR-137). Done: value on the doc, not in the client payload (grep both).
-- [ ] T045 [P] [US1] Wire `validateLogoPlacements` before `compositeUILogos` (or move its clamps into `normalizeLogoPlacements`) in `functions/src/generators.ts` (FR-138). Done: an over-range/over-cap logo is clamped/dropped in the live render.
+- [x] T044 [US1] Invert `culturalViolation`: persist to `generations/{genId}` and strip from the client response in `functions/src/index.ts`/`generators.ts` (FR-137). Done: value on the doc, not in the client payload (grep both).
+- [x] T045 [P] [US1] Wire `validateLogoPlacements` before `compositeUILogos` (or move its clamps into `normalizeLogoPlacements`) in `functions/src/generators.ts` (FR-138). Done: an over-range/over-cap logo is clamped/dropped in the live render.
 
 **Checkpoint (SC-101)**: Run the quickstart Tier-1 recipe; all Tier-1 acceptance scenarios pass, Phase 9 + Phase 4 verified first. → Tier 2 may begin.
 
@@ -119,14 +119,14 @@ description: "Task list for Post-Phase-21 Drift Audit Remediation"
 
 ### Phase 1 — Resolver inputs
 
-- [ ] T046 [US2] Pass `visualStyleFamily`/`campaignType`/`referenceAdUsed`/`selectedSubStyle`/`selectedUniverse` to `resolveCreativeSpec` at all call sites (`generators.ts:399,2431,5716`; `index.ts:3944`; `layoutContract.ts:444`; `variantEngine.ts:133`) (FR-201). Done: minimal/precedence logic fires in prod (inspect trace/prompt).
-- [ ] T047 [US2] Make `functions/src/generators.ts` read `referenceAdOverrideActive`/`artDirectionCleared` from the resolver result when building prompts (FR-202). Done: reference-ad upload suppresses art direction/universe in the prompt.
+- [x] T046 [US2] Pass `visualStyleFamily`/`campaignType`/`referenceAdUsed`/`selectedSubStyle`/`selectedUniverse` to `resolveCreativeSpec` at all call sites (`generators.ts:399,2431,5716`; `index.ts:3944`; `layoutContract.ts:444`; `variantEngine.ts:133`) (FR-201). Done: minimal/precedence logic fires in prod (inspect trace/prompt).
+- [x] T047 [US2] Make `functions/src/generators.ts` read `referenceAdOverrideActive`/`artDirectionCleared` from the resolver result when building prompts (FR-202). Done: reference-ad upload suppresses art direction/universe in the prompt.
 
 ### CI + test wiring
 
-- [ ] T048 [P] [US2] Add `test:lang` script to `functions/package.json` (`npm run build && node lib/languageQuality.test.js`) (FR-203). Done: `npm run test:lang` runs the 25 fixtures.
-- [ ] T049 [US2] Chain `test:lang` + the team fixtures into the aggregate `npm test` in `functions/package.json` (FR-204/205). Done: `npm test` runs lang + team suites.
-- [ ] T050 [US2] Rewrite `functions/src/teamFixtureTests.ts` assertions to exercise the real exported callables (not logic clones) (FR-206). Done: fixtures call deployed callables; would catch a prod regression.
+- [x] T048 [P] [US2] Add `test:lang` script to `functions/package.json` (`npm run build && node lib/languageQuality.test.js`) (FR-203). Done: `npm run test:lang` runs the 25 fixtures.
+- [x] T049 [US2] Chain `test:lang` + the team fixtures into the aggregate `npm test` in `functions/package.json` (FR-204/205). Done: `npm test` runs lang + team suites.
+- [x] T050 [US2] Rewrite `functions/src/teamFixtureTests.ts` assertions to exercise the real exported callables (not logic clones) (FR-206). Done: fixtures call deployed callables; would catch a prod regression.
 - [ ] T051 [P] [US2] Add `.github/workflows/ci.yml` running build + `npm test` on push/PR, blocking merge on failure (FR-216). Done: a PR with a broken parity test is blocked; clean PR passes. **Gates T048–T050, T052, T058.**
 
 ### Phase 13 — Team project listing (LINKED to T025)

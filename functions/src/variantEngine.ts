@@ -133,6 +133,11 @@ export async function generateVariantSet(input: GenerateVariantsInput): Promise<
     const spec = resolveCreativeSpec({
         selectedModes: input.creativeModes,
         hookAngle: input.hookAngle,
+        campaignType: (input as any).campaignType,
+        visualStyleFamily: (input as any).visualStyleFamily,
+        referenceAdUsed: !!(input as any).referenceAd,
+        selectedSubStyle: (input as any).selectedSubStyle || null,
+        selectedUniverse: (input as any).selectedUniverse || null,
     });
     const templateId = selectLayoutTemplate(spec.primaryMode, spec.secondaryMode, input.hookAngle, input.aspectRatio);
 

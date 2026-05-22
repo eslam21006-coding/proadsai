@@ -12,7 +12,7 @@ import Stripe from "stripe";
 import * as crypto from "crypto";
 import {
     resolveFirestoreEntitlement, checkFeature, checkCarouselSlides,
-    checkAspectRatio, resolveCreditOwner, resolveEntitlement,
+    checkAspectRatio, resolveCreditOwner,
     PLAN_CREDITS, TRIAL_CREDITS,
     type GatedFeature, type ResolvedEntitlement,
 } from "./entitlements.js";
@@ -2403,7 +2403,7 @@ export const stripeWebhook = onRequest({
 // ═══════════════════════════════════════════════════════════════════════════
 // TEAM MANAGEMENT: Create Team Member
 // ═══════════════════════════════════════════════════════════════════════════
-const PLAN_TEAM_LIMITS: Record<string, number> = {
+export const PLAN_TEAM_LIMITS: Record<string, number> = {
     none: 0, starter: 1, pro: 3, scale: 10,
 };
 
@@ -2415,8 +2415,53 @@ const PLAN_TEAM_LIMITS: Record<string, number> = {
 // Final membership created only on acceptance/claim.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const INVITE_EXPIRY_DAYS = 7;
-const OPEN_INVITE_STATUSES = ['pending', 'sent', 'failed'];
+export const INVITE_EXPIRY_DAYS = 7;
+export const OPEN_INVITE_STATUSES = ['pending', 'sent', 'failed'];
+
+export function canCreateInvite(plan: string, currentMembers: number, openInvites: number): { allowed: boolean; reason?: string } {
+    const max = PLAN_TEAM_LIMITS[plan] ?? 0;
+    if (max === 0) return { allowed: false, reason: "Team invites not available on this plan." };
+    if (currentMembers + openInvites >= max) {
+        return { allowed: false, reason: `Your ${plan} plan allows ${max} members.` };
+    }
+    return { allowed: true };
+}
+
+export function isClaimable(invite: { inviteeEmailNormalized: string; status: string; expiresAt: number }, callerEmail: string, now: number): { claimable: boolean; reason?: string } {
+    if (invite.inviteeEmailNormalized !== callerEmail) {
+        return { claimable: false, reason: "Email mismatch." };
+    }
+    if (!OPEN_INVITE_STATUSES.includes(invite.status)) {
+        return { claimable: false, reason: `Invite is ${invite.status}.` };
+    }
+    if (invite.expiresAt < now) {
+        return { claimable: false, reason: "Expired." };
+    }
+    return { claimable: true };
+}
+
+export function deductCreditsViewerCheck(isTeamMember: boolean, teamRole: string | null): { allowed: boolean } {
+    if (isTeamMember && teamRole === "viewer") {
+        return { allowed: false };
+    }
+    return { allowed: true };
+}
+
+export function getInviteDetailsLogic(invite: { status: string; expiresAt: number } | null, now: number): { success: boolean; status?: string; message?: string } {
+    if (!invite) {
+        return { success: false, status: "not_found", message: "Invite not found" };
+    }
+    if (invite.status === "revoked") {
+        return { success: false, status: "revoked", message: "This invite is no longer valid" };
+    }
+    if (invite.status === "accepted") {
+        return { success: false, status: "accepted", message: "This invite has already been claimed" };
+    }
+    if (invite.expiresAt < now) {
+        return { success: false, status: "expired", message: "This invite has expired" };
+    }
+    return { success: true };
+}
 
 interface TeamInvite {
     inviteId: string;
@@ -3727,10 +3772,10 @@ async function enforceGenerationEntitlement(
             }));
         }
         if (options.batchQuantity) {
-            const batchDecision = resolveEntitlement({ plan: entitlement.basePlan, feature: "batchRun", quantity: options.batchQuantity });
-            if (!batchDecision.allowed) {
-                throw new HttpsError("permission-denied", batchDecision.reason || "batch_limit_exceeded");
-            }
+            // FR-136: enforce the per-plan batch cap (Pro 4 / Scale 36) via the canonical
+            // generators.validateBatchRunEntitlement helper. batchQuantity is the precomputed
+            // sizes×hooks×concepts total, so it is passed as the single dimension.
+            generators.validateBatchRunEntitlement(entitlement.basePlan, options.batchQuantity, 1, 1);
         }
     }
 
@@ -4115,6 +4160,14 @@ export const serverGenerateBuildPlan = onCall({
             response.warningCode = "copy_fidelity_degraded";
             response.failedFields = result.copyFidelityWarning.failedFields;
         }
+        if (result.culturalViolation) {
+            admin.firestore().collection("generations").add({
+                userId: request.auth.uid,
+                timestamp: Date.now(),
+                output: { phase: "build_plan" },
+                culturalViolation: result.culturalViolation,
+            }).catch(() => {});
+        }
         return response;
     } catch (error: any) {
         console.error("generateBuildPlan error:", error);
@@ -4136,7 +4189,7 @@ export const serverGenerateFinalAd = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId } = request.data;
+    const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId, _batchTotal } = request.data;
     void activeWorkspaceId;
     // ═══ MODE-FORMAT GATE (before any credit spend) ═══
     // Always run — even on edit/regen paths. An edit request that arrives with
@@ -4147,6 +4200,8 @@ export const serverGenerateFinalAd = onCall({
     // ═══ ENTITLEMENT: Check retargeting + aspect ratio gates ═══
     const entitlement = await enforceGenerationEntitlement(request.auth.uid, inputs, {
         requireAspectRatio: currentAspectRatio,
+        requireBatch: _batchTotal != null,
+        batchQuantity: _batchTotal ?? undefined,
     });
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setOpenAIKey(openaiApiKey.value());
@@ -4176,6 +4231,11 @@ export const serverGenerateFinalAd = onCall({
             const spec = resolveCreativeSpec({
                 selectedModes: inputs?.offerCreativeMode || ['standard_hero'],
                 hookAngle: inputs?.coldHookAngle || undefined,
+                campaignType: inputs?.campaignType,
+                visualStyleFamily: inputs?.visualStyleFamily || inputs?.universeMode || 'realistic',
+                referenceAdUsed: !!inputs?.referenceAd,
+                selectedSubStyle: inputs?.visualSubStyle || null,
+                selectedUniverse: inputs?.preferredUniverse || inputs?.resolvedUniverse || null,
             });
             const templateId = selectLayoutTemplate(spec.primaryMode, spec.secondaryMode, inputs?.coldHookAngle, currentAspectRatio);
             // Extract TECHNICAL_PROMPT for resolvedImagePrompt, strip it for blueprintText

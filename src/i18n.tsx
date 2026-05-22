@@ -517,6 +517,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'billing.status.past_due': 'Past Due',
         'billing.status.cancelling': 'Cancelling',
         'billing.status.cancelled': 'Cancelled',
+        'billing.savedProjectOverLimit': 'Project limit reached ({limit} on your plan). Upgrade to save more.',
+        'billing.audienceAvatarOverLimit': 'Avatar limit reached ({limit} on your plan). Upgrade to save more.',
 
         // ── Team ──
         'team.title': 'Team',
@@ -1248,6 +1250,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'billing.status.past_due': 'متأخر',
         'billing.status.cancelling': 'قيد الإلغاء',
         'billing.status.cancelled': 'ملغى',
+        'billing.savedProjectOverLimit': 'تم بلوغ حد المشاريع ({limit} في خطتك). قم بالترقية للحفظ.',
+        'billing.audienceAvatarOverLimit': 'تم بلوغ حد الأفاتار ({limit} في خطتك). قم بالترقية للحفظ.',
 
         // ── Team ──
         'team.title': 'الفريق',
