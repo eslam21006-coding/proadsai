@@ -2383,10 +2383,16 @@ const App: React.FC = () => {
       try {
         // Load from both sources and merge (cloud is source of truth)
         // Use effectiveUid so team members see the owner's projects
-        const [localProjects, cloudProjects] = await Promise.all([
-          getAllProjectsFromDB(effectiveUid),
-          getAllProjectsFromFirestore(effectiveUid),
-        ]);
+        // Team members route through getUserProjects callable for workspace-access control
+        let cloudProjects: SavedProject[];
+        if (teamOwnerUid) {
+          const { workspaceService } = await import('./services/workspaceService');
+          const result = await workspaceService.getUserProjects({ pageSize: 100 });
+          cloudProjects = (result.data?.projects ?? []) as SavedProject[];
+        } else {
+          cloudProjects = await getAllProjectsFromFirestore(effectiveUid);
+        }
+        const localProjects = await getAllProjectsFromDB(effectiveUid);
         const savedProjects = mergeProjects(cloudProjects, localProjects);
         // Sync any cloud-only projects to local IndexedDB for offline access
         for (const cp of cloudProjects) {
@@ -3751,6 +3757,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       setPhase('concept_review');
       updateHighestUnlocked('concept_review');
       awardMilestone('conceptsGenerated');
+      if (loadedFavoriteId) {
+        setFavUpdatePrompt({ phase: 'concepts', newGenId: Date.now().toString() });
+      }
     } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
   };
 
@@ -5663,6 +5672,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                             <FeedbackButtons
                               generationId={hookGenerationIds[v] || ''}
                               compact={true}
+                              initialFavorite={favoriteIds.has(hookGenerationIds[v] || '')}
                               onRegenerate={(tags, freeText) => {
                                 const context = feedbackService.buildRegenerationContext(raw, tags, freeText);
                                 handlePrecisionHookEdit(v, context);
@@ -7009,6 +7019,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     <FeedbackButtons
                       generationId={renderGenerationId}
                       showUsedThis={true}
+                      initialFavorite={favoriteIds.has(renderGenerationId || '')}
                     />
                   </div>
                 )}
@@ -7412,6 +7423,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         generationId={captionGenerationId}
                         showUsedThis={true}
                         compact={true}
+                        initialFavorite={favoriteIds.has(captionGenerationId || '')}
                       />
                     </div>
                   )}
@@ -7698,7 +7710,13 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           isOpen={openFavoritesPhase === 'concepts'}
           onClose={() => setOpenFavoritesPhase(null)}
           workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
-          onLoad={(record) => {
+          onLoad={async (record) => {
+            if (conceptsText && user) {
+              const existingConceptGenId = conceptsFavs.find(f => f.output?.conceptText === conceptsText)?.id;
+              if (existingConceptGenId) {
+                await feedbackService.toggleFavorite(existingConceptGenId, true).catch(() => {});
+              }
+            }
             if (record.output?.conceptText) setConceptsText(record.output.conceptText);
             if (record.output?.buildPlan) setBuildPlan(record.output.buildPlan);
             // Rewind downstream: a loaded concept is a new branch. Strand

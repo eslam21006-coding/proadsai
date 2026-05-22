@@ -54,6 +54,8 @@ export default function FavoritesPanel({ phase, onLoad, isOpen, onClose, workspa
   const { favorites, loading, hasMore, loadMore, connectionState, markRemovedInList } = useFavorites({ phase, workspaceId });
   const [sortMode, setSortMode] = useState<SortMode>('newest');
   const [removing, setRemoving] = useState<string | null>(null);
+  const [deletedNoticeId, setDeletedNoticeId] = useState<string | null>(null);
+  const [schemaMismatchId, setSchemaMismatchId] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const sortToggleRef = useRef<HTMLButtonElement>(null);
@@ -63,6 +65,18 @@ export default function FavoritesPanel({ phase, onLoad, isOpen, onClose, workspa
   const phaseLabel = t(`fav.phase_label.${phase}`);
   const regionLabel = t(`fav.aria_region.${phase}`);
   const styles = PHASE_STYLES[phase];
+
+  const hasSchemaMismatch = useCallback((record: GenerationRecord): boolean => {
+    const o = record.output;
+    if (!o) return true;
+    switch (phase) {
+      case 'hooks': return !o.hookText && !o.fullResponse;
+      case 'concepts': return !o.conceptText && !o.fullResponse;
+      case 'render': return !o.imageUrl && !o.fullResponse;
+      case 'caption': return !o.captionText && !o.fullResponse;
+      default: return false;
+    }
+  }, [phase]);
 
   const previewOf = useCallback((record: GenerationRecord): string => {
     const o = record.output;
@@ -211,6 +225,36 @@ export default function FavoritesPanel({ phase, onLoad, isOpen, onClose, workspa
           </div>
         )}
 
+        {deletedNoticeId && (
+          <div aria-live="assertive" className="px-4 py-3 bg-red-500/10 border-b border-red-500/20">
+            <p className="text-[11px] text-red-400 font-bold mb-1">{t('fav.deleted_title')}</p>
+            <p className="text-[10px] text-slate-400 mb-2">{t('fav.deleted_desc')}</p>
+            <button
+              onClick={async () => {
+                await feedbackService.toggleFavorite(deletedNoticeId, false).catch(() => {});
+                markRemovedInList(deletedNoticeId);
+                setDeletedNoticeId(null);
+              }}
+              className="text-[9px] font-bold uppercase text-red-400 hover:text-red-300 transition-colors"
+            >
+              {t('fav.deleted_dismiss')}
+            </button>
+          </div>
+        )}
+
+        {schemaMismatchId && (
+          <div aria-live="polite" className="px-4 py-3 bg-amber-500/10 border-b border-amber-500/20">
+            <p className="text-[11px] text-amber-400 font-bold mb-1">{t('fav.schema_mismatch_title')}</p>
+            <p className="text-[10px] text-slate-400 mb-2">{t('fav.schema_mismatch_desc')}</p>
+            <button
+              onClick={() => setSchemaMismatchId(null)}
+              className="text-[9px] font-bold uppercase text-amber-400 hover:text-amber-300 transition-colors"
+            >
+              {t('fav.remove') || 'Dismiss'}
+            </button>
+          </div>
+        )}
+
         <div
           className="flex-1 overflow-y-auto p-4 space-y-3 flex flex-col"
           {...(sorted.length > 0 ? { role: 'list', 'aria-label': t('fav.aria_list', { label: phaseLabel }) } : {})}
@@ -277,7 +321,18 @@ export default function FavoritesPanel({ phase, onLoad, isOpen, onClose, workspa
 
                   <div className="flex gap-2 pt-2 border-t border-slate-800/30">
                     <button
-                      onClick={() => onLoad(record)}
+                      onClick={() => {
+                        const o = record.output;
+                        const hasData = o && (o.hookText || o.conceptText || o.captionText || o.imageUrl || o.fullResponse);
+                        if (!hasData) {
+                          setDeletedNoticeId(record.id || 'unknown');
+                          return;
+                        }
+                        if (hasSchemaMismatch(record)) {
+                          setSchemaMismatchId(record.id || 'unknown');
+                        }
+                        onLoad(record);
+                      }}
                       aria-label={t('fav.aria_load', { label: phaseLabel.toLowerCase(), preview: truncatedPreview })}
                       className="flex-1 py-1.5 rounded-lg bg-blue-600/15 text-blue-400 hover:bg-blue-600 hover:text-white text-[8px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1"
                     >

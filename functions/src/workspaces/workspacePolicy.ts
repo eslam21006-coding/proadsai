@@ -117,13 +117,24 @@ export async function resolveCallerScope(callerUid: string): Promise<{
   ownerUid: string;
   allowedWorkspaceIds: string[] | "ALL";
 }> {
-  const teamDoc = await admin.firestore().collection(`users/${callerUid}/team`).doc("meta").get();
+  // Check if caller is a team member via their user doc
+  const callerDoc = await admin.firestore().collection("users").doc(callerUid).get();
+  const callerData = callerDoc.data();
 
-  if (teamDoc.exists && teamDoc.data()?.ownerUid) {
-    const ownerUid = teamDoc.data()!.ownerUid;
-    const membersSnap = await admin.firestore().collection(`users/${ownerUid}/team/members`).doc(callerUid).get();
-    const allowedWs: string[] = membersSnap.exists ? (membersSnap.data()?.workspaceIds ?? []) : [];
-    return { ownerUid, allowedWorkspaceIds: allowedWs };
+  if (callerData?.isTeamMember && callerData?.teamOwnerUid) {
+    const ownerUid = callerData.teamOwnerUid;
+    // Find the member doc in the owner's team subcollection
+    const memberSnap = await admin.firestore()
+      .collection(`users/${ownerUid}/team`)
+      .where("uid", "==", callerUid)
+      .limit(1)
+      .get();
+    if (!memberSnap.empty) {
+      const memberData = memberSnap.docs[0].data();
+      const allowedWs: string[] = memberData.workspaceAccess ?? [];
+      return { ownerUid, allowedWorkspaceIds: allowedWs };
+    }
+    return { ownerUid, allowedWorkspaceIds: [] };
   }
 
   const wsSnap = await admin.firestore().collection(`users/${callerUid}/workspaces`).get();

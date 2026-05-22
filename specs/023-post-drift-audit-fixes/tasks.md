@@ -127,25 +127,25 @@ description: "Task list for Post-Phase-21 Drift Audit Remediation"
 - [x] T048 [P] [US2] Add `test:lang` script to `functions/package.json` (`npm run build && node lib/languageQuality.test.js`) (FR-203). Done: `npm run test:lang` runs the 25 fixtures.
 - [x] T049 [US2] Chain `test:lang` + the team fixtures into the aggregate `npm test` in `functions/package.json` (FR-204/205). Done: `npm test` runs lang + team suites.
 - [x] T050 [US2] Rewrite `functions/src/teamFixtureTests.ts` assertions to exercise the real exported callables (not logic clones) (FR-206). Done: fixtures call deployed callables; would catch a prod regression.
-- [ ] T051 [P] [US2] Add `.github/workflows/ci.yml` running build + `npm test` on push/PR, blocking merge on failure (FR-216). Done: a PR with a broken parity test is blocked; clean PR passes. **Gates T048–T050, T052, T058.**
+- [x] T051 [P] [US2] Add `.github/workflows/ci.yml` running build + `npm test` on push/PR, blocking merge on failure (FR-216). Done: a PR with a broken parity test is blocked; clean PR passes. **Gates T048–T050, T052, T058.**
 
 ### Phase 13 — Team project listing (LINKED to T025)
 
-- [ ] T052 [US2] Fix `resolveCallerScope` in `functions/src/workspaces/workspacePolicy.ts:116-132` to read `users/{ownerUid}/team/{autoId}` + `workspaceAccess[]` (remove the stale `team/meta` path) (FR-211). Done: a member's `getUserProjects` returns owner workspace-scoped projects; deny path reachable. **DEPENDS ON T025.**
-- [ ] T053 [US2] Wire `getUserProjects` into the frontend for team members in `src/components/SavedProjectsPanel/*` / `src/services/*` (FR-213). Done: member listing goes through `getUserProjects` with pagination. **DEPENDS ON T052.**
-- [ ] T054 [P] [US2] Restructure `storage.rules` so the 256KB/ext thumbnail cap is not shadowed by the broad owner rule (FR-212). Done: oversized/non-image thumbnail upload is rejected (emulator).
-- [ ] T055 [P] [US2] Create `functions/src/__tests__/savedProjects.getUserProjects.test.ts` with a `permission_denied_no_metadata_leak` assertion + add to the test script (FR-214). Done: test runs in `npm test` and asserts the denial leaks no metadata.
+- [x] T052 [US2] Fix `resolveCallerScope` in `functions/src/workspaces/workspacePolicy.ts:116-132` to read `users/{ownerUid}/team/{autoId}` + `workspaceAccess[]` (remove the stale `team/meta` path) (FR-211). Done: a member's `getUserProjects` returns owner workspace-scoped projects; deny path reachable. **DEPENDS ON T025.**
+- [x] T053 [US2] Wire `getUserProjects` into the frontend for team members in `src/components/SavedProjectsPanel/*` / `src/services/*` (FR-213). Done: member listing goes through `getUserProjects` with pagination. **DEPENDS ON T052.**
+- [x] T054 [P] [US2] Restructure `storage.rules` so the 256KB/ext thumbnail cap is not shadowed by the broad owner rule (FR-212). Done: oversized/non-image thumbnail upload is rejected (emulator).
+- [x] T055 [P] [US2] Create `functions/src/__tests__/savedProjects.getUserProjects.test.ts` with a `permission_denied_no_metadata_leak` assertion + add to the test script (FR-214). Done: test runs in `npm test` and asserts the denial leaks no metadata.
 
 ### Phase 10 — Favorites quality (App.tsx cluster sequential)
 
-- [ ] T056 [US2] Pass `initialFavorite={favoriteIds.has(genId)}` to every `<FeedbackButtons>` in `src/App.tsx` (FR-207). Done: correct bookmark state on first paint, no flicker.
-- [ ] T057 [US2] Implement T025-favorites: deleted-favorite "no longer available" + remove offer in `src/components/SavedProjectsPanel/*` + i18n (FR-208). Done: loading a deleted favorite shows the message.
-- [ ] T058 [US2] Implement T026-favorites: schema-mismatch notice on missing fields in `src/components/SavedProjectsPanel/*` + i18n (FR-209). Done: loading a partial favorite shows the notice.
-- [ ] T059 [US2] Cover concepts phase: auto-save-before-load + save-back modal fires for concepts in `src/App.tsx` (FR-210). Done: loading/regenerating a concept auto-saves and prompts update/keep-both.
+- [x] T056 [US2] Pass `initialFavorite={favoriteIds.has(genId)}` to every `<FeedbackButtons>` in `src/App.tsx` (FR-207). Done: correct bookmark state on first paint, no flicker.
+- [x] T057 [US2] Implement T025-favorites: deleted-favorite "no longer available" + remove offer in `src/components/SavedProjectsPanel/*` + i18n (FR-208). Done: loading a deleted favorite shows the message.
+- [x] T058 [US2] Implement T026-favorites: schema-mismatch notice on missing fields in `src/components/SavedProjectsPanel/*` + i18n (FR-209). Done: loading a partial favorite shows the notice.
+- [x] T059 [US2] Cover concepts phase: auto-save-before-load + save-back modal fires for concepts in `src/App.tsx` (FR-210). Done: loading/regenerating a concept auto-saves and prompts update/keep-both.
 
 ### Phase 16 — Resolver parity
 
-- [ ] T060 [P] [US2] Add a parity test asserting `functions/src/creativeResolver.ts` and `src/creativeResolver.ts` keep `ALLOWED_PAIRS` + reason strings byte-identical; add to `npm test` (FR-215). Done: a one-sided edit fails CI.
+- [x] T060 [P] [US2] Add a parity test asserting `functions/src/creativeResolver.ts` and `src/creativeResolver.ts` keep `ALLOWED_PAIRS` + reason strings byte-identical; add to `npm test` (FR-215). Done: a one-sided edit fails CI.
 
 **Checkpoint (SC-201)**: Tier-2 scenarios pass AND Tier-1 re-run passes; CI green and gating. → Tier 3 may begin.
 
