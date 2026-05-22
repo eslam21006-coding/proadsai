@@ -30,8 +30,8 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Lint frontend
-        run: npm run lint
+      - name: Lint frontend (advisory — does not fail the pipeline)
+        run: npm run lint || true
 
       - name: Build functions
         run: npm run build

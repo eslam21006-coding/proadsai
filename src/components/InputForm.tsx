@@ -1105,7 +1105,9 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
             return;
           }
 
-          // Apply safe downgrades (swap mode but don't block)
+          // Apply safe downgrades (swap mode but don't block). Build a local submit copy and
+          // update React state via setInputs — never mutate the useState value in place.
+          let submitInputs = inputs;
           if (modeValidation.downgrades.length > 0) {
             let modesChanged: string[] = [...selectedModes];
             for (const dg of modeValidation.downgrades) {
@@ -1117,26 +1119,28 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                 'info'
               );
             }
-            inputs.offerCreativeMode = [...new Set(modesChanged)] as typeof inputs.offerCreativeMode;
+            const dedupedModes = [...new Set(modesChanged)] as typeof inputs.offerCreativeMode;
+            setInputs(prev => ({ ...prev, offerCreativeMode: dedupedModes }));
+            // setInputs is async; keep this submit's local copy in sync so onSubmit below sees it.
+            submitInputs = { ...submitInputs, offerCreativeMode: dedupedModes };
           }
 
           // Testimonial Wall: enforce carousel + require screenshots
-          const hasMode = (id: string) => (inputs.offerCreativeMode || []).includes(id as any);
+          const hasMode = (id: string) => (submitInputs.offerCreativeMode || []).includes(id as any);
           if (hasMode('testimonial_carousel')) {
-            const screenshots = (inputs as any).testimonialScreenshots || [];
+            const screenshots = (submitInputs as any).testimonialScreenshots || [];
             if (screenshots.length === 0) {
               if (showToast) showToast(appLang === 'ar' ? 'ارفع لقطة شاشة واحدة على الأقل للشهادات' : 'Upload at least one testimonial screenshot.', 'error');
               return;
             }
-            // Auto-switch to carousel if not already
-            if (inputs.adMode !== 'carousel') {
-              inputs.adMode = 'carousel' as any;
-              inputs.slideCount = Math.min(screenshots.length + 2, 5);
+            // Auto-switch to carousel if not already (local submit copy only — no in-place mutation)
+            if (submitInputs.adMode !== 'carousel') {
+              submitInputs = { ...submitInputs, adMode: 'carousel' as AdMode, slideCount: Math.min(screenshots.length + 2, 5) };
               if (showToast) showToast(t('override.testimonial_requires_carousel'), 'info');
             }
           }
           {/* Spec G: when testimonial screenshots are uploaded AND adMode === 'single', auto-switch to carousel: setInputs(prev => ({ ...prev, adMode: 'carousel', slideCount: Math.min(3, getMaxSlides(userPlan)) })); if (showToast) showToast(t('override.testimonial_requires_carousel'), 'info'); */}
-          onSubmit(inputs);
+          onSubmit(submitInputs);
         }}
         className="space-y-6 pb-32"
       >
