@@ -69,3 +69,4 @@ Desktop.ini
 test-payload.json
 test-payload*.json
 *.test-payload.json
+.playwright-mcp/
