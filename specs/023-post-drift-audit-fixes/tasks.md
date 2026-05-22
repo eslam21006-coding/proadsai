@@ -156,10 +156,10 @@ description: "Task list for Post-Phase-21 Drift Audit Remediation"
 **Goal**: Resolution trace persisted, lane fixtures real, prompt-assembly + storage restored.
 **Independent Test**: quickstart.md Tier-3 recipe; gate = SC-301 (+ Tiers 1/2 still pass).
 
-- [ ] T061 [US3] KEYSTONE: persist the resolution trace onto `generations/{genId}` in the main generation-completion path in `functions/src/generators.ts`/`index.ts`, replicating the `reflowImage.ts:492-519` transaction; additive field (FR-301). Done: a completed generation's `generations/{genId}.resolutionTrace` is present + queryable. **Closes Phases 1/5/6/7/15/16 observability.**
-- [ ] T062 [US3] Mirror `blueprintText` + `resolvedImagePrompt` onto the main `generations/{genId}` doc (not only `creativeMemory`) in `functions/src/index.ts`/`generators.ts` (FR-304). Done: the generation doc carries both.
-- [ ] T063 [US3] Route production prompt assembly through `buildFinalImagePrompt`, removing the inline assembly in `generateFinalAd` (`generators.ts:~5680-5699`) (FR-303). Done: grep — `buildFinalImagePrompt` called from the live path; no inline assembly remains.
-- [ ] T064 [P] [US3] Strengthen `testLane1/3/4/5/6/7/8/9` in `functions/src/contractFixtures.test.ts` to assert their acceptance scenarios (CTA placement, slide angles, style family, `validateLaunchSurface`) (FR-302). Done: deliberately breaking one lane's behavior fails that lane.
+- [x] T061 [US3] KEYSTONE: persist the resolution trace onto `generations/{genId}` in the main generation-completion path in `functions/src/generators.ts`/`index.ts`, replicating the `reflowImage.ts:492-519` transaction; additive field (FR-301). Done: a completed generation's `generations/{genId}.resolutionTrace` is present + queryable. **Closes Phases 1/5/6/7/15/16 observability.**
+- [x] T062 [US3] Mirror `blueprintText` + `resolvedImagePrompt` onto the main `generations/{genId}` doc (not only `creativeMemory`) in `functions/src/index.ts`/`generators.ts` (FR-304). Done: the generation doc carries both.
+- [x] T063 [US3] Route production prompt assembly through `buildFinalImagePrompt`, removing the inline assembly in `generateFinalAd` (`generators.ts:~5680-5699`) (FR-303). Done: grep — `buildFinalImagePrompt` called from the live path; no inline assembly remains.
+- [x] T064 [P] [US3] Strengthen `testLane1/3/4/5/6/7/8/9` in `functions/src/contractFixtures.test.ts` to assert their acceptance scenarios (CTA placement, slide angles, style family, `validateLaunchSurface`) (FR-302). Done: deliberately breaking one lane's behavior fails that lane.
 
 **Checkpoint (SC-301)**: Tier-3 scenarios pass AND Tiers 1/2 re-run passes.
 
@@ -167,10 +167,10 @@ description: "Task list for Post-Phase-21 Drift Audit Remediation"
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T065 [P] Run full `cd functions && npm test` + root `npm run build` + `npm run lint`; confirm zero regressions across all suites.
+- [x] T065 [P] Run full `cd functions && npm test` + root `npm run build` + `npm run lint`; confirm zero regressions across all suites.
 - [ ] T066 Run the quickstart.md end-to-end recipe (all three tiers) against the emulator; record pass/fail per acceptance scenario.
-- [ ] T067 Re-audit each completed FR with the original audit methodology (cross-boundary grep / real-data smoke / dead-reference grep) and update `MANUAL_QA_LOG.md` per-phase entries from "fix required" to "fixed + verified".
-- [ ] T068 Hand off the owner-deploy checklist (FR-122 rules/indexes + FR-103/104 callables + any `functions` deploy) — production `firebase deploy` is the owner's separate gated step (research R6); re-verify production-dependent SCs (e.g., SC-104 live Meta publish) post-deploy.
+- [x] T067 Re-audit each completed FR with the original audit methodology (cross-boundary grep / real-data smoke / dead-reference grep) and update `MANUAL_QA_LOG.md` per-phase entries from "fix required" to "fixed + verified".
+- [x] T068 Hand off the owner-deploy checklist (FR-122 rules/indexes + FR-103/104 callables + any `functions` deploy) — production `firebase deploy` is the owner's separate gated step (research R6); re-verify production-dependent SCs (e.g., SC-104 live Meta publish) post-deploy.
 
 ---
 

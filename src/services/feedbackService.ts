@@ -156,7 +156,8 @@ class FeedbackService {
         creativeIdentity?: GenerationRecord['creativeIdentity'],
         workspaceId?: string | null,
         failureClass: FailureClass | null = null,
-        costEstimate: CostEstimate | null = null
+        costEstimate: CostEstimate | null = null,
+        resolutionTrace?: any | null
     ): Promise<string> {
         const record: Omit<GenerationRecord, 'id'> & { workspaceId?: string | null } = {
             userId,
@@ -199,6 +200,7 @@ class FeedbackService {
                 aspectRatio,
             },
             ...(creativeIdentity ? { creativeIdentity } : {}),
+            ...(resolutionTrace ? { resolutionTrace } : {}),
         };
 
         try {

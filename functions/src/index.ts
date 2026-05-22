@@ -4263,7 +4263,8 @@ export const serverGenerateFinalAd = onCall({
         }
 
         if (result.image) {
-            return { success: true, imageBase64: result.image, errorCode: null, costEstimate: generators.getCostEstimate() };
+            const trace = generators.getLastResolutionTrace();
+            return { success: true, imageBase64: result.image, errorCode: null, costEstimate: generators.getCostEstimate(), resolutionTrace: trace };
         } else {
             return {
                 success: false,

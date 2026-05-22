@@ -3853,7 +3853,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500) },
               conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
               canUseWorkspaces ? activeWorkspaceId : null,
-              null, null
+              null, null, mockupResult.resolutionTrace
             );
             setRenderGenerationId(savedGenId);
             if (loadedFavoriteId && savedGenId) {

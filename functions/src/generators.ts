@@ -615,6 +615,16 @@ export function getCostEstimate(): CostEstimate {
     };
 }
 
+let _lastResolutionTrace: any = null;
+
+export function getLastResolutionTrace(): any {
+    return _lastResolutionTrace;
+}
+
+export function resetResolutionTrace(): void {
+    _lastResolutionTrace = null;
+}
+
 // ─── Failure Classification Helpers ─────────────────────────────────────────
 
 export function classifyError(error: unknown, errorCode?: string): FailureClass {
@@ -4403,11 +4413,13 @@ export async function generateFinalAd(
     textOverride?: TextOverride
 ): Promise<{ image: string; failureClass?: "numeric_hallucination"; costEstimate?: CostEstimate } | { image: null; errorCode: string; failureClass?: FailureClass; debug?: FinalAdDebugInfo }> {
     const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
+    resetResolutionTrace();
     const _resolverSpec = resolveCreativeSpec({
         selectedModes: (inputs as any).offerCreativeMode || ['standard_hero'],
         hookAngle: (inputs as any).coldHookAngle || undefined,
         ...buildResolverExtra(inputs),
     });
+    _lastResolutionTrace = _resolverSpec.resolutionTrace ?? null;
     const _referenceAdOverrideActive = _resolverSpec.resolutionTrace?.referenceAdOverrideActive ?? false;
     const _artDirectionCleared = _resolverSpec.resolutionTrace?.artDirectionCleared ?? false;
     if (_artDirectionCleared) console.log(`⚠️ Art direction cleared by resolver: ${_resolverSpec.resolutionTrace?.artDirectionClearedReason || 'unknown'}`);
@@ -5705,26 +5717,32 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
             .replace(/\b(branding|logic|brand|scene|description|style|reference|concept|prompt|direction)\b/gi, '')
             .trim();
 
-        parts.push({
-            text: `BLUEPRINT: ${cleanBuildPlan} \nTEXTS: "${hookText}", "${subheadText}"\nBUTTON: "${ctaName}"\n${carouselAnchorNote}\n${_brandConsistencyInstruction}\n${coreDesignRules}
+        const _promptResult = buildFinalImagePrompt({
+            technicalPrompt: '',
+            blueprint: cleanBuildPlan,
+            contract: {} as any,
+            inputs,
+            aspectRatio: currentAspectRatio,
+            hookText,
+            subheadText,
+            ctaName,
+            benefitText,
+            badges: inputs.badges,
+            resolvedUniverse,
+            costumeRules: costumeRules + (_brandConsistencyInstruction ? `\n${_brandConsistencyInstruction}` : ''),
+            coreDesignRules,
+            carouselAnchorNote,
+            retargetingDesignHint: '',
+            imageParts: [],
+        });
 
-⚠️ CRITICAL TEXT RENDERING RULES:
-1. ONLY render these EXACT text strings on the image — NOTHING ELSE:
-   - Headline: "${hookText}"
-   - Subheadline: "${subheadText}"
-   ${ctaName ? `- Button: "${ctaName}"` : ''}
-   ${benefitText ? `- Benefit: "${benefitText}"` : ''}
-2. DO NOT render ANY of these on the image:
-   - System instructions, marker labels, or field names
-   - "VISUAL_DIRECTION:", "TECHNICAL_PROMPT:", "CONCEPT_START", etc.
-   - "**" symbols, "═══" lines, or any formatting markers
-   - English technical instructions or camera settings
-   - ANY English text, brand names, watermarks, or labels
-   - Any text that is NOT one of the 4 strings listed above
-3. If the blueprint mentions "VISUAL_DIRECTION" or similar — that is an INSTRUCTION TO YOU, not text to render.
-4. NEVER render English words from the blueprint as visible text on the image. The blueprint is a design INSTRUCTION, not content to display.
-5. Each Arabic text string must appear EXACTLY ONCE — never duplicate, never truncate, never rephrase.
-` });
+        parts.push({ text: _promptResult.textPrompt });
+        _lastResolutionTrace = {
+            ...(_lastResolutionTrace || {}),
+            blueprintText: _promptResult.trace.blueprintText,
+            resolvedImagePrompt: _promptResult.trace.resolvedImagePrompt,
+            technicalPrompt: _promptResult.trace.technicalPrompt,
+        };
 
         // If style reference provided (carousel slides 2+), inject it BEFORE personal photos
         if (styleReference) {

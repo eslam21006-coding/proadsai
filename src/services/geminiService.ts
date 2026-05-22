@@ -259,7 +259,7 @@ Use this information to better understand the brand's positioning, tone, and tar
     editInstruction?: string, base64ToEdit?: string,
     styleReference?: string, textOverride?: TextOverride,
     activeWorkspaceId?: string, batchTotal?: number
-  ): Promise<{ image: string | null; errorCode?: string; debug?: any }> {
+  ): Promise<{ image: string | null; errorCode?: string; debug?: any; resolutionTrace?: any }> {
     const inputsWithPhotos = { ...inputs } as any;
     inputsWithPhotos.personalPhotos = (inputs.personalPhotos || []).slice(0, 5);
     inputsWithPhotos.brandLogos = (inputs.brandLogos || []).slice(0, 5);
@@ -281,6 +281,7 @@ Use this information to better understand the brand's positioning, tone, and tar
       image,
       errorCode: data.errorCode || (raw && !image ? 'invalid_image_format' : undefined),
       debug: data.debug || null,
+      resolutionTrace: data.resolutionTrace || null,
     };
   }
 

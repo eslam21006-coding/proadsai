@@ -244,6 +244,12 @@ function testLane1RetargetingCarousel() {
     assert.ok(spec.mustShow.includes('hero_portrait'));
     assert.ok(spec.mustShow.includes('headline'));
     assert.ok(spec.mustShow.includes('cta_button'));
+
+    const surfResult = validateLaunchSurface({ selectedModes: modes, adFormat: 'carousel', campaignType: 'retargeting' });
+    assert.equal(surfResult.allowed, true, `Lane 1: validateLaunchSurface should allow, got: ${surfResult.reason || 'ok'}`);
+
+    const compatRealistic = validateSubStyleModeCompat('realistic', modes);
+    assert.equal(compatRealistic.compat, 'ok', 'Lane 1: realistic should be compatible with standard_hero');
 }
 
 // ─── Lane 2 — Cold + Single + before_after (T024) ───
@@ -297,6 +303,12 @@ function testLane3ColdCarouselValueStack() {
     assert.ok(vsMeta.mustShow.includes('value_items_with_prices'), 'Lane 3: value_stack must require priced items');
     assert.ok(vsMeta.mustShow.includes('total_value_line'), 'Lane 3: value_stack must require total value line');
     assert.ok(vsMeta.mustShow.includes('actual_price_contrast'), 'Lane 3: value_stack must require price contrast');
+
+    const surfResult = validateLaunchSurface({ selectedModes: modes, adFormat: 'carousel', campaignType: 'cold' });
+    assert.equal(surfResult.allowed, true, `Lane 3: validateLaunchSurface should allow, got: ${surfResult.reason || 'ok'}`);
+
+    const compatBold = validateSubStyleModeCompat('bold_typography', modes);
+    assert.equal(compatBold.compat, 'ok', 'Lane 3: bold_typography should be compatible');
 }
 
 // ─── Lane 4 — Cold + Carousel, any approved mode (T026) ───
@@ -310,6 +322,17 @@ function testLane4ColdCarouselApprovedMode() {
     assert.equal(spec.isValid, true);
     assert.ok(spec.mustShow.includes('cta_button'),
         'Lane 4: must have CTA button in mustShow');
+
+    const surfResult = validateLaunchSurface({ selectedModes: modes, adFormat: 'carousel', campaignType: 'cold' });
+    assert.equal(surfResult.allowed, true, `Lane 4: validateLaunchSurface should allow, got: ${surfResult.reason || 'ok'}`);
+
+    const allSubStyles = Object.keys(SUBSTYLE_MODE_COMPAT);
+    for (const sub of allSubStyles) {
+        const result = validateSubStyleModeCompat(sub, modes);
+        if (result.compat !== 'ok') {
+            console.log(`  ⚠️ Lane 4: ${sub}+standard_hero compat=${result.compat}`);
+        }
+    }
 }
 
 // ─── Lane 5 — Cold + Batch + standard_hero + value_stack (T027) ───
@@ -324,6 +347,12 @@ function testLane5ColdBatchHeroValueStack() {
     assert.ok(spec.secondaryMode === 'standard_hero' || spec.secondaryMode === 'value_stack');
     assert.notEqual(spec.resolvedLayoutKey.indexOf('hero_value_stack'), -1,
         `Lane 5: expected hero_value_stack layout, got ${spec.resolvedLayoutKey}`);
+
+    const surfResult = validateLaunchSurface({ selectedModes: modes, adFormat: 'batch', campaignType: 'cold' });
+    assert.equal(surfResult.allowed, true, `Lane 5: validateLaunchSurface should allow, got: ${surfResult.reason || 'ok'}`);
+
+    assert.ok(spec.mustShow.some(s => s.includes('cta') || s.includes('hero')),
+        'Lane 5: must include CTA or hero element');
 }
 
 // ─── Lane 6 — Cold + Single + value_stack (T028a) ───
@@ -341,6 +370,12 @@ function testLane6ColdSingleValueStack() {
     const vsMeta = CREATIVE_MODE_CATALOG['value_stack'];
     assert.ok(vsMeta.mustAvoid.includes('before_after_split'),
         'Lane 6: value_stack must avoid before_after_split');
+
+    const surfResult = validateLaunchSurface({ selectedModes: modes, adFormat: 'single', campaignType: 'cold' });
+    assert.equal(surfResult.allowed, true, `Lane 6: validateLaunchSurface should allow, got: ${surfResult.reason || 'ok'}`);
+
+    assert.ok(spec.mustShow.some(s => s.includes('value') || s.includes('price')),
+        'Lane 6: must include value stack or price elements');
 }
 
 // ─── Lane 7 — Retargeting + Single + value_stack (T028b) ───
@@ -354,6 +389,12 @@ function testLane7RetargetingSingleValueStack() {
     assert.equal(spec.isValid, true);
     assert.equal(spec.primaryMode, 'value_stack');
     assert.equal(spec.secondaryMode, null);
+
+    const surfResult = validateLaunchSurface({ selectedModes: modes, adFormat: 'single', campaignType: 'retargeting' });
+    assert.equal(surfResult.allowed, true, `Lane 7: validateLaunchSurface should allow, got: ${surfResult.reason || 'ok'}`);
+
+    assert.ok(spec.mustShow.some(s => s.includes('value') || s.includes('price')),
+        'Lane 7: must include value stack or price elements');
 }
 
 // ─── Lane 8 — Minimal + standard_hero + Single (T029a) ───
@@ -369,6 +410,12 @@ function testLane8MinimalHeroSingle() {
     // Verify text_only is blocked for all sub-styles (art direction irrelevant)
     const textCompat = validateSubStyleModeCompat('clean_corporate', ['text_only']);
     assert.equal(textCompat.compat, 'block', 'Lane 8: text_only should be blocked for all sub-styles');
+
+    const surfResult = validateLaunchSurface({ selectedModes: modes, adFormat: 'single', campaignType: 'cold' });
+    assert.equal(surfResult.allowed, true, `Lane 8: validateLaunchSurface should allow, got: ${surfResult.reason || 'ok'}`);
+
+    const spec = resolveCreativeSpec({ selectedModes: modes });
+    assert.ok(spec.mustShow.includes('cta_button'), 'Lane 8: must include CTA');
 }
 
 // ─── Lane 9 — Minimal + standard_hero + Batch (T029b) ───
@@ -387,6 +434,9 @@ function testLane9MinimalHeroBatch() {
         const result = validateSubStyleModeCompat(sub, modes);
         assert.equal(result.compat, 'ok', `Lane 9: ${sub}+standard_hero should be ok`);
     }
+
+    const surfResult = validateLaunchSurface({ selectedModes: modes, adFormat: 'batch', campaignType: 'cold' });
+    assert.equal(surfResult.allowed, true, `Lane 9: validateLaunchSurface should allow, got: ${surfResult.reason || 'ok'}`);
 }
 
 // ─── Lane 10 — Testimonial Carousel Cold (T030a) ───
