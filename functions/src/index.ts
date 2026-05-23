@@ -21,6 +21,7 @@ import { writeBillingState } from "./billing/billingState.js";
 import { assertOwner, assertWorkspaceActive, createWorkspaceWithLimit, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
 import { enforceProjectQuota } from "./savedProjects/projectQuota.js";
 import { deriveStatus } from "./savedProjects/projectStatus.js";
+import { isArabic, scanAndReplace } from "./culturalCompliance.js";
 // Re-export so Firebase deploys the callable from this module (main: lib/index.js).
 export { getUserProjects } from "./savedProjects/getUserProjects.js";
 import { probeMetaRole } from "./workspaces/metaRoleProbe.js";
@@ -4134,8 +4135,21 @@ export const serverGenerateConcepts = onCall({
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
         const result = await generators.generateConcepts(approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex);
+        // ── Cultural compliance: scan the concept/blueprint text returned to the client.
+        // The prompt and final-copy pipelines are already scanned in generators.ts, but
+        // the raw concept text shown in the client's concept cards was not — so haram
+        // motifs (wine, alcohol, inappropriate references) could surface there. Arabic-only,
+        // mirrors the scanAndReplace usage in generators.ts.
+        let conceptText = result.text;
+        if (isArabic(inputs?.adLanguage) && typeof conceptText === "string" && conceptText) {
+            const { cleaned, matched } = scanAndReplace(conceptText, "adCopy");
+            if (matched.length > 0) {
+                conceptText = cleaned;
+                console.log(`🕌 Cultural compliance scan (serverGenerateConcepts): replaced [${matched.join(", ")}]`);
+            }
+        }
         const rg = result.rankingGuidance;
-        return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null, costEstimate: generators.getCostEstimate() };
+        return { success: true, text: conceptText, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null, costEstimate: generators.getCostEstimate() };
     } catch (error: any) {
         console.error("generateConcepts error:", error);
         const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateConcepts", inputs });
@@ -6282,6 +6296,23 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
                 ...r,
                 url: r.url && r.url.length > 5000 ? null : r.url,
             }));
+        }
+        // Strip base64 image data from mockupHistory before persisting. Each entry
+        // carries the full base64 data URL in `rawBase64` (and `url` itself can hold
+        // base64 when the client's blob-URL conversion failed) — a single render is
+        // ~1-5 MB, so a few entries blow past Firestore's 1 MiB document limit and
+        // fail the write. The durable Firebase Storage `url` is kept; the heavy base64
+        // is replaced with a placeholder. Mirrors the batchResults URL-trimming above.
+        if (Array.isArray(cleanProject.mockupHistory) && cleanProject.mockupHistory.length > 0) {
+            cleanProject.mockupHistory = cleanProject.mockupHistory.map((m: any) => {
+                const trimmed: Record<string, any> = { ...m };
+                if (trimmed.rawBase64 != null) trimmed.rawBase64 = "stored_externally";
+                // A `url` longer than 5000 chars is a base64 data URL, not a Storage URL.
+                if (typeof trimmed.url === "string" && trimmed.url.length > 5000) {
+                    trimmed.url = "stored_externally";
+                }
+                return trimmed;
+            });
         }
         txn.set(projectRef, cleanProject, { merge: true });
         return newStatus;
