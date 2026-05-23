@@ -117,29 +117,42 @@ export async function resolveCallerScope(callerUid: string): Promise<{
   ownerUid: string;
   allowedWorkspaceIds: string[] | "ALL";
 }> {
-  // Check if caller is a team member via their user doc
-  const callerDoc = await admin.firestore().collection("users").doc(callerUid).get();
-  const callerData = callerDoc.data();
+  try {
+    // Check if caller is a team member via their user doc
+    const callerDoc = await admin.firestore().collection("users").doc(callerUid).get();
+    const callerData = callerDoc.data();
 
-  if (callerData?.isTeamMember && callerData?.teamOwnerUid) {
-    const ownerUid = callerData.teamOwnerUid;
-    // Find the member doc in the owner's team subcollection
-    const memberSnap = await admin.firestore()
-      .collection(`users/${ownerUid}/team`)
-      .where("uid", "==", callerUid)
-      .limit(1)
-      .get();
-    if (!memberSnap.empty) {
-      const memberData = memberSnap.docs[0].data();
-      const allowedWs: string[] = memberData.workspaceAccess ?? [];
-      return { ownerUid, allowedWorkspaceIds: allowedWs };
+    if (callerData?.isTeamMember && callerData?.teamOwnerUid) {
+      const ownerUid = callerData.teamOwnerUid;
+      // Find the member doc in the owner's team subcollection
+      const memberSnap = await admin.firestore()
+        .collection(`users/${ownerUid}/team`)
+        .where("uid", "==", callerUid)
+        .limit(1)
+        .get();
+      if (!memberSnap.empty) {
+        const memberData = memberSnap.docs[0].data();
+        const allowedWs: string[] = memberData.workspaceAccess ?? [];
+        return { ownerUid, allowedWorkspaceIds: allowedWs };
+      }
+      return { ownerUid, allowedWorkspaceIds: [] };
     }
-    return { ownerUid, allowedWorkspaceIds: [] };
-  }
 
-  const wsSnap = await admin.firestore().collection(`users/${callerUid}/workspaces`).get();
-  const wsIds = wsSnap.docs.filter((d) => d.data().deletedAt == null).map((d) => d.id);
-  return { ownerUid: callerUid, allowedWorkspaceIds: wsIds.length > 0 ? wsIds : "ALL" };
+    const wsSnap = await admin.firestore().collection(`users/${callerUid}/workspaces`).get();
+    const wsIds = wsSnap.docs.filter((d) => d.data().deletedAt == null).map((d) => d.id);
+    return { ownerUid: callerUid, allowedWorkspaceIds: wsIds.length > 0 ? wsIds : "ALL" };
+  } catch (err) {
+    // A Firestore read failure here must NOT bubble up as an unhandled error and
+    // crash the calling callable (getUserProjects / saveProject) with a 500. The
+    // common case is a regular (non-team) user, for whom the safe, no-data-leak
+    // default is to scope to their own account: ownerUid = callerUid grants access
+    // only to the caller's own documents, never another user's.
+    console.warn(
+      `resolveCallerScope: degraded to self-scope for ${callerUid} after read failure:`,
+      (err as { message?: string })?.message ?? err,
+    );
+    return { ownerUid: callerUid, allowedWorkspaceIds: "ALL" };
+  }
 }
 
 

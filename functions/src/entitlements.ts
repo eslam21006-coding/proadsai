@@ -359,7 +359,13 @@ function resolveFromUserData(
     userData: FirebaseFirestore.DocumentData,
     creditOwnerUid: string
 ): ResolvedEntitlement {
-    const storedPlan = (userData.plan || "none") as StoredPlan;
+    // Read the canonical plan from billingState.plan first — that is the normalized,
+    // authoritative field written by buildBillingState() and read by saveProject,
+    // assertScalePlan, and createWorkspaceWithLimit. The top-level `plan` is a legacy
+    // mirror that can be stale/missing; relying on it alone made entitlement resolve
+    // to "none" (→ no_plan errors on generation/auto-reflow) for users whose real
+    // plan lived only in billingState. Fall back to top-level `plan`, then "none".
+    const storedPlan = (userData.billingState?.plan || userData.plan || "none") as StoredPlan;
     const isTrial = userData.isTrial === true;
 
     // ── Legacy plan normalization (matches buildBillingState read-time map) ──

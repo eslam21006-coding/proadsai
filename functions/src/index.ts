@@ -3692,7 +3692,16 @@ async function refundCreditsDirect(params: {
     action: string;
     count?: number;
     targetUid?: string;
+    creditsWereDeducted: boolean;
 }): Promise<void> {
+    // T019 fix: only refund when credits were actually deducted IN THIS callable
+    // execution. The generation callables below do NOT deduct credits themselves —
+    // the client deducts up front via `deductCreditsServer` and refunds on failure
+    // via `refundCreditsServer`. Refunding here too would be a second, phantom
+    // refund, inflating the user's balance after a failed generation (credits
+    // increasing instead of staying flat). Callers that genuinely deducted credits
+    // in-execution pass `creditsWereDeducted: true`.
+    if (!params.creditsWereDeducted) return;
     const count = params.count || 1;
     const COSTS: Record<string, number> = {
         generateHooks: 1, generateConcepts: 1, generateBuildPlan: 1,
@@ -4101,7 +4110,7 @@ export const serverGenerateTOV = onCall({
         console.error("generateTOV error:", error);
         const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateTOV", inputs });
         if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
-            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateHooks" });
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateHooks", creditsWereDeducted: false });
         }
         throw new HttpsError("internal", "Hook generation failed: " + error.message);
     }
@@ -4131,7 +4140,7 @@ export const serverGenerateConcepts = onCall({
         console.error("generateConcepts error:", error);
         const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateConcepts", inputs });
         if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
-            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateConcepts" });
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateConcepts", creditsWereDeducted: false });
         }
         throw new HttpsError("internal", "Concept generation failed: " + error.message);
     }
@@ -4173,7 +4182,7 @@ export const serverGenerateBuildPlan = onCall({
         console.error("generateBuildPlan error:", error);
         const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateBuildPlan", inputs });
         if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
-            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateBuildPlan" });
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateBuildPlan", creditsWereDeducted: false });
         }
         throw new HttpsError("internal", "Build plan generation failed: " + error.message);
     }
@@ -4277,7 +4286,7 @@ export const serverGenerateFinalAd = onCall({
         console.error("generateFinalAd error:", error);
         const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateFinalAd", inputs });
         if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
-            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateFinalAd" });
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateFinalAd", creditsWereDeducted: false });
         }
         throw new HttpsError("internal", "Image generation failed: " + error.message);
     }
@@ -4451,7 +4460,7 @@ export const serverGenerateCarouselAngles = onCall({
         console.error("generateCarouselAngles error:", error);
         const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateCarouselAngles", inputs });
         if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
-            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCarousel" });
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCarousel", creditsWereDeducted: false });
         }
         throw new HttpsError("internal", "Carousel angle generation failed: " + error.message);
     }
@@ -4484,7 +4493,7 @@ export const serverGenerateCarouselSlideCopies = onCall({
         console.error("generateCarouselSlideCopies error:", error);
         const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateCarouselSlideCopies", inputs });
         if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
-            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCarouselCopies" });
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCarouselCopies", creditsWereDeducted: false });
         }
         throw new HttpsError("internal", "Carousel copy generation failed: " + error.message);
     }
@@ -4525,7 +4534,7 @@ export const serverGenerateTestimonialCarousel = onCall({
         console.error("generateTestimonialCarousel error:", error);
         const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateTestimonialCarousel", inputs });
         if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
-            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCarousel" });
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCarousel", creditsWereDeducted: false });
         }
         throw new HttpsError("internal", "Testimonial carousel generation failed: " + error.message);
     }
@@ -4553,7 +4562,7 @@ export const serverGenerateCaption = onCall({
         console.error("generateCaption error:", error);
         const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateCaption", inputs });
         if ((HARD_FAILURE_CLASSES as readonly string[]).includes(failureClass)) {
-            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCaption" });
+            await refundCreditsDirect({ uid: request.auth!.uid, action: "generateCaption", creditsWereDeducted: false });
         }
         throw new HttpsError("internal", "Caption generation failed: " + error.message);
     }
@@ -6220,6 +6229,14 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
     // count check and both write, AND a concurrent plan downgrade between the
     // out-of-txn plan read and the txn could let the user slip past their
     // new lower cap.
+    //
+    // The whole transaction is wrapped so an unexpected, non-HttpsError failure —
+    // a transient Firestore error, or a project document that exceeds Firestore's
+    // 1 MiB limit (mockupHistory/carouselSlides can carry large data) — surfaces as
+    // a controlled, logged error instead of an unhandled exception that crashes the
+    // callable with a bare 500. Structured HttpsErrors (quota/plan) pass through
+    // unchanged so the client still sees their specific reason codes.
+    try {
     const status = await admin.firestore().runTransaction(async (txn) => {
         const projectRef = admin.firestore().doc(`users/${uid}/projects/${project.id}`);
         const userRef = admin.firestore().doc(`users/${uid}`);
@@ -6271,6 +6288,15 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
     });
 
     return { status };
+    } catch (err) {
+        // Preserve structured failures (quota exceeded, plan-gate, invalid-argument).
+        if (err instanceof HttpsError) throw err;
+        console.error(
+            `saveProject failed for uid=${uid} project=${project.id}:`,
+            (err as { message?: string })?.message ?? err,
+        );
+        throw new HttpsError("internal", "Could not save project. Please try again.", { reason: "save_failed" });
+    }
 });
 
 export { purgeExpiredWorkspaces };
