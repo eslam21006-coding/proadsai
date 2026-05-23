@@ -204,7 +204,12 @@ class FeedbackService {
         };
 
         try {
-            const ref = await addDoc(collection(db, 'generations'), stripUndefined(record));
+            // JSON deep-clone after stripUndefined: converts frozen objects, class
+            // instances (e.g. Firestore Timestamp), and other non-plain values into
+            // plain serializable objects, avoiding Firestore "invalid nested entity"
+            // rejections on the write.
+            const cleanRecord = JSON.parse(JSON.stringify(stripUndefined(record)));
+            const ref = await addDoc(collection(db, 'generations'), cleanRecord);
             // Back-fill generationId for self-reference
             if (creativeIdentity && !creativeIdentity.generationId) {
                 await updateDoc(ref, { 'creativeIdentity.generationId': ref.id }).catch(() => { });
