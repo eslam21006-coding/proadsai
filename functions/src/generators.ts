@@ -1240,9 +1240,9 @@ ${minimalHookBias}
       MANDATE FOR TONE ADAPTATION (CRITICAL):
 
       ⚠️ METAPHOR RULE (ABSOLUTELY CRITICAL):
-      - The universe/theme is for VISUAL SETTING only, NOT for the ad copy logic.
-      - DO NOT write full thematic metaphors in the copy.
-      - The copy must make DIRECT SENSE without needing to understand the theme.
+      - The universe/theme is primarily for VISUAL SETTING. You MAY use subtle vocabulary from the universe theme (e.g. one evocative word or short phrase that echoes the visual) but do NOT build the copy logic around the theme.
+      - Do NOT write full thematic metaphors or sentences that only make sense in context of the universe.
+      - The copy must stand on its own and make complete sense to someone who has never seen the visual.
 
       ❌ WRONG (Rooftop Garden theme): "المشكلة في جودة التربة وليست في سعر المحصول النهائي"
          → This is NONSENSE. What is "soil" and "crop"? The reader won't understand.
@@ -1359,7 +1359,8 @@ IMPORTANT:
 - If the user says "use these specific words: X" → use those exact words
 - FOCUS on pain: "${inputs.challenges}"
 - FOCUS on result: "${inputs.transformation}"
-- UNIVERSE: ${resolveStyleFamily(inputs) === "minimal" ? "MINIMAL (clean backdrop)" : resolvedUniverse}`;
+- UNIVERSE: ${resolveStyleFamily(inputs) === "minimal" ? "MINIMAL (clean backdrop)" : resolvedUniverse}
+- UNIVERSE/THEME USAGE: The theme is primarily for VISUAL SETTING. You MAY use subtle vocabulary from the universe theme (one evocative word or short phrase that echoes the visual) but do NOT build the copy logic around the theme. Do NOT write full thematic metaphors or sentences that only make sense in context of the universe. The copy must stand on its own and make complete sense to someone who has never seen the visual.`;
         } else if (mode === 'precision') {
             const semanticLockBlock = semanticLock ? `
 SEMANTIC LOCK (DO NOT BREAK):
@@ -1410,7 +1411,7 @@ YOUR TASK:
 3. If they want to change the CTA/button, update CTA_BUTTON with their EXACT text
 4. If they want to change the headline, update HOOK_TEXT
 5. If they want to change the subheadline, update SUBHEADLINE
-6. Keep the ${resolveStyleFamily(inputs) === "minimal" ? "minimal clean style" : `universe theme: "${resolvedUniverse}"`}
+6. Keep the ${resolveStyleFamily(inputs) === "minimal" ? "minimal clean style" : `universe theme: "${resolvedUniverse}"`} — the theme is primarily for VISUAL SETTING. You MAY use subtle vocabulary from the universe theme (one evocative word or short phrase that echoes the visual) but do NOT build the copy logic around the theme. Do NOT write full thematic metaphors or sentences that only make sense in context of the universe. The copy must stand on its own and make complete sense to someone who has never seen the visual.
 
 IMPORTANT RULES:
 - If user provides specific Arabic text, use it VERBATIM - do not translate or modify
