@@ -1358,7 +1358,11 @@ const App: React.FC = () => {
     }
     try {
       const avatarsRef = collection(db, 'users', uid, 'avatars');
-      const docRef = await addDoc(avatarsRef, { ...avatar, createdAt: Date.now() });
+      // Firestore rejects `undefined` field values. Optional avatar fields (adTone,
+      // hookType, coldHookAngle, brandColor*, etc.) are undefined when unset, so strip
+      // undefined keys before writing.
+      const cleanAvatar = Object.fromEntries(Object.entries(avatar).filter(([, v]) => v !== undefined));
+      const docRef = await addDoc(avatarsRef, { ...cleanAvatar, createdAt: Date.now() });
       setAvatars(prev => [{ id: docRef.id, ...avatar, createdAt: Date.now() }, ...prev]);
     } catch (e) {
       console.error('Failed to save avatar:', e);
@@ -1382,7 +1386,9 @@ const App: React.FC = () => {
     const uid = effectiveUidRef.current;
     if (!user || !uid) return;
     try {
-      await setDoc(doc(db, 'users', uid, 'avatars', avatarId), { ...avatar, createdAt: Date.now() });
+      // Same undefined-stripping as handleSaveAvatar — optional fields are undefined when unset.
+      const cleanAvatar = Object.fromEntries(Object.entries(avatar).filter(([, v]) => v !== undefined));
+      await setDoc(doc(db, 'users', uid, 'avatars', avatarId), { ...cleanAvatar, createdAt: Date.now() });
       setAvatars(prev => prev.map(a => a.id === avatarId ? { ...a, ...avatar, createdAt: Date.now() } : a));
     } catch (e) {
       console.error('Failed to update avatar:', e);
