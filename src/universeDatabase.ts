@@ -1363,10 +1363,20 @@ export function getSmartRandomUniverse(
         offerType?: string;
         targetAudience?: string;
         productName?: string;
+        adLanguage?: string;
     }
 ): UniverseEntry {
-    const filtered = filterUniverses(styleFamily, context);
-    // Pick from top 20 for variety (or all if fewer)
-    const topPool = filtered.slice(0, Math.min(20, filtered.length));
-    return topPool[Math.floor(Math.random() * topPool.length)] || filtered[0];
+    let filtered = filterUniverses(styleFamily, context);
+    // Arabic-market cultural safety: drop arabicSafe:false universes so "Surprise Me" /
+    // "Roll New Universe" never lands on a haram setting (bar, wine cellar, casino, …).
+    // Mirrors the dropdown filter in InputForm.tsx (isArabic → filter(u => u.arabicSafe)).
+    if (isArabic(context.adLanguage)) {
+        const safe = filtered.filter(u => u.arabicSafe);
+        if (safe.length > 0) filtered = safe;
+    }
+    if (filtered.length === 0) return ALL_UNIVERSES[0];
+    // Sample from the FULL filtered pool. The previous top-20 slice collapsed surprise
+    // variety to the same ~20 universes every roll; the full pool spreads picks across
+    // all matching (and, for Arabic, all arabicSafe) universes.
+    return filtered[Math.floor(Math.random() * filtered.length)];
 }

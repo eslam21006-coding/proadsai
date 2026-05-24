@@ -603,13 +603,14 @@ export const SURPRISE_UNIVERSES = [...SURPRISE_REALISTIC, ...SURPRISE_FANTASY];
 // Helper function for random universe by mode — NOW USES STRUCTURED DATABASE
 import { getSmartRandomUniverse, REALISTIC_UNIVERSES as DB_REALISTIC, FANTASY_UNIVERSES as DB_FANTASY, ALL_UNIVERSES as DB_ALL, type UniverseEntry } from './universeDatabase';
 
-export const getRandomUniverse = (mode?: 'realistic' | 'fantasy', context?: { targetAudience?: string; productName?: string; challenges?: string; offerType?: string; productCategory?: string }) => {
+export const getRandomUniverse = (mode?: 'realistic' | 'fantasy', context?: { targetAudience?: string; productName?: string; challenges?: string; offerType?: string; productCategory?: string; adLanguage?: string }) => {
   const styleFamily = mode || 'realistic';
   const entry = getSmartRandomUniverse(styleFamily as 'realistic' | 'fantasy', {
     niche: context?.productCategory,
     offerType: context?.offerType,
     targetAudience: context?.targetAudience,
     productName: context?.productName,
+    adLanguage: context?.adLanguage,
   });
   return entry.name;
 };

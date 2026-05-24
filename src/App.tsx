@@ -3333,6 +3333,7 @@ const App: React.FC = () => {
         targetAudience: formData.targetAudience,
         productName: formData.productName,
         challenges: formData.challenges,
+        adLanguage: formData.adLanguage,
       });
     }
     else if (universe.toLowerCase().includes("custom")) { universe = formData.customUniverseDetails || "Custom World"; }
@@ -3477,6 +3478,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       targetAudience: inputs.targetAudience,
       productName: inputs.productName,
       challenges: inputs.challenges,
+      adLanguage: inputs.adLanguage,
     });
     setResolvedUniverse(newUniverse);
 
@@ -3859,7 +3861,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           try {
             savedGenId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
-              { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500) },
+              { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500), buildPlan: conceptRaw },
               conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
               canUseWorkspaces ? activeWorkspaceId : null,
               null, null, mockupResult.resolutionTrace
@@ -4433,7 +4435,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         try {
           const genId = await feedbackService.saveGeneration(
             user.uid, inputs, 'render',
-            { imageUrl: res, conceptText: (selectedConcept || '').substring(0, 500) },
+            { imageUrl: res, conceptText: (selectedConcept || '').substring(0, 500), buildPlan: buildPlan || '' },
             buildPlan, resolvedUniverse, 'gemini-3.1-flash-image', 0, editRatio, buildCreativeIdentity(),
             canUseWorkspaces ? activeWorkspaceId : null
           );
@@ -4809,7 +4811,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     try {
       const genId = await feedbackService.saveGeneration(
         user.uid, inputs, 'render',
-        { imageUrl, conceptText: (conceptText || selectedConcept || '').substring(0, 500), hookText: (hookText || '').substring(0, 200) },
+        { imageUrl, conceptText: (conceptText || selectedConcept || '').substring(0, 500), hookText: (hookText || '').substring(0, 200), buildPlan: bPlan || buildPlan || '' },
         bPlan || buildPlan || '', resolvedUniverse, 'gemini-flash', 0, ratio, buildCreativeIdentity(),
         canUseWorkspaces ? activeWorkspaceId : null
       );
@@ -6637,7 +6639,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                           try {
                                             const genId = await feedbackService.saveGeneration(
                                               user.uid, inputs, 'render',
-                                              { imageUrl: item.url || '', conceptText: item.conceptText?.substring(0, 500) || '', hookText: item.hookText?.substring(0, 200) || '' },
+                                              { imageUrl: item.url || '', conceptText: item.conceptText?.substring(0, 500) || '', hookText: item.hookText?.substring(0, 200) || '', buildPlan: item.buildPlan || '' },
                                               item.buildPlan || '', resolvedUniverse, 'gemini-flash', 0, item.ratio as AspectRatio, buildCreativeIdentity(),
                                               canUseWorkspaces ? activeWorkspaceId : null
                                             );
