@@ -2,27 +2,30 @@
 
 export const SCREEN_CONTENT_BAN_BLOCK = `
 ═════════════════════════════════════════════════════════════════════
-ABSOLUTE RULE — DEVICE SCREEN CONTENT BAN
+DEVICE SCREEN CONTENT RULE
 ═════════════════════════════════════════════════════════════════════
-NEVER render any of the following on any device display
-(laptop screen, desktop monitor, tablet front, phone front,
-smartwatch face, or any other device screen visible in the scene):
+Every device display (laptop screen, desktop monitor, tablet front,
+phone front, smartwatch face, or any other screen visible in the scene)
+SHOWS contextually relevant interface content that fits the offer:
 
-- Text of any kind (UI text, labels, body copy, captions, watermarks)
-- Logos (brand marks, app icons, software logos, partner logos)
-- Charts, graphs, dashboards, KPI cards, metric tiles
-- Application user interfaces (web apps, native apps, OS chrome)
-- Notification badges, status bars, system text
-- Code editors, terminal output, slide decks with content
+- A clean online-course / lesson / learning-platform interface
+- A simple, generic dashboard or progress view (illustrative tiles)
+- A native-app or web-app UI that matches the product
+- A relevant website or landing page
 
-Device screens MUST be one of:
-- Completely blank dark screen (off-state look)
-- Abstract gradient (single color or smooth color blend, NO content)
-- Out-of-focus soft glow (warm or cool, no discernible shapes)
-- Dimmed unreadable blur (suggests on-state without showing anything readable)
+Render the on-screen interface realistically but keep it SOFT and
+SECONDARY — gentle screen glow, slight perspective, lightly out of
+focus — so it reads as a believable working screen without competing
+with the headline.
 
-NO EXCEPTIONS. This rule overrides any earlier instruction that
-would have placed content on a screen.
+The screen shows interface (UI) content ONLY. Keep these OFF the
+screen surface — they are handled elsewhere in the composition:
+- Brand logos, wordmarks, app icons, or partner marks
+- The ad's headline, subhead, CTA, captions, or any text overlay
+
+Brand logos live in their assigned composited zone or on a physical
+scene surface; the ad copy lives in the headline layer — never on a
+device screen.
 ═════════════════════════════════════════════════════════════════════
 `;
 

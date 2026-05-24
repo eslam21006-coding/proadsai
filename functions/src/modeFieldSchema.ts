@@ -697,7 +697,7 @@ ${bm.guideFormat ? `Format: ${bm.guideFormat}` : ''}
 STRUCTURED DATA — DEVICE MOCKUP:
 Content Title: "${dm.deviceContentTitle}"
 ${dm.deviceScreenLabels ? `Screen Labels: ${dm.deviceScreenLabels}` : ''}
-⚠️ Render this title VISIBLE on the device screen. The screen must show real content, not blank.`);
+⚠️ Render this title as part of the on-screen interface (the course/guide/app UI). The screen must show real UI content, not blank — but no logos, brand marks, or ad-copy text overlay on the screen.`);
     }
 
     if (payload.speaker_card) {

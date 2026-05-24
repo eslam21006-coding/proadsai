@@ -250,7 +250,7 @@ MANDATORY LAYOUT:
 - CTA: "Download Free" or "Read Now"
 PREMIUM EXECUTION:
 - Device must be a REALISTIC rendered device (not a flat rectangle)
-- Screen must show ACTUAL content — text, sections, or thumbnails (not blank/solid)
+- Screen must show ACTUAL interface content — lesson sections, content cards, or thumbnails (not blank/solid). UI content only: no logos, brand marks, or ad-copy text overlay on the screen.
 - Key insight callout: floating bubble with arrow pointing to the device
 - The device should feel like a REAL product screenshot being showcased
 INVALID:
@@ -263,7 +263,7 @@ Key insight callout bubble floating beside device. Hero holding or presenting de
 For 9:16: device can be larger showing more screen content.`,
         renderInstruction: `DEVICE MOCKUP MODE — PREMIUM EXECUTION:
 - Device: REALISTIC rendered tablet or phone — with bezel, shadow, and perspective angle
-- Screen: must show VISIBLE content (text layout, section previews, or guide thumbnails) — NOT blank
+- Screen: must show VISIBLE interface content (UI layout, section previews, or guide thumbnails) — NOT blank. UI content only: no logos, brand marks, or ad-copy text overlay on the screen.
 - If Box C provided: use as screen content texture
 - Key insight: floating callout bubble beside device with pointer/arrow
 - Hero: holding the device or presenting beside it

@@ -1490,7 +1490,7 @@ function testHfe8b() {
 
 // ─── HFE.8.c — Corporate ad, screen-content ban + UI collision (T027 partial + T029) ───
 function testHfe8c() {
-    assert.ok(SCREEN_CONTENT_BAN_BLOCK.includes("NEVER render"), "SCREEN_CONTENT_BAN_BLOCK must contain 'NEVER render'");
+    assert.ok(SCREEN_CONTENT_BAN_BLOCK.includes("Brand logos"), "SCREEN_CONTENT_BAN_BLOCK must keep brand logos off the screen");
     assert.ok(!SCREEN_CONTENT_BAN_BLOCK.includes("Device screen shows content, not blank"), "SCREEN_CONTENT_BAN_BLOCK must NOT contain legacy phrase");
 
     const result = validateLogoPlacements(
@@ -1583,16 +1583,16 @@ function testHfe8i() {
 
 // ─── Ban-1 — Planner prompt always includes ban (T027) ───
 function testBan1() {
-    assert.ok(SCREEN_CONTENT_BAN_BLOCK.includes("DEVICE SCREEN CONTENT BAN"), "Ban block has header");
+    assert.ok(SCREEN_CONTENT_BAN_BLOCK.includes("DEVICE SCREEN CONTENT RULE"), "Rule block has header");
     assert.ok(MODE_SELECTION_HINT_BLOCK.includes("ui"), "Mode hint mentions ui");
     console.log("  ✅ Ban-1: SCREEN_CONTENT_BAN_BLOCK constant verified");
 }
 
 // ─── Ban-2 — Image-model prompt always includes ban (T027) ───
 function testBan2() {
-    assert.ok(SCREEN_CONTENT_BAN_BLOCK.includes("blank dark screen"), "Ban allows blank dark screen");
-    assert.ok(SCREEN_CONTENT_BAN_BLOCK.includes("Abstract gradient"), "Ban allows abstract gradient");
-    console.log("  ✅ Ban-2: Ban allowed states verified");
+    assert.ok(SCREEN_CONTENT_BAN_BLOCK.includes("contextually relevant interface content"), "Rule shows relevant interface content");
+    assert.ok(SCREEN_CONTENT_BAN_BLOCK.includes("interface (UI) content ONLY"), "Rule restricts screen to UI content only");
+    console.log("  ✅ Ban-2: screen-content rule allowed states verified");
 }
 
 // ─── Validator: widthPct clamp ───

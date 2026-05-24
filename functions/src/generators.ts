@@ -854,7 +854,7 @@ ${isSquare ? '- 1:1 EXECUTION: Tighter crop, hero upper 60%, credentials bar acr
 PAIR EXECUTION — EVENT TICKET + WEBINAR SCREEN (PREMIUM):
 Ticket structure with embedded broadcast screen — the screen element is integrated into the ticket design.
 - Ticket frame: premium event ticket with perforated edges and decorations
-- Screen element: SMALL realistic device/screen showing abstract glow (per SCREEN_CONTENT_BAN), embedded WITHIN the ticket layout
+- Screen element: SMALL realistic device/screen showing a relevant webinar/broadcast interface — soft, secondary, embedded WITHIN the ticket layout (per DEVICE SCREEN CONTENT RULE: UI content only, no logos/brand marks/text overlay on the screen)
 - The screen is a SUPPORTING element inside the ticket — the ticket structure dominates
 - Event info row: DATE | TIME | "LIVE" badge — prominent ticket metadata
 - Layout: ticket frame 80%, with screen as a small inset within the ticket design
@@ -902,7 +902,7 @@ ${isSquare ? '- 1:1 EXECUTION: Products centered with headline above and CTA bel
             parts.push(`
 PAIR EXECUTION — WEBINAR SCREEN + SPEAKER CARD (PREMIUM):
 Screen and speaker identity combined — hero presenting on stage with screen element showing broadcast.
-- Device: REALISTIC laptop/monitor with blank/glowing screen (per SCREEN_CONTENT_BAN)
+- Device: REALISTIC laptop/monitor whose screen shows a relevant webinar/broadcast interface — soft, secondary (per DEVICE SCREEN CONTENT RULE: UI content only, no logos/brand marks/text overlay on the screen)
 - Speaker: presenting pose beside the device, stage spotlight
 - Credentials bar: TV-STYLE LOWER-THIRD with speaker name and title
 - Layout: speaker left 45%, screen right 45%, credentials spanning bottom
@@ -914,11 +914,11 @@ ${isSquare ? '- 1:1 EXECUTION: Tighter layout — speaker and screen side by sid
             parts.push(`
 PAIR EXECUTION — WEBINAR SCREEN (PREMIUM):
 - Device: REALISTIC laptop/monitor with bezel, shadow, and perspective angle — NOT a flat rectangle
-- SCREEN CONTENT: per SCREEN_CONTENT_BAN — the display MUST be blank dark / abstract gradient / out-of-focus glow / dimmed unreadable blur. NEVER any text, title, logo, chart, dashboard, app UI, or "LIVE" badge ON the screen surface.
-- The "LIVE" indicator (if any) is a small physical-looking sticker or badge on the device BEZEL or in the surrounding scene, NOT on the screen.
+- SCREEN CONTENT: per DEVICE SCREEN CONTENT RULE — the display SHOWS a relevant webinar/broadcast interface (a presentation/livestream UI that fits the offer), rendered soft and secondary so it reads as a believable working screen. UI content ONLY — no logos, brand marks, or ad-copy text overlay on the screen surface.
+- The "LIVE" indicator (if any) is a small physical-looking sticker or badge on the device BEZEL or in the surrounding scene, NOT a text overlay on the screen.
 - Hero: presenting gesture beside the device, gesturing toward it as the visual anchor.
-${isTall ? '- 9:16 EXECUTION: Larger device. Hero beside or above. Screen is a glowing surface only.' : ''}
-${isSquare ? '- 1:1 EXECUTION: Device center, hero to one side, tighter layout. Screen glowing/blank.' : ''}`);
+${isTall ? '- 9:16 EXECUTION: Larger device. Hero beside or above. Screen shows the soft webinar UI.' : ''}
+${isSquare ? '- 1:1 EXECUTION: Device center, hero to one side, tighter layout. Screen shows the soft webinar UI.' : ''}`);
         }
     }
 
@@ -967,8 +967,8 @@ ${isSquare ? '- 1:1 EXECUTION: Book center, hero to one side, callouts above or 
 PAIR EXECUTION — HERO + DEVICE MOCKUP (PREMIUM):
 Hero presenting a real device showing guide content — the device IS the product delivery method.
 - Hero: portrait-style pose, holding or presenting a realistic tablet/phone
-- Device: realistic tablet/phone with bezel, shadow, and perspective — screen glowing/blank per SCREEN_CONTENT_BAN
-- Key insight: floating callout bubble beside device (not on screen)
+- Device: realistic tablet/phone with bezel, shadow, and perspective — screen SHOWS a relevant course/guide/app interface, soft and secondary per DEVICE SCREEN CONTENT RULE (UI content only, no logos/brand marks/text overlay on the screen)
+- Key insight: floating callout bubble beside device (the headline/copy stays off the screen)
 - Layout: hero left 40%, device right 40% — balanced product-hero composition
 ${isTall ? '- 9:16 EXECUTION: Hero upper portion, larger device below with callout beside it.' : ''}
 ${isSquare ? '- 1:1 EXECUTION: Hero to one side, device center-right, callouts above or below.' : ''}`);
@@ -979,11 +979,11 @@ ${isSquare ? '- 1:1 EXECUTION: Hero to one side, device center-right, callouts a
             parts.push(`
 PAIR EXECUTION — DEVICE MOCKUP (PREMIUM):
 - Realistic tablet/phone with bezel, shadow, and perspective
-- SCREEN CONTENT: per SCREEN_CONTENT_BAN — the display MUST be blank dark / abstract gradient / out-of-focus glow / dimmed unreadable blur. NEVER any text layout, section preview, guide thumbnail, dashboard, chart, app UI, or logo ON the screen surface.
-- All informational content lives OUTSIDE the device — in floating callout bubbles, headlines, or scene props beside the device.
-- Key insight: floating callout bubble beside device (not on the screen).
-${isTall ? '- 9:16 EXECUTION: Larger device. Screen glowing/blank only. Callouts in surrounding scene.' : ''}
-${isSquare ? '- 1:1 EXECUTION: Device center, hero to side, callouts above or below — never on the screen.' : ''}`);
+- SCREEN CONTENT: per DEVICE SCREEN CONTENT RULE — the display SHOWS a relevant course/guide/app interface that fits the offer (lesson view, content library, app home), rendered soft and secondary so it reads as a believable working screen. UI content ONLY — no logos, brand marks, or ad-copy text overlay on the screen surface.
+- The ad's headline/subhead/CTA copy lives OUTSIDE the device — in floating callout bubbles, headlines, or scene props beside the device (never as a text overlay on the screen).
+- Key insight: floating callout bubble beside device (ad copy stays off the screen).
+${isTall ? '- 9:16 EXECUTION: Larger device showing the soft UI. Callouts in surrounding scene.' : ''}
+${isSquare ? '- 1:1 EXECUTION: Device center, hero to side, callouts above or below — ad copy never on the screen.' : ''}`);
         }
     }
 
@@ -2356,10 +2356,10 @@ BEFORE/AFTER SPLIT — Canvas split into two halves. BEFORE half: hero in proble
                   value_stack: 'This ad has NO hero person. The value stack IS the entire design. Full-width layout with offer items as visual focus. Background is thematic only.',
 
                   event_ticket: 'TICKET-ONLY design. NO presenter visible. The ticket fills the canvas with premium details (date, time, title, seat count).',
-                  webinar_screen: 'SCREEN-ONLY design. Laptop/monitor as visual anchor with screen showing only an abstract glow / blank dark surface / out-of-focus blur per SCREEN_CONTENT_BAN — NEVER any text/logo/chart/UI on the screen. NO presenter beside it.',
+                  webinar_screen: 'SCREEN-ONLY design. Laptop/monitor as visual anchor with screen showing a relevant webinar/broadcast interface, soft and secondary per DEVICE SCREEN CONTENT RULE — UI content only, no logos/brand marks/ad-copy text overlay on the screen. NO presenter beside it.',
                   speaker_card: 'SPEAKER PORTRAIT — keynote stage environment mandatory. Dramatic lighting, credentials bar.',
                   book_mockup: 'BOOK-ONLY design. 3D book as centerpiece, NO hero person holding it. Floating in thematic environment.',
-                  device_mockup: 'DEVICE-ONLY design. Tablet/phone as visual anchor with screen rendered as blank dark / abstract gradient / out-of-focus blur per SCREEN_CONTENT_BAN — NEVER any text/logo/chart/UI on the screen. NO hero person.',
+                  device_mockup: 'DEVICE-ONLY design. Tablet/phone as visual anchor with screen showing a relevant course/guide/app interface, soft and secondary per DEVICE SCREEN CONTENT RULE — UI content only, no logos/brand marks/ad-copy text overlay on the screen. NO hero person.',
                   text_only: 'TYPOGRAPHY-ONLY design. NO hero person. NO universe environment. The COPY and TYPOGRAPHY ARE the entire visual. Background is color/gradient/texture only. All canvas space is used for typographic layout.',
               };
               return `
@@ -2375,9 +2375,9 @@ ${soloLabels[soloMode] || 'This ad features ONLY this creative element without a
                   event_ticket: 'VISUAL WEIGHT: Hero 40% | Ticket 50% | Text 10%. Ticket must show DATE, TIME, TITLE as READABLE text.',
                   speaker_card: 'VISUAL WEIGHT: Hero 50% | Stage/Credentials 40% | Text 10%. STAGE ENVIRONMENT + lower-third bar MANDATORY.',
 
-                  webinar_screen: 'VISUAL WEIGHT: Hero 40% | Screen 50% | Text 10%. Screen MUST be blank/abstract per SCREEN_CONTENT_BAN — never any text/logo/chart/UI; the screen reads as a glowing surface only.',
+                  webinar_screen: 'VISUAL WEIGHT: Hero 40% | Screen 50% | Text 10%. Screen shows a relevant webinar/broadcast interface, soft and secondary per DEVICE SCREEN CONTENT RULE — UI content only, no logos/brand marks/ad-copy text overlay on the screen.',
                   book_mockup: 'VISUAL WEIGHT: Hero 45% | Book 45% | Text 10%. 3D book with readable cover title.',
-                  device_mockup: 'VISUAL WEIGHT: Hero 45% | Device 45% | Text 10%. Device screen MUST be blank/abstract per SCREEN_CONTENT_BAN — never any text/logo/chart/UI.',
+                  device_mockup: 'VISUAL WEIGHT: Hero 45% | Device 45% | Text 10%. Device screen shows a relevant course/guide/app interface, soft and secondary per DEVICE SCREEN CONTENT RULE — UI content only, no logos/brand marks/ad-copy text overlay on the screen.',
 
               };
               return `
@@ -4151,10 +4151,11 @@ const MODE_REQUIRED_SLOTS: Record<string, string[][]> = {
         ["time"],
         ["seat", "register", "registration", "rsvp"],
     ],
-    // SCREEN_CONTENT_BAN: device screens MUST NOT render text/logos/charts.
-    // The required slots therefore stay non-textual — no "session title", no
-    // "live badge". The slot is "live indicator" (a visual cue: red dot, glow,
-    // broadcast presence) which the model can render without rendering UI text.
+    // DEVICE SCREEN CONTENT RULE: screens show relevant UI content (soft,
+    // secondary) but never a logo/brand mark or ad-copy text overlay. The
+    // required slots stay non-textual — no "session title", no "live badge".
+    // The slot is "live indicator" (a visual cue: red dot, glow, broadcast
+    // presence) which the model renders without any ad-copy text overlay.
     webinar_screen: [
         ["screen", "device", "laptop", "monitor", "screen_or_device"],
         ["live indicator", "live signal", "broadcast presence", "session graphic", "broadcast indicator"],
@@ -4168,8 +4169,9 @@ const MODE_REQUIRED_SLOTS: Record<string, string[][]> = {
         ["book", "3d book", "book mockup", "pdf mockup", "book_mockup"],
         ["book cover", "cover visual", "book_cover"],
     ],
-    // SCREEN_CONTENT_BAN applies here too — "guide content on screen" would
-    // imply readable text on the device. Use a non-text visual descriptor.
+    // DEVICE SCREEN CONTENT RULE applies here — the screen shows a relevant
+    // course/guide/app UI (soft, secondary), with no logo/brand mark or ad-copy
+    // text overlay on it. That on-screen interface content satisfies this slot.
     device_mockup: [
         ["device", "tablet", "phone", "device frame", "device_mockup"],
         ["content placeholder", "guide visual", "content area"],
