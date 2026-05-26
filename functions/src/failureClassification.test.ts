@@ -107,8 +107,8 @@ function testBuildCostEstimateWithUsageMetadata() {
 }
 
 function testBuildCostEstimateWithNullMetadata() {
-    const ce = buildCostEstimate("gemini-3.1-flash-lite-preview", 1, null);
-    assert.equal(ce.modelTier, "gemini-3.1-flash-lite-preview");
+    const ce = buildCostEstimate("gemini-3.5-flash", 1, null);
+    assert.equal(ce.modelTier, "gemini-3.5-flash");
     assert.equal(ce.retryCount, 1);
     assert.equal(ce.estimatedTokens, 0);
     console.log("✅ buildCostEstimate: null metadata returns 0 tokens with model tier preserved");

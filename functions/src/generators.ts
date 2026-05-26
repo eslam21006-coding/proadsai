@@ -521,7 +521,7 @@ export interface CarouselSlideCopy {
 // 1. THE COPYWRITER (High IQ, High Nuance for Arabic Puns)
 // Use this for TOV (Step 2) and Caption (Step 5)
 const CREATIVE_MODEL_PRO = "gemini-3.1-pro-preview"; // First generation (highest quality)
-const CREATIVE_MODEL_LITE = "gemini-3.1-flash-lite-preview"; // Regenerations (fast + cheap)
+const CREATIVE_MODEL_LITE = "gemini-3.5-flash"; // Regenerations (fast + cheap)
 
 // 2. THE ENGINEER (High Speed, High Structure, Low Cost)
 // Use this for Concepts (Step 3) and JSON Data. It doesn't need to be poetic.
