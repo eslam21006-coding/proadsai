@@ -2203,7 +2203,8 @@ const App: React.FC = () => {
   const [activeEditConceptIndex, setActiveEditConceptIndex] = useState<string | null>(null);
   const [expandedConcepts, setExpandedConcepts] = useState<Set<number>>(new Set([11, 12, 13, 21, 22, 23, 31, 32, 33, 41, 42, 43]));
   const [editFeedback, setEditFeedback] = useState('');
-  const [globalRefinement, setGlobalRefinement] = useState('');
+  const [globalRefinement, setGlobalRefinement] = useState(''); // cumulative refinement history (sent to AI)
+  const [refinementEntry, setRefinementEntry] = useState('');   // the new instruction being typed (not yet appended)
   const [studioTweak, setStudioTweak] = useState('');
   const [reflowMethod, setReflowMethod] = useState<'auto' | 'outpaint' | 'rerender'>('auto');
   const [showMethodSelector, setShowMethodSelector] = useState(false);
@@ -3517,23 +3518,42 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     } catch (e) { refundCredits('refreshHooks'); handleApiError(e); } finally { stopLoad(); }
   };
 
-  const handleGlobalHookRefinement = async () => {
+  // ─── CUMULATIVE REFINEMENTS ───────────────────────────────────────────────
+  // Refinement instructions accumulate instead of replacing: each submitted entry
+  // is appended to globalRefinement (newline-separated) so all prior instructions
+  // persist and are sent together to the AI. Returns the merged string for
+  // immediate use (setState is async, so callers can't read the updated state yet).
+  const appendRefinement = (entry: string): string => {
+    const trimmed = (entry || '').trim();
+    const base = globalRefinement.trim();
+    const merged = trimmed ? (base ? `${base}\n${trimmed}` : trimmed) : base;
+    setGlobalRefinement(merged);
+    setRefinementEntry('');
+    return merged;
+  };
+  const clearRefinements = () => { setGlobalRefinement(''); setRefinementEntry(''); };
+
+  // `refinementValue` lets callers pass the freshly-merged refinement directly
+  // (setState is async). Type-guarded so a button wired as onClick={handleGlobalHookRefinement}
+  // — which passes a click event — falls back to the accumulated globalRefinement.
+  const handleGlobalHookRefinement = async (refinementValue?: string) => {
     if (!inputs) return;
+    const refinement = typeof refinementValue === 'string' ? refinementValue : globalRefinement;
     if (!deductCredits('refreshHooks')) return;
     startLoad("Regenerating Hooks...");
     try {
       let res: string;
       if (inputs.adMode === 'carousel' && (inputs.slideCount || 1) > 1) {
-        res = (await gemini.generateCarouselAngles(inputs, resolvedUniverse, inputs.slideCount || 5, globalRefinement)).text;
+        res = (await gemini.generateCarouselAngles(inputs, resolvedUniverse, inputs.slideCount || 5, refinement)).text;
       } else {
         // If no refinement text, generate completely fresh hooks (initial mode) instead of refining existing ones
         // ALWAYS pass previous hooks so the model can explicitly avoid repeating them
-        const hasRefinement = globalRefinement && globalRefinement.trim().length > 0;
+        const hasRefinement = refinement && refinement.trim().length > 0;
         res = unwrapGen(await gemini.generateTOV(
           inputs, resolvedUniverse,
           hasRefinement ? 'refresh' : 'initial',
           tovText || undefined,
-          hasRefinement ? globalRefinement : undefined
+          hasRefinement ? refinement : undefined
         ));
       }
 
@@ -3555,7 +3575,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
       setTovText(res);
       // Clear downstream state since hooks changed — concepts and batches are now stale
-      const isFullRegen = !globalRefinement || !globalRefinement.trim();
+      const isFullRegen = !refinement || !refinement.trim();
       if (isFullRegen) {
         setConceptsText('');
         setSelectedConcept('');
@@ -4660,7 +4680,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             // single-image mockupHistory (would advance historyIndex/currentMockup with
             // intermediate carousel outputs and confuse the back/forward UI). The user's
             // active selection drives any single-image history changes elsewhere.
-            for (const outcome of result.data.outcomes) {
+            for (const outcome of result.data.outcomes || []) {
               if (outcome.success && outcome.outputUrl && outcome.itemIndex !== null) {
                 const slideIdx = outcome.itemIndex;
                 setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: outcome.outputUrl, status: 'done' as const } : s));
@@ -4745,13 +4765,17 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           const delta = singleOptimisticCost - result.data.totalCreditsCharged;
           if (delta !== 0) setUserCredits(prev => prev + delta);
         }
-        if (result.data.success && result.data.outcomes[0]?.outputUrl) {
-          if (result.data.outcomes[0].fallbackFrom) {
-            setReflowFallbackNotice(result.data.outcomes[0].fallbackFrom);
+        // Guard: a malformed/error response can omit `outcomes` entirely. Reading
+        // `outcomes[0]` on an undefined array crashes ("cannot read '0' of undefined")
+        // — optional-chain the array itself so a missing payload fails cleanly instead.
+        const firstOutcome = result.data.outcomes?.[0];
+        if (result.data.success && firstOutcome?.outputUrl) {
+          if (firstOutcome.fallbackFrom) {
+            setReflowFallbackNotice(firstOutcome.fallbackFrom);
           }
-          pushMockup(result.data.outcomes[0].outputUrl, newRatio);
+          pushMockup(firstOutcome.outputUrl, newRatio);
         } else {
-          throw new Error(result.data.outcomes[0]?.errorMessage || 'Reflow returned no image');
+          throw new Error(firstOutcome?.errorMessage || 'Reflow returned no image');
         }
       } else {
         showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation — try generating again first.', 'error');
@@ -5348,14 +5372,29 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               </div>
               <div className="max-w-xl mx-auto mt-8 p-6 bg-slate-900/50 border border-blue-500/20 rounded-[2rem] shadow-2xl">
                 <label className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider mb-2 block">Global Hook Refinement (Tone & Keywords)</label>
+                {globalRefinement.trim() && (
+                  <div className="mb-3 p-3 bg-slate-950/70 border border-blue-500/10 rounded-xl">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Applied so far ({globalRefinement.split('\n').filter(Boolean).length})</span>
+                      <button onClick={clearRefinements} className="text-[9px] font-bold text-red-400/70 hover:text-red-400 uppercase tracking-wider transition-colors">
+                        <i className="fa-solid fa-xmark mr-1"></i>Clear all
+                      </button>
+                    </div>
+                    <ul className="space-y-0.5">
+                      {globalRefinement.split('\n').filter(Boolean).map((line, i) => (
+                        <li key={i} className="text-[11px] text-slate-300 leading-snug">• {line}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 <textarea
-                  value={globalRefinement}
-                  onChange={e => setGlobalRefinement(e.target.value)}
+                  value={refinementEntry}
+                  onChange={e => setRefinementEntry(e.target.value)}
                   placeholder="e.g. Make it more professional, highlight the word 'Profit', or use more aggressive puns..."
                   className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-3 text-sm text-slate-200 outline-none focus:ring-1 focus:ring-blue-500 h-20 resize-none mb-4"
                 />
                 <button
-                  onClick={handleGlobalHookRefinement}
+                  onClick={() => { const merged = appendRefinement(refinementEntry); handleGlobalHookRefinement(merged); }}
                   className="w-full py-3 bg-blue-600/10 border border-blue-500/30 text-blue-400 rounded-xl text-[10px] font-bold uppercase tracking-wider hover:bg-blue-600 hover:text-white transition-all"
                 >
                   <i className="fa-solid fa-arrows-rotate mr-2"></i>Apply Refinement to All Hooks
@@ -5881,7 +5920,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
             {/* Regenerate All (below batch bar) */}
             <div className="max-w-2xl mx-auto space-y-6 pt-6 border-t border-white/5">
               <button
-                onClick={handleGlobalHookRefinement}
+                onClick={() => handleGlobalHookRefinement()}
                 className="w-full py-4 rounded-2xl bg-slate-900/60 hover:bg-slate-800/80 text-slate-200 text-[11px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 active:scale-[0.99]"
               >
                 <i className="fa-solid fa-arrows-rotate text-blue-500"></i>
@@ -5972,19 +6011,35 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
               {/* ─── Global Refinement ─── */}
               <div className="max-w-2xl mx-auto p-6 bg-slate-900/50 border border-blue-500/20 rounded-[2rem] shadow-2xl">
                 <label className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider mb-2 block">Refine All Blueprints (Global)</label>
+                {globalRefinement.trim() && (
+                  <div className="mb-3 p-3 bg-slate-950/70 border border-blue-500/10 rounded-xl">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Applied so far ({globalRefinement.split('\n').filter(Boolean).length})</span>
+                      <button onClick={clearRefinements} className="text-[9px] font-bold text-red-400/70 hover:text-red-400 uppercase tracking-wider transition-colors">
+                        <i className="fa-solid fa-xmark mr-1"></i>Clear all
+                      </button>
+                    </div>
+                    <ul className="space-y-0.5">
+                      {globalRefinement.split('\n').filter(Boolean).map((line, i) => (
+                        <li key={i} className="text-[11px] text-slate-300 leading-snug">• {line}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 <textarea
-                  value={globalRefinement}
-                  onChange={e => setGlobalRefinement(e.target.value)}
+                  value={refinementEntry}
+                  onChange={e => setRefinementEntry(e.target.value)}
                   placeholder="e.g. Center the hero, make the lighting more dramatic, ensure the pharaoh costume is highly detailed..."
                   className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-3 text-sm text-slate-200 outline-none focus:ring-1 focus:ring-blue-500 h-20 resize-none mb-4"
                 />
                 <button
                   onClick={async () => {
-                    if (!globalRefinement) return showToast("Please enter instructions first.", "error");
+                    const merged = appendRefinement(refinementEntry);
+                    if (!merged) return showToast("Please enter instructions first.", "error");
                     if (!deductCredits('generateConcepts')) return;
                     startLoad("Re-architecting Blueprints...");
                     try {
-                      let res = unwrapGen(await gemini.generateConcepts(selectedTov, inputs!, resolvedUniverse, 'initial', '', globalRefinement));
+                      let res = unwrapGen(await gemini.generateConcepts(selectedTov, inputs!, resolvedUniverse, 'initial', '', merged));
                       res = res ? normalizeFieldLabels(res) : res;
                       if (!res || (!res.includes('CONCEPT_START') && !res.includes('SUBJECT_ACTION'))) {
                         refundCredits('generateConcepts');
@@ -5992,7 +6047,6 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         return;
                       }
                       setConceptsText(res);
-                      setGlobalRefinement('');
                       showToast("Architecture updated with your custom vision.", "success");
                     } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
                   }}
@@ -7307,8 +7361,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       ))}
                     </div>
                   )}
-                  <div className="grid grid-cols-5 gap-2">
-                    {ASPECT_RATIOS.map(ratio => {
+                  <div className="grid grid-cols-3 gap-2">
+                    {/* Reflow sizes limited to square (1:1), standard (4:5), and portrait/story (9:16).
+                        Landscape (16:9), wide (4:3), and tall (3:4) are intentionally removed here. */}
+                    {ASPECT_RATIOS.filter(r => ['1:1', '4:5', '9:16'].includes(r.value)).map(ratio => {
                       const allowed = canUseRatio(userPlan, ratio.value);
                       const alreadyRendered = mockupHistory.some(m => m.ratio === ratio.value);
                       const icons: Record<string, string> = {

@@ -1816,6 +1816,11 @@ BENEFIT FORMULA (pick one per hook — NEVER repeat):
 
 Each hook MUST have a DIFFERENT benefit that addresses a DIFFERENT pain from their challenges.
 
+🔤 ARABIC GRAMMAR & FLOW (when the ad language is Arabic):
+- The benefit line must be a grammatically COMPLETE and natural Arabic phrase that flows directly from the main CTA. Read the CTA button text and the benefit together as ONE fluent, spoken line.
+- Do NOT begin the benefit with و (waw) or any dangling conjunction. A benefit that starts with "و..." reads as a cut-off fragment that disconnects from the preceding CTA line — this is forbidden.
+- Write a self-contained phrase (a clear outcome or a natural continuation of the CTA) that stands on its own grammatically — never a hanging clause that depends on words not shown on the button.
+
 ═══════════════════════════════════════════════════════════════════════════════
 COPYWRITING QUALITY RULES (CRITICAL — READ EVERY LINE)
 ═══════════════════════════════════════════════════════════════════════════════
