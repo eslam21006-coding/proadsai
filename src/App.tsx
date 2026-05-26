@@ -2208,6 +2208,7 @@ const App: React.FC = () => {
   const [studioTweak, setStudioTweak] = useState('');
   const [reflowMethod, setReflowMethod] = useState<'auto' | 'outpaint' | 'rerender'>('auto');
   const [showMethodSelector, setShowMethodSelector] = useState(false);
+  const [showReflowSizes, setShowReflowSizes] = useState(false); // inline reflow size-picker popover
   const [reflowFallbackNotice, setReflowFallbackNotice] = useState<'outpaint' | 'rerender' | null>(null);
   const [visualPolishes, setVisualPolishes] = useState<VisualPolish[]>([]);
   const [selectedPolishIds, setSelectedPolishIds] = useState<Set<string>>(new Set());
@@ -7361,46 +7362,53 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       ))}
                     </div>
                   )}
-                  <div className="grid grid-cols-3 gap-2">
-                    {/* Reflow sizes limited to square (1:1), standard (4:5), and portrait/story (9:16).
-                        Landscape (16:9), wide (4:3), and tall (3:4) are intentionally removed here. */}
-                    {ASPECT_RATIOS.filter(r => ['1:1', '4:5', '9:16'].includes(r.value)).map(ratio => {
-                      const allowed = canUseRatio(userPlan, ratio.value);
-                      const alreadyRendered = mockupHistory.some(m => m.ratio === ratio.value);
-                      const icons: Record<string, string> = {
-                        '1:1': 'fa-regular fa-square',
-                        '4:5': 'fa-solid fa-mobile-screen',
-                        '3:4': 'fa-solid fa-mobile-screen',
-                        '4:3': 'fa-solid fa-display',
-                        '9:16': 'fa-solid fa-mobile',
-                        '16:9': 'fa-solid fa-film',
-                      };
-                      const shortLabels: Record<string, string> = {
-                        '1:1': 'Square',
-                        '4:5': 'Portrait',
-                        '3:4': 'Tall',
-                        '4:3': 'Wide',
-                        '9:16': 'Story',
-                        '16:9': 'Landscape',
-                      };
-                      return (
-                        <button key={ratio.value} onClick={() => allowed && !alreadyRendered && handleRescale(ratio.value)}
-                          className={`flex flex-col items-center justify-center py-3.5 rounded-2xl border transition-all relative ${!allowed
-                            ? 'bg-slate-950/50 border-slate-800/50 text-slate-800 cursor-not-allowed opacity-50'
-                            : alreadyRendered
-                              ? 'bg-emerald-900/20 border-emerald-500/30 text-emerald-400 cursor-default'
-                              : currentAspectRatio === ratio.value
-                                ? 'bg-blue-600 border-blue-400 text-white shadow-lg'
-                                : 'bg-slate-950 border-slate-800 text-slate-600 hover:text-slate-300 shadow-inner'
-                            }`}
-                          title={alreadyRendered ? 'Already rendered — switch to this size using the tabs above' : allowed ? ratio.label : `Requires ${requiredPlanForRatio(ratio.value)} plan`}>
-                          <i className={`${icons[ratio.value]} text-lg mb-1`}></i>
-                          <span className="text-[7px] font-black uppercase tracking-tighter">{shortLabels[ratio.value] || ratio.label}</span>
-                          {alreadyRendered && <i className="fa-solid fa-check text-[7px] text-emerald-400 absolute top-1.5 right-1.5"></i>}
-                          {!allowed && !alreadyRendered && <i className="fa-solid fa-lock text-[6px] text-amber-500/60 absolute top-1.5 right-1.5"></i>}
-                        </button>
-                      );
-                    })}
+                  {/* Reflow opens an inline size-picker popover. Sizes limited to
+                      Square (1:1) / Portrait (4:5) / Story (9:16); the currently-viewed
+                      ratio (displayRatio) is hidden so the user only sees other sizes. */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowReflowSizes(v => !v)}
+                      className="w-full py-2.5 rounded-xl bg-blue-600/12 border border-blue-500/20 text-blue-300 text-[9px] font-bold uppercase tracking-wider hover:bg-blue-600 hover:text-white transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
+                    >
+                      <i className="fa-solid fa-crop-simple text-[8px]"></i>
+                      {t('studio.reflow')}
+                      <i className={`fa-solid fa-chevron-${showReflowSizes ? 'up' : 'down'} text-[6px] opacity-60`}></i>
+                    </button>
+                    {showReflowSizes && (
+                      <div className="absolute left-0 right-0 z-30 mt-2 p-2 bg-slate-950 border border-slate-700/60 rounded-2xl shadow-2xl space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                        {ASPECT_RATIOS
+                          .filter(r => ['1:1', '4:5', '9:16'].includes(r.value) && r.value !== displayRatio)
+                          .map(r => {
+                            const reflowLabels: Record<string, string> = {
+                              '1:1': 'Square / مربع (1:1)',
+                              '4:5': 'Portrait / بورتريه (4:5)',
+                              '9:16': 'Story / ستوري (9:16)',
+                            };
+                            const reflowIcons: Record<string, string> = {
+                              '1:1': 'fa-regular fa-square',
+                              '4:5': 'fa-solid fa-mobile-screen',
+                              '9:16': 'fa-solid fa-mobile',
+                            };
+                            const allowed = canUseRatio(userPlan, r.value);
+                            return (
+                              <button
+                                key={r.value}
+                                disabled={!allowed}
+                                onClick={() => { if (!allowed) return; setShowReflowSizes(false); handleRescale(r.value); }}
+                                title={allowed ? reflowLabels[r.value] : `Requires ${requiredPlanForRatio(r.value)} plan`}
+                                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left transition-all ${allowed
+                                  ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-blue-600/15 hover:border-blue-500/30 hover:text-white'
+                                  : 'bg-slate-950/50 border-slate-800/40 text-slate-600 cursor-not-allowed opacity-60'
+                                  }`}
+                              >
+                                <i className={`${reflowIcons[r.value]} text-sm w-4 text-center`}></i>
+                                <span className="text-[10px] font-bold tracking-tight flex-1">{reflowLabels[r.value]}</span>
+                                {!allowed && <i className="fa-solid fa-lock text-[7px] text-amber-500/60"></i>}
+                              </button>
+                            );
+                          })}
+                      </div>
+                    )}
                   </div>
                 </div>
 
