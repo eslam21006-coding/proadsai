@@ -1719,7 +1719,7 @@ function testT010SafeZone() {
     );
     let threw = false;
     try {
-        getSafeZoneForRatio("21:9" as any);
+        getSafeZoneForRatio("21:9" as unknown as Parameters<typeof getSafeZoneForRatio>[0]);
     } catch {
         threw = true;
     }

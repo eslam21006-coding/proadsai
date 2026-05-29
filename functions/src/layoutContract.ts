@@ -236,17 +236,17 @@ export interface SafeZoneInsetsPct {
     left: number;
 }
 
-const SAFE_ZONE_TABLE: Record<string, SafeZoneInsetsPct> = {
+const SAFE_ZONE_TABLE = {
     '1:1':  { top: 8,  right: 8,  bottom: 8,  left: 8  },
     '4:5':  { top: 10, right: 8,  bottom: 10, left: 8  },
     '3:4':  { top: 12, right: 8,  bottom: 12, left: 8  },
     '4:3':  { top: 8,  right: 12, bottom: 8,  left: 12 },
     '9:16': { top: 14, right: 8,  bottom: 14, left: 8  },
     '16:9': { top: 8,  right: 14, bottom: 8,  left: 14 },
-};
+} as const;
 
 export function getSafeZoneForRatio(aspectRatio: AspectRatio): SafeZoneInsetsPct {
-    const entry = SAFE_ZONE_TABLE[aspectRatio];
+    const entry = SAFE_ZONE_TABLE[aspectRatio as keyof typeof SAFE_ZONE_TABLE];
     if (!entry) {
         throw new Error(`Unsupported aspect ratio: ${aspectRatio}`);
     }

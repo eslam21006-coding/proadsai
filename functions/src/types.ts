@@ -261,6 +261,11 @@ export interface ResolutionTrace {
     };
     logoPipeline?: LogoPipelineEvents;
     readonly reflowHistory?: readonly ReflowHistoryEntry[];
+    // Phase 17 — top-level rollup flags (set to OR of any reflow's per-entry flag).
+    // Reflects what `reflowImage.ts:deductAndPersist()` writes alongside `reflowHistory`
+    // so typed consumers can read the rollups directly without scanning the array.
+    brandColorReinforced?: boolean;
+    textReflowOverflow?: boolean;
     brandColorSource?: BrandColorSource;
     brandColorCompliance?: BrandColorComplianceEntry[];
     modeComposition?: ModeCompositionTrace;

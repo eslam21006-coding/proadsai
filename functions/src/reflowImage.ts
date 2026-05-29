@@ -389,8 +389,13 @@ async function executeOutpaint(
     itemIndex: number | null = null,
     overrideSourceUrl: string | null = null,
 ): Promise<ReflowOutcome> {
-    const history = genData.mockupHistory;
-    const sourceImageUrl: string | null = overrideSourceUrl || genData.output?.imageUrl || null;
+    // Per-item scopes (itemIndex !== null) MUST NOT fall back to the parent generation's
+    // output.imageUrl — that would silently resize the wrong image. Only single scope
+    // (itemIndex === null) may use output.imageUrl as a safety net; for items, null
+    // sourceImageUrl correctly triggers the per-item `no_source` failure below.
+    const sourceImageUrl: string | null =
+        overrideSourceUrl ||
+        (itemIndex === null ? (genData.output?.imageUrl ?? null) : null);
 
     if (!sourceImageUrl) {
         return {
@@ -497,10 +502,27 @@ async function deductAndPersist(args: {
             throw new Error(`Insufficient credits at commit time (have ${currentCredits}, need ${creditsCharged}).`);
         }
 
+        // Normalize existing chips into a map keyed by ratio, deduping by newest
+        // generatedAt (FR-017a invariant: no duplicate ratios at rest). This is
+        // defensive against legacy data or any concurrent-write artefacts; the
+        // handler is the only writer to variantChips so we re-enforce the shape
+        // on every commit.
         const existingChips: VariantChip[] = (genSnap.data()?.variantChips as VariantChip[] | undefined) ?? [];
-        const filteredChips = existingChips.filter(c => c.ratio !== targetRatio);
+        const chipMap = new Map<AspectRatio, VariantChip>();
+        for (const chip of existingChips) {
+            if (!chip || typeof chip.ratio !== "string") continue;
+            const prior = chipMap.get(chip.ratio);
+            if (!prior || (chip.generatedAt ?? 0) > (prior.generatedAt ?? 0)) {
+                chipMap.set(chip.ratio, chip);
+            }
+        }
         const newChip: VariantChip = { ratio: targetRatio, url: outputUrl, generatedAt: Date.now() };
-        const updatedChips = [...filteredChips, newChip];
+        chipMap.set(targetRatio, newChip);
+        // Emit in canonical SUPPORTED_RATIOS order, dropping any ratios not in
+        // the 6-key launch set. Cap is implicit in the key-space (<=6).
+        const updatedChips: VariantChip[] = SUPPORTED_RATIOS
+            .map(r => chipMap.get(r))
+            .filter((c): c is VariantChip => c !== undefined);
 
         const prevTrace = genSnap.data()?.resolutionTrace ?? {};
         const prevBrandReinforced = prevTrace.brandColorReinforced === true;
