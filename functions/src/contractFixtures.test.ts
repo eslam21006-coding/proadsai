@@ -1887,79 +1887,84 @@ async function testT023CarouselReflow() {
     const origResolve = entMod.resolveCreditOwner;
     entMod.resolveCreditOwner = async (uid: string) => ({ creditOwnerUid: uid, teamRole: null });
 
-    __setGenerateFinalAdForTests(async (bp: string) => {
-        return { image: `https://example.com/reflowed-${bp}.png` };
-    });
-
+    // Outer try/finally keeps the entitlement stub active across BOTH sub-scenarios
+    // so the second reflowImageHandler call doesn't fall through to the real resolver
+    // (the inner try/finally blocks only reset __setGenerateFinalAdForTests between scenarios).
     try {
-        const genData = {
-            output: {
-                imageUrl: "https://example.com/original.png",
-                carouselSlides: Array.from({ length: 7 }, (_, i) => ({
-                    imageUrl: `https://example.com/slide-${i}.png`,
-                    buildPlan: `slide-plan-${i}`,
-                })),
-            },
-            metadata: { aspectRatio: "4:5" },
-            userId: "user1",
-            credits: 200,
-            mockupHistory: [],
-            resolutionTrace: { reflowHistory: [] },
-        };
-        const mockDb = createMockReflowDb(genData);
+        // ─── Scenario A: carousel_all over 7 slides ───
+        __setGenerateFinalAdForTests(async (bp: string) => {
+            return { image: `https://example.com/reflowed-${bp}.png` };
+        });
+        try {
+            const genData = {
+                output: {
+                    imageUrl: "https://example.com/original.png",
+                    carouselSlides: Array.from({ length: 7 }, (_, i) => ({
+                        imageUrl: `https://example.com/slide-${i}.png`,
+                        buildPlan: `slide-plan-${i}`,
+                    })),
+                },
+                metadata: { aspectRatio: "4:5" },
+                userId: "user1",
+                credits: 200,
+                mockupHistory: [],
+                resolutionTrace: { reflowHistory: [] },
+            };
+            const mockDb = createMockReflowDb(genData);
 
-        const result = await reflowImageHandler(
-            { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "1:1", method: "auto", scope: "carousel_all" } } as unknown as Parameters<typeof reflowImageHandler>[0],
-            { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
-        );
+            const result = await reflowImageHandler(
+                { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "1:1", method: "auto", scope: "carousel_all" } } as unknown as Parameters<typeof reflowImageHandler>[0],
+                { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+            );
 
-        assert.equal(result.outcomes.length, 7, "carousel_all must return 7 outcomes");
-        for (let i = 0; i < 7; i++) {
-            assert.equal(result.outcomes[i].itemIndex, i, `slide ${i} itemIndex must be ${i}`);
-            assert.equal(result.outcomes[i].success, true, `slide ${i} must succeed`);
+            assert.equal(result.outcomes.length, 7, "carousel_all must return 7 outcomes");
+            for (let i = 0; i < 7; i++) {
+                assert.equal(result.outcomes[i].itemIndex, i, `slide ${i} itemIndex must be ${i}`);
+                assert.equal(result.outcomes[i].success, true, `slide ${i} must succeed`);
+            }
+            assert.equal(result.totalCreditsCharged, 35, "7 × 5 = 35 credits for carousel_all");
+            for (let i = 0; i < 6; i++) {
+                assert.ok(result.outcomes[i].itemIndex! < result.outcomes[i + 1].itemIndex!, `slide order preserved: ${i} < ${i + 1}`);
+            }
+        } finally {
+            __setGenerateFinalAdForTests(null);
         }
-        assert.equal(result.totalCreditsCharged, 35, "7 × 5 = 35 credits for carousel_all");
-        for (let i = 0; i < 6; i++) {
-            assert.ok(result.outcomes[i].itemIndex! < result.outcomes[i + 1].itemIndex!, `slide order preserved: ${i} < ${i + 1}`);
+
+        // ─── Scenario B: carousel_slide (slideIndex=2) ───
+        __setGenerateFinalAdForTests(async () => {
+            return { image: "https://example.com/reflowed-slide2.png" };
+        });
+        try {
+            const genData = {
+                output: {
+                    imageUrl: "https://example.com/original.png",
+                    carouselSlides: Array.from({ length: 7 }, (_, i) => ({
+                        imageUrl: `https://example.com/slide-${i}.png`,
+                        buildPlan: `slide-plan-${i}`,
+                    })),
+                },
+                metadata: { aspectRatio: "4:5" },
+                userId: "user1",
+                credits: 200,
+                mockupHistory: [],
+                resolutionTrace: { reflowHistory: [] },
+            };
+            const mockDb = createMockReflowDb(genData);
+
+            const result = await reflowImageHandler(
+                { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "1:1", method: "auto", scope: "carousel_slide", slideIndex: 2 } } as unknown as Parameters<typeof reflowImageHandler>[0],
+                { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+            );
+
+            assert.equal(result.outcomes.length, 1, "carousel_slide must return 1 outcome");
+            assert.equal(result.outcomes[0].itemIndex, 2, "itemIndex must be 2");
+            assert.equal(result.outcomes[0].success, true, "slide 2 must succeed");
+            assert.equal(result.outcomes[0].creditsCharged, 5, "unified cost for single slide");
+            assert.equal(result.totalCreditsCharged, 5, "total credits for single slide reflow");
+        } finally {
+            __setGenerateFinalAdForTests(null);
         }
     } finally {
-        __setGenerateFinalAdForTests(null);
-        entMod.resolveCreditOwner = origResolve;
-    }
-
-    __setGenerateFinalAdForTests(async (bp: string) => {
-        return { image: "https://example.com/reflowed-slide2.png" };
-    });
-
-    try {
-        const genData = {
-            output: {
-                imageUrl: "https://example.com/original.png",
-                carouselSlides: Array.from({ length: 7 }, (_, i) => ({
-                    imageUrl: `https://example.com/slide-${i}.png`,
-                    buildPlan: `slide-plan-${i}`,
-                })),
-            },
-            metadata: { aspectRatio: "4:5" },
-            userId: "user1",
-            credits: 200,
-            mockupHistory: [],
-            resolutionTrace: { reflowHistory: [] },
-        };
-        const mockDb = createMockReflowDb(genData);
-
-        const result = await reflowImageHandler(
-            { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "1:1", method: "auto", scope: "carousel_slide", slideIndex: 2 } } as unknown as Parameters<typeof reflowImageHandler>[0],
-            { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
-        );
-
-        assert.equal(result.outcomes.length, 1, "carousel_slide must return 1 outcome");
-        assert.equal(result.outcomes[0].itemIndex, 2, "itemIndex must be 2");
-        assert.equal(result.outcomes[0].success, true, "slide 2 must succeed");
-        assert.equal(result.outcomes[0].creditsCharged, 5, "unified cost for single slide");
-        assert.equal(result.totalCreditsCharged, 5, "total credits for single slide reflow");
-    } finally {
-        __setGenerateFinalAdForTests(null);
         entMod.resolveCreditOwner = origResolve;
     }
     console.log("  ✅ T023: carousel reflow 7 slides → all succeed (35 credits), slide order preserved; carousel_slide idx=2 → 5 credits");
