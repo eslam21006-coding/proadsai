@@ -1,6 +1,6 @@
 ﻿# Pro Ads AI - SaaS - FAL Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-05-21
+Auto-generated from all feature plans. Last updated: 2026-05-28
 
 
 ## Project Structure
@@ -43,6 +43,8 @@ specs/            # Feature specs (speckit workflow)
 - TypeScript 5.7 (functions) + Firebase Cloud Functions v2, Sharp `^0.33.5` (already installed; same engine as `offerOverlay.ts` and `textCompositing.ts`), Gemini 3.1 image model (no new model calls). Firestore additive only — `StructuredBuildPlanPayload.logoPlacements: LogoPlacement[]` and `ResolutionTrace.logoPipeline?` sub-object. Frontend untouched. (0953-hotfix-hybrid-logo)
 - TypeScript 5.7 (Cloud Functions), TypeScript 5.9 (frontend), React 19 (016-creative-modes-qa)
 - Firestore — existing `generations/{genId}` document; new `resolutionTrace.modeComposition` sub-object (additive only, no migration). (016-creative-modes-qa)
+- TypeScript 5.7 (Firebase Cloud Functions v2), TypeScript 5.9 (Vite frontend) + Firebase Functions v2, Firebase Admin SDK, Sharp `^0.33.5` (already installed for `reflowOutpaint.ts` / `offerOverlay.ts` / `textCompositing.ts`), Gemini 3.5 Flash (text + image via `reflowRerender.ts`), React 19, Zustand 4, Tailwind CSS 3 (017-resize-reflow)
+- Firestore — `generations/{genId}` (extends existing doc — adds `mockupHistory` chip-map shape change, new `resolutionTrace.brandColorReinforced` / `resolutionTrace.textReflowOverflow` flags); `users/{uid}` (credits — unchanged read/write path) (017-resize-reflow)
 
 ## Recent Changes
 - 016-creative-modes-qa: Phase 16 — Creative Modes & Art Direction QA. `validateModeFormatCombination` added to `functions/src/creativeResolver.ts` and `src/creativeResolver.ts` (single source of truth for both frontend and backend). Enforced client-side via `validateLaunchSurface` in `InputForm.tsx` (Generate disabled + inline reason) and server-side via `enforceModeFormatGate()` in all 9 generation callables in `index.ts` (before credit deduction). Post-build-plan composition validator `validateModeComposition()` in `generators.ts` detects missing mode elements, logs `mode_composition_missing` warning, and injects verbatim reinforcement before render. `adaptStateAudit.ts` introduced as launch-gate checking 8 adapt-state pairs for cultural-compliance trigger words. 43 contract fixtures added: 10 solo modes, 10 approved pairs, 4 carousel, 3 batch, 2 retargeting, 1 self-correction (FR-009), 4 blocked combos, 8 adapt states, 1 audit. `event_ticket+webinar_screen` moved from `DISALLOWED_PAIRS` to `ALLOWED_PAIRS` (10th approved pair). New test file `functions/src/__tests__/modeFormatValidator.test.ts` with 7 decision-table rows + 6138-combo fuzz.

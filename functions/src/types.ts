@@ -28,6 +28,9 @@ export interface ReflowHistoryEntry {
     itemIndex: number | null;
     outputUrl: string | null;
     creditsCharged: number;
+    brandColorReinforced?: boolean;
+    textReflowOverflow?: boolean;
+    textReductionSteps?: 0 | 1 | 2 | 3;
 }
 
 export interface ReflowDecision {
@@ -48,6 +51,16 @@ export interface ReflowOutcome {
     creditsCharged: number;
     errorCode?: string;
     errorMessage?: string;
+    brandColorReinforced?: boolean;
+    textReflowOverflow?: boolean;
+    textReductionSteps?: 0 | 1 | 2 | 3;
+}
+
+export interface VariantChip {
+    ratio: AspectRatio;
+    url: string;
+    cleanReflowedImageUrl?: string;
+    generatedAt: number;
 }
 
 // ─── Failure Classification ──────────────────────────────────────────────────

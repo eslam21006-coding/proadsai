@@ -29,7 +29,7 @@ async function getSharp(): Promise<SharpFactory> {
     return sharpInstance;
 }
 
-export const OUTPAINT_CREDIT_COST = 2;
+export const OUTPAINT_CREDIT_COST = 5;
 
 /**
  * Extract the GCS object path from any of the URL shapes the codebase emits:

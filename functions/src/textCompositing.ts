@@ -10,6 +10,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { BrandColorPair } from "./types.js";
+import { getSafeZoneForRatio } from "./layoutContract.js";
+import type { AspectRatio } from "./generators.js";
 
 // ─── Pure brand-override helpers (exported for unit testability) ─────────────
 // Both compositors below thread these through their SVG assembly so the
@@ -672,4 +674,113 @@ export async function compositeFullAdText(
         console.error('❌ Full ad text compositing failed:', err);
         return null;
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REFLOW TEXT RECOMPOSITION — Phase 17 (FR-011, FR-012 / research R-003)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface ReflowRecomposeResult {
+    imageBase64: string | null;
+    textReflowOverflow: boolean;
+    textReductionSteps: 0 | 1 | 2 | 3;
+}
+
+export async function reflowRecomposeText(args: {
+    imageBase64: string;
+    targetRatio: AspectRatio;
+    fullText: FullAdText;
+    textStyle: TextStyle;
+    canvasWidth: number;
+    canvasHeight: number;
+    brand?: BrandColorPair;
+}): Promise<ReflowRecomposeResult> {
+    const { targetRatio, fullText, canvasWidth, canvasHeight, brand } = args;
+    const safeZone = getSafeZoneForRatio(targetRatio);
+
+    const textZone: TextZone = {
+        horizontalPosition: "center",
+        verticalPosition: "center",
+        xPercent: safeZone.left,
+        yPercent: safeZone.top,
+        widthPercent: 100 - safeZone.left - safeZone.right,
+        heightPercent: 100 - safeZone.top - safeZone.bottom,
+        zoneBaseColor: args.textStyle.backgroundTreatmentColor ?? "dark",
+        zoneLuminosity: "dark",
+    };
+
+    const hasAnyText = fullText.hookText.trim() || fullText.subheadText.trim() ||
+        fullText.ctaText.trim() || fullText.benefitText.trim() || fullText.targetAudienceText.trim();
+    if (!hasAnyText) {
+        return { imageBase64: args.imageBase64, textReflowOverflow: false, textReductionSteps: 0 };
+    }
+
+    const originalFontSize = args.textStyle.fontSize;
+
+    const zoneH = Math.round((textZone.heightPercent / 100) * canvasHeight);
+    const scale = canvasWidth / 1024;
+    const GAP = Math.round(12 * scale);
+    const zoneWidthRatio = textZone.widthPercent / 100;
+
+    function estimateTotalHeight(fontSizeKey: string): number {
+        const baseFontSize = FONT_SIZE_PX[fontSizeKey] || 48;
+        const hookSize = Math.round(baseFontSize * scale);
+        const subSize = Math.round(hookSize * 0.65);
+        const ctaSize = Math.round(hookSize * 0.55);
+        const benSize = Math.round(hookSize * 0.45);
+        const audSize = Math.round(hookSize * 0.38);
+        let h = Math.round(16 * scale);
+        if (fullText.hookText.trim()) {
+            const maxC = Math.max(8, Math.round((CHARS_PER_LINE[fontSizeKey] || 18) * zoneWidthRatio));
+            h += splitArabicLines(fullText.hookText, maxC).length * (hookSize * (args.textStyle.lineHeightMultiplier || 1.4)) + GAP;
+        }
+        if (fullText.subheadText.trim()) {
+            const maxC = Math.max(10, Math.round(28 * zoneWidthRatio));
+            h += splitArabicLines(fullText.subheadText, maxC).length * (subSize * 1.35) + GAP * 1.5;
+        }
+        if (fullText.ctaText.trim()) {
+            h += GAP + (ctaSize * 1.3 + Math.round(12 * scale) * 2) + GAP;
+        }
+        if (fullText.benefitText.trim()) {
+            const maxC = Math.max(12, Math.round(36 * zoneWidthRatio));
+            h += splitArabicLines(fullText.benefitText, maxC).length * (benSize * 1.3) + GAP;
+        }
+        if (fullText.targetAudienceText.trim()) {
+            const maxC = Math.max(15, Math.round(42 * zoneWidthRatio));
+            h += splitArabicLines(fullText.targetAudienceText, maxC).length * (audSize * 1.25);
+        }
+        return h;
+    }
+
+    let reductionSteps: 0 | 1 | 2 | 3 = 0;
+    let adjustedStyle = { ...args.textStyle };
+
+    const baseEstimate = estimateTotalHeight(originalFontSize);
+    if (baseEstimate > zoneH) {
+        for (let step = 1; step <= 3; step++) {
+            const scaledKey = `__reflow_${originalFontSize}_${step}`;
+            const scaledFontSize = Math.round((FONT_SIZE_PX[originalFontSize] || 48) * Math.pow(0.9, step));
+            (FONT_SIZE_PX as Record<string, number>)[scaledKey] = scaledFontSize;
+            const est = estimateTotalHeight(scaledKey);
+            reductionSteps = step as 1 | 2 | 3;
+            adjustedStyle = { ...args.textStyle, fontSize: scaledKey as typeof originalFontSize };
+            if (est <= zoneH) break;
+        }
+    }
+
+    const result = await compositeFullAdText(
+        args.imageBase64,
+        fullText,
+        textZone,
+        adjustedStyle,
+        canvasWidth,
+        canvasHeight,
+        brand,
+    );
+
+    return {
+        imageBase64: result ?? args.imageBase64,
+        textReflowOverflow: reductionSteps > 0,
+        textReductionSteps: reductionSteps,
+    };
 }

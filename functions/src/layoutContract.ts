@@ -37,6 +37,8 @@ import {
     type ResolvedCreativeSpec,
 } from "./creativeResolver.js";
 
+import type { AspectRatio } from "./generators.js";
+
 // ═══════════════════════════════════════════════════════════════════════════
 // FULL LAYOUT CONTRACT — The unified hidden specification
 // ═══════════════════════════════════════════════════════════════════════════
@@ -222,6 +224,34 @@ const ASPECT_RATIO_RULES: Record<string, AspectRatioRules> = {
         reelsBottomClearPct: 0,
     },
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SAFE ZONE PERCENTAGE INSETS — Phase 17 Resize & Reflow (FR-013 / R-002)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface SafeZoneInsetsPct {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+}
+
+const SAFE_ZONE_TABLE: Record<string, SafeZoneInsetsPct> = {
+    '1:1':  { top: 8,  right: 8,  bottom: 8,  left: 8  },
+    '4:5':  { top: 10, right: 8,  bottom: 10, left: 8  },
+    '3:4':  { top: 12, right: 8,  bottom: 12, left: 8  },
+    '4:3':  { top: 8,  right: 12, bottom: 8,  left: 12 },
+    '9:16': { top: 14, right: 8,  bottom: 14, left: 8  },
+    '16:9': { top: 8,  right: 14, bottom: 8,  left: 14 },
+};
+
+export function getSafeZoneForRatio(aspectRatio: AspectRatio): SafeZoneInsetsPct {
+    const entry = SAFE_ZONE_TABLE[aspectRatio];
+    if (!entry) {
+        throw new Error(`Unsupported aspect ratio: ${aspectRatio}`);
+    }
+    return { ...entry };
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LANGUAGE RULE CATALOG

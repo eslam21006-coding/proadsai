@@ -84,18 +84,28 @@ export async function rerenderFromPlan(args: {
     genData: RerenderGenData;
     geminiApiKey: string;
     openaiApiKey: string;
-}): Promise<{ outputUrl: string; creditsCharged: number }> {
+}): Promise<{ outputUrl: string; creditsCharged: number; brandColorReinforced: boolean }> {
     const { generationId, targetRatio, itemIndex, genData, geminiApiKey, openaiApiKey } = args;
 
     const inputs: Record<string, unknown> = (genData.input ?? {}) as Record<string, unknown>;
     const approvedTov: string = genData.output?.fullResponse ?? "";
     const resolvedUniverse: string = genData.input?.tone ?? "";
 
-    const buildPlan = extractBuildPlan(genData, itemIndex, generationId);
+    let buildPlan = extractBuildPlan(genData, itemIndex, generationId);
+
+    const brandPrimary = typeof inputs.brandColorPrimary === "string" ? inputs.brandColorPrimary.trim() : "";
+    const brandSecondary = typeof inputs.brandColorSecondary === "string" ? inputs.brandColorSecondary.trim() : "";
+    let brandColorReinforced = false;
+    if (brandPrimary || brandSecondary) {
+        const parts: string[] = [];
+        if (brandPrimary) parts.push(`Primary: ${brandPrimary}`);
+        if (brandSecondary) parts.push(`Secondary: ${brandSecondary}`);
+        buildPlan += `\n\nBRAND COLOR LOCK: Maintain exact brand palette — ${parts.join(", ")}.`;
+        brandColorReinforced = true;
+    }
 
     const generate = _generateFinalAdOverride ?? generateFinalAd;
     if (!_generateFinalAdOverride) {
-        // Real path — wire the gemini caller and openai key. Tests skip this branch.
         const { setGeminiCaller, setOpenAIKey } = await import("./generators.js");
         const { GoogleGenerativeAI } = await import("@google/generative-ai");
         const genAI = new GoogleGenerativeAI(geminiApiKey);
@@ -122,5 +132,6 @@ export async function rerenderFromPlan(args: {
     return {
         outputUrl: result.image,
         creditsCharged: REFLOW_CREDIT_COST,
+        brandColorReinforced,
     };
 }

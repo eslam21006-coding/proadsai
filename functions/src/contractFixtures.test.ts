@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { compileFullContract } from "./layoutContract.js";
+import { compileFullContract, getSafeZoneForRatio } from "./layoutContract.js";
 import {
     buildContentOwnershipMap,
     buildPlanSlotMap,
@@ -1700,6 +1700,33 @@ console.log("═══ HFE — All hybrid logo fixtures passed ═══\n");
 // HFF — HOTFIX-F: Deterministic Aspect Ratio Reflow Fixtures
 // ═══════════════════════════════════════════════════════════
 
+// ─── T010 (Phase 17) — getSafeZoneForRatio returns spec table ───
+function testT010SafeZone() {
+    assert.deepStrictEqual(
+        getSafeZoneForRatio("9:16"),
+        { top: 14, right: 8, bottom: 14, left: 8 },
+        "9:16 safe zone must match spec table",
+    );
+    assert.deepStrictEqual(
+        getSafeZoneForRatio("1:1"),
+        { top: 8, right: 8, bottom: 8, left: 8 },
+        "1:1 safe zone must be uniform 8%",
+    );
+    assert.deepStrictEqual(
+        getSafeZoneForRatio("4:3"),
+        { top: 8, right: 12, bottom: 8, left: 12 },
+        "4:3 safe zone must have wider side insets",
+    );
+    let threw = false;
+    try {
+        getSafeZoneForRatio("21:9" as any);
+    } catch {
+        threw = true;
+    }
+    assert.equal(threw, true, "unsupported ratio must throw");
+    console.log("  ✅ T010: getSafeZoneForRatio returns spec table, throws on unknown");
+}
+
 import { decideMethod, RATIO_TO_NUMERIC } from "./reflowRouter.js";
 import { verifyLockedRegion } from "./reflowOutpaint.js";
 import { NoPlanError, extractBuildPlan, rerenderFromPlan, __setGenerateFinalAdForTests } from "./reflowRerender.js";
@@ -2763,6 +2790,7 @@ function runBcrFixtures() {
 async function runHff6Fixtures() {
     console.log("\n═══ HFF — HOTFIX-F: Aspect Ratio Reflow Fixtures ═══");
 
+    testT010SafeZone();
     testHff6a();
     testHff6b();
     await testHff6c();

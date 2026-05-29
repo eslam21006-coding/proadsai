@@ -7,6 +7,7 @@ import type {
     ReflowHistoryEntry,
     ReflowMethod,
     ReflowScope,
+    VariantChip,
 } from "./types.js";
 import { decideMethod } from "./reflowRouter.js";
 import { rerenderFromPlan, NoPlanError, type RerenderGenData } from "./reflowRerender.js";
@@ -136,10 +137,10 @@ export async function reflowImageHandler(
     let items: ReflowItem[] = [];
 
     if (scope === "single") {
-        const sourceUrl = genData.output?.imageUrl ||
-            (genData.mockupHistory && genData.mockupHistory.length > 0
-                ? genData.mockupHistory[genData.mockupHistory.length - 1].url
-                : null);
+        const sourceUrl = genData.output?.imageUrl;
+        if (!sourceUrl) {
+            throw new HttpsError("failed-precondition", "legacy_no_original");
+        }
         items = [{ itemIndex: null, sourceImageUrl: sourceUrl, buildPlan: genData.output?.buildPlan }];
     } else if (scope === "carousel_all") {
         const slides = genData.output?.carouselSlides;
@@ -389,11 +390,7 @@ async function executeOutpaint(
     overrideSourceUrl: string | null = null,
 ): Promise<ReflowOutcome> {
     const history = genData.mockupHistory;
-    const sourceImageUrl: string | null = overrideSourceUrl ||
-        genData.output?.imageUrl ||
-        (Array.isArray(history) && history.length > 0
-            ? history[history.length - 1].url
-            : null);
+    const sourceImageUrl: string | null = overrideSourceUrl || genData.output?.imageUrl || null;
 
     if (!sourceImageUrl) {
         return {
@@ -457,6 +454,7 @@ async function executeRerender(
         fallbackFrom: null, fallbackReason: null,
         outputUrl: result.outputUrl,
         creditsCharged: result.creditsCharged,
+        brandColorReinforced: result.brandColorReinforced,
     };
 }
 
@@ -486,17 +484,27 @@ async function deductAndPersist(args: {
         itemIndex: outcome.itemIndex,
         outputUrl,
         creditsCharged,
+        brandColorReinforced: outcome.brandColorReinforced,
+        textReflowOverflow: outcome.textReflowOverflow,
+        textReductionSteps: outcome.textReductionSteps,
     };
 
-    // Single atomic transaction: history + credit deduction succeed-or-rollback together (FR-017).
     await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
         const [genSnap, userSnap] = await Promise.all([tx.get(genRef), tx.get(userRef)]);
         const existing = (genSnap.data()?.resolutionTrace?.reflowHistory as ReflowHistoryEntry[] | undefined) ?? [];
         const currentCredits = (userSnap.data()?.credits as number | undefined) ?? 0;
         if (currentCredits < creditsCharged) {
-            // Concurrent reflow drained credits between pre-flight and now; abort cleanly.
             throw new Error(`Insufficient credits at commit time (have ${currentCredits}, need ${creditsCharged}).`);
         }
+
+        const existingChips: VariantChip[] = (genSnap.data()?.variantChips as VariantChip[] | undefined) ?? [];
+        const filteredChips = existingChips.filter(c => c.ratio !== targetRatio);
+        const newChip: VariantChip = { ratio: targetRatio, url: outputUrl, generatedAt: Date.now() };
+        const updatedChips = [...filteredChips, newChip];
+
+        const prevTrace = genSnap.data()?.resolutionTrace ?? {};
+        const prevBrandReinforced = prevTrace.brandColorReinforced === true;
+        const prevTextOverflow = prevTrace.textReflowOverflow === true;
 
         tx.set(
             genRef,
@@ -505,8 +513,11 @@ async function deductAndPersist(args: {
                     url: outputUrl,
                     ratio: targetRatio,
                 }),
+                variantChips: updatedChips,
                 resolutionTrace: {
                     reflowHistory: [...existing, historyEntry],
+                    brandColorReinforced: prevBrandReinforced || (outcome.brandColorReinforced === true),
+                    textReflowOverflow: prevTextOverflow || (outcome.textReflowOverflow === true),
                 },
             },
             { merge: true },
