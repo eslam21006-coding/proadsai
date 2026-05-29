@@ -130,7 +130,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 
 | Item | Why minor |
 |---|---|
-| **Phase 17 — Resize & Reflow** | Mostly subsumed by HOTFIX-F (which already replaced generative reflow with deterministic outpaint + re-render). Remaining work: batch reflow UI, carousel slide selector, CSS preview. |
+| **Phase 17 — Resize & Reflow** | ✅ DONE (2026-05-29). 6-ratio popover, free CSS preview, batch + carousel scope selectors, ratio-only variant chips, brand-color lock, text re-composition, method selector REMOVED, cost unified to 5/item. |
 
 ---
 
@@ -1815,36 +1815,26 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## Phase 17 — Resize & Reflow ⏳ TODO — MINOR
+## Phase 17 — Resize & Reflow ✅ DONE
 **Requires:** Phase 5 + Phase 15 complete (pipeline + brand colors).
 
-**What already exists:**
-- Reflow logic in `generators.ts` (line 4913+): sends `REFLOW: Ratio {ratio}` instruction to re-render same concept at new aspect ratio.
-- Aspect ratios 1:1, 4:5, 3:4, 4:3, 9:16, 16:9 all defined and selectable.
-- Safe zone inset referenced in `textCompositing.ts`.
-- Layout contract system defines zone proportions per aspect ratio.
-- `mockupHistory` on SavedProject stores `{ url, ratio }` pairs.
+**What shipped (2026-05-29):**
+- 6-ratio Resize popover (1:1, 4:5, 3:4, 4:3, 9:16, 16:9) — all available to every paid plan (no plan-tier gating).
+- Free CSS preview via `ReflowPreview` component — `object-fit: cover` at target ratio, renders in <1s, costs 0 credits.
+- Confirm-step state machine (`closed → picker_open → preview → committing`) with "Generate Resize — X credits" button.
+- Method selector UI **removed** (FR-011) — method is always `'auto'`, never user-facing.
+- Batch scope selector: "Resize this image" / "Resize all N images" with dynamic cost display.
+- Carousel scope selector: "Resize this slide" / "Resize all N slides" with per-slide and all-slides support.
+- Per-item loading spinners and failure indicators during batch_all reflow; "Resize failed — try again" on errors.
+- Carousel slide order preserved after `carousel_all` reflow (FR-015).
+- Ratio-only variant chips (max 6 per generation) — no `method` field on chips (FR-017a).
+- Unified 5-credit flat cost per item for both outpaint and rerender routes (FR-006).
+- Brand color lock injection in rerender prompts (FR-020 audit trail).
+- Text re-composition with safe zone insets after rerender; overflow trace (`textReflowOverflow`, `textReductionSteps`).
+- Legacy generation rejection (`legacy_no_original`) — no chaining from variant chips as source.
+- Backend fixture tests: T010 (safe zone), T011 (single reflow), T011a (router matrix 30 pairs), T012 (brand color), T020 (batch partial-success), T023 (carousel 7 slides + per-slide). All backend fixture suites pass (HFF.6 + Phase 17 + existing US4/US5/Phase 16/cultural/language/workspace/saved-projects/mode-format/creative-resolver-parity).
 
-**What is missing:**
-- No batch reflow (all N images).
-- No carousel per-slide reflow.
-- No safe-zone re-validation after reflow.
-- No reflow preview before committing.
-- No text compositing re-run after reflow.
-- No reflow in retargeting mode.
-
-| # | File | Action | Done when |
-|---|---|---|---|
-| 17.1 | `functions/src/generators.ts` | In the reflow path (around line 4920), after the reflow image is generated, re-run `compositeArabicText()` with the new aspect ratio's safe zone dimensions. Store the clean (pre-text) reflowed image separately as `cleanReflowedImageBase64` before text compositing. | Reflowed images have fresh text overlay positioned for the new ratio. Clean version is stored for future edits. |
-| 17.2 | `functions/src/generators.ts` | Add function `reflowBatch(generationId, newAspectRatio): Promise<BatchReflowResult[]>`. Iterates over all `batchResults` in the generation record. For each batch item, runs the reflow pipeline (same concept, new ratio). Uses `Promise.allSettled` for parallel execution. Updates each batch item's URLs in the generation record. Returns per-item success/failure. | Calling with a batch generationId and `4:5` reflows all batch items. Partial failures don't block successful reflows. |
-| 17.3 | `functions/src/generators.ts` | Add function `reflowCarousel(generationId, newAspectRatio): Promise<CarouselReflowResult[]>`. Iterates over all carousel slides in `output.carouselSlides`. For each slide, runs reflow with the new ratio. Maintains slide order. Updates all slide URLs. | Calling with a carousel generationId reflows all slides. Slide order is preserved. |
-| 17.4 | `functions/src/index.ts` | Create callable `reflowImage({ generationId, newAspectRatio, scope })`. `scope` is `'single' \| 'batch_all' \| 'carousel_all' \| 'carousel_slide'`. For `single`: reflow the single image. For `batch_all`: call `reflowBatch`. For `carousel_all`: call `reflowCarousel`. For `carousel_slide`: reflow only the specified slide index. Deduct credits per reflowed image. | Callable handles all four scopes. Credits are deducted correctly (1 per image reflowed). |
-| 17.5 | `functions/src/layoutContract.ts` | Add function `getSafeZoneForRatio(aspectRatio: AspectRatio): { top, right, bottom, left }`. Returns the safe zone inset in percentage for each supported ratio. Taller ratios (9:16) get larger top/bottom insets. Wider ratios (16:9) get larger left/right insets. Square (1:1) uses uniform inset. | Function returns correct insets for all 6 supported ratios. |
-| 17.6 | `functions/src/textCompositing.ts` | After reflow, call `getSafeZoneForRatio(newAspectRatio)` and re-calculate all text positions. Validate that no text element exceeds the new safe zone boundaries. If any text overflows, reduce font size by 10% increments until it fits (maximum 3 reductions). Log `textReflowOverflow: true` on the resolution trace if reduction was needed. | Text never clips outside safe zone after reflow. Font size reduction is logged. |
-| 17.7 | `src/App.tsx` (or Step 4 UI component) | Add "Resize" button group in Step 4 output area. Show 6 ratio buttons (1:1, 4:5, 3:4, 4:3, 9:16, 16:9). Current ratio is highlighted. Clicking a different ratio calls `reflowImage` callable. For batch/carousel modes, show a scope selector: "Resize this image only" vs "Resize all [N] images". Show loading state per image during reflow. | User can click a ratio button and see the reflowed result. Batch/carousel scope selector appears in those modes. |
-| 17.8 | `src/App.tsx` (or Step 4 UI component) | Add reflow preview: before committing a reflow (spending credits), show a lightweight CSS-based preview of how the current image would crop/extend at the new ratio. Use CSS `object-fit: cover` with the target aspect ratio container to simulate the framing. Show "This is a preview — generate to see the final result" label. Preview costs 0 credits. | Clicking a ratio shows instant CSS preview. "Generate" button commits the reflow and deducts credits. |
-| 17.9 | `functions/src/generators.ts` | In the reflow prompt, add brand color reinforcement: "Maintain the exact same brand color palette (Primary: {hex}, Secondary: {hex}) in the reflowed composition. Do not shift colors or introduce new dominant tones." Read brand colors from the generation record's original inputs. | Reflowed images maintain brand colors. Prompt includes hex values. |
-| 17.10 | `functions/src/contractFixtures.test.ts` | Add reflow fixture tests: (a) single reflow from 1:1 to 9:16 returns new image URL with `aspectRatio: '9:16'`, (b) batch reflow with 4 items returns 4 results, (c) carousel reflow maintains slide count, (d) text compositing after reflow has no overflow (or logged reduction), (e) brand colors are present in reflow prompt. | All 5 tests pass. |
+**Files changed:** `functions/src/{layoutContract,types,textCompositing,reflowRerender,reflowOutpaint,reflowImage}.ts`, `functions/src/contractFixtures.test.ts`, `src/App.tsx`, `src/i18n.tsx`, `src/components/ReflowPreview.tsx` (new).
 
 ---
 

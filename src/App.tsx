@@ -2209,6 +2209,7 @@ const App: React.FC = () => {
   const [studioTweak, setStudioTweak] = useState('');
   const [reflowStep, setReflowStep] = useState<'closed' | 'picker_open' | 'preview' | 'committing'>('closed');
   const [reflowTarget, setReflowTarget] = useState<AspectRatio | null>(null);
+  const [reflowScope, setReflowScope] = useState<'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'>('single');
   const [reflowFallbackNotice, setReflowFallbackNotice] = useState<'outpaint' | 'rerender' | null>(null);
   const [visualPolishes, setVisualPolishes] = useState<VisualPolish[]>([]);
   const [selectedPolishIds, setSelectedPolishIds] = useState<Set<string>>(new Set());
@@ -4624,8 +4625,94 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     showToast(`${hookCount} ad copies generated!`, 'success');
   };
 
-  const handleRescale = async (newRatio: AspectRatio) => {
+  const handleRescale = async (newRatio: AspectRatio, scopeOverride?: { scope: 'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'; slideIndex?: number }) => {
     if (!inputs || !selectedTov) return;
+
+    const effectiveScope = scopeOverride?.scope;
+    const effectiveSlideIndex = scopeOverride?.slideIndex;
+
+    // ─── BATCH_ALL MODE ─────
+    if (effectiveScope === 'batch_all') {
+      const batchItems = batchResults.filter(r => r.status === 'done' && r.url);
+      if (batchItems.length === 0) return;
+      const totalCost = CREDIT_COSTS.reflowImage * batchItems.length;
+      if (!renderGenerationId) { showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation.', 'error'); return; }
+      if (userCredits < totalCost) {
+        setUpgradeReason(t('studio.reflow.upgrade_single_credits').replace('{cost}', String(totalCost)).replace('{have}', String(userCredits)));
+        setShowUpgradeModal(true);
+        return;
+      }
+      setCurrentAspectRatio(newRatio);
+      startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
+      setBatchResults(prev => prev.map(r => r.status === 'done' && r.url ? { ...r, status: 'rendering' as const } : r));
+      setUserCredits(prev => prev - totalCost);
+      try {
+        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+        const result = await reflowFn({
+          generationId: renderGenerationId,
+          targetAspectRatio: newRatio,
+          method: 'auto',
+          scope: 'batch_all',
+        });
+        if (typeof result.data.totalCreditsCharged === 'number') {
+          const delta = totalCost - result.data.totalCreditsCharged;
+          if (delta !== 0) setUserCredits(prev => prev + delta);
+        }
+        for (const outcome of result.data.outcomes || []) {
+          if (outcome.success && outcome.outputUrl && outcome.itemIndex !== null) {
+            setBatchResults(prev => prev.map((r, idx) => idx === outcome.itemIndex ? { ...r, url: outcome.outputUrl, status: 'done' as const } : r));
+          } else if (!outcome.success && outcome.itemIndex !== null) {
+            setBatchResults(prev => prev.map((r, idx) => idx === outcome.itemIndex ? { ...r, status: 'error' as const } : r));
+          }
+        }
+        if (result.data.success && result.data.outcomes?.[0]?.outputUrl) {
+          pushMockup(result.data.outcomes[0].outputUrl, newRatio);
+        }
+      } catch (e) {
+        setUserCredits(prev => prev + totalCost);
+        handleApiError(e);
+      } finally { stopLoad(); }
+      return;
+    }
+
+    // ─── CAROUSEL_SLIDE MODE (single slide) ─────
+    if (effectiveScope === 'carousel_slide') {
+      const slideIdx = effectiveSlideIndex ?? 0;
+      if (!renderGenerationId) { showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation.', 'error'); return; }
+      const cost = CREDIT_COSTS.reflowImage;
+      if (userCredits < cost) {
+        setUpgradeReason(t('studio.reflow.upgrade_single_credits').replace('{cost}', String(cost)).replace('{have}', String(userCredits)));
+        setShowUpgradeModal(true);
+        return;
+      }
+      setCurrentAspectRatio(newRatio);
+      startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
+      setUserCredits(prev => prev - cost);
+      try {
+        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+        const result = await reflowFn({
+          generationId: renderGenerationId,
+          targetAspectRatio: newRatio,
+          method: 'auto',
+          scope: 'carousel_slide',
+          slideIndex: slideIdx,
+        });
+        if (typeof result.data.totalCreditsCharged === 'number') {
+          const delta = cost - result.data.totalCreditsCharged;
+          if (delta !== 0) setUserCredits(prev => prev + delta);
+        }
+        const oc = result.data.outcomes?.[0];
+        if (oc?.success && oc.outputUrl) {
+          setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: oc.outputUrl, status: 'done' as const } : s));
+        } else if (oc && !oc.success) {
+          setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, status: 'error' as const } : s));
+        }
+      } catch (e) {
+        setUserCredits(prev => prev + cost);
+        handleApiError(e);
+      } finally { stopLoad(); }
+      return;
+    }
 
     // ─── CAROUSEL MODE: Reflow ALL slides via reflowImage callable (HOTFIX-F) ─────
     if (carouselSlides.length > 0 && carouselSlides.some(s => s.status === 'done')) {
@@ -6735,7 +6822,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                 ) : item.status === 'rendering' ? (
                                   <div className="w-full h-full flex flex-col items-center justify-center gap-2"><div className="animate-spin w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full"></div><span className="text-[8px] text-slate-500 font-bold">H{item.hookKey}·C{item.conceptIndex}</span></div>
                                 ) : item.status === 'error' ? (
-                                  <div className="w-full h-full flex flex-col items-center justify-center gap-2"><i className="fa-solid fa-triangle-exclamation text-red-400"></i><button onClick={() => handleBatchRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[8px] font-bold">Retry</button></div>
+                                  <div className="w-full h-full flex flex-col items-center justify-center gap-2"><i className="fa-solid fa-triangle-exclamation text-red-400"></i><span className="text-[7px] text-red-300">Resize failed</span><button onClick={() => handleBatchRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[8px] font-bold">Try again</button></div>
                                 ) : (
                                   <div className="w-full h-full flex items-center justify-center"><span className="text-[8px] text-slate-700 font-bold">H{item.hookKey}·C{item.conceptIndex}</span></div>
                                 )}
@@ -7416,7 +7503,13 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                             return (
                               <button
                                 key={r.value}
-                                onClick={() => { setReflowTarget(r.value); setReflowStep('preview'); }}
+                                onClick={() => {
+                                  setReflowTarget(r.value);
+                                  if (carouselSlides.length > 0 && carouselSlides.some(s => s.status === 'done')) setReflowScope('carousel_slide');
+                                  else if (batchResults.length > 0 && batchResults.some(br => br.status === 'done')) setReflowScope('single');
+                                  else setReflowScope('single');
+                                  setReflowStep('preview');
+                                }}
                                 title={reflowLabels[r.value]}
                                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left transition-all bg-slate-900 border-slate-800 text-slate-300 hover:bg-blue-600/15 hover:border-blue-500/30 hover:text-white"
                               >
@@ -7430,15 +7523,14 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   )}
 
                   {reflowStep === 'preview' && reflowTarget && currentMockup && (() => {
-                    // Scope-total cost per FR-006: button shows the TOTAL credits the user
-                    // will be charged, not the per-image cost. Carousel mode fires
-                    // `carousel_all` inside handleRescale, so the visible cost must reflect
-                    // that. Batch UI scope-selector is deferred to a later task; until then
-                    // batch reflows go through the single-image path.
                     const isCarouselScope =
                       carouselSlides.length > 0 && carouselSlides.some(s => s.status === 'done');
-                    const scopeItemCount = isCarouselScope
-                      ? carouselSlides.filter(s => s.status === 'done').length
+                    const isBatchScope =
+                      batchResults.length > 0 && batchResults.some(r => r.status === 'done');
+                    const doneBatchCount = isBatchScope ? batchResults.filter(r => r.status === 'done' && r.url).length : 0;
+                    const doneCarouselCount = isCarouselScope ? carouselSlides.filter(s => s.status === 'done').length : 0;
+                    const scopeItemCount = reflowScope === 'batch_all' ? doneBatchCount
+                      : reflowScope === 'carousel_all' ? doneCarouselCount
                       : 1;
                     const totalCost = CREDIT_COSTS.reflowImage * scopeItemCount;
                     return (
@@ -7446,13 +7538,51 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       <Suspense fallback={<div className="h-32 flex items-center justify-center"><i className="fa-solid fa-spinner fa-spin text-slate-500 text-sm"></i></div>}>
                         <ReflowPreview sourceImageUrl={currentMockup} targetRatio={reflowTarget} />
                       </Suspense>
+
+                      {isBatchScope && (
+                        <div className="flex gap-2">
+                          <button onClick={() => setReflowScope('single')}
+                            className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'single' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
+                            {t('studio.reflow.scope_single')}
+                          </button>
+                          <button onClick={() => setReflowScope('batch_all')}
+                            className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'batch_all' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
+                            {t('studio.reflow.scope_batch_all', { count: doneBatchCount })}
+                          </button>
+                        </div>
+                      )}
+
+                      {isCarouselScope && (
+                        <div className="flex gap-2">
+                          <button onClick={() => setReflowScope('carousel_slide')}
+                            className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'carousel_slide' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
+                            {t('studio.reflow.scope_slide')}
+                          </button>
+                          <button onClick={() => setReflowScope('carousel_all')}
+                            className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'carousel_all' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
+                            {t('studio.reflow.scope_carousel_all', { count: doneCarouselCount })}
+                          </button>
+                        </div>
+                      )}
+
                       <button
                         onClick={async () => {
                           setReflowStep('committing');
                           try {
-                            await handleRescale(reflowTarget);
+                            if (reflowScope === 'batch_all') {
+                              await handleRescale(reflowTarget, { scope: 'batch_all' });
+                            } else if (reflowScope === 'carousel_slide') {
+                              // Resolve focused slide by matching displayed image url; fall back to slide 0 when
+                              // currentMockup isn't a slide url (e.g., showing a composite). Single findIndex call.
+                              const matchIdx = carouselSlides.findIndex(s => s.imageUrl === currentMockup);
+                              const slideIndex = matchIdx >= 0 ? matchIdx : 0;
+                              await handleRescale(reflowTarget, { scope: 'carousel_slide', slideIndex });
+                            } else if (reflowScope === 'carousel_all') {
+                              await handleRescale(reflowTarget, { scope: 'carousel_all' });
+                            } else {
+                              await handleRescale(reflowTarget);
+                            }
                           } catch {
-                            // handleRescale shows its own toasts
                           }
                           setReflowStep('closed');
                           setReflowTarget(null);
