@@ -1729,12 +1729,13 @@ function testT010SafeZone() {
 
 // ─── T011a (Phase 17) — router covers all 30 non-identity ratio pairs ───
 function testT011aRouterMatrix() {
-    const ratios: string[] = ["1:1", "4:5", "3:4", "4:3", "9:16", "16:9"];
+    type RouterRatio = Parameters<typeof decideMethod>[0];
+    const ratios: RouterRatio[] = ["1:1", "4:5", "3:4", "4:3", "9:16", "16:9"];
     let identityCount = 0;
     let nonIdentityCount = 0;
     for (const src of ratios) {
         for (const tgt of ratios) {
-            const d = decideMethod(src as any, tgt as any, "auto");
+            const d = decideMethod(src, tgt, "auto");
             if (src === tgt) {
                 assert.equal(d.magnitude, 0, `${src}→${tgt} identity magnitude must be 0`);
                 identityCount++;

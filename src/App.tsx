@@ -28,7 +28,7 @@ import { feedbackService, type NegativeFeedbackTag } from './services/feedbackSe
 import { metaService, type MetaConnection } from './services/metaService';
 import { ASPECT_RATIOS, COLD_HOOK_ANGLES, OFFER_TYPES, getRandomUniverse } from './constants';
 import type { UserPlan } from './planconfig';
-import { PLANS, CREDIT_COSTS, TOPUP_PACKS, TOPUP_PRICES, CREDITS_PER_AD, canUse, requiredPlanFor, hasCredits, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
+import { PLANS, CREDIT_COSTS, TOPUP_PACKS, TOPUP_PRICES, canUse, requiredPlanFor, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
 import { LanguageProvider, useT, type UILanguage } from './i18n';
 import { deriveStatus } from './lib/projectStatus';
 import { resolveCoverImage } from './lib/projectCoverImage';
@@ -7367,7 +7367,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   )}
                 </div>
 
-                {/* Reflow Rescaling */}
+                {/* Reflow Rescaling — gated on currentMockup so users can't open the
+                    picker on a generation that hasn't produced a viewable image yet
+                    (prevents dead-end preview state during batch rendering). */}
+                {currentMockup && (
                 <div className="bg-slate-900/50 rounded-2xl border border-slate-800/40 p-4 space-y-4">
                   <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center"><i className="fa-solid fa-crop-simple mr-2 text-blue-500"></i>{t('studio.reflow')}</h4>
 
@@ -7395,12 +7398,12 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                           .filter(r => r.value !== displayRatio)
                           .map(r => {
                             const reflowLabels: Record<string, string> = {
-                              '1:1': 'Square / مربع (1:1)',
-                              '4:5': 'Portrait / بورتريه (4:5)',
-                              '3:4': 'Tall Portrait / طولي (3:4)',
-                              '4:3': 'Landscape / أفقي (4:3)',
-                              '9:16': 'Story / ستوري (9:16)',
-                              '16:9': 'YouTube (16:9)',
+                              '1:1': t('studio.reflow.ratio.1_1'),
+                              '4:5': t('studio.reflow.ratio.4_5'),
+                              '3:4': t('studio.reflow.ratio.3_4'),
+                              '4:3': t('studio.reflow.ratio.4_3'),
+                              '9:16': t('studio.reflow.ratio.9_16'),
+                              '16:9': t('studio.reflow.ratio.16_9'),
                             };
                             const reflowIcons: Record<string, string> = {
                               '1:1': 'fa-regular fa-square',
@@ -7440,7 +7443,9 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     const totalCost = CREDIT_COSTS.reflowImage * scopeItemCount;
                     return (
                     <div className="space-y-3">
-                      <ReflowPreview sourceImageUrl={currentMockup} targetRatio={reflowTarget} />
+                      <Suspense fallback={<div className="h-32 flex items-center justify-center"><i className="fa-solid fa-spinner fa-spin text-slate-500 text-sm"></i></div>}>
+                        <ReflowPreview sourceImageUrl={currentMockup} targetRatio={reflowTarget} />
+                      </Suspense>
                       <button
                         onClick={async () => {
                           setReflowStep('committing');
@@ -7474,6 +7479,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     </div>
                   )}
                 </div>
+                )}
 
                 {/* Script — bottom */}
                 {hasAnyImage && (
