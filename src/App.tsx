@@ -7481,43 +7481,49 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         {t('studio.reflow')}
                       </button>
                       <div className="space-y-1.5">
-                        {ASPECT_RATIOS
-                          .filter(r => r.value !== displayRatio)
-                          .map(r => {
-                            const reflowLabels: Record<string, string> = {
-                              '1:1': t('studio.reflow.ratio.1_1'),
-                              '4:5': t('studio.reflow.ratio.4_5'),
-                              '3:4': t('studio.reflow.ratio.3_4'),
-                              '4:3': t('studio.reflow.ratio.4_3'),
-                              '9:16': t('studio.reflow.ratio.9_16'),
-                              '16:9': t('studio.reflow.ratio.16_9'),
-                            };
-                            const reflowIcons: Record<string, string> = {
-                              '1:1': 'fa-regular fa-square',
-                              '4:5': 'fa-solid fa-mobile-screen',
-                              '3:4': 'fa-solid fa-table-columns',
-                              '4:3': 'fa-solid fa-display',
-                              '9:16': 'fa-solid fa-mobile',
-                              '16:9': 'fa-solid fa-tv',
-                            };
-                            return (
+                        {/* UI restriction: Resize popover shows only Square / Portrait / Story
+                            for now. Backend (getSafeZoneForRatio, reflowImage callable, all
+                            fixtures) continues to support the full 6 ratios — adding the
+                            others (3:4, 4:3, 16:9) back to the UI later is a single-line
+                            change to UI_RATIOS below. */}
+                        {(() => {
+                          const UI_RATIOS: AspectRatio[] = ['1:1', '4:5', '9:16'];
+                          const reflowLabels: Record<string, string> = {
+                            '1:1': t('studio.reflow.ratio.1_1'),
+                            '4:5': t('studio.reflow.ratio.4_5'),
+                            '3:4': t('studio.reflow.ratio.3_4'),
+                            '4:3': t('studio.reflow.ratio.4_3'),
+                            '9:16': t('studio.reflow.ratio.9_16'),
+                            '16:9': t('studio.reflow.ratio.16_9'),
+                          };
+                          const reflowIcons: Record<string, string> = {
+                            '1:1': 'fa-regular fa-square',
+                            '4:5': 'fa-solid fa-mobile-screen',
+                            '3:4': 'fa-solid fa-table-columns',
+                            '4:3': 'fa-solid fa-display',
+                            '9:16': 'fa-solid fa-mobile',
+                            '16:9': 'fa-solid fa-tv',
+                          };
+                          return UI_RATIOS
+                            .filter(value => value !== displayRatio)
+                            .map(value => (
                               <button
-                                key={r.value}
+                                key={value}
                                 onClick={() => {
-                                  setReflowTarget(r.value);
+                                  setReflowTarget(value);
                                   if (carouselSlides.length > 0 && carouselSlides.some(s => s.status === 'done')) setReflowScope('carousel_slide');
                                   else if (batchResults.length > 0 && batchResults.some(br => br.status === 'done')) setReflowScope('single');
                                   else setReflowScope('single');
                                   setReflowStep('preview');
                                 }}
-                                title={reflowLabels[r.value]}
+                                title={reflowLabels[value]}
                                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left transition-all bg-slate-900 border-slate-800 text-slate-300 hover:bg-blue-600/15 hover:border-blue-500/30 hover:text-white"
                               >
-                                <i className={`${reflowIcons[r.value]} text-sm w-4 text-center`}></i>
-                                <span className="text-[10px] font-bold tracking-tight flex-1">{reflowLabels[r.value]}</span>
+                                <i className={`${reflowIcons[value]} text-sm w-4 text-center`}></i>
+                                <span className="text-[10px] font-bold tracking-tight flex-1">{reflowLabels[value]}</span>
                               </button>
-                            );
-                          })}
+                            ));
+                        })()}
                       </div>
                     </div>
                   )}
