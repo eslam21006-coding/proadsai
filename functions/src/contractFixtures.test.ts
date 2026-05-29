@@ -1727,6 +1727,159 @@ function testT010SafeZone() {
     console.log("  ✅ T010: getSafeZoneForRatio returns spec table, throws on unknown");
 }
 
+// ─── T011a (Phase 17) — router covers all 30 non-identity ratio pairs ───
+function testT011aRouterMatrix() {
+    const ratios: string[] = ["1:1", "4:5", "3:4", "4:3", "9:16", "16:9"];
+    let identityCount = 0;
+    let nonIdentityCount = 0;
+    for (const src of ratios) {
+        for (const tgt of ratios) {
+            const d = decideMethod(src as any, tgt as any, "auto");
+            if (src === tgt) {
+                assert.equal(d.magnitude, 0, `${src}→${tgt} identity magnitude must be 0`);
+                identityCount++;
+            } else {
+                nonIdentityCount++;
+                if (d.magnitude < 0.30) {
+                    assert.equal(d.chosenMethod, "outpaint",
+                        `${src}→${tgt} mag=${d.magnitude.toFixed(4)} < 0.30 must route outpaint`);
+                } else {
+                    assert.equal(d.chosenMethod, "rerender",
+                        `${src}→${tgt} mag=${d.magnitude.toFixed(4)} >= 0.30 must route rerender`);
+                }
+            }
+        }
+    }
+    assert.equal(identityCount, 6, "must have 6 identity pairs");
+    assert.equal(nonIdentityCount, 30, "must have 30 non-identity pairs");
+    console.log("  ✅ T011a: router covers all 30 non-identity pairs, 6 identity pairs");
+}
+
+// ─── T012 (Phase 17) — brand-color hex appears in re-render prompt ───
+async function testT012BrandColor() {
+    let capturedBuildPlan = "";
+    __setGenerateFinalAdForTests(async (bp: string) => {
+        capturedBuildPlan = bp;
+        return { image: "https://example.com/branded.png" };
+    });
+    try {
+        const result = await rerenderFromPlan({
+            generationId: "gen-bc",
+            targetRatio: "9:16",
+            itemIndex: null,
+            genData: {
+                input: { tone: "universe", brandColorPrimary: "#FF0000" },
+                output: { buildPlan: "ORIGINAL-PLAN" },
+            },
+            geminiApiKey: "stub",
+            openaiApiKey: "stub",
+        });
+        assert.ok(capturedBuildPlan.includes("FF0000"),
+            `prompt must contain brand hex FF0000, got: ${capturedBuildPlan}`);
+        assert.equal(result.brandColorReinforced, true,
+            "brandColorReinforced must be true when brand color present");
+    } finally {
+        __setGenerateFinalAdForTests(null);
+    }
+    console.log("  ✅ T012: brand-color hex FF0000 appears in re-render prompt, brandColorReinforced=true");
+}
+
+// ─── T011 (Phase 17) — single reflow 1:1 → 9:16 returns 9:16 and 5 credits ───
+async function testT011SingleReflow() {
+    const entPath = require.resolve("./entitlements.js");
+    const entMod = require(entPath);
+    const origResolve = entMod.resolveCreditOwner;
+    entMod.resolveCreditOwner = async (uid: string) => ({ creditOwnerUid: uid, teamRole: null });
+
+    const fakeImage = "https://example.com/reflowed-9x16.png";
+    __setGenerateFinalAdForTests(async () => {
+        return { image: fakeImage };
+    });
+
+    try {
+        const genData = {
+            output: { imageUrl: "https://example.com/original-1x1.png", buildPlan: "plan-1x1" },
+            metadata: { aspectRatio: "1:1" },
+            userId: "user1",
+            credits: 100,
+            mockupHistory: [],
+            resolutionTrace: { reflowHistory: [] },
+        };
+        const mockDb = createMockReflowDb(genData);
+
+        const result = await reflowImageHandler(
+            { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "9:16", method: "auto", scope: "single" } } as unknown as Parameters<typeof reflowImageHandler>[0],
+            { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+        );
+
+        assert.equal(result.outcomes.length, 1, "single reflow returns 1 outcome");
+        const o = result.outcomes[0];
+        assert.equal(o.success, true, "outcome must succeed");
+        assert.equal(o.method, "rerender", "1:1→9:16 magnitude≈0.78 routes to rerender");
+        assert.equal(o.creditsCharged, 5, "unified cost must be 5");
+        assert.ok(o.outputUrl, "outputUrl must be set");
+        assert.equal(result.totalCreditsCharged, 5, "total credits must be 5");
+    } finally {
+        __setGenerateFinalAdForTests(null);
+        entMod.resolveCreditOwner = origResolve;
+    }
+    console.log("  ✅ T011: single reflow 1:1→9:16 returns 9:16 and 5 credits");
+}
+
+// ─── T020 (Phase 17) — batch reflow with 4 items returns 4 outcomes ───
+async function testT020BatchReflow() {
+    const entPath = require.resolve("./entitlements.js");
+    const entMod = require(entPath);
+    const origResolve = entMod.resolveCreditOwner;
+    entMod.resolveCreditOwner = async (uid: string) => ({ creditOwnerUid: uid, teamRole: null });
+
+    const fakeImage = "https://example.com/reflowed.png";
+    __setGenerateFinalAdForTests(async (bp: string) => {
+        if (bp.includes("plan-2")) throw new Error("engine_error");
+        return { image: fakeImage };
+    });
+
+    try {
+        const genData = {
+            output: {
+                imageUrl: "https://example.com/original.png",
+                batchResults: [
+                    { url: "https://example.com/b0.png", buildPlan: "plan-0" },
+                    { url: "https://example.com/b1.png", buildPlan: "plan-1" },
+                    { url: "https://example.com/b2.png", buildPlan: "plan-2" },
+                    { url: "https://example.com/b3.png", buildPlan: "plan-3" },
+                ],
+            },
+            metadata: { aspectRatio: "1:1" },
+            userId: "user1",
+            credits: 100,
+            mockupHistory: [],
+            resolutionTrace: { reflowHistory: [] },
+        };
+        const mockDb = createMockReflowDb(genData);
+
+        const result = await reflowImageHandler(
+            { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "9:16", method: "auto", scope: "batch_all" } } as unknown as Parameters<typeof reflowImageHandler>[0],
+            { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+        );
+
+        assert.equal(result.outcomes.length, 4, "batch must return 4 outcomes");
+        for (let i = 0; i < 4; i++) {
+            assert.equal(result.outcomes[i].itemIndex, i, `outcome ${i} itemIndex must be ${i}`);
+        }
+        assert.equal(result.outcomes[0].success, true, "item 0 succeeds");
+        assert.equal(result.outcomes[1].success, true, "item 1 succeeds");
+        assert.equal(result.outcomes[2].success, false, "item 2 must fail (engine_error)");
+        assert.equal(result.outcomes[2].creditsCharged, 0, "failed item 2 charges 0");
+        assert.equal(result.outcomes[3].success, true, "item 3 succeeds");
+        assert.equal(result.totalCreditsCharged, 15, "3 × 5 = 15 credits for partial success");
+    } finally {
+        __setGenerateFinalAdForTests(null);
+        entMod.resolveCreditOwner = origResolve;
+    }
+    console.log("  ✅ T020: batch reflow 4 items → 3 success (15 credits) + 1 failure (0 credits)");
+}
+
 import { decideMethod, RATIO_TO_NUMERIC } from "./reflowRouter.js";
 import { verifyLockedRegion } from "./reflowOutpaint.js";
 import { NoPlanError, extractBuildPlan, rerenderFromPlan, __setGenerateFinalAdForTests } from "./reflowRerender.js";
@@ -2791,6 +2944,10 @@ async function runHff6Fixtures() {
     console.log("\n═══ HFF — HOTFIX-F: Aspect Ratio Reflow Fixtures ═══");
 
     testT010SafeZone();
+    testT011aRouterMatrix();
+    await testT012BrandColor();
+    await testT011SingleReflow();
+    await testT020BatchReflow();
     testHff6a();
     testHff6b();
     await testHff6c();

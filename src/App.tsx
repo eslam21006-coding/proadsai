@@ -28,7 +28,7 @@ import { feedbackService, type NegativeFeedbackTag } from './services/feedbackSe
 import { metaService, type MetaConnection } from './services/metaService';
 import { ASPECT_RATIOS, COLD_HOOK_ANGLES, OFFER_TYPES, getRandomUniverse } from './constants';
 import type { UserPlan } from './planconfig';
-import { PLANS, CREDIT_COSTS, TOPUP_PACKS, TOPUP_PRICES, CREDITS_PER_AD, canUse, canUseRatio, requiredPlanFor, requiredPlanForRatio, hasCredits, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
+import { PLANS, CREDIT_COSTS, TOPUP_PACKS, TOPUP_PRICES, CREDITS_PER_AD, canUse, requiredPlanFor, hasCredits, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
 import { LanguageProvider, useT, type UILanguage } from './i18n';
 import { deriveStatus } from './lib/projectStatus';
 import { resolveCoverImage } from './lib/projectCoverImage';
@@ -41,6 +41,7 @@ const InputForm = React.lazy(() => import('./components/InputForm'));
 const PerformanceDashboard = React.lazy(() => import('./components/PerformanceDashboard'));
 const PricingTableLazy = React.lazy(() => import('./components/PricingTable'));
 const BillingPage = React.lazy(() => import('./pages/Billing'));
+const ReflowPreview = React.lazy(() => import('./components/ReflowPreview'));
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import WorkspaceSettingsModal from './components/WorkspaceSettingsModal';
 import { ForgotPasswordDialog } from './components/auth/ForgotPasswordDialog';
@@ -2206,9 +2207,8 @@ const App: React.FC = () => {
   const [globalRefinement, setGlobalRefinement] = useState(''); // cumulative refinement history (sent to AI)
   const [refinementEntry, setRefinementEntry] = useState('');   // the new instruction being typed (not yet appended)
   const [studioTweak, setStudioTweak] = useState('');
-  const [reflowMethod, setReflowMethod] = useState<'auto' | 'outpaint' | 'rerender'>('auto');
-  const [showMethodSelector, setShowMethodSelector] = useState(false);
-  const [showReflowSizes, setShowReflowSizes] = useState(false); // inline reflow size-picker popover
+  const [reflowStep, setReflowStep] = useState<'closed' | 'picker_open' | 'preview' | 'committing'>('closed');
+  const [reflowTarget, setReflowTarget] = useState<AspectRatio | null>(null);
   const [reflowFallbackNotice, setReflowFallbackNotice] = useState<'outpaint' | 'rerender' | null>(null);
   const [visualPolishes, setVisualPolishes] = useState<VisualPolish[]>([]);
   const [selectedPolishIds, setSelectedPolishIds] = useState<Set<string>>(new Set());
@@ -3074,7 +3074,7 @@ const App: React.FC = () => {
     if (phase === 'tov_review') setPhase('input');
     else if (phase === 'concept_review') setPhase('tov_review');
     else if (phase === 'render_studio') setPhase('concept_review');
-    else if (phase === 'primary_text') { setPhase('render_studio'); setReflowMethod('auto'); }
+    else if (phase === 'primary_text') { setPhase('render_studio'); }
   };
 
   const togglePolish = (id: string) => {
@@ -3896,7 +3896,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           }
         }
         setPhase('render_studio');
-        setReflowMethod('auto');
+        setReflowStep('closed');
+    setReflowTarget(null);
         updateHighestUnlocked('render_studio');
         awardMilestone('designGenerated');
 
@@ -4075,7 +4076,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     setBatchRendering(true);
     setCurrentAspectRatio(primaryRatio);
     setPhase('render_studio');
-    setReflowMethod('auto');
+    setReflowStep('closed');
+    setReflowTarget(null);
     updateHighestUnlocked('render_studio');
 
     const newCredits = userCredits - totalCost;
@@ -4285,7 +4287,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
 
       setPhase('render_studio');
-      setReflowMethod('auto');
+      setReflowStep('closed');
+    setReflowTarget(null);
       updateHighestUnlocked('render_studio');
       awardMilestone('designGenerated');
     } catch (e: any) {
@@ -4328,7 +4331,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       const result = await reflowFn({
         generationId: renderGenerationId,
         targetAspectRatio: currentAspectRatio,
-        method: reflowMethod,
+        method: 'auto',
         scope: 'carousel_slide',
         slideIndex,
       });
@@ -4623,10 +4626,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
   const handleRescale = async (newRatio: AspectRatio) => {
     if (!inputs || !selectedTov) return;
-    if (!canUseRatio(userPlan, newRatio)) {
-      showToast(`${newRatio} ratio requires ${requiredPlanForRatio(newRatio)} plan or above.`, 'error');
-      return;
-    }
 
     // ─── CAROUSEL MODE: Reflow ALL slides via reflowImage callable (HOTFIX-F) ─────
     if (carouselSlides.length > 0 && carouselSlides.some(s => s.status === 'done')) {
@@ -4666,7 +4665,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           const result = await reflowFn({
             generationId: renderGenerationId,
             targetAspectRatio: newRatio,
-            method: reflowMethod,
+            method: 'auto',
             scope: 'carousel_all',
           });
           // Reconcile: replace the optimistic estimate with the actual charge reported
@@ -4758,7 +4757,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         const result = await reflowFn({
           generationId: renderGenerationId,
           targetAspectRatio: newRatio,
-          method: reflowMethod,
+          method: 'auto',
           scope: 'single',
         });
         // Reconcile optimistic estimate with the actual backend charge.
@@ -7132,6 +7131,38 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   </div>
                 )}
 
+                {/* ═══ VARIANT RATIO CHIPS — compact ratio switcher ═══ */}
+                {carouselSlides.length === 0 && mockupHistory.length > 1 && (() => {
+                  const uniqueRatios = [...new Set(mockupHistory.map(m => m.ratio))];
+                  const currentHistoryRatio = mockupHistory[historyIndex]?.ratio;
+                  return (
+                    <div className="flex items-center gap-1.5 justify-center mt-2 flex-wrap">
+                      {uniqueRatios.slice(0, 6).map(ratio => {
+                        const isActive = ratio === currentHistoryRatio;
+                        const latestForRatio = [...mockupHistory].reverse().find(m => m.ratio === ratio);
+                        return (
+                          <button
+                            key={ratio}
+                            onClick={() => {
+                              if (latestForRatio) {
+                                const idx = mockupHistory.indexOf(latestForRatio);
+                                if (idx >= 0) setHistoryIndex(idx);
+                              }
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-[9px] font-bold tracking-tight transition-all border ${
+                              isActive
+                                ? 'bg-blue-600/25 border-blue-500/40 text-blue-300 shadow-sm shadow-blue-500/10'
+                                : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300 hover:border-slate-600'
+                            }`}
+                          >
+                            {ratio}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+
                 {/* ═══ ALL VERSIONS GALLERY — shows when multiple renders exist in non-batch mode ═══ */}
                 {carouselSlides.length === 0 && mockupHistory.length > 1 && (() => {
                   const allDone = mockupHistory.filter(m => m.url);
@@ -7338,78 +7369,110 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                 {/* Reflow Rescaling */}
                 <div className="bg-slate-900/50 rounded-2xl border border-slate-800/40 p-4 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center flex-1"><i className="fa-solid fa-crop-simple mr-2 text-blue-500"></i>{t('studio.reflow')}</h4>
-                    <button onClick={() => setShowMethodSelector(!showMethodSelector)}
-                      className="text-[8px] text-slate-500 hover:text-slate-300 flex items-center gap-1 transition-all">
-                      <span>{t('studio.reflow.method_label')}: {reflowMethod === 'auto' ? t('studio.reflow.method_auto') : reflowMethod === 'outpaint' ? t('studio.reflow.method_quick') : t('studio.reflow.method_fresh')}</span>
-                      <i className={`fa-solid fa-chevron-${showMethodSelector ? 'up' : 'down'} text-[6px]`}></i>
-                    </button>
-                  </div>
-                  {showMethodSelector && (
-                    <div className="flex gap-2">
-                      {([
-                        { value: 'auto' as const, label: t('studio.reflow.method_auto'), desc: t('studio.reflow.method_auto_desc'), icon: 'fa-wand-magic-sparkles' },
-                        { value: 'outpaint' as const, label: t('studio.reflow.method_quick'), desc: t('studio.reflow.method_quick_desc'), icon: 'fa-bolt' },
-                        { value: 'rerender' as const, label: t('studio.reflow.method_fresh'), desc: t('studio.reflow.method_fresh_desc'), icon: 'fa-rotate' },
-                      ]).map(opt => (
-                        <button key={opt.value} onClick={() => { setReflowMethod(opt.value); setShowMethodSelector(false); }}
-                          className={`flex-1 py-2 rounded-lg border text-center transition-all ${reflowMethod === opt.value ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
-                          <i className={`fa-solid ${opt.icon} text-[9px] block mb-0.5`}></i>
-                          <span className="text-[7px] font-bold block">{opt.label}</span>
-                          <span className="text-[6px] opacity-50 block">{opt.desc}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {/* Reflow opens an inline size-picker popover. Sizes limited to
-                      Square (1:1) / Portrait (4:5) / Story (9:16); the currently-viewed
-                      ratio (displayRatio) is hidden so the user only sees other sizes. */}
-                  <div className="relative">
+                  <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center"><i className="fa-solid fa-crop-simple mr-2 text-blue-500"></i>{t('studio.reflow')}</h4>
+
+                  {reflowStep === 'closed' && (
                     <button
-                      onClick={() => setShowReflowSizes(v => !v)}
+                      onClick={() => setReflowStep('picker_open')}
                       className="w-full py-2.5 rounded-xl bg-blue-600/12 border border-blue-500/20 text-blue-300 text-[9px] font-bold uppercase tracking-wider hover:bg-blue-600 hover:text-white transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
                     >
                       <i className="fa-solid fa-crop-simple text-[8px]"></i>
                       {t('studio.reflow')}
-                      <i className={`fa-solid fa-chevron-${showReflowSizes ? 'up' : 'down'} text-[6px] opacity-60`}></i>
                     </button>
-                    {showReflowSizes && (
-                      <div className="absolute left-0 right-0 z-30 mt-2 p-2 bg-slate-950 border border-slate-700/60 rounded-2xl shadow-2xl space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                  )}
+
+                  {reflowStep === 'picker_open' && (
+                    <div className="space-y-1.5">
+                      <button
+                        onClick={() => setReflowStep('closed')}
+                        className="w-full text-[8px] text-slate-500 hover:text-slate-300 flex items-center justify-center gap-1 transition-all"
+                      >
+                        <i className="fa-solid fa-chevron-up text-[6px]"></i>
+                        {t('studio.reflow')}
+                      </button>
+                      <div className="space-y-1.5">
                         {ASPECT_RATIOS
-                          .filter(r => ['1:1', '4:5', '9:16'].includes(r.value) && r.value !== displayRatio)
+                          .filter(r => r.value !== displayRatio)
                           .map(r => {
                             const reflowLabels: Record<string, string> = {
                               '1:1': 'Square / مربع (1:1)',
                               '4:5': 'Portrait / بورتريه (4:5)',
+                              '3:4': 'Tall Portrait / طولي (3:4)',
+                              '4:3': 'Landscape / أفقي (4:3)',
                               '9:16': 'Story / ستوري (9:16)',
+                              '16:9': 'YouTube (16:9)',
                             };
                             const reflowIcons: Record<string, string> = {
                               '1:1': 'fa-regular fa-square',
                               '4:5': 'fa-solid fa-mobile-screen',
+                              '3:4': 'fa-solid fa-table-columns',
+                              '4:3': 'fa-solid fa-display',
                               '9:16': 'fa-solid fa-mobile',
+                              '16:9': 'fa-solid fa-tv',
                             };
-                            const allowed = canUseRatio(userPlan, r.value);
                             return (
                               <button
                                 key={r.value}
-                                disabled={!allowed}
-                                onClick={() => { if (!allowed) return; setShowReflowSizes(false); handleRescale(r.value); }}
-                                title={allowed ? reflowLabels[r.value] : `Requires ${requiredPlanForRatio(r.value)} plan`}
-                                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left transition-all ${allowed
-                                  ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-blue-600/15 hover:border-blue-500/30 hover:text-white'
-                                  : 'bg-slate-950/50 border-slate-800/40 text-slate-600 cursor-not-allowed opacity-60'
-                                  }`}
+                                onClick={() => { setReflowTarget(r.value); setReflowStep('preview'); }}
+                                title={reflowLabels[r.value]}
+                                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left transition-all bg-slate-900 border-slate-800 text-slate-300 hover:bg-blue-600/15 hover:border-blue-500/30 hover:text-white"
                               >
                                 <i className={`${reflowIcons[r.value]} text-sm w-4 text-center`}></i>
                                 <span className="text-[10px] font-bold tracking-tight flex-1">{reflowLabels[r.value]}</span>
-                                {!allowed && <i className="fa-solid fa-lock text-[7px] text-amber-500/60"></i>}
                               </button>
                             );
                           })}
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
+
+                  {reflowStep === 'preview' && reflowTarget && currentMockup && (() => {
+                    // Scope-total cost per FR-006: button shows the TOTAL credits the user
+                    // will be charged, not the per-image cost. Carousel mode fires
+                    // `carousel_all` inside handleRescale, so the visible cost must reflect
+                    // that. Batch UI scope-selector is deferred to a later task; until then
+                    // batch reflows go through the single-image path.
+                    const isCarouselScope =
+                      carouselSlides.length > 0 && carouselSlides.some(s => s.status === 'done');
+                    const scopeItemCount = isCarouselScope
+                      ? carouselSlides.filter(s => s.status === 'done').length
+                      : 1;
+                    const totalCost = CREDIT_COSTS.reflowImage * scopeItemCount;
+                    return (
+                    <div className="space-y-3">
+                      <ReflowPreview sourceImageUrl={currentMockup} targetRatio={reflowTarget} />
+                      <button
+                        onClick={async () => {
+                          setReflowStep('committing');
+                          try {
+                            await handleRescale(reflowTarget);
+                          } catch {
+                            // handleRescale shows its own toasts
+                          }
+                          setReflowStep('closed');
+                          setReflowTarget(null);
+                        }}
+                        disabled={isLoading}
+                        className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-lg transition-all active:scale-[0.98] hover:from-blue-500 hover:to-cyan-500 flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        <i className="fa-solid fa-wand-magic-sparkles text-[8px]"></i>
+                        {t('studio.reflow.generate_button', { credits: totalCost })}
+                      </button>
+                      <button
+                        onClick={() => { setReflowStep('picker_open'); setReflowTarget(null); }}
+                        className="w-full text-[8px] text-slate-500 hover:text-slate-300 text-center transition-all"
+                      >
+                        {t('studio.reflow.current_ratio')}: {displayRatio}
+                      </button>
+                    </div>
+                    );
+                  })()}
+
+                  {reflowStep === 'committing' && (
+                    <div className="flex items-center justify-center py-4">
+                      <i className="fa-solid fa-spinner fa-spin text-blue-400 text-lg"></i>
+                    </div>
+                  )}
                 </div>
 
                 {/* Script — bottom */}
