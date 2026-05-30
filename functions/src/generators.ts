@@ -22,7 +22,7 @@ import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, pars
 import { compileModePayload, getModePayloadPromptBlock, getModePayloadPromptBlock_RenderSafe, getModePayloadCaptionAnchors, extractAuthorizedNumbers, getNumericFidelityPolicy, type ModePayload, type NumericFidelityPolicy } from "./modeFieldSchema.js";
 import { compositeOfferOverlay, isOverlayAvailable, extractOfferFacts, validateResolvedOfferFacts } from "./offerOverlay.js";
 import { validateCaption, validateArabicCompliance, validateBlueprintLanguage, validateBlueprintModeContribution, validateBlueprintMinimalStyle, sanitizeReferenceAdSummary, validateLanguageQuality, type CaptionValidationInput, type CaptionQualityResult, type CaptionQualityCheck } from "./captionValidator.js";
-import { validateBuildPlanAgainstContract, buildScoringPrompt, parseScoringResponse, quickRejectCheck, applyBrandColorDeduction } from "./creativeScoringEngine.js";
+import { validateBuildPlanAgainstContract, quickRejectCheck } from "./creativeScoringEngine.js";
 import type { BrandColorComplianceEntry } from "./types.js";
 import { storeCreativeToMemory, retrieveCreativePatterns } from "./creativeMemory.js";
 import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.js";
@@ -5818,94 +5818,10 @@ If the asset is not clearly visible and prominent in the final render, the outpu
                     const imageBase64 = `data:image/png;base64,${part.inlineData.data}`;
                     let currentImage = imageBase64;
 
-                    // ═══ DESIGN CRITIC LOOP ═══
-                    // A cheap model reviews the render and the visual model auto-fixes issues
-                    // Only runs on primary renders (not reflows/edits) to save cost
-                    if (!base64ToEdit && !styleReference && hasTimeBudget(90000)) {
-                        try {
-                            const critique = await critiqueDesign(
-                                currentImage, hookText, subheadText, ctaName, benefitText, currentAspectRatio, inputs
-                            );
-
-                            if (_lastBrandComplianceEntry && critique) {
-                                const baseScore = { overallScore: critique.score * 10, passed: !critique.needsRevision, violations: critique.fixes, suggestions: critique.fixes };
-                                const adjusted = applyBrandColorDeduction(baseScore as any, _lastBrandComplianceEntry);
-                                if (adjusted.overallScore !== baseScore.overallScore) {
-                                    console.log(`🎨 Brand color deduction applied: ${baseScore.overallScore} → ${adjusted.overallScore}`);
-                                    critique.score = Math.round(adjusted.overallScore / 10);
-                                    critique.needsRevision = !adjusted.passed;
-                                }
-                            }
-
-                            if (critique && critique.needsRevision && critique.fixes.length > 0) {
-                                console.log(`🎨 Design Critic found ${critique.fixes.length} issues — auto-fixing...`);
-
-                                // Re-render with targeted fix instructions
-                                const fixInstruction = `DESIGN CRITIC AUTO-FIX (DO NOT CHANGE THE OVERALL DESIGN — ONLY FIX THESE SPECIFIC ISSUES):
-${critique.fixes.map((f: string, i: number) => `${i + 1}. ${f}`).join('\n')}
-
-CRITICAL: Keep the SAME hero pose, SAME environment, SAME color palette, SAME composition.
-ONLY adjust the specific issues listed above. This is a REFINEMENT, not a redesign.
-
-⚠️⚠️⚠️ ABSOLUTE TEXT LOCK — DO NOT CHANGE ANY TEXT ⚠️⚠️⚠️
-The following text strings must appear EXACTLY as written — character for character:
-- HEADLINE: "${hookText}"
-- SUBHEADLINE: "${subheadText}"
-- CTA BUTTON: "${ctaName}"
-- BENEFIT: "${benefitText}"
-If you change, rephrase, translate, abbreviate, or omit ANY of these strings, the fix FAILS.
-Render these EXACT strings. No variations. No improvements. EXACT.`;
-
-                                // Use the generated image as base for refinement
-                                const refineParts: any[] = [
-                                    { inlineData: { mimeType: "image/png", data: currentImage.split(',')[1] } },
-                                    { text: `${fixInstruction}
-
-${coreDesignRules}` }
-                                ];
-                                // Include face reference for identity preservation
-                                boxA.forEach((d: any) => refineParts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
-
-                                const refineResponse = await callGemini({
-                                    model: VISUAL_MODEL,
-                                    contents: { parts: refineParts },
-                                    config: {
-                                        responseModalities: ['TEXT', 'IMAGE'],
-                                        thinkingConfig: { thinkingLevel: 'High' },
-                                        imageConfig: { aspectRatio: currentAspectRatio as any },
-                                        safetySettings: [
-                                            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
-                                            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
-                                            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-                                            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
-                                        ]
-                                    }
-                                });
-
-                                // Try to extract the refined image
-                                let refinementApplied = false;
-                                for (const refineCand of refineResponse.candidates || []) {
-                                    if (refineCand.content && refineCand.content.parts) {
-                                        for (const refinePart of refineCand.content.parts) {
-                                            if (refinePart.inlineData) {
-                                                console.log('✅ Design Critic refinement applied successfully');
-                                                currentImage = `data:image/png;base64,${refinePart.inlineData.data}`;
-                                                refinementApplied = true;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    if (refinementApplied) break;
-                                }
-                                if (!refinementApplied) {
-                                    console.log('⚠️ Refinement render failed — using current image');
-                                }
-                            }
-                        } catch (critiqueError) {
-                            // Critic failed — non-blocking, return original image
-                            console.warn('Design Critic skipped (non-blocking):', critiqueError);
-                        }
-                    }
+                    // Quality gate / design critique pipeline removed (product decision 2026-05-30):
+                    // GPT-4o-mini critique + auto-fix re-render added latency and cost with no
+                    // user-visible benefit at the current stage. Render proceeds directly with
+                    // currentImage as produced by VISUAL_MODEL.
 
                     // ═══ ARABIC TEXT QA — Auto-detect and fix Arabic text corruption ═══
                     // Runs after design critic, only for Arabic content, only on primary renders
@@ -6396,109 +6312,10 @@ If no monetary numbers are visible, return: []` }
     return { image: null, errorCode: 'safety_blocked', failureClass: 'model_error' as const };
 }
 
-// ═══ DESIGN CRITIC LOOP — Internal quality gate before user sees the image ═══
-// Architecture:
-//   1. Gemini VISUAL_MODEL generates the image
-//   2. Gemini CREATIVE_MODEL (different architecture) critiques it with vision
-//   3. If score < 7 or any criterion ≤ 4, Gemini VISUAL_MODEL re-renders with targeted fixes
-//   4. User only sees the final version
-//
-// Cost: ~$0.002 for critique (always) + ~$0.01 for re-render (only when needed, ~30% of the time)
-// Time: +3s for critique, +18s for re-render when needed
-//
-// To switch to OpenAI as critic: deploy the designCritique Cloud Function and set
-// USE_EXTERNAL_CRITIC=true. The Cloud Function calls GPT-4o-mini vision (~$0.001/call).
-//
-export async function critiqueDesign(
-    imageBase64: string,
-    expectedHeadline: string,
-    expectedSubheadline: string,
-    expectedCTA: string,
-    expectedBenefit: string,
-    ratio: AspectRatio,
-    inputs?: AdInputs,
-): Promise<{ needsRevision: boolean; fixes: string[]; score: number } | null> {
-    if (!openaiKey) {
-        console.warn('OpenAI key not set — skipping design critique');
-        return null;
-    }
-
-    try {
-        // Compile the layout contract for scoring context
-        const selectedModes = (inputs as any)?.offerCreativeMode || ['standard_hero'];
-        const hookAngle = inputs?.coldHookAngle || undefined;
-        const scoringFullContract = compileFullContract({
-            selectedModes,
-            hookAngle,
-            aspectRatio: ratio,
-            adLanguage: inputs?.adLanguage || 'ar_fusha',
-            visualStyleFamily: inputs ? resolveStyleFamily(inputs) : 'realistic',
-        });
-        const contract = getContractForScoring(scoringFullContract);
-
-        // Build the scoring prompt with layout contract awareness
-        const scoringPrompt = buildScoringPrompt(
-            contract, expectedHeadline, expectedSubheadline,
-            expectedCTA, expectedBenefit, ratio
-        );
-
-        // Strip data URL prefix
-        let rawBase64 = imageBase64;
-        if (rawBase64.includes(',')) rawBase64 = rawBase64.split(',')[1];
-
-        // Use OpenAI GPT-4o-mini vision — different model catches Gemini's blind spots
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${openaiKey}`,
-            },
-            body: JSON.stringify({
-                model: 'gpt-4o-mini',
-                messages: [
-                    {
-                        role: 'system',
-                        content: 'You are a strict ad design quality inspector. Score advertisement images against layout contracts. Return ONLY valid JSON. Be strict — this is a quality gate, not a participation trophy.'
-                    },
-                    {
-                        role: 'user',
-                        content: [
-                            {
-                                type: 'image_url',
-                                image_url: { url: `data:image/png;base64,${rawBase64}`, detail: 'low' }
-                            },
-                            { type: 'text', text: scoringPrompt }
-                        ]
-                    }
-                ],
-                max_tokens: 600,
-                temperature: 0.1,
-                response_format: { type: 'json_object' }
-            })
-        });
-
-        const data = await response.json() as any;
-
-        if (data.error) {
-            console.error('OpenAI Critic error:', data.error);
-            return null;
-        }
-
-        const content = data.choices?.[0]?.message?.content || '{}';
-        const scoreResult = parseScoringResponse(content);
-
-        console.log(`🔍 OpenAI Critic: overall=${scoreResult.overallScore}/100, passed=${scoreResult.passed}, violations=${scoreResult.violations.length}`);
-
-        return {
-            needsRevision: !scoreResult.passed,
-            fixes: scoreResult.suggestions,
-            score: Math.round(scoreResult.overallScore / 10),
-        };
-    } catch (err) {
-        console.warn('OpenAI Design Critique failed (non-blocking):', err);
-        return null;
-    }
-}
+// `critiqueDesign` (GPT-4o-mini quality gate + auto-fix pipeline) was removed on
+// 2026-05-30 as a product decision — added latency/cost without user-visible benefit.
+// If a critique step is reintroduced later, restore both this function AND the
+// DESIGN CRITIC LOOP block in generateFinalAd that consumed it.
 
 // ─── CAROUSEL STORY ANGLES ─────────────────────────────────────────────────
 // Generates 4 different carousel narrative angles for the user to choose from

@@ -18,7 +18,6 @@ const fnCarouselAngles = httpsCallable(functions, 'serverGenerateCarouselAngles'
 const fnCarouselCopies = httpsCallable(functions, 'serverGenerateCarouselSlideCopies', { timeout: 120000 });
 const fnCaption = httpsCallable(functions, 'serverGenerateCaption', { timeout: 120000 });
 const fnVisualPolishes = httpsCallable(functions, 'serverGenerateVisualPolishes', { timeout: 60000 });
-const fnDesignCritique = httpsCallable(functions, 'designCritique', { timeout: 30000 });
 const fnGetRankings = httpsCallable(functions, 'serverGetRankings', { timeout: 30000 });
 const fnEditRegion = httpsCallable(functions, 'serverEditRegion', { timeout: 120000 });
 const fnTestimonialCarousel = httpsCallable(functions, 'serverGenerateTestimonialCarousel', { timeout: 300000 });
@@ -283,23 +282,6 @@ Use this information to better understand the brand's positioning, tone, and tar
       debug: data.debug || null,
       resolutionTrace: data.resolutionTrace || null,
     };
-  }
-
-  // ─── DESIGN CRITIQUE (already server-side via OpenAI) ──────────────────
-  async critiqueDesign(
-    imageBase64: string, expectedHeadline: string,
-    expectedSubheadline: string, expectedCTA: string,
-    expectedBenefit: string, ratio: AspectRatio
-  ): Promise<{ needsRevision: boolean; fixes: string[]; score: number } | null> {
-    try {
-      const result = await fnDesignCritique({
-        imageBase64, expectedHeadline, expectedSubheadline,
-        expectedCTA, expectedBenefit, ratio,
-      });
-      return result.data as { needsRevision: boolean; fixes: string[]; score: number };
-    } catch {
-      return null;
-    }
   }
 
   // ─── CAROUSEL ANGLE GENERATION ─────────────────────────────────────────

@@ -4856,96 +4856,9 @@ export const triggerVaultExtraction = onCall({
     return { status: 'processed', principlesCreated, processedSignals: pendingSnap.size };
 });
 
-// ─── 5d. DESIGN CRITIC via OpenAI ───
-// Call GPT-4o-mini vision to critique a generated ad image
-
-export const designCritique = onCall({
-    region: "europe-west1",
-    secrets: [openaiApiKey],
-    timeoutSeconds: 30,
-    cors: true,
-    memory: "256MiB",
-    maxInstances: 20,
-}, async (request: CallableRequest) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-
-    const { imageBase64, expectedHeadline, expectedSubheadline, expectedCTA, expectedBenefit, ratio } = request.data;
-    if (!imageBase64) throw new HttpsError("invalid-argument", "Missing image.");
-
-    try {
-        // Strip data URL prefix
-        let rawBase64 = imageBase64;
-        if (rawBase64.includes(',')) rawBase64 = rawBase64.split(',')[1];
-
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${openaiApiKey.value()}`,
-            },
-            body: JSON.stringify({
-                model: 'gpt-4o-mini',
-                messages: [
-                    {
-                        role: 'system',
-                        content: 'You are an expert ad design critic. You analyze advertisement images and return structured JSON feedback. Be strict but fair. Only flag genuinely problematic issues.'
-                    },
-                    {
-                        role: 'user',
-                        content: [
-                            {
-                                type: 'image_url',
-                                image_url: { url: `data:image/png;base64,${rawBase64}`, detail: 'low' }
-                            },
-                            {
-                                type: 'text',
-                                text: `Review this ad image. Expected text elements:
-- Headline: "${expectedHeadline || ''}"
-- Subheadline: "${expectedSubheadline || ''}"
-${expectedCTA ? `- CTA Button: "${expectedCTA}"` : '- No CTA expected'}
-${expectedBenefit ? `- Benefit: "${expectedBenefit}"` : ''}
-- Ratio: ${ratio || '1:1'}
-
-Score 1-10 on: readability, text_accuracy, layout, text_hero_overlap, cta_visibility, color_harmony, professional_feel.
-
-Return ONLY valid JSON:
-{"scores":{"readability":N,"accuracy":N,"layout":N,"overlap":N,"cta":N,"color":N,"professional":N},"averageScore":N,"needsRevision":true/false,"fixes":["fix1","fix2"]}
-
-needsRevision=true only if average<7 or any score<=4. Max 3 specific actionable fixes. Focus on worst issues only.`
-                            }
-                        ]
-                    }
-                ],
-                max_tokens: 500,
-                temperature: 0.1,
-                response_format: { type: 'json_object' }
-            })
-        });
-
-        const data = await response.json() as any;
-
-        if (data.error) {
-            console.error('OpenAI critic error:', data.error);
-            return { needsRevision: false, fixes: [], score: 7 }; // Fail open
-        }
-
-        const content = data.choices?.[0]?.message?.content || '{}';
-        try {
-            const result = JSON.parse(content);
-            console.log(`🔍 OpenAI Critic: score=${result.averageScore}, revision=${result.needsRevision}`);
-            return {
-                needsRevision: result.needsRevision === true,
-                fixes: (result.fixes || []).slice(0, 3),
-                score: result.averageScore || 7,
-            };
-        } catch {
-            return { needsRevision: false, fixes: [], score: 7 };
-        }
-    } catch (err: any) {
-        console.error('Design critique failed:', err);
-        return { needsRevision: false, fixes: [], score: 7 }; // Fail open — don't block the user
-    }
-});
+// The `designCritique` callable (GPT-4o-mini quality gate) was removed on
+// 2026-05-30 as a product decision. The frontend service method that called it
+// has also been removed. Re-add both layers together if the gate is reintroduced.
 
 // ─── 5c. PUSH CREATIVE PACK (Image + Copy) TO META ─────────────────────
 export const metaPushCreativePack = onCall({
@@ -6313,6 +6226,38 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
                 }
                 return trimmed;
             });
+        }
+        // Same stripping for carouselSlides[].imageUrl — slide renders are the same size
+        // as single renders and can blow past the 1 MiB limit on a 10-slide carousel.
+        if (Array.isArray(cleanProject.carouselSlides) && cleanProject.carouselSlides.length > 0) {
+            cleanProject.carouselSlides = cleanProject.carouselSlides.map((s: any) => {
+                const trimmed: Record<string, any> = { ...s };
+                if (typeof trimmed.imageUrl === "string" && trimmed.imageUrl.length > 5000) {
+                    trimmed.imageUrl = "stored_externally";
+                }
+                if (typeof trimmed.rawBase64 === "string" && trimmed.rawBase64.length > 5000) {
+                    trimmed.rawBase64 = "stored_externally";
+                }
+                return trimmed;
+            });
+        }
+        // Heavy base64 arrays on inputs (user-uploaded photos / logos) can also blow
+        // the doc limit. They are reference data — the render pipeline reads them at
+        // generation time but they aren't needed once the project is rendered, and
+        // the resize/reflow path uses the persisted output URLs (not inputs.personalPhotos).
+        if (cleanProject.inputs && typeof cleanProject.inputs === "object") {
+            const cleanedInputs: Record<string, any> = { ...cleanProject.inputs };
+            if (Array.isArray(cleanedInputs.personalPhotos) && cleanedInputs.personalPhotos.length > 0) {
+                cleanedInputs.personalPhotos = cleanedInputs.personalPhotos.map((p: any) =>
+                    typeof p === "string" && p.length > 5000 ? "stored_externally" : p
+                );
+            }
+            if (Array.isArray(cleanedInputs.brandLogos) && cleanedInputs.brandLogos.length > 0) {
+                cleanedInputs.brandLogos = cleanedInputs.brandLogos.map((p: any) =>
+                    typeof p === "string" && p.length > 5000 ? "stored_externally" : p
+                );
+            }
+            cleanProject.inputs = cleanedInputs;
         }
         txn.set(projectRef, cleanProject, { merge: true });
         return newStatus;
