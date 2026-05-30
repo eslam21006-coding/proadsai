@@ -129,10 +129,10 @@ const ACTION_FEATURE_MAP: Record<string, string> = {
 };
 
 // ─── MODEL CONSTANTS (single source of truth) ───────────────────────────
-const CREATIVE_MODEL_PRO = "gemini-3.1-pro-preview"; // First generation
+const CREATIVE_MODEL_PRO = "gemini-flash-latest"; // First generation
 const CREATIVE_MODEL_LITE = "gemini-3.5-flash"; // Regenerations
 const LOGIC_MODEL = "gemini-2.5-flash-lite";
-const VISUAL_MODEL = "gemini-3.1-flash-image-preview";
+const VISUAL_MODEL = "gemini-pro-latest";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 2. THE AI GENERATOR (Don't lose this!)
