@@ -2543,7 +2543,8 @@ const App: React.FC = () => {
           const updated = { ...project, thumbnailUrl: storageUrl };
           saveProjectToDB(updated).catch(() => {});
           const callable = httpsCallable(functions, 'saveProject');
-          callable({ project: updated }).catch(() => {});
+          // Strip heavy base64 before the round-trip (same as the primary save path).
+          callable({ project: stripHeavyImageData(updated) }).catch(() => {});
         })
         .catch((err) => {
           console.warn("phase13 ▸ thumbnail upload failed (non-blocking):", err);
@@ -3930,7 +3931,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             // base64 — in the generations doc. Base64 (~1-5 MB) overflows Firestore's
             // 1 MiB doc limit (the addDoc fails → empty id → studio.reflow.no_generation_id),
             // and the reflowImage callable can only download a Storage URL, never base64.
-            const storedImageUrl = await uploadRenderToStorage(user.uid, mockup || '');
+            let storedImageUrl = 'pending_upload';
+            try {
+              storedImageUrl = await uploadRenderToStorage(user.uid, mockup || '');
+            } catch (uploadErr) {
+              console.warn('Render Storage upload failed (non-blocking) — saving generation with placeholder imageUrl:', uploadErr);
+            }
             savedGenId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
               { imageUrl: storedImageUrl, conceptText: conceptRaw.substring(0, 500), buildPlan: conceptRaw },
@@ -4509,7 +4515,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       if (user && res) {
         try {
           // Upload to Storage first — store the URL, not base64 (see main render path).
-          const storedImageUrl = await uploadRenderToStorage(user.uid, res);
+          // Non-blocking: a Storage failure falls back to a placeholder so the
+          // generation still saves (and reflow still gets a generationId).
+          let storedImageUrl = 'pending_upload';
+          try {
+            storedImageUrl = await uploadRenderToStorage(user.uid, res);
+          } catch (uploadErr) {
+            console.warn('Render Storage upload failed (non-blocking) — saving generation with placeholder imageUrl:', uploadErr);
+          }
           const genId = await feedbackService.saveGeneration(
             user.uid, inputs, 'render',
             { imageUrl: storedImageUrl, conceptText: (selectedConcept || '').substring(0, 500), buildPlan: buildPlan || '' },
@@ -4973,7 +4986,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     if (!user?.uid || !inputs) return;
     try {
       // Upload to Storage first — never persist base64 in the generations doc (1 MiB limit).
-      const storedImageUrl = await uploadRenderToStorage(user.uid, imageUrl);
+      // Non-blocking: fall back to a placeholder if Storage is unavailable.
+      let storedImageUrl = 'pending_upload';
+      try {
+        storedImageUrl = await uploadRenderToStorage(user.uid, imageUrl);
+      } catch (uploadErr) {
+        console.warn('Render Storage upload failed (non-blocking) — saving favorite with placeholder imageUrl:', uploadErr);
+      }
       const genId = await feedbackService.saveGeneration(
         user.uid, inputs, 'render',
         { imageUrl: storedImageUrl, conceptText: (conceptText || selectedConcept || '').substring(0, 500), hookText: (hookText || '').substring(0, 200), buildPlan: bPlan || buildPlan || '' },
@@ -6833,7 +6852,13 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                           if (!user?.uid || !inputs) return;
                                           try {
                                             // Upload to Storage first — never persist base64 in the generations doc (1 MiB limit).
-                                            const storedImageUrl = await uploadRenderToStorage(user.uid, item.url || '');
+                                            // Non-blocking: fall back to a placeholder if Storage is unavailable.
+                                            let storedImageUrl = 'pending_upload';
+                                            try {
+                                              storedImageUrl = await uploadRenderToStorage(user.uid, item.url || '');
+                                            } catch (uploadErr) {
+                                              console.warn('Render Storage upload failed (non-blocking) — saving favorite with placeholder imageUrl:', uploadErr);
+                                            }
                                             const genId = await feedbackService.saveGeneration(
                                               user.uid, inputs, 'render',
                                               { imageUrl: storedImageUrl, conceptText: item.conceptText?.substring(0, 500) || '', hookText: item.hookText?.substring(0, 200) || '', buildPlan: item.buildPlan || '' },
