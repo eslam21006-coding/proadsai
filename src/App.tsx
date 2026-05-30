@@ -33,6 +33,7 @@ import { LanguageProvider, useT, type UILanguage } from './i18n';
 import { deriveStatus } from './lib/projectStatus';
 import { resolveCoverImage } from './lib/projectCoverImage';
 import { uploadAndPersistThumbnail } from './lib/projectThumbnail';
+import { uploadRenderToStorage } from './lib/renderUpload';
 import { stepsWithData } from './lib/projectStepsData';
 import { useProjectAutoSave } from './hooks/useProjectAutoSave';
 import type { AutoSaveState } from './lib/projectAutoSave';
@@ -366,19 +367,40 @@ const stripUndefined = (obj: any): any => {
   return obj;
 };
 
-const saveProjectToFirestore = async (userId: string, project: SavedProject) => {
-  // Strip large image URLs from batchResults before saving to Firestore (1MB doc limit)
-  // Also recursively strip undefined values (Firestore rejects them)
-  const cleanProject = stripUndefined(JSON.parse(JSON.stringify({ ...project })));
-  if (cleanProject.batchResults && cleanProject.batchResults.length > 0) {
-    cleanProject.batchResults = cleanProject.batchResults.map((r: any) => ({
-      ...r,
-      // Keep URL only if it's a short Firebase Storage URL, strip base64/data URLs
-      url: r.url && r.url.length > 5000 ? null : r.url,
-    }));
+// Recursively replace heavy inline image data (base64 `data:` URLs and raw base64
+// blobs) anywhere in the project with a short placeholder. Mirrors the backend
+// saveProject stripper (functions/src/index.ts). Firestore rejects docs > 1 MiB
+// and a single render is ~1–5 MB; this catches every oversized payload regardless
+// of field name (referenceImage, referenceAd, offerAssets[], testimonialScreenshots[],
+// uploadedAssets[], mockupHistory[].url, carouselSlides[].imageUrl, …) while sparing
+// legitimate long text (buildPlan, conceptsText) — text always contains whitespace,
+// base64 never does. Short Storage URLs are preserved.
+const HEAVY_STR_THRESHOLD = 5000;
+const stripHeavyImageData = (value: any): any => {
+  if (typeof value === 'string') {
+    if (value.startsWith('data:')) return 'stored_externally';
+    if (value.length > HEAVY_STR_THRESHOLD && !/\s/.test(value)) return 'stored_externally';
+    return value;
   }
+  if (Array.isArray(value)) return value.map(stripHeavyImageData);
+  if (value && typeof value === 'object') {
+    const out: any = {};
+    for (const [k, v] of Object.entries(value)) out[k] = stripHeavyImageData(v);
+    return out;
+  }
+  return value;
+};
+
+const saveProjectToFirestore = async (userId: string, project: SavedProject) => {
+  // Strip undefined values (Firestore rejects them) then recursively strip all
+  // heavy base64/data-URL payloads (1 MiB doc limit) regardless of field name.
+  const cleanProject = stripHeavyImageData(stripUndefined(JSON.parse(JSON.stringify({ ...project }))));
   const projectRef = doc(db, 'users', userId, 'projects', project.id);
-  await setDoc(projectRef, { ...cleanProject, userId, updatedAt: Date.now() });
+  const payload = { ...cleanProject, userId, updatedAt: Date.now() };
+  if (import.meta.env.DEV) {
+    console.log(`saveProjectToFirestore: doc bytes = ${JSON.stringify(payload).length} for project ${project.id}`);
+  }
+  await setDoc(projectRef, payload);
 };
 
 const getAllProjectsFromFirestore = async (userId: string): Promise<SavedProject[]> => {
@@ -2477,9 +2499,19 @@ const App: React.FC = () => {
 
     try {
       const saveProjectFn = httpsCallable(functions, 'saveProject');
-      await saveProjectFn({ project });
+      // Strip heavy base64/data-URL payloads BEFORE the callable round-trip. The
+      // backend also strips defensively, but a project carrying several base64
+      // renders plus reference images can exceed the callable's request-size limit
+      // and fail at the transport layer before the backend ever runs. Local
+      // IndexedDB (above) keeps the full base64 for offline display; only the
+      // cloud copy is trimmed. stripHeavyImageData deep-clones, so `project`
+      // (used below for thumbnail resolution) is untouched.
+      await saveProjectFn({ project: stripHeavyImageData(project) });
     } catch (firestoreErr: any) {
-      console.error("Firestore cloud sync failed:", firestoreErr);
+      console.error(
+        `Firestore cloud sync failed: code=${firestoreErr?.code ?? 'unknown'} message=${firestoreErr?.message ?? String(firestoreErr)}`,
+        firestoreErr,
+      );
       if (firestoreErr?.code === 'failed-precondition' && firestoreErr?.message?.includes('QUOTA_EXCEEDED')) {
         const details = firestoreErr?.details || {};
         // Roll back the local IndexedDB write so mergeProjects on next sign-in
@@ -3894,9 +3926,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         let savedGenId: string | null = null;
         if (user) {
           try {
+            // Persist the render to Storage and store the resulting URL — NOT the raw
+            // base64 — in the generations doc. Base64 (~1-5 MB) overflows Firestore's
+            // 1 MiB doc limit (the addDoc fails → empty id → studio.reflow.no_generation_id),
+            // and the reflowImage callable can only download a Storage URL, never base64.
+            const storedImageUrl = await uploadRenderToStorage(user.uid, mockup || '');
             savedGenId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
-              { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500), buildPlan: conceptRaw },
+              { imageUrl: storedImageUrl, conceptText: conceptRaw.substring(0, 500), buildPlan: conceptRaw },
               conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
               canUseWorkspaces ? activeWorkspaceId : null,
               null, null, mockupResult.resolutionTrace
@@ -4471,9 +4508,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       // Save polished render for feedback/favorites (non-blocking)
       if (user && res) {
         try {
+          // Upload to Storage first — store the URL, not base64 (see main render path).
+          const storedImageUrl = await uploadRenderToStorage(user.uid, res);
           const genId = await feedbackService.saveGeneration(
             user.uid, inputs, 'render',
-            { imageUrl: res, conceptText: (selectedConcept || '').substring(0, 500), buildPlan: buildPlan || '' },
+            { imageUrl: storedImageUrl, conceptText: (selectedConcept || '').substring(0, 500), buildPlan: buildPlan || '' },
             buildPlan, resolvedUniverse, 'gemini-3.1-flash-image', 0, editRatio, buildCreativeIdentity(),
             canUseWorkspaces ? activeWorkspaceId : null
           );
@@ -4933,9 +4972,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   const saveDesignFavorite = async (imageUrl: string, ratio: AspectRatio, conceptText?: string, hookText?: string, bPlan?: string) => {
     if (!user?.uid || !inputs) return;
     try {
+      // Upload to Storage first — never persist base64 in the generations doc (1 MiB limit).
+      const storedImageUrl = await uploadRenderToStorage(user.uid, imageUrl);
       const genId = await feedbackService.saveGeneration(
         user.uid, inputs, 'render',
-        { imageUrl, conceptText: (conceptText || selectedConcept || '').substring(0, 500), hookText: (hookText || '').substring(0, 200), buildPlan: bPlan || buildPlan || '' },
+        { imageUrl: storedImageUrl, conceptText: (conceptText || selectedConcept || '').substring(0, 500), hookText: (hookText || '').substring(0, 200), buildPlan: bPlan || buildPlan || '' },
         bPlan || buildPlan || '', resolvedUniverse, 'gemini-flash', 0, ratio, buildCreativeIdentity(),
         canUseWorkspaces ? activeWorkspaceId : null
       );
@@ -6791,9 +6832,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                         <button onClick={async () => {
                                           if (!user?.uid || !inputs) return;
                                           try {
+                                            // Upload to Storage first — never persist base64 in the generations doc (1 MiB limit).
+                                            const storedImageUrl = await uploadRenderToStorage(user.uid, item.url || '');
                                             const genId = await feedbackService.saveGeneration(
                                               user.uid, inputs, 'render',
-                                              { imageUrl: item.url || '', conceptText: item.conceptText?.substring(0, 500) || '', hookText: item.hookText?.substring(0, 200) || '', buildPlan: item.buildPlan || '' },
+                                              { imageUrl: storedImageUrl, conceptText: item.conceptText?.substring(0, 500) || '', hookText: item.hookText?.substring(0, 200) || '', buildPlan: item.buildPlan || '' },
                                               item.buildPlan || '', resolvedUniverse, 'gemini-flash', 0, item.ratio as AspectRatio, buildCreativeIdentity(),
                                               canUseWorkspaces ? activeWorkspaceId : null
                                             );

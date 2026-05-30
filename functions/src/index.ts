@@ -130,7 +130,7 @@ const ACTION_FEATURE_MAP: Record<string, string> = {
 
 // ─── MODEL CONSTANTS (single source of truth) ───────────────────────────
 const CREATIVE_MODEL_PRO = "gemini-flash-latest"; // First generation
-const CREATIVE_MODEL_LITE = "gemini-3.5-flash"; // Regenerations
+const CREATIVE_MODEL_LITE = "gemini-flash-latest"; // Regenerations
 const LOGIC_MODEL = "gemini-2.5-flash-lite";
 const VISUAL_MODEL = "gemini-pro-latest";
 
@@ -6138,6 +6138,38 @@ export const getWorkspaceAccessAuditLog = onCall({
     return { entries, nextCursor };
 });
 
+// Recursively replace heavy inline image data (base64 `data:` URLs and raw base64
+// blobs) anywhere in a saved-project document with a short placeholder. Firestore
+// rejects documents > 1 MiB, and a single render is ~1–5 MB. The explicit per-field
+// trimming inside saveProject covers the *known* carriers (mockupHistory,
+// carouselSlides, batchResults, inputs.personalPhotos / brandLogos) — but several
+// other image-bearing fields were never trimmed: inputs.referenceImage,
+// inputs.referenceAd, inputs.offerAssets[], inputs.testimonialScreenshots[], and
+// inputs.uploadedAssets[]. A project using any of those still overflowed the limit,
+// which is why "Saving to cloud failed" kept recurring after the earlier fix. This
+// pass catches every oversized payload regardless of field name, so the document
+// can never overflow on an unanticipated field again.
+//
+// It deliberately spares legitimate long TEXT (buildPlan, conceptsText, tovText):
+// natural-language text always contains whitespace, whereas base64 / data-URL
+// payloads never do — so the whitespace test cleanly separates the two. Short
+// Storage URLs (< threshold) are preserved untouched.
+const HEAVY_STR_THRESHOLD = 5000;
+function stripHeavyImageData(value: any): any {
+    if (typeof value === "string") {
+        if (value.startsWith("data:")) return "stored_externally";
+        if (value.length > HEAVY_STR_THRESHOLD && !/\s/.test(value)) return "stored_externally";
+        return value;
+    }
+    if (Array.isArray(value)) return value.map(stripHeavyImageData);
+    if (value && typeof value === "object") {
+        const out: Record<string, any> = {};
+        for (const [k, v] of Object.entries(value)) out[k] = stripHeavyImageData(v);
+        return out;
+    }
+    return value;
+}
+
 export const saveProject = onCall({ region: "europe-west1" }, async (request: CallableRequest<any>) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required");
     const uid = request.auth.uid;
@@ -6259,7 +6291,24 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
             }
             cleanProject.inputs = cleanedInputs;
         }
-        txn.set(projectRef, cleanProject, { merge: true });
+        // Final safety net: recursively strip ANY remaining base64/data-URL payload
+        // regardless of which field carries it (referenceImage, referenceAd,
+        // offerAssets[], testimonialScreenshots[], uploadedAssets[], …). This is the
+        // root-cause fix for the recurring "Saving to cloud failed" error.
+        const persistedProject = stripHeavyImageData(cleanProject);
+
+        // Diagnostic: measure the actual persisted doc size. Firestore's hard limit is
+        // 1,048,576 bytes; warn well before it so any future overflow source is visible
+        // in logs instead of surfacing as an opaque write rejection.
+        const docBytes = Buffer.byteLength(JSON.stringify(persistedProject), "utf8");
+        if (docBytes > 900_000) {
+            console.warn(
+                `saveProject: persisted doc for uid=${uid} project=${project.id} is ${docBytes} bytes ` +
+                `after stripping — approaching Firestore's 1 MiB limit.`,
+            );
+        }
+
+        txn.set(projectRef, persistedProject, { merge: true });
         return newStatus;
     });
 
@@ -6268,8 +6317,10 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
         // Preserve structured failures (quota exceeded, plan-gate, invalid-argument).
         if (err instanceof HttpsError) throw err;
         console.error(
-            `saveProject failed for uid=${uid} project=${project.id}:`,
-            (err as { message?: string })?.message ?? err,
+            `saveProject failed for uid=${uid} project=${project.id}: ` +
+            `code=${(err as { code?: string | number })?.code ?? "unknown"} ` +
+            `message=${(err as { message?: string })?.message ?? String(err)}`,
+            err,
         );
         throw new HttpsError("internal", "Could not save project. Please try again.", { reason: "save_failed" });
     }
