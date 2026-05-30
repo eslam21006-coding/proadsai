@@ -528,7 +528,7 @@ const CREATIVE_MODEL_LITE = "gemini-flash-latest"; // Regenerations (fast + chea
 const LOGIC_MODEL = "gemini-2.5-flash-lite";
 
 // 3. THE ARTIST (State of the Art Visuals)
-const VISUAL_MODEL = "gemini-pro-latest";
+const VISUAL_MODEL = "gemini-3-pro-image";
 
 const clean = (val: string): string => {
     if (!val) return "";

@@ -132,7 +132,7 @@ const ACTION_FEATURE_MAP: Record<string, string> = {
 const CREATIVE_MODEL_PRO = "gemini-flash-latest"; // First generation
 const CREATIVE_MODEL_LITE = "gemini-flash-latest"; // Regenerations
 const LOGIC_MODEL = "gemini-2.5-flash-lite";
-const VISUAL_MODEL = "gemini-pro-latest";
+const VISUAL_MODEL = "gemini-3-pro-image";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 2. THE AI GENERATOR (Don't lose this!)
