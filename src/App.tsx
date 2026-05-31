@@ -33,7 +33,6 @@ import { LanguageProvider, useT, type UILanguage } from './i18n';
 import { deriveStatus } from './lib/projectStatus';
 import { resolveCoverImage } from './lib/projectCoverImage';
 import { uploadAndPersistThumbnail } from './lib/projectThumbnail';
-import { uploadRenderToStorage } from './lib/renderUpload';
 import { stepsWithData } from './lib/projectStepsData';
 import { useProjectAutoSave } from './hooks/useProjectAutoSave';
 import type { AutoSaveState } from './lib/projectAutoSave';
@@ -3931,16 +3930,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         let savedGenId: string | null = null;
         if (user) {
           try {
-            // Persist the render to Storage and store the resulting URL — NOT the raw
-            // base64 — in the generations doc. Base64 (~1-5 MB) overflows Firestore's
-            // 1 MiB doc limit (the addDoc fails → empty id → studio.reflow.no_generation_id),
-            // and the reflowImage callable can only download a Storage URL, never base64.
-            let storedImageUrl = 'pending_upload';
-            try {
-              storedImageUrl = await uploadRenderToStorage(user.uid, mockup || '');
-            } catch (uploadErr) {
-              console.warn('Render Storage upload failed (non-blocking) — saving generation with placeholder imageUrl:', uploadErr);
-            }
+            // The render was already persisted to Storage SERVER-SIDE by
+            // serverGenerateFinalAd (admin SDK — no client Storage write, no
+            // storage/unauthorized). Store that durable URL — NOT the ~1-5 MB base64 —
+            // in the generations doc. If the server upload failed, storageUrl is null
+            // and we fall back to 'pending_upload' (reflow then rerenders from plan).
+            const storedImageUrl = mockupResult.storageUrl || 'pending_upload';
             savedGenId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
               { imageUrl: storedImageUrl, conceptText: conceptRaw.substring(0, 500), buildPlan: conceptRaw },
@@ -4491,7 +4486,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const editRatio = displayRatio as AspectRatio;
     startLoad(editTarget ? `Editing ${editTarget.label}...` : "Applying Refinement...");
     try {
-      const res = (await gemini.generateFinalAd(buildPlan, selectedTov, inputs, resolvedUniverse, editRatio, combinedInstructions, (currentRawBase64 || currentMockup) || undefined)).image;
+      const editResult = await gemini.generateFinalAd(buildPlan, selectedTov, inputs, resolvedUniverse, editRatio, combinedInstructions, (currentRawBase64 || currentMockup) || undefined);
+      const res = editResult.image;
 
       // ═══ WRITE-BACK: Route result to correct source ═══
       if (editTarget && res) {
@@ -4521,15 +4517,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       // Save polished render for feedback/favorites (non-blocking)
       if (user && res) {
         try {
-          // Upload to Storage first — store the URL, not base64 (see main render path).
-          // Non-blocking: a Storage failure falls back to a placeholder so the
-          // generation still saves (and reflow still gets a generationId).
-          let storedImageUrl = 'pending_upload';
-          try {
-            storedImageUrl = await uploadRenderToStorage(user.uid, res);
-          } catch (uploadErr) {
-            console.warn('Render Storage upload failed (non-blocking) — saving generation with placeholder imageUrl:', uploadErr);
-          }
+          // The edited render was persisted to Storage server-side by
+          // serverGenerateFinalAd; store that URL (fall back to pending_upload if the
+          // server upload failed). No client-side Storage write.
+          const storedImageUrl = editResult.storageUrl || 'pending_upload';
           const genId = await feedbackService.saveGeneration(
             user.uid, inputs, 'render',
             { imageUrl: storedImageUrl, conceptText: (selectedConcept || '').substring(0, 500), buildPlan: buildPlan || '' },
@@ -5014,13 +5005,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   const saveDesignFavorite = async (imageUrl: string, ratio: AspectRatio, conceptText?: string, hookText?: string, bPlan?: string) => {
     if (!user?.uid || !inputs) return;
     try {
-      // Upload to Storage first — never persist base64 in the generations doc (1 MiB limit).
-      // Non-blocking: fall back to a placeholder if Storage is unavailable.
+      // Persist the image to Storage SERVER-SIDE (admin SDK — no client Storage write,
+      // no storage/unauthorized). An http URL is returned unchanged by the callable.
+      // Non-blocking: fall back to a placeholder if the callable fails.
       let storedImageUrl = 'pending_upload';
       try {
-        storedImageUrl = await uploadRenderToStorage(user.uid, imageUrl);
+        const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
+        storedImageUrl = (await uploadFn({ imageBase64: imageUrl })).data.storageUrl || 'pending_upload';
       } catch (uploadErr) {
-        console.warn('Render Storage upload failed (non-blocking) — saving favorite with placeholder imageUrl:', uploadErr);
+        console.warn('Server render upload failed (non-blocking) — saving favorite with placeholder imageUrl:', uploadErr);
       }
       const genId = await feedbackService.saveGeneration(
         user.uid, inputs, 'render',
@@ -6880,13 +6873,14 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                         <button onClick={async () => {
                                           if (!user?.uid || !inputs) return;
                                           try {
-                                            // Upload to Storage first — never persist base64 in the generations doc (1 MiB limit).
-                                            // Non-blocking: fall back to a placeholder if Storage is unavailable.
+                                            // Persist to Storage SERVER-SIDE (admin SDK). http URLs pass through.
+                                            // Non-blocking: fall back to a placeholder if the callable fails.
                                             let storedImageUrl = 'pending_upload';
                                             try {
-                                              storedImageUrl = await uploadRenderToStorage(user.uid, item.url || '');
+                                              const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
+                                              storedImageUrl = (await uploadFn({ imageBase64: item.url || '' })).data.storageUrl || 'pending_upload';
                                             } catch (uploadErr) {
-                                              console.warn('Render Storage upload failed (non-blocking) — saving favorite with placeholder imageUrl:', uploadErr);
+                                              console.warn('Server render upload failed (non-blocking) — saving favorite with placeholder imageUrl:', uploadErr);
                                             }
                                             const genId = await feedbackService.saveGeneration(
                                               user.uid, inputs, 'render',

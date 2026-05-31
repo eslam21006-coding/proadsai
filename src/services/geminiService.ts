@@ -258,7 +258,7 @@ Use this information to better understand the brand's positioning, tone, and tar
     editInstruction?: string, base64ToEdit?: string,
     styleReference?: string, textOverride?: TextOverride,
     activeWorkspaceId?: string, batchTotal?: number
-  ): Promise<{ image: string | null; errorCode?: string; debug?: any; resolutionTrace?: any }> {
+  ): Promise<{ image: string | null; storageUrl?: string | null; errorCode?: string; debug?: any; resolutionTrace?: any }> {
     const inputsWithPhotos = { ...inputs } as any;
     inputsWithPhotos.personalPhotos = (inputs.personalPhotos || []).slice(0, 5);
     inputsWithPhotos.brandLogos = (inputs.brandLogos || []).slice(0, 5);
@@ -278,6 +278,9 @@ Use this information to better understand the brand's positioning, tone, and tar
     const image = (typeof raw === 'string' && raw.startsWith('data:image/')) ? raw : null;
     return {
       image,
+      // Storage URL persisted server-side (admin SDK). The frontend stores THIS in the
+      // generations doc instead of the base64, and reflow uses it as the source image.
+      storageUrl: (typeof data.storageUrl === 'string' && data.storageUrl) ? data.storageUrl : null,
       errorCode: data.errorCode || (raw && !image ? 'invalid_image_format' : undefined),
       debug: data.debug || null,
       resolutionTrace: data.resolutionTrace || null,

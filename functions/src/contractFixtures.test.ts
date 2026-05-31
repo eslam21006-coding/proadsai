@@ -1972,7 +1972,7 @@ async function testT023CarouselReflow() {
 
 import { decideMethod, RATIO_TO_NUMERIC } from "./reflowRouter.js";
 import { verifyLockedRegion } from "./reflowOutpaint.js";
-import { NoPlanError, extractBuildPlan, rerenderFromPlan, __setGenerateFinalAdForTests } from "./reflowRerender.js";
+import { NoPlanError, extractBuildPlan, rerenderFromPlan, __setGenerateFinalAdForTests, __setStorageUploaderForTests } from "./reflowRerender.js";
 import type { ReflowHistoryEntry } from "./types.js";
 import { reflowImageHandler } from "./reflowImage.js";
 import { readFileSync } from "node:fs";
@@ -3032,6 +3032,11 @@ function runBcrFixtures() {
 
 async function runHff6Fixtures() {
     console.log("\n═══ HFF — HOTFIX-F: Aspect Ratio Reflow Fixtures ═══");
+
+    // rerenderFromPlan now persists the render to Storage via the admin SDK, which is
+    // unavailable in unit tests. Inject a passthrough uploader so outputUrl echoes the
+    // generator's image (preserving every existing outputUrl assertion below).
+    __setStorageUploaderForTests(async (img: string) => img);
 
     testT010SafeZone();
     testT011aRouterMatrix();

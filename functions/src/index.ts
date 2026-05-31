@@ -4287,7 +4287,20 @@ export const serverGenerateFinalAd = onCall({
 
         if (result.image) {
             const trace = generators.getLastResolutionTrace();
-            return { success: true, imageBase64: result.image, errorCode: null, costEstimate: generators.getCostEstimate(), resolutionTrace: trace };
+            // Persist the render to Storage SERVER-SIDE (admin SDK bypasses Storage
+            // rules) and hand the frontend a ready-to-use public URL. The browser
+            // stores this URL — not the ~1-5 MB base64 — in the generations doc, and
+            // the reflow backend downloads it as the outpaint source. Non-blocking:
+            // a Storage failure must not fail generation, so we still return the
+            // base64 for instant display and let imageUrl fall back to pending_upload.
+            let storageUrl: string | null = null;
+            try {
+                const { saveBase64ToStorage } = await import("./storageUpload.js");
+                storageUrl = await saveBase64ToStorage(result.image, `users/${request.auth.uid}/renders`);
+            } catch (uploadErr) {
+                console.warn("serverGenerateFinalAd: server-side render upload failed (non-blocking):", uploadErr);
+            }
+            return { success: true, imageBase64: result.image, storageUrl, errorCode: null, costEstimate: generators.getCostEstimate(), resolutionTrace: trace };
         } else {
             return {
                 success: false,
@@ -6169,6 +6182,34 @@ function stripHeavyImageData(value: any): any {
     }
     return value;
 }
+
+// Persist a base64 render to Storage SERVER-SIDE (admin SDK bypasses Storage rules)
+// and return a public URL. Used by client save paths that hold an in-memory base64
+// image (e.g. favoriting a displayed render) but must never write to Storage from
+// the browser. An http(s) URL is returned unchanged (idempotent).
+export const uploadRenderImage = onCall({ region: "europe-west1", memory: "512MiB", cors: true }, async (request: CallableRequest<any>) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required");
+    const uid = request.auth.uid;
+    const data = asObjectPayload(request.data);
+    const imageBase64 = data.imageBase64;
+    if (typeof imageBase64 !== "string" || imageBase64.length === 0) {
+        throw new HttpsError("invalid-argument", "imageBase64 required");
+    }
+    if (imageBase64.startsWith("http")) {
+        return { storageUrl: imageBase64 };
+    }
+    if (!imageBase64.startsWith("data:")) {
+        throw new HttpsError("invalid-argument", "imageBase64 must be a data: URL");
+    }
+    try {
+        const { saveBase64ToStorage } = await import("./storageUpload.js");
+        const storageUrl = await saveBase64ToStorage(imageBase64, `users/${uid}/renders`);
+        return { storageUrl };
+    } catch (err) {
+        console.error(`uploadRenderImage failed for uid=${uid}:`, (err as { message?: string })?.message ?? err);
+        throw new HttpsError("internal", "Could not persist render image.");
+    }
+});
 
 export const saveProject = onCall({ region: "europe-west1" }, async (request: CallableRequest<any>) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required");

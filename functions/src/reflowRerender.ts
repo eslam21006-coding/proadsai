@@ -77,6 +77,18 @@ export function __setGenerateFinalAdForTests(impl: GenerateFinalAdImpl | null): 
     _generateFinalAdOverride = impl;
 }
 
+/**
+ * Test seam for the server-side Storage upload. Production default (null) lazily
+ * imports `saveBase64ToStorage`, which needs an initialized admin app + bucket —
+ * unavailable in unit tests. Tests inject a passthrough stub so rerenderFromPlan
+ * can be exercised without real Storage. Pass `null` to restore the default.
+ */
+export type StorageUploaderImpl = (base64OrDataUrl: string, pathPrefix: string) => Promise<string>;
+let _storageUploaderOverride: StorageUploaderImpl | null = null;
+export function __setStorageUploaderForTests(impl: StorageUploaderImpl | null): void {
+    _storageUploaderOverride = impl;
+}
+
 export async function rerenderFromPlan(args: {
     generationId: string;
     targetRatio: AspectRatio;
@@ -129,8 +141,19 @@ export async function rerenderFromPlan(args: {
         throw new Error(`Rerender failed for generation ${generationId}: ${errorCode}`);
     }
 
+    // generateFinalAd returns a base64 data URL. Persist it to Storage (admin SDK)
+    // so outputUrl is a durable Storage URL — matching the outpaint route — instead
+    // of base64. Writing base64 into mockupHistory/variantChips would re-bloat the
+    // generations doc past Firestore's 1 MiB limit and isn't reusable as a reflow
+    // source. saveBase64ToStorage throws on failure, which propagates as a reflow
+    // failure (caught by the handler) — correct, since a render with nowhere to live
+    // can't be delivered.
+    const upload: StorageUploaderImpl = _storageUploaderOverride
+        ?? (async (b64, prefix) => (await import("./storageUpload.js")).saveBase64ToStorage(b64, prefix));
+    const outputUrl = await upload(result.image, "reflows");
+
     return {
-        outputUrl: result.image,
+        outputUrl,
         creditsCharged: REFLOW_CREDIT_COST,
         brandColorReinforced,
     };
