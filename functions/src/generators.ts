@@ -4601,7 +4601,16 @@ export async function generateFinalAd(
         }
     }
 
-    const boxA = (inputs.personalPhotos || []).slice(0, 5);
+    // Guard against placeholder strings ("stored_externally", "pending_upload", "")
+    // that the base64 stripper writes into saved-project inputs. These would
+    // otherwise flow into Gemini as inlineData parts with `data: undefined`
+    // (value.split(',')[1] on a non-data-URL), triggering
+    // "Unable to process input image. INVALID_ARGUMENT". Only real inline base64
+    // data URLs or http(s) URLs are valid image inputs.
+    const isRealImage = (v: string) =>
+        typeof v === 'string' && (v.startsWith('data:image/') || v.startsWith('http'));
+
+    const boxA = (inputs.personalPhotos || []).filter(isRealImage).slice(0, 5);
     const _isTextOnly = isTextOnlyMode(inputs);
     const rawBrandLogos = inputs.brandLogos || [];
     if (rawBrandLogos.length > 5) {
@@ -4612,8 +4621,8 @@ export async function generateFinalAd(
             userId: (inputs as any)._userId || null,
         }));
     }
-    const boxB = rawBrandLogos.slice(0, 5);
-    const boxC = ((inputs as any).offerAssets || []).slice(0, 3); // Offer-specific assets (book cover, dashboard, etc.)
+    const boxB = rawBrandLogos.filter(isRealImage).slice(0, 5);
+    const boxC = ((inputs as any).offerAssets || []).filter(isRealImage).slice(0, 3); // Offer-specific assets (book cover, dashboard, etc.)
 
     // Helper: extract actual MIME type from base64 data URL
     const getMime = (dataUrl: string): string => {
