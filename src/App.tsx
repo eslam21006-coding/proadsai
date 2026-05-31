@@ -4752,8 +4752,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             setBatchResults(prev => prev.map((r, idx) => idx === outcome.itemIndex ? { ...r, status: 'error' as const } : r));
           }
         }
-        if (result.data.success && result.data.outcomes?.[0]?.outputUrl) {
-          pushMockup(result.data.outcomes[0].outputUrl, newRatio);
+        const batchFirstUrl = result.data.outcomes?.[0]?.outputUrl;
+        if (result.data.success && batchFirstUrl) {
+          pushMockup(batchFirstUrl, newRatio);
         }
       } catch (e) {
         setUserCredits(prev => prev + totalCost);
