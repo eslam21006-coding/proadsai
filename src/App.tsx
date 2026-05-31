@@ -4689,6 +4689,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   };
 
   const handleRescale = async (newRatio: AspectRatio, scopeOverride?: { scope: 'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'; slideIndex?: number }) => {
+    console.log('[handleRescale] START', {
+      newRatio,
+      scopeOverride,
+      renderGenerationId,
+      safeBatch: (batchResults ?? []).length,
+      safeCarousel: (carouselSlides ?? []).length,
+      currentMode: inputs?.adMode,
+      reflowTarget,
+    });
     if (!inputs || !selectedTov) return;
 
     // ─── EARLY-EXIT GUARDS (crash hardening) ─────────────────────────────────
@@ -4735,6 +4744,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           method: 'auto',
           scope: 'batch_all',
         });
+        console.log('[handleRescale] callable result (batch_all):', JSON.stringify(result?.data));
         if (typeof result.data.totalCreditsCharged === 'number') {
           const delta = totalCost - result.data.totalCreditsCharged;
           if (delta !== 0) setUserCredits(prev => prev + delta);
@@ -4779,6 +4789,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           scope: 'carousel_slide',
           slideIndex: slideIdx,
         });
+        console.log('[handleRescale] callable result (carousel_slide):', JSON.stringify(result?.data));
         if (typeof result.data.totalCreditsCharged === 'number') {
           const delta = cost - result.data.totalCreditsCharged;
           if (delta !== 0) setUserCredits(prev => prev + delta);
@@ -4837,6 +4848,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             method: 'auto',
             scope: 'carousel_all',
           });
+          console.log('[handleRescale] callable result (carousel_all):', JSON.stringify(result?.data));
           // Reconcile: replace the optimistic estimate with the actual charge reported
           // by the backend (covers fallback-routed items charging at outpaint vs rerender,
           // partial failures that aren't billed, no-op short-circuits, etc.).
@@ -4881,6 +4893,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 scope: 'carousel_slide',
                 slideIndex: slideIdx,
               });
+              console.log('[handleRescale] callable result (carousel_all fallback loop):', JSON.stringify(reflowRes?.data));
               const res = reflowRes.data.success && reflowRes.data.outcomes?.[0]?.outputUrl;
               setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: res || null, status: res ? 'done' : 'error' } : s));
             } catch {
@@ -4929,6 +4942,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           method: 'auto',
           scope: 'single',
         });
+        console.log('[handleRescale] callable result (single):', JSON.stringify(result?.data));
         // Guard the whole payload: a transport/normalization failure can yield an
         // empty data object, and a malformed/error response can omit `outcomes`.
         if (!result.data) {
