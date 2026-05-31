@@ -2,6 +2,7 @@
 
 import type { AspectRatio } from "./generators.js";
 import type { Sharp } from "sharp";
+import { getStorage } from "firebase-admin/storage";
 import { RATIO_TO_NUMERIC } from "./reflowRouter.js";
 
 type SharpFactory = (input?: Buffer | string | Uint8Array, options?: { raw?: { width: number; height: number; channels: 4 } }) => Sharp;
@@ -77,9 +78,10 @@ export async function outpaintReflow(args: {
     const { sourceRatio, targetRatio } = args;
     const sharp = await getSharp();
 
-    // Single firebase-admin import for both download (when needed) and upload below.
-    const admin = await import("firebase-admin");
-    const bucket = admin.storage().bucket();
+    // Modular Admin SDK: getStorage() resolves the default app initialized in index.ts.
+    // Avoids the `admin.storage is not a function` interop pitfall from
+    // `await import("firebase-admin")`. One bucket handle for both download and upload.
+    const bucket = getStorage().bucket();
 
     let srcBuf: Buffer;
     if (args.sourceBuffer) {

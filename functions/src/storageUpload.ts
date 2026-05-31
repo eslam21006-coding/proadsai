@@ -6,6 +6,8 @@
 // Cloud Function decodes the base64 render, writes it to Storage itself, and hands
 // the frontend a ready-to-use public URL.
 
+import { getStorage } from "firebase-admin/storage";
+
 /**
  * Decode a base64 data-URL (or raw base64) image and upload it to Storage at
  * `${pathPrefix}/<timestamp>-<rand>.png`, returning a public download URL.
@@ -13,14 +15,16 @@
  * non-blocking (primary render).
  */
 export async function saveBase64ToStorage(base64OrDataUrl: string, pathPrefix: string): Promise<string> {
-    const admin = await import("firebase-admin");
     const commaIdx = base64OrDataUrl.indexOf(",");
     const b64 = base64OrDataUrl.startsWith("data:") && commaIdx >= 0
         ? base64OrDataUrl.slice(commaIdx + 1)
         : base64OrDataUrl;
     const buffer = Buffer.from(b64, "base64");
 
-    const bucket = admin.storage().bucket();
+    // Modular Admin SDK: getStorage() resolves the default app initialized in index.ts.
+    // Avoids the `admin.storage is not a function` interop pitfall from
+    // `await import("firebase-admin")`.
+    const bucket = getStorage().bucket();
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
     const filePath = `${pathPrefix.replace(/\/+$/, "")}/${id}`;
     const file = bucket.file(filePath);
