@@ -2328,8 +2328,9 @@ const App: React.FC = () => {
                   method: 'auto',
                   scope: 'single',
                 });
-                if (reflowRes.data.success && reflowRes.data.outcomes[0]?.outputUrl) {
-                  pushMockup(reflowRes.data.outcomes[0].outputUrl, extraRatio as AspectRatio);
+                const oc = reflowRes.data?.outcomes?.[0];
+                if (reflowRes.data?.success && oc?.outputUrl) {
+                  pushMockup(oc.outputUrl, extraRatio as AspectRatio);
                 }
               } else {
                 console.warn(`Skipping auto-reflow to ${extraRatio} — no generation ID for reflowImage callable`);
@@ -3986,11 +3987,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   method: 'auto',
                   scope: 'single',
                 });
-                if (reflowRes.data.success && reflowRes.data.outcomes[0]?.outputUrl) {
-                  pushMockup(reflowRes.data.outcomes[0].outputUrl, extraRatio as AspectRatio);
+                const oc = reflowRes.data?.outcomes?.[0];
+                if (reflowRes.data?.success && oc?.outputUrl) {
+                  pushMockup(oc.outputUrl, extraRatio as AspectRatio);
                   variantProduced = true;
                 } else {
-                  console.warn(`Auto-reflow to ${extraRatio} returned no image: success=${reflowRes.data.success}, errorCode=${reflowRes.data.outcomes[0]?.errorCode ?? 'none'}`);
+                  console.warn(`Auto-reflow to ${extraRatio} returned no image: success=${reflowRes.data?.success}, errorCode=${oc?.errorCode ?? 'none'}`);
                 }
               } else {
                 // No persisted generation id — reflowImage requires one (FR-029, FR-030 keep
@@ -4235,8 +4237,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           method: 'auto',
           scope: 'single',
         });
-        mockup = reflowRes.data.success && reflowRes.data.outcomes[0]?.outputUrl
-          ? reflowRes.data.outcomes[0].outputUrl : null;
+        const reflowOc = reflowRes.data?.outcomes?.[0];
+        mockup = reflowRes.data?.success && reflowOc?.outputUrl ? reflowOc.outputUrl : null;
       } else {
         const variationInstruction = `IMPORTANT: This is a RETRY — you MUST generate a DIFFERENT composition, layout, camera angle, and color palette from previous attempts. Vary the hero pose, background elements, and text placement while keeping the same concept and Arabic text strings. Do NOT reproduce the same design.${refinementNote ? ' ' + refinementNote : ''}`;
         const renderInstruction = isReflow
@@ -4402,11 +4404,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         if (delta !== 0) setUserCredits(prev => prev + delta);
       }
 
-      const imageUrl = result.data.success && result.data.outcomes[0]?.outputUrl;
+      const oc = result.data?.outcomes?.[0];
+      const imageUrl = result.data?.success && oc?.outputUrl;
       if (imageUrl) {
         success = true;
-        if (result.data.outcomes[0].fallbackFrom) {
-          setReflowFallbackNotice(result.data.outcomes[0].fallbackFrom);
+        if (oc?.fallbackFrom) {
+          setReflowFallbackNotice(oc.fallbackFrom);
         }
       }
       setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, imageUrl: imageUrl || null, status: imageUrl ? 'done' : 'error' } : s));
@@ -4935,15 +4938,18 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           method: 'auto',
           scope: 'single',
         });
+        // Guard the whole payload: a transport/normalization failure can yield an
+        // empty data object, and a malformed/error response can omit `outcomes`.
+        if (!result.data) {
+          throw new Error('Reflow returned empty response');
+        }
+        const outcomes = result.data?.outcomes ?? [];
         // Reconcile optimistic estimate with the actual backend charge.
         if (typeof result.data.totalCreditsCharged === 'number') {
           const delta = singleOptimisticCost - result.data.totalCreditsCharged;
           if (delta !== 0) setUserCredits(prev => prev + delta);
         }
-        // Guard: a malformed/error response can omit `outcomes` entirely. Reading
-        // `outcomes[0]` on an undefined array crashes ("cannot read '0' of undefined")
-        // — optional-chain the array itself so a missing payload fails cleanly instead.
-        const firstOutcome = result.data.outcomes?.[0];
+        const firstOutcome = outcomes[0];
         if (result.data.success && firstOutcome?.outputUrl) {
           if (firstOutcome.fallbackFrom) {
             setReflowFallbackNotice(firstOutcome.fallbackFrom);
