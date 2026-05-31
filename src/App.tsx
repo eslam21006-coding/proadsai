@@ -4196,6 +4196,16 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
    * localRefinement — optional per-image instruction applied to this image only
    */
   const handleBatchRetry = async (index: number, retryMode: 'rerender' | 'reflow' = 'rerender', localRefinement?: string) => {
+    // NOTE: extraRatios/combos/allSizes from the original request are locals of
+    // handleBatchGenerate and are NOT in scope here — logging this handler's actual
+    // in-scope state (which is what matters for diagnosing a crash inside it).
+    console.log('[handleBatchRetry] START', {
+      index,
+      retryMode,
+      batchResults: (batchResults ?? []).length,
+      renderGenerationId,
+      reflowTarget,
+    });
     if (!inputs || !selectedTov) return;
     const totalNeeded = CREDIT_COSTS.generateImage;
     if (userCredits < totalNeeded) {
@@ -4365,6 +4375,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   };
   // ─── CAROUSEL: Regenerate a single slide ─────────────────────────────
   const handleCarouselSlideRetry = async (slideIndex: number) => {
+    console.log('[handleCarouselSlideRetry] START', {
+      carouselCopies: (carouselCopies ?? []).length,
+    });
     if (!inputs || !selectedTov || !carouselConceptRaw) return;
     if (!renderGenerationId) {
       showToast(t('studio.reflow.no_generation_id') || 'Retry requires a saved generation — try generating again first.', 'error');
