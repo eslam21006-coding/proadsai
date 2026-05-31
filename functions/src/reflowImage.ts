@@ -519,9 +519,12 @@ async function deductAndPersist(args: {
         itemIndex: outcome.itemIndex,
         outputUrl,
         creditsCharged,
-        brandColorReinforced: outcome.brandColorReinforced,
-        textReflowOverflow: outcome.textReflowOverflow,
-        textReductionSteps: outcome.textReductionSteps,
+        // Default optional flags to definite values — never leave them `undefined`,
+        // which Firestore rejects on write (belt-and-suspenders with the global
+        // ignoreUndefinedProperties setting).
+        brandColorReinforced: outcome.brandColorReinforced === true,
+        textReflowOverflow: outcome.textReflowOverflow === true,
+        textReductionSteps: outcome.textReductionSteps ?? 0,
     };
 
     await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {

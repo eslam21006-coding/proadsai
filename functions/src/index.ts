@@ -43,6 +43,13 @@ admin.initializeApp({
     storageBucket: "proadsai-saas.firebasestorage.app"
 });
 
+// Ignore `undefined` field values on ALL Firestore writes across the functions
+// codebase (instead of throwing "Cannot use undefined as a Firestore value").
+// Must be set once, before any Firestore operation — module load, immediately after
+// initializeApp, is the correct and only safe place. Covers optional fields such as
+// resolutionTrace.reflowHistory[].textReflowOverflow that may be omitted.
+admin.firestore().settings({ ignoreUndefinedProperties: true });
+
 // NOTE: Do NOT cache `admin.firestore()` at module load — this file is imported
 // before `admin.initializeApp()` runs in Firebase deploy analysis, which fails
 // with "The default Firebase app does not exist". Always call inline.
