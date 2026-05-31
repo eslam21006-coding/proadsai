@@ -11,6 +11,7 @@ import type {
 } from "./types.js";
 import { decideMethod } from "./reflowRouter.js";
 import { rerenderFromPlan, NoPlanError, type RerenderGenData } from "./reflowRerender.js";
+import type { GeminiCaller } from "./generators.js";
 import { outpaintReflow, verifyLockedRegion, OUTPAINT_CREDIT_COST } from "./reflowOutpaint.js";
 
 export interface ReflowImageRequest {
@@ -31,7 +32,9 @@ export interface ReflowImageResponse {
 export interface ReflowImageDeps {
     db: FirebaseFirestore.Firestore;
     admin: typeof import("firebase-admin");
-    geminiApiKey: string;
+    // Production Gemini caller (new @google/genai SDK), injected by the reflow callable.
+    // Used by the rerender route so generateFinalAd's request shape matches the SDK.
+    geminiCaller: GeminiCaller;
     openaiApiKey: string;
 }
 
@@ -76,7 +79,7 @@ export async function reflowImageHandler(
     request: CallableRequest<ReflowImageRequest>,
     deps: ReflowImageDeps,
 ): Promise<ReflowImageResponse> {
-    const { db, admin, geminiApiKey, openaiApiKey } = deps;
+    const { db, admin, geminiCaller, openaiApiKey } = deps;
 
     const { HttpsError } = await import("firebase-functions/v2/https");
 
@@ -220,7 +223,7 @@ export async function reflowImageHandler(
                 sourceRatio,
                 genData,
                 decision,
-                geminiApiKey,
+                geminiCaller,
                 openaiApiKey,
             });
         },
@@ -281,10 +284,10 @@ async function executeItemReflow(args: {
     sourceRatio: AspectRatio;
     genData: ReflowGenerationDoc;
     decision: { magnitude: number; chosenMethod: "outpaint" | "rerender"; isUserOverride: boolean };
-    geminiApiKey: string;
+    geminiCaller: GeminiCaller;
     openaiApiKey: string;
 }): Promise<ReflowOutcome> {
-    const { item, generationId, targetRatio, sourceRatio, genData, decision, geminiApiKey, openaiApiKey } = args;
+    const { item, generationId, targetRatio, sourceRatio, genData, decision, geminiCaller, openaiApiKey } = args;
     const idx = item.itemIndex;
 
     // Outpaint needs a real, downloadable source image. When the render's Storage
@@ -314,7 +317,7 @@ async function executeItemReflow(args: {
         if (!outcome.success && !decision.isUserOverride) {
             console.log(`⚠️ Outpaint failed (auto), falling back to rerender for ${generationId} item ${idx}`);
             try {
-                const rerenderOutcome = await executeRerender(generationId, targetRatio, genData, geminiApiKey, openaiApiKey, idx);
+                const rerenderOutcome = await executeRerender(generationId, targetRatio, genData, geminiCaller, openaiApiKey, idx);
                 if (rerenderOutcome.success) {
                     outcome = {
                         ...rerenderOutcome,
@@ -337,7 +340,7 @@ async function executeItemReflow(args: {
     }
 
     try {
-        return await executeRerender(generationId, targetRatio, genData, geminiApiKey, openaiApiKey, idx);
+        return await executeRerender(generationId, targetRatio, genData, geminiCaller, openaiApiKey, idx);
     } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         // No outpaint fallback when the user explicitly forced rerender, OR when we
@@ -472,13 +475,13 @@ async function executeRerender(
     generationId: string,
     targetRatio: AspectRatio,
     genData: ReflowGenerationDoc,
-    geminiApiKey: string,
+    geminiCaller: GeminiCaller,
     openaiApiKey: string,
     itemIndex: number | null = null,
 ): Promise<ReflowOutcome> {
     const result = await rerenderFromPlan({
         generationId, targetRatio, itemIndex,
-        genData, geminiApiKey, openaiApiKey,
+        genData, geminiCaller, openaiApiKey,
     });
 
     return {

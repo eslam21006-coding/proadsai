@@ -1,6 +1,6 @@
 // functions/src/reflowRerender.ts — full-pipeline rerender-from-plan wrapper (HOTFIX-F)
 
-import type { AspectRatio } from "./generators.js";
+import type { AspectRatio, GeminiCaller } from "./generators.js";
 import { generateFinalAd } from "./generators.js";
 
 export class NoPlanError extends Error {
@@ -94,10 +94,10 @@ export async function rerenderFromPlan(args: {
     targetRatio: AspectRatio;
     itemIndex: number | null;
     genData: RerenderGenData;
-    geminiApiKey: string;
+    geminiCaller: GeminiCaller;
     openaiApiKey: string;
 }): Promise<{ outputUrl: string; creditsCharged: number; brandColorReinforced: boolean }> {
-    const { generationId, targetRatio, itemIndex, genData, geminiApiKey, openaiApiKey } = args;
+    const { generationId, targetRatio, itemIndex, genData, geminiCaller, openaiApiKey } = args;
 
     const inputs: Record<string, unknown> = (genData.input ?? {}) as Record<string, unknown>;
     const approvedTov: string = genData.output?.fullResponse ?? "";
@@ -118,13 +118,14 @@ export async function rerenderFromPlan(args: {
 
     const generate = _generateFinalAdOverride ?? generateFinalAd;
     if (!_generateFinalAdOverride) {
+        // Use the SAME production caller as serverGenerateFinalAd (the new @google/genai
+        // SDK), injected by the reflow callable. generateFinalAd emits @google/genai
+        // request shapes (contents:{parts} + config); the previous home-grown
+        // @google/generative-ai (old SDK) caller could not iterate that shape and threw
+        // "request is not iterable". Wiring the injected caller into the module-level
+        // singleton makes generateFinalAd use it.
         const { setGeminiCaller, setOpenAIKey } = await import("./generators.js");
-        const { GoogleGenerativeAI } = await import("@google/generative-ai");
-        const genAI = new GoogleGenerativeAI(geminiApiKey);
-        type GeminiCaller = Parameters<typeof setGeminiCaller>[0];
-        const caller: GeminiCaller = (params) =>
-            genAI.getGenerativeModel({ model: params.model, ...params.config }).generateContent(params.contents);
-        setGeminiCaller(caller);
+        setGeminiCaller(geminiCaller);
         setOpenAIKey(openaiApiKey);
     }
 

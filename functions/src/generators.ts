@@ -485,7 +485,7 @@ async function buildRankingGuidance(inputs: AdInputs, step: 'hooks' | 'concepts'
 
 // ─── Gemini Caller (injected at module level by Cloud Function setup) ────
 // This allows the generators to call Gemini without knowing the API key.
-type GeminiCaller = (params: { model: string; contents: any; config?: any }) => Promise<any>;
+export type GeminiCaller = (params: { model: string; contents: any; config?: any }) => Promise<any>;
 let callGemini: GeminiCaller;
 
 export function setGeminiCaller(fn: GeminiCaller) {

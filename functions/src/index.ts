@@ -4327,7 +4327,7 @@ export const reflowImage = onCall({
     memory: "2GiB",
     cors: true,
 }, async (request: CallableRequest) => {
-    return reflowImageHandler(request, { db: admin.firestore(), admin, geminiApiKey: geminiApiKey.value(), openaiApiKey: openaiApiKey.value() });
+    return reflowImageHandler(request, { db: admin.firestore(), admin, geminiCaller: createGeminiCaller(geminiApiKey.value()), openaiApiKey: openaiApiKey.value() });
 });
 
 // ─── MAGIC SELECTOR: Region-targeted image editing ──────────────────────

@@ -1772,7 +1772,7 @@ async function testT012BrandColor() {
                 input: { tone: "universe", brandColorPrimary: "#FF0000" },
                 output: { buildPlan: "ORIGINAL-PLAN" },
             },
-            geminiApiKey: "stub",
+            geminiCaller: (async () => ({})) as any,
             openaiApiKey: "stub",
         });
         assert.ok(capturedBuildPlan.includes("FF0000"),
@@ -1810,7 +1810,7 @@ async function testT011SingleReflow() {
 
         const result = await reflowImageHandler(
             { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "9:16", method: "auto", scope: "single" } } as unknown as Parameters<typeof reflowImageHandler>[0],
-            { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+            { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
         );
 
         assert.equal(result.outcomes.length, 1, "single reflow returns 1 outcome");
@@ -1861,7 +1861,7 @@ async function testT020BatchReflow() {
 
         const result = await reflowImageHandler(
             { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "9:16", method: "auto", scope: "batch_all" } } as unknown as Parameters<typeof reflowImageHandler>[0],
-            { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+            { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
         );
 
         assert.equal(result.outcomes.length, 4, "batch must return 4 outcomes");
@@ -1914,7 +1914,7 @@ async function testT023CarouselReflow() {
 
             const result = await reflowImageHandler(
                 { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "1:1", method: "auto", scope: "carousel_all" } } as unknown as Parameters<typeof reflowImageHandler>[0],
-                { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+                { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
             );
 
             assert.equal(result.outcomes.length, 7, "carousel_all must return 7 outcomes");
@@ -1953,7 +1953,7 @@ async function testT023CarouselReflow() {
 
             const result = await reflowImageHandler(
                 { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "1:1", method: "auto", scope: "carousel_slide", slideIndex: 2 } } as unknown as Parameters<typeof reflowImageHandler>[0],
-                { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+                { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
             );
 
             assert.equal(result.outcomes.length, 1, "carousel_slide must return 1 outcome");
@@ -2097,7 +2097,7 @@ async function testHff6d() {
             targetRatio: "9:16",
             itemIndex: null,
             genData: { input: {}, output: {} },
-            geminiApiKey: "stub",
+            geminiCaller: (async () => ({})) as any,
             openaiApiKey: "stub",
         });
     } catch (e: unknown) {
@@ -2224,7 +2224,7 @@ async function testHff6k() {
         // the strict admin SDK types without weakening the production handler signature.
         await reflowImageHandler(
             { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "2:1", method: "auto", scope: "single" } } as unknown as Parameters<typeof reflowImageHandler>[0],
-            { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+            { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
         );
         assert.fail("Should have thrown");
     } catch (e: unknown) {
@@ -2349,7 +2349,7 @@ async function testHff6o() {
                 input: { tone: "minimal_universe" },
                 output: { buildPlan: "ORIGINAL-PLAN-1x1", fullResponse: "approved-tov-text" },
             },
-            geminiApiKey: "stub",
+            geminiCaller: (async () => ({})) as any,
             openaiApiKey: "stub",
         });
 
