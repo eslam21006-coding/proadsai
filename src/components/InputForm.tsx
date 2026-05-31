@@ -15,6 +15,26 @@ import { getAuth } from 'firebase/auth';
 import BrandColorSwatchPreview from './BrandColorSwatchPreview';
 import { ctaTextColor } from '../utils/wcagContrast';
 
+// Recursively blank out base64 `data:` payloads (uploaded photos, logos, reference
+// images, etc.) before writing the draft to localStorage. A few base64 images
+// easily exceed the ~5 MB localStorage quota and throw QuotaExceededError, which
+// previously aborted the whole "Save Draft" action. The draft only needs the text
+// fields restored; images are re-uploaded by the user if needed.
+function stripBase64ForDraft(obj: any): any {
+  if (typeof obj === 'string') {
+    return obj.startsWith('data:') ? '' : obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(stripBase64ForDraft);
+  }
+  if (obj && typeof obj === 'object') {
+    return Object.fromEntries(
+      Object.entries(obj).map(([k, v]) => [k, stripBase64ForDraft(v)]),
+    );
+  }
+  return obj;
+}
+
 interface Props {
   onSubmit: (inputs: AdInputs) => void;
   onSaveDraft?: (inputs: AdInputs) => void;
@@ -2517,7 +2537,13 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
           <button type="button" id="save-draft-btn" onClick={() => {
             console.log('[Save Draft] clicked', inputs?.productName);
             try {
-              localStorage.setItem('adInputsDraft', JSON.stringify(inputs));
+              const strippedInputs = stripBase64ForDraft(inputs);
+              try {
+                localStorage.setItem('adInputsDraft', JSON.stringify(strippedInputs));
+              } catch (quotaErr) {
+                // Non-blocking: never surface a quota failure to the user for a draft save.
+                console.warn('[Save Draft] localStorage quota exceeded — draft not saved', quotaErr);
+              }
               if (onSaveDraft) onSaveDraft(inputs);
               if (showToast) showToast('📝 Draft saved!', 'success');
             } catch (err) { console.error('[Save Draft] error:', err); }

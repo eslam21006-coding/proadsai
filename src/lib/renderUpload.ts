@@ -37,10 +37,25 @@ function dataUrlToBlob(dataUrl: string): Blob {
  */
 export async function uploadRenderToStorage(uid: string, imageData: string): Promise<string> {
   if (!imageData || !imageData.startsWith("data:")) return imageData;
-  const blob = dataUrlToBlob(imageData);
-  const ext = blob.type === "image/jpeg" ? "jpg" : "png";
-  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const storageRef = ref(storage, `users/${uid}/renders/${id}`);
-  await uploadBytes(storageRef, blob, { contentType: blob.type });
-  return getDownloadURL(storageRef);
+  try {
+    const blob = dataUrlToBlob(imageData);
+    const ext = blob.type === "image/jpeg" ? "jpg" : "png";
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const storageRef = ref(storage, `users/${uid}/renders/${id}`);
+    await uploadBytes(storageRef, blob, { contentType: blob.type });
+    return await getDownloadURL(storageRef);
+  } catch (err) {
+    // NEVER rethrow — generation must not fail because Storage is unavailable
+    // (CORS misconfig / bucket outage manifests as AbortError / "Failed to fetch").
+    // Return the "pending_upload" sentinel: the generation still saves with a valid
+    // id, and the reflow backend detects the sentinel and rerenders from the plan.
+    const name = (err as { name?: string })?.name;
+    const code = (err as { code?: string })?.code;
+    if (name === "AbortError" || code === "storage/canceled" || code === "storage/retry-limit-exceeded") {
+      console.warn("[renderUpload] Storage upload aborted (likely CORS/Storage outage) — using 'pending_upload'; reflow will rerender from plan.");
+    } else {
+      console.warn("[renderUpload] Storage upload failed (non-blocking) — using 'pending_upload':", err);
+    }
+    return "pending_upload";
+  }
 }

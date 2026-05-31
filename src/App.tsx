@@ -2231,7 +2231,10 @@ const App: React.FC = () => {
   const [globalRefinement, setGlobalRefinement] = useState(''); // cumulative refinement history (sent to AI)
   const [refinementEntry, setRefinementEntry] = useState('');   // the new instruction being typed (not yet appended)
   const [studioTweak, setStudioTweak] = useState('');
-  const [reflowStep, setReflowStep] = useState<'closed' | 'picker_open' | 'committing'>('closed');
+  // Reflow is a permanently-visible 3-button control (no picker toggle): the only
+  // states are 'idle' (buttons shown, accepting a selection) and 'committing'
+  // (a resize is in flight). 'picker_open' was removed — the buttons always render.
+  const [reflowStep, setReflowStep] = useState<'idle' | 'committing'>('idle');
   const [reflowTarget, setReflowTarget] = useState<AspectRatio | null>(null);
   const [reflowScope, setReflowScope] = useState<'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'>('single');
   const [reflowFallbackNotice, setReflowFallbackNotice] = useState<'outpaint' | 'rerender' | null>(null);
@@ -3182,9 +3185,9 @@ const App: React.FC = () => {
     setBatchConceptsLoading(false);
     setCarouselCopies([]);
     setShowCarouselPreview(false);
-    // Phase 17 reflow surface — close the resize picker when switching projects so
-    // a picker_open / committing state from a previous project doesn't bleed in.
-    setReflowStep('closed');
+    // Phase 17 reflow surface — reset the resize control when switching projects so
+    // a committing state / stale target from a previous project doesn't bleed in.
+    setReflowStep('idle');
     setReflowTarget(null);
     setReflowScope('single');
     setReflowFallbackNotice(null);
@@ -3243,7 +3246,7 @@ const App: React.FC = () => {
     setCarouselCopies([]);
     setShowCarouselPreview(false);
     // Phase 17 reflow surface — clear so previous reflow state never bleeds into a new project.
-    setReflowStep('closed');
+    setReflowStep('idle');
     setReflowTarget(null);
     setReflowScope('single');
     setReflowFallbackNotice(null);
@@ -3945,6 +3948,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               null, null, mockupResult.resolutionTrace
             );
             setRenderGenerationId(savedGenId);
+            console.log(`[reflow] renderGenerationId set after generation: "${savedGenId}" (imageUrl: ${storedImageUrl === 'pending_upload' ? 'pending_upload — reflow will rerender from plan' : 'stored'})`);
             if (loadedFavoriteId && savedGenId) {
               setFavUpdatePrompt({ phase: 'render', newGenId: savedGenId });
             }
@@ -3953,7 +3957,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           }
         }
         setPhase('render_studio');
-        setReflowStep('closed');
+        setReflowStep('idle');
     setReflowTarget(null);
         updateHighestUnlocked('render_studio');
         awardMilestone('designGenerated');
@@ -4133,7 +4137,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     setBatchRendering(true);
     setCurrentAspectRatio(primaryRatio);
     setPhase('render_studio');
-    setReflowStep('closed');
+    setReflowStep('idle');
     setReflowTarget(null);
     updateHighestUnlocked('render_studio');
 
@@ -4344,7 +4348,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
 
       setPhase('render_studio');
-      setReflowStep('closed');
+      setReflowStep('idle');
     setReflowTarget(null);
       updateHighestUnlocked('render_studio');
       awardMilestone('designGenerated');
@@ -4693,12 +4697,30 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   const handleRescale = async (newRatio: AspectRatio, scopeOverride?: { scope: 'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'; slideIndex?: number }) => {
     if (!inputs || !selectedTov) return;
 
+    // ─── EARLY-EXIT GUARDS (crash hardening) ─────────────────────────────────
+    // Reflow requires a persisted generation to read the source from. Without it
+    // the callable rejects with invalid-argument; surface a clear toast instead.
+    // This is also the ONLY place the no_generation_id message should fire (FR:
+    // never show it while a valid id exists).
+    if (!renderGenerationId) {
+      showToast(t('studio.reflow.no_generation_id'), 'error');
+      return;
+    }
+    if (!newRatio) return;
+
+    // Defensive guarded copies: the scope/count math below previously crashed the
+    // whole handler ("Cannot read .length of undefined"). Both arrays are always
+    // initialized to [], but resolve null-guarded copies once, up front, and use
+    // them for every count read so a malformed state can never throw here.
+    const safeBatch = batchResults ?? [];
+    const safeCarousel = carouselSlides ?? [];
+
     const effectiveScope = scopeOverride?.scope;
     const effectiveSlideIndex = scopeOverride?.slideIndex;
 
     // ─── BATCH_ALL MODE ─────
     if (effectiveScope === 'batch_all') {
-      const batchItems = batchResults.filter(r => r.status === 'done' && r.url);
+      const batchItems = safeBatch.filter(r => r.status === 'done' && r.url);
       if (batchItems.length === 0) return;
       const totalCost = CREDIT_COSTS.reflowImage * batchItems.length;
       if (!renderGenerationId) { showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation.', 'error'); return; }
@@ -4780,8 +4802,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     }
 
     // ─── CAROUSEL MODE: Reflow ALL slides via reflowImage callable (HOTFIX-F) ─────
-    if (carouselSlides.length > 0 && carouselSlides.some(s => s.status === 'done')) {
-      const doneSlides = carouselSlides.filter(s => s.status === 'done' && s.imageUrl);
+    if (safeCarousel.length > 0 && safeCarousel.some(s => s.status === 'done')) {
+      const doneSlides = safeCarousel.filter(s => s.status === 'done' && s.imageUrl);
       const totalCost = CREDIT_COSTS.reflowImage * doneSlides.length;
       if (userCredits < totalCost) {
         setUpgradeReason(t('studio.reflow.upgrade_carousel_credits')
@@ -7535,165 +7557,143 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   )}
                 </div>
 
-                {/* Reflow Rescaling — gated on currentMockup so users can't open the
-                    picker on a generation that hasn't produced a viewable image yet
-                    (prevents dead-end preview state during batch rendering). */}
-                {currentMockup && (
-                <div className="bg-slate-900/50 rounded-2xl border border-slate-800/40 p-4 space-y-4">
-                  <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center"><i className="fa-solid fa-crop-simple mr-2 text-blue-500"></i>{t('studio.reflow')}</h4>
+                {/* Reflow Rescaling — 3 ratio buttons, PERMANENTLY visible (no picker
+                    toggle, no trigger button). Gated only on currentMockup so the
+                    control appears the moment a viewable render exists. */}
+                {currentMockup && (() => {
+                  // UI restriction: Square / Portrait / Story only. Backend supports the
+                  // full 6 ratios; restore others by extending UI_RATIOS.
+                  const UI_RATIOS: AspectRatio[] = ['1:1', '4:5', '9:16'];
+                  const reflowLabels: Record<string, string> = {
+                    '1:1': t('studio.reflow.ratio.1_1'),
+                    '4:5': t('studio.reflow.ratio.4_5'),
+                    '9:16': t('studio.reflow.ratio.9_16'),
+                  };
+                  const reflowIcons: Record<string, string> = {
+                    '1:1': 'fa-regular fa-square',
+                    '4:5': 'fa-solid fa-mobile-screen',
+                    '9:16': 'fa-solid fa-mobile',
+                  };
+                  // Display name (Square/Portrait/Story) without the "(1:1)" suffix the
+                  // i18n label carries — the ratio renders on its own line beneath it.
+                  const nameFor = (r: string) => (reflowLabels[r] || r).replace(/\s*\(.*\)\s*/, '').trim();
+                  // Null-guarded counts. Both arrays are always initialized to [], but
+                  // guard defensively — the scope math previously crashed reflow.
+                  const slides = carouselSlides ?? [];
+                  const batches = batchResults ?? [];
+                  const isCarouselScope = slides.length > 0 && slides.some(s => s.status === 'done');
+                  const isBatchScope = batches.length > 0 && batches.some(r => r.status === 'done');
+                  const doneBatchCount = isBatchScope ? batches.filter(r => r.status === 'done' && r.url).length : 0;
+                  const doneCarouselCount = isCarouselScope ? slides.filter(s => s.status === 'done').length : 0;
+                  const scopeItemCount = reflowScope === 'batch_all' ? doneBatchCount
+                    : reflowScope === 'carousel_all' ? doneCarouselCount
+                    : 1;
+                  const totalCost = CREDIT_COSTS.reflowImage * scopeItemCount;
+                  const committing = reflowStep === 'committing';
+                  return (
+                  <div className="bg-slate-900/50 rounded-2xl border border-slate-800/40 p-4 space-y-3">
+                    <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center"><i className="fa-solid fa-left-right mr-2 text-blue-500"></i>{t('studio.reflow')}</h4>
 
-                  {reflowStep === 'closed' && (
-                    <button
-                      onClick={() => setReflowStep('picker_open')}
-                      className="w-full py-2.5 rounded-xl bg-blue-600/12 border border-blue-500/20 text-blue-300 text-[9px] font-bold uppercase tracking-wider hover:bg-blue-600 hover:text-white transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
-                    >
-                      <i className="fa-solid fa-crop-simple text-[8px]"></i>
-                      {t('studio.reflow')}
-                    </button>
-                  )}
-
-                  {reflowStep === 'picker_open' && (() => {
-                    // UI restriction: shows only Square / Portrait / Story for now.
-                    // Backend (getSafeZoneForRatio, reflowImage callable, all fixtures)
-                    // continues to support the full 6 ratios — restore the others by
-                    // adding them to UI_RATIOS below.
-                    const UI_RATIOS: AspectRatio[] = ['1:1', '4:5', '9:16'];
-                    const reflowLabels: Record<string, string> = {
-                      '1:1': t('studio.reflow.ratio.1_1'),
-                      '4:5': t('studio.reflow.ratio.4_5'),
-                      '3:4': t('studio.reflow.ratio.3_4'),
-                      '4:3': t('studio.reflow.ratio.4_3'),
-                      '9:16': t('studio.reflow.ratio.9_16'),
-                      '16:9': t('studio.reflow.ratio.16_9'),
-                    };
-                    const reflowIcons: Record<string, string> = {
-                      '1:1': 'fa-regular fa-square',
-                      '4:5': 'fa-solid fa-mobile-screen',
-                      '3:4': 'fa-solid fa-table-columns',
-                      '4:3': 'fa-solid fa-display',
-                      '9:16': 'fa-solid fa-mobile',
-                      '16:9': 'fa-solid fa-tv',
-                    };
-                    const isCarouselScope =
-                      carouselSlides.length > 0 && carouselSlides.some(s => s.status === 'done');
-                    const isBatchScope =
-                      batchResults.length > 0 && batchResults.some(r => r.status === 'done');
-                    const doneBatchCount = isBatchScope ? batchResults.filter(r => r.status === 'done' && r.url).length : 0;
-                    const doneCarouselCount = isCarouselScope ? carouselSlides.filter(s => s.status === 'done').length : 0;
-                    const scopeItemCount = reflowScope === 'batch_all' ? doneBatchCount
-                      : reflowScope === 'carousel_all' ? doneCarouselCount
-                      : 1;
-                    const totalCost = CREDIT_COSTS.reflowImage * scopeItemCount;
-                    return (
-                    <div className="space-y-1.5">
-                      <button
-                        onClick={() => { setReflowStep('closed'); setReflowTarget(null); }}
-                        className="w-full text-[8px] text-slate-500 hover:text-slate-300 flex items-center justify-center gap-1 transition-all"
-                      >
-                        <i className="fa-solid fa-chevron-up text-[6px]"></i>
-                        {t('studio.reflow')}
-                      </button>
-                      <div className="space-y-1.5">
-                        {UI_RATIOS.map(value => {
-                          const isCurrent = value === displayRatio;
-                          const isSelected = !isCurrent && reflowTarget === value;
-                          return (
-                            <button
-                              key={value}
-                              disabled={isCurrent}
-                              onClick={isCurrent ? undefined : () => {
-                                setReflowTarget(value);
-                                if (isCarouselScope) setReflowScope('carousel_slide');
-                                else setReflowScope('single');
-                              }}
-                              title={reflowLabels[value]}
-                              className={
-                                isCurrent
-                                  ? 'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border-2 bg-blue-600 border-blue-400 text-white cursor-default shadow-lg shadow-blue-600/30'
-                                  : isSelected
-                                    ? 'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border bg-blue-600/15 border-blue-500/40 text-blue-200 transition-all'
-                                    : 'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border bg-slate-900 border-slate-800 text-slate-300 hover:bg-blue-600/15 hover:border-blue-500/30 hover:text-white transition-all'
-                              }
-                            >
-                              <i className={`${reflowIcons[value]} text-sm w-4 text-center`}></i>
-                              <span className="text-[10px] font-bold tracking-tight flex-1 text-left">{reflowLabels[value]}</span>
-                              {isCurrent && (
-                                <span className="text-[8px] font-bold uppercase tracking-wider bg-white/15 text-white px-1.5 py-0.5 rounded">
-                                  {t('studio.reflow.current_ratio')}
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      {reflowTarget && reflowTarget !== displayRatio && (
-                        <div className="space-y-2 pt-2">
-                          {isBatchScope && (
-                            <div className="flex gap-2">
-                              <button onClick={() => setReflowScope('single')}
-                                className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'single' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
-                                {t('studio.reflow.scope_single')}
-                              </button>
-                              <button onClick={() => setReflowScope('batch_all')}
-                                className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'batch_all' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
-                                {t('studio.reflow.scope_batch_all', { count: doneBatchCount })}
-                              </button>
-                            </div>
-                          )}
-                          {isCarouselScope && (
-                            <div className="flex gap-2">
-                              <button onClick={() => setReflowScope('carousel_slide')}
-                                className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'carousel_slide' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
-                                {t('studio.reflow.scope_slide')}
-                              </button>
-                              <button onClick={() => setReflowScope('carousel_all')}
-                                className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'carousel_all' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
-                                {t('studio.reflow.scope_carousel_all', { count: doneCarouselCount })}
-                              </button>
-                            </div>
-                          )}
+                    {/* 3 buttons in a single equal-width row — always rendered */}
+                    <div className="flex gap-2">
+                      {UI_RATIOS.map(value => {
+                        const isCurrent = value === displayRatio;
+                        const isSelected = !isCurrent && reflowTarget === value;
+                        const isCommittingThis = committing && reflowTarget === value;
+                        return (
                           <button
-                            onClick={async () => {
-                              setReflowStep('committing');
-                              try {
-                                if (reflowScope === 'batch_all') {
-                                  await handleRescale(reflowTarget, { scope: 'batch_all' });
-                                } else if (reflowScope === 'carousel_slide') {
-                                  // Resolve focused slide by matching displayed image url; fall back to slide 0 when
-                                  // currentMockup isn't a slide url (e.g., showing a composite).
-                                  const matchIdx = carouselSlides.findIndex(s => s.imageUrl === currentMockup);
-                                  const slideIndex = matchIdx >= 0 ? matchIdx : 0;
-                                  await handleRescale(reflowTarget, { scope: 'carousel_slide', slideIndex });
-                                } else if (reflowScope === 'carousel_all') {
-                                  await handleRescale(reflowTarget, { scope: 'carousel_all' });
-                                } else {
-                                  await handleRescale(reflowTarget);
-                                }
-                              } catch {
-                              }
-                              setReflowStep('closed');
-                              setReflowTarget(null);
+                            key={value}
+                            disabled={isCurrent || committing}
+                            onClick={isCurrent ? undefined : () => {
+                              setReflowTarget(value);
+                              if (isCarouselScope) setReflowScope('carousel_slide');
+                              else setReflowScope('single');
                             }}
-                            disabled={isLoading}
-                            className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-lg transition-all active:scale-[0.98] hover:from-blue-500 hover:to-cyan-500 flex items-center justify-center gap-2 disabled:opacity-50"
+                            title={reflowLabels[value]}
+                            className={
+                              isCurrent
+                                ? 'flex-1 flex flex-col items-center gap-1 px-2 py-3 rounded-xl border-2 bg-blue-600 border-blue-400 text-white cursor-default shadow-lg shadow-blue-600/30'
+                                : isSelected
+                                  ? 'flex-1 flex flex-col items-center gap-1 px-2 py-3 rounded-xl border bg-blue-600/15 border-blue-500/40 text-blue-200 transition-all disabled:opacity-50'
+                                  : 'flex-1 flex flex-col items-center gap-1 px-2 py-3 rounded-xl border bg-slate-900 border-slate-800 text-slate-300 hover:bg-blue-600/15 hover:border-blue-500/30 hover:text-white transition-all disabled:opacity-50'
+                            }
                           >
-                            <i className="fa-solid fa-wand-magic-sparkles text-[8px]"></i>
-                            {t('studio.reflow.generate_button', { credits: totalCost })}
+                            <i className={`${isCommittingThis ? 'fa-solid fa-spinner fa-spin' : reflowIcons[value]} text-base`}></i>
+                            <span className="text-[10px] font-bold tracking-tight">{nameFor(value)}</span>
+                            <span className="text-[9px] font-mono opacity-70">{value}</span>
+                            {isCurrent && (
+                              <span className="text-[7px] font-bold uppercase tracking-wider bg-white/15 text-white px-1.5 py-0.5 rounded">
+                                {t('studio.reflow.current_ratio')}
+                              </span>
+                            )}
                           </button>
-                        </div>
-                      )}
+                        );
+                      })}
                     </div>
-                    );
-                  })()}
 
-                  {reflowStep === 'committing' && (
-                    <div className="flex items-center justify-center py-4">
-                      <i className="fa-solid fa-spinner fa-spin text-blue-400 text-lg"></i>
-                    </div>
-                  )}
-                </div>
-                )}
+                    {/* Scope toggles + Generate button — shown directly below the row when
+                        a non-current ratio is selected. No picker state transition. */}
+                    {reflowTarget && reflowTarget !== displayRatio && (
+                      <div className="space-y-2">
+                        {isBatchScope && (
+                          <div className="flex gap-2">
+                            <button disabled={committing} onClick={() => setReflowScope('single')}
+                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'single' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
+                              {t('studio.reflow.scope_single')}
+                            </button>
+                            <button disabled={committing} onClick={() => setReflowScope('batch_all')}
+                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'batch_all' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
+                              {t('studio.reflow.scope_batch_all', { count: doneBatchCount })}
+                            </button>
+                          </div>
+                        )}
+                        {isCarouselScope && (
+                          <div className="flex gap-2">
+                            <button disabled={committing} onClick={() => setReflowScope('carousel_slide')}
+                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'carousel_slide' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
+                              {t('studio.reflow.scope_slide')}
+                            </button>
+                            <button disabled={committing} onClick={() => setReflowScope('carousel_all')}
+                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'carousel_all' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
+                              {t('studio.reflow.scope_carousel_all', { count: doneCarouselCount })}
+                            </button>
+                          </div>
+                        )}
+                        <button
+                          onClick={async () => {
+                            if (committing || !reflowTarget) return;
+                            setReflowStep('committing');
+                            try {
+                              if (reflowScope === 'batch_all') {
+                                await handleRescale(reflowTarget, { scope: 'batch_all' });
+                              } else if (reflowScope === 'carousel_slide') {
+                                // Resolve focused slide by matching displayed image url; fall back to slide 0.
+                                const matchIdx = slides.findIndex(s => s.imageUrl === currentMockup);
+                                const slideIndex = matchIdx >= 0 ? matchIdx : 0;
+                                await handleRescale(reflowTarget, { scope: 'carousel_slide', slideIndex });
+                              } else if (reflowScope === 'carousel_all') {
+                                await handleRescale(reflowTarget, { scope: 'carousel_all' });
+                              } else {
+                                await handleRescale(reflowTarget);
+                              }
+                            } catch (err) {
+                              console.warn('Reflow commit failed (non-blocking):', err);
+                            } finally {
+                              setReflowStep('idle');
+                              setReflowTarget(null);
+                            }
+                          }}
+                          disabled={committing || isLoading}
+                          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-lg transition-all active:scale-[0.98] hover:from-blue-500 hover:to-cyan-500 flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
+                          <i className={`fa-solid ${committing ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'} text-[8px]`}></i>
+                          {t('studio.reflow.generate_button', { credits: totalCost })}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  );
+                })()}
 
                 {/* Script — bottom */}
                 {hasAnyImage && (

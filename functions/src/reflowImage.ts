@@ -287,7 +287,28 @@ async function executeItemReflow(args: {
     const { item, generationId, targetRatio, sourceRatio, genData, decision, geminiApiKey, openaiApiKey } = args;
     const idx = item.itemIndex;
 
-    if (decision.chosenMethod === "outpaint") {
+    // Outpaint needs a real, downloadable source image. When the render's Storage
+    // upload failed, imageUrl is persisted as the sentinel "pending_upload" (or some
+    // other non-fetchable value). In that case outpaint can only fail — so re-route
+    // to rerender, which rebuilds from the saved buildPlan and needs no source pixels.
+    const sourceUsableForOutpaint =
+        typeof item.sourceImageUrl === "string" &&
+        item.sourceImageUrl.length > 0 &&
+        item.sourceImageUrl !== "pending_upload" &&
+        item.sourceImageUrl.startsWith("http");
+    const route: "outpaint" | "rerender" =
+        decision.chosenMethod === "outpaint" && !sourceUsableForOutpaint
+            ? "rerender"
+            : decision.chosenMethod;
+    const reroutedFromMissingSource = route !== decision.chosenMethod;
+    if (reroutedFromMissingSource) {
+        console.log(
+            `[reflowImage] no usable source image (value="${item.sourceImageUrl ?? "null"}") for gen=${generationId} ` +
+            `item=${idx} — forcing rerender route instead of outpaint.`,
+        );
+    }
+
+    if (route === "outpaint") {
         let outcome = await executeOutpaint(genData, sourceRatio, targetRatio, idx, item.sourceImageUrl);
 
         if (!outcome.success && !decision.isUserOverride) {
@@ -319,12 +340,18 @@ async function executeItemReflow(args: {
         return await executeRerender(generationId, targetRatio, genData, geminiApiKey, openaiApiKey, idx);
     } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        if (decision.isUserOverride) {
+        // No outpaint fallback when the user explicitly forced rerender, OR when we
+        // re-routed here because there is no usable source image (outpaint would have
+        // nothing to extend). Fail cleanly instead of attempting a doomed outpaint.
+        if (decision.isUserOverride || reroutedFromMissingSource) {
             return {
                 itemIndex: idx, success: false, method: null,
                 fallbackFrom: null, fallbackReason: null,
                 outputUrl: null, creditsCharged: 0,
-                errorCode: "rerender_failed", errorMessage,
+                errorCode: reroutedFromMissingSource ? "no_source" : "rerender_failed",
+                errorMessage: reroutedFromMissingSource
+                    ? "Source image is still uploading or unavailable, and the saved plan could not be re-rendered."
+                    : errorMessage,
             };
         }
         if (error instanceof NoPlanError || errorMessage.includes("No saved buildPlan")) {

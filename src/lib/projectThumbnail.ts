@@ -59,20 +59,35 @@ export async function uploadAndPersistThumbnail(
     return sourceUrl;
   }
 
-  // fetch() handles both data: URLs and remote URLs natively, so a single
-  // branch covers both cases.
-  const res = await fetch(sourceUrl);
-  let blob: Blob = await res.blob();
+  try {
+    // fetch() handles both data: URLs and remote URLs natively, so a single
+    // branch covers both cases.
+    const res = await fetch(sourceUrl);
+    let blob: Blob = await res.blob();
 
-  if (blob.size > MAX_BYTES || blob.type !== "image/jpeg") {
-    blob = await downscaleToJpg(blob);
+    if (blob.size > MAX_BYTES || blob.type !== "image/jpeg") {
+      blob = await downscaleToJpg(blob);
+    }
+
+    if (blob.size > MAX_BYTES) {
+      blob = await downscaleToJpg(blob);
+    }
+
+    const storageRef = ref(storage, STORAGE_PATH(uid, projectId));
+    await uploadBytes(storageRef, blob, { contentType: "image/jpeg" });
+    return await getDownloadURL(storageRef);
+  } catch (err) {
+    // NEVER rethrow — thumbnail upload is best-effort and must not block project
+    // saves. A CORS/Storage outage surfaces as AbortError / "Failed to fetch".
+    // Fall back to the source URL so the card still shows an image; the next save
+    // re-attempts the upload once Storage is healthy.
+    const name = (err as { name?: string })?.name;
+    const code = (err as { code?: string })?.code;
+    if (name === "AbortError" || code === "storage/canceled" || code === "storage/retry-limit-exceeded") {
+      console.warn("[projectThumbnail] thumbnail upload aborted (likely CORS/Storage outage) — keeping source image as thumbnail.");
+    } else {
+      console.warn("[projectThumbnail] thumbnail upload failed (non-blocking) — keeping source image as thumbnail:", err);
+    }
+    return sourceUrl;
   }
-
-  if (blob.size > MAX_BYTES) {
-    blob = await downscaleToJpg(blob);
-  }
-
-  const storageRef = ref(storage, STORAGE_PATH(uid, projectId));
-  await uploadBytes(storageRef, blob, { contentType: "image/jpeg" });
-  return getDownloadURL(storageRef);
 }
