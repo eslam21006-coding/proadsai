@@ -4864,12 +4864,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             }
           }
         } else {
-          for (const slide of carouselSlides) {
+          for (const slide of (carouselSlides ?? [])) {
             if (slide.status !== 'done' || !slide.imageUrl) continue;
             const slideIdx = slide.index - 1;
             setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, status: 'rendering' } : s));
             const copy = carouselCopies[slideIdx];
-            const isLastSlide = slideIdx === carouselCopies.length - 1;
+            const isLastSlide = slideIdx === (carouselCopies ?? []).length - 1;
             const txOverride: TextOverride = {
               hookText: (copy?.hookText || '').replace(/\|\|\|/g, '').trim(),
               subheadText: (copy?.subheadText || '').replace(/\|\|\|/g, '').trim(),
@@ -4886,13 +4886,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 scope: 'carousel_slide',
                 slideIndex: slideIdx,
               });
-              const res = reflowRes.data.success && reflowRes.data.outcomes[0]?.outputUrl;
+              const res = reflowRes.data.success && reflowRes.data.outcomes?.[0]?.outputUrl;
               setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: res || null, status: res ? 'done' : 'error' } : s));
             } catch {
               refundCredits('reflowImage');
               setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, status: 'error' } : s));
             }
-            if (slide.index < carouselSlides.length) await new Promise(r => setTimeout(r, 500));
+            if (slide.index < (carouselSlides ?? []).length) await new Promise(r => setTimeout(r, 500));
           }
         }
       } catch (e) {
