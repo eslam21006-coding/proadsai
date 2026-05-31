@@ -207,7 +207,7 @@ function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverr
         ctaName = parts[0].trim() || inputs.cta;
         benefitText = parts[1]?.trim() || "";
     } else if (ctaBlockText.toLowerCase().startsWith((inputs.cta || '').toLowerCase())) {
-        benefitText = ctaBlockText.substring(inputs.cta.length).trim();
+        benefitText = ctaBlockText.substring((inputs.cta || '').length).trim();
         ctaName = inputs.cta;
     } else {
         ctaName = ctaBlockText || inputs.cta;
@@ -4592,7 +4592,7 @@ export async function generateFinalAd(
         const isCompactRatio = currentAspectRatio === '9:16' || currentAspectRatio === '4:5';
         if (isCompactRatio) {
             // Limit total text density — prefer fewer, cleaner elements
-            const totalChars = hookText.length + subheadText.length + ctaName.length + benefitText.length;
+            const totalChars = hookText.length + subheadText.length + (ctaName || '').length + (benefitText || '').length;
             if (totalChars > 120) {
                 // Prioritize: headline > CTA > subheadline > benefit
                 if (benefitText.length > 30) benefitText = benefitText.substring(0, 30).trim();
