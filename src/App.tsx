@@ -2241,6 +2241,11 @@ const App: React.FC = () => {
   // the focused batch tile).
   const [activeBatchRatio, setActiveBatchRatio] = useState<AspectRatio>(currentAspectRatio);
   const [reflowFallbackNotice, setReflowFallbackNotice] = useState<'outpaint' | 'rerender' | null>(null);
+  // BUG 3: saved projects strip hero photos / logos to "stored_externally" to fit Firestore's
+  // 1 MiB limit. When such a project is reloaded, warn (non-blocking) that the user should
+  // re-upload so their face/logo is included in the next generation. Dismissible; also auto-
+  // hides once personalPhotos/brandLogos no longer contain the stripped placeholder.
+  const [showStrippedAssetsWarning, setShowStrippedAssetsWarning] = useState(false);
   const [visualPolishes, setVisualPolishes] = useState<VisualPolish[]>([]);
   const [selectedPolishIds, setSelectedPolishIds] = useState<Set<string>>(new Set());
   // ─── EDIT TARGET — tracks which exact design is being edited ─────
@@ -3177,6 +3182,13 @@ const App: React.FC = () => {
     const migratedInputs = migrateProjectInputs(p.inputs);
 
     setInputs(sanitizeProjectModes(migratedInputs));
+    // BUG 3: detect hero photos / logos that were stripped to "stored_externally" on save.
+    // If any were stripped, surface a non-blocking re-upload warning in Step 1.
+    const hasStrippedPhotos =
+      [...(migratedInputs?.personalPhotos || []),
+       ...(migratedInputs?.brandLogos || [])]
+      .some((asset: string) => asset === 'stored_externally');
+    setShowStrippedAssetsWarning(hasStrippedPhotos);
     setTovText(p.tovText);
     setConceptsText(normalizeFieldLabels(p.conceptsText));
     setSelectedTov(p.selectedTov);
@@ -4332,15 +4344,24 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     let anchorImage: string | null = null;
     let creditsActuallyUsed = 0;
     const cleanField = (s: string) => s.replace(/\|\|\|/g, '').trim();
+    // Split a "cta ||| benefit" string into its two parts instead of just deleting the bars
+    // (which fused the benefit into the button label). Prefer an explicit benefit field;
+    // fall back to the benefit half of the CTA string (BUG 2).
+    const splitCtaField = (raw: string): { ctaName: string; benefitText: string } => {
+      if (!raw.includes('|||')) return { ctaName: raw.trim(), benefitText: '' };
+      const [c, b] = raw.split('|||');
+      return { ctaName: c.trim(), benefitText: b?.trim() || '' };
+    };
 
     const buildSlide = async (i: number, styleRef?: string) => {
       const copy = carouselCopies[i];
       const isLastSlide = i === slideCount - 1;
+      const ctaSplit = splitCtaField(copy.ctaText || inputs.cta || '');
       const txOverride: TextOverride = {
         hookText: cleanField(copy.hookText),
         subheadText: cleanField(copy.subheadText || ''),
-        ctaName: isLastSlide ? cleanField(copy.ctaText || inputs.cta) : '',
-        benefitText: isLastSlide ? cleanField(copy.benefitText || '') : '',
+        ctaName: isLastSlide ? ctaSplit.ctaName : '',
+        benefitText: isLastSlide ? (cleanField(copy.benefitText || '') || ctaSplit.benefitText) : '',
       };
       const slideInstruction = i === 0
         ? `This is SLIDE 1 (the HOOK slide) of a ${slideCount}-slide carousel. Hero pose: CONFIDENT STANCE — arms relaxed, looking at camera or slightly off-camera. NO pointing.`
@@ -4904,11 +4925,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, status: 'rendering' } : s));
             const copy = carouselCopies[slideIdx];
             const isLastSlide = slideIdx === (carouselCopies ?? []).length - 1;
+            // Split CTA on ||| into label + benefit instead of deleting the bars (BUG 2).
+            const ctaRaw = copy?.ctaText || inputs.cta || '';
+            const [ctaPart, benefitPart] = ctaRaw.includes('|||') ? ctaRaw.split('|||') : [ctaRaw, ''];
             const txOverride: TextOverride = {
               hookText: (copy?.hookText || '').replace(/\|\|\|/g, '').trim(),
               subheadText: (copy?.subheadText || '').replace(/\|\|\|/g, '').trim(),
-              ctaName: isLastSlide ? (copy?.ctaText || inputs.cta).replace(/\|\|\|/g, '').trim() : '',
-              benefitText: isLastSlide ? (copy?.benefitText || '').replace(/\|\|\|/g, '').trim() : '',
+              ctaName: isLastSlide ? ctaPart.trim() : '',
+              benefitText: isLastSlide ? ((copy?.benefitText || '').replace(/\|\|\|/g, '').trim() || (benefitPart?.trim() || '')) : '',
             };
             try {
               if (!deductCredits('reflowImage')) break;
@@ -5550,6 +5574,27 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 </div>
               </div>
             </details>
+          </div>
+        )}
+
+        {phase === 'input' && showStrippedAssetsWarning &&
+          [...(inputs?.personalPhotos || []), ...(inputs?.brandLogos || [])].some(a => a === 'stored_externally') && (
+          <div className="max-w-3xl mx-auto mb-4 px-4">
+            <div className={`flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3 ${lang === 'ar' ? 'flex-row-reverse text-right' : ''}`} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+              <i className="fa-solid fa-triangle-exclamation text-amber-400 mt-0.5"></i>
+              <p className="flex-1 text-[11px] leading-relaxed text-amber-200/90 font-medium">
+                {lang === 'ar'
+                  ? 'لم يتم حفظ صورك الشخصية والشعارات. أعد رفعها لتظهر في الإعلان التالي.'
+                  : "Your hero photos and logos weren't saved to cloud. Re-upload them to include your face in the next generation."}
+              </p>
+              <button
+                onClick={() => setShowStrippedAssetsWarning(false)}
+                aria-label={lang === 'ar' ? 'إغلاق' : 'Dismiss'}
+                className="text-amber-400/60 hover:text-amber-300 transition-colors shrink-0"
+              >
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            </div>
           </div>
         )}
 

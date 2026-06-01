@@ -109,22 +109,6 @@ export async function rerenderFromPlan(args: {
 
     let buildPlan = extractBuildPlan(genData, itemIndex, generationId);
 
-    // FIX C: REFLOW CONSISTENCY LOCK. A reflow rerender is a ratio adaptation of an
-    // EXISTING ad — NOT a fresh creative and NOT a carousel narrative progression. Prepend
-    // an explicit scene-lock instruction to the top of the blueprint so the from-plan render
-    // preserves hero/colors/background/style/mood and only re-lays-out for the new canvas.
-    const styleRefProvided = typeof styleReference === "string" && styleReference.startsWith("data:image/");
-    const reflowConsistencyBlock =
-        `REFLOW INSTRUCTION: This is a ratio adaptation, NOT a new creative.\n` +
-        `Re-render the EXACT same ad at the new aspect ratio.\n` +
-        `MUST preserve: same hero face and appearance, same color palette, same background environment and lighting, same visual style, same mood and atmosphere, same brand elements.\n` +
-        `ONLY change: element placement, proportions, and composition to fit the ${targetRatio} canvas.\n` +
-        `Do NOT change the concept. Do NOT add new elements. Do NOT change the scene. This must look like the same ad at a different size.` +
-        (styleRefProvided
-            ? `\nReference image provided — match this image exactly in style, color, hero appearance, and scene. Only adapt the composition for ${targetRatio}.`
-            : "");
-    buildPlan = `${reflowConsistencyBlock}\n\n${buildPlan}`;
-
     const brandPrimary = typeof inputs.brandColorPrimary === "string" ? inputs.brandColorPrimary.trim() : "";
     const brandSecondary = typeof inputs.brandColorSecondary === "string" ? inputs.brandColorSecondary.trim() : "";
     let brandColorReinforced = false;
@@ -154,6 +138,22 @@ export async function rerenderFromPlan(args: {
     const styleRef = typeof styleReference === "string" && styleReference.startsWith("data:image/")
         ? styleReference
         : undefined;
+
+    // FIX C (revised): REFLOW CONSISTENCY LOCK. A reflow rerender is a ratio adaptation of
+    // an EXISTING ad — NOT a fresh creative and NOT a carousel narrative progression. This
+    // is passed as a dedicated `reflowInstruction` arg so generateFinalAd injects it AFTER
+    // blueprint keyword-stripping (the stripper would otherwise delete scene/style/reference/
+    // concept from a blueprint-prepended block). Keeps the scene lock at full strength.
+    const reflowConsistencyBlock =
+        `REFLOW INSTRUCTION: This is a ratio adaptation, NOT a new creative.\n` +
+        `Re-render the EXACT same ad at the new aspect ratio.\n` +
+        `MUST preserve: same hero face and appearance, same color palette, same background environment and lighting, same visual style, same mood and atmosphere, same brand elements.\n` +
+        `ONLY change: element placement, proportions, and composition to fit the ${targetRatio} canvas.\n` +
+        `Do NOT change the concept. Do NOT add new elements. Do NOT change the scene. This must look like the same ad at a different size.` +
+        (styleRef
+            ? `\nReference image provided — match this image exactly in style, color, hero appearance, and scene. Only adapt the composition for ${targetRatio}.`
+            : "");
+
     const result = await generate(
         buildPlan,
         approvedTov,
@@ -163,6 +163,8 @@ export async function rerenderFromPlan(args: {
         undefined, // editInstruction
         undefined, // base64ToEdit
         styleRef,  // styleReference — original render, for visual coherence
+        undefined, // textOverride
+        reflowConsistencyBlock, // reflowInstruction — injected post-strip (FIX C)
     );
 
     if (!result.image) {

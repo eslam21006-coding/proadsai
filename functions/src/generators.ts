@@ -173,13 +173,29 @@ interface FinalAdDebugInfo {
     filledZones?: Record<string, { source: string; value: string }>;
 }
 
+/**
+ * Split a CTA field on the ||| separator into the button label and its trailing benefit
+ * line. The ||| convention is produced by clean() (" + " → " ||| ") and the hook-generation
+ * prompts. Applied at EVERY channel that feeds a CTA into the render — TOV parse, the
+ * `textOverride` bypass, and the model's `machinePlan.ownership.ctaText` — so the literal
+ * "|||" (and the fused benefit text) can never reach the rendered image (BUG 2).
+ */
+function splitCta(raw: string): { ctaName: string; benefitText: string } {
+    if (!raw?.includes('|||')) return { ctaName: raw?.trim() || '', benefitText: '' };
+    const parts = raw.split('|||');
+    return { ctaName: parts[0].trim(), benefitText: parts[1]?.trim() || '' };
+}
+
 function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverride?: TextOverride): OwnedRenderText {
     if (textOverride) {
+        // textOverride bypasses the TOV ||| splitter — split here too, otherwise a
+        // "cta ||| benefit" supplied in textOverride.ctaName renders the literal bars.
+        const { ctaName: splitName, benefitText: splitBenefit } = splitCta(textOverride.ctaName || '');
         return {
             hookText: textOverride.hookText,
             subheadText: textOverride.subheadText,
-            ctaName: textOverride.ctaName,
-            benefitText: textOverride.benefitText,
+            ctaName: splitName,
+            benefitText: (textOverride.benefitText || '').trim() || splitBenefit,
         };
     }
 
@@ -4315,6 +4331,10 @@ export interface BuildFinalImagePromptInput {
     carouselAnchorNote: string;
     retargetingDesignHint: string;
     imageParts: Array<{ inlineData: { mimeType: string; data: string } }>;
+    // Optional reflow scene-lock instruction. Injected AFTER blueprint keyword-stripping
+    // (the reflow path strips scene/style/reference/concept from the blueprint), so it must
+    // ride a dedicated prompt section here rather than be prepended to `blueprint`.
+    reflowInstruction?: string;
 }
 
 export interface BuildFinalImagePromptResult {
@@ -4341,6 +4361,7 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
         carouselAnchorNote,
         retargetingDesignHint,
         imageParts,
+        reflowInstruction,
     } = params;
 
     // Brand-color injection happens upstream via the per-prompt blocks built
@@ -4369,7 +4390,11 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
     const _hasEnv = _logoPlacements.some((p) => p.mode === 'environmental');
     const _logoBlock = `${_hasUI ? UI_LOGO_INSTRUCTION_BLOCK : ''}${_hasEnv ? ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK : ''}`;
 
-    const textPrompt = `${_ccBlock}${coreDesignRules}
+    // Reflow scene-lock rides its own section at the very top of the prompt so it (a) is
+    // never touched by the blueprint keyword-stripper and (b) dominates the render intent.
+    const _reflowBlock = reflowInstruction ? `${reflowInstruction}\n\n` : '';
+
+    const textPrompt = `${_reflowBlock}${_ccBlock}${coreDesignRules}
 ${SCREEN_CONTENT_BAN_BLOCK}
 ${_logoBlock}
 ${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}
@@ -4418,7 +4443,8 @@ export async function generateFinalAd(
     editInstruction?: string,
     base64ToEdit?: string,
     styleReference?: string,
-    textOverride?: TextOverride
+    textOverride?: TextOverride,
+    reflowInstruction?: string
 ): Promise<{ image: string; failureClass?: "numeric_hallucination"; costEstimate?: CostEstimate } | { image: null; errorCode: string; failureClass?: FailureClass; debug?: FinalAdDebugInfo }> {
     const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
     resetResolutionTrace();
@@ -4556,8 +4582,17 @@ export async function generateFinalAd(
     }
     const parsedBuildPlan = parseBuildPlanEnvelope(buildPlan);
     let incomingBuildBlueprint = parsedBuildPlan.blueprint || buildPlan;
-    const ownershipMap = parsedBuildPlan.machinePlan?.ownership
-        ? mergeContentOwnership(buildContentOwnershipMap(ownedRenderText, inputs), parsedBuildPlan.machinePlan.ownership)
+    // The model's machine-plan ownership bypasses the TOV ||| splitter. Split its ctaText
+    // before it overwrites the canonical CTA in the merge, recovering the benefit half into
+    // benefitText when we don't already have one (BUG 2).
+    const _machineOwnership = parsedBuildPlan.machinePlan?.ownership;
+    if (_machineOwnership && typeof _machineOwnership.ctaText === 'string' && _machineOwnership.ctaText.includes('|||')) {
+        const { ctaName: ownCta, benefitText: ownBenefit } = splitCta(_machineOwnership.ctaText);
+        _machineOwnership.ctaText = ownCta;
+        if (!benefitText.trim() && ownBenefit) benefitText = ownBenefit;
+    }
+    const ownershipMap = _machineOwnership
+        ? mergeContentOwnership(buildContentOwnershipMap(ownedRenderText, inputs), _machineOwnership)
         : buildContentOwnershipMap(ownedRenderText, inputs);
 
     // ═══ ARABIC ANTI-REPETITION & TEXT QA LAYER ═══
@@ -5751,6 +5786,7 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
             carouselAnchorNote,
             retargetingDesignHint: '',
             imageParts: [],
+            reflowInstruction,
         });
 
         parts.push({ text: _promptResult.textPrompt });
