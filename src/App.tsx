@@ -2936,7 +2936,14 @@ const App: React.FC = () => {
   // Get the URL string (blob URL for display, rawBase64 for API calls)
   // @ts-ignore (Safety check for old history data)
   const currentMockup = typeof historyItem === 'string' ? historyItem : historyItem?.url;
-  const currentRawBase64 = (typeof historyItem === 'object' ? historyItem?.rawBase64 : undefined) || currentMockup;
+  // After save/reload, historyItem.rawBase64 is the stripped placeholder "stored_externally"
+  // (a truthy string), which would otherwise win the `||` and block the real Storage URL from
+  // ever being used as the reflow source. Fall back to currentMockup whenever rawBase64 is
+  // missing OR the stripped placeholder, so reflow always has a usable source.
+  const rawBase64Candidate = typeof historyItem === 'object' ? historyItem?.rawBase64 : undefined;
+  const currentRawBase64 = (rawBase64Candidate && rawBase64Candidate !== 'stored_externally')
+    ? rawBase64Candidate
+    : currentMockup;
 
   // Get the Ratio (If old data, default to 1:1. If new, use saved ratio. If generating, use button selection)
   // @ts-ignore

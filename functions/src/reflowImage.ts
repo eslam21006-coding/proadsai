@@ -319,10 +319,33 @@ async function executeItemReflow(args: {
         (item.sourceImageUrl.startsWith("http") || item.sourceImageUrl.startsWith("data:image/"));
     // A base64 data URL can also seed the rerender path as a style/composition
     // reference so a from-plan rerender stays coherent with the original render.
-    const styleRefForRerender =
+    let styleRefForRerender: string | undefined =
         typeof item.sourceImageUrl === "string" && item.sourceImageUrl.startsWith("data:image/")
             ? item.sourceImageUrl
             : undefined;
+    // FIX B: an http(s) Storage URL is also a valid style reference (the common
+    // saved/reloaded case where the displayed image is a Storage URL, not base64).
+    // Download it and inline it as base64 so rerenderFromPlan can anchor the from-plan
+    // render on the original image instead of regenerating blind. Best-effort: if the
+    // fetch fails, fall through with no reference (still better than crashing).
+    if (
+        !styleRefForRerender &&
+        typeof item.sourceImageUrl === "string" &&
+        item.sourceImageUrl.startsWith("http")
+    ) {
+        try {
+            const response = await fetch(item.sourceImageUrl);
+            const buffer = await response.arrayBuffer();
+            const base64 = Buffer.from(buffer).toString("base64");
+            styleRefForRerender = `data:image/png;base64,${base64}`;
+        } catch (fetchErr: unknown) {
+            const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+            console.warn(
+                `[reflowImage] failed to download http style reference (value="${item.sourceImageUrl}") ` +
+                `for gen=${generationId} item=${idx}: ${msg}. Proceeding without a style reference.`,
+            );
+        }
+    }
     const route: "outpaint" | "rerender" =
         decision.chosenMethod === "outpaint" && !sourceUsableForOutpaint
             ? "rerender"
