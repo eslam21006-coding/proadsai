@@ -28,7 +28,7 @@ import { feedbackService, type NegativeFeedbackTag } from './services/feedbackSe
 import { metaService, type MetaConnection } from './services/metaService';
 import { ASPECT_RATIOS, COLD_HOOK_ANGLES, OFFER_TYPES, getRandomUniverse } from './constants';
 import type { UserPlan } from './planconfig';
-import { PLANS, CREDIT_COSTS, TOPUP_PACKS, TOPUP_PRICES, CREDITS_PER_AD, canUse, canUseRatio, requiredPlanFor, requiredPlanForRatio, hasCredits, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
+import { PLANS, CREDIT_COSTS, TOPUP_PACKS, TOPUP_PRICES, canUse, requiredPlanFor, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
 import { LanguageProvider, useT, type UILanguage } from './i18n';
 import { deriveStatus } from './lib/projectStatus';
 import { resolveCoverImage } from './lib/projectCoverImage';
@@ -41,6 +41,9 @@ const InputForm = React.lazy(() => import('./components/InputForm'));
 const PerformanceDashboard = React.lazy(() => import('./components/PerformanceDashboard'));
 const PricingTableLazy = React.lazy(() => import('./components/PricingTable'));
 const BillingPage = React.lazy(() => import('./pages/Billing'));
+// ReflowPreview lazy-import removed 2026-05-30 — CSS preview step was dropped from the
+// resize flow as a product decision. The component file is retained so it can be
+// re-imported here if the preview is reintroduced.
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import WorkspaceSettingsModal from './components/WorkspaceSettingsModal';
 import { ForgotPasswordDialog } from './components/auth/ForgotPasswordDialog';
@@ -363,19 +366,40 @@ const stripUndefined = (obj: any): any => {
   return obj;
 };
 
-const saveProjectToFirestore = async (userId: string, project: SavedProject) => {
-  // Strip large image URLs from batchResults before saving to Firestore (1MB doc limit)
-  // Also recursively strip undefined values (Firestore rejects them)
-  const cleanProject = stripUndefined(JSON.parse(JSON.stringify({ ...project })));
-  if (cleanProject.batchResults && cleanProject.batchResults.length > 0) {
-    cleanProject.batchResults = cleanProject.batchResults.map((r: any) => ({
-      ...r,
-      // Keep URL only if it's a short Firebase Storage URL, strip base64/data URLs
-      url: r.url && r.url.length > 5000 ? null : r.url,
-    }));
+// Recursively replace heavy inline image data (base64 `data:` URLs and raw base64
+// blobs) anywhere in the project with a short placeholder. Mirrors the backend
+// saveProject stripper (functions/src/index.ts). Firestore rejects docs > 1 MiB
+// and a single render is ~1–5 MB; this catches every oversized payload regardless
+// of field name (referenceImage, referenceAd, offerAssets[], testimonialScreenshots[],
+// uploadedAssets[], mockupHistory[].url, carouselSlides[].imageUrl, …) while sparing
+// legitimate long text (buildPlan, conceptsText) — text always contains whitespace,
+// base64 never does. Short Storage URLs are preserved.
+const HEAVY_STR_THRESHOLD = 5000;
+const stripHeavyImageData = (value: any): any => {
+  if (typeof value === 'string') {
+    if (value.startsWith('data:')) return 'stored_externally';
+    if (value.length > HEAVY_STR_THRESHOLD && !/\s/.test(value)) return 'stored_externally';
+    return value;
   }
+  if (Array.isArray(value)) return value.map(stripHeavyImageData);
+  if (value && typeof value === 'object') {
+    const out: any = {};
+    for (const [k, v] of Object.entries(value)) out[k] = stripHeavyImageData(v);
+    return out;
+  }
+  return value;
+};
+
+const saveProjectToFirestore = async (userId: string, project: SavedProject) => {
+  // Strip undefined values (Firestore rejects them) then recursively strip all
+  // heavy base64/data-URL payloads (1 MiB doc limit) regardless of field name.
+  const cleanProject = stripHeavyImageData(stripUndefined(JSON.parse(JSON.stringify({ ...project }))));
   const projectRef = doc(db, 'users', userId, 'projects', project.id);
-  await setDoc(projectRef, { ...cleanProject, userId, updatedAt: Date.now() });
+  const payload = { ...cleanProject, userId, updatedAt: Date.now() };
+  if (import.meta.env.DEV) {
+    console.log(`saveProjectToFirestore: doc bytes = ${JSON.stringify(payload).length} for project ${project.id}`);
+  }
+  await setDoc(projectRef, payload);
 };
 
 const getAllProjectsFromFirestore = async (userId: string): Promise<SavedProject[]> => {
@@ -2206,9 +2230,16 @@ const App: React.FC = () => {
   const [globalRefinement, setGlobalRefinement] = useState(''); // cumulative refinement history (sent to AI)
   const [refinementEntry, setRefinementEntry] = useState('');   // the new instruction being typed (not yet appended)
   const [studioTweak, setStudioTweak] = useState('');
-  const [reflowMethod, setReflowMethod] = useState<'auto' | 'outpaint' | 'rerender'>('auto');
-  const [showMethodSelector, setShowMethodSelector] = useState(false);
-  const [showReflowSizes, setShowReflowSizes] = useState(false); // inline reflow size-picker popover
+  // Reflow is a permanently-visible 3-button control (no picker toggle): the only
+  // states are 'idle' (buttons shown, accepting a selection) and 'committing'
+  // (a resize is in flight). 'picker_open' was removed — the buttons always render.
+  const [reflowStep, setReflowStep] = useState<'idle' | 'committing'>('idle');
+  const [reflowTarget, setReflowTarget] = useState<AspectRatio | null>(null);
+  const [reflowScope, setReflowScope] = useState<'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'>('single');
+  // Ratio of the batch tile currently being viewed — drives the reflow "Current"
+  // badge in batch mode (where displayRatio reflects the single-render history, not
+  // the focused batch tile).
+  const [activeBatchRatio, setActiveBatchRatio] = useState<AspectRatio>(currentAspectRatio);
   const [reflowFallbackNotice, setReflowFallbackNotice] = useState<'outpaint' | 'rerender' | null>(null);
   const [visualPolishes, setVisualPolishes] = useState<VisualPolish[]>([]);
   const [selectedPolishIds, setSelectedPolishIds] = useState<Set<string>>(new Set());
@@ -2300,8 +2331,9 @@ const App: React.FC = () => {
                   method: 'auto',
                   scope: 'single',
                 });
-                if (reflowRes.data.success && reflowRes.data.outcomes[0]?.outputUrl) {
-                  pushMockup(reflowRes.data.outcomes[0].outputUrl, extraRatio as AspectRatio);
+                const oc = reflowRes.data?.outcomes?.[0];
+                if (reflowRes.data?.success && oc?.outputUrl) {
+                  pushMockup(oc.outputUrl, extraRatio as AspectRatio);
                 }
               } else {
                 console.warn(`Skipping auto-reflow to ${extraRatio} — no generation ID for reflowImage callable`);
@@ -2474,9 +2506,19 @@ const App: React.FC = () => {
 
     try {
       const saveProjectFn = httpsCallable(functions, 'saveProject');
-      await saveProjectFn({ project });
+      // Strip heavy base64/data-URL payloads BEFORE the callable round-trip. The
+      // backend also strips defensively, but a project carrying several base64
+      // renders plus reference images can exceed the callable's request-size limit
+      // and fail at the transport layer before the backend ever runs. Local
+      // IndexedDB (above) keeps the full base64 for offline display; only the
+      // cloud copy is trimmed. stripHeavyImageData deep-clones, so `project`
+      // (used below for thumbnail resolution) is untouched.
+      await saveProjectFn({ project: stripHeavyImageData(project) });
     } catch (firestoreErr: any) {
-      console.error("Firestore cloud sync failed:", firestoreErr);
+      console.error(
+        `Firestore cloud sync failed: code=${firestoreErr?.code ?? 'unknown'} message=${firestoreErr?.message ?? String(firestoreErr)}`,
+        firestoreErr,
+      );
       if (firestoreErr?.code === 'failed-precondition' && firestoreErr?.message?.includes('QUOTA_EXCEEDED')) {
         const details = firestoreErr?.details || {};
         // Roll back the local IndexedDB write so mergeProjects on next sign-in
@@ -2508,7 +2550,8 @@ const App: React.FC = () => {
           const updated = { ...project, thumbnailUrl: storageUrl };
           saveProjectToDB(updated).catch(() => {});
           const callable = httpsCallable(functions, 'saveProject');
-          callable({ project: updated }).catch(() => {});
+          // Strip heavy base64 before the round-trip (same as the primary save path).
+          callable({ project: stripHeavyImageData(updated) }).catch(() => {});
         })
         .catch((err) => {
           console.warn("phase13 ▸ thumbnail upload failed (non-blocking):", err);
@@ -3074,7 +3117,7 @@ const App: React.FC = () => {
     if (phase === 'tov_review') setPhase('input');
     else if (phase === 'concept_review') setPhase('tov_review');
     else if (phase === 'render_studio') setPhase('concept_review');
-    else if (phase === 'primary_text') { setPhase('render_studio'); setReflowMethod('auto'); }
+    else if (phase === 'primary_text') { setPhase('render_studio'); }
   };
 
   const togglePolish = (id: string) => {
@@ -3146,6 +3189,12 @@ const App: React.FC = () => {
     setBatchConceptsLoading(false);
     setCarouselCopies([]);
     setShowCarouselPreview(false);
+    // Phase 17 reflow surface — reset the resize control when switching projects so
+    // a committing state / stale target from a previous project doesn't bleed in.
+    setReflowStep('idle');
+    setReflowTarget(null);
+    setReflowScope('single');
+    setReflowFallbackNotice(null);
     // Determine the highest step that has meaningful data
     const phaseOrder: AppPhase[] = ['input', 'tov_review', 'concept_review', 'render_studio', 'primary_text'];
     let highestPhaseWithData: AppPhase = 'input';
@@ -3200,6 +3249,11 @@ const App: React.FC = () => {
     setBatchCaptions([]);
     setCarouselCopies([]);
     setShowCarouselPreview(false);
+    // Phase 17 reflow surface — clear so previous reflow state never bleeds into a new project.
+    setReflowStep('idle');
+    setReflowTarget(null);
+    setReflowScope('single');
+    setReflowFallbackNotice(null);
     setHighestUnlockedPhase(0);
     setShowSidebar(false);
     localStorage.removeItem('adInputsDraft');
@@ -3880,9 +3934,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         let savedGenId: string | null = null;
         if (user) {
           try {
+            // The render was already persisted to Storage SERVER-SIDE by
+            // serverGenerateFinalAd (admin SDK — no client Storage write, no
+            // storage/unauthorized). Store that durable URL — NOT the ~1-5 MB base64 —
+            // in the generations doc. If the server upload failed, storageUrl is null
+            // and we fall back to 'pending_upload' (reflow then rerenders from plan).
+            const storedImageUrl = mockupResult.storageUrl || 'pending_upload';
             savedGenId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
-              { imageUrl: mockup || '', conceptText: conceptRaw.substring(0, 500), buildPlan: conceptRaw },
+              { imageUrl: storedImageUrl, conceptText: conceptRaw.substring(0, 500), buildPlan: conceptRaw },
               conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
               canUseWorkspaces ? activeWorkspaceId : null,
               null, null, mockupResult.resolutionTrace
@@ -3896,7 +3956,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           }
         }
         setPhase('render_studio');
-        setReflowMethod('auto');
+        setReflowStep('idle');
+    setReflowTarget(null);
         updateHighestUnlocked('render_studio');
         awardMilestone('designGenerated');
 
@@ -3924,11 +3985,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   method: 'auto',
                   scope: 'single',
                 });
-                if (reflowRes.data.success && reflowRes.data.outcomes[0]?.outputUrl) {
-                  pushMockup(reflowRes.data.outcomes[0].outputUrl, extraRatio as AspectRatio);
+                const oc = reflowRes.data?.outcomes?.[0];
+                if (reflowRes.data?.success && oc?.outputUrl) {
+                  pushMockup(oc.outputUrl, extraRatio as AspectRatio);
                   variantProduced = true;
                 } else {
-                  console.warn(`Auto-reflow to ${extraRatio} returned no image: success=${reflowRes.data.success}, errorCode=${reflowRes.data.outcomes[0]?.errorCode ?? 'none'}`);
+                  console.warn(`Auto-reflow to ${extraRatio} returned no image: success=${reflowRes.data?.success}, errorCode=${oc?.errorCode ?? 'none'}`);
                 }
               } else {
                 // No persisted generation id — reflowImage requires one (FR-029, FR-030 keep
@@ -4075,7 +4137,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     setBatchRendering(true);
     setCurrentAspectRatio(primaryRatio);
     setPhase('render_studio');
-    setReflowMethod('auto');
+    setReflowStep('idle');
+    setReflowTarget(null);
     updateHighestUnlocked('render_studio');
 
     const newCredits = userCredits - totalCost;
@@ -4087,6 +4150,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     for (let ci = 0; ci < combos.length; ci++) {
       const combo = combos[ci];
       let primaryUrl: string | null = null;
+      let comboGenId: string | null = null;
 
       // Primary render — concept text goes directly to image generation
       const primaryIdx = resultIdx;
@@ -4094,30 +4158,56 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       try {
         const genResult = await gemini.generateFinalAd(combo.conceptText, combo.hookText, inputs, resolvedUniverse, primaryRatio, undefined, undefined, undefined, undefined, undefined, combos.length * allSizes.length);
         primaryUrl = genResult.image;
+        const primaryStorageUrl = genResult.storageUrl || null;
         setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, buildPlan: combo.conceptText, url: primaryUrl, status: primaryUrl ? 'done' : 'error' } : r));
+        // Persist a generation doc for this combo so its extra-size reflows have a
+        // generationId to anchor to (the reflowImage callable requires one) and the
+        // correct per-combo buildPlan for any rerender route. Non-blocking.
+        if (user && primaryUrl) {
+          try {
+            comboGenId = await feedbackService.saveGeneration(
+              user.uid, inputs, 'render',
+              { imageUrl: primaryStorageUrl || 'pending_upload', conceptText: combo.conceptText.substring(0, 500), hookText: (combo.hookText || '').substring(0, 200), buildPlan: combo.conceptText },
+              combo.conceptText, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
+              canUseWorkspaces ? activeWorkspaceId : null
+            );
+          } catch (saveErr) {
+            console.error(`Batch combo ${ci + 1} generation save failed (reflows skipped):`, saveErr);
+          }
+        }
       } catch (e) {
         console.error(`Batch render primary ${ci + 1} failed:`, e);
         setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, status: 'error' } : r));
       }
       resultIdx++;
 
-      // Reflow to extra sizes
+      // Reflow to extra sizes via the reflowImage callable, passing the just-rendered
+      // primary base64 directly (sourceImageOverride) so reflow never depends on the
+      // server Storage upload state.
       for (let si = 0; si < extraRatios.length; si++) {
         const extraRatio = extraRatios[si];
         const reflowIdx = resultIdx;
         setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'rendering' } : r));
 
-        if (primaryUrl) {
+        if (primaryUrl && comboGenId) {
           try {
-            await new Promise(r => setTimeout(r, 500));
-            console.warn(`Skipping batch reflow to ${extraRatio} — reflowImage callable required`);
-            setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'error' } : r));
+            const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+            const reflowRes = await reflowFn({
+              generationId: comboGenId,
+              targetAspectRatio: extraRatio as AspectRatio,
+              method: 'auto',
+              scope: 'single',
+              sourceImageOverride: primaryUrl,
+            });
+            const oc = reflowRes.data?.outcomes?.[0];
+            const reflowedUrl = reflowRes.data?.success && oc?.outputUrl ? oc.outputUrl : null;
+            setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, buildPlan: combo.conceptText, url: reflowedUrl, status: reflowedUrl ? 'done' as const : 'error' as const } : r));
           } catch (e) {
             console.error(`Batch reflow ${ci + 1} to ${extraRatio} failed:`, e);
             setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'error' } : r));
           }
         } else {
-          // Primary failed, mark reflow as error too
+          // Primary failed or no generation id available — mark reflow as error too.
           setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'error' } : r));
         }
         resultIdx++;
@@ -4172,8 +4262,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           method: 'auto',
           scope: 'single',
         });
-        mockup = reflowRes.data.success && reflowRes.data.outcomes[0]?.outputUrl
-          ? reflowRes.data.outcomes[0].outputUrl : null;
+        const reflowOc = reflowRes.data?.outcomes?.[0];
+        mockup = reflowRes.data?.success && reflowOc?.outputUrl ? reflowOc.outputUrl : null;
       } else {
         const variationInstruction = `IMPORTANT: This is a RETRY — you MUST generate a DIFFERENT composition, layout, camera angle, and color palette from previous attempts. Vary the hero pose, background elements, and text placement while keeping the same concept and Arabic text strings. Do NOT reproduce the same design.${refinementNote ? ' ' + refinementNote : ''}`;
         const renderInstruction = isReflow
@@ -4285,7 +4375,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
 
       setPhase('render_studio');
-      setReflowMethod('auto');
+      setReflowStep('idle');
+    setReflowTarget(null);
       updateHighestUnlocked('render_studio');
       awardMilestone('designGenerated');
     } catch (e: any) {
@@ -4328,7 +4419,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       const result = await reflowFn({
         generationId: renderGenerationId,
         targetAspectRatio: currentAspectRatio,
-        method: reflowMethod,
+        method: 'auto',
         scope: 'carousel_slide',
         slideIndex,
       });
@@ -4338,11 +4429,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         if (delta !== 0) setUserCredits(prev => prev + delta);
       }
 
-      const imageUrl = result.data.success && result.data.outcomes[0]?.outputUrl;
+      const oc = result.data?.outcomes?.[0];
+      const imageUrl = result.data?.success && oc?.outputUrl;
       if (imageUrl) {
         success = true;
-        if (result.data.outcomes[0].fallbackFrom) {
-          setReflowFallbackNotice(result.data.outcomes[0].fallbackFrom);
+        if (oc?.fallbackFrom) {
+          setReflowFallbackNotice(oc.fallbackFrom);
         }
       }
       setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, imageUrl: imageUrl || null, status: imageUrl ? 'done' : 'error' } : s));
@@ -4424,7 +4516,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const editRatio = displayRatio as AspectRatio;
     startLoad(editTarget ? `Editing ${editTarget.label}...` : "Applying Refinement...");
     try {
-      const res = (await gemini.generateFinalAd(buildPlan, selectedTov, inputs, resolvedUniverse, editRatio, combinedInstructions, (currentRawBase64 || currentMockup) || undefined)).image;
+      const editResult = await gemini.generateFinalAd(buildPlan, selectedTov, inputs, resolvedUniverse, editRatio, combinedInstructions, (currentRawBase64 || currentMockup) || undefined);
+      const res = editResult.image;
 
       // ═══ WRITE-BACK: Route result to correct source ═══
       if (editTarget && res) {
@@ -4454,9 +4547,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       // Save polished render for feedback/favorites (non-blocking)
       if (user && res) {
         try {
+          // The edited render was persisted to Storage server-side by
+          // serverGenerateFinalAd; store that URL (fall back to pending_upload if the
+          // server upload failed). No client-side Storage write.
+          const storedImageUrl = editResult.storageUrl || 'pending_upload';
           const genId = await feedbackService.saveGeneration(
             user.uid, inputs, 'render',
-            { imageUrl: res, conceptText: (selectedConcept || '').substring(0, 500), buildPlan: buildPlan || '' },
+            { imageUrl: storedImageUrl, conceptText: (selectedConcept || '').substring(0, 500), buildPlan: buildPlan || '' },
             buildPlan, resolvedUniverse, 'gemini-3.1-flash-image', 0, editRatio, buildCreativeIdentity(),
             canUseWorkspaces ? activeWorkspaceId : null
           );
@@ -4621,16 +4718,119 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     showToast(`${hookCount} ad copies generated!`, 'success');
   };
 
-  const handleRescale = async (newRatio: AspectRatio) => {
+  const handleRescale = async (newRatio: AspectRatio, scopeOverride?: { scope: 'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'; slideIndex?: number }) => {
     if (!inputs || !selectedTov) return;
-    if (!canUseRatio(userPlan, newRatio)) {
-      showToast(`${newRatio} ratio requires ${requiredPlanForRatio(newRatio)} plan or above.`, 'error');
+
+    // ─── EARLY-EXIT GUARDS (crash hardening) ─────────────────────────────────
+    // Reflow requires a persisted generation to read the source from. Without it
+    // the callable rejects with invalid-argument; surface a clear toast instead.
+    // This is also the ONLY place the no_generation_id message should fire (FR:
+    // never show it while a valid id exists).
+    if (!renderGenerationId) {
+      showToast(t('studio.reflow.no_generation_id'), 'error');
+      return;
+    }
+    if (!newRatio) return;
+
+    // Defensive guarded copies: the scope/count math below previously crashed the
+    // whole handler ("Cannot read .length of undefined"). Both arrays are always
+    // initialized to [], but resolve null-guarded copies once, up front, and use
+    // them for every count read so a malformed state can never throw here.
+    const safeBatch = batchResults ?? [];
+    const safeCarousel = carouselSlides ?? [];
+
+    const effectiveScope = scopeOverride?.scope;
+    const effectiveSlideIndex = scopeOverride?.slideIndex;
+
+    // ─── BATCH_ALL MODE ─────
+    if (effectiveScope === 'batch_all') {
+      const batchItems = safeBatch.filter(r => r.status === 'done' && r.url);
+      if (batchItems.length === 0) return;
+      const totalCost = CREDIT_COSTS.reflowImage * batchItems.length;
+      if (!renderGenerationId) { showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation.', 'error'); return; }
+      if (userCredits < totalCost) {
+        setUpgradeReason(t('studio.reflow.upgrade_single_credits').replace('{cost}', String(totalCost)).replace('{have}', String(userCredits)));
+        setShowUpgradeModal(true);
+        return;
+      }
+      setCurrentAspectRatio(newRatio);
+      startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
+      setBatchResults(prev => prev.map(r => r.status === 'done' && r.url ? { ...r, status: 'rendering' as const } : r));
+      setUserCredits(prev => prev - totalCost);
+      try {
+        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+        const result = await reflowFn({
+          generationId: renderGenerationId,
+          targetAspectRatio: newRatio,
+          method: 'auto',
+          scope: 'batch_all',
+        });
+        if (typeof result.data.totalCreditsCharged === 'number') {
+          const delta = totalCost - result.data.totalCreditsCharged;
+          if (delta !== 0) setUserCredits(prev => prev + delta);
+        }
+        for (const outcome of result.data.outcomes || []) {
+          if (outcome.success && outcome.outputUrl && outcome.itemIndex !== null) {
+            setBatchResults(prev => prev.map((r, idx) => idx === outcome.itemIndex ? { ...r, url: outcome.outputUrl, status: 'done' as const } : r));
+          } else if (!outcome.success && outcome.itemIndex !== null) {
+            setBatchResults(prev => prev.map((r, idx) => idx === outcome.itemIndex ? { ...r, status: 'error' as const } : r));
+          }
+        }
+        const batchFirstUrl = result.data.outcomes?.[0]?.outputUrl;
+        if (result.data.success && batchFirstUrl) {
+          pushMockup(batchFirstUrl, newRatio);
+        }
+      } catch (e) {
+        setUserCredits(prev => prev + totalCost);
+        handleApiError(e);
+      } finally { stopLoad(); }
+      return;
+    }
+
+    // ─── CAROUSEL_SLIDE MODE (single slide) ─────
+    if (effectiveScope === 'carousel_slide') {
+      const slideIdx = effectiveSlideIndex ?? 0;
+      if (!renderGenerationId) { showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation.', 'error'); return; }
+      const cost = CREDIT_COSTS.reflowImage;
+      if (userCredits < cost) {
+        setUpgradeReason(t('studio.reflow.upgrade_single_credits').replace('{cost}', String(cost)).replace('{have}', String(userCredits)));
+        setShowUpgradeModal(true);
+        return;
+      }
+      setCurrentAspectRatio(newRatio);
+      startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
+      setUserCredits(prev => prev - cost);
+      try {
+        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+        const result = await reflowFn({
+          generationId: renderGenerationId,
+          targetAspectRatio: newRatio,
+          method: 'auto',
+          scope: 'carousel_slide',
+          slideIndex: slideIdx,
+          // Displayed slide image, passed directly (see single-scope note).
+          sourceImageOverride: currentRawBase64 || undefined,
+        });
+        if (typeof result.data.totalCreditsCharged === 'number') {
+          const delta = cost - result.data.totalCreditsCharged;
+          if (delta !== 0) setUserCredits(prev => prev + delta);
+        }
+        const oc = result.data.outcomes?.[0];
+        if (oc?.success && oc.outputUrl) {
+          setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: oc.outputUrl, status: 'done' as const } : s));
+        } else if (oc && !oc.success) {
+          setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, status: 'error' as const } : s));
+        }
+      } catch (e) {
+        setUserCredits(prev => prev + cost);
+        handleApiError(e);
+      } finally { stopLoad(); }
       return;
     }
 
     // ─── CAROUSEL MODE: Reflow ALL slides via reflowImage callable (HOTFIX-F) ─────
-    if (carouselSlides.length > 0 && carouselSlides.some(s => s.status === 'done')) {
-      const doneSlides = carouselSlides.filter(s => s.status === 'done' && s.imageUrl);
+    if (safeCarousel.length > 0 && safeCarousel.some(s => s.status === 'done')) {
+      const doneSlides = safeCarousel.filter(s => s.status === 'done' && s.imageUrl);
       const totalCost = CREDIT_COSTS.reflowImage * doneSlides.length;
       if (userCredits < totalCost) {
         setUpgradeReason(t('studio.reflow.upgrade_carousel_credits')
@@ -4666,7 +4866,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           const result = await reflowFn({
             generationId: renderGenerationId,
             targetAspectRatio: newRatio,
-            method: reflowMethod,
+            method: 'auto',
             scope: 'carousel_all',
           });
           // Reconcile: replace the optimistic estimate with the actual charge reported
@@ -4691,12 +4891,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             }
           }
         } else {
-          for (const slide of carouselSlides) {
+          for (const slide of (carouselSlides ?? [])) {
             if (slide.status !== 'done' || !slide.imageUrl) continue;
             const slideIdx = slide.index - 1;
             setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, status: 'rendering' } : s));
             const copy = carouselCopies[slideIdx];
-            const isLastSlide = slideIdx === carouselCopies.length - 1;
+            const isLastSlide = slideIdx === (carouselCopies ?? []).length - 1;
             const txOverride: TextOverride = {
               hookText: (copy?.hookText || '').replace(/\|\|\|/g, '').trim(),
               subheadText: (copy?.subheadText || '').replace(/\|\|\|/g, '').trim(),
@@ -4713,13 +4913,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 scope: 'carousel_slide',
                 slideIndex: slideIdx,
               });
-              const res = reflowRes.data.success && reflowRes.data.outcomes[0]?.outputUrl;
+              const res = reflowRes.data.success && reflowRes.data.outcomes?.[0]?.outputUrl;
               setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: res || null, status: res ? 'done' : 'error' } : s));
             } catch {
               refundCredits('reflowImage');
               setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, status: 'error' } : s));
             }
-            if (slide.index < carouselSlides.length) await new Promise(r => setTimeout(r, 500));
+            if (slide.index < (carouselSlides ?? []).length) await new Promise(r => setTimeout(r, 500));
           }
         }
       } catch (e) {
@@ -4758,18 +4958,26 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         const result = await reflowFn({
           generationId: renderGenerationId,
           targetAspectRatio: newRatio,
-          method: reflowMethod,
+          method: 'auto',
           scope: 'single',
+          // Pass the actual displayed render directly (API-safe base64 / Storage URL —
+          // NOT the blob: display url) so reflow never depends on the server Storage
+          // upload state. currentRawBase64 holds the original base64 for fresh renders
+          // or the Storage URL for prior reflow outputs.
+          sourceImageOverride: currentRawBase64 || undefined,
         });
+        // Guard the whole payload: a transport/normalization failure can yield an
+        // empty data object, and a malformed/error response can omit `outcomes`.
+        if (!result.data) {
+          throw new Error('Reflow returned empty response');
+        }
+        const outcomes = result.data?.outcomes ?? [];
         // Reconcile optimistic estimate with the actual backend charge.
         if (typeof result.data.totalCreditsCharged === 'number') {
           const delta = singleOptimisticCost - result.data.totalCreditsCharged;
           if (delta !== 0) setUserCredits(prev => prev + delta);
         }
-        // Guard: a malformed/error response can omit `outcomes` entirely. Reading
-        // `outcomes[0]` on an undefined array crashes ("cannot read '0' of undefined")
-        // — optional-chain the array itself so a missing payload fails cleanly instead.
-        const firstOutcome = result.data.outcomes?.[0];
+        const firstOutcome = outcomes[0];
         if (result.data.success && firstOutcome?.outputUrl) {
           if (firstOutcome.fallbackFrom) {
             setReflowFallbackNotice(firstOutcome.fallbackFrom);
@@ -4834,9 +5042,19 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   const saveDesignFavorite = async (imageUrl: string, ratio: AspectRatio, conceptText?: string, hookText?: string, bPlan?: string) => {
     if (!user?.uid || !inputs) return;
     try {
+      // Persist the image to Storage SERVER-SIDE (admin SDK — no client Storage write,
+      // no storage/unauthorized). An http URL is returned unchanged by the callable.
+      // Non-blocking: fall back to a placeholder if the callable fails.
+      let storedImageUrl = 'pending_upload';
+      try {
+        const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
+        storedImageUrl = (await uploadFn({ imageBase64: imageUrl })).data.storageUrl || 'pending_upload';
+      } catch (uploadErr) {
+        console.warn('Server render upload failed (non-blocking) — saving favorite with placeholder imageUrl:', uploadErr);
+      }
       const genId = await feedbackService.saveGeneration(
         user.uid, inputs, 'render',
-        { imageUrl, conceptText: (conceptText || selectedConcept || '').substring(0, 500), hookText: (hookText || '').substring(0, 200), buildPlan: bPlan || buildPlan || '' },
+        { imageUrl: storedImageUrl, conceptText: (conceptText || selectedConcept || '').substring(0, 500), hookText: (hookText || '').substring(0, 200), buildPlan: bPlan || buildPlan || '' },
         bPlan || buildPlan || '', resolvedUniverse, 'gemini-flash', 0, ratio, buildCreativeIdentity(),
         canUseWorkspaces ? activeWorkspaceId : null
       );
@@ -5123,7 +5341,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 <i className="fa-solid fa-wand-magic-sparkles text-white text-sm"></i>
               </div>
             </div>
-            <button onClick={() => { if (confirm('Start a new project?')) { const newId = Date.now().toString(); setCurrentProjectId(newId); setCurrentProjectName('Untitled Project'); setPhase('input'); setInputs(null); setTovText(''); setConceptsText(''); setSelectedTov(''); setSelectedConcept(''); setBuildPlan(''); setMockupHistory([]); setHistoryIndex(-1); setCaptionText(''); setBatchResults([]); setCarouselSlides([]); setBatchRendering(false); setBatchSelectedHooks(new Set()); setBatchHookGroups([]); setShowBatchConfig(false); setBatchConceptsLoading(false); setCarouselCopies([]); setShowCarouselPreview(false); setResolvedUniverse(''); setHighestUnlockedPhase(0); localStorage.removeItem('adInputsDraft'); } }}
+            <button onClick={() => { if (confirm('Start a new project?')) { resetToBlankProject(); } }}
               className="hidden sm:flex h-9 px-3.5 rounded-lg bg-white/[0.04] text-slate-500 text-[10px] font-semibold hover:text-white transition-colors items-center gap-1.5">
               <i className="fa-solid fa-plus text-[8px]"></i> {t('sidebar.new')}
             </button>
@@ -6670,6 +6888,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                           setBuildPlan(item.buildPlan);
                                           setSelectedConcept(item.conceptText);
                                           setCurrentAspectRatio(item.ratio as AspectRatio);
+                                          setActiveBatchRatio(item.ratio as AspectRatio);
                                           setStudioTweak('');
                                           setSelectedPolishIds(new Set());
                                           setEditTarget({
@@ -6684,7 +6903,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                           <i className="fa-solid fa-pen-to-square text-[8px]"></i>
                                         </button>
                                         {/* Save */}
-                                        <button onClick={() => { pushMockup(item.url!, item.ratio as AspectRatio); setBuildPlan(item.buildPlan); setSelectedConcept(item.conceptText); }}
+                                        <button onClick={() => { pushMockup(item.url!, item.ratio as AspectRatio); setBuildPlan(item.buildPlan); setSelectedConcept(item.conceptText); setActiveBatchRatio(item.ratio as AspectRatio); }}
                                           className="px-2 py-1 bg-emerald-600 text-white rounded text-[7px] font-bold flex items-center gap-0.5" title="Use this design">
                                           <i className="fa-solid fa-bookmark text-[8px]"></i>
                                         </button>
@@ -6692,9 +6911,18 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                         <button onClick={async () => {
                                           if (!user?.uid || !inputs) return;
                                           try {
+                                            // Persist to Storage SERVER-SIDE (admin SDK). http URLs pass through.
+                                            // Non-blocking: fall back to a placeholder if the callable fails.
+                                            let storedImageUrl = 'pending_upload';
+                                            try {
+                                              const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
+                                              storedImageUrl = (await uploadFn({ imageBase64: item.url || '' })).data.storageUrl || 'pending_upload';
+                                            } catch (uploadErr) {
+                                              console.warn('Server render upload failed (non-blocking) — saving favorite with placeholder imageUrl:', uploadErr);
+                                            }
                                             const genId = await feedbackService.saveGeneration(
                                               user.uid, inputs, 'render',
-                                              { imageUrl: item.url || '', conceptText: item.conceptText?.substring(0, 500) || '', hookText: item.hookText?.substring(0, 200) || '', buildPlan: item.buildPlan || '' },
+                                              { imageUrl: storedImageUrl, conceptText: item.conceptText?.substring(0, 500) || '', hookText: item.hookText?.substring(0, 200) || '', buildPlan: item.buildPlan || '' },
                                               item.buildPlan || '', resolvedUniverse, 'gemini-flash', 0, item.ratio as AspectRatio, buildCreativeIdentity(),
                                               canUseWorkspaces ? activeWorkspaceId : null
                                             );
@@ -6736,7 +6964,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                 ) : item.status === 'rendering' ? (
                                   <div className="w-full h-full flex flex-col items-center justify-center gap-2"><div className="animate-spin w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full"></div><span className="text-[8px] text-slate-500 font-bold">H{item.hookKey}·C{item.conceptIndex}</span></div>
                                 ) : item.status === 'error' ? (
-                                  <div className="w-full h-full flex flex-col items-center justify-center gap-2"><i className="fa-solid fa-triangle-exclamation text-red-400"></i><button onClick={() => handleBatchRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[8px] font-bold">Retry</button></div>
+                                  <div className="w-full h-full flex flex-col items-center justify-center gap-2"><i className="fa-solid fa-triangle-exclamation text-red-400"></i><span className="text-[7px] text-red-300">Resize failed</span><button onClick={() => handleBatchRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[8px] font-bold">Try again</button></div>
                                 ) : (
                                   <div className="w-full h-full flex items-center justify-center"><span className="text-[8px] text-slate-700 font-bold">H{item.hookKey}·C{item.conceptIndex}</span></div>
                                 )}
@@ -7132,6 +7360,38 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   </div>
                 )}
 
+                {/* ═══ VARIANT RATIO CHIPS — compact ratio switcher ═══ */}
+                {carouselSlides.length === 0 && mockupHistory.length > 1 && (() => {
+                  const uniqueRatios = [...new Set(mockupHistory.map(m => m.ratio))];
+                  const currentHistoryRatio = mockupHistory[historyIndex]?.ratio;
+                  return (
+                    <div className="flex items-center gap-1.5 justify-center mt-2 flex-wrap">
+                      {uniqueRatios.slice(0, 6).map(ratio => {
+                        const isActive = ratio === currentHistoryRatio;
+                        const latestForRatio = [...mockupHistory].reverse().find(m => m.ratio === ratio);
+                        return (
+                          <button
+                            key={ratio}
+                            onClick={() => {
+                              if (latestForRatio) {
+                                const idx = mockupHistory.indexOf(latestForRatio);
+                                if (idx >= 0) setHistoryIndex(idx);
+                              }
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-[9px] font-bold tracking-tight transition-all border ${
+                              isActive
+                                ? 'bg-blue-600/25 border-blue-500/40 text-blue-300 shadow-sm shadow-blue-500/10'
+                                : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300 hover:border-slate-600'
+                            }`}
+                          >
+                            {ratio}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+
                 {/* ═══ ALL VERSIONS GALLERY — shows when multiple renders exist in non-batch mode ═══ */}
                 {carouselSlides.length === 0 && mockupHistory.length > 1 && (() => {
                   const allDone = mockupHistory.filter(m => m.url);
@@ -7336,81 +7596,147 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   )}
                 </div>
 
-                {/* Reflow Rescaling */}
-                <div className="bg-slate-900/50 rounded-2xl border border-slate-800/40 p-4 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center flex-1"><i className="fa-solid fa-crop-simple mr-2 text-blue-500"></i>{t('studio.reflow')}</h4>
-                    <button onClick={() => setShowMethodSelector(!showMethodSelector)}
-                      className="text-[8px] text-slate-500 hover:text-slate-300 flex items-center gap-1 transition-all">
-                      <span>{t('studio.reflow.method_label')}: {reflowMethod === 'auto' ? t('studio.reflow.method_auto') : reflowMethod === 'outpaint' ? t('studio.reflow.method_quick') : t('studio.reflow.method_fresh')}</span>
-                      <i className={`fa-solid fa-chevron-${showMethodSelector ? 'up' : 'down'} text-[6px]`}></i>
-                    </button>
-                  </div>
-                  {showMethodSelector && (
+                {/* Reflow Rescaling — 3 ratio buttons, PERMANENTLY visible (no picker
+                    toggle, no trigger button). Gated only on currentMockup so the
+                    control appears the moment a viewable render exists. */}
+                {currentMockup && (() => {
+                  // UI restriction: Square / Portrait / Story only. Backend supports the
+                  // full 6 ratios; restore others by extending UI_RATIOS.
+                  const UI_RATIOS: AspectRatio[] = ['1:1', '4:5', '9:16'];
+                  const reflowLabels: Record<string, string> = {
+                    '1:1': t('studio.reflow.ratio.1_1'),
+                    '4:5': t('studio.reflow.ratio.4_5'),
+                    '9:16': t('studio.reflow.ratio.9_16'),
+                  };
+                  const reflowIcons: Record<string, string> = {
+                    '1:1': 'fa-regular fa-square',
+                    '4:5': 'fa-solid fa-mobile-screen',
+                    '9:16': 'fa-solid fa-mobile',
+                  };
+                  // Display name (Square/Portrait/Story) without the "(1:1)" suffix the
+                  // i18n label carries — the ratio renders on its own line beneath it.
+                  const nameFor = (r: string) => (reflowLabels[r] || r).replace(/\s*\(.*\)\s*/, '').trim();
+                  // Null-guarded counts. Both arrays are always initialized to [], but
+                  // guard defensively — the scope math previously crashed reflow.
+                  const slides = carouselSlides ?? [];
+                  const batches = batchResults ?? [];
+                  const isCarouselScope = slides.length > 0 && slides.some(s => s.status === 'done');
+                  const isBatchScope = batches.length > 0 && batches.some(r => r.status === 'done');
+                  const doneBatchCount = isBatchScope ? batches.filter(r => r.status === 'done' && r.url).length : 0;
+                  const doneCarouselCount = isCarouselScope ? slides.filter(s => s.status === 'done').length : 0;
+                  const scopeItemCount = reflowScope === 'batch_all' ? doneBatchCount
+                    : reflowScope === 'carousel_all' ? doneCarouselCount
+                    : 1;
+                  const totalCost = CREDIT_COSTS.reflowImage * scopeItemCount;
+                  const committing = reflowStep === 'committing';
+                  // In batch mode the displayed image is a batch tile, so the "Current"
+                  // badge tracks the focused tile's ratio (activeBatchRatio), not the
+                  // single-render displayRatio.
+                  const currentRatioForBadge = isBatchScope ? activeBatchRatio : displayRatio;
+                  return (
+                  <div className="bg-slate-900/50 rounded-2xl border border-slate-800/40 p-4 space-y-3">
+                    <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center"><i className="fa-solid fa-left-right mr-2 text-blue-500"></i>{t('studio.reflow')}</h4>
+
+                    {/* 3 buttons in a single equal-width row — always rendered */}
                     <div className="flex gap-2">
-                      {([
-                        { value: 'auto' as const, label: t('studio.reflow.method_auto'), desc: t('studio.reflow.method_auto_desc'), icon: 'fa-wand-magic-sparkles' },
-                        { value: 'outpaint' as const, label: t('studio.reflow.method_quick'), desc: t('studio.reflow.method_quick_desc'), icon: 'fa-bolt' },
-                        { value: 'rerender' as const, label: t('studio.reflow.method_fresh'), desc: t('studio.reflow.method_fresh_desc'), icon: 'fa-rotate' },
-                      ]).map(opt => (
-                        <button key={opt.value} onClick={() => { setReflowMethod(opt.value); setShowMethodSelector(false); }}
-                          className={`flex-1 py-2 rounded-lg border text-center transition-all ${reflowMethod === opt.value ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
-                          <i className={`fa-solid ${opt.icon} text-[9px] block mb-0.5`}></i>
-                          <span className="text-[7px] font-bold block">{opt.label}</span>
-                          <span className="text-[6px] opacity-50 block">{opt.desc}</span>
-                        </button>
-                      ))}
+                      {UI_RATIOS.map(value => {
+                        const isCurrent = value === currentRatioForBadge;
+                        const isSelected = !isCurrent && reflowTarget === value;
+                        const isCommittingThis = committing && reflowTarget === value;
+                        return (
+                          <button
+                            key={value}
+                            disabled={isCurrent || committing}
+                            onClick={isCurrent ? undefined : () => {
+                              setReflowTarget(value);
+                              if (isCarouselScope) setReflowScope('carousel_slide');
+                              else setReflowScope('single');
+                            }}
+                            title={reflowLabels[value]}
+                            className={
+                              isCurrent
+                                ? 'flex-1 flex flex-col items-center gap-1 px-2 py-3 rounded-xl border-2 bg-blue-600 border-blue-400 text-white cursor-default shadow-lg shadow-blue-600/30'
+                                : isSelected
+                                  ? 'flex-1 flex flex-col items-center gap-1 px-2 py-3 rounded-xl border bg-blue-600/15 border-blue-500/40 text-blue-200 transition-all disabled:opacity-50'
+                                  : 'flex-1 flex flex-col items-center gap-1 px-2 py-3 rounded-xl border bg-slate-900 border-slate-800 text-slate-300 hover:bg-blue-600/15 hover:border-blue-500/30 hover:text-white transition-all disabled:opacity-50'
+                            }
+                          >
+                            <i className={`${isCommittingThis ? 'fa-solid fa-spinner fa-spin' : reflowIcons[value]} text-base`}></i>
+                            <span className="text-[10px] font-bold tracking-tight">{nameFor(value)}</span>
+                            <span className="text-[9px] font-mono opacity-70">{value}</span>
+                            {isCurrent && (
+                              <span className="text-[7px] font-bold uppercase tracking-wider bg-white/15 text-white px-1.5 py-0.5 rounded">
+                                {t('studio.reflow.current_ratio')}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
-                  )}
-                  {/* Reflow opens an inline size-picker popover. Sizes limited to
-                      Square (1:1) / Portrait (4:5) / Story (9:16); the currently-viewed
-                      ratio (displayRatio) is hidden so the user only sees other sizes. */}
-                  <div className="relative">
-                    <button
-                      onClick={() => setShowReflowSizes(v => !v)}
-                      className="w-full py-2.5 rounded-xl bg-blue-600/12 border border-blue-500/20 text-blue-300 text-[9px] font-bold uppercase tracking-wider hover:bg-blue-600 hover:text-white transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
-                    >
-                      <i className="fa-solid fa-crop-simple text-[8px]"></i>
-                      {t('studio.reflow')}
-                      <i className={`fa-solid fa-chevron-${showReflowSizes ? 'up' : 'down'} text-[6px] opacity-60`}></i>
-                    </button>
-                    {showReflowSizes && (
-                      <div className="absolute left-0 right-0 z-30 mt-2 p-2 bg-slate-950 border border-slate-700/60 rounded-2xl shadow-2xl space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
-                        {ASPECT_RATIOS
-                          .filter(r => ['1:1', '4:5', '9:16'].includes(r.value) && r.value !== displayRatio)
-                          .map(r => {
-                            const reflowLabels: Record<string, string> = {
-                              '1:1': 'Square / مربع (1:1)',
-                              '4:5': 'Portrait / بورتريه (4:5)',
-                              '9:16': 'Story / ستوري (9:16)',
-                            };
-                            const reflowIcons: Record<string, string> = {
-                              '1:1': 'fa-regular fa-square',
-                              '4:5': 'fa-solid fa-mobile-screen',
-                              '9:16': 'fa-solid fa-mobile',
-                            };
-                            const allowed = canUseRatio(userPlan, r.value);
-                            return (
-                              <button
-                                key={r.value}
-                                disabled={!allowed}
-                                onClick={() => { if (!allowed) return; setShowReflowSizes(false); handleRescale(r.value); }}
-                                title={allowed ? reflowLabels[r.value] : `Requires ${requiredPlanForRatio(r.value)} plan`}
-                                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left transition-all ${allowed
-                                  ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-blue-600/15 hover:border-blue-500/30 hover:text-white'
-                                  : 'bg-slate-950/50 border-slate-800/40 text-slate-600 cursor-not-allowed opacity-60'
-                                  }`}
-                              >
-                                <i className={`${reflowIcons[r.value]} text-sm w-4 text-center`}></i>
-                                <span className="text-[10px] font-bold tracking-tight flex-1">{reflowLabels[r.value]}</span>
-                                {!allowed && <i className="fa-solid fa-lock text-[7px] text-amber-500/60"></i>}
-                              </button>
-                            );
-                          })}
+
+                    {/* Scope toggles + Generate button — shown directly below the row when
+                        a non-current ratio is selected. No picker state transition. */}
+                    {reflowTarget && reflowTarget !== currentRatioForBadge && (
+                      <div className="space-y-2">
+                        {isBatchScope && (
+                          <div className="flex gap-2">
+                            <button disabled={committing} onClick={() => setReflowScope('single')}
+                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'single' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
+                              {t('studio.reflow.scope_single')}
+                            </button>
+                            <button disabled={committing} onClick={() => setReflowScope('batch_all')}
+                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'batch_all' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
+                              {t('studio.reflow.scope_batch_all', { count: doneBatchCount })}
+                            </button>
+                          </div>
+                        )}
+                        {isCarouselScope && (
+                          <div className="flex gap-2">
+                            <button disabled={committing} onClick={() => setReflowScope('carousel_slide')}
+                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'carousel_slide' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
+                              {t('studio.reflow.scope_slide')}
+                            </button>
+                            <button disabled={committing} onClick={() => setReflowScope('carousel_all')}
+                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'carousel_all' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
+                              {t('studio.reflow.scope_carousel_all', { count: doneCarouselCount })}
+                            </button>
+                          </div>
+                        )}
+                        <button
+                          onClick={async () => {
+                            if (committing || !reflowTarget) return;
+                            setReflowStep('committing');
+                            try {
+                              if (reflowScope === 'batch_all') {
+                                await handleRescale(reflowTarget, { scope: 'batch_all' });
+                              } else if (reflowScope === 'carousel_slide') {
+                                // Resolve focused slide by matching displayed image url; fall back to slide 0.
+                                const matchIdx = slides.findIndex(s => s.imageUrl === currentMockup);
+                                const slideIndex = matchIdx >= 0 ? matchIdx : 0;
+                                await handleRescale(reflowTarget, { scope: 'carousel_slide', slideIndex });
+                              } else if (reflowScope === 'carousel_all') {
+                                await handleRescale(reflowTarget, { scope: 'carousel_all' });
+                              } else {
+                                await handleRescale(reflowTarget);
+                              }
+                            } catch (err) {
+                              console.warn('Reflow commit failed (non-blocking):', err);
+                            } finally {
+                              setReflowStep('idle');
+                              setReflowTarget(null);
+                            }
+                          }}
+                          disabled={committing || isLoading}
+                          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-lg transition-all active:scale-[0.98] hover:from-blue-500 hover:to-cyan-500 flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
+                          <i className={`fa-solid ${committing ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'} text-[8px]`}></i>
+                          {t('studio.reflow.generate_button', { credits: totalCost })}
+                        </button>
                       </div>
                     )}
                   </div>
-                </div>
+                  );
+                })()}
 
                 {/* Script — bottom */}
                 {hasAnyImage && (

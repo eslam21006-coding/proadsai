@@ -28,6 +28,9 @@ export interface ReflowHistoryEntry {
     itemIndex: number | null;
     outputUrl: string | null;
     creditsCharged: number;
+    brandColorReinforced?: boolean;
+    textReflowOverflow?: boolean;
+    textReductionSteps?: 0 | 1 | 2 | 3;
 }
 
 export interface ReflowDecision {
@@ -48,6 +51,16 @@ export interface ReflowOutcome {
     creditsCharged: number;
     errorCode?: string;
     errorMessage?: string;
+    brandColorReinforced?: boolean;
+    textReflowOverflow?: boolean;
+    textReductionSteps?: 0 | 1 | 2 | 3;
+}
+
+export interface VariantChip {
+    ratio: AspectRatio;
+    url: string;
+    cleanReflowedImageUrl?: string;
+    generatedAt: number;
 }
 
 // ─── Failure Classification ──────────────────────────────────────────────────
@@ -248,6 +261,11 @@ export interface ResolutionTrace {
     };
     logoPipeline?: LogoPipelineEvents;
     readonly reflowHistory?: readonly ReflowHistoryEntry[];
+    // Phase 17 — top-level rollup flags (set to OR of any reflow's per-entry flag).
+    // Reflects what `reflowImage.ts:deductAndPersist()` writes alongside `reflowHistory`
+    // so typed consumers can read the rollups directly without scanning the array.
+    brandColorReinforced?: boolean;
+    textReflowOverflow?: boolean;
     brandColorSource?: BrandColorSource;
     brandColorCompliance?: BrandColorComplianceEntry[];
     modeComposition?: ModeCompositionTrace;

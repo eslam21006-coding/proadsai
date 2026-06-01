@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { compileFullContract } from "./layoutContract.js";
+import { compileFullContract, getSafeZoneForRatio } from "./layoutContract.js";
 import {
     buildContentOwnershipMap,
     buildPlanSlotMap,
@@ -1700,9 +1700,279 @@ console.log("═══ HFE — All hybrid logo fixtures passed ═══\n");
 // HFF — HOTFIX-F: Deterministic Aspect Ratio Reflow Fixtures
 // ═══════════════════════════════════════════════════════════
 
+// ─── T010 (Phase 17) — getSafeZoneForRatio returns spec table ───
+function testT010SafeZone() {
+    assert.deepStrictEqual(
+        getSafeZoneForRatio("9:16"),
+        { top: 14, right: 8, bottom: 14, left: 8 },
+        "9:16 safe zone must match spec table",
+    );
+    assert.deepStrictEqual(
+        getSafeZoneForRatio("1:1"),
+        { top: 8, right: 8, bottom: 8, left: 8 },
+        "1:1 safe zone must be uniform 8%",
+    );
+    assert.deepStrictEqual(
+        getSafeZoneForRatio("4:3"),
+        { top: 8, right: 12, bottom: 8, left: 12 },
+        "4:3 safe zone must have wider side insets",
+    );
+    let threw = false;
+    try {
+        getSafeZoneForRatio("21:9" as unknown as Parameters<typeof getSafeZoneForRatio>[0]);
+    } catch {
+        threw = true;
+    }
+    assert.equal(threw, true, "unsupported ratio must throw");
+    console.log("  ✅ T010: getSafeZoneForRatio returns spec table, throws on unknown");
+}
+
+// ─── T011a (Phase 17) — router covers all 30 non-identity ratio pairs ───
+function testT011aRouterMatrix() {
+    type RouterRatio = Parameters<typeof decideMethod>[0];
+    const ratios: RouterRatio[] = ["1:1", "4:5", "3:4", "4:3", "9:16", "16:9"];
+    let identityCount = 0;
+    let nonIdentityCount = 0;
+    for (const src of ratios) {
+        for (const tgt of ratios) {
+            const d = decideMethod(src, tgt, "auto");
+            if (src === tgt) {
+                assert.equal(d.magnitude, 0, `${src}→${tgt} identity magnitude must be 0`);
+                identityCount++;
+            } else {
+                nonIdentityCount++;
+                if (d.magnitude < 0.30) {
+                    assert.equal(d.chosenMethod, "outpaint",
+                        `${src}→${tgt} mag=${d.magnitude.toFixed(4)} < 0.30 must route outpaint`);
+                } else {
+                    assert.equal(d.chosenMethod, "rerender",
+                        `${src}→${tgt} mag=${d.magnitude.toFixed(4)} >= 0.30 must route rerender`);
+                }
+            }
+        }
+    }
+    assert.equal(identityCount, 6, "must have 6 identity pairs");
+    assert.equal(nonIdentityCount, 30, "must have 30 non-identity pairs");
+    console.log("  ✅ T011a: router covers all 30 non-identity pairs, 6 identity pairs");
+}
+
+// ─── T012 (Phase 17) — brand-color hex appears in re-render prompt ───
+async function testT012BrandColor() {
+    let capturedBuildPlan = "";
+    __setGenerateFinalAdForTests(async (bp: string) => {
+        capturedBuildPlan = bp;
+        return { image: "https://example.com/branded.png" };
+    });
+    try {
+        const result = await rerenderFromPlan({
+            generationId: "gen-bc",
+            targetRatio: "9:16",
+            itemIndex: null,
+            genData: {
+                input: { tone: "universe", brandColorPrimary: "#FF0000" },
+                output: { buildPlan: "ORIGINAL-PLAN" },
+            },
+            geminiCaller: (async () => ({})) as any,
+            openaiApiKey: "stub",
+        });
+        assert.ok(capturedBuildPlan.includes("FF0000"),
+            `prompt must contain brand hex FF0000, got: ${capturedBuildPlan}`);
+        assert.equal(result.brandColorReinforced, true,
+            "brandColorReinforced must be true when brand color present");
+    } finally {
+        __setGenerateFinalAdForTests(null);
+    }
+    console.log("  ✅ T012: brand-color hex FF0000 appears in re-render prompt, brandColorReinforced=true");
+}
+
+// ─── T011 (Phase 17) — single reflow 1:1 → 9:16 returns 9:16 and 5 credits ───
+async function testT011SingleReflow() {
+    const entPath = require.resolve("./entitlements.js");
+    const entMod = require(entPath);
+    const origResolve = entMod.resolveCreditOwner;
+    entMod.resolveCreditOwner = async (uid: string) => ({ creditOwnerUid: uid, teamRole: null });
+
+    const fakeImage = "https://example.com/reflowed-9x16.png";
+    __setGenerateFinalAdForTests(async () => {
+        return { image: fakeImage };
+    });
+
+    try {
+        const genData = {
+            output: { imageUrl: "https://example.com/original-1x1.png", buildPlan: "plan-1x1" },
+            metadata: { aspectRatio: "1:1" },
+            userId: "user1",
+            credits: 100,
+            mockupHistory: [],
+            resolutionTrace: { reflowHistory: [] },
+        };
+        const mockDb = createMockReflowDb(genData);
+
+        const result = await reflowImageHandler(
+            { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "9:16", method: "auto", scope: "single" } } as unknown as Parameters<typeof reflowImageHandler>[0],
+            { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+        );
+
+        assert.equal(result.outcomes.length, 1, "single reflow returns 1 outcome");
+        const o = result.outcomes[0];
+        assert.equal(o.success, true, "outcome must succeed");
+        assert.equal(o.method, "rerender", "1:1→9:16 magnitude≈0.78 routes to rerender");
+        assert.equal(o.creditsCharged, 5, "unified cost must be 5");
+        assert.ok(o.outputUrl, "outputUrl must be set");
+        assert.equal(result.totalCreditsCharged, 5, "total credits must be 5");
+    } finally {
+        __setGenerateFinalAdForTests(null);
+        entMod.resolveCreditOwner = origResolve;
+    }
+    console.log("  ✅ T011: single reflow 1:1→9:16 returns 9:16 and 5 credits");
+}
+
+// ─── T020 (Phase 17) — batch reflow with 4 items returns 4 outcomes ───
+async function testT020BatchReflow() {
+    const entPath = require.resolve("./entitlements.js");
+    const entMod = require(entPath);
+    const origResolve = entMod.resolveCreditOwner;
+    entMod.resolveCreditOwner = async (uid: string) => ({ creditOwnerUid: uid, teamRole: null });
+
+    const fakeImage = "https://example.com/reflowed.png";
+    __setGenerateFinalAdForTests(async (bp: string) => {
+        if (bp.includes("plan-2")) throw new Error("engine_error");
+        return { image: fakeImage };
+    });
+
+    try {
+        const genData = {
+            output: {
+                imageUrl: "https://example.com/original.png",
+                batchResults: [
+                    { url: "https://example.com/b0.png", buildPlan: "plan-0" },
+                    { url: "https://example.com/b1.png", buildPlan: "plan-1" },
+                    { url: "https://example.com/b2.png", buildPlan: "plan-2" },
+                    { url: "https://example.com/b3.png", buildPlan: "plan-3" },
+                ],
+            },
+            metadata: { aspectRatio: "1:1" },
+            userId: "user1",
+            credits: 100,
+            mockupHistory: [],
+            resolutionTrace: { reflowHistory: [] },
+        };
+        const mockDb = createMockReflowDb(genData);
+
+        const result = await reflowImageHandler(
+            { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "9:16", method: "auto", scope: "batch_all" } } as unknown as Parameters<typeof reflowImageHandler>[0],
+            { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+        );
+
+        assert.equal(result.outcomes.length, 4, "batch must return 4 outcomes");
+        for (let i = 0; i < 4; i++) {
+            assert.equal(result.outcomes[i].itemIndex, i, `outcome ${i} itemIndex must be ${i}`);
+        }
+        assert.equal(result.outcomes[0].success, true, "item 0 succeeds");
+        assert.equal(result.outcomes[1].success, true, "item 1 succeeds");
+        assert.equal(result.outcomes[2].success, false, "item 2 must fail (engine_error)");
+        assert.equal(result.outcomes[2].creditsCharged, 0, "failed item 2 charges 0");
+        assert.equal(result.outcomes[3].success, true, "item 3 succeeds");
+        assert.equal(result.totalCreditsCharged, 15, "3 × 5 = 15 credits for partial success");
+    } finally {
+        __setGenerateFinalAdForTests(null);
+        entMod.resolveCreditOwner = origResolve;
+    }
+    console.log("  ✅ T020: batch reflow 4 items → 3 success (15 credits) + 1 failure (0 credits)");
+}
+
+async function testT023CarouselReflow() {
+    const entPath = require.resolve("./entitlements.js");
+    const entMod = require(entPath);
+    const origResolve = entMod.resolveCreditOwner;
+    entMod.resolveCreditOwner = async (uid: string) => ({ creditOwnerUid: uid, teamRole: null });
+
+    // Outer try/finally keeps the entitlement stub active across BOTH sub-scenarios
+    // so the second reflowImageHandler call doesn't fall through to the real resolver
+    // (the inner try/finally blocks only reset __setGenerateFinalAdForTests between scenarios).
+    try {
+        // ─── Scenario A: carousel_all over 7 slides ───
+        __setGenerateFinalAdForTests(async (bp: string) => {
+            return { image: `https://example.com/reflowed-${bp}.png` };
+        });
+        try {
+            const genData = {
+                output: {
+                    imageUrl: "https://example.com/original.png",
+                    carouselSlides: Array.from({ length: 7 }, (_, i) => ({
+                        imageUrl: `https://example.com/slide-${i}.png`,
+                        buildPlan: `slide-plan-${i}`,
+                    })),
+                },
+                metadata: { aspectRatio: "4:5" },
+                userId: "user1",
+                credits: 200,
+                mockupHistory: [],
+                resolutionTrace: { reflowHistory: [] },
+            };
+            const mockDb = createMockReflowDb(genData);
+
+            const result = await reflowImageHandler(
+                { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "1:1", method: "auto", scope: "carousel_all" } } as unknown as Parameters<typeof reflowImageHandler>[0],
+                { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+            );
+
+            assert.equal(result.outcomes.length, 7, "carousel_all must return 7 outcomes");
+            for (let i = 0; i < 7; i++) {
+                assert.equal(result.outcomes[i].itemIndex, i, `slide ${i} itemIndex must be ${i}`);
+                assert.equal(result.outcomes[i].success, true, `slide ${i} must succeed`);
+            }
+            assert.equal(result.totalCreditsCharged, 35, "7 × 5 = 35 credits for carousel_all");
+            for (let i = 0; i < 6; i++) {
+                assert.ok(result.outcomes[i].itemIndex! < result.outcomes[i + 1].itemIndex!, `slide order preserved: ${i} < ${i + 1}`);
+            }
+        } finally {
+            __setGenerateFinalAdForTests(null);
+        }
+
+        // ─── Scenario B: carousel_slide (slideIndex=2) ───
+        __setGenerateFinalAdForTests(async () => {
+            return { image: "https://example.com/reflowed-slide2.png" };
+        });
+        try {
+            const genData = {
+                output: {
+                    imageUrl: "https://example.com/original.png",
+                    carouselSlides: Array.from({ length: 7 }, (_, i) => ({
+                        imageUrl: `https://example.com/slide-${i}.png`,
+                        buildPlan: `slide-plan-${i}`,
+                    })),
+                },
+                metadata: { aspectRatio: "4:5" },
+                userId: "user1",
+                credits: 200,
+                mockupHistory: [],
+                resolutionTrace: { reflowHistory: [] },
+            };
+            const mockDb = createMockReflowDb(genData);
+
+            const result = await reflowImageHandler(
+                { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "1:1", method: "auto", scope: "carousel_slide", slideIndex: 2 } } as unknown as Parameters<typeof reflowImageHandler>[0],
+                { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+            );
+
+            assert.equal(result.outcomes.length, 1, "carousel_slide must return 1 outcome");
+            assert.equal(result.outcomes[0].itemIndex, 2, "itemIndex must be 2");
+            assert.equal(result.outcomes[0].success, true, "slide 2 must succeed");
+            assert.equal(result.outcomes[0].creditsCharged, 5, "unified cost for single slide");
+            assert.equal(result.totalCreditsCharged, 5, "total credits for single slide reflow");
+        } finally {
+            __setGenerateFinalAdForTests(null);
+        }
+    } finally {
+        entMod.resolveCreditOwner = origResolve;
+    }
+    console.log("  ✅ T023: carousel reflow 7 slides → all succeed (35 credits), slide order preserved; carousel_slide idx=2 → 5 credits");
+}
+
 import { decideMethod, RATIO_TO_NUMERIC } from "./reflowRouter.js";
 import { verifyLockedRegion } from "./reflowOutpaint.js";
-import { NoPlanError, extractBuildPlan, rerenderFromPlan, __setGenerateFinalAdForTests } from "./reflowRerender.js";
+import { NoPlanError, extractBuildPlan, rerenderFromPlan, __setGenerateFinalAdForTests, __setStorageUploaderForTests } from "./reflowRerender.js";
 import type { ReflowHistoryEntry } from "./types.js";
 import { reflowImageHandler } from "./reflowImage.js";
 import { readFileSync } from "node:fs";
@@ -1827,7 +2097,7 @@ async function testHff6d() {
             targetRatio: "9:16",
             itemIndex: null,
             genData: { input: {}, output: {} },
-            geminiApiKey: "stub",
+            geminiCaller: (async () => ({})) as any,
             openaiApiKey: "stub",
         });
     } catch (e: unknown) {
@@ -1954,7 +2224,7 @@ async function testHff6k() {
         // the strict admin SDK types without weakening the production handler signature.
         await reflowImageHandler(
             { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "2:1", method: "auto", scope: "single" } } as unknown as Parameters<typeof reflowImageHandler>[0],
-            { db: mockDb, admin: mockReflowAdmin(), geminiApiKey: "dummy", openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+            { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
         );
         assert.fail("Should have thrown");
     } catch (e: unknown) {
@@ -2079,7 +2349,7 @@ async function testHff6o() {
                 input: { tone: "minimal_universe" },
                 output: { buildPlan: "ORIGINAL-PLAN-1x1", fullResponse: "approved-tov-text" },
             },
-            geminiApiKey: "stub",
+            geminiCaller: (async () => ({})) as any,
             openaiApiKey: "stub",
         });
 
@@ -2763,6 +3033,17 @@ function runBcrFixtures() {
 async function runHff6Fixtures() {
     console.log("\n═══ HFF — HOTFIX-F: Aspect Ratio Reflow Fixtures ═══");
 
+    // rerenderFromPlan now persists the render to Storage via the admin SDK, which is
+    // unavailable in unit tests. Inject a passthrough uploader so outputUrl echoes the
+    // generator's image (preserving every existing outputUrl assertion below).
+    __setStorageUploaderForTests(async (img: string) => img);
+
+    testT010SafeZone();
+    testT011aRouterMatrix();
+    await testT012BrandColor();
+    await testT011SingleReflow();
+    await testT020BatchReflow();
+    await testT023CarouselReflow();
     testHff6a();
     testHff6b();
     await testHff6c();

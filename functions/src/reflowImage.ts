@@ -7,9 +7,11 @@ import type {
     ReflowHistoryEntry,
     ReflowMethod,
     ReflowScope,
+    VariantChip,
 } from "./types.js";
 import { decideMethod } from "./reflowRouter.js";
 import { rerenderFromPlan, NoPlanError, type RerenderGenData } from "./reflowRerender.js";
+import type { GeminiCaller } from "./generators.js";
 import { outpaintReflow, verifyLockedRegion, OUTPAINT_CREDIT_COST } from "./reflowOutpaint.js";
 
 export interface ReflowImageRequest {
@@ -18,6 +20,11 @@ export interface ReflowImageRequest {
     method: ReflowMethod;
     scope: ReflowScope;
     slideIndex?: number;
+    // Optional direct source image (base64 data URL or http URL) for the displayed
+    // render. When provided (single-item scopes), reflow uses it as the source —
+    // independent of Storage state — so a failed/pending server upload never forces
+    // a from-scratch rerender. See handleRescale in App.tsx.
+    sourceImageOverride?: string;
 }
 
 export interface ReflowImageResponse {
@@ -30,7 +37,9 @@ export interface ReflowImageResponse {
 export interface ReflowImageDeps {
     db: FirebaseFirestore.Firestore;
     admin: typeof import("firebase-admin");
-    geminiApiKey: string;
+    // Production Gemini caller (new @google/genai SDK), injected by the reflow callable.
+    // Used by the rerender route so generateFinalAd's request shape matches the SDK.
+    geminiCaller: GeminiCaller;
     openaiApiKey: string;
 }
 
@@ -75,7 +84,7 @@ export async function reflowImageHandler(
     request: CallableRequest<ReflowImageRequest>,
     deps: ReflowImageDeps,
 ): Promise<ReflowImageResponse> {
-    const { db, admin, geminiApiKey, openaiApiKey } = deps;
+    const { db, admin, geminiCaller, openaiApiKey } = deps;
 
     const { HttpsError } = await import("firebase-functions/v2/https");
 
@@ -90,7 +99,16 @@ export async function reflowImageHandler(
         throw new HttpsError("invalid-argument", "request.data must be an object.");
     }
 
-    const { generationId, targetAspectRatio, method, scope, slideIndex } = request.data;
+    const { generationId, targetAspectRatio, method, scope, slideIndex, sourceImageOverride } = request.data;
+
+    // A usable direct source: base64 data URL (decoded for outpaint, used as a style
+    // reference for rerender) or an http(s) URL (downloaded by outpaint). blob:/empty
+    // values are ignored — the backend can't read them.
+    const overrideSource =
+        typeof sourceImageOverride === "string" &&
+        (sourceImageOverride.startsWith("data:image/") || sourceImageOverride.startsWith("http"))
+            ? sourceImageOverride
+            : null;
 
     if (!generationId || typeof generationId !== "string") {
         throw new HttpsError("invalid-argument", "generationId is required.");
@@ -136,10 +154,12 @@ export async function reflowImageHandler(
     let items: ReflowItem[] = [];
 
     if (scope === "single") {
-        const sourceUrl = genData.output?.imageUrl ||
-            (genData.mockupHistory && genData.mockupHistory.length > 0
-                ? genData.mockupHistory[genData.mockupHistory.length - 1].url
-                : null);
+        // Prefer the caller-supplied direct image; fall back to the persisted Storage
+        // URL. Only error if BOTH are missing (truly nothing to reflow).
+        const sourceUrl = overrideSource ?? genData.output?.imageUrl;
+        if (!sourceUrl) {
+            throw new HttpsError("failed-precondition", "legacy_no_original");
+        }
         items = [{ itemIndex: null, sourceImageUrl: sourceUrl, buildPlan: genData.output?.buildPlan }];
     } else if (scope === "carousel_all") {
         const slides = genData.output?.carouselSlides;
@@ -160,7 +180,7 @@ export async function reflowImageHandler(
             throw new HttpsError("failed-precondition", `slideIndex ${slideIndex} out of range.`);
         }
         const slide = slides[slideIndex];
-        items = [{ itemIndex: slideIndex, sourceImageUrl: slide.imageUrl || null, buildPlan: slide.buildPlan || undefined }];
+        items = [{ itemIndex: slideIndex, sourceImageUrl: overrideSource ?? (slide.imageUrl || null), buildPlan: slide.buildPlan || undefined }];
     } else if (scope === "batch_all") {
         const batchResults = genData.output?.batchResults;
         if (!Array.isArray(batchResults) || batchResults.length === 0) {
@@ -219,7 +239,7 @@ export async function reflowImageHandler(
                 sourceRatio,
                 genData,
                 decision,
-                geminiApiKey,
+                geminiCaller,
                 openaiApiKey,
             });
         },
@@ -280,19 +300,48 @@ async function executeItemReflow(args: {
     sourceRatio: AspectRatio;
     genData: ReflowGenerationDoc;
     decision: { magnitude: number; chosenMethod: "outpaint" | "rerender"; isUserOverride: boolean };
-    geminiApiKey: string;
+    geminiCaller: GeminiCaller;
     openaiApiKey: string;
 }): Promise<ReflowOutcome> {
-    const { item, generationId, targetRatio, sourceRatio, genData, decision, geminiApiKey, openaiApiKey } = args;
+    const { item, generationId, targetRatio, sourceRatio, genData, decision, geminiCaller, openaiApiKey } = args;
     const idx = item.itemIndex;
 
-    if (decision.chosenMethod === "outpaint") {
+    // Outpaint needs a real source image: either an http(s) URL (downloaded) or a
+    // base64 data URL (decoded in-process, e.g. the caller-supplied sourceImageOverride).
+    // The "pending_upload" sentinel (server Storage upload failed) and other
+    // non-image values are NOT usable — those still re-route to rerender from the
+    // saved buildPlan. (For single-item scopes the frontend now passes the displayed
+    // image directly, so this no longer fires there.)
+    const sourceUsableForOutpaint =
+        typeof item.sourceImageUrl === "string" &&
+        item.sourceImageUrl.length > 0 &&
+        item.sourceImageUrl !== "pending_upload" &&
+        (item.sourceImageUrl.startsWith("http") || item.sourceImageUrl.startsWith("data:image/"));
+    // A base64 data URL can also seed the rerender path as a style/composition
+    // reference so a from-plan rerender stays coherent with the original render.
+    const styleRefForRerender =
+        typeof item.sourceImageUrl === "string" && item.sourceImageUrl.startsWith("data:image/")
+            ? item.sourceImageUrl
+            : undefined;
+    const route: "outpaint" | "rerender" =
+        decision.chosenMethod === "outpaint" && !sourceUsableForOutpaint
+            ? "rerender"
+            : decision.chosenMethod;
+    const reroutedFromMissingSource = route !== decision.chosenMethod;
+    if (reroutedFromMissingSource) {
+        console.log(
+            `[reflowImage] no usable source image (value="${item.sourceImageUrl ?? "null"}") for gen=${generationId} ` +
+            `item=${idx} — forcing rerender route instead of outpaint.`,
+        );
+    }
+
+    if (route === "outpaint") {
         let outcome = await executeOutpaint(genData, sourceRatio, targetRatio, idx, item.sourceImageUrl);
 
         if (!outcome.success && !decision.isUserOverride) {
             console.log(`⚠️ Outpaint failed (auto), falling back to rerender for ${generationId} item ${idx}`);
             try {
-                const rerenderOutcome = await executeRerender(generationId, targetRatio, genData, geminiApiKey, openaiApiKey, idx);
+                const rerenderOutcome = await executeRerender(generationId, targetRatio, genData, geminiCaller, openaiApiKey, idx, styleRefForRerender);
                 if (rerenderOutcome.success) {
                     outcome = {
                         ...rerenderOutcome,
@@ -315,15 +364,21 @@ async function executeItemReflow(args: {
     }
 
     try {
-        return await executeRerender(generationId, targetRatio, genData, geminiApiKey, openaiApiKey, idx);
+        return await executeRerender(generationId, targetRatio, genData, geminiCaller, openaiApiKey, idx, styleRefForRerender);
     } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        if (decision.isUserOverride) {
+        // No outpaint fallback when the user explicitly forced rerender, OR when we
+        // re-routed here because there is no usable source image (outpaint would have
+        // nothing to extend). Fail cleanly instead of attempting a doomed outpaint.
+        if (decision.isUserOverride || reroutedFromMissingSource) {
             return {
                 itemIndex: idx, success: false, method: null,
                 fallbackFrom: null, fallbackReason: null,
                 outputUrl: null, creditsCharged: 0,
-                errorCode: "rerender_failed", errorMessage,
+                errorCode: reroutedFromMissingSource ? "no_source" : "rerender_failed",
+                errorMessage: reroutedFromMissingSource
+                    ? "Source image is still uploading or unavailable, and the saved plan could not be re-rendered."
+                    : errorMessage,
             };
         }
         if (error instanceof NoPlanError || errorMessage.includes("No saved buildPlan")) {
@@ -388,12 +443,13 @@ async function executeOutpaint(
     itemIndex: number | null = null,
     overrideSourceUrl: string | null = null,
 ): Promise<ReflowOutcome> {
-    const history = genData.mockupHistory;
-    const sourceImageUrl: string | null = overrideSourceUrl ||
-        genData.output?.imageUrl ||
-        (Array.isArray(history) && history.length > 0
-            ? history[history.length - 1].url
-            : null);
+    // Per-item scopes (itemIndex !== null) MUST NOT fall back to the parent generation's
+    // output.imageUrl — that would silently resize the wrong image. Only single scope
+    // (itemIndex === null) may use output.imageUrl as a safety net; for items, null
+    // sourceImageUrl correctly triggers the per-item `no_source` failure below.
+    const sourceImageUrl: string | null =
+        overrideSourceUrl ||
+        (itemIndex === null ? (genData.output?.imageUrl ?? null) : null);
 
     if (!sourceImageUrl) {
         return {
@@ -404,9 +460,19 @@ async function executeOutpaint(
         };
     }
 
+    // A base64 data URL can't be downloaded from Storage — decode it in-process and
+    // hand outpaintReflow a ready Buffer (it skips the Storage download when given one).
+    let sourceBuffer: Buffer | undefined;
+    if (sourceImageUrl.startsWith("data:")) {
+        const commaIdx = sourceImageUrl.indexOf(",");
+        if (commaIdx >= 0) {
+            sourceBuffer = Buffer.from(sourceImageUrl.slice(commaIdx + 1), "base64");
+        }
+    }
+
     try {
         const outpaintResult = await outpaintReflow({
-            sourceImageUrl, sourceRatio, targetRatio,
+            sourceImageUrl, sourceRatio, targetRatio, sourceBuffer,
         });
 
         const verification = await verifyLockedRegion(
@@ -443,13 +509,14 @@ async function executeRerender(
     generationId: string,
     targetRatio: AspectRatio,
     genData: ReflowGenerationDoc,
-    geminiApiKey: string,
+    geminiCaller: GeminiCaller,
     openaiApiKey: string,
     itemIndex: number | null = null,
+    styleReference?: string,
 ): Promise<ReflowOutcome> {
     const result = await rerenderFromPlan({
         generationId, targetRatio, itemIndex,
-        genData, geminiApiKey, openaiApiKey,
+        genData, geminiCaller, openaiApiKey, styleReference,
     });
 
     return {
@@ -457,6 +524,7 @@ async function executeRerender(
         fallbackFrom: null, fallbackReason: null,
         outputUrl: result.outputUrl,
         creditsCharged: result.creditsCharged,
+        brandColorReinforced: result.brandColorReinforced,
     };
 }
 
@@ -486,17 +554,47 @@ async function deductAndPersist(args: {
         itemIndex: outcome.itemIndex,
         outputUrl,
         creditsCharged,
+        // Default optional flags to definite values — never leave them `undefined`,
+        // which Firestore rejects on write (belt-and-suspenders with the global
+        // ignoreUndefinedProperties setting).
+        brandColorReinforced: outcome.brandColorReinforced === true,
+        textReflowOverflow: outcome.textReflowOverflow === true,
+        textReductionSteps: outcome.textReductionSteps ?? 0,
     };
 
-    // Single atomic transaction: history + credit deduction succeed-or-rollback together (FR-017).
     await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
         const [genSnap, userSnap] = await Promise.all([tx.get(genRef), tx.get(userRef)]);
         const existing = (genSnap.data()?.resolutionTrace?.reflowHistory as ReflowHistoryEntry[] | undefined) ?? [];
         const currentCredits = (userSnap.data()?.credits as number | undefined) ?? 0;
         if (currentCredits < creditsCharged) {
-            // Concurrent reflow drained credits between pre-flight and now; abort cleanly.
             throw new Error(`Insufficient credits at commit time (have ${currentCredits}, need ${creditsCharged}).`);
         }
+
+        // Normalize existing chips into a map keyed by ratio, deduping by newest
+        // generatedAt (FR-017a invariant: no duplicate ratios at rest). This is
+        // defensive against legacy data or any concurrent-write artefacts; the
+        // handler is the only writer to variantChips so we re-enforce the shape
+        // on every commit.
+        const existingChips: VariantChip[] = (genSnap.data()?.variantChips as VariantChip[] | undefined) ?? [];
+        const chipMap = new Map<AspectRatio, VariantChip>();
+        for (const chip of existingChips) {
+            if (!chip || typeof chip.ratio !== "string") continue;
+            const prior = chipMap.get(chip.ratio);
+            if (!prior || (chip.generatedAt ?? 0) > (prior.generatedAt ?? 0)) {
+                chipMap.set(chip.ratio, chip);
+            }
+        }
+        const newChip: VariantChip = { ratio: targetRatio, url: outputUrl, generatedAt: Date.now() };
+        chipMap.set(targetRatio, newChip);
+        // Emit in canonical SUPPORTED_RATIOS order, dropping any ratios not in
+        // the 6-key launch set. Cap is implicit in the key-space (<=6).
+        const updatedChips: VariantChip[] = SUPPORTED_RATIOS
+            .map(r => chipMap.get(r))
+            .filter((c): c is VariantChip => c !== undefined);
+
+        const prevTrace = genSnap.data()?.resolutionTrace ?? {};
+        const prevBrandReinforced = prevTrace.brandColorReinforced === true;
+        const prevTextOverflow = prevTrace.textReflowOverflow === true;
 
         tx.set(
             genRef,
@@ -505,8 +603,11 @@ async function deductAndPersist(args: {
                     url: outputUrl,
                     ratio: targetRatio,
                 }),
+                variantChips: updatedChips,
                 resolutionTrace: {
                     reflowHistory: [...existing, historyEntry],
+                    brandColorReinforced: prevBrandReinforced || (outcome.brandColorReinforced === true),
+                    textReflowOverflow: prevTextOverflow || (outcome.textReflowOverflow === true),
                 },
             },
             { merge: true },

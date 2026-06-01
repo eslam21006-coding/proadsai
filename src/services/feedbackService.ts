@@ -71,6 +71,7 @@ export interface GenerationRecord {
         challenges: string;
         transformation: string;
         offer: string;
+        cta?: string;
         tone: string;
         language: string;
         adType: 'single' | 'carousel';
@@ -172,6 +173,10 @@ class FeedbackService {
                 challenges: inputs.challenges || '',
                 transformation: inputs.transformation || '',
                 offer: inputs.offerType || '',
+                // Persist the CTA so reflow's rerender-from-plan (which rebuilds inputs
+                // from this saved record) has it — its absence caused inputs.cta.length
+                // to crash generateFinalAd on the rerender path.
+                cta: inputs.cta || '',
                 tone: resolvedUniverse,
                 language: inputs.adLanguage || 'ar_fusha',
                 adType: inputs.adMode || 'single',

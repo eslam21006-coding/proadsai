@@ -43,6 +43,13 @@ admin.initializeApp({
     storageBucket: "proadsai-saas.firebasestorage.app"
 });
 
+// Ignore `undefined` field values on ALL Firestore writes across the functions
+// codebase (instead of throwing "Cannot use undefined as a Firestore value").
+// Must be set once, before any Firestore operation — module load, immediately after
+// initializeApp, is the correct and only safe place. Covers optional fields such as
+// resolutionTrace.reflowHistory[].textReflowOverflow that may be omitted.
+admin.firestore().settings({ ignoreUndefinedProperties: true });
+
 // NOTE: Do NOT cache `admin.firestore()` at module load — this file is imported
 // before `admin.initializeApp()` runs in Firebase deploy analysis, which fails
 // with "The default Firebase app does not exist". Always call inline.
@@ -130,9 +137,9 @@ const ACTION_FEATURE_MAP: Record<string, string> = {
 
 // ─── MODEL CONSTANTS (single source of truth) ───────────────────────────
 const CREATIVE_MODEL_PRO = "gemini-3.1-pro-preview"; // First generation
-const CREATIVE_MODEL_LITE = "gemini-3.5-flash"; // Regenerations
+const CREATIVE_MODEL_LITE = "gemini-3.1-pro-preview"; // Regenerations
 const LOGIC_MODEL = "gemini-2.5-flash-lite";
-const VISUAL_MODEL = "gemini-3.1-flash-image-preview";
+const VISUAL_MODEL = "gemini-3.1-flash-image";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 2. THE AI GENERATOR (Don't lose this!)
@@ -4287,7 +4294,20 @@ export const serverGenerateFinalAd = onCall({
 
         if (result.image) {
             const trace = generators.getLastResolutionTrace();
-            return { success: true, imageBase64: result.image, errorCode: null, costEstimate: generators.getCostEstimate(), resolutionTrace: trace };
+            // Persist the render to Storage SERVER-SIDE (admin SDK bypasses Storage
+            // rules) and hand the frontend a ready-to-use public URL. The browser
+            // stores this URL — not the ~1-5 MB base64 — in the generations doc, and
+            // the reflow backend downloads it as the outpaint source. Non-blocking:
+            // a Storage failure must not fail generation, so we still return the
+            // base64 for instant display and let imageUrl fall back to pending_upload.
+            let storageUrl: string | null = null;
+            try {
+                const { saveBase64ToStorage } = await import("./storageUpload.js");
+                storageUrl = await saveBase64ToStorage(result.image, `users/${request.auth.uid}/renders`);
+            } catch (uploadErr) {
+                console.warn("serverGenerateFinalAd: server-side render upload failed (non-blocking):", uploadErr);
+            }
+            return { success: true, imageBase64: result.image, storageUrl, errorCode: null, costEstimate: generators.getCostEstimate(), resolutionTrace: trace };
         } else {
             return {
                 success: false,
@@ -4314,7 +4334,7 @@ export const reflowImage = onCall({
     memory: "2GiB",
     cors: true,
 }, async (request: CallableRequest) => {
-    return reflowImageHandler(request, { db: admin.firestore(), admin, geminiApiKey: geminiApiKey.value(), openaiApiKey: openaiApiKey.value() });
+    return reflowImageHandler(request, { db: admin.firestore(), admin, geminiCaller: createGeminiCaller(geminiApiKey.value()), openaiApiKey: openaiApiKey.value() });
 });
 
 // ─── MAGIC SELECTOR: Region-targeted image editing ──────────────────────
@@ -4856,96 +4876,9 @@ export const triggerVaultExtraction = onCall({
     return { status: 'processed', principlesCreated, processedSignals: pendingSnap.size };
 });
 
-// ─── 5d. DESIGN CRITIC via OpenAI ───
-// Call GPT-4o-mini vision to critique a generated ad image
-
-export const designCritique = onCall({
-    region: "europe-west1",
-    secrets: [openaiApiKey],
-    timeoutSeconds: 30,
-    cors: true,
-    memory: "256MiB",
-    maxInstances: 20,
-}, async (request: CallableRequest) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-
-    const { imageBase64, expectedHeadline, expectedSubheadline, expectedCTA, expectedBenefit, ratio } = request.data;
-    if (!imageBase64) throw new HttpsError("invalid-argument", "Missing image.");
-
-    try {
-        // Strip data URL prefix
-        let rawBase64 = imageBase64;
-        if (rawBase64.includes(',')) rawBase64 = rawBase64.split(',')[1];
-
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${openaiApiKey.value()}`,
-            },
-            body: JSON.stringify({
-                model: 'gpt-4o-mini',
-                messages: [
-                    {
-                        role: 'system',
-                        content: 'You are an expert ad design critic. You analyze advertisement images and return structured JSON feedback. Be strict but fair. Only flag genuinely problematic issues.'
-                    },
-                    {
-                        role: 'user',
-                        content: [
-                            {
-                                type: 'image_url',
-                                image_url: { url: `data:image/png;base64,${rawBase64}`, detail: 'low' }
-                            },
-                            {
-                                type: 'text',
-                                text: `Review this ad image. Expected text elements:
-- Headline: "${expectedHeadline || ''}"
-- Subheadline: "${expectedSubheadline || ''}"
-${expectedCTA ? `- CTA Button: "${expectedCTA}"` : '- No CTA expected'}
-${expectedBenefit ? `- Benefit: "${expectedBenefit}"` : ''}
-- Ratio: ${ratio || '1:1'}
-
-Score 1-10 on: readability, text_accuracy, layout, text_hero_overlap, cta_visibility, color_harmony, professional_feel.
-
-Return ONLY valid JSON:
-{"scores":{"readability":N,"accuracy":N,"layout":N,"overlap":N,"cta":N,"color":N,"professional":N},"averageScore":N,"needsRevision":true/false,"fixes":["fix1","fix2"]}
-
-needsRevision=true only if average<7 or any score<=4. Max 3 specific actionable fixes. Focus on worst issues only.`
-                            }
-                        ]
-                    }
-                ],
-                max_tokens: 500,
-                temperature: 0.1,
-                response_format: { type: 'json_object' }
-            })
-        });
-
-        const data = await response.json() as any;
-
-        if (data.error) {
-            console.error('OpenAI critic error:', data.error);
-            return { needsRevision: false, fixes: [], score: 7 }; // Fail open
-        }
-
-        const content = data.choices?.[0]?.message?.content || '{}';
-        try {
-            const result = JSON.parse(content);
-            console.log(`🔍 OpenAI Critic: score=${result.averageScore}, revision=${result.needsRevision}`);
-            return {
-                needsRevision: result.needsRevision === true,
-                fixes: (result.fixes || []).slice(0, 3),
-                score: result.averageScore || 7,
-            };
-        } catch {
-            return { needsRevision: false, fixes: [], score: 7 };
-        }
-    } catch (err: any) {
-        console.error('Design critique failed:', err);
-        return { needsRevision: false, fixes: [], score: 7 }; // Fail open — don't block the user
-    }
-});
+// The `designCritique` callable (GPT-4o-mini quality gate) was removed on
+// 2026-05-30 as a product decision. The frontend service method that called it
+// has also been removed. Re-add both layers together if the gate is reintroduced.
 
 // ─── 5c. PUSH CREATIVE PACK (Image + Copy) TO META ─────────────────────
 export const metaPushCreativePack = onCall({
@@ -6225,6 +6158,66 @@ export const getWorkspaceAccessAuditLog = onCall({
     return { entries, nextCursor };
 });
 
+// Recursively replace heavy inline image data (base64 `data:` URLs and raw base64
+// blobs) anywhere in a saved-project document with a short placeholder. Firestore
+// rejects documents > 1 MiB, and a single render is ~1–5 MB. The explicit per-field
+// trimming inside saveProject covers the *known* carriers (mockupHistory,
+// carouselSlides, batchResults, inputs.personalPhotos / brandLogos) — but several
+// other image-bearing fields were never trimmed: inputs.referenceImage,
+// inputs.referenceAd, inputs.offerAssets[], inputs.testimonialScreenshots[], and
+// inputs.uploadedAssets[]. A project using any of those still overflowed the limit,
+// which is why "Saving to cloud failed" kept recurring after the earlier fix. This
+// pass catches every oversized payload regardless of field name, so the document
+// can never overflow on an unanticipated field again.
+//
+// It deliberately spares legitimate long TEXT (buildPlan, conceptsText, tovText):
+// natural-language text always contains whitespace, whereas base64 / data-URL
+// payloads never do — so the whitespace test cleanly separates the two. Short
+// Storage URLs (< threshold) are preserved untouched.
+const HEAVY_STR_THRESHOLD = 5000;
+function stripHeavyImageData(value: any): any {
+    if (typeof value === "string") {
+        if (value.startsWith("data:")) return "stored_externally";
+        if (value.length > HEAVY_STR_THRESHOLD && !/\s/.test(value)) return "stored_externally";
+        return value;
+    }
+    if (Array.isArray(value)) return value.map(stripHeavyImageData);
+    if (value && typeof value === "object") {
+        const out: Record<string, any> = {};
+        for (const [k, v] of Object.entries(value)) out[k] = stripHeavyImageData(v);
+        return out;
+    }
+    return value;
+}
+
+// Persist a base64 render to Storage SERVER-SIDE (admin SDK bypasses Storage rules)
+// and return a public URL. Used by client save paths that hold an in-memory base64
+// image (e.g. favoriting a displayed render) but must never write to Storage from
+// the browser. An http(s) URL is returned unchanged (idempotent).
+export const uploadRenderImage = onCall({ region: "europe-west1", memory: "512MiB", cors: true }, async (request: CallableRequest<any>) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required");
+    const uid = request.auth.uid;
+    const data = asObjectPayload(request.data);
+    const imageBase64 = data.imageBase64;
+    if (typeof imageBase64 !== "string" || imageBase64.length === 0) {
+        throw new HttpsError("invalid-argument", "imageBase64 required");
+    }
+    if (imageBase64.startsWith("http")) {
+        return { storageUrl: imageBase64 };
+    }
+    if (!imageBase64.startsWith("data:")) {
+        throw new HttpsError("invalid-argument", "imageBase64 must be a data: URL");
+    }
+    try {
+        const { saveBase64ToStorage } = await import("./storageUpload.js");
+        const storageUrl = await saveBase64ToStorage(imageBase64, `users/${uid}/renders`);
+        return { storageUrl };
+    } catch (err) {
+        console.error(`uploadRenderImage failed for uid=${uid}:`, (err as { message?: string })?.message ?? err);
+        throw new HttpsError("internal", "Could not persist render image.");
+    }
+});
+
 export const saveProject = onCall({ region: "europe-west1" }, async (request: CallableRequest<any>) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required");
     const uid = request.auth.uid;
@@ -6314,7 +6307,56 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
                 return trimmed;
             });
         }
-        txn.set(projectRef, cleanProject, { merge: true });
+        // Same stripping for carouselSlides[].imageUrl — slide renders are the same size
+        // as single renders and can blow past the 1 MiB limit on a 10-slide carousel.
+        if (Array.isArray(cleanProject.carouselSlides) && cleanProject.carouselSlides.length > 0) {
+            cleanProject.carouselSlides = cleanProject.carouselSlides.map((s: any) => {
+                const trimmed: Record<string, any> = { ...s };
+                if (typeof trimmed.imageUrl === "string" && trimmed.imageUrl.length > 5000) {
+                    trimmed.imageUrl = "stored_externally";
+                }
+                if (typeof trimmed.rawBase64 === "string" && trimmed.rawBase64.length > 5000) {
+                    trimmed.rawBase64 = "stored_externally";
+                }
+                return trimmed;
+            });
+        }
+        // Heavy base64 arrays on inputs (user-uploaded photos / logos) can also blow
+        // the doc limit. They are reference data — the render pipeline reads them at
+        // generation time but they aren't needed once the project is rendered, and
+        // the resize/reflow path uses the persisted output URLs (not inputs.personalPhotos).
+        if (cleanProject.inputs && typeof cleanProject.inputs === "object") {
+            const cleanedInputs: Record<string, any> = { ...cleanProject.inputs };
+            if (Array.isArray(cleanedInputs.personalPhotos) && cleanedInputs.personalPhotos.length > 0) {
+                cleanedInputs.personalPhotos = cleanedInputs.personalPhotos.map((p: any) =>
+                    typeof p === "string" && p.length > 5000 ? "stored_externally" : p
+                );
+            }
+            if (Array.isArray(cleanedInputs.brandLogos) && cleanedInputs.brandLogos.length > 0) {
+                cleanedInputs.brandLogos = cleanedInputs.brandLogos.map((p: any) =>
+                    typeof p === "string" && p.length > 5000 ? "stored_externally" : p
+                );
+            }
+            cleanProject.inputs = cleanedInputs;
+        }
+        // Final safety net: recursively strip ANY remaining base64/data-URL payload
+        // regardless of which field carries it (referenceImage, referenceAd,
+        // offerAssets[], testimonialScreenshots[], uploadedAssets[], …). This is the
+        // root-cause fix for the recurring "Saving to cloud failed" error.
+        const persistedProject = stripHeavyImageData(cleanProject);
+
+        // Diagnostic: measure the actual persisted doc size. Firestore's hard limit is
+        // 1,048,576 bytes; warn well before it so any future overflow source is visible
+        // in logs instead of surfacing as an opaque write rejection.
+        const docBytes = Buffer.byteLength(JSON.stringify(persistedProject), "utf8");
+        if (docBytes > 900_000) {
+            console.warn(
+                `saveProject: persisted doc for uid=${uid} project=${project.id} is ${docBytes} bytes ` +
+                `after stripping — approaching Firestore's 1 MiB limit.`,
+            );
+        }
+
+        txn.set(projectRef, persistedProject, { merge: true });
         return newStatus;
     });
 
@@ -6323,8 +6365,10 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
         // Preserve structured failures (quota exceeded, plan-gate, invalid-argument).
         if (err instanceof HttpsError) throw err;
         console.error(
-            `saveProject failed for uid=${uid} project=${project.id}:`,
-            (err as { message?: string })?.message ?? err,
+            `saveProject failed for uid=${uid} project=${project.id}: ` +
+            `code=${(err as { code?: string | number })?.code ?? "unknown"} ` +
+            `message=${(err as { message?: string })?.message ?? String(err)}`,
+            err,
         );
         throw new HttpsError("internal", "Could not save project. Please try again.", { reason: "save_failed" });
     }
