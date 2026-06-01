@@ -96,8 +96,12 @@ export async function rerenderFromPlan(args: {
     genData: RerenderGenData;
     geminiCaller: GeminiCaller;
     openaiApiKey: string;
+    // Optional base64 data URL of the original render. When present it is passed to
+    // generateFinalAd as a style/composition reference so the from-plan rerender stays
+    // visually coherent with the original instead of regenerating blind.
+    styleReference?: string;
 }): Promise<{ outputUrl: string; creditsCharged: number; brandColorReinforced: boolean }> {
-    const { generationId, targetRatio, itemIndex, genData, geminiCaller, openaiApiKey } = args;
+    const { generationId, targetRatio, itemIndex, genData, geminiCaller, openaiApiKey, styleReference } = args;
 
     const inputs: Record<string, unknown> = (genData.input ?? {}) as Record<string, unknown>;
     const approvedTov: string = genData.output?.fullResponse ?? "";
@@ -129,12 +133,20 @@ export async function rerenderFromPlan(args: {
         setOpenAIKey(openaiApiKey);
     }
 
+    // Only a base64 data URL is a valid style reference (generateFinalAd reads its
+    // base64 payload); ignore http URLs / sentinels here.
+    const styleRef = typeof styleReference === "string" && styleReference.startsWith("data:image/")
+        ? styleReference
+        : undefined;
     const result = await generate(
         buildPlan,
         approvedTov,
         inputs as Parameters<typeof generateFinalAd>[2],
         resolvedUniverse,
         targetRatio,
+        undefined, // editInstruction
+        undefined, // base64ToEdit
+        styleRef,  // styleReference — original render, for visual coherence
     );
 
     if (!result.image) {

@@ -654,6 +654,9 @@ interface ReflowImageRequestBase {
   generationId: string;
   targetAspectRatio: AspectRatio;
   method: ReflowMethod;
+  // Optional direct source image (base64 data URL or http URL) for the displayed
+  // render, so reflow doesn't depend on the server-side Storage upload state.
+  sourceImageOverride?: string;
 }
 
 export type ReflowImageRequest =

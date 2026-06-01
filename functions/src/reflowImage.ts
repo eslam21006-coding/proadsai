@@ -20,6 +20,11 @@ export interface ReflowImageRequest {
     method: ReflowMethod;
     scope: ReflowScope;
     slideIndex?: number;
+    // Optional direct source image (base64 data URL or http URL) for the displayed
+    // render. When provided (single-item scopes), reflow uses it as the source —
+    // independent of Storage state — so a failed/pending server upload never forces
+    // a from-scratch rerender. See handleRescale in App.tsx.
+    sourceImageOverride?: string;
 }
 
 export interface ReflowImageResponse {
@@ -94,7 +99,16 @@ export async function reflowImageHandler(
         throw new HttpsError("invalid-argument", "request.data must be an object.");
     }
 
-    const { generationId, targetAspectRatio, method, scope, slideIndex } = request.data;
+    const { generationId, targetAspectRatio, method, scope, slideIndex, sourceImageOverride } = request.data;
+
+    // A usable direct source: base64 data URL (decoded for outpaint, used as a style
+    // reference for rerender) or an http(s) URL (downloaded by outpaint). blob:/empty
+    // values are ignored — the backend can't read them.
+    const overrideSource =
+        typeof sourceImageOverride === "string" &&
+        (sourceImageOverride.startsWith("data:image/") || sourceImageOverride.startsWith("http"))
+            ? sourceImageOverride
+            : null;
 
     if (!generationId || typeof generationId !== "string") {
         throw new HttpsError("invalid-argument", "generationId is required.");
@@ -140,7 +154,9 @@ export async function reflowImageHandler(
     let items: ReflowItem[] = [];
 
     if (scope === "single") {
-        const sourceUrl = genData.output?.imageUrl;
+        // Prefer the caller-supplied direct image; fall back to the persisted Storage
+        // URL. Only error if BOTH are missing (truly nothing to reflow).
+        const sourceUrl = overrideSource ?? genData.output?.imageUrl;
         if (!sourceUrl) {
             throw new HttpsError("failed-precondition", "legacy_no_original");
         }
@@ -164,7 +180,7 @@ export async function reflowImageHandler(
             throw new HttpsError("failed-precondition", `slideIndex ${slideIndex} out of range.`);
         }
         const slide = slides[slideIndex];
-        items = [{ itemIndex: slideIndex, sourceImageUrl: slide.imageUrl || null, buildPlan: slide.buildPlan || undefined }];
+        items = [{ itemIndex: slideIndex, sourceImageUrl: overrideSource ?? (slide.imageUrl || null), buildPlan: slide.buildPlan || undefined }];
     } else if (scope === "batch_all") {
         const batchResults = genData.output?.batchResults;
         if (!Array.isArray(batchResults) || batchResults.length === 0) {
@@ -290,15 +306,23 @@ async function executeItemReflow(args: {
     const { item, generationId, targetRatio, sourceRatio, genData, decision, geminiCaller, openaiApiKey } = args;
     const idx = item.itemIndex;
 
-    // Outpaint needs a real, downloadable source image. When the render's Storage
-    // upload failed, imageUrl is persisted as the sentinel "pending_upload" (or some
-    // other non-fetchable value). In that case outpaint can only fail — so re-route
-    // to rerender, which rebuilds from the saved buildPlan and needs no source pixels.
+    // Outpaint needs a real source image: either an http(s) URL (downloaded) or a
+    // base64 data URL (decoded in-process, e.g. the caller-supplied sourceImageOverride).
+    // The "pending_upload" sentinel (server Storage upload failed) and other
+    // non-image values are NOT usable — those still re-route to rerender from the
+    // saved buildPlan. (For single-item scopes the frontend now passes the displayed
+    // image directly, so this no longer fires there.)
     const sourceUsableForOutpaint =
         typeof item.sourceImageUrl === "string" &&
         item.sourceImageUrl.length > 0 &&
         item.sourceImageUrl !== "pending_upload" &&
-        item.sourceImageUrl.startsWith("http");
+        (item.sourceImageUrl.startsWith("http") || item.sourceImageUrl.startsWith("data:image/"));
+    // A base64 data URL can also seed the rerender path as a style/composition
+    // reference so a from-plan rerender stays coherent with the original render.
+    const styleRefForRerender =
+        typeof item.sourceImageUrl === "string" && item.sourceImageUrl.startsWith("data:image/")
+            ? item.sourceImageUrl
+            : undefined;
     const route: "outpaint" | "rerender" =
         decision.chosenMethod === "outpaint" && !sourceUsableForOutpaint
             ? "rerender"
@@ -317,7 +341,7 @@ async function executeItemReflow(args: {
         if (!outcome.success && !decision.isUserOverride) {
             console.log(`⚠️ Outpaint failed (auto), falling back to rerender for ${generationId} item ${idx}`);
             try {
-                const rerenderOutcome = await executeRerender(generationId, targetRatio, genData, geminiCaller, openaiApiKey, idx);
+                const rerenderOutcome = await executeRerender(generationId, targetRatio, genData, geminiCaller, openaiApiKey, idx, styleRefForRerender);
                 if (rerenderOutcome.success) {
                     outcome = {
                         ...rerenderOutcome,
@@ -340,7 +364,7 @@ async function executeItemReflow(args: {
     }
 
     try {
-        return await executeRerender(generationId, targetRatio, genData, geminiCaller, openaiApiKey, idx);
+        return await executeRerender(generationId, targetRatio, genData, geminiCaller, openaiApiKey, idx, styleRefForRerender);
     } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         // No outpaint fallback when the user explicitly forced rerender, OR when we
@@ -436,9 +460,19 @@ async function executeOutpaint(
         };
     }
 
+    // A base64 data URL can't be downloaded from Storage — decode it in-process and
+    // hand outpaintReflow a ready Buffer (it skips the Storage download when given one).
+    let sourceBuffer: Buffer | undefined;
+    if (sourceImageUrl.startsWith("data:")) {
+        const commaIdx = sourceImageUrl.indexOf(",");
+        if (commaIdx >= 0) {
+            sourceBuffer = Buffer.from(sourceImageUrl.slice(commaIdx + 1), "base64");
+        }
+    }
+
     try {
         const outpaintResult = await outpaintReflow({
-            sourceImageUrl, sourceRatio, targetRatio,
+            sourceImageUrl, sourceRatio, targetRatio, sourceBuffer,
         });
 
         const verification = await verifyLockedRegion(
@@ -478,10 +512,11 @@ async function executeRerender(
     geminiCaller: GeminiCaller,
     openaiApiKey: string,
     itemIndex: number | null = null,
+    styleReference?: string,
 ): Promise<ReflowOutcome> {
     const result = await rerenderFromPlan({
         generationId, targetRatio, itemIndex,
-        genData, geminiCaller, openaiApiKey,
+        genData, geminiCaller, openaiApiKey, styleReference,
     });
 
     return {

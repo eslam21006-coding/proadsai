@@ -4801,6 +4801,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           method: 'auto',
           scope: 'carousel_slide',
           slideIndex: slideIdx,
+          // Displayed slide image, passed directly (see single-scope note).
+          sourceImageOverride: currentRawBase64 || undefined,
         });
         console.log('[handleRescale] callable result (carousel_slide):', JSON.stringify(result?.data));
         if (typeof result.data.totalCreditsCharged === 'number') {
@@ -4954,6 +4956,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           targetAspectRatio: newRatio,
           method: 'auto',
           scope: 'single',
+          // Pass the actual displayed render directly (API-safe base64 / Storage URL —
+          // NOT the blob: display url) so reflow never depends on the server Storage
+          // upload state. currentRawBase64 holds the original base64 for fresh renders
+          // or the Storage URL for prior reflow outputs.
+          sourceImageOverride: currentRawBase64 || undefined,
         });
         console.log('[handleRescale] callable result (single):', JSON.stringify(result?.data));
         // Guard the whole payload: a transport/normalization failure can yield an
