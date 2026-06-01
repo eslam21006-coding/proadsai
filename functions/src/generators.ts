@@ -4392,7 +4392,11 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
 
     // Reflow scene-lock rides its own section at the very top of the prompt so it (a) is
     // never touched by the blueprint keyword-stripper and (b) dominates the render intent.
-    const _reflowBlock = reflowInstruction ? `${reflowInstruction}\n\n` : '';
+    // Sanitize first: strip bracket/brace characters (the image model renders stray [ ] { }
+    // as visible glyphs) and collapse runs of spaces/tabs, preserving intentional newlines.
+    const _reflowBlock = reflowInstruction
+        ? `${reflowInstruction.replace(/[[\]{}]/g, '').replace(/[ \t]+/g, ' ').trim()}\n\n`
+        : '';
 
     const textPrompt = `${_reflowBlock}${_ccBlock}${coreDesignRules}
 ${SCREEN_CONTENT_BAN_BLOCK}

@@ -37,6 +37,16 @@ import { stepsWithData } from './lib/projectStepsData';
 import { useProjectAutoSave } from './hooks/useProjectAutoSave';
 import type { AutoSaveState } from './lib/projectAutoSave';
 import { ALL_UNIVERSES, type UniverseEntry } from './universeDatabase';
+
+// BUG 3: saved projects strip hero photos / logos to "stored_externally" (Firestore 1 MiB
+// limit). Detect that placeholder so the re-upload warning can be shown consistently from
+// every restore path (manual loadProject + startup auto-restore).
+const detectStrippedAssets = (
+  inputsObj: { personalPhotos?: string[]; brandLogos?: string[] } | null | undefined,
+): boolean =>
+  [...(inputsObj?.personalPhotos || []), ...(inputsObj?.brandLogos || [])]
+    .some((asset) => asset === 'stored_externally');
+
 const InputForm = React.lazy(() => import('./components/InputForm'));
 const PerformanceDashboard = React.lazy(() => import('./components/PerformanceDashboard'));
 const PricingTableLazy = React.lazy(() => import('./components/PricingTable'));
@@ -2456,7 +2466,10 @@ const App: React.FC = () => {
           // normalization). Plan-aware retargeting normalization is reserved for loadProject
           // (user-initiated action) where userPlan is known; applying it here would wrongly
           // strip retargeting data for users whose plan is still loading.
-          setInputs(sanitizeProjectModes(migrateProjectInputsShape(mostRecent.inputs)));
+          const _restoredShape = migrateProjectInputsShape(mostRecent.inputs);
+          setInputs(sanitizeProjectModes(_restoredShape));
+          // BUG 3: auto-restore must set the stripped-assets warning too (not just loadProject).
+          setShowStrippedAssetsWarning(detectStrippedAssets(_restoredShape));
           setPhase(mostRecent.phase);
           setTovText(mostRecent.tovText);
           setConceptsText(normalizeFieldLabels(mostRecent.conceptsText));
@@ -3182,13 +3195,9 @@ const App: React.FC = () => {
     const migratedInputs = migrateProjectInputs(p.inputs);
 
     setInputs(sanitizeProjectModes(migratedInputs));
-    // BUG 3: detect hero photos / logos that were stripped to "stored_externally" on save.
-    // If any were stripped, surface a non-blocking re-upload warning in Step 1.
-    const hasStrippedPhotos =
-      [...(migratedInputs?.personalPhotos || []),
-       ...(migratedInputs?.brandLogos || [])]
-      .some((asset: string) => asset === 'stored_externally');
-    setShowStrippedAssetsWarning(hasStrippedPhotos);
+    // BUG 3: surface a non-blocking re-upload warning in Step 1 when hero photos / logos
+    // were stripped to "stored_externally" on save.
+    setShowStrippedAssetsWarning(detectStrippedAssets(migratedInputs));
     setTovText(p.tovText);
     setConceptsText(normalizeFieldLabels(p.conceptsText));
     setSelectedTov(p.selectedTov);
@@ -4923,17 +4932,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             if (slide.status !== 'done' || !slide.imageUrl) continue;
             const slideIdx = slide.index - 1;
             setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, status: 'rendering' } : s));
-            const copy = carouselCopies[slideIdx];
-            const isLastSlide = slideIdx === (carouselCopies ?? []).length - 1;
-            // Split CTA on ||| into label + benefit instead of deleting the bars (BUG 2).
-            const ctaRaw = copy?.ctaText || inputs.cta || '';
-            const [ctaPart, benefitPart] = ctaRaw.includes('|||') ? ctaRaw.split('|||') : [ctaRaw, ''];
-            const txOverride: TextOverride = {
-              hookText: (copy?.hookText || '').replace(/\|\|\|/g, '').trim(),
-              subheadText: (copy?.subheadText || '').replace(/\|\|\|/g, '').trim(),
-              ctaName: isLastSlide ? ctaPart.trim() : '',
-              benefitText: isLastSlide ? ((copy?.benefitText || '').replace(/\|\|\|/g, '').trim() || (benefitPart?.trim() || '')) : '',
-            };
+            // The carousel_slide reflow callable re-renders from the saved per-slide plan and
+            // does not accept a text override, so no txOverride is assembled here (BUG 2's CTA
+            // split lives on the generation path, not this reflow path).
             try {
               if (!deductCredits('reflowImage')) break;
               const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
@@ -5583,13 +5584,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             <div className={`flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3 ${lang === 'ar' ? 'flex-row-reverse text-right' : ''}`} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
               <i className="fa-solid fa-triangle-exclamation text-amber-400 mt-0.5"></i>
               <p className="flex-1 text-[11px] leading-relaxed text-amber-200/90 font-medium">
-                {lang === 'ar'
-                  ? 'لم يتم حفظ صورك الشخصية والشعارات. أعد رفعها لتظهر في الإعلان التالي.'
-                  : "Your hero photos and logos weren't saved to cloud. Re-upload them to include your face in the next generation."}
+                {t('strippedAssets.warning')}
               </p>
               <button
                 onClick={() => setShowStrippedAssetsWarning(false)}
-                aria-label={lang === 'ar' ? 'إغلاق' : 'Dismiss'}
+                aria-label={t('strippedAssets.dismiss')}
                 className="text-amber-400/60 hover:text-amber-300 transition-colors shrink-0"
               >
                 <i className="fa-solid fa-xmark"></i>

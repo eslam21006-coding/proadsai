@@ -80,6 +80,27 @@ function costForMethod(method: "outpaint" | "rerender"): number {
     return method === "outpaint" ? OUTPAINT_CREDIT_COST : RERENDER_CREDIT_COST;
 }
 
+// SSRF guard for the style-reference download. The source URL originates from the
+// caller (request.data.sourceImageOverride → item.sourceImageUrl), so we only ever fetch
+// from known Google/Firebase storage hosts over https. A strict host allowlist inherently
+// blocks the cloud metadata endpoint (169.254.169.254), RFC1918 ranges, localhost, and any
+// other internal target, since none of those match an allowlisted host.
+const ALLOWED_STYLE_REF_HOSTS = ["storage.googleapis.com", "firebasestorage.googleapis.com"];
+const STYLE_REF_FETCH_TIMEOUT_MS = 10_000;
+
+function isAllowedStyleReferenceUrl(rawUrl: string): boolean {
+    let parsed: URL;
+    try {
+        parsed = new URL(rawUrl);
+    } catch {
+        return false;
+    }
+    if (parsed.protocol !== "https:") return false;
+    const host = parsed.hostname.toLowerCase();
+    // Exact match or a bucket subdomain of an allowlisted host (e.g. <bucket>.storage.googleapis.com).
+    return ALLOWED_STYLE_REF_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+}
+
 export async function reflowImageHandler(
     request: CallableRequest<ReflowImageRequest>,
     deps: ReflowImageDeps,
@@ -333,17 +354,40 @@ async function executeItemReflow(args: {
         typeof item.sourceImageUrl === "string" &&
         item.sourceImageUrl.startsWith("http")
     ) {
-        try {
-            const response = await fetch(item.sourceImageUrl);
-            const buffer = await response.arrayBuffer();
-            const base64 = Buffer.from(buffer).toString("base64");
-            styleRefForRerender = `data:image/png;base64,${base64}`;
-        } catch (fetchErr: unknown) {
-            const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+        if (!isAllowedStyleReferenceUrl(item.sourceImageUrl)) {
+            // SSRF guard: refuse to fetch anything that isn't an allowlisted storage host.
             console.warn(
-                `[reflowImage] failed to download http style reference (value="${item.sourceImageUrl}") ` +
-                `for gen=${generationId} item=${idx}: ${msg}. Proceeding without a style reference.`,
+                `[reflowImage] style reference URL rejected (not an allowlisted https storage host; ` +
+                `value="${item.sourceImageUrl}") for gen=${generationId} item=${idx}. ` +
+                `Proceeding without a style reference.`,
             );
+        } else {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), STYLE_REF_FETCH_TIMEOUT_MS);
+            try {
+                const response = await fetch(item.sourceImageUrl, { signal: controller.signal });
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status} ${response.statusText}`);
+                }
+                const contentType = response.headers.get("content-type");
+                if (!contentType || !contentType.startsWith("image/")) {
+                    throw new Error(`non-image content-type "${contentType ?? "none"}"`);
+                }
+                const buffer = await response.arrayBuffer();
+                const base64 = Buffer.from(buffer).toString("base64");
+                styleRefForRerender = `data:${contentType};base64,${base64}`;
+            } catch (fetchErr: unknown) {
+                const aborted = fetchErr instanceof Error && fetchErr.name === "AbortError";
+                const msg = aborted
+                    ? `timed out after ${STYLE_REF_FETCH_TIMEOUT_MS}ms`
+                    : fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+                console.warn(
+                    `[reflowImage] failed to download http style reference (value="${item.sourceImageUrl}") ` +
+                    `for gen=${generationId} item=${idx}: ${msg}. Proceeding without a style reference.`,
+                );
+            } finally {
+                clearTimeout(timer);
+            }
         }
     }
     const route: "outpaint" | "rerender" =

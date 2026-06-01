@@ -304,6 +304,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'reflow.fallbackToRerender': 'Auto-reflow fell back to a fresh render for this image.',
         'reflow.fallbackToOutpaint': 'Auto-reflow fell back to outpainting for this image.',
         'reflow.fallback_dismiss': 'Dismiss',
+        'strippedAssets.warning': "Your hero photos and logos weren't saved to cloud. Re-upload them to include your face in the next generation.",
+        'strippedAssets.dismiss': 'Dismiss',
 
         // ── Step 5: Script ──
         'script.title': 'Primary Script',
@@ -1051,6 +1053,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'reflow.fallbackToRerender': 'تم الرجوع إلى إعادة الرسم الكامل تلقائيًا لهذه الصورة.',
         'reflow.fallbackToOutpaint': 'تم الرجوع إلى توسيع الصورة تلقائيًا لهذه الصورة.',
         'reflow.fallback_dismiss': 'إغلاق',
+        'strippedAssets.warning': 'لم يتم حفظ صورك الشخصية والشعارات. أعد رفعها لتظهر في الإعلان التالي.',
+        'strippedAssets.dismiss': 'إغلاق',
 
         // ── Step 5: Script ──
         'script.title': 'النص الأساسي',
