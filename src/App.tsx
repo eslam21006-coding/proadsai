@@ -4927,32 +4927,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               }
             }
           }
-        } else {
-          for (const slide of (carouselSlides ?? [])) {
-            if (slide.status !== 'done' || !slide.imageUrl) continue;
-            const slideIdx = slide.index - 1;
-            setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, status: 'rendering' } : s));
-            // The carousel_slide reflow callable re-renders from the saved per-slide plan and
-            // does not accept a text override, so no txOverride is assembled here (BUG 2's CTA
-            // split lives on the generation path, not this reflow path).
-            try {
-              if (!deductCredits('reflowImage')) break;
-              const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
-              const reflowRes = await reflowFn({
-                generationId: renderGenerationId || '',
-                targetAspectRatio: newRatio as AspectRatio,
-                method: 'auto',
-                scope: 'carousel_slide',
-                slideIndex: slideIdx,
-              });
-              const res = reflowRes.data.success && reflowRes.data.outcomes?.[0]?.outputUrl;
-              setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: res || null, status: res ? 'done' : 'error' } : s));
-            } catch {
-              refundCredits('reflowImage');
-              setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, status: 'error' } : s));
-            }
-            if (slide.index < (carouselSlides ?? []).length) await new Promise(r => setTimeout(r, 500));
-          }
         }
       } catch (e) {
         // Restore optimistic decrement on transport / callable exception.
