@@ -1,9 +1,9 @@
- # Pro Ads AI — Launch Matrix
+# Pro Ads AI — Launch Matrix
 ## Single Source of Truth for Launch Scope, Approved Combinations, and Behavior Contracts
 
 > **Authority**: This file overrides all older behavior assumptions, the Compatibility Matrix v2, and the ChatGPT master plan for launch scope.
 > Where this file and any other document disagree, this file wins.
-> Last updated: v4 — 11 product owner decisions + 7 new feature phases + Stripe migration. Codebase audit April 11, 2026.
+> Last updated: v5 — v4 + Copy System (Phase 22 copy quality, Phase 23 conditional structure). Codebase audit April 11, 2026.
 
 ---
 
@@ -86,7 +86,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | Phase 12 — Workspace Logic | `createWorkspace` rejects below-Scale plans correctly. Meta ad account linking works. |
 | Phase 13 — Saved Projects | Per-plan project limits enforced (10/30/Unlimited). Status filter works. |
 
-### ✅ Done (16 items)
+### ✅ Done (17 items)
 
 | Item | Spec folder | Notes |
 |---|---|---|
@@ -103,6 +103,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | Phase 13 — Saved Projects | `013-saved-projects` | |
 | Phase 15 — Brand Colors | `956-brand-colors` | |
 | Phase 16 — Creative Modes QA | `016-creative-modes-qa` | |
+| Phase 17 — Resize & Reflow | `017-resize-reflow` | Single/batch/carousel reflow; 3 ratio buttons (Square/Portrait/Story); server-side render upload (admin SDK); direct image source for reflow. |
 | HOTFIX (plan alignment) | `09.50-hotfix-plan-alignment` | |
 | HOTFIX-C (cultural compliance) | `0951-hotfix-cultural-compliance` | |
 | HOTFIX-D (multi-logo) | `953-hotfix-multi-logo` | |
@@ -117,6 +118,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | **Phase 21 — Stripe Migration** | **CRITICAL #1 — blocks production launch.** Phase 8 implementation diverged from spec — code is on Paddle, matrix specified Stripe. Pre-launch is the cheapest moment to fix this. After Phase 21: re-verify Phases 9, 10, 12, 13. Behavioral spec at `specs/009-billing-plan-access/` is reused. New spec authored at `specs/021-stripe-migration/`. |
 | **Phase 19 — Direct-Response Design Upgrades** | Single biggest paid-traffic conversion lever. Adds gaze direction, one-highlight cap, price hierarchy, CTA outcome framing, hook↔visual alignment, campaign coherence. **Independent of billing — can run in parallel with Phase 21.** |
 | **Phase 20 — Concept Director + Brief Coherence Check** | Solves "every ad looks like the same machine made it." User-facing impact: Brief Coherence Check (live banner) + Variance Mode (Balanced/Aggressive). Backend stays hidden. **Depends on Phase 14 (which depends on Phase 21).** |
+| **Phase 22 — Copy Quality Upgrade** | Lifts every on-creative text string: enforces ≤6th-grade reading level, mandates lived-symptom depth (concrete moment, not abstract problem), replaces the hard fake-proof block with a soft user-facing claim flag, and adds a silent GPT-4o-mini scoring + rewrite gate. **Rides the existing copy-fidelity contract — improvements propagate to the rendered image automatically. Independent of billing; can run in parallel with Phase 21.** |
 
 ### ⏳ TODO — Major
 
@@ -125,12 +127,11 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | **Phase 11 — Magic Edit** | Re-spec'd to use Gemini's edit endpoint after HOTFIX-G. User-facing feature: lasso → edit → text re-composite. Pro+ gated. |
 | **Phase 14 — RAG + Meta Reporting** | Required by Phase 20 (`pastWinningAds` feeds Concept Director). Daily Meta Insights sync + RAG context injection into prompts. **Blocked until Phase 21 ships** (user data shape may shift). |
 | **Phase 18 — Multi-Hero Support** | Up to 5 distinct people per ad. Required for webinar / mini-course / co-host / summit / speaker-grid use cases. |
+| **Phase 23 — Conditional Copy Structure** | Makes the on-creative text *count* conditional (headline-only, headline+proof, diagnostic-only, etc.) instead of forcing 4 fields. Adds the Hook Angle / Hook Type / Awareness taxonomy cleanup, the 8 static / 11 carousel structures, the decision tree, the `creativeTextDirector` module, (23.A) the "Generate 4 More Like This" in-card variation carousel, and (23.B) within-angle dimension/entry rotation + cross-project anti-repetition memory so new projects stop feeling samey (the user's angle lock stays intact). **Depends on Phase 22 (quality rules + scoring must exist first) and Phase 5 (fidelity gate + compositor).** |
 
 ### ⏳ TODO — Minor
 
-| Item | Why minor |
-|---|---|
-| **Phase 17 — Resize & Reflow** | ✅ DONE (2026-05-29). 6-ratio popover, free CSS preview, batch + carousel scope selectors, ratio-only variant chips, brand-color lock, text re-composition, method selector REMOVED, cost unified to 5/item. |
+_(none — Phase 17, the last minor item, shipped 2026-06-01; see ✅ Done above.)_
 
 ---
 
@@ -1113,6 +1114,8 @@ Phase 18  requires Phase 5 + Phase 11 (pipeline + magic edit face consistency)
 Phase 19  requires Phase 5 + HOTFIX-E + HOTFIX-F (pipeline + logos + reflow must be stable)
 Phase 20  requires Phase 5 + Phase 14 + HOTFIX-G (pipeline + creative memory + FLUX cleanup)
 Phase 21  requires nothing in matrix — pre-launch migration, blocks production launch
+Phase 22  requires nothing in matrix — copy-quality is a Step-2 prompt + scoring change that rides the Phase 5 fidelity contract. Can run in parallel with Phase 21. Start any time.
+Phase 23  requires Phase 22 + Phase 5 (quality rules + scoring must exist; fidelity gate + compositor must be stable before fields go conditional)
 ```
 
 Complete all tasks in a phase before starting any phase that depends on it.
@@ -1816,25 +1819,19 @@ These are manual steps for Eslam to complete before any code tasks begin.
 ---
 
 ## Phase 17 — Resize & Reflow ✅ DONE
-**Requires:** Phase 5 + Phase 15 complete (pipeline + brand colors).
+**Requires:** Phase 5 + Phase 15 complete (pipeline + brand colors). **Shipped 2026-06-01.** Spec: `017-resize-reflow`.
 
-**What shipped (2026-05-29):**
-- 6-ratio Resize popover (1:1, 4:5, 3:4, 4:3, 9:16, 16:9) — all available to every paid plan (no plan-tier gating).
-- Free CSS preview via `ReflowPreview` component — `object-fit: cover` at target ratio, renders in <1s, costs 0 credits.
-- Confirm-step state machine (`closed → picker_open → preview → committing`) with "Generate Resize — X credits" button.
-- Method selector UI **removed** (FR-011) — method is always `'auto'`, never user-facing.
-- Batch scope selector: "Resize this image" / "Resize all N images" with dynamic cost display.
-- Carousel scope selector: "Resize this slide" / "Resize all N slides" with per-slide and all-slides support.
-- Per-item loading spinners and failure indicators during batch_all reflow; "Resize failed — try again" on errors.
-- Carousel slide order preserved after `carousel_all` reflow (FR-015).
-- Ratio-only variant chips (max 6 per generation) — no `method` field on chips (FR-017a).
-- Unified 5-credit flat cost per item for both outpaint and rerender routes (FR-006).
-- Brand color lock injection in rerender prompts (FR-020 audit trail).
-- Text re-composition with safe zone insets after rerender; overflow trace (`textReflowOverflow`, `textReductionSteps`).
-- Legacy generation rejection (`legacy_no_original`) — no chaining from variant chips as source.
-- Backend fixture tests: T010 (safe zone), T011 (single reflow), T011a (router matrix 30 pairs), T012 (brand color), T020 (batch partial-success), T023 (carousel 7 slides + per-slide). All backend fixture suites pass (HFF.6 + Phase 17 + existing US4/US5/Phase 16/cultural/language/workspace/saved-projects/mode-format/creative-resolver-parity).
+**What shipped:**
+- **Always-visible reflow control** in Step 4 with **3 ratio buttons — Square (1:1), Portrait (4:5), Story (9:16)** in a single row. The current ratio is solid-filled with a "Current" badge; selecting a different ratio reveals a "Generate Resize — 5 credits" button. No picker toggle and no method selector (both removed).
+- **`reflowImage` callable** (`functions/src/index.ts` → `functions/src/reflowImage.ts`) with four scopes: `single`, `batch_all`, `carousel_all`, `carousel_slide`. Deterministic two-route engine (HOTFIX-F): **outpaint** (Sharp margin extension, byte-identical center lock) for `<30%` fold-change, **rerender-from-plan** for `≥30%`, with auto-fallback between routes. Unified cost: 5 credits/item.
+- **Single, batch (all N), and carousel (all slides + per-slide) reflow** wired end-to-end. Batch reflow saves a per-combo generation doc so each variant carries its own `buildPlan` + `generationId`.
+- **Server-side render upload:** `serverGenerateFinalAd` and the reflow routes persist images to Storage via the **admin SDK (`getStorage()`)**, returning a durable public URL. The browser never writes to Storage — eliminates `storage/unauthorized`, CORS, and auth-token-timing failures.
+- **Direct image source for reflow:** the frontend passes the displayed render straight to the callable (`sourceImageOverride`, base64 or URL), so reflow never depends on the server upload state. Outpaint decodes base64 in-process; rerender uses it as a style/composition reference for coherence.
+- **Brand-color reinforcement** on the rerender route; **safe-zone-aware text re-composition** with overflow logging (`resolutionTrace.textReflowOverflow`); **ratio-only variant chips**; reflow output is a variant of the source generation (no new `generations` doc).
+- New **`@google/genai` SDK** caller used across the reflow path (replaced the old `@google/generative-ai` caller that couldn't iterate the new request shape).
+- **CURRENT badge** is batch-aware (tracks the focused batch tile's ratio).
 
-**Files changed:** `functions/src/{layoutContract,types,textCompositing,reflowRerender,reflowOutpaint,reflowImage}.ts`, `functions/src/contractFixtures.test.ts`, `src/App.tsx`, `src/i18n.tsx`, `src/components/ReflowPreview.tsx` (new).
+**Contract fixtures:** `functions/src/contractFixtures.test.ts` HFF.6.a–o cover the router matrix, outpaint byte-identity, rerender-from-plan, drift/no-plan fallbacks, carousel/batch scopes, brand-color reinforcement, and safe-zone text overflow.
 
 ---
 
@@ -2148,6 +2145,113 @@ After Phase 21 deploys to test mode and smoke tests pass:
 ### 21.I — Live Mode Cutover
 
 Same checklist as the old Phase 8.E.6 — recreate products in Live mode, generate live API keys, create live webhook endpoint, update Firebase secrets, redeploy. Done in the final pre-launch week.
+
+---
+
+## Phase 22 — Copy Quality Upgrade ⏳ TODO — CRITICAL
+**Requires:** Phase 5 complete (the build-plan → render pipeline and copy-fidelity contract must be stable). Independent of billing — can run in parallel with Phase 21.
+
+**Context:** Every on-creative text string flows from Step 2 through a 3-layer copy-fidelity contract (`generators.ts` writes → `buildFinalImagePrompt()` injects verbatim → `validateCopyFidelity()` enforces exact match with up to 3 retries → `textCompositing.ts` renders). Because the gate guarantees exact strings reach the image, improving the *words* at Step 2 propagates to the final design automatically — no design-phase wiring needed. This phase raises copy quality at the source on three product-owner decisions and adds a silent scoring/rewrite gate. It does NOT change how many fields exist (that is Phase 23).
+
+**What's missing (verified from code audit):**
+- No reading-level control. `HOOK_GENERATION_RULES` / `SYSTEM_TOV` permit literary Arabic and abstract nouns; copy routinely exceeds a 6th-grade level.
+- No lived-symptom mandate. Copy states problems abstractly ("struggling to get clients") instead of the concrete moment the audience lives.
+- A hard fake-proof block currently suppresses persuasive invention entirely — product owner wants invention allowed, with only fabricated *verifiable specifics* flagged (not blocked) for Meta-policy / GCC-law safety.
+- No silent quality gate scoring the 4 generated fields before they enter the fidelity contract.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 22.0 | `specs/_shared/COPY_SYSTEM_REFERENCE.md` | Place the Copy System Reference doc at this path (create `specs/_shared/` if absent). This is the build-time design source — the app never reads it at runtime. | File exists at the path. |
+| 22.1 | `functions/src/generators.ts` | Inject a READING-LEVEL rule into `SYSTEM_TOV` and `HOOK_GENERATION_RULES`: "All text must read at a 6th-grade level or below — short everyday words, short sentences, no jargon, no abstract nouns. For Arabic: simple spoken-style فصحى only; never literary or rare vocabulary; nothing a 12-year-old wouldn't say out loud. If a word has a simpler synonym, use the simpler one." | Both prompt constants contain the reading-level rule verbatim. |
+| 22.2 | `functions/src/generators.ts` | Inject the same READING-LEVEL rule into the carousel slide prompt and `RETARGETING_RULES`. | Carousel prompt and `RETARGETING_RULES` both contain the rule. Per-slide carousel copy and retargeting copy read ≤6th grade. |
+| 22.3 | `functions/src/copywriting_knowledge.ts` | Add a top-of-file comment `// Implements specs/_shared/COPY_SYSTEM_REFERENCE.md — edit the reference first, then sync these constants.` Then add exported constants `READING_LEVEL_BLOCK`, `LIVED_SYMPTOM_BLOCK`, `FABRICATION_POLICY_BLOCK`, `BANNED_CTA_LIST` (rule text transcribed from the reference doc, Sections 0/8/9). Refactor 22.1–22.2 + 22.4–22.5 to import these constants so each rule has ONE source of truth. | Constants exported and imported by `generators.ts`. No duplicated rule text. Drift comment present. |
+| 22.4 | `functions/src/generators.ts` | Inject a LIVED-SYMPTOM rule into `SYSTEM_TOV`, `HOOK_GENERATION_RULES`, the carousel prompt, and `RETARGETING_RULES`: "Never state the problem in the abstract. Name the exact concrete moment the audience already lives — the scene, the time of day, the recognizable detail that makes them think 'that's literally me.' Pull the raw material from the PAIN POINTS and TARGET AUDIENCE fields and render it as a specific moment, not a category." Include one weak→strong example pair in the prompt. | All four prompt surfaces contain the lived-symptom rule + example. |
+| 22.5 | `functions/src/generators.ts` | Remove the existing hard fake-proof guardrail text from the copy prompts and replace it with a FABRICATION POLICY: "You may invent persuasive framing freely — scenarios, hypotheticals, metaphors, illustrative composites. You do NOT need real proof to write persuasively. When you write a fabricated verifiable specific (a named person, an exact figure, a hard count, a star rating, or a concrete deadline/quantity), the system will flag it for the user — do not refuse or omit it." | No hard fake-proof block remains in any copy prompt. Fabrication policy text present. |
+| 22.6 | `functions/src/types.ts` | Add `claimFlag?: Array<{ field: string; reason: string }>` to the copy/hook result type that carries `hookText`, `subheadText`, `ctaName`, `benefitText`. | Type compiles. Field is optional. Existing call sites unaffected. |
+| 22.7 | `functions/src/generators.ts` | After copy generation, run a CLAIM DETECTOR over the 4 fields: flag any field containing a fabricated verifiable specific (named person, exact number/currency figure, hard headcount, star rating, concrete date/deadline/quantity). Populate `claimFlag[]` with `{ field, reason }`. Do NOT flag obvious hypotheticals, metaphors, or illustrative scenarios. Never block or rewrite on a claim flag. | Copy with "Ahmed made 47,000 SAR in 30 days" → flagged. Copy with "imagine waking up to a full calendar" → not flagged. Generation never blocked by a flag. |
+| 22.8 | `src/App.tsx` | In the Step-2 hook UI, render a non-blocking warning chip on any field present in `claimFlag[]`: "Specific claim — make sure you can back it up before publishing." Chip is dismissible and never prevents proceeding. | Flagged fields show the chip. Unflagged fields show nothing. User can always proceed. |
+| 22.9 | `functions/src/generators.ts` | Add a silent COPY SCORING pass using GPT-4o-mini after generation (before the fidelity contract). Score the 4 fields 1–10 on: audience specificity, pain/desire relevance, clarity, scroll-stopping tension, wording specificity, offer relevance, non-generic language, reading level (≤6th grade), lived-symptom depth. Return per-dimension scores on the result object. Non-blocking on errors/timeouts (fail-open per credit-safety principle). | Every generation returns per-dimension scores. Scoring failure does not block generation. |
+| 22.10 | `functions/src/generators.ts` | Add a REWRITE loop (max 2 passes): if average < 8, OR reading level < 7, OR lived-symptom depth < 7, OR any other dimension < 6, diagnose the weakness and regenerate that field with the matched fix (simplify wording for reading level; substitute the concrete lived moment for surface-level; apply CTA formula for weak CTA; etc.). After 2 passes, proceed with the best candidate and log a soft flag — never loop further (credit safety). | Below-threshold copy triggers ≤2 rewrites then proceeds. No infinite loops. Rewrite events logged on the resolution trace. |
+| 22.11 | `functions/src/buildPlanSlotMap.ts` | Regression verify only (no logic change expected): confirm `validateCopyFidelity()` still passes when the improved (often shorter/simpler) strings are injected into the build plan, and does not produce new fidelity-retry storms. | Smoke-test generations produce zero new fidelity failures attributable to the copy changes. |
+| 22.12 | `functions/src/textCompositing.ts` | Regression verify only: confirm Sharp composites the simpler/shorter Arabic copy with RTL intact and correct non-empty element count. Shorter copy must not break zone layout. | RTL renders correctly; element count matches non-empty fields; no layout overflow on the shorter strings. |
+| 22.13 | `functions/src/contractFixtures.test.ts` | Add copy-quality fixture tests: (a) reading-level rule present in `SYSTEM_TOV`, `HOOK_GENERATION_RULES`, carousel prompt, `RETARGETING_RULES`; (b) lived-symptom rule present in all four; (c) no hard fake-proof block remains; (d) claim detector flags a fabricated named-person/number, does not flag a hypothetical; (e) scoring pass returns reading-level + lived-symptom dimensions; (f) rewrite loop caps at 2 passes. | All 6 tests pass. |
+
+> **Propagation note:** No tasks edit `buildFinalImagePrompt()` to push copy quality downstream — by design. The fidelity contract from Phase 5 carries the improved Step-2 strings to the image verbatim. Tasks 22.11–22.12 only *verify* downstream behavior; they do not change it.
+
+---
+
+## Phase 23 — Conditional Copy Structure ⏳ TODO — MAJOR
+**Requires:** Phase 22 + Phase 5 complete (quality rules and scoring must exist; the fidelity gate and compositor must be stable before the field count goes conditional).
+
+**Context:** The on-creative text is currently locked to four fields (`hookText`, `subheadText`, `ctaName`, `benefitText`) end-to-end — in the prompts, the Step-2 UI, the fidelity gate, the design prompt, and the compositor. The four-field shape is the right default for solution-aware mid-funnel ads but wrong for pure-curiosity (headline only), retargeting (objection handling), high-ticket (diagnostic, CTA delayed), and proof-led ads. This phase introduces the Hook Angle / Hook Type / Awareness taxonomy cleanup, eight static structures and eleven carousel frameworks, a decision tree, and a server-side `creativeTextDirector` that selects the structure — teaching every downstream layer that "intentionally absent field" is legal, not a fidelity failure.
+
+**What's missing (verified from code audit):**
+- Prompts always emit 4 fields; the Step-2 UI always renders 4 slots with per-field regenerate buttons.
+- `validateCopyFidelity()` treats the 4 fields as canonical; it does not know which fields a chosen structure legitimately omits.
+- `buildFinalImagePrompt()` conditionals CTA/benefit but not subheadline; the compositor balances layout assuming the canonical set.
+- No structure-selection brain; `HOOK_GENERATION_RULES` hardcodes 4 variations A/B/C/D.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 23.1 | `functions/src/copywriting_knowledge.ts` | Add the final taxonomy constants: Hook Angle (Pain Amplification, Curiosity, Rational Diagnosis, Expert Authority, Social Proof, Statistics, Future-Based, Urgency, Scarcity, Cost of Inaction, Identity), Hook Type (Question, Curiosity Gap, Pain Point, Transformation Promise, Misconception, Shocking Statistic, Controversial, Comedic, Listicle, Personal Story, Storytelling Carousel, Diagnostic), Awareness Levels (Pattern Interrupt, Problem Awareness, Solution Awareness, Product Awareness, Authority Builder, Myth Busting, Soft Story Sell, Most Aware/Retargeting). | Constants exported. Removed: `Emotional`, `Threat` (as type), `Beginner Awareness`. |
+| 23.2 | `src/modeFieldSchema.ts` + relevant UI config | Add optional `offerType` enum (mini-course / webinar / challenge / lead magnet / high-ticket call / coaching / consulting / course / DFY / other) and optional `realDeadline` field to inputs. | New fields persist; existing flows unaffected. |
+| 23.3 | migration | Map legacy taxonomy values: `Emotional` → Pain Amplification or Future-Based by awareness; `Threat` (hook type) → Cost of Inaction (angle); `Beginner Awareness` → Problem Awareness. | Saved old values resolve to new taxonomy with no broken selections. |
+| 23.4 | `functions/src/creativeTextDirector.ts` | Create the module skeleton: input → typed result `{ structure, fields: {role,text}[], resolvedAngle, resolvedType, resolvedAwareness, scores, claimFlags, rationale }`. | Module callable; returns typed empty result. |
+| 23.5 | `functions/src/creativeTextDirector.ts` | Implement Input Diagnosis: self-selection trigger, sharpest pain/outcome, true next step from offer + price. | Emits a `diagnosis` object from inputs. |
+| 23.6 | `functions/src/creativeTextDirector.ts` | Implement Auto-Selection rules (Awareness → Hook Angle → Hook Type) with guardrails: proof structures need a proof anchor; objection structures need retargeting + objections; invented hard deadlines flagged unless `realDeadline` set; no hook-type/awareness mismatch. | Blank dials resolve deterministically; guardrails enforced. |
+| 23.7 | `functions/src/creativeTextDirector.ts` | Implement the decision tree → returns exactly one of 8 static structures or 11 carousel frameworks for any input combination. | Valid structure returned for every combo; no undefined paths. |
+| 23.8 | `functions/src/creativeTextDirector.ts` | Implement static writers S1–S8 and carousel writers C1–C11, each emitting only the fields its structure includes, within the word caps; carousel CTA on last slide only (except C8); auto slide count to content. | Each structure emits correct fields; no empty padding; CTA placement rule enforced. |
+| 23.9 | `functions/src/creativeTextDirector.ts` | Reuse the Phase 22 scoring + rewrite gate; add format-fit, hook-angle-fit, visual-compatibility, and structure-appropriate CTA/proof/objection dimensions. | Director scores include format/angle fit; rewrite caps at 2 passes. |
+| 23.10 | `functions/src/types.ts` | Add `structure: string` and a typed `fields` contract (role-tagged) to the copy result so downstream layers know which fields are expected present. | Type compiles; gate and compositor can read `structure` + roles. |
+| 23.11 | `functions/src/buildPlanSlotMap.ts` | Teach `validateCopyFidelity()` to check only the fields the chosen `structure` declares present. An intentionally-absent field (e.g. no CTA in Diagnostic-only) must NOT trigger the retry loop. **Highest-risk task — paranoid checkpoint.** | Diagnostic-only structure does not loop on missing CTA; a genuinely dropped expected field still triggers retry. |
+| 23.12 | `functions/src/generators.ts` — `buildFinalImagePrompt()` | Omit absent fields cleanly per `structure`; never inject "render this empty field." Extend the existing CTA/benefit conditionals to also cover subheadline for headline-only structures. | Headline-only and headline+proof prompts inject only present fields. |
+| 23.13 | `functions/src/textCompositing.ts` | Add a structure→zone map so layout balances with fewer fields (a headline-only ad must not leave a large empty CTA zone). **High-risk — paranoid checkpoint.** | Headline-only ad renders balanced; no empty reserved zones; Arabic RTL intact. |
+| 23.14 | `src/App.tsx` | Make the Step-2 UI render only the fields the chosen structure includes; per-field regenerate buttons hide for absent fields; UI does not break on a missing field. **High-risk — live UI on every generation; paranoid checkpoint.** | Each structure shows only its fields; no broken slots; regenerate buttons match present fields. |
+| 23.15 | `functions/src/generators.ts` | Wire `creativeTextDirector` into the pipeline before the build-plan step, replacing `HOOK_GENERATION_RULES` as the structure decision-maker; run once per design and per-slide for carousels. | Director output feeds the build plan; legacy 4-variation hardcode no longer drives structure. |
+| 23.16 | `functions/src/contractFixtures.test.ts` | Add conditional-structure fixtures: (a) decision tree returns a valid structure for each of 6 offer types × {static, carousel}; (b) Diagnostic-only emits no CTA and the gate does not retry; (c) headline-only composites balanced with no empty zone; (d) Step-2 UI renders only present fields; (e) high-ticket carousel CTA appears only on the last slide; (f) legacy taxonomy values migrate correctly. | All 6 tests pass. |
+
+### Phase 23.A — "Generate 4 More Like This" → in-card variation carousel
+
+**Context:** Today the per-hook "Generate 4 More Like This" button (in `App.tsx` Step 2) deducts `refreshHooks` credits, builds a `likeThisPrompt` keyed to a HARDCODED angle map (`A: Direct Value, B: Curiosity, C: Social Proof, D: Problem Agitation`), generates 4 hooks, and **appends them to the bottom of `tovText`** with a toast. Two problems: (1) the angle map is replaced by the Phase 23 taxonomy, so the prompt must key off the hook's *resolved* angle + structure, not the letter; (2) the appended-to-bottom UX buries the variations away from the hook they relate to. This sub-block fixes both: variations are TRUE to the liked hook (same hook angle + same structure, fresh wording) and live INSIDE the originating hook's card as a scrollable mini-carousel (original = position 1, the 4 new = positions 2–5), with arrows + dots. Approve / Edit / Batch act on whichever variation is currently displayed.
+
+**Behavior decision (locked):** "More like THIS" = same resolved hook angle + same resolved structure as the reference hook, with completely fresh wording, metaphors, and entry points. It does NOT vary the structure (that is the job of the grid-level fresh-angle regenerate). All Phase 22 quality rules (6th-grade, lived-symptom, claim-flag) and Phase 22/23 scoring apply to the new variations.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 23.A1 | `functions/src/creativeTextDirector.ts` | Add a `generateSimilarVariations(referenceHook, count=4)` path: it reads the reference hook's resolved `{hookAngle, structure}` and regenerates `count` new hooks LOCKED to that same angle + structure, fresh wording, no reused words, deduped against all existing hooks. Applies the standard scoring + rewrite gate. | Returns N variations all sharing the reference angle + structure; none duplicate existing hooks; each passes the score gate. |
+| 23.A2 | `functions/src/generators.ts` | Replace the hardcoded angle map in the "more like this" prompt builder with the reference hook's resolved angle + structure from 23.A1. Remove the `{A,B,C,D} → label` lookup. | No hardcoded angle map remains; prompt is driven by resolved angle + structure. |
+| 23.A3 | `functions/src/types.ts` | Extend the hook result type so each hook can carry a `variations?: Hook[]` group and a `parentHookId?: string`, enabling a card to hold its reference hook + its similar variations as one scrollable set. | Type compiles; existing single-hook flows unaffected (empty `variations`). |
+| 23.A4 | `src/App.tsx` | Change the "Generate 4 More Like This" handler: instead of appending results to the bottom of `tovText`, attach them as the originating hook's `variations` group. Do NOT mutate the main hook grid. | Clicking the button populates that hook's variation group; the main grid does not grow. |
+| 23.A5 | `src/App.tsx` | Convert the hook card into a mini-carousel when it has variations: reference hook = slide 1, variations = slides 2..N; render left/right arrows + position dots inside the same box; track `activeVariationIndex` per card. | Card shows arrows + dots; user can scroll through reference + 4 variations within the box. |
+| 23.A6 | `src/App.tsx` | Make Approve / Edit / AI Edit / Batch operate on the CURRENTLY DISPLAYED variation (by `activeVariationIndex`), not always the reference hook. | Approving while viewing variation 3 selects variation 3; Batch adds the displayed variation. |
+| 23.A7 | `src/App.tsx` | Repeat-click behavior: clicking "Generate 4 More Like This" again on a card that already has variations appends to that card's variation group (does not reset to 4), capped at a sane max (e.g. 12 per card) with the credit deduction per click unchanged. | Second click extends the same carousel; cap enforced; credits deducted/refunded per existing `refreshHooks` logic. |
+| 23.A8 | `src/i18n.tsx` | Update `info.generate_more` tooltip to reflect the new behavior ("Generate variations of THIS hook — same angle and style, fresh wording — and scroll through them inside this card"). Add EN + AR strings for arrow/dot aria-labels and "Variation {n} of {total}". | Tooltip + new strings present in both locales; AR is RTL-correct. |
+| 23.A9 | `src/App.tsx` | RTL: in Arabic the carousel arrows and slide order must respect RTL (next = leftward), and the variation strip must not break the existing RTL hook layout. | Arabic carousel scrolls RTL-correctly; no layout break. |
+| 23.A10 | `functions/src/contractFixtures.test.ts` | Add fixtures: (a) `generateSimilarVariations` output all share the reference angle + structure; (b) no variation duplicates an existing hook; (c) repeat-click appends and respects the cap; (d) variations carry `parentHookId`. | All 4 tests pass. |
+
+**Carousel-mode note:** when `adMode === 'carousel'`, "more like this" generates similar *full carousel angle sets* (via `generateCarouselAngles`) rather than single hooks — the variation carousel then scrolls through alternative slide-1 hooks, each backed by its own slide set. Preserve the existing carousel branch; only the presentation (in-card scroll vs bottom-append) and the angle-resolution change.
+
+### Phase 23.B — Fresh hooks every project (anti-sameness)
+
+**Context (corrected against current code):** The angle is already correctly LOCKED to the user's selected `coldHookAngle` — that is working as intended and must stay. The repetition comes from a different layer: (1) within the locked angle, the 4 hooks are varied across a HARDCODED, fixed-order dimension map (Hook A = Financial/Revenue, B = Time/Lifestyle, C = Status/Identity, D = Skill/Confidence) — so every project using a given angle gets the same four sub-flavors in the same order; (2) the blueprints in `hookAnglesKnowledge.ts` are richly-worded SCRIPTS (e.g. `future_based` spells out A=Financial Future, B=Lifestyle, C=Status, D=Timeline-90-days with fixed dimension/constraint/feeling/subheadline) — the model anchors to the template, so the skeleton repeats and only nouns swap; (3) there is NO cross-project memory, so even the existing within-set diversity rule can't stop repetition ACROSS projects; (4) temperature is already high (1.0/1.2) — raising it only degrades copy, it can't touch the fixed dimension map or the amnesia.
+
+**Decisions (locked):** Keep the user's angle lock untouched. Within the locked angle, rotate BOTH the dimensions used AND the entry structure across projects. Convert the `hookAnglesKnowledge.ts` blueprints from fixed-4 SCRIPTS into POOLS of 6–8 dimensions per angle (preserve every word of the existing psychology + Arabic phrasing — only remove the fixed-order lock, draw 4-of-N rotated). Add cross-project anti-repetition memory that BIASES away from recently-used dimension+opening combos; it never hard-bans, so the pool never starves.
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| 23.B1 | `functions/src/knowledge/hookAnglesKnowledge.ts` | Convert each angle's `ANGLE_VARIATION_BLUEPRINTS` entry from a fixed 4-hook script into a POOL of 6–8 named dimensions (keep all existing dimension text, constraints, feelings, and Arabic phrasing verbatim — only restructure so dimensions are a selectable list, not Hook A/B/C/D positions). | Each angle exposes ≥6 dimensions as a pool; no dimension is hardwired to a hook slot; all original psychology text preserved. |
+| 23.B2 | `functions/src/creativeTextDirector.ts` | Add `selectHookDimensions(angleId, recentlyUsed, count=4)`: draw `count` distinct dimensions from the angle's pool (23.B1), down-weight dimensions in `recentlyUsed`, shuffle order, and never return the same ordered set twice in a row for the same angle. A sole remaining best-fit dimension is still selectable (bias, never ban). | Returns N distinct on-angle dimensions; consecutive identical ordered sets do not occur; pool never empties. |
+| 23.B3 | `functions/src/generators.ts` | Remove the hardcoded `Hook A = FINANCIAL, B = TIME, C = STATUS, D = SKILL` dimension assignment from the cold-angle prompt. Replace with the rotated dimensions from 23.B2 (angle stays locked to `coldHookAngle`; only which dimensions fill the 4 hooks changes). | No fixed-order dimension map remains; dimensions come from the selector; angle lock intact. |
+| 23.B4 | `functions/src/generators.ts` | Strengthen the existing ENTRY-STRUCTURE diversity rule so the chosen opening structures (percentage / question / imperative / ratio / conditional / direct-address / time-reference) are ROTATED per project too — not just distinct within one set. Feed the structures used recently (from memory) so the opening moves differ across projects, not only within. | Across two consecutive projects on the same angle, the set of opening structures differs; within a set all 4 still differ. |
+| 23.B5 | `functions/src/creativeMemory.ts` | Extend memory to record, per generation (per user, across ALL projects): the locked angle, the dimensions used, and a normalized fingerprint of each hook's opening structure + first 3–4 content words. | Each generation writes angle + dimensions + opening fingerprints to memory. |
+| 23.B6 | `functions/src/creativeMemory.ts` | Add `getRecentHookUsage(userId, angleId, lookback=N)` returning recently-used dimensions + opening fingerprints for the bias inputs to 23.B2 and 23.B4. | Returns recent usage scoped to the angle; first-time users return empty (no crash, no bias). |
+| 23.B7 | `functions/src/generators.ts` | Inject an ANTI-REPETITION block into the cold-angle prompt built from 23.B6: "Within the {angle} angle, you recently used these dimensions and openings: {list}. Pick different dimensions and a different opening rhythm this time." Absent cleanly when memory is empty. | Block present when recent usage exists for that angle; absent (no error) when not. |
+| 23.B8 | `functions/src/creativeMemory.ts` | After generation completes, write the angle + dimensions + opening fingerprints back to memory (close the loop so the NEXT project sees them). Fire-and-forget; never blocks generation. | Post-generation write occurs; failure logged, never blocks. |
+| 23.B9 | `functions/src/contractFixtures.test.ts` | Add fixtures: (a) blueprints expose ≥6 dimensions per angle as a pool; (b) `selectHookDimensions` never returns the same ordered set twice consecutively for one angle; (c) a recently-used dimension is down-weighted but a sole best-fit dimension is still selectable; (d) the angle stays locked to `coldHookAngle` regardless of dimension rotation; (e) first-time user (empty memory) generates with no bias and no crash; (f) two consecutive same-angle projects differ in dimensions and/or opening structures. | All 6 tests pass. |
+
+**Why not just raise temperature:** temperature randomizes word choice but cannot change the fixed dimension map, cannot loosen the scripted blueprints, and cannot give the model memory across projects. Those three are the actual causes; the existing high temperature is left as-is.
+
+**Note on the angle lock:** the user's selected angle is NOT rotated — it stays locked exactly as the current code enforces. This sub-block only diversifies the dimensions and openings WITHIN that locked angle, plus adds cross-project memory.
 
 ---
 
