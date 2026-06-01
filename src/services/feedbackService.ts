@@ -10,7 +10,7 @@ import {
     query, where, orderBy, limit, updateDoc, Timestamp
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import type { AdInputs, AspectRatio } from '../types';
+import type { AdInputs, AspectRatio, CarouselSlideCopy } from '../types';
 
 // ─── FIRESTORE SAFETY ────────────────────────────────────────────────────────
 // Firestore rejects `undefined` values in documents. This recursively strips
@@ -93,6 +93,11 @@ export interface GenerationRecord {
         blueprintText?: string;
         resolvedImagePrompt?: string;
         imageUrl?: string;
+        // Per-slide carousel renders. Persisted so the reflowImage callable (scope
+        // carousel_slide / carousel_all) and slide-retry can read each slide's buildPlan
+        // (rerender-from-plan) and source URL. imageUrl is a short Storage/http URL or the
+        // 'pending_upload' sentinel — never base64 (would blow Firestore's 1 MiB doc limit).
+        carouselSlides?: Array<{ index: number; imageUrl: string; buildPlan: string; copy?: CarouselSlideCopy }>;
         captionText?: string;
         fullResponse: string;
     };

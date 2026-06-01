@@ -4352,6 +4352,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
     let anchorImage: string | null = null;
     let creditsActuallyUsed = 0;
+    // Local mirror of the slides as they complete. State updates are async, so we cannot
+    // read `carouselSlides` reliably right after the render loop; this array is what we
+    // persist into the generation doc (FIX 1).
+    const renderedSlides: CarouselSlide[] = carouselCopies.map((copy, i) => ({
+      index: i + 1, copy, buildPlan: '', imageUrl: null, status: 'pending' as const,
+    }));
     const cleanField = (s: string) => s.replace(/\|\|\|/g, '').trim();
     // Split a "cta ||| benefit" string into its two parts instead of just deleting the bars
     // (which fused the benefit into the button label). Prefer an explicit benefit field;
@@ -4384,6 +4390,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         undefined, undefined, styleRef, txOverride
       )).image;
       setCarouselSlides(prev => prev.map((s, idx) => idx === i ? { ...s, buildPlan: slideConceptText, imageUrl: mockup, status: mockup ? 'done' : 'error' } : s));
+      renderedSlides[i] = { ...renderedSlides[i], buildPlan: slideConceptText, imageUrl: mockup, status: mockup ? 'done' : 'error' };
       if (mockup) creditsActuallyUsed += perSlideCost;
       return mockup;
     };
@@ -4411,6 +4418,36 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         await Promise.all(parallelPromises);
       }
 
+      // ─── SAVE CAROUSEL GENERATION (FIX 1) ─────────────────────────────────────
+      // Persist a generation doc with the per-slide buildPlan + source URL so slide
+      // retry and the reflowImage callable (carousel_slide / carousel_all) have a
+      // generationId to act on. Non-blocking — must not prevent the phase transition.
+      if (user) {
+        try {
+          const savedGenId = await feedbackService.saveGeneration(
+            user.uid, inputs, 'render',
+            {
+              conceptText: conceptRaw.substring(0, 500),
+              buildPlan: conceptRaw,
+              carouselSlides: renderedSlides.map(s => ({
+                index: s.index,
+                // Base64 data URLs are megabytes each; storing several would blow Firestore's
+                // 1 MiB doc limit and fail the write. Persist only short Storage/http URLs —
+                // otherwise 'pending_upload', and reflow/retry rerenders from the saved buildPlan.
+                imageUrl: (typeof s.imageUrl === 'string' && s.imageUrl.startsWith('http')) ? s.imageUrl : 'pending_upload',
+                buildPlan: s.buildPlan,
+                copy: s.copy,
+              })),
+            },
+            conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, currentAspectRatio, buildCreativeIdentity(),
+            canUseWorkspaces ? activeWorkspaceId : null
+          );
+          setRenderGenerationId(savedGenId);
+        } catch (saveErr) {
+          console.error('Non-blocking: failed to save carousel generation record (retry/reflow will be unavailable):', saveErr);
+        }
+      }
+
       setPhase('render_studio');
       setReflowStep('idle');
     setReflowTarget(null);
@@ -4433,8 +4470,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   // ─── CAROUSEL: Regenerate a single slide ─────────────────────────────
   const handleCarouselSlideRetry = async (slideIndex: number) => {
     if (!inputs || !selectedTov || !carouselConceptRaw) return;
+    // The carousel generation now saves a doc and sets renderGenerationId. If it isn't set
+    // yet, the save is still in flight (or failed) — ask the user to wait rather than showing
+    // the misleading "generate an ad first" error.
     if (!renderGenerationId) {
-      showToast(t('studio.reflow.no_generation_id') || 'Retry requires a saved generation — try generating again first.', 'error');
+      showToast(t('studio.reflow.wait_for_generation') || 'Please wait for generation to complete first.', 'error');
       return;
     }
 
@@ -6607,6 +6647,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         <button key={r.key} type="button"
                           onClick={() => {
                             setSelectedSizes(prev => {
+                              // Carousel renders every slide at a single ratio (currentAspectRatio)
+                              // and ignores extra selected sizes, so multi-select is misleading.
+                              // Force single-select in carousel mode (FIX 2).
+                              if (inputs?.adMode === 'carousel') return new Set([r.key]);
                               const next = new Set(prev);
                               if (next.has(r.key) && next.size > 1) next.delete(r.key);
                               else next.add(r.key);
