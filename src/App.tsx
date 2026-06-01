@@ -2236,6 +2236,10 @@ const App: React.FC = () => {
   const [reflowStep, setReflowStep] = useState<'idle' | 'committing'>('idle');
   const [reflowTarget, setReflowTarget] = useState<AspectRatio | null>(null);
   const [reflowScope, setReflowScope] = useState<'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'>('single');
+  // Ratio of the batch tile currently being viewed — drives the reflow "Current"
+  // badge in batch mode (where displayRatio reflects the single-render history, not
+  // the focused batch tile).
+  const [activeBatchRatio, setActiveBatchRatio] = useState<AspectRatio>(currentAspectRatio);
   const [reflowFallbackNotice, setReflowFallbackNotice] = useState<'outpaint' | 'rerender' | null>(null);
   const [visualPolishes, setVisualPolishes] = useState<VisualPolish[]>([]);
   const [selectedPolishIds, setSelectedPolishIds] = useState<Set<string>>(new Set());
@@ -3944,7 +3948,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               null, null, mockupResult.resolutionTrace
             );
             setRenderGenerationId(savedGenId);
-            console.log(`[reflow] renderGenerationId set after generation: "${savedGenId}" (imageUrl: ${storedImageUrl === 'pending_upload' ? 'pending_upload — reflow will rerender from plan' : 'stored'})`);
             if (loadedFavoriteId && savedGenId) {
               setFavUpdatePrompt({ phase: 'render', newGenId: savedGenId });
             }
@@ -4147,6 +4150,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     for (let ci = 0; ci < combos.length; ci++) {
       const combo = combos[ci];
       let primaryUrl: string | null = null;
+      let comboGenId: string | null = null;
 
       // Primary render — concept text goes directly to image generation
       const primaryIdx = resultIdx;
@@ -4154,30 +4158,56 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       try {
         const genResult = await gemini.generateFinalAd(combo.conceptText, combo.hookText, inputs, resolvedUniverse, primaryRatio, undefined, undefined, undefined, undefined, undefined, combos.length * allSizes.length);
         primaryUrl = genResult.image;
+        const primaryStorageUrl = genResult.storageUrl || null;
         setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, buildPlan: combo.conceptText, url: primaryUrl, status: primaryUrl ? 'done' : 'error' } : r));
+        // Persist a generation doc for this combo so its extra-size reflows have a
+        // generationId to anchor to (the reflowImage callable requires one) and the
+        // correct per-combo buildPlan for any rerender route. Non-blocking.
+        if (user && primaryUrl) {
+          try {
+            comboGenId = await feedbackService.saveGeneration(
+              user.uid, inputs, 'render',
+              { imageUrl: primaryStorageUrl || 'pending_upload', conceptText: combo.conceptText.substring(0, 500), hookText: (combo.hookText || '').substring(0, 200), buildPlan: combo.conceptText },
+              combo.conceptText, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
+              canUseWorkspaces ? activeWorkspaceId : null
+            );
+          } catch (saveErr) {
+            console.error(`Batch combo ${ci + 1} generation save failed (reflows skipped):`, saveErr);
+          }
+        }
       } catch (e) {
         console.error(`Batch render primary ${ci + 1} failed:`, e);
         setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, status: 'error' } : r));
       }
       resultIdx++;
 
-      // Reflow to extra sizes
+      // Reflow to extra sizes via the reflowImage callable, passing the just-rendered
+      // primary base64 directly (sourceImageOverride) so reflow never depends on the
+      // server Storage upload state.
       for (let si = 0; si < extraRatios.length; si++) {
         const extraRatio = extraRatios[si];
         const reflowIdx = resultIdx;
         setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'rendering' } : r));
 
-        if (primaryUrl) {
+        if (primaryUrl && comboGenId) {
           try {
-            await new Promise(r => setTimeout(r, 500));
-            console.warn(`Skipping batch reflow to ${extraRatio} — reflowImage callable required`);
-            setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'error' } : r));
+            const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+            const reflowRes = await reflowFn({
+              generationId: comboGenId,
+              targetAspectRatio: extraRatio as AspectRatio,
+              method: 'auto',
+              scope: 'single',
+              sourceImageOverride: primaryUrl,
+            });
+            const oc = reflowRes.data?.outcomes?.[0];
+            const reflowedUrl = reflowRes.data?.success && oc?.outputUrl ? oc.outputUrl : null;
+            setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, buildPlan: combo.conceptText, url: reflowedUrl, status: reflowedUrl ? 'done' as const : 'error' as const } : r));
           } catch (e) {
             console.error(`Batch reflow ${ci + 1} to ${extraRatio} failed:`, e);
             setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'error' } : r));
           }
         } else {
-          // Primary failed, mark reflow as error too
+          // Primary failed or no generation id available — mark reflow as error too.
           setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'error' } : r));
         }
         resultIdx++;
@@ -4196,16 +4226,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
    * localRefinement — optional per-image instruction applied to this image only
    */
   const handleBatchRetry = async (index: number, retryMode: 'rerender' | 'reflow' = 'rerender', localRefinement?: string) => {
-    // NOTE: extraRatios/combos/allSizes from the original request are locals of
-    // handleBatchGenerate and are NOT in scope here — logging this handler's actual
-    // in-scope state (which is what matters for diagnosing a crash inside it).
-    console.log('[handleBatchRetry] START', {
-      index,
-      retryMode,
-      batchResults: (batchResults ?? []).length,
-      renderGenerationId,
-      reflowTarget,
-    });
     if (!inputs || !selectedTov) return;
     const totalNeeded = CREDIT_COSTS.generateImage;
     if (userCredits < totalNeeded) {
@@ -4375,9 +4395,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   };
   // ─── CAROUSEL: Regenerate a single slide ─────────────────────────────
   const handleCarouselSlideRetry = async (slideIndex: number) => {
-    console.log('[handleCarouselSlideRetry] START', {
-      carouselCopies: (carouselCopies ?? []).length,
-    });
     if (!inputs || !selectedTov || !carouselConceptRaw) return;
     if (!renderGenerationId) {
       showToast(t('studio.reflow.no_generation_id') || 'Retry requires a saved generation — try generating again first.', 'error');
@@ -4702,15 +4719,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   };
 
   const handleRescale = async (newRatio: AspectRatio, scopeOverride?: { scope: 'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'; slideIndex?: number }) => {
-    console.log('[handleRescale] START', {
-      newRatio,
-      scopeOverride,
-      renderGenerationId,
-      safeBatch: (batchResults ?? []).length,
-      safeCarousel: (carouselSlides ?? []).length,
-      currentMode: inputs?.adMode,
-      reflowTarget,
-    });
     if (!inputs || !selectedTov) return;
 
     // ─── EARLY-EXIT GUARDS (crash hardening) ─────────────────────────────────
@@ -4757,7 +4765,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           method: 'auto',
           scope: 'batch_all',
         });
-        console.log('[handleRescale] callable result (batch_all):', JSON.stringify(result?.data));
         if (typeof result.data.totalCreditsCharged === 'number') {
           const delta = totalCost - result.data.totalCreditsCharged;
           if (delta !== 0) setUserCredits(prev => prev + delta);
@@ -4804,7 +4811,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           // Displayed slide image, passed directly (see single-scope note).
           sourceImageOverride: currentRawBase64 || undefined,
         });
-        console.log('[handleRescale] callable result (carousel_slide):', JSON.stringify(result?.data));
         if (typeof result.data.totalCreditsCharged === 'number') {
           const delta = cost - result.data.totalCreditsCharged;
           if (delta !== 0) setUserCredits(prev => prev + delta);
@@ -4863,7 +4869,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             method: 'auto',
             scope: 'carousel_all',
           });
-          console.log('[handleRescale] callable result (carousel_all):', JSON.stringify(result?.data));
           // Reconcile: replace the optimistic estimate with the actual charge reported
           // by the backend (covers fallback-routed items charging at outpaint vs rerender,
           // partial failures that aren't billed, no-op short-circuits, etc.).
@@ -4908,7 +4913,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 scope: 'carousel_slide',
                 slideIndex: slideIdx,
               });
-              console.log('[handleRescale] callable result (carousel_all fallback loop):', JSON.stringify(reflowRes?.data));
               const res = reflowRes.data.success && reflowRes.data.outcomes?.[0]?.outputUrl;
               setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: res || null, status: res ? 'done' : 'error' } : s));
             } catch {
@@ -4962,7 +4966,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           // or the Storage URL for prior reflow outputs.
           sourceImageOverride: currentRawBase64 || undefined,
         });
-        console.log('[handleRescale] callable result (single):', JSON.stringify(result?.data));
         // Guard the whole payload: a transport/normalization failure can yield an
         // empty data object, and a malformed/error response can omit `outcomes`.
         if (!result.data) {
@@ -6885,6 +6888,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                           setBuildPlan(item.buildPlan);
                                           setSelectedConcept(item.conceptText);
                                           setCurrentAspectRatio(item.ratio as AspectRatio);
+                                          setActiveBatchRatio(item.ratio as AspectRatio);
                                           setStudioTweak('');
                                           setSelectedPolishIds(new Set());
                                           setEditTarget({
@@ -6899,7 +6903,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                           <i className="fa-solid fa-pen-to-square text-[8px]"></i>
                                         </button>
                                         {/* Save */}
-                                        <button onClick={() => { pushMockup(item.url!, item.ratio as AspectRatio); setBuildPlan(item.buildPlan); setSelectedConcept(item.conceptText); }}
+                                        <button onClick={() => { pushMockup(item.url!, item.ratio as AspectRatio); setBuildPlan(item.buildPlan); setSelectedConcept(item.conceptText); setActiveBatchRatio(item.ratio as AspectRatio); }}
                                           className="px-2 py-1 bg-emerald-600 text-white rounded text-[7px] font-bold flex items-center gap-0.5" title="Use this design">
                                           <i className="fa-solid fa-bookmark text-[8px]"></i>
                                         </button>
@@ -7625,6 +7629,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     : 1;
                   const totalCost = CREDIT_COSTS.reflowImage * scopeItemCount;
                   const committing = reflowStep === 'committing';
+                  // In batch mode the displayed image is a batch tile, so the "Current"
+                  // badge tracks the focused tile's ratio (activeBatchRatio), not the
+                  // single-render displayRatio.
+                  const currentRatioForBadge = isBatchScope ? activeBatchRatio : displayRatio;
                   return (
                   <div className="bg-slate-900/50 rounded-2xl border border-slate-800/40 p-4 space-y-3">
                     <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center"><i className="fa-solid fa-left-right mr-2 text-blue-500"></i>{t('studio.reflow')}</h4>
@@ -7632,7 +7640,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     {/* 3 buttons in a single equal-width row — always rendered */}
                     <div className="flex gap-2">
                       {UI_RATIOS.map(value => {
-                        const isCurrent = value === displayRatio;
+                        const isCurrent = value === currentRatioForBadge;
                         const isSelected = !isCurrent && reflowTarget === value;
                         const isCommittingThis = committing && reflowTarget === value;
                         return (
@@ -7668,7 +7676,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                     {/* Scope toggles + Generate button — shown directly below the row when
                         a non-current ratio is selected. No picker state transition. */}
-                    {reflowTarget && reflowTarget !== displayRatio && (
+                    {reflowTarget && reflowTarget !== currentRatioForBadge && (
                       <div className="space-y-2">
                         {isBatchScope && (
                           <div className="flex gap-2">
