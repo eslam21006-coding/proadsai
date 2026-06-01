@@ -58,6 +58,16 @@ export interface CostEstimate {
     estimatedTokens: number;
 }
 
+// Write-side carousel slide shape persisted on a generation doc. Intentionally narrower
+// than the UI's `CarouselSlide` (types.ts): imageUrl is a non-null Storage/http URL or the
+// 'pending_upload' sentinel (never base64), and there is no transient `status`.
+export interface PersistedCarouselSlide {
+    index: number;
+    imageUrl: string;
+    buildPlan: string;
+    copy?: CarouselSlideCopy;
+}
+
 export interface GenerationRecord {
     id?: string;
     userId: string;
@@ -97,7 +107,7 @@ export interface GenerationRecord {
         // carousel_slide / carousel_all) and slide-retry can read each slide's buildPlan
         // (rerender-from-plan) and source URL. imageUrl is a short Storage/http URL or the
         // 'pending_upload' sentinel — never base64 (would blow Firestore's 1 MiB doc limit).
-        carouselSlides?: Array<{ index: number; imageUrl: string; buildPlan: string; copy?: CarouselSlideCopy }>;
+        carouselSlides?: PersistedCarouselSlide[];
         captionText?: string;
         fullResponse: string;
     };
