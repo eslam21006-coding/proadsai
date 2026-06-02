@@ -47,6 +47,12 @@ const detectStrippedAssets = (
   [...(inputsObj?.personalPhotos || []), ...(inputsObj?.brandLogos || [])]
     .some((asset) => asset === 'stored_externally');
 
+// Only a base64 data URL or an http(s) URL can actually render in an <img>. Sentinels like
+// "pending_upload"/"stored_externally" (or empty/undefined) must be treated as NOT renderable
+// so the UI shows a failed state instead of a broken image.
+const isRenderableImageUrl = (url?: string | null): boolean =>
+  typeof url === 'string' && (url.startsWith('data:') || url.startsWith('http'));
+
 const InputForm = React.lazy(() => import('./components/InputForm'));
 const PerformanceDashboard = React.lazy(() => import('./components/PerformanceDashboard'));
 const PricingTableLazy = React.lazy(() => import('./components/PricingTable'));
@@ -4569,14 +4575,22 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
 
       const oc = result.data?.outcomes?.[0];
-      const imageUrl = result.data?.success && oc?.outputUrl;
-      if (imageUrl) {
+      console.log('[retry] outcome:', JSON.stringify(oc));
+      const outputUrl = (result.data?.success && oc?.outputUrl) || null;
+      // A same-ratio retry hits the backend no-op short-circuit, which echoes the slide's
+      // STORED source — which for a carousel is the 'pending_upload' sentinel (base64 is never
+      // persisted). That is NOT a renderable image, so guard against it: only accept a real
+      // data:/http(s) URL. Otherwise surface the failure and revert the slide to error.
+      if (isRenderableImageUrl(outputUrl)) {
         success = true;
         if (oc?.fallbackFrom) {
           setReflowFallbackNotice(oc.fallbackFrom);
         }
+        setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, imageUrl: outputUrl, status: 'done' as const } : s));
+      } else {
+        showToast('Resize failed — storage unavailable. Try again.', 'error');
+        setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, status: 'error' as const } : s));
       }
-      setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, imageUrl: imageUrl || null, status: imageUrl ? 'done' : 'error' } : s));
     } catch (e: any) {
       handleApiError(e);
       setUserCredits(startingCredits);
@@ -7300,11 +7314,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       {carouselSlides.map((slide, idx) => (
                         <div key={idx} className="shrink-0" style={{ width: currentAspectRatio === '9:16' ? '120px' : '160px' }}>
                           <div onClick={() => setLightboxIndex(idx)} className={`relative rounded-xl overflow-hidden border bg-slate-900 group cursor-pointer ${currentAspectRatio === '9:16' ? 'aspect-[9/16]' : currentAspectRatio === '4:3' ? 'aspect-[4/3]' : 'aspect-square'} ${slide.status === 'done' ? 'border-emerald-500/30' : 'border-slate-800/60'}`}>
-                            {slide.status === 'done' && slide.imageUrl ? (
+                            {slide.status === 'done' && slide.imageUrl && isRenderableImageUrl(slide.imageUrl) ? (
                               <><img src={slide.imageUrl} className="w-full h-full object-cover cursor-grab active:cursor-grabbing" draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/uri-list', slide.imageUrl!); e.dataTransfer.setData('text/plain', slide.imageUrl!); e.dataTransfer.setData('text/html', `<img src="${slide.imageUrl}" />`); }} /><div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100 pointer-events-none"><div className="flex gap-1 pointer-events-auto" onClick={(e) => e.stopPropagation()}><button onClick={() => { pushMockup(slide.imageUrl!, currentAspectRatio); setBuildPlan(slide.buildPlan); setStudioTweak(''); setEditTarget({ source: 'carousel', index: idx, imageUrl: slide.imageUrl!, label: `Slide ${slide.index}` }); showToast(`Editing Slide ${slide.index} — changes will update this slide`, 'info'); }} className="px-2 py-1 bg-violet-600 text-white rounded text-[7px] font-bold" title="Edit this slide"><i className="fa-solid fa-pen-to-square"></i></button><button onClick={() => { applyTrialWatermark(slide.imageUrl!).then(url => { const a = document.createElement('a'); a.href = url; a.download = `slide_${slide.index}.png`; a.click(); }); }} className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold"><i className="fa-solid fa-download"></i></button><button onClick={() => handleCarouselSlideRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[7px] font-bold"><i className="fa-solid fa-rotate-right"></i></button>{metaConnection?.connected && (<button onClick={async () => { setMetaPushing(true); showToast('Pushing slide to Meta...', 'info'); try { const result = await metaService.pushCreative(slide.imageUrl!, `${inputs?.productName || 'Ad'}_carousel_slide_${slide.index}`, buildDeploymentMeta({ mode: 'carousel', ratio: currentAspectRatio })); if (result.success) showToast(result.message || 'Slide pushed!', 'success'); else showToast(result.message || 'Push failed', 'error'); } catch { showToast('Push to Meta failed', 'error'); } setMetaPushing(false); }} className="px-2 py-1 bg-blue-500/90 text-white rounded text-[7px] font-bold"><i className="fa-brands fa-meta"></i></button>)}<button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(slide.imageUrl!, currentAspectRatio, '', '', slide.buildPlan); }} className="px-2 py-1 bg-amber-500/90 text-white rounded text-[7px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button></div></div></>
                             ) : slide.status === 'rendering' ? (
                               <div className="w-full h-full flex flex-col items-center justify-center gap-1"><div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"></div><span className="text-[7px] text-blue-400 font-bold">Slide {slide.index}</span></div>
-                            ) : slide.status === 'error' ? (
+                            ) : (slide.status === 'error' || (slide.status === 'done' && !isRenderableImageUrl(slide.imageUrl))) ? (
                               <div className="w-full h-full flex flex-col items-center justify-center gap-1"><i className="fa-solid fa-triangle-exclamation text-red-400 text-xs"></i><button onClick={(e) => { e.stopPropagation(); handleCarouselSlideRetry(idx); }} className="px-2 py-0.5 bg-blue-600 text-white rounded text-[7px] font-bold">Retry</button></div>
                             ) : (
                               <div className="w-full h-full flex items-center justify-center"><span className="text-[8px] text-slate-700 font-bold">{slide.index}</span></div>
@@ -8418,7 +8432,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
             )}
             {/* Image (or failed-slide placeholder) */}
             <div onClick={(e) => e.stopPropagation()} className="flex items-center justify-center">
-              {slide.status === 'done' && slide.imageUrl ? (
+              {slide.status === 'done' && slide.imageUrl && isRenderableImageUrl(slide.imageUrl) ? (
                 <img src={slide.imageUrl} alt={`Slide ${slide.index}`} className="object-contain rounded-lg shadow-2xl" style={{ maxHeight: '90vh', maxWidth: '90vw' }} />
               ) : (
                 <div className="flex flex-col items-center justify-center gap-3 bg-slate-900 border border-slate-700 rounded-2xl px-20 py-28">
