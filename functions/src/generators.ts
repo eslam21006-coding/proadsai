@@ -210,6 +210,19 @@ function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverr
         if (lines.length > 2) ctaBlock = lines[lines.length - 1];
     }
 
+    // Defense-in-depth: this single-ad parser uses SUBHEADLINE→CTA_BUTTON and CTA_BUTTON→HOOK_END
+    // boundaries, which a CAROUSEL-angle TOV (STORY_ARC: between subhead and CTA; ANGLE_END_X /
+    // ANGLE_START_X markers) does not respect — so internal markers could be swallowed into the
+    // copy and rendered on the image. Strip them here so a carousel angle reaching this path can
+    // never leak markers, regardless of how it arrived.
+    subheadText = subheadText.split('STORY_ARC:')[0].trim();
+    ctaBlock = ctaBlock.split(/ANGLE_END|HOOK_END/)[0].trim();
+    const stripMarkerLines = (s: string): string =>
+        s.split('\n').filter((l) => !/^\s*(STORY_ARC:|ANGLE_END|HOOK_END|ANGLE_START)/i.test(l)).join('\n').trim();
+    hookText = stripMarkerLines(hookText);
+    subheadText = stripMarkerLines(subheadText);
+    ctaBlock = stripMarkerLines(ctaBlock);
+
     let ctaName = inputs.cta;
     let benefitText = "";
     const ctaBlockText = ctaBlock.trim();
@@ -4412,15 +4425,15 @@ ${SCREEN_CONTENT_BAN_BLOCK}
 ${_logoBlock}
 ${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}
 BLUEPRINT: ${strippedBlueprint}
-TEXTS: "${hookText}", "${subheadText}"
+TEXTS: ${hookText ? `"${hookText}"` : ''}${subheadText ? `, "${subheadText}"` : ''}
 BUTTON: "${ctaName}"
 ${carouselAnchorNote}
 ${retargetingDesignHint}
 
 ⚠️ CRITICAL TEXT RENDERING RULES:
 1. ONLY render these EXACT text strings on the image — NOTHING ELSE:
-   - Headline: "${hookText}"
-   - Subheadline: "${subheadText}"
+   ${hookText ? `- Headline: "${hookText}"` : ''}
+   ${subheadText ? `- Subheadline: "${subheadText}"` : ''}
    ${ctaName ? `- Button: "${ctaName}"` : ''}
    ${benefitText ? `- Benefit: "${benefitText}"` : ''}
    ${badges ? `- Badge: "${badges}"` : ''}

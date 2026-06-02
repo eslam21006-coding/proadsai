@@ -6529,8 +6529,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                                 {/* Action buttons */}
                                 <div className="flex items-center gap-1 shrink-0">
-                                  {/* Render this one */}
-                                  {!group.isBatch && singleSelectedConcepts.size <= 1 && (
+                                  {/* Render this one — single-ad path; hidden in carousel mode
+                                       where the dedicated "Design N Slides" button (handleCarouselRender)
+                                       is the only correct entry point. */}
+                                  {!group.isBatch && singleSelectedConcepts.size <= 1 && inputs?.adMode !== 'carousel' && (
                                     <button
                                       onClick={() => {
                                         const conceptBlock = getConceptBlock(group.conceptsSource, n);
@@ -7662,7 +7664,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 {/* Actions */}
                 <div className="bg-slate-900/50 rounded-2xl border border-slate-800/40 p-4 space-y-2">
 
-                  <button disabled={!selectedConcept} onClick={() => selectedConcept && handleApproveConcept(selectedConcept)}
+                  <button disabled={!selectedConcept} onClick={() => selectedConcept && (inputs?.adMode === 'carousel' ? handleCarouselRender(selectedConcept) : handleApproveConcept(selectedConcept))}
                     className="w-full py-2.5 rounded-xl bg-slate-800/70 border border-slate-700/60 text-slate-300 text-[9px] font-bold uppercase tracking-wider hover:bg-slate-700 hover:text-white transition-all flex items-center justify-center gap-2 disabled:opacity-30">
                     <i className="fa-solid fa-arrows-rotate text-[8px]"></i> Reset & Regenerate
                   </button>
