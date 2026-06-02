@@ -4546,7 +4546,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       return;
     }
 
-    const totalNeeded = CREDIT_COSTS.reflowImage;
+    const slideCount = carouselCopies.length;
+    const copy = carouselCopies[slideIndex];
+    if (!copy) return;
+
+    // Same cost as the original per-slide generation (NOT the reflow cost).
+    const totalNeeded = CREDIT_COSTS.generateImage;
     if (userCredits < totalNeeded) {
       setUpgradeReason(`Retrying 1 slide needs ${totalNeeded} credits.`);
       setShowUpgradeModal(true);
@@ -4557,44 +4562,54 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     setUserCredits(startingCredits - totalNeeded);
     setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, status: 'rendering' } : s));
 
-    let success = false;
+    // Reconstruct the SAME inputs buildSlide uses for this slide, then render directly via
+    // generateFinalAd (NOT reflowImage — a same-ratio reflow no-ops and echoes the stored
+    // 'pending_upload' sentinel). This genuinely regenerates the failed slide.
+    const cleanField = (s: string) => s.replace(/\|\|\|/g, '').trim();
+    const splitCtaField = (raw: string): { ctaName: string; benefitText: string } => {
+      if (!raw.includes('|||')) return { ctaName: raw.trim(), benefitText: '' };
+      const [c, b] = raw.split('|||');
+      return { ctaName: c.trim(), benefitText: b?.trim() || '' };
+    };
+    const isLastSlide = slideIndex === slideCount - 1;
+    const ctaSplit = splitCtaField(copy.ctaText || inputs.cta || '');
+    const txOverride: TextOverride = {
+      hookText: cleanField(copy.hookText),
+      subheadText: cleanField(copy.subheadText || ''),
+      ctaName: isLastSlide ? ctaSplit.ctaName : '',
+      benefitText: isLastSlide ? (cleanField(copy.benefitText || '') || ctaSplit.benefitText) : '',
+    };
+    const slideInstruction = slideIndex === 0
+      ? `This is SLIDE 1 (the HOOK slide) of a ${slideCount}-slide carousel. Hero pose: CONFIDENT STANCE — arms relaxed, looking at camera or slightly off-camera. NO pointing.`
+      : slideIndex === slideCount - 1
+        ? `This is SLIDE ${slideIndex + 1} (FINAL SLIDE) of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: INVITING GESTURE — open palm toward camera, welcoming. This slide HAS a CTA button. Show logo ONLY on this final slide.`
+        : `This is SLIDE ${slideIndex + 1} of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: ${['THOUGHTFUL — hand on chin, looking contemplative', 'ACTIVE — leaning forward slightly, engaged expression', 'CONVERSATIONAL — relaxed, one hand gesturing naturally to the side', 'PROFESSIONAL — arms crossed confidently, slight smile', 'DYNAMIC — walking pose, captured mid-stride'][slideIndex % 5]}. NO pointing finger. NO CTA button on this slide. NO logo on this slide. NO promo badge on this slide.`;
+    const slideConceptText = carouselConceptRaw + `\n\n[CAROUSEL SLIDE ${slideIndex + 1}/${slideCount}]: ${slideInstruction}`;
+    // For non-first slides, anchor to slide 1's rendered image (same style reference buildSlide passes).
+    const anchorSlide = carouselSlides[0];
+    const styleRef = (slideIndex !== 0 && anchorSlide?.status === 'done' && isRenderableImageUrl(anchorSlide.imageUrl))
+      ? anchorSlide.imageUrl ?? undefined
+      : undefined;
 
     try {
-      const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
-      const result = await reflowFn({
-        generationId: renderGenerationId,
-        targetAspectRatio: currentAspectRatio,
-        method: 'auto',
-        scope: 'carousel_slide',
-        slideIndex,
-      });
-
-      if (typeof result.data.totalCreditsCharged === 'number') {
-        const delta = totalNeeded - result.data.totalCreditsCharged;
-        if (delta !== 0) setUserCredits(prev => prev + delta);
-      }
-
-      const oc = result.data?.outcomes?.[0];
-      console.log('[retry] outcome:', JSON.stringify(oc));
-      const outputUrl = (result.data?.success && oc?.outputUrl) || null;
-      // A same-ratio retry hits the backend no-op short-circuit, which echoes the slide's
-      // STORED source — which for a carousel is the 'pending_upload' sentinel (base64 is never
-      // persisted). That is NOT a renderable image, so guard against it: only accept a real
-      // data:/http(s) URL. Otherwise surface the failure and revert the slide to error.
-      if (isRenderableImageUrl(outputUrl)) {
-        success = true;
-        if (oc?.fallbackFrom) {
-          setReflowFallbackNotice(oc.fallbackFrom);
-        }
-        setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, imageUrl: outputUrl, status: 'done' as const } : s));
+      const slideResult = await gemini.generateFinalAd(
+        slideConceptText, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
+        undefined, undefined, styleRef, txOverride
+      );
+      const mockup: string | null = slideResult.image;
+      if (mockup) {
+        setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, buildPlan: slideConceptText, imageUrl: mockup, status: 'done' as const } : s));
+        showToast(`Slide ${slideIndex + 1} regenerated!`, 'success');
       } else {
-        showToast('Resize failed — storage unavailable. Try again.', 'error');
+        console.warn('[carousel retry] slide', slideIndex + 1, 'failed:', (slideResult as any)?.errorCode, (slideResult as any)?.errorMessage);
+        setUserCredits(startingCredits); // refund — no image produced
         setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, status: 'error' as const } : s));
+        showToast(`Slide ${slideIndex + 1} retry failed. Credits refunded.`, 'error');
       }
     } catch (e: any) {
+      setUserCredits(startingCredits); // refund on error
       handleApiError(e);
-      setUserCredits(startingCredits);
-      setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, status: 'error' } : s));
+      setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, status: 'error' as const } : s));
     }
   };
 
