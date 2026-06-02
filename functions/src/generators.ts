@@ -4335,6 +4335,10 @@ export interface BuildFinalImagePromptInput {
     // (the reflow path strips scene/style/reference/concept from the blueprint), so it must
     // ride a dedicated prompt section here rather than be prepended to `blueprint`.
     reflowInstruction?: string;
+    // Optional per-slide visual directive (carousel only). Forces the model to derive THIS
+    // slide's scene from THIS slide's own copy so every slide is visually distinct. Injected
+    // at the very top of the prompt (highest priority).
+    slideVisualDirective?: string;
 }
 
 export interface BuildFinalImagePromptResult {
@@ -4362,6 +4366,7 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
         retargetingDesignHint,
         imageParts,
         reflowInstruction,
+        slideVisualDirective,
     } = params;
 
     // Brand-color injection happens upstream via the per-prompt blocks built
@@ -4398,7 +4403,11 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
         ? `${reflowInstruction.replace(/[[\]{}]/g, '').replace(/[ \t]+/g, ' ').trim()}\n\n`
         : '';
 
-    const textPrompt = `${_reflowBlock}${_ccBlock}${coreDesignRules}
+    // Per-slide visual directive rides the very top of the prompt (above everything else) so
+    // it dominates the render intent — each carousel slide derives its scene from its own copy.
+    const _slideDirectiveBlock = slideVisualDirective ? `${slideVisualDirective.trim()}\n\n` : '';
+
+    const textPrompt = `${_slideDirectiveBlock}${_reflowBlock}${_ccBlock}${coreDesignRules}
 ${SCREEN_CONTENT_BAN_BLOCK}
 ${_logoBlock}
 ${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}
@@ -5773,6 +5782,27 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
             .replace(/\b(branding|logic|brand|scene|description|style|reference|concept|prompt|direction)\b/gi, '')
             .trim();
 
+        // Per-slide unique visual (carousel only): force the model to derive THIS slide's
+        // scene from THIS slide's own copy (headline + subheadline) rather than reusing the
+        // hook scene, so every slide is visually distinct. Generic — no hardcoded scene
+        // assumptions; the model reads the copy and decides the subject.
+        const _slideVisualDirective = inputs.adMode === 'carousel'
+            ? `
+SLIDE VISUAL DIRECTIVE:
+This slide's copy is: "${hookText}${subheadText ? '. ' + subheadText : ''}"
+
+Read the copy above and ask: what is the CORE SUBJECT of this slide?
+Build the visual scene entirely around that subject.
+
+Rules:
+1. The visual MUST illustrate the core subject of THIS slide's copy — not the hook, not other slides, not the overall offer.
+2. Every slide in this carousel must look visually distinct from every other slide. Different environment, different objects, different mood.
+3. If the copy references a concrete object, place, situation, or moment — make it the dominant visual element.
+4. If the copy is abstract — find the most concrete visual metaphor that represents its meaning and use that.
+5. The hero/person presence scales to relevance: prominent when the copy is personal or about the person, reduced or absent when the copy is about an external concept or comparison.
+`
+            : undefined;
+
         const _promptResult = buildFinalImagePrompt({
             technicalPrompt: '',
             blueprint: cleanBuildPlan,
@@ -5791,6 +5821,7 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
             retargetingDesignHint: '',
             imageParts: [],
             reflowInstruction,
+            slideVisualDirective: _slideVisualDirective,
         });
 
         parts.push({ text: _promptResult.textPrompt });
