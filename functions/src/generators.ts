@@ -5745,19 +5745,7 @@ ${coreDesignRules}
         // and ARABIC_WARDROBE_BLOCK are injected into coreDesignRules and costumeRules above,
         // every slide and every batch item receives the compliance guardrails when isArabic is true.
         const carouselAnchorNote = styleReference ? `
-═══════════════════════════════════════════════════════════════════════════════
-CAROUSEL STYLE ANCHORING (CRITICAL)
-═══════════════════════════════════════════════════════════════════════════════
-A REFERENCE IMAGE from Slide 1 is attached. You MUST match its visual style EXACTLY:
-- SAME color grading and color palette
-- SAME lighting direction, intensity, and temperature
-- SAME typography style, font weight, and text layout grid
-- SAME environment style and mood
-- SAME level of detail and rendering quality
-- The Hero should wear the SAME outfit as in the reference
-- Progress the NARRATIVE (different pose/action) but keep the WORLD identical
-DO NOT deviate from the reference style. This slide must feel like part of the SAME carousel.
-═══════════════════════════════════════════════════════════════════════════════
+CAROUSEL STYLE ANCHORING: Maintain consistent visual STYLE across all slides — same brand color palette, same typography weight and treatment, same lighting quality, same art direction. Environment and scene may change per slide when the copy demands it. Style stays unified; scene follows the copy.
 ` : '';
 
         const _isBatchCall = inputs.adMode !== 'carousel' && inputs.adMode !== 'single' && !!_multiAssetView.batchN;
@@ -5782,24 +5770,25 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
             .replace(/\b(branding|logic|brand|scene|description|style|reference|concept|prompt|direction)\b/gi, '')
             .trim();
 
-        // Per-slide unique visual (carousel only): force the model to derive THIS slide's
-        // scene from THIS slide's own copy (headline + subheadline) rather than reusing the
-        // hook scene, so every slide is visually distinct. Generic — no hardcoded scene
-        // assumptions; the model reads the copy and decides the subject.
+        // Per-slide visual (carousel only): the model reads THIS slide's own copy and decides
+        // whether the scene should stay in the shared environment (varying only composition) or
+        // change to match content that demands a different environment. Generic — no hardcoded
+        // scene assumptions; the goal is that the visual makes the copy feel SEEN.
         const _slideVisualDirective = inputs.adMode === 'carousel'
             ? `
 SLIDE VISUAL DIRECTIVE:
 This slide's copy is: "${hookText}${subheadText ? '. ' + subheadText : ''}"
 
-Read the copy above and ask: what is the CORE SUBJECT of this slide?
-Build the visual scene entirely around that subject.
+Read this slide's copy and decide:
+- If this slide's content naturally fits within the same environment as other slides → keep the same environment, vary only the composition, pose, and focal elements.
+- If this slide's content references a specific object, place, situation, or concept that requires a different environment to make visual sense → change the environment to match this slide's content specifically.
 
-Rules:
-1. The visual MUST illustrate the core subject of THIS slide's copy — not the hook, not other slides, not the overall offer.
-2. Every slide in this carousel must look visually distinct from every other slide. Different environment, different objects, different mood.
-3. If the copy references a concrete object, place, situation, or moment — make it the dominant visual element.
-4. If the copy is abstract — find the most concrete visual metaphor that represents its meaning and use that.
-5. The hero/person presence scales to relevance: prominent when the copy is personal or about the person, reduced or absent when the copy is about an external concept or comparison.
+The core rule: the visual must make the copy feel SEEN.
+A viewer should look at the image and immediately understand what this slide is about without reading the text.
+If the copy is about a cinema ticket, the visual should feel like cinema.
+If the copy is about a book, the visual should feel like a book.
+If the copy is about the speaker's authority, the speaker's environment works.
+Use your judgment — consistency where it serves the story, change where the copy demands it.
 `
             : undefined;
 
