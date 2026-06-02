@@ -5837,6 +5837,16 @@ Use your judgment — consistency where it serves the story, change where the co
         // If style reference provided (carousel slides 2+), inject it BEFORE personal photos
         if (styleReference) {
             parts.push({ inlineData: { mimeType: "image/png", data: styleReference.split(',')[1] } });
+            // Scope the reference strictly to aesthetics + hero identity. Without this, the model
+            // treats the attached slide-1 image as a SCENE template and reproduces its environment,
+            // overriding the per-slide SLIDE VISUAL DIRECTIVE. This frees the scene to follow copy.
+            parts.push({
+                text: `REFERENCE IMAGE USAGE (CAROUSEL STYLE ANCHOR):
+Use the attached reference image for STYLE, COLOR PALETTE, TYPOGRAPHY TREATMENT, LIGHTING QUALITY, and HERO FACE/WARDROBE ONLY.
+Do NOT copy the environment, background, or scene from the reference.
+The scene for THIS slide must be derived from THIS slide's copy (as specified in the SLIDE VISUAL DIRECTIVE above).
+The reference image is a style guide — not a scene template.`,
+            });
             // Skip personal photos for carousel slides 2+ — the style reference (slide 1) already
             // contains the rendered face. Sending photos again wastes input tokens (~$0.006/slide).
             // Only send brand logo if available.

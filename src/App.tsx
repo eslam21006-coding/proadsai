@@ -4683,8 +4683,29 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     // which may point to a different size than what the user is actually looking at.
     const editRatio = displayRatio as AspectRatio;
     startLoad(editTarget ? `Editing ${editTarget.label}...` : "Applying Refinement...");
+    // FIX 1: when editing a carousel slide, render with the user's EDITED copy from
+    // carouselCopies — not the original AI copy that resolveOwnedRenderText would re-parse
+    // from selectedTov. Build the same txOverride buildSlide / handleCarouselSlideRetry use.
+    let carouselTextOverride: TextOverride | undefined;
+    if (editTarget?.source === 'carousel' && carouselCopies[editTarget.index]) {
+      const copy = carouselCopies[editTarget.index];
+      const cleanField = (s: string) => s.replace(/\|\|\|/g, '').trim();
+      const splitCtaField = (raw: string): { ctaName: string; benefitText: string } => {
+        if (!raw.includes('|||')) return { ctaName: raw.trim(), benefitText: '' };
+        const [c, b] = raw.split('|||');
+        return { ctaName: c.trim(), benefitText: b?.trim() || '' };
+      };
+      const isLastSlide = editTarget.index === carouselCopies.length - 1;
+      const ctaSplit = splitCtaField(copy.ctaText || inputs.cta || '');
+      carouselTextOverride = {
+        hookText: cleanField(copy.hookText),
+        subheadText: cleanField(copy.subheadText || ''),
+        ctaName: isLastSlide ? ctaSplit.ctaName : '',
+        benefitText: isLastSlide ? (cleanField(copy.benefitText || '') || ctaSplit.benefitText) : '',
+      };
+    }
     try {
-      const editResult = await gemini.generateFinalAd(buildPlan, selectedTov, inputs, resolvedUniverse, editRatio, combinedInstructions, (currentRawBase64 || currentMockup) || undefined);
+      const editResult = await gemini.generateFinalAd(buildPlan, selectedTov, inputs, resolvedUniverse, editRatio, combinedInstructions, (currentRawBase64 || currentMockup) || undefined, undefined, carouselTextOverride);
       const res = editResult.image;
 
       // ═══ WRITE-BACK: Route result to correct source ═══
