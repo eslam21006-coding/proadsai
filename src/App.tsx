@@ -2229,6 +2229,25 @@ const App: React.FC = () => {
   const [carouselSlides, setCarouselSlides] = useState<CarouselSlide[]>([]);
   const [carouselCopies, setCarouselCopies] = useState<CarouselSlideCopy[]>([]);
   const [showCarouselPreview, setShowCarouselPreview] = useState(false);
+  // Carousel slide lightbox — null = closed, otherwise the index of the slide shown full-screen.
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const lightboxPrev = useCallback(() => {
+    setLightboxIndex(i => (i === null || carouselSlides.length === 0) ? i : (i - 1 + carouselSlides.length) % carouselSlides.length);
+  }, [carouselSlides.length]);
+  const lightboxNext = useCallback(() => {
+    setLightboxIndex(i => (i === null || carouselSlides.length === 0) ? i : (i + 1) % carouselSlides.length);
+  }, [carouselSlides.length]);
+  useEffect(() => {
+    if (lightboxIndex === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightboxIndex(null);
+      // RTL-aware: in Arabic the visual ←/→ are mirrored, so ArrowLeft = next, ArrowRight = prev.
+      else if (e.key === 'ArrowLeft') (lang === 'ar' ? lightboxNext : lightboxPrev)();
+      else if (e.key === 'ArrowRight') (lang === 'ar' ? lightboxPrev : lightboxNext)();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxIndex, lang, lightboxNext, lightboxPrev]);
   const [carouselConceptRaw, setCarouselConceptRaw] = useState('');
   const [captionRefinement, setCaptionRefinement] = useState('');
   const [selectedTov, setSelectedTov] = useState('');
@@ -4439,28 +4458,43 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       // retry and the reflowImage callable (carousel_slide / carousel_all) have a
       // generationId to act on. Non-blocking — must not prevent the phase transition.
       if (user) {
+        // feedbackService.saveGeneration swallows Firestore write errors and returns '' (it
+        // never throws), so the old try/catch could leave renderGenerationId empty silently —
+        // which disables carousel retry + resize. Capture the id, and retry the save once if
+        // the first attempt came back empty. Only set the state when we have a real id.
+        const doSaveCarousel = () => feedbackService.saveGeneration(
+          user.uid, inputs, 'render',
+          {
+            conceptText: conceptRaw.substring(0, 500),
+            buildPlan: conceptRaw,
+            carouselSlides: renderedSlides.map(s => ({
+              index: s.index,
+              // Base64 data URLs are megabytes each; storing several would blow Firestore's
+              // 1 MiB doc limit and fail the write. Persist only short Storage/http URLs —
+              // otherwise 'pending_upload', and reflow/retry rerenders from the saved buildPlan.
+              imageUrl: (typeof s.imageUrl === 'string' && s.imageUrl.startsWith('http')) ? s.imageUrl : 'pending_upload',
+              buildPlan: s.buildPlan,
+              copy: s.copy,
+            })),
+          },
+          conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, currentAspectRatio, buildCreativeIdentity(),
+          canUseWorkspaces ? activeWorkspaceId : null
+        );
+        let savedGenId = '';
         try {
-          const savedGenId = await feedbackService.saveGeneration(
-            user.uid, inputs, 'render',
-            {
-              conceptText: conceptRaw.substring(0, 500),
-              buildPlan: conceptRaw,
-              carouselSlides: renderedSlides.map(s => ({
-                index: s.index,
-                // Base64 data URLs are megabytes each; storing several would blow Firestore's
-                // 1 MiB doc limit and fail the write. Persist only short Storage/http URLs —
-                // otherwise 'pending_upload', and reflow/retry rerenders from the saved buildPlan.
-                imageUrl: (typeof s.imageUrl === 'string' && s.imageUrl.startsWith('http')) ? s.imageUrl : 'pending_upload',
-                buildPlan: s.buildPlan,
-                copy: s.copy,
-              })),
-            },
-            conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, currentAspectRatio, buildCreativeIdentity(),
-            canUseWorkspaces ? activeWorkspaceId : null
-          );
-          setRenderGenerationId(savedGenId);
+          savedGenId = await doSaveCarousel();
+          if (!savedGenId) {
+            console.warn('[carousel] saveGeneration returned empty id — retrying once');
+            savedGenId = await doSaveCarousel();
+          }
         } catch (saveErr) {
           console.error('Non-blocking: failed to save carousel generation record (retry/reflow will be unavailable):', saveErr);
+        }
+        console.log('[carousel] renderGenerationId set:', savedGenId);
+        if (savedGenId) {
+          setRenderGenerationId(savedGenId);
+        } else {
+          showToast('Could not save the carousel — retry & resize are unavailable. Try generating again.', 'error');
         }
       }
 
@@ -7253,13 +7287,13 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     <div className="flex gap-2.5 overflow-x-auto pb-3" style={{ maxWidth: '100%' }}>
                       {carouselSlides.map((slide, idx) => (
                         <div key={idx} className="shrink-0" style={{ width: currentAspectRatio === '9:16' ? '120px' : '160px' }}>
-                          <div className={`relative rounded-xl overflow-hidden border bg-slate-900 group ${currentAspectRatio === '9:16' ? 'aspect-[9/16]' : currentAspectRatio === '4:3' ? 'aspect-[4/3]' : 'aspect-square'} ${slide.status === 'done' ? 'border-emerald-500/30' : 'border-slate-800/60'}`}>
+                          <div onClick={() => setLightboxIndex(idx)} className={`relative rounded-xl overflow-hidden border bg-slate-900 group cursor-pointer ${currentAspectRatio === '9:16' ? 'aspect-[9/16]' : currentAspectRatio === '4:3' ? 'aspect-[4/3]' : 'aspect-square'} ${slide.status === 'done' ? 'border-emerald-500/30' : 'border-slate-800/60'}`}>
                             {slide.status === 'done' && slide.imageUrl ? (
-                              <><img src={slide.imageUrl} className="w-full h-full object-cover cursor-grab active:cursor-grabbing" draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/uri-list', slide.imageUrl!); e.dataTransfer.setData('text/plain', slide.imageUrl!); e.dataTransfer.setData('text/html', `<img src="${slide.imageUrl}" />`); }} /><div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100"><div className="flex gap-1"><button onClick={() => { pushMockup(slide.imageUrl!, currentAspectRatio); setBuildPlan(slide.buildPlan); setStudioTweak(''); setEditTarget({ source: 'carousel', index: idx, imageUrl: slide.imageUrl!, label: `Slide ${slide.index}` }); showToast(`Editing Slide ${slide.index} — changes will update this slide`, 'info'); }} className="px-2 py-1 bg-violet-600 text-white rounded text-[7px] font-bold" title="Edit this slide"><i className="fa-solid fa-pen-to-square"></i></button><button onClick={() => { applyTrialWatermark(slide.imageUrl!).then(url => { const a = document.createElement('a'); a.href = url; a.download = `slide_${slide.index}.png`; a.click(); }); }} className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold"><i className="fa-solid fa-download"></i></button><button onClick={() => handleCarouselSlideRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[7px] font-bold"><i className="fa-solid fa-rotate-right"></i></button>{metaConnection?.connected && (<button onClick={async () => { setMetaPushing(true); showToast('Pushing slide to Meta...', 'info'); try { const result = await metaService.pushCreative(slide.imageUrl!, `${inputs?.productName || 'Ad'}_carousel_slide_${slide.index}`, buildDeploymentMeta({ mode: 'carousel', ratio: currentAspectRatio })); if (result.success) showToast(result.message || 'Slide pushed!', 'success'); else showToast(result.message || 'Push failed', 'error'); } catch { showToast('Push to Meta failed', 'error'); } setMetaPushing(false); }} className="px-2 py-1 bg-blue-500/90 text-white rounded text-[7px] font-bold"><i className="fa-brands fa-meta"></i></button>)}<button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(slide.imageUrl!, currentAspectRatio, '', '', slide.buildPlan); }} className="px-2 py-1 bg-amber-500/90 text-white rounded text-[7px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button></div></div></>
+                              <><img src={slide.imageUrl} className="w-full h-full object-cover cursor-grab active:cursor-grabbing" draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/uri-list', slide.imageUrl!); e.dataTransfer.setData('text/plain', slide.imageUrl!); e.dataTransfer.setData('text/html', `<img src="${slide.imageUrl}" />`); }} /><div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100 pointer-events-none"><div className="flex gap-1 pointer-events-auto" onClick={(e) => e.stopPropagation()}><button onClick={() => { pushMockup(slide.imageUrl!, currentAspectRatio); setBuildPlan(slide.buildPlan); setStudioTweak(''); setEditTarget({ source: 'carousel', index: idx, imageUrl: slide.imageUrl!, label: `Slide ${slide.index}` }); showToast(`Editing Slide ${slide.index} — changes will update this slide`, 'info'); }} className="px-2 py-1 bg-violet-600 text-white rounded text-[7px] font-bold" title="Edit this slide"><i className="fa-solid fa-pen-to-square"></i></button><button onClick={() => { applyTrialWatermark(slide.imageUrl!).then(url => { const a = document.createElement('a'); a.href = url; a.download = `slide_${slide.index}.png`; a.click(); }); }} className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold"><i className="fa-solid fa-download"></i></button><button onClick={() => handleCarouselSlideRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[7px] font-bold"><i className="fa-solid fa-rotate-right"></i></button>{metaConnection?.connected && (<button onClick={async () => { setMetaPushing(true); showToast('Pushing slide to Meta...', 'info'); try { const result = await metaService.pushCreative(slide.imageUrl!, `${inputs?.productName || 'Ad'}_carousel_slide_${slide.index}`, buildDeploymentMeta({ mode: 'carousel', ratio: currentAspectRatio })); if (result.success) showToast(result.message || 'Slide pushed!', 'success'); else showToast(result.message || 'Push failed', 'error'); } catch { showToast('Push to Meta failed', 'error'); } setMetaPushing(false); }} className="px-2 py-1 bg-blue-500/90 text-white rounded text-[7px] font-bold"><i className="fa-brands fa-meta"></i></button>)}<button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(slide.imageUrl!, currentAspectRatio, '', '', slide.buildPlan); }} className="px-2 py-1 bg-amber-500/90 text-white rounded text-[7px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button></div></div></>
                             ) : slide.status === 'rendering' ? (
                               <div className="w-full h-full flex flex-col items-center justify-center gap-1"><div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"></div><span className="text-[7px] text-blue-400 font-bold">Slide {slide.index}</span></div>
                             ) : slide.status === 'error' ? (
-                              <div className="w-full h-full flex flex-col items-center justify-center gap-1"><i className="fa-solid fa-triangle-exclamation text-red-400 text-xs"></i><button onClick={() => handleCarouselSlideRetry(idx)} className="px-2 py-0.5 bg-blue-600 text-white rounded text-[7px] font-bold">Retry</button></div>
+                              <div className="w-full h-full flex flex-col items-center justify-center gap-1"><i className="fa-solid fa-triangle-exclamation text-red-400 text-xs"></i><button onClick={(e) => { e.stopPropagation(); handleCarouselSlideRetry(idx); }} className="px-2 py-0.5 bg-blue-600 text-white rounded text-[7px] font-bold">Retry</button></div>
                             ) : (
                               <div className="w-full h-full flex items-center justify-center"><span className="text-[8px] text-slate-700 font-bold">{slide.index}</span></div>
                             )}
@@ -7684,9 +7718,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 </div>
 
                 {/* Reflow Rescaling — 3 ratio buttons, PERMANENTLY visible (no picker
-                    toggle, no trigger button). Gated only on currentMockup so the
-                    control appears the moment a viewable render exists. */}
-                {currentMockup && (() => {
+                    toggle, no trigger button). Shown the moment a viewable render exists —
+                    either a single render (currentMockup) OR a rendered carousel (which never
+                    sets currentMockup but has done slides to resize). */}
+                {(currentMockup || carouselSlides.length > 0) && (() => {
                   // UI restriction: Square / Portrait / Story only. Backend supports the
                   // full 6 ratios; restore others by extending UI_RATIOS.
                   const UI_RATIOS: AspectRatio[] = ['1:1', '4:5', '9:16'];
@@ -8339,6 +8374,54 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           </div>
         </div>
       )}
+
+      {/* ═══ CAROUSEL SLIDE LIGHTBOX ═══ */}
+      {lightboxIndex !== null && carouselSlides[lightboxIndex] && (() => {
+        const slide = carouselSlides[lightboxIndex];
+        const isRtl = lang === 'ar';
+        // RTL-aware: the visual ← button advances (next) in Arabic, goes back (prev) in English.
+        const onLeftArrow = isRtl ? lightboxNext : lightboxPrev;
+        const onRightArrow = isRtl ? lightboxPrev : lightboxNext;
+        const multi = carouselSlides.length > 1;
+        return (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={() => setLightboxIndex(null)} dir={isRtl ? 'rtl' : 'ltr'}>
+            {/* Close */}
+            <button onClick={(e) => { e.stopPropagation(); setLightboxIndex(null); }} aria-label={isRtl ? 'إغلاق' : 'Close'}
+              className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-xl z-10 transition-colors">
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+            {/* Left arrow */}
+            {multi && (
+              <button onClick={(e) => { e.stopPropagation(); onLeftArrow(); }} aria-label={isRtl ? 'التالي' : 'Previous'}
+                className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-2xl z-10 transition-colors">
+                <i className="fa-solid fa-chevron-left"></i>
+              </button>
+            )}
+            {/* Right arrow */}
+            {multi && (
+              <button onClick={(e) => { e.stopPropagation(); onRightArrow(); }} aria-label={isRtl ? 'السابق' : 'Next'}
+                className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-2xl z-10 transition-colors">
+                <i className="fa-solid fa-chevron-right"></i>
+              </button>
+            )}
+            {/* Image (or failed-slide placeholder) */}
+            <div onClick={(e) => e.stopPropagation()} className="flex items-center justify-center">
+              {slide.status === 'done' && slide.imageUrl ? (
+                <img src={slide.imageUrl} alt={`Slide ${slide.index}`} className="object-contain rounded-lg shadow-2xl" style={{ maxHeight: '90vh', maxWidth: '90vw' }} />
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-3 bg-slate-900 border border-slate-700 rounded-2xl px-20 py-28">
+                  <i className="fa-solid fa-triangle-exclamation text-red-400 text-4xl"></i>
+                  <span className="text-slate-300 text-sm font-bold">{isRtl ? 'فشل الإنشاء' : 'Generation failed'}</span>
+                </div>
+              )}
+            </div>
+            {/* Counter */}
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full bg-black/60 text-white text-sm font-bold z-10">
+              {lightboxIndex + 1} / {carouselSlides.length}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ═══ UPGRADE / TOP-UP MODAL ═══ */}
       {/* ═══ CAROUSEL COPY PREVIEW MODAL ═══ */}
