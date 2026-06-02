@@ -1029,6 +1029,11 @@ const App: React.FC = () => {
   const { t, lang, setLang } = useT();
   // Mutable ref for effective UID — updated each render, safe to use in effects before state declarations
   const effectiveUidRef = React.useRef<string | null>(null);
+  // Guards the startup project auto-restore so it runs exactly ONCE per signed-in session.
+  // The restore effect's deps include `user`/`effectiveUid`, which change reference on token
+  // refresh and on async team `teamOwnerUid` resolution — re-running it would overwrite live
+  // session work (e.g. a freshly rendered carousel) with the saved snapshot. Reset on logout.
+  const hasRestoredRef = React.useRef(false);
   // --- STATE ---
   const [view, setView] = useState<'app' | 'privacy'>('app');
   const [showSidebar, setShowSidebar] = useState(false);
@@ -1304,6 +1309,8 @@ const App: React.FC = () => {
         setUserPlan('none');
         setOnboardingComplete(null);
         setShowMandatoryBilling(false);
+        // Allow the project auto-restore to run again for the next sign-in.
+        hasRestoredRef.current = false;
       }
       setLoadingAuth(false);
     });
@@ -2453,6 +2460,11 @@ const App: React.FC = () => {
   // --- HISTORY ENGINE (IndexedDB + Firestore sync) ---
   useEffect(() => {
     if (!user || !effectiveUid) return; // Don't load projects if not logged in
+    // Restore exactly once per session. Token refreshes / effectiveUid flips re-fire this
+    // effect, and a second restore would clobber live session state (carousel slides, etc.)
+    // with the persisted snapshot. hasRestoredRef is reset to false on logout.
+    if (hasRestoredRef.current) return;
+    hasRestoredRef.current = true;
     const initLoad = async () => {
       try {
         // Load from both sources and merge (cloud is source of truth)
