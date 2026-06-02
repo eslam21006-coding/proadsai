@@ -2631,7 +2631,15 @@ const App: React.FC = () => {
       selectedTov,
       selectedConcept,
       buildPlan,
-      mockupHistory,
+      // FIX 1: never persist ephemeral blob: URLs — they die on page reload (object URLs
+      // are document-scoped) and the heavy-data stripper misses them (~50 chars, no
+      // whitespace, not a data: URL), so they round-tripped into a broken <img> on restore.
+      // Swap any blob: url for the durable rawBase64 (local IndexedDB keeps it; the cloud
+      // path's stripHeavyImageData then reduces the base64 to 'stored_externally' as usual).
+      mockupHistory: mockupHistory.map(m => ({
+        ...m,
+        url: m.url?.startsWith('blob:') ? (m.rawBase64 || 'pending_upload') : m.url,
+      })),
       historyIndex,
       resolvedUniverse,
       captionText,
@@ -2640,7 +2648,10 @@ const App: React.FC = () => {
       batchHookGroups: batchHookGroups.length > 0 ? batchHookGroups.map(g => ({ ...g, selectedConcepts: Array.from(g.selectedConcepts) })) : undefined,
       creatorName: user?.displayName || user?.email?.split('@')[0] || 'Unknown',
       creatorEmail: user?.email || '',
-      carouselSlides: carouselSlides.length > 0 ? carouselSlides : undefined,
+      // FIX 3: only persist carousel slides once render is complete. An autosave firing mid-
+      // generation (slides still rendering) would otherwise overwrite the saved carousel with
+      // a partial/empty array, wiping the carousel on restore.
+      carouselSlides: (phase === 'render_studio' && carouselSlides.length > 0) ? carouselSlides : undefined,
       status: derivedStatus,
       thumbnailUrl: existingProject?.thumbnailUrl,
       metaAdId: existingProject?.metaAdId,
@@ -7492,7 +7503,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                             onClick={() => setHistoryIndex(idx)}>
                             {m.url ? (
                               <>
-                                <img src={m.url} className="w-full h-full object-cover cursor-grab active:cursor-grabbing"
+                                <img src={m.url?.startsWith('blob:') ? (m.rawBase64 || m.url) : m.url} className="w-full h-full object-cover cursor-grab active:cursor-grabbing"
                                   draggable={true}
                                   onDragStart={(e) => {
                                     e.dataTransfer.setData('text/uri-list', m.url);

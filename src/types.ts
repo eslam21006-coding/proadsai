@@ -419,7 +419,7 @@ export interface SavedProject {
   selectedConcept: string;
   buildPlan: string;
   // Update this line inside SavedProject interface
-  mockupHistory: { url: string; ratio: AspectRatio }[];
+  mockupHistory: { url: string; ratio: AspectRatio; rawBase64?: string }[];
   historyIndex: number;
   resolvedUniverse: string;
   captionText: string;
