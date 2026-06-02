@@ -263,8 +263,8 @@ const selectCls = `${inputCls} cursor-pointer`;
 // ─── UNIVERSE DROPDOWN (extracted to avoid conditional hooks inside JSX) ──────
 const UniverseDropdown: React.FC<{
   activeStyle: string;
-  dbRealistic: { name: string }[];
-  dbFantasy: { name: string }[];
+  dbRealistic: { id: string; name: string }[];
+  dbFantasy: { id: string; name: string }[];
   preferredUniverse: string;
   onSelect: (universe: string) => void;
   inputCls: string;
@@ -274,12 +274,15 @@ const UniverseDropdown: React.FC<{
   const [isOpen, setIsOpen] = React.useState(false);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
 
-  const universeOptions = [
-    activeStyle === 'realistic' ? SURPRISE_REALISTIC : SURPRISE_FANTASY,
-    CUSTOM_WORLD_EMOJI,
-    ...(activeStyle === 'realistic' ? dbRealistic : dbFantasy).map(u => u.name),
+  // Carry a stable `id` per option so the rendered list keys by id, not the display name.
+  // Two DB universes can share a name (e.g. "Urban Rooftop Garden"); keying by name collided
+  // and corrupted React reconciliation. Sentinels get fixed pseudo-ids.
+  const universeOptions: Array<{ id: string; label: string }> = [
+    { id: 'surprise', label: activeStyle === 'realistic' ? SURPRISE_REALISTIC : SURPRISE_FANTASY },
+    { id: 'custom', label: CUSTOM_WORLD_EMOJI },
+    ...(activeStyle === 'realistic' ? dbRealistic : dbFantasy).map(u => ({ id: u.id, label: u.name })),
   ];
-  const filteredOptions = universeOptions.filter(u => u.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredOptions = universeOptions.filter(o => o.label.toLowerCase().includes(searchTerm.toLowerCase()));
 
   React.useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => { if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setIsOpen(false); };
@@ -299,10 +302,10 @@ const UniverseDropdown: React.FC<{
             <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search..." className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 outline-none" autoFocus />
           </div>
           <div className="max-h-48 overflow-y-auto">
-            {filteredOptions.map(u => (
-              <div key={u} onClick={() => { onSelect(u); setIsOpen(false); setSearchTerm(''); }}
-                className={`px-4 py-2 cursor-pointer text-sm transition-colors ${preferredUniverse === u ? 'bg-blue-600/20 text-blue-400' : 'text-slate-300 hover:bg-slate-800'}`}>
-                {preferredUniverse === u && <i className="fa-solid fa-check text-blue-400 text-xs mr-2"></i>}{u}
+            {filteredOptions.map(o => (
+              <div key={o.id} onClick={() => { onSelect(o.label); setIsOpen(false); setSearchTerm(''); }}
+                className={`px-4 py-2 cursor-pointer text-sm transition-colors ${preferredUniverse === o.label ? 'bg-blue-600/20 text-blue-400' : 'text-slate-300 hover:bg-slate-800'}`}>
+                {preferredUniverse === o.label && <i className="fa-solid fa-check text-blue-400 text-xs mr-2"></i>}{o.label}
               </div>
             ))}
             {filteredOptions.length === 0 && <div className="px-4 py-3 text-slate-500 text-sm italic text-center">{noMatchesLabel}</div>}

@@ -4385,10 +4385,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           : `This is SLIDE ${i + 1} of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: ${['THOUGHTFUL — hand on chin, looking contemplative', 'ACTIVE — leaning forward slightly, engaged expression', 'CONVERSATIONAL — relaxed, one hand gesturing naturally to the side', 'PROFESSIONAL — arms crossed confidently, slight smile', 'DYNAMIC — walking pose, captured mid-stride'][i % 5]}. NO pointing finger. NO CTA button on this slide. NO logo on this slide. NO promo badge on this slide.`;
       setCarouselSlides(prev => prev.map((s, idx) => idx === i ? { ...s, status: 'rendering' } : s));
       const slideConceptText = conceptRaw + `\n\n[CAROUSEL SLIDE ${i + 1}/${slideCount}]: ${slideInstruction}`;
-      const mockup: string | null = (await gemini.generateFinalAd(
+      const slideResult = await gemini.generateFinalAd(
         slideConceptText, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
         undefined, undefined, styleRef, txOverride
-      )).image;
+      );
+      const mockup: string | null = slideResult.image;
+      // Surface why a slide failed (non-blocking) so carousel render failures are diagnosable.
+      if (!mockup) {
+        console.warn('[carousel] slide', i + 1, 'failed:', (slideResult as any)?.errorCode, (slideResult as any)?.errorMessage);
+      }
       setCarouselSlides(prev => prev.map((s, idx) => idx === i ? { ...s, buildPlan: slideConceptText, imageUrl: mockup, status: mockup ? 'done' : 'error' } : s));
       renderedSlides[i] = { ...renderedSlides[i], buildPlan: slideConceptText, imageUrl: mockup, status: mockup ? 'done' : 'error' };
       if (mockup) creditsActuallyUsed += perSlideCost;
