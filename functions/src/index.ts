@@ -6229,6 +6229,9 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
     if (!project || typeof project !== "object" || !project.id) {
         throw new HttpsError("invalid-argument", "project.id required");
     }
+    // Auto-save (default) vs an explicit manual save from the UI. The limit is never a hard
+    // block; this only changes over-limit handling (auto-save evicts the oldest draft).
+    const saveSource: "autosave" | "manual" = data.source === "manual" ? "manual" : "autosave";
 
     // Quota check, plan resolution, status latch read, and project write must
     // all happen inside ONE transaction (FR-006/FR-007/SC-005, Constitution
@@ -6244,7 +6247,7 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
     // callable with a bare 500. Structured HttpsErrors (quota/plan) pass through
     // unchanged so the client still sees their specific reason codes.
     try {
-    const status = await admin.firestore().runTransaction(async (txn) => {
+    const result = await admin.firestore().runTransaction(async (txn) => {
         const projectRef = admin.firestore().doc(`users/${uid}/projects/${project.id}`);
         const userRef = admin.firestore().doc(`users/${uid}`);
 
@@ -6267,7 +6270,7 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
         const plan: "none" | "starter" | "pro" | "scale" =
             rawPlan === "starter" || rawPlan === "pro" || rawPlan === "scale" ? rawPlan : "none";
 
-        await enforceProjectQuota(txn, uid, plan, isNew);
+        const quota = await enforceProjectQuota(txn, uid, plan, isNew, saveSource);
 
         // Server-side latch is authoritative — never trust the client-supplied
         // project.status (it may be stale and would otherwise allow demotion).
@@ -6356,11 +6359,19 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
             );
         }
 
+        // Auto-save over the cap: evict the oldest draft (chosen by the quota resolver) so the
+        // project count stays within the limit without ever blocking the save. Guard against
+        // evicting the project currently being written.
+        if (quota.evictId && quota.evictId !== project.id) {
+            txn.delete(admin.firestore().doc(`users/${uid}/projects/${quota.evictId}`));
+            console.info(`phase13 ▸ quota-evict uid=${uid} evicted=${quota.evictId} for=${project.id}`);
+        }
+
         txn.set(projectRef, persistedProject, { merge: true });
-        return newStatus;
+        return { status: newStatus, overLimit: quota.overLimit };
     });
 
-    return { status };
+    return { status: result.status, overLimit: result.overLimit };
     } catch (err) {
         // Preserve structured failures (quota exceeded, plan-gate, invalid-argument).
         if (err instanceof HttpsError) throw err;

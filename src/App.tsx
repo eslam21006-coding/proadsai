@@ -1066,6 +1066,10 @@ const App: React.FC = () => {
     if (!isDarkMode) document.documentElement.classList.add('light-mode');
   });
   const [projects, setProjects] = useState<SavedProject[]>([]);
+  // Non-blocking project-limit warning. Set when a new project is saved at/over the plan cap
+  // (auto-save still succeeds — the backend evicts the oldest draft). Shown as a dismissible
+  // banner in the saved-projects panel; never blocks generation, navigation, or auto-save.
+  const [projectLimitReached, setProjectLimitReached] = useState(false);
   const [currentProjectId, setCurrentProjectId] = useState<string>(() => Date.now().toString());
   const [currentProjectName, setCurrentProjectName] = useState<string>("Untitled Project");
   // --- AUTH STATE ---
@@ -2568,21 +2572,23 @@ const App: React.FC = () => {
       // IndexedDB (above) keeps the full base64 for offline display; only the
       // cloud copy is trimmed. stripHeavyImageData deep-clones, so `project`
       // (used below for thumbnail resolution) is untouched.
-      await saveProjectFn({ project: stripHeavyImageData(project) });
+      const saveRes = await saveProjectFn({ project: stripHeavyImageData(project), source: 'autosave' });
+      // Non-blocking over-limit warning — the save still succeeded server-side (oldest draft
+      // evicted to stay within the cap). Surface a dismissible banner in the panel; do NOT
+      // roll back, block, or error.
+      if ((saveRes?.data as { overLimit?: boolean } | undefined)?.overLimit) {
+        setProjectLimitReached(true);
+      }
     } catch (firestoreErr: any) {
       console.error(
         `Firestore cloud sync failed: code=${firestoreErr?.code ?? 'unknown'} message=${firestoreErr?.message ?? String(firestoreErr)}`,
         firestoreErr,
       );
+      // Defensive: the project limit is no longer a hard error (the backend never throws
+      // QUOTA_EXCEEDED), but if a legacy/edge response surfaces it, treat it as a non-blocking
+      // warning — keep the local save, do not roll back, do not block the user.
       if (firestoreErr?.code === 'failed-precondition' && firestoreErr?.message?.includes('QUOTA_EXCEEDED')) {
-        const details = firestoreErr?.details || {};
-        // Roll back the local IndexedDB write so mergeProjects on next sign-in
-        // doesn't reintroduce a project the server has already rejected.
-        // QUOTA_EXCEEDED only fires for NEW projects, so the local record we
-        // just wrote was a brand-new doc, never an update.
-        deleteProjectFromDB(project.id).catch(() => {});
-        setProjects((prev: SavedProject[]) => prev.filter((p: SavedProject) => p.id !== project.id));
-        showToast(t('billing.savedProjectOverLimit').replace('{limit}', String(details.limit || 'plan cap')), 'error');
+        setProjectLimitReached(true);
         return;
       }
       throw firestoreErr;
@@ -2606,7 +2612,7 @@ const App: React.FC = () => {
           saveProjectToDB(updated).catch(() => {});
           const callable = httpsCallable(functions, 'saveProject');
           // Strip heavy base64 before the round-trip (same as the primary save path).
-          callable({ project: stripHeavyImageData(updated) }).catch(() => {});
+          callable({ project: stripHeavyImageData(updated), source: 'autosave' }).catch(() => {});
         })
         .catch((err) => {
           console.warn("phase13 ▸ thumbnail upload failed (non-blocking):", err);
@@ -2626,14 +2632,14 @@ const App: React.FC = () => {
     const uid = effectiveUidRef.current;
     if (!uid) return;
 
-    // Client-side cap precheck — instant feedback before any round-trip.
-    // The server enforces the same cap inside a transaction (authoritative).
+    // Client-side cap detection — surface a NON-BLOCKING warning, but never stop the auto-save.
+    // The server allows the save (evicting the oldest draft to stay within the cap), so the user
+    // is never blocked from working. The warning shows as a dismissible banner in the panel.
     const isNewProject = !projects.some((p: SavedProject) => p.id === currentProjectId);
     if (isNewProject) {
       const maxProjects = getSavedProjectLimit(userPlan);
       if (Number.isFinite(maxProjects) && projects.length >= maxProjects) {
-        showToast(t('billing.savedProjectOverLimit').replace('{limit}', String(maxProjects)), 'error');
-        return;
+        setProjectLimitReached(true);
       }
     }
 
@@ -5671,6 +5677,24 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         {/* ═══ PROJECT GALLERY (shown on input phase) ═══ */}
         {phase === 'input' && projects.length > 1 && (
           <div className="max-w-5xl mx-auto mb-10 animate-in fade-in duration-700">
+            {projectLimitReached && (() => {
+              const cap = getSavedProjectLimit(userPlan);
+              const capLabel = Number.isFinite(cap) ? String(cap) : 'plan';
+              return (
+                <div className={`flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3 mb-4 ${lang === 'ar' ? 'flex-row-reverse text-right' : ''}`} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+                  <i className="fa-solid fa-circle-info text-amber-400 mt-0.5"></i>
+                  <p className="flex-1 text-[11px] leading-relaxed text-amber-200/90 font-medium">
+                    {lang === 'ar'
+                      ? `وصلت إلى حد ${capLabel} مشاريع. احذف مشاريع قديمة لحفظ مشاريع جديدة.`
+                      : `You've reached your ${capLabel}-project limit. Delete old projects to save new ones.`}
+                  </p>
+                  <button onClick={() => setProjectLimitReached(false)} aria-label={lang === 'ar' ? 'إغلاق' : 'Dismiss'}
+                    className="text-amber-400/60 hover:text-amber-300 transition-colors shrink-0">
+                    <i className="fa-solid fa-xmark"></i>
+                  </button>
+                </div>
+              );
+            })()}
             <SavedProjectsPanel
               projects={projects}
               workspaces={workspaces.map(w => ({ id: w.id, name: w.name }))}
