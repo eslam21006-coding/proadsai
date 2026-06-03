@@ -2246,6 +2246,10 @@ const App: React.FC = () => {
   const [carouselSlides, setCarouselSlides] = useState<CarouselSlide[]>([]);
   const [carouselCopies, setCarouselCopies] = useState<CarouselSlideCopy[]>([]);
   const [showCarouselPreview, setShowCarouselPreview] = useState(false);
+  // One-level undo for carousel resize: snapshot of the slides (and their ratio) taken right
+  // before a carousel_all reflow. Lets the user restore the pre-resize version.
+  const [previousCarouselSlides, setPreviousCarouselSlides] = useState<CarouselSlide[] | null>(null);
+  const [previousCarouselRatio, setPreviousCarouselRatio] = useState<AspectRatio | null>(null);
   // Carousel slide lightbox — null = closed, otherwise the index of the slide shown full-screen.
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const lightboxPrev = useCallback(() => {
@@ -4398,6 +4402,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       index: i + 1, copy, buildPlan: '', imageUrl: null, status: 'pending' as const,
     }));
     setCarouselSlides(initialSlides);
+    // A fresh carousel invalidates any prior resize-undo snapshot.
+    setPreviousCarouselSlides(null);
+    setPreviousCarouselRatio(null);
 
     // Deduct all credits upfront — we reconcile at the end
     const startingCredits = userCredits;
@@ -5042,6 +5049,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         setShowUpgradeModal(true);
         return;
       }
+      // FIX 2: snapshot the current slides + their ratio for a one-level undo before resizing.
+      setPreviousCarouselSlides([...carouselSlides]);
+      setPreviousCarouselRatio(currentAspectRatio);
       // FIX 1A: do NOT flip currentAspectRatio yet — that would instantly reshape the grid
       // (object-cover) and visually CROP the still-square slides before the reflow lands.
       // currentAspectRatio is set only AFTER the reflowed images are written back (below).
@@ -7389,7 +7399,23 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   </div>
                 ) : carouselSlides.length > 0 ? (
                   <div className="space-y-3">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Carousel — {carouselSlides.filter(s => s.status === 'done').length}/{carouselSlides.length}</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Carousel — {carouselSlides.filter(s => s.status === 'done').length}/{carouselSlides.length}</span>
+                      {/* FIX 2: one-level undo for carousel resize — restore the pre-resize version. */}
+                      {previousCarouselSlides && previousCarouselRatio && previousCarouselRatio !== currentAspectRatio && (
+                        <button
+                          onClick={() => {
+                            setCarouselSlides(previousCarouselSlides);
+                            setCurrentAspectRatio(previousCarouselRatio);
+                            setPreviousCarouselSlides(null);
+                            setPreviousCarouselRatio(null);
+                          }}
+                          className="text-[9px] font-bold text-blue-300 bg-blue-600/15 border border-blue-500/30 rounded-lg px-2.5 py-1 hover:bg-blue-600/25 transition-all flex items-center gap-1.5">
+                          <i className="fa-solid fa-arrow-left text-[8px]"></i>
+                          {lang === 'ar' ? `النسخة السابقة (${previousCarouselRatio})` : `Previous Version (${previousCarouselRatio})`}
+                        </button>
+                      )}
+                    </div>
                     <div className="flex gap-2.5 overflow-x-auto pb-3" style={{ maxWidth: '100%' }}>
                       {carouselSlides.map((slide, idx) => (
                         <div key={idx} className="shrink-0" style={{ width: currentAspectRatio === '9:16' ? '120px' : '160px' }}>

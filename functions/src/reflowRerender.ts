@@ -25,7 +25,13 @@ export interface RerenderGenData {
     output?: {
         buildPlan?: string;
         fullResponse?: string;
-        carouselSlides?: Array<{ buildPlan?: string; imageUrl?: string }>;
+        carouselSlides?: Array<{
+            buildPlan?: string;
+            imageUrl?: string;
+            // User-edited per-slide copy persisted at generation time. Used as the reflow
+            // rerender's textOverride so a resize keeps the EDITED hooks, not the original AI text.
+            copy?: { hookText?: string; subheadText?: string; ctaText?: string; benefitText?: string };
+        }>;
         batchResults?: Array<{ buildPlan?: string; url?: string }>;
         [k: string]: unknown;
     };
@@ -139,6 +145,34 @@ export async function rerenderFromPlan(args: {
         ? styleReference
         : undefined;
 
+    // STEP B: for a carousel slide, rebuild the user's EDITED copy as a textOverride so the
+    // resize keeps the edited hooks instead of regenerating the original AI text from the
+    // flattened genData.input. Same cleanField/split pattern as the frontend buildSlide.
+    // No copy saved (legacy doc / single render) → proceed without an override (fallback).
+    let textOverride: Parameters<typeof generateFinalAd>[8] | undefined;
+    if (itemIndex !== null) {
+        const slides = genData.output?.carouselSlides;
+        const slideCopy = Array.isArray(slides) ? slides[itemIndex]?.copy : undefined;
+        if (slideCopy) {
+            const cleanField = (s: string): string => (s || "").replace(/\|\|\|/g, "").trim();
+            const splitCta = (raw: string): { ctaName: string; benefitText: string } => {
+                if (!raw.includes("|||")) return { ctaName: raw.trim(), benefitText: "" };
+                const [c, b] = raw.split("|||");
+                return { ctaName: c.trim(), benefitText: b?.trim() || "" };
+            };
+            const slideCount = Array.isArray(slides) ? slides.length : 0;
+            const isLastSlide = itemIndex === slideCount - 1;
+            const fallbackCta = typeof inputs.cta === "string" ? inputs.cta : "";
+            const ctaSplit = splitCta(slideCopy.ctaText || fallbackCta || "");
+            textOverride = {
+                hookText: cleanField(slideCopy.hookText || ""),
+                subheadText: cleanField(slideCopy.subheadText || ""),
+                ctaName: isLastSlide ? ctaSplit.ctaName : "",
+                benefitText: isLastSlide ? (cleanField(slideCopy.benefitText || "") || ctaSplit.benefitText) : "",
+            };
+        }
+    }
+
     // FIX C (revised): REFLOW CONSISTENCY LOCK. A reflow rerender is a ratio adaptation of
     // an EXISTING ad — NOT a fresh creative and NOT a carousel narrative progression. This
     // is passed as a dedicated `reflowInstruction` arg so generateFinalAd injects it AFTER
@@ -163,7 +197,7 @@ export async function rerenderFromPlan(args: {
         undefined, // editInstruction
         undefined, // base64ToEdit
         styleRef,  // styleReference — original render, for visual coherence
-        undefined, // textOverride
+        textOverride, // user's EDITED per-slide copy (carousel) — undefined for single/legacy
         reflowConsistencyBlock, // reflowInstruction — injected post-strip (FIX C)
     );
 
