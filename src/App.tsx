@@ -5042,7 +5042,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         setShowUpgradeModal(true);
         return;
       }
-      setCurrentAspectRatio(newRatio);
+      // FIX 1A: do NOT flip currentAspectRatio yet — that would instantly reshape the grid
+      // (object-cover) and visually CROP the still-square slides before the reflow lands.
+      // currentAspectRatio is set only AFTER the reflowed images are written back (below).
+      setCarouselSlides(prev => prev.map(s => s.status === 'done' && s.imageUrl ? { ...s, status: 'rendering' as const } : s));
       startLoad(t('studio.reflow.loading_carousel')
         .replace('{count}', String(doneSlides.length))
         .replace('{ratio}', newRatio));
@@ -5091,11 +5094,21 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 setCarouselSlides(prev => prev.map((s, idx) => idx === outcome.itemIndex ? { ...s, status: 'error' as const } : s));
               }
             }
+            // FIX 1A: flip the display ratio only now that the reflowed images are in place,
+            // so the grid reshapes to the new ratio WITH the new images (no pre-reflow crop).
+            setCurrentAspectRatio(newRatio);
+          } else {
+            // Reflow didn't succeed — restore the 'done' status so slides stay viewable
+            // (no crop, no spinner stuck) at their original ratio.
+            setCarouselSlides(prev => prev.map(s => s.status === 'rendering' && s.imageUrl ? { ...s, status: 'done' as const } : s));
           }
         }
       } catch (e) {
         // Restore optimistic decrement on transport / callable exception.
         if (optimisticCost > 0) setUserCredits(prev => prev + optimisticCost);
+        // Restore slides from the 'rendering' placeholder so they stay viewable at the
+        // original ratio (currentAspectRatio was intentionally NOT flipped yet).
+        setCarouselSlides(prev => prev.map(s => s.status === 'rendering' && s.imageUrl ? { ...s, status: 'done' as const } : s));
         handleApiError(e);
       } finally { stopLoad(); }
       return;
@@ -7847,7 +7860,12 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   // In batch mode the displayed image is a batch tile, so the "Current"
                   // badge tracks the focused tile's ratio (activeBatchRatio), not the
                   // single-render displayRatio.
-                  const currentRatioForBadge = isBatchScope ? activeBatchRatio : displayRatio;
+                  // For carousel, use currentAspectRatio directly — displayRatio reads from
+                  // mockupHistory (which the carousel reflow never updates) and goes stale.
+                  const currentRatioForBadge =
+                    carouselSlides.length > 0 ? currentAspectRatio :
+                    isBatchScope ? activeBatchRatio :
+                    displayRatio;
                   return (
                   <div className="bg-slate-900/50 rounded-2xl border border-slate-800/40 p-4 space-y-3">
                     <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center"><i className="fa-solid fa-left-right mr-2 text-blue-500"></i>{t('studio.reflow')}</h4>
@@ -7864,7 +7882,9 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                             disabled={isCurrent || committing}
                             onClick={isCurrent ? undefined : () => {
                               setReflowTarget(value);
-                              if (isCarouselScope) setReflowScope('carousel_slide');
+                              // Carousel always resizes ALL slides (carousel_slide's index
+                              // resolution via currentMockup is broken for carousels).
+                              if (isCarouselScope) setReflowScope('carousel_all');
                               else setReflowScope('single');
                             }}
                             title={reflowLabels[value]}
@@ -7905,18 +7925,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                             </button>
                           </div>
                         )}
-                        {isCarouselScope && (
-                          <div className="flex gap-2">
-                            <button disabled={committing} onClick={() => setReflowScope('carousel_slide')}
-                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'carousel_slide' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
-                              {t('studio.reflow.scope_slide')}
-                            </button>
-                            <button disabled={committing} onClick={() => setReflowScope('carousel_all')}
-                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'carousel_all' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
-                              {t('studio.reflow.scope_carousel_all', { count: doneCarouselCount })}
-                            </button>
-                          </div>
-                        )}
+                        {/* Carousel always resizes ALL slides — no per-slide scope toggle
+                            (carousel_slide's slide-index resolution is unreliable). */}
                         <button
                           onClick={async () => {
                             if (committing || !reflowTarget) return;

@@ -5849,11 +5849,16 @@ Use it for: hero face and appearance, brand color palette, typography style, lig
 For THIS slide's scene: let the copy be your guide.
 If the copy fits naturally in the reference's environment → keep that environment, change only composition and pose.
 If the copy calls for a different scene → show that scene, but carry over the hero's appearance and brand aesthetic.
-The reference keeps the campaign cohesive; the copy makes each slide distinct.`,
+The reference keeps the campaign cohesive; the copy makes each slide distinct.
+THE HERO'S FACE IS INVIOLABLE: The person in this slide must have IDENTICAL facial structure, bone structure, features, skin tone, age, and identity as the reference image. Do not reinterpret, alter, soften, or reimagine any facial feature. The face in the reference image is the absolute ground truth — reproduce it exactly.`,
             });
-            // Skip personal photos for carousel slides 2+ — the style reference (slide 1) already
-            // contains the rendered face. Sending photos again wastes input tokens (~$0.006/slide).
-            // Only send brand logo if available.
+            // FIX 3B: also send the uploaded personal photos (boxA) as an INDEPENDENT
+            // ground-truth face anchor. Relying solely on slide 1's render let the face drift
+            // across slides; the original photos lock identity. (Skipped only in text-only mode,
+            // which has no hero.)
+            if (!_isTextOnly) {
+                boxA.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
+            }
             boxB.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
             boxC.forEach((d: string) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
         } else {
