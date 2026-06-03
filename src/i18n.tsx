@@ -289,6 +289,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'studio.reflow.scope_carousel_all': 'Resize all {count} slides',
         'studio.reflow.current_ratio': 'Current',
         'studio.reflow.no_generation_id': 'Generate an ad first before resizing.',
+        'studio.reflow.wait_for_generation': 'Please wait for generation to complete first.',
         'studio.reflow.legacy_no_original': 'This older generation cannot be resized — please regenerate first.',
         'studio.reflow.ratio.1_1': 'Square (1:1)',
         'studio.reflow.ratio.4_5': 'Portrait (4:5)',
@@ -304,6 +305,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'reflow.fallbackToRerender': 'Auto-reflow fell back to a fresh render for this image.',
         'reflow.fallbackToOutpaint': 'Auto-reflow fell back to outpainting for this image.',
         'reflow.fallback_dismiss': 'Dismiss',
+        'strippedAssets.warning': "Your hero photos and logos weren't saved to cloud. Re-upload them to include your face in the next generation.",
+        'strippedAssets.dismiss': 'Dismiss',
 
         // ── Step 5: Script ──
         'script.title': 'Primary Script',
@@ -1036,6 +1039,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'studio.reflow.scope_carousel_all': 'تحجيم جميع الشرائح ({count})',
         'studio.reflow.current_ratio': 'الحالي',
         'studio.reflow.no_generation_id': 'أنشئ إعلانًا أولاً قبل إعادة التحجيم.',
+        'studio.reflow.wait_for_generation': 'يرجى الانتظار حتى يكتمل الإنشاء أولاً.',
         'studio.reflow.legacy_no_original': 'لا يمكن تحجيم هذا الإصدار القديم — يرجى إعادة الإنشاء أولاً.',
         'studio.reflow.ratio.1_1': 'مربع (1:1)',
         'studio.reflow.ratio.4_5': 'بورتريه (4:5)',
@@ -1051,6 +1055,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'reflow.fallbackToRerender': 'تم الرجوع إلى إعادة الرسم الكامل تلقائيًا لهذه الصورة.',
         'reflow.fallbackToOutpaint': 'تم الرجوع إلى توسيع الصورة تلقائيًا لهذه الصورة.',
         'reflow.fallback_dismiss': 'إغلاق',
+        'strippedAssets.warning': 'لم يتم حفظ صورك الشخصية والشعارات. أعد رفعها لتظهر في الإعلان التالي.',
+        'strippedAssets.dismiss': 'إغلاق',
 
         // ── Step 5: Script ──
         'script.title': 'النص الأساسي',

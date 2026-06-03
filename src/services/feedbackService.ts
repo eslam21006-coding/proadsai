@@ -10,7 +10,7 @@ import {
     query, where, orderBy, limit, updateDoc, Timestamp
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import type { AdInputs, AspectRatio } from '../types';
+import type { AdInputs, AspectRatio, CarouselSlideCopy } from '../types';
 
 // ─── FIRESTORE SAFETY ────────────────────────────────────────────────────────
 // Firestore rejects `undefined` values in documents. This recursively strips
@@ -58,6 +58,16 @@ export interface CostEstimate {
     estimatedTokens: number;
 }
 
+// Write-side carousel slide shape persisted on a generation doc. Intentionally narrower
+// than the UI's `CarouselSlide` (types.ts): imageUrl is a non-null Storage/http URL or the
+// 'pending_upload' sentinel (never base64), and there is no transient `status`.
+export interface PersistedCarouselSlide {
+    index: number;
+    imageUrl: string;
+    buildPlan: string;
+    copy?: CarouselSlideCopy;
+}
+
 export interface GenerationRecord {
     id?: string;
     userId: string;
@@ -82,6 +92,13 @@ export interface GenerationRecord {
         testimonial?: string;
         brandColorPrimary?: string | null;
         brandColorSecondary?: string | null;
+        // Art-direction / style fields — persisted so reflow's rerender-from-plan reproduces
+        // the SAME hero look and art direction instead of regenerating with defaults.
+        visualSubStyle?: string | null;
+        adTone?: string | null;
+        visualStyleFamily?: string | null;
+        universeMode?: string | null;
+        preferredUniverse?: string | null;
     };
     output: {
         phase: 'hooks' | 'concepts' | 'render' | 'caption';
@@ -93,6 +110,11 @@ export interface GenerationRecord {
         blueprintText?: string;
         resolvedImagePrompt?: string;
         imageUrl?: string;
+        // Per-slide carousel renders. Persisted so the reflowImage callable (scope
+        // carousel_slide / carousel_all) and slide-retry can read each slide's buildPlan
+        // (rerender-from-plan) and source URL. imageUrl is a short Storage/http URL or the
+        // 'pending_upload' sentinel — never base64 (would blow Firestore's 1 MiB doc limit).
+        carouselSlides?: PersistedCarouselSlide[];
         captionText?: string;
         fullResponse: string;
     };
@@ -186,6 +208,13 @@ class FeedbackService {
                 testimonial: (inputs as any).testimonial || null,
                 brandColorPrimary: inputs.brandColorPrimary || null,
                 brandColorSecondary: inputs.brandColorSecondary || null,
+                // Art-direction / style fields (canonical AdInputs names) so reflow rerender
+                // keeps the same hero look + art direction. adType (=adMode) is already above.
+                visualSubStyle: (inputs as any).visualSubStyle || null,
+                adTone: (inputs as any).adTone || null,
+                visualStyleFamily: (inputs as any).visualStyleFamily || null,
+                universeMode: (inputs as any).universeMode || null,
+                preferredUniverse: (inputs as any).preferredUniverse || null,
             },
             output: {
                 phase,

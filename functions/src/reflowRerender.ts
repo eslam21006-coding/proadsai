@@ -25,7 +25,13 @@ export interface RerenderGenData {
     output?: {
         buildPlan?: string;
         fullResponse?: string;
-        carouselSlides?: Array<{ buildPlan?: string; imageUrl?: string }>;
+        carouselSlides?: Array<{
+            buildPlan?: string;
+            imageUrl?: string;
+            // User-edited per-slide copy persisted at generation time. Used as the reflow
+            // rerender's textOverride so a resize keeps the EDITED hooks, not the original AI text.
+            copy?: { hookText?: string; subheadText?: string; ctaText?: string; benefitText?: string };
+        }>;
         batchResults?: Array<{ buildPlan?: string; url?: string }>;
         [k: string]: unknown;
     };
@@ -103,7 +109,24 @@ export async function rerenderFromPlan(args: {
 }): Promise<{ outputUrl: string; creditsCharged: number; brandColorReinforced: boolean }> {
     const { generationId, targetRatio, itemIndex, genData, geminiCaller, openaiApiKey, styleReference } = args;
 
-    const inputs: Record<string, unknown> = (genData.input ?? {}) as Record<string, unknown>;
+    // The saved generation record uses aliased field names (adType / niche / language / offer)
+    // and carries the art-direction fields under their canonical names. Map everything back to
+    // the AdInputs shape generateFinalAd expects — otherwise the rerender runs with adMode /
+    // targetAudience / adLanguage / visualSubStyle / adTone / etc. undefined and regenerates the
+    // hero + art direction with defaults (FIX 2).
+    const savedInput = (genData.input ?? {}) as Record<string, unknown>;
+    const inputs: Record<string, unknown> = {
+        ...savedInput,
+        adMode: savedInput.adMode ?? savedInput.adType,
+        targetAudience: savedInput.targetAudience ?? savedInput.niche,
+        adLanguage: savedInput.adLanguage ?? savedInput.language,
+        offerType: savedInput.offerType ?? savedInput.offer,
+        visualSubStyle: savedInput.visualSubStyle,
+        adTone: savedInput.adTone,
+        visualStyleFamily: savedInput.visualStyleFamily,
+        universeMode: savedInput.universeMode,
+        preferredUniverse: savedInput.preferredUniverse,
+    };
     const approvedTov: string = genData.output?.fullResponse ?? "";
     const resolvedUniverse: string = genData.input?.tone ?? "";
 
@@ -138,6 +161,50 @@ export async function rerenderFromPlan(args: {
     const styleRef = typeof styleReference === "string" && styleReference.startsWith("data:image/")
         ? styleReference
         : undefined;
+
+    // STEP B: for a carousel slide, rebuild the user's EDITED copy as a textOverride so the
+    // resize keeps the edited hooks instead of regenerating the original AI text from the
+    // flattened genData.input. Same cleanField/split pattern as the frontend buildSlide.
+    // No copy saved (legacy doc / single render) → proceed without an override (fallback).
+    let textOverride: Parameters<typeof generateFinalAd>[8] | undefined;
+    if (itemIndex !== null) {
+        const slides = genData.output?.carouselSlides;
+        const slideCopy = Array.isArray(slides) ? slides[itemIndex]?.copy : undefined;
+        if (slideCopy) {
+            const cleanField = (s: string): string => (s || "").replace(/\|\|\|/g, "").trim();
+            const splitCta = (raw: string): { ctaName: string; benefitText: string } => {
+                if (!raw.includes("|||")) return { ctaName: raw.trim(), benefitText: "" };
+                const [c, b] = raw.split("|||");
+                return { ctaName: c.trim(), benefitText: b?.trim() || "" };
+            };
+            const slideCount = Array.isArray(slides) ? slides.length : 0;
+            const isLastSlide = itemIndex === slideCount - 1;
+            const fallbackCta = typeof inputs.cta === "string" ? inputs.cta : "";
+            const ctaSplit = splitCta(slideCopy.ctaText || fallbackCta || "");
+            textOverride = {
+                hookText: cleanField(slideCopy.hookText || ""),
+                subheadText: cleanField(slideCopy.subheadText || ""),
+                ctaName: isLastSlide ? ctaSplit.ctaName : "",
+                benefitText: isLastSlide ? (cleanField(slideCopy.benefitText || "") || ctaSplit.benefitText) : "",
+            };
+        }
+    }
+
+    // FIX C (revised): REFLOW CONSISTENCY LOCK. A reflow rerender is a ratio adaptation of
+    // an EXISTING ad — NOT a fresh creative and NOT a carousel narrative progression. This
+    // is passed as a dedicated `reflowInstruction` arg so generateFinalAd injects it AFTER
+    // blueprint keyword-stripping (the stripper would otherwise delete scene/style/reference/
+    // concept from a blueprint-prepended block). Keeps the scene lock at full strength.
+    const reflowConsistencyBlock =
+        `REFLOW INSTRUCTION: This is a ratio adaptation, NOT a new creative.\n` +
+        `Re-render the EXACT same ad at the new aspect ratio.\n` +
+        `MUST preserve: same hero face and appearance, same color palette, same background environment and lighting, same visual style, same mood and atmosphere, same brand elements.\n` +
+        `ONLY change: element placement, proportions, and composition to fit the ${targetRatio} canvas.\n` +
+        `Do NOT change the concept. Do NOT add new elements. Do NOT change the scene. This must look like the same ad at a different size.` +
+        (styleRef
+            ? `\nReference image provided — match this image exactly in style, color, hero appearance, and scene. Only adapt the composition for ${targetRatio}.`
+            : "");
+
     const result = await generate(
         buildPlan,
         approvedTov,
@@ -147,6 +214,8 @@ export async function rerenderFromPlan(args: {
         undefined, // editInstruction
         undefined, // base64ToEdit
         styleRef,  // styleReference — original render, for visual coherence
+        textOverride, // user's EDITED per-slide copy (carousel) — undefined for single/legacy
+        reflowConsistencyBlock, // reflowInstruction — injected post-strip (FIX C)
     );
 
     if (!result.image) {

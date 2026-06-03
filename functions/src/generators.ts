@@ -173,13 +173,29 @@ interface FinalAdDebugInfo {
     filledZones?: Record<string, { source: string; value: string }>;
 }
 
+/**
+ * Split a CTA field on the ||| separator into the button label and its trailing benefit
+ * line. The ||| convention is produced by clean() (" + " → " ||| ") and the hook-generation
+ * prompts. Applied at EVERY channel that feeds a CTA into the render — TOV parse, the
+ * `textOverride` bypass, and the model's `machinePlan.ownership.ctaText` — so the literal
+ * "|||" (and the fused benefit text) can never reach the rendered image (BUG 2).
+ */
+function splitCta(raw: string): { ctaName: string; benefitText: string } {
+    if (!raw?.includes('|||')) return { ctaName: raw?.trim() || '', benefitText: '' };
+    const parts = raw.split('|||');
+    return { ctaName: parts[0].trim(), benefitText: parts[1]?.trim() || '' };
+}
+
 function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverride?: TextOverride): OwnedRenderText {
     if (textOverride) {
+        // textOverride bypasses the TOV ||| splitter — split here too, otherwise a
+        // "cta ||| benefit" supplied in textOverride.ctaName renders the literal bars.
+        const { ctaName: splitName, benefitText: splitBenefit } = splitCta(textOverride.ctaName || '');
         return {
             hookText: textOverride.hookText,
             subheadText: textOverride.subheadText,
-            ctaName: textOverride.ctaName,
-            benefitText: textOverride.benefitText,
+            ctaName: splitName,
+            benefitText: (textOverride.benefitText || '').trim() || splitBenefit,
         };
     }
 
@@ -193,6 +209,19 @@ function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverr
         if (lines.length > 1) subheadText = lines[1];
         if (lines.length > 2) ctaBlock = lines[lines.length - 1];
     }
+
+    // Defense-in-depth: this single-ad parser uses SUBHEADLINE→CTA_BUTTON and CTA_BUTTON→HOOK_END
+    // boundaries, which a CAROUSEL-angle TOV (STORY_ARC: between subhead and CTA; ANGLE_END_X /
+    // ANGLE_START_X markers) does not respect — so internal markers could be swallowed into the
+    // copy and rendered on the image. Strip them here so a carousel angle reaching this path can
+    // never leak markers, regardless of how it arrived.
+    subheadText = subheadText.split('STORY_ARC:')[0].trim();
+    ctaBlock = ctaBlock.split(/ANGLE_END|HOOK_END/)[0].trim();
+    const stripMarkerLines = (s: string): string =>
+        s.split('\n').filter((l) => !/^\s*(STORY_ARC:|ANGLE_END|HOOK_END|ANGLE_START)/i.test(l)).join('\n').trim();
+    hookText = stripMarkerLines(hookText);
+    subheadText = stripMarkerLines(subheadText);
+    ctaBlock = stripMarkerLines(ctaBlock);
 
     let ctaName = inputs.cta;
     let benefitText = "";
@@ -4315,6 +4344,14 @@ export interface BuildFinalImagePromptInput {
     carouselAnchorNote: string;
     retargetingDesignHint: string;
     imageParts: Array<{ inlineData: { mimeType: string; data: string } }>;
+    // Optional reflow scene-lock instruction. Injected AFTER blueprint keyword-stripping
+    // (the reflow path strips scene/style/reference/concept from the blueprint), so it must
+    // ride a dedicated prompt section here rather than be prepended to `blueprint`.
+    reflowInstruction?: string;
+    // Optional per-slide visual directive (carousel only). Forces the model to derive THIS
+    // slide's scene from THIS slide's own copy so every slide is visually distinct. Injected
+    // at the very top of the prompt (highest priority).
+    slideVisualDirective?: string;
 }
 
 export interface BuildFinalImagePromptResult {
@@ -4341,6 +4378,8 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
         carouselAnchorNote,
         retargetingDesignHint,
         imageParts,
+        reflowInstruction,
+        slideVisualDirective,
     } = params;
 
     // Brand-color injection happens upstream via the per-prompt blocks built
@@ -4369,20 +4408,32 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
     const _hasEnv = _logoPlacements.some((p) => p.mode === 'environmental');
     const _logoBlock = `${_hasUI ? UI_LOGO_INSTRUCTION_BLOCK : ''}${_hasEnv ? ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK : ''}`;
 
-    const textPrompt = `${_ccBlock}${coreDesignRules}
+    // Reflow scene-lock rides its own section at the very top of the prompt so it (a) is
+    // never touched by the blueprint keyword-stripper and (b) dominates the render intent.
+    // Sanitize first: strip bracket/brace characters (the image model renders stray [ ] { }
+    // as visible glyphs) and collapse runs of spaces/tabs, preserving intentional newlines.
+    const _reflowBlock = reflowInstruction
+        ? `${reflowInstruction.replace(/[[\]{}]/g, '').replace(/[ \t]+/g, ' ').trim()}\n\n`
+        : '';
+
+    // Per-slide visual directive rides the very top of the prompt (above everything else) so
+    // it dominates the render intent — each carousel slide derives its scene from its own copy.
+    const _slideDirectiveBlock = slideVisualDirective ? `${slideVisualDirective.trim()}\n\n` : '';
+
+    const textPrompt = `${_slideDirectiveBlock}${_reflowBlock}${_ccBlock}${coreDesignRules}
 ${SCREEN_CONTENT_BAN_BLOCK}
 ${_logoBlock}
 ${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}
 BLUEPRINT: ${strippedBlueprint}
-TEXTS: "${hookText}", "${subheadText}"
+TEXTS: ${hookText ? `"${hookText}"` : ''}${subheadText ? `, "${subheadText}"` : ''}
 BUTTON: "${ctaName}"
 ${carouselAnchorNote}
 ${retargetingDesignHint}
 
 ⚠️ CRITICAL TEXT RENDERING RULES:
 1. ONLY render these EXACT text strings on the image — NOTHING ELSE:
-   - Headline: "${hookText}"
-   - Subheadline: "${subheadText}"
+   ${hookText ? `- Headline: "${hookText}"` : ''}
+   ${subheadText ? `- Subheadline: "${subheadText}"` : ''}
    ${ctaName ? `- Button: "${ctaName}"` : ''}
    ${benefitText ? `- Benefit: "${benefitText}"` : ''}
    ${badges ? `- Badge: "${badges}"` : ''}
@@ -4418,7 +4469,8 @@ export async function generateFinalAd(
     editInstruction?: string,
     base64ToEdit?: string,
     styleReference?: string,
-    textOverride?: TextOverride
+    textOverride?: TextOverride,
+    reflowInstruction?: string
 ): Promise<{ image: string; failureClass?: "numeric_hallucination"; costEstimate?: CostEstimate } | { image: null; errorCode: string; failureClass?: FailureClass; debug?: FinalAdDebugInfo }> {
     const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
     resetResolutionTrace();
@@ -4556,8 +4608,17 @@ export async function generateFinalAd(
     }
     const parsedBuildPlan = parseBuildPlanEnvelope(buildPlan);
     let incomingBuildBlueprint = parsedBuildPlan.blueprint || buildPlan;
-    const ownershipMap = parsedBuildPlan.machinePlan?.ownership
-        ? mergeContentOwnership(buildContentOwnershipMap(ownedRenderText, inputs), parsedBuildPlan.machinePlan.ownership)
+    // The model's machine-plan ownership bypasses the TOV ||| splitter. Split its ctaText
+    // before it overwrites the canonical CTA in the merge, recovering the benefit half into
+    // benefitText when we don't already have one (BUG 2).
+    const _machineOwnership = parsedBuildPlan.machinePlan?.ownership;
+    if (_machineOwnership && typeof _machineOwnership.ctaText === 'string' && _machineOwnership.ctaText.includes('|||')) {
+        const { ctaName: ownCta, benefitText: ownBenefit } = splitCta(_machineOwnership.ctaText);
+        _machineOwnership.ctaText = ownCta;
+        if (!benefitText.trim() && ownBenefit) benefitText = ownBenefit;
+    }
+    const ownershipMap = _machineOwnership
+        ? mergeContentOwnership(buildContentOwnershipMap(ownedRenderText, inputs), _machineOwnership)
         : buildContentOwnershipMap(ownedRenderText, inputs);
 
     // ═══ ARABIC ANTI-REPETITION & TEXT QA LAYER ═══
@@ -5697,19 +5758,7 @@ ${coreDesignRules}
         // and ARABIC_WARDROBE_BLOCK are injected into coreDesignRules and costumeRules above,
         // every slide and every batch item receives the compliance guardrails when isArabic is true.
         const carouselAnchorNote = styleReference ? `
-═══════════════════════════════════════════════════════════════════════════════
-CAROUSEL STYLE ANCHORING (CRITICAL)
-═══════════════════════════════════════════════════════════════════════════════
-A REFERENCE IMAGE from Slide 1 is attached. You MUST match its visual style EXACTLY:
-- SAME color grading and color palette
-- SAME lighting direction, intensity, and temperature
-- SAME typography style, font weight, and text layout grid
-- SAME environment style and mood
-- SAME level of detail and rendering quality
-- The Hero should wear the SAME outfit as in the reference
-- Progress the NARRATIVE (different pose/action) but keep the WORLD identical
-DO NOT deviate from the reference style. This slide must feel like part of the SAME carousel.
-═══════════════════════════════════════════════════════════════════════════════
+CAROUSEL STYLE ANCHORING: Maintain consistent visual STYLE across all slides — same brand color palette, same typography weight and treatment, same lighting quality, same art direction. Environment and scene may change per slide when the copy demands it. Style stays unified; scene follows the copy.
 ` : '';
 
         const _isBatchCall = inputs.adMode !== 'carousel' && inputs.adMode !== 'single' && !!_multiAssetView.batchN;
@@ -5734,6 +5783,28 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
             .replace(/\b(branding|logic|brand|scene|description|style|reference|concept|prompt|direction)\b/gi, '')
             .trim();
 
+        // Per-slide visual (carousel only): the model reads THIS slide's own copy and decides
+        // whether the scene should stay in the shared environment (varying only composition) or
+        // change to match content that demands a different environment. Generic — no hardcoded
+        // scene assumptions; the goal is that the visual makes the copy feel SEEN.
+        const _slideVisualDirective = inputs.adMode === 'carousel'
+            ? `
+SLIDE VISUAL DIRECTIVE:
+This slide's copy is: "${hookText}${subheadText ? '. ' + subheadText : ''}"
+
+Read this slide's copy and decide:
+- If this slide's content naturally fits within the same environment as other slides → keep the same environment, vary only the composition, pose, and focal elements.
+- If this slide's content references a specific object, place, situation, or concept that requires a different environment to make visual sense → change the environment to match this slide's content specifically.
+
+The core rule: the visual must make the copy feel SEEN.
+A viewer should look at the image and immediately understand what this slide is about without reading the text.
+If the copy is about a cinema ticket, the visual should feel like cinema.
+If the copy is about a book, the visual should feel like a book.
+If the copy is about the speaker's authority, the speaker's environment works.
+Use your judgment — consistency where it serves the story, change where the copy demands it.
+`
+            : undefined;
+
         const _promptResult = buildFinalImagePrompt({
             technicalPrompt: '',
             blueprint: cleanBuildPlan,
@@ -5751,6 +5822,8 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
             carouselAnchorNote,
             retargetingDesignHint: '',
             imageParts: [],
+            reflowInstruction,
+            slideVisualDirective: _slideVisualDirective,
         });
 
         parts.push({ text: _promptResult.textPrompt });
@@ -5764,9 +5837,28 @@ DO NOT deviate from the reference style. This slide must feel like part of the S
         // If style reference provided (carousel slides 2+), inject it BEFORE personal photos
         if (styleReference) {
             parts.push({ inlineData: { mimeType: "image/png", data: styleReference.split(',')[1] } });
-            // Skip personal photos for carousel slides 2+ — the style reference (slide 1) already
-            // contains the rendered face. Sending photos again wastes input tokens (~$0.006/slide).
-            // Only send brand logo if available.
+            // Balanced anchor: the reference carries hero identity + brand aesthetic for cohesion,
+            // while the copy still drives each slide's scene. A hard "never copy the environment"
+            // rule made the model discard ALL visual direction and default to a generic universe —
+            // this version keeps the reference's environment when the copy fits it, and changes it
+            // only when the copy calls for a different scene.
+            parts.push({
+                text: `REFERENCE IMAGE ROLE (CAROUSEL STYLE ANCHOR):
+The attached reference image is this carousel's visual foundation.
+Use it for: hero face and appearance, brand color palette, typography style, lighting quality, and overall art direction.
+For THIS slide's scene: let the copy be your guide.
+If the copy fits naturally in the reference's environment → keep that environment, change only composition and pose.
+If the copy calls for a different scene → show that scene, but carry over the hero's appearance and brand aesthetic.
+The reference keeps the campaign cohesive; the copy makes each slide distinct.
+THE HERO'S FACE IS INVIOLABLE: The person in this slide must have IDENTICAL facial structure, bone structure, features, skin tone, age, and identity as the reference image. Do not reinterpret, alter, soften, or reimagine any facial feature. The face in the reference image is the absolute ground truth — reproduce it exactly.`,
+            });
+            // FIX 3B: also send the uploaded personal photos (boxA) as an INDEPENDENT
+            // ground-truth face anchor. Relying solely on slide 1's render let the face drift
+            // across slides; the original photos lock identity. (Skipped only in text-only mode,
+            // which has no hero.)
+            if (!_isTextOnly) {
+                boxA.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
+            }
             boxB.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
             boxC.forEach((d: string) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
         } else {

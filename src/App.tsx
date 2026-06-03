@@ -37,6 +37,22 @@ import { stepsWithData } from './lib/projectStepsData';
 import { useProjectAutoSave } from './hooks/useProjectAutoSave';
 import type { AutoSaveState } from './lib/projectAutoSave';
 import { ALL_UNIVERSES, type UniverseEntry } from './universeDatabase';
+
+// BUG 3: saved projects strip hero photos / logos to "stored_externally" (Firestore 1 MiB
+// limit). Detect that placeholder so the re-upload warning can be shown consistently from
+// every restore path (manual loadProject + startup auto-restore).
+const detectStrippedAssets = (
+  inputsObj: { personalPhotos?: string[]; brandLogos?: string[] } | null | undefined,
+): boolean =>
+  [...(inputsObj?.personalPhotos || []), ...(inputsObj?.brandLogos || [])]
+    .some((asset) => asset === 'stored_externally');
+
+// Only a base64 data URL or an http(s) URL can actually render in an <img>. Sentinels like
+// "pending_upload"/"stored_externally" (or empty/undefined) must be treated as NOT renderable
+// so the UI shows a failed state instead of a broken image.
+const isRenderableImageUrl = (url?: string | null): boolean =>
+  typeof url === 'string' && (url.startsWith('data:') || url.startsWith('http'));
+
 const InputForm = React.lazy(() => import('./components/InputForm'));
 const PerformanceDashboard = React.lazy(() => import('./components/PerformanceDashboard'));
 const PricingTableLazy = React.lazy(() => import('./components/PricingTable'));
@@ -1019,6 +1035,11 @@ const App: React.FC = () => {
   const { t, lang, setLang } = useT();
   // Mutable ref for effective UID — updated each render, safe to use in effects before state declarations
   const effectiveUidRef = React.useRef<string | null>(null);
+  // Guards the startup project auto-restore so it runs exactly ONCE per signed-in session.
+  // The restore effect's deps include `user`/`effectiveUid`, which change reference on token
+  // refresh and on async team `teamOwnerUid` resolution — re-running it would overwrite live
+  // session work (e.g. a freshly rendered carousel) with the saved snapshot. Reset on logout.
+  const hasRestoredRef = React.useRef(false);
   // --- STATE ---
   const [view, setView] = useState<'app' | 'privacy'>('app');
   const [showSidebar, setShowSidebar] = useState(false);
@@ -1045,6 +1066,10 @@ const App: React.FC = () => {
     if (!isDarkMode) document.documentElement.classList.add('light-mode');
   });
   const [projects, setProjects] = useState<SavedProject[]>([]);
+  // Non-blocking project-limit warning. Set when a new project is saved at/over the plan cap
+  // (auto-save still succeeds — the backend evicts the oldest draft). Shown as a dismissible
+  // banner in the saved-projects panel; never blocks generation, navigation, or auto-save.
+  const [projectLimitReached, setProjectLimitReached] = useState(false);
   const [currentProjectId, setCurrentProjectId] = useState<string>(() => Date.now().toString());
   const [currentProjectName, setCurrentProjectName] = useState<string>("Untitled Project");
   // --- AUTH STATE ---
@@ -1294,6 +1319,8 @@ const App: React.FC = () => {
         setUserPlan('none');
         setOnboardingComplete(null);
         setShowMandatoryBilling(false);
+        // Allow the project auto-restore to run again for the next sign-in.
+        hasRestoredRef.current = false;
       }
       setLoadingAuth(false);
     });
@@ -2219,6 +2246,29 @@ const App: React.FC = () => {
   const [carouselSlides, setCarouselSlides] = useState<CarouselSlide[]>([]);
   const [carouselCopies, setCarouselCopies] = useState<CarouselSlideCopy[]>([]);
   const [showCarouselPreview, setShowCarouselPreview] = useState(false);
+  // One-level undo for carousel resize: snapshot of the slides (and their ratio) taken right
+  // before a carousel_all reflow. Lets the user restore the pre-resize version.
+  const [previousCarouselSlides, setPreviousCarouselSlides] = useState<CarouselSlide[] | null>(null);
+  const [previousCarouselRatio, setPreviousCarouselRatio] = useState<AspectRatio | null>(null);
+  // Carousel slide lightbox — null = closed, otherwise the index of the slide shown full-screen.
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const lightboxPrev = useCallback(() => {
+    setLightboxIndex(i => (i === null || carouselSlides.length === 0) ? i : (i - 1 + carouselSlides.length) % carouselSlides.length);
+  }, [carouselSlides.length]);
+  const lightboxNext = useCallback(() => {
+    setLightboxIndex(i => (i === null || carouselSlides.length === 0) ? i : (i + 1) % carouselSlides.length);
+  }, [carouselSlides.length]);
+  useEffect(() => {
+    if (lightboxIndex === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightboxIndex(null);
+      // RTL-aware: in Arabic the visual ←/→ are mirrored, so ArrowLeft = next, ArrowRight = prev.
+      else if (e.key === 'ArrowLeft') (lang === 'ar' ? lightboxNext : lightboxPrev)();
+      else if (e.key === 'ArrowRight') (lang === 'ar' ? lightboxPrev : lightboxNext)();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxIndex, lang, lightboxNext, lightboxPrev]);
   const [carouselConceptRaw, setCarouselConceptRaw] = useState('');
   const [captionRefinement, setCaptionRefinement] = useState('');
   const [selectedTov, setSelectedTov] = useState('');
@@ -2241,6 +2291,11 @@ const App: React.FC = () => {
   // the focused batch tile).
   const [activeBatchRatio, setActiveBatchRatio] = useState<AspectRatio>(currentAspectRatio);
   const [reflowFallbackNotice, setReflowFallbackNotice] = useState<'outpaint' | 'rerender' | null>(null);
+  // BUG 3: saved projects strip hero photos / logos to "stored_externally" to fit Firestore's
+  // 1 MiB limit. When such a project is reloaded, warn (non-blocking) that the user should
+  // re-upload so their face/logo is included in the next generation. Dismissible; also auto-
+  // hides once personalPhotos/brandLogos no longer contain the stripped placeholder.
+  const [showStrippedAssetsWarning, setShowStrippedAssetsWarning] = useState(false);
   const [visualPolishes, setVisualPolishes] = useState<VisualPolish[]>([]);
   const [selectedPolishIds, setSelectedPolishIds] = useState<Set<string>>(new Set());
   // ─── EDIT TARGET — tracks which exact design is being edited ─────
@@ -2419,6 +2474,11 @@ const App: React.FC = () => {
   // --- HISTORY ENGINE (IndexedDB + Firestore sync) ---
   useEffect(() => {
     if (!user || !effectiveUid) return; // Don't load projects if not logged in
+    // Restore exactly once per session. Token refreshes / effectiveUid flips re-fire this
+    // effect, and a second restore would clobber live session state (carousel slides, etc.)
+    // with the persisted snapshot. hasRestoredRef is reset to false on logout.
+    if (hasRestoredRef.current) return;
+    hasRestoredRef.current = true;
     const initLoad = async () => {
       try {
         // Load from both sources and merge (cloud is source of truth)
@@ -2451,7 +2511,10 @@ const App: React.FC = () => {
           // normalization). Plan-aware retargeting normalization is reserved for loadProject
           // (user-initiated action) where userPlan is known; applying it here would wrongly
           // strip retargeting data for users whose plan is still loading.
-          setInputs(sanitizeProjectModes(migrateProjectInputsShape(mostRecent.inputs)));
+          const _restoredShape = migrateProjectInputsShape(mostRecent.inputs);
+          setInputs(sanitizeProjectModes(_restoredShape));
+          // BUG 3: auto-restore must set the stripped-assets warning too (not just loadProject).
+          setShowStrippedAssetsWarning(detectStrippedAssets(_restoredShape));
           setPhase(mostRecent.phase);
           setTovText(mostRecent.tovText);
           setConceptsText(normalizeFieldLabels(mostRecent.conceptsText));
@@ -2513,21 +2576,23 @@ const App: React.FC = () => {
       // IndexedDB (above) keeps the full base64 for offline display; only the
       // cloud copy is trimmed. stripHeavyImageData deep-clones, so `project`
       // (used below for thumbnail resolution) is untouched.
-      await saveProjectFn({ project: stripHeavyImageData(project) });
+      const saveRes = await saveProjectFn({ project: stripHeavyImageData(project), source: 'autosave' });
+      // Non-blocking over-limit warning — the save still succeeded server-side (oldest draft
+      // evicted to stay within the cap). Surface a dismissible banner in the panel; do NOT
+      // roll back, block, or error.
+      if ((saveRes?.data as { overLimit?: boolean } | undefined)?.overLimit) {
+        setProjectLimitReached(true);
+      }
     } catch (firestoreErr: any) {
       console.error(
         `Firestore cloud sync failed: code=${firestoreErr?.code ?? 'unknown'} message=${firestoreErr?.message ?? String(firestoreErr)}`,
         firestoreErr,
       );
+      // Defensive: the project limit is no longer a hard error (the backend never throws
+      // QUOTA_EXCEEDED), but if a legacy/edge response surfaces it, treat it as a non-blocking
+      // warning — keep the local save, do not roll back, do not block the user.
       if (firestoreErr?.code === 'failed-precondition' && firestoreErr?.message?.includes('QUOTA_EXCEEDED')) {
-        const details = firestoreErr?.details || {};
-        // Roll back the local IndexedDB write so mergeProjects on next sign-in
-        // doesn't reintroduce a project the server has already rejected.
-        // QUOTA_EXCEEDED only fires for NEW projects, so the local record we
-        // just wrote was a brand-new doc, never an update.
-        deleteProjectFromDB(project.id).catch(() => {});
-        setProjects((prev: SavedProject[]) => prev.filter((p: SavedProject) => p.id !== project.id));
-        showToast(t('billing.savedProjectOverLimit').replace('{limit}', String(details.limit || 'plan cap')), 'error');
+        setProjectLimitReached(true);
         return;
       }
       throw firestoreErr;
@@ -2551,7 +2616,7 @@ const App: React.FC = () => {
           saveProjectToDB(updated).catch(() => {});
           const callable = httpsCallable(functions, 'saveProject');
           // Strip heavy base64 before the round-trip (same as the primary save path).
-          callable({ project: stripHeavyImageData(updated) }).catch(() => {});
+          callable({ project: stripHeavyImageData(updated), source: 'autosave' }).catch(() => {});
         })
         .catch((err) => {
           console.warn("phase13 ▸ thumbnail upload failed (non-blocking):", err);
@@ -2571,14 +2636,14 @@ const App: React.FC = () => {
     const uid = effectiveUidRef.current;
     if (!uid) return;
 
-    // Client-side cap precheck — instant feedback before any round-trip.
-    // The server enforces the same cap inside a transaction (authoritative).
+    // Client-side cap detection — surface a NON-BLOCKING warning, but never stop the auto-save.
+    // The server allows the save (evicting the oldest draft to stay within the cap), so the user
+    // is never blocked from working. The warning shows as a dismissible banner in the panel.
     const isNewProject = !projects.some((p: SavedProject) => p.id === currentProjectId);
     if (isNewProject) {
       const maxProjects = getSavedProjectLimit(userPlan);
       if (Number.isFinite(maxProjects) && projects.length >= maxProjects) {
-        showToast(t('billing.savedProjectOverLimit').replace('{limit}', String(maxProjects)), 'error');
-        return;
+        setProjectLimitReached(true);
       }
     }
 
@@ -2613,7 +2678,15 @@ const App: React.FC = () => {
       selectedTov,
       selectedConcept,
       buildPlan,
-      mockupHistory,
+      // FIX 1: never persist ephemeral blob: URLs — they die on page reload (object URLs
+      // are document-scoped) and the heavy-data stripper misses them (~50 chars, no
+      // whitespace, not a data: URL), so they round-tripped into a broken <img> on restore.
+      // Swap any blob: url for the durable rawBase64 (local IndexedDB keeps it; the cloud
+      // path's stripHeavyImageData then reduces the base64 to 'stored_externally' as usual).
+      mockupHistory: mockupHistory.map(m => ({
+        ...m,
+        url: m.url?.startsWith('blob:') ? (m.rawBase64 || 'pending_upload') : m.url,
+      })),
       historyIndex,
       resolvedUniverse,
       captionText,
@@ -2622,7 +2695,10 @@ const App: React.FC = () => {
       batchHookGroups: batchHookGroups.length > 0 ? batchHookGroups.map(g => ({ ...g, selectedConcepts: Array.from(g.selectedConcepts) })) : undefined,
       creatorName: user?.displayName || user?.email?.split('@')[0] || 'Unknown',
       creatorEmail: user?.email || '',
-      carouselSlides: carouselSlides.length > 0 ? carouselSlides : undefined,
+      // FIX 3: only persist carousel slides once render is complete. An autosave firing mid-
+      // generation (slides still rendering) would otherwise overwrite the saved carousel with
+      // a partial/empty array, wiping the carousel on restore.
+      carouselSlides: (phase === 'render_studio' && carouselSlides.length > 0) ? carouselSlides : undefined,
       status: derivedStatus,
       thumbnailUrl: existingProject?.thumbnailUrl,
       metaAdId: existingProject?.metaAdId,
@@ -2936,7 +3012,14 @@ const App: React.FC = () => {
   // Get the URL string (blob URL for display, rawBase64 for API calls)
   // @ts-ignore (Safety check for old history data)
   const currentMockup = typeof historyItem === 'string' ? historyItem : historyItem?.url;
-  const currentRawBase64 = (typeof historyItem === 'object' ? historyItem?.rawBase64 : undefined) || currentMockup;
+  // After save/reload, historyItem.rawBase64 is the stripped placeholder "stored_externally"
+  // (a truthy string), which would otherwise win the `||` and block the real Storage URL from
+  // ever being used as the reflow source. Fall back to currentMockup whenever rawBase64 is
+  // missing OR the stripped placeholder, so reflow always has a usable source.
+  const rawBase64Candidate = typeof historyItem === 'object' ? historyItem?.rawBase64 : undefined;
+  const currentRawBase64 = (rawBase64Candidate && rawBase64Candidate !== 'stored_externally')
+    ? rawBase64Candidate
+    : currentMockup;
 
   // Get the Ratio (If old data, default to 1:1. If new, use saved ratio. If generating, use button selection)
   // @ts-ignore
@@ -3170,6 +3253,9 @@ const App: React.FC = () => {
     const migratedInputs = migrateProjectInputs(p.inputs);
 
     setInputs(sanitizeProjectModes(migratedInputs));
+    // BUG 3: surface a non-blocking re-upload warning in Step 1 when hero photos / logos
+    // were stripped to "stored_externally" on save.
+    setShowStrippedAssetsWarning(detectStrippedAssets(migratedInputs));
     setTovText(p.tovText);
     setConceptsText(normalizeFieldLabels(p.conceptsText));
     setSelectedTov(p.selectedTov);
@@ -4316,6 +4402,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       index: i + 1, copy, buildPlan: '', imageUrl: null, status: 'pending' as const,
     }));
     setCarouselSlides(initialSlides);
+    // A fresh carousel invalidates any prior resize-undo snapshot.
+    setPreviousCarouselSlides(null);
+    setPreviousCarouselRatio(null);
 
     // Deduct all credits upfront — we reconcile at the end
     const startingCredits = userCredits;
@@ -4324,16 +4413,31 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
     let anchorImage: string | null = null;
     let creditsActuallyUsed = 0;
+    // Local mirror of the slides as they complete. State updates are async, so we cannot
+    // read `carouselSlides` reliably right after the render loop; this array is what we
+    // persist into the generation doc (FIX 1).
+    const renderedSlides: CarouselSlide[] = carouselCopies.map((copy, i) => ({
+      index: i + 1, copy, buildPlan: '', imageUrl: null, status: 'pending' as const,
+    }));
     const cleanField = (s: string) => s.replace(/\|\|\|/g, '').trim();
+    // Split a "cta ||| benefit" string into its two parts instead of just deleting the bars
+    // (which fused the benefit into the button label). Prefer an explicit benefit field;
+    // fall back to the benefit half of the CTA string (BUG 2).
+    const splitCtaField = (raw: string): { ctaName: string; benefitText: string } => {
+      if (!raw.includes('|||')) return { ctaName: raw.trim(), benefitText: '' };
+      const [c, b] = raw.split('|||');
+      return { ctaName: c.trim(), benefitText: b?.trim() || '' };
+    };
 
     const buildSlide = async (i: number, styleRef?: string) => {
       const copy = carouselCopies[i];
       const isLastSlide = i === slideCount - 1;
+      const ctaSplit = splitCtaField(copy.ctaText || inputs.cta || '');
       const txOverride: TextOverride = {
         hookText: cleanField(copy.hookText),
         subheadText: cleanField(copy.subheadText || ''),
-        ctaName: isLastSlide ? cleanField(copy.ctaText || inputs.cta) : '',
-        benefitText: isLastSlide ? cleanField(copy.benefitText || '') : '',
+        ctaName: isLastSlide ? ctaSplit.ctaName : '',
+        benefitText: isLastSlide ? (cleanField(copy.benefitText || '') || ctaSplit.benefitText) : '',
       };
       const slideInstruction = i === 0
         ? `This is SLIDE 1 (the HOOK slide) of a ${slideCount}-slide carousel. Hero pose: CONFIDENT STANCE — arms relaxed, looking at camera or slightly off-camera. NO pointing.`
@@ -4342,12 +4446,26 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           : `This is SLIDE ${i + 1} of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: ${['THOUGHTFUL — hand on chin, looking contemplative', 'ACTIVE — leaning forward slightly, engaged expression', 'CONVERSATIONAL — relaxed, one hand gesturing naturally to the side', 'PROFESSIONAL — arms crossed confidently, slight smile', 'DYNAMIC — walking pose, captured mid-stride'][i % 5]}. NO pointing finger. NO CTA button on this slide. NO logo on this slide. NO promo badge on this slide.`;
       setCarouselSlides(prev => prev.map((s, idx) => idx === i ? { ...s, status: 'rendering' } : s));
       const slideConceptText = conceptRaw + `\n\n[CAROUSEL SLIDE ${i + 1}/${slideCount}]: ${slideInstruction}`;
-      const mockup: string | null = (await gemini.generateFinalAd(
+      const slideResult = await gemini.generateFinalAd(
         slideConceptText, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
         undefined, undefined, styleRef, txOverride
-      )).image;
-      setCarouselSlides(prev => prev.map((s, idx) => idx === i ? { ...s, buildPlan: slideConceptText, imageUrl: mockup, status: mockup ? 'done' : 'error' } : s));
+      );
+      const mockup: string | null = slideResult.image;
+      // Surface why a slide failed (non-blocking) so carousel render failures are diagnosable.
+      if (!mockup) {
+        console.warn('[carousel] slide', i + 1, 'failed:', (slideResult as any)?.errorCode, (slideResult as any)?.errorMessage);
+      }
+      // STEP 2: prefer the durable server-uploaded Storage URL so the generation doc persists a
+      // REAL source image for each slide. Previously only base64 was stored → the saveGeneration
+      // map collapsed it to 'pending_upload', leaving carousel reflow with no source image →
+      // rerenderFromPlan regenerated BLIND → a completely different person/style. Fall back to the
+      // base64 for display only if the (non-blocking) Storage upload failed.
+      const slideUrl: string | null = mockup ? (slideResult.storageUrl || mockup) : null;
+      setCarouselSlides(prev => prev.map((s, idx) => idx === i ? { ...s, buildPlan: slideConceptText, imageUrl: slideUrl, status: mockup ? 'done' : 'error' } : s));
+      renderedSlides[i] = { ...renderedSlides[i], buildPlan: slideConceptText, imageUrl: slideUrl, status: mockup ? 'done' : 'error' };
       if (mockup) creditsActuallyUsed += perSlideCost;
+      // Return the base64 (not the Storage URL) — it's used as the styleReference anchor for
+      // subsequent slides, and generateFinalAd reads a base64 data URL for that.
       return mockup;
     };
 
@@ -4374,6 +4492,51 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         await Promise.all(parallelPromises);
       }
 
+      // ─── SAVE CAROUSEL GENERATION (FIX 1) ─────────────────────────────────────
+      // Persist a generation doc with the per-slide buildPlan + source URL so slide
+      // retry and the reflowImage callable (carousel_slide / carousel_all) have a
+      // generationId to act on. Non-blocking — must not prevent the phase transition.
+      if (user) {
+        // feedbackService.saveGeneration swallows Firestore write errors and returns '' (it
+        // never throws), so the old try/catch could leave renderGenerationId empty silently —
+        // which disables carousel retry + resize. Capture the id, and retry the save once if
+        // the first attempt came back empty. Only set the state when we have a real id.
+        const doSaveCarousel = () => feedbackService.saveGeneration(
+          user.uid, inputs, 'render',
+          {
+            conceptText: conceptRaw.substring(0, 500),
+            buildPlan: conceptRaw,
+            carouselSlides: renderedSlides.map(s => ({
+              index: s.index,
+              // Base64 data URLs are megabytes each; storing several would blow Firestore's
+              // 1 MiB doc limit and fail the write. Persist only short Storage/http URLs —
+              // otherwise 'pending_upload', and reflow/retry rerenders from the saved buildPlan.
+              imageUrl: (typeof s.imageUrl === 'string' && s.imageUrl.startsWith('http')) ? s.imageUrl : 'pending_upload',
+              buildPlan: s.buildPlan,
+              copy: s.copy,
+            })),
+          },
+          conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, currentAspectRatio, buildCreativeIdentity(),
+          canUseWorkspaces ? activeWorkspaceId : null
+        );
+        let savedGenId = '';
+        try {
+          savedGenId = await doSaveCarousel();
+          if (!savedGenId) {
+            console.warn('[carousel] saveGeneration returned empty id — retrying once');
+            savedGenId = await doSaveCarousel();
+          }
+        } catch (saveErr) {
+          console.error('Non-blocking: failed to save carousel generation record (retry/reflow will be unavailable):', saveErr);
+        }
+        console.log('[carousel] renderGenerationId set:', savedGenId);
+        if (savedGenId) {
+          setRenderGenerationId(savedGenId);
+        } else {
+          showToast('Could not save the carousel — retry & resize are unavailable. Try generating again.', 'error');
+        }
+      }
+
       setPhase('render_studio');
       setReflowStep('idle');
     setReflowTarget(null);
@@ -4396,12 +4559,20 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   // ─── CAROUSEL: Regenerate a single slide ─────────────────────────────
   const handleCarouselSlideRetry = async (slideIndex: number) => {
     if (!inputs || !selectedTov || !carouselConceptRaw) return;
+    // The carousel generation now saves a doc and sets renderGenerationId. If it isn't set
+    // yet, the save is still in flight (or failed) — ask the user to wait rather than showing
+    // the misleading "generate an ad first" error.
     if (!renderGenerationId) {
-      showToast(t('studio.reflow.no_generation_id') || 'Retry requires a saved generation — try generating again first.', 'error');
+      showToast(t('studio.reflow.wait_for_generation') || 'Please wait for generation to complete first.', 'error');
       return;
     }
 
-    const totalNeeded = CREDIT_COSTS.reflowImage;
+    const slideCount = carouselCopies.length;
+    const copy = carouselCopies[slideIndex];
+    if (!copy) return;
+
+    // Same cost as the original per-slide generation (NOT the reflow cost).
+    const totalNeeded = CREDIT_COSTS.generateImage;
     if (userCredits < totalNeeded) {
       setUpgradeReason(`Retrying 1 slide needs ${totalNeeded} credits.`);
       setShowUpgradeModal(true);
@@ -4412,36 +4583,61 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     setUserCredits(startingCredits - totalNeeded);
     setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, status: 'rendering' } : s));
 
-    let success = false;
+    // Reconstruct the SAME inputs buildSlide uses for this slide, then render directly via
+    // generateFinalAd (NOT reflowImage — a same-ratio reflow no-ops and echoes the stored
+    // 'pending_upload' sentinel). This genuinely regenerates the failed slide.
+    const cleanField = (s: string) => s.replace(/\|\|\|/g, '').trim();
+    const splitCtaField = (raw: string): { ctaName: string; benefitText: string } => {
+      if (!raw.includes('|||')) return { ctaName: raw.trim(), benefitText: '' };
+      const [c, b] = raw.split('|||');
+      return { ctaName: c.trim(), benefitText: b?.trim() || '' };
+    };
+    const isLastSlide = slideIndex === slideCount - 1;
+    const ctaSplit = splitCtaField(copy.ctaText || inputs.cta || '');
+    const txOverride: TextOverride = {
+      hookText: cleanField(copy.hookText),
+      subheadText: cleanField(copy.subheadText || ''),
+      ctaName: isLastSlide ? ctaSplit.ctaName : '',
+      benefitText: isLastSlide ? (cleanField(copy.benefitText || '') || ctaSplit.benefitText) : '',
+    };
+    const slideInstruction = slideIndex === 0
+      ? `This is SLIDE 1 (the HOOK slide) of a ${slideCount}-slide carousel. Hero pose: CONFIDENT STANCE — arms relaxed, looking at camera or slightly off-camera. NO pointing.`
+      : slideIndex === slideCount - 1
+        ? `This is SLIDE ${slideIndex + 1} (FINAL SLIDE) of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: INVITING GESTURE — open palm toward camera, welcoming. This slide HAS a CTA button. Show logo ONLY on this final slide.`
+        : `This is SLIDE ${slideIndex + 1} of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: ${['THOUGHTFUL — hand on chin, looking contemplative', 'ACTIVE — leaning forward slightly, engaged expression', 'CONVERSATIONAL — relaxed, one hand gesturing naturally to the side', 'PROFESSIONAL — arms crossed confidently, slight smile', 'DYNAMIC — walking pose, captured mid-stride'][slideIndex % 5]}. NO pointing finger. NO CTA button on this slide. NO logo on this slide. NO promo badge on this slide.`;
+    // FIX (ISSUE 1): reuse the slide's OWN stored buildPlan (the exact concept + slide instruction
+    // it was originally generated with) so retry can't drift to a different/first concept via a
+    // stale carouselConceptRaw. Fall back to rebuilding only if the slide crashed before its
+    // buildPlan was recorded.
+    const existingPlan = carouselSlides[slideIndex]?.buildPlan;
+    const slideConceptText = (existingPlan && existingPlan.trim())
+      ? existingPlan
+      : carouselConceptRaw + `\n\n[CAROUSEL SLIDE ${slideIndex + 1}/${slideCount}]: ${slideInstruction}`;
+    // For non-first slides, anchor to slide 1's rendered image (same style reference buildSlide passes).
+    const anchorSlide = carouselSlides[0];
+    const styleRef = (slideIndex !== 0 && anchorSlide?.status === 'done' && isRenderableImageUrl(anchorSlide.imageUrl))
+      ? anchorSlide.imageUrl ?? undefined
+      : undefined;
 
     try {
-      const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
-      const result = await reflowFn({
-        generationId: renderGenerationId,
-        targetAspectRatio: currentAspectRatio,
-        method: 'auto',
-        scope: 'carousel_slide',
-        slideIndex,
-      });
-
-      if (typeof result.data.totalCreditsCharged === 'number') {
-        const delta = totalNeeded - result.data.totalCreditsCharged;
-        if (delta !== 0) setUserCredits(prev => prev + delta);
+      const slideResult = await gemini.generateFinalAd(
+        slideConceptText, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
+        undefined, undefined, styleRef, txOverride
+      );
+      const mockup: string | null = slideResult.image;
+      if (mockup) {
+        setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, buildPlan: slideConceptText, imageUrl: mockup, status: 'done' as const } : s));
+        showToast(`Slide ${slideIndex + 1} regenerated!`, 'success');
+      } else {
+        console.warn('[carousel retry] slide', slideIndex + 1, 'failed:', (slideResult as any)?.errorCode, (slideResult as any)?.errorMessage);
+        setUserCredits(startingCredits); // refund — no image produced
+        setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, status: 'error' as const } : s));
+        showToast(`Slide ${slideIndex + 1} retry failed. Credits refunded.`, 'error');
       }
-
-      const oc = result.data?.outcomes?.[0];
-      const imageUrl = result.data?.success && oc?.outputUrl;
-      if (imageUrl) {
-        success = true;
-        if (oc?.fallbackFrom) {
-          setReflowFallbackNotice(oc.fallbackFrom);
-        }
-      }
-      setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, imageUrl: imageUrl || null, status: imageUrl ? 'done' : 'error' } : s));
     } catch (e: any) {
+      setUserCredits(startingCredits); // refund on error
       handleApiError(e);
-      setUserCredits(startingCredits);
-      setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, status: 'error' } : s));
+      setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, status: 'error' as const } : s));
     }
   };
 
@@ -4515,8 +4711,29 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     // which may point to a different size than what the user is actually looking at.
     const editRatio = displayRatio as AspectRatio;
     startLoad(editTarget ? `Editing ${editTarget.label}...` : "Applying Refinement...");
+    // FIX 1: when editing a carousel slide, render with the user's EDITED copy from
+    // carouselCopies — not the original AI copy that resolveOwnedRenderText would re-parse
+    // from selectedTov. Build the same txOverride buildSlide / handleCarouselSlideRetry use.
+    let carouselTextOverride: TextOverride | undefined;
+    if (editTarget?.source === 'carousel' && carouselCopies[editTarget.index]) {
+      const copy = carouselCopies[editTarget.index];
+      const cleanField = (s: string) => s.replace(/\|\|\|/g, '').trim();
+      const splitCtaField = (raw: string): { ctaName: string; benefitText: string } => {
+        if (!raw.includes('|||')) return { ctaName: raw.trim(), benefitText: '' };
+        const [c, b] = raw.split('|||');
+        return { ctaName: c.trim(), benefitText: b?.trim() || '' };
+      };
+      const isLastSlide = editTarget.index === carouselCopies.length - 1;
+      const ctaSplit = splitCtaField(copy.ctaText || inputs.cta || '');
+      carouselTextOverride = {
+        hookText: cleanField(copy.hookText),
+        subheadText: cleanField(copy.subheadText || ''),
+        ctaName: isLastSlide ? ctaSplit.ctaName : '',
+        benefitText: isLastSlide ? (cleanField(copy.benefitText || '') || ctaSplit.benefitText) : '',
+      };
+    }
     try {
-      const editResult = await gemini.generateFinalAd(buildPlan, selectedTov, inputs, resolvedUniverse, editRatio, combinedInstructions, (currentRawBase64 || currentMockup) || undefined);
+      const editResult = await gemini.generateFinalAd(buildPlan, selectedTov, inputs, resolvedUniverse, editRatio, combinedInstructions, (currentRawBase64 || currentMockup) || undefined, undefined, carouselTextOverride);
       const res = editResult.image;
 
       // ═══ WRITE-BACK: Route result to correct source ═══
@@ -4840,7 +5057,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         setShowUpgradeModal(true);
         return;
       }
-      setCurrentAspectRatio(newRatio);
+      // FIX 2: snapshot the current slides + their ratio for a one-level undo before resizing.
+      setPreviousCarouselSlides([...carouselSlides]);
+      setPreviousCarouselRatio(currentAspectRatio);
+      // FIX 1A: do NOT flip currentAspectRatio yet — that would instantly reshape the grid
+      // (object-cover) and visually CROP the still-square slides before the reflow lands.
+      // currentAspectRatio is set only AFTER the reflowed images are written back (below).
+      setCarouselSlides(prev => prev.map(s => s.status === 'done' && s.imageUrl ? { ...s, status: 'rendering' as const } : s));
       startLoad(t('studio.reflow.loading_carousel')
         .replace('{count}', String(doneSlides.length))
         .replace('{ratio}', newRatio));
@@ -4889,42 +5112,21 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 setCarouselSlides(prev => prev.map((s, idx) => idx === outcome.itemIndex ? { ...s, status: 'error' as const } : s));
               }
             }
-          }
-        } else {
-          for (const slide of (carouselSlides ?? [])) {
-            if (slide.status !== 'done' || !slide.imageUrl) continue;
-            const slideIdx = slide.index - 1;
-            setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, status: 'rendering' } : s));
-            const copy = carouselCopies[slideIdx];
-            const isLastSlide = slideIdx === (carouselCopies ?? []).length - 1;
-            const txOverride: TextOverride = {
-              hookText: (copy?.hookText || '').replace(/\|\|\|/g, '').trim(),
-              subheadText: (copy?.subheadText || '').replace(/\|\|\|/g, '').trim(),
-              ctaName: isLastSlide ? (copy?.ctaText || inputs.cta).replace(/\|\|\|/g, '').trim() : '',
-              benefitText: isLastSlide ? (copy?.benefitText || '').replace(/\|\|\|/g, '').trim() : '',
-            };
-            try {
-              if (!deductCredits('reflowImage')) break;
-              const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
-              const reflowRes = await reflowFn({
-                generationId: renderGenerationId || '',
-                targetAspectRatio: newRatio as AspectRatio,
-                method: 'auto',
-                scope: 'carousel_slide',
-                slideIndex: slideIdx,
-              });
-              const res = reflowRes.data.success && reflowRes.data.outcomes?.[0]?.outputUrl;
-              setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: res || null, status: res ? 'done' : 'error' } : s));
-            } catch {
-              refundCredits('reflowImage');
-              setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, status: 'error' } : s));
-            }
-            if (slide.index < (carouselSlides ?? []).length) await new Promise(r => setTimeout(r, 500));
+            // FIX 1A: flip the display ratio only now that the reflowed images are in place,
+            // so the grid reshapes to the new ratio WITH the new images (no pre-reflow crop).
+            setCurrentAspectRatio(newRatio);
+          } else {
+            // Reflow didn't succeed — restore the 'done' status so slides stay viewable
+            // (no crop, no spinner stuck) at their original ratio.
+            setCarouselSlides(prev => prev.map(s => s.status === 'rendering' && s.imageUrl ? { ...s, status: 'done' as const } : s));
           }
         }
       } catch (e) {
         // Restore optimistic decrement on transport / callable exception.
         if (optimisticCost > 0) setUserCredits(prev => prev + optimisticCost);
+        // Restore slides from the 'rendering' placeholder so they stay viewable at the
+        // original ratio (currentAspectRatio was intentionally NOT flipped yet).
+        setCarouselSlides(prev => prev.map(s => s.status === 'rendering' && s.imageUrl ? { ...s, status: 'done' as const } : s));
         handleApiError(e);
       } finally { stopLoad(); }
       return;
@@ -5506,6 +5708,24 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         {/* ═══ PROJECT GALLERY (shown on input phase) ═══ */}
         {phase === 'input' && projects.length > 1 && (
           <div className="max-w-5xl mx-auto mb-10 animate-in fade-in duration-700">
+            {projectLimitReached && (() => {
+              const cap = getSavedProjectLimit(userPlan);
+              const capLabel = Number.isFinite(cap) ? String(cap) : 'plan';
+              return (
+                <div className={`flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3 mb-4 ${lang === 'ar' ? 'flex-row-reverse text-right' : ''}`} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+                  <i className="fa-solid fa-circle-info text-amber-400 mt-0.5"></i>
+                  <p className="flex-1 text-[11px] leading-relaxed text-amber-200/90 font-medium">
+                    {lang === 'ar'
+                      ? `وصلت إلى حد ${capLabel} مشاريع. احذف مشاريع قديمة لحفظ مشاريع جديدة.`
+                      : `You've reached your ${capLabel}-project limit. Delete old projects to save new ones.`}
+                  </p>
+                  <button onClick={() => setProjectLimitReached(false)} aria-label={lang === 'ar' ? 'إغلاق' : 'Dismiss'}
+                    className="text-amber-400/60 hover:text-amber-300 transition-colors shrink-0">
+                    <i className="fa-solid fa-xmark"></i>
+                  </button>
+                </div>
+              );
+            })()}
             <SavedProjectsPanel
               projects={projects}
               workspaces={workspaces.map(w => ({ id: w.id, name: w.name }))}
@@ -5543,6 +5763,25 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 </div>
               </div>
             </details>
+          </div>
+        )}
+
+        {phase === 'input' && showStrippedAssetsWarning &&
+          [...(inputs?.personalPhotos || []), ...(inputs?.brandLogos || [])].some(a => a === 'stored_externally') && (
+          <div className="max-w-3xl mx-auto mb-4 px-4">
+            <div className={`flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3 ${lang === 'ar' ? 'flex-row-reverse text-right' : ''}`} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+              <i className="fa-solid fa-triangle-exclamation text-amber-400 mt-0.5"></i>
+              <p className="flex-1 text-[11px] leading-relaxed text-amber-200/90 font-medium">
+                {t('strippedAssets.warning')}
+              </p>
+              <button
+                onClick={() => setShowStrippedAssetsWarning(false)}
+                aria-label={t('strippedAssets.dismiss')}
+                className="text-amber-400/60 hover:text-amber-300 transition-colors shrink-0"
+              >
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            </div>
           </div>
         )}
 
@@ -6448,8 +6687,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                                 {/* Action buttons */}
                                 <div className="flex items-center gap-1 shrink-0">
-                                  {/* Render this one */}
-                                  {!group.isBatch && singleSelectedConcepts.size <= 1 && (
+                                  {/* Render this one — single-ad path; hidden in carousel mode
+                                       where the dedicated "Design N Slides" button (handleCarouselRender)
+                                       is the only correct entry point. */}
+                                  {!group.isBatch && singleSelectedConcepts.size <= 1 && inputs?.adMode !== 'carousel' && (
                                     <button
                                       onClick={() => {
                                         const conceptBlock = getConceptBlock(group.conceptsSource, n);
@@ -6582,6 +6823,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         <button key={r.key} type="button"
                           onClick={() => {
                             setSelectedSizes(prev => {
+                              // Carousel renders every slide at a single ratio (currentAspectRatio)
+                              // and ignores extra selected sizes, so multi-select is misleading.
+                              // Force single-select in carousel mode (FIX 2).
+                              if (inputs?.adMode === 'carousel') return new Set([r.key]);
                               const next = new Set(prev);
                               if (next.has(r.key) && next.size > 1) next.delete(r.key);
                               else next.add(r.key);
@@ -7162,17 +7407,48 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   </div>
                 ) : carouselSlides.length > 0 ? (
                   <div className="space-y-3">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Carousel — {carouselSlides.filter(s => s.status === 'done').length}/{carouselSlides.length}</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Carousel — {carouselSlides.filter(s => s.status === 'done').length}/{carouselSlides.length}</span>
+                      {/* FIX 1: toggle between the current and the previous (pre-resize) version —
+                          SWAP the snapshots so the user can flip back and forth. */}
+                      {previousCarouselSlides && previousCarouselRatio && previousCarouselRatio !== currentAspectRatio && (() => {
+                        const ratioName: Record<string, { en: string; ar: string }> = {
+                          '1:1': { en: 'Square', ar: 'مربع' },
+                          '4:5': { en: 'Portrait', ar: 'عمودي' },
+                          '9:16': { en: 'Story', ar: 'ستوري' },
+                          '4:3': { en: 'Wide', ar: 'عريض' },
+                          '3:4': { en: 'Tall', ar: 'طويل' },
+                          '16:9': { en: 'Landscape', ar: 'أفقي' },
+                        };
+                        const label = ratioName[previousCarouselRatio] || { en: previousCarouselRatio, ar: previousCarouselRatio };
+                        return (
+                          <button
+                            onClick={() => {
+                              // Swap, don't clear — keep the toggle available both ways.
+                              const tempSlides = [...carouselSlides];
+                              const tempRatio = currentAspectRatio;
+                              setCarouselSlides(previousCarouselSlides);
+                              setCurrentAspectRatio(previousCarouselRatio);
+                              setPreviousCarouselSlides(tempSlides);
+                              setPreviousCarouselRatio(tempRatio);
+                            }}
+                            className="text-[9px] font-bold text-blue-300 bg-blue-600/15 border border-blue-500/30 rounded-lg px-2.5 py-1 hover:bg-blue-600/25 transition-all flex items-center gap-1.5">
+                            <i className="fa-solid fa-arrow-right-arrow-left text-[8px]"></i>
+                            {lang === 'ar' ? `التبديل إلى نسخة ${label.ar}` : `Switch to ${label.en} version`}
+                          </button>
+                        );
+                      })()}
+                    </div>
                     <div className="flex gap-2.5 overflow-x-auto pb-3" style={{ maxWidth: '100%' }}>
                       {carouselSlides.map((slide, idx) => (
                         <div key={idx} className="shrink-0" style={{ width: currentAspectRatio === '9:16' ? '120px' : '160px' }}>
-                          <div className={`relative rounded-xl overflow-hidden border bg-slate-900 group ${currentAspectRatio === '9:16' ? 'aspect-[9/16]' : currentAspectRatio === '4:3' ? 'aspect-[4/3]' : 'aspect-square'} ${slide.status === 'done' ? 'border-emerald-500/30' : 'border-slate-800/60'}`}>
-                            {slide.status === 'done' && slide.imageUrl ? (
-                              <><img src={slide.imageUrl} className="w-full h-full object-cover cursor-grab active:cursor-grabbing" draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/uri-list', slide.imageUrl!); e.dataTransfer.setData('text/plain', slide.imageUrl!); e.dataTransfer.setData('text/html', `<img src="${slide.imageUrl}" />`); }} /><div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100"><div className="flex gap-1"><button onClick={() => { pushMockup(slide.imageUrl!, currentAspectRatio); setBuildPlan(slide.buildPlan); setStudioTweak(''); setEditTarget({ source: 'carousel', index: idx, imageUrl: slide.imageUrl!, label: `Slide ${slide.index}` }); showToast(`Editing Slide ${slide.index} — changes will update this slide`, 'info'); }} className="px-2 py-1 bg-violet-600 text-white rounded text-[7px] font-bold" title="Edit this slide"><i className="fa-solid fa-pen-to-square"></i></button><button onClick={() => { applyTrialWatermark(slide.imageUrl!).then(url => { const a = document.createElement('a'); a.href = url; a.download = `slide_${slide.index}.png`; a.click(); }); }} className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold"><i className="fa-solid fa-download"></i></button><button onClick={() => handleCarouselSlideRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[7px] font-bold"><i className="fa-solid fa-rotate-right"></i></button>{metaConnection?.connected && (<button onClick={async () => { setMetaPushing(true); showToast('Pushing slide to Meta...', 'info'); try { const result = await metaService.pushCreative(slide.imageUrl!, `${inputs?.productName || 'Ad'}_carousel_slide_${slide.index}`, buildDeploymentMeta({ mode: 'carousel', ratio: currentAspectRatio })); if (result.success) showToast(result.message || 'Slide pushed!', 'success'); else showToast(result.message || 'Push failed', 'error'); } catch { showToast('Push to Meta failed', 'error'); } setMetaPushing(false); }} className="px-2 py-1 bg-blue-500/90 text-white rounded text-[7px] font-bold"><i className="fa-brands fa-meta"></i></button>)}<button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(slide.imageUrl!, currentAspectRatio, '', '', slide.buildPlan); }} className="px-2 py-1 bg-amber-500/90 text-white rounded text-[7px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button></div></div></>
+                          <div onClick={() => setLightboxIndex(idx)} className={`relative rounded-xl overflow-hidden border bg-slate-900 group cursor-pointer ${currentAspectRatio === '9:16' ? 'aspect-[9/16]' : currentAspectRatio === '4:3' ? 'aspect-[4/3]' : 'aspect-square'} ${slide.status === 'done' ? 'border-emerald-500/30' : 'border-slate-800/60'}`}>
+                            {slide.status === 'done' && slide.imageUrl && isRenderableImageUrl(slide.imageUrl) ? (
+                              <><img src={slide.imageUrl} className="w-full h-full object-cover cursor-grab active:cursor-grabbing" draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/uri-list', slide.imageUrl!); e.dataTransfer.setData('text/plain', slide.imageUrl!); e.dataTransfer.setData('text/html', `<img src="${slide.imageUrl}" />`); }} /><div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100 pointer-events-none"><div className="flex gap-1 pointer-events-auto" onClick={(e) => e.stopPropagation()}><button onClick={() => { pushMockup(slide.imageUrl!, currentAspectRatio); setBuildPlan(slide.buildPlan); setStudioTweak(''); setEditTarget({ source: 'carousel', index: idx, imageUrl: slide.imageUrl!, label: `Slide ${slide.index}` }); showToast(`Editing Slide ${slide.index} — changes will update this slide`, 'info'); }} className="px-2 py-1 bg-violet-600 text-white rounded text-[7px] font-bold" title="Edit this slide"><i className="fa-solid fa-pen-to-square"></i></button><button onClick={() => { applyTrialWatermark(slide.imageUrl!).then(url => { const a = document.createElement('a'); a.href = url; a.download = `slide_${slide.index}.png`; a.click(); }); }} className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold"><i className="fa-solid fa-download"></i></button><button onClick={() => handleCarouselSlideRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[7px] font-bold"><i className="fa-solid fa-rotate-right"></i></button>{metaConnection?.connected && (<button onClick={async () => { setMetaPushing(true); showToast('Pushing slide to Meta...', 'info'); try { const result = await metaService.pushCreative(slide.imageUrl!, `${inputs?.productName || 'Ad'}_carousel_slide_${slide.index}`, buildDeploymentMeta({ mode: 'carousel', ratio: currentAspectRatio })); if (result.success) showToast(result.message || 'Slide pushed!', 'success'); else showToast(result.message || 'Push failed', 'error'); } catch { showToast('Push to Meta failed', 'error'); } setMetaPushing(false); }} className="px-2 py-1 bg-blue-500/90 text-white rounded text-[7px] font-bold"><i className="fa-brands fa-meta"></i></button>)}<button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(slide.imageUrl!, currentAspectRatio, '', '', slide.buildPlan); }} className="px-2 py-1 bg-amber-500/90 text-white rounded text-[7px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button></div></div></>
                             ) : slide.status === 'rendering' ? (
                               <div className="w-full h-full flex flex-col items-center justify-center gap-1"><div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"></div><span className="text-[7px] text-blue-400 font-bold">Slide {slide.index}</span></div>
-                            ) : slide.status === 'error' ? (
-                              <div className="w-full h-full flex flex-col items-center justify-center gap-1"><i className="fa-solid fa-triangle-exclamation text-red-400 text-xs"></i><button onClick={() => handleCarouselSlideRetry(idx)} className="px-2 py-0.5 bg-blue-600 text-white rounded text-[7px] font-bold">Retry</button></div>
+                            ) : (slide.status === 'error' || (slide.status === 'done' && !isRenderableImageUrl(slide.imageUrl))) ? (
+                              <div className="w-full h-full flex flex-col items-center justify-center gap-1"><i className="fa-solid fa-triangle-exclamation text-red-400 text-xs"></i><button onClick={(e) => { e.stopPropagation(); handleCarouselSlideRetry(idx); }} className="px-2 py-0.5 bg-blue-600 text-white rounded text-[7px] font-bold">Retry</button></div>
                             ) : (
                               <div className="w-full h-full flex items-center justify-center"><span className="text-[8px] text-slate-700 font-bold">{slide.index}</span></div>
                             )}
@@ -7418,7 +7694,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                             onClick={() => setHistoryIndex(idx)}>
                             {m.url ? (
                               <>
-                                <img src={m.url} className="w-full h-full object-cover cursor-grab active:cursor-grabbing"
+                                <img src={m.url?.startsWith('blob:') ? (m.rawBase64 || m.url) : m.url} className="w-full h-full object-cover cursor-grab active:cursor-grabbing"
                                   draggable={true}
                                   onDragStart={(e) => {
                                     e.dataTransfer.setData('text/uri-list', m.url);
@@ -7577,7 +7853,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 {/* Actions */}
                 <div className="bg-slate-900/50 rounded-2xl border border-slate-800/40 p-4 space-y-2">
 
-                  <button disabled={!selectedConcept} onClick={() => selectedConcept && handleApproveConcept(selectedConcept)}
+                  <button disabled={!selectedConcept} onClick={() => selectedConcept && (inputs?.adMode === 'carousel' ? handleCarouselRender(selectedConcept) : handleApproveConcept(selectedConcept))}
                     className="w-full py-2.5 rounded-xl bg-slate-800/70 border border-slate-700/60 text-slate-300 text-[9px] font-bold uppercase tracking-wider hover:bg-slate-700 hover:text-white transition-all flex items-center justify-center gap-2 disabled:opacity-30">
                     <i className="fa-solid fa-arrows-rotate text-[8px]"></i> Reset & Regenerate
                   </button>
@@ -7597,9 +7873,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 </div>
 
                 {/* Reflow Rescaling — 3 ratio buttons, PERMANENTLY visible (no picker
-                    toggle, no trigger button). Gated only on currentMockup so the
-                    control appears the moment a viewable render exists. */}
-                {currentMockup && (() => {
+                    toggle, no trigger button). Shown the moment a viewable render exists —
+                    either a single render (currentMockup) OR a rendered carousel (which never
+                    sets currentMockup but has done slides to resize). */}
+                {(currentMockup || carouselSlides.length > 0) && (() => {
                   // UI restriction: Square / Portrait / Story only. Backend supports the
                   // full 6 ratios; restore others by extending UI_RATIOS.
                   const UI_RATIOS: AspectRatio[] = ['1:1', '4:5', '9:16'];
@@ -7632,7 +7909,12 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   // In batch mode the displayed image is a batch tile, so the "Current"
                   // badge tracks the focused tile's ratio (activeBatchRatio), not the
                   // single-render displayRatio.
-                  const currentRatioForBadge = isBatchScope ? activeBatchRatio : displayRatio;
+                  // For carousel, use currentAspectRatio directly — displayRatio reads from
+                  // mockupHistory (which the carousel reflow never updates) and goes stale.
+                  const currentRatioForBadge =
+                    carouselSlides.length > 0 ? currentAspectRatio :
+                    isBatchScope ? activeBatchRatio :
+                    displayRatio;
                   return (
                   <div className="bg-slate-900/50 rounded-2xl border border-slate-800/40 p-4 space-y-3">
                     <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center"><i className="fa-solid fa-left-right mr-2 text-blue-500"></i>{t('studio.reflow')}</h4>
@@ -7649,7 +7931,9 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                             disabled={isCurrent || committing}
                             onClick={isCurrent ? undefined : () => {
                               setReflowTarget(value);
-                              if (isCarouselScope) setReflowScope('carousel_slide');
+                              // Carousel always resizes ALL slides (carousel_slide's index
+                              // resolution via currentMockup is broken for carousels).
+                              if (isCarouselScope) setReflowScope('carousel_all');
                               else setReflowScope('single');
                             }}
                             title={reflowLabels[value]}
@@ -7690,18 +7974,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                             </button>
                           </div>
                         )}
-                        {isCarouselScope && (
-                          <div className="flex gap-2">
-                            <button disabled={committing} onClick={() => setReflowScope('carousel_slide')}
-                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'carousel_slide' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
-                              {t('studio.reflow.scope_slide')}
-                            </button>
-                            <button disabled={committing} onClick={() => setReflowScope('carousel_all')}
-                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'carousel_all' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
-                              {t('studio.reflow.scope_carousel_all', { count: doneCarouselCount })}
-                            </button>
-                          </div>
-                        )}
+                        {/* Carousel always resizes ALL slides — no per-slide scope toggle
+                            (carousel_slide's slide-index resolution is unreliable). */}
                         <button
                           onClick={async () => {
                             if (committing || !reflowTarget) return;
@@ -8252,6 +8526,54 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           </div>
         </div>
       )}
+
+      {/* ═══ CAROUSEL SLIDE LIGHTBOX ═══ */}
+      {lightboxIndex !== null && carouselSlides[lightboxIndex] && (() => {
+        const slide = carouselSlides[lightboxIndex];
+        const isRtl = lang === 'ar';
+        // RTL-aware: the visual ← button advances (next) in Arabic, goes back (prev) in English.
+        const onLeftArrow = isRtl ? lightboxNext : lightboxPrev;
+        const onRightArrow = isRtl ? lightboxPrev : lightboxNext;
+        const multi = carouselSlides.length > 1;
+        return (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={() => setLightboxIndex(null)} dir={isRtl ? 'rtl' : 'ltr'}>
+            {/* Close */}
+            <button onClick={(e) => { e.stopPropagation(); setLightboxIndex(null); }} aria-label={isRtl ? 'إغلاق' : 'Close'}
+              className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-xl z-10 transition-colors">
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+            {/* Left arrow */}
+            {multi && (
+              <button onClick={(e) => { e.stopPropagation(); onLeftArrow(); }} aria-label={isRtl ? 'التالي' : 'Previous'}
+                className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-2xl z-10 transition-colors">
+                <i className="fa-solid fa-chevron-left"></i>
+              </button>
+            )}
+            {/* Right arrow */}
+            {multi && (
+              <button onClick={(e) => { e.stopPropagation(); onRightArrow(); }} aria-label={isRtl ? 'السابق' : 'Next'}
+                className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-2xl z-10 transition-colors">
+                <i className="fa-solid fa-chevron-right"></i>
+              </button>
+            )}
+            {/* Image (or failed-slide placeholder) */}
+            <div onClick={(e) => e.stopPropagation()} className="flex items-center justify-center">
+              {slide.status === 'done' && slide.imageUrl && isRenderableImageUrl(slide.imageUrl) ? (
+                <img src={slide.imageUrl} alt={`Slide ${slide.index}`} className="object-contain rounded-lg shadow-2xl" style={{ maxHeight: '90vh', maxWidth: '90vw' }} />
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-3 bg-slate-900 border border-slate-700 rounded-2xl px-20 py-28">
+                  <i className="fa-solid fa-triangle-exclamation text-red-400 text-4xl"></i>
+                  <span className="text-slate-300 text-sm font-bold">{isRtl ? 'فشل الإنشاء' : 'Generation failed'}</span>
+                </div>
+              )}
+            </div>
+            {/* Counter */}
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full bg-black/60 text-white text-sm font-bold z-10">
+              {lightboxIndex + 1} / {carouselSlides.length}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ═══ UPGRADE / TOP-UP MODAL ═══ */}
       {/* ═══ CAROUSEL COPY PREVIEW MODAL ═══ */}
