@@ -5837,15 +5837,19 @@ Use your judgment — consistency where it serves the story, change where the co
         // If style reference provided (carousel slides 2+), inject it BEFORE personal photos
         if (styleReference) {
             parts.push({ inlineData: { mimeType: "image/png", data: styleReference.split(',')[1] } });
-            // Scope the reference strictly to aesthetics + hero identity. Without this, the model
-            // treats the attached slide-1 image as a SCENE template and reproduces its environment,
-            // overriding the per-slide SLIDE VISUAL DIRECTIVE. This frees the scene to follow copy.
+            // Balanced anchor: the reference carries hero identity + brand aesthetic for cohesion,
+            // while the copy still drives each slide's scene. A hard "never copy the environment"
+            // rule made the model discard ALL visual direction and default to a generic universe —
+            // this version keeps the reference's environment when the copy fits it, and changes it
+            // only when the copy calls for a different scene.
             parts.push({
-                text: `REFERENCE IMAGE USAGE (CAROUSEL STYLE ANCHOR):
-Use the attached reference image for STYLE, COLOR PALETTE, TYPOGRAPHY TREATMENT, LIGHTING QUALITY, and HERO FACE/WARDROBE ONLY.
-Do NOT copy the environment, background, or scene from the reference.
-The scene for THIS slide must be derived from THIS slide's copy (as specified in the SLIDE VISUAL DIRECTIVE above).
-The reference image is a style guide — not a scene template.`,
+                text: `REFERENCE IMAGE ROLE (CAROUSEL STYLE ANCHOR):
+The attached reference image is this carousel's visual foundation.
+Use it for: hero face and appearance, brand color palette, typography style, lighting quality, and overall art direction.
+For THIS slide's scene: let the copy be your guide.
+If the copy fits naturally in the reference's environment → keep that environment, change only composition and pose.
+If the copy calls for a different scene → show that scene, but carry over the hero's appearance and brand aesthetic.
+The reference keeps the campaign cohesive; the copy makes each slide distinct.`,
             });
             // Skip personal photos for carousel slides 2+ — the style reference (slide 1) already
             // contains the rendered face. Sending photos again wastes input tokens (~$0.006/slide).

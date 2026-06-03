@@ -4584,7 +4584,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       : slideIndex === slideCount - 1
         ? `This is SLIDE ${slideIndex + 1} (FINAL SLIDE) of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: INVITING GESTURE — open palm toward camera, welcoming. This slide HAS a CTA button. Show logo ONLY on this final slide.`
         : `This is SLIDE ${slideIndex + 1} of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: ${['THOUGHTFUL — hand on chin, looking contemplative', 'ACTIVE — leaning forward slightly, engaged expression', 'CONVERSATIONAL — relaxed, one hand gesturing naturally to the side', 'PROFESSIONAL — arms crossed confidently, slight smile', 'DYNAMIC — walking pose, captured mid-stride'][slideIndex % 5]}. NO pointing finger. NO CTA button on this slide. NO logo on this slide. NO promo badge on this slide.`;
-    const slideConceptText = carouselConceptRaw + `\n\n[CAROUSEL SLIDE ${slideIndex + 1}/${slideCount}]: ${slideInstruction}`;
+    // FIX (ISSUE 1): reuse the slide's OWN stored buildPlan (the exact concept + slide instruction
+    // it was originally generated with) so retry can't drift to a different/first concept via a
+    // stale carouselConceptRaw. Fall back to rebuilding only if the slide crashed before its
+    // buildPlan was recorded.
+    const existingPlan = carouselSlides[slideIndex]?.buildPlan;
+    const slideConceptText = (existingPlan && existingPlan.trim())
+      ? existingPlan
+      : carouselConceptRaw + `\n\n[CAROUSEL SLIDE ${slideIndex + 1}/${slideCount}]: ${slideInstruction}`;
     // For non-first slides, anchor to slide 1's rendered image (same style reference buildSlide passes).
     const anchorSlide = carouselSlides[0];
     const styleRef = (slideIndex !== 0 && anchorSlide?.status === 'done' && isRenderableImageUrl(anchorSlide.imageUrl))
