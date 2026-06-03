@@ -4455,9 +4455,17 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       if (!mockup) {
         console.warn('[carousel] slide', i + 1, 'failed:', (slideResult as any)?.errorCode, (slideResult as any)?.errorMessage);
       }
-      setCarouselSlides(prev => prev.map((s, idx) => idx === i ? { ...s, buildPlan: slideConceptText, imageUrl: mockup, status: mockup ? 'done' : 'error' } : s));
-      renderedSlides[i] = { ...renderedSlides[i], buildPlan: slideConceptText, imageUrl: mockup, status: mockup ? 'done' : 'error' };
+      // STEP 2: prefer the durable server-uploaded Storage URL so the generation doc persists a
+      // REAL source image for each slide. Previously only base64 was stored → the saveGeneration
+      // map collapsed it to 'pending_upload', leaving carousel reflow with no source image →
+      // rerenderFromPlan regenerated BLIND → a completely different person/style. Fall back to the
+      // base64 for display only if the (non-blocking) Storage upload failed.
+      const slideUrl: string | null = mockup ? (slideResult.storageUrl || mockup) : null;
+      setCarouselSlides(prev => prev.map((s, idx) => idx === i ? { ...s, buildPlan: slideConceptText, imageUrl: slideUrl, status: mockup ? 'done' : 'error' } : s));
+      renderedSlides[i] = { ...renderedSlides[i], buildPlan: slideConceptText, imageUrl: slideUrl, status: mockup ? 'done' : 'error' };
       if (mockup) creditsActuallyUsed += perSlideCost;
+      // Return the base64 (not the Storage URL) — it's used as the styleReference anchor for
+      // subsequent slides, and generateFinalAd reads a base64 data URL for that.
       return mockup;
     };
 
