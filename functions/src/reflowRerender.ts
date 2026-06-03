@@ -109,7 +109,24 @@ export async function rerenderFromPlan(args: {
 }): Promise<{ outputUrl: string; creditsCharged: number; brandColorReinforced: boolean }> {
     const { generationId, targetRatio, itemIndex, genData, geminiCaller, openaiApiKey, styleReference } = args;
 
-    const inputs: Record<string, unknown> = (genData.input ?? {}) as Record<string, unknown>;
+    // The saved generation record uses aliased field names (adType / niche / language / offer)
+    // and carries the art-direction fields under their canonical names. Map everything back to
+    // the AdInputs shape generateFinalAd expects — otherwise the rerender runs with adMode /
+    // targetAudience / adLanguage / visualSubStyle / adTone / etc. undefined and regenerates the
+    // hero + art direction with defaults (FIX 2).
+    const savedInput = (genData.input ?? {}) as Record<string, unknown>;
+    const inputs: Record<string, unknown> = {
+        ...savedInput,
+        adMode: savedInput.adMode ?? savedInput.adType,
+        targetAudience: savedInput.targetAudience ?? savedInput.niche,
+        adLanguage: savedInput.adLanguage ?? savedInput.language,
+        offerType: savedInput.offerType ?? savedInput.offer,
+        visualSubStyle: savedInput.visualSubStyle,
+        adTone: savedInput.adTone,
+        visualStyleFamily: savedInput.visualStyleFamily,
+        universeMode: savedInput.universeMode,
+        preferredUniverse: savedInput.preferredUniverse,
+    };
     const approvedTov: string = genData.output?.fullResponse ?? "";
     const resolvedUniverse: string = genData.input?.tone ?? "";
 

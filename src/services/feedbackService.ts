@@ -92,6 +92,13 @@ export interface GenerationRecord {
         testimonial?: string;
         brandColorPrimary?: string | null;
         brandColorSecondary?: string | null;
+        // Art-direction / style fields — persisted so reflow's rerender-from-plan reproduces
+        // the SAME hero look and art direction instead of regenerating with defaults.
+        visualSubStyle?: string | null;
+        adTone?: string | null;
+        visualStyleFamily?: string | null;
+        universeMode?: string | null;
+        preferredUniverse?: string | null;
     };
     output: {
         phase: 'hooks' | 'concepts' | 'render' | 'caption';
@@ -201,6 +208,13 @@ class FeedbackService {
                 testimonial: (inputs as any).testimonial || null,
                 brandColorPrimary: inputs.brandColorPrimary || null,
                 brandColorSecondary: inputs.brandColorSecondary || null,
+                // Art-direction / style fields (canonical AdInputs names) so reflow rerender
+                // keeps the same hero look + art direction. adType (=adMode) is already above.
+                visualSubStyle: (inputs as any).visualSubStyle || null,
+                adTone: (inputs as any).adTone || null,
+                visualStyleFamily: (inputs as any).visualStyleFamily || null,
+                universeMode: (inputs as any).universeMode || null,
+                preferredUniverse: (inputs as any).preferredUniverse || null,
             },
             output: {
                 phase,

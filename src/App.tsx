@@ -7401,20 +7401,35 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   <div className="space-y-3">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Carousel — {carouselSlides.filter(s => s.status === 'done').length}/{carouselSlides.length}</span>
-                      {/* FIX 2: one-level undo for carousel resize — restore the pre-resize version. */}
-                      {previousCarouselSlides && previousCarouselRatio && previousCarouselRatio !== currentAspectRatio && (
-                        <button
-                          onClick={() => {
-                            setCarouselSlides(previousCarouselSlides);
-                            setCurrentAspectRatio(previousCarouselRatio);
-                            setPreviousCarouselSlides(null);
-                            setPreviousCarouselRatio(null);
-                          }}
-                          className="text-[9px] font-bold text-blue-300 bg-blue-600/15 border border-blue-500/30 rounded-lg px-2.5 py-1 hover:bg-blue-600/25 transition-all flex items-center gap-1.5">
-                          <i className="fa-solid fa-arrow-left text-[8px]"></i>
-                          {lang === 'ar' ? `النسخة السابقة (${previousCarouselRatio})` : `Previous Version (${previousCarouselRatio})`}
-                        </button>
-                      )}
+                      {/* FIX 1: toggle between the current and the previous (pre-resize) version —
+                          SWAP the snapshots so the user can flip back and forth. */}
+                      {previousCarouselSlides && previousCarouselRatio && previousCarouselRatio !== currentAspectRatio && (() => {
+                        const ratioName: Record<string, { en: string; ar: string }> = {
+                          '1:1': { en: 'Square', ar: 'مربع' },
+                          '4:5': { en: 'Portrait', ar: 'عمودي' },
+                          '9:16': { en: 'Story', ar: 'ستوري' },
+                          '4:3': { en: 'Wide', ar: 'عريض' },
+                          '3:4': { en: 'Tall', ar: 'طويل' },
+                          '16:9': { en: 'Landscape', ar: 'أفقي' },
+                        };
+                        const label = ratioName[previousCarouselRatio] || { en: previousCarouselRatio, ar: previousCarouselRatio };
+                        return (
+                          <button
+                            onClick={() => {
+                              // Swap, don't clear — keep the toggle available both ways.
+                              const tempSlides = [...carouselSlides];
+                              const tempRatio = currentAspectRatio;
+                              setCarouselSlides(previousCarouselSlides);
+                              setCurrentAspectRatio(previousCarouselRatio);
+                              setPreviousCarouselSlides(tempSlides);
+                              setPreviousCarouselRatio(tempRatio);
+                            }}
+                            className="text-[9px] font-bold text-blue-300 bg-blue-600/15 border border-blue-500/30 rounded-lg px-2.5 py-1 hover:bg-blue-600/25 transition-all flex items-center gap-1.5">
+                            <i className="fa-solid fa-arrow-right-arrow-left text-[8px]"></i>
+                            {lang === 'ar' ? `التبديل إلى نسخة ${label.ar}` : `Switch to ${label.en} version`}
+                          </button>
+                        );
+                      })()}
                     </div>
                     <div className="flex gap-2.5 overflow-x-auto pb-3" style={{ maxWidth: '100%' }}>
                       {carouselSlides.map((slide, idx) => (
