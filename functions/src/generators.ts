@@ -4979,6 +4979,7 @@ ${_renderRtCtx.testimonial ? `- Testimonial context available — design should 
   ${_renderLogoBlock}
   ${_renderRtDesignHint}
        
+  ${MODEL_PROVIDER === 'gemini' ? `
         ⚠️⚠️⚠️ ABSOLUTE RULE: ONLY RENDER USER - FACING TEXT ⚠️⚠️⚠️
 ================================================================
 The image must contain ONLY these text elements and NOTHING ELSE:
@@ -5047,6 +5048,7 @@ SUBHEADLINE VISIBILITY (CRITICAL):
 - Every text element must be readable at phone screen size (1080px width). If in doubt, add a darker background.
 - Use text stroke/outline (2-3px dark outline) on ALL text to ensure separation from background.
 - The contrast background should look DESIGNED (gradient, frosted glass, etc.), not like a cheap overlay.
+` : ''}
     ⚠️ PROFESSIONAL DESIGN INTEGRATION: The design must look like a professional ad agency made it — not text pasted on a stock photo.
 
     ${(() => {
