@@ -14,3 +14,7 @@ export const OPENAI_SIZE_BY_ASPECT: Record<string, string> = {
 };
 
 export const OPENAI_IMAGE_TIMEOUT_MS = 120_000;
+
+// Render quality tier for gpt-image-2. 'medium' is materially faster and cheaper
+// than 'high' (~30-50s & ~$0.07 vs ~60-90s & ~$0.19) at advertising-acceptable quality.
+export const OPENAI_IMAGE_QUALITY: 'low' | 'medium' | 'high' = 'medium';

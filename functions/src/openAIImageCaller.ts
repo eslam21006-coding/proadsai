@@ -5,6 +5,7 @@ import {
   OPENAI_VISUAL_MODEL,
   OPENAI_SIZE_BY_ASPECT,
   OPENAI_IMAGE_TIMEOUT_MS,
+  OPENAI_IMAGE_QUALITY,
 } from "./modelConfig.js";
 import type { GeminiCaller } from "./generators.js";
 
@@ -58,6 +59,7 @@ export function createOpenAIImageCaller(apiKey: string): GeminiCaller {
             image: imageFiles,
             prompt,
             size: size as any,
+            quality: OPENAI_IMAGE_QUALITY,
           },
           { signal: controller.signal },
         );
@@ -69,6 +71,7 @@ export function createOpenAIImageCaller(apiKey: string): GeminiCaller {
             model: OPENAI_VISUAL_MODEL,
             prompt,
             size: size as any,
+            quality: OPENAI_IMAGE_QUALITY,
           },
           { signal: controller.signal },
         );

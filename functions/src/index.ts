@@ -4356,7 +4356,7 @@ export const reflowImage = onCall({
 export const serverEditRegion = onCall({
     region: "europe-west1",
     secrets: [geminiApiKey, openaiApiKey],
-    timeoutSeconds: 120,
+    timeoutSeconds: 300,
     memory: "2GiB",
     cors: true,
     maxInstances: 20,
