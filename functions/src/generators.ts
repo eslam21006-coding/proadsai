@@ -4462,9 +4462,16 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
        5. Each Arabic text string must appear EXACTLY ONCE — never duplicate, never truncate, never rephrase.
        === END GEMINI PROMPT === */
 
+    // Dedup (Phase 025 — 32k prompt budget): the main path's coreDesignRules already embeds
+    // SCREEN_CONTENT_BAN_BLOCK and the logo block. Only re-add them when a minimal caller's
+    // coreDesignRules lacks them — mirrors the _ccBlock guard above. Removes ~1.3–2.4k chars
+    // of duplicated rules with zero semantic loss.
+    const _screenBanOut = coreDesignRules.includes(SCREEN_CONTENT_BAN_BLOCK) ? '' : SCREEN_CONTENT_BAN_BLOCK;
+    const _logoBlockOut = (coreDesignRules.includes(UI_LOGO_INSTRUCTION_BLOCK) || coreDesignRules.includes(ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK)) ? '' : _logoBlock;
+
     const textPrompt = `${_slideDirectiveBlock}${_reflowBlock}${_ccBlock}${coreDesignRules}
-${SCREEN_CONTENT_BAN_BLOCK}
-${_logoBlock}
+${_screenBanOut}
+${_logoBlockOut}
 ${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}
 BLUEPRINT: ${strippedBlueprint}
 
@@ -5038,9 +5045,7 @@ SUBHEADLINE VISIBILITY (CRITICAL):
 - Every text element must be readable at phone screen size (1080px width). If in doubt, add a darker background.
 - Use text stroke/outline (2-3px dark outline) on ALL text to ensure separation from background.
 - The contrast background should look DESIGNED (gradient, frosted glass, etc.), not like a cheap overlay.
-    ⚠️⚠️⚠️ PROFESSIONAL DESIGN INTEGRATION (NOT TEXT ON IMAGE — THIS IS CRITICAL) ⚠️⚠️⚠️
-    ================================================================
-    The design must look like a PROFESSIONAL AD AGENCY created it, not like someone pasted text on a stock photo.
+    ⚠️ PROFESSIONAL DESIGN INTEGRATION: The design must look like a professional ad agency made it — not text pasted on a stock photo.
 
     ${(() => {
             // ═══ STEP 3.5 → STEP 4: CONTRACT-LED COMPOSITION (sole authority) ═══
@@ -5121,15 +5126,12 @@ ${(() => {
     return '';
 })()}
 
-⚠️ THE LAYOUT CONTRACT ABOVE IS THE SOLE COMPOSITION AUTHORITY.
-Follow the zone definitions, hierarchy, spatial rules, and must-show/must-avoid lists EXACTLY.
-Do NOT improvise a different layout. Do NOT use a generic 3-zone top/center/bottom unless the contract specifies it.
-If the contract says "hero left, stack right" — that is what you render. Not hero-only.`;
+⚠️ THE LAYOUT CONTRACT ABOVE IS THE SOLE COMPOSITION AUTHORITY — follow its zones, hierarchy, spatial rules, and must-show/must-avoid lists EXACTLY. Do not improvise a different layout or default to a generic 3-zone top/center/bottom unless the contract specifies it (if it says "hero left, stack right", render exactly that — not hero-only).`;
         })()}
 
     INTEGRATED DESIGN ELEMENTS:
-    - GRADIENT SCRIMS: Must be SMOOTH multi-stop gradients (3+ stops: 85% → 50% → 0%). Not flat rectangles. Feel like natural vignetting.
-    - DECORATIVE FRAME ELEMENTS: Add subtle design elements that frame the text — thin lines, corner accents, geometric shapes, or glow effects in the accent color.
+    - GRADIENT SCRIMS: smooth multi-stop gradients (85% → 50% → 0%), like natural vignetting — not flat rectangles.
+    - DECORATIVE FRAME: subtle accent-color elements framing the text (thin lines, corner accents, geometric shapes, or glow).
     ${resolveStyleFamily(inputs) === 'minimal'
     ? `- DEPTH LAYERING: Keep background clean and uncluttered. FORBIDDEN atmospheric effects: no bokeh, no dust motes, no smoke wisps, no haze, no particles, no volumetric light, no god rays. Maximize negative space. Clean studio depth only.`
     : (() => {
@@ -5303,16 +5305,9 @@ FORBIDDEN: Soft gradients, photorealism, cinematic lighting,
         };
         return blocks[sub] || '';
     })()}
-    BACKGROUND OVERLAY (MANDATORY ON EVERY SLIDE):
-    - ALWAYS render a full-width dark gradient overlay behind ALL text areas
-    - Top text area: dark gradient from top edge (85% opacity black) fading to transparent by 40% height
-    - Bottom text area (CTA/benefit): solid dark bar (80-90% opacity) spanning full width
-    - The overlay must be VISIBLE and OBVIOUS — if someone squints and can't see it, it's not dark enough
+    BACKGROUND OVERLAY (MANDATORY): full-width dark gradient behind ALL text areas — top: 85%-black fading to transparent by 40% height; bottom (CTA/benefit): solid 80-90% dark bar full width. Must be visibly obvious.
 
-    ⚠️ META ADS SAFE ZONE: Follow the SPATIAL RULES from the layout contract above.
-    All text, logos, CTAs, and critical visual elements MUST stay INSIDE the safe zone inset specified by the contract.
-    NEVER place headline text touching the top edge. NEVER place CTA touching the bottom edge.
-    ⚠️ NEVER render safe zone percentages, margin numbers, or dimension indicators as visible text in the image. These are invisible layout guides only.
+    ⚠️ META ADS SAFE ZONE: Keep all text, logos, CTAs, and key visuals INSIDE the contract's safe-zone inset (per the layout contract's spatial rules). Headline never touches the top edge; CTA never touches the bottom edge. Never render safe-zone percentages or margin numbers as visible text — they are invisible guides.
 
     ═══════════════════════════════════════════════════════════════════════════
     TEXT TREATMENT — VARIETY SYSTEM (pick ONE style for this design)

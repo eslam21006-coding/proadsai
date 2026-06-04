@@ -25,6 +25,13 @@ export function createOpenAIImageCaller(apiKey: string): GeminiCaller {
     }
     const prompt = textParts.join("\n");
 
+    // Safety net: gpt-image-2 enforces a 32,000-char prompt limit. Fail loud and early
+    // (refund via the callable's catch) rather than letting the API reject the request.
+    if (prompt.length > 31500) {
+      console.error("[openAI] Prompt still over limit:", prompt.length);
+      throw new Error(`Prompt too long: ${prompt.length} chars (max 31500)`);
+    }
+
     // 2. Resolve size from aspect ratio
     const aspectRatio: string = params.config?.imageConfig?.aspectRatio ?? "1:1";
     const size = OPENAI_SIZE_BY_ASPECT[aspectRatio] ?? "1024x1024";

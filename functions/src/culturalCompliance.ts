@@ -123,27 +123,18 @@ export const SUBSTITUTIONS = {
 // ═══════════════════════════════════════════════════════════
 
 export const CULTURAL_COMPLIANCE_BLOCK: string = `CULTURAL COMPLIANCE (MANDATORY — Arabic market):
-- NEVER render alcohol in any form: no wine glasses, beer bottles, champagne, cocktails, whiskey, spirits, or any drinking vessel that implies alcohol.
-- NEVER render nightclub, bar, or pub interiors.
-- NEVER render gambling elements: no cards, chips, roulette, slot machines.
-- NEVER render pork products or pork-related food scenes.
-- NEVER render dogs as pets (culturally sensitive in Gulf markets).
-- NEVER render crosses, churches, or non-Islamic religious symbols unless specifically relevant to the product.
-- NEVER render revealing or immodest clothing on any person — all figures should be dressed conservatively. Shoulders covered, no deep necklines, no short skirts/shorts.
-- NEVER render mixed-gender physical contact (handshakes are acceptable).
-- Luxury signaling should use: premium tea/coffee, luxury watches, fine dining (halal), architecture, cars, travel, nature — NOT alcohol or nightlife.
-- If the universe mentions any bar/lounge/club setting, replace the alcohol elements with premium non-alcoholic beverages (Arabic coffee, tea, juice, water).`;
+- NO alcohol in any form (wine, beer, champagne, cocktails, spirits, or any vessel implying it); NO bar/nightclub/pub/lounge settings — replace with premium non-alcoholic drinks (Arabic coffee, tea, juice, water).
+- NO gambling (cards, chips, roulette, slots); NO pork or pork-related food; NO dogs as pets; NO crosses/churches/non-Islamic religious symbols unless the product specifically requires it.
+- Conservative, modest clothing on everyone: shoulders covered, no deep necklines, no short skirts/shorts. NO mixed-gender physical contact (handshakes OK).
+- Signal luxury via premium tea/coffee, fine watches, halal fine dining, architecture, cars, travel, nature — never alcohol or nightlife.`;
 
 // ═══════════════════════════════════════════════════════════
 // ARABIC WARDROBE BLOCK — injected into wardrobe section
 // ═══════════════════════════════════════════════════════════
 
 export const ARABIC_WARDROBE_BLOCK: string = `ARABIC MARKET WARDROBE RULES:
-- All figures (male and female) must be dressed conservatively and modestly.
-- Female figures: shoulders covered, no cleavage, skirt/dress below knee or trousers. Hijab ONLY if present in Box A — never add or remove it.
-- Male figures: no tank tops, no shorts above knee. Business casual minimum.
-- No swimwear, no gym wear showing skin, no lingerie or underwear visible.
-- Luxury fashion is encouraged — but covered luxury (suits, abayas, elegant modest dresses, thobes).`;
+- Everyone dressed conservatively and modestly. Female: shoulders covered, no cleavage, hem below knee or trousers; hijab ONLY if present in Box A — never add or remove it. Male: no tank tops, no shorts above knee (business-casual minimum).
+- No swimwear, gym wear showing skin, lingerie, or visible underwear. Luxury encouraged but COVERED (suits, abayas, elegant modest dresses, thobes).`;
 
 // ═══════════════════════════════════════════════════════════
 // ARABIC DETECTION

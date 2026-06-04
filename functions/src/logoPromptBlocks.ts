@@ -1,56 +1,17 @@
 // functions/src/logoPromptBlocks.ts — single source of truth for HOTFIX-E prompt constants
 
 export const SCREEN_CONTENT_BAN_BLOCK = `
-═════════════════════════════════════════════════════════════════════
-DEVICE SCREEN CONTENT RULE
-═════════════════════════════════════════════════════════════════════
-Every device display (laptop screen, desktop monitor, tablet front,
-phone front, smartwatch face, or any other screen visible in the scene)
-SHOWS contextually relevant interface content that fits the offer:
-
-- A clean online-course / lesson / learning-platform interface
-- A simple, generic dashboard or progress view (illustrative tiles)
-- A native-app or web-app UI that matches the product
-- A relevant website or landing page
-
-Render the on-screen interface realistically but keep it SOFT and
-SECONDARY — gentle screen glow, slight perspective, lightly out of
-focus — so it reads as a believable working screen without competing
-with the headline.
-
-The screen shows interface (UI) content ONLY. Keep these OFF the
-screen surface — they are handled elsewhere in the composition:
-- Brand logos, wordmarks, app icons, or partner marks
-- The ad's headline, subhead, CTA, captions, or any text overlay
-
-Brand logos live in their assigned composited zone or on a physical
-scene surface; the ad copy lives in the headline layer — never on a
-device screen.
-═════════════════════════════════════════════════════════════════════
+DEVICE SCREEN CONTENT RULE:
+Any device screen in the scene (laptop, monitor, tablet, phone, smartwatch) shows contextually relevant interface content for the offer — a clean course/lesson UI, a simple dashboard, an app/web UI, or a relevant landing page. Render it realistically but SOFT and SECONDARY (gentle glow, slight perspective, lightly out of focus) so it never competes with the headline.
+The screen shows interface (UI) content ONLY. Keep OFF the screen: Brand logos/wordmarks/app icons and the ad's headline/subhead/CTA/captions. Logos live in their composited zone or on a physical scene surface; ad copy stays in the headline layer — never on a screen.
 `;
 
 export const UI_LOGO_INSTRUCTION_BLOCK = `
-═════════════════════════════════════════════════════════════════════
-UI LOGO PLACEMENT INSTRUCTION
-═════════════════════════════════════════════════════════════════════
-For each logo marked as UI mode:
-Do NOT render this logo in the image. Leave the specified zone CLEAR
-and unobstructed. It will be composited post-render for pixel-perfect
-accuracy. The zone must be completely empty — no overlapping elements,
-no partial coverage, no visual content of any kind.
-═════════════════════════════════════════════════════════════════════
+UI LOGO PLACEMENT: For each UI-mode logo, do NOT render it. Leave the specified zone CLEAR and unobstructed (no overlapping elements, no partial coverage) — it is composited post-render for pixel-perfect accuracy.
 `;
 
 export const ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK = `
-═════════════════════════════════════════════════════════════════════
-ENVIRONMENTAL LOGO PLACEMENT INSTRUCTION
-═════════════════════════════════════════════════════════════════════
-For each logo marked as environmental mode:
-Render this logo as a physical object in the scene — on the {surface}.
-Match the object's perspective, lighting, and material.
-Keep it subtle and natural — part of the environment, not an overlay.
-Use the uploaded logo image as the visual reference.
-═════════════════════════════════════════════════════════════════════
+ENVIRONMENTAL LOGO PLACEMENT: For each environmental-mode logo, render it as a physical object on the {surface}, matching the scene's perspective, lighting, and material. Keep it subtle and natural — part of the environment, not an overlay. Use the uploaded logo image as reference.
 `;
 
 export const MODE_SELECTION_HINT_BLOCK = `
