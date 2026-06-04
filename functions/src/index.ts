@@ -34,6 +34,8 @@ import { createStripePortalSessionImpl } from "./stripe/stripePortal.js";
 import { notifyGHL, URL_BY_EVENT_TEMPLATE } from "./billing/ghlBillingSync.js";
 import type { GHLEventType } from "./billing/ghlBillingSync.js";
 import { STRIPE_PRICE_TO_PLAN } from "./stripe/stripeClient.js";
+import { createOpenAIImageCaller } from "./openAIImageCaller.js";
+import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL } from "./modelConfig.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
@@ -3900,6 +3902,19 @@ function createGeminiCaller(apiKey: string) {
     };
 }
 
+// Helper: Creates a model-aware routing caller that sends VISUAL_MODEL calls to
+// OpenAI (when MODEL_PROVIDER==='openai') and everything else to Gemini.
+function createVisualRoutingCaller(geminiKey: string, openaiKey: string) {
+    const gemini = createGeminiCaller(geminiKey);
+    const openai = createOpenAIImageCaller(openaiKey);
+    return async (params: { model: string; contents: any; config?: any }) => {
+        if (MODEL_PROVIDER === "openai" && params.model === VISUAL_MODEL) {
+            return openai(params);
+        }
+        return gemini(params);
+    };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PATTERN SUMMARIES — Aggregation Jobs
 // ═══════════════════════════════════════════════════════════════════════════
@@ -4233,7 +4248,7 @@ export const serverGenerateFinalAd = onCall({
         requireBatch: _batchTotal != null,
         batchQuantity: _batchTotal ?? undefined,
     });
-    generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    generators.setGeminiCaller(createVisualRoutingCaller(geminiApiKey.value(), openaiApiKey.value()));
     generators.setOpenAIKey(openaiApiKey.value());
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     await populateSourceColdAdBrandColors(request.auth.uid, inputs);
@@ -4334,13 +4349,13 @@ export const reflowImage = onCall({
     memory: "2GiB",
     cors: true,
 }, async (request: CallableRequest) => {
-    return reflowImageHandler(request, { db: admin.firestore(), admin, geminiCaller: createGeminiCaller(geminiApiKey.value()), openaiApiKey: openaiApiKey.value() });
+    return reflowImageHandler(request, { db: admin.firestore(), admin, geminiCaller: createVisualRoutingCaller(geminiApiKey.value(), openaiApiKey.value()), openaiApiKey: openaiApiKey.value() });
 });
 
 // ─── MAGIC SELECTOR: Region-targeted image editing ──────────────────────
 export const serverEditRegion = onCall({
     region: "europe-west1",
-    secrets: [geminiApiKey],
+    secrets: [geminiApiKey, openaiApiKey],
     timeoutSeconds: 120,
     memory: "2GiB",
     cors: true,
@@ -4413,12 +4428,12 @@ Rules:
     // Append universal aspect ratio preservation
     instruction += `\n\n⚠️ CRITICAL: The output image MUST have the EXACT SAME aspect ratio and dimensions as the input image. This is a ${ratio || '1:1'} image. Do NOT change it to square or any other ratio.`;
 
-    generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    generators.setGeminiCaller(createVisualRoutingCaller(geminiApiKey.value(), openaiApiKey.value()));
 
     try {
         const rawB64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
-        const callGemini = createGeminiCaller(geminiApiKey.value());
-        const response = await callGemini({
+        const editCaller = createVisualRoutingCaller(geminiApiKey.value(), openaiApiKey.value());
+        const response = await editCaller({
             model: VISUAL_MODEL,
             contents: {
                 parts: [

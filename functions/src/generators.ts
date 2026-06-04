@@ -33,6 +33,7 @@ import { resolveBrandColors, type ResolveBrandColorsInput } from "./brandColorRe
 import { buildCarouselBrandConsistencyBlock, buildBatchBrandConsistencyBlock } from "./brandPromptBlocks.js";
 import { checkBrandColorCompliance } from "./brandColorCompliance.js";
 import { GenerationError } from "./types.js";
+import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL, OPENAI_SIZE_BY_ASPECT } from "./modelConfig.js";
 
 // ─── Typed precedence-resolver argument builder ─────────────────────────────
 // Centralises the 4-source precedence shape so all 6 prompt-build sites and
@@ -3948,7 +3949,7 @@ ${JSON.stringify(machinePlan)}`;
     };
 
     const copyFields: CopyFidelityFields = { hookText, subheadText, ctaName, benefitText };
-    const MAX_COPY_FIDELITY_ATTEMPTS = 3;
+    const MAX_COPY_FIDELITY_ATTEMPTS = MODEL_PROVIDER === "openai" ? 1 : 3;
     let bestMachinePlan = machinePlan;
     let bestFidelityResult: CopyFidelityResult | null = null;
     let copyFidelityPassed = false;
@@ -4318,6 +4319,15 @@ export interface ResolutionTrace {
         resolvedImagePrompt: string | null;
         blueprintText: string | null;
     }>;
+    visualProvider?: {
+        provider: "openai" | "gemini";
+        model: string;
+        size?: string;
+        usedReferenceEdit?: boolean;
+        copyFidelityGated?: boolean;
+        arabicQaRan?: boolean;
+        timedOut?: boolean;
+    };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -4420,33 +4430,61 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
     // it dominates the render intent — each carousel slide derives its scene from its own copy.
     const _slideDirectiveBlock = slideVisualDirective ? `${slideVisualDirective.trim()}\n\n` : '';
 
+    /* === GEMINI PROMPT (preserved for revert) ===
+       Phase 025 replaced the rigid fixed-zone text-rendering sections below with the
+       free-form GPT-native AD COPY / TEXT PLACEMENT / QUALITY blocks. Nothing is deleted.
+       To revert: set MODEL_PROVIDER='gemini' in modelConfig.ts AND restore the two original
+       sections below into the textPrompt template (section 1 replaced the AD COPY block;
+       section 2 replaced the TEXT PLACEMENT / QUALITY blocks). The `${...}` interpolations
+       below are the verbatim originals — inert here because this is a comment.
+
+       --- Section 1: between `BLUEPRINT: ...` and `${carouselAnchorNote}` ---
+       TEXTS: ${hookText ? `"${hookText}"` : ''}${subheadText ? `, "${subheadText}"` : ''}
+       BUTTON: "${ctaName}"
+
+       --- Section 2: after `${retargetingDesignHint}`, before `${_wardrobeBlock}${costumeRules}` ---
+       ⚠️ CRITICAL TEXT RENDERING RULES:
+       1. ONLY render these EXACT text strings on the image — NOTHING ELSE:
+          ${hookText ? `- Headline: "${hookText}"` : ''}
+          ${subheadText ? `- Subheadline: "${subheadText}"` : ''}
+          ${ctaName ? `- Button: "${ctaName}"` : ''}
+          ${benefitText ? `- Benefit: "${benefitText}"` : ''}
+          ${badges ? `- Badge: "${badges}"` : ''}
+       2. DO NOT render ANY of these on the image:
+          - System instructions, marker labels, or field names
+          - "VISUAL_DIRECTION:", "TECHNICAL_PROMPT:", "CONCEPT_START", etc.
+          - "**" symbols, "═══" lines, or any formatting markers
+          - English technical instructions or camera settings
+          - ANY English text, brand names, watermarks, or labels
+          - Any text that is NOT one of the strings listed above
+       3. If the blueprint mentions "VISUAL_DIRECTION" or similar — that is an INSTRUCTION TO YOU, not text to render.
+       4. NEVER render English words from the blueprint as visible text on the image. The blueprint is a design INSTRUCTION, not content to display.
+       5. Each Arabic text string must appear EXACTLY ONCE — never duplicate, never truncate, never rephrase.
+       === END GEMINI PROMPT === */
+
     const textPrompt = `${_slideDirectiveBlock}${_reflowBlock}${_ccBlock}${coreDesignRules}
 ${SCREEN_CONTENT_BAN_BLOCK}
 ${_logoBlock}
 ${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}
 BLUEPRINT: ${strippedBlueprint}
-TEXTS: ${hookText ? `"${hookText}"` : ''}${subheadText ? `, "${subheadText}"` : ''}
-BUTTON: "${ctaName}"
+
+AD COPY TO RENDER ON THIS IMAGE:
+${hookText ? `- Main Hook: "${hookText}"` : ''}
+${subheadText ? `- Supporting Line: "${subheadText}"` : ''}
+${ctaName ? `- CTA Button: "${ctaName}"` : ''}
+${benefitText ? `- Benefit Line: "${benefitText}"` : ''}
+${badges ? `- Badge: "${badges}"` : ''}
+
+TEXT PLACEMENT:
+Place the ad copy where it best fits the composition. Every design must have a DIFFERENT text layout — vary placement freely across overlays on dark areas, inside shapes or cards, split across zones, integrated into the scene, or in dedicated panels. Never repeat the same text skeleton across concepts.
+${_isAr ? `ARABIC TEXT: All Arabic copy MUST be rendered right-to-left in fully connected Arabic script. Zero tolerance for broken letter connections, disconnected glyphs, or Latin character substitution. Every Arabic letterform must be complete and correctly joined.` : ''}
+The CTA button must appear inside a visually distinct button or shape with strong text-to-background contrast. All text must be legible against its background.
+
+QUALITY:
+Ultra-high-resolution professional advertising output. Every element must be sharp and intentional. ${_isAr ? `Arabic letterforms must be pixel-perfect with zero rendering artifacts.` : ''}
+
 ${carouselAnchorNote}
 ${retargetingDesignHint}
-
-⚠️ CRITICAL TEXT RENDERING RULES:
-1. ONLY render these EXACT text strings on the image — NOTHING ELSE:
-   ${hookText ? `- Headline: "${hookText}"` : ''}
-   ${subheadText ? `- Subheadline: "${subheadText}"` : ''}
-   ${ctaName ? `- Button: "${ctaName}"` : ''}
-   ${benefitText ? `- Benefit: "${benefitText}"` : ''}
-   ${badges ? `- Badge: "${badges}"` : ''}
-2. DO NOT render ANY of these on the image:
-   - System instructions, marker labels, or field names
-   - "VISUAL_DIRECTION:", "TECHNICAL_PROMPT:", "CONCEPT_START", etc.
-   - "**" symbols, "═══" lines, or any formatting markers
-   - English technical instructions or camera settings
-   - ANY English text, brand names, watermarks, or labels
-   - Any text that is NOT one of the strings listed above
-3. If the blueprint mentions "VISUAL_DIRECTION" or similar — that is an INSTRUCTION TO YOU, not text to render.
-4. NEVER render English words from the blueprint as visible text on the image. The blueprint is a design INSTRUCTION, not content to display.
-5. Each Arabic text string must appear EXACTLY ONCE — never duplicate, never truncate, never rephrase.
 ${_wardrobeBlock}${costumeRules}
 `;
 
@@ -5919,6 +5957,31 @@ If the asset is not clearly visible and prominent in the final render, the outpu
                     const imageBase64 = `data:image/png;base64,${part.inlineData.data}`;
                     let currentImage = imageBase64;
 
+                    // Phase 025 — audit trace: which visual provider rendered this image
+                    const _hasHeroRefs = parts.some((p: any) => p.inlineData);
+                    if (MODEL_PROVIDER === "openai") {
+                        const _existingTrace = _lastResolutionTrace as any || {};
+                        _lastResolutionTrace = {
+                            ..._existingTrace,
+                            visualProvider: {
+                                provider: "openai" as const,
+                                model: OPENAI_VISUAL_MODEL,
+                                size: OPENAI_SIZE_BY_ASPECT[currentAspectRatio] || "1024x1024",
+                                usedReferenceEdit: _hasHeroRefs,
+                                copyFidelityGated: MODEL_PROVIDER === "openai",
+                            },
+                        };
+                    } else {
+                        const _existingTrace = _lastResolutionTrace as any || {};
+                        _lastResolutionTrace = {
+                            ..._existingTrace,
+                            visualProvider: {
+                                provider: "gemini" as const,
+                                model: VISUAL_MODEL,
+                            },
+                        };
+                    }
+
                     // Quality gate / design critique pipeline removed (product decision 2026-05-30):
                     // GPT-4o-mini critique + auto-fix re-render added latency and cost with no
                     // user-visible benefit at the current stage. Render proceeds directly with
@@ -6033,6 +6096,13 @@ ${benefitText ? `- BENEFIT goes below CTA ONLY: "${benefitText}"` : ''}
                             } catch { /* JSON parse failed — skip QA */ }
                         } catch (qaErr) {
                             console.warn('Arabic QA skipped (non-blocking):', qaErr);
+                        }
+                        // Phase 025 — mark arabicQaRan in trace
+                        if (_lastResolutionTrace && typeof _lastResolutionTrace === 'object') {
+                            const _vp = (_lastResolutionTrace as any).visualProvider;
+                            if (_vp && typeof _vp === 'object') {
+                                _vp.arabicQaRan = true;
+                            }
                         }
                     }
 

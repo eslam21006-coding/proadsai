@@ -22,6 +22,7 @@ type ResolutionTraceDraft = Partial<Mutable<ResolutionTrace>> & {
     _brandColorCompliance?: BrandColorComplianceEntry[];
     _modeComposition?: { missing: ModeCompositionWarning[]; reinforced: boolean };
     _adaptStateAudit?: AdaptStateAuditResult;
+    _visualProvider?: ResolutionTrace["visualProvider"];
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -56,6 +57,15 @@ export interface TraceBuilder {
     addBrandColorComplianceEntry(entry: BrandColorComplianceEntry): TraceBuilder;
     recordModeCompositionMissing(mode: string, missingElements: string[]): TraceBuilder;
     recordAdaptStateAudit(result: AdaptStateAuditResult): TraceBuilder;
+    setVisualProvider(provider: {
+        provider: "openai" | "gemini";
+        model: string;
+        size?: string;
+        usedReferenceEdit?: boolean;
+        copyFidelityGated?: boolean;
+        arabicQaRan?: boolean;
+        timedOut?: boolean;
+    }): TraceBuilder;
     build(): ResolutionTrace;
 }
 
@@ -183,6 +193,10 @@ export function createTraceBuilder(): TraceBuilder {
             };
             return builder;
         },
+        setVisualProvider(provider) {
+            state._visualProvider = { ...provider };
+            return builder;
+        },
         build(): ResolutionTrace {
             if (!state.resolvedCampaignType) throw new Error("TraceBuilder: resolvedCampaignType not set");
             if (!state.resolvedAdMode) throw new Error("TraceBuilder: resolvedAdMode not set");
@@ -233,6 +247,7 @@ export function createTraceBuilder(): TraceBuilder {
                     ? { missing: state._modeComposition.missing.map(e => ({ ...e })), reinforced: state._modeComposition.reinforced }
                     : undefined,
                 adaptStateAudit: state._adaptStateAudit,
+                visualProvider: state._visualProvider,
             });
         },
     };

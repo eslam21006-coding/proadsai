@@ -270,6 +270,15 @@ export interface ResolutionTrace {
     brandColorCompliance?: BrandColorComplianceEntry[];
     modeComposition?: ModeCompositionTrace;
     adaptStateAudit?: AdaptStateAuditResult;
+    visualProvider?: {
+        provider: "openai" | "gemini";
+        model: string;
+        size?: string;
+        usedReferenceEdit?: boolean;
+        copyFidelityGated?: boolean;
+        arabicQaRan?: boolean;
+        timedOut?: boolean;
+    };
 }
 
 export interface ModeCompositionTrace {
