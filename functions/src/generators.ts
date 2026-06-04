@@ -4416,7 +4416,6 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
     const _logoPlacements: LogoPlacement[] = parsedBpForLogos?.machinePlan?.logoPlacements ?? [];
     const _hasUI = _logoPlacements.some((p) => p.mode === 'ui');
     const _hasEnv = _logoPlacements.some((p) => p.mode === 'environmental');
-    const _logoBlock = `${_hasUI ? UI_LOGO_INSTRUCTION_BLOCK : ''}${_hasEnv ? ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK : ''}`;
 
     // Reflow scene-lock rides its own section at the very top of the prompt so it (a) is
     // never touched by the blueprint keyword-stripper and (b) dominates the render intent.
@@ -4467,7 +4466,10 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
     // coreDesignRules lacks them — mirrors the _ccBlock guard above. Removes ~1.3–2.4k chars
     // of duplicated rules with zero semantic loss.
     const _screenBanOut = coreDesignRules.includes(SCREEN_CONTENT_BAN_BLOCK) ? '' : SCREEN_CONTENT_BAN_BLOCK;
-    const _logoBlockOut = (coreDesignRules.includes(UI_LOGO_INSTRUCTION_BLOCK) || coreDesignRules.includes(ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK)) ? '' : _logoBlock;
+    // Suppress each logo block independently — only drop the specific block already present
+    // in coreDesignRules (the two sides derive from different sources: blueprint here vs.
+    // gatedBuildPlan in coreDesignRules), so a blanket either-or guard could drop the other.
+    const _logoBlockOut = `${_hasUI && !coreDesignRules.includes(UI_LOGO_INSTRUCTION_BLOCK) ? UI_LOGO_INSTRUCTION_BLOCK : ''}${_hasEnv && !coreDesignRules.includes(ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK) ? ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK : ''}`;
 
     const textPrompt = `${_slideDirectiveBlock}${_reflowBlock}${_ccBlock}${coreDesignRules}
 ${_screenBanOut}
@@ -5963,7 +5965,7 @@ If the asset is not clearly visible and prominent in the final render, the outpu
                                 model: OPENAI_VISUAL_MODEL,
                                 size: OPENAI_SIZE_BY_ASPECT[currentAspectRatio] || "1024x1024",
                                 usedReferenceEdit: _hasHeroRefs,
-                                copyFidelityGated: MODEL_PROVIDER === "openai",
+                                copyFidelityGated: true, // OpenAI path runs a single build-plan pass (T014)
                             },
                         };
                     } else {
@@ -5973,6 +5975,7 @@ If the asset is not clearly visible and prominent in the final render, the outpu
                             visualProvider: {
                                 provider: "gemini" as const,
                                 model: VISUAL_MODEL,
+                                copyFidelityGated: false, // Gemini path keeps the multi-attempt fidelity loop (T014)
                             },
                         };
                     }

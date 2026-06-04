@@ -123,7 +123,7 @@ export const SUBSTITUTIONS = {
 // ═══════════════════════════════════════════════════════════
 
 export const CULTURAL_COMPLIANCE_BLOCK: string = `CULTURAL COMPLIANCE (MANDATORY — Arabic market):
-- NO alcohol in any form (wine, beer, champagne, cocktails, spirits, or any vessel implying it); NO bar/nightclub/pub/lounge settings — replace with premium non-alcoholic drinks (Arabic coffee, tea, juice, water).
+- NO alcohol in any form (wine, beer, champagne, cocktails, spirits, or any vessel implying it); NO bar/nightclub/pub settings — replace with premium non-alcoholic drinks (Arabic coffee, tea, juice, water) in an upscale lounge/seating area.
 - NO gambling (cards, chips, roulette, slots); NO pork or pork-related food; NO dogs as pets; NO crosses/churches/non-Islamic religious symbols unless the product specifically requires it.
 - Conservative, modest clothing on everyone: shoulders covered, no deep necklines, no short skirts/shorts. NO mixed-gender physical contact (handshakes OK).
 - Signal luxury via premium tea/coffee, fine watches, halal fine dining, architecture, cars, travel, nature — never alcohol or nightlife.`;

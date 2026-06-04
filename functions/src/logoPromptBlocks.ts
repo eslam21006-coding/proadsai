@@ -11,7 +11,7 @@ UI LOGO PLACEMENT: For each UI-mode logo, do NOT render it. Leave the specified 
 `;
 
 export const ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK = `
-ENVIRONMENTAL LOGO PLACEMENT: For each environmental-mode logo, render it as a physical object on the {surface}, matching the scene's perspective, lighting, and material. Keep it subtle and natural — part of the environment, not an overlay. Use the uploaded logo image as reference.
+ENVIRONMENTAL LOGO PLACEMENT: For each environmental-mode logo, render it as a physical object on its designated scene surface (the placement's surface), matching the scene's perspective, lighting, and material. Keep it subtle and natural — part of the environment, not an overlay. Use the uploaded logo image as reference.
 `;
 
 export const MODE_SELECTION_HINT_BLOCK = `
