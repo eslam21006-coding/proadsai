@@ -2379,7 +2379,7 @@ const App: React.FC = () => {
               showToast(`Reflowing to ${extraRatio}...`, 'info');
               await new Promise(r => setTimeout(r, 500));
               if (renderGenerationId) {
-                const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+                const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
                 const reflowRes = await reflowFn({
                   generationId: renderGenerationId,
                   targetAspectRatio: extraRatio as AspectRatio,
@@ -4064,13 +4064,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             try {
               await new Promise(r => setTimeout(r, 500));
               if (savedGenId) {
-                const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+                const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
+                console.log(`[auto-reflow] → ${extraRatio} starting (genId=${savedGenId}, client timeout=300s)`, Date.now());
                 const reflowRes = await reflowFn({
                   generationId: savedGenId,
                   targetAspectRatio: extraRatio as AspectRatio,
                   method: 'auto',
                   scope: 'single',
                 });
+                console.log(`[auto-reflow] → ${extraRatio} returned`, Date.now(), { success: reflowRes.data?.success, hasUrl: !!reflowRes.data?.outcomes?.[0]?.outputUrl, errorCode: reflowRes.data?.outcomes?.[0]?.errorCode ?? 'none' });
                 const oc = reflowRes.data?.outcomes?.[0];
                 if (reflowRes.data?.success && oc?.outputUrl) {
                   pushMockup(oc.outputUrl, extraRatio as AspectRatio);
@@ -4277,7 +4279,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
         if (primaryUrl && comboGenId) {
           try {
-            const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+            const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
             const reflowRes = await reflowFn({
               generationId: comboGenId,
               targetAspectRatio: extraRatio as AspectRatio,
@@ -4341,7 +4343,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       let mockup: string | null = null;
 
       if (isReflow && renderGenerationId) {
-        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
         const reflowRes = await reflowFn({
           generationId: renderGenerationId,
           targetAspectRatio: itemRatio,
@@ -4975,7 +4977,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       setBatchResults(prev => prev.map(r => r.status === 'done' && r.url ? { ...r, status: 'rendering' as const } : r));
       setUserCredits(prev => prev - totalCost);
       try {
-        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
         const result = await reflowFn({
           generationId: renderGenerationId,
           targetAspectRatio: newRatio,
@@ -5018,7 +5020,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
       setUserCredits(prev => prev - cost);
       try {
-        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
         const result = await reflowFn({
           generationId: renderGenerationId,
           targetAspectRatio: newRatio,
@@ -5085,7 +5087,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
       try {
         if (renderGenerationId) {
-          const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+          const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
           const result = await reflowFn({
             generationId: renderGenerationId,
             targetAspectRatio: newRatio,
@@ -5156,7 +5158,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     }
     try {
       if (renderGenerationId) {
-        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
         const result = await reflowFn({
           generationId: renderGenerationId,
           targetAspectRatio: newRatio,
@@ -5296,6 +5298,34 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     });
   };
 
+  // Force a real file download for Storage URLs (cross-origin URLs ignore the anchor
+  // `download` attr and open in-browser with a token filename). Fetch → blob → same-origin
+  // object URL makes `download` + a meaningful filename work. Data URLs (trial watermark)
+  // pass through fetch fine. Falls back to opening in a new tab if fetch is CORS-blocked.
+  const downloadImage = async (url: string, filename: string) => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename || 'ad-creative.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      console.error('downloadImage fetch failed, falling back to direct link:', e);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename || 'ad-creative.png';
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+  };
+
   const handleDownload = async () => {
     const downloadable = currentRawBase64 || currentMockup;
     if (!downloadable) return;
@@ -5311,12 +5341,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const filename = `${product}_${campaign}_${universe}_${hookKeyword}_${ratio}.png`;
 
     const finalUrl = await applyTrialWatermark(downloadable);
-    const link = document.createElement('a');
-    link.href = finalUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    await downloadImage(finalUrl, filename);
   };
 
   if (view === 'privacy') return <PrivacyPolicy onBack={() => setView('app')} />;
@@ -7113,7 +7138,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                       />
                                       <div className="flex gap-1 flex-wrap justify-center px-1">
                                         {/* Download */}
-                                        <button onClick={async () => { const url = await applyTrialWatermark(item.url!); const a = document.createElement('a'); a.href = url; a.download = `${inputs?.productName || 'ad'}_${item.ratio.replace(':', 'x')}_H${item.hookKey}_C${item.conceptIndex}.png`; a.click(); }}
+                                        <button onClick={async () => { const url = await applyTrialWatermark(item.url!); await downloadImage(url, `${inputs?.productName || 'ad'}_${item.ratio.replace(':', 'x')}_H${item.hookKey}_C${item.conceptIndex}.png`); }}
                                           className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold flex items-center gap-0.5" title="Download">
                                           <i className="fa-solid fa-download text-[8px]"></i>
                                         </button>
@@ -7200,7 +7225,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                     </div>
                                     {/* Mobile-visible action strip (always visible) */}
                                     <div data-light-ctx="batch-mobile-strip" className="absolute top-1 right-1 flex gap-1 md:hidden">
-                                      <button onClick={async () => { const url = await applyTrialWatermark(item.url!); const a = document.createElement('a'); a.href = url; a.download = `ad_${item.ratio.replace(':', 'x')}.png`; a.click(); }}
+                                      <button onClick={async () => { const url = await applyTrialWatermark(item.url!); await downloadImage(url, `ad_${item.ratio.replace(':', 'x')}.png`); }}
                                         className="w-6 h-6 bg-black/60 text-white rounded-md flex items-center justify-center text-[8px]"><i className="fa-solid fa-download"></i></button>
                                       <button onClick={() => handleBatchRetry(idx, 'reflow')}
                                         className="w-6 h-6 bg-black/60 text-cyan-300 rounded-md flex items-center justify-center text-[8px]"><i className="fa-solid fa-arrows-spin"></i></button>
@@ -7444,7 +7469,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         <div key={idx} className="shrink-0" style={{ width: currentAspectRatio === '9:16' ? '120px' : '160px' }}>
                           <div onClick={() => setLightboxIndex(idx)} className={`relative rounded-xl overflow-hidden border bg-slate-900 group cursor-pointer ${currentAspectRatio === '9:16' ? 'aspect-[9/16]' : currentAspectRatio === '4:3' ? 'aspect-[4/3]' : 'aspect-square'} ${slide.status === 'done' ? 'border-emerald-500/30' : 'border-slate-800/60'}`}>
                             {slide.status === 'done' && slide.imageUrl && isRenderableImageUrl(slide.imageUrl) ? (
-                              <><img src={slide.imageUrl} className="w-full h-full object-cover cursor-grab active:cursor-grabbing" draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/uri-list', slide.imageUrl!); e.dataTransfer.setData('text/plain', slide.imageUrl!); e.dataTransfer.setData('text/html', `<img src="${slide.imageUrl}" />`); }} /><div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100 pointer-events-none"><div className="flex gap-1 pointer-events-auto" onClick={(e) => e.stopPropagation()}><button onClick={() => { pushMockup(slide.imageUrl!, currentAspectRatio); setBuildPlan(slide.buildPlan); setStudioTweak(''); setEditTarget({ source: 'carousel', index: idx, imageUrl: slide.imageUrl!, label: `Slide ${slide.index}` }); showToast(`Editing Slide ${slide.index} — changes will update this slide`, 'info'); }} className="px-2 py-1 bg-violet-600 text-white rounded text-[7px] font-bold" title="Edit this slide"><i className="fa-solid fa-pen-to-square"></i></button><button onClick={() => { applyTrialWatermark(slide.imageUrl!).then(url => { const a = document.createElement('a'); a.href = url; a.download = `slide_${slide.index}.png`; a.click(); }); }} className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold"><i className="fa-solid fa-download"></i></button><button onClick={() => handleCarouselSlideRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[7px] font-bold"><i className="fa-solid fa-rotate-right"></i></button>{metaConnection?.connected && (<button onClick={async () => { setMetaPushing(true); showToast('Pushing slide to Meta...', 'info'); try { const result = await metaService.pushCreative(slide.imageUrl!, `${inputs?.productName || 'Ad'}_carousel_slide_${slide.index}`, buildDeploymentMeta({ mode: 'carousel', ratio: currentAspectRatio })); if (result.success) showToast(result.message || 'Slide pushed!', 'success'); else showToast(result.message || 'Push failed', 'error'); } catch { showToast('Push to Meta failed', 'error'); } setMetaPushing(false); }} className="px-2 py-1 bg-blue-500/90 text-white rounded text-[7px] font-bold"><i className="fa-brands fa-meta"></i></button>)}<button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(slide.imageUrl!, currentAspectRatio, '', '', slide.buildPlan); }} className="px-2 py-1 bg-amber-500/90 text-white rounded text-[7px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button></div></div></>
+                              <><img src={slide.imageUrl} className="w-full h-full object-cover cursor-grab active:cursor-grabbing" draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/uri-list', slide.imageUrl!); e.dataTransfer.setData('text/plain', slide.imageUrl!); e.dataTransfer.setData('text/html', `<img src="${slide.imageUrl}" />`); }} /><div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100 pointer-events-none"><div className="flex gap-1 pointer-events-auto" onClick={(e) => e.stopPropagation()}><button onClick={() => { pushMockup(slide.imageUrl!, currentAspectRatio); setBuildPlan(slide.buildPlan); setStudioTweak(''); setEditTarget({ source: 'carousel', index: idx, imageUrl: slide.imageUrl!, label: `Slide ${slide.index}` }); showToast(`Editing Slide ${slide.index} — changes will update this slide`, 'info'); }} className="px-2 py-1 bg-violet-600 text-white rounded text-[7px] font-bold" title="Edit this slide"><i className="fa-solid fa-pen-to-square"></i></button><button onClick={async () => { const url = await applyTrialWatermark(slide.imageUrl!); await downloadImage(url, `slide_${slide.index}.png`); }} className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold"><i className="fa-solid fa-download"></i></button><button onClick={() => handleCarouselSlideRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[7px] font-bold"><i className="fa-solid fa-rotate-right"></i></button>{metaConnection?.connected && (<button onClick={async () => { setMetaPushing(true); showToast('Pushing slide to Meta...', 'info'); try { const result = await metaService.pushCreative(slide.imageUrl!, `${inputs?.productName || 'Ad'}_carousel_slide_${slide.index}`, buildDeploymentMeta({ mode: 'carousel', ratio: currentAspectRatio })); if (result.success) showToast(result.message || 'Slide pushed!', 'success'); else showToast(result.message || 'Push failed', 'error'); } catch { showToast('Push to Meta failed', 'error'); } setMetaPushing(false); }} className="px-2 py-1 bg-blue-500/90 text-white rounded text-[7px] font-bold"><i className="fa-brands fa-meta"></i></button>)}<button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(slide.imageUrl!, currentAspectRatio, '', '', slide.buildPlan); }} className="px-2 py-1 bg-amber-500/90 text-white rounded text-[7px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button></div></div></>
                             ) : slide.status === 'rendering' ? (
                               <div className="w-full h-full flex flex-col items-center justify-center gap-1"><div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"></div><span className="text-[7px] text-blue-400 font-bold">Slide {slide.index}</span></div>
                             ) : (slide.status === 'error' || (slide.status === 'done' && !isRenderableImageUrl(slide.imageUrl))) ? (
@@ -7612,7 +7637,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2.5 opacity-0 group-hover:opacity-100">
                                 <div className="flex gap-1.5">
                                   <button onClick={(e) => { e.stopPropagation(); pushMockup(v.url!, currentAspectRatio); setStudioTweak(''); setEditTarget({ source: 'ab', index: idx, imageUrl: v.url!, label: `A/B V${idx + 1}` }); showToast(`Editing V${idx + 1} — changes will update this variation`, 'info'); }} className="px-2.5 py-1.5 bg-violet-600 text-white rounded-lg text-[8px] font-bold" title="Edit"><i className="fa-solid fa-pen-to-square"></i></button>
-                                  <button onClick={async (e) => { e.stopPropagation(); const url = await applyTrialWatermark(v.url!); const a = document.createElement('a'); a.href = url; a.download = `AB_V${idx + 1}.png`; a.click(); }} className="px-2.5 py-1.5 bg-white/90 text-slate-900 rounded-lg text-[8px] font-bold"><i className="fa-solid fa-download"></i></button>
+                                  <button onClick={async (e) => { e.stopPropagation(); const url = await applyTrialWatermark(v.url!); await downloadImage(url, `AB_V${idx + 1}.png`); }} className="px-2.5 py-1.5 bg-white/90 text-slate-900 rounded-lg text-[8px] font-bold"><i className="fa-solid fa-download"></i></button>
                                   <button onClick={(e) => { e.stopPropagation(); handleRetryAB(idx); }} className="px-2.5 py-1.5 bg-blue-600 text-white rounded-lg text-[8px] font-bold"><i className="fa-solid fa-rotate"></i></button>
                                   <button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(v.url!, currentAspectRatio); }} className="px-2.5 py-1.5 bg-amber-500/90 text-white rounded-lg text-[8px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button>
                                 </div>
@@ -7708,7 +7733,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                       className="px-2 py-1 bg-violet-600 text-white rounded-lg text-[7px] font-bold" title="Edit">
                                       <i className="fa-solid fa-pen-to-square"></i>
                                     </button>
-                                    <button onClick={(e) => { e.stopPropagation(); const a = document.createElement('a'); a.href = m.url; a.download = `${pName}_${campaign}_V${idx + 1}_${m.ratio.replace(':', 'x')}.png`; a.click(); }}
+                                    <button onClick={async (e) => { e.stopPropagation(); const url = await applyTrialWatermark(m.url); await downloadImage(url, `${pName}_${campaign}_V${idx + 1}_${m.ratio.replace(':', 'x')}.png`); }}
                                       className="px-2 py-1 bg-white/90 text-slate-900 rounded-lg text-[7px] font-bold">
                                       <i className="fa-solid fa-download"></i>
                                     </button>
@@ -8310,7 +8335,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                               {item.ratio.replace(':', 'x')}
                             </div>
                             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100">
-                              <button onClick={() => { const a = document.createElement('a'); a.href = item.url!; a.download = `H${item.hookKey}_C${item.conceptIndex}_${item.ratio.replace(':', 'x')}.png`; a.click(); }}
+                              <button onClick={async () => { const url = await applyTrialWatermark(item.url!); await downloadImage(url, `H${item.hookKey}_C${item.conceptIndex}_${item.ratio.replace(':', 'x')}.png`); }}
                                 className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold">
                                 <i className="fa-solid fa-download"></i>
                               </button>
