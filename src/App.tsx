@@ -4065,14 +4065,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               await new Promise(r => setTimeout(r, 500));
               if (savedGenId) {
                 const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
-                console.log(`[auto-reflow] → ${extraRatio} starting (genId=${savedGenId}, client timeout=300s)`, Date.now());
+                console.log(`🔁 [auto-reflow] → ${extraRatio} starting (genId=${savedGenId}, client timeout=300s)`, Date.now());
                 const reflowRes = await reflowFn({
                   generationId: savedGenId,
                   targetAspectRatio: extraRatio as AspectRatio,
                   method: 'auto',
                   scope: 'single',
                 });
-                console.log(`[auto-reflow] → ${extraRatio} returned`, Date.now(), { success: reflowRes.data?.success, hasUrl: !!reflowRes.data?.outcomes?.[0]?.outputUrl, errorCode: reflowRes.data?.outcomes?.[0]?.errorCode ?? 'none' });
+                console.log(`${reflowRes.data?.success && reflowRes.data?.outcomes?.[0]?.outputUrl ? '✅' : '❌'} [auto-reflow] → ${extraRatio} returned`, Date.now(), { success: reflowRes.data?.success, hasUrl: !!reflowRes.data?.outcomes?.[0]?.outputUrl, errorCode: reflowRes.data?.outcomes?.[0]?.errorCode ?? 'none' });
                 const oc = reflowRes.data?.outcomes?.[0];
                 if (reflowRes.data?.success && oc?.outputUrl) {
                   pushMockup(oc.outputUrl, extraRatio as AspectRatio);
@@ -5305,6 +5305,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   const downloadImage = async (url: string, filename: string) => {
     try {
       const response = await fetch(url);
+      if (!response.ok) {
+        console.warn(`downloadImage: fetch returned ${response.status} ${response.statusText} for ${url} — falling back to direct link`);
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
       const blob = await response.blob();
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -5315,7 +5319,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       document.body.removeChild(a);
       URL.revokeObjectURL(blobUrl);
     } catch (e) {
-      console.error('downloadImage fetch failed, falling back to direct link:', e);
+      console.warn('downloadImage fetch failed, falling back to direct link:', e);
       const a = document.createElement('a');
       a.href = url;
       a.download = filename || 'ad-creative.png';
