@@ -5090,7 +5090,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     if (effectiveScope === 'batch_all') {
       const batchItems = safeBatch
         .map((r, idx) => ({ r, idx }))
-        .filter(({ r }) => r.status === 'done' && !!r.url && !!r.generationId);
+        .filter(({ r }) => r.status === 'done' && !!r.url && !!r.generationId && r.ratio === currentAspectRatio);
       if (batchItems.length === 0) {
         showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation.', 'error');
         return;
