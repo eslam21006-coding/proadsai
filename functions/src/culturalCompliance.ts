@@ -26,9 +26,9 @@ export type HaramMotif = typeof HARAM_MOTIFS[number];
 // against the derived literal union while preserving the literal types of each value.
 export const MOTIF_SUBSTITUTIONS = {
   cocktails: "premium beverages",
-  champagne: "sparkling drinks",
+  champagne: "Arabic coffee in a traditional finjan",
   whiskey: "warm lighting",
-  wine: "premium tea",
+  wine: "Arabic tea in an ornate glass",
   beer: "artisan refreshments",
   spirits: "premium refreshments",
   "cocktail reception": "elegant reception",
@@ -87,10 +87,10 @@ export type TriggerWord = typeof TRIGGER_WORDS[number];
 // `as const satisfies Record<TriggerWord, string>` — same compile-time exact-key
 // coverage guarantee as MOTIF_SUBSTITUTIONS. See note above MOTIF_SUBSTITUTIONS.
 export const SUBSTITUTIONS = {
-  wine: "premium tea",
+  wine: "Arabic tea in an ornate glass",
   whiskey: "artisan coffee",
   cocktail: "artisan coffee",
-  champagne: "sparkling water",
+  champagne: "Arabic coffee",
   beer: "artisan coffee",
   vodka: "sparkling water",
   rum: "artisan coffee",
@@ -119,11 +119,25 @@ export const SUBSTITUTIONS = {
 } as const satisfies Record<TriggerWord, string>;
 
 // ═══════════════════════════════════════════════════════════
+// ARABIC TERMS — Arabic-language drink/alcohol terms that the English
+// TRIGGER_WORDS regex cannot match. Applied to the IMAGE-PROMPT layer only
+// (not ad copy) to avoid mangling legitimate phrases such as "كأس العالم" (World Cup).
+// ═══════════════════════════════════════════════════════════
+export const ARABIC_SUBSTITUTIONS: Record<string, string> = {
+  "شامبانيا": "قهوة عربية",   // champagne → Arabic coffee
+  "نبيذ": "شاي أخضر",          // wine → green tea
+  "خمر": "",                   // alcohol → removed entirely
+  "كأس": "فنجان قهوة",         // glass → coffee cup
+  "شراب": "قهوة عربية",        // drink/beverage → Arabic coffee
+};
+
+// ═══════════════════════════════════════════════════════════
 // CULTURAL COMPLIANCE BLOCK — injected into image prompts
 // ═══════════════════════════════════════════════════════════
 
 export const CULTURAL_COMPLIANCE_BLOCK: string = `CULTURAL COMPLIANCE (MANDATORY — Arabic market):
 - NO alcohol in any form (wine, beer, champagne, cocktails, spirits, or any vessel implying it); NO bar/nightclub/pub settings — replace with premium non-alcoholic drinks (Arabic coffee, tea, juice, water) in an upscale lounge/seating area.
+- NEVER render the hero holding a wine glass, champagne flute, cocktail glass, or any glass containing a sparkling or clear beverage. If a beverage must appear, use: an Arabic coffee cup (finjan), a tea glass with a clear handle, or a juice glass with visible fruit. No champagne flutes under any circumstances.
 - NO gambling (cards, chips, roulette, slots); NO pork or pork-related food; NO dogs as pets; NO crosses/churches/non-Islamic religious symbols unless the product specifically requires it.
 - Conservative, modest clothing on everyone: shoulders covered, no deep necklines, no short skirts/shorts. NO mixed-gender physical contact (handshakes OK).
 - Signal luxury via premium tea/coffee, fine watches, halal fine dining, architecture, cars, travel, nature — never alcohol or nightlife.`;
@@ -227,6 +241,18 @@ export function scanAndReplace(
     cursor = hitEnd;
   }
   out += text.slice(cursor);
+
+  // Arabic-language pass (image-prompt layer only). English TRIGGER_WORDS can't match Arabic
+  // alcohol/drink terms; this scrubs them from the visual blueprint. Skipped for ad copy to
+  // avoid mangling legitimate words. Word-boundary-guarded (not preceded/followed by another
+  // Arabic letter) so it never replaces a substring inside a larger word.
+  if (sourceLayer === "imagePrompt") {
+    for (const [ar, sub] of Object.entries(ARABIC_SUBSTITUTIONS)) {
+      const re = new RegExp(`(?<![\\u0600-\\u06FF])${ar}(?![\\u0600-\\u06FF])`, "g");
+      const next = out.replace(re, sub);
+      if (next !== out) { matched.push(ar); out = next; }
+    }
+  }
 
   return { cleaned: out, matched };
 }

@@ -2554,6 +2554,7 @@ DO NOT return the other concepts.`;
         const prompt = `
 [VISUAL ARCHITECT V5.0]
       ${getLanguageInstruction(inputs.adLanguage || 'ar_fusha')}
+      ${isArabic(inputs.adLanguage) ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n⚠️ CONCEPT TEXT RULE: Do NOT describe the hero holding any glass, cup, or beverage vessel — not even juice, water, or coffee in a glass. If a prop is needed, use: a tablet, a book, a pen, prayer beads, or let hands be naturally at sides.\n` : ''}
       ${_rtConceptBlock ? `\n${_rtConceptBlock}\n` : ''}
       LANGUAGE MANDATE: ALL OUTPUT (Subject, Environment, Mood) MUST follow the language above. ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'ALL concept field content MUST be in Arabic — not English.' : ''}
       ${inputs.adTone ? `MOOD DIRECTION: ${getAdToneVisualMood(inputs.adTone)}` : ''}
