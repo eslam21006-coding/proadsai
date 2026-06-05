@@ -2298,6 +2298,8 @@ const App: React.FC = () => {
   const [reflowStep, setReflowStep] = useState<'idle' | 'committing'>('idle');
   const [reflowTarget, setReflowTarget] = useState<AspectRatio | null>(null);
   const [reflowScope, setReflowScope] = useState<'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'>('single');
+  // Target ratio for the batch grid's "Resize All" button (per-combo reflow). Defaults to Story.
+  const [batchResizeTarget, setBatchResizeTarget] = useState<AspectRatio>('9:16');
   // Ratio of the batch tile currently being viewed — drives the reflow "Current"
   // badge in batch mode (where displayRatio reflects the single-render history, not
   // the focused batch tile).
@@ -5078,50 +5080,73 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const effectiveScope = scopeOverride?.scope;
     const effectiveSlideIndex = scopeOverride?.slideIndex;
 
-    // ─── BATCH_ALL MODE ─────
+    // ─── BATCH_ALL MODE: per-combo reflow ─────
+    // Each batch combo is its OWN generation doc, so a single generationId can't address
+    // them all (the old scope:'batch_all' call only ever touched the first combo). Instead
+    // loop per-combo and call reflowImage with SCOPE:'single' using each item's own
+    // generationId + its rendered image as the source override. Runs in parallel
+    // (Promise.allSettled), best-effort partial success — a failed item reverts to its
+    // original image/ratio and never aborts the others.
     if (effectiveScope === 'batch_all') {
-      const batchItems = safeBatch.filter(r => r.status === 'done' && r.url);
-      if (batchItems.length === 0) return;
+      const batchItems = safeBatch
+        .map((r, idx) => ({ r, idx }))
+        .filter(({ r }) => r.status === 'done' && !!r.url && !!r.generationId);
+      if (batchItems.length === 0) {
+        showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation.', 'error');
+        return;
+      }
       const totalCost = CREDIT_COSTS.reflowImage * batchItems.length;
-      // Prefer a real batch generation id; fall back to the global only if items lack their own.
-      const batchAllGenId = batchItems.find(b => b.generationId)?.generationId || renderGenerationId;
-      if (!batchAllGenId) { showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation.', 'error'); return; }
       if (userCredits < totalCost) {
         setUpgradeReason(t('studio.reflow.upgrade_single_credits').replace('{cost}', String(totalCost)).replace('{have}', String(userCredits)));
         setShowUpgradeModal(true);
         return;
       }
+      // Flip the grid to the target ratio and move every target item into that ratio bucket
+      // as 'rendering' — the grid filters tiles by item.ratio === currentAspectRatio, so the
+      // items must adopt newRatio up front to stay visible (with spinners) during the resize.
+      const targetIdxs = new Set(batchItems.map(b => b.idx));
+      const originals = new Map(batchItems.map(({ r, idx }) => [idx, { url: r.url!, ratio: r.ratio }]));
       setCurrentAspectRatio(newRatio);
       startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
-      setBatchResults(prev => prev.map(r => r.status === 'done' && r.url ? { ...r, status: 'rendering' as const } : r));
+      setBatchResults(prev => prev.map((r, idx) => targetIdxs.has(idx) ? { ...r, ratio: newRatio, status: 'rendering' as const } : r));
       setUserCredits(prev => prev - totalCost);
-      try {
-        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
+      const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
+      let creditsCharged = 0;
+      const settled = await Promise.allSettled(batchItems.map(async ({ r, idx }) => {
+        const orig = originals.get(idx)!;
         const result = await reflowFn({
-          generationId: batchAllGenId,
+          generationId: r.generationId!,
           targetAspectRatio: newRatio,
           method: 'auto',
-          scope: 'batch_all',
+          scope: 'single',           // resize each combo on its OWN generation id
+          sourceImageOverride: orig.url,
         });
-        if (typeof result.data.totalCreditsCharged === 'number') {
-          const delta = totalCost - result.data.totalCreditsCharged;
-          if (delta !== 0) setUserCredits(prev => prev + delta);
+        if (typeof result.data?.totalCreditsCharged === 'number') creditsCharged += result.data.totalCreditsCharged;
+        const oc = result.data?.outcomes?.[0];
+        if (oc?.success && oc.outputUrl) {
+          const outUrl = oc.outputUrl;
+          setBatchResults(prev => prev.map((rr, i) => i === idx ? { ...rr, url: outUrl, ratio: newRatio, status: 'done' as const } : rr));
+        } else {
+          // No image produced — revert this item to its original image AND ratio so it
+          // returns to its own ratio bucket (it simply won't appear in the new-ratio view).
+          setBatchResults(prev => prev.map((rr, i) => i === idx ? { ...rr, url: orig.url, ratio: orig.ratio, status: 'done' as const } : rr));
+          throw new Error('reflow_failed');
         }
-        for (const outcome of result.data.outcomes || []) {
-          if (outcome.success && outcome.outputUrl && outcome.itemIndex !== null) {
-            setBatchResults(prev => prev.map((r, idx) => idx === outcome.itemIndex ? { ...r, url: outcome.outputUrl, status: 'done' as const } : r));
-          } else if (!outcome.success && outcome.itemIndex !== null) {
-            setBatchResults(prev => prev.map((r, idx) => idx === outcome.itemIndex ? { ...r, status: 'error' as const } : r));
-          }
-        }
-        const batchFirstUrl = result.data.outcomes?.[0]?.outputUrl;
-        if (result.data.success && batchFirstUrl) {
-          pushMockup(batchFirstUrl, newRatio);
-        }
-      } catch (e) {
-        setUserCredits(prev => prev + totalCost);
-        handleApiError(e);
-      } finally { stopLoad(); }
+      }));
+      stopLoad();
+      // Reconcile the optimistic charge against the backend's authoritative total
+      // (failed/throwing items contribute 0 and are refunded via the delta).
+      const delta = totalCost - creditsCharged;
+      if (delta !== 0) setUserCredits(prev => prev + delta);
+      const failedCount = settled.filter(s => s.status === 'rejected').length;
+      if (failedCount === batchItems.length) {
+        const firstErr = settled.find(s => s.status === 'rejected') as PromiseRejectedResult | undefined;
+        handleApiError(firstErr?.reason);
+      } else if (failedCount > 0) {
+        showToast(`Resized ${batchItems.length - failedCount}/${batchItems.length} — ${failedCount} failed`, 'error');
+      } else {
+        showToast(`Resized all ${batchItems.length} to ${newRatio}`, 'success');
+      }
       return;
     }
 
@@ -7260,9 +7285,31 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       const totalDone = allResults.filter(r => r.status === 'done').length;
                       return (
                         <>
-                          <div className="flex items-center justify-between">
+                          <div className="flex items-center justify-between gap-2">
                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{doneCount}/{filteredResults.length} rendered</span>
-                            {batchRendering && <span className="text-[10px] text-amber-400 animate-pulse font-bold">Rendering...</span>}
+                            <div className="flex items-center gap-2">
+                              {batchRendering && <span className="text-[10px] text-amber-400 animate-pulse font-bold">Rendering...</span>}
+                              {/* Resize All — per-combo reflow (each combo resized on its own generationId) */}
+                              {!batchRendering && allResults.some(r => r.status === 'done' && r.url && r.generationId) && (
+                                <div className="flex items-center gap-1.5">
+                                  <select value={batchResizeTarget} onChange={e => setBatchResizeTarget(e.target.value as AspectRatio)}
+                                    className="bg-slate-900 border border-slate-700 rounded-lg text-[9px] font-bold text-slate-300 px-1.5 py-1 outline-none focus:border-blue-500/50">
+                                    <option value="1:1">Square 1:1</option>
+                                    <option value="4:5">Portrait 4:5</option>
+                                    <option value="9:16">Story 9:16</option>
+                                    <option value="4:3">Wide 4:3</option>
+                                    <option value="3:4">Tall 3:4</option>
+                                    <option value="16:9">Landscape 16:9</option>
+                                  </select>
+                                  <button onClick={() => handleRescale(batchResizeTarget, { scope: 'batch_all' })}
+                                    className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[9px] font-bold flex items-center gap-1.5 whitespace-nowrap"
+                                    title={`Resize all done images to ${batchResizeTarget}`}>
+                                    <i className="fa-solid fa-up-down text-[8px]"></i>
+                                    {lang === 'ar' ? 'تغيير حجم الكل' : 'Resize All'}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                             {filteredResults.map(({ item, idx }) => (
