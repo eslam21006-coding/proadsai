@@ -2494,13 +2494,13 @@ const App: React.FC = () => {
     }
   }, [selectedTov, batchHookGroups.length]);
 
-  // Default the resize scope to 'batch_all' the moment a batch produces done items, so the
-  // resize panel opens on "all" instead of "single". Fires only on the empty→done transition
-  // (prev-ref guard), so a subsequent manual switch to 'single' is preserved.
+  // When a batch produces done items, force the resize scope to 'single' (the global batch_all
+  // scope toggle is hidden in batch mode — users resize per-card instead). Fires only on the
+  // empty→done transition (prev-ref guard) so it clears any stale carousel/batch_all scope.
   useEffect(() => {
     const hasDoneBatch = batchResults.some(r => r.status === 'done' && r.url);
     if (hasDoneBatch && !prevHasDoneBatchRef.current) {
-      setReflowScope('batch_all');
+      setReflowScope('single');
     }
     prevHasDoneBatchRef.current = hasDoneBatch;
   }, [batchResults]);
@@ -8144,18 +8144,9 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         a non-current ratio is selected. No picker state transition. */}
                     {reflowTarget && reflowTarget !== currentRatioForBadge && (
                       <div className="space-y-2">
-                        {isBatchScope && (
-                          <div className="flex gap-2">
-                            <button disabled={committing} onClick={() => setReflowScope('single')}
-                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'single' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
-                              {t('studio.reflow.scope_single')}
-                            </button>
-                            <button disabled={committing} onClick={() => setReflowScope('batch_all')}
-                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'batch_all' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
-                              {t('studio.reflow.scope_batch_all', { count: doneBatchCount })}
-                            </button>
-                          </div>
-                        )}
+                        {/* Batch scope toggle (single / resize-all) removed — global batch_all
+                            reflow is unreliable (single generation id can't address all combo docs),
+                            so batch resizing is per-card only. Batch scope is forced to 'single' above. */}
                         {/* Carousel always resizes ALL slides — no per-slide scope toggle
                             (carousel_slide's slide-index resolution is unreliable). */}
                         <button
