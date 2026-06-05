@@ -3653,7 +3653,7 @@ export async function generateBuildPlan(conceptRaw: string, selectedTov: string,
     const prompt = `
   [BUILDER V6.0 — STRUCTURED BUILD PLAN]
       Synthesize this raw concept into a technical rendering blueprint.
-      ${isArabic(inputs.adLanguage) ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n` : ''}
+      ${isArabic(inputs.adLanguage) ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n⚠️ CONCEPT TEXT RULE: Do NOT mention or describe alcohol, champagne, wine, cocktails, beer, bars, or nightclubs anywhere in the blueprint — not even as a prop, background detail, or visual-direction note. Replace any such element with a premium non-alcoholic alternative (Arabic coffee, tea, sparkling water, fresh juice).\n` : ''}
       ${_bpRtBlock ? `
 ${_bpRtBlock}
 ` : ''}
@@ -4048,6 +4048,17 @@ ${JSON.stringify(machinePlan)}`;
                 }
                 imageMatched.push(...matched);
                 console.log(`🕌 Cultural compliance scan (imagePrompt): replaced [${matched.join(", ")}]`);
+            }
+        }
+        // Champagne fix: scan the FULL blueprint (visual direction, zones, scene narrative —
+        // not only the [[TECHNICAL_PROMPT]] region) so a haram mention anywhere in the concept
+        // text is substituted before it can leak into the displayed/rendered plan.
+        {
+            const { cleaned: bpCleaned, matched: bpMatched } = scanAndReplace(finalMachinePlan.blueprint, "imagePrompt");
+            if (bpMatched.length > 0) {
+                finalMachinePlan.blueprint = bpCleaned;
+                imageMatched.push(...bpMatched);
+                console.log(`🕌 Cultural compliance scan (full blueprint): replaced [${bpMatched.join(", ")}]`);
             }
         }
         // ── T025: Post-parse cultural scan on ad-copy fields — WRITE CLEANED VALUES BACK. ──
@@ -4491,6 +4502,7 @@ The CTA button must appear inside a visually distinct button or shape with stron
 
 QUALITY:
 Ultra-high-resolution professional advertising output. Every element must be sharp and intentional. ${_isAr ? `Arabic letterforms must be pixel-perfect with zero rendering artifacts.` : ''}
+${(() => { const _vss = resolveVisualSubStyle(inputs); return _vss ? `\nART DIRECTION (MANDATORY): Render this image in "${_vss.replace(/_/g, ' ')}" visual style — the art direction must match exactly. Do NOT default to generic photorealism unless the selected style is realistic.` : ''; })()}
 
 ${carouselAnchorNote}
 ${retargetingDesignHint}

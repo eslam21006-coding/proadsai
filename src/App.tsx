@@ -4262,6 +4262,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           } catch (saveErr) {
             console.error(`Batch combo ${ci + 1} generation save failed (reflows skipped):`, saveErr);
           }
+          // Persist this combo's generation id on its primary item so batch retry/reflow
+          // anchors to the correct source generation (not the global renderGenerationId).
+          if (comboGenId) {
+            const _cg = comboGenId;
+            setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, generationId: _cg } : r));
+          }
         }
       } catch (e) {
         console.error(`Batch render primary ${ci + 1} failed:`, e);
@@ -4289,7 +4295,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             });
             const oc = reflowRes.data?.outcomes?.[0];
             const reflowedUrl = reflowRes.data?.success && oc?.outputUrl ? oc.outputUrl : null;
-            setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, buildPlan: combo.conceptText, url: reflowedUrl, status: reflowedUrl ? 'done' as const : 'error' as const } : r));
+            setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, buildPlan: combo.conceptText, url: reflowedUrl, status: reflowedUrl ? 'done' as const : 'error' as const, generationId: comboGenId ?? undefined } : r));
           } catch (e) {
             console.error(`Batch reflow ${ci + 1} to ${extraRatio} failed:`, e);
             setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'error' } : r));
@@ -4342,10 +4348,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
       let mockup: string | null = null;
 
-      if (isReflow && renderGenerationId) {
+      // Use THIS item's own source generation (comboGenId) — fall back to the global only if absent.
+      const reflowGenId = item.generationId || renderGenerationId;
+      if (isReflow && reflowGenId) {
         const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
         const reflowRes = await reflowFn({
-          generationId: renderGenerationId,
+          generationId: reflowGenId,
           targetAspectRatio: itemRatio,
           method: 'auto',
           scope: 'single',
@@ -4966,7 +4974,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       const batchItems = safeBatch.filter(r => r.status === 'done' && r.url);
       if (batchItems.length === 0) return;
       const totalCost = CREDIT_COSTS.reflowImage * batchItems.length;
-      if (!renderGenerationId) { showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation.', 'error'); return; }
+      // Prefer a real batch generation id; fall back to the global only if items lack their own.
+      const batchAllGenId = batchItems.find(b => b.generationId)?.generationId || renderGenerationId;
+      if (!batchAllGenId) { showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation.', 'error'); return; }
       if (userCredits < totalCost) {
         setUpgradeReason(t('studio.reflow.upgrade_single_credits').replace('{cost}', String(totalCost)).replace('{have}', String(userCredits)));
         setShowUpgradeModal(true);
@@ -4979,7 +4989,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       try {
         const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
         const result = await reflowFn({
-          generationId: renderGenerationId,
+          generationId: batchAllGenId,
           targetAspectRatio: newRatio,
           method: 'auto',
           scope: 'batch_all',

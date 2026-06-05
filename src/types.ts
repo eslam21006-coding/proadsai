@@ -322,6 +322,7 @@ export interface BatchResult {
   url: string | null;
   ratio: AspectRatio;
   status: 'pending' | 'rendering' | 'done' | 'error';
+  generationId?: string;             // This item's own source generation doc (comboGenId) — reflow/rerender use this instead of the global renderGenerationId
   // ─── Per-image state persistence ─────────────────────────────
   imageId: string;                   // Unique ID for this batch image
   parentBatchId?: string;            // Links to the batch that produced this
