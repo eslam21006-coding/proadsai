@@ -3936,6 +3936,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     // ─── SINGLE MODE: Generate concepts directly ─────
     if (!deductCredits('generateConcepts')) return;
     startLoad(`Creating Concepts...`);
+    // Clear stale batch state on single-hook approval so Step 3 reads the global conceptsText
+    // (the cards branch on batchHookGroups.length) instead of rendering old batch groups.
+    setBatchHookGroups([]);
+    setBatchResults([]);
     const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 5) || [] };
     // FIX 1: when the user typed a refinement direction (editFeedback) and concepts already
     // exist, apply it to the selected concept via 'precision' instead of discarding everything.
