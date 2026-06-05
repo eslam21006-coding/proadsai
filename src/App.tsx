@@ -7289,26 +7289,41 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{doneCount}/{filteredResults.length} rendered</span>
                             <div className="flex items-center gap-2">
                               {batchRendering && <span className="text-[10px] text-amber-400 animate-pulse font-bold">Rendering...</span>}
-                              {/* Resize All — per-combo reflow (each combo resized on its own generationId) */}
-                              {!batchRendering && allResults.some(r => r.status === 'done' && r.url && r.generationId) && (
-                                <div className="flex items-center gap-1.5">
-                                  <select value={batchResizeTarget} onChange={e => setBatchResizeTarget(e.target.value as AspectRatio)}
-                                    className="bg-slate-900 border border-slate-700 rounded-lg text-[9px] font-bold text-slate-300 px-1.5 py-1 outline-none focus:border-blue-500/50">
-                                    <option value="1:1">Square 1:1</option>
-                                    <option value="4:5">Portrait 4:5</option>
-                                    <option value="9:16">Story 9:16</option>
-                                    <option value="4:3">Wide 4:3</option>
-                                    <option value="3:4">Tall 3:4</option>
-                                    <option value="16:9">Landscape 16:9</option>
-                                  </select>
-                                  <button onClick={() => handleRescale(batchResizeTarget, { scope: 'batch_all' })}
-                                    className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[9px] font-bold flex items-center gap-1.5 whitespace-nowrap"
-                                    title={`Resize all done images to ${batchResizeTarget}`}>
-                                    <i className="fa-solid fa-up-down text-[8px]"></i>
-                                    {lang === 'ar' ? 'تغيير حجم الكل' : 'Resize All'}
-                                  </button>
-                                </div>
-                              )}
+                              {/* Resize All — per-combo reflow (each combo resized on its own generationId).
+                                  Styled ratio chips mirror the single/carousel resize picker. */}
+                              {!batchRendering && allResults.some(r => r.status === 'done' && r.url && r.generationId) && (() => {
+                                const RESIZE_RATIOS: { value: AspectRatio; name: string; icon: string }[] = [
+                                  { value: '1:1', name: 'Square', icon: 'fa-regular fa-square' },
+                                  { value: '4:5', name: 'Portrait', icon: 'fa-solid fa-mobile-screen' },
+                                  { value: '9:16', name: 'Story', icon: 'fa-solid fa-mobile' },
+                                  { value: '4:3', name: 'Wide', icon: 'fa-solid fa-tv' },
+                                  { value: '3:4', name: 'Tall', icon: 'fa-solid fa-image-portrait' },
+                                  { value: '16:9', name: 'Landscape', icon: 'fa-solid fa-panorama' },
+                                ];
+                                return (
+                                  <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                                    {RESIZE_RATIOS.map(({ value, name, icon }) => {
+                                      const isSelected = batchResizeTarget === value;
+                                      return (
+                                        <button key={value} onClick={() => setBatchResizeTarget(value)} title={`${name} (${value})`}
+                                          className={`flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-xl border transition-all ${isSelected
+                                            ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-600/30'
+                                            : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-blue-600/15 hover:border-blue-500/30 hover:text-white'}`}>
+                                          <i className={`${icon} text-xs`}></i>
+                                          <span className="text-[8px] font-bold tracking-tight">{name}</span>
+                                          <span className="text-[7px] font-mono opacity-70">{value}</span>
+                                        </button>
+                                      );
+                                    })}
+                                    <button onClick={() => handleRescale(batchResizeTarget, { scope: 'batch_all' })}
+                                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[9px] font-bold flex items-center gap-1.5 whitespace-nowrap"
+                                      title={`Resize all done images to ${batchResizeTarget}`}>
+                                      <i className="fa-solid fa-up-down text-[8px]"></i>
+                                      {lang === 'ar' ? 'تغيير حجم الكل' : 'Resize All'}
+                                    </button>
+                                  </div>
+                                );
+                              })()}
                             </div>
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
