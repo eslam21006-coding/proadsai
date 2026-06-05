@@ -1040,6 +1040,9 @@ const App: React.FC = () => {
   // refresh and on async team `teamOwnerUid` resolution — re-running it would overwrite live
   // session work (e.g. a freshly rendered carousel) with the saved snapshot. Reset on logout.
   const hasRestoredRef = React.useRef(false);
+  // FIX 3: tracks the previous selectedTov so we only clear concepts when the user SWITCHES
+  // between two real hooks — never on first set or session restore (prev is '').
+  const prevSelectedTovRef = React.useRef('');
   // --- STATE ---
   const [view, setView] = useState<'app' | 'privacy'>('app');
   const [showSidebar, setShowSidebar] = useState(false);
@@ -2476,6 +2479,17 @@ const App: React.FC = () => {
     if (showAccountMenu) document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showAccountMenu]);
+
+  // FIX 3: when the user switches to a DIFFERENT hook in single mode, drop stale concepts so
+  // Step 3 can't show a previous session's blueprints — forcing a fresh regenerate for the new
+  // hook. The prev-ref guard means this never fires on first set or session restore (prev is '').
+  useEffect(() => {
+    const prev = prevSelectedTovRef.current;
+    prevSelectedTovRef.current = selectedTov;
+    if (batchHookGroups.length === 0 && prev && selectedTov && prev !== selectedTov) {
+      setConceptsText('');
+    }
+  }, [selectedTov, batchHookGroups.length]);
 
   // --- HISTORY ENGINE (IndexedDB + Firestore sync) ---
   useEffect(() => {
@@ -3978,13 +3992,16 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   // BUTTON 2 ("Regenerate All Blueprints"): regenerate the 3 concepts FRESH from the CURRENT
   // hook — no refinement direction, no hook/TOV regeneration. Carousel keeps its slide-copy flow.
   const handleRegenerateConceptsFresh = async () => {
-    if (!inputs || !selectedTov) return;
+    if (!inputs) return;
+    // FIX 2: surface a toast instead of silently no-op'ing when no hook is selected.
+    if (!selectedTov) { showToast('Please select a hook first before regenerating blueprints.', 'error'); return; }
     if (inputs.adMode === 'carousel' && (inputs.slideCount || 1) > 1) {
       return handleApproveTov(selectedTov);
     }
     if (!deductCredits('generateConcepts')) return;
     startLoad('Regenerating Blueprints...');
     const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 5) || [] };
+    const prevConceptsText = conceptsText;
     try {
       let res = unwrapGen(await gemini.generateConcepts(selectedTov, cleanInputs, resolvedUniverse, 'initial', '', ''));
       res = res ? normalizeFieldLabels(res) : res;
@@ -3994,6 +4011,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         return;
       }
       setConceptsText(res);
+      // FIX 1: also write back to the active batch group (cards read g.conceptsText, not the global).
+      setBatchHookGroups(prev => prev.map(g => g.conceptsText === prevConceptsText ? { ...g, conceptsText: res } : g));
       showToast('Blueprints regenerated.', 'success');
     } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
   };
@@ -6603,6 +6622,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 />
                 <button
                   onClick={async () => {
+                    const prevConceptsText = conceptsText;
                     const merged = appendRefinement(refinementEntry);
                     if (!merged) return showToast("Please enter instructions first.", "error");
                     if (!deductCredits('generateConcepts')) return;
@@ -6616,6 +6636,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         return;
                       }
                       setConceptsText(res);
+                      // FIX 1: also write back to the active batch group (cards read g.conceptsText, not the global).
+                      setBatchHookGroups(prev => prev.map(g => g.conceptsText === prevConceptsText ? { ...g, conceptsText: res } : g));
                       showToast("Architecture updated with your custom vision.", "success");
                     } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
                   }}
