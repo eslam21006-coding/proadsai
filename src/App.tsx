@@ -4001,7 +4001,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     if (!deductCredits('generateConcepts')) return;
     startLoad('Regenerating Blueprints...');
     const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 5) || [] };
-    const prevConceptsText = conceptsText;
     try {
       let res = unwrapGen(await gemini.generateConcepts(selectedTov, cleanInputs, resolvedUniverse, 'initial', '', ''));
       res = res ? normalizeFieldLabels(res) : res;
@@ -4011,8 +4010,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         return;
       }
       setConceptsText(res);
-      // FIX 1: also write back to the active batch group (cards read g.conceptsText, not the global).
-      setBatchHookGroups(prev => prev.map(g => g.conceptsText === prevConceptsText ? { ...g, conceptsText: res } : g));
+      // Refresh ALL batch groups (cards read g.conceptsText). Text-match was unreliable because the
+      // global conceptsText and group text diverge, so update every group with the new content.
+      setBatchHookGroups(prev => prev.map(g => ({ ...g, conceptsText: res })));
       showToast('Blueprints regenerated.', 'success');
     } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
   };
@@ -6622,7 +6622,6 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 />
                 <button
                   onClick={async () => {
-                    const prevConceptsText = conceptsText;
                     const merged = appendRefinement(refinementEntry);
                     if (!merged) return showToast("Please enter instructions first.", "error");
                     if (!deductCredits('generateConcepts')) return;
@@ -6636,8 +6635,9 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         return;
                       }
                       setConceptsText(res);
-                      // FIX 1: also write back to the active batch group (cards read g.conceptsText, not the global).
-                      setBatchHookGroups(prev => prev.map(g => g.conceptsText === prevConceptsText ? { ...g, conceptsText: res } : g));
+                      // Refresh ALL batch groups (cards read g.conceptsText). Text-match was unreliable
+                      // because the global conceptsText and group text diverge, so update every group.
+                      setBatchHookGroups(prev => prev.map(g => ({ ...g, conceptsText: res })));
                       showToast("Architecture updated with your custom vision.", "success");
                     } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
                   }}
