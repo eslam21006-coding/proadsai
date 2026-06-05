@@ -1043,6 +1043,9 @@ const App: React.FC = () => {
   // FIX 3: tracks the previous selectedTov so we only clear concepts when the user SWITCHES
   // between two real hooks — never on first set or session restore (prev is '').
   const prevSelectedTovRef = React.useRef('');
+  // Tracks whether the batch already had done items, so we default reflowScope to 'batch_all'
+  // exactly once when a batch finishes — without clobbering a later manual 'single' choice.
+  const prevHasDoneBatchRef = React.useRef(false);
   // --- STATE ---
   const [view, setView] = useState<'app' | 'privacy'>('app');
   const [showSidebar, setShowSidebar] = useState(false);
@@ -2490,6 +2493,17 @@ const App: React.FC = () => {
       setConceptsText('');
     }
   }, [selectedTov, batchHookGroups.length]);
+
+  // Default the resize scope to 'batch_all' the moment a batch produces done items, so the
+  // resize panel opens on "all" instead of "single". Fires only on the empty→done transition
+  // (prev-ref guard), so a subsequent manual switch to 'single' is preserved.
+  useEffect(() => {
+    const hasDoneBatch = batchResults.some(r => r.status === 'done' && r.url);
+    if (hasDoneBatch && !prevHasDoneBatchRef.current) {
+      setReflowScope('batch_all');
+    }
+    prevHasDoneBatchRef.current = hasDoneBatch;
+  }, [batchResults]);
 
   // --- HISTORY ENGINE (IndexedDB + Firestore sync) ---
   useEffect(() => {
@@ -5245,7 +5259,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
     // FIX 3: when a batch card is focused, target ITS generation, not the global one.
     const _focusedBatchItem = selectedBatchItemIndex != null ? safeBatch[selectedBatchItemIndex] : null;
-    const effectiveSingleGenId = _focusedBatchItem?.generationId || renderGenerationId;
+    // Fall back to the first done batch item's own generation id when no tile is focused and the
+    // global renderGenerationId is empty — so a 'single'-scope resize in batch mode still works
+    // instead of erroring with "Generate an ad first".
+    const effectiveSingleGenId = _focusedBatchItem?.generationId
+      || renderGenerationId
+      || safeBatch.find(b => b.status === 'done' && b.generationId)?.generationId;
     // Optimistic UI-only decrement (callable backend performs the authoritative deduction;
     // calling deductCredits() here would invoke deductCreditsServer and double-bill).
     const singleOptimisticCost = effectiveSingleGenId ? CREDIT_COSTS.reflowImage : 0;
