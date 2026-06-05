@@ -98,6 +98,131 @@ function buildResolverExtra(inputs: AdInputs): {
 }
 
 /** Returns the active visual sub-style for the current style family, or null if not applicable */
+// Phase 025: the per-sub-style "BASE CANVAS" art-direction block, extracted so it can be
+// injected at the TOP of the OpenAI prompt — gpt-image-2 ignores it when buried ~15k chars
+// deep inside coreDesignRules and defaults to realistic photography. Returns '' when no
+// sub-style is active. NOTE: the inline copy inside coreDesignRules (gated to the Gemini
+// path) must stay in sync with this map.
+function resolveActiveStyleCanvas(inputs: AdInputs): string {
+    const sub = resolveVisualSubStyle(inputs);
+    if (!sub) return '';
+    const blocks: Record<string, string> = {
+        dark_cinematic: `
+⚠️⚠️⚠️ DARK CINEMATIC BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: deep black (#0A0A0F) to dark navy (#0D1B3E). This is a RENDERED SCENE — not a photo.
+SINGLE KEY LIGHT: casts visible directional shadow across 60%+ of the canvas.
+Key light MUST cast a colored rim glow on the hero.
+ATMOSPHERIC LAYERS (REQUIRED): smoke wisps, particles, or haze — not optional.
+FORBIDDEN: natural daylight, white/cream/grey backgrounds, pastel colors, stock photo backgrounds.
+=======================================================================`,
+        bright_illustrated: `
+⚠️⚠️⚠️ BRIGHT ILLUSTRATED BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: warm, vibrant, saturated — golden amber, rich cream, vivid illustrated color fields.
+MULTI-FILL LIGHTING: even, warm, inviting. No heavy shadows. Scene feels BRIGHT and OPTIMISTIC.
+Scene is ILLUSTRATED with painterly quality — not a dark photo, not a gritty render.
+FORBIDDEN: dark backgrounds, heavy shadow, smoke/haze, neon effects, black canvas.
+=======================================================================`,
+        mythic_epic: `
+⚠️⚠️⚠️ MYTHIC EPIC BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: rich jewel tones — emerald (#0B3D2E), royal purple (#1A0A3D),
+  crimson (#3D0A0A), or midnight gold (#2A1A00). Dark but RICHLY COLORED — never plain black.
+MULTIPLE COLORED LIGHT SOURCES: contrasting temperature lights (cold moonlight + warm fire glow).
+Volumetric light rays MUST be visible somewhere in the scene.
+MAGICAL PARTICLES: glowing embers, mystical sparks, or colored mist — REQUIRED for epic atmosphere.
+FORBIDDEN: plain black background, pastel backgrounds, flat/graphic style, studio aesthetics.
+=======================================================================`,
+        vintage_bw: `
+⚠️⚠️⚠️ VINTAGE B&W BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE image: hand-drawn pen-and-ink illustration. ZERO photorealistic rendering.
+GRAYSCALE ABSOLUTE: No color anywhere — not even subtle color tinting.
+THICK BLACK BORDER: Mandatory rectangular frame around the full composition.
+INK TECHNIQUE: Cross-hatching visible for all shading. Bold outlines on all elements.
+FORBIDDEN: Color, photorealism, modern rendering, smooth gradients, bokeh,
+           atmospheric particles, cinematic lighting.
+=======================================================================`,
+        vintage_sepia: `
+⚠️⚠️⚠️ VINTAGE SEPIA BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE image: hand-drawn pen-and-ink illustration in warm sepia monochrome.
+SEPIA ABSOLUTE: All tones in warm amber/brown range (#704214). Zero cool tones.
+AGED PAPER TEXTURE: Subtle parchment grain in lighter areas — timeworn quality.
+THICK WARM-BROWN BORDER: Mandatory rectangular frame in dark sepia tone.
+INK TECHNIQUE: Cross-hatching visible. Bold warm-brown outlines on all elements.
+FORBIDDEN: Cool greys, blue tones, photorealism, modern rendering,
+           bokeh, atmospheric particles, cinematic lighting.
+=======================================================================`,
+        luxury_magazine: `
+⚠️⚠️⚠️ LUXURY MAGAZINE COVER BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+BOLD SOLID DARK BACKGROUND: Deep navy (#1a1a3e), rich black (#0d0d0d),
+  warm dark grey (#2d2d2d), or deep teal (#0a3d3d). NOT white. NOT cream.
+HERO FILLS 70% OF FRAME: Tight crop waist-up. Shoulders span width.
+  Hero head extends into top 20% (overlapping masthead zone).
+PROFESSIONAL PORTRAIT LIGHTING: Rembrandt or butterfly/loop.
+  Hair light + rim light for separation. Face has DIMENSION (not flat).
+TEXT DENSITY: Cover lines fill ALL spaces around hero. Canvas feels FULL.
+FORBIDDEN: White background, negative space, empty canvas areas,
+           environmental scenes, full body shots, flat high-key lighting.
+=======================================================================`,
+        documentary_gritty: `
+⚠️⚠️⚠️ DOCUMENTARY GRITTY BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+DESATURATED REAL ENVIRONMENT: Saturation reduced 40-60%. Real location feel.
+FILM GRAIN: Visible across entire image — not optional. Mandatory texture.
+AVAILABLE LIGHT ONLY: No studio lighting. Imperfection is intentional.
+SLIGHT VIGNETTE: Edges darkened naturally. Photojournalism feel.
+FORBIDDEN: Studio lighting, glossy finish, saturated colors,
+           fantasy/neon effects, artificial particles.
+=======================================================================`,
+        neon_urban: `
+⚠️⚠️⚠️ NEON URBAN BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+NIGHT CITY ENVIRONMENT: Dark streets, wet pavement, colored neon reflections.
+MULTIPLE NEON SOURCES: At least 2 colors (pink, cyan, purple, amber) visible.
+HERO RIM-LIT: By at least one colored neon source — mandatory.
+DEEP BACKGROUND: Bokeh city lights behind scene.
+FORBIDDEN: Daylight, natural environments, pastel colors,
+           white/bright backgrounds, vintage aesthetics.
+=======================================================================`,
+        anime_manga: `
+⚠️⚠️⚠️ ANIME/MANGA BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+CEL-SHADED ILLUSTRATION: Flat color fills + bold black outlines throughout.
+VIBRANT ANIME PALETTE: Saturated, high-contrast. No desaturation.
+SPEED LINES: At least one concept MUST include action/speed lines.
+BOLD OUTLINES: Every element — hero, background, props — has ink outline.
+FORBIDDEN: Photorealism, cinematic lighting, film grain,
+           desaturation, watercolor, soft edges.
+=======================================================================`,
+        watercolor_dreamscape: `
+⚠️⚠️⚠️ WATERCOLOR DREAMSCAPE BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+WATERCOLOR WASH TECHNIQUE: Visible brush strokes, color bleeding at edges.
+SOFT DREAMY PALETTE: Lavender, rose, sage, soft gold ONLY.
+DIFFUSED SOFT LIGHT: No harsh shadows anywhere. Gentle luminosity.
+NO HARD EDGES: Everything flows softly — no sharp digital boundaries.
+FORBIDDEN: Dark backgrounds, neon, heavy shadow, photorealism,
+           bold aggressive type, sharp edges, film grain.
+=======================================================================`,
+        comic_book: `
+⚠️⚠️⚠️ COMIC BOOK BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+BEN-DAY HALFTONE DOTS: All shading uses halftone dot patterns — mandatory.
+BOLD BLACK OUTLINES: Every element has thick ink outline — no exceptions.
+4-COLOR PALETTE ONLY: Red (#E8001C), Yellow (#FFE600), Blue (#003087), Black.
+THICK PANEL BORDER: Mandatory rectangular frame around full composition.
+ACTION LINES: At least one directional action/speed line element — mandatory.
+FORBIDDEN: Soft gradients, photorealism, cinematic lighting,
+           watercolor, thin typography, more than 4 colors.
+=======================================================================`,
+    };
+    return blocks[sub] || '';
+}
+
 function resolveVisualSubStyle(
     inputs: AdInputs
 ): 'dark_cinematic' | 'bright_illustrated' | 'mythic_epic' | 'vintage_bw' | 'vintage_sepia'
@@ -4482,7 +4607,17 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
     // gatedBuildPlan in coreDesignRules), so a blanket either-or guard could drop the other.
     const _logoBlockOut = `${_hasUI && !coreDesignRules.includes(UI_LOGO_INSTRUCTION_BLOCK) ? UI_LOGO_INSTRUCTION_BLOCK : ''}${_hasEnv && !coreDesignRules.includes(ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK) ? ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK : ''}`;
 
-    const textPrompt = `${_slideDirectiveBlock}${_reflowBlock}${_ccBlock}${coreDesignRules}
+    // Phase 025: art-direction canvas at the TOP of the prompt so gpt-image-2 honors it
+    // (it ignores the same block when buried ~15k chars deep and defaults to realism).
+    // Gated to the OpenAI path; the Gemini path keeps the canvas deep in coreDesignRules.
+    const _activeStyleCanvas = MODEL_PROVIDER === 'openai' ? resolveActiveStyleCanvas(inputs) : '';
+    const _styleSub = resolveVisualSubStyle(inputs);
+    const _styleEnforcer = (MODEL_PROVIDER === 'openai' && _styleSub)
+        ? `RENDER STYLE (NON-NEGOTIABLE): This image MUST be rendered in ${_styleSub.replace(/_/g, ' ').toUpperCase()} style. Do NOT default to realistic photography. The style above is mandatory.\n\n`
+        : '';
+    const _stylePrefix = _activeStyleCanvas ? `${_activeStyleCanvas}\n\n${_styleEnforcer}` : '';
+
+    const textPrompt = `${_stylePrefix}${_slideDirectiveBlock}${_reflowBlock}${_ccBlock}${coreDesignRules}
 ${_screenBanOut}
 ${_logoBlockOut}
 ${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}
@@ -5202,7 +5337,7 @@ ${(() => {
         return `- TEXT IS DESIGNED INTO THE SCENE, not placed on top. Text zones should feel like part of the lighting/composition.`;
     })()}
 
-    ${(() => {
+    ${MODEL_PROVIDER === 'openai' ? '' /* Phase 025: for OpenAI the canvas is injected at the TOP of the prompt (buildFinalImagePrompt _stylePrefix); keep this deep copy for the Gemini path only */ : (() => {
         const sub = resolveVisualSubStyle(inputs);
         if (!sub) return '';
         const blocks: Record<string, string> = {
