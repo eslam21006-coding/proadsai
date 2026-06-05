@@ -4890,7 +4890,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   // Updated Handler to support Refinement
   const handleGenerateCaption = async (isRefinement = false) => {
     // Support both single mode (currentMockup) and carousel mode (first slide image)
-    const mockupForCaption = currentMockup || carouselSlides.find(s => s.status === 'done')?.imageUrl || null;
+    const mockupForCaption = currentMockup
+      || carouselSlides.find(s => s.status === 'done')?.imageUrl
+      || batchResults.find(r => r.status === 'done' && r.url)?.url
+      || null;
     if (!mockupForCaption || !selectedTov || !inputs) return;
     if (!deductCredits(isRefinement ? 'refineCaption' : 'generateCaption')) return;
 
@@ -8036,7 +8039,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     toggle, no trigger button). Shown the moment a viewable render exists —
                     either a single render (currentMockup) OR a rendered carousel (which never
                     sets currentMockup but has done slides to resize). */}
-                {(currentMockup || carouselSlides.length > 0) && (() => {
+                {(currentMockup || carouselSlides.length > 0 || batchResults.some(r => r.status === 'done')) && (() => {
                   // UI restriction: Square / Portrait / Story only. Backend supports the
                   // full 6 ratios; restore others by extending UI_RATIOS.
                   const UI_RATIOS: AspectRatio[] = ['1:1', '4:5', '9:16'];
