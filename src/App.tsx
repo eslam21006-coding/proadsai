@@ -2277,6 +2277,9 @@ const App: React.FC = () => {
   const [activeEditConceptIndex, setActiveEditConceptIndex] = useState<string | null>(null);
   const [expandedConcepts, setExpandedConcepts] = useState<Set<number>>(new Set([11, 12, 13, 21, 22, 23, 31, 32, 33, 41, 42, 43]));
   const [editFeedback, setEditFeedback] = useState('');
+  // FIX 2: direct raw-blueprint text editing (single mode) — index of concept being edited + its draft text
+  const [directEditIndex, setDirectEditIndex] = useState<string | null>(null);
+  const [directEditText, setDirectEditText] = useState('');
   const [globalRefinement, setGlobalRefinement] = useState(''); // cumulative refinement history (sent to AI)
   const [refinementEntry, setRefinementEntry] = useState('');   // the new instruction being typed (not yet appended)
   const [studioTweak, setStudioTweak] = useState('');
@@ -3917,8 +3920,19 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     if (!deductCredits('generateConcepts')) return;
     startLoad(`Creating Concepts...`);
     const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 5) || [] };
+    // FIX 1: when the user typed a refinement direction (editFeedback) and concepts already
+    // exist, apply it to the selected concept via 'precision' instead of discarding everything.
+    const refineDirection = (editFeedback.trim() && conceptsText.trim()) ? editFeedback.trim() : '';
+    const refineIndex = singleSelectedConcepts.size >= 1 ? String(Array.from(singleSelectedConcepts)[0]) : '1';
     try {
-      let res = unwrapGen(await gemini.generateConcepts(variationText, cleanInputs, resolvedUniverse, 'initial', '', globalRefinement));
+      let res = unwrapGen(await gemini.generateConcepts(
+        variationText, cleanInputs, resolvedUniverse,
+        refineDirection ? 'precision' : 'initial',
+        refineDirection ? conceptsText : '',
+        refineDirection ? '' : globalRefinement,
+        refineDirection || undefined,
+        refineDirection ? refineIndex : undefined,
+      ));
       res = res ? normalizeFieldLabels(res) : res;
       if (!res || (!res.includes('CONCEPT_START') && !res.includes('SUBJECT_ACTION'))) {
         refundCredits('generateConcepts');
@@ -3926,6 +3940,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         return;
       }
       setConceptsText(res);
+      if (refineDirection) setEditFeedback('');
       setPhase('concept_review');
       updateHighestUnlocked('concept_review');
       awardMilestone('conceptsGenerated');
@@ -3961,6 +3976,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     if (!inputs || !editFeedback) return;
     if (!deductCredits('editOneConcept')) return;
     const feedbackCopy = editFeedback;
+    const prevConceptsText = conceptsText;
     setActiveEditConceptIndex(null);
     setEditFeedback('');
     setItemLoading(prev => ({ ...prev, [`concept_${index}`]: true }));
@@ -3969,12 +3985,34 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       res = res ? normalizeFieldLabels(res) : res;
       if (res && (res.includes('CONCEPT_START') || res.includes('SUBJECT_ACTION'))) {
         setConceptsText(res);
+        // FIX 3: also patch the matching batch hook group so batch render uses the edit.
+        setBatchHookGroups(prev => prev.map(g => g.conceptsText === prevConceptsText ? { ...g, conceptsText: res } : g));
         showToast(`Blueprint updated.`, "success");
       } else {
         refundCredits('editOneConcept');
         showToast('Edit returned empty result. Credits refunded.', 'error');
       }
     } catch (e) { refundCredits('editOneConcept'); handleApiError(e); } finally { setItemLoading(prev => ({ ...prev, [`concept_${index}`]: false })); }
+  };
+
+  // FIX 2: write directly-edited raw blueprint text back into conceptsText for concept `index`.
+  const saveDirectConceptEdit = (index: string, text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) { setDirectEditIndex(null); return; }
+    setConceptsText(prev => {
+      const start = `CONCEPT_START_${index}`;
+      const end = `CONCEPT_END_${index}`;
+      const si = prev.indexOf(start);
+      const ei = prev.indexOf(end);
+      if (si !== -1 && ei !== -1 && ei > si) {
+        // Splice the edited body back between this concept's markers, preserving siblings.
+        return prev.slice(0, si + start.length) + '\n' + trimmed + '\n' + prev.slice(ei);
+      }
+      // No CONCEPT_START/END markers (single-concept / alt format) — replace the whole text.
+      return trimmed;
+    });
+    setDirectEditIndex(null);
+    showToast('Blueprint updated.', 'success');
   };
 
   const handleApproveConcept = async (conceptRaw: string) => {
@@ -6742,14 +6780,24 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                       <span className="text-[10px] font-black uppercase tracking-wider">{t('concepts.render_btn')}</span>
                                     </button>
                                   )}
-                                  {/* Edit */}
+                                  {/* AI Patch (scissors) */}
                                   {!group.isBatch && (
                                     <button
                                       onClick={() => { setActiveEditConceptIndex(n.toString()); setEditFeedback(''); }}
                                       className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-slate-800/60 transition-all"
-                                      title="Edit concept"
+                                      title="AI patch (describe a change)"
                                     >
                                       <i className="fa-solid fa-scissors text-[10px]"></i>
+                                    </button>
+                                  )}
+                                  {/* FIX 2: Direct text edit (pen) — edit the raw blueprint text yourself */}
+                                  {!group.isBatch && (
+                                    <button
+                                      onClick={() => { setDirectEditIndex(n.toString()); setDirectEditText(getConceptBlock(group.conceptsSource, n)); }}
+                                      className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-slate-800/60 transition-all"
+                                      title="Edit blueprint text directly"
+                                    >
+                                      <i className="fa-solid fa-pen text-[10px]"></i>
                                     </button>
                                   )}
                                   {/* Expand/Collapse */}
@@ -6828,6 +6876,18 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                   <div className="flex flex-col gap-2">
                                     <button onClick={() => handlePrecisionConceptEdit(n.toString())} className="bg-blue-600 text-white py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider">Update Blueprint</button>
                                     <button onClick={() => setActiveEditConceptIndex(null)} className="text-slate-500 text-[10px] font-semibold py-2 hover:text-slate-300">Cancel</button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* ─── FIX 2: Direct Blueprint Text Editor (single mode only) ─── */}
+                              {!group.isBatch && directEditIndex === n.toString() && (
+                                <div className="absolute inset-0 bg-slate-950/95 backdrop-blur-xl p-6 z-30 flex flex-col justify-center animate-in zoom-in duration-300 rounded-xl">
+                                  <h4 className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider mb-4 text-center">Edit Blueprint Text — Concept {n}</h4>
+                                  <textarea value={directEditText} onChange={e => setDirectEditText(e.target.value)} dir="auto" placeholder="Edit the raw blueprint text directly — add or remove words..." className="w-full bg-slate-900 border border-slate-800/60 rounded-xl px-5 py-4 text-slate-100 h-64 focus:ring-1 focus:ring-emerald-500 outline-none text-xs font-mono resize-none mb-4" />
+                                  <div className="flex flex-col gap-2">
+                                    <button onClick={() => saveDirectConceptEdit(n.toString(), directEditText)} className="bg-emerald-600 text-white py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider">Save</button>
+                                    <button onClick={() => setDirectEditIndex(null)} className="text-slate-500 text-[10px] font-semibold py-2 hover:text-slate-300">Cancel</button>
                                   </div>
                                 </div>
                               )}
