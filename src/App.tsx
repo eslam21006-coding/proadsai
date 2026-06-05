@@ -3975,6 +3975,29 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
   };
 
+  // BUTTON 2 ("Regenerate All Blueprints"): regenerate the 3 concepts FRESH from the CURRENT
+  // hook — no refinement direction, no hook/TOV regeneration. Carousel keeps its slide-copy flow.
+  const handleRegenerateConceptsFresh = async () => {
+    if (!inputs || !selectedTov) return;
+    if (inputs.adMode === 'carousel' && (inputs.slideCount || 1) > 1) {
+      return handleApproveTov(selectedTov);
+    }
+    if (!deductCredits('generateConcepts')) return;
+    startLoad('Regenerating Blueprints...');
+    const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 5) || [] };
+    try {
+      let res = unwrapGen(await gemini.generateConcepts(selectedTov, cleanInputs, resolvedUniverse, 'initial', '', ''));
+      res = res ? normalizeFieldLabels(res) : res;
+      if (!res || (!res.includes('CONCEPT_START') && !res.includes('SUBJECT_ACTION'))) {
+        refundCredits('generateConcepts');
+        showToast('Blueprint generation returned empty. Credits refunded. Try again.', 'error');
+        return;
+      }
+      setConceptsText(res);
+      showToast('Blueprints regenerated.', 'success');
+    } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
+  };
+
   const handlePrecisionConceptEdit = async (index: string) => {
     if (!inputs || !editFeedback) return;
     if (!deductCredits('editOneConcept')) return;
@@ -6599,7 +6622,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   className="w-full py-4 bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white rounded-2xl text-[11px] font-bold uppercase tracking-wider shadow-lg transition-all flex items-center justify-center space-x-2 active:scale-[0.98]"
                 >
                   <i className="fa-solid fa-wand-magic-sparkles"></i>
-                  <span>Apply Global Refinement</span>
+                  <span>{t('concepts.apply_direction_regenerate')}</span>
                 </button>
               </div>
 
@@ -6989,11 +7012,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         <span className="text-[9px] font-medium opacity-70 ml-1">(<i className="fa-solid fa-coins text-[7px]"></i> {totalCreditCost})</span>
                       </button>
                       <button
-                        onClick={() => handleApproveTov(selectedTov)}
+                        onClick={handleRegenerateConceptsFresh}
                         className="px-6 py-4 rounded-xl bg-gradient-to-r from-slate-800 to-slate-700 hover:from-slate-700 hover:to-slate-600 text-white text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-2 active:scale-[0.99] border border-slate-600/30 shadow-lg"
                       >
                         <i className="fa-solid fa-arrows-rotate text-blue-400"></i>
-                        <span>{t('concepts.regenerate')}</span>
+                        <span>{t('concepts.regenerate_all_blueprints')}</span>
                       </button>
                     </div>
                   ) : (
@@ -7031,11 +7054,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         </button>
                       )}
                       <button
-                        onClick={() => handleApproveTov(selectedTov)}
+                        onClick={handleRegenerateConceptsFresh}
                         className="px-6 py-3 rounded-xl bg-gradient-to-r from-slate-800 to-slate-700 hover:from-slate-700 hover:to-slate-600 text-white text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-2 active:scale-[0.99] border border-slate-600/30 shadow-lg"
                       >
                         <i className="fa-solid fa-arrows-rotate text-blue-400"></i>
-                        <span>{t('concepts.regenerate')}</span>
+                        <span>{t('concepts.regenerate_all_blueprints')}</span>
                       </button>
                     </div>
                   )}

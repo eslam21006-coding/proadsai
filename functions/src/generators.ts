@@ -219,6 +219,71 @@ ACTION LINES: At least one directional action/speed line element — mandatory.
 FORBIDDEN: Soft gradients, photorealism, cinematic lighting,
            watercolor, thin typography, more than 4 colors.
 =======================================================================`,
+        ugly_ad: `
+⚠️⚠️⚠️ UGLY AD BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: a raw phone screenshot, notepad, or plain flat color — deliberate anti-design.
+Hand-drawn red circle annotations, scribbled arrows, yellow highlighter on key words.
+System font or handwritten marker — NO professional typography. Imperfect, low-production, authentic.
+FORBIDDEN: editorial layout, studio lighting, gradients, metallic accents, polished composition.
+=======================================================================`,
+        cinematic_film_still: `
+⚠️⚠️⚠️ CINEMATIC FILM STILL BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: a frame from a movie — rich cinematic color grade, 35mm film grain (mandatory), shallow depth of field.
+Thin letterbox dark bars top and bottom. Motivated practical lighting; hero sharp, background melts into bokeh.
+Text reads like a film title card, integrated into the movie-frame composition.
+FORBIDDEN: flat stock-photo lighting, clean grain-free digital sharpness, bright high-key studio.
+=======================================================================`,
+        clean_corporate: `
+⚠️⚠️⚠️ CLEAN CORPORATE BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: neutral multi-stop gradient (grey/blue/cream) with clean even studio lighting. Apple/Nike/Shopify aesthetic.
+Premium commercial product-shot quality, generous negative space. Modern sans-serif text, perfect kerning.
+FORBIDDEN: cinematic/moody/dramatic lighting, fantasy, neon, film grain, smoke, particles, bokeh.
+=======================================================================`,
+        golden_hour_outdoor: `
+⚠️⚠️⚠️ GOLDEN HOUR OUTDOOR BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: a warm golden-hour outdoor scene. Amber backlight with a warm rim glow on the hero; soft landscape bokeh.
+Sun flare / light rays for atmosphere. Warm color palette throughout; any text scrim is warm-toned, never cold.
+FORBIDDEN: cold/blue tones, dark studio backdrops, neon, flat indoor lighting.
+=======================================================================`,
+        street_photography: `
+⚠️⚠️⚠️ STREET PHOTOGRAPHY BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: a real urban environment, candid documentary capture. Available city light, slightly desaturated natural palette.
+35mm lens feel — hero in focus against a softly busy street; slight motion energy. Text is a functional caption/subtitle overlay.
+FORBIDDEN: studio lighting, glossy polish, saturated fantasy colors, artificial particles.
+=======================================================================`,
+        pixel_retro_game: `
+⚠️⚠️⚠️ PIXEL RETRO GAME BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: 16-bit pixel art — visible pixel grid, limited (≤16-color) palette, parallax layered background.
+Game-UI framing: health/score bars, menu boxes. Text is a blocky monospaced pixel font inside UI boxes.
+FORBIDDEN: photorealism, smooth gradients, anti-aliased edges, cinematic lighting.
+=======================================================================`,
+        stained_glass: `
+⚠️⚠️⚠️ STAINED GLASS BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: a dark ground with jewel-toned BACKLIT glass panels glowing from behind. Thick dark lead lines separate every flat color zone.
+Colors: ruby, emerald, sapphire, amber, deep purple — all backlit. Text is integrated as a sacred-art inscription within the glass design.
+FORBIDDEN: photorealism, soft photographic gradients, bokeh, daylight stock backgrounds.
+=======================================================================`,
+        glitch_digital: `
+⚠️⚠️⚠️ GLITCH DIGITAL BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: a dark digital ground with horizontal glitch bands, RGB channel separation at edges, scanline interference, pixel-sort strips.
+Colors: cyan, magenta, neon green from the RGB splits against the dark base. Text is glitched (slight horizontal shift, RGB split) but still READABLE.
+FORBIDDEN: clean photorealism, natural daylight, soft pastel backgrounds, film grain.
+=======================================================================`,
+        synthwave_80s: `
+⚠️⚠️⚠️ SYNTHWAVE 80s BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: a pink→purple→blue gradient sky with a neon perspective grid floor and a striped neon sun on the horizon.
+Hero rim-lit by neon pink and cyan; optional palm silhouettes. Chrome/metallic text effects. 80s retro-futuristic energy throughout.
+FORBIDDEN: natural daylight, desaturated/realistic palettes, photorealistic stock backgrounds.
+=======================================================================`,
     };
     return blocks[sub] || '';
 }
@@ -4615,7 +4680,11 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
     const _styleEnforcer = (MODEL_PROVIDER === 'openai' && _styleSub)
         ? `RENDER STYLE (NON-NEGOTIABLE): This image MUST be rendered in ${_styleSub.replace(/_/g, ' ').toUpperCase()} style. Do NOT default to realistic photography. The style above is mandatory.\n\n`
         : '';
-    const _stylePrefix = _activeStyleCanvas ? `${_activeStyleCanvas}\n\n${_styleEnforcer}` : '';
+    // Fire the prefix when EITHER a canvas block or the enforcer exists — so a sub-style with
+    // no dedicated canvas still gets the one-line "render in X style" enforcer at the top.
+    const _stylePrefix = (_activeStyleCanvas || _styleEnforcer)
+        ? `${_activeStyleCanvas ? `${_activeStyleCanvas}\n\n` : ''}${_styleEnforcer}`
+        : '';
 
     const textPrompt = `${_stylePrefix}${_slideDirectiveBlock}${_reflowBlock}${_ccBlock}${coreDesignRules}
 ${_screenBanOut}
