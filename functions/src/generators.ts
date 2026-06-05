@@ -5171,11 +5171,12 @@ Arabic letters change shape based on their position in a word (initial, medial, 
 - If a text field is empty or very short, simply omit that text element — do NOT fill it with a copy of another field.
 - When space is tight, prefer FEWER text elements rendered CLEARLY over cramming everything.
 - Each text zone must contain ONLY its designated content — headline zone gets headline only, CTA zone gets CTA only.
+` : ''}
 ⚠️ NUMBER + SYMBOL INTEGRITY (CRITICAL):
 - NEVER separate a number from its adjacent % sign. "70%" must render as "70%" — not "%" alone.
 - NEVER drop digits from percentages, prices, or statistics. If the text says "90% من المدربين", render ALL of "90%".
 - All numbers in the copy text are INTENTIONAL and MUST appear exactly as written in the rendered image.
-
+${MODEL_PROVIDER === 'gemini' ? `
 ⚠️ ARABIC COLOR/HIGHLIGHT WORD BOUNDARY RULE (CRITICAL):
 - Arabic letters CONNECT within a word. If you apply a color to part of a word, it breaks the visual connection and looks corrupted.
 - NEVER change color mid-word in Arabic text. Colors must change ONLY at word boundaries (spaces).

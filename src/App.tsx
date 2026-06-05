@@ -2184,6 +2184,9 @@ const App: React.FC = () => {
   const [activeBatchCaptionKey, setActiveBatchCaptionKey] = useState<string>('');
   const [batchResults, setBatchResults] = useState<BatchResult[]>([]);
   const [batchRendering, setBatchRendering] = useState(false);
+  // FIX 3: which batch card is focused for a 'single'-scope resize (so it targets that
+  // item's own generationId instead of the global renderGenerationId). null = not a batch item.
+  const [selectedBatchItemIndex, setSelectedBatchItemIndex] = useState<number | null>(null);
   const [batchHookGroups, setBatchHookGroups] = useState<BatchHookGroup[]>([]);
   const [batchSelectedHooks, setBatchSelectedHooks] = useState<Set<string>>(new Set());
   const [showBatchConfig, setShowBatchConfig] = useState(false);
@@ -4273,6 +4276,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
     // Render per combo: primary size first, then reflow to extra sizes
     let resultIdx = 0;
+    let firstBatchGenId: string | null = null; // FIX 2: anchor the global renderGenerationId so resize works after a batch
     for (let ci = 0; ci < combos.length; ci++) {
       const combo = combos[ci];
       let primaryUrl: string | null = null;
@@ -4302,6 +4306,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           }
           // Persist this combo's generation id on its primary item so batch retry/reflow
           // anchors to the correct source generation (not the global renderGenerationId).
+          if (comboGenId && !firstBatchGenId) firstBatchGenId = comboGenId;
           if (comboGenId) {
             const _cg = comboGenId;
             setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, generationId: _cg } : r));
@@ -4347,6 +4352,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
       if (ci < combos.length - 1) await new Promise(r => setTimeout(r, 500));
     }
+    // FIX 2: anchor the global renderGenerationId to the first successful batch item so the
+    // resize guard (which checks renderGenerationId) no longer blocks resizing after a batch.
+    if (firstBatchGenId) setRenderGenerationId(firstBatchGenId);
     setBatchRendering(false);
   };
 
@@ -5186,10 +5194,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     if (!selectedConcept || !currentMockup || !buildPlan) return;
     setCurrentAspectRatio(newRatio);
     startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
+    // FIX 3: when a batch card is focused, target ITS generation, not the global one.
+    const _focusedBatchItem = selectedBatchItemIndex != null ? safeBatch[selectedBatchItemIndex] : null;
+    const effectiveSingleGenId = _focusedBatchItem?.generationId || renderGenerationId;
     // Optimistic UI-only decrement (callable backend performs the authoritative deduction;
     // calling deductCredits() here would invoke deductCreditsServer and double-bill).
-    const singleOptimisticCost = renderGenerationId ? CREDIT_COSTS.reflowImage : 0;
-    if (renderGenerationId) {
+    const singleOptimisticCost = effectiveSingleGenId ? CREDIT_COSTS.reflowImage : 0;
+    if (effectiveSingleGenId) {
       if (userCredits < singleOptimisticCost) {
         setUpgradeReason(t('studio.reflow.upgrade_single_credits')
           .replace('{cost}', String(singleOptimisticCost))
@@ -5205,10 +5216,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       return;
     }
     try {
-      if (renderGenerationId) {
+      if (effectiveSingleGenId) {
         const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
         const result = await reflowFn({
-          generationId: renderGenerationId,
+          generationId: effectiveSingleGenId,
           targetAspectRatio: newRatio,
           method: 'auto',
           scope: 'single',
@@ -6459,7 +6470,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 className="w-full py-4 rounded-2xl bg-slate-900/60 hover:bg-slate-800/80 text-slate-200 text-[11px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 active:scale-[0.99]"
               >
                 <i className="fa-solid fa-arrows-rotate text-blue-500"></i>
-                <span>Regenerate All AI Suggestions</span>
+                <span>{t('concepts.regenerate_all_hooks')}</span>
               </button>
             </div>
           </div>
@@ -7233,6 +7244,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                           setSelectedConcept(item.conceptText);
                                           setCurrentAspectRatio(item.ratio as AspectRatio);
                                           setActiveBatchRatio(item.ratio as AspectRatio);
+                                          setSelectedBatchItemIndex(idx); // FIX 3: focus this item for single-scope resize
                                           setStudioTweak('');
                                           setSelectedPolishIds(new Set());
                                           setEditTarget({
@@ -7247,7 +7259,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                           <i className="fa-solid fa-pen-to-square text-[8px]"></i>
                                         </button>
                                         {/* Save */}
-                                        <button onClick={() => { pushMockup(item.url!, item.ratio as AspectRatio); setBuildPlan(item.buildPlan); setSelectedConcept(item.conceptText); setActiveBatchRatio(item.ratio as AspectRatio); }}
+                                        <button onClick={() => { pushMockup(item.url!, item.ratio as AspectRatio); setBuildPlan(item.buildPlan); setSelectedConcept(item.conceptText); setActiveBatchRatio(item.ratio as AspectRatio); setSelectedBatchItemIndex(idx); }}
                                           className="px-2 py-1 bg-emerald-600 text-white rounded text-[7px] font-bold flex items-center gap-0.5" title="Use this design">
                                           <i className="fa-solid fa-bookmark text-[8px]"></i>
                                         </button>
