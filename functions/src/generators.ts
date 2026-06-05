@@ -4699,6 +4699,7 @@ ${subheadText ? `- Supporting Line: "${subheadText}"` : ''}
 ${ctaName ? `- CTA Button: "${ctaName}"` : ''}
 ${benefitText ? `- Benefit Line: "${benefitText}"` : ''}
 ${badges ? `- Badge: "${badges}"` : ''}
+ALL text fields listed above MUST appear on the image. Do not skip any field. If a field is provided, it MUST be rendered.
 
 TEXT PLACEMENT:
 Place the ad copy where it best fits the composition. Every design must have a DIFFERENT text layout — vary placement freely across overlays on dark areas, inside shapes or cards, split across zones, integrated into the scene, or in dedicated panels. Never repeat the same text skeleton across concepts.
@@ -5195,8 +5196,7 @@ ${_renderRtCtx.testimonial ? `- Testimonial context available — design should 
   ${SCREEN_CONTENT_BAN_BLOCK}
   ${_renderLogoBlock}
   ${_renderRtDesignHint}
-       
-  ${MODEL_PROVIDER === 'gemini' ? `
+
         ⚠️⚠️⚠️ ABSOLUTE RULE: ONLY RENDER USER - FACING TEXT ⚠️⚠️⚠️
 ================================================================
 The image must contain ONLY these text elements and NOTHING ELSE:
@@ -5222,6 +5222,7 @@ EXACT TEXT RENDERING(ZERO TOLERANCE FOR ANY CHARACTER CHANGE):
          - Typography must be CLEAN, PRINTED, and HIGH - LEGIBILITY(no calligraphy, no decorative distortion).
          - FONT STYLE(MANDATORY): Use a modern Arabic sans - serif look(Cairo / Tajawal / Noto Kufi Arabic style).Heavy weight for headline / button, medium for subheadline.No thin strokes.
 
+  ${MODEL_PROVIDER === 'gemini' ? `
 ⚠️⚠️⚠️ ARABIC LETTER CONNECTION RULES (MOST COMMON FAILURE — READ CAREFULLY) ⚠️⚠️⚠️
 Arabic letters change shape based on their position in a word (initial, medial, final, isolated).
 - EVERY word must have CONNECTED letters within it. Disconnected letters within a word = CORRUPTED text.
@@ -5906,7 +5907,25 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
 
     const parts: any[] = [];
     if (base64ToEdit) {
-        parts.push({ inlineData: { mimeType: "image/png", data: base64ToEdit.split(',')[1] } });
+        // base64ToEdit may be a data URL (data:image/png;base64,XXX), a remote Storage/blob URL
+        // (reflowed / loaded / server-uploaded renders), or raw base64. The image model needs raw
+        // base64 — resolve all three. Previously `split(',')[1]` returned undefined for non-data-URL
+        // inputs, so the edit reference was dropped and the OpenAI path silently fell back to
+        // images.generate (a fresh image) instead of images.edit — i.e. Polish "did nothing".
+        let _editData: string | undefined;
+        if (base64ToEdit.startsWith('data:')) {
+            _editData = base64ToEdit.split(',')[1];
+        } else if (/^https?:\/\//i.test(base64ToEdit)) {
+            try {
+                const _resp = await fetch(base64ToEdit);
+                if (_resp.ok) _editData = Buffer.from(await _resp.arrayBuffer()).toString('base64');
+                else console.warn(`⚠️ base64ToEdit fetch ${_resp.status} — edit reference skipped`);
+            } catch (e) { console.warn('⚠️ base64ToEdit fetch failed — edit reference skipped:', e); }
+        } else {
+            _editData = base64ToEdit; // assume raw base64
+        }
+        if (_editData) parts.push({ inlineData: { mimeType: "image/png", data: _editData } });
+        else console.warn('⚠️ base64ToEdit unresolved; proceeding without the edit reference image.');
 
         // ─── Normalize editInstruction once (HOTFIX-F gate / FR-026) ───
         // editInstruction may arrive as a primitive string (frontend callable), a boxed String
