@@ -4572,6 +4572,28 @@ export interface BuildFinalImagePromptResult {
     trace: ResolutionTrace;
 }
 
+// Phase 025: On the OpenAI path the full technicalPrompt is NOT injected — gpt-image-2
+// renders camera/lens/render directives ("85mm lens, f/1.8, bokeh…") as literal text on
+// the image. But the technicalPrompt also carries campaign context (product name, offer,
+// target audience) that SHOULD reach the renderer. This strips only the camera/render-spec
+// lines and keeps the rest, so context survives without the directive bleed. Returns the
+// kept lines with no TECHNICAL_PROMPT: label (the label itself is a Gemini-only marker).
+const OPENAI_CAMERA_SPEC_KEYWORDS = [
+    "lens", "f/1.", "mm lens", "depth of field", "bokeh",
+    "photorealistic", "cinematic film still", "dynamic composition",
+    "high-contrast typography", "no textures on face", "pixel-perfect match",
+];
+function extractCampaignContextForOpenAI(tp: string): string {
+    return tp
+        .split(/\r?\n/)
+        .filter((line) => {
+            const lower = line.toLowerCase();
+            return !OPENAI_CAMERA_SPEC_KEYWORDS.some((kw) => lower.includes(kw));
+        })
+        .join("\n")
+        .trim();
+}
+
 export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): BuildFinalImagePromptResult {
     const {
         technicalPrompt,
@@ -4691,7 +4713,14 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
 ${_screenBanOut}
 ${_logoBlockOut}
 ${MODEL_PROVIDER === 'openai'
-  ? '' /* gpt-image-2 renders the technicalPrompt (camera/lens/render directives) as literal text on the image — it's Gemini-specific, so omit it entirely on the OpenAI path */
+  ? (() => {
+      /* gpt-image-2 renders camera/lens/render directives as literal text on the image, so
+         the full technicalPrompt is Gemini-specific. But campaign context (product/offer/
+         audience) lives in the same field and SHOULD reach the renderer — extract only those
+         lines, drop the camera specs, and inject WITHOUT the TECHNICAL_PROMPT: label. */
+      const _ctx = technicalPrompt ? extractCampaignContextForOpenAI(technicalPrompt) : '';
+      return _ctx ? `\n${_ctx}\n` : '';
+    })()
   : (technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : '')}
 BLUEPRINT: ${strippedBlueprint}
 
