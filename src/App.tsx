@@ -4037,6 +4037,40 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
   };
 
+  // Robustly replace ONLY concept `n`'s body inside the full multi-concept text, mirroring
+  // getConceptBlock's boundary detection (numbered → positional, 1-based; numbered/unnumbered/
+  // spaced markers all handled). Returns the merged text, or null when no concept markers exist
+  // at all (genuine single-concept text — caller decides) or the target can't be safely located.
+  const spliceConceptBody = (full: string, n: number, edited: string): string | null => {
+    if (!full) return null;
+    const startRe = /CONCEPT[\s_\-]*START[\s_\-]*(\d*)/gi;
+    const starts: { idx: number; mEnd: number; num: number }[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = startRe.exec(full)) !== null) {
+      starts.push({ idx: m.index, mEnd: m.index + m[0].length, num: parseInt(m[1], 10) || 0 });
+    }
+    if (starts.length === 0) return null;
+    let ti = starts.findIndex(s => s.num === n);
+    if (ti === -1 && n >= 1 && n <= starts.length) ti = n - 1; // fall back to positional (1-based)
+    if (ti === -1) return null; // target out of range — caller must NOT wipe siblings
+    const tStart = starts[ti];
+    const lineEnd = full.indexOf('\n', tStart.idx);
+    const contentStart = lineEnd === -1 ? tStart.mEnd : lineEnd + 1; // body begins after the START line
+    const nextStart = ti + 1 < starts.length ? starts[ti + 1].idx : full.length;
+    const endRe = /CONCEPT[\s_\-]*END[\s_\-]*\d*/gi;
+    endRe.lastIndex = contentStart;
+    const endMatch = endRe.exec(full);
+    const contentEnd = (endMatch && endMatch.index < nextStart) ? endMatch.index : nextStart;
+    // Strip any markers the model wrapped around the returned single concept.
+    const body = edited
+      .replace(/CONCEPT[\s_\-]*START[\s_\-]*\d*/gi, '')
+      .replace(/CONCEPT[\s_\-]*END[\s_\-]*\d*/gi, '')
+      .trim();
+    if (!body) return null;
+    // Preserve the original START marker line + the END marker; replace only the inner body.
+    return full.slice(0, contentStart) + body + '\n' + full.slice(contentEnd);
+  };
+
   const handlePrecisionConceptEdit = async (index: string) => {
     if (!inputs || !editFeedback) return;
     if (!deductCredits('editOneConcept')) return;
@@ -4049,30 +4083,31 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       let res = unwrapGen(await gemini.generateConcepts(selectedTov, inputs, resolvedUniverse, 'precision', conceptsText, '', feedbackCopy, index));
       res = res ? normalizeFieldLabels(res) : res;
       if (res && (res.includes('CONCEPT_START') || res.includes('SUBJECT_ACTION'))) {
-        // Splice the edited concept back into ITS slot instead of replacing the whole
-        // multi-concept text. A precision edit can return just one concept (or markers that
-        // don't match `index`); blindly setConceptsText(res) then makes the other cards —
-        // and sometimes the edited card itself — fail their getConceptBlock lookup and go blank.
-        const start = `CONCEPT_START_${index}`;
-        const end = `CONCEPT_END_${index}`;
-        const si = prevConceptsText.indexOf(start);
-        const ei = prevConceptsText.indexOf(end);
-        let body = res;
-        const rSi = res.indexOf(start);
-        if (rSi !== -1) {
-          const rEi = res.indexOf(end, rSi);
-          body = res.slice(rSi + start.length, rEi !== -1 ? rEi : undefined);
+        // Precision mode returns ONLY the edited concept. Splice it back into its slot using
+        // the same boundary detection the cards use — NEVER replace the whole multi-concept
+        // text on a marker miss (that wiped the sibling concepts and blanked the edited card).
+        const n = parseInt(index, 10);
+        const startCount = (prevConceptsText.match(/CONCEPT[\s_\-]*START/gi) || []).length;
+        const merged = spliceConceptBody(prevConceptsText, n, res);
+        if (merged) {
+          setConceptsText(merged);
+          // Also patch the matching batch hook group so batch render uses the edit.
+          setBatchHookGroups(prev => prev.map(g => g.conceptsText === prevConceptsText ? { ...g, conceptsText: merged } : g));
+          showToast(`Blueprint updated.`, "success");
+        } else if (startCount <= 1) {
+          // Genuine single-concept text (0–1 markers) — replacing the whole body drops no siblings.
+          const body = res.replace(/CONCEPT[\s_\-]*START[\s_\-]*\d*/gi, '').replace(/CONCEPT[\s_\-]*END[\s_\-]*\d*/gi, '').trim();
+          const next = body || res;
+          setConceptsText(next);
+          setBatchHookGroups(prev => prev.map(g => g.conceptsText === prevConceptsText ? { ...g, conceptsText: next } : g));
+          showToast(`Blueprint updated.`, "success");
         } else {
-          body = res.replace(/CONCEPT[\s_\-]*START[\s_\-]*\d*/gi, '').replace(/CONCEPT[\s_\-]*END[\s_\-]*\d*/gi, '');
+          // Multiple concepts exist but the target couldn't be located — refund rather than
+          // overwrite the whole set (which is what made concepts disappear before).
+          console.warn('[precisionEdit] could not locate concept', n, 'in', startCount, 'concepts — aborting splice to avoid wiping siblings');
+          refundCredits('editOneConcept');
+          showToast('Could not locate that blueprint to patch. Credits refunded — try again.', 'error');
         }
-        body = body.trim();
-        const merged = (si !== -1 && ei !== -1 && ei > si && body)
-          ? prevConceptsText.slice(0, si + start.length) + '\n' + body + '\n' + prevConceptsText.slice(ei)
-          : res;
-        setConceptsText(merged);
-        // FIX 3: also patch the matching batch hook group so batch render uses the edit.
-        setBatchHookGroups(prev => prev.map(g => g.conceptsText === prevConceptsText ? { ...g, conceptsText: merged } : g));
-        showToast(`Blueprint updated.`, "success");
       } else {
         refundCredits('editOneConcept');
         showToast('Edit returned empty result. Credits refunded.', 'error');
@@ -6426,7 +6461,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                               onClick={() => { setActiveEditHookIndex(v); setEditFeedback(''); }}
                               className="px-4 py-3.5 rounded-xl bg-slate-950/40 border border-slate-700/30 text-slate-300 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 hover:text-white transition-all flex items-center gap-2"
                             >
-                              <i className="fa-solid fa-scissors text-[10px]"></i>
+                              <i className="fa-solid fa-wand-magic-sparkles text-[10px]"></i>
                               <span>AI Edit</span>
                             </button>
                           </div>
@@ -6927,7 +6962,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                       className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-slate-800/60 transition-all"
                                       title="AI patch (describe a change)"
                                     >
-                                      <i className="fa-solid fa-scissors text-[10px]"></i>
+                                      <i className="fa-solid fa-wand-magic-sparkles text-[10px]"></i>
                                     </button>
                                   )}
                                   {/* FIX 2: Direct text edit (pen) — edit the raw blueprint text yourself */}
@@ -7010,9 +7045,9 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                               {/* ─── Edit Overlay (single mode only) ─── */}
                               {!group.isBatch && activeEditConceptIndex === n.toString() && (
-                                <div className="absolute inset-0 bg-slate-950/95 backdrop-blur-xl p-6 z-30 flex flex-col justify-center animate-in zoom-in duration-300 rounded-xl">
+                                <div className="absolute inset-0 bg-slate-950/95 backdrop-blur-xl p-6 z-30 flex flex-col justify-center overflow-y-auto animate-in zoom-in duration-300 rounded-xl">
                                   <h4 className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider mb-4 text-center">Blueprint Patch — Concept {n}</h4>
-                                  <textarea value={editFeedback} onChange={e => setEditFeedback(e.target.value)} placeholder="e.g. Change background to office, make hero more confident, add laptop as prop..." className="w-full bg-slate-900 border border-slate-800/60 rounded-xl px-5 py-4 text-slate-100 h-32 focus:ring-1 focus:ring-blue-500 outline-none text-sm resize-none mb-4" />
+                                  <textarea value={editFeedback} onChange={e => setEditFeedback(e.target.value)} placeholder="e.g. Change background to office, make hero more confident, add laptop as prop..." style={{ minHeight: '200px', width: '100%' }} className="bg-slate-900 border border-slate-800/60 rounded-xl px-5 py-4 text-slate-100 focus:ring-1 focus:ring-blue-500 outline-none text-sm resize-y mb-4" />
                                   <div className="flex flex-col gap-2">
                                     <button onClick={() => handlePrecisionConceptEdit(n.toString())} className="bg-blue-600 text-white py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider">Update Blueprint</button>
                                     <button onClick={() => setActiveEditConceptIndex(null)} className="text-slate-500 text-[10px] font-semibold py-2 hover:text-slate-300">Cancel</button>
