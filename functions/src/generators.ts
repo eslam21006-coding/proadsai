@@ -4690,7 +4690,9 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
     const textPrompt = `${_stylePrefix}${_slideDirectiveBlock}${_reflowBlock}${_ccBlock}${coreDesignRules}
 ${_screenBanOut}
 ${_logoBlockOut}
-${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}
+${MODEL_PROVIDER === 'openai'
+  ? (technicalPrompt ? `\n${technicalPrompt}\n` : '')
+  : (technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : '')}
 BLUEPRINT: ${strippedBlueprint}
 
 AD COPY TO RENDER ON THIS IMAGE:
