@@ -2298,8 +2298,6 @@ const App: React.FC = () => {
   const [reflowStep, setReflowStep] = useState<'idle' | 'committing'>('idle');
   const [reflowTarget, setReflowTarget] = useState<AspectRatio | null>(null);
   const [reflowScope, setReflowScope] = useState<'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'>('single');
-  // Target ratio for the batch grid's "Resize All" button (per-combo reflow). Defaults to Story.
-  const [batchResizeTarget, setBatchResizeTarget] = useState<AspectRatio>('9:16');
   // Ratio of the batch tile currently being viewed — drives the reflow "Current"
   // badge in batch mode (where displayRatio reflects the single-render history, not
   // the focused batch tile).
@@ -7285,46 +7283,9 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       const totalDone = allResults.filter(r => r.status === 'done').length;
                       return (
                         <>
-                          <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center justify-between">
                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{doneCount}/{filteredResults.length} rendered</span>
-                            <div className="flex items-center gap-2">
-                              {batchRendering && <span className="text-[10px] text-amber-400 animate-pulse font-bold">Rendering...</span>}
-                              {/* Resize All — per-combo reflow (each combo resized on its own generationId).
-                                  Styled ratio chips mirror the single/carousel resize picker. */}
-                              {!batchRendering && allResults.some(r => r.status === 'done' && r.url && r.generationId) && (() => {
-                                const RESIZE_RATIOS: { value: AspectRatio; name: string; icon: string }[] = [
-                                  { value: '1:1', name: 'Square', icon: 'fa-regular fa-square' },
-                                  { value: '4:5', name: 'Portrait', icon: 'fa-solid fa-mobile-screen' },
-                                  { value: '9:16', name: 'Story', icon: 'fa-solid fa-mobile' },
-                                  { value: '4:3', name: 'Wide', icon: 'fa-solid fa-tv' },
-                                  { value: '3:4', name: 'Tall', icon: 'fa-solid fa-image-portrait' },
-                                  { value: '16:9', name: 'Landscape', icon: 'fa-solid fa-panorama' },
-                                ];
-                                return (
-                                  <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                                    {RESIZE_RATIOS.map(({ value, name, icon }) => {
-                                      const isSelected = batchResizeTarget === value;
-                                      return (
-                                        <button key={value} onClick={() => setBatchResizeTarget(value)} title={`${name} (${value})`}
-                                          className={`flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-xl border transition-all ${isSelected
-                                            ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-600/30'
-                                            : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-blue-600/15 hover:border-blue-500/30 hover:text-white'}`}>
-                                          <i className={`${icon} text-xs`}></i>
-                                          <span className="text-[8px] font-bold tracking-tight">{name}</span>
-                                          <span className="text-[7px] font-mono opacity-70">{value}</span>
-                                        </button>
-                                      );
-                                    })}
-                                    <button onClick={() => handleRescale(batchResizeTarget, { scope: 'batch_all' })}
-                                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[9px] font-bold flex items-center gap-1.5 whitespace-nowrap"
-                                      title={`Resize all done images to ${batchResizeTarget}`}>
-                                      <i className="fa-solid fa-up-down text-[8px]"></i>
-                                      {lang === 'ar' ? 'تغيير حجم الكل' : 'Resize All'}
-                                    </button>
-                                  </div>
-                                );
-                              })()}
-                            </div>
+                            {batchRendering && <span className="text-[10px] text-amber-400 animate-pulse font-bold">Rendering...</span>}
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                             {filteredResults.map(({ item, idx }) => (
@@ -8123,15 +8084,15 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 {(currentMockup || carouselSlides.length > 0 || batchResults.some(r => r.status === 'done')) && (() => {
                   // UI restriction: Square / Portrait / Story only. Backend supports the
                   // full 6 ratios; restore others by extending UI_RATIOS.
-                  const UI_RATIOS: AspectRatio[] = ['1:1', '4:5', '9:16'];
+                  const UI_RATIOS: AspectRatio[] = ['1:1', '3:4', '9:16'];
                   const reflowLabels: Record<string, string> = {
                     '1:1': t('studio.reflow.ratio.1_1'),
-                    '4:5': t('studio.reflow.ratio.4_5'),
+                    '3:4': t('studio.reflow.ratio.3_4'),
                     '9:16': t('studio.reflow.ratio.9_16'),
                   };
                   const reflowIcons: Record<string, string> = {
                     '1:1': 'fa-regular fa-square',
-                    '4:5': 'fa-solid fa-mobile-screen',
+                    '3:4': 'fa-solid fa-mobile-screen',
                     '9:16': 'fa-solid fa-mobile',
                   };
                   // Display name (Square/Portrait/Story) without the "(1:1)" suffix the
@@ -8202,28 +8163,38 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       })}
                     </div>
 
-                    {/* Scope toggles + Generate button — shown directly below the row when
-                        a non-current ratio is selected. No picker state transition. */}
-                    {reflowTarget && reflowTarget !== currentRatioForBadge && (
-                      <div className="space-y-2">
-                        {/* Batch scope toggle (single / resize-all) removed — global batch_all
-                            reflow is unreliable (single generation id can't address all combo docs),
-                            so batch resizing is per-card only. Batch scope is forced to 'single' above. */}
-                        {/* Carousel always resizes ALL slides — no per-slide scope toggle
-                            (carousel_slide's slide-index resolution is unreliable). */}
+                    {/* Resize action button — always visible beneath the ratio row. Solid filled
+                        primary when a non-current ratio is selected; dimmed/disabled when the
+                        selection equals the current ratio (already at that size). In batch mode
+                        it triggers the per-combo batch reflow loop; otherwise single/carousel. */}
+                    {(() => {
+                      const effectiveTarget = (reflowTarget || currentRatioForBadge) as AspectRatio;
+                      const atCurrent = !reflowTarget || reflowTarget === currentRatioForBadge;
+                      const targetName = nameFor(effectiveTarget);
+                      // "Resize All to X" when the action fans out over multiple items (batch
+                      // combos / carousel slides); "Resize to X" for a single image.
+                      const allMode = isBatchScope || isCarouselScope;
+                      const verb = allMode
+                        ? (lang === 'ar' ? 'تغيير حجم الكل إلى' : 'Resize All to')
+                        : (lang === 'ar' ? 'تغيير الحجم إلى' : 'Resize to');
+                      const label = atCurrent
+                        ? (lang === 'ar' ? `الحجم الحالي (${targetName})` : `Already ${targetName}`)
+                        : `${verb} ${targetName}`;
+                      return (
                         <button
                           onClick={async () => {
-                            if (committing || !reflowTarget) return;
+                            if (committing || atCurrent || !reflowTarget) return;
                             setReflowStep('committing');
                             try {
-                              if (reflowScope === 'batch_all') {
+                              if (isBatchScope) {
+                                // Per-combo batch reflow — each combo resized on its own generationId.
                                 await handleRescale(reflowTarget, { scope: 'batch_all' });
                               } else if (reflowScope === 'carousel_slide') {
                                 // Resolve focused slide by matching displayed image url; fall back to slide 0.
                                 const matchIdx = slides.findIndex(s => s.imageUrl === currentMockup);
                                 const slideIndex = matchIdx >= 0 ? matchIdx : 0;
                                 await handleRescale(reflowTarget, { scope: 'carousel_slide', slideIndex });
-                              } else if (reflowScope === 'carousel_all') {
+                              } else if (isCarouselScope || reflowScope === 'carousel_all') {
                                 await handleRescale(reflowTarget, { scope: 'carousel_all' });
                               } else {
                                 await handleRescale(reflowTarget);
@@ -8235,14 +8206,16 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                               setReflowTarget(null);
                             }
                           }}
-                          disabled={committing || isLoading}
-                          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-lg transition-all active:scale-[0.98] hover:from-blue-500 hover:to-cyan-500 flex items-center justify-center gap-2 disabled:opacity-50"
+                          disabled={committing || isLoading || atCurrent}
+                          className={atCurrent
+                            ? 'w-full py-2.5 rounded-xl bg-slate-800/50 border border-slate-700/40 text-slate-500 text-[9px] font-bold uppercase tracking-wider flex items-center justify-center gap-2 cursor-not-allowed'
+                            : 'w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-lg transition-all active:scale-[0.98] hover:from-blue-500 hover:to-cyan-500 flex items-center justify-center gap-2 disabled:opacity-50'}
                         >
-                          <i className={`fa-solid ${committing ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'} text-[8px]`}></i>
-                          {t('studio.reflow.generate_button', { credits: totalCost })}
+                          <i className={`fa-solid ${committing ? 'fa-spinner fa-spin' : atCurrent ? 'fa-check' : 'fa-wand-magic-sparkles'} text-[8px]`}></i>
+                          {label}
                         </button>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </div>
                   );
                 })()}

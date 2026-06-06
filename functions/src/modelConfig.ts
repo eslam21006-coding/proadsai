@@ -6,7 +6,10 @@ export const OPENAI_VISUAL_MODEL = "gpt-image-2";
 
 export const OPENAI_SIZE_BY_ASPECT: Record<string, string> = {
   "1:1": "1024x1024",
-  "4:5": "1024x1280",
+  // 4:5 is not a natively supported gpt-image-2 size. Remap legacy/4:5 requests to the
+  // nearest valid portrait canvas (the 3:4 size) so they still render portrait instead of
+  // falling back to a square. The live UI now offers 3:4 ("Portrait") rather than 4:5.
+  "4:5": "1024x1360",
   "3:4": "1024x1360",
   "9:16": "1024x1792",
   "4:3": "1360x1024",
