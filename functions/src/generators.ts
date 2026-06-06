@@ -4691,7 +4691,7 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
 ${_screenBanOut}
 ${_logoBlockOut}
 ${MODEL_PROVIDER === 'openai'
-  ? (technicalPrompt ? `\n${technicalPrompt}\n` : '')
+  ? '' /* gpt-image-2 renders the technicalPrompt (camera/lens/render directives) as literal text on the image — it's Gemini-specific, so omit it entirely on the OpenAI path */
   : (technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : '')}
 BLUEPRINT: ${strippedBlueprint}
 

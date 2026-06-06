@@ -5165,6 +5165,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       const targetIdxs = new Set(batchItems.map(b => b.idx));
       const originals = new Map(batchItems.map(({ r, idx }) => [idx, { url: r.url!, ratio: r.ratio }]));
       setCurrentAspectRatio(newRatio);
+      // Keep the reflow chips' "current ratio" in sync (it reads activeBatchRatio in batch mode).
+      // Without this the picker still treats the OLD ratio as current after a batch resize, which
+      // disables that ratio's chip — so the user can't pick it again to resize back (FIX 3).
+      setActiveBatchRatio(newRatio);
       startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
       setBatchResults(prev => prev.map((r, idx) => targetIdxs.has(idx) ? { ...r, ratio: newRatio, status: 'rendering' as const } : r));
       setUserCredits(prev => prev - totalCost);
@@ -7047,7 +7051,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                               {!group.isBatch && activeEditConceptIndex === n.toString() && (
                                 <div className="absolute inset-0 bg-slate-950/95 backdrop-blur-xl p-6 z-30 flex flex-col justify-center overflow-y-auto animate-in zoom-in duration-300 rounded-xl">
                                   <h4 className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider mb-4 text-center">Blueprint Patch — Concept {n}</h4>
-                                  <textarea value={editFeedback} onChange={e => setEditFeedback(e.target.value)} placeholder="e.g. Change background to office, make hero more confident, add laptop as prop..." style={{ minHeight: '200px', width: '100%' }} className="bg-slate-900 border border-slate-800/60 rounded-xl px-5 py-4 text-slate-100 focus:ring-1 focus:ring-blue-500 outline-none text-sm resize-y mb-4" />
+                                  <textarea value={editFeedback} onChange={e => setEditFeedback(e.target.value)} placeholder="e.g. Change background to office, make hero more confident, add laptop as prop..." style={{ minHeight: '120px', maxHeight: '40vh', width: '100%' }} className="bg-slate-900 border border-slate-800/60 rounded-xl px-5 py-4 text-slate-100 focus:ring-1 focus:ring-blue-500 outline-none text-sm resize-y mb-4" />
                                   <div className="flex flex-col gap-2">
                                     <button onClick={() => handlePrecisionConceptEdit(n.toString())} className="bg-blue-600 text-white py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider">Update Blueprint</button>
                                     <button onClick={() => setActiveEditConceptIndex(null)} className="text-slate-500 text-[10px] font-semibold py-2 hover:text-slate-300">Cancel</button>
