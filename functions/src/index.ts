@@ -4362,11 +4362,20 @@ export const serverEditRegion = onCall({
     maxInstances: 20,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { imageBase64, region, editMode, editPayload, ratio } = request.data;
+    const { imageBase64, region, editMode, editPayload, ratio, personalPhotos } = request.data;
 
     if (!imageBase64 || !region || !editMode) {
         throw new HttpsError("invalid-argument", "Missing imageBase64, region, or editMode.");
     }
+
+    // FIX C (ISSUE 2 — face lock in the edit path): the original hero photos (Box A) are
+    // passed as independent ground-truth face anchors so an edit near the face cannot let the
+    // identity drift. Only real inline/HTTP images count (same guard as generators.ts).
+    const isRealImage = (v: any): v is string =>
+        typeof v === 'string' && (v.startsWith('data:image/') || v.startsWith('http'));
+    const faceRefs: string[] = Array.isArray(personalPhotos)
+        ? personalPhotos.filter(isRealImage).slice(0, 5)
+        : [];
 
     const { xPct, yPct, wPct, hPct } = region;
     const x2 = xPct + wPct;
@@ -4428,19 +4437,35 @@ Rules:
     // Append universal aspect ratio preservation
     instruction += `\n\n⚠️ CRITICAL: The output image MUST have the EXACT SAME aspect ratio and dimensions as the input image. This is a ${ratio || '1:1'} image. Do NOT change it to square or any other ratio.`;
 
+    // FIX C (ISSUE 2): when hero photos are attached, lock the face. The extra reference
+    // images follow the base image in the parts array (the base stays first so it remains the
+    // image being edited); this block tells the model what they are and forbids face drift.
+    if (faceRefs.length > 0) {
+        instruction += `\n\n⚠️⚠️ THE HERO'S FACE IS INVIOLABLE: ${faceRefs.length} reference photo(s) of the hero are attached AFTER the image being edited. Any human face in the result MUST keep IDENTICAL facial structure, bone structure, features, skin tone, age, and identity to those reference photos. Do NOT reinterpret, alter, soften, smooth, or reimagine any facial feature. The reference photos are the absolute ground truth for the face. Use them for FACE IDENTITY ONLY — ignore their clothing and background. Everything outside the edited region must remain pixel-identical.`;
+    }
+
     generators.setGeminiCaller(createVisualRoutingCaller(geminiApiKey.value(), openaiApiKey.value()));
 
     try {
         const rawB64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
+        const getMime = (dataUrl: string): string => {
+            const m = dataUrl.match(/^data:(image\/\w+);base64,/);
+            return m ? m[1] : 'image/png';
+        };
+        // Base image first (the image being edited), then any hero face anchors.
+        const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [
+            { inlineData: { mimeType: "image/png", data: rawB64 } },
+            { text: instruction },
+        ];
+        for (const ref of faceRefs) {
+            if (ref.startsWith('data:image/')) {
+                parts.push({ inlineData: { mimeType: getMime(ref), data: ref.split(',')[1] } });
+            }
+        }
         const editCaller = createVisualRoutingCaller(geminiApiKey.value(), openaiApiKey.value());
         const response = await editCaller({
             model: VISUAL_MODEL,
-            contents: {
-                parts: [
-                    { inlineData: { mimeType: "image/png", data: rawB64 } },
-                    { text: instruction },
-                ]
-            },
+            contents: { parts },
             config: {
                 responseModalities: ['TEXT', 'IMAGE'],
                 thinkingConfig: { thinkingLevel: 'High' },

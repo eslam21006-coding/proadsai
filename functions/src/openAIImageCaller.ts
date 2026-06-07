@@ -37,6 +37,12 @@ export function createOpenAIImageCaller(apiKey: string): GeminiCaller {
     const aspectRatio: string = params.config?.imageConfig?.aspectRatio ?? "1:1";
     const size = OPENAI_SIZE_BY_ASPECT[aspectRatio] ?? "1024x1024";
 
+    // FIX A (ISSUE 2 — adaptive quality): when hero reference photos are present (Box A,
+    // brand logos, offer assets, or a carousel style anchor) the render contains a face/brand
+    // mark that must stay sharp, so render at 'high'. Pure text/brand-only generations with no
+    // image references stay on the cheaper/faster OPENAI_IMAGE_QUALITY tier (default 'medium').
+    const quality = refs.length > 0 ? "high" : OPENAI_IMAGE_QUALITY;
+
     // 3. Abort controller for timeout
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), OPENAI_IMAGE_TIMEOUT_MS);
@@ -59,7 +65,7 @@ export function createOpenAIImageCaller(apiKey: string): GeminiCaller {
             image: imageFiles,
             prompt,
             size: size as any,
-            quality: OPENAI_IMAGE_QUALITY,
+            quality,
           },
           { signal: controller.signal },
         );
@@ -71,7 +77,7 @@ export function createOpenAIImageCaller(apiKey: string): GeminiCaller {
             model: OPENAI_VISUAL_MODEL,
             prompt,
             size: size as any,
-            quality: OPENAI_IMAGE_QUALITY,
+            quality,
           },
           { signal: controller.signal },
         );

@@ -2375,12 +2375,13 @@ const App: React.FC = () => {
           { xPct: 0, yPct: 0, wPct: 100, hPct: 100 }, // full image
           'describe',
           { freeInstruction: `Apply ALL of these edits to this image:\n${combinedInstruction}\n\nApply every edit listed above. Keep everything else pixel-identical.` },
-          currentAspectRatio
+          currentAspectRatio,
+          inputs?.personalPhotos
         );
       } else {
         // First edit: normal single-edit path
         result = await gemini.editRegion(
-          editBase64, req.region, req.mode, req.payload, currentAspectRatio
+          editBase64, req.region, req.mode, req.payload, currentAspectRatio, inputs?.personalPhotos
         );
       }
 
