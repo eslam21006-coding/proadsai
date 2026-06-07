@@ -42,3 +42,13 @@ export const cardLabels: Record<string, { en: string; ar: string }> = {
   untitled: { en: "Untitled Project", ar: "مشروع بدون عنوان" },
   deleteAction: { en: "Delete", ar: "حذف" },
 };
+
+export const bulkLabels: Record<string, { en: string; ar: string }> = {
+  selectAll: { en: "Select all", ar: "تحديد الكل" },
+  deselectAll: { en: "Deselect all", ar: "إلغاء التحديد" },
+  deleteSelected: { en: "Delete Selected ({n})", ar: "حذف المحدد ({n})" },
+  confirmPrompt: { en: "Delete {n} project(s)? This cannot be undone.", ar: "حذف {n} مشروع؟ لا يمكن التراجع." },
+  confirm: { en: "Delete", ar: "حذف" },
+  cancel: { en: "Cancel", ar: "إلغاء" },
+  selectAria: { en: "Select project", ar: "تحديد المشروع" },
+};

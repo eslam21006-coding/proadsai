@@ -35,6 +35,7 @@ import { resolveCoverImage } from './lib/projectCoverImage';
 import { uploadAndPersistThumbnail } from './lib/projectThumbnail';
 import { stepsWithData } from './lib/projectStepsData';
 import { useProjectAutoSave } from './hooks/useProjectAutoSave';
+import { forceFlush as autoSaveForceFlush } from './lib/projectAutoSave';
 import type { AutoSaveState } from './lib/projectAutoSave';
 import { ALL_UNIVERSES, type UniverseEntry } from './universeDatabase';
 
@@ -2259,6 +2260,10 @@ const App: React.FC = () => {
   // before a carousel_all reflow. Lets the user restore the pre-resize version.
   const [previousCarouselSlides, setPreviousCarouselSlides] = useState<CarouselSlide[] | null>(null);
   const [previousCarouselRatio, setPreviousCarouselRatio] = useState<AspectRatio | null>(null);
+  // ISSUE 3: one-level undo for SINGLE-image resize — snapshot of the displayed mockup
+  // (+ its raw base64/Storage source and ratio) taken right before a single reflow. Lets
+  // the user flip back to the pre-resize size, mirroring the carousel snapshot pattern.
+  const [previousSingleMockup, setPreviousSingleMockup] = useState<{ url: string; rawBase64?: string; ratio: AspectRatio } | null>(null);
   // Carousel slide lightbox — null = closed, otherwise the index of the slide shown full-screen.
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const lightboxPrev = useCallback(() => {
@@ -3416,6 +3421,32 @@ const App: React.FC = () => {
     setDeleteTarget(null);
   };
 
+  // ISSUE 1: delete multiple selected projects at once. The panel handles its own
+  // confirmation, so this performs the deletes directly (DB + Firestore + Storage
+  // per id) and prunes local state in a single pass.
+  const confirmBulkDelete = async (ids: string[]) => {
+    if (!ids.length) return;
+    const idSet = new Set(ids);
+    for (const id of ids) {
+      try {
+        await deleteProjectFromDB(id);
+        if (effectiveUid) {
+          deleteProjectFromFirestore(effectiveUid, id).catch(() => {});
+          for (const ext of ["jpg", "png"]) {
+            try {
+              await deleteObject(storageRef(storage, `users/${effectiveUid}/projects/${id}/thumbnail.${ext}`));
+            } catch (err: any) {
+              if (err?.code !== "storage/object-not-found") throw err;
+            }
+          }
+        }
+      } catch (e) { console.warn(`Bulk delete sync failed for ${id}`); }
+    }
+    setProjects(prev => prev.filter(p => !idSet.has(p.id)));
+    if (currentProjectId && idSet.has(currentProjectId)) resetToBlankProject();
+    showToast(`${ids.length} project${ids.length > 1 ? 's' : ''} deleted.`, 'success');
+  };
+
   const handleApiError = (e: any) => {
     console.error('[API Error]', e); // Log full error for debugging
     const msg = typeof e === 'string' ? e : e.message || JSON.stringify(e);
@@ -4157,6 +4188,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     // Clear old batch results so the new single render shows properly
     setBatchResults([]);
     setBatchRendering(false);
+    // A fresh single render invalidates any prior resize-undo snapshot (ISSUE 3).
+    setPreviousSingleMockup(null);
 
     // Deduct credits upfront
     const startingCredits = userCredits;
@@ -4391,6 +4424,16 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     setUserCredits(newCredits);
     awardMilestone('designGenerated');
 
+    // ISSUE 4: persist the refined concepts / batch groups NOW, before the long render loop.
+    // The autosave debounce (3 s) may not have fired yet after a refinement, so a stuck/slow
+    // generation followed by a refresh would otherwise lose the refined state. forceFlush()
+    // swallows its own errors, so this never blocks the render.
+    try { await autoSaveForceFlush(); } catch { /* non-blocking */ }
+
+    // ISSUE 4: a single outer try/finally guarantees the rendering flag is cleared even if an
+    // unexpected error escapes the per-combo handlers — otherwise the UI stays stuck on
+    // "Rendering…" forever with every control disabled.
+    try {
     // Render per combo: primary size first, then reflow to extra sizes
     let resultIdx = 0;
     let firstBatchGenId: string | null = null; // FIX 2: anchor the global renderGenerationId so resize works after a batch
@@ -4472,7 +4515,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     // FIX 2: anchor the global renderGenerationId to the first successful batch item so the
     // resize guard (which checks renderGenerationId) no longer blocks resizing after a batch.
     if (firstBatchGenId) setRenderGenerationId(firstBatchGenId);
-    setBatchRendering(false);
+    } catch (e) {
+      // ISSUE 4: surface the failure instead of leaving a silently-stuck spinner.
+      console.error('Batch render failed:', e);
+      handleApiError(e);
+    } finally {
+      setBatchRendering(false);
+    }
   };
 
   // ─── BATCH RETRY — Retry a single failed/unwanted batch image ─────────────
@@ -5343,6 +5392,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
     // ─── SINGLE MODE: Reflow one image via reflowImage callable (HOTFIX-F) ─────
     if (!selectedConcept || !currentMockup || !buildPlan) return;
+    // ISSUE 3: snapshot the current displayed image + its source ratio BEFORE flipping the
+    // aspect ratio, so the user can switch back to the pre-resize size. displayRatio reads
+    // the active history item's own ratio (falling back to currentAspectRatio).
+    setPreviousSingleMockup({ url: currentMockup, rawBase64: currentRawBase64, ratio: displayRatio });
     setCurrentAspectRatio(newRatio);
     startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
     // FIX 3: when a batch card is focused, target ITS generation, not the global one.
@@ -5976,6 +6029,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               metaConnected={metaConnection?.connected ?? false}
               onLoad={loadProject}
               onDelete={deleteProject}
+              onBulkDelete={confirmBulkDelete}
             />
           </div>
         )}
@@ -8352,6 +8406,44 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                           className={atCurrent ? dimCls : `${baseBtn} bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-lg active:scale-[0.98] hover:from-blue-500 hover:to-cyan-500 disabled:opacity-50`}>
                           <i className={`fa-solid ${committing ? 'fa-spinner fa-spin' : atCurrent ? 'fa-check' : 'fa-wand-magic-sparkles'} text-[8px]`}></i>
                           {label}
+                        </button>
+                      );
+                    })()}
+
+                    {/* ISSUE 3 — single-image "switch back to previous size" toggle. Mirrors the
+                        carousel version: swaps the displayed mockup + ratio with the pre-resize
+                        snapshot so the user can flip between sizes both ways. Single mode only. */}
+                    {!isCarouselScope && !isBatchScope && currentMockup && previousSingleMockup && previousSingleMockup.ratio !== displayRatio && (() => {
+                      const ratioName: Record<string, { en: string; ar: string }> = {
+                        '1:1': { en: 'Square', ar: 'مربع' },
+                        '4:5': { en: 'Portrait', ar: 'عمودي' },
+                        '3:4': { en: 'Portrait', ar: 'عمودي' },
+                        '9:16': { en: 'Story', ar: 'ستوري' },
+                        '4:3': { en: 'Wide', ar: 'عريض' },
+                        '16:9': { en: 'Landscape', ar: 'أفقي' },
+                      };
+                      const label = ratioName[previousSingleMockup.ratio] || { en: previousSingleMockup.ratio, ar: previousSingleMockup.ratio };
+                      return (
+                        <button
+                          disabled={committing || isLoading}
+                          onClick={() => {
+                            // Swap, don't clear — keep the toggle available both ways. Append the
+                            // snapshot as a new history entry (preserving its raw source for any
+                            // later reflow), point the cursor at it, and stash the current as the
+                            // new "previous".
+                            const cur = { url: currentMockup!, rawBase64: currentRawBase64, ratio: displayRatio };
+                            const snap = previousSingleMockup!;
+                            setMockupHistory(prev => {
+                              const next = [...prev, { url: snap.url, ratio: snap.ratio, rawBase64: snap.rawBase64 }];
+                              setHistoryIndex(next.length - 1);
+                              return next;
+                            });
+                            setCurrentAspectRatio(snap.ratio);
+                            setPreviousSingleMockup(cur);
+                          }}
+                          className="w-full mt-1 py-2 rounded-xl text-[9px] font-bold text-blue-300 bg-blue-600/15 border border-blue-500/30 hover:bg-blue-600/25 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50">
+                          <i className="fa-solid fa-arrow-right-arrow-left text-[8px]"></i>
+                          {lang === 'ar' ? `التبديل إلى نسخة ${label.ar}` : `Switch to ${label.en} version`}
                         </button>
                       );
                     })()}
