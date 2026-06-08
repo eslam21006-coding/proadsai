@@ -16,7 +16,14 @@ export const OPENAI_SIZE_BY_ASPECT: Record<string, string> = {
   "16:9": "1792x1024",
 };
 
+// Base timeout for 'medium'/'low' renders (~30-50s typical). High-quality renders take
+// 60-90s and, in parallel batch mode, network variance can push a single call past 120s —
+// so the high tier gets a longer ceiling (see OPENAI_IMAGE_TIMEOUT_HIGH_MS below).
 export const OPENAI_IMAGE_TIMEOUT_MS = 120_000;
+
+// Extended timeout for 'high' quality (hero-photo) renders — 4 minutes. Prevents the
+// "OpenAI image generation timed out after 120000ms" failures seen in parallel batch runs.
+export const OPENAI_IMAGE_TIMEOUT_HIGH_MS = 240_000;
 
 // Render quality tier for gpt-image-2. 'medium' is materially faster and cheaper
 // than 'high' (~30-50s & ~$0.07 vs ~60-90s & ~$0.19) at advertising-acceptable quality.

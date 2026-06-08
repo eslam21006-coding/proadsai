@@ -5,6 +5,7 @@ import {
   OPENAI_VISUAL_MODEL,
   OPENAI_SIZE_BY_ASPECT,
   OPENAI_IMAGE_TIMEOUT_MS,
+  OPENAI_IMAGE_TIMEOUT_HIGH_MS,
   OPENAI_IMAGE_QUALITY,
 } from "./modelConfig.js";
 import type { GeminiCaller } from "./generators.js";
@@ -43,9 +44,14 @@ export function createOpenAIImageCaller(apiKey: string): GeminiCaller {
     // image references stay on the cheaper/faster OPENAI_IMAGE_QUALITY tier (default 'medium').
     const quality = refs.length > 0 ? "high" : OPENAI_IMAGE_QUALITY;
 
+    // ISSUE 1 (batch timeout): match the timeout to the quality tier. 'high' renders take
+    // 60-90s and, under parallel batch load + network variance, regularly exceed the 120s
+    // base ceiling — so high quality gets the extended 240s timeout.
+    const timeout = quality === "high" ? OPENAI_IMAGE_TIMEOUT_HIGH_MS : OPENAI_IMAGE_TIMEOUT_MS;
+
     // 3. Abort controller for timeout
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), OPENAI_IMAGE_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeout);
 
     try {
       let b64Json: string | undefined;
@@ -109,7 +115,7 @@ export function createOpenAIImageCaller(apiKey: string): GeminiCaller {
     } catch (err: any) {
       if (controller.signal.aborted || err?.name === "AbortError" || err?.name === "APIUserAbortError") {
         throw new Error(
-          `OpenAI image generation timed out after ${OPENAI_IMAGE_TIMEOUT_MS}ms`,
+          `OpenAI image generation timed out after ${timeout}ms`,
         );
       }
       throw new Error(

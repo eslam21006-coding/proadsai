@@ -24,6 +24,7 @@ interface FavUpdatePrompt {
   newGenId: string;
 }
 import MagicSelector, { type EditRequest } from './components/MagicSelector';
+import ErrorBoundary from './components/ErrorBoundary';
 import { feedbackService, type NegativeFeedbackTag } from './services/feedbackService';
 import { metaService, type MetaConnection } from './services/metaService';
 import { ASPECT_RATIOS, COLD_HOOK_ANGLES, OFFER_TYPES, getRandomUniverse } from './constants';
@@ -7268,7 +7269,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           );
         })()}
 
-        {phase === 'render_studio' && (() => {
+        {phase === 'render_studio' && (
+          // ISSUE 2: contain any render-time crash in the studio so it can't blank the whole
+          // page. resetKeys=[phase] auto-recovers when the user navigates away and back.
+          <ErrorBoundary label="the render studio" resetKeys={[phase]}>
+          {(() => {
           const hasAnyImage = currentMockup || batchResults.some((r: any) => r.status === 'done') || carouselSlides.some((s: any) => s.status === 'done');
           return (
             <div className="flex flex-col xl:flex-row gap-6 animate-in fade-in duration-700 max-w-[1500px] mx-auto relative">
@@ -7469,7 +7474,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                       />
                                       <div className="flex gap-1 flex-wrap justify-center px-1">
                                         {/* Download */}
-                                        <button onClick={async () => { const url = await applyTrialWatermark(item.url!); await downloadImage(url, `${inputs?.productName || 'ad'}_${item.ratio.replace(':', 'x')}_H${item.hookKey}_C${item.conceptIndex}.png`); }}
+                                        <button onClick={async () => { const url = await applyTrialWatermark(item.url!); await downloadImage(url, `${inputs?.productName || 'ad'}_${(item.ratio || '1:1').replace(':', 'x')}_H${item.hookKey}_C${item.conceptIndex}.png`); }}
                                           className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold flex items-center gap-0.5" title="Download">
                                           <i className="fa-solid fa-download text-[8px]"></i>
                                         </button>
@@ -7543,7 +7548,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                             setMetaPushing(true);
                                             showToast('Pushing to Meta Ads...', 'info');
                                             try {
-                                              const result = await metaService.pushCreative(item.url!, `${inputs?.productName || 'Ad'}_H${item.hookKey}_C${item.conceptIndex}_${item.ratio.replace(':', 'x')}`, buildDeploymentMeta({ ratio: item.ratio }));
+                                              const result = await metaService.pushCreative(item.url!, `${inputs?.productName || 'Ad'}_H${item.hookKey}_C${item.conceptIndex}_${(item.ratio || '1:1').replace(':', 'x')}`, buildDeploymentMeta({ ratio: item.ratio }));
                                               if (result.success) showToast(result.message || 'Pushed to Meta!', 'success');
                                               else showToast(result.message || 'Push failed', 'error');
                                             } catch { showToast('Push to Meta failed', 'error'); }
@@ -7557,7 +7562,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                     </div>
                                     {/* Mobile-visible action strip (always visible) */}
                                     <div data-light-ctx="batch-mobile-strip" className="absolute top-1 right-1 flex gap-1 md:hidden">
-                                      <button onClick={async () => { const url = await applyTrialWatermark(item.url!); await downloadImage(url, `ad_${item.ratio.replace(':', 'x')}.png`); }}
+                                      <button onClick={async () => { const url = await applyTrialWatermark(item.url!); await downloadImage(url, `ad_${(item.ratio || '1:1').replace(':', 'x')}.png`); }}
                                         className="w-6 h-6 bg-black/60 text-white rounded-md flex items-center justify-center text-[8px]"><i className="fa-solid fa-download"></i></button>
                                       <button onClick={() => handleBatchRetry(idx, 'reflow')}
                                         className="w-6 h-6 bg-black/60 text-cyan-300 rounded-md flex items-center justify-center text-[8px]"><i className="fa-solid fa-arrows-spin"></i></button>
@@ -7580,7 +7585,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                 )}
                                 {/* ISSUE 6: always-visible download (not hover-gated) */}
                                 {item.status === 'done' && item.url && (
-                                  <button onClick={async (e) => { e.stopPropagation(); const url = await applyTrialWatermark(item.url!); await downloadImage(url, `${inputs?.productName || 'ad'}_${item.ratio.replace(':', 'x')}_H${item.hookKey}_C${item.conceptIndex}.png`); }}
+                                  <button onClick={async (e) => { e.stopPropagation(); const url = await applyTrialWatermark(item.url!); await downloadImage(url, `${inputs?.productName || 'ad'}_${(item.ratio || '1:1').replace(':', 'x')}_H${item.hookKey}_C${item.conceptIndex}.png`); }}
                                     className="absolute bottom-1.5 right-1.5 z-20 w-7 h-7 rounded-lg bg-blue-600/90 hover:bg-blue-500 text-white flex items-center justify-center shadow-lg" title="Download">
                                     <i className="fa-solid fa-download text-[9px]"></i>
                                   </button>
@@ -7641,7 +7646,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                       const watermarkedUrl = await applyTrialWatermark(item.url!);
                                       const r = await fetch(watermarkedUrl);
                                       const b = await r.blob();
-                                      const sizeName = sizeLabels[item.ratio] || item.ratio.replace(':', 'x');
+                                      const sizeName = sizeLabels[item.ratio] || (item.ratio || '1:1').replace(':', 'x');
                                       const fileName = `${pName}_H${hookKey}_C${item.conceptIndex}_${sizeName}_${dateStr}.png`;
                                       folder.file(fileName, b);
                                       imageFiles.push(fileName);
@@ -7714,7 +7719,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                       for (let i = 0; i < doneItems.length; i++) {
                                         const item = doneItems[i];
                                         try {
-                                          const result = await metaService.pushCreative(item.url!, `${inputs?.productName || 'Ad'}_H${item.hookKey}_C${item.conceptIndex}_${item.ratio.replace(':', 'x')}`, buildDeploymentMeta({ ratio: item.ratio }));
+                                          const result = await metaService.pushCreative(item.url!, `${inputs?.productName || 'Ad'}_H${item.hookKey}_C${item.conceptIndex}_${(item.ratio || '1:1').replace(':', 'x')}`, buildDeploymentMeta({ ratio: item.ratio }));
                                           if (result.success) {
                                             successCount++;
                                             // Store generation→ad linkage for performance tracking
@@ -7725,7 +7730,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                                   hookKey: item.hookKey,
                                                   conceptIndex: item.conceptIndex,
                                                   ratio: item.ratio,
-                                                  adName: `${inputs?.productName || 'Ad'}_H${item.hookKey}_C${item.conceptIndex}_${item.ratio.replace(':', 'x')}`,
+                                                  adName: `${inputs?.productName || 'Ad'}_H${item.hookKey}_C${item.conceptIndex}_${(item.ratio || '1:1').replace(':', 'x')}`,
                                                   productName: inputs?.productName || '',
                                                   pushedAt: Date.now(),
                                                   projectId: currentProjectId,
@@ -8470,6 +8475,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
             </div>
           );
         })()}
+          </ErrorBoundary>
+        )}
 
         {phase === 'primary_text' && (() => {
           const wordCount = captionText ? captionText.split(/\s+/).filter(Boolean).length : 0;
@@ -8651,7 +8658,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                           for (const item of images) {
                             const r = await fetch(item.url!);
                             const b = await r.blob();
-                            const sizeName = sizeLabels[item.ratio] || item.ratio.replace(':', 'x');
+                            const sizeName = sizeLabels[item.ratio] || (item.ratio || '1:1').replace(':', 'x');
                             const fileName = `${pName}_H${hookKey}_C${item.conceptIndex}_${sizeName}_${dateStr}.png`;
                             folder.file(fileName, b);
                             imageFiles.push(fileName);
@@ -8747,10 +8754,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                           <div key={idx} className={`relative rounded-xl overflow-hidden border border-slate-800/60 bg-slate-900 group ${item.ratio === '9:16' ? 'aspect-[9/16]' : item.ratio === '4:5' ? 'aspect-[4/5]' : item.ratio === '16:9' ? 'aspect-video' : 'aspect-square'}`}>
                             <img src={item.url!} className="w-full h-full object-cover" alt="" />
                             <div className="absolute top-1 left-1 px-1.5 py-0.5 bg-black/60 rounded text-[7px] font-bold text-white">
-                              {item.ratio.replace(':', 'x')}
+                              {(item.ratio || '1:1').replace(':', 'x')}
                             </div>
                             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100">
-                              <button onClick={async () => { const url = await applyTrialWatermark(item.url!); await downloadImage(url, `H${item.hookKey}_C${item.conceptIndex}_${item.ratio.replace(':', 'x')}.png`); }}
+                              <button onClick={async () => { const url = await applyTrialWatermark(item.url!); await downloadImage(url, `H${item.hookKey}_C${item.conceptIndex}_${(item.ratio || '1:1').replace(':', 'x')}.png`); }}
                                 className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold">
                                 <i className="fa-solid fa-download"></i>
                               </button>
