@@ -4589,6 +4589,10 @@ export interface BuildFinalImagePromptInput {
     // slide's scene from THIS slide's own copy so every slide is visually distinct. Injected
     // at the very top of the prompt (highest priority).
     slideVisualDirective?: string;
+    // True when a style-reference image is attached (reflow / carousel anchor). On the OpenAI
+    // path this suppresses the BLUEPRINT block — the reference image already carries all visual
+    // direction, so dumping the (Arabic) blueprint prose only risks it bleeding onto the image.
+    styleReferencePresent?: boolean;
 }
 
 export interface BuildFinalImagePromptResult {
@@ -4639,6 +4643,7 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
         imageParts,
         reflowInstruction,
         slideVisualDirective,
+        styleReferencePresent,
     } = params;
 
     // Brand-color injection happens upstream via the per-prompt blocks built
@@ -4747,7 +4752,10 @@ ${MODEL_PROVIDER === 'openai'
       return _ctx ? `\n${_ctx}\n` : '';
     })()
   : (technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : '')}
-BLUEPRINT: ${strippedBlueprint}
+${MODEL_PROVIDER === 'openai' && styleReferencePresent
+  ? '' /* OpenAI reflow/anchor: the style-reference image supplies all visual direction; omit the
+          blueprint so its (Arabic) scene prose can't bleed onto the image as rendered text. */
+  : `BLUEPRINT: ${strippedBlueprint}`}
 
 AD COPY TO RENDER ON THIS IMAGE:
 ${hookText ? `- Main Hook: "${hookText}"` : ''}
@@ -5288,7 +5296,7 @@ Arabic letters change shape based on their position in a word (initial, medial, 
 - If ANY word looks like its letters are floating separately, RE-RENDER that text block.
 - Prefer LARGER font sizes with extra letter spacing between WORDS (not between letters within a word).
 - Use BOLD/HEAVY weight fonts — thin strokes cause letter connections to break at small sizes.
-
+` : ''}
 ⚠️ ARABIC TEXT ANTI-CORRUPTION RULES (CRITICAL):
 - Do NOT duplicate any text string. Each text element appears EXACTLY ONCE in the image.
 - Do NOT repeat the headline text in the subheadline area or vice versa.
@@ -5298,7 +5306,6 @@ Arabic letters change shape based on their position in a word (initial, medial, 
 - If a text field is empty or very short, simply omit that text element — do NOT fill it with a copy of another field.
 - When space is tight, prefer FEWER text elements rendered CLEARLY over cramming everything.
 - Each text zone must contain ONLY its designated content — headline zone gets headline only, CTA zone gets CTA only.
-` : ''}
 ⚠️ NUMBER + SYMBOL INTEGRITY (CRITICAL):
 - NEVER separate a number from its adjacent % sign. "70%" must render as "70%" — not "%" alone.
 - NEVER drop digits from percentages, prices, or statistics. If the text says "90% من المدربين", render ALL of "90%".
@@ -6154,6 +6161,7 @@ Use your judgment — consistency where it serves the story, change where the co
             imageParts: [],
             reflowInstruction,
             slideVisualDirective: _slideVisualDirective,
+            styleReferencePresent: !!styleReference,
         });
 
         parts.push({ text: _promptResult.textPrompt });
