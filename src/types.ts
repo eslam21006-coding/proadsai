@@ -320,6 +320,10 @@ export interface BatchResult {
   hookText: string;         // Full hook text
   buildPlan: string;
   url: string | null;
+  // The ORIGINAL (un-reflowed) render for this combo — the first successful primary output.
+  // Every resize reflows from this source instead of the previous resize output, so repeated
+  // resizes never chain-degrade quality. Updated only on a full rerender (new base image).
+  originalUrl?: string | null;
   ratio: AspectRatio;
   status: 'pending' | 'rendering' | 'done' | 'error';
   generationId?: string;             // This item's own source generation doc (comboGenId) — reflow/rerender use this instead of the global renderGenerationId

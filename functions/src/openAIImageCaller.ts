@@ -38,15 +38,14 @@ export function createOpenAIImageCaller(apiKey: string): GeminiCaller {
     const aspectRatio: string = params.config?.imageConfig?.aspectRatio ?? "1:1";
     const size = OPENAI_SIZE_BY_ASPECT[aspectRatio] ?? "1024x1024";
 
-    // FIX A (ISSUE 2 — adaptive quality): when hero reference photos are present (Box A,
-    // brand logos, offer assets, or a carousel style anchor) the render contains a face/brand
-    // mark that must stay sharp, so render at 'high'. Pure text/brand-only generations with no
-    // image references stay on the cheaper/faster OPENAI_IMAGE_QUALITY tier (default 'medium').
-    const quality = refs.length > 0 ? "high" : OPENAI_IMAGE_QUALITY;
+    // Quality is fixed at OPENAI_IMAGE_QUALITY ('medium') for EVERY render — generation,
+    // edit, and reflow alike. The earlier adaptive-'high'-for-refs path was reverted: face
+    // sharpness across resizes is solved by always reflowing from the ORIGINAL generation
+    // (App.tsx), not by bumping the quality tier (which also caused batch timeouts).
+    const quality = OPENAI_IMAGE_QUALITY;
 
-    // ISSUE 1 (batch timeout): match the timeout to the quality tier. 'high' renders take
-    // 60-90s and, under parallel batch load + network variance, regularly exceed the 120s
-    // base ceiling — so high quality gets the extended 240s timeout.
+    // Timeout matches the quality tier. 'high' renders (60-90s) get the extended 240s ceiling;
+    // 'medium'/'low' use the 120s base. Kept tier-aware so a future quality bump stays safe.
     const timeout = quality === "high" ? OPENAI_IMAGE_TIMEOUT_HIGH_MS : OPENAI_IMAGE_TIMEOUT_MS;
 
     // 3. Abort controller for timeout

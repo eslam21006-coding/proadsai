@@ -2265,6 +2265,11 @@ const App: React.FC = () => {
   // (+ its raw base64/Storage source and ratio) taken right before a single reflow. Lets
   // the user flip back to the pre-resize size, mirroring the carousel snapshot pattern.
   const [previousSingleMockup, setPreviousSingleMockup] = useState<{ url: string; rawBase64?: string; ratio: AspectRatio } | null>(null);
+  // Reflow quality fix: the ORIGINAL (first-generation) source for the active single render,
+  // captured the first time a reflow runs. Every subsequent resize reflows from THIS original
+  // instead of the previous resize output, so repeated resizes never chain-degrade quality.
+  // Cleared on every fresh generation / reset so a new render anchors to its own original.
+  const originalMockupRef = useRef<string | null>(null);
   // Carousel slide lightbox — null = closed, otherwise the index of the slide shown full-screen.
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const lightboxPrev = useCallback(() => {
@@ -3306,6 +3311,10 @@ const App: React.FC = () => {
     setBuildPlan(p.buildPlan);
     setMockupHistory(p.mockupHistory);
     setHistoryIndex(p.historyIndex);
+    // Reflow quality fix: a loaded project has no in-memory original anchor — clear it so the
+    // first reflow re-captures the loaded current mockup as this session's original source.
+    originalMockupRef.current = null;
+    setPreviousSingleMockup(null);
     setResolvedUniverse(p.resolvedUniverse);
     setCaptionText(p.captionText);
     setBatchCaptions(p.batchCaptions || []);
@@ -3370,6 +3379,10 @@ const App: React.FC = () => {
     setCaptionText('');
     setBatchResults([]);
     setCarouselSlides([]);
+    // Reflow quality fix: drop the original-source anchor + resize-undo snapshot so a brand
+    // new render captures its own original on its first reflow.
+    originalMockupRef.current = null;
+    setPreviousSingleMockup(null);
     setBatchRendering(false);
     setBatchSelectedHooks(new Set());
     setBatchHookGroups([]);
@@ -4190,8 +4203,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     // Clear old batch results so the new single render shows properly
     setBatchResults([]);
     setBatchRendering(false);
-    // A fresh single render invalidates any prior resize-undo snapshot (ISSUE 3).
+    // A fresh single render invalidates any prior resize-undo snapshot (ISSUE 3) and the
+    // original-source anchor — the first reflow of THIS render will capture its own original.
     setPreviousSingleMockup(null);
+    originalMockupRef.current = null;
 
     // Deduct credits upfront
     const startingCredits = userCredits;
@@ -4206,6 +4221,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
       if (mockup) {
         pushMockup(mockup, primaryRatio);
+        // Reflow quality fix: anchor the original source to THIS first render so every later
+        // resize reflows from it (never from an auto-reflowed extra size or a prior resize).
+        originalMockupRef.current = mockup;
         setVisualPolishes([]);
         // ─── SAVE RENDER FOR FEEDBACK (non-blocking — must not prevent phase transition) ─────────
         // Capture the freshly returned id locally; React state setter is async and the auto-reflow
@@ -4451,7 +4469,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         const genResult = await gemini.generateFinalAd(combo.conceptText, combo.hookText, inputs, resolvedUniverse, primaryRatio, undefined, undefined, undefined, undefined, undefined, combos.length * allSizes.length);
         primaryUrl = genResult.image;
         const primaryStorageUrl = genResult.storageUrl || null;
-        setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, buildPlan: combo.conceptText, url: primaryUrl, status: primaryUrl ? 'done' : 'error' } : r));
+        // Capture originalUrl = the primary render: the un-reflowed, highest-quality source
+        // every later resize of any size for this combo reflows from (no chain degradation).
+        setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, buildPlan: combo.conceptText, url: primaryUrl, originalUrl: primaryUrl, status: primaryUrl ? 'done' : 'error' } : r));
         // Persist a generation doc for this combo so its extra-size reflows have a
         // generationId to anchor to (the reflowImage callable requires one) and the
         // correct per-combo buildPlan for any rerender route. Non-blocking.
@@ -4500,7 +4520,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             });
             const oc = reflowRes.data?.outcomes?.[0];
             const reflowedUrl = reflowRes.data?.success && oc?.outputUrl ? oc.outputUrl : null;
-            setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, buildPlan: combo.conceptText, url: reflowedUrl, status: reflowedUrl ? 'done' as const : 'error' as const, generationId: comboGenId ?? undefined } : r));
+            // originalUrl = the primary render (NOT this reflowed output), so resizing this
+            // extra-size tile later still reflows from the original source, not from itself.
+            setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, buildPlan: combo.conceptText, url: reflowedUrl, originalUrl: primaryUrl, status: reflowedUrl ? 'done' as const : 'error' as const, generationId: comboGenId ?? undefined } : r));
           } catch (e) {
             console.error(`Batch reflow ${ci + 1} to ${extraRatio} failed:`, e);
             setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'error' } : r));
@@ -4571,6 +4593,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           targetAspectRatio: itemRatio,
           method: 'auto',
           scope: 'single',
+          // Reflow from the ORIGINAL render, never a prior resize output (no chain degradation).
+          sourceImageOverride: item.originalUrl || undefined,
         });
         const reflowOc = reflowRes.data?.outcomes?.[0];
         mockup = reflowRes.data?.success && reflowOc?.outputUrl ? reflowOc.outputUrl : null;
@@ -4579,7 +4603,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         const renderInstruction = isReflow
           ? `REFLOW ONLY — adapt this exact design to ${itemRatio} ratio. Keep ALL text identical word-for-word.${refinementNote ? ' ' + refinementNote : ''}`
           : variationInstruction;
-        const sourceImage = isReflow && item.url ? item.url : undefined;
+        // Reflow path resizes from the ORIGINAL source; full rerender (else) starts fresh.
+        const sourceImage = isReflow ? (item.originalUrl || item.url || undefined) : undefined;
         const retryResult = await gemini.generateFinalAd(item.conceptText, item.hookText || selectedTov, inputs, resolvedUniverse, itemRatio, renderInstruction, sourceImage);
         mockup = retryResult.image;
       }
@@ -4589,6 +4614,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         ...r,
         buildPlan: item.conceptText,
         url: mockup,
+        // A full rerender produces a NEW base image → it becomes the new original source.
+        // A reflow retry keeps the existing original (it's just another resize of it).
+        originalUrl: isReflow ? r.originalUrl : (mockup || r.originalUrl),
         status: mockup ? 'done' as const : 'error' as const,
         localRefinement: localRefinement?.trim() || r.localRefinement,
         localRefinementHistory: localRefinement?.trim()
@@ -5214,7 +5242,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       // as 'rendering' — the grid filters tiles by item.ratio === currentAspectRatio, so the
       // items must adopt newRatio up front to stay visible (with spinners) during the resize.
       const targetIdxs = new Set(batchItems.map(b => b.idx));
-      const originals = new Map(batchItems.map(({ r, idx }) => [idx, { url: r.url!, ratio: r.ratio }]));
+      // `url`/`ratio` are the item's CURRENT state (used to revert on failure); `src` is the
+      // ORIGINAL un-reflowed render used as the reflow source so repeated resizes never
+      // chain-degrade quality.
+      const originals = new Map(batchItems.map(({ r, idx }) => [idx, { url: r.url!, ratio: r.ratio, src: r.originalUrl || r.url! }]));
       setCurrentAspectRatio(newRatio);
       // Keep the reflow chips' "current ratio" in sync (it reads activeBatchRatio in batch mode).
       // Without this the picker still treats the OLD ratio as current after a batch resize, which
@@ -5232,7 +5263,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           targetAspectRatio: newRatio,
           method: 'auto',
           scope: 'single',           // resize each combo on its OWN generation id
-          sourceImageOverride: orig.url,
+          sourceImageOverride: orig.src,   // ALWAYS the original render, never a prior resize
         });
         if (typeof result.data?.totalCreditsCharged === 'number') creditsCharged += result.data.totalCreditsCharged;
         const oc = result.data?.outcomes?.[0];
@@ -5408,6 +5439,16 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const effectiveSingleGenId = _focusedBatchItem?.generationId
       || renderGenerationId
       || safeBatch.find(b => b.status === 'done' && b.generationId)?.generationId;
+    // Reflow quality fix: ALWAYS resize from the ORIGINAL generation, never from a prior
+    // resize output (which would chain-degrade quality each hop). For a focused batch tile use
+    // that item's stored originalUrl; for the single render use originalMockupRef, capturing it
+    // on the first reflow (when currentRawBase64 still IS the original generation).
+    if (!_focusedBatchItem && !originalMockupRef.current) {
+      originalMockupRef.current = currentRawBase64 || currentMockup || null;
+    }
+    const reflowSource = _focusedBatchItem
+      ? (_focusedBatchItem.originalUrl || _focusedBatchItem.url || currentRawBase64)
+      : (originalMockupRef.current || currentRawBase64);
     // Optimistic UI-only decrement (callable backend performs the authoritative deduction;
     // calling deductCredits() here would invoke deductCreditsServer and double-bill).
     const singleOptimisticCost = effectiveSingleGenId ? CREDIT_COSTS.reflowImage : 0;
@@ -5434,11 +5475,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           targetAspectRatio: newRatio,
           method: 'auto',
           scope: 'single',
-          // Pass the actual displayed render directly (API-safe base64 / Storage URL —
-          // NOT the blob: display url) so reflow never depends on the server Storage
-          // upload state. currentRawBase64 holds the original base64 for fresh renders
-          // or the Storage URL for prior reflow outputs.
-          sourceImageOverride: currentRawBase64 || undefined,
+          // ALWAYS the ORIGINAL generation source (API-safe base64 / Storage URL — never a
+          // blob: display url and never a prior resize output), so quality never chain-degrades.
+          sourceImageOverride: reflowSource || undefined,
         });
         // Guard the whole payload: a transport/normalization failure can yield an
         // empty data object, and a malformed/error response can omit `outcomes`.
