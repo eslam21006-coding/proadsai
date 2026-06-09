@@ -1282,8 +1282,29 @@ function validateBuildPlanZones(
 }
 
 
+// FIX 2: Drop the heavy base64 media payload from inputs for the text-only pipeline steps
+// (TOV / concepts / build plan). Those steps NEVER send image bytes to any model — they only
+// branch on media PRESENCE (brandLogos.length, offerAssets.length, etc.) to shape the prompt.
+// We therefore preserve each array's LENGTH (so every presence branch behaves identically — zero
+// quality change) while replacing the multi-MB base64 strings with a tiny sentinel, so the photos
+// stop riding through these steps. generateFinalAd always receives the FULL, original-quality
+// inputs and is the only step that reads image content. (Emptying the arrays to [] would wrongly
+// flip the presence branches and strip logo / offer-asset awareness out of concepts & build plans.)
+function stripMediaFromInputs(inputs: AdInputs): AdInputs {
+    const dropPayload = (arr?: string[] | null): string[] | undefined =>
+        Array.isArray(arr) ? arr.map(() => 'media_omitted') : (arr ?? undefined);
+    return {
+        ...inputs,
+        personalPhotos: dropPayload(inputs.personalPhotos) as any,
+        brandLogos: dropPayload(inputs.brandLogos) as any,
+        offerAssets: dropPayload((inputs as any).offerAssets) as any,
+    };
+}
+
 // Step 2. Generate TOV -> NEEDS GEMINI 3 (Creative)
 export async function generateTOV(inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', previousOutput?: string, globalRefinement?: string, editFeedback?: string, editIndex?: string, editIntent?: 'simplify_terms' | 'shorten' | 'sharpen' | 'formalize' | 'change_angle' | 'change_cta' | 'change_subheadline' | 'change_headline' | 'freeform', rewriteScope?: 'wording_only' | 'cta_only' | 'subheadline_only' | 'hook_only' | 'full', semanticLock?: SemanticLock | null): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
+    // FIX 2: strip media payload (presence preserved) — TOV never uses hero photos/logos.
+    inputs = stripMediaFromInputs(inputs);
     let _tovRankingLinkage: RankingLinkage | null = null;
     async function _generateTOVInner(): Promise<string> {
         // ═══ REFERENCE IMAGE ANALYSIS (optional, non-blocking) ═══
@@ -2377,6 +2398,8 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
 // This saves your Gemini 3 Quota/Limits.
 
 export async function generateConcepts(approvedTov: string, inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', _previousOutput?: string, _globalRefinement?: string, editFeedback?: string, editIndex?: string): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
+    // FIX 2: strip media payload (presence preserved) — concepts only branch on logo/asset COUNT.
+    inputs = stripMediaFromInputs(inputs);
     let _conceptsRankingLinkage: RankingLinkage | null = null;
     async function _generateConceptsInner(): Promise<string> {
         const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
@@ -3797,6 +3820,8 @@ export interface GenerateBuildPlanResult {
 }
 
 export async function generateBuildPlan(conceptRaw: string, selectedTov: string, inputs: AdInputs, resolvedUniverse: string, currentAspectRatio: AspectRatio, textOverride?: TextOverride): Promise<GenerateBuildPlanResult> {
+    // FIX 2: strip media payload (presence preserved) — the build plan only branches on logo COUNT.
+    inputs = stripMediaFromInputs(inputs);
     const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
     const _bpModes = (inputs as any).offerCreativeMode || ['standard_hero'];
     const _bpCheck = validateCombination(_bpModes, inputs.coldHookAngle);
@@ -6302,7 +6327,12 @@ If the Arabic text matches expected text exactly with no issues, return: {"hasIs
                                 const qaClean = qaText.replace(/```json|```/g, '').trim();
                                 const qaResult = JSON.parse(qaClean);
                                 if (qaResult.hasIssues && qaResult.issues?.length > 0) {
-                                    if (!hasTimeBudget(50000)) {
+                                    if (MODEL_PROVIDER !== 'gemini') {
+                                        // FIX 1: OpenAI path is single-call — keep the cheap Gemini text
+                                        // inspection (already ran above) but SKIP the image re-render so a
+                                        // generation never chains a second slow images.edit call.
+                                        console.log(`🔤 Arabic QA found ${qaResult.issues.length} issues (${qaResult.severity}) — skipping auto-fix re-render on OpenAI path (single-call policy); keeping the rendered image.`);
+                                    } else if (!hasTimeBudget(50000)) {
                                         console.warn('⚠️ Arabic QA found issues but skipped auto-fix due to callable time budget.');
                                     } else {
                                         console.log(`🔤 Arabic QA found ${qaResult.issues.length} issues (${qaResult.severity}) — auto-fixing...`);
@@ -6437,8 +6467,10 @@ If no monetary/value numbers are visible in the image, return: []` }
                                 // Unauthorized numbers detected
                                 console.warn(`🛑 NUMERIC FIDELITY VIOLATION (attempt ${auditAttempt + 1}): unauthorized [${unauthorized.join(', ')}], authorized [${allAuthorized.join(', ')}]`);
 
-                                if (auditAttempt === 0) {
-                                    // RETRY: re-render with stronger numeric suppression
+                                if (auditAttempt === 0 && MODEL_PROVIDER === 'gemini') {
+                                    // RETRY: re-render with stronger numeric suppression (Gemini only).
+                                    // FIX 1: OpenAI path is single-call — the erase re-render below is
+                                    // skipped (handled in the else branch) so no second images.edit fires.
                                     console.log(`🔄 Numeric fidelity retry: re-rendering with numeric erase instruction...`);
                                     try {
                                         const eraseParts: any[] = [
@@ -6510,10 +6542,13 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                     }
                                     // Loop continues to auditAttempt 1 to re-audit the erased image
                                 } else {
-                                    // Second audit still found unauthorized numbers — warn but continue
-                                    console.warn(`⚠️ Numeric fidelity: unauthorized numbers persist after retry [${unauthorized.join(', ')}]. Continuing with best-effort image.`);
+                                    // Reached when: (a) OpenAI path (single-call — erase re-render skipped),
+                                    // or (b) Gemini second audit still found unauthorized numbers. Either
+                                    // way keep the best-effort image; break so OpenAI doesn't re-audit.
+                                    console.warn(`⚠️ Numeric fidelity: unauthorized numbers ${MODEL_PROVIDER !== 'gemini' ? 'detected; skipping erase re-render on OpenAI path (single-call policy)' : 'persist after retry'} [${unauthorized.join(', ')}]. Continuing with best-effort image.`);
                                     numericPass = true;
                                     _numericHallucination = true;
+                                    break;
                                 }
                             } catch (auditErr) {
                                 // Audit call itself failed — downgrade to warning, return the image
