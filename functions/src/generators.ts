@@ -4739,6 +4739,14 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
         ? `${_activeStyleCanvas ? `${_activeStyleCanvas}\n\n` : ''}${_styleEnforcer}`
         : '';
 
+    // ISSUE 1 diagnostic: log the four copy fields' lengths as they reach the AD COPY block,
+    // so a missing subheadline/benefit can be traced to extraction/dedup (empty here) vs the
+    // model skipping it (present here). Grep Cloud Functions logs for "[copy]".
+    console.log('[copy] hook:', hookText?.length,
+        'sub:', subheadText?.length,
+        'cta:', ctaName?.length,
+        'benefit:', benefitText?.length);
+
     const textPrompt = `${_stylePrefix}${_slideDirectiveBlock}${_reflowBlock}${_ccBlock}${coreDesignRules}
 ${_screenBanOut}
 ${_logoBlockOut}
@@ -4757,13 +4765,13 @@ ${MODEL_PROVIDER === 'openai' && styleReferencePresent
           blueprint so its (Arabic) scene prose can't bleed onto the image as rendered text. */
   : `BLUEPRINT: ${strippedBlueprint}`}
 
-AD COPY TO RENDER ON THIS IMAGE:
-${hookText ? `- Main Hook: "${hookText}"` : ''}
-${subheadText ? `- Supporting Line: "${subheadText}"` : ''}
-${ctaName ? `- CTA Button: "${ctaName}"` : ''}
-${benefitText ? `- Benefit Line: "${benefitText}"` : ''}
-${badges ? `- Badge: "${badges}"` : ''}
-ALL text fields listed above MUST appear on the image. Do not skip any field. If a field is provided, it MUST be rendered.
+MANDATORY TEXT ELEMENTS — render ALL of these, no exceptions:
+${hookText ? `✓ HEADLINE (REQUIRED): "${hookText}"` : ''}
+${subheadText ? `✓ SUBHEADLINE (REQUIRED): "${subheadText}"` : ''}
+${ctaName ? `✓ CTA BUTTON (REQUIRED): "${ctaName}"` : ''}
+${benefitText ? `✓ BENEFIT LINE (REQUIRED): "${benefitText}"` : ''}
+${badges ? `✓ BADGE (REQUIRED): "${badges}"` : ''}
+Each element marked REQUIRED above MUST be visible on the final image. Do not skip, merge, or omit any REQUIRED element — if a line is listed, it must be rendered as its own distinct text element.
 
 TEXT PLACEMENT:
 Place the ad copy where it best fits the composition. Every design must have a DIFFERENT text layout — vary placement freely across overlays on dark areas, inside shapes or cards, split across zones, integrated into the scene, or in dedicated panels. Never repeat the same text skeleton across concepts.
