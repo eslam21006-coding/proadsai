@@ -2265,6 +2265,8 @@ const App: React.FC = () => {
   // (+ its raw base64/Storage source and ratio) taken right before a single reflow. Lets
   // the user flip back to the pre-resize size, mirroring the carousel snapshot pattern.
   const [previousSingleMockup, setPreviousSingleMockup] = useState<{ url: string; rawBase64?: string; ratio: AspectRatio } | null>(null);
+  // ISSUE 2: collapse state for the unified "All Versions" gallery (collapsed by default).
+  const [showAllVersionsGallery, setShowAllVersionsGallery] = useState(false);
   // Reflow quality fix: the ORIGINAL (first-generation) source for the active single render,
   // captured the first time a reflow runs. Every subsequent resize reflows from THIS original
   // instead of the previous resize output, so repeated resizes never chain-degrade quality.
@@ -8205,6 +8207,104 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                               {metaPushing ? 'Pushing...' : `Push All (${allDone.length}) to Meta`}
                             </button>
                           )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* ═══ ISSUE 2 — UNIFIED ALL-VERSIONS GALLERY (Option A) ═══
+                    Aggregates every render in the session (single history, batch results,
+                    carousel slides, pre-resize snapshot), groups thumbnails by ratio, and
+                    lets the user click any one to make it the active single view via the
+                    existing pushMockup() mechanism. Collapsible, collapsed by default. */}
+                {(() => {
+                  type GalleryItem = { url: string; ratio: AspectRatio; label: string; key: string };
+                  const items: GalleryItem[] = [];
+                  // Single-render history (all ratios). Prefer the API-safe rawBase64 over a
+                  // blob: display URL so the pushed view stays reflow/source-coherent.
+                  mockupHistory.forEach((m, i) => {
+                    if (m.url) items.push({
+                      url: (m.url.startsWith('blob:') && m.rawBase64) ? m.rawBase64 : m.url,
+                      ratio: m.ratio, label: `V${i + 1}`, key: `h${i}`,
+                    });
+                  });
+                  // Batch results
+                  (batchResults || []).forEach((b, i) => {
+                    if (b.status === 'done' && b.url) items.push({
+                      url: b.url, ratio: b.ratio as AspectRatio,
+                      label: `H${b.hookKey}·C${b.conceptIndex}`, key: `b${i}`,
+                    });
+                  });
+                  // Carousel slides (they share the carousel's current ratio)
+                  (carouselSlides || []).forEach((s, i) => {
+                    if (s.status === 'done' && s.imageUrl) items.push({
+                      url: s.imageUrl, ratio: currentAspectRatio,
+                      label: `Carousel ${s.index}`, key: `c${i}`,
+                    });
+                  });
+                  // Pre-resize snapshot (single-image one-level undo)
+                  if (previousSingleMockup?.url) items.push({
+                    url: previousSingleMockup.url, ratio: previousSingleMockup.ratio,
+                    label: 'Pre-resize', key: 'prev',
+                  });
+
+                  // De-dupe by url so a snapshot already present in history isn't shown twice.
+                  const seen = new Set<string>();
+                  const unique = items.filter(it => { if (seen.has(it.url)) return false; seen.add(it.url); return true; });
+                  if (unique.length === 0) return null;
+
+                  const RATIO_NAMES: Record<string, string> = {
+                    '1:1': 'Square', '4:5': 'Portrait', '3:4': 'Portrait',
+                    '9:16': 'Story', '4:3': 'Wide', '16:9': 'Landscape',
+                  };
+                  const aspectCls = (r: string) =>
+                    r === '9:16' ? 'aspect-[9/16]' : r === '16:9' ? 'aspect-video'
+                    : r === '4:5' ? 'aspect-[4/5]' : r === '3:4' ? 'aspect-[3/4]'
+                    : r === '4:3' ? 'aspect-[4/3]' : 'aspect-square';
+
+                  // Group by ratio, preserving first-seen order.
+                  const groups: { ratio: string; items: GalleryItem[] }[] = [];
+                  unique.forEach(it => {
+                    let g = groups.find(x => x.ratio === it.ratio);
+                    if (!g) { g = { ratio: it.ratio, items: [] }; groups.push(g); }
+                    g.items.push(it);
+                  });
+
+                  return (
+                    <div className="mt-4 bg-slate-900/40 border border-slate-800/40 rounded-2xl overflow-hidden">
+                      <button
+                        onClick={() => setShowAllVersionsGallery(v => !v)}
+                        aria-expanded={showAllVersionsGallery}
+                        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-slate-800/30 transition-colors">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          <i className="fa-solid fa-layer-group text-blue-400 mr-1.5"></i>All Versions ({unique.length})
+                        </span>
+                        <i className={`fa-solid fa-chevron-down text-[9px] text-slate-500 transition-transform ${showAllVersionsGallery ? 'rotate-180' : ''}`}></i>
+                      </button>
+                      {showAllVersionsGallery && (
+                        <div className="px-4 pb-4 space-y-3">
+                          {groups.map(g => (
+                            <div key={g.ratio} className="space-y-1.5">
+                              <div className="text-[8px] font-bold text-slate-500 uppercase tracking-wider">
+                                {RATIO_NAMES[g.ratio] || g.ratio} <span className="opacity-50">({g.ratio}) · {g.items.length}</span>
+                              </div>
+                              <div className="grid grid-cols-4 gap-2">
+                                {g.items.map(it => (
+                                  <button
+                                    key={it.key}
+                                    onClick={() => pushMockup(it.url, it.ratio)}
+                                    title={`${it.ratio} · ${it.label}`}
+                                    className={`relative rounded-lg overflow-hidden border border-slate-800/60 hover:border-blue-500 hover:ring-2 hover:ring-blue-500/20 transition-all bg-slate-900 group ${aspectCls(it.ratio)}`}>
+                                    <img src={it.url} alt={it.label} loading="lazy" className="w-full h-full object-cover" />
+                                    <div className="absolute bottom-0 inset-x-0 px-1 py-0.5 bg-black/65 text-white text-[6px] font-bold truncate text-center">
+                                      {it.ratio} · {it.label}
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
