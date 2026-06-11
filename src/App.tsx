@@ -4609,13 +4609,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         const reflowOc = reflowRes.data?.outcomes?.[0];
         mockup = reflowRes.data?.success && reflowOc?.outputUrl ? reflowOc.outputUrl : null;
       } else {
+        // Fallback when no generationId is available to anchor the reflowImage callable.
+        // Degrade to a full fresh rerender for BOTH retry modes — NEVER send a "REFLOW ONLY"
+        // instruction + source image into generateFinalAd, since that combination is blocked
+        // by the deprecated REFLOW gate (FR-026) and always returns image: null. This mirrors
+        // the retryMode === 'rerender' path exactly (variation instruction, no source image).
         const variationInstruction = `IMPORTANT: This is a RETRY — you MUST generate a DIFFERENT composition, layout, camera angle, and color palette from previous attempts. Vary the hero pose, background elements, and text placement while keeping the same concept and Arabic text strings. Do NOT reproduce the same design.${refinementNote ? ' ' + refinementNote : ''}`;
-        const renderInstruction = isReflow
-          ? `REFLOW ONLY — adapt this exact design to ${itemRatio} ratio. Keep ALL text identical word-for-word.${refinementNote ? ' ' + refinementNote : ''}`
-          : variationInstruction;
-        // Reflow path resizes from the ORIGINAL source; full rerender (else) starts fresh.
-        const sourceImage = isReflow ? (item.originalUrl || item.url || undefined) : undefined;
-        const retryResult = await gemini.generateFinalAd(item.conceptText, item.hookText || selectedTov, inputs, resolvedUniverse, itemRatio, renderInstruction, sourceImage);
+        const retryResult = await gemini.generateFinalAd(item.conceptText, item.hookText || selectedTov, inputs, resolvedUniverse, itemRatio, variationInstruction);
         mockup = retryResult.image;
       }
 
