@@ -6301,7 +6301,8 @@ If the asset is not clearly visible and prominent in the final render, the outpu
                     // Uses cheap text model to check for common Arabic rendering issues
                     // If issues found, auto-rerenders with targeted corrective instruction
                     const isArabic = (inputs.adLanguage || 'ar_fusha').startsWith('ar');
-                    if (isArabic && !base64ToEdit && !styleReference && hookText.length > 2) {
+                    // OpenAI path: skipped — gpt-image-2 renders natively, no post-render inspection needed
+                    if (MODEL_PROVIDER === 'gemini' && isArabic && !base64ToEdit && !styleReference && hookText.length > 2) {
                         try {
                             const qaResponse = await callGemini({
                                 model: LOGIC_MODEL,
@@ -6425,7 +6426,8 @@ ${benefitText ? `- BENEFIT goes below CTA ONLY: "${benefitText}"` : ''}
                     const numericPolicy = getNumericFidelityPolicy(
                         (inputs as any).offerCreativeMode || ['standard_hero']
                     );
-                    if (numericPolicy === 'strict' && !base64ToEdit && !styleReference) {
+                    // OpenAI path: skipped — gpt-image-2 renders natively, no post-render inspection needed
+                    if (MODEL_PROVIDER === 'gemini' && numericPolicy === 'strict' && !base64ToEdit && !styleReference) {
                         const authorizedNums = getAuthorizedNumbers(inputs);
                         // Also authorize numbers from the approved text fields
                         const textNums: string[] = [];
@@ -6674,7 +6676,10 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                             const postNormalize = (n: string) => n.replace(/[\s,]/g, '').toLowerCase();
                                             const postAuthorizedSet = new Set(postAllAuthorized.map(postNormalize));
 
-                                            if (!hasTimeBudget(25000)) {
+                                            // OpenAI path: skipped — gpt-image-2 renders natively, no post-render inspection needed
+                                            if (MODEL_PROVIDER !== 'gemini') {
+                                                // post-overlay verification skipped on OpenAI path
+                                            } else if (!hasTimeBudget(25000)) {
                                                 console.warn('⚠️ Post-overlay verification skipped due to callable time budget.');
                                             } else {
                                                 const postAuditResponse = await callGemini({
