@@ -464,6 +464,11 @@ const steps: { id: AppPhase; tKey: string }[] = [
   { id: 'primary_text', tKey: 'step.script' },
 ];
 
+// Launch size set — Square / Portrait / Story only. Backend supports the full 6 ratios;
+// restore others by extending this list. Shared by the Step 3 size selector and the
+// Step 4 reflow picker so the two can never drift.
+const UI_RATIOS: AspectRatio[] = ['1:1', '3:4', '9:16'];
+
 const ToastNotification: React.FC<{ toast: Toast | null; onClose: () => void }> = ({ toast, onClose }) => {
   if (!toast) return null;
   useEffect(() => {
@@ -7185,14 +7190,16 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 <div className="px-6 pt-5 pb-4 border-b border-slate-800/60">
                   <p className="text-[9px] text-slate-400 uppercase tracking-widest font-bold mb-3">{t('studio.select_sizes')}</p>
                   <div className="flex gap-2">
+                    {/* Only UI_RATIOS (Square / Portrait / Story) are offered — same constant
+                        as the Step 4 reflow picker so the two pickers never drift. */}
                     {([
                       { key: '1:1' as AspectRatio, label: 'Square', sub: 'Feed', icon: 'fa-square' },
                       { key: '4:5' as AspectRatio, label: 'Portrait', sub: 'Feed', icon: 'fa-rectangle-portrait' },
-                      { key: '3:4' as AspectRatio, label: 'Tall', sub: 'Pinterest', icon: 'fa-rectangle-portrait' },
+                      { key: '3:4' as AspectRatio, label: 'Portrait', sub: 'Feed', icon: 'fa-rectangle-portrait' },
                       { key: '4:3' as AspectRatio, label: 'Wide', sub: 'Display', icon: 'fa-rectangle-landscape' },
                       { key: '9:16' as AspectRatio, label: 'Story', sub: 'Story', icon: 'fa-mobile-screen' },
                       { key: '16:9' as AspectRatio, label: 'Landscape', sub: 'YouTube', icon: 'fa-rectangle-wide' },
-                    ]).map(r => {
+                    ]).filter(r => UI_RATIOS.includes(r.key)).map(r => {
                       const isActive = selectedSizes.has(r.key);
                       return (
                         <button key={r.key} type="button"
@@ -8393,9 +8400,9 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     either a single render (currentMockup) OR a rendered carousel (which never
                     sets currentMockup but has done slides to resize). */}
                 {(currentMockup || carouselSlides.length > 0 || batchResults.some(r => r.status === 'done')) && (() => {
-                  // UI restriction: Square / Portrait / Story only. Backend supports the
-                  // full 6 ratios; restore others by extending UI_RATIOS.
-                  const UI_RATIOS: AspectRatio[] = ['1:1', '3:4', '9:16'];
+                  // UI restriction: Square / Portrait / Story only — module-level UI_RATIOS,
+                  // shared with the Step 3 size selector. Backend supports the full 6 ratios;
+                  // restore others by extending UI_RATIOS at the top of this file.
                   const reflowLabels: Record<string, string> = {
                     '1:1': t('studio.reflow.ratio.1_1'),
                     '3:4': t('studio.reflow.ratio.3_4'),
