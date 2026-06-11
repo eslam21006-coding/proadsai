@@ -4530,6 +4530,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             // originalUrl = the primary render (NOT this reflowed output), so resizing this
             // extra-size tile later still reflows from the original source, not from itself.
             setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, buildPlan: combo.conceptText, url: reflowedUrl, originalUrl: primaryUrl, status: reflowedUrl ? 'done' as const : 'error' as const, generationId: comboGenId ?? undefined } : r));
+            // Mirror the single-render extra-size path: also push to mockupHistory so the
+            // ALL VERSIONS gallery lists this size alongside the primary-size renders.
+            if (reflowedUrl) pushMockup(reflowedUrl, extraRatio as AspectRatio);
           } catch (e) {
             console.error(`Batch reflow ${ci + 1} to ${extraRatio} failed:`, e);
             setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'error' } : r));
