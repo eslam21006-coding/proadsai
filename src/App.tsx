@@ -2272,6 +2272,17 @@ const App: React.FC = () => {
   const [previousSingleMockup, setPreviousSingleMockup] = useState<{ url: string; rawBase64?: string; ratio: AspectRatio } | null>(null);
   // ISSUE 2: collapse state for the unified "All Versions" gallery (collapsed by default).
   const [showAllVersionsGallery, setShowAllVersionsGallery] = useState(false);
+  // 3-dot options menu in the unified gallery — holds the URL of the card whose menu is
+  // open (null = none). Closed on any mousedown outside an element tagged data-version-menu.
+  const [openVersionMenu, setOpenVersionMenu] = useState<string | null>(null);
+  useEffect(() => {
+    if (!openVersionMenu) return;
+    const close = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement | null)?.closest?.('[data-version-menu]')) setOpenVersionMenu(null);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [openVersionMenu]);
   // Reflow quality fix: the ORIGINAL (first-generation) source for the active single render,
   // captured the first time a reflow runs. Every subsequent resize reflows from THIS original
   // instead of the previous resize output, so repeated resizes never chain-degrade quality.
@@ -8096,167 +8107,34 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   );
                 })()}
 
-                {/* ═══ ALL VERSIONS GALLERY — shows when multiple renders exist in non-batch mode ═══ */}
-                {carouselSlides.length === 0 && mockupHistory.length > 1 && (() => {
-                  const allDone = mockupHistory.filter(m => m.url);
-                  const uniqueRatios = [...new Set(mockupHistory.map(m => m.ratio))];
-                  const pName = (inputs?.productName || 'ad').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '-').substring(0, 20);
-                  const campaign = inputs?.campaignType === 'retargeting' ? 'RT' : 'Cold';
-
-                  return (
-                    <div className="space-y-3 mt-4">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                          <i className="fa-solid fa-images text-blue-400 mr-1.5"></i>All Versions ({allDone.length})
-                        </span>
-                        {uniqueRatios.length > 1 && (
-                          <span className="text-[8px] text-slate-600">{uniqueRatios.map(r => r).join(' · ')}</span>
-                        )}
-                      </div>
-
-                      {/* Thumbnail Grid */}
-                      <div className="grid grid-cols-4 gap-2">
-                        {mockupHistory.map((m, idx) => (
-                          <div key={idx}
-                            className={`relative rounded-xl overflow-hidden border bg-slate-900 group cursor-pointer transition-all ${idx === historyIndex ? 'border-blue-500 ring-2 ring-blue-500/20 shadow-lg shadow-blue-500/10' : 'border-slate-800/60 hover:border-slate-600'} ${m.ratio === '9:16' ? 'aspect-[9/16]' : m.ratio === '16:9' ? 'aspect-video' : m.ratio === '4:5' ? 'aspect-[4/5]' : m.ratio === '3:4' ? 'aspect-[3/4]' : m.ratio === '4:3' ? 'aspect-[4/3]' : 'aspect-square'}`}
-                            onClick={() => setHistoryIndex(idx)}>
-                            {m.url ? (
-                              <>
-                                <img src={m.url?.startsWith('blob:') ? (m.rawBase64 || m.url) : m.url} className="w-full h-full object-cover cursor-grab active:cursor-grabbing"
-                                  draggable={true}
-                                  onDragStart={(e) => {
-                                    e.dataTransfer.setData('text/uri-list', m.url);
-                                    e.dataTransfer.setData('text/plain', m.url);
-                                    e.dataTransfer.setData('text/html', `<img src="${m.url}" />`);
-                                  }}
-                                />
-                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100">
-                                  <div className="flex gap-1">
-                                    <button onClick={(e) => { e.stopPropagation(); setHistoryIndex(idx); setStudioTweak(''); setEditTarget({ source: 'history', index: idx, imageUrl: m.url, label: `Version ${idx + 1}` }); showToast(`Editing V${idx + 1}`, 'info'); }}
-                                      className="px-2 py-1 bg-violet-600 text-white rounded-lg text-[7px] font-bold" title="Edit">
-                                      <i className="fa-solid fa-pen-to-square"></i>
-                                    </button>
-                                    <button onClick={async (e) => { e.stopPropagation(); const url = await applyTrialWatermark(m.url); await downloadImage(url, `${pName}_${campaign}_V${idx + 1}_${m.ratio.replace(':', 'x')}.png`); }}
-                                      className="px-2 py-1 bg-white/90 text-slate-900 rounded-lg text-[7px] font-bold">
-                                      <i className="fa-solid fa-download"></i>
-                                    </button>
-                                    <button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(m.url, m.ratio); }}
-                                      className="px-2 py-1 bg-amber-500/90 text-white rounded-lg text-[7px] font-bold" title="Favorite">
-                                      <i className="fa-solid fa-star"></i>
-                                    </button>
-                                  </div>
-                                </div>
-                              </>
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center"><span className="text-[8px] text-slate-700 font-bold">V{idx + 1}</span></div>
-                            )}
-                            <div className="absolute top-1 left-1 px-1.5 py-0.5 bg-black/60 rounded text-[6px] font-bold text-white">
-                              {idx === historyIndex ? '●' : ''} V{idx + 1}
-                            </div>
-                            {m.ratio !== '1:1' && (
-                              <div className="absolute top-1 right-1 px-1 py-0.5 bg-black/60 rounded text-[6px] text-slate-300">{m.ratio}</div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Bulk Actions */}
-                      {allDone.length > 1 && (
-                        <div className="flex gap-2">
-                          {/* Download All ZIP */}
-                          <button onClick={async () => {
-                            try {
-                              const { default: JSZip } = await import('jszip');
-                              const zip = new JSZip();
-                              for (let i = 0; i < mockupHistory.length; i++) {
-                                const m = mockupHistory[i];
-                                if (m.url) {
-                                  const r = await fetch(m.url);
-                                  const b = await r.blob();
-                                  zip.file(`${pName}_${campaign}_V${i + 1}_${m.ratio.replace(':', 'x')}.png`, b);
-                                }
-                              }
-                              const zBlob = await zip.generateAsync({ type: 'blob' });
-                              const u = URL.createObjectURL(zBlob);
-                              const a = document.createElement('a');
-                              a.href = u;
-                              a.download = `${pName}_${campaign}_All_${allDone.length}versions.zip`;
-                              a.click();
-                              URL.revokeObjectURL(u);
-                              showToast(`Downloaded ${allDone.length} designs!`, 'success');
-                            } catch { showToast('Download failed', 'error'); }
-                          }}
-                            className="flex-1 py-2.5 rounded-xl bg-emerald-600/15 border border-emerald-500/20 text-emerald-300 text-[9px] font-bold uppercase flex items-center justify-center gap-2 hover:bg-emerald-600/25 transition-all">
-                            <i className="fa-solid fa-file-zipper"></i>Download All ({allDone.length}) ZIP
-                          </button>
-
-                          {/* Push All to Meta */}
-                          {metaConnection?.connected && (
-                            <button
-                              onClick={async () => {
-                                if (metaPushing) return;
-                                setMetaPushing(true);
-                                showToast(`Pushing ${allDone.length} designs to Meta...`, 'info');
-                                let successCount = 0;
-                                for (let i = 0; i < mockupHistory.length; i++) {
-                                  const m = mockupHistory[i];
-                                  if (m.url) {
-                                    try {
-                                      const result = await metaService.pushCreative(m.url, `${pName}_${campaign}_V${i + 1}_${m.ratio.replace(':', 'x')}`, buildDeploymentMeta({ ratio: m.ratio }));
-                                      if (result.success) successCount++;
-                                    } catch { /* continue */ }
-                                  }
-                                }
-                                setMetaPushing(false);
-                                if (successCount > 0) showToast(`Pushed ${successCount}/${allDone.length} to Meta!`, 'success');
-                                else showToast('Push to Meta failed', 'error');
-                              }}
-                              disabled={metaPushing}
-                              className="flex-1 py-2.5 rounded-xl bg-blue-600/15 border border-blue-500/20 text-blue-300 text-[9px] font-bold uppercase flex items-center justify-center gap-2 hover:bg-blue-600/25 transition-all disabled:opacity-50">
-                              <i className={`fa-brands fa-meta ${metaPushing ? 'animate-pulse' : ''}`}></i>
-                              {metaPushing ? 'Pushing...' : `Push All (${allDone.length}) to Meta`}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-
                 {/* ═══ ISSUE 2 — UNIFIED ALL-VERSIONS GALLERY (Option A) ═══
                     Aggregates every render in the session (single history, batch results,
                     carousel slides, pre-resize snapshot), groups thumbnails by ratio, and
                     lets the user click any one to make it the active single view via the
-                    existing pushMockup() mechanism. Collapsible, collapsed by default. */}
-                {(() => {
-                  type GalleryItem = { url: string; ratio: AspectRatio; label: string; key: string };
+                    existing pushMockup() mechanism. Collapsible, collapsed by default.
+                    Hidden in carousel mode — the carousel has its own slide viewer. */}
+                {carouselSlides.length === 0 && (() => {
+                  type GalleryItem = { url: string; ratio: AspectRatio; label: string; key: string; source: 'history' | 'batch' | 'prev'; sourceIndex: number };
                   const items: GalleryItem[] = [];
                   // Single-render history (all ratios). Prefer the API-safe rawBase64 over a
                   // blob: display URL so the pushed view stays reflow/source-coherent.
                   mockupHistory.forEach((m, i) => {
                     if (m.url) items.push({
                       url: (m.url.startsWith('blob:') && m.rawBase64) ? m.rawBase64 : m.url,
-                      ratio: m.ratio, label: `V${i + 1}`, key: `h${i}`,
+                      ratio: m.ratio, label: `V${i + 1}`, key: `h${i}`, source: 'history', sourceIndex: i,
                     });
                   });
                   // Batch results
                   (batchResults || []).forEach((b, i) => {
                     if (b.status === 'done' && b.url) items.push({
                       url: b.url, ratio: b.ratio as AspectRatio,
-                      label: `H${b.hookKey}·C${b.conceptIndex}`, key: `b${i}`,
-                    });
-                  });
-                  // Carousel slides (they share the carousel's current ratio)
-                  (carouselSlides || []).forEach((s, i) => {
-                    if (s.status === 'done' && s.imageUrl) items.push({
-                      url: s.imageUrl, ratio: currentAspectRatio,
-                      label: `Carousel ${s.index}`, key: `c${i}`,
+                      label: `H${b.hookKey}·C${b.conceptIndex}`, key: `b${i}`, source: 'batch', sourceIndex: i,
                     });
                   });
                   // Pre-resize snapshot (single-image one-level undo)
                   if (previousSingleMockup?.url) items.push({
                     url: previousSingleMockup.url, ratio: previousSingleMockup.ratio,
-                    label: 'Pre-resize', key: 'prev',
+                    label: 'Pre-resize', key: 'prev', source: 'prev', sourceIndex: -1,
                   });
 
                   // De-dupe by url so a snapshot already present in history isn't shown twice.
@@ -8281,12 +8159,14 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     g.items.push(it);
                   });
 
+                  // No overflow-hidden on the wrapper below — the per-card 3-dot dropdown
+                  // must extend past the container edge without being clipped.
                   return (
-                    <div className="mt-4 bg-slate-900/40 border border-slate-800/40 rounded-2xl overflow-hidden">
+                    <div className="mt-4 bg-slate-900/40 border border-slate-800/40 rounded-2xl">
                       <button
                         onClick={() => setShowAllVersionsGallery(v => !v)}
                         aria-expanded={showAllVersionsGallery}
-                        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-slate-800/30 transition-colors">
+                        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-slate-800/30 transition-colors rounded-t-2xl">
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                           <i className="fa-solid fa-layer-group text-blue-400 mr-1.5"></i>All Versions ({unique.length})
                         </span>
@@ -8301,16 +8181,63 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                               </div>
                               <div className="grid grid-cols-4 gap-2">
                                 {g.items.map(it => (
-                                  <button
+                                  <div
                                     key={it.key}
-                                    onClick={() => pushMockup(it.url, it.ratio)}
-                                    title={`${it.ratio} · ${it.label}`}
-                                    className={`relative rounded-lg overflow-hidden border border-slate-800/60 hover:border-blue-500 hover:ring-2 hover:ring-blue-500/20 transition-all bg-slate-900 group ${aspectCls(it.ratio)}`}>
-                                    <img src={it.url} alt={it.label} loading="lazy" className="w-full h-full object-cover" />
-                                    <div className="absolute bottom-0 inset-x-0 px-1 py-0.5 bg-black/65 text-white text-[6px] font-bold truncate text-center">
-                                      {it.ratio} · {it.label}
+                                    className={`relative rounded-lg border border-slate-800/60 hover:border-blue-500 hover:ring-2 hover:ring-blue-500/20 transition-all bg-slate-900 group ${aspectCls(it.ratio)}`}>
+                                    {/* Thumbnail — click promotes this version to the active single view */}
+                                    <button
+                                      onClick={() => pushMockup(it.url, it.ratio)}
+                                      title={`${it.ratio} · ${it.label}`}
+                                      className="absolute inset-0 w-full h-full rounded-lg overflow-hidden">
+                                      <img src={it.url} alt={it.label} loading="lazy" className="w-full h-full object-cover" />
+                                      <div className="absolute bottom-0 inset-x-0 px-1 py-0.5 bg-black/65 text-white text-[6px] font-bold truncate text-center">
+                                        {it.ratio} · {it.label}
+                                      </div>
+                                    </button>
+                                    {/* 3-dot options menu — Download always; Delete only for sources
+                                        we can remove from (history / batch). data-version-menu keeps
+                                        the document mousedown closer from firing on inside clicks. */}
+                                    <div className="absolute top-1 right-1 z-20" data-version-menu>
+                                      <button
+                                        onClick={() => setOpenVersionMenu(prev => (prev === it.url ? null : it.url))}
+                                        title="Options"
+                                        className={`w-5 h-5 rounded-md bg-black/60 text-white text-[9px] flex items-center justify-center transition-opacity ${openVersionMenu === it.url ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                                        <i className="fa-solid fa-ellipsis-vertical"></i>
+                                      </button>
+                                      {openVersionMenu === it.url && (
+                                        <div className="absolute right-0 top-6 w-24 rounded-lg border border-slate-700 bg-slate-900 shadow-xl z-30 overflow-hidden">
+                                          <button
+                                            onClick={async () => {
+                                              setOpenVersionMenu(null);
+                                              const pName = (inputs?.productName || 'ad').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '-').substring(0, 20);
+                                              const label = it.label.replace(/[^a-zA-Z0-9\u0600-\u06FF-]/g, '-');
+                                              const url = await applyTrialWatermark(it.url);
+                                              await downloadImage(url, `${pName}_${it.ratio.replace(':', 'x')}_${label}.png`);
+                                            }}
+                                            className="w-full px-2.5 py-1.5 text-left text-[8px] font-bold text-slate-200 hover:bg-slate-800 flex items-center gap-1.5">
+                                            <i className="fa-solid fa-download text-[7px]"></i>Download
+                                          </button>
+                                          {(it.source === 'history' || it.source === 'batch') && (
+                                            <button
+                                              onClick={() => {
+                                                setOpenVersionMenu(null);
+                                                if (it.source === 'history') {
+                                                  const next = mockupHistory.filter((_, i) => i !== it.sourceIndex);
+                                                  setMockupHistory(next);
+                                                  // Clamp so the canvas never points at a removed/shifted slot.
+                                                  if (historyIndex >= it.sourceIndex) setHistoryIndex(Math.max(0, next.length - 1));
+                                                } else {
+                                                  setBatchResults(prev => prev.map((r, i) => i === it.sourceIndex ? { ...r, url: null, status: 'error' as const } : r));
+                                                }
+                                              }}
+                                              className="w-full px-2.5 py-1.5 text-left text-[8px] font-bold text-red-400 hover:bg-slate-800 flex items-center gap-1.5">
+                                              <i className="fa-solid fa-trash text-[7px]"></i>Delete
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
                                     </div>
-                                  </button>
+                                  </div>
                                 ))}
                               </div>
                             </div>
