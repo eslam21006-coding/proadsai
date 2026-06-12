@@ -3872,9 +3872,14 @@ function createGeminiCaller(apiKey: string) {
     return async (params: { model: string; contents: any; config?: any }) => {
         const { GoogleGenAI } = await import("@google/genai");
         const ai = new GoogleGenAI({ apiKey });
+        // Strip the OpenAI-only _isPersonalPhoto marker (set on Box A parts in generators)
+        // so it never reaches the Gemini API — keeps the MODEL_PROVIDER='gemini' revert safe.
+        const contents = Array.isArray(params.contents?.parts)
+            ? { ...params.contents, parts: params.contents.parts.map(({ _isPersonalPhoto, ...rest }: any) => rest) }
+            : params.contents;
         const response = await ai.models.generateContent({
             model: params.model,
-            contents: params.contents,
+            contents,
             config: params.config,
         });
         // Normalize response to match what generators expect

@@ -6208,13 +6208,17 @@ THE HERO'S FACE IS INVIOLABLE: The person in this slide must have IDENTICAL faci
             // across slides; the original photos lock identity. (Skipped only in text-only mode,
             // which has no hero.)
             if (!_isTextOnly) {
-                boxA.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
+                // _isPersonalPhoto marks hero photos for backend re-compression in the OpenAI
+                // caller (512px JPEG); logos/Box C/style refs keep original resolution.
+                boxA.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] }, _isPersonalPhoto: true }));
             }
             boxB.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
             boxC.forEach((d: string) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
         } else {
             if (!_isTextOnly) {
-                boxA.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
+                // _isPersonalPhoto marks hero photos for backend re-compression in the OpenAI
+                // caller (512px JPEG); logos/Box C/style refs keep original resolution.
+                boxA.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] }, _isPersonalPhoto: true }));
             }
             boxB.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
             // Box C: Offer-specific assets (book cover, dashboard screenshot, etc.)

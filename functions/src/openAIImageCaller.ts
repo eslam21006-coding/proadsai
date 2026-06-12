@@ -1,6 +1,7 @@
 // functions/src/openAIImageCaller.ts — drop-in GeminiCaller backed by OpenAI gpt-image-2
 
 import OpenAI, { toFile } from "openai";
+import sharp from "sharp";
 import {
   OPENAI_VISUAL_MODEL,
   OPENAI_SIZE_BY_ASPECT,
@@ -15,14 +16,14 @@ export function createOpenAIImageCaller(apiKey: string): GeminiCaller {
     const client = new OpenAI({ apiKey });
 
     // 1. Extract & concatenate text parts → prompt
-    const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> =
+    const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string }; _isPersonalPhoto?: boolean }> =
       params.contents?.parts ?? [];
     const textParts: string[] = [];
-    const refs: Buffer[] = [];
+    const refs: Array<{ buf: Buffer; isPersonalPhoto: boolean }> = [];
     for (const p of parts) {
       if (p.text) textParts.push(p.text);
       if (p.inlineData?.data) {
-        refs.push(Buffer.from(p.inlineData.data, "base64"));
+        refs.push({ buf: Buffer.from(p.inlineData.data, "base64"), isPersonalPhoto: p._isPersonalPhoto === true });
       }
     }
     const prompt = textParts.join("\n");
@@ -45,9 +46,10 @@ export function createOpenAIImageCaller(apiKey: string): GeminiCaller {
     // (App.tsx), not by bumping the quality tier (which also caused batch timeouts).
     const quality = OPENAI_IMAGE_QUALITY;
 
-    // Timeout matches the quality tier. 'high' renders (60-90s) get the extended 240s ceiling;
-    // 'medium'/'low' use the 120s base. Kept tier-aware so a future quality bump stays safe.
-    const timeout = quality === "high" ? OPENAI_IMAGE_TIMEOUT_HIGH_MS : OPENAI_IMAGE_TIMEOUT_MS;
+    // edit path needs longer ceiling — multi-ref upload adds latency before generation.
+    // (The previous quality === 'high' condition was dead code: quality is fixed 'medium',
+    // so edit calls with several reference images were racing the 120s base timeout.)
+    const timeout = refs.length > 0 ? OPENAI_IMAGE_TIMEOUT_HIGH_MS : OPENAI_IMAGE_TIMEOUT_MS;
 
     // 3. Abort controller for timeout
     const controller = new AbortController();
@@ -61,8 +63,26 @@ export function createOpenAIImageCaller(apiKey: string): GeminiCaller {
         // gpt-image-2 images.edit accepts multiple input images — pass ALL refs
         // for face-fidelity parity with the Gemini path (FR-016). The SDK requires
         // Uploadable File objects, so convert each base64 Buffer via toFile().
+        // Personal photos (marked _isPersonalPhoto upstream) are re-compressed to
+        // 512px JPEG q70 — face identity survives the downscale and the smaller
+        // upload payload cuts edit-call latency. Logos, Box C assets, and style
+        // references keep their original resolution. Fail-soft: on a Sharp error
+        // the original buffer is uploaded unchanged.
         const imageFiles = await Promise.all(
-          refs.map((buf, i) => toFile(buf, `ref_${i}.png`, { type: "image/png" })),
+          refs.map(async ({ buf, isPersonalPhoto }, i) => {
+            if (isPersonalPhoto) {
+              try {
+                const small = await sharp(buf)
+                  .resize(512, 512, { fit: "inside", withoutEnlargement: true })
+                  .jpeg({ quality: 70 })
+                  .toBuffer();
+                return toFile(small, `ref_${i}.jpg`, { type: "image/jpeg" });
+              } catch (err) {
+                console.warn(`[openAI] hero photo recompress failed (ref ${i}); uploading original:`, err);
+              }
+            }
+            return toFile(buf, `ref_${i}.png`, { type: "image/png" });
+          }),
         );
         // gpt-image models always return b64_json and reject the response_format param.
         const response = await client.images.edit(
