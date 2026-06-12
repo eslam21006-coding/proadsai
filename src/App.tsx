@@ -8153,8 +8153,14 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                     className={`relative rounded-lg border border-slate-800/60 hover:border-blue-500 hover:ring-2 hover:ring-blue-500/20 transition-all bg-slate-900 group ${aspectCls(it.ratio)}`}>
                                     {/* Thumbnail — click promotes this version to the active single view */}
                                     <button
-                                      onClick={() => pushMockup(it.url, it.ratio)}
-                                      title={`${it.ratio} · ${it.label}`}
+                                      onClick={() => {
+                                        pushMockup(it.url, it.ratio);
+                                        // In batch mode the canvas shows the batch grid, which never
+                                        // reads mockupHistory — clear batchResults so the canvas drops
+                                        // to single-image mode and displays the promoted version.
+                                        if (batchResults.length > 0) setBatchResults([]);
+                                      }}
+                                      title={batchResults.length > 0 ? `${it.ratio} · ${it.label} — Click to view full size` : `${it.ratio} · ${it.label}`}
                                       className="absolute inset-0 w-full h-full rounded-lg overflow-hidden">
                                       <img src={it.url} alt={it.label} loading="lazy" className="w-full h-full object-cover" />
                                       <div className="absolute bottom-0 inset-x-0 px-1 py-0.5 bg-black/65 text-white text-[6px] font-bold truncate text-center">

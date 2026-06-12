@@ -377,7 +377,7 @@ function splitCta(raw: string): { ctaName: string; benefitText: string } {
     return { ctaName: parts[0].trim(), benefitText: parts[1]?.trim() || '' };
 }
 
-function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverride?: TextOverride, buildPlan?: string): OwnedRenderText {
+function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverride?: TextOverride): OwnedRenderText {
     if (textOverride) {
         // textOverride bypasses the TOV ||| splitter — split here too, otherwise a
         // "cta ||| benefit" supplied in textOverride.ctaName renders the literal bars.
@@ -431,20 +431,6 @@ function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverr
         ctaName = inputs.cta;
     } else {
         ctaName = ctaBlockText || inputs.cta;
-    }
-
-    // Fallback: hook blocks often omit the "|||" benefit half, leaving benefitText empty
-    // even when the concept blueprint carries a BENEFIT_TEXT:/BENEFIT: field — which the
-    // OpenAI no-render instruction then suppresses from the BLUEPRINT block. Recover the
-    // first line of that field's value so the benefit still reaches MANDATORY TEXT ELEMENTS.
-    // (Not applied on the textOverride path above — carousel middle slides pass an
-    // intentionally empty benefit.)
-    if (!benefitText && buildPlan) {
-        const m = buildPlan.match(/\bBENEFIT(?:_TEXT)?\s*:\s*([^\n]+)/);
-        if (m) {
-            const candidate = cleanStrict(m[1]).trim();
-            if (candidate) benefitText = candidate;
-        }
     }
 
     return { hookText, subheadText, ctaName, benefitText };
@@ -4905,7 +4891,7 @@ export async function generateFinalAd(
     if (inputs.referenceImage && !editInstruction && !base64ToEdit) {
         _referenceInfluence = await analyzeReferenceImage(inputs.referenceImage);
     }
-    const ownedRenderText = resolveOwnedRenderText(approvedTov, inputs, textOverride, buildPlan);
+    const ownedRenderText = resolveOwnedRenderText(approvedTov, inputs, textOverride);
     let hookText = ownedRenderText.hookText;
     let subheadText = ownedRenderText.subheadText;
     let ctaName = ownedRenderText.ctaName;
@@ -6142,7 +6128,11 @@ CAROUSEL STYLE ANCHORING: Maintain consistent visual STYLE across all slides —
         // full blueprint — it uses the prose for visual generation and has its own defenses.
         const _visualDirectionStripped = MODEL_PROVIDER === 'openai'
             ? gatedBlueprint.replace(
-                /(?:SUBJECT_ACTION|ENVIRONMENT_DESC|LIGHTING_LOGIC|CAMERA_FRAMING|STYLE_NOTES|VISUAL_DIRECTION|DEPTH_LAYERING|ATMOSPHERE)[:\s][\s\S]*?(?=\n\s*[A-Z][A-Z_]*(?: [A-Z][A-Z_]*)*\s*:|$)/g,
+                // Lookahead requires a COMPOUND label (≥1 underscore): real field boundaries are
+                // SUBJECT_ACTION / HOOK_TEXT / CTA_BUTTON-style compounds, while single-word caps
+                // like STRICT: / FORBIDDEN: are inline sub-instructions that must be consumed as
+                // block content, not treated as the next section.
+                /(?:SUBJECT_ACTION|ENVIRONMENT_DESC|LIGHTING_LOGIC|CAMERA_FRAMING|STYLE_NOTES|VISUAL_DIRECTION|DEPTH_LAYERING|ATMOSPHERE|BRANDING_LOGIC)[:\s][\s\S]*?(?=\n\s*[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\s*:|$)/g,
                 '')
             : gatedBlueprint;
 
@@ -6152,7 +6142,7 @@ CAROUSEL STYLE ANCHORING: Maintain consistent visual STYLE across all slides —
             // from the label through to the next ALL-CAPS section label (or end of string),
             // not just to end of line (the old /.*$/m form left continuation lines to bleed
             // onto OpenAI renders as visible text).
-            .replace(/TECHNICAL_PROMPT[:\s][\s\S]*?(?=\n\s*[A-Z][A-Z_]*(?: [A-Z][A-Z_]*)*\s*:|$)/g, '')
+            .replace(/TECHNICAL_PROMPT[:\s][\s\S]*?(?=\n\s*[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\s*:|$)/g, '')
             .replace(/VISUAL_DIRECTION[:\s].*$/gm, '')
             .replace(/CONCEPT_START_\d/g, '')
             .replace(/CONCEPT_END_\d/g, '')
