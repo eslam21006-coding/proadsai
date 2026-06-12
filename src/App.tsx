@@ -4675,6 +4675,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       index: i + 1, copy, buildPlan: '', imageUrl: null, status: 'pending' as const,
     }));
     setCarouselSlides(initialSlides);
+    // Clear stale batch results — the canvas ternary gives batchResults priority over
+    // carouselSlides, so leftovers from an earlier batch run would hijack the canvas
+    // and hide the freshly rendered carousel.
+    setBatchResults([]);
     // A fresh carousel invalidates any prior resize-undo snapshot.
     setPreviousCarouselSlides(null);
     setPreviousCarouselRatio(null);
