@@ -4457,6 +4457,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     setCarouselSlides([]);
     setBatchRendering(true);
     setCurrentAspectRatio(primaryRatio);
+    // The reflow panel's "Current" badge reads activeBatchRatio in batch scope (not
+    // currentAspectRatio) — sync it to the rendered ratio so the correct size button
+    // shows CURRENT instead of whatever ratio was active before this batch.
+    setActiveBatchRatio(primaryRatio);
     setPhase('render_studio');
     setReflowStep('idle');
     setReflowTarget(null);
