@@ -4764,7 +4764,8 @@ ${MODEL_PROVIDER === 'openai' && styleReferencePresent
   ? '' /* OpenAI reflow/anchor: the style-reference image supplies all visual direction; omit the
           blueprint so its (Arabic) scene prose can't bleed onto the image as rendered text. */
   : `BLUEPRINT: ${strippedBlueprint}`}
-
+${MODEL_PROVIDER === 'openai' ? `BLUEPRINT contains layout structure only — render ONLY the text elements listed below, nothing else from the BLUEPRINT.
+` : ''}
 MANDATORY TEXT ELEMENTS — render ALL of these, no exceptions:
 ${hookText ? `✓ HEADLINE (REQUIRED): "${hookText}"` : ''}
 ${subheadText ? `✓ SUBHEADLINE (REQUIRED): "${subheadText}"` : ''}
@@ -6118,8 +6119,21 @@ CAROUSEL STYLE ANCHORING: Maintain consistent visual STYLE across all slides —
                 ? buildCarouselBrandConsistencyBlock(_brandResolved)
                 : '';
 
+        // OpenAI path: visual-direction fields carry Arabic scene prose (wardrobe, environment,
+        // lighting) whose VALUES survive the label-stripping below as bare narrative text that
+        // gpt-image-2 renders verbatim on the image. Drop each whole field block — label through
+        // the next ALL-CAPS label or end of string (same multi-line pattern as the
+        // TECHNICAL_PROMPT strip, 9e3fa72). Copy fields (HOOK_TEXT / SUBHEADLINE / CTA_BUTTON /
+        // BENEFIT_TEXT / BRAND_NAME / BADGE_TEXT / URGENCY_LINE) stay intact. Gemini keeps the
+        // full blueprint — it uses the prose for visual generation and has its own defenses.
+        const _visualDirectionStripped = MODEL_PROVIDER === 'openai'
+            ? gatedBlueprint.replace(
+                /(?:SUBJECT_ACTION|ENVIRONMENT_DESC|LIGHTING_LOGIC|CAMERA_FRAMING|STYLE_NOTES|VISUAL_DIRECTION|DEPTH_LAYERING|ATMOSPHERE)[:\s][\s\S]*?(?=\n\s*[A-Z][A-Z_]*(?: [A-Z][A-Z_]*)*\s*:|$)/g,
+                '')
+            : gatedBlueprint;
+
         // Sanitize buildPlan: strip system instruction markers and stray English that the image AI renders as visible text
-        const cleanBuildPlan = gatedBlueprint
+        const cleanBuildPlan = _visualDirectionStripped
             // Labeled TECHNICAL_PROMPT content in concept text can span multiple lines — strip
             // from the label through to the next ALL-CAPS section label (or end of string),
             // not just to end of line (the old /.*$/m form left continuation lines to bleed
