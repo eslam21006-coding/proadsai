@@ -2275,6 +2275,9 @@ const App: React.FC = () => {
   // 3-dot options menu in the unified gallery — holds the URL of the card whose menu is
   // open (null = none). Closed on any mousedown outside an element tagged data-version-menu.
   const [openVersionMenu, setOpenVersionMenu] = useState<string | null>(null);
+  // Full-size preview for a unified-gallery card — opened via the expand icon on each
+  // card, closed by clicking the overlay or the X. Non-destructive: batch grid untouched.
+  const [galleryLightbox, setGalleryLightbox] = useState<{ url: string; ratio: string } | null>(null);
   useEffect(() => {
     if (!openVersionMenu) return;
     const close = (e: MouseEvent) => {
@@ -8153,19 +8156,21 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                     className={`relative rounded-lg border border-slate-800/60 hover:border-blue-500 hover:ring-2 hover:ring-blue-500/20 transition-all bg-slate-900 group ${aspectCls(it.ratio)}`}>
                                     {/* Thumbnail — click promotes this version to the active single view */}
                                     <button
-                                      onClick={() => {
-                                        pushMockup(it.url, it.ratio);
-                                        // In batch mode the canvas shows the batch grid, which never
-                                        // reads mockupHistory — clear batchResults so the canvas drops
-                                        // to single-image mode and displays the promoted version.
-                                        if (batchResults.length > 0) setBatchResults([]);
-                                      }}
-                                      title={batchResults.length > 0 ? `${it.ratio} · ${it.label} — Click to view full size` : `${it.ratio} · ${it.label}`}
+                                      onClick={() => pushMockup(it.url, it.ratio)}
+                                      title={`${it.ratio} · ${it.label}`}
                                       className="absolute inset-0 w-full h-full rounded-lg overflow-hidden">
                                       <img src={it.url} alt={it.label} loading="lazy" className="w-full h-full object-cover" />
                                       <div className="absolute bottom-0 inset-x-0 px-1 py-0.5 bg-black/65 text-white text-[6px] font-bold truncate text-center">
                                         {it.ratio} · {it.label}
                                       </div>
+                                    </button>
+                                    {/* Expand icon — opens the full-size lightbox without touching
+                                        batch grid or history state. */}
+                                    <button
+                                      onClick={() => setGalleryLightbox({ url: it.url, ratio: it.ratio })}
+                                      title="View full size"
+                                      className="absolute top-1 left-1 z-20 w-7 h-7 rounded-md bg-black/70 hover:bg-black/90 text-white text-[11px] flex items-center justify-center transition-opacity opacity-0 group-hover:opacity-100">
+                                      <i className="fa-solid fa-expand"></i>
                                     </button>
                                     {/* 3-dot options menu — Download always; Delete only for sources
                                         we can remove from (history / batch). data-version-menu keeps
@@ -8220,6 +8225,36 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     </div>
                   );
                 })()}
+
+                {/* ═══ GALLERY LIGHTBOX — full-size preview, non-destructive ═══ */}
+                {galleryLightbox && (
+                  <div
+                    className="fixed inset-0 z-[100] bg-black/80 flex flex-col items-center justify-center gap-4 p-6"
+                    onClick={() => setGalleryLightbox(null)}>
+                    <button
+                      onClick={() => setGalleryLightbox(null)}
+                      title="Close"
+                      className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/60 hover:bg-black/90 text-white flex items-center justify-center">
+                      <i className="fa-solid fa-xmark"></i>
+                    </button>
+                    <img
+                      src={galleryLightbox.url}
+                      alt="Full size preview"
+                      className="max-h-[90vh] max-w-[90vw] object-contain rounded-xl"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const pName = (inputs?.productName || 'ad').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '-').substring(0, 20);
+                        const url = await applyTrialWatermark(galleryLightbox.url);
+                        await downloadImage(url, `${pName}_${galleryLightbox.ratio.replace(':', 'x')}.png`);
+                      }}
+                      className="px-4 py-2 rounded-xl bg-white/90 text-slate-900 text-[10px] font-bold flex items-center gap-2 hover:bg-white">
+                      <i className="fa-solid fa-download"></i>Download
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* ═══════ RIGHT: SIDEBAR ═══════ */}
