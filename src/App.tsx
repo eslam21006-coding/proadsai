@@ -4744,7 +4744,20 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
     try {
       // ── PHASE 1: Render Slide 1 (anchor) sequentially ──
-      const slide1Result = await buildSlide(0);
+      // Per-slide try/catch (same pattern as slides 2+ below): a slide-1 exception must
+      // show an error tile and let the remaining slides render — not fall through to the
+      // outer catch, which aborts the whole carousel and strands the user on the concept
+      // screen. Slide-1 credits refund via the finally-block reconciliation
+      // (creditsActuallyUsed is never incremented for a failed slide). When slide 1
+      // fails, slides 2+ render without a style anchor.
+      let slide1Result: string | null = null;
+      try {
+        slide1Result = await buildSlide(0);
+      } catch (e) {
+        console.error('[carousel] slide 1 failed with exception:', e);
+        setCarouselSlides(prev => prev.map((s, idx) => idx === 0 ? { ...s, status: 'error' } : s));
+        renderedSlides[0] = { ...renderedSlides[0], status: 'error' };
+      }
       if (slide1Result) anchorImage = slide1Result;
 
       // ── PHASE 2: Render slides 2-N in PARALLEL (staggered 2s apart to avoid rate limits) ──
