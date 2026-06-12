@@ -5315,6 +5315,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         const oc = result.data?.outcomes?.[0];
         if (oc?.success && oc.outputUrl) {
           const outUrl = oc.outputUrl;
+          // Preserve the pre-resize version in mockupHistory BEFORE the in-place overwrite
+          // below discards it (the gallery never reads originalUrl) — so ALL VERSIONS keeps
+          // both sizes. Mirrors the auto-reflow path (65513f1).
+          if (orig.url) pushMockup(orig.url, orig.ratio);
           setBatchResults(prev => prev.map((rr, i) => i === idx ? { ...rr, url: outUrl, ratio: newRatio, status: 'done' as const } : rr));
         } else {
           // No image produced — revert this item to its original image AND ratio so it

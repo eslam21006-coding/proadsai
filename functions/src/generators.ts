@@ -377,7 +377,7 @@ function splitCta(raw: string): { ctaName: string; benefitText: string } {
     return { ctaName: parts[0].trim(), benefitText: parts[1]?.trim() || '' };
 }
 
-function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverride?: TextOverride): OwnedRenderText {
+function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverride?: TextOverride, buildPlan?: string): OwnedRenderText {
     if (textOverride) {
         // textOverride bypasses the TOV ||| splitter — split here too, otherwise a
         // "cta ||| benefit" supplied in textOverride.ctaName renders the literal bars.
@@ -431,6 +431,20 @@ function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverr
         ctaName = inputs.cta;
     } else {
         ctaName = ctaBlockText || inputs.cta;
+    }
+
+    // Fallback: hook blocks often omit the "|||" benefit half, leaving benefitText empty
+    // even when the concept blueprint carries a BENEFIT_TEXT:/BENEFIT: field — which the
+    // OpenAI no-render instruction then suppresses from the BLUEPRINT block. Recover the
+    // first line of that field's value so the benefit still reaches MANDATORY TEXT ELEMENTS.
+    // (Not applied on the textOverride path above — carousel middle slides pass an
+    // intentionally empty benefit.)
+    if (!benefitText && buildPlan) {
+        const m = buildPlan.match(/\bBENEFIT(?:_TEXT)?\s*:\s*([^\n]+)/);
+        if (m) {
+            const candidate = cleanStrict(m[1]).trim();
+            if (candidate) benefitText = candidate;
+        }
     }
 
     return { hookText, subheadText, ctaName, benefitText };
@@ -4891,7 +4905,7 @@ export async function generateFinalAd(
     if (inputs.referenceImage && !editInstruction && !base64ToEdit) {
         _referenceInfluence = await analyzeReferenceImage(inputs.referenceImage);
     }
-    const ownedRenderText = resolveOwnedRenderText(approvedTov, inputs, textOverride);
+    const ownedRenderText = resolveOwnedRenderText(approvedTov, inputs, textOverride, buildPlan);
     let hookText = ownedRenderText.hookText;
     let subheadText = ownedRenderText.subheadText;
     let ctaName = ownedRenderText.ctaName;
