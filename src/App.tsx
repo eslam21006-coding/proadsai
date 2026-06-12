@@ -7415,55 +7415,25 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     </button>
                   )}
 
-                  {/* Size tabs + Version nav */}
+                  {/* Size tabs — version navigation lives in the ALL VERSIONS gallery below
+                      (the old "Version X of Y" arrow navigator was removed as redundant). */}
                   {mockupHistory.length > 1 && (() => {
                     const uniqueRatios = [...new Set(mockupHistory.map(m => m.ratio))];
-                    const hasMultipleRatios = uniqueRatios.length > 1;
+                    if (uniqueRatios.length <= 1) return null;
                     const currentRatio = mockupHistory[historyIndex]?.ratio;
-                    // Get all items for the current ratio for version navigation
-                    const currentRatioItems = mockupHistory.map((m, idx) => ({ ...m, idx })).filter(m => m.ratio === currentRatio);
-                    const currentPosInRatio = currentRatioItems.findIndex(m => m.idx === historyIndex);
-                    const hasManyVersions = currentRatioItems.length > 1;
-
                     return (
-                      <div className="flex items-center gap-3">
-                        {/* SIZE TABS — show when multiple ratios */}
-                        {hasMultipleRatios && (
-                          <div className="flex items-center gap-1 bg-slate-900/80 border border-slate-800 p-1 rounded-xl">
-                            {uniqueRatios.map(ratio => {
-                              const idx = mockupHistory.findIndex(m => m.ratio === ratio);
-                              const isActive = currentRatio === ratio;
-                              const label = ratio === '1:1' ? 'Square' : ratio === '9:16' ? 'Story' : ratio === '4:5' ? 'Portrait' : ratio === '16:9' ? 'Landscape' : ratio === '3:4' ? 'Tall' : ratio === '4:3' ? 'Wide' : ratio;
-                              return (
-                                <button key={ratio} onClick={() => setHistoryIndex(idx)}
-                                  className={`px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all ${isActive ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'text-slate-500 hover:text-white'}`}>
-                                  {label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                        {/* VERSION ARROWS — always visible for navigating versions */}
-                        <div className="flex items-center gap-1.5 bg-slate-900/80 border border-slate-800 px-2.5 py-1.5 rounded-xl">
-                          <button onClick={() => {
-                            if (hasMultipleRatios) {
-                              if (currentPosInRatio > 0) setHistoryIndex(currentRatioItems[currentPosInRatio - 1].idx);
-                            } else {
-                              setHistoryIndex(prev => Math.max(0, prev - 1));
-                            }
-                          }} disabled={hasMultipleRatios ? currentPosInRatio <= 0 : historyIndex === 0} className="w-7 h-7 rounded-lg flex items-center justify-center disabled:opacity-20 hover:bg-slate-800 text-slate-400 text-xs"><i className="fa-solid fa-chevron-left"></i></button>
-                          <div className="text-center min-w-[60px]">
-                            <span className="text-[10px] font-bold text-white block">Version {hasMultipleRatios ? currentPosInRatio + 1 : historyIndex + 1}</span>
-                            <span className="text-[8px] text-slate-500">of {hasMultipleRatios ? currentRatioItems.length : mockupHistory.length}</span>
-                          </div>
-                          <button onClick={() => {
-                            if (hasMultipleRatios) {
-                              if (currentPosInRatio < currentRatioItems.length - 1) setHistoryIndex(currentRatioItems[currentPosInRatio + 1].idx);
-                            } else {
-                              setHistoryIndex(prev => Math.min(mockupHistory.length - 1, prev + 1));
-                            }
-                          }} disabled={hasMultipleRatios ? currentPosInRatio >= currentRatioItems.length - 1 : historyIndex === mockupHistory.length - 1} className="w-7 h-7 rounded-lg flex items-center justify-center disabled:opacity-20 hover:bg-slate-800 text-slate-400 text-xs"><i className="fa-solid fa-chevron-right"></i></button>
-                        </div>
+                      <div className="flex items-center gap-1 bg-slate-900/80 border border-slate-800 p-1 rounded-xl">
+                        {uniqueRatios.map(ratio => {
+                          const idx = mockupHistory.findIndex(m => m.ratio === ratio);
+                          const isActive = currentRatio === ratio;
+                          const label = ratio === '1:1' ? 'Square' : ratio === '9:16' ? 'Story' : ratio === '4:5' ? 'Portrait' : ratio === '16:9' ? 'Landscape' : ratio === '3:4' ? 'Tall' : ratio === '4:3' ? 'Wide' : ratio;
+                          return (
+                            <button key={ratio} onClick={() => setHistoryIndex(idx)}
+                              className={`px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all ${isActive ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'text-slate-500 hover:text-white'}`}>
+                              {label}
+                            </button>
+                          );
+                        })}
                       </div>
                     );
                   })()}
@@ -8075,38 +8045,6 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   </div>
                 )}
 
-                {/* ═══ VARIANT RATIO CHIPS — compact ratio switcher ═══ */}
-                {carouselSlides.length === 0 && mockupHistory.length > 1 && (() => {
-                  const uniqueRatios = [...new Set(mockupHistory.map(m => m.ratio))];
-                  const currentHistoryRatio = mockupHistory[historyIndex]?.ratio;
-                  return (
-                    <div className="flex items-center gap-1.5 justify-center mt-2 flex-wrap">
-                      {uniqueRatios.slice(0, 6).map(ratio => {
-                        const isActive = ratio === currentHistoryRatio;
-                        const latestForRatio = [...mockupHistory].reverse().find(m => m.ratio === ratio);
-                        return (
-                          <button
-                            key={ratio}
-                            onClick={() => {
-                              if (latestForRatio) {
-                                const idx = mockupHistory.indexOf(latestForRatio);
-                                if (idx >= 0) setHistoryIndex(idx);
-                              }
-                            }}
-                            className={`px-2.5 py-1 rounded-lg text-[9px] font-bold tracking-tight transition-all border ${
-                              isActive
-                                ? 'bg-blue-600/25 border-blue-500/40 text-blue-300 shadow-sm shadow-blue-500/10'
-                                : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300 hover:border-slate-600'
-                            }`}
-                          >
-                            {ratio}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
-
                 {/* ═══ ISSUE 2 — UNIFIED ALL-VERSIONS GALLERY (Option A) ═══
                     Aggregates every render in the session (single history, batch results,
                     carousel slides, pre-resize snapshot), groups thumbnails by ratio, and
@@ -8201,7 +8139,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                       <button
                                         onClick={() => setOpenVersionMenu(prev => (prev === it.url ? null : it.url))}
                                         title="Options"
-                                        className={`w-5 h-5 rounded-md bg-black/60 text-white text-[9px] flex items-center justify-center transition-opacity ${openVersionMenu === it.url ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                                        className={`w-7 h-7 rounded-md bg-black/70 hover:bg-black/90 text-white text-[11px] flex items-center justify-center transition-opacity ${openVersionMenu === it.url ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                                         <i className="fa-solid fa-ellipsis-vertical"></i>
                                       </button>
                                       {openVersionMenu === it.url && (
