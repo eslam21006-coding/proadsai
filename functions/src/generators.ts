@@ -6120,7 +6120,11 @@ CAROUSEL STYLE ANCHORING: Maintain consistent visual STYLE across all slides —
 
         // Sanitize buildPlan: strip system instruction markers and stray English that the image AI renders as visible text
         const cleanBuildPlan = gatedBlueprint
-            .replace(/TECHNICAL_PROMPT[:\s].*$/gm, '')
+            // Labeled TECHNICAL_PROMPT content in concept text can span multiple lines — strip
+            // from the label through to the next ALL-CAPS section label (or end of string),
+            // not just to end of line (the old /.*$/m form left continuation lines to bleed
+            // onto OpenAI renders as visible text).
+            .replace(/TECHNICAL_PROMPT[:\s][\s\S]*?(?=\n\s*[A-Z][A-Z_]*(?: [A-Z][A-Z_]*)*\s*:|$)/g, '')
             .replace(/VISUAL_DIRECTION[:\s].*$/gm, '')
             .replace(/CONCEPT_START_\d/g, '')
             .replace(/CONCEPT_END_\d/g, '')

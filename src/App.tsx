@@ -4451,6 +4451,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     }
 
     setBatchResults(initial);
+    // Clear stale carousel slides — mirrors handleCarouselRender clearing batchResults
+    // (5787330): the ALL VERSIONS gallery is gated on carouselSlides.length === 0, so
+    // leftovers from an earlier carousel run would keep it hidden for this batch.
+    setCarouselSlides([]);
     setBatchRendering(true);
     setCurrentAspectRatio(primaryRatio);
     setPhase('render_studio');
