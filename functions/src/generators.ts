@@ -5269,6 +5269,7 @@ ${_renderRtCtx.testimonial ? `- Testimonial context available — design should 
   ${_renderLogoBlock}
   ${_renderRtDesignHint}
 
+  ${MODEL_PROVIDER === 'gemini' ? `
         ⚠️⚠️⚠️ ABSOLUTE RULE: ONLY RENDER USER - FACING TEXT ⚠️⚠️⚠️
 ================================================================
 The image must contain ONLY these text elements and NOTHING ELSE:
@@ -5286,13 +5287,15 @@ or ANY text that was not provided as headline/subheadline/CTA/benefit.
 - Do NOT render "BEFORE", "AFTER", "قبل", "بعد" labels on the image.
 - The ONLY text on the image is the headline, subheadline, CTA button, benefit line, and badge (if provided). Nothing else.
 ================================================================
-
+` : '' /* OpenAI path: skipped — Gemini-era text rendering mitigation, redundant with gpt-image-2 native Arabic rendering (labels already stripped at parse time, d60adb8) */}
+  ${MODEL_PROVIDER === 'gemini' ? `
 EXACT TEXT RENDERING(ZERO TOLERANCE FOR ANY CHARACTER CHANGE):
 - You MUST render the Arabic text EXACTLY as provided below, character -for-character.
          - Do NOT paraphrase.Do NOT replace synonyms.Do NOT "improve" phrasing.Do NOT reorder words.
          - Do NOT add / remove punctuation.Do NOT add tashkeel / diacritics if not present.Do NOT change Hamza forms.
          - Typography must be CLEAN, PRINTED, and HIGH - LEGIBILITY(no calligraphy, no decorative distortion).
          - FONT STYLE(MANDATORY): Use a modern Arabic sans - serif look(Cairo / Tajawal / Noto Kufi Arabic style).Heavy weight for headline / button, medium for subheadline.No thin strokes.
+` : '' /* OpenAI path: skipped — Gemini-era text rendering mitigation, redundant with gpt-image-2 native Arabic rendering */}
 
   ${MODEL_PROVIDER === 'gemini' ? `
 ⚠️⚠️⚠️ ARABIC LETTER CONNECTION RULES (MOST COMMON FAILURE — READ CAREFULLY) ⚠️⚠️⚠️
@@ -5305,6 +5308,7 @@ Arabic letters change shape based on their position in a word (initial, medial, 
 - Prefer LARGER font sizes with extra letter spacing between WORDS (not between letters within a word).
 - Use BOLD/HEAVY weight fonts — thin strokes cause letter connections to break at small sizes.
 ` : ''}
+${MODEL_PROVIDER === 'gemini' ? `
 ⚠️ ARABIC TEXT ANTI-CORRUPTION RULES (CRITICAL):
 - Do NOT duplicate any text string. Each text element appears EXACTLY ONCE in the image.
 - Do NOT repeat the headline text in the subheadline area or vice versa.
@@ -5314,6 +5318,7 @@ Arabic letters change shape based on their position in a word (initial, medial, 
 - If a text field is empty or very short, simply omit that text element — do NOT fill it with a copy of another field.
 - When space is tight, prefer FEWER text elements rendered CLEARLY over cramming everything.
 - Each text zone must contain ONLY its designated content — headline zone gets headline only, CTA zone gets CTA only.
+` : '' /* OpenAI path: skipped — Gemini-era text rendering mitigation, redundant with gpt-image-2 native Arabic rendering */}
 ⚠️ NUMBER + SYMBOL INTEGRITY (CRITICAL):
 - NEVER separate a number from its adjacent % sign. "70%" must render as "70%" — not "%" alone.
 - NEVER drop digits from percentages, prices, or statistics. If the text says "90% من المدربين", render ALL of "90%".
