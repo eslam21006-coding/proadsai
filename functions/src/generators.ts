@@ -6290,6 +6290,10 @@ Use your judgment — consistency where it serves the story, change where the co
             resolvedImagePrompt: _promptResult.trace.resolvedImagePrompt,
             technicalPrompt: _promptResult.trace.technicalPrompt,
         };
+        console.log('[BLUEPRINT DEBUG] raw gatedBlueprint:',
+            gatedBlueprint.substring(0, 2000));
+        console.log('[BLUEPRINT DEBUG] after strip:',
+            _visualDirectionStripped.substring(0, 2000));
 
         // If style reference provided (carousel slides 2+), inject it BEFORE personal photos
         if (styleReference) {
