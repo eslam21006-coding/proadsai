@@ -35,6 +35,88 @@ import { checkBrandColorCompliance } from "./brandColorCompliance.js";
 import { GenerationError } from "./types.js";
 import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL, OPENAI_SIZE_BY_ASPECT } from "./modelConfig.js";
 
+// ─── Safe remote-image fetch ────────────────────────────────────────────────
+// The edit / style / face-anchor reference paths may receive a remote URL
+// (persisted Storage render, server-uploaded blob) instead of a data URL. A
+// naive `fetch(url)` is an SSRF + resource-exhaustion vector: an attacker-
+// supplied URL could target internal hosts (cloud metadata 169.254.169.254,
+// loopback, RFC-1918) or stream an unbounded body. This guard rejects non-
+// http(s) and private/loopback/link-local hosts, enforces an AbortController
+// timeout, requires an image/* content-type, and caps the payload size. It
+// returns the decoded base64 + real MIME so callers preserve the source format
+// (previously every reference was force-tagged image/png, mis-decoding JPEGs).
+const REMOTE_IMAGE_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+const REMOTE_IMAGE_FETCH_TIMEOUT_MS = 12000;
+
+function isPrivateOrLocalHost(hostname: string): boolean {
+    const h = hostname.toLowerCase().replace(/^\[|\]$/g, ""); // strip IPv6 brackets
+    if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return true;
+    if (h === "::1" || h === "::") return true;
+    if (/^f[cd][0-9a-f]{2}:/.test(h) || /^fe80:/.test(h)) return true; // IPv6 ULA / link-local
+    const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (v4) {
+        const a = Number(v4[1]);
+        const b = Number(v4[2]);
+        if (a === 0 || a === 10 || a === 127) return true;
+        if (a === 169 && b === 254) return true; // link-local incl. cloud metadata
+        if (a === 172 && b >= 16 && b <= 31) return true;
+        if (a === 192 && b === 168) return true;
+        if (a >= 224) return true; // multicast / reserved
+    }
+    return false;
+}
+
+export async function fetchRemoteImageAsBase64(
+    rawUrl: string,
+    label = "remote image",
+): Promise<{ data: string; mimeType: string } | null> {
+    let url: URL;
+    try {
+        url = new URL(rawUrl);
+    } catch {
+        console.warn(`⚠️ ${label}: invalid URL — skipped`);
+        return null;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+        console.warn(`⚠️ ${label}: non-http(s) URL rejected — skipped`);
+        return null;
+    }
+    if (isPrivateOrLocalHost(url.hostname)) {
+        console.warn(`⚠️ ${label}: private/local host rejected — skipped`);
+        return null;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REMOTE_IMAGE_FETCH_TIMEOUT_MS);
+    try {
+        const resp = await fetch(url.toString(), { signal: controller.signal });
+        if (!resp.ok) {
+            console.warn(`⚠️ ${label}: fetch ${resp.status} — skipped`);
+            return null;
+        }
+        const contentType = (resp.headers.get("content-type") || "").split(";")[0].trim();
+        if (!/^image\//i.test(contentType)) {
+            console.warn(`⚠️ ${label}: non-image content-type "${contentType}" — skipped`);
+            return null;
+        }
+        const declaredLen = Number(resp.headers.get("content-length") || "0");
+        if (declaredLen && declaredLen > REMOTE_IMAGE_MAX_BYTES) {
+            console.warn(`⚠️ ${label}: declared size ${declaredLen} exceeds cap — skipped`);
+            return null;
+        }
+        const buf = Buffer.from(await resp.arrayBuffer());
+        if (buf.length > REMOTE_IMAGE_MAX_BYTES) {
+            console.warn(`⚠️ ${label}: size ${buf.length} exceeds cap — skipped`);
+            return null;
+        }
+        return { data: buf.toString("base64"), mimeType: contentType || "image/png" };
+    } catch (e) {
+        console.warn(`⚠️ ${label}: fetch failed — skipped:`, e);
+        return null;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 // ─── Typed precedence-resolver argument builder ─────────────────────────────
 // Centralises the 4-source precedence shape so all 6 prompt-build sites and
 // the compliance call site stay in lockstep. Earlier copies of this object
@@ -5990,18 +6072,20 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
         // inputs, so the edit reference was dropped and the OpenAI path silently fell back to
         // images.generate (a fresh image) instead of images.edit — i.e. Polish "did nothing".
         let _editData: string | undefined;
+        let _editMime = "image/png";
         if (base64ToEdit.startsWith('data:')) {
-            _editData = base64ToEdit.split(',')[1];
+            const _comma = base64ToEdit.indexOf(',');
+            const _parsedMime = base64ToEdit.slice(5, base64ToEdit.indexOf(';') >= 0 ? base64ToEdit.indexOf(';') : _comma);
+            if (_parsedMime) _editMime = _parsedMime;
+            _editData = base64ToEdit.slice(_comma + 1);
         } else if (/^https?:\/\//i.test(base64ToEdit)) {
-            try {
-                const _resp = await fetch(base64ToEdit);
-                if (_resp.ok) _editData = Buffer.from(await _resp.arrayBuffer()).toString('base64');
-                else console.warn(`⚠️ base64ToEdit fetch ${_resp.status} — edit reference skipped`);
-            } catch (e) { console.warn('⚠️ base64ToEdit fetch failed — edit reference skipped:', e); }
+            // Guarded fetch (SSRF / size / timeout) — preserves the real MIME from content-type.
+            const _fetched = await fetchRemoteImageAsBase64(base64ToEdit, "base64ToEdit");
+            if (_fetched) { _editData = _fetched.data; _editMime = _fetched.mimeType; }
         } else {
             _editData = base64ToEdit; // assume raw base64
         }
-        if (_editData) parts.push({ inlineData: { mimeType: "image/png", data: _editData } });
+        if (_editData) parts.push({ inlineData: { mimeType: _editMime, data: _editData } });
         else console.warn('⚠️ base64ToEdit unresolved; proceeding without the edit reference image.');
 
         // ─── Normalize editInstruction once (HOTFIX-F gate / FR-026) ───
@@ -6132,7 +6216,7 @@ CAROUSEL STYLE ANCHORING: Maintain consistent visual STYLE across all slides —
                 // SUBJECT_ACTION / HOOK_TEXT / CTA_BUTTON-style compounds, while single-word caps
                 // like STRICT: / FORBIDDEN: are inline sub-instructions that must be consumed as
                 // block content, not treated as the next section.
-                /(?:SUBJECT_ACTION|ENVIRONMENT_DESC|LIGHTING_LOGIC|CAMERA_FRAMING|STYLE_NOTES|VISUAL_DIRECTION|DEPTH_LAYERING|ATMOSPHERE|BRANDING_LOGIC)[:\s][\s\S]*?(?=\n\s*[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\s*:|$)/g,
+                /(?:SUBJECT_ACTION|ENVIRONMENT_DESC|MOOD_EMOTION|LIGHTING_LOGIC|TEXT_LAYOUT|BUTTON_POSITION|CAMERA_FRAMING|STYLE_NOTES|VISUAL_DIRECTION|DEPTH_LAYERING|ATMOSPHERE|BRANDING_LOGIC)[:\s][\s\S]*?(?=\n\s*[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\s*:|$)/g,
                 '')
             : gatedBlueprint;
 
@@ -6209,7 +6293,13 @@ Use your judgment — consistency where it serves the story, change where the co
 
         // If style reference provided (carousel slides 2+), inject it BEFORE personal photos
         if (styleReference) {
-            parts.push({ inlineData: { mimeType: "image/png", data: styleReference.split(',')[1] } });
+            // Preserve the real MIME from the data URL prefix (was force-tagged image/png,
+            // mis-decoding JPEG style anchors). styleReference always arrives as a data URL.
+            const _styleComma = styleReference.indexOf(',');
+            const _styleMime = styleReference.startsWith('data:')
+                ? (styleReference.slice(5, styleReference.indexOf(';') >= 0 ? styleReference.indexOf(';') : _styleComma) || "image/png")
+                : "image/png";
+            parts.push({ inlineData: { mimeType: _styleMime, data: styleReference.slice(_styleComma + 1) } });
             // Balanced anchor: the reference carries hero identity + brand aesthetic for cohesion,
             // while the copy still drives each slide's scene. A hard "never copy the environment"
             // rule made the model discard ALL visual direction and default to a generic universe —
@@ -6332,8 +6422,10 @@ If the asset is not clearly visible and prominent in the final render, the outpu
                     // Uses cheap text model to check for common Arabic rendering issues
                     // If issues found, auto-rerenders with targeted corrective instruction
                     const isArabic = (inputs.adLanguage || 'ar_fusha').startsWith('ar');
-                    // OpenAI path: skipped — gpt-image-2 renders natively, no post-render inspection needed
-                    if (MODEL_PROVIDER === 'gemini' && isArabic && !base64ToEdit && !styleReference && hookText.length > 2) {
+                    // Inspection pass runs for BOTH providers — Arabic text can corrupt on either
+                    // engine. The cheap text-model inspection always runs; only the follow-up image
+                    // re-render is gated to Gemini below (OpenAI stays single-call per T014 policy).
+                    if (isArabic && !base64ToEdit && !styleReference && hookText.length > 2) {
                         try {
                             const qaResponse = await callGemini({
                                 model: LOGIC_MODEL,

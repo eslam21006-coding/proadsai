@@ -3874,8 +3874,9 @@ function createGeminiCaller(apiKey: string) {
         const ai = new GoogleGenAI({ apiKey });
         // Strip the OpenAI-only _isPersonalPhoto marker (set on Box A parts in generators)
         // so it never reaches the Gemini API — keeps the MODEL_PROVIDER='gemini' revert safe.
+        type ContentPart = { _isPersonalPhoto?: boolean } & Record<string, unknown>;
         const contents = Array.isArray(params.contents?.parts)
-            ? { ...params.contents, parts: params.contents.parts.map(({ _isPersonalPhoto, ...rest }: any) => rest) }
+            ? { ...params.contents, parts: params.contents.parts.map(({ _isPersonalPhoto, ...rest }: ContentPart) => rest) }
             : params.contents;
         const response = await ai.models.generateContent({
             model: params.model,
@@ -4458,13 +4459,21 @@ Rules:
             return m ? m[1] : 'image/png';
         };
         // Base image first (the image being edited), then any hero face anchors.
+        // Preserve the base image's real MIME when it arrived as a data URL.
+        const baseMime = imageBase64.startsWith('data:') ? getMime(imageBase64) : 'image/png';
         const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [
-            { inlineData: { mimeType: "image/png", data: rawB64 } },
+            { inlineData: { mimeType: baseMime, data: rawB64 } },
             { text: instruction },
         ];
         for (const ref of faceRefs) {
             if (ref.startsWith('data:image/')) {
                 parts.push({ inlineData: { mimeType: getMime(ref), data: ref.split(',')[1] } });
+            } else if (/^https?:\/\//i.test(ref)) {
+                // faceRefs allows persisted/Storage http(s) URLs (isRealImage) — fetch + encode
+                // them (guarded against SSRF/size) so face locking works for persisted anchors,
+                // not just inline data URLs.
+                const fetched = await generators.fetchRemoteImageAsBase64(ref, "face anchor");
+                if (fetched) parts.push({ inlineData: { mimeType: fetched.mimeType, data: fetched.data } });
             }
         }
         const editCaller = createVisualRoutingCaller(geminiApiKey.value(), openaiApiKey.value());

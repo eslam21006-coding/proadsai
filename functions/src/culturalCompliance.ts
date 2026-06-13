@@ -120,8 +120,14 @@ export const SUBSTITUTIONS = {
 
 // ═══════════════════════════════════════════════════════════
 // ARABIC TERMS — Arabic-language drink/alcohol terms that the English
-// TRIGGER_WORDS regex cannot match. Applied to the IMAGE-PROMPT layer only
-// (not ad copy) to avoid mangling legitimate phrases such as "كأس العالم" (World Cup).
+// TRIGGER_WORDS regex cannot match. Applied to the IMAGE-PROMPT layer ONLY
+// (ad copy is skipped) — see scanAndReplace below.
+// PROTECTION SCOPE: the lookarounds in scanAndReplace only prevent a match when
+// the term is directly ADJACENT to another Arabic letter (no intra-word substring
+// hits). They do NOT span spaces, so a multi-word phrase such as "كأس العالم"
+// (World Cup) WOULD still have "كأس" replaced. This is tolerated because the
+// substitution runs on the image prompt only, where such phrases are rare and a
+// rephrase is harmless; ad-copy text (where the phrase matters) is never touched.
 // ═══════════════════════════════════════════════════════════
 export const ARABIC_SUBSTITUTIONS: Record<string, string> = {
   "شامبانيا": "قهوة عربية",   // champagne → Arabic coffee
@@ -243,12 +249,16 @@ export function scanAndReplace(
   out += text.slice(cursor);
 
   // Arabic-language pass (image-prompt layer only). English TRIGGER_WORDS can't match Arabic
-  // alcohol/drink terms; this scrubs them from the visual blueprint. Skipped for ad copy to
-  // avoid mangling legitimate words. Word-boundary-guarded (not preceded/followed by another
-  // Arabic letter) so it never replaces a substring inside a larger word.
+  // alcohol/drink terms; this scrubs them from the visual blueprint. Skipped for ad copy.
+  // Adjacency-guarded (not preceded/followed by another Arabic letter) so it never replaces a
+  // substring inside a larger word — but the guard does NOT span spaces, so a multi-word phrase
+  // could still have a component term replaced (see the ARABIC_SUBSTITUTIONS note above).
   if (sourceLayer === "imagePrompt") {
     for (const [ar, sub] of Object.entries(ARABIC_SUBSTITUTIONS)) {
-      const re = new RegExp(`(?<![\\u0600-\\u06FF])${ar}(?![\\u0600-\\u06FF])`, "g");
+      // Escape the key before interpolation — defends against ReDoS / breakage if a future key
+      // contains regex metacharacters (current keys are plain Arabic words, so this is a no-op).
+      const escapedAr = ar.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`(?<![\\u0600-\\u06FF])${escapedAr}(?![\\u0600-\\u06FF])`, "g");
       const next = out.replace(re, sub);
       if (next !== out) { matched.push(ar); out = next; }
     }
