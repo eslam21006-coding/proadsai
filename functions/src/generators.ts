@@ -4880,6 +4880,11 @@ ${_wardrobeBlock}${costumeRules}
 }
 
 // 4. Final Ad -> USE VISUAL MODEL (Artist)
+// Bypass token for the deprecated REFLOW edit path (FR-026). Backend-internal callers
+// (e.g. the reflowImage edit-recompose route) embed this literal in `editInstruction`
+// to clear the deprecation gate; frontend httpsCallable strings never contain it.
+export const INTERNAL_REFLOW_TOKEN = "__INTERNAL_REFLOW_BYPASS__";
+
 export async function generateFinalAd(
     buildPlan: string,
     approvedTov: string,
@@ -6094,7 +6099,7 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
         // backend callers), or an object carrying a truthy `_internalReflow` flag. Calling
         // `.includes(...)` directly on a plain object would throw, so derive the string view
         // and bypass flag once and reuse them everywhere below.
-        const INTERNAL_REFLOW_TOKEN = "__INTERNAL_REFLOW_BYPASS__";
+        // INTERNAL_REFLOW_TOKEN is module-level (exported) so internal callers can embed it.
         const ei: unknown = editInstruction;
         const eiStringValue =
             typeof ei === "string" ? ei :
@@ -6159,6 +6164,15 @@ ${currentAspectRatio === '9:16' ? 'VERTICAL STORY: Stack headline at top, hero i
                                     : currentAspectRatio === '3:4' ? 'TALL: Headline at top, hero center, CTA at bottom. Leave generous invisible margins — extra space at top and bottom.'
                                         : currentAspectRatio === '4:3' ? 'WIDE: Hero on one side, text on other. Leave generous invisible margins on all edges.'
                                             : `Adapt layout to ${currentAspectRatio}. Leave generous invisible margins on all edges.`}
+
+PLATFORM SAFE ZONES for ${currentAspectRatio}:
+${currentAspectRatio === '9:16'
+                        ? '- STORY: Keep ALL text and the CTA button OUT of the bottom 20% of the canvas (Meta / TikTok / Snapchat UI overlap) AND out of the top 8% (status bar). No interactive elements, CTA, headline, or logo may sit inside those bands.'
+                        : currentAspectRatio === '3:4'
+                            ? '- PORTRAIT: Keep text and the CTA button OUT of the bottom 10% safe zone.'
+                            : currentAspectRatio === '1:1'
+                                ? '- SQUARE: No platform safe-zone restrictions — use the full canvas with normal margins.'
+                                : '- Keep text and the CTA button within generous margins; avoid the extreme top and bottom edges.'}
 
 THIS IS A RESIZE, NOT A REDESIGN. If the output looks like a different ad, you have failed.
 ================================================================
