@@ -86,7 +86,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | Phase 12 — Workspace Logic | `createWorkspace` rejects below-Scale plans correctly. Meta ad account linking works. |
 | Phase 13 — Saved Projects | Per-plan project limits enforced (10/30/Unlimited). Status filter works. |
 
-### ✅ Done (17 items)
+### ✅ Done (22 items)
 
 | Item | Spec folder | Notes |
 |---|---|---|
@@ -110,24 +110,26 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | HOTFIX-E (hybrid logo) | `0953-hotfix-hybrid-logo` | |
 | HOTFIX-F (aspect reflow) | `955-aspect-reflow` | |
 | HOTFIX-G (FLUX cleanup) | `0955-hotfix-flux-cleanup` | Deploy crash fixed via lazy-access pattern. |
+| Phase 021 — Stripe Migration | `specs/021-stripe-migration` | Complete |
+| Phase 025 — OpenAI gpt-image-2 Swap | `specs/025-openai-swap` | Complete. Replaces Gemini image generation with gpt-image-2 across all render paths. Includes edit-recompose reflow, blueprint bleeding fixes, carousel prompt optimization, and unified ALL VERSIONS gallery. |
 
 ### ⏳ TODO — Critical (build first)
 
 | Item | Why critical |
 |---|---|
-| **Phase 21 — Stripe Migration** | **CRITICAL #1 — blocks production launch.** Phase 8 implementation diverged from spec — code is on Paddle, matrix specified Stripe. Pre-launch is the cheapest moment to fix this. After Phase 21: re-verify Phases 9, 10, 12, 13. Behavioral spec at `specs/009-billing-plan-access/` is reused. New spec authored at `specs/021-stripe-migration/`. |
 | **Phase 19 — Direct-Response Design Upgrades** | Single biggest paid-traffic conversion lever. Adds gaze direction, one-highlight cap, price hierarchy, CTA outcome framing, hook↔visual alignment, campaign coherence. **Independent of billing — can run in parallel with Phase 21.** |
 | **Phase 20 — Concept Director + Brief Coherence Check** | Solves "every ad looks like the same machine made it." User-facing impact: Brief Coherence Check (live banner) + Variance Mode (Balanced/Aggressive). Backend stays hidden. **Depends on Phase 14 (which depends on Phase 21).** |
-| **Phase 22 — Copy Quality Upgrade** | Lifts every on-creative text string: enforces ≤6th-grade reading level, mandates lived-symptom depth (concrete moment, not abstract problem), replaces the hard fake-proof block with a soft user-facing claim flag, and adds a silent GPT-4o-mini scoring + rewrite gate. **Rides the existing copy-fidelity contract — improvements propagate to the rendered image automatically. Independent of billing; can run in parallel with Phase 21.** |
+| **Phase 17 — Resize & Reflow (re-verify)** | Rebuilt in Phase 025 as edit-recompose — needs smoke test verification |
+| **Phase 22 — Copy Quality Upgrade** | **NEXT — ready for implementation.** Lifts every on-creative text string: enforces ≤6th-grade reading level, mandates lived-symptom depth (concrete moment, not abstract problem), replaces the hard fake-proof block with a soft user-facing claim flag, and adds a silent GPT-4o-mini scoring + rewrite gate. **Rides the existing copy-fidelity contract — improvements propagate to the rendered image automatically. Independent of billing; can run in parallel with Phase 21.** |
+| **Phase 23 — Conditional Copy Structure** | **NEXT — ready for implementation.** Makes the on-creative text *count* conditional (headline-only, headline+proof, diagnostic-only, etc.) instead of forcing 4 fields. Adds the Hook Angle / Hook Type / Awareness taxonomy cleanup, the 8 static / 11 carousel structures, the decision tree, the `creativeTextDirector` module, (23.A) the "Generate 4 More Like This" in-card variation carousel, and (23.B) within-angle dimension/entry rotation + cross-project anti-repetition memory so new projects stop feeling samey (the user's angle lock stays intact). **Depends on Phase 22 (quality rules + scoring must exist first) and Phase 5 (fidelity gate + compositor).** |
 
 ### ⏳ TODO — Major
 
 | Item | Why major |
 |---|---|
 | **Phase 11 — Magic Edit** | Re-spec'd to use Gemini's edit endpoint after HOTFIX-G. User-facing feature: lasso → edit → text re-composite. Pro+ gated. |
-| **Phase 14 — RAG + Meta Reporting** | Required by Phase 20 (`pastWinningAds` feeds Concept Director). Daily Meta Insights sync + RAG context injection into prompts. **Blocked until Phase 21 ships** (user data shape may shift). |
+| **Phase 14 — RAG + Meta Reporting** | Required by Phase 20 (`pastWinningAds` feeds Concept Director). Daily Meta Insights sync + RAG context injection into prompts. **Blocked until Phase 21 ships** (user data shape may shift). **Priority after Phase 22 and Phase 23.** |
 | **Phase 18 — Multi-Hero Support** | Up to 5 distinct people per ad. Required for webinar / mini-course / co-host / summit / speaker-grid use cases. |
-| **Phase 23 — Conditional Copy Structure** | Makes the on-creative text *count* conditional (headline-only, headline+proof, diagnostic-only, etc.) instead of forcing 4 fields. Adds the Hook Angle / Hook Type / Awareness taxonomy cleanup, the 8 static / 11 carousel structures, the decision tree, the `creativeTextDirector` module, (23.A) the "Generate 4 More Like This" in-card variation carousel, and (23.B) within-angle dimension/entry rotation + cross-project anti-repetition memory so new projects stop feeling samey (the user's angle lock stays intact). **Depends on Phase 22 (quality rules + scoring must exist first) and Phase 5 (fidelity gate + compositor).** |
 
 ### ⏳ TODO — Minor
 
@@ -1116,6 +1118,8 @@ Phase 20  requires Phase 5 + Phase 14 + HOTFIX-G (pipeline + creative memory + F
 Phase 21  requires nothing in matrix — pre-launch migration, blocks production launch
 Phase 22  requires nothing in matrix — copy-quality is a Step-2 prompt + scoring change that rides the Phase 5 fidelity contract. Can run in parallel with Phase 21. Start any time.
 Phase 23  requires Phase 22 + Phase 5 (quality rules + scoring must exist; fidelity gate + compositor must be stable before fields go conditional)
+Phase 025 — OpenAI Swap (complete).
+          Unblocks: Phase 17 (reflow done), Phase 22, Phase 23
 ```
 
 Complete all tasks in a phase before starting any phase that depends on it.
