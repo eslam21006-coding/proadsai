@@ -44,7 +44,7 @@ Product-owner decisions, final for this system.
 |---|---|
 | Reading level | **All copy ≤ 6th-grade.** Short everyday words, short sentences, no jargon, no abstract nouns. Arabic: simple spoken-style فصحى only — nothing a 12-year-old wouldn't say. Hard rule, scored, reject trigger. |
 | Depth | **Dig deep — name the lived symptom.** Never state the problem abstractly. Name the concrete recognizable moment the audience already lives (scene, time of day, specific detail). Hard rule, scored, reject trigger. |
-| Fabrication policy | **Soft flag, never block.** AI invents persuasive framing freely (scenarios, hypotheticals, metaphors). Only fabricated *verifiable specifics* (named person, exact figure, hard count, star rating, concrete deadline) get a non-blocking `claimFlag` advising the user to be able to back it up (Meta policy + GCC consumer law). The hard fake-proof block is removed. |
+| Fabrication policy | **Three-layer ladder, not a single block.** (1) Real data provided → use it. (2) No real data for a HARD-FACT category (specific date, seat count, price, named person, precise stat) → the existing code's HONEST DEGRADATION path applies (cost-of-delay instead of a fake deadline, structural scarcity instead of fake seats, market-pattern proof instead of fake names) — KEPT as a hard rule for GCC/Meta compliance, and `captionValidator.ts`'s NUMERIC FACT VIOLATION repair stays. (3) A fabricated verifiable specific that still slips through → non-blocking `claimFlag`. Invented FRAMING (scenarios, hypotheticals, metaphors) is fully allowed and never flagged. **Correction:** an earlier draft said "the hard fake-proof block is removed" — that was wrong. What is freed is creative *framing*, NOT numeric/identity compliance. The hard guards on invented dates/seats/prices/names/stats remain; the soft flag is a safety net BELOW them, not a replacement. |
 | Current 3-field structure | `Headline → Subheadline → CTA + Benefit` is NOT a forced default. It becomes one conditional structure among many. Stays the right pick for solution-aware mid-funnel ads. |
 | Propagation | Copy quality is improved at the **generation source**; the existing copy-fidelity contract carries exact strings to the image automatically. No manual design-phase wiring needed for quality. |
 | Structure conditionality | Making the *number* of fields conditional (headline-only, headline+proof, etc.) is a separate, later track — it touches the fidelity gate, design prompt, compositor, and step-2 UI together. |
@@ -162,7 +162,7 @@ The director (or, in Track 1, the enriched prompt) reads inputs before writing.
 | Creative format | static vs carousel branch | wrong structure set | Section 5 vs 6 |
 | CTA | intended action verb | generic CTA | CTA + benefit |
 
-**Fabrication policy:** invent framing freely. Flag (never block) fabricated verifiable specifics. Do not flag obvious hypotheticals/metaphors.
+**Fabrication policy (ladder):** real data → use it; no data for hard-fact categories (date/seat/price/name/stat) → honest degradation (existing code, kept); fabricated specific that slips through → soft-flag; invented framing (metaphor/scenario) → fully allowed, never flagged. The soft flag sits BELOW the existing hard numeric/identity guards, it does not replace them.
 
 ---
 
