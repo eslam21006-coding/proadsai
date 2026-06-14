@@ -10,9 +10,10 @@ import type {
     VariantChip,
 } from "./types.js";
 import { decideMethod } from "./reflowRouter.js";
-import { rerenderFromPlan, NoPlanError, type RerenderGenData } from "./reflowRerender.js";
+import { rerenderFromPlan, editRecomposeFromPlan, EDIT_RECOMPOSE_CREDIT_COST, NoPlanError, type RerenderGenData } from "./reflowRerender.js";
 import type { GeminiCaller } from "./generators.js";
 import { outpaintReflow, verifyLockedRegion, OUTPAINT_CREDIT_COST } from "./reflowOutpaint.js";
+import { MODEL_PROVIDER } from "./modelConfig.js";
 
 export interface ReflowImageRequest {
     generationId: string;
@@ -41,6 +42,10 @@ export interface ReflowImageDeps {
     // Used by the rerender route so generateFinalAd's request shape matches the SDK.
     geminiCaller: GeminiCaller;
     openaiApiKey: string;
+    // Visual provider override. Defaults to the live MODEL_PROVIDER constant in production
+    // (index.ts does not set it). Tests inject "gemini" to exercise the auto-router's
+    // rerender route, which is force-disabled on the OpenAI path.
+    modelProvider?: "openai" | "gemini";
 }
 
 /**
@@ -101,11 +106,65 @@ function isAllowedStyleReferenceUrl(rawUrl: string): boolean {
     return ALLOWED_STYLE_REF_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
 }
 
+/**
+ * Resolve a displayed source image to a base64 data URL usable by generateFinalAd
+ * (rerender style reference / edit-recompose base64ToEdit):
+ *   - a `data:image/...` URL passes through unchanged
+ *   - an http(s) Storage URL is downloaded (SSRF-guarded, timed out) and inlined as base64
+ *   - anything else (null, `pending_upload`, blob:, disallowed host, fetch failure) → undefined
+ * Best-effort by design: callers treat `undefined` as "no usable source".
+ */
+async function resolveSourceImageToDataUrl(
+    sourceImageUrl: string | null | undefined,
+    generationId: string,
+    idx: number | null,
+): Promise<string | undefined> {
+    if (typeof sourceImageUrl !== "string" || sourceImageUrl.length === 0) return undefined;
+    if (sourceImageUrl.startsWith("data:image/")) return sourceImageUrl;
+    if (!sourceImageUrl.startsWith("http")) return undefined;
+    if (!isAllowedStyleReferenceUrl(sourceImageUrl)) {
+        // SSRF guard: refuse to fetch anything that isn't an allowlisted storage host.
+        console.warn(
+            `[reflowImage] source image URL rejected (not an allowlisted https storage host; ` +
+            `value="${sourceImageUrl}") for gen=${generationId} item=${idx}. Proceeding without it.`,
+        );
+        return undefined;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), STYLE_REF_FETCH_TIMEOUT_MS);
+    try {
+        const response = await fetch(sourceImageUrl, { signal: controller.signal });
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status} ${response.statusText}`);
+        }
+        const contentType = response.headers.get("content-type");
+        if (!contentType || !contentType.startsWith("image/")) {
+            throw new Error(`non-image content-type "${contentType ?? "none"}"`);
+        }
+        const buffer = await response.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString("base64");
+        return `data:${contentType};base64,${base64}`;
+    } catch (fetchErr: unknown) {
+        const aborted = fetchErr instanceof Error && fetchErr.name === "AbortError";
+        const msg = aborted
+            ? `timed out after ${STYLE_REF_FETCH_TIMEOUT_MS}ms`
+            : fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+        console.warn(
+            `[reflowImage] failed to download source image (value="${sourceImageUrl}") ` +
+            `for gen=${generationId} item=${idx}: ${msg}. Proceeding without it.`,
+        );
+        return undefined;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 export async function reflowImageHandler(
     request: CallableRequest<ReflowImageRequest>,
     deps: ReflowImageDeps,
 ): Promise<ReflowImageResponse> {
     const { db, admin, geminiCaller, openaiApiKey } = deps;
+    const modelProvider = deps.modelProvider ?? MODEL_PROVIDER;
 
     const { HttpsError } = await import("firebase-functions/v2/https");
 
@@ -232,13 +291,21 @@ export async function reflowImageHandler(
     // ─── Decide route first so credit pre-check uses the correct per-route cost ───
     const decision = decideMethod(sourceRatio, targetRatio, method);
 
-    // ─── Pre-flight credit check (FR-017): charge by the route the router actually chose ───
+    // OpenAI visual path: reflow is an EDIT-RECOMPOSE — the original rendered image is sent
+    // to gpt-image-2 images.edit and the layout is recomposed for the target ratio (true
+    // layout adaptation with platform safe zones), preserving the rendered hero/colors/text.
+    // This replaces the previous forced-outpaint behavior. The auto router's outpaint/rerender
+    // decision is ignored on OpenAI (used only for the Gemini path below). No fallback —
+    // a failed recompose returns its error cleanly.
+    const editRecompose = modelProvider === "openai";
+
+    // ─── Pre-flight credit check (FR-017): charge by the route that will actually run ───
     // Reserving the rerender bound for every auto-routed outpaint would falsely reject users
     // who have enough credits for the chosen route but not the higher fallback route. If a
     // fallback is later needed and credits run short, the per-item atomic transaction's
     // commit-time re-check (deductAndPersist) catches it and that single item fails cleanly
     // (best-effort partial persistence), without blocking sibling items.
-    const perItemCost = costForMethod(decision.chosenMethod);
+    const perItemCost = editRecompose ? EDIT_RECOMPOSE_CREDIT_COST : costForMethod(decision.chosenMethod);
     const maxCost = perItemCost * activeItems.length;
     const userRef = db.collection("users").doc(creditOwnerUid);
     if (maxCost > 0) {
@@ -262,6 +329,7 @@ export async function reflowImageHandler(
                 decision,
                 geminiCaller,
                 openaiApiKey,
+                editRecompose,
             });
         },
     );
@@ -323,8 +391,9 @@ async function executeItemReflow(args: {
     decision: { magnitude: number; chosenMethod: "outpaint" | "rerender"; isUserOverride: boolean };
     geminiCaller: GeminiCaller;
     openaiApiKey: string;
+    editRecompose?: boolean;
 }): Promise<ReflowOutcome> {
-    const { item, generationId, targetRatio, sourceRatio, genData, decision, geminiCaller, openaiApiKey } = args;
+    const { item, generationId, targetRatio, sourceRatio, genData, decision, geminiCaller, openaiApiKey, editRecompose } = args;
     const idx = item.itemIndex;
 
     // Outpaint needs a real source image: either an http(s) URL (downloaded) or a
@@ -338,58 +407,26 @@ async function executeItemReflow(args: {
         item.sourceImageUrl.length > 0 &&
         item.sourceImageUrl !== "pending_upload" &&
         (item.sourceImageUrl.startsWith("http") || item.sourceImageUrl.startsWith("data:image/"));
-    // A base64 data URL can also seed the rerender path as a style/composition
-    // reference so a from-plan rerender stays coherent with the original render.
-    let styleRefForRerender: string | undefined =
-        typeof item.sourceImageUrl === "string" && item.sourceImageUrl.startsWith("data:image/")
-            ? item.sourceImageUrl
-            : undefined;
-    // FIX B: an http(s) Storage URL is also a valid style reference (the common
-    // saved/reloaded case where the displayed image is a Storage URL, not base64).
-    // Download it and inline it as base64 so rerenderFromPlan can anchor the from-plan
-    // render on the original image instead of regenerating blind. Best-effort: if the
-    // fetch fails, fall through with no reference (still better than crashing).
-    if (
-        !styleRefForRerender &&
-        typeof item.sourceImageUrl === "string" &&
-        item.sourceImageUrl.startsWith("http")
-    ) {
-        if (!isAllowedStyleReferenceUrl(item.sourceImageUrl)) {
-            // SSRF guard: refuse to fetch anything that isn't an allowlisted storage host.
-            console.warn(
-                `[reflowImage] style reference URL rejected (not an allowlisted https storage host; ` +
-                `value="${item.sourceImageUrl}") for gen=${generationId} item=${idx}. ` +
-                `Proceeding without a style reference.`,
-            );
-        } else {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), STYLE_REF_FETCH_TIMEOUT_MS);
-            try {
-                const response = await fetch(item.sourceImageUrl, { signal: controller.signal });
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status} ${response.statusText}`);
-                }
-                const contentType = response.headers.get("content-type");
-                if (!contentType || !contentType.startsWith("image/")) {
-                    throw new Error(`non-image content-type "${contentType ?? "none"}"`);
-                }
-                const buffer = await response.arrayBuffer();
-                const base64 = Buffer.from(buffer).toString("base64");
-                styleRefForRerender = `data:${contentType};base64,${base64}`;
-            } catch (fetchErr: unknown) {
-                const aborted = fetchErr instanceof Error && fetchErr.name === "AbortError";
-                const msg = aborted
-                    ? `timed out after ${STYLE_REF_FETCH_TIMEOUT_MS}ms`
-                    : fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
-                console.warn(
-                    `[reflowImage] failed to download http style reference (value="${item.sourceImageUrl}") ` +
-                    `for gen=${generationId} item=${idx}: ${msg}. Proceeding without a style reference.`,
-                );
-            } finally {
-                clearTimeout(timer);
-            }
-        }
+    // A base64 data URL can also seed the rerender / edit-recompose paths as the source/style
+    // reference so the result stays coherent with the original render. Resolve the displayed
+    // image to a base64 data URL: a data: URL passes through; an http(s) Storage URL is
+    // downloaded and inlined (best-effort — undefined if the fetch fails / host disallowed).
+    const styleRefForRerender: string | undefined =
+        await resolveSourceImageToDataUrl(item.sourceImageUrl, generationId, idx);
+
+    // ─── OpenAI EDIT-RECOMPOSE route ───
+    // Send the original rendered image to gpt-image-2 images.edit and recompose the layout
+    // for the target ratio. No fallback to outpaint/rerender — a failure returns cleanly.
+    if (editRecompose) {
+        return executeEditRecompose({
+            generationId, targetRatio, genData, geminiCaller, openaiApiKey,
+            itemIndex: idx,
+            sourceImageBase64: styleRefForRerender,
+        });
     }
+
+    // Gemini auto path: reroute an auto-chosen outpaint to rerender when the source image is
+    // missing/unusable (outpaint would have nothing to extend).
     const route: "outpaint" | "rerender" =
         decision.chosenMethod === "outpaint" && !sourceUsableForOutpaint
             ? "rerender"
@@ -595,6 +632,60 @@ async function executeRerender(
     };
 }
 
+/**
+ * OpenAI EDIT-RECOMPOSE route. Sends the ORIGINAL rendered image to gpt-image-2 images.edit
+ * (via generateFinalAd's REFLOW-MODE block) to recompose the layout for the target ratio —
+ * true layout adaptation with platform safe zones, preserving the rendered hero/colors/text.
+ * No fallback: a missing source returns `no_source`; any other failure returns
+ * `edit_recompose_failed` cleanly (the caller never silently falls back to outpaint/rerender).
+ */
+async function executeEditRecompose(args: {
+    generationId: string;
+    targetRatio: AspectRatio;
+    genData: ReflowGenerationDoc;
+    geminiCaller: GeminiCaller;
+    openaiApiKey: string;
+    itemIndex: number | null;
+    // Source image pre-resolved to a base64 data URL by executeItemReflow. May be undefined
+    // when the displayed image could not be resolved (missing / pending / disallowed host).
+    sourceImageBase64: string | undefined;
+}): Promise<ReflowOutcome> {
+    const { generationId, targetRatio, genData, geminiCaller, openaiApiKey, itemIndex, sourceImageBase64 } = args;
+
+    if (!sourceImageBase64) {
+        return {
+            itemIndex, success: false, method: null,
+            fallbackFrom: null, fallbackReason: null,
+            outputUrl: null, creditsCharged: 0,
+            errorCode: "no_source",
+            errorMessage: "No usable source image to recompose (image still uploading or unavailable).",
+        };
+    }
+
+    try {
+        const result = await editRecomposeFromPlan({
+            generationId, targetRatio, itemIndex,
+            genData, geminiCaller, openaiApiKey,
+            sourceImageBase64,
+        });
+        return {
+            itemIndex, success: true, method: "edit_recompose",
+            fallbackFrom: null, fallbackReason: null,
+            outputUrl: result.outputUrl,
+            creditsCharged: result.creditsCharged,
+            brandColorReinforced: result.brandColorReinforced,
+        };
+    } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+            itemIndex, success: false, method: null,
+            fallbackFrom: null, fallbackReason: null,
+            outputUrl: null, creditsCharged: 0,
+            errorCode: "edit_recompose_failed", errorMessage,
+        };
+    }
+}
+
 async function deductAndPersist(args: {
     db: FirebaseFirestore.Firestore;
     admin: typeof import("firebase-admin");
@@ -614,8 +705,12 @@ async function deductAndPersist(args: {
         sourceRatio,
         targetRatio,
         magnitude: decision.magnitude,
-        method: outcome.method as "outpaint" | "rerender",
-        userOverride: decision.isUserOverride ? (outcome.method as "outpaint" | "rerender") : null,
+        method: outcome.method as "outpaint" | "rerender" | "edit_recompose",
+        // userOverride only records explicit outpaint/rerender overrides; edit_recompose is an
+        // engine-routed method (never a user choice) so it never populates this field.
+        userOverride: decision.isUserOverride && (outcome.method === "outpaint" || outcome.method === "rerender")
+            ? outcome.method
+            : null,
         fallbackFrom: outcome.fallbackFrom,
         fallbackReason: outcome.fallbackReason,
         itemIndex: outcome.itemIndex,

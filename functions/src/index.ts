@@ -34,6 +34,8 @@ import { createStripePortalSessionImpl } from "./stripe/stripePortal.js";
 import { notifyGHL, URL_BY_EVENT_TEMPLATE } from "./billing/ghlBillingSync.js";
 import type { GHLEventType } from "./billing/ghlBillingSync.js";
 import { STRIPE_PRICE_TO_PLAN } from "./stripe/stripeClient.js";
+import { createOpenAIImageCaller } from "./openAIImageCaller.js";
+import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL } from "./modelConfig.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
@@ -3870,9 +3872,15 @@ function createGeminiCaller(apiKey: string) {
     return async (params: { model: string; contents: any; config?: any }) => {
         const { GoogleGenAI } = await import("@google/genai");
         const ai = new GoogleGenAI({ apiKey });
+        // Strip the OpenAI-only _isPersonalPhoto marker (set on Box A parts in generators)
+        // so it never reaches the Gemini API — keeps the MODEL_PROVIDER='gemini' revert safe.
+        type ContentPart = { _isPersonalPhoto?: boolean } & Record<string, unknown>;
+        const contents = Array.isArray(params.contents?.parts)
+            ? { ...params.contents, parts: params.contents.parts.map(({ _isPersonalPhoto, ...rest }: ContentPart) => rest) }
+            : params.contents;
         const response = await ai.models.generateContent({
             model: params.model,
-            contents: params.contents,
+            contents,
             config: params.config,
         });
         // Normalize response to match what generators expect
@@ -3897,6 +3905,19 @@ function createGeminiCaller(apiKey: string) {
                 }
             }))
         };
+    };
+}
+
+// Helper: Creates a model-aware routing caller that sends VISUAL_MODEL calls to
+// OpenAI (when MODEL_PROVIDER==='openai') and everything else to Gemini.
+function createVisualRoutingCaller(geminiKey: string, openaiKey: string) {
+    const gemini = createGeminiCaller(geminiKey);
+    const openai = createOpenAIImageCaller(openaiKey);
+    return async (params: { model: string; contents: any; config?: any }) => {
+        if (MODEL_PROVIDER === "openai" && params.model === VISUAL_MODEL) {
+            return openai(params);
+        }
+        return gemini(params);
     };
 }
 
@@ -4233,7 +4254,7 @@ export const serverGenerateFinalAd = onCall({
         requireBatch: _batchTotal != null,
         batchQuantity: _batchTotal ?? undefined,
     });
-    generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    generators.setGeminiCaller(createVisualRoutingCaller(geminiApiKey.value(), openaiApiKey.value()));
     generators.setOpenAIKey(openaiApiKey.value());
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     await populateSourceColdAdBrandColors(request.auth.uid, inputs);
@@ -4334,24 +4355,33 @@ export const reflowImage = onCall({
     memory: "2GiB",
     cors: true,
 }, async (request: CallableRequest) => {
-    return reflowImageHandler(request, { db: admin.firestore(), admin, geminiCaller: createGeminiCaller(geminiApiKey.value()), openaiApiKey: openaiApiKey.value() });
+    return reflowImageHandler(request, { db: admin.firestore(), admin, geminiCaller: createVisualRoutingCaller(geminiApiKey.value(), openaiApiKey.value()), openaiApiKey: openaiApiKey.value() });
 });
 
 // ─── MAGIC SELECTOR: Region-targeted image editing ──────────────────────
 export const serverEditRegion = onCall({
     region: "europe-west1",
-    secrets: [geminiApiKey],
-    timeoutSeconds: 120,
+    secrets: [geminiApiKey, openaiApiKey],
+    timeoutSeconds: 300,
     memory: "2GiB",
     cors: true,
     maxInstances: 20,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { imageBase64, region, editMode, editPayload, ratio } = request.data;
+    const { imageBase64, region, editMode, editPayload, ratio, personalPhotos } = request.data;
 
     if (!imageBase64 || !region || !editMode) {
         throw new HttpsError("invalid-argument", "Missing imageBase64, region, or editMode.");
     }
+
+    // FIX C (ISSUE 2 — face lock in the edit path): the original hero photos (Box A) are
+    // passed as independent ground-truth face anchors so an edit near the face cannot let the
+    // identity drift. Only real inline/HTTP images count (same guard as generators.ts).
+    const isRealImage = (v: any): v is string =>
+        typeof v === 'string' && (v.startsWith('data:image/') || v.startsWith('http'));
+    const faceRefs: string[] = Array.isArray(personalPhotos)
+        ? personalPhotos.filter(isRealImage).slice(0, 5)
+        : [];
 
     const { xPct, yPct, wPct, hPct } = region;
     const x2 = xPct + wPct;
@@ -4413,19 +4443,43 @@ Rules:
     // Append universal aspect ratio preservation
     instruction += `\n\n⚠️ CRITICAL: The output image MUST have the EXACT SAME aspect ratio and dimensions as the input image. This is a ${ratio || '1:1'} image. Do NOT change it to square or any other ratio.`;
 
-    generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    // FIX C (ISSUE 2): when hero photos are attached, lock the face. The extra reference
+    // images follow the base image in the parts array (the base stays first so it remains the
+    // image being edited); this block tells the model what they are and forbids face drift.
+    if (faceRefs.length > 0) {
+        instruction += `\n\n⚠️⚠️ THE HERO'S FACE IS INVIOLABLE: ${faceRefs.length} reference photo(s) of the hero are attached AFTER the image being edited. Any human face in the result MUST keep IDENTICAL facial structure, bone structure, features, skin tone, age, and identity to those reference photos. Do NOT reinterpret, alter, soften, smooth, or reimagine any facial feature. The reference photos are the absolute ground truth for the face. Use them for FACE IDENTITY ONLY — ignore their clothing and background. Everything outside the edited region must remain pixel-identical.`;
+    }
+
+    generators.setGeminiCaller(createVisualRoutingCaller(geminiApiKey.value(), openaiApiKey.value()));
 
     try {
         const rawB64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
-        const callGemini = createGeminiCaller(geminiApiKey.value());
-        const response = await callGemini({
+        const getMime = (dataUrl: string): string => {
+            const m = dataUrl.match(/^data:(image\/\w+);base64,/);
+            return m ? m[1] : 'image/png';
+        };
+        // Base image first (the image being edited), then any hero face anchors.
+        // Preserve the base image's real MIME when it arrived as a data URL.
+        const baseMime = imageBase64.startsWith('data:') ? getMime(imageBase64) : 'image/png';
+        const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [
+            { inlineData: { mimeType: baseMime, data: rawB64 } },
+            { text: instruction },
+        ];
+        for (const ref of faceRefs) {
+            if (ref.startsWith('data:image/')) {
+                parts.push({ inlineData: { mimeType: getMime(ref), data: ref.split(',')[1] } });
+            } else if (/^https?:\/\//i.test(ref)) {
+                // faceRefs allows persisted/Storage http(s) URLs (isRealImage) — fetch + encode
+                // them (guarded against SSRF/size) so face locking works for persisted anchors,
+                // not just inline data URLs.
+                const fetched = await generators.fetchRemoteImageAsBase64(ref, "face anchor");
+                if (fetched) parts.push({ inlineData: { mimeType: fetched.mimeType, data: fetched.data } });
+            }
+        }
+        const editCaller = createVisualRoutingCaller(geminiApiKey.value(), openaiApiKey.value());
+        const response = await editCaller({
             model: VISUAL_MODEL,
-            contents: {
-                parts: [
-                    { inlineData: { mimeType: "image/png", data: rawB64 } },
-                    { text: instruction },
-                ]
-            },
+            contents: { parts },
             config: {
                 responseModalities: ['TEXT', 'IMAGE'],
                 thinkingConfig: { thinkingLevel: 'High' },

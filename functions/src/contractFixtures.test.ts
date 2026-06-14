@@ -1810,7 +1810,9 @@ async function testT011SingleReflow() {
 
         const result = await reflowImageHandler(
             { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "9:16", method: "auto", scope: "single" } } as unknown as Parameters<typeof reflowImageHandler>[0],
-            { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+            // modelProvider:"gemini" exercises the auto-router's rerender route. On the live
+            // OpenAI path reflow is force-routed to outpaint (rerender is never called).
+            { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy", modelProvider: "gemini" } as unknown as Parameters<typeof reflowImageHandler>[1],
         );
 
         assert.equal(result.outcomes.length, 1, "single reflow returns 1 outcome");
@@ -1861,7 +1863,7 @@ async function testT020BatchReflow() {
 
         const result = await reflowImageHandler(
             { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "9:16", method: "auto", scope: "batch_all" } } as unknown as Parameters<typeof reflowImageHandler>[0],
-            { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+            { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy", modelProvider: "gemini" } as unknown as Parameters<typeof reflowImageHandler>[1],
         );
 
         assert.equal(result.outcomes.length, 4, "batch must return 4 outcomes");
@@ -1914,7 +1916,7 @@ async function testT023CarouselReflow() {
 
             const result = await reflowImageHandler(
                 { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "1:1", method: "auto", scope: "carousel_all" } } as unknown as Parameters<typeof reflowImageHandler>[0],
-                { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+                { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy", modelProvider: "gemini" } as unknown as Parameters<typeof reflowImageHandler>[1],
             );
 
             assert.equal(result.outcomes.length, 7, "carousel_all must return 7 outcomes");
@@ -1953,7 +1955,7 @@ async function testT023CarouselReflow() {
 
             const result = await reflowImageHandler(
                 { auth: { uid: "user1" }, data: { generationId: "gen1", targetAspectRatio: "1:1", method: "auto", scope: "carousel_slide", slideIndex: 2 } } as unknown as Parameters<typeof reflowImageHandler>[0],
-                { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy" } as unknown as Parameters<typeof reflowImageHandler>[1],
+                { db: mockDb, admin: mockReflowAdmin(), geminiCaller: (async () => ({})) as any, openaiApiKey: "dummy", modelProvider: "gemini" } as unknown as Parameters<typeof reflowImageHandler>[1],
             );
 
             assert.equal(result.outcomes.length, 1, "carousel_slide must return 1 outcome");

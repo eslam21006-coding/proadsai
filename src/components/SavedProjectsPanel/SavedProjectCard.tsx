@@ -7,21 +7,30 @@ import { stepsWithData, type AppPhase } from "../../lib/projectStepsData";
 import { cardLabels } from "../../i18n/savedProjects";
 import ProjectStatusBadge from "./ProjectStatusBadge";
 import ProjectStepNavigator from "./ProjectStepNavigator";
+import { bulkLabels } from "../../i18n/savedProjects";
 
 interface Props {
   project: SavedProject;
   onLoad: (project: SavedProject, targetPhase?: AppPhase) => void;
   onDelete: (e: React.MouseEvent, id: string) => void;
+  // Multi-select (ISSUE 1): when selectable, a checkbox is shown and clicking the
+  // card toggles selection instead of opening the project.
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
 }
 
-const SavedProjectCard: React.FC<Props> = ({ project, onLoad, onDelete }) => {
+const SavedProjectCard: React.FC<Props> = ({ project, onLoad, onDelete, selectable = false, selected = false, onToggleSelect }) => {
   const { dir, lang } = useT();
   const hasThumbnail = !!project.thumbnailUrl;
   const steps = stepsWithData(project);
   const langKey = (lang === "ar" ? "ar" : "en") as "en" | "ar";
   const untitledLabel = cardLabels.untitled[langKey];
   const deleteLabel = cardLabels.deleteAction[langKey];
+  const selectAria = bulkLabels.selectAria[langKey];
 
+  // Card body always opens the project; selection is driven solely by the checkbox so
+  // the primary "click to open" action is never hijacked (ISSUE 1).
   const handleActivate = () => onLoad(project);
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     // Only react to Enter/Space when focus is on the wrapper itself —
@@ -39,12 +48,22 @@ const SavedProjectCard: React.FC<Props> = ({ project, onLoad, onDelete }) => {
       role="button"
       tabIndex={0}
       aria-label={project.name || untitledLabel}
-      className="group relative bg-slate-900/50 border border-slate-800 rounded-lg overflow-hidden cursor-pointer hover:border-slate-600 focus:outline-none focus:ring-2 focus:ring-slate-500 transition-colors"
+      className={`group relative bg-slate-900/50 border rounded-lg overflow-hidden cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-500 transition-colors ${selected ? "border-blue-500 ring-1 ring-blue-500/40" : "border-slate-800 hover:border-slate-600"}`}
       onClick={handleActivate}
       onKeyDown={handleKeyDown}
       dir={dir}
     >
       <div className="flex items-center gap-3 p-2">
+        {selectable && (
+          <input
+            type="checkbox"
+            checked={selected}
+            aria-label={selectAria}
+            onClick={(e) => e.stopPropagation()}
+            onChange={() => onToggleSelect?.(project.id)}
+            className="flex-shrink-0 w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0 cursor-pointer accent-blue-600"
+          />
+        )}
         <div className="w-16 h-16 flex-shrink-0 rounded-md overflow-hidden bg-slate-800 flex items-center justify-center">
           {hasThumbnail ? (
             <img

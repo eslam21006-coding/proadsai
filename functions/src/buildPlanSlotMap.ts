@@ -383,14 +383,22 @@ export function parseBuildPlanEnvelope(rawBuildPlan: string): BuildPlanEnvelope 
         technicalPrompt = raw.slice(tpStart + TECHNICAL_PROMPT_START.length, tpEnd).trim();
     }
 
-    const start = raw.indexOf(BUILD_PLAN_MACHINE_BLOCK_START);
-    const end = raw.indexOf(BUILD_PLAN_MACHINE_BLOCK_END);
+    // Slice the [[TECHNICAL_PROMPT]] block out of the returned blueprint, mirroring the
+    // machine-plan block removal below. The prose is render direction, not blueprint content:
+    // if it stays in the blueprint, downstream sanitizers mangle the markers before
+    // stripTechnicalPrompt can find them and the prose bleeds onto renders as visible text.
+    const sansTp = (tpStart !== -1 && tpEnd !== -1 && tpEnd > tpStart)
+        ? `${raw.slice(0, tpStart)}${raw.slice(tpEnd + TECHNICAL_PROMPT_END.length)}`
+        : raw;
+
+    const start = sansTp.indexOf(BUILD_PLAN_MACHINE_BLOCK_START);
+    const end = sansTp.indexOf(BUILD_PLAN_MACHINE_BLOCK_END);
     if (start === -1 || end === -1 || end <= start) {
-        return { blueprint: raw.trim(), machinePlan: null, technicalPrompt };
+        return { blueprint: sansTp.trim(), machinePlan: null, technicalPrompt };
     }
 
-    const blueprint = `${raw.slice(0, start)}${raw.slice(end + BUILD_PLAN_MACHINE_BLOCK_END.length)}`.trim();
-    const jsonBlock = raw.slice(start + BUILD_PLAN_MACHINE_BLOCK_START.length, end).trim();
+    const blueprint = `${sansTp.slice(0, start)}${sansTp.slice(end + BUILD_PLAN_MACHINE_BLOCK_END.length)}`.trim();
+    const jsonBlock = sansTp.slice(start + BUILD_PLAN_MACHINE_BLOCK_START.length, end).trim();
     try {
         const parsed = JSON.parse(jsonBlock);
         const fallbackOwnership = mergeContentOwnership({}, parsed?.ownership || {});

@@ -1,7 +1,7 @@
 // functions/src/reflowRerender.ts — full-pipeline rerender-from-plan wrapper (HOTFIX-F)
 
 import type { AspectRatio, GeminiCaller } from "./generators.js";
-import { generateFinalAd } from "./generators.js";
+import { generateFinalAd, INTERNAL_REFLOW_TOKEN } from "./generators.js";
 
 export class NoPlanError extends Error {
     public readonly fallbackReason = "no_plan" as const;
@@ -12,6 +12,7 @@ export class NoPlanError extends Error {
 }
 
 const REFLOW_CREDIT_COST = 5;
+export const EDIT_RECOMPOSE_CREDIT_COST = 5;
 
 /**
  * Generation document shape used by rerenderFromPlan. Loose by design — generation
@@ -237,6 +238,133 @@ export async function rerenderFromPlan(args: {
     return {
         outputUrl,
         creditsCharged: REFLOW_CREDIT_COST,
+        brandColorReinforced,
+    };
+}
+
+/**
+ * Map a saved generation record back to the AdInputs shape generateFinalAd expects.
+ * Shared by rerenderFromPlan (above) and editRecomposeFromPlan (below) so both routes
+ * reconstruct adMode / targetAudience / adLanguage / art-direction fields identically.
+ */
+function reconstructInputs(genData: RerenderGenData): Record<string, unknown> {
+    const savedInput = (genData.input ?? {}) as Record<string, unknown>;
+    return {
+        ...savedInput,
+        adMode: savedInput.adMode ?? savedInput.adType,
+        targetAudience: savedInput.targetAudience ?? savedInput.niche,
+        adLanguage: savedInput.adLanguage ?? savedInput.language,
+        offerType: savedInput.offerType ?? savedInput.offer,
+        visualSubStyle: savedInput.visualSubStyle,
+        adTone: savedInput.adTone,
+        visualStyleFamily: savedInput.visualStyleFamily,
+        universeMode: savedInput.universeMode,
+        preferredUniverse: savedInput.preferredUniverse,
+    };
+}
+
+/**
+ * EDIT-RECOMPOSE reflow (OpenAI path). Unlike rerenderFromPlan (which regenerates the ad
+ * from the saved buildPlan text and only attaches the original as a coherence reference),
+ * this sends the ORIGINAL RENDERED IMAGE to gpt-image-2 images.edit via generateFinalAd's
+ * `base64ToEdit` + REFLOW-MODE block — true layout adaptation that preserves the rendered
+ * hero, colors, and text while recomposing for the target ratio. The deprecated REFLOW gate
+ * (FR-026) is cleared by embedding INTERNAL_REFLOW_TOKEN in the editInstruction.
+ */
+export async function editRecomposeFromPlan(args: {
+    generationId: string;
+    targetRatio: AspectRatio;
+    itemIndex: number | null;
+    genData: RerenderGenData;
+    geminiCaller: GeminiCaller;
+    openaiApiKey: string;
+    // Original rendered image as a base64 data URL (data:image/...;base64,...). Sent to
+    // gpt-image-2 images.edit as the visual source to recompose.
+    sourceImageBase64: string;
+}): Promise<{ outputUrl: string; creditsCharged: number; brandColorReinforced: boolean }> {
+    const { generationId, targetRatio, itemIndex, genData, geminiCaller, openaiApiKey, sourceImageBase64 } = args;
+
+    const inputs = reconstructInputs(genData);
+    const approvedTov: string = genData.output?.fullResponse ?? "";
+    const resolvedUniverse: string = genData.input?.tone ?? "";
+
+    let buildPlan = extractBuildPlan(genData, itemIndex, generationId);
+
+    const brandPrimary = typeof inputs.brandColorPrimary === "string" ? inputs.brandColorPrimary.trim() : "";
+    const brandSecondary = typeof inputs.brandColorSecondary === "string" ? inputs.brandColorSecondary.trim() : "";
+    let brandColorReinforced = false;
+    if (brandPrimary || brandSecondary) {
+        const parts: string[] = [];
+        if (brandPrimary) parts.push(`Primary: ${brandPrimary}`);
+        if (brandSecondary) parts.push(`Secondary: ${brandSecondary}`);
+        buildPlan += `\n\nBRAND COLOR LOCK: Maintain exact brand palette — ${parts.join(", ")}.`;
+        brandColorReinforced = true;
+    }
+
+    const generate = _generateFinalAdOverride ?? generateFinalAd;
+    if (!_generateFinalAdOverride) {
+        const { setGeminiCaller, setOpenAIKey } = await import("./generators.js");
+        setGeminiCaller(geminiCaller);
+        setOpenAIKey(openaiApiKey);
+    }
+
+    // Carousel slides: rebuild the user's EDITED per-slide copy as a textOverride so the
+    // recompose keeps the edited hooks (identical pattern to rerenderFromPlan).
+    let textOverride: Parameters<typeof generateFinalAd>[8] | undefined;
+    if (itemIndex !== null) {
+        const slides = genData.output?.carouselSlides;
+        const slideCopy = Array.isArray(slides) ? slides[itemIndex]?.copy : undefined;
+        if (slideCopy) {
+            const cleanField = (s: string): string => (s || "").replace(/\|\|\|/g, "").trim();
+            const splitCta = (raw: string): { ctaName: string; benefitText: string } => {
+                if (!raw.includes("|||")) return { ctaName: raw.trim(), benefitText: "" };
+                const [c, b] = raw.split("|||");
+                return { ctaName: c.trim(), benefitText: b?.trim() || "" };
+            };
+            const slideCount = Array.isArray(slides) ? slides.length : 0;
+            const isLastSlide = itemIndex === slideCount - 1;
+            const fallbackCta = typeof inputs.cta === "string" ? inputs.cta : "";
+            const ctaSplit = splitCta(slideCopy.ctaText || fallbackCta || "");
+            textOverride = {
+                hookText: cleanField(slideCopy.hookText || ""),
+                subheadText: cleanField(slideCopy.subheadText || ""),
+                ctaName: isLastSlide ? ctaSplit.ctaName : "",
+                benefitText: isLastSlide ? (cleanField(slideCopy.benefitText || "") || ctaSplit.benefitText) : "",
+            };
+        }
+    }
+
+    // editInstruction must (a) contain "REFLOW" to trigger generateFinalAd's REFLOW-MODE
+    // block, and (b) embed INTERNAL_REFLOW_TOKEN to clear the FR-026 deprecation gate. The
+    // REFLOW-MODE block itself supplies the ratio adaptation, text-preservation, and safe-zone
+    // instructions — so a terse trigger string is all that's needed here.
+    const editInstruction = `${INTERNAL_REFLOW_TOKEN} REFLOW — adapt this ad to ${targetRatio}.`;
+
+    const result = await generate(
+        buildPlan,
+        approvedTov,
+        inputs as Parameters<typeof generateFinalAd>[2],
+        resolvedUniverse,
+        targetRatio,
+        editInstruction,    // editInstruction — REFLOW trigger + internal bypass token
+        sourceImageBase64,  // base64ToEdit — the original rendered image (→ images.edit)
+        undefined,          // styleReference (unused on this route)
+        textOverride,       // user's EDITED per-slide copy (carousel) — undefined for single/legacy
+        undefined,          // reflowInstruction (unused; REFLOW-MODE block handles consistency)
+    );
+
+    if (!result.image) {
+        const errorCode = "errorCode" in result && typeof result.errorCode === "string" ? result.errorCode : "unknown";
+        throw new Error(`Edit-recompose failed for generation ${generationId}: ${errorCode}`);
+    }
+
+    const upload: StorageUploaderImpl = _storageUploaderOverride
+        ?? (async (b64, prefix) => (await import("./storageUpload.js")).saveBase64ToStorage(b64, prefix));
+    const outputUrl = await upload(result.image, "reflows");
+
+    return {
+        outputUrl,
+        creditsCharged: EDIT_RECOMPOSE_CREDIT_COST,
         brandColorReinforced,
     };
 }

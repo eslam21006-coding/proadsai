@@ -33,6 +33,89 @@ import { resolveBrandColors, type ResolveBrandColorsInput } from "./brandColorRe
 import { buildCarouselBrandConsistencyBlock, buildBatchBrandConsistencyBlock } from "./brandPromptBlocks.js";
 import { checkBrandColorCompliance } from "./brandColorCompliance.js";
 import { GenerationError } from "./types.js";
+import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL, OPENAI_SIZE_BY_ASPECT } from "./modelConfig.js";
+
+// ─── Safe remote-image fetch ────────────────────────────────────────────────
+// The edit / style / face-anchor reference paths may receive a remote URL
+// (persisted Storage render, server-uploaded blob) instead of a data URL. A
+// naive `fetch(url)` is an SSRF + resource-exhaustion vector: an attacker-
+// supplied URL could target internal hosts (cloud metadata 169.254.169.254,
+// loopback, RFC-1918) or stream an unbounded body. This guard rejects non-
+// http(s) and private/loopback/link-local hosts, enforces an AbortController
+// timeout, requires an image/* content-type, and caps the payload size. It
+// returns the decoded base64 + real MIME so callers preserve the source format
+// (previously every reference was force-tagged image/png, mis-decoding JPEGs).
+const REMOTE_IMAGE_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+const REMOTE_IMAGE_FETCH_TIMEOUT_MS = 12000;
+
+function isPrivateOrLocalHost(hostname: string): boolean {
+    const h = hostname.toLowerCase().replace(/^\[|\]$/g, ""); // strip IPv6 brackets
+    if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return true;
+    if (h === "::1" || h === "::") return true;
+    if (/^f[cd][0-9a-f]{2}:/.test(h) || /^fe80:/.test(h)) return true; // IPv6 ULA / link-local
+    const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (v4) {
+        const a = Number(v4[1]);
+        const b = Number(v4[2]);
+        if (a === 0 || a === 10 || a === 127) return true;
+        if (a === 169 && b === 254) return true; // link-local incl. cloud metadata
+        if (a === 172 && b >= 16 && b <= 31) return true;
+        if (a === 192 && b === 168) return true;
+        if (a >= 224) return true; // multicast / reserved
+    }
+    return false;
+}
+
+export async function fetchRemoteImageAsBase64(
+    rawUrl: string,
+    label = "remote image",
+): Promise<{ data: string; mimeType: string } | null> {
+    let url: URL;
+    try {
+        url = new URL(rawUrl);
+    } catch {
+        console.warn(`⚠️ ${label}: invalid URL — skipped`);
+        return null;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+        console.warn(`⚠️ ${label}: non-http(s) URL rejected — skipped`);
+        return null;
+    }
+    if (isPrivateOrLocalHost(url.hostname)) {
+        console.warn(`⚠️ ${label}: private/local host rejected — skipped`);
+        return null;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REMOTE_IMAGE_FETCH_TIMEOUT_MS);
+    try {
+        const resp = await fetch(url.toString(), { signal: controller.signal });
+        if (!resp.ok) {
+            console.warn(`⚠️ ${label}: fetch ${resp.status} — skipped`);
+            return null;
+        }
+        const contentType = (resp.headers.get("content-type") || "").split(";")[0].trim();
+        if (!/^image\//i.test(contentType)) {
+            console.warn(`⚠️ ${label}: non-image content-type "${contentType}" — skipped`);
+            return null;
+        }
+        const declaredLen = Number(resp.headers.get("content-length") || "0");
+        if (declaredLen && declaredLen > REMOTE_IMAGE_MAX_BYTES) {
+            console.warn(`⚠️ ${label}: declared size ${declaredLen} exceeds cap — skipped`);
+            return null;
+        }
+        const buf = Buffer.from(await resp.arrayBuffer());
+        if (buf.length > REMOTE_IMAGE_MAX_BYTES) {
+            console.warn(`⚠️ ${label}: size ${buf.length} exceeds cap — skipped`);
+            return null;
+        }
+        return { data: buf.toString("base64"), mimeType: contentType || "image/png" };
+    } catch (e) {
+        console.warn(`⚠️ ${label}: fetch failed — skipped:`, e);
+        return null;
+    } finally {
+        clearTimeout(timer);
+    }
+}
 
 // ─── Typed precedence-resolver argument builder ─────────────────────────────
 // Centralises the 4-source precedence shape so all 6 prompt-build sites and
@@ -97,6 +180,196 @@ function buildResolverExtra(inputs: AdInputs): {
 }
 
 /** Returns the active visual sub-style for the current style family, or null if not applicable */
+// Phase 025: the per-sub-style "BASE CANVAS" art-direction block, extracted so it can be
+// injected at the TOP of the OpenAI prompt — gpt-image-2 ignores it when buried ~15k chars
+// deep inside coreDesignRules and defaults to realistic photography. Returns '' when no
+// sub-style is active. NOTE: the inline copy inside coreDesignRules (gated to the Gemini
+// path) must stay in sync with this map.
+function resolveActiveStyleCanvas(inputs: AdInputs): string {
+    const sub = resolveVisualSubStyle(inputs);
+    if (!sub) return '';
+    const blocks: Record<string, string> = {
+        dark_cinematic: `
+⚠️⚠️⚠️ DARK CINEMATIC BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: deep black (#0A0A0F) to dark navy (#0D1B3E). This is a RENDERED SCENE — not a photo.
+SINGLE KEY LIGHT: casts visible directional shadow across 60%+ of the canvas.
+Key light MUST cast a colored rim glow on the hero.
+ATMOSPHERIC LAYERS (REQUIRED): smoke wisps, particles, or haze — not optional.
+FORBIDDEN: natural daylight, white/cream/grey backgrounds, pastel colors, stock photo backgrounds.
+=======================================================================`,
+        bright_illustrated: `
+⚠️⚠️⚠️ BRIGHT ILLUSTRATED BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: warm, vibrant, saturated — golden amber, rich cream, vivid illustrated color fields.
+MULTI-FILL LIGHTING: even, warm, inviting. No heavy shadows. Scene feels BRIGHT and OPTIMISTIC.
+Scene is ILLUSTRATED with painterly quality — not a dark photo, not a gritty render.
+FORBIDDEN: dark backgrounds, heavy shadow, smoke/haze, neon effects, black canvas.
+=======================================================================`,
+        mythic_epic: `
+⚠️⚠️⚠️ MYTHIC EPIC BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: rich jewel tones — emerald (#0B3D2E), royal purple (#1A0A3D),
+  crimson (#3D0A0A), or midnight gold (#2A1A00). Dark but RICHLY COLORED — never plain black.
+MULTIPLE COLORED LIGHT SOURCES: contrasting temperature lights (cold moonlight + warm fire glow).
+Volumetric light rays MUST be visible somewhere in the scene.
+MAGICAL PARTICLES: glowing embers, mystical sparks, or colored mist — REQUIRED for epic atmosphere.
+FORBIDDEN: plain black background, pastel backgrounds, flat/graphic style, studio aesthetics.
+=======================================================================`,
+        vintage_bw: `
+⚠️⚠️⚠️ VINTAGE B&W BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE image: hand-drawn pen-and-ink illustration. ZERO photorealistic rendering.
+GRAYSCALE ABSOLUTE: No color anywhere — not even subtle color tinting.
+THICK BLACK BORDER: Mandatory rectangular frame around the full composition.
+INK TECHNIQUE: Cross-hatching visible for all shading. Bold outlines on all elements.
+FORBIDDEN: Color, photorealism, modern rendering, smooth gradients, bokeh,
+           atmospheric particles, cinematic lighting.
+=======================================================================`,
+        vintage_sepia: `
+⚠️⚠️⚠️ VINTAGE SEPIA BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE image: hand-drawn pen-and-ink illustration in warm sepia monochrome.
+SEPIA ABSOLUTE: All tones in warm amber/brown range (#704214). Zero cool tones.
+AGED PAPER TEXTURE: Subtle parchment grain in lighter areas — timeworn quality.
+THICK WARM-BROWN BORDER: Mandatory rectangular frame in dark sepia tone.
+INK TECHNIQUE: Cross-hatching visible. Bold warm-brown outlines on all elements.
+FORBIDDEN: Cool greys, blue tones, photorealism, modern rendering,
+           bokeh, atmospheric particles, cinematic lighting.
+=======================================================================`,
+        luxury_magazine: `
+⚠️⚠️⚠️ LUXURY MAGAZINE COVER BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+BOLD SOLID DARK BACKGROUND: Deep navy (#1a1a3e), rich black (#0d0d0d),
+  warm dark grey (#2d2d2d), or deep teal (#0a3d3d). NOT white. NOT cream.
+HERO FILLS 70% OF FRAME: Tight crop waist-up. Shoulders span width.
+  Hero head extends into top 20% (overlapping masthead zone).
+PROFESSIONAL PORTRAIT LIGHTING: Rembrandt or butterfly/loop.
+  Hair light + rim light for separation. Face has DIMENSION (not flat).
+TEXT DENSITY: Cover lines fill ALL spaces around hero. Canvas feels FULL.
+FORBIDDEN: White background, negative space, empty canvas areas,
+           environmental scenes, full body shots, flat high-key lighting.
+=======================================================================`,
+        documentary_gritty: `
+⚠️⚠️⚠️ DOCUMENTARY GRITTY BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+DESATURATED REAL ENVIRONMENT: Saturation reduced 40-60%. Real location feel.
+FILM GRAIN: Visible across entire image — not optional. Mandatory texture.
+AVAILABLE LIGHT ONLY: No studio lighting. Imperfection is intentional.
+SLIGHT VIGNETTE: Edges darkened naturally. Photojournalism feel.
+FORBIDDEN: Studio lighting, glossy finish, saturated colors,
+           fantasy/neon effects, artificial particles.
+=======================================================================`,
+        neon_urban: `
+⚠️⚠️⚠️ NEON URBAN BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+NIGHT CITY ENVIRONMENT: Dark streets, wet pavement, colored neon reflections.
+MULTIPLE NEON SOURCES: At least 2 colors (pink, cyan, purple, amber) visible.
+HERO RIM-LIT: By at least one colored neon source — mandatory.
+DEEP BACKGROUND: Bokeh city lights behind scene.
+FORBIDDEN: Daylight, natural environments, pastel colors,
+           white/bright backgrounds, vintage aesthetics.
+=======================================================================`,
+        anime_manga: `
+⚠️⚠️⚠️ ANIME/MANGA BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+CEL-SHADED ILLUSTRATION: Flat color fills + bold black outlines throughout.
+VIBRANT ANIME PALETTE: Saturated, high-contrast. No desaturation.
+SPEED LINES: At least one concept MUST include action/speed lines.
+BOLD OUTLINES: Every element — hero, background, props — has ink outline.
+FORBIDDEN: Photorealism, cinematic lighting, film grain,
+           desaturation, watercolor, soft edges.
+=======================================================================`,
+        watercolor_dreamscape: `
+⚠️⚠️⚠️ WATERCOLOR DREAMSCAPE BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+WATERCOLOR WASH TECHNIQUE: Visible brush strokes, color bleeding at edges.
+SOFT DREAMY PALETTE: Lavender, rose, sage, soft gold ONLY.
+DIFFUSED SOFT LIGHT: No harsh shadows anywhere. Gentle luminosity.
+NO HARD EDGES: Everything flows softly — no sharp digital boundaries.
+FORBIDDEN: Dark backgrounds, neon, heavy shadow, photorealism,
+           bold aggressive type, sharp edges, film grain.
+=======================================================================`,
+        comic_book: `
+⚠️⚠️⚠️ COMIC BOOK BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+BEN-DAY HALFTONE DOTS: All shading uses halftone dot patterns — mandatory.
+BOLD BLACK OUTLINES: Every element has thick ink outline — no exceptions.
+4-COLOR PALETTE ONLY: Red (#E8001C), Yellow (#FFE600), Blue (#003087), Black.
+THICK PANEL BORDER: Mandatory rectangular frame around full composition.
+ACTION LINES: At least one directional action/speed line element — mandatory.
+FORBIDDEN: Soft gradients, photorealism, cinematic lighting,
+           watercolor, thin typography, more than 4 colors.
+=======================================================================`,
+        ugly_ad: `
+⚠️⚠️⚠️ UGLY AD BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: a raw phone screenshot, notepad, or plain flat color — deliberate anti-design.
+Hand-drawn red circle annotations, scribbled arrows, yellow highlighter on key words.
+System font or handwritten marker — NO professional typography. Imperfect, low-production, authentic.
+FORBIDDEN: editorial layout, studio lighting, gradients, metallic accents, polished composition.
+=======================================================================`,
+        cinematic_film_still: `
+⚠️⚠️⚠️ CINEMATIC FILM STILL BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: a frame from a movie — rich cinematic color grade, 35mm film grain (mandatory), shallow depth of field.
+Thin letterbox dark bars top and bottom. Motivated practical lighting; hero sharp, background melts into bokeh.
+Text reads like a film title card, integrated into the movie-frame composition.
+FORBIDDEN: flat stock-photo lighting, clean grain-free digital sharpness, bright high-key studio.
+=======================================================================`,
+        clean_corporate: `
+⚠️⚠️⚠️ CLEAN CORPORATE BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: neutral multi-stop gradient (grey/blue/cream) with clean even studio lighting. Apple/Nike/Shopify aesthetic.
+Premium commercial product-shot quality, generous negative space. Modern sans-serif text, perfect kerning.
+FORBIDDEN: cinematic/moody/dramatic lighting, fantasy, neon, film grain, smoke, particles, bokeh.
+=======================================================================`,
+        golden_hour_outdoor: `
+⚠️⚠️⚠️ GOLDEN HOUR OUTDOOR BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: a warm golden-hour outdoor scene. Amber backlight with a warm rim glow on the hero; soft landscape bokeh.
+Sun flare / light rays for atmosphere. Warm color palette throughout; any text scrim is warm-toned, never cold.
+FORBIDDEN: cold/blue tones, dark studio backdrops, neon, flat indoor lighting.
+=======================================================================`,
+        street_photography: `
+⚠️⚠️⚠️ STREET PHOTOGRAPHY BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: a real urban environment, candid documentary capture. Available city light, slightly desaturated natural palette.
+35mm lens feel — hero in focus against a softly busy street; slight motion energy. Text is a functional caption/subtitle overlay.
+FORBIDDEN: studio lighting, glossy polish, saturated fantasy colors, artificial particles.
+=======================================================================`,
+        pixel_retro_game: `
+⚠️⚠️⚠️ PIXEL RETRO GAME BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: 16-bit pixel art — visible pixel grid, limited (≤16-color) palette, parallax layered background.
+Game-UI framing: health/score bars, menu boxes. Text is a blocky monospaced pixel font inside UI boxes.
+FORBIDDEN: photorealism, smooth gradients, anti-aliased edges, cinematic lighting.
+=======================================================================`,
+        stained_glass: `
+⚠️⚠️⚠️ STAINED GLASS BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: a dark ground with jewel-toned BACKLIT glass panels glowing from behind. Thick dark lead lines separate every flat color zone.
+Colors: ruby, emerald, sapphire, amber, deep purple — all backlit. Text is integrated as a sacred-art inscription within the glass design.
+FORBIDDEN: photorealism, soft photographic gradients, bokeh, daylight stock backgrounds.
+=======================================================================`,
+        glitch_digital: `
+⚠️⚠️⚠️ GLITCH DIGITAL BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: a dark digital ground with horizontal glitch bands, RGB channel separation at edges, scanline interference, pixel-sort strips.
+Colors: cyan, magenta, neon green from the RGB splits against the dark base. Text is glitched (slight horizontal shift, RGB split) but still READABLE.
+FORBIDDEN: clean photorealism, natural daylight, soft pastel backgrounds, film grain.
+=======================================================================`,
+        synthwave_80s: `
+⚠️⚠️⚠️ SYNTHWAVE 80s BASE CANVAS (MANDATORY) ⚠️⚠️⚠️
+=======================================================================
+ENTIRE canvas: a pink→purple→blue gradient sky with a neon perspective grid floor and a striped neon sun on the horizon.
+Hero rim-lit by neon pink and cyan; optional palm silhouettes. Chrome/metallic text effects. 80s retro-futuristic energy throughout.
+FORBIDDEN: natural daylight, desaturated/realistic palettes, photorealistic stock backgrounds.
+=======================================================================`,
+    };
+    return blocks[sub] || '';
+}
+
 function resolveVisualSubStyle(
     inputs: AdInputs
 ): 'dark_cinematic' | 'bright_illustrated' | 'mythic_epic' | 'vintage_bw' | 'vintage_sepia'
@@ -1091,8 +1364,29 @@ function validateBuildPlanZones(
 }
 
 
+// FIX 2: Drop the heavy base64 media payload from inputs for the text-only pipeline steps
+// (TOV / concepts / build plan). Those steps NEVER send image bytes to any model — they only
+// branch on media PRESENCE (brandLogos.length, offerAssets.length, etc.) to shape the prompt.
+// We therefore preserve each array's LENGTH (so every presence branch behaves identically — zero
+// quality change) while replacing the multi-MB base64 strings with a tiny sentinel, so the photos
+// stop riding through these steps. generateFinalAd always receives the FULL, original-quality
+// inputs and is the only step that reads image content. (Emptying the arrays to [] would wrongly
+// flip the presence branches and strip logo / offer-asset awareness out of concepts & build plans.)
+function stripMediaFromInputs(inputs: AdInputs): AdInputs {
+    const dropPayload = (arr?: string[] | null): string[] | undefined =>
+        Array.isArray(arr) ? arr.map(() => 'media_omitted') : (arr ?? undefined);
+    return {
+        ...inputs,
+        personalPhotos: dropPayload(inputs.personalPhotos) as any,
+        brandLogos: dropPayload(inputs.brandLogos) as any,
+        offerAssets: dropPayload((inputs as any).offerAssets) as any,
+    };
+}
+
 // Step 2. Generate TOV -> NEEDS GEMINI 3 (Creative)
 export async function generateTOV(inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', previousOutput?: string, globalRefinement?: string, editFeedback?: string, editIndex?: string, editIntent?: 'simplify_terms' | 'shorten' | 'sharpen' | 'formalize' | 'change_angle' | 'change_cta' | 'change_subheadline' | 'change_headline' | 'freeform', rewriteScope?: 'wording_only' | 'cta_only' | 'subheadline_only' | 'hook_only' | 'full', semanticLock?: SemanticLock | null): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
+    // FIX 2: strip media payload (presence preserved) — TOV never uses hero photos/logos.
+    inputs = stripMediaFromInputs(inputs);
     let _tovRankingLinkage: RankingLinkage | null = null;
     async function _generateTOVInner(): Promise<string> {
         // ═══ REFERENCE IMAGE ANALYSIS (optional, non-blocking) ═══
@@ -2186,6 +2480,8 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
 // This saves your Gemini 3 Quota/Limits.
 
 export async function generateConcepts(approvedTov: string, inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', _previousOutput?: string, _globalRefinement?: string, editFeedback?: string, editIndex?: string): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
+    // FIX 2: strip media payload (presence preserved) — concepts only branch on logo/asset COUNT.
+    inputs = stripMediaFromInputs(inputs);
     let _conceptsRankingLinkage: RankingLinkage | null = null;
     async function _generateConceptsInner(): Promise<string> {
         const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
@@ -2363,6 +2659,7 @@ DO NOT return the other concepts.`;
         const prompt = `
 [VISUAL ARCHITECT V5.0]
       ${getLanguageInstruction(inputs.adLanguage || 'ar_fusha')}
+      ${isArabic(inputs.adLanguage) ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n⚠️ CONCEPT TEXT RULE: Do NOT describe the hero holding any glass, cup, or beverage vessel — not even juice, water, or coffee in a glass. If a prop is needed, use: a tablet, a book, a pen, prayer beads, or let hands be naturally at sides.\n` : ''}
       ${_rtConceptBlock ? `\n${_rtConceptBlock}\n` : ''}
       LANGUAGE MANDATE: ALL OUTPUT (Subject, Environment, Mood) MUST follow the language above. ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'ALL concept field content MUST be in Arabic — not English.' : ''}
       ${inputs.adTone ? `MOOD DIRECTION: ${getAdToneVisualMood(inputs.adTone)}` : ''}
@@ -3605,6 +3902,8 @@ export interface GenerateBuildPlanResult {
 }
 
 export async function generateBuildPlan(conceptRaw: string, selectedTov: string, inputs: AdInputs, resolvedUniverse: string, currentAspectRatio: AspectRatio, textOverride?: TextOverride): Promise<GenerateBuildPlanResult> {
+    // FIX 2: strip media payload (presence preserved) — the build plan only branches on logo COUNT.
+    inputs = stripMediaFromInputs(inputs);
     const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
     const _bpModes = (inputs as any).offerCreativeMode || ['standard_hero'];
     const _bpCheck = validateCombination(_bpModes, inputs.coldHookAngle);
@@ -3652,7 +3951,7 @@ export async function generateBuildPlan(conceptRaw: string, selectedTov: string,
     const prompt = `
   [BUILDER V6.0 — STRUCTURED BUILD PLAN]
       Synthesize this raw concept into a technical rendering blueprint.
-      ${isArabic(inputs.adLanguage) ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n` : ''}
+      ${isArabic(inputs.adLanguage) ? `\n${CULTURAL_COMPLIANCE_BLOCK}\n⚠️ CONCEPT TEXT RULE: Do NOT mention or describe alcohol, champagne, wine, cocktails, beer, bars, or nightclubs anywhere in the blueprint — not even as a prop, background detail, or visual-direction note. Replace any such element with a premium non-alcoholic alternative (Arabic coffee, tea, sparkling water, fresh juice).\n` : ''}
       ${_bpRtBlock ? `
 ${_bpRtBlock}
 ` : ''}
@@ -3948,7 +4247,7 @@ ${JSON.stringify(machinePlan)}`;
     };
 
     const copyFields: CopyFidelityFields = { hookText, subheadText, ctaName, benefitText };
-    const MAX_COPY_FIDELITY_ATTEMPTS = 3;
+    const MAX_COPY_FIDELITY_ATTEMPTS = MODEL_PROVIDER === "openai" ? 1 : 3;
     let bestMachinePlan = machinePlan;
     let bestFidelityResult: CopyFidelityResult | null = null;
     let copyFidelityPassed = false;
@@ -4047,6 +4346,17 @@ ${JSON.stringify(machinePlan)}`;
                 }
                 imageMatched.push(...matched);
                 console.log(`🕌 Cultural compliance scan (imagePrompt): replaced [${matched.join(", ")}]`);
+            }
+        }
+        // Champagne fix: scan the FULL blueprint (visual direction, zones, scene narrative —
+        // not only the [[TECHNICAL_PROMPT]] region) so a haram mention anywhere in the concept
+        // text is substituted before it can leak into the displayed/rendered plan.
+        {
+            const { cleaned: bpCleaned, matched: bpMatched } = scanAndReplace(finalMachinePlan.blueprint, "imagePrompt");
+            if (bpMatched.length > 0) {
+                finalMachinePlan.blueprint = bpCleaned;
+                imageMatched.push(...bpMatched);
+                console.log(`🕌 Cultural compliance scan (full blueprint): replaced [${bpMatched.join(", ")}]`);
             }
         }
         // ── T025: Post-parse cultural scan on ad-copy fields — WRITE CLEANED VALUES BACK. ──
@@ -4318,6 +4628,15 @@ export interface ResolutionTrace {
         resolvedImagePrompt: string | null;
         blueprintText: string | null;
     }>;
+    visualProvider?: {
+        provider: "openai" | "gemini";
+        model: string;
+        size?: string;
+        usedReferenceEdit?: boolean;
+        copyFidelityGated?: boolean;
+        arabicQaRan?: boolean;
+        timedOut?: boolean;
+    };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -4352,12 +4671,38 @@ export interface BuildFinalImagePromptInput {
     // slide's scene from THIS slide's own copy so every slide is visually distinct. Injected
     // at the very top of the prompt (highest priority).
     slideVisualDirective?: string;
+    // True when a style-reference image is attached (reflow / carousel anchor). On the OpenAI
+    // path this suppresses the BLUEPRINT block — the reference image already carries all visual
+    // direction, so dumping the (Arabic) blueprint prose only risks it bleeding onto the image.
+    styleReferencePresent?: boolean;
 }
 
 export interface BuildFinalImagePromptResult {
     textPrompt: string;
     imageParts: Array<{ inlineData: { mimeType: string; data: string } }>;
     trace: ResolutionTrace;
+}
+
+// Phase 025: On the OpenAI path the full technicalPrompt is NOT injected — gpt-image-2
+// renders camera/lens/render directives ("85mm lens, f/1.8, bokeh…") as literal text on
+// the image. But the technicalPrompt also carries campaign context (product name, offer,
+// target audience) that SHOULD reach the renderer. This strips only the camera/render-spec
+// lines and keeps the rest, so context survives without the directive bleed. Returns the
+// kept lines with no TECHNICAL_PROMPT: label (the label itself is a Gemini-only marker).
+const OPENAI_CAMERA_SPEC_KEYWORDS = [
+    "lens", "f/1.", "mm lens", "depth of field", "bokeh",
+    "photorealistic", "cinematic film still", "dynamic composition",
+    "high-contrast typography", "no textures on face", "pixel-perfect match",
+];
+function extractCampaignContextForOpenAI(tp: string): string {
+    return tp
+        .split(/\r?\n/)
+        .filter((line) => {
+            const lower = line.toLowerCase();
+            return !OPENAI_CAMERA_SPEC_KEYWORDS.some((kw) => lower.includes(kw));
+        })
+        .join("\n")
+        .trim();
 }
 
 export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): BuildFinalImagePromptResult {
@@ -4380,6 +4725,7 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
         imageParts,
         reflowInstruction,
         slideVisualDirective,
+        styleReferencePresent,
     } = params;
 
     // Brand-color injection happens upstream via the per-prompt blocks built
@@ -4406,7 +4752,6 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
     const _logoPlacements: LogoPlacement[] = parsedBpForLogos?.machinePlan?.logoPlacements ?? [];
     const _hasUI = _logoPlacements.some((p) => p.mode === 'ui');
     const _hasEnv = _logoPlacements.some((p) => p.mode === 'environmental');
-    const _logoBlock = `${_hasUI ? UI_LOGO_INSTRUCTION_BLOCK : ''}${_hasEnv ? ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK : ''}`;
 
     // Reflow scene-lock rides its own section at the very top of the prompt so it (a) is
     // never touched by the blueprint keyword-stripper and (b) dominates the render intent.
@@ -4420,33 +4765,108 @@ export function buildFinalImagePrompt(params: BuildFinalImagePromptInput): Build
     // it dominates the render intent — each carousel slide derives its scene from its own copy.
     const _slideDirectiveBlock = slideVisualDirective ? `${slideVisualDirective.trim()}\n\n` : '';
 
-    const textPrompt = `${_slideDirectiveBlock}${_reflowBlock}${_ccBlock}${coreDesignRules}
-${SCREEN_CONTENT_BAN_BLOCK}
-${_logoBlock}
-${technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : ''}
-BLUEPRINT: ${strippedBlueprint}
-TEXTS: ${hookText ? `"${hookText}"` : ''}${subheadText ? `, "${subheadText}"` : ''}
-BUTTON: "${ctaName}"
+    /* === GEMINI PROMPT (preserved for revert) ===
+       Phase 025 replaced the rigid fixed-zone text-rendering sections below with the
+       free-form GPT-native AD COPY / TEXT PLACEMENT / QUALITY blocks. Nothing is deleted.
+       To revert: set MODEL_PROVIDER='gemini' in modelConfig.ts AND restore the two original
+       sections below into the textPrompt template (section 1 replaced the AD COPY block;
+       section 2 replaced the TEXT PLACEMENT / QUALITY blocks). The `${...}` interpolations
+       below are the verbatim originals — inert here because this is a comment.
+
+       --- Section 1: between `BLUEPRINT: ...` and `${carouselAnchorNote}` ---
+       TEXTS: ${hookText ? `"${hookText}"` : ''}${subheadText ? `, "${subheadText}"` : ''}
+       BUTTON: "${ctaName}"
+
+       --- Section 2: after `${retargetingDesignHint}`, before `${_wardrobeBlock}${costumeRules}` ---
+       ⚠️ CRITICAL TEXT RENDERING RULES:
+       1. ONLY render these EXACT text strings on the image — NOTHING ELSE:
+          ${hookText ? `- Headline: "${hookText}"` : ''}
+          ${subheadText ? `- Subheadline: "${subheadText}"` : ''}
+          ${ctaName ? `- Button: "${ctaName}"` : ''}
+          ${benefitText ? `- Benefit: "${benefitText}"` : ''}
+          ${badges ? `- Badge: "${badges}"` : ''}
+       2. DO NOT render ANY of these on the image:
+          - System instructions, marker labels, or field names
+          - "VISUAL_DIRECTION:", "TECHNICAL_PROMPT:", "CONCEPT_START", etc.
+          - "**" symbols, "═══" lines, or any formatting markers
+          - English technical instructions or camera settings
+          - ANY English text, brand names, watermarks, or labels
+          - Any text that is NOT one of the strings listed above
+       3. If the blueprint mentions "VISUAL_DIRECTION" or similar — that is an INSTRUCTION TO YOU, not text to render.
+       4. NEVER render English words from the blueprint as visible text on the image. The blueprint is a design INSTRUCTION, not content to display.
+       5. Each Arabic text string must appear EXACTLY ONCE — never duplicate, never truncate, never rephrase.
+       === END GEMINI PROMPT === */
+
+    // Dedup (Phase 025 — 32k prompt budget): the main path's coreDesignRules already embeds
+    // SCREEN_CONTENT_BAN_BLOCK and the logo block. Only re-add them when a minimal caller's
+    // coreDesignRules lacks them — mirrors the _ccBlock guard above. Removes ~1.3–2.4k chars
+    // of duplicated rules with zero semantic loss.
+    const _screenBanOut = coreDesignRules.includes(SCREEN_CONTENT_BAN_BLOCK) ? '' : SCREEN_CONTENT_BAN_BLOCK;
+    // Suppress each logo block independently — only drop the specific block already present
+    // in coreDesignRules (the two sides derive from different sources: blueprint here vs.
+    // gatedBuildPlan in coreDesignRules), so a blanket either-or guard could drop the other.
+    const _logoBlockOut = `${_hasUI && !coreDesignRules.includes(UI_LOGO_INSTRUCTION_BLOCK) ? UI_LOGO_INSTRUCTION_BLOCK : ''}${_hasEnv && !coreDesignRules.includes(ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK) ? ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK : ''}`;
+
+    // Phase 025: art-direction canvas at the TOP of the prompt so gpt-image-2 honors it
+    // (it ignores the same block when buried ~15k chars deep and defaults to realism).
+    // Gated to the OpenAI path; the Gemini path keeps the canvas deep in coreDesignRules.
+    const _activeStyleCanvas = MODEL_PROVIDER === 'openai' ? resolveActiveStyleCanvas(inputs) : '';
+    const _styleSub = resolveVisualSubStyle(inputs);
+    const _styleEnforcer = (MODEL_PROVIDER === 'openai' && _styleSub)
+        ? `RENDER STYLE (NON-NEGOTIABLE): This image MUST be rendered in ${_styleSub.replace(/_/g, ' ').toUpperCase()} style. Do NOT default to realistic photography. The style above is mandatory.\n\n`
+        : '';
+    // Fire the prefix when EITHER a canvas block or the enforcer exists — so a sub-style with
+    // no dedicated canvas still gets the one-line "render in X style" enforcer at the top.
+    const _stylePrefix = (_activeStyleCanvas || _styleEnforcer)
+        ? `${_activeStyleCanvas ? `${_activeStyleCanvas}\n\n` : ''}${_styleEnforcer}`
+        : '';
+
+    // ISSUE 1 diagnostic: log the four copy fields' lengths as they reach the AD COPY block,
+    // so a missing subheadline/benefit can be traced to extraction/dedup (empty here) vs the
+    // model skipping it (present here). Grep Cloud Functions logs for "[copy]".
+    console.log('[copy] hook:', hookText?.length,
+        'sub:', subheadText?.length,
+        'cta:', ctaName?.length,
+        'benefit:', benefitText?.length);
+
+    const textPrompt = `${_stylePrefix}${_slideDirectiveBlock}${_reflowBlock}${_ccBlock}${coreDesignRules}
+${_screenBanOut}
+${_logoBlockOut}
+${MODEL_PROVIDER === 'openai'
+  ? (() => {
+      /* gpt-image-2 renders camera/lens/render directives as literal text on the image, so
+         the full technicalPrompt is Gemini-specific. But campaign context (product/offer/
+         audience) lives in the same field and SHOULD reach the renderer — extract only those
+         lines, drop the camera specs, and inject WITHOUT the TECHNICAL_PROMPT: label. */
+      const _ctx = technicalPrompt ? extractCampaignContextForOpenAI(technicalPrompt) : '';
+      return _ctx ? `\n${_ctx}\n` : '';
+    })()
+  : (technicalPrompt ? `\nTECHNICAL_PROMPT:\n${technicalPrompt}\n` : '')}
+${MODEL_PROVIDER === 'openai' && styleReferencePresent
+  ? '' /* OpenAI reflow/anchor: the style-reference image supplies all visual direction; omit the
+          blueprint so its (Arabic) scene prose can't bleed onto the image as rendered text. */
+  : `BLUEPRINT: ${strippedBlueprint}`}
+${MODEL_PROVIDER === 'openai' ? `BLUEPRINT contains layout structure only — render ONLY the text elements listed below, nothing else from the BLUEPRINT.
+` : ''}
+MANDATORY TEXT ELEMENTS — render ALL of these, no exceptions:
+${hookText ? `✓ HEADLINE (REQUIRED): "${hookText}"` : ''}
+${subheadText ? `✓ SUBHEADLINE (REQUIRED): "${subheadText}"` : ''}
+${ctaName ? `✓ CTA BUTTON (REQUIRED): "${ctaName}"` : ''}
+${benefitText ? `✓ BENEFIT LINE (REQUIRED): "${benefitText}"` : ''}
+${badges ? `✓ BADGE (REQUIRED): "${badges}"` : ''}
+Each element marked REQUIRED above MUST be visible on the final image. Do not skip, merge, or omit any REQUIRED element — if a line is listed, it must be rendered as its own distinct text element.
+
+TEXT PLACEMENT:
+Place the ad copy where it best fits the composition. Every design must have a DIFFERENT text layout — vary placement freely across overlays on dark areas, inside shapes or cards, split across zones, integrated into the scene, or in dedicated panels. Never repeat the same text skeleton across concepts.
+${_isAr ? `ARABIC TEXT: All Arabic copy MUST be rendered right-to-left in fully connected Arabic script. Zero tolerance for broken letter connections, disconnected glyphs, or Latin character substitution. Every Arabic letterform must be complete and correctly joined.` : ''}
+The CTA button must appear inside a visually distinct button or shape with strong text-to-background contrast. All text must be legible against its background.
+
+QUALITY:
+Ultra-high-resolution professional advertising output. Every element must be sharp and intentional. ${_isAr ? `Arabic letterforms must be pixel-perfect with zero rendering artifacts.` : ''}
+${(() => { const _vss = resolveVisualSubStyle(inputs); return _vss ? `\nART DIRECTION (MANDATORY): Render this image in "${_vss.replace(/_/g, ' ')}" visual style — the art direction must match exactly. Do NOT default to generic photorealism unless the selected style is realistic.` : ''; })()}
+
 ${carouselAnchorNote}
 ${retargetingDesignHint}
-
-⚠️ CRITICAL TEXT RENDERING RULES:
-1. ONLY render these EXACT text strings on the image — NOTHING ELSE:
-   ${hookText ? `- Headline: "${hookText}"` : ''}
-   ${subheadText ? `- Subheadline: "${subheadText}"` : ''}
-   ${ctaName ? `- Button: "${ctaName}"` : ''}
-   ${benefitText ? `- Benefit: "${benefitText}"` : ''}
-   ${badges ? `- Badge: "${badges}"` : ''}
-2. DO NOT render ANY of these on the image:
-   - System instructions, marker labels, or field names
-   - "VISUAL_DIRECTION:", "TECHNICAL_PROMPT:", "CONCEPT_START", etc.
-   - "**" symbols, "═══" lines, or any formatting markers
-   - English technical instructions or camera settings
-   - ANY English text, brand names, watermarks, or labels
-   - Any text that is NOT one of the strings listed above
-3. If the blueprint mentions "VISUAL_DIRECTION" or similar — that is an INSTRUCTION TO YOU, not text to render.
-4. NEVER render English words from the blueprint as visible text on the image. The blueprint is a design INSTRUCTION, not content to display.
-5. Each Arabic text string must appear EXACTLY ONCE — never duplicate, never truncate, never rephrase.
 ${_wardrobeBlock}${costumeRules}
 `;
 
@@ -4460,6 +4880,11 @@ ${_wardrobeBlock}${costumeRules}
 }
 
 // 4. Final Ad -> USE VISUAL MODEL (Artist)
+// Bypass token for the deprecated REFLOW edit path (FR-026). Backend-internal callers
+// (e.g. the reflowImage edit-recompose route) embed this literal in `editInstruction`
+// to clear the deprecation gate; frontend httpsCallable strings never contain it.
+export const INTERNAL_REFLOW_TOKEN = "__INTERNAL_REFLOW_BYPASS__";
+
 export async function generateFinalAd(
     buildPlan: string,
     approvedTov: string,
@@ -4931,7 +5356,8 @@ ${_renderRtCtx.testimonial ? `- Testimonial context available — design should 
   ${SCREEN_CONTENT_BAN_BLOCK}
   ${_renderLogoBlock}
   ${_renderRtDesignHint}
-       
+
+  ${MODEL_PROVIDER === 'gemini' ? `
         ⚠️⚠️⚠️ ABSOLUTE RULE: ONLY RENDER USER - FACING TEXT ⚠️⚠️⚠️
 ================================================================
 The image must contain ONLY these text elements and NOTHING ELSE:
@@ -4949,14 +5375,17 @@ or ANY text that was not provided as headline/subheadline/CTA/benefit.
 - Do NOT render "BEFORE", "AFTER", "قبل", "بعد" labels on the image.
 - The ONLY text on the image is the headline, subheadline, CTA button, benefit line, and badge (if provided). Nothing else.
 ================================================================
-
+` : '' /* OpenAI path: skipped — Gemini-era text rendering mitigation, redundant with gpt-image-2 native Arabic rendering (labels already stripped at parse time, d60adb8) */}
+  ${MODEL_PROVIDER === 'gemini' ? `
 EXACT TEXT RENDERING(ZERO TOLERANCE FOR ANY CHARACTER CHANGE):
 - You MUST render the Arabic text EXACTLY as provided below, character -for-character.
          - Do NOT paraphrase.Do NOT replace synonyms.Do NOT "improve" phrasing.Do NOT reorder words.
          - Do NOT add / remove punctuation.Do NOT add tashkeel / diacritics if not present.Do NOT change Hamza forms.
          - Typography must be CLEAN, PRINTED, and HIGH - LEGIBILITY(no calligraphy, no decorative distortion).
          - FONT STYLE(MANDATORY): Use a modern Arabic sans - serif look(Cairo / Tajawal / Noto Kufi Arabic style).Heavy weight for headline / button, medium for subheadline.No thin strokes.
+` : '' /* OpenAI path: skipped — Gemini-era text rendering mitigation, redundant with gpt-image-2 native Arabic rendering */}
 
+  ${MODEL_PROVIDER === 'gemini' ? `
 ⚠️⚠️⚠️ ARABIC LETTER CONNECTION RULES (MOST COMMON FAILURE — READ CAREFULLY) ⚠️⚠️⚠️
 Arabic letters change shape based on their position in a word (initial, medial, final, isolated).
 - EVERY word must have CONNECTED letters within it. Disconnected letters within a word = CORRUPTED text.
@@ -4966,7 +5395,8 @@ Arabic letters change shape based on their position in a word (initial, medial, 
 - If ANY word looks like its letters are floating separately, RE-RENDER that text block.
 - Prefer LARGER font sizes with extra letter spacing between WORDS (not between letters within a word).
 - Use BOLD/HEAVY weight fonts — thin strokes cause letter connections to break at small sizes.
-
+` : ''}
+${MODEL_PROVIDER === 'gemini' ? `
 ⚠️ ARABIC TEXT ANTI-CORRUPTION RULES (CRITICAL):
 - Do NOT duplicate any text string. Each text element appears EXACTLY ONCE in the image.
 - Do NOT repeat the headline text in the subheadline area or vice versa.
@@ -4976,11 +5406,12 @@ Arabic letters change shape based on their position in a word (initial, medial, 
 - If a text field is empty or very short, simply omit that text element — do NOT fill it with a copy of another field.
 - When space is tight, prefer FEWER text elements rendered CLEARLY over cramming everything.
 - Each text zone must contain ONLY its designated content — headline zone gets headline only, CTA zone gets CTA only.
+` : '' /* OpenAI path: skipped — Gemini-era text rendering mitigation, redundant with gpt-image-2 native Arabic rendering */}
 ⚠️ NUMBER + SYMBOL INTEGRITY (CRITICAL):
 - NEVER separate a number from its adjacent % sign. "70%" must render as "70%" — not "%" alone.
 - NEVER drop digits from percentages, prices, or statistics. If the text says "90% من المدربين", render ALL of "90%".
 - All numbers in the copy text are INTENTIONAL and MUST appear exactly as written in the rendered image.
-
+${MODEL_PROVIDER === 'gemini' ? `
 ⚠️ ARABIC COLOR/HIGHLIGHT WORD BOUNDARY RULE (CRITICAL):
 - Arabic letters CONNECT within a word. If you apply a color to part of a word, it breaks the visual connection and looks corrupted.
 - NEVER change color mid-word in Arabic text. Colors must change ONLY at word boundaries (spaces).
@@ -5000,9 +5431,8 @@ SUBHEADLINE VISIBILITY (CRITICAL):
 - Every text element must be readable at phone screen size (1080px width). If in doubt, add a darker background.
 - Use text stroke/outline (2-3px dark outline) on ALL text to ensure separation from background.
 - The contrast background should look DESIGNED (gradient, frosted glass, etc.), not like a cheap overlay.
-    ⚠️⚠️⚠️ PROFESSIONAL DESIGN INTEGRATION (NOT TEXT ON IMAGE — THIS IS CRITICAL) ⚠️⚠️⚠️
-    ================================================================
-    The design must look like a PROFESSIONAL AD AGENCY created it, not like someone pasted text on a stock photo.
+` : ''}
+    ⚠️ PROFESSIONAL DESIGN INTEGRATION: The design must look like a professional ad agency made it — not text pasted on a stock photo.
 
     ${(() => {
             // ═══ STEP 3.5 → STEP 4: CONTRACT-LED COMPOSITION (sole authority) ═══
@@ -5083,15 +5513,12 @@ ${(() => {
     return '';
 })()}
 
-⚠️ THE LAYOUT CONTRACT ABOVE IS THE SOLE COMPOSITION AUTHORITY.
-Follow the zone definitions, hierarchy, spatial rules, and must-show/must-avoid lists EXACTLY.
-Do NOT improvise a different layout. Do NOT use a generic 3-zone top/center/bottom unless the contract specifies it.
-If the contract says "hero left, stack right" — that is what you render. Not hero-only.`;
+⚠️ THE LAYOUT CONTRACT ABOVE IS THE SOLE COMPOSITION AUTHORITY — follow its zones, hierarchy, spatial rules, and must-show/must-avoid lists EXACTLY. Do not improvise a different layout or default to a generic 3-zone top/center/bottom unless the contract specifies it (if it says "hero left, stack right", render exactly that — not hero-only).`;
         })()}
 
     INTEGRATED DESIGN ELEMENTS:
-    - GRADIENT SCRIMS: Must be SMOOTH multi-stop gradients (3+ stops: 85% → 50% → 0%). Not flat rectangles. Feel like natural vignetting.
-    - DECORATIVE FRAME ELEMENTS: Add subtle design elements that frame the text — thin lines, corner accents, geometric shapes, or glow effects in the accent color.
+    - GRADIENT SCRIMS: smooth multi-stop gradients (85% → 50% → 0%), like natural vignetting — not flat rectangles.
+    - DECORATIVE FRAME: subtle accent-color elements framing the text (thin lines, corner accents, geometric shapes, or glow).
     ${resolveStyleFamily(inputs) === 'minimal'
     ? `- DEPTH LAYERING: Keep background clean and uncluttered. FORBIDDEN atmospheric effects: no bokeh, no dust motes, no smoke wisps, no haze, no particles, no volumetric light, no god rays. Maximize negative space. Clean studio depth only.`
     : (() => {
@@ -5146,7 +5573,7 @@ If the contract says "hero left, stack right" — that is what you render. Not h
         return `- TEXT IS DESIGNED INTO THE SCENE, not placed on top. Text zones should feel like part of the lighting/composition.`;
     })()}
 
-    ${(() => {
+    ${MODEL_PROVIDER === 'openai' ? '' /* Phase 025: for OpenAI the canvas is injected at the TOP of the prompt (buildFinalImagePrompt _stylePrefix); keep this deep copy for the Gemini path only */ : (() => {
         const sub = resolveVisualSubStyle(inputs);
         if (!sub) return '';
         const blocks: Record<string, string> = {
@@ -5265,16 +5692,9 @@ FORBIDDEN: Soft gradients, photorealism, cinematic lighting,
         };
         return blocks[sub] || '';
     })()}
-    BACKGROUND OVERLAY (MANDATORY ON EVERY SLIDE):
-    - ALWAYS render a full-width dark gradient overlay behind ALL text areas
-    - Top text area: dark gradient from top edge (85% opacity black) fading to transparent by 40% height
-    - Bottom text area (CTA/benefit): solid dark bar (80-90% opacity) spanning full width
-    - The overlay must be VISIBLE and OBVIOUS — if someone squints and can't see it, it's not dark enough
+    BACKGROUND OVERLAY (MANDATORY): full-width dark gradient behind ALL text areas — top: 85%-black fading to transparent by 40% height; bottom (CTA/benefit): solid 80-90% dark bar full width. Must be visibly obvious.
 
-    ⚠️ META ADS SAFE ZONE: Follow the SPATIAL RULES from the layout contract above.
-    All text, logos, CTAs, and critical visual elements MUST stay INSIDE the safe zone inset specified by the contract.
-    NEVER place headline text touching the top edge. NEVER place CTA touching the bottom edge.
-    ⚠️ NEVER render safe zone percentages, margin numbers, or dimension indicators as visible text in the image. These are invisible layout guides only.
+    ⚠️ META ADS SAFE ZONE: Keep all text, logos, CTAs, and key visuals INSIDE the contract's safe-zone inset (per the layout contract's spatial rules). Headline never touches the top edge; CTA never touches the bottom edge. Never render safe-zone percentages or margin numbers as visible text — they are invisible guides.
 
     ═══════════════════════════════════════════════════════════════════════════
     TEXT TREATMENT — VARIETY SYSTEM (pick ONE style for this design)
@@ -5651,7 +6071,27 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
 
     const parts: any[] = [];
     if (base64ToEdit) {
-        parts.push({ inlineData: { mimeType: "image/png", data: base64ToEdit.split(',')[1] } });
+        // base64ToEdit may be a data URL (data:image/png;base64,XXX), a remote Storage/blob URL
+        // (reflowed / loaded / server-uploaded renders), or raw base64. The image model needs raw
+        // base64 — resolve all three. Previously `split(',')[1]` returned undefined for non-data-URL
+        // inputs, so the edit reference was dropped and the OpenAI path silently fell back to
+        // images.generate (a fresh image) instead of images.edit — i.e. Polish "did nothing".
+        let _editData: string | undefined;
+        let _editMime = "image/png";
+        if (base64ToEdit.startsWith('data:')) {
+            const _comma = base64ToEdit.indexOf(',');
+            const _parsedMime = base64ToEdit.slice(5, base64ToEdit.indexOf(';') >= 0 ? base64ToEdit.indexOf(';') : _comma);
+            if (_parsedMime) _editMime = _parsedMime;
+            _editData = base64ToEdit.slice(_comma + 1);
+        } else if (/^https?:\/\//i.test(base64ToEdit)) {
+            // Guarded fetch (SSRF / size / timeout) — preserves the real MIME from content-type.
+            const _fetched = await fetchRemoteImageAsBase64(base64ToEdit, "base64ToEdit");
+            if (_fetched) { _editData = _fetched.data; _editMime = _fetched.mimeType; }
+        } else {
+            _editData = base64ToEdit; // assume raw base64
+        }
+        if (_editData) parts.push({ inlineData: { mimeType: _editMime, data: _editData } });
+        else console.warn('⚠️ base64ToEdit unresolved; proceeding without the edit reference image.');
 
         // ─── Normalize editInstruction once (HOTFIX-F gate / FR-026) ───
         // editInstruction may arrive as a primitive string (frontend callable), a boxed String
@@ -5659,7 +6099,7 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
         // backend callers), or an object carrying a truthy `_internalReflow` flag. Calling
         // `.includes(...)` directly on a plain object would throw, so derive the string view
         // and bypass flag once and reuse them everywhere below.
-        const INTERNAL_REFLOW_TOKEN = "__INTERNAL_REFLOW_BYPASS__";
+        // INTERNAL_REFLOW_TOKEN is module-level (exported) so internal callers can embed it.
         const ei: unknown = editInstruction;
         const eiStringValue =
             typeof ei === "string" ? ei :
@@ -5695,6 +6135,13 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
 ================================================================
 You are RESIZING the attached image to a new aspect ratio: ${currentAspectRatio}
 
+REFLOW RULES — READ BEFORE ANYTHING ELSE:
+1. PRESERVE THE HERO FACE EXACTLY — do not regenerate, reinterpret, or soften the face. The hero's face in the output must be pixel-level identical to the input image. Copy it as-is, do not redraw it.
+2. USE THE FULL CANVAS HEIGHT — spread all elements across the entire available space between the safe zones. Do not compress or center everything in the middle third. The headline goes near the top, the hero fills the middle, the CTA anchors near the bottom safe zone boundary.
+3. PRESERVE ALL VISUAL STYLE EXACTLY — same colors, same lighting, same background, same typography style, same decorative elements. Only the spatial layout changes.
+4. PRESERVE ALL TEXT EXACTLY — every word, every character, every punctuation mark must be identical to the input. Do not paraphrase, summarize, or omit any text.
+5. SCALE THE HERO UP — in Story (9:16) format, the hero should fill more vertical space than in Square. Make the hero larger and more prominent, not smaller.
+
 ABSOLUTE RULES — DO NOT VIOLATE ANY OF THESE:
 1. SAME HERO: Same person, same face, same expression, same pose, same outfit, same accessories. Do NOT change anything about the hero.
 2. SAME COLORS: Same color palette, same color grading, same background colors, same accent colors. Do NOT change the color scheme.
@@ -5724,6 +6171,24 @@ ${currentAspectRatio === '9:16' ? 'VERTICAL STORY: Stack headline at top, hero i
                                     : currentAspectRatio === '3:4' ? 'TALL: Headline at top, hero center, CTA at bottom. Leave generous invisible margins — extra space at top and bottom.'
                                         : currentAspectRatio === '4:3' ? 'WIDE: Hero on one side, text on other. Leave generous invisible margins on all edges.'
                                             : `Adapt layout to ${currentAspectRatio}. Leave generous invisible margins on all edges.`}
+
+PLATFORM SAFE ZONES for ${currentAspectRatio}:
+${currentAspectRatio === '9:16'
+                        ? `⚠️ CRITICAL SAFE ZONES FOR 9:16 STORY FORMAT:
+- TOP 8% of canvas (≈130px): NO text, logos, or UI elements. Fill this area with background scene/environment only.
+- BOTTOM 20% of canvas (≈320px): NO CTA button, NO text, NO interactive elements. Fill this area with background scene, environment, gradient, or texture that naturally extends the design — it must look intentional, not empty.
+- ALL text, CTA button, and copy elements MUST be placed between 8% and 78% of canvas height.
+- CTA button MUST be above the 75% mark.
+- The bottom 20% is covered by platform UI (Meta/TikTok/Snapchat controls) so it will never look empty to end users — but it must contain ONLY background visual, never interactive elements.
+- This is non-negotiable for platform compliance.`
+                        : currentAspectRatio === '3:4'
+                            ? `⚠️ SAFE ZONES FOR 3:4 PORTRAIT FORMAT:
+- BOTTOM 10% of canvas: keep clear of CTA and interactive elements.
+- CTA button MUST be above the 88% mark.
+- Top 5%: keep clear of text elements.`
+                            : currentAspectRatio === '1:1'
+                                ? 'No platform safe zone restrictions for Square format. Use full canvas area.'
+                                : '- Keep text and the CTA button within generous margins; avoid the extreme top and bottom edges.'}
 
 THIS IS A RESIZE, NOT A REDESIGN. If the output looks like a different ad, you have failed.
 ================================================================
@@ -5768,9 +6233,30 @@ CAROUSEL STYLE ANCHORING: Maintain consistent visual STYLE across all slides —
                 ? buildCarouselBrandConsistencyBlock(_brandResolved)
                 : '';
 
+        // OpenAI path: visual-direction fields carry Arabic scene prose (wardrobe, environment,
+        // lighting) whose VALUES survive the label-stripping below as bare narrative text that
+        // gpt-image-2 renders verbatim on the image. Drop each whole field block — label through
+        // the next ALL-CAPS label or end of string (same multi-line pattern as the
+        // TECHNICAL_PROMPT strip, 9e3fa72). Copy fields (HOOK_TEXT / SUBHEADLINE / CTA_BUTTON /
+        // BENEFIT_TEXT / BRAND_NAME / BADGE_TEXT / URGENCY_LINE) stay intact. Gemini keeps the
+        // full blueprint — it uses the prose for visual generation and has its own defenses.
+        const _visualDirectionStripped = MODEL_PROVIDER === 'openai'
+            ? gatedBlueprint.replace(
+                // Lookahead requires a COMPOUND label (≥1 underscore): real field boundaries are
+                // SUBJECT_ACTION / HOOK_TEXT / CTA_BUTTON-style compounds, while single-word caps
+                // like STRICT: / FORBIDDEN: are inline sub-instructions that must be consumed as
+                // block content, not treated as the next section.
+                /(?:SUBJECT_ACTION|ENVIRONMENT_DESC|MOOD_EMOTION|LIGHTING_LOGIC|TEXT_LAYOUT|BUTTON_POSITION|CAMERA_FRAMING|STYLE_NOTES|VISUAL_DIRECTION|DEPTH_LAYERING|ATMOSPHERE|BRANDING_LOGIC)[:\s][\s\S]*?(?=\n\s*[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\s*:|$)/g,
+                '')
+            : gatedBlueprint;
+
         // Sanitize buildPlan: strip system instruction markers and stray English that the image AI renders as visible text
-        const cleanBuildPlan = gatedBlueprint
-            .replace(/TECHNICAL_PROMPT[:\s].*$/gm, '')
+        const cleanBuildPlan = _visualDirectionStripped
+            // Labeled TECHNICAL_PROMPT content in concept text can span multiple lines — strip
+            // from the label through to the next ALL-CAPS section label (or end of string),
+            // not just to end of line (the old /.*$/m form left continuation lines to bleed
+            // onto OpenAI renders as visible text).
+            .replace(/TECHNICAL_PROMPT[:\s][\s\S]*?(?=\n\s*[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\s*:|$)/g, '')
             .replace(/VISUAL_DIRECTION[:\s].*$/gm, '')
             .replace(/CONCEPT_START_\d/g, '')
             .replace(/CONCEPT_END_\d/g, '')
@@ -5824,6 +6310,7 @@ Use your judgment — consistency where it serves the story, change where the co
             imageParts: [],
             reflowInstruction,
             slideVisualDirective: _slideVisualDirective,
+            styleReferencePresent: !!styleReference,
         });
 
         parts.push({ text: _promptResult.textPrompt });
@@ -5833,10 +6320,20 @@ Use your judgment — consistency where it serves the story, change where the co
             resolvedImagePrompt: _promptResult.trace.resolvedImagePrompt,
             technicalPrompt: _promptResult.trace.technicalPrompt,
         };
+        console.log('[BLUEPRINT DEBUG] raw gatedBlueprint:',
+            gatedBlueprint.substring(0, 2000));
+        console.log('[BLUEPRINT DEBUG] after strip:',
+            _visualDirectionStripped.substring(0, 2000));
 
         // If style reference provided (carousel slides 2+), inject it BEFORE personal photos
         if (styleReference) {
-            parts.push({ inlineData: { mimeType: "image/png", data: styleReference.split(',')[1] } });
+            // Preserve the real MIME from the data URL prefix (was force-tagged image/png,
+            // mis-decoding JPEG style anchors). styleReference always arrives as a data URL.
+            const _styleComma = styleReference.indexOf(',');
+            const _styleMime = styleReference.startsWith('data:')
+                ? (styleReference.slice(5, styleReference.indexOf(';') >= 0 ? styleReference.indexOf(';') : _styleComma) || "image/png")
+                : "image/png";
+            parts.push({ inlineData: { mimeType: _styleMime, data: styleReference.slice(_styleComma + 1) } });
             // Balanced anchor: the reference carries hero identity + brand aesthetic for cohesion,
             // while the copy still drives each slide's scene. A hard "never copy the environment"
             // rule made the model discard ALL visual direction and default to a generic universe —
@@ -5857,13 +6354,17 @@ THE HERO'S FACE IS INVIOLABLE: The person in this slide must have IDENTICAL faci
             // across slides; the original photos lock identity. (Skipped only in text-only mode,
             // which has no hero.)
             if (!_isTextOnly) {
-                boxA.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
+                // _isPersonalPhoto marks hero photos for backend re-compression in the OpenAI
+                // caller (512px JPEG); logos/Box C/style refs keep original resolution.
+                boxA.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] }, _isPersonalPhoto: true }));
             }
             boxB.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
             boxC.forEach((d: string) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
         } else {
             if (!_isTextOnly) {
-                boxA.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
+                // _isPersonalPhoto marks hero photos for backend re-compression in the OpenAI
+                // caller (512px JPEG); logos/Box C/style refs keep original resolution.
+                boxA.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] }, _isPersonalPhoto: true }));
             }
             boxB.forEach((d: any) => parts.push({ inlineData: { mimeType: getMime(d), data: d.split(',')[1] } }));
             // Box C: Offer-specific assets (book cover, dashboard screenshot, etc.)
@@ -5919,6 +6420,32 @@ If the asset is not clearly visible and prominent in the final render, the outpu
                     const imageBase64 = `data:image/png;base64,${part.inlineData.data}`;
                     let currentImage = imageBase64;
 
+                    // Phase 025 — audit trace: which visual provider rendered this image
+                    const _hasHeroRefs = parts.some((p: any) => p.inlineData);
+                    if (MODEL_PROVIDER === "openai") {
+                        const _existingTrace = _lastResolutionTrace as any || {};
+                        _lastResolutionTrace = {
+                            ..._existingTrace,
+                            visualProvider: {
+                                provider: "openai" as const,
+                                model: OPENAI_VISUAL_MODEL,
+                                size: OPENAI_SIZE_BY_ASPECT[currentAspectRatio] || "1024x1024",
+                                usedReferenceEdit: _hasHeroRefs,
+                                copyFidelityGated: true, // OpenAI path runs a single build-plan pass (T014)
+                            },
+                        };
+                    } else {
+                        const _existingTrace = _lastResolutionTrace as any || {};
+                        _lastResolutionTrace = {
+                            ..._existingTrace,
+                            visualProvider: {
+                                provider: "gemini" as const,
+                                model: VISUAL_MODEL,
+                                copyFidelityGated: false, // Gemini path keeps the multi-attempt fidelity loop (T014)
+                            },
+                        };
+                    }
+
                     // Quality gate / design critique pipeline removed (product decision 2026-05-30):
                     // GPT-4o-mini critique + auto-fix re-render added latency and cost with no
                     // user-visible benefit at the current stage. Render proceeds directly with
@@ -5929,6 +6456,9 @@ If the asset is not clearly visible and prominent in the final render, the outpu
                     // Uses cheap text model to check for common Arabic rendering issues
                     // If issues found, auto-rerenders with targeted corrective instruction
                     const isArabic = (inputs.adLanguage || 'ar_fusha').startsWith('ar');
+                    // Inspection pass runs for BOTH providers — Arabic text can corrupt on either
+                    // engine. The cheap text-model inspection always runs; only the follow-up image
+                    // re-render is gated to Gemini below (OpenAI stays single-call per T014 policy).
                     if (isArabic && !base64ToEdit && !styleReference && hookText.length > 2) {
                         try {
                             const qaResponse = await callGemini({
@@ -5971,7 +6501,12 @@ If the Arabic text matches expected text exactly with no issues, return: {"hasIs
                                 const qaClean = qaText.replace(/```json|```/g, '').trim();
                                 const qaResult = JSON.parse(qaClean);
                                 if (qaResult.hasIssues && qaResult.issues?.length > 0) {
-                                    if (!hasTimeBudget(50000)) {
+                                    if (MODEL_PROVIDER !== 'gemini') {
+                                        // FIX 1: OpenAI path is single-call — keep the cheap Gemini text
+                                        // inspection (already ran above) but SKIP the image re-render so a
+                                        // generation never chains a second slow images.edit call.
+                                        console.log(`🔤 Arabic QA found ${qaResult.issues.length} issues (${qaResult.severity}) — skipping auto-fix re-render on OpenAI path (single-call policy); keeping the rendered image.`);
+                                    } else if (!hasTimeBudget(50000)) {
                                         console.warn('⚠️ Arabic QA found issues but skipped auto-fix due to callable time budget.');
                                     } else {
                                         console.log(`🔤 Arabic QA found ${qaResult.issues.length} issues (${qaResult.severity}) — auto-fixing...`);
@@ -6034,6 +6569,13 @@ ${benefitText ? `- BENEFIT goes below CTA ONLY: "${benefitText}"` : ''}
                         } catch (qaErr) {
                             console.warn('Arabic QA skipped (non-blocking):', qaErr);
                         }
+                        // Phase 025 — mark arabicQaRan in trace
+                        if (_lastResolutionTrace && typeof _lastResolutionTrace === 'object') {
+                            const _vp = (_lastResolutionTrace as any).visualProvider;
+                            if (_vp && typeof _vp === 'object') {
+                                _vp.arabicQaRan = true;
+                            }
+                        }
                     }
 
                     // ═══ NUMERIC FIDELITY ENFORCEMENT — reject unauthorized prices/values ═══
@@ -6041,7 +6583,8 @@ ${benefitText ? `- BENEFIT goes below CTA ONLY: "${benefitText}"` : ''}
                     const numericPolicy = getNumericFidelityPolicy(
                         (inputs as any).offerCreativeMode || ['standard_hero']
                     );
-                    if (numericPolicy === 'strict' && !base64ToEdit && !styleReference) {
+                    // OpenAI path: skipped — gpt-image-2 renders natively, no post-render inspection needed
+                    if (MODEL_PROVIDER === 'gemini' && numericPolicy === 'strict' && !base64ToEdit && !styleReference) {
                         const authorizedNums = getAuthorizedNumbers(inputs);
                         // Also authorize numbers from the approved text fields
                         const textNums: string[] = [];
@@ -6099,8 +6642,10 @@ If no monetary/value numbers are visible in the image, return: []` }
                                 // Unauthorized numbers detected
                                 console.warn(`🛑 NUMERIC FIDELITY VIOLATION (attempt ${auditAttempt + 1}): unauthorized [${unauthorized.join(', ')}], authorized [${allAuthorized.join(', ')}]`);
 
-                                if (auditAttempt === 0) {
-                                    // RETRY: re-render with stronger numeric suppression
+                                if (auditAttempt === 0 && MODEL_PROVIDER === 'gemini') {
+                                    // RETRY: re-render with stronger numeric suppression (Gemini only).
+                                    // FIX 1: OpenAI path is single-call — the erase re-render below is
+                                    // skipped (handled in the else branch) so no second images.edit fires.
                                     console.log(`🔄 Numeric fidelity retry: re-rendering with numeric erase instruction...`);
                                     try {
                                         const eraseParts: any[] = [
@@ -6172,10 +6717,13 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                     }
                                     // Loop continues to auditAttempt 1 to re-audit the erased image
                                 } else {
-                                    // Second audit still found unauthorized numbers — warn but continue
-                                    console.warn(`⚠️ Numeric fidelity: unauthorized numbers persist after retry [${unauthorized.join(', ')}]. Continuing with best-effort image.`);
+                                    // Reached when: (a) OpenAI path (single-call — erase re-render skipped),
+                                    // or (b) Gemini second audit still found unauthorized numbers. Either
+                                    // way keep the best-effort image; break so OpenAI doesn't re-audit.
+                                    console.warn(`⚠️ Numeric fidelity: unauthorized numbers ${MODEL_PROVIDER !== 'gemini' ? 'detected; skipping erase re-render on OpenAI path (single-call policy)' : 'persist after retry'} [${unauthorized.join(', ')}]. Continuing with best-effort image.`);
                                     numericPass = true;
                                     _numericHallucination = true;
+                                    break;
                                 }
                             } catch (auditErr) {
                                 // Audit call itself failed — downgrade to warning, return the image
@@ -6285,7 +6833,10 @@ This is a CORRECTION pass. Keep the same design. Only erase the unauthorized num
                                             const postNormalize = (n: string) => n.replace(/[\s,]/g, '').toLowerCase();
                                             const postAuthorizedSet = new Set(postAllAuthorized.map(postNormalize));
 
-                                            if (!hasTimeBudget(25000)) {
+                                            // OpenAI path: skipped — gpt-image-2 renders natively, no post-render inspection needed
+                                            if (MODEL_PROVIDER !== 'gemini') {
+                                                // post-overlay verification skipped on OpenAI path
+                                            } else if (!hasTimeBudget(25000)) {
                                                 console.warn('⚠️ Post-overlay verification skipped due to callable time budget.');
                                             } else {
                                                 const postAuditResponse = await callGemini({

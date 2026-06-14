@@ -24,6 +24,7 @@ interface FavUpdatePrompt {
   newGenId: string;
 }
 import MagicSelector, { type EditRequest } from './components/MagicSelector';
+import ErrorBoundary from './components/ErrorBoundary';
 import { feedbackService, type NegativeFeedbackTag } from './services/feedbackService';
 import { metaService, type MetaConnection } from './services/metaService';
 import { ASPECT_RATIOS, COLD_HOOK_ANGLES, OFFER_TYPES, getRandomUniverse } from './constants';
@@ -35,6 +36,7 @@ import { resolveCoverImage } from './lib/projectCoverImage';
 import { uploadAndPersistThumbnail } from './lib/projectThumbnail';
 import { stepsWithData } from './lib/projectStepsData';
 import { useProjectAutoSave } from './hooks/useProjectAutoSave';
+import { forceFlush as autoSaveForceFlush } from './lib/projectAutoSave';
 import type { AutoSaveState } from './lib/projectAutoSave';
 import { ALL_UNIVERSES, type UniverseEntry } from './universeDatabase';
 
@@ -461,6 +463,11 @@ const steps: { id: AppPhase; tKey: string }[] = [
   { id: 'render_studio', tKey: 'step.studio' },
   { id: 'primary_text', tKey: 'step.script' },
 ];
+
+// Launch size set — Square / Portrait / Story only. Backend supports the full 6 ratios;
+// restore others by extending this list. Shared by the Step 3 size selector and the
+// Step 4 reflow picker so the two can never drift.
+const UI_RATIOS: AspectRatio[] = ['1:1', '3:4', '9:16'];
 
 const ToastNotification: React.FC<{ toast: Toast | null; onClose: () => void }> = ({ toast, onClose }) => {
   if (!toast) return null;
@@ -1040,6 +1047,12 @@ const App: React.FC = () => {
   // refresh and on async team `teamOwnerUid` resolution — re-running it would overwrite live
   // session work (e.g. a freshly rendered carousel) with the saved snapshot. Reset on logout.
   const hasRestoredRef = React.useRef(false);
+  // FIX 3: tracks the previous selectedTov so we only clear concepts when the user SWITCHES
+  // between two real hooks — never on first set or session restore (prev is '').
+  const prevSelectedTovRef = React.useRef('');
+  // Tracks whether the batch already had done items, so we default reflowScope to 'batch_all'
+  // exactly once when a batch finishes — without clobbering a later manual 'single' choice.
+  const prevHasDoneBatchRef = React.useRef(false);
   // --- STATE ---
   const [view, setView] = useState<'app' | 'privacy'>('app');
   const [showSidebar, setShowSidebar] = useState(false);
@@ -2183,7 +2196,14 @@ const App: React.FC = () => {
   const [batchCaptions, setBatchCaptions] = useState<{ hookKey: string; hookText: string; captionText: string }[]>([]);
   const [activeBatchCaptionKey, setActiveBatchCaptionKey] = useState<string>('');
   const [batchResults, setBatchResults] = useState<BatchResult[]>([]);
+  // Snapshot of the batch grid taken when a gallery thumbnail is clicked in batch mode —
+  // lets the canvas drop to single view for that image while a "Back to batch" button
+  // restores the grid. Cleared on a fresh batch render so stale grids never reappear.
+  const [batchSnapshot, setBatchSnapshot] = useState<typeof batchResults>([]);
   const [batchRendering, setBatchRendering] = useState(false);
+  // FIX 3: which batch card is focused for a 'single'-scope resize (so it targets that
+  // item's own generationId instead of the global renderGenerationId). null = not a batch item.
+  const [selectedBatchItemIndex, setSelectedBatchItemIndex] = useState<number | null>(null);
   const [batchHookGroups, setBatchHookGroups] = useState<BatchHookGroup[]>([]);
   const [batchSelectedHooks, setBatchSelectedHooks] = useState<Set<string>>(new Set());
   const [showBatchConfig, setShowBatchConfig] = useState(false);
@@ -2250,6 +2270,31 @@ const App: React.FC = () => {
   // before a carousel_all reflow. Lets the user restore the pre-resize version.
   const [previousCarouselSlides, setPreviousCarouselSlides] = useState<CarouselSlide[] | null>(null);
   const [previousCarouselRatio, setPreviousCarouselRatio] = useState<AspectRatio | null>(null);
+  // ISSUE 3: one-level undo for SINGLE-image resize — snapshot of the displayed mockup
+  // (+ its raw base64/Storage source and ratio) taken right before a single reflow. Lets
+  // the user flip back to the pre-resize size, mirroring the carousel snapshot pattern.
+  const [previousSingleMockup, setPreviousSingleMockup] = useState<{ url: string; rawBase64?: string; ratio: AspectRatio } | null>(null);
+  // ISSUE 2: collapse state for the unified "All Versions" gallery (collapsed by default).
+  const [showAllVersionsGallery, setShowAllVersionsGallery] = useState(false);
+  // 3-dot options menu in the unified gallery — holds the URL of the card whose menu is
+  // open (null = none). Closed on any mousedown outside an element tagged data-version-menu.
+  const [openVersionMenu, setOpenVersionMenu] = useState<string | null>(null);
+  // Full-size preview for a unified-gallery card — opened via the expand icon on each
+  // card, closed by clicking the overlay or the X. Non-destructive: batch grid untouched.
+  const [galleryLightbox, setGalleryLightbox] = useState<{ url: string; ratio: string } | null>(null);
+  useEffect(() => {
+    if (!openVersionMenu) return;
+    const close = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement | null)?.closest?.('[data-version-menu]')) setOpenVersionMenu(null);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [openVersionMenu]);
+  // Reflow quality fix: the ORIGINAL (first-generation) source for the active single render,
+  // captured the first time a reflow runs. Every subsequent resize reflows from THIS original
+  // instead of the previous resize output, so repeated resizes never chain-degrade quality.
+  // Cleared on every fresh generation / reset so a new render anchors to its own original.
+  const originalMockupRef = useRef<string | null>(null);
   // Carousel slide lightbox — null = closed, otherwise the index of the slide shown full-screen.
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const lightboxPrev = useCallback(() => {
@@ -2277,6 +2322,9 @@ const App: React.FC = () => {
   const [activeEditConceptIndex, setActiveEditConceptIndex] = useState<string | null>(null);
   const [expandedConcepts, setExpandedConcepts] = useState<Set<number>>(new Set([11, 12, 13, 21, 22, 23, 31, 32, 33, 41, 42, 43]));
   const [editFeedback, setEditFeedback] = useState('');
+  // FIX 2: direct raw-blueprint text editing (single mode) — index of concept being edited + its draft text
+  const [directEditIndex, setDirectEditIndex] = useState<string | null>(null);
+  const [directEditText, setDirectEditText] = useState('');
   const [globalRefinement, setGlobalRefinement] = useState(''); // cumulative refinement history (sent to AI)
   const [refinementEntry, setRefinementEntry] = useState('');   // the new instruction being typed (not yet appended)
   const [studioTweak, setStudioTweak] = useState('');
@@ -2286,6 +2334,8 @@ const App: React.FC = () => {
   const [reflowStep, setReflowStep] = useState<'idle' | 'committing'>('idle');
   const [reflowTarget, setReflowTarget] = useState<AspectRatio | null>(null);
   const [reflowScope, setReflowScope] = useState<'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'>('single');
+  // ISSUE 5: batch cards checked for "Resize Selected" (stores global batchResults indices).
+  const [selectedBatchIndices, setSelectedBatchIndices] = useState<Set<number>>(new Set());
   // Ratio of the batch tile currently being viewed — drives the reflow "Current"
   // badge in batch mode (where displayRatio reflects the single-render history, not
   // the focused batch tile).
@@ -2356,12 +2406,13 @@ const App: React.FC = () => {
           { xPct: 0, yPct: 0, wPct: 100, hPct: 100 }, // full image
           'describe',
           { freeInstruction: `Apply ALL of these edits to this image:\n${combinedInstruction}\n\nApply every edit listed above. Keep everything else pixel-identical.` },
-          currentAspectRatio
+          currentAspectRatio,
+          inputs?.personalPhotos
         );
       } else {
         // First edit: normal single-edit path
         result = await gemini.editRegion(
-          editBase64, req.region, req.mode, req.payload, currentAspectRatio
+          editBase64, req.region, req.mode, req.payload, currentAspectRatio, inputs?.personalPhotos
         );
       }
 
@@ -2379,7 +2430,7 @@ const App: React.FC = () => {
               showToast(`Reflowing to ${extraRatio}...`, 'info');
               await new Promise(r => setTimeout(r, 500));
               if (renderGenerationId) {
-                const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+                const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
                 const reflowRes = await reflowFn({
                   generationId: renderGenerationId,
                   targetAspectRatio: extraRatio as AspectRatio,
@@ -2470,6 +2521,28 @@ const App: React.FC = () => {
     if (showAccountMenu) document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showAccountMenu]);
+
+  // FIX 3: when the user switches to a DIFFERENT hook in single mode, drop stale concepts so
+  // Step 3 can't show a previous session's blueprints — forcing a fresh regenerate for the new
+  // hook. The prev-ref guard means this never fires on first set or session restore (prev is '').
+  useEffect(() => {
+    const prev = prevSelectedTovRef.current;
+    prevSelectedTovRef.current = selectedTov;
+    if (batchHookGroups.length === 0 && prev && selectedTov && prev !== selectedTov) {
+      setConceptsText('');
+    }
+  }, [selectedTov, batchHookGroups.length]);
+
+  // When a batch produces done items, force the resize scope to 'single' (the global batch_all
+  // scope toggle is hidden in batch mode — users resize per-card instead). Fires only on the
+  // empty→done transition (prev-ref guard) so it clears any stale carousel/batch_all scope.
+  useEffect(() => {
+    const hasDoneBatch = batchResults.some(r => r.status === 'done' && r.url);
+    if (hasDoneBatch && !prevHasDoneBatchRef.current) {
+      setReflowScope('single');
+    }
+    prevHasDoneBatchRef.current = hasDoneBatch;
+  }, [batchResults]);
 
   // --- HISTORY ENGINE (IndexedDB + Firestore sync) ---
   useEffect(() => {
@@ -3263,6 +3336,10 @@ const App: React.FC = () => {
     setBuildPlan(p.buildPlan);
     setMockupHistory(p.mockupHistory);
     setHistoryIndex(p.historyIndex);
+    // Reflow quality fix: a loaded project has no in-memory original anchor — clear it so the
+    // first reflow re-captures the loaded current mockup as this session's original source.
+    originalMockupRef.current = null;
+    setPreviousSingleMockup(null);
     setResolvedUniverse(p.resolvedUniverse);
     setCaptionText(p.captionText);
     setBatchCaptions(p.batchCaptions || []);
@@ -3327,6 +3404,10 @@ const App: React.FC = () => {
     setCaptionText('');
     setBatchResults([]);
     setCarouselSlides([]);
+    // Reflow quality fix: drop the original-source anchor + resize-undo snapshot so a brand
+    // new render captures its own original on its first reflow.
+    originalMockupRef.current = null;
+    setPreviousSingleMockup(null);
     setBatchRendering(false);
     setBatchSelectedHooks(new Set());
     setBatchHookGroups([]);
@@ -3378,6 +3459,32 @@ const App: React.FC = () => {
     // non-interactive reset instead.
     if (id === currentProjectId) resetToBlankProject();
     setDeleteTarget(null);
+  };
+
+  // ISSUE 1: delete multiple selected projects at once. The panel handles its own
+  // confirmation, so this performs the deletes directly (DB + Firestore + Storage
+  // per id) and prunes local state in a single pass.
+  const confirmBulkDelete = async (ids: string[]) => {
+    if (!ids.length) return;
+    const idSet = new Set(ids);
+    for (const id of ids) {
+      try {
+        await deleteProjectFromDB(id);
+        if (effectiveUid) {
+          deleteProjectFromFirestore(effectiveUid, id).catch(() => {});
+          for (const ext of ["jpg", "png"]) {
+            try {
+              await deleteObject(storageRef(storage, `users/${effectiveUid}/projects/${id}/thumbnail.${ext}`));
+            } catch (err: any) {
+              if (err?.code !== "storage/object-not-found") throw err;
+            }
+          }
+        }
+      } catch (e) { console.warn(`Bulk delete sync failed for ${id}`); }
+    }
+    setProjects(prev => prev.filter(p => !idSet.has(p.id)));
+    if (currentProjectId && idSet.has(currentProjectId)) resetToBlankProject();
+    showToast(`${ids.length} project${ids.length > 1 ? 's' : ''} deleted.`, 'success');
   };
 
   const handleApiError = (e: any) => {
@@ -3916,9 +4023,24 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     // ─── SINGLE MODE: Generate concepts directly ─────
     if (!deductCredits('generateConcepts')) return;
     startLoad(`Creating Concepts...`);
+    // Clear stale batch state on single-hook approval so Step 3 reads the global conceptsText
+    // (the cards branch on batchHookGroups.length) instead of rendering old batch groups.
+    setBatchHookGroups([]);
+    setBatchResults([]);
     const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 5) || [] };
+    // FIX 1: when the user typed a refinement direction (editFeedback) and concepts already
+    // exist, apply it to the selected concept via 'precision' instead of discarding everything.
+    const refineDirection = (editFeedback.trim() && conceptsText.trim()) ? editFeedback.trim() : '';
+    const refineIndex = singleSelectedConcepts.size >= 1 ? String(Array.from(singleSelectedConcepts)[0]) : '1';
     try {
-      let res = unwrapGen(await gemini.generateConcepts(variationText, cleanInputs, resolvedUniverse, 'initial', '', globalRefinement));
+      let res = unwrapGen(await gemini.generateConcepts(
+        variationText, cleanInputs, resolvedUniverse,
+        refineDirection ? 'precision' : 'initial',
+        refineDirection ? conceptsText : '',
+        refineDirection ? '' : globalRefinement,
+        refineDirection || undefined,
+        refineDirection ? refineIndex : undefined,
+      ));
       res = res ? normalizeFieldLabels(res) : res;
       if (!res || (!res.includes('CONCEPT_START') && !res.includes('SUBJECT_ACTION'))) {
         refundCredits('generateConcepts');
@@ -3926,6 +4048,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         return;
       }
       setConceptsText(res);
+      if (refineDirection) setEditFeedback('');
       setPhase('concept_review');
       updateHighestUnlocked('concept_review');
       awardMilestone('conceptsGenerated');
@@ -3957,10 +4080,73 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
   };
 
+  // BUTTON 2 ("Regenerate All Blueprints"): regenerate the 3 concepts FRESH from the CURRENT
+  // hook — no refinement direction, no hook/TOV regeneration. Carousel keeps its slide-copy flow.
+  const handleRegenerateConceptsFresh = async () => {
+    if (!inputs) return;
+    // FIX 2: surface a toast instead of silently no-op'ing when no hook is selected.
+    if (!selectedTov) { showToast('Please select a hook first before regenerating blueprints.', 'error'); return; }
+    if (inputs.adMode === 'carousel' && (inputs.slideCount || 1) > 1) {
+      return handleApproveTov(selectedTov);
+    }
+    if (!deductCredits('generateConcepts')) return;
+    startLoad('Regenerating Blueprints...');
+    const cleanInputs = { ...inputs, personalPhotos: [], brandLogos: inputs.brandLogos?.slice(0, 5) || [] };
+    try {
+      let res = unwrapGen(await gemini.generateConcepts(selectedTov, cleanInputs, resolvedUniverse, 'initial', '', ''));
+      res = res ? normalizeFieldLabels(res) : res;
+      if (!res || (!res.includes('CONCEPT_START') && !res.includes('SUBJECT_ACTION'))) {
+        refundCredits('generateConcepts');
+        showToast('Blueprint generation returned empty. Credits refunded. Try again.', 'error');
+        return;
+      }
+      setConceptsText(res);
+      // Refresh ALL batch groups (cards read g.conceptsText). Text-match was unreliable because the
+      // global conceptsText and group text diverge, so update every group with the new content.
+      setBatchHookGroups(prev => prev.map(g => ({ ...g, conceptsText: res })));
+      showToast('Blueprints regenerated.', 'success');
+    } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
+  };
+
+  // Robustly replace ONLY concept `n`'s body inside the full multi-concept text, mirroring
+  // getConceptBlock's boundary detection (numbered → positional, 1-based; numbered/unnumbered/
+  // spaced markers all handled). Returns the merged text, or null when no concept markers exist
+  // at all (genuine single-concept text — caller decides) or the target can't be safely located.
+  const spliceConceptBody = (full: string, n: number, edited: string): string | null => {
+    if (!full) return null;
+    const startRe = /CONCEPT[\s_\-]*START[\s_\-]*(\d*)/gi;
+    const starts: { idx: number; mEnd: number; num: number }[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = startRe.exec(full)) !== null) {
+      starts.push({ idx: m.index, mEnd: m.index + m[0].length, num: parseInt(m[1], 10) || 0 });
+    }
+    if (starts.length === 0) return null;
+    let ti = starts.findIndex(s => s.num === n);
+    if (ti === -1 && n >= 1 && n <= starts.length) ti = n - 1; // fall back to positional (1-based)
+    if (ti === -1) return null; // target out of range — caller must NOT wipe siblings
+    const tStart = starts[ti];
+    const lineEnd = full.indexOf('\n', tStart.idx);
+    const contentStart = lineEnd === -1 ? tStart.mEnd : lineEnd + 1; // body begins after the START line
+    const nextStart = ti + 1 < starts.length ? starts[ti + 1].idx : full.length;
+    const endRe = /CONCEPT[\s_\-]*END[\s_\-]*\d*/gi;
+    endRe.lastIndex = contentStart;
+    const endMatch = endRe.exec(full);
+    const contentEnd = (endMatch && endMatch.index < nextStart) ? endMatch.index : nextStart;
+    // Strip any markers the model wrapped around the returned single concept.
+    const body = edited
+      .replace(/CONCEPT[\s_\-]*START[\s_\-]*\d*/gi, '')
+      .replace(/CONCEPT[\s_\-]*END[\s_\-]*\d*/gi, '')
+      .trim();
+    if (!body) return null;
+    // Preserve the original START marker line + the END marker; replace only the inner body.
+    return full.slice(0, contentStart) + body + '\n' + full.slice(contentEnd);
+  };
+
   const handlePrecisionConceptEdit = async (index: string) => {
     if (!inputs || !editFeedback) return;
     if (!deductCredits('editOneConcept')) return;
     const feedbackCopy = editFeedback;
+    const prevConceptsText = conceptsText;
     setActiveEditConceptIndex(null);
     setEditFeedback('');
     setItemLoading(prev => ({ ...prev, [`concept_${index}`]: true }));
@@ -3968,13 +4154,56 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       let res = unwrapGen(await gemini.generateConcepts(selectedTov, inputs, resolvedUniverse, 'precision', conceptsText, '', feedbackCopy, index));
       res = res ? normalizeFieldLabels(res) : res;
       if (res && (res.includes('CONCEPT_START') || res.includes('SUBJECT_ACTION'))) {
-        setConceptsText(res);
-        showToast(`Blueprint updated.`, "success");
+        // Precision mode returns ONLY the edited concept. Splice it back into its slot using
+        // the same boundary detection the cards use — NEVER replace the whole multi-concept
+        // text on a marker miss (that wiped the sibling concepts and blanked the edited card).
+        const n = parseInt(index, 10);
+        const startCount = (prevConceptsText.match(/CONCEPT[\s_\-]*START/gi) || []).length;
+        const merged = spliceConceptBody(prevConceptsText, n, res);
+        if (merged) {
+          setConceptsText(merged);
+          // Also patch the matching batch hook group so batch render uses the edit.
+          setBatchHookGroups(prev => prev.map(g => g.conceptsText === prevConceptsText ? { ...g, conceptsText: merged } : g));
+          showToast(`Blueprint updated.`, "success");
+        } else if (startCount <= 1) {
+          // Genuine single-concept text (0–1 markers) — replacing the whole body drops no siblings.
+          const body = res.replace(/CONCEPT[\s_\-]*START[\s_\-]*\d*/gi, '').replace(/CONCEPT[\s_\-]*END[\s_\-]*\d*/gi, '').trim();
+          const next = body || res;
+          setConceptsText(next);
+          setBatchHookGroups(prev => prev.map(g => g.conceptsText === prevConceptsText ? { ...g, conceptsText: next } : g));
+          showToast(`Blueprint updated.`, "success");
+        } else {
+          // Multiple concepts exist but the target couldn't be located — refund rather than
+          // overwrite the whole set (which is what made concepts disappear before).
+          console.warn('[precisionEdit] could not locate concept', n, 'in', startCount, 'concepts — aborting splice to avoid wiping siblings');
+          refundCredits('editOneConcept');
+          showToast('Could not locate that blueprint to patch. Credits refunded — try again.', 'error');
+        }
       } else {
         refundCredits('editOneConcept');
         showToast('Edit returned empty result. Credits refunded.', 'error');
       }
     } catch (e) { refundCredits('editOneConcept'); handleApiError(e); } finally { setItemLoading(prev => ({ ...prev, [`concept_${index}`]: false })); }
+  };
+
+  // FIX 2: write directly-edited raw blueprint text back into conceptsText for concept `index`.
+  const saveDirectConceptEdit = (index: string, text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) { setDirectEditIndex(null); return; }
+    setConceptsText(prev => {
+      const start = `CONCEPT_START_${index}`;
+      const end = `CONCEPT_END_${index}`;
+      const si = prev.indexOf(start);
+      const ei = prev.indexOf(end);
+      if (si !== -1 && ei !== -1 && ei > si) {
+        // Splice the edited body back between this concept's markers, preserving siblings.
+        return prev.slice(0, si + start.length) + '\n' + trimmed + '\n' + prev.slice(ei);
+      }
+      // No CONCEPT_START/END markers (single-concept / alt format) — replace the whole text.
+      return trimmed;
+    });
+    setDirectEditIndex(null);
+    showToast('Blueprint updated.', 'success');
   };
 
   const handleApproveConcept = async (conceptRaw: string) => {
@@ -3999,6 +4228,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     // Clear old batch results so the new single render shows properly
     setBatchResults([]);
     setBatchRendering(false);
+    // A fresh single render invalidates any prior resize-undo snapshot (ISSUE 3) and the
+    // original-source anchor — the first reflow of THIS render will capture its own original.
+    setPreviousSingleMockup(null);
+    originalMockupRef.current = null;
 
     // Deduct credits upfront
     const startingCredits = userCredits;
@@ -4013,6 +4246,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
       if (mockup) {
         pushMockup(mockup, primaryRatio);
+        // Reflow quality fix: anchor the original source to THIS first render so every later
+        // resize reflows from it (never from an auto-reflowed extra size or a prior resize).
+        originalMockupRef.current = mockup;
         setVisualPolishes([]);
         // ─── SAVE RENDER FOR FEEDBACK (non-blocking — must not prevent phase transition) ─────────
         // Capture the freshly returned id locally; React state setter is async and the auto-reflow
@@ -4064,13 +4300,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             try {
               await new Promise(r => setTimeout(r, 500));
               if (savedGenId) {
-                const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+                const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
+                console.log(`🔁 [auto-reflow] → ${extraRatio} starting (genId=${savedGenId}, client timeout=300s)`, Date.now());
                 const reflowRes = await reflowFn({
                   generationId: savedGenId,
                   targetAspectRatio: extraRatio as AspectRatio,
                   method: 'auto',
                   scope: 'single',
                 });
+                console.log(`${reflowRes.data?.success && reflowRes.data?.outcomes?.[0]?.outputUrl ? '✅' : '❌'} [auto-reflow] → ${extraRatio} returned`, Date.now(), { success: reflowRes.data?.success, hasUrl: !!reflowRes.data?.outcomes?.[0]?.outputUrl, errorCode: reflowRes.data?.outcomes?.[0]?.errorCode ?? 'none' });
                 const oc = reflowRes.data?.outcomes?.[0];
                 if (reflowRes.data?.success && oc?.outputUrl) {
                   pushMockup(oc.outputUrl, extraRatio as AspectRatio);
@@ -4220,8 +4458,19 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     }
 
     setBatchResults(initial);
+    // Drop any "Back to batch" snapshot from a prior batch run so a stale grid can't
+    // reappear behind this fresh render.
+    setBatchSnapshot([]);
+    // Clear stale carousel slides — mirrors handleCarouselRender clearing batchResults
+    // (5787330): the ALL VERSIONS gallery is gated on carouselSlides.length === 0, so
+    // leftovers from an earlier carousel run would keep it hidden for this batch.
+    setCarouselSlides([]);
     setBatchRendering(true);
     setCurrentAspectRatio(primaryRatio);
+    // The reflow panel's "Current" badge reads activeBatchRatio in batch scope (not
+    // currentAspectRatio) — sync it to the rendered ratio so the correct size button
+    // shows CURRENT instead of whatever ratio was active before this batch.
+    setActiveBatchRatio(primaryRatio);
     setPhase('render_studio');
     setReflowStep('idle');
     setReflowTarget(null);
@@ -4231,8 +4480,19 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     setUserCredits(newCredits);
     awardMilestone('designGenerated');
 
+    // ISSUE 4: persist the refined concepts / batch groups NOW, before the long render loop.
+    // The autosave debounce (3 s) may not have fired yet after a refinement, so a stuck/slow
+    // generation followed by a refresh would otherwise lose the refined state. forceFlush()
+    // swallows its own errors, so this never blocks the render.
+    try { await autoSaveForceFlush(); } catch { /* non-blocking */ }
+
+    // ISSUE 4: a single outer try/finally guarantees the rendering flag is cleared even if an
+    // unexpected error escapes the per-combo handlers — otherwise the UI stays stuck on
+    // "Rendering…" forever with every control disabled.
+    try {
     // Render per combo: primary size first, then reflow to extra sizes
     let resultIdx = 0;
+    let firstBatchGenId: string | null = null; // FIX 2: anchor the global renderGenerationId so resize works after a batch
     for (let ci = 0; ci < combos.length; ci++) {
       const combo = combos[ci];
       let primaryUrl: string | null = null;
@@ -4245,7 +4505,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         const genResult = await gemini.generateFinalAd(combo.conceptText, combo.hookText, inputs, resolvedUniverse, primaryRatio, undefined, undefined, undefined, undefined, undefined, combos.length * allSizes.length);
         primaryUrl = genResult.image;
         const primaryStorageUrl = genResult.storageUrl || null;
-        setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, buildPlan: combo.conceptText, url: primaryUrl, status: primaryUrl ? 'done' : 'error' } : r));
+        // Capture originalUrl = the primary render: the un-reflowed, highest-quality source
+        // every later resize of any size for this combo reflows from (no chain degradation).
+        setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, buildPlan: combo.conceptText, url: primaryUrl, originalUrl: primaryUrl, status: primaryUrl ? 'done' : 'error' } : r));
         // Persist a generation doc for this combo so its extra-size reflows have a
         // generationId to anchor to (the reflowImage callable requires one) and the
         // correct per-combo buildPlan for any rerender route. Non-blocking.
@@ -4259,6 +4521,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             );
           } catch (saveErr) {
             console.error(`Batch combo ${ci + 1} generation save failed (reflows skipped):`, saveErr);
+          }
+          // Persist this combo's generation id on its primary item so batch retry/reflow
+          // anchors to the correct source generation (not the global renderGenerationId).
+          if (comboGenId && !firstBatchGenId) firstBatchGenId = comboGenId;
+          if (comboGenId) {
+            const _cg = comboGenId;
+            setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, generationId: _cg } : r));
           }
         }
       } catch (e) {
@@ -4277,7 +4546,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
         if (primaryUrl && comboGenId) {
           try {
-            const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+            const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
             const reflowRes = await reflowFn({
               generationId: comboGenId,
               targetAspectRatio: extraRatio as AspectRatio,
@@ -4287,7 +4556,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             });
             const oc = reflowRes.data?.outcomes?.[0];
             const reflowedUrl = reflowRes.data?.success && oc?.outputUrl ? oc.outputUrl : null;
-            setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, buildPlan: combo.conceptText, url: reflowedUrl, status: reflowedUrl ? 'done' as const : 'error' as const } : r));
+            // originalUrl = the primary render (NOT this reflowed output), so resizing this
+            // extra-size tile later still reflows from the original source, not from itself.
+            setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, buildPlan: combo.conceptText, url: reflowedUrl, originalUrl: primaryUrl, status: reflowedUrl ? 'done' as const : 'error' as const, generationId: comboGenId ?? undefined } : r));
+            // Mirror the single-render extra-size path: also push to mockupHistory so the
+            // ALL VERSIONS gallery lists this size alongside the primary-size renders.
+            if (reflowedUrl) pushMockup(reflowedUrl, extraRatio as AspectRatio);
           } catch (e) {
             console.error(`Batch reflow ${ci + 1} to ${extraRatio} failed:`, e);
             setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'error' } : r));
@@ -4301,7 +4575,16 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
       if (ci < combos.length - 1) await new Promise(r => setTimeout(r, 500));
     }
-    setBatchRendering(false);
+    // FIX 2: anchor the global renderGenerationId to the first successful batch item so the
+    // resize guard (which checks renderGenerationId) no longer blocks resizing after a batch.
+    if (firstBatchGenId) setRenderGenerationId(firstBatchGenId);
+    } catch (e) {
+      // ISSUE 4: surface the failure instead of leaving a silently-stuck spinner.
+      console.error('Batch render failed:', e);
+      handleApiError(e);
+    } finally {
+      setBatchRendering(false);
+    }
   };
 
   // ─── BATCH RETRY — Retry a single failed/unwanted batch image ─────────────
@@ -4340,23 +4623,28 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
       let mockup: string | null = null;
 
-      if (isReflow && renderGenerationId) {
-        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+      // Use THIS item's own source generation (comboGenId) — fall back to the global only if absent.
+      const reflowGenId = item.generationId || renderGenerationId;
+      if (isReflow && reflowGenId) {
+        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
         const reflowRes = await reflowFn({
-          generationId: renderGenerationId,
+          generationId: reflowGenId,
           targetAspectRatio: itemRatio,
           method: 'auto',
           scope: 'single',
+          // Reflow from the ORIGINAL render, never a prior resize output (no chain degradation).
+          sourceImageOverride: item.originalUrl || undefined,
         });
         const reflowOc = reflowRes.data?.outcomes?.[0];
         mockup = reflowRes.data?.success && reflowOc?.outputUrl ? reflowOc.outputUrl : null;
       } else {
+        // Fallback when no generationId is available to anchor the reflowImage callable.
+        // Degrade to a full fresh rerender for BOTH retry modes — NEVER send a "REFLOW ONLY"
+        // instruction + source image into generateFinalAd, since that combination is blocked
+        // by the deprecated REFLOW gate (FR-026) and always returns image: null. This mirrors
+        // the retryMode === 'rerender' path exactly (variation instruction, no source image).
         const variationInstruction = `IMPORTANT: This is a RETRY — you MUST generate a DIFFERENT composition, layout, camera angle, and color palette from previous attempts. Vary the hero pose, background elements, and text placement while keeping the same concept and Arabic text strings. Do NOT reproduce the same design.${refinementNote ? ' ' + refinementNote : ''}`;
-        const renderInstruction = isReflow
-          ? `REFLOW ONLY — adapt this exact design to ${itemRatio} ratio. Keep ALL text identical word-for-word.${refinementNote ? ' ' + refinementNote : ''}`
-          : variationInstruction;
-        const sourceImage = isReflow && item.url ? item.url : undefined;
-        const retryResult = await gemini.generateFinalAd(item.conceptText, item.hookText || selectedTov, inputs, resolvedUniverse, itemRatio, renderInstruction, sourceImage);
+        const retryResult = await gemini.generateFinalAd(item.conceptText, item.hookText || selectedTov, inputs, resolvedUniverse, itemRatio, variationInstruction);
         mockup = retryResult.image;
       }
 
@@ -4365,6 +4653,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         ...r,
         buildPlan: item.conceptText,
         url: mockup,
+        // A full rerender produces a NEW base image → it becomes the new original source.
+        // A reflow retry keeps the existing original (it's just another resize of it).
+        originalUrl: isReflow ? r.originalUrl : (mockup || r.originalUrl),
         status: mockup ? 'done' as const : 'error' as const,
         localRefinement: localRefinement?.trim() || r.localRefinement,
         localRefinementHistory: localRefinement?.trim()
@@ -4402,6 +4693,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       index: i + 1, copy, buildPlan: '', imageUrl: null, status: 'pending' as const,
     }));
     setCarouselSlides(initialSlides);
+    // Clear stale batch results — the canvas ternary gives batchResults priority over
+    // carouselSlides, so leftovers from an earlier batch run would hijack the canvas
+    // and hide the freshly rendered carousel.
+    setBatchResults([]);
     // A fresh carousel invalidates any prior resize-undo snapshot.
     setPreviousCarouselSlides(null);
     setPreviousCarouselRatio(null);
@@ -4471,7 +4766,20 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
     try {
       // ── PHASE 1: Render Slide 1 (anchor) sequentially ──
-      const slide1Result = await buildSlide(0);
+      // Per-slide try/catch (same pattern as slides 2+ below): a slide-1 exception must
+      // show an error tile and let the remaining slides render — not fall through to the
+      // outer catch, which aborts the whole carousel and strands the user on the concept
+      // screen. Slide-1 credits refund via the finally-block reconciliation
+      // (creditsActuallyUsed is never incremented for a failed slide). When slide 1
+      // fails, slides 2+ render without a style anchor.
+      let slide1Result: string | null = null;
+      try {
+        slide1Result = await buildSlide(0);
+      } catch (e) {
+        console.error('[carousel] slide 1 failed with exception:', e);
+        setCarouselSlides(prev => prev.map((s, idx) => idx === 0 ? { ...s, status: 'error' } : s));
+        renderedSlides[0] = { ...renderedSlides[0], status: 'error' };
+      }
       if (slide1Result) anchorImage = slide1Result;
 
       // ── PHASE 2: Render slides 2-N in PARALLEL (staggered 2s apart to avoid rate limits) ──
@@ -4788,7 +5096,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   // Updated Handler to support Refinement
   const handleGenerateCaption = async (isRefinement = false) => {
     // Support both single mode (currentMockup) and carousel mode (first slide image)
-    const mockupForCaption = currentMockup || carouselSlides.find(s => s.status === 'done')?.imageUrl || null;
+    const mockupForCaption = currentMockup
+      || carouselSlides.find(s => s.status === 'done')?.imageUrl
+      || batchResults.find(r => r.status === 'done' && r.url)?.url
+      || null;
     if (!mockupForCaption || !selectedTov || !inputs) return;
     if (!deductCredits(isRefinement ? 'refineCaption' : 'generateCaption')) return;
 
@@ -4935,7 +5246,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     showToast(`${hookCount} ad copies generated!`, 'success');
   };
 
-  const handleRescale = async (newRatio: AspectRatio, scopeOverride?: { scope: 'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'; slideIndex?: number }) => {
+  const handleRescale = async (newRatio: AspectRatio, scopeOverride?: { scope: 'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'; slideIndex?: number; indices?: number[] }) => {
     if (!inputs || !selectedTov) return;
 
     // ─── EARLY-EXIT GUARDS (crash hardening) ─────────────────────────────────
@@ -4959,48 +5270,88 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const effectiveScope = scopeOverride?.scope;
     const effectiveSlideIndex = scopeOverride?.slideIndex;
 
-    // ─── BATCH_ALL MODE ─────
+    // ─── BATCH_ALL MODE: per-combo reflow ─────
+    // Each batch combo is its OWN generation doc, so a single generationId can't address
+    // them all (the old scope:'batch_all' call only ever touched the first combo). Instead
+    // loop per-combo and call reflowImage with SCOPE:'single' using each item's own
+    // generationId + its rendered image as the source override. Runs in parallel
+    // (Promise.allSettled), best-effort partial success — a failed item reverts to its
+    // original image/ratio and never aborts the others.
     if (effectiveScope === 'batch_all') {
-      const batchItems = safeBatch.filter(r => r.status === 'done' && r.url);
-      if (batchItems.length === 0) return;
+      // Optional explicit subset (ISSUE 5 "Resize Selected") — restrict to checked indices.
+      const restrictTo = scopeOverride?.indices ? new Set(scopeOverride.indices) : null;
+      const batchItems = safeBatch
+        .map((r, idx) => ({ r, idx }))
+        .filter(({ r, idx }) => r.status === 'done' && !!r.url && !!r.generationId && r.ratio === currentAspectRatio
+          && (!restrictTo || restrictTo.has(idx)));
+      if (batchItems.length === 0) {
+        showToast(restrictTo ? 'Select at least one ad to resize.' : (t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation.'), 'error');
+        return;
+      }
       const totalCost = CREDIT_COSTS.reflowImage * batchItems.length;
-      if (!renderGenerationId) { showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation.', 'error'); return; }
       if (userCredits < totalCost) {
         setUpgradeReason(t('studio.reflow.upgrade_single_credits').replace('{cost}', String(totalCost)).replace('{have}', String(userCredits)));
         setShowUpgradeModal(true);
         return;
       }
+      // Flip the grid to the target ratio and move every target item into that ratio bucket
+      // as 'rendering' — the grid filters tiles by item.ratio === currentAspectRatio, so the
+      // items must adopt newRatio up front to stay visible (with spinners) during the resize.
+      const targetIdxs = new Set(batchItems.map(b => b.idx));
+      // `url`/`ratio` are the item's CURRENT state (used to revert on failure); `src` is the
+      // ORIGINAL un-reflowed render used as the reflow source so repeated resizes never
+      // chain-degrade quality.
+      const originals = new Map(batchItems.map(({ r, idx }) => [idx, { url: r.url!, ratio: r.ratio, src: r.originalUrl || r.url! }]));
       setCurrentAspectRatio(newRatio);
+      // Keep the reflow chips' "current ratio" in sync (it reads activeBatchRatio in batch mode).
+      // Without this the picker still treats the OLD ratio as current after a batch resize, which
+      // disables that ratio's chip — so the user can't pick it again to resize back (FIX 3).
+      setActiveBatchRatio(newRatio);
       startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
-      setBatchResults(prev => prev.map(r => r.status === 'done' && r.url ? { ...r, status: 'rendering' as const } : r));
+      setBatchResults(prev => prev.map((r, idx) => targetIdxs.has(idx) ? { ...r, ratio: newRatio, status: 'rendering' as const } : r));
       setUserCredits(prev => prev - totalCost);
-      try {
-        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+      const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
+      let creditsCharged = 0;
+      const settled = await Promise.allSettled(batchItems.map(async ({ r, idx }) => {
+        const orig = originals.get(idx)!;
         const result = await reflowFn({
-          generationId: renderGenerationId,
+          generationId: r.generationId!,
           targetAspectRatio: newRatio,
           method: 'auto',
-          scope: 'batch_all',
+          scope: 'single',           // resize each combo on its OWN generation id
+          sourceImageOverride: orig.src,   // ALWAYS the original render, never a prior resize
         });
-        if (typeof result.data.totalCreditsCharged === 'number') {
-          const delta = totalCost - result.data.totalCreditsCharged;
-          if (delta !== 0) setUserCredits(prev => prev + delta);
+        if (typeof result.data?.totalCreditsCharged === 'number') creditsCharged += result.data.totalCreditsCharged;
+        const oc = result.data?.outcomes?.[0];
+        if (oc?.success && oc.outputUrl) {
+          const outUrl = oc.outputUrl;
+          // Preserve the pre-resize version in mockupHistory BEFORE the in-place overwrite
+          // below discards it (the gallery never reads originalUrl) — so ALL VERSIONS keeps
+          // both sizes. Mirrors the auto-reflow path (65513f1).
+          if (orig.url) pushMockup(orig.url, orig.ratio);
+          setBatchResults(prev => prev.map((rr, i) => i === idx ? { ...rr, url: outUrl, ratio: newRatio, status: 'done' as const } : rr));
+        } else {
+          // No image produced — revert this item to its original image AND ratio so it
+          // returns to its own ratio bucket (it simply won't appear in the new-ratio view).
+          setBatchResults(prev => prev.map((rr, i) => i === idx ? { ...rr, url: orig.url, ratio: orig.ratio, status: 'done' as const } : rr));
+          throw new Error('reflow_failed');
         }
-        for (const outcome of result.data.outcomes || []) {
-          if (outcome.success && outcome.outputUrl && outcome.itemIndex !== null) {
-            setBatchResults(prev => prev.map((r, idx) => idx === outcome.itemIndex ? { ...r, url: outcome.outputUrl, status: 'done' as const } : r));
-          } else if (!outcome.success && outcome.itemIndex !== null) {
-            setBatchResults(prev => prev.map((r, idx) => idx === outcome.itemIndex ? { ...r, status: 'error' as const } : r));
-          }
-        }
-        const batchFirstUrl = result.data.outcomes?.[0]?.outputUrl;
-        if (result.data.success && batchFirstUrl) {
-          pushMockup(batchFirstUrl, newRatio);
-        }
-      } catch (e) {
-        setUserCredits(prev => prev + totalCost);
-        handleApiError(e);
-      } finally { stopLoad(); }
+      }));
+      stopLoad();
+      // Reconcile the optimistic charge against the backend's authoritative total
+      // (failed/throwing items contribute 0 and are refunded via the delta).
+      const delta = totalCost - creditsCharged;
+      if (delta !== 0) setUserCredits(prev => prev + delta);
+      const failedCount = settled.filter(s => s.status === 'rejected').length;
+      if (failedCount === batchItems.length) {
+        const firstErr = settled.find(s => s.status === 'rejected') as PromiseRejectedResult | undefined;
+        handleApiError(firstErr?.reason);
+      } else if (failedCount > 0) {
+        showToast(`Resized ${batchItems.length - failedCount}/${batchItems.length} — ${failedCount} failed`, 'error');
+      } else {
+        showToast(`Resized ${batchItems.length} to ${newRatio}`, 'success');
+      }
+      setSelectedBatchIndices(new Set()); // clear checkbox selection after a batch resize
       return;
     }
 
@@ -5018,7 +5369,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
       setUserCredits(prev => prev - cost);
       try {
-        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
         const result = await reflowFn({
           generationId: renderGenerationId,
           targetAspectRatio: newRatio,
@@ -5085,7 +5436,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
       try {
         if (renderGenerationId) {
-          const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+          const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
           const result = await reflowFn({
             generationId: renderGenerationId,
             targetAspectRatio: newRatio,
@@ -5134,12 +5485,34 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
     // ─── SINGLE MODE: Reflow one image via reflowImage callable (HOTFIX-F) ─────
     if (!selectedConcept || !currentMockup || !buildPlan) return;
+    // ISSUE 3: snapshot the current displayed image + its source ratio BEFORE flipping the
+    // aspect ratio, so the user can switch back to the pre-resize size. displayRatio reads
+    // the active history item's own ratio (falling back to currentAspectRatio).
+    setPreviousSingleMockup({ url: currentMockup, rawBase64: currentRawBase64, ratio: displayRatio });
     setCurrentAspectRatio(newRatio);
     startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
+    // FIX 3: when a batch card is focused, target ITS generation, not the global one.
+    const _focusedBatchItem = selectedBatchItemIndex != null ? safeBatch[selectedBatchItemIndex] : null;
+    // Fall back to the first done batch item's own generation id when no tile is focused and the
+    // global renderGenerationId is empty — so a 'single'-scope resize in batch mode still works
+    // instead of erroring with "Generate an ad first".
+    const effectiveSingleGenId = _focusedBatchItem?.generationId
+      || renderGenerationId
+      || safeBatch.find(b => b.status === 'done' && b.generationId)?.generationId;
+    // Reflow quality fix: ALWAYS resize from the ORIGINAL generation, never from a prior
+    // resize output (which would chain-degrade quality each hop). For a focused batch tile use
+    // that item's stored originalUrl; for the single render use originalMockupRef, capturing it
+    // on the first reflow (when currentRawBase64 still IS the original generation).
+    if (!_focusedBatchItem && !originalMockupRef.current) {
+      originalMockupRef.current = currentRawBase64 || currentMockup || null;
+    }
+    const reflowSource = _focusedBatchItem
+      ? (_focusedBatchItem.originalUrl || _focusedBatchItem.url || currentRawBase64)
+      : (originalMockupRef.current || currentRawBase64);
     // Optimistic UI-only decrement (callable backend performs the authoritative deduction;
     // calling deductCredits() here would invoke deductCreditsServer and double-bill).
-    const singleOptimisticCost = renderGenerationId ? CREDIT_COSTS.reflowImage : 0;
-    if (renderGenerationId) {
+    const singleOptimisticCost = effectiveSingleGenId ? CREDIT_COSTS.reflowImage : 0;
+    if (effectiveSingleGenId) {
       if (userCredits < singleOptimisticCost) {
         setUpgradeReason(t('studio.reflow.upgrade_single_credits')
           .replace('{cost}', String(singleOptimisticCost))
@@ -5155,18 +5528,16 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       return;
     }
     try {
-      if (renderGenerationId) {
-        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage');
+      if (effectiveSingleGenId) {
+        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
         const result = await reflowFn({
-          generationId: renderGenerationId,
+          generationId: effectiveSingleGenId,
           targetAspectRatio: newRatio,
           method: 'auto',
           scope: 'single',
-          // Pass the actual displayed render directly (API-safe base64 / Storage URL —
-          // NOT the blob: display url) so reflow never depends on the server Storage
-          // upload state. currentRawBase64 holds the original base64 for fresh renders
-          // or the Storage URL for prior reflow outputs.
-          sourceImageOverride: currentRawBase64 || undefined,
+          // ALWAYS the ORIGINAL generation source (API-safe base64 / Storage URL — never a
+          // blob: display url and never a prior resize output), so quality never chain-degrades.
+          sourceImageOverride: reflowSource || undefined,
         });
         // Guard the whole payload: a transport/normalization failure can yield an
         // empty data object, and a malformed/error response can omit `outcomes`.
@@ -5296,6 +5667,38 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     });
   };
 
+  // Force a real file download for Storage URLs (cross-origin URLs ignore the anchor
+  // `download` attr and open in-browser with a token filename). Fetch → blob → same-origin
+  // object URL makes `download` + a meaningful filename work. Data URLs (trial watermark)
+  // pass through fetch fine. Falls back to opening in a new tab if fetch is CORS-blocked.
+  const downloadImage = async (url: string, filename: string) => {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        console.warn(`downloadImage: fetch returned ${response.status} ${response.statusText} for ${url} — falling back to direct link`);
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename || 'ad-creative.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      console.warn('downloadImage fetch failed, falling back to direct link:', e);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename || 'ad-creative.png';
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+  };
+
   const handleDownload = async () => {
     const downloadable = currentRawBase64 || currentMockup;
     if (!downloadable) return;
@@ -5311,12 +5714,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const filename = `${product}_${campaign}_${universe}_${hookKeyword}_${ratio}.png`;
 
     const finalUrl = await applyTrialWatermark(downloadable);
-    const link = document.createElement('a');
-    link.href = finalUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    await downloadImage(finalUrl, filename);
   };
 
   if (view === 'privacy') return <PrivacyPolicy onBack={() => setView('app')} />;
@@ -5732,6 +6130,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               metaConnected={metaConnection?.connected ?? false}
               onLoad={loadProject}
               onDelete={deleteProject}
+              onBulkDelete={confirmBulkDelete}
             />
           </div>
         )}
@@ -6221,7 +6620,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                               onClick={() => { setActiveEditHookIndex(v); setEditFeedback(''); }}
                               className="px-4 py-3.5 rounded-xl bg-slate-950/40 border border-slate-700/30 text-slate-300 text-[10px] font-bold uppercase tracking-wider hover:bg-slate-800 hover:text-white transition-all flex items-center gap-2"
                             >
-                              <i className="fa-solid fa-scissors text-[10px]"></i>
+                              <i className="fa-solid fa-wand-magic-sparkles text-[10px]"></i>
                               <span>AI Edit</span>
                             </button>
                           </div>
@@ -6382,7 +6781,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 className="w-full py-4 rounded-2xl bg-slate-900/60 hover:bg-slate-800/80 text-slate-200 text-[11px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 active:scale-[0.99]"
               >
                 <i className="fa-solid fa-arrows-rotate text-blue-500"></i>
-                <span>Regenerate All AI Suggestions</span>
+                <span>{t('concepts.regenerate_all_hooks')}</span>
               </button>
             </div>
           </div>
@@ -6492,7 +6891,12 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 />
                 <button
                   onClick={async () => {
-                    const merged = appendRefinement(refinementEntry);
+                    // ISSUE 4: compute the merged direction WITHOUT committing yet, so a failed
+                    // regen leaves the typed text in the box for retry (and doesn't pollute the
+                    // "Applied so far" history). Commit + clear the input only on success.
+                    const entry = refinementEntry.trim();
+                    const base = globalRefinement.trim();
+                    const merged = entry ? (base ? `${base}\n${entry}` : entry) : base;
                     if (!merged) return showToast("Please enter instructions first.", "error");
                     if (!deductCredits('generateConcepts')) return;
                     startLoad("Re-architecting Blueprints...");
@@ -6502,16 +6906,23 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       if (!res || (!res.includes('CONCEPT_START') && !res.includes('SUBJECT_ACTION'))) {
                         refundCredits('generateConcepts');
                         showToast("Blueprint generation returned empty. Credits refunded. Try again.", "error");
-                        return;
+                        return; // refinementEntry preserved, globalRefinement untouched — user can retry
                       }
                       setConceptsText(res);
+                      // Refresh ALL batch groups (cards read g.conceptsText). Text-match was unreliable
+                      // because the global conceptsText and group text diverge, so update every group.
+                      setBatchHookGroups(prev => prev.map(g => ({ ...g, conceptsText: res })));
+                      // SUCCESS: commit the direction to history (visible as "last used" in the
+                      // "Applied so far" list) and clear the input box.
+                      setGlobalRefinement(merged);
+                      setRefinementEntry('');
                       showToast("Architecture updated with your custom vision.", "success");
                     } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
                   }}
                   className="w-full py-4 bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white rounded-2xl text-[11px] font-bold uppercase tracking-wider shadow-lg transition-all flex items-center justify-center space-x-2 active:scale-[0.98]"
                 >
                   <i className="fa-solid fa-wand-magic-sparkles"></i>
-                  <span>Apply Global Refinement</span>
+                  <span>{t('concepts.apply_direction_regenerate')}</span>
                 </button>
               </div>
 
@@ -6703,14 +7114,24 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                       <span className="text-[10px] font-black uppercase tracking-wider">{t('concepts.render_btn')}</span>
                                     </button>
                                   )}
-                                  {/* Edit */}
+                                  {/* AI Patch (scissors) */}
                                   {!group.isBatch && (
                                     <button
                                       onClick={() => { setActiveEditConceptIndex(n.toString()); setEditFeedback(''); }}
                                       className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-slate-800/60 transition-all"
-                                      title="Edit concept"
+                                      title="AI patch (describe a change)"
                                     >
-                                      <i className="fa-solid fa-scissors text-[10px]"></i>
+                                      <i className="fa-solid fa-wand-magic-sparkles text-[10px]"></i>
+                                    </button>
+                                  )}
+                                  {/* FIX 2: Direct text edit (pen) — edit the raw blueprint text yourself */}
+                                  {!group.isBatch && (
+                                    <button
+                                      onClick={() => { setDirectEditIndex(n.toString()); setDirectEditText(getConceptBlock(group.conceptsSource, n)); }}
+                                      className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-slate-800/60 transition-all"
+                                      title="Edit blueprint text directly"
+                                    >
+                                      <i className="fa-solid fa-pen text-[10px]"></i>
                                     </button>
                                   )}
                                   {/* Expand/Collapse */}
@@ -6783,12 +7204,24 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                               {/* ─── Edit Overlay (single mode only) ─── */}
                               {!group.isBatch && activeEditConceptIndex === n.toString() && (
-                                <div className="absolute inset-0 bg-slate-950/95 backdrop-blur-xl p-6 z-30 flex flex-col justify-center animate-in zoom-in duration-300 rounded-xl">
+                                <div className="absolute inset-0 bg-slate-950/95 backdrop-blur-xl p-6 z-30 flex flex-col justify-center overflow-y-auto animate-in zoom-in duration-300 rounded-xl">
                                   <h4 className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider mb-4 text-center">Blueprint Patch — Concept {n}</h4>
-                                  <textarea value={editFeedback} onChange={e => setEditFeedback(e.target.value)} placeholder="e.g. Change background to office, make hero more confident, add laptop as prop..." className="w-full bg-slate-900 border border-slate-800/60 rounded-xl px-5 py-4 text-slate-100 h-32 focus:ring-1 focus:ring-blue-500 outline-none text-sm resize-none mb-4" />
+                                  <textarea value={editFeedback} onChange={e => setEditFeedback(e.target.value)} placeholder="e.g. Change background to office, make hero more confident, add laptop as prop..." style={{ minHeight: '120px', maxHeight: '40vh', width: '100%' }} className="bg-slate-900 border border-slate-800/60 rounded-xl px-5 py-4 text-slate-100 focus:ring-1 focus:ring-blue-500 outline-none text-sm resize-y mb-4" />
                                   <div className="flex flex-col gap-2">
                                     <button onClick={() => handlePrecisionConceptEdit(n.toString())} className="bg-blue-600 text-white py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider">Update Blueprint</button>
                                     <button onClick={() => setActiveEditConceptIndex(null)} className="text-slate-500 text-[10px] font-semibold py-2 hover:text-slate-300">Cancel</button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* ─── FIX 2: Direct Blueprint Text Editor (single mode only) ─── */}
+                              {!group.isBatch && directEditIndex === n.toString() && (
+                                <div className="absolute inset-0 bg-slate-950/95 backdrop-blur-xl p-6 z-30 flex flex-col justify-center overflow-y-auto animate-in zoom-in duration-300 rounded-xl">
+                                  <h4 className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider mb-4 text-center">Edit Blueprint Text — Concept {n}</h4>
+                                  <textarea value={directEditText} onChange={e => setDirectEditText(e.target.value)} dir="auto" placeholder="Edit the raw blueprint text directly — add or remove words..." className="w-full bg-slate-900 border border-slate-800/60 rounded-xl px-5 py-4 text-slate-100 min-h-[300px] focus:ring-1 focus:ring-emerald-500 outline-none text-xs font-mono resize-y mb-4" />
+                                  <div className="flex flex-col gap-2">
+                                    <button onClick={() => saveDirectConceptEdit(n.toString(), directEditText)} className="bg-emerald-600 text-white py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider">Save</button>
+                                    <button onClick={() => setDirectEditIndex(null)} className="text-slate-500 text-[10px] font-semibold py-2 hover:text-slate-300">Cancel</button>
                                   </div>
                                 </div>
                               )}
@@ -6810,14 +7243,16 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 <div className="px-6 pt-5 pb-4 border-b border-slate-800/60">
                   <p className="text-[9px] text-slate-400 uppercase tracking-widest font-bold mb-3">{t('studio.select_sizes')}</p>
                   <div className="flex gap-2">
+                    {/* Only UI_RATIOS (Square / Portrait / Story) are offered — same constant
+                        as the Step 4 reflow picker so the two pickers never drift. */}
                     {([
                       { key: '1:1' as AspectRatio, label: 'Square', sub: 'Feed', icon: 'fa-square' },
                       { key: '4:5' as AspectRatio, label: 'Portrait', sub: 'Feed', icon: 'fa-rectangle-portrait' },
-                      { key: '3:4' as AspectRatio, label: 'Tall', sub: 'Pinterest', icon: 'fa-rectangle-portrait' },
+                      { key: '3:4' as AspectRatio, label: 'Portrait', sub: 'Feed', icon: 'fa-rectangle-portrait' },
                       { key: '4:3' as AspectRatio, label: 'Wide', sub: 'Display', icon: 'fa-rectangle-landscape' },
                       { key: '9:16' as AspectRatio, label: 'Story', sub: 'Story', icon: 'fa-mobile-screen' },
                       { key: '16:9' as AspectRatio, label: 'Landscape', sub: 'YouTube', icon: 'fa-rectangle-wide' },
-                    ]).map(r => {
+                    ]).filter(r => UI_RATIOS.includes(r.key)).map(r => {
                       const isActive = selectedSizes.has(r.key);
                       return (
                         <button key={r.key} type="button"
@@ -6879,11 +7314,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         <span className="text-[9px] font-medium opacity-70 ml-1">(<i className="fa-solid fa-coins text-[7px]"></i> {totalCreditCost})</span>
                       </button>
                       <button
-                        onClick={() => handleApproveTov(selectedTov)}
+                        onClick={handleRegenerateConceptsFresh}
                         className="px-6 py-4 rounded-xl bg-gradient-to-r from-slate-800 to-slate-700 hover:from-slate-700 hover:to-slate-600 text-white text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-2 active:scale-[0.99] border border-slate-600/30 shadow-lg"
                       >
                         <i className="fa-solid fa-arrows-rotate text-blue-400"></i>
-                        <span>{t('concepts.regenerate')}</span>
+                        <span>{t('concepts.regenerate_all_blueprints')}</span>
                       </button>
                     </div>
                   ) : (
@@ -6921,11 +7356,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         </button>
                       )}
                       <button
-                        onClick={() => handleApproveTov(selectedTov)}
+                        onClick={handleRegenerateConceptsFresh}
                         className="px-6 py-3 rounded-xl bg-gradient-to-r from-slate-800 to-slate-700 hover:from-slate-700 hover:to-slate-600 text-white text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-2 active:scale-[0.99] border border-slate-600/30 shadow-lg"
                       >
                         <i className="fa-solid fa-arrows-rotate text-blue-400"></i>
-                        <span>{t('concepts.regenerate')}</span>
+                        <span>{t('concepts.regenerate_all_blueprints')}</span>
                       </button>
                     </div>
                   )}
@@ -6935,7 +7370,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           );
         })()}
 
-        {phase === 'render_studio' && (() => {
+        {phase === 'render_studio' && (
+          // ISSUE 2: contain any render-time crash in the studio so it can't blank the whole
+          // page. resetKeys=[phase] auto-recovers when the user navigates away and back.
+          <ErrorBoundary label="the render studio" resetKeys={[phase]}>
+          {(() => {
           const hasAnyImage = currentMockup || batchResults.some((r: any) => r.status === 'done') || carouselSlides.some((s: any) => s.status === 'done');
           return (
             <div className="flex flex-col xl:flex-row gap-6 animate-in fade-in duration-700 max-w-[1500px] mx-auto relative">
@@ -7015,55 +7454,25 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     </button>
                   )}
 
-                  {/* Size tabs + Version nav */}
+                  {/* Size tabs — version navigation lives in the ALL VERSIONS gallery below
+                      (the old "Version X of Y" arrow navigator was removed as redundant). */}
                   {mockupHistory.length > 1 && (() => {
                     const uniqueRatios = [...new Set(mockupHistory.map(m => m.ratio))];
-                    const hasMultipleRatios = uniqueRatios.length > 1;
+                    if (uniqueRatios.length <= 1) return null;
                     const currentRatio = mockupHistory[historyIndex]?.ratio;
-                    // Get all items for the current ratio for version navigation
-                    const currentRatioItems = mockupHistory.map((m, idx) => ({ ...m, idx })).filter(m => m.ratio === currentRatio);
-                    const currentPosInRatio = currentRatioItems.findIndex(m => m.idx === historyIndex);
-                    const hasManyVersions = currentRatioItems.length > 1;
-
                     return (
-                      <div className="flex items-center gap-3">
-                        {/* SIZE TABS — show when multiple ratios */}
-                        {hasMultipleRatios && (
-                          <div className="flex items-center gap-1 bg-slate-900/80 border border-slate-800 p-1 rounded-xl">
-                            {uniqueRatios.map(ratio => {
-                              const idx = mockupHistory.findIndex(m => m.ratio === ratio);
-                              const isActive = currentRatio === ratio;
-                              const label = ratio === '1:1' ? 'Square' : ratio === '9:16' ? 'Story' : ratio === '4:5' ? 'Portrait' : ratio === '16:9' ? 'Landscape' : ratio === '3:4' ? 'Tall' : ratio === '4:3' ? 'Wide' : ratio;
-                              return (
-                                <button key={ratio} onClick={() => setHistoryIndex(idx)}
-                                  className={`px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all ${isActive ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'text-slate-500 hover:text-white'}`}>
-                                  {label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                        {/* VERSION ARROWS — always visible for navigating versions */}
-                        <div className="flex items-center gap-1.5 bg-slate-900/80 border border-slate-800 px-2.5 py-1.5 rounded-xl">
-                          <button onClick={() => {
-                            if (hasMultipleRatios) {
-                              if (currentPosInRatio > 0) setHistoryIndex(currentRatioItems[currentPosInRatio - 1].idx);
-                            } else {
-                              setHistoryIndex(prev => Math.max(0, prev - 1));
-                            }
-                          }} disabled={hasMultipleRatios ? currentPosInRatio <= 0 : historyIndex === 0} className="w-7 h-7 rounded-lg flex items-center justify-center disabled:opacity-20 hover:bg-slate-800 text-slate-400 text-xs"><i className="fa-solid fa-chevron-left"></i></button>
-                          <div className="text-center min-w-[60px]">
-                            <span className="text-[10px] font-bold text-white block">Version {hasMultipleRatios ? currentPosInRatio + 1 : historyIndex + 1}</span>
-                            <span className="text-[8px] text-slate-500">of {hasMultipleRatios ? currentRatioItems.length : mockupHistory.length}</span>
-                          </div>
-                          <button onClick={() => {
-                            if (hasMultipleRatios) {
-                              if (currentPosInRatio < currentRatioItems.length - 1) setHistoryIndex(currentRatioItems[currentPosInRatio + 1].idx);
-                            } else {
-                              setHistoryIndex(prev => Math.min(mockupHistory.length - 1, prev + 1));
-                            }
-                          }} disabled={hasMultipleRatios ? currentPosInRatio >= currentRatioItems.length - 1 : historyIndex === mockupHistory.length - 1} className="w-7 h-7 rounded-lg flex items-center justify-center disabled:opacity-20 hover:bg-slate-800 text-slate-400 text-xs"><i className="fa-solid fa-chevron-right"></i></button>
-                        </div>
+                      <div className="flex items-center gap-1 bg-slate-900/80 border border-slate-800 p-1 rounded-xl">
+                        {uniqueRatios.map(ratio => {
+                          const idx = mockupHistory.findIndex(m => m.ratio === ratio);
+                          const isActive = currentRatio === ratio;
+                          const label = ratio === '1:1' ? 'Square' : ratio === '9:16' ? 'Story' : ratio === '4:5' ? 'Portrait' : ratio === '16:9' ? 'Landscape' : ratio === '3:4' ? 'Tall' : ratio === '4:3' ? 'Wide' : ratio;
+                          return (
+                            <button key={ratio} onClick={() => setHistoryIndex(idx)}
+                              className={`px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all ${isActive ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'text-slate-500 hover:text-white'}`}>
+                              {label}
+                            </button>
+                          );
+                        })}
                       </div>
                     );
                   })()}
@@ -7077,15 +7486,38 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       const allResults = batchResults;
                       const doneCount = filteredResults.filter(({ item }) => item.status === 'done').length;
                       const totalDone = allResults.filter(r => r.status === 'done').length;
+                      // ISSUE 5: selection operates on the visible (current-ratio) done items.
+                      const doneVisible = filteredResults.filter(({ item }) => item.status === 'done' && item.url);
+                      const allVisibleSelected = doneVisible.length > 0 && doneVisible.every(({ idx }) => selectedBatchIndices.has(idx));
+                      const toggleBatchSelect = (i: number) => setSelectedBatchIndices(prev => {
+                        const next = new Set(prev);
+                        if (next.has(i)) next.delete(i); else next.add(i);
+                        return next;
+                      });
                       return (
                         <>
-                          <div className="flex items-center justify-between">
+                          <div className="flex items-center justify-between gap-2">
                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{doneCount}/{filteredResults.length} rendered</span>
-                            {batchRendering && <span className="text-[10px] text-amber-400 animate-pulse font-bold">Rendering...</span>}
+                            <div className="flex items-center gap-3">
+                              {batchRendering && <span className="text-[10px] text-amber-400 animate-pulse font-bold">Rendering...</span>}
+                              {doneVisible.length > 0 && (
+                                <button
+                                  onClick={() => setSelectedBatchIndices(prev => {
+                                    const next = new Set(prev);
+                                    if (allVisibleSelected) doneVisible.forEach(({ idx }) => next.delete(idx));
+                                    else doneVisible.forEach(({ idx }) => next.add(idx));
+                                    return next;
+                                  })}
+                                  className="text-[9px] font-bold text-blue-300 hover:text-blue-200 uppercase tracking-wider flex items-center gap-1 transition-colors">
+                                  <i className={`fa-solid ${allVisibleSelected ? 'fa-square-check' : 'fa-square'} text-[9px]`}></i>
+                                  {allVisibleSelected ? (lang === 'ar' ? 'إلغاء التحديد' : 'Deselect All') : (lang === 'ar' ? 'تحديد الكل' : 'Select All')}
+                                </button>
+                              )}
+                            </div>
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                             {filteredResults.map(({ item, idx }) => (
-                              <div key={idx} className={`relative rounded-xl overflow-hidden border border-slate-800/60 bg-slate-900 group ${item.ratio === '9:16' ? 'aspect-[9/16]' : item.ratio === '16:9' ? 'aspect-video' : item.ratio === '4:5' ? 'aspect-[4/5]' : item.ratio === '3:4' ? 'aspect-[3/4]' : item.ratio === '4:3' ? 'aspect-[4/3]' : 'aspect-square'}`}>
+                              <div key={idx} className={`relative rounded-xl overflow-hidden border bg-slate-900 group ${selectedBatchIndices.has(idx) ? 'border-blue-500 ring-2 ring-inset ring-blue-400' : 'border-slate-800/60'} ${item.ratio === '9:16' ? 'aspect-[9/16]' : item.ratio === '16:9' ? 'aspect-video' : item.ratio === '4:5' ? 'aspect-[4/5]' : item.ratio === '3:4' ? 'aspect-[3/4]' : item.ratio === '4:3' ? 'aspect-[4/3]' : 'aspect-square'}`}>
                                 {item.status === 'done' && item.url ? (
                                   <>
                                     <img src={item.url} className="w-full h-full object-cover cursor-grab active:cursor-grabbing"
@@ -7113,7 +7545,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                       />
                                       <div className="flex gap-1 flex-wrap justify-center px-1">
                                         {/* Download */}
-                                        <button onClick={async () => { const url = await applyTrialWatermark(item.url!); const a = document.createElement('a'); a.href = url; a.download = `${inputs?.productName || 'ad'}_${item.ratio.replace(':', 'x')}_H${item.hookKey}_C${item.conceptIndex}.png`; a.click(); }}
+                                        <button onClick={async () => { const url = await applyTrialWatermark(item.url!); await downloadImage(url, `${inputs?.productName || 'ad'}_${(item.ratio || '1:1').replace(':', 'x')}_H${item.hookKey}_C${item.conceptIndex}.png`); }}
                                           className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold flex items-center gap-0.5" title="Download">
                                           <i className="fa-solid fa-download text-[8px]"></i>
                                         </button>
@@ -7134,6 +7566,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                           setSelectedConcept(item.conceptText);
                                           setCurrentAspectRatio(item.ratio as AspectRatio);
                                           setActiveBatchRatio(item.ratio as AspectRatio);
+                                          setSelectedBatchItemIndex(idx); // FIX 3: focus this item for single-scope resize
                                           setStudioTweak('');
                                           setSelectedPolishIds(new Set());
                                           setEditTarget({
@@ -7148,7 +7581,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                           <i className="fa-solid fa-pen-to-square text-[8px]"></i>
                                         </button>
                                         {/* Save */}
-                                        <button onClick={() => { pushMockup(item.url!, item.ratio as AspectRatio); setBuildPlan(item.buildPlan); setSelectedConcept(item.conceptText); setActiveBatchRatio(item.ratio as AspectRatio); }}
+                                        <button onClick={() => { pushMockup(item.url!, item.ratio as AspectRatio); setBuildPlan(item.buildPlan); setSelectedConcept(item.conceptText); setActiveBatchRatio(item.ratio as AspectRatio); setSelectedBatchItemIndex(idx); }}
                                           className="px-2 py-1 bg-emerald-600 text-white rounded text-[7px] font-bold flex items-center gap-0.5" title="Use this design">
                                           <i className="fa-solid fa-bookmark text-[8px]"></i>
                                         </button>
@@ -7186,7 +7619,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                             setMetaPushing(true);
                                             showToast('Pushing to Meta Ads...', 'info');
                                             try {
-                                              const result = await metaService.pushCreative(item.url!, `${inputs?.productName || 'Ad'}_H${item.hookKey}_C${item.conceptIndex}_${item.ratio.replace(':', 'x')}`, buildDeploymentMeta({ ratio: item.ratio }));
+                                              const result = await metaService.pushCreative(item.url!, `${inputs?.productName || 'Ad'}_H${item.hookKey}_C${item.conceptIndex}_${(item.ratio || '1:1').replace(':', 'x')}`, buildDeploymentMeta({ ratio: item.ratio }));
                                               if (result.success) showToast(result.message || 'Pushed to Meta!', 'success');
                                               else showToast(result.message || 'Push failed', 'error');
                                             } catch { showToast('Push to Meta failed', 'error'); }
@@ -7200,7 +7633,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                     </div>
                                     {/* Mobile-visible action strip (always visible) */}
                                     <div data-light-ctx="batch-mobile-strip" className="absolute top-1 right-1 flex gap-1 md:hidden">
-                                      <button onClick={async () => { const url = await applyTrialWatermark(item.url!); const a = document.createElement('a'); a.href = url; a.download = `ad_${item.ratio.replace(':', 'x')}.png`; a.click(); }}
+                                      <button onClick={async () => { const url = await applyTrialWatermark(item.url!); await downloadImage(url, `ad_${(item.ratio || '1:1').replace(':', 'x')}.png`); }}
                                         className="w-6 h-6 bg-black/60 text-white rounded-md flex items-center justify-center text-[8px]"><i className="fa-solid fa-download"></i></button>
                                       <button onClick={() => handleBatchRetry(idx, 'reflow')}
                                         className="w-6 h-6 bg-black/60 text-cyan-300 rounded-md flex items-center justify-center text-[8px]"><i className="fa-solid fa-arrows-spin"></i></button>
@@ -7213,7 +7646,22 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                 ) : (
                                   <div className="w-full h-full flex items-center justify-center"><span className="text-[8px] text-slate-700 font-bold">H{item.hookKey}·C{item.conceptIndex}</span></div>
                                 )}
-                                <div data-light-ctx="batch-badge" className="absolute top-1.5 left-1.5 px-1.5 py-0.5 bg-black/60 rounded text-[7px] font-bold text-white">H{item.hookKey}·C{item.conceptIndex}</div>
+                                {/* ISSUE 5: selection checkbox (done items only) */}
+                                {item.status === 'done' && item.url && (
+                                  <button onClick={(e) => { e.stopPropagation(); toggleBatchSelect(idx); }}
+                                    className={`absolute top-1.5 left-1.5 z-20 w-5 h-5 rounded-md border flex items-center justify-center transition-all ${selectedBatchIndices.has(idx) ? 'bg-blue-600 border-blue-300 text-white' : 'bg-black/55 border-slate-300/60 text-transparent hover:border-blue-400'}`}
+                                    title={selectedBatchIndices.has(idx) ? 'Deselect' : 'Select'}>
+                                    <i className="fa-solid fa-check text-[9px]"></i>
+                                  </button>
+                                )}
+                                {/* ISSUE 6: always-visible download (not hover-gated) */}
+                                {item.status === 'done' && item.url && (
+                                  <button onClick={async (e) => { e.stopPropagation(); const url = await applyTrialWatermark(item.url!); await downloadImage(url, `${inputs?.productName || 'ad'}_${(item.ratio || '1:1').replace(':', 'x')}_H${item.hookKey}_C${item.conceptIndex}.png`); }}
+                                    className="absolute bottom-1.5 right-1.5 z-20 w-7 h-7 rounded-lg bg-blue-600/90 hover:bg-blue-500 text-white flex items-center justify-center shadow-lg" title="Download">
+                                    <i className="fa-solid fa-download text-[9px]"></i>
+                                  </button>
+                                )}
+                                <div data-light-ctx="batch-badge" className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 bg-black/60 rounded text-[7px] font-bold text-white">H{item.hookKey}·C{item.conceptIndex}</div>
                                 {(item.ratio === '9:16' || item.ratio === '16:9') && (
                                   <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-amber-500/80 rounded text-[6px] font-bold text-black" title="This aspect ratio will be cropped on Feed. Best for Stories/Reels.">Stories</div>
                                 )}
@@ -7269,7 +7717,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                       const watermarkedUrl = await applyTrialWatermark(item.url!);
                                       const r = await fetch(watermarkedUrl);
                                       const b = await r.blob();
-                                      const sizeName = sizeLabels[item.ratio] || item.ratio.replace(':', 'x');
+                                      const sizeName = sizeLabels[item.ratio] || (item.ratio || '1:1').replace(':', 'x');
                                       const fileName = `${pName}_H${hookKey}_C${item.conceptIndex}_${sizeName}_${dateStr}.png`;
                                       folder.file(fileName, b);
                                       imageFiles.push(fileName);
@@ -7342,7 +7790,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                       for (let i = 0; i < doneItems.length; i++) {
                                         const item = doneItems[i];
                                         try {
-                                          const result = await metaService.pushCreative(item.url!, `${inputs?.productName || 'Ad'}_H${item.hookKey}_C${item.conceptIndex}_${item.ratio.replace(':', 'x')}`, buildDeploymentMeta({ ratio: item.ratio }));
+                                          const result = await metaService.pushCreative(item.url!, `${inputs?.productName || 'Ad'}_H${item.hookKey}_C${item.conceptIndex}_${(item.ratio || '1:1').replace(':', 'x')}`, buildDeploymentMeta({ ratio: item.ratio }));
                                           if (result.success) {
                                             successCount++;
                                             // Store generation→ad linkage for performance tracking
@@ -7353,7 +7801,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                                   hookKey: item.hookKey,
                                                   conceptIndex: item.conceptIndex,
                                                   ratio: item.ratio,
-                                                  adName: `${inputs?.productName || 'Ad'}_H${item.hookKey}_C${item.conceptIndex}_${item.ratio.replace(':', 'x')}`,
+                                                  adName: `${inputs?.productName || 'Ad'}_H${item.hookKey}_C${item.conceptIndex}_${(item.ratio || '1:1').replace(':', 'x')}`,
                                                   productName: inputs?.productName || '',
                                                   pushedAt: Date.now(),
                                                   projectId: currentProjectId,
@@ -7444,7 +7892,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         <div key={idx} className="shrink-0" style={{ width: currentAspectRatio === '9:16' ? '120px' : '160px' }}>
                           <div onClick={() => setLightboxIndex(idx)} className={`relative rounded-xl overflow-hidden border bg-slate-900 group cursor-pointer ${currentAspectRatio === '9:16' ? 'aspect-[9/16]' : currentAspectRatio === '4:3' ? 'aspect-[4/3]' : 'aspect-square'} ${slide.status === 'done' ? 'border-emerald-500/30' : 'border-slate-800/60'}`}>
                             {slide.status === 'done' && slide.imageUrl && isRenderableImageUrl(slide.imageUrl) ? (
-                              <><img src={slide.imageUrl} className="w-full h-full object-cover cursor-grab active:cursor-grabbing" draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/uri-list', slide.imageUrl!); e.dataTransfer.setData('text/plain', slide.imageUrl!); e.dataTransfer.setData('text/html', `<img src="${slide.imageUrl}" />`); }} /><div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100 pointer-events-none"><div className="flex gap-1 pointer-events-auto" onClick={(e) => e.stopPropagation()}><button onClick={() => { pushMockup(slide.imageUrl!, currentAspectRatio); setBuildPlan(slide.buildPlan); setStudioTweak(''); setEditTarget({ source: 'carousel', index: idx, imageUrl: slide.imageUrl!, label: `Slide ${slide.index}` }); showToast(`Editing Slide ${slide.index} — changes will update this slide`, 'info'); }} className="px-2 py-1 bg-violet-600 text-white rounded text-[7px] font-bold" title="Edit this slide"><i className="fa-solid fa-pen-to-square"></i></button><button onClick={() => { applyTrialWatermark(slide.imageUrl!).then(url => { const a = document.createElement('a'); a.href = url; a.download = `slide_${slide.index}.png`; a.click(); }); }} className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold"><i className="fa-solid fa-download"></i></button><button onClick={() => handleCarouselSlideRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[7px] font-bold"><i className="fa-solid fa-rotate-right"></i></button>{metaConnection?.connected && (<button onClick={async () => { setMetaPushing(true); showToast('Pushing slide to Meta...', 'info'); try { const result = await metaService.pushCreative(slide.imageUrl!, `${inputs?.productName || 'Ad'}_carousel_slide_${slide.index}`, buildDeploymentMeta({ mode: 'carousel', ratio: currentAspectRatio })); if (result.success) showToast(result.message || 'Slide pushed!', 'success'); else showToast(result.message || 'Push failed', 'error'); } catch { showToast('Push to Meta failed', 'error'); } setMetaPushing(false); }} className="px-2 py-1 bg-blue-500/90 text-white rounded text-[7px] font-bold"><i className="fa-brands fa-meta"></i></button>)}<button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(slide.imageUrl!, currentAspectRatio, '', '', slide.buildPlan); }} className="px-2 py-1 bg-amber-500/90 text-white rounded text-[7px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button></div></div></>
+                              <><img src={slide.imageUrl} className="w-full h-full object-cover cursor-grab active:cursor-grabbing" draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/uri-list', slide.imageUrl!); e.dataTransfer.setData('text/plain', slide.imageUrl!); e.dataTransfer.setData('text/html', `<img src="${slide.imageUrl}" />`); }} /><div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100 pointer-events-none"><div className="flex gap-1 pointer-events-auto" onClick={(e) => e.stopPropagation()}><button onClick={() => { pushMockup(slide.imageUrl!, currentAspectRatio); setBuildPlan(slide.buildPlan); setStudioTweak(''); setEditTarget({ source: 'carousel', index: idx, imageUrl: slide.imageUrl!, label: `Slide ${slide.index}` }); showToast(`Editing Slide ${slide.index} — changes will update this slide`, 'info'); }} className="px-2 py-1 bg-violet-600 text-white rounded text-[7px] font-bold" title="Edit this slide"><i className="fa-solid fa-pen-to-square"></i></button><button onClick={async () => { const url = await applyTrialWatermark(slide.imageUrl!); await downloadImage(url, `slide_${slide.index}.png`); }} className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold"><i className="fa-solid fa-download"></i></button><button onClick={() => handleCarouselSlideRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[7px] font-bold"><i className="fa-solid fa-rotate-right"></i></button>{metaConnection?.connected && (<button onClick={async () => { setMetaPushing(true); showToast('Pushing slide to Meta...', 'info'); try { const result = await metaService.pushCreative(slide.imageUrl!, `${inputs?.productName || 'Ad'}_carousel_slide_${slide.index}`, buildDeploymentMeta({ mode: 'carousel', ratio: currentAspectRatio })); if (result.success) showToast(result.message || 'Slide pushed!', 'success'); else showToast(result.message || 'Push failed', 'error'); } catch { showToast('Push to Meta failed', 'error'); } setMetaPushing(false); }} className="px-2 py-1 bg-blue-500/90 text-white rounded text-[7px] font-bold"><i className="fa-brands fa-meta"></i></button>)}<button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(slide.imageUrl!, currentAspectRatio, '', '', slide.buildPlan); }} className="px-2 py-1 bg-amber-500/90 text-white rounded text-[7px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button></div></div></>
                             ) : slide.status === 'rendering' ? (
                               <div className="w-full h-full flex flex-col items-center justify-center gap-1"><div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"></div><span className="text-[7px] text-blue-400 font-bold">Slide {slide.index}</span></div>
                             ) : (slide.status === 'error' || (slide.status === 'done' && !isRenderableImageUrl(slide.imageUrl))) ? (
@@ -7612,7 +8060,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2.5 opacity-0 group-hover:opacity-100">
                                 <div className="flex gap-1.5">
                                   <button onClick={(e) => { e.stopPropagation(); pushMockup(v.url!, currentAspectRatio); setStudioTweak(''); setEditTarget({ source: 'ab', index: idx, imageUrl: v.url!, label: `A/B V${idx + 1}` }); showToast(`Editing V${idx + 1} — changes will update this variation`, 'info'); }} className="px-2.5 py-1.5 bg-violet-600 text-white rounded-lg text-[8px] font-bold" title="Edit"><i className="fa-solid fa-pen-to-square"></i></button>
-                                  <button onClick={async (e) => { e.stopPropagation(); const url = await applyTrialWatermark(v.url!); const a = document.createElement('a'); a.href = url; a.download = `AB_V${idx + 1}.png`; a.click(); }} className="px-2.5 py-1.5 bg-white/90 text-slate-900 rounded-lg text-[8px] font-bold"><i className="fa-solid fa-download"></i></button>
+                                  <button onClick={async (e) => { e.stopPropagation(); const url = await applyTrialWatermark(v.url!); await downloadImage(url, `AB_V${idx + 1}.png`); }} className="px-2.5 py-1.5 bg-white/90 text-slate-900 rounded-lg text-[8px] font-bold"><i className="fa-solid fa-download"></i></button>
                                   <button onClick={(e) => { e.stopPropagation(); handleRetryAB(idx); }} className="px-2.5 py-1.5 bg-blue-600 text-white rounded-lg text-[8px] font-bold"><i className="fa-solid fa-rotate"></i></button>
                                   <button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(v.url!, currentAspectRatio); }} className="px-2.5 py-1.5 bg-amber-500/90 text-white rounded-lg text-[8px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button>
                                 </div>
@@ -7636,164 +8084,207 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   </div>
                 )}
 
-                {/* ═══ VARIANT RATIO CHIPS — compact ratio switcher ═══ */}
-                {carouselSlides.length === 0 && mockupHistory.length > 1 && (() => {
-                  const uniqueRatios = [...new Set(mockupHistory.map(m => m.ratio))];
-                  const currentHistoryRatio = mockupHistory[historyIndex]?.ratio;
-                  return (
-                    <div className="flex items-center gap-1.5 justify-center mt-2 flex-wrap">
-                      {uniqueRatios.slice(0, 6).map(ratio => {
-                        const isActive = ratio === currentHistoryRatio;
-                        const latestForRatio = [...mockupHistory].reverse().find(m => m.ratio === ratio);
-                        return (
-                          <button
-                            key={ratio}
-                            onClick={() => {
-                              if (latestForRatio) {
-                                const idx = mockupHistory.indexOf(latestForRatio);
-                                if (idx >= 0) setHistoryIndex(idx);
-                              }
-                            }}
-                            className={`px-2.5 py-1 rounded-lg text-[9px] font-bold tracking-tight transition-all border ${
-                              isActive
-                                ? 'bg-blue-600/25 border-blue-500/40 text-blue-300 shadow-sm shadow-blue-500/10'
-                                : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300 hover:border-slate-600'
-                            }`}
-                          >
-                            {ratio}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
+                {/* Back to batch — restores the grid snapshot taken when a gallery thumbnail
+                    was clicked in batch mode (which dropped the canvas to single view). */}
+                {batchSnapshot.length > 0 && batchResults.length === 0 && (
+                  <button
+                    onClick={() => { setBatchResults(batchSnapshot); setBatchSnapshot([]); }}
+                    className="mt-3 text-[11px] font-bold text-slate-400 hover:text-slate-200 transition-colors">
+                    ← Back to batch results
+                  </button>
+                )}
 
-                {/* ═══ ALL VERSIONS GALLERY — shows when multiple renders exist in non-batch mode ═══ */}
-                {carouselSlides.length === 0 && mockupHistory.length > 1 && (() => {
-                  const allDone = mockupHistory.filter(m => m.url);
-                  const uniqueRatios = [...new Set(mockupHistory.map(m => m.ratio))];
-                  const pName = (inputs?.productName || 'ad').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '-').substring(0, 20);
-                  const campaign = inputs?.campaignType === 'retargeting' ? 'RT' : 'Cold';
+                {/* ═══ ISSUE 2 — UNIFIED ALL-VERSIONS GALLERY (Option A) ═══
+                    Aggregates every render in the session (single history, batch results,
+                    carousel slides, pre-resize snapshot), groups thumbnails by ratio, and
+                    lets the user click any one to make it the active single view via the
+                    existing pushMockup() mechanism. Collapsible, collapsed by default.
+                    Hidden in carousel mode — the carousel has its own slide viewer. */}
+                {carouselSlides.length === 0 && (() => {
+                  type GalleryItem = { url: string; ratio: AspectRatio; label: string; key: string; source: 'history' | 'batch' | 'prev'; sourceIndex: number };
+                  const items: GalleryItem[] = [];
+                  // Single-render history (all ratios). Prefer the API-safe rawBase64 over a
+                  // blob: display URL so the pushed view stays reflow/source-coherent.
+                  mockupHistory.forEach((m, i) => {
+                    if (m.url) items.push({
+                      url: (m.url.startsWith('blob:') && m.rawBase64) ? m.rawBase64 : m.url,
+                      ratio: m.ratio, label: `V${i + 1}`, key: `h${i}`, source: 'history', sourceIndex: i,
+                    });
+                  });
+                  // Batch results
+                  (batchResults || []).forEach((b, i) => {
+                    if (b.status === 'done' && b.url) items.push({
+                      url: b.url, ratio: b.ratio as AspectRatio,
+                      label: `H${b.hookKey}·C${b.conceptIndex}`, key: `b${i}`, source: 'batch', sourceIndex: i,
+                    });
+                  });
+                  // Pre-resize snapshot (single-image one-level undo)
+                  if (previousSingleMockup?.url) items.push({
+                    url: previousSingleMockup.url, ratio: previousSingleMockup.ratio,
+                    label: 'Pre-resize', key: 'prev', source: 'prev', sourceIndex: -1,
+                  });
 
+                  // De-dupe by url so a snapshot already present in history isn't shown twice.
+                  const seen = new Set<string>();
+                  const unique = items.filter(it => { if (seen.has(it.url)) return false; seen.add(it.url); return true; });
+                  if (unique.length === 0) return null;
+
+                  const RATIO_NAMES: Record<string, string> = {
+                    '1:1': 'Square', '4:5': 'Portrait', '3:4': 'Portrait',
+                    '9:16': 'Story', '4:3': 'Wide', '16:9': 'Landscape',
+                  };
+                  const aspectCls = (r: string) =>
+                    r === '9:16' ? 'aspect-[9/16]' : r === '16:9' ? 'aspect-video'
+                    : r === '4:5' ? 'aspect-[4/5]' : r === '3:4' ? 'aspect-[3/4]'
+                    : r === '4:3' ? 'aspect-[4/3]' : 'aspect-square';
+
+                  // Group by ratio, preserving first-seen order.
+                  const groups: { ratio: string; items: GalleryItem[] }[] = [];
+                  unique.forEach(it => {
+                    let g = groups.find(x => x.ratio === it.ratio);
+                    if (!g) { g = { ratio: it.ratio, items: [] }; groups.push(g); }
+                    g.items.push(it);
+                  });
+
+                  // No overflow-hidden on the wrapper below — the per-card 3-dot dropdown
+                  // must extend past the container edge without being clipped.
                   return (
-                    <div className="space-y-3 mt-4">
-                      <div className="flex items-center justify-between">
+                    <div className="mt-4 bg-slate-900/40 border border-slate-800/40 rounded-2xl">
+                      <button
+                        onClick={() => setShowAllVersionsGallery(v => !v)}
+                        aria-expanded={showAllVersionsGallery}
+                        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-slate-800/30 transition-colors rounded-t-2xl">
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                          <i className="fa-solid fa-images text-blue-400 mr-1.5"></i>All Versions ({allDone.length})
+                          <i className="fa-solid fa-layer-group text-blue-400 mr-1.5"></i>All Versions ({unique.length})
                         </span>
-                        {uniqueRatios.length > 1 && (
-                          <span className="text-[8px] text-slate-600">{uniqueRatios.map(r => r).join(' · ')}</span>
-                        )}
-                      </div>
-
-                      {/* Thumbnail Grid */}
-                      <div className="grid grid-cols-4 gap-2">
-                        {mockupHistory.map((m, idx) => (
-                          <div key={idx}
-                            className={`relative rounded-xl overflow-hidden border bg-slate-900 group cursor-pointer transition-all ${idx === historyIndex ? 'border-blue-500 ring-2 ring-blue-500/20 shadow-lg shadow-blue-500/10' : 'border-slate-800/60 hover:border-slate-600'} ${m.ratio === '9:16' ? 'aspect-[9/16]' : m.ratio === '16:9' ? 'aspect-video' : m.ratio === '4:5' ? 'aspect-[4/5]' : m.ratio === '3:4' ? 'aspect-[3/4]' : m.ratio === '4:3' ? 'aspect-[4/3]' : 'aspect-square'}`}
-                            onClick={() => setHistoryIndex(idx)}>
-                            {m.url ? (
-                              <>
-                                <img src={m.url?.startsWith('blob:') ? (m.rawBase64 || m.url) : m.url} className="w-full h-full object-cover cursor-grab active:cursor-grabbing"
-                                  draggable={true}
-                                  onDragStart={(e) => {
-                                    e.dataTransfer.setData('text/uri-list', m.url);
-                                    e.dataTransfer.setData('text/plain', m.url);
-                                    e.dataTransfer.setData('text/html', `<img src="${m.url}" />`);
-                                  }}
-                                />
-                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100">
-                                  <div className="flex gap-1">
-                                    <button onClick={(e) => { e.stopPropagation(); setHistoryIndex(idx); setStudioTweak(''); setEditTarget({ source: 'history', index: idx, imageUrl: m.url, label: `Version ${idx + 1}` }); showToast(`Editing V${idx + 1}`, 'info'); }}
-                                      className="px-2 py-1 bg-violet-600 text-white rounded-lg text-[7px] font-bold" title="Edit">
-                                      <i className="fa-solid fa-pen-to-square"></i>
+                        <i className={`fa-solid fa-chevron-down text-[9px] text-slate-500 transition-transform ${showAllVersionsGallery ? 'rotate-180' : ''}`}></i>
+                      </button>
+                      {showAllVersionsGallery && (
+                        <div className="px-4 pb-4 space-y-3">
+                          {groups.map(g => (
+                            <div key={g.ratio} className="space-y-1.5">
+                              <div className="text-[8px] font-bold text-slate-500 uppercase tracking-wider">
+                                {RATIO_NAMES[g.ratio] || g.ratio} <span className="opacity-50">({g.ratio}) · {g.items.length}</span>
+                              </div>
+                              <div className="grid grid-cols-4 gap-2">
+                                {g.items.map(it => (
+                                  <div
+                                    key={it.key}
+                                    className={`relative rounded-lg border border-slate-800/60 hover:border-blue-500 hover:ring-2 hover:ring-blue-500/20 transition-all bg-slate-900 group ${aspectCls(it.ratio)}`}>
+                                    {/* Thumbnail — click promotes this version to the active view.
+                                        In batch mode the canvas renders the batch grid (filtered by
+                                        currentAspectRatio), not mockupHistory, so pushMockup has no
+                                        visible effect. If the clicked image is one of the batch tiles,
+                                        switch the grid's active ratio to bring it into view instead. */}
+                                    <button
+                                      onClick={() => {
+                                        // In batch mode the canvas renders the batch grid, not
+                                        // mockupHistory. Snapshot the grid, drop to single view, and
+                                        // promote the clicked image; a "Back to batch" button restores it.
+                                        if (batchResults.length > 0) {
+                                          setBatchSnapshot([...batchResults]);
+                                          setBatchResults([]);
+                                        }
+                                        pushMockup(it.url, it.ratio);
+                                      }}
+                                      title={`${it.ratio} · ${it.label}`}
+                                      className="absolute inset-0 w-full h-full rounded-lg overflow-hidden">
+                                      <img src={it.url} alt={it.label} loading="lazy" className="w-full h-full object-cover" />
+                                      <div className="absolute bottom-0 inset-x-0 px-1 py-0.5 bg-black/65 text-white text-[6px] font-bold truncate text-center">
+                                        {it.ratio} · {it.label}
+                                      </div>
                                     </button>
-                                    <button onClick={(e) => { e.stopPropagation(); const a = document.createElement('a'); a.href = m.url; a.download = `${pName}_${campaign}_V${idx + 1}_${m.ratio.replace(':', 'x')}.png`; a.click(); }}
-                                      className="px-2 py-1 bg-white/90 text-slate-900 rounded-lg text-[7px] font-bold">
-                                      <i className="fa-solid fa-download"></i>
+                                    {/* Expand icon — opens the full-size lightbox without touching
+                                        batch grid or history state. */}
+                                    <button
+                                      onClick={() => setGalleryLightbox({ url: it.url, ratio: it.ratio })}
+                                      title="View full size"
+                                      className="absolute top-1 left-1 z-20 w-7 h-7 rounded-md bg-black/70 hover:bg-black/90 text-white text-[11px] flex items-center justify-center transition-opacity opacity-0 group-hover:opacity-100">
+                                      <i className="fa-solid fa-expand"></i>
                                     </button>
-                                    <button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(m.url, m.ratio); }}
-                                      className="px-2 py-1 bg-amber-500/90 text-white rounded-lg text-[7px] font-bold" title="Favorite">
-                                      <i className="fa-solid fa-star"></i>
-                                    </button>
+                                    {/* 3-dot options menu — Download always; Delete only for sources
+                                        we can remove from (history / batch). data-version-menu keeps
+                                        the document mousedown closer from firing on inside clicks. */}
+                                    <div className="absolute top-1 right-1 z-20" data-version-menu>
+                                      <button
+                                        onClick={() => setOpenVersionMenu(prev => (prev === it.url ? null : it.url))}
+                                        title="Options"
+                                        className={`w-7 h-7 rounded-md bg-black/70 hover:bg-black/90 text-white text-[11px] flex items-center justify-center transition-opacity ${openVersionMenu === it.url ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                                        <i className="fa-solid fa-ellipsis-vertical"></i>
+                                      </button>
+                                      {openVersionMenu === it.url && (
+                                        <div className="absolute right-0 top-6 w-24 rounded-lg border border-slate-700 bg-slate-900 shadow-xl z-30 overflow-hidden">
+                                          <button
+                                            onClick={async () => {
+                                              setOpenVersionMenu(null);
+                                              const pName = (inputs?.productName || 'ad').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '-').substring(0, 20);
+                                              const label = it.label.replace(/[^a-zA-Z0-9\u0600-\u06FF-]/g, '-');
+                                              const url = await applyTrialWatermark(it.url);
+                                              await downloadImage(url, `${pName}_${it.ratio.replace(':', 'x')}_${label}.png`);
+                                            }}
+                                            className="w-full px-2.5 py-1.5 text-left text-[8px] font-bold text-slate-200 hover:bg-slate-800 flex items-center gap-1.5">
+                                            <i className="fa-solid fa-download text-[7px]"></i>Download
+                                          </button>
+                                          {(it.source === 'history' || it.source === 'batch') && (
+                                            <button
+                                              onClick={() => {
+                                                setOpenVersionMenu(null);
+                                                if (it.source === 'history') {
+                                                  const next = mockupHistory.filter((_, i) => i !== it.sourceIndex);
+                                                  setMockupHistory(next);
+                                                  // Clamp so the canvas never points at a removed/shifted slot.
+                                                  if (historyIndex >= it.sourceIndex) setHistoryIndex(Math.max(0, next.length - 1));
+                                                } else {
+                                                  setBatchResults(prev => prev.map((r, i) => i === it.sourceIndex ? { ...r, url: null, status: 'error' as const } : r));
+                                                }
+                                              }}
+                                              className="w-full px-2.5 py-1.5 text-left text-[8px] font-bold text-red-400 hover:bg-slate-800 flex items-center gap-1.5">
+                                              <i className="fa-solid fa-trash text-[7px]"></i>Delete
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
-                                </div>
-                              </>
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center"><span className="text-[8px] text-slate-700 font-bold">V{idx + 1}</span></div>
-                            )}
-                            <div className="absolute top-1 left-1 px-1.5 py-0.5 bg-black/60 rounded text-[6px] font-bold text-white">
-                              {idx === historyIndex ? '●' : ''} V{idx + 1}
+                                ))}
+                              </div>
                             </div>
-                            {m.ratio !== '1:1' && (
-                              <div className="absolute top-1 right-1 px-1 py-0.5 bg-black/60 rounded text-[6px] text-slate-300">{m.ratio}</div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Bulk Actions */}
-                      {allDone.length > 1 && (
-                        <div className="flex gap-2">
-                          {/* Download All ZIP */}
-                          <button onClick={async () => {
-                            try {
-                              const { default: JSZip } = await import('jszip');
-                              const zip = new JSZip();
-                              for (let i = 0; i < mockupHistory.length; i++) {
-                                const m = mockupHistory[i];
-                                if (m.url) {
-                                  const r = await fetch(m.url);
-                                  const b = await r.blob();
-                                  zip.file(`${pName}_${campaign}_V${i + 1}_${m.ratio.replace(':', 'x')}.png`, b);
-                                }
-                              }
-                              const zBlob = await zip.generateAsync({ type: 'blob' });
-                              const u = URL.createObjectURL(zBlob);
-                              const a = document.createElement('a');
-                              a.href = u;
-                              a.download = `${pName}_${campaign}_All_${allDone.length}versions.zip`;
-                              a.click();
-                              URL.revokeObjectURL(u);
-                              showToast(`Downloaded ${allDone.length} designs!`, 'success');
-                            } catch { showToast('Download failed', 'error'); }
-                          }}
-                            className="flex-1 py-2.5 rounded-xl bg-emerald-600/15 border border-emerald-500/20 text-emerald-300 text-[9px] font-bold uppercase flex items-center justify-center gap-2 hover:bg-emerald-600/25 transition-all">
-                            <i className="fa-solid fa-file-zipper"></i>Download All ({allDone.length}) ZIP
-                          </button>
-
-                          {/* Push All to Meta */}
-                          {metaConnection?.connected && (
-                            <button
-                              onClick={async () => {
-                                if (metaPushing) return;
-                                setMetaPushing(true);
-                                showToast(`Pushing ${allDone.length} designs to Meta...`, 'info');
-                                let successCount = 0;
-                                for (let i = 0; i < mockupHistory.length; i++) {
-                                  const m = mockupHistory[i];
-                                  if (m.url) {
-                                    try {
-                                      const result = await metaService.pushCreative(m.url, `${pName}_${campaign}_V${i + 1}_${m.ratio.replace(':', 'x')}`, buildDeploymentMeta({ ratio: m.ratio }));
-                                      if (result.success) successCount++;
-                                    } catch { /* continue */ }
-                                  }
-                                }
-                                setMetaPushing(false);
-                                if (successCount > 0) showToast(`Pushed ${successCount}/${allDone.length} to Meta!`, 'success');
-                                else showToast('Push to Meta failed', 'error');
-                              }}
-                              disabled={metaPushing}
-                              className="flex-1 py-2.5 rounded-xl bg-blue-600/15 border border-blue-500/20 text-blue-300 text-[9px] font-bold uppercase flex items-center justify-center gap-2 hover:bg-blue-600/25 transition-all disabled:opacity-50">
-                              <i className={`fa-brands fa-meta ${metaPushing ? 'animate-pulse' : ''}`}></i>
-                              {metaPushing ? 'Pushing...' : `Push All (${allDone.length}) to Meta`}
-                            </button>
-                          )}
+                          ))}
                         </div>
                       )}
                     </div>
                   );
                 })()}
+
+                {/* ═══ GALLERY LIGHTBOX — full-size preview, non-destructive ═══ */}
+                {galleryLightbox && (
+                  <div
+                    className="fixed inset-0 z-[100] bg-black/80 flex flex-col items-center justify-center gap-4 p-6"
+                    onClick={() => setGalleryLightbox(null)}>
+                    <button
+                      onClick={() => setGalleryLightbox(null)}
+                      title="Close"
+                      className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/60 hover:bg-black/90 text-white flex items-center justify-center">
+                      <i className="fa-solid fa-xmark"></i>
+                    </button>
+                    <img
+                      src={galleryLightbox.url}
+                      alt="Full size preview"
+                      className="max-h-[90vh] max-w-[90vw] object-contain rounded-xl"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const pName = (inputs?.productName || 'ad').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '-').substring(0, 20);
+                        const url = await applyTrialWatermark(galleryLightbox.url);
+                        await downloadImage(url, `${pName}_${galleryLightbox.ratio.replace(':', 'x')}.png`);
+                      }}
+                      className="px-4 py-2 rounded-xl bg-white/90 text-slate-900 text-[10px] font-bold flex items-center gap-2 hover:bg-white">
+                      <i className="fa-solid fa-download"></i>Download
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* ═══════ RIGHT: SIDEBAR ═══════ */}
@@ -7876,18 +8367,18 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     toggle, no trigger button). Shown the moment a viewable render exists —
                     either a single render (currentMockup) OR a rendered carousel (which never
                     sets currentMockup but has done slides to resize). */}
-                {(currentMockup || carouselSlides.length > 0) && (() => {
-                  // UI restriction: Square / Portrait / Story only. Backend supports the
-                  // full 6 ratios; restore others by extending UI_RATIOS.
-                  const UI_RATIOS: AspectRatio[] = ['1:1', '4:5', '9:16'];
+                {(currentMockup || carouselSlides.length > 0 || batchResults.some(r => r.status === 'done')) && (() => {
+                  // UI restriction: Square / Portrait / Story only — module-level UI_RATIOS,
+                  // shared with the Step 3 size selector. Backend supports the full 6 ratios;
+                  // restore others by extending UI_RATIOS at the top of this file.
                   const reflowLabels: Record<string, string> = {
                     '1:1': t('studio.reflow.ratio.1_1'),
-                    '4:5': t('studio.reflow.ratio.4_5'),
+                    '3:4': t('studio.reflow.ratio.3_4'),
                     '9:16': t('studio.reflow.ratio.9_16'),
                   };
                   const reflowIcons: Record<string, string> = {
                     '1:1': 'fa-regular fa-square',
-                    '4:5': 'fa-solid fa-mobile-screen',
+                    '3:4': 'fa-solid fa-mobile-screen',
                     '9:16': 'fa-solid fa-mobile',
                   };
                   // Display name (Square/Portrait/Story) without the "(1:1)" suffix the
@@ -7941,7 +8432,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                               isCurrent
                                 ? 'flex-1 flex flex-col items-center gap-1 px-2 py-3 rounded-xl border-2 bg-blue-600 border-blue-400 text-white cursor-default shadow-lg shadow-blue-600/30'
                                 : isSelected
-                                  ? 'flex-1 flex flex-col items-center gap-1 px-2 py-3 rounded-xl border bg-blue-600/15 border-blue-500/40 text-blue-200 transition-all disabled:opacity-50'
+                                  ? 'flex-1 flex flex-col items-center gap-1 px-2 py-3 rounded-xl border-2 bg-blue-600 border-blue-300 text-white ring-2 ring-blue-400/60 shadow-lg shadow-blue-600/30 transition-all disabled:opacity-50'
                                   : 'flex-1 flex flex-col items-center gap-1 px-2 py-3 rounded-xl border bg-slate-900 border-slate-800 text-slate-300 hover:bg-blue-600/15 hover:border-blue-500/30 hover:text-white transition-all disabled:opacity-50'
                             }
                           >
@@ -7958,56 +8449,124 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       })}
                     </div>
 
-                    {/* Scope toggles + Generate button — shown directly below the row when
-                        a non-current ratio is selected. No picker state transition. */}
-                    {reflowTarget && reflowTarget !== currentRatioForBadge && (
-                      <div className="space-y-2">
-                        {isBatchScope && (
-                          <div className="flex gap-2">
-                            <button disabled={committing} onClick={() => setReflowScope('single')}
-                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'single' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
-                              {t('studio.reflow.scope_single')}
+                    {/* Resize action — always visible beneath the ratio row. Solid filled primary
+                        when a non-current ratio is selected; dimmed/disabled when the selection
+                        equals the current ratio. In batch mode it shows TWO buttons (Resize All /
+                        Resize Selected); single/carousel show one. */}
+                    {(() => {
+                      const effectiveTarget = (reflowTarget || currentRatioForBadge) as AspectRatio;
+                      const atCurrent = !reflowTarget || reflowTarget === currentRatioForBadge;
+                      const targetName = nameFor(effectiveTarget);
+                      // Shared commit routine — `indices` restricts a batch resize to a subset.
+                      const runReflow = async (indices?: number[]) => {
+                        if (committing || atCurrent || !reflowTarget) return;
+                        setReflowStep('committing');
+                        try {
+                          if (isBatchScope) {
+                            await handleRescale(reflowTarget, { scope: 'batch_all', ...(indices ? { indices } : {}) });
+                          } else if (reflowScope === 'carousel_slide') {
+                            const matchIdx = slides.findIndex(s => s.imageUrl === currentMockup);
+                            await handleRescale(reflowTarget, { scope: 'carousel_slide', slideIndex: matchIdx >= 0 ? matchIdx : 0 });
+                          } else if (isCarouselScope || reflowScope === 'carousel_all') {
+                            await handleRescale(reflowTarget, { scope: 'carousel_all' });
+                          } else {
+                            await handleRescale(reflowTarget);
+                          }
+                        } catch (err) {
+                          console.warn('Reflow commit failed (non-blocking):', err);
+                        } finally {
+                          setReflowStep('idle');
+                          setReflowTarget(null);
+                        }
+                      };
+                      const baseBtn = 'w-full py-2.5 rounded-xl text-[9px] font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-all';
+                      const dimCls = `${baseBtn} bg-slate-800/50 border border-slate-700/40 text-slate-500 cursor-not-allowed`;
+
+                      if (isBatchScope) {
+                        // Count selected items that are actually resizable at the current ratio.
+                        const selectedCount = [...selectedBatchIndices].filter(i => {
+                          const it = (batchResults ?? [])[i];
+                          return it && it.status === 'done' && it.url && it.ratio === currentAspectRatio;
+                        }).length;
+                        return (
+                          <div className="space-y-2">
+                            <button
+                              onClick={() => runReflow()}
+                              disabled={committing || isLoading || atCurrent}
+                              className={atCurrent ? dimCls : `${baseBtn} bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-lg active:scale-[0.98] hover:from-blue-500 hover:to-cyan-500 disabled:opacity-50`}>
+                              <i className={`fa-solid ${committing ? 'fa-spinner fa-spin' : atCurrent ? 'fa-check' : 'fa-up-down'} text-[8px]`}></i>
+                              {atCurrent
+                                ? (lang === 'ar' ? `الحجم الحالي (${targetName})` : `Already ${targetName}`)
+                                : (lang === 'ar' ? `تغيير حجم الكل ← ${targetName}` : `Resize All → ${targetName}`)}
                             </button>
-                            <button disabled={committing} onClick={() => setReflowScope('batch_all')}
-                              className={`flex-1 py-2 rounded-lg border text-[8px] font-bold text-center transition-all ${reflowScope === 'batch_all' ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-300'}`}>
-                              {t('studio.reflow.scope_batch_all', { count: doneBatchCount })}
+                            <button
+                              onClick={() => runReflow([...selectedBatchIndices])}
+                              disabled={committing || isLoading || atCurrent || selectedCount === 0}
+                              className={(atCurrent || selectedCount === 0) ? dimCls : `${baseBtn} bg-blue-600 text-white shadow-lg active:scale-[0.98] hover:bg-blue-500 disabled:opacity-50`}>
+                              <i className="fa-solid fa-check-double text-[8px]"></i>
+                              {lang === 'ar'
+                                ? `تغيير المحدد ← ${targetName} (${selectedCount} × ${CREDIT_COSTS.reflowImage})`
+                                : `Resize Selected → ${targetName} (${selectedCount} × ${CREDIT_COSTS.reflowImage} credits)`}
                             </button>
                           </div>
-                        )}
-                        {/* Carousel always resizes ALL slides — no per-slide scope toggle
-                            (carousel_slide's slide-index resolution is unreliable). */}
+                        );
+                      }
+
+                      // Single / carousel — one dynamic button.
+                      const verb = isCarouselScope
+                        ? (lang === 'ar' ? 'تغيير حجم الكل إلى' : 'Resize All to')
+                        : (lang === 'ar' ? 'تغيير الحجم إلى' : 'Resize to');
+                      const label = atCurrent
+                        ? (lang === 'ar' ? `الحجم الحالي (${targetName})` : `Already ${targetName}`)
+                        : `${verb} ${targetName}`;
+                      return (
                         <button
-                          onClick={async () => {
-                            if (committing || !reflowTarget) return;
-                            setReflowStep('committing');
-                            try {
-                              if (reflowScope === 'batch_all') {
-                                await handleRescale(reflowTarget, { scope: 'batch_all' });
-                              } else if (reflowScope === 'carousel_slide') {
-                                // Resolve focused slide by matching displayed image url; fall back to slide 0.
-                                const matchIdx = slides.findIndex(s => s.imageUrl === currentMockup);
-                                const slideIndex = matchIdx >= 0 ? matchIdx : 0;
-                                await handleRescale(reflowTarget, { scope: 'carousel_slide', slideIndex });
-                              } else if (reflowScope === 'carousel_all') {
-                                await handleRescale(reflowTarget, { scope: 'carousel_all' });
-                              } else {
-                                await handleRescale(reflowTarget);
-                              }
-                            } catch (err) {
-                              console.warn('Reflow commit failed (non-blocking):', err);
-                            } finally {
-                              setReflowStep('idle');
-                              setReflowTarget(null);
-                            }
-                          }}
-                          disabled={committing || isLoading}
-                          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 text-white text-[9px] font-bold uppercase tracking-wider shadow-lg transition-all active:scale-[0.98] hover:from-blue-500 hover:to-cyan-500 flex items-center justify-center gap-2 disabled:opacity-50"
-                        >
-                          <i className={`fa-solid ${committing ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'} text-[8px]`}></i>
-                          {t('studio.reflow.generate_button', { credits: totalCost })}
+                          onClick={() => runReflow()}
+                          disabled={committing || isLoading || atCurrent}
+                          className={atCurrent ? dimCls : `${baseBtn} bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-lg active:scale-[0.98] hover:from-blue-500 hover:to-cyan-500 disabled:opacity-50`}>
+                          <i className={`fa-solid ${committing ? 'fa-spinner fa-spin' : atCurrent ? 'fa-check' : 'fa-wand-magic-sparkles'} text-[8px]`}></i>
+                          {label}
                         </button>
-                      </div>
-                    )}
+                      );
+                    })()}
+
+                    {/* ISSUE 3 — single-image "switch back to previous size" toggle. Mirrors the
+                        carousel version: swaps the displayed mockup + ratio with the pre-resize
+                        snapshot so the user can flip between sizes both ways. Single mode only. */}
+                    {!isCarouselScope && !isBatchScope && currentMockup && previousSingleMockup && previousSingleMockup.ratio !== displayRatio && (() => {
+                      const ratioName: Record<string, { en: string; ar: string }> = {
+                        '1:1': { en: 'Square', ar: 'مربع' },
+                        '4:5': { en: 'Portrait', ar: 'عمودي' },
+                        '3:4': { en: 'Portrait', ar: 'عمودي' },
+                        '9:16': { en: 'Story', ar: 'ستوري' },
+                        '4:3': { en: 'Wide', ar: 'عريض' },
+                        '16:9': { en: 'Landscape', ar: 'أفقي' },
+                      };
+                      const label = ratioName[previousSingleMockup.ratio] || { en: previousSingleMockup.ratio, ar: previousSingleMockup.ratio };
+                      return (
+                        <button
+                          disabled={committing || isLoading}
+                          onClick={() => {
+                            // Swap, don't clear — keep the toggle available both ways. Append the
+                            // snapshot as a new history entry (preserving its raw source for any
+                            // later reflow), point the cursor at it, and stash the current as the
+                            // new "previous".
+                            const cur = { url: currentMockup!, rawBase64: currentRawBase64, ratio: displayRatio };
+                            const snap = previousSingleMockup!;
+                            setMockupHistory(prev => {
+                              const next = [...prev, { url: snap.url, ratio: snap.ratio, rawBase64: snap.rawBase64 }];
+                              setHistoryIndex(next.length - 1);
+                              return next;
+                            });
+                            setCurrentAspectRatio(snap.ratio);
+                            setPreviousSingleMockup(cur);
+                          }}
+                          className="w-full mt-1 py-2 rounded-xl text-[9px] font-bold text-blue-300 bg-blue-600/15 border border-blue-500/30 hover:bg-blue-600/25 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50">
+                          <i className="fa-solid fa-arrow-right-arrow-left text-[8px]"></i>
+                          {lang === 'ar' ? `التبديل إلى نسخة ${label.ar}` : `Switch to ${label.en} version`}
+                        </button>
+                      );
+                    })()}
                   </div>
                   );
                 })()}
@@ -8030,6 +8589,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
             </div>
           );
         })()}
+          </ErrorBoundary>
+        )}
 
         {phase === 'primary_text' && (() => {
           const wordCount = captionText ? captionText.split(/\s+/).filter(Boolean).length : 0;
@@ -8211,7 +8772,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                           for (const item of images) {
                             const r = await fetch(item.url!);
                             const b = await r.blob();
-                            const sizeName = sizeLabels[item.ratio] || item.ratio.replace(':', 'x');
+                            const sizeName = sizeLabels[item.ratio] || (item.ratio || '1:1').replace(':', 'x');
                             const fileName = `${pName}_H${hookKey}_C${item.conceptIndex}_${sizeName}_${dateStr}.png`;
                             folder.file(fileName, b);
                             imageFiles.push(fileName);
@@ -8307,10 +8868,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                           <div key={idx} className={`relative rounded-xl overflow-hidden border border-slate-800/60 bg-slate-900 group ${item.ratio === '9:16' ? 'aspect-[9/16]' : item.ratio === '4:5' ? 'aspect-[4/5]' : item.ratio === '16:9' ? 'aspect-video' : 'aspect-square'}`}>
                             <img src={item.url!} className="w-full h-full object-cover" alt="" />
                             <div className="absolute top-1 left-1 px-1.5 py-0.5 bg-black/60 rounded text-[7px] font-bold text-white">
-                              {item.ratio.replace(':', 'x')}
+                              {(item.ratio || '1:1').replace(':', 'x')}
                             </div>
                             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100">
-                              <button onClick={() => { const a = document.createElement('a'); a.href = item.url!; a.download = `H${item.hookKey}_C${item.conceptIndex}_${item.ratio.replace(':', 'x')}.png`; a.click(); }}
+                              <button onClick={async () => { const url = await applyTrialWatermark(item.url!); await downloadImage(url, `H${item.hookKey}_C${item.conceptIndex}_${(item.ratio || '1:1').replace(':', 'x')}.png`); }}
                                 className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold">
                                 <i className="fa-solid fa-download"></i>
                               </button>

@@ -357,9 +357,11 @@ Use this information to better understand the brand's positioning, tone, and tar
     region: { xPct: number; yPct: number; wPct: number; hPct: number },
     editMode: 'text' | 'erase' | 'style' | 'describe',
     editPayload: { newText?: string; action?: string; styleAction?: string; colorHex?: string; freeInstruction?: string },
-    ratio: string
+    ratio: string,
+    // FIX C (ISSUE 2): hero photos (Box A) sent as face anchors so edits never drift the face.
+    personalPhotos?: string[]
   ): Promise<{ image: string | null; errorCode?: string }> {
-    const result = await fnEditRegion({ imageBase64, region, editMode, editPayload, ratio });
+    const result = await fnEditRegion({ imageBase64, region, editMode, editPayload, ratio, personalPhotos });
     const data = result.data as any;
     const raw = data.imageBase64 || null;
     const image = (typeof raw === 'string' && raw.startsWith('data:image/')) ? raw : null;

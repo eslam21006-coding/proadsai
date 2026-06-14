@@ -21,7 +21,7 @@ export interface ReflowHistoryEntry {
     sourceRatio: AspectRatio;
     targetRatio: AspectRatio;
     magnitude: number;
-    method: "outpaint" | "rerender";
+    method: "outpaint" | "rerender" | "edit_recompose";
     userOverride: "outpaint" | "rerender" | null;
     fallbackFrom: "outpaint" | "rerender" | null;
     fallbackReason: ReflowFallbackReason | null;
@@ -44,7 +44,7 @@ export interface ReflowDecision {
 export interface ReflowOutcome {
     itemIndex: number | null;
     success: boolean;
-    method: "outpaint" | "rerender" | null;
+    method: "outpaint" | "rerender" | "edit_recompose" | null;
     fallbackFrom: "outpaint" | "rerender" | null;
     fallbackReason: ReflowFallbackReason | null;
     outputUrl: string | null;
@@ -270,6 +270,15 @@ export interface ResolutionTrace {
     brandColorCompliance?: BrandColorComplianceEntry[];
     modeComposition?: ModeCompositionTrace;
     adaptStateAudit?: AdaptStateAuditResult;
+    visualProvider?: {
+        provider: "openai" | "gemini";
+        model: string;
+        size?: string;
+        usedReferenceEdit?: boolean;
+        copyFidelityGated?: boolean;
+        arabicQaRan?: boolean;
+        timedOut?: boolean;
+    };
 }
 
 export interface ModeCompositionTrace {
