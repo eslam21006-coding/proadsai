@@ -122,12 +122,21 @@ export async function outpaintReflow(args: {
     }
 
     const top = Math.floor((dstH - srcH) / 2);
-    const bottom = dstH - srcH - top;
     const left = Math.floor((dstW - srcW) / 2);
-    const right = dstW - srcW - left;
 
-    const outputBuffer = await sharp(srcBuf)
-        .extend({ top, bottom, left, right, extendWith: "mirror" })
+    // "Blurred background" fill (the Instagram/social standard for ratio conversion).
+    // Mirror-extend was reflecting the hero upside-down on vertical extension and looked
+    // terrible. Instead: scale the source to *cover* the full target canvas, blur it
+    // heavily, then composite the untouched original centered on top. The center region
+    // stays byte-identical to the source (verifyLockedRegion still passes), and the
+    // extended margins are filled with a soft, on-brand blur of the same image.
+    const blurredBackground = await sharp(srcBuf)
+        .resize(dstW, dstH, { fit: "cover" })
+        .blur(40)
+        .toBuffer();
+
+    const outputBuffer = await sharp(blurredBackground)
+        .composite([{ input: srcBuf, top, left }])
         .png()
         .toBuffer();
 

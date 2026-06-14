@@ -8154,9 +8154,22 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                   <div
                                     key={it.key}
                                     className={`relative rounded-lg border border-slate-800/60 hover:border-blue-500 hover:ring-2 hover:ring-blue-500/20 transition-all bg-slate-900 group ${aspectCls(it.ratio)}`}>
-                                    {/* Thumbnail — click promotes this version to the active single view */}
+                                    {/* Thumbnail — click promotes this version to the active view.
+                                        In batch mode the canvas renders the batch grid (filtered by
+                                        currentAspectRatio), not mockupHistory, so pushMockup has no
+                                        visible effect. If the clicked image is one of the batch tiles,
+                                        switch the grid's active ratio to bring it into view instead. */}
                                     <button
-                                      onClick={() => pushMockup(it.url, it.ratio)}
+                                      onClick={() => {
+                                        const batchMatch = batchResults.length > 0
+                                          ? batchResults.find(b => b.url === it.url)
+                                          : undefined;
+                                        if (batchMatch) {
+                                          setCurrentAspectRatio(it.ratio);
+                                        } else {
+                                          pushMockup(it.url, it.ratio);
+                                        }
+                                      }}
                                       title={`${it.ratio} · ${it.label}`}
                                       className="absolute inset-0 w-full h-full rounded-lg overflow-hidden">
                                       <img src={it.url} alt={it.label} loading="lazy" className="w-full h-full object-cover" />
