@@ -28,7 +28,7 @@ import { storeCreativeToMemory, retrieveCreativePatterns } from "./creativeMemor
 import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.js";
 import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreservation, type SemanticLock } from "./utils/hookPayload.js";
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
-import type { FailureClass, CostEstimate, LogoPlacement } from "./types.js";
+import type { FailureClass, CostEstimate, LogoPlacement, ClaimFlagEntry } from "./types.js";
 import { resolveBrandColors, type ResolveBrandColorsInput } from "./brandColorResolver.js";
 import { buildCarouselBrandConsistencyBlock, buildBatchBrandConsistencyBlock } from "./brandPromptBlocks.js";
 import { checkBrandColorCompliance } from "./brandColorCompliance.js";
@@ -141,6 +141,12 @@ function buildBrandResolverArgs(inputs: AdInputs): ResolveBrandColorsInput {
 import { CULTURAL_COMPLIANCE_BLOCK, ARABIC_WARDROBE_BLOCK, isArabic, scanAndReplace } from "./culturalCompliance.js";
 import { compositeUILogos } from "./logoComposite.js";
 import { SCREEN_CONTENT_BAN_BLOCK, UI_LOGO_INSTRUCTION_BLOCK, ENVIRONMENTAL_LOGO_INSTRUCTION_BLOCK, MODE_SELECTION_HINT_BLOCK } from "./logoPromptBlocks.js";
+import {
+  READING_LEVEL_BLOCK,
+  LIVED_SYMPTOM_BLOCK,
+  FABRICATION_POLICY_BLOCK,
+  BANNED_CTA_LIST,
+} from "./copywriting_knowledge.js";
 
 // ─── Ranking Guidance Builder ────────────────────────────────────────────
 // Converts Ticket 2 ranking output into a compact prompt-safe guidance block.
@@ -491,7 +497,7 @@ function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverr
     subheadText = subheadText.split('STORY_ARC:')[0].trim();
     ctaBlock = ctaBlock.split(/ANGLE_END|HOOK_END/)[0].trim();
     const stripMarkerLines = (s: string): string =>
-        s.split('\n').filter((l) => !/^\s*(STORY_ARC:|ANGLE_END|HOOK_END|ANGLE_START)/i.test(l)).join('\n').trim();
+        s.split('\n').filter((l) => !/^\s*(STORY_ARC:|ANGLE_END|HOOK_END|ANGLE_START|CLAIM_FLAG)/i.test(l)).join('\n').trim();
     hookText = stripMarkerLines(hookText);
     subheadText = stripMarkerLines(subheadText);
     ctaBlock = stripMarkerLines(ctaBlock);
@@ -516,6 +522,59 @@ function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverr
     }
 
     return { hookText, subheadText, ctaName, benefitText };
+}
+
+/**
+ * Phase 22 — soft-fabrication-flag parser.
+ *
+ * Scans the model-authored TOV response for `CLAIM_FLAG: <verbatim specific> — <one-line reason>`
+ * lines, removes them, and returns the structured flags + cleaned text. The
+ * cleaned text is fed into `resolveOwnedRenderText` so the four copy fields
+ * are guaranteed to be free of the marker substring.
+ *
+ * Hard invariant: no `CLAIM_FLAG` substring may survive in hookText /
+ * subheadText / ctaName / benefitText — this protects `validateCopyFidelity()`.
+ *
+ * The matched em-dash / en-dash / hyphen separator is tolerated, and the line
+ * is matched case-insensitively. Empty / malformed lines are silently dropped
+ * (no throw) to keep the soft-flag policy strictly non-blocking.
+ */
+export function extractClaimFlagsFromResponse(text: string): { claimFlags: ClaimFlagEntry[]; cleanedText: string } {
+    const claimFlags: ClaimFlagEntry[] = [];
+    if (!text) return { claimFlags, cleanedText: "" };
+    const lines = text.split(/\r?\n/);
+    const kept: string[] = [];
+    // Match `CLAIM_FLAG:` followed by the verbatim specific, a separator (em-dash,
+    // en-dash, hyphen, or `:`), and a one-line reason. The specific and reason are
+    // captured greedily to allow arbitrary punctuation inside them.
+    const claimRe = /^\s*CLAIM_FLAG\s*:\s*(.+?)\s*(?:\u2014|\u2013|-|:)\s*(.+?)\s*$/i;
+    for (const line of lines) {
+        const m = line.match(claimRe);
+        if (m) {
+            claimFlags.push({ text: m[1].trim(), reason: m[2].trim() });
+        } else if (!/^\s*CLAIM_FLAG\s*:/i.test(line)) {
+            // Defensive: keep any line that looks like a partial / malformed claim
+            // out of the parser output but still strip it from the rendered fields.
+            kept.push(line);
+        }
+    }
+    return { claimFlags, cleanedText: kept.join("\n") };
+}
+
+/**
+ * Phase 22 — T015 / T016. Wraps `resolveOwnedRenderText` with the soft-fabrication
+ * claim-flag parser so callers that care about claim flags get a single source of
+ * truth. Callers that don't care (carousel, batch) continue to use
+ * `resolveOwnedRenderText` directly and only need the fields.
+ */
+export function extractCopyFieldsFromResponse(
+    selectedTov: string,
+    inputs: AdInputs,
+    textOverride?: TextOverride,
+): { fields: OwnedRenderText; claimFlags: ClaimFlagEntry[] } {
+    const { claimFlags, cleanedText } = extractClaimFlagsFromResponse(selectedTov || "");
+    const fields = resolveOwnedRenderText(cleanedText, inputs, textOverride);
+    return { fields, claimFlags };
 }
 
 const BUILD_PLAN_RESPONSE_SCHEMA = {
@@ -1522,7 +1581,12 @@ STRICT RULES:
 ✗ NO cold-style openers like "هل تريد" or "اكتشف"
 ✓ USE real-world counter-examples (iPhone, weddings, Netflix)
 ✓ SHIFT beliefs, don't argue with them
-✓ Make them FEEL something, not just know something`
+✓ Make them FEEL something, not just know something
+
+${READING_LEVEL_BLOCK}
+${LIVED_SYMPTOM_BLOCK}
+${FABRICATION_POLICY_BLOCK}
+BANNED CTAs (do NOT author any of these as the CTA line — the user's literal CTA input is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs as [verb] [the offer] → [payoff tied to their pain/outcome].`
             : `COLD MODE:
 - Prospect has NOT seen the offer.
 - Do NOT mention: "you watched / you visited / you saw / didn't buy".
@@ -2199,10 +2263,15 @@ ${inputs.hookType ? `2. DELIVERY (${inputs.hookType}) — PACKAGING: Is the angl
 ${(inputs as any).copywritingStrategy ? `3. STRATEGY (${(inputs as any).copywritingStrategy}) — ENERGY: Does the tone/pacing reflect this strategy? (Priority 3 — flavors the output)` : ''}
 If ANY layer is missing from ANY hook, REWRITE it. The angle's hard rule is the FIRST thing to verify — if it fails, the hook fails regardless of delivery or strategy.
 
+${READING_LEVEL_BLOCK}
+${LIVED_SYMPTOM_BLOCK}
+${FABRICATION_POLICY_BLOCK}
+
 INSTRUCTIONS FOR EACH HOOK (do NOT include these instructions in your output):
 - HOOK_TEXT = the headline. Max 8 words. Write in ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'Arabic' : 'the project language'}. Must be punchy direct-response copy.
 - SUBHEADLINE = the supporting line. Max ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? '12' : '8'} words. Must be a COMPLETE sentence that ends naturally. Never end on a conjunction.
 - CTA_BUTTON = the call-to-action button text, followed by ||| then a CONNECTOR + short benefit line (2-5 words). The benefit MUST start with a natural connector word (و/ل/عشان/وابدأ/وحقق). Example: "${inputs.cta} ||| وابدأ تحقق دخل يليق بخبرتك" or "${inputs.cta} ||| وتوقف عن ملاحقة العملاء".
+- BANNED CTAs (do NOT author any of these as the CTA_BUTTON — the user's literal CTA is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs as [verb] [the offer] → [payoff tied to their pain/outcome].
 - Each hook explores a DIFFERENT dimension of the ${inputs.coldHookAngle} angle.
 - Hook A = FINANCIAL/REVENUE dimension. Hook B = TIME/LIFESTYLE dimension. Hook C = STATUS/IDENTITY dimension. Hook D = SKILL/CONFIDENCE dimension.
 
@@ -2245,10 +2314,14 @@ CTA_BUTTON: ${inputs.cta} |||
 HOOK_END_D
 ` : `
 ${(inputs as any).copywritingStrategy ? `⚠️ COPYWRITING STRATEGY: ${(inputs as any).copywritingStrategy}\nEvery hook must reflect this strategy in its approach. If a hook doesn't clearly use this framework, REWRITE it.\n` : ''}
+${READING_LEVEL_BLOCK}
+${LIVED_SYMPTOM_BLOCK}
+${FABRICATION_POLICY_BLOCK}
 INSTRUCTIONS FOR EACH HOOK (do NOT include these instructions in your output):
 - HOOK_TEXT = the headline. Max 8 words. Write in ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'Arabic' : 'the project language'}. Must be punchy direct-response copy.
 - SUBHEADLINE = the supporting line. Max ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? '12' : '8'} words. Must be a COMPLETE sentence that ends naturally. Never end on a conjunction.
 - CTA_BUTTON = the call-to-action button text, followed by ||| then a CONNECTOR + short benefit line (2-5 words). The benefit MUST start with a natural connector word (و/ل/عشان/وابدأ/وحقق). Example: "${inputs.cta} ||| وابدأ تحقق دخل يليق بخبرتك" or "${inputs.cta} ||| وتوقف عن ملاحقة العملاء".
+- BANNED CTAs (do NOT author any of these as the CTA_BUTTON — the user's literal CTA is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs as [verb] [the offer] → [payoff tied to their pain/outcome].
 - Hook A = Direct/How-To type, Greed angle. Hook B = Question/Challenge type, Fear angle. Hook C = News/Testimonial type, Proof angle. Hook D = Command/Reason-Why type, Curiosity angle.
 
 OUTPUT FORMAT (fill in the values after each colon — do NOT output instructions, brackets, or dimension labels):
@@ -4978,7 +5051,21 @@ export async function generateFinalAd(
     if (inputs.referenceImage && !editInstruction && !base64ToEdit) {
         _referenceInfluence = await analyzeReferenceImage(inputs.referenceImage);
     }
-    const ownedRenderText = resolveOwnedRenderText(approvedTov, inputs, textOverride);
+    // ═══ PHASE 22 — US3 soft-fabrication flag (T015 / T016) ═══
+    // Strip CLAIM_FLAG lines from approvedTov and capture structured flags.
+    // `ownedRenderText` is derived from the CLEANED text so no `CLAIM_FLAG`
+    // substring can leak into the four fields (protects validateCopyFidelity).
+    // The structured flags are merged into the resolution trace below —
+    // non-blocking; the soft flag never fails the generation.
+    const _copyExtraction = extractCopyFieldsFromResponse(approvedTov, inputs, textOverride);
+    if (_copyExtraction.claimFlags.length > 0) {
+        console.log(`🚩 [generateFinalAd] ${_copyExtraction.claimFlags.length} claim flag(s) captured (${_complianceAssetId})`);
+        _lastResolutionTrace = {
+            ...(_lastResolutionTrace || {}),
+            claimFlags: _copyExtraction.claimFlags.map(f => ({ ...f })),
+        };
+    }
+    const ownedRenderText = _copyExtraction.fields;
     let hookText = ownedRenderText.hookText;
     let subheadText = ownedRenderText.subheadText;
     let ctaName = ownedRenderText.ctaName;
@@ -7387,6 +7474,11 @@ ABSOLUTE RULES:
 8. Use concrete, sensory language (food, money, things you can touch/see/taste).
 9. The PIVOT slide (slide ${slideCount - 1}) MUST start with a contrast word: "أم..." / "أو..." / "لكن..."
 10. FORBIDDEN: Abstract concepts, motivational fluff, generic advice, new questions unrelated to hook.
+
+${READING_LEVEL_BLOCK}
+${LIVED_SYMPTOM_BLOCK}
+${FABRICATION_POLICY_BLOCK}
+BANNED CTAs (do NOT author any of these as the CTA on the last slide — the user's literal CTA input is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs as [verb] [the offer] → [payoff tied to their pain/outcome].
 
 ═══════════════════════════════════════════════════════════════════════════════
 OUTPUT FORMAT (STRICT)

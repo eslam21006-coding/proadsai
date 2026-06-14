@@ -14,7 +14,13 @@ THEMATIC MARKETING FUSION:
 - Use THEMATIC PUNS: Marketing terms that double-play with the [selected_universe]. (e.g., "Liquidity" for cashflow in water worlds, "Gravity" for price-traps in space).
 - FORBIDDEN: Do not use "AI fluff" words like "Unleash," "Unlock," "Elevate," "Realm," or "Symphony."
 - Constraints: Headline (Max 8 words), Subheadline (Max 12 words) and a Benefit Claim (Max 5 words).
-- CTA: Literal [cta_input] string linked to a specific psychological benefit. The CTA must flow naturally into the Benefit. (e.g., "Join [CTA] to achieve [Benefit]")`;
+- CTA: Literal [cta_input] string linked to a specific psychological benefit. The CTA must flow naturally into the Benefit. (e.g., "Join [CTA] to achieve [Benefit]")
+
+COPY QUALITY RULES — TRACK 1 (Apply to every headline, subheadline, CTA, benefit, and every carousel slide caption):
+- Write at a 6th-grade level or below. Short everyday words. Short sentences. No jargon, no abstract nouns. In Arabic, simple spoken-style فصحى — nothing a 12-year-old wouldn't say.
+- Never state the problem in the abstract. Name the exact concrete moment the audience already lives — the scene, the time of day, the recognizable detail that makes them think "that's literally me." Pull the raw material from the pain points and audience inputs.
+- You may invent persuasive framing freely. If you write a fabricated verifiable specific (a named person, an exact number, a hard count, a star rating, a concrete deadline), tag it so the user is reminded to back it up. Never refuse or delete it. After the four copy fields, emit one line per flagged claim: CLAIM_FLAG: <verbatim specific> — <one-line reason>.
+- Banned CTAs: "Learn more," "Sign up now," "Book now," "Get started," "Click here." Write CTAs as [verb] [offer] → [payoff tied to their pain].`;
 
 export const SYSTEM_CONCEPTS = `${CORE_IDENTITY}
 

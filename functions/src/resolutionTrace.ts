@@ -10,6 +10,7 @@ import type {
     BrandColorComplianceEntry,
     ModeCompositionWarning,
     AdaptStateAuditResult,
+    ClaimFlagEntry,
 } from "./types.js";
 
 type Mutable<T> = { -readonly [P in keyof T]: T[P] extends readonly (infer U)[] ? U[] : T[P] };
@@ -23,6 +24,7 @@ type ResolutionTraceDraft = Partial<Mutable<ResolutionTrace>> & {
     _modeComposition?: { missing: ModeCompositionWarning[]; reinforced: boolean };
     _adaptStateAudit?: AdaptStateAuditResult;
     _visualProvider?: ResolutionTrace["visualProvider"];
+    _claimFlags?: ClaimFlagEntry[];
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -66,6 +68,7 @@ export interface TraceBuilder {
         arabicQaRan?: boolean;
         timedOut?: boolean;
     }): TraceBuilder;
+    setClaimFlags(flags: readonly ClaimFlagEntry[]): TraceBuilder;
     build(): ResolutionTrace;
 }
 
@@ -197,6 +200,10 @@ export function createTraceBuilder(): TraceBuilder {
             state._visualProvider = { ...provider };
             return builder;
         },
+        setClaimFlags(flags) {
+            state._claimFlags = flags.map(f => ({ ...f }));
+            return builder;
+        },
         build(): ResolutionTrace {
             if (!state.resolvedCampaignType) throw new Error("TraceBuilder: resolvedCampaignType not set");
             if (!state.resolvedAdMode) throw new Error("TraceBuilder: resolvedAdMode not set");
@@ -248,6 +255,7 @@ export function createTraceBuilder(): TraceBuilder {
                     : undefined,
                 adaptStateAudit: state._adaptStateAudit,
                 visualProvider: state._visualProvider,
+                claimFlags: state._claimFlags ? state._claimFlags.map(e => ({ ...e })) : undefined,
             });
         },
     };

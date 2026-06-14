@@ -228,6 +228,12 @@ export interface LogoPipelineEvents {
     }>;
 }
 
+export interface ClaimFlagEntry {
+    text: string;
+    reason: string;
+    field?: "hook" | "subhead" | "cta" | "benefit" | "slide";
+}
+
 export interface ResolutionTrace {
     resolvedCampaignType: "cold" | "retargeting";
     resolvedAdMode: "single" | "carousel" | "batch";
@@ -279,6 +285,10 @@ export interface ResolutionTrace {
         arabicQaRan?: boolean;
         timedOut?: boolean;
     };
+    // Phase 22 — US3 soft-fabrication flag. Captures (does not enforce) the soft-flag
+    // policy emitted by the model after the four copy fields. Non-blocking; the copy
+    // is always produced in full and never deleted/refused.
+    readonly claimFlags?: readonly ClaimFlagEntry[];
 }
 
 export interface ModeCompositionTrace {
