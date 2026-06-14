@@ -6135,6 +6135,13 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
 ================================================================
 You are RESIZING the attached image to a new aspect ratio: ${currentAspectRatio}
 
+REFLOW RULES — READ BEFORE ANYTHING ELSE:
+1. PRESERVE THE HERO FACE EXACTLY — do not regenerate, reinterpret, or soften the face. The hero's face in the output must be pixel-level identical to the input image. Copy it as-is, do not redraw it.
+2. USE THE FULL CANVAS HEIGHT — spread all elements across the entire available space between the safe zones. Do not compress or center everything in the middle third. The headline goes near the top, the hero fills the middle, the CTA anchors near the bottom safe zone boundary.
+3. PRESERVE ALL VISUAL STYLE EXACTLY — same colors, same lighting, same background, same typography style, same decorative elements. Only the spatial layout changes.
+4. PRESERVE ALL TEXT EXACTLY — every word, every character, every punctuation mark must be identical to the input. Do not paraphrase, summarize, or omit any text.
+5. SCALE THE HERO UP — in Story (9:16) format, the hero should fill more vertical space than in Square. Make the hero larger and more prominent, not smaller.
+
 ABSOLUTE RULES — DO NOT VIOLATE ANY OF THESE:
 1. SAME HERO: Same person, same face, same expression, same pose, same outfit, same accessories. Do NOT change anything about the hero.
 2. SAME COLORS: Same color palette, same color grading, same background colors, same accent colors. Do NOT change the color scheme.
