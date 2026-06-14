@@ -13,6 +13,7 @@ import { decideMethod } from "./reflowRouter.js";
 import { rerenderFromPlan, NoPlanError, type RerenderGenData } from "./reflowRerender.js";
 import type { GeminiCaller } from "./generators.js";
 import { outpaintReflow, verifyLockedRegion, OUTPAINT_CREDIT_COST } from "./reflowOutpaint.js";
+import { MODEL_PROVIDER } from "./modelConfig.js";
 
 export interface ReflowImageRequest {
     generationId: string;
@@ -41,6 +42,10 @@ export interface ReflowImageDeps {
     // Used by the rerender route so generateFinalAd's request shape matches the SDK.
     geminiCaller: GeminiCaller;
     openaiApiKey: string;
+    // Visual provider override. Defaults to the live MODEL_PROVIDER constant in production
+    // (index.ts does not set it). Tests inject "gemini" to exercise the auto-router's
+    // rerender route, which is force-disabled on the OpenAI path.
+    modelProvider?: "openai" | "gemini";
 }
 
 /**
@@ -106,6 +111,7 @@ export async function reflowImageHandler(
     deps: ReflowImageDeps,
 ): Promise<ReflowImageResponse> {
     const { db, admin, geminiCaller, openaiApiKey } = deps;
+    const modelProvider = deps.modelProvider ?? MODEL_PROVIDER;
 
     const { HttpsError } = await import("firebase-functions/v2/https");
 
@@ -230,7 +236,19 @@ export async function reflowImageHandler(
     }));
 
     // ─── Decide route first so credit pre-check uses the correct per-route cost ───
-    const decision = decideMethod(sourceRatio, targetRatio, method);
+    let decision = decideMethod(sourceRatio, targetRatio, method);
+
+    // OpenAI visual path: reflow is ALWAYS a deterministic canvas extension of the
+    // already-rendered image — never a from-plan rerender. Rerender re-runs the full
+    // pipeline from the saved buildPlan (rebuilds the ad from the prompt/blueprint),
+    // which on the OpenAI engine drifts away from the displayed render. Force outpaint
+    // regardless of magnitude or the caller's requested method, and mark it as an
+    // override so a failed/unverifiable outpaint fails cleanly instead of silently
+    // falling back to rerender. The Gemini path is untouched (still uses the auto router).
+    const forceOutpaint = modelProvider === "openai";
+    if (forceOutpaint) {
+        decision = { ...decision, chosenMethod: "outpaint", isUserOverride: true };
+    }
 
     // ─── Pre-flight credit check (FR-017): charge by the route the router actually chose ───
     // Reserving the rerender bound for every auto-routed outpaint would falsely reject users
@@ -262,6 +280,7 @@ export async function reflowImageHandler(
                 decision,
                 geminiCaller,
                 openaiApiKey,
+                forceOutpaint,
             });
         },
     );
@@ -323,8 +342,9 @@ async function executeItemReflow(args: {
     decision: { magnitude: number; chosenMethod: "outpaint" | "rerender"; isUserOverride: boolean };
     geminiCaller: GeminiCaller;
     openaiApiKey: string;
+    forceOutpaint?: boolean;
 }): Promise<ReflowOutcome> {
-    const { item, generationId, targetRatio, sourceRatio, genData, decision, geminiCaller, openaiApiKey } = args;
+    const { item, generationId, targetRatio, sourceRatio, genData, decision, geminiCaller, openaiApiKey, forceOutpaint } = args;
     const idx = item.itemIndex;
 
     // Outpaint needs a real source image: either an http(s) URL (downloaded) or a
@@ -390,8 +410,11 @@ async function executeItemReflow(args: {
             }
         }
     }
+    // On the OpenAI path we never reroute to rerender for a missing/unusable source —
+    // rerender would rebuild from the prompt. Keep the outpaint route so it fails cleanly
+    // (no_source) if the image truly can't be read, rather than silently rebuilding the ad.
     const route: "outpaint" | "rerender" =
-        decision.chosenMethod === "outpaint" && !sourceUsableForOutpaint
+        decision.chosenMethod === "outpaint" && !sourceUsableForOutpaint && !forceOutpaint
             ? "rerender"
             : decision.chosenMethod;
     const reroutedFromMissingSource = route !== decision.chosenMethod;
