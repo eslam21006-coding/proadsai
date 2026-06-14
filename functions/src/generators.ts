@@ -6168,11 +6168,12 @@ ${currentAspectRatio === '9:16' ? 'VERTICAL STORY: Stack headline at top, hero i
 PLATFORM SAFE ZONES for ${currentAspectRatio}:
 ${currentAspectRatio === '9:16'
                         ? `⚠️ CRITICAL SAFE ZONES FOR 9:16 STORY FORMAT:
-- TOP 8% of canvas (≈130px on 1080px): COMPLETELY EMPTY — no text, no logo, no elements. This is covered by platform UI (clock, signal bars).
-- BOTTOM 20% of canvas (≈320px on 1080px): COMPLETELY EMPTY — no text, no CTA button, no benefit line, no elements whatsoever. This is covered by platform UI on Meta/TikTok/Snapchat (home bar, comments, share buttons).
-- ALL text, CTA button, and interactive elements MUST be placed between 8% and 80% of canvas height.
+- TOP 8% of canvas (≈130px): NO text, logos, or UI elements. Fill this area with background scene/environment only.
+- BOTTOM 20% of canvas (≈320px): NO CTA button, NO text, NO interactive elements. Fill this area with background scene, environment, gradient, or texture that naturally extends the design — it must look intentional, not empty.
+- ALL text, CTA button, and copy elements MUST be placed between 8% and 78% of canvas height.
 - CTA button MUST be above the 75% mark.
-- Violating these zones makes the ad unusable on all major platforms. This is non-negotiable.`
+- The bottom 20% is covered by platform UI (Meta/TikTok/Snapchat controls) so it will never look empty to end users — but it must contain ONLY background visual, never interactive elements.
+- This is non-negotiable for platform compliance.`
                         : currentAspectRatio === '3:4'
                             ? `⚠️ SAFE ZONES FOR 3:4 PORTRAIT FORMAT:
 - BOTTOM 10% of canvas: keep clear of CTA and interactive elements.
