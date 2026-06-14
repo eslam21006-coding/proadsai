@@ -2196,6 +2196,10 @@ const App: React.FC = () => {
   const [batchCaptions, setBatchCaptions] = useState<{ hookKey: string; hookText: string; captionText: string }[]>([]);
   const [activeBatchCaptionKey, setActiveBatchCaptionKey] = useState<string>('');
   const [batchResults, setBatchResults] = useState<BatchResult[]>([]);
+  // Snapshot of the batch grid taken when a gallery thumbnail is clicked in batch mode —
+  // lets the canvas drop to single view for that image while a "Back to batch" button
+  // restores the grid. Cleared on a fresh batch render so stale grids never reappear.
+  const [batchSnapshot, setBatchSnapshot] = useState<typeof batchResults>([]);
   const [batchRendering, setBatchRendering] = useState(false);
   // FIX 3: which batch card is focused for a 'single'-scope resize (so it targets that
   // item's own generationId instead of the global renderGenerationId). null = not a batch item.
@@ -4454,6 +4458,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     }
 
     setBatchResults(initial);
+    // Drop any "Back to batch" snapshot from a prior batch run so a stale grid can't
+    // reappear behind this fresh render.
+    setBatchSnapshot([]);
     // Clear stale carousel slides — mirrors handleCarouselRender clearing batchResults
     // (5787330): the ALL VERSIONS gallery is gated on carouselSlides.length === 0, so
     // leftovers from an earlier carousel run would keep it hidden for this batch.
@@ -8077,6 +8084,16 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   </div>
                 )}
 
+                {/* Back to batch — restores the grid snapshot taken when a gallery thumbnail
+                    was clicked in batch mode (which dropped the canvas to single view). */}
+                {batchSnapshot.length > 0 && batchResults.length === 0 && (
+                  <button
+                    onClick={() => { setBatchResults(batchSnapshot); setBatchSnapshot([]); }}
+                    className="mt-3 text-[11px] font-bold text-slate-400 hover:text-slate-200 transition-colors">
+                    ← Back to batch results
+                  </button>
+                )}
+
                 {/* ═══ ISSUE 2 — UNIFIED ALL-VERSIONS GALLERY (Option A) ═══
                     Aggregates every render in the session (single history, batch results,
                     carousel slides, pre-resize snapshot), groups thumbnails by ratio, and
@@ -8161,14 +8178,14 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                         switch the grid's active ratio to bring it into view instead. */}
                                     <button
                                       onClick={() => {
-                                        const batchMatch = batchResults.length > 0
-                                          ? batchResults.find(b => b.url === it.url)
-                                          : undefined;
-                                        if (batchMatch) {
-                                          setCurrentAspectRatio(it.ratio);
-                                        } else {
-                                          pushMockup(it.url, it.ratio);
+                                        // In batch mode the canvas renders the batch grid, not
+                                        // mockupHistory. Snapshot the grid, drop to single view, and
+                                        // promote the clicked image; a "Back to batch" button restores it.
+                                        if (batchResults.length > 0) {
+                                          setBatchSnapshot([...batchResults]);
+                                          setBatchResults([]);
                                         }
+                                        pushMockup(it.url, it.ratio);
                                       }}
                                       title={`${it.ratio} · ${it.label}`}
                                       className="absolute inset-0 w-full h-full rounded-lg overflow-hidden">

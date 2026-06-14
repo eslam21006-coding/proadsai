@@ -6167,11 +6167,19 @@ ${currentAspectRatio === '9:16' ? 'VERTICAL STORY: Stack headline at top, hero i
 
 PLATFORM SAFE ZONES for ${currentAspectRatio}:
 ${currentAspectRatio === '9:16'
-                        ? '- STORY: Keep ALL text and the CTA button OUT of the bottom 20% of the canvas (Meta / TikTok / Snapchat UI overlap) AND out of the top 8% (status bar). No interactive elements, CTA, headline, or logo may sit inside those bands.'
+                        ? `⚠️ CRITICAL SAFE ZONES FOR 9:16 STORY FORMAT:
+- TOP 8% of canvas (≈130px on 1080px): COMPLETELY EMPTY — no text, no logo, no elements. This is covered by platform UI (clock, signal bars).
+- BOTTOM 20% of canvas (≈320px on 1080px): COMPLETELY EMPTY — no text, no CTA button, no benefit line, no elements whatsoever. This is covered by platform UI on Meta/TikTok/Snapchat (home bar, comments, share buttons).
+- ALL text, CTA button, and interactive elements MUST be placed between 8% and 80% of canvas height.
+- CTA button MUST be above the 75% mark.
+- Violating these zones makes the ad unusable on all major platforms. This is non-negotiable.`
                         : currentAspectRatio === '3:4'
-                            ? '- PORTRAIT: Keep text and the CTA button OUT of the bottom 10% safe zone.'
+                            ? `⚠️ SAFE ZONES FOR 3:4 PORTRAIT FORMAT:
+- BOTTOM 10% of canvas: keep clear of CTA and interactive elements.
+- CTA button MUST be above the 88% mark.
+- Top 5%: keep clear of text elements.`
                             : currentAspectRatio === '1:1'
-                                ? '- SQUARE: No platform safe-zone restrictions — use the full canvas with normal margins.'
+                                ? 'No platform safe zone restrictions for Square format. Use full canvas area.'
                                 : '- Keep text and the CTA button within generous margins; avoid the extreme top and bottom edges.'}
 
 THIS IS A RESIZE, NOT A REDESIGN. If the output looks like a different ad, you have failed.
