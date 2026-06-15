@@ -7556,6 +7556,10 @@ At least 1-2 of the 4 angles should directly leverage competitive differentiatio
             responseText.includes(`ANGLE_END_${f}`),
         );
         if (!allFamiliesPresent) {
+            // Phase 23 (CodeRabbit): clear the prewritten survivor so
+            // generateFinalAd does NOT persist a `copyDiversity.storyDirectionFamilies`
+            // audit for families the user did not actually receive.
+            _lastCopyDiversity = null;
             console.warn(
                 "⚠️ carousel response missing one or more drawn ANGLE_START/END blocks; skipping fingerprint record to avoid memory pollution",
             );

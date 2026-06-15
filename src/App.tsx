@@ -6701,15 +6701,25 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                     // via the T011a helper. Push to the per-card store; the
                                     // reference hook (position 1) stays at tovText and is
                                     // NEVER replaced. Extend, never reset.
-                                    const existingVariations = (variationCarousels[v] || []).map((hv) => hv.rawBlock);
+                                    const existingRawBlocks = new Set(
+                                      (variationCarousels[v] || []).map((hv) => hv.rawBlock.trim()),
+                                    );
                                     const parsed = parseHookVariations(newHookValidation.hooks.map((h) => `HOOK_START_${h.variant}\nHOOK_TEXT: ${h.hookText}\nSUBHEADLINE: ${h.subheadline}\nCTA_BUTTON: ${h.ctaButton}\nHOOK_END_${h.variant}\n`));
                                     if (parsed.length === 0) {
                                       // C8 — non-blocking notice, carousel unchanged
                                       refundCredits('refreshHooks');
                                       showToast(t('variation.empty_result'), "info");
                                     } else {
+                                      // Phase 23 (CodeRabbit): drop any new blocks that
+                                      // already exist in the carousel so repeated clicks
+                                      // can't insert duplicates. Match on the raw block
+                                      // (truncated) so formatting differences don't slip
+                                      // duplicates through.
+                                      const deduped = parsed.filter(
+                                        (p) => !existingRawBlocks.has(p.rawBlock.trim()),
+                                      );
                                       // Clamp to remaining slots so we never overflow the 12-position cap
-                                      const parsedToAdd = parsed.slice(0, remainingVariationSlots);
+                                      const parsedToAdd = deduped.slice(0, remainingVariationSlots);
                                       const finalCount = currentVariationCount + parsedToAdd.length;
                                       pushVariations(v, parsedToAdd);
                                       const toastMsg = parsedToAdd.length === 1
@@ -6728,7 +6738,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                             className="w-full mt-2 py-2.5 rounded-xl bg-slate-950/40 border border-dashed border-slate-700/40 text-slate-500 text-[9px] font-bold uppercase tracking-wider hover:border-blue-500/40 hover:text-blue-400 hover:bg-blue-500/5 transition-all flex items-center justify-center gap-2"
                           >
                             <i className="fa-solid fa-clone text-[9px]"></i>
-                            <span>Generate 4 More Like This · <i className="fa-solid fa-coins text-[7px] text-amber-400 mr-0.5"></i>{CREDIT_COSTS.refreshHooks}</span>
+                            <span>{t('variation.generate_button')} · <i className="fa-solid fa-coins text-[7px] text-amber-400 mr-0.5"></i>{CREDIT_COSTS.refreshHooks}</span>
                           </button>
                           {/* Phase 23 — In-card variation carousel (23.A) */}
                           {(variationCarousels[v] && variationCarousels[v]!.length > 0) && (
@@ -6766,7 +6776,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                       key={i}
                                       onClick={() => setVariationActiveIndex(v, i)}
                                       className={`w-1.5 h-1.5 rounded-full transition-all ${(variationActiveIndex[v] ?? 0) === i ? 'bg-blue-500 w-3' : 'bg-slate-600'}`}
-                                      title={`Position ${i + 1}`}
+                                      title={t('variation.position_title', { position: i + 1 })}
                                     />
                                   ))}
                                 </div>

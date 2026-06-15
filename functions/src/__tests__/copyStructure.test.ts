@@ -4,17 +4,13 @@
 // in-card variation state, and the rotational contracts documented in
 // specs/959-copy-structure-variation/contracts/.
 
-import { drawDimensions, drawOpenings, type AngleFingerprint, type DimensionEntry, type OpeningStructure } from "../knowledge/hookAnglesKnowledge.js";
+import { drawDimensions, drawOpenings, type DimensionEntry, type OpeningStructure } from "../knowledge/hookAnglesKnowledge.js";
+import type { AngleFingerprint } from "../creativeMemory.js";
 import { getRecentFingerprints, recordAngleFingerprint } from "../creativeMemory.js";
 import { buildSlidePlan } from "../slidePlanEngine.js";
 import { rotateCarouselAngles } from "../generators.js";
-
-declare const require: any;
-declare const process: any;
-declare const console: any;
-
-const fs = require("fs");
-const path = require("path");
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 // ═══════════════════════════════════════════════════════════
 // SHELL
@@ -29,7 +25,7 @@ function runTests(): void {
       passed++;
     } else {
       failed++;
-      console.error(`  ✗ ${label}`);
+      console.error(`  ❌ ${label}`);
     }
   }
 
@@ -246,7 +242,10 @@ function runTests(): void {
       assert(!slides[i].photoInjection, `middle slide ${i + 1} has no photoInjection`);
     }
     for (let i = 1; i < slides.length - 2; i++) {
-      assert(slides[i].narrativeAngle !== slides[i + 1].narrativeAngle || slides.length - 2 <= 1, "no two adjacent middle slides share the same angle (when ≥2 middles)");
+      assert(
+        slides[i].narrativeAngle !== slides[i + 1].narrativeAngle || slides.length - 2 <= 1,
+        "no two adjacent middle slides share the same angle (when ≥2 middles)",
+      );
     }
   }
 
@@ -365,11 +364,16 @@ function runTests(): void {
     const middles0 = plan0.filter((s) => s.role === "middle").map((s) => s.narrativeAngle).join(",");
     const middles3 = plan3.filter((s) => s.role === "middle").map((s) => s.narrativeAngle).join(",");
     assert(middles0 !== middles3, `middle-slide order varies by seed (got '${middles0}' vs '${middles3}')`);
-    // No two adjacent middle slides share the same angle
-    for (let i = 1; i < plan0.length - 1; i++) {
-      if (i + 1 < plan0.length - 1) {
-        assert(plan0[i].narrativeAngle !== plan0[i + 1].narrativeAngle, "no two adjacent middle slides share an angle (plan0)");
-      }
+    // No two adjacent middle slides share the same angle. Both `plan0[i]`
+    // and `plan0[i+1]` must be middle slides; the slide plan has 1 hook
+    // at index 0 and 1 close at the last index, so middle slides run
+    // [1 .. length-2]. The comparison `(i+1) <= length-2` translates to
+    // `i < length-2` for the loop bound.
+    for (let i = 1; i < plan0.length - 2; i++) {
+      assert(
+        plan0[i].narrativeAngle !== plan0[i + 1].narrativeAngle,
+        "no two adjacent middle slides share an angle (plan0)",
+      );
     }
   }
 

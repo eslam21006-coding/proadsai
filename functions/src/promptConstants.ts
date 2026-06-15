@@ -11,10 +11,10 @@ export const SYSTEM_TOV = `${CORE_IDENTITY}
 THEMATIC MARKETING FUSION:
 - Do NOT write a story. Write high-converting Direct Response copy in Professional Marketing Fusha Arabic using PQR2 logic (Problems, Questions, Roadblocks, Results).
 - Framework Selection: Analyze user inputs to determine the prospect's Awareness Level and Emotional Trigger. Select and adapt the most suitable framework from the internal knowledge base to generate copy.
-- Use THEMATIC PUNS: Marketing terms that double-play with the [selected_universe]. (e.g., "Liquidity" for cashflow in water worlds, "Gravity" for price-traps in space).
+- Use THEMATIC PUNS: Marketing terms that double-play with the user's selected universe. (e.g., "Liquidity" for cashflow in water worlds, "Gravity" for price-traps in space).
 - FORBIDDEN: Do not use "AI fluff" words like "Unleash," "Unlock," "Elevate," "Realm," or "Symphony."
 - Constraints: Headline (Max 8 words), Subheadline (Max 12 words) and a Benefit Claim (Max 5 words).
-- CTA: Preserve the user's literal CTA input intent. The banned CTA list below applies only to the model-authored connector/benefit line that you write — NOT to the user-supplied CTA input itself, which is always preserved verbatim. Write a connector + benefit that flows naturally into the user's CTA. (e.g., the user provides a CTA input and you write a benefit that joins it: "Join the CTA input to achieve the stated benefit")
+- CTA: Preserve the user's literal CTA input intent. The banned CTA list below applies only to the model-authored connector/benefit line that you write — NOT to the user-supplied CTA input itself, which is always preserved verbatim. Write a connector + benefit that flows naturally into the user's CTA. (e.g., the user provides a CTA input and you write a benefit that joins it: "Join the supplied CTA to achieve the stated benefit")
 
 COPY QUALITY RULES — TRACK 1 (Apply to every headline, subheadline, CTA, benefit, and every carousel slide caption):
 - Write at a 6th-grade level or below. Short everyday words. Short sentences. No jargon, no abstract nouns. In Arabic, simple spoken-style فصحى — nothing a 12-year-old wouldn't say.
@@ -31,7 +31,7 @@ CINEMATIC ARCHITECT BLUEPRINT:
 - Translate hooks into high-concept visual metaphors based on the selected framework's emotional trigger.
 - COSTUME & SCENE TRANSFORMATION (CRITICAL):
   - Maintain facial likeness and bone structure from Box A photos EXACTLY.
-  - Transform all clothing, gear, and accessories to fit the [selected_universe] (e.g., "Galactic CEO wearing a nebula-textured silk suit").
+  - Transform all clothing, gear, and accessories to fit the user's selected universe (e.g., "Galactic CEO wearing a nebula-textured silk suit").
 - Environment & Physics: Describe how the hero is interacting with the universe and how the universe physics interact with the offer (e.g., floating ROI charts, bioluminescent certificates).
 - Conditional Branding: If logos exist, integrate as physical artifacts. If not, focus on cinematic composition.
 - TEXT FIDELITY: You must design the image specifically to hold the exact text generated in Step 2.

@@ -6,7 +6,6 @@
 **Input**: User description: "Phase 23 — Conditional Copy Structure + Anti-Sameness + Variation Carousel (Track 2 of the two-track copy system plan). Three sub-tracks shipping together in one PR: 23.A in-card variation carousel for 'Generate 4 More Like This'; 23.B single-hook anti-sameness via dimension pools, rotation, and cross-project memory; 23.C carousel anti-sameness via rotated story-direction pools and middle-slide angle rotation."
 
 > **Authority**: `specs/_shared/COPY_SYSTEM_REFERENCE.md` is the single source of truth for all copy rules, structures, scoring dimensions, and pipeline facts. Where this spec and the reference disagree, the reference wins. This feature implements Section 16 (variation carousel) and Section 17 (anti-sameness, single-hook + carousel).
-
 > **Track context**: Track 1 (Phase 22) already shipped — 6 constants in `copywriting_knowledge.ts`, 4 prompt surfaces wired, claimFlag trace, SYSTEM_TOV updated. This feature does not re-implement anything from Phase 22; it adds variation structure and cross-project diversity on top of the Phase 22 quality rules, which stay fully active.
 
 ## Clarifications

@@ -45,16 +45,23 @@ function extractClaimFlags(block: string): ClaimFlagEntry[] {
 
 function splitCtaAndBenefit(ctaBlock: string): { cta: string; benefit: string } {
   if (!ctaBlock) return { cta: "", benefit: "" };
-  // Phase 23 (CodeRabbit): handle a standalone BENEFIT: marker in addition
-  // to the legacy ||| separator. Some model outputs use a labeled line:
-  //   CTA_BUTTON: Click here
-  //   BENEFIT: Save 50%
-  // The BENEFIT marker takes precedence (more explicit) but we still strip
-  // the marker line itself from the cta text.
-  const benefitMarker = ctaBlock.match(/^\s*BENEFIT\s*[:：]\s*$/im);
+  // Phase 23 (CodeRabbit): handle a BENEFIT: marker in addition to the legacy
+  // ||| separator. Two forms are supported:
+  //   1. Inline label on the same line:  "BENEFIT: Save 50%"
+  //   2. Standalone label, benefit on subsequent lines:
+  //        "BENEFIT:"
+  //        "Save 50%"
+  // Capture group 1 is the inline content (may be empty for the standalone
+  // form); the tail after the matched line is appended if non-empty.
+  const benefitMarker = ctaBlock.match(/^\s*BENEFIT\s*[:：]\s*([^\n]*)/im);
   if (benefitMarker && typeof benefitMarker.index === "number") {
     const cta = ctaBlock.slice(0, benefitMarker.index).replace(/\*\*/g, "").trim();
-    const benefit = ctaBlock.slice(benefitMarker.index + benefitMarker[0].length).replace(/\*\*/g, "").trim();
+    const inlineBenefit = (benefitMarker[1] || "").trim();
+    const tailBenefit = ctaBlock
+      .slice(benefitMarker.index + benefitMarker[0].length)
+      .replace(/\*\*/g, "")
+      .trim();
+    const benefit = [inlineBenefit, tailBenefit].filter(Boolean).join("\n").trim();
     return { cta, benefit };
   }
   const triplePipe = ctaBlock.indexOf("|||");

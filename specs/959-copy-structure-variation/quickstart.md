@@ -21,7 +21,7 @@ New backend tests to author:
 ## 23.A — In-card variation carousel (manual)
 
 | Step | Action | Expected | Check |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | A1 | Generate a hook set in Step 2, click "Generate 4 More Like This" on card B. | 4 variations appear INSIDE card B as positions 2–5; reference stays at position 1; nothing appended to list bottom. | SC-001, FR-001/002 |
 | A2 | Use arrows + dots on card B. | Displayed variation changes; active dot updates. | FR-003 |
 | A3 | Navigate to position 3, click Edit / AI Edit / Approve / Batch. | Action targets the displayed variation, not the reference or other cards. | FR-004 |
@@ -35,7 +35,7 @@ New backend tests to author:
 ## 23.B — Single-hook anti-sameness (manual)
 
 | Step | Action | Expected | Check |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | B1 | Lock one angle; run 5 consecutive NEW projects for the same user. | Locked angle identical all 5 times. | FR-012, SC-002 |
 | B2 | Compare the 4 dimensions used across the 5 projects. | Dimension set differs in ≥3 of 5 projects (not fixed A=Financial/B=Time order). | FR-014, SC-002 |
 | B3 | Compare opening structures across the 5 projects. | Opening combination differs in ≥3 of 5. | FR-015, SC-003 |
@@ -47,7 +47,7 @@ New backend tests to author:
 ## 23.C — Carousel anti-sameness (manual)
 
 | Step | Action | Expected | Check |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | C1 | Run 5 consecutive NEW carousel projects. | The 4 offered story-direction families differ in ≥3 of 5; middle-slide angle order differs in ≥3 of 5. | FR-019/020, SC-006 |
 | C2 | Inspect each generated slide plan. | No adjacent middle-slide angle repeat; CTA only slide 1 + last; photo only slide 1. | FR-021, SC-007 |
 | C3 | Generate a 2–3 slide carousel. | Invariants still hold with few/no middle slides. | Edge case |
@@ -56,7 +56,7 @@ New backend tests to author:
 ## Preserved-invariant regression sweep
 
 | Check | Expected | FR |
-|---|---|---|
+| --- | --- | --- |
 | `modelConfig.ts:3` | `MODEL_PROVIDER` line present and intact. | FR-025 |
 | Commented Gemini/Sharp code | Still commented, not deleted. | FR-026 |
 | `captionValidator.ts` / cultural-compliance | Untouched; GCC/Meta + Arabic guards pass. | FR-024, FR-027 |

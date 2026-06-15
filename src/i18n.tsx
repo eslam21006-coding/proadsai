@@ -1,3 +1,4 @@
+// src/i18n.tsx — i18n provider, EN+AR translation dictionary, and useT() hook
 import React, { createContext, useContext, useState, useCallback } from 'react';
 
 export type UILanguage = 'en' | 'ar';
@@ -365,6 +366,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'variation.cap_warning': 'Carousel full (12 positions).',
         'variation.malformed_refund': 'Generated hooks were malformed. Credits refunded.',
         'variation.failed_refund': 'Generation failed. Credits refunded.',
+        'variation.generate_button': 'Generate 4 More Like This',
+        'variation.position_title': 'Position {position}',
         'variation.regen_fail': 'Regeneration failed. Credits refunded.',
 
         // ── InfoTip tooltips — Step 3 ──
@@ -1133,6 +1136,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'variation.cap_warning': 'الكاروسيل ممتلئ (12 موقع).',
         'variation.malformed_refund': 'العناوين المولّدة كانت مشوّهة. تم استرداد الرصيد.',
         'variation.failed_refund': 'فشل التوليد. تم استرداد الرصيد.',
+        'variation.generate_button': 'أنشئ 4 تنويعات مشابهة',
+        'variation.position_title': 'الموقع {position}',
         'variation.regen_fail': 'فشل إعادة التوليد. تم استرداد الرصيد.',
 
         // ── InfoTip tooltips — Step 3 ──
