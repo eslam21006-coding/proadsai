@@ -410,6 +410,60 @@ function runTests(): void {
     assert(/Section 5\.A reconciliation/.test(refSrc) || /carousel-slide-count-plan/.test(refSrc), "reference doc reconciles Section 5.A pointer");
   }
 
+  // ─── FAIL-2 / T023 — copyDiversity populated after single-hook TOV generation ─
+  console.log("  FAIL-2 — copyDiversity populated after single-hook TOV generation");
+  {
+    const genSrc = fs.readFileSync(path.join(__dirname, "..", "..", "src", "generators.ts"), "utf-8");
+    // Survivor variable + getter exist
+    assert(/let _lastCopyDiversity/.test(genSrc), "generators.ts declares _lastCopyDiversity survivor");
+    assert(/export function getLastCopyDiversity\b/.test(genSrc), "getLastCopyDiversity is exported");
+    // Single-hook path populates it with the drawn dimensions + openings
+    assert(/_lastCopyDiversity = \{[\s\S]*?drawnDimensionIds:/.test(genSrc), "single-hook path sets _lastCopyDiversity.drawnDimensionIds");
+    assert(/openingIds:\s*\(_phase23DrawnOpenings/.test(genSrc), "single-hook path sets _lastCopyDiversity.openingIds");
+    // It is merged into the persisted ResolutionTrace
+    assert(/copyDiversity:\s*_lastCopyDiversity/.test(genSrc), "copyDiversity merged into _lastResolutionTrace in generateFinalAd");
+    // resetResolutionTrace must NOT clear the survivor (it survives to generateFinalAd)
+    const resetBody = genSrc.match(/export function resetResolutionTrace[\s\S]*?\n\}/)?.[0] || "";
+    assert(!/_lastCopyDiversity/.test(resetBody), "resetResolutionTrace does NOT clear _lastCopyDiversity");
+  }
+
+  // ─── FAIL-2 / T030 — copyDiversity.storyDirectionFamilies populated after carousel gen ─
+  console.log("  FAIL-2 — copyDiversity.storyDirectionFamilies populated after carousel generation");
+  {
+    const genSrc = fs.readFileSync(path.join(__dirname, "..", "..", "src", "generators.ts"), "utf-8");
+    const carStart = genSrc.indexOf("export async function generateCarouselAngles");
+    assert(carStart >= 0, "generateCarouselAngles function found");
+    const carRegion = genSrc.slice(carStart, carStart + 8000);
+    assert(/storyDirectionFamilies:\s*_phase23CarouselFamilies/.test(carRegion), "carousel path sets _lastCopyDiversity.storyDirectionFamilies");
+    // middleAngleOrder is recorded where the slide plan is built
+    assert(/middleAngleOrder:\s*middlePlans\.map/.test(genSrc), "slide-plan build records _lastCopyDiversity.middleAngleOrder");
+  }
+
+  // ─── FAIL-3 — carousel records a fingerprint (wiring + non-blocking stub) ─────
+  console.log("  FAIL-3 — carousel recordAngleFingerprint is called + non-blocking");
+  {
+    const genSrc = fs.readFileSync(path.join(__dirname, "..", "..", "src", "generators.ts"), "utf-8");
+    const carStart = genSrc.indexOf("export async function generateCarouselAngles");
+    const carRegion = genSrc.slice(carStart, carStart + 8000);
+    // The carousel path (not just the single-hook path) records a fingerprint
+    assert(/recordAngleFingerprint\(/.test(carRegion), "carousel path calls recordAngleFingerprint");
+    assert(/angleKey:\s*`carousel-\$\{campaignType\}`/.test(carRegion), "carousel fingerprint uses carousel-<campaignType> angleKey");
+    assert(/storyFamilies:\s*_phase23CarouselFamilies/.test(carRegion), "carousel fingerprint records the drawn storyFamilies");
+    // The read side is angle-scoped so single-hook and carousel recents don't cross-contaminate
+    const cdSrc = fs.readFileSync(path.join(__dirname, "..", "..", "src", "copyDiversity.ts"), "utf-8");
+    assert(/\.filter\(\(f\)\s*=>\s*f\.angleKey === angleKey\)/.test(cdSrc), "getRecentFingerprintsForRotation is angle-scoped");
+    // Runtime stub: recordAngleFingerprint is non-blocking — calling it returns a Promise
+    // and never throws synchronously even with no firebase app initialised.
+    const ret = recordAngleFingerprint("audit-test-user", {
+      angleKey: "carousel-cold",
+      dimensionIds: [],
+      storyFamilies: ["A", "B", "C", "D"],
+      timestamp: Date.now(),
+    });
+    assert(ret instanceof Promise, "recordAngleFingerprint returns a Promise (callable as a stub)");
+    ret.catch(() => { /* non-blocking by contract */ });
+  }
+
   // ─── Summary ───
   console.log(`  ${passed} passed, ${failed} failed`);
   if (failed > 0) {

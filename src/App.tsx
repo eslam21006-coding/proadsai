@@ -1049,6 +1049,7 @@ const App: React.FC = () => {
   const pushVariations = useAppStore((s) => s.pushVariations);
   const setVariationActiveIndex = useAppStore((s) => s.setVariationActiveIndex);
   const resetVariations = useAppStore((s) => s.resetVariations);
+  const updateVariation = useAppStore((s) => s.updateVariation);
   const isRtl = lang === 'ar';
   // Mutable ref for effective UID — updated each render, safe to use in effects before state declarations
   const effectiveUidRef = React.useRef<string | null>(null);
@@ -2076,8 +2077,14 @@ const App: React.FC = () => {
       ? `${startTag}\nHOOK_TEXT: ${d.hookText}\nSUBHEADLINE: ${d.subhead}\nSTORY_ARC: ${(editHookData as any).storyArc || ''}\nCTA_BUTTON: ${d.benefit ? `${d.cta} ||| ${d.benefit}` : d.cta}\n${endTag}`
       : `${startTag}\nHOOK_TEXT: ${d.hookText}\nSUBHEADLINE: ${d.subhead}\nCTA_BUTTON: ${d.benefit ? `${d.cta} ||| ${d.benefit}` : d.cta}\n${endTag}`;
     const regex = new RegExp(`${startTag}[\\s\\S]*?${endTag}`, 'i');
-    const updated = tovText.replace(regex, newBlock);
-    setTovText(updated);
+    // Phase 23 (FR-004): if a variation is displayed for this variant, edit IT, not the reference.
+    const _vIdx = variationActiveIndex[variant] ?? 0;
+    if (_vIdx > 0 && variationCarousels[variant]?.[_vIdx - 1]) {
+      updateVariation(variant, _vIdx - 1, parseHookVariation(newBlock, _vIdx - 1));
+    } else {
+      const updated = tovText.replace(regex, newBlock);
+      setTovText(updated);
+    }
     setEditingHook(null);
   };
 
@@ -3950,12 +3957,17 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       // Extract ONLY the hook being edited to send to the AI
       const startMarker = `HOOK_START_${index}`;
       const endMarker = `HOOK_END_${index}`;
-      const existingStart = tovText.indexOf(startMarker);
-      const existingEnd = tovText.indexOf(endMarker);
+      // Phase 23 (FR-004): edit the displayed variation if one is active for this variant.
+      const _vIdx = variationActiveIndex[index] ?? 0;
+      const _activeVar = _vIdx > 0 ? variationCarousels[index]?.[_vIdx - 1] : undefined;
+      const existingStart = _activeVar ? 0 : tovText.indexOf(startMarker);
+      const existingEnd = _activeVar ? 0 : tovText.indexOf(endMarker);
 
-      const currentHookText = existingStart >= 0 && existingEnd >= 0
-        ? tovText.substring(existingStart, existingEnd + endMarker.length)
-        : '';
+      const currentHookText = _activeVar
+        ? _activeVar.rawBlock
+        : (existingStart >= 0 && existingEnd >= 0
+          ? tovText.substring(existingStart, existingEnd + endMarker.length)
+          : '');
 
       // Call API with just this hook
       const isRegenerate = instruction.toLowerCase().includes('regenerate');
@@ -3984,14 +3996,20 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             return;
           }
 
-          // Merge: Replace ONLY this hook in the full tovText
-          const mergedTov =
-            tovText.substring(0, existingStart) +
-            editedHook +
-            tovText.substring(existingEnd + endMarker.length);
+          // Phase 23 (FR-004): write back to the displayed variation when active.
+          if (_activeVar) {
+            updateVariation(index, _vIdx - 1, parseHookVariation(editedHook, _vIdx - 1));
+            showToast(`Variation updated!`, "success");
+          } else {
+            // Merge: Replace ONLY this hook in the full tovText
+            const mergedTov =
+              tovText.substring(0, existingStart) +
+              editedHook +
+              tovText.substring(existingEnd + endMarker.length);
 
-          setTovText(mergedTov);
-          showToast(`Hook ${index} updated!`, "success");
+            setTovText(mergedTov);
+            showToast(`Hook ${index} updated!`, "success");
+          }
         } else {
           // Fallback: response didn't have proper markers — don't blindly overwrite
           refundCredits('editOneHook');
@@ -6434,6 +6452,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
                 {['A', 'B', 'C', 'D'].map((v) => {
                   const raw = getSection(tovText, `HOOK_START_${v}`, `HOOK_END_${v}`);
+                  // Phase 23 (T014 / FR-004): the four card actions operate on the
+                  // CURRENTLY DISPLAYED carousel position. idx 0 = reference (raw);
+                  // 1..N = variations[idx-1]. Card display stays as-is.
+                  const _varIdx = variationActiveIndex[v] ?? 0;
+                  const _activeVar = _varIdx > 0 ? variationCarousels[v]?.[_varIdx - 1] : undefined;
+                  const activeBlock = _activeVar?.rawBlock || raw;
                   const normalize = (t: string) =>
                     (t || '')
                       .replace(/\*\*/g, '')
@@ -6598,7 +6622,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                           </div>
                           <div className="flex gap-2">
                             <button
-                              onClick={() => handleApproveTov(raw)}
+                              onClick={() => handleApproveTov(activeBlock)}
                               disabled={batchSelectedHooks.size > 0}
                               className={`flex-1 py-3.5 rounded-xl font-bold uppercase tracking-wider text-[10px] shadow-lg transition-all active:scale-[0.98] flex items-center justify-center gap-2 ${batchSelectedHooks.size > 0 ? 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-50' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}
                               title={batchSelectedHooks.size > 0 ? 'Clear batch selection first to approve a single hook' : 'Approve this hook'}
@@ -6809,7 +6833,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                             for (let i = 0; i < hookLetters.length; i++) {
                               const v = hookLetters[i];
-                              let hookRaw = getSection(tovText, `ANGLE_START_${v}`, `ANGLE_END_${v}`);
+                              // Phase 23 (FR-004): batch the DISPLAYED variation when one is active.
+                              const _vIdx = variationActiveIndex[v] ?? 0;
+                              const _activeVar = _vIdx > 0 ? variationCarousels[v]?.[_vIdx - 1] : undefined;
+                              let hookRaw = _activeVar?.rawBlock || getSection(tovText, `ANGLE_START_${v}`, `ANGLE_END_${v}`);
                               if (!hookRaw.trim()) hookRaw = getSection(tovText, `HOOK_START_${v}`, `HOOK_END_${v}`);
                               if (!hookRaw.trim()) continue;
 

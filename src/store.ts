@@ -155,6 +155,7 @@ interface AppState {
     setVariationActiveIndex: (variant: string, index: number) => void;
     resetVariations: (variant: string) => void;
     resetAllVariations: () => void;
+    updateVariation: (variant: string, index: number, hv: HookVariation) => void;
 
     // Reset (new project)
     resetPipeline: () => void;
@@ -345,6 +346,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         variationCarousels: {},
         variationActiveIndex: {},
         variationCapReached: {},
+    }),
+    updateVariation: (variant, index, hv) => set((state) => {
+        const list = state.variationCarousels[variant];
+        if (!list || index < 0 || index >= list.length) return {} as any;
+        const next = list.slice();
+        next[index] = hv;
+        return { variationCarousels: { ...state.variationCarousels, [variant]: next } };
     }),
 
     // Reset

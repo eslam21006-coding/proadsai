@@ -994,6 +994,17 @@ export function resetResolutionTrace(): void {
     _lastResolutionTrace = null;
 }
 
+// Phase 23 — copyDiversity survivor. Set during step-2 copy generation
+// (generateTOV / generateCarouselAngles / slide-plan build) and merged into
+// the persisted ResolutionTrace in generateFinalAd. Deliberately NOT cleared
+// by resetResolutionTrace() (which runs inside generateFinalAd, after step 2);
+// it is reset at the START of each step-2 entry point instead, to avoid
+// leaking a previous generation's diversity data into a new one.
+let _lastCopyDiversity: ResolutionTrace["copyDiversity"] | null = null;
+export function getLastCopyDiversity(): ResolutionTrace["copyDiversity"] | null {
+    return _lastCopyDiversity;
+}
+
 // ─── Failure Classification Helpers ─────────────────────────────────────────
 
 export function classifyError(error: unknown, errorCode?: string): FailureClass {
@@ -1463,6 +1474,10 @@ export async function generateTOV(inputs: AdInputs, resolvedUniverse: string, mo
     let _phase23MemoryBiasApplied = false;
     let _phase23RecentDimensionIds: string[] = [];
     let _phase23RecentOpeningIds: string[] = [];
+    let _phase23FingerprintsConsidered = 0;
+    // Phase 23 — clear the copyDiversity survivor at the start of this step-2 entry
+    // point so a previous generation's data can't leak into this one.
+    _lastCopyDiversity = null;
     async function _generateTOVInner(): Promise<string> {
         // ═══ REFERENCE IMAGE ANALYSIS (optional, non-blocking) ═══
         let _tovRefInfluence: ReferenceInfluence | null = null;
@@ -1883,6 +1898,7 @@ RETURN NOTHING ELSE. NO OTHER HOOKS.`;
                 _phase23DrawnDimensions = drawDimensions(inputs.coldHookAngle, 4, _phase23Seed, _phase23Recent);
                 _phase23DrawnOpenings = drawOpenings(4, _phase23Seed, _phase23Recent);
                 _phase23MemoryBiasApplied = _phase23Recent.length > 0;
+                _phase23FingerprintsConsidered = _phase23Recent.length;
                 // Stash for the prompt builder below (T019 + T022)
                 _phase23RecentDimensionIds = _phase23Recent.flatMap((f) => f.dimensionIds || []);
                 _phase23RecentOpeningIds = _phase23Recent.map((f) => f.openingId || "").filter(Boolean);
@@ -2622,16 +2638,20 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
                 });
             }
         }
-        // Update the global resolutionTrace builder if present
-        try {
-            const traceBuilder = (typeof getLastResolutionTrace === "function" ? getLastResolutionTrace() : null);
-            if (traceBuilder && typeof traceBuilder === "object") {
-                // The existing builder pattern uses setXxx() methods, not mutation.
-                // Phase 23 — only attach the copyDiversity sub-object if the
-                // builder is willing (a no-op for the legacy shape; supported
-                // by future trace-builder versions).
-            }
-        } catch { /* swallow — non-blocking */ }
+        // Phase 23 (T023) — populate the copyDiversity survivor so generateFinalAd
+        // can merge it into the persisted ResolutionTrace. Non-blocking.
+        if (_phase23DrawnDimensions && _phase23DrawnDimensions.length > 0 && inputs.coldHookAngle) {
+            const _cdUserId = (inputs as any)._userId as string | undefined;
+            const _cdProjectId = ((inputs as any)._projectId as string | undefined) || (inputs as any).projectId;
+            _lastCopyDiversity = {
+                seed: String(makeProjectSeed(_cdUserId, _cdProjectId, inputs.coldHookAngle)),
+                angle: inputs.coldHookAngle,
+                drawnDimensionIds: _phase23DrawnDimensions.map((d) => d.id),
+                openingIds: (_phase23DrawnOpenings || []).map((o) => o.id),
+                memoryBiasApplied: _phase23MemoryBiasApplied,
+                fingerprintsConsidered: _phase23FingerprintsConsidered,
+            };
+        }
     } catch (e) {
         console.warn("⚠️ Phase 23 fingerprint recording failed (non-blocking):", e);
     }
@@ -4805,6 +4825,19 @@ export interface ResolutionTrace {
         arabicQaRan?: boolean;
         timedOut?: boolean;
     };
+    // Phase 23 — additive copy-diversity sub-object (mirrors types.ts ResolutionTrace).
+    // Records what the dimension/rotation/fingerprint machinery decided. Non-blocking;
+    // no consumer is required to read it.
+    copyDiversity?: {
+        seed: string;
+        angle: string;
+        drawnDimensionIds?: string[];
+        openingIds?: string[];
+        storyDirectionFamilies?: string[];
+        middleAngleOrder?: string[];
+        memoryBiasApplied: boolean;
+        fingerprintsConsidered: number;
+    };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -5073,6 +5106,12 @@ export async function generateFinalAd(
         ...buildResolverExtra(inputs),
     });
     _lastResolutionTrace = _resolverSpec.resolutionTrace ?? null;
+    // Phase 23 (T023/T030/T031) — merge the copyDiversity survivor (set during step-2
+    // copy generation) into the persisted trace. resetResolutionTrace() above clears
+    // _lastResolutionTrace but intentionally NOT _lastCopyDiversity.
+    if (_lastCopyDiversity) {
+        _lastResolutionTrace = { ...(_lastResolutionTrace || {}), copyDiversity: _lastCopyDiversity };
+    }
     const _referenceAdOverrideActive = _resolverSpec.resolutionTrace?.referenceAdOverrideActive ?? false;
     const _artDirectionCleared = _resolverSpec.resolutionTrace?.artDirectionCleared ?? false;
     if (_artDirectionCleared) console.log(`⚠️ Art direction cleared by resolver: ${_resolverSpec.resolutionTrace?.artDirectionClearedReason || 'unknown'}`);
@@ -7204,6 +7243,8 @@ export async function generateCarouselAngles(
     globalRefinement?: string,
     plan?: StoredPlan
 ): Promise<string> {
+    // Phase 23 — clear the copyDiversity survivor at this step-2 entry point.
+    _lastCopyDiversity = null;
     const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
     const carouselDecision = resolveEntitlement({ plan: plan || "none", feature: "carouselSlides", quantity: slideCount });
     if (!carouselDecision.allowed) {
@@ -7250,6 +7291,25 @@ export async function generateCarouselAngles(
             if (Array.isArray(f.storyFamilies)) recentFamilies.push(...f.storyFamilies);
         }
         _phase23CarouselFamilies = rotateCarouselAngles(campaignType, _phase23Seed, recentFamilies);
+        // Phase 23 (T030) — record the drawn families into the copyDiversity survivor.
+        _lastCopyDiversity = {
+            ...(_lastCopyDiversity || {}),
+            seed: String(_phase23Seed),
+            angle: `carousel-${campaignType}`,
+            storyDirectionFamilies: _phase23CarouselFamilies,
+            memoryBiasApplied: recentFamilies.length > 0,
+            fingerprintsConsidered: _phase23Recent.length,
+        };
+        // Phase 23 (FAIL-3 / FR-019) — record a carousel fingerprint so cross-project
+        // memory bias actually accumulates (read at the top of this block). Non-blocking.
+        if (_carouselUserId) {
+            recordAngleFingerprint(_carouselUserId, {
+                angleKey: `carousel-${campaignType}`,
+                dimensionIds: [],
+                storyFamilies: _phase23CarouselFamilies,
+                timestamp: Date.now(),
+            }).catch((e) => console.warn("⚠️ carousel recordAngleFingerprint failed (non-blocking):", e));
+        }
     } catch (e) {
         console.warn("⚠️ Phase 23 carousel family rotation failed (non-blocking, falling back to first-4):", e);
         // Fallback: use the existing first-4 families
@@ -7631,6 +7691,11 @@ ${
             const _carSeed = makeProjectSeed(_carUserId, _carProjectId, `carousel-slides-${campaignType}`);
             const plan = buildSlidePlan(campaignType as "cold" | "retargeting", slideCount, _carSeed);
             const middlePlans = plan.filter((s) => s.role === "middle");
+            // Phase 23 (T031) — record the rotated middle-slide angle order for audit.
+            _lastCopyDiversity = {
+                ...(_lastCopyDiversity || { seed: String(_carSeed), angle: `carousel-${campaignType}`, memoryBiasApplied: false, fingerprintsConsidered: 0 }),
+                middleAngleOrder: middlePlans.map((s) => s.narrativeAngle),
+            };
             if (middlePlans.length === 0) return '';
             const lines = middlePlans.map((s, idx) => `  Slide ${s.slide}: angle family "${s.narrativeAngle}"`);
             return `\n${'═'.repeat(60)}\nPHASE 23 — ROTATED MIDDLE-SLIDE ANGLE PLAN (per-project seed)\n${'═'.repeat(60)}\nThe angle family for each middle slide was drawn from the spec-001 pool\n(${isRetargeting ? 'retargeting P/M/R/I/C/Q/E' : 'cold A/B/C/D/E/F/G'}) using a per-project seed.\nNo two adjacent middle slides share the same family (guaranteed by sequential\ndistinct picks from the rotated pool). Use this plan to keep the narrative\nflow but vary WHICH family each middle slide pulls from.\n${lines.join('\n')}\n`;

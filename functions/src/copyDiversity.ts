@@ -80,12 +80,16 @@ export function biasByMemory<T extends { id: string }>(
 // proceeds with no bias. Generation MUST NOT fail because of memory.
 export async function getRecentFingerprintsForRotation(
     userId: string | null | undefined,
-    _angleKey: string,
+    angleKey: string,
     limit: number = 10,
 ): Promise<AngleFingerprint[]> {
     if (!userId) return [];
     try {
-        return await getRecentFingerprints(userId, limit);
+        // Over-fetch then filter by angleKey in memory so single-hook recents and
+        // carousel recents don't cross-contaminate (avoids a composite Firestore
+        // index on angleKey+timestamp). Bias-never-ban still holds downstream.
+        const all = await getRecentFingerprints(userId, limit * 4);
+        return all.filter((f) => f.angleKey === angleKey).slice(0, limit);
     } catch (e) {
         console.warn("⚠️ getRecentFingerprintsForRotation failed (non-blocking):", e);
         return [];
