@@ -545,9 +545,13 @@ export function extractClaimFlagsFromResponse(text: string): { claimFlags: Claim
     const lines = text.split(/\r?\n/);
     const kept: string[] = [];
     // Match `CLAIM_FLAG:` followed by the verbatim specific, a separator (em-dash,
-    // en-dash, hyphen, or `:`), and a one-line reason. The specific and reason are
-    // captured greedily to allow arbitrary punctuation inside them.
-    const claimRe = /^\s*CLAIM_FLAG\s*:\s*(.+?)\s*(?:\u2014|\u2013|-|:)\s*(.+?)\s*$/i;
+    // en-dash, hyphen, or `:`) that MUST be surrounded by whitespace on both sides,
+    // and a one-line reason. The specific and reason are captured greedily to allow
+    // arbitrary punctuation (including internal dashes/colons like "3-step plan" or
+    // "Price: $27") inside them. The non-greedy `.+?` quantifier plus the
+    // whitespace-bounded separator prevent the parser from splitting on the first
+    // separator it sees inside the specific itself.
+    const claimRe = /^\s*CLAIM_FLAG\s*:\s*(.+?)\s+(?:\u2014|\u2013|-|:)\s+(.+?)\s*$/i;
     for (const line of lines) {
         const m = line.match(claimRe);
         if (m) {
@@ -1586,7 +1590,7 @@ STRICT RULES:
 ${READING_LEVEL_BLOCK}
 ${LIVED_SYMPTOM_BLOCK}
 ${FABRICATION_POLICY_BLOCK}
-BANNED CTAs (do NOT author any of these as the CTA line — the user's literal CTA input is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs as [verb] [the offer] → [payoff tied to their pain/outcome].`
+BANNED CTAs (do NOT author any of these as the CTA line — the user's literal CTA input is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs in this form: a specific verb, the offer, an arrow, then a payoff tied to the audience's pain or desired outcome.`
             : `COLD MODE:
 - Prospect has NOT seen the offer.
 - Do NOT mention: "you watched / you visited / you saw / didn't buy".
@@ -2271,7 +2275,7 @@ INSTRUCTIONS FOR EACH HOOK (do NOT include these instructions in your output):
 - HOOK_TEXT = the headline. Max 8 words. Write in ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'Arabic' : 'the project language'}. Must be punchy direct-response copy.
 - SUBHEADLINE = the supporting line. Max ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? '12' : '8'} words. Must be a COMPLETE sentence that ends naturally. Never end on a conjunction.
 - CTA_BUTTON = the call-to-action button text, followed by ||| then a CONNECTOR + short benefit line (2-5 words). The benefit MUST start with a natural connector word (و/ل/عشان/وابدأ/وحقق). Example: "${inputs.cta} ||| وابدأ تحقق دخل يليق بخبرتك" or "${inputs.cta} ||| وتوقف عن ملاحقة العملاء".
-- BANNED CTAs (do NOT author any of these as the CTA_BUTTON — the user's literal CTA is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs as [verb] [the offer] → [payoff tied to their pain/outcome].
+- BANNED CTAs (do NOT author any of these as the CTA_BUTTON — the user's literal CTA is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs in this form: a specific verb, the offer, an arrow, then a payoff tied to the audience's pain or desired outcome.
 - Each hook explores a DIFFERENT dimension of the ${inputs.coldHookAngle} angle.
 - Hook A = FINANCIAL/REVENUE dimension. Hook B = TIME/LIFESTYLE dimension. Hook C = STATUS/IDENTITY dimension. Hook D = SKILL/CONFIDENCE dimension.
 
@@ -2321,7 +2325,7 @@ INSTRUCTIONS FOR EACH HOOK (do NOT include these instructions in your output):
 - HOOK_TEXT = the headline. Max 8 words. Write in ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'Arabic' : 'the project language'}. Must be punchy direct-response copy.
 - SUBHEADLINE = the supporting line. Max ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? '12' : '8'} words. Must be a COMPLETE sentence that ends naturally. Never end on a conjunction.
 - CTA_BUTTON = the call-to-action button text, followed by ||| then a CONNECTOR + short benefit line (2-5 words). The benefit MUST start with a natural connector word (و/ل/عشان/وابدأ/وحقق). Example: "${inputs.cta} ||| وابدأ تحقق دخل يليق بخبرتك" or "${inputs.cta} ||| وتوقف عن ملاحقة العملاء".
-- BANNED CTAs (do NOT author any of these as the CTA_BUTTON — the user's literal CTA is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs as [verb] [the offer] → [payoff tied to their pain/outcome].
+- BANNED CTAs (do NOT author any of these as the CTA_BUTTON — the user's literal CTA is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs in this form: a specific verb, the offer, an arrow, then a payoff tied to the audience's pain or desired outcome.
 - Hook A = Direct/How-To type, Greed angle. Hook B = Question/Challenge type, Fear angle. Hook C = News/Testimonial type, Proof angle. Hook D = Command/Reason-Why type, Curiosity angle.
 
 OUTPUT FORMAT (fill in the values after each colon — do NOT output instructions, brackets, or dimension labels):
@@ -2574,9 +2578,13 @@ export async function generateConcepts(approvedTov: string, inputs: AdInputs, re
         }
 
         // --- 1. Force Extract Text Layers to ensure they are NOT lost ---
-        const rawHook = extract(approvedTov, "HOOK_TEXT:", "SUBHEADLINE:");
-        const rawSub = extract(approvedTov, "SUBHEADLINE:", "CTA_BUTTON:");
-        const rawCTA = extract(approvedTov, "CTA_BUTTON:", "HOOK_END");
+        // Phase 22 — strip any CLAIM_FLAG marker lines from approvedTov BEFORE
+        // the boundary-based extract runs, so the hidden marker can never leak
+        // into the raw CTA / subhead fields that the model has approved.
+        const _conceptTovScrubbed = extractClaimFlagsFromResponse(approvedTov).cleanedText;
+        const rawHook = extract(_conceptTovScrubbed, "HOOK_TEXT:", "SUBHEADLINE:");
+        const rawSub = extract(_conceptTovScrubbed, "SUBHEADLINE:", "CTA_BUTTON:");
+        const rawCTA = extract(_conceptTovScrubbed, "CTA_BUTTON:", "HOOK_END");
         let modeInstruction = "";
 
         if (mode === 'initial') {
@@ -7302,17 +7310,23 @@ export async function generateCarouselSlideCopies(
         throw new HttpsError("permission-denied", carouselDecision.reason || "carousel_limit_exceeded");
     }
 
-    const hookText = extract(approvedTov, "HOOK_TEXT:", "SUBHEADLINE:");
+    // Phase 22 — strip any CLAIM_FLAG marker lines from approvedTov BEFORE the
+    // boundary-based extract runs. This mirrors what extractCopyFieldsFromResponse
+    // does for the single-ad path so the hidden marker cannot leak into the
+    // raw CTA / subhead / story-arc fields that the model has approved.
+    const _carouselTovScrubbed = extractClaimFlagsFromResponse(approvedTov).cleanedText;
+
+    const hookText = extract(_carouselTovScrubbed, "HOOK_TEXT:", "SUBHEADLINE:");
     // Extract subheadline carefully — stop at STORY_ARC (carousel) or CTA_BUTTON (single)
-    let subheadText = extract(approvedTov, "SUBHEADLINE:", "STORY_ARC:");
-    if (!subheadText) subheadText = extract(approvedTov, "SUBHEADLINE:", "CTA_BUTTON:");
+    let subheadText = extract(_carouselTovScrubbed, "SUBHEADLINE:", "STORY_ARC:");
+    if (!subheadText) subheadText = extract(_carouselTovScrubbed, "SUBHEADLINE:", "CTA_BUTTON:");
     // Clean any leaked STORY_ARC content from subheadline
     subheadText = subheadText.replace(/STORY_ARC[:\s].*/gs, '').trim();
     // Support both HOOK_END_X (from old single-hook format) and ANGLE_END_X (from new carousel angles)
-    let ctaBlock = extract(approvedTov, "CTA_BUTTON:", "HOOK_END");
-    if (!ctaBlock) ctaBlock = extract(approvedTov, "CTA_BUTTON:", "ANGLE_END");
+    let ctaBlock = extract(_carouselTovScrubbed, "CTA_BUTTON:", "HOOK_END");
+    if (!ctaBlock) ctaBlock = extract(_carouselTovScrubbed, "CTA_BUTTON:", "ANGLE_END");
     // Also try extracting story arc for context in the prompt
-    const storyArc = extract(approvedTov, "STORY_ARC:", "CTA_BUTTON:") || '';
+    const storyArc = extract(_carouselTovScrubbed, "STORY_ARC:", "CTA_BUTTON:") || '';
 
     let ctaName = inputs.cta;
     let benefitText = "";
@@ -7478,7 +7492,7 @@ ABSOLUTE RULES:
 ${READING_LEVEL_BLOCK}
 ${LIVED_SYMPTOM_BLOCK}
 ${FABRICATION_POLICY_BLOCK}
-BANNED CTAs (do NOT author any of these as the CTA on the last slide — the user's literal CTA input is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs as [verb] [the offer] → [payoff tied to their pain/outcome].
+BANNED CTAs (do NOT author any of these as the CTA on the last slide — the user's literal CTA input is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs in this form: a specific verb, the offer, an arrow, then a payoff tied to the audience's pain or desired outcome.
 
 ═══════════════════════════════════════════════════════════════════════════════
 OUTPUT FORMAT (STRICT)

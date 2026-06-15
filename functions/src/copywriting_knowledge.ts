@@ -769,13 +769,13 @@ CLAIM_FLAG: "Ahmed, a Riyadh-based coach" — invented testimonial name, must be
 
 // ─── BANNED CTA LIST (prompt guidance only) ────────────────────────────────
 
-export const BANNED_CTA_LIST: readonly string[] = [
+export const BANNED_CTA_LIST = [
     "Learn more",
     "Sign up now",
     "Book now",
     "Get started",
     "Click here",
-];
+] as const;
 
 // ─── COPY SCORING DIMENSIONS (Section 12 — seeded for the later track) ───
 

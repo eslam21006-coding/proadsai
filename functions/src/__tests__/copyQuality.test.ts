@@ -94,10 +94,14 @@ function runTests(): void {
   assert(/FABRICATION_POLICY_BLOCK/.test(cwKnowledgeSrc), "copywriting_knowledge.ts defines FABRICATION_POLICY_BLOCK");
   assert(/BANNED_CTA_LIST/.test(cwKnowledgeSrc), "copywriting_knowledge.ts defines BANNED_CTA_LIST");
 
-  // ─── US2: BANNED_CTA_LIST deep-equals the five phrases ───
+  // ─── US2: BANNED_CTA_LIST contains the five phrases (set membership, order-insensitive) ───
   console.log("  BANNED_CTA_LIST contents");
-  const expectedBanned: readonly string[] = ["Learn more", "Sign up now", "Book now", "Get started", "Click here"];
-  assert(JSON.stringify(BANNED_CTA_LIST) === JSON.stringify(expectedBanned), `BANNED_CTA_LIST deep-equals ${JSON.stringify(expectedBanned)}`);
+  const expectedBanned = new Set(["Learn more", "Sign up now", "Book now", "Get started", "Click here"]);
+  assert(
+    BANNED_CTA_LIST.length === expectedBanned.size &&
+      BANNED_CTA_LIST.every((cta) => expectedBanned.has(cta)),
+    `BANNED_CTA_LIST contains exactly the five banned phrases (set membership): ${[...expectedBanned].join(", ")}`,
+  );
 
   // ─── US2: SYSTEM_TOV contains the banned-CTA + CTA-formula signal ───
   console.log("  SYSTEM_TOV contains CTA signals");
@@ -106,7 +110,7 @@ function runTests(): void {
   assert(/Book now/i.test(SYSTEM_TOV), "SYSTEM_TOV mentions 'Book now' in banned list");
   assert(/Get started/i.test(SYSTEM_TOV), "SYSTEM_TOV mentions 'Get started' in banned list");
   assert(/Click here/i.test(SYSTEM_TOV), "SYSTEM_TOV mentions 'Click here' in banned list");
-  assert(/\[verb\] \[offer\]|verb.*offer.*payoff|payoff tied to/i.test(SYSTEM_TOV), "SYSTEM_TOV contains the [verb] [offer] → [payoff] formula signal");
+  assert(/specific verb.*offer|verb.*offer.*arrow|payoff tied to/i.test(SYSTEM_TOV), "SYSTEM_TOV contains the CTA formula signal (specific verb, offer, arrow, payoff)");
 
   // ─── US2: CTA-point prompt builder includes the banned-list guidance ───
   console.log("  CTA-point guidance in generators.ts");

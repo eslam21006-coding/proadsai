@@ -32,5 +32,5 @@
 ## Notes
 
 - Items marked incomplete require spec updates before `/speckit.clarify` or `/speckit.plan`.
-- **Naming note**: The spec references named constants (`READING_LEVEL_BLOCK`, etc.), prompt-surface identifiers (`SYSTEM_TOV`, `HOOK_GENERATION_RULES`, `RETARGETING_RULES`, `SHOW_CTA`), and file paths. These are treated as **product vocabulary fixed by the governing reference document** (`specs/_shared/COPY_SYSTEM_REFERENCE.md`), not as implementation leakage — the reference mandates these exact names so the build-time source and runtime constants stay in lockstep (FR-015). The spec stays free of language/framework/API choices.
 - Validation passed on first iteration; all items pass. Spec is ready for `/speckit.plan` (or optional `/speckit.clarify`).
+- Implementation identifiers (named constants, prompt-surface names, file paths) referenced elsewhere in the spec documents are product vocabulary fixed by the governing reference document; they are documented in the relevant spec and contract files, not in this checklist.

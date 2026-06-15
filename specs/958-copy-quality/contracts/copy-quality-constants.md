@@ -47,7 +47,7 @@ CLAIM_FLAG: <verbatim specific> — <one-line reason>
 
 | Input (model response) | `hookText/subheadText/ctaName/benefitText` | returned `claimFlags` |
 |---|---|---|
-| No `CLAIM_FLAG:` lines | exactly as today | `[]` / undefined |
+| No `CLAIM_FLAG:` lines | exactly as today | `claimFlags` is always present and empty (`[]`) |
 | One+ `CLAIM_FLAG:` lines | identical to the no-flag case (marker text fully stripped) | one `ClaimFlagEntry` per line |
 
 **Hard invariant:** no `CLAIM_FLAG` substring may appear in any of the four returned fields (protects `validateCopyFidelity`).
