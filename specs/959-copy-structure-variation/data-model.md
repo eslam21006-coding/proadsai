@@ -11,9 +11,9 @@ Per-card in-card carousel state. Keyed by hook variant.
 
 | Field | Type | Notes |
 |---|---|---|
-| `variations` | `Record<HookVariantKey, HookVariation[]>` | `HookVariantKey = 'A'|'B'|'C'|'D'`. Ordered list of variations for each reference card. Empty until first "Generate 4 More". |
+| `variations` | `Record<HookVariantKey, HookVariation[]>` | `HookVariantKey = 'A'\|'B'\|'C'\|'D'`. Ordered list of variations for each reference card. Empty until first "Generate 4 More". |
 | `activeIndex` | `Record<HookVariantKey, number>` | Currently displayed position per card. `0` = reference hook; `1..N` = `variations[i-1]`. Defaults to `0`. |
-| `capReached` | `Record<HookVariantKey, boolean>` | `true` when `variations.length >= 11` (1 reference + 11 = 12 positions). |
+| `capReached` | `Record<HookVariantKey, boolean>` | `true` when the per-card variation array (the value stored within the Record for that HookVariantKey) reaches 11 items (1 reference + 11 = 12 positions). |
 
 **Validation / rules**
 - `variations[v].length` MUST NOT exceed 11 (cap = 12 positions incl. reference). FR-005, FR-006.
@@ -68,7 +68,7 @@ One generated variation inside a card.
 
 | Field | Type | Notes |
 |---|---|---|
-| `id` | `'percentage'|'question'|'imperative'|'ratio'|'conditional'|'direct_address'|'time_reference'` | The 7 existing opening forms (`generators.ts:2284-2291`). |
+| `id` | `'percentage'\|'question'\|'imperative'\|'ratio'\|'conditional'\|'direct_address'\|'time_reference'` | The 7 existing opening forms (`generators.ts:2284-2291`). |
 | `template` | `string` | The existing one-line pattern text, verbatim. |
 
 **Rules**: a per-project rotation assigns which openings the 4 hooks use; no opening is permanently banned (FR-015, FR-017).
@@ -88,7 +88,7 @@ Recorded per generation; read back (recent ~10 per angle per user) to bias new d
 | `openingIds` | `string[]` | The opening-structure ids used. |
 | `storyDirectionFamilies?` | `string[]` | The 4-of-7 carousel families drawn (carousel path). 23.C. |
 | `middleAngleOrder?` | `string[]` | The rotated middle-slide angle sequence (carousel path). 23.C. |
-| `createdAt` | `timestamp` | For recency windowing (~10 most recent per angle). |
+| `createdAt` | `number \| FieldValue` | Server timestamp; write-time `FieldValue.serverTimestamp()`, read-time `number` (epoch ms after `Timestamp.toMillis()`). For recency windowing (~10 most recent per angle). |
 
 **Storage**: additive fields on the existing `CreativeMemoryRecord` (`creativeMemory/{creativeId}`), or a small companion write — chosen at task time to minimize coupling. No migration; legacy records simply lack these fields and contribute no bias (FR-016 ages out / absent = no bias).
 
@@ -119,7 +119,7 @@ Shape unchanged: `{ slide, role, hasCTA, narrativeAngle, photoInjection }`.
 
 | Field | Type | Notes |
 |---|---|---|
-| `campaignType` | `'cold'|'retargeting'` | Selects the 7-angle pool. |
+| `campaignType` | `'cold'\|'retargeting'` | Selects the 7-angle pool. |
 | `families` | `string[]` (length 4) | 4-of-7 drawn, rotated + memory-biased per project. Feeds `generateCarouselAngles` block selection (`ANGLE_START_A..D`). FR-019. |
 
 ---

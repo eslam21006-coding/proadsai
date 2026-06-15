@@ -6475,12 +6475,18 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                       .replace(/\(#[^)]*\)/g, '')
                       .trim();
 
-                  const hookText = normalize(getSection(raw, "HOOK_TEXT", "SUBHEADLINE"));
-                  const subhead = normalize(getSection(raw, "SUBHEADLINE", "CTA_BUTTON"));
+                  // Phase 23 (T014 / FR-004): the four card actions (display, approve,
+                  // edit, regenerate) operate on the CURRENTLY DISPLAYED carousel
+                  // position. idx 0 = reference (raw); 1..N = variations[idx-1].
+                  // Use activeBlock (which is _activeVar?.rawBlock || raw) for the
+                  // visible fields and the action payloads so the user sees and
+                  // approves the same hook they're looking at.
+                  const hookText = normalize(getSection(activeBlock, "HOOK_TEXT", "SUBHEADLINE"));
+                  const subhead = normalize(getSection(activeBlock, "SUBHEADLINE", "CTA_BUTTON"));
 
                   const actionBlockRaw =
-                    getSection(raw, "CTA_BUTTON", "HOOK_END") ||
-                    (raw.match(/CTA[_\s]*BUTTON\s*[:：]?\s*([\s\S]*?)(?:HOOK[_\s]*END|$)/i)?.[1] ?? '') ||
+                    getSection(activeBlock, "CTA_BUTTON", "HOOK_END") ||
+                    (activeBlock.match(/CTA[_\s]*BUTTON\s*[:：]?\s*([\s\S]*?)(?:HOOK[_\s]*END|$)/i)?.[1] ?? '') ||
                     '';
 
                   const actionClean = normalize(actionBlockRaw);
@@ -6530,7 +6536,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                                   return angle?.labelEn || inputs.coldHookAngle.replace(/_/g, ' ');
                                 }
                                 // Fallback: auto-classify only when no angle is selected
-                                const hookContent = (getSection(raw, "HOOK_TEXT:", "SUBHEADLINE:") || '').trim();
+                                const hookContent = (getSection(activeBlock, "HOOK_TEXT:", "SUBHEADLINE:") || '').trim();
                                 if (hookContent.includes('\u061F') || hookContent.includes('?')) return 'Question';
                                 if (hookContent.includes('\u062A\u0648\u0642\u0641') || hookContent.includes('\u0627\u0628\u062F\u0623') || hookContent.includes('\u0627\u0643\u062A\u0634\u0641') || hookContent.includes('\u0627\u0646\u0636\u0645')) return 'Command';
                                 if (/\d+%|\d+x|\d+\+/.test(hookContent)) return 'Statistics';
@@ -6615,7 +6621,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                               compact={true}
                               initialFavorite={favoriteIds.has(hookGenerationIds[v] || '')}
                               onRegenerate={(tags, freeText) => {
-                                const context = feedbackService.buildRegenerationContext(raw, tags, freeText);
+                                const context = feedbackService.buildRegenerationContext(activeBlock, tags, freeText);
                                 handlePrecisionHookEdit(v, context);
                               }}
                             />
@@ -6662,12 +6668,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                           <button
                             onClick={async () => {
                               if (!inputs) return;
-                              if (variationCapReached[v]) {
-                                showToast("Carousel is full — this card already has the maximum of 11 variations.", "info");
+                              const currentVariationCount = variationCarousels[v]?.length || 0;
+                              const remainingVariationSlots = Math.max(0, 11 - currentVariationCount);
+                              if (variationCapReached[v] || remainingVariationSlots <= 0) {
+                                showToast(t('variation.carousel_full'), "info");
                                 return;
                               }
                               if (!deductCredits('refreshHooks')) return;
-                              startLoad("Generating 4 similar hooks...");
+                              startLoad(t('variation.generating'));
                               const angleLabel = ({ A: 'Direct Value', B: 'Curiosity', C: 'Social Proof', D: 'Problem Agitation' } as Record<string, string>)[v] || 'same style';
                               try {
                                 const likeThisPrompt = `Generate 4 NEW hooks inspired by this specific hook's psychological angle and style:
@@ -6698,17 +6706,23 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                     if (parsed.length === 0) {
                                       // C8 — non-blocking notice, carousel unchanged
                                       refundCredits('refreshHooks');
-                                      showToast("Couldn't generate fresh variations — try again.", "info");
+                                      showToast(t('variation.empty_result'), "info");
                                     } else {
-                                      pushVariations(v, parsed);
-                                      showToast(`${parsed.length} fresh variation${parsed.length === 1 ? '' : 's'} added to card ${v} (position ${(variationCarousels[v]?.length || 0) + 2} of up to 12).`, "success");
+                                      // Clamp to remaining slots so we never overflow the 12-position cap
+                                      const parsedToAdd = parsed.slice(0, remainingVariationSlots);
+                                      const finalCount = currentVariationCount + parsedToAdd.length;
+                                      pushVariations(v, parsedToAdd);
+                                      const toastMsg = parsedToAdd.length === 1
+                                        ? t('variation.fresh_added_one', { variant: v, position: finalCount + 1 })
+                                        : t('variation.fresh_added_many', { count: parsedToAdd.length, variant: v, position: finalCount + 1 });
+                                      showToast(toastMsg, "success");
                                     }
                                   } else {
                                     refundCredits('refreshHooks');
-                                    showToast("Generated hooks were malformed. Credits refunded.", "error");
+                                    showToast(t('variation.malformed_refund'), "error");
                                   }
                                 }
-                                else { refundCredits('refreshHooks'); showToast("Generation failed. Credits refunded.", "error"); }
+                                else { refundCredits('refreshHooks'); showToast(t('variation.failed_refund'), "error"); }
                               } catch (e) { refundCredits('refreshHooks'); } finally { stopLoad(); }
                             }}
                             className="w-full mt-2 py-2.5 rounded-xl bg-slate-950/40 border border-dashed border-slate-700/40 text-slate-500 text-[9px] font-bold uppercase tracking-wider hover:border-blue-500/40 hover:text-blue-400 hover:bg-blue-500/5 transition-all flex items-center justify-center gap-2"
@@ -6721,14 +6735,14 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                             <div className="mt-3 p-3 rounded-xl bg-slate-950/30 border border-slate-800/40" data-testid={`variation-carousel-${v}`}>
                               <div className="flex items-center justify-between mb-2">
                                 <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
-                                  Variations · {(variationActiveIndex[v] ?? 0) + 1} / {variationCarousels[v]!.length + 1}
+                                  {t('variation.label')} · {t('variation.position_indicator', { current: (variationActiveIndex[v] ?? 0) + 1, total: variationCarousels[v]!.length + 1 })}
                                 </div>
                                 <button
                                   onClick={() => resetVariations(v)}
                                   className="text-[9px] text-slate-600 hover:text-red-400 transition-colors"
-                                  title="Clear this card's variation carousel"
+                                  title={t('variation.clear_title')}
                                 >
-                                  <i className="fa-solid fa-trash-can mr-1"></i>clear
+                                  <i className="fa-solid fa-trash-can mr-1"></i>{t('variation.clear_label')}
                                 </button>
                               </div>
                               <div className="flex items-center gap-2">
@@ -6742,7 +6756,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                   }}
                                   disabled={(variationActiveIndex[v] ?? 0) === 0}
                                   className="px-2 py-1 rounded bg-slate-800/60 text-slate-400 text-[10px] disabled:opacity-30 hover:bg-slate-700/60 transition-colors"
-                                  title={isRtl ? 'Previous' : 'Previous'}
+                                  title={t('variation.prev')}
                                 >
                                   <i className={`fa-solid ${isRtl ? 'fa-chevron-right' : 'fa-chevron-left'}`}></i>
                                 </button>
@@ -6766,7 +6780,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                   }}
                                   disabled={(variationActiveIndex[v] ?? 0) === variationCarousels[v]!.length}
                                   className="px-2 py-1 rounded bg-slate-800/60 text-slate-400 text-[10px] disabled:opacity-30 hover:bg-slate-700/60 transition-colors"
-                                  title={isRtl ? 'Next' : 'Next'}
+                                  title={t('variation.next')}
                                 >
                                   <i className={`fa-solid ${isRtl ? 'fa-chevron-left' : 'fa-chevron-right'}`}></i>
                                 </button>
@@ -6778,7 +6792,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                               )}
                               {variationCapReached[v] && (
                                 <div className="mt-2 text-[9px] text-amber-500/80">
-                                  <i className="fa-solid fa-circle-info mr-1"></i>Carousel full (12 positions).
+                                  <i className="fa-solid fa-circle-info mr-1"></i>{t('variation.cap_warning')}
                                 </div>
                               )}
                             </div>

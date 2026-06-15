@@ -70,7 +70,7 @@ function runTests(): void {
     const set2: string = drawDimensions("urgency", 4, 2, []).map(d => d.id).join(",");
     const set3: string = drawDimensions("urgency", 4, 3, []).map(d => d.id).join(",");
     const distinctSets = new Set([set1, set2, set3]).size;
-    assert(distinctSets >= 2, `5 seeds produce ≥2 distinct sets (got ${distinctSets})`);
+    assert(distinctSets >= 2, `3 seeds produce ≥2 distinct sets (got ${distinctSets})`);
   }
 
   // ─── T005 / drawOpenings returns 4 distinct structures ───
@@ -245,10 +245,8 @@ function runTests(): void {
       assert(!slides[i].hasCTA, `middle slide ${i + 1} has no CTA`);
       assert(!slides[i].photoInjection, `middle slide ${i + 1} has no photoInjection`);
     }
-    for (let i = 1; i < slides.length - 1; i++) {
-      if (i > 0 && i - 1 < slides.length - 2) {
-        assert(slides[i].narrativeAngle !== slides[i + 1].narrativeAngle || slides.length - 2 <= 1, "no two adjacent middle slides share the same angle (when ≥2 middles)");
-      }
+    for (let i = 1; i < slides.length - 2; i++) {
+      assert(slides[i].narrativeAngle !== slides[i + 1].narrativeAngle || slides.length - 2 <= 1, "no two adjacent middle slides share the same angle (when ≥2 middles)");
     }
   }
 
@@ -261,14 +259,14 @@ function runTests(): void {
     const fams3 = rotateCarouselAngles("cold", 2, []);
     const sameSeed = fams1.join(",") === fams2.join(",");
     assert(sameSeed, "rotateCarouselAngles is deterministic for same seed");
-    const distinctCount = new Set([fams1.join(","), fams3.join(",")]).size;
+    const differentSeedDiffers = fams1.join(",") !== fams3.join(",");
+    assert(differentSeedDiffers, "rotateCarouselAngles draws a different 4-of-7 under a different seed");
     const coldPool = new Set(["A", "B", "C", "D", "E", "F", "G"]);
     for (const f of fams1) {
       assert(coldPool.has(f), `cold family "${f}" is a member of the 7-angle pool`);
     }
     const uniqFams = new Set(fams1);
     assert(uniqFams.size === 4, "no family appears twice in one draw");
-    void distinctCount;
   }
 
   // ─── T025 / US2 — drawDimensions + drawOpenings contract ─────────────
@@ -444,7 +442,10 @@ function runTests(): void {
   {
     const genSrc = fs.readFileSync(path.join(__dirname, "..", "..", "src", "generators.ts"), "utf-8");
     const carStart = genSrc.indexOf("export async function generateCarouselAngles");
-    const carRegion = genSrc.slice(carStart, carStart + 8000);
+    // Use a much larger slice: the fingerprint is recorded AFTER the model call
+    // (Phase 23 fix: don't pollute the memory pool with families the user never
+    // saw), so it sits well past the first 8k chars of the function body.
+    const carRegion = genSrc.slice(carStart, carStart + 25000);
     // The carousel path (not just the single-hook path) records a fingerprint
     assert(/recordAngleFingerprint\(/.test(carRegion), "carousel path calls recordAngleFingerprint");
     assert(/angleKey:\s*`carousel-\$\{campaignType\}`/.test(carRegion), "carousel fingerprint uses carousel-<campaignType> angleKey");

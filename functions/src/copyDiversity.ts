@@ -62,14 +62,19 @@ export function biasByMemory<T extends { id: string }>(
 ): T[] {
     if (recentIds.length === 0 || candidates.length === 0) return candidates.slice();
     const recencyScore = new Map<string, number>();
+    // Score = position+1: oldest (index 0) gets the lowest score (1), most
+    // recent gets the highest. The subsequent ascending sort by `ra - rb`
+    // then places the LEAST-recent (lowest score) items first — which is
+    // the bias we want. (Previously `recentIds.length - i` produced the
+    // opposite: most-recent scored highest, so they sorted first.)
     for (let i = 0; i < recentIds.length; i++) {
-        recencyScore.set(recentIds[i]!, recentIds.length - i);
+        recencyScore.set(recentIds[i]!, i + 1);
     }
     return candidates.slice().sort((a, b) => {
         const ra = recencyScore.get(a.id) || 0;
         const rb = recencyScore.get(b.id) || 0;
         if (ra === rb) return 0;
-        return ra - rb; // least-recent first
+        return ra - rb; // least-recent (lowest score) first
     });
 }
 

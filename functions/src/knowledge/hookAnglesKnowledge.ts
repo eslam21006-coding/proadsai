@@ -1447,8 +1447,13 @@ function downWeightRecent<T extends { id: string }>(
 ): T[] {
     if (recentIds.length === 0) return items.slice();
     const recencyScore = new Map<string, number>();
+    // Score = position+1: oldest (index 0) gets the lowest score (1), most
+    // recent gets the highest. The subsequent ascending sort by `ra - rb`
+    // then places the LEAST-recent (lowest score) items first — which is
+    // the bias we want. (Previously `recentIds.length - i` produced the
+    // opposite: most-recent scored highest, so they sorted first.)
     for (let i = 0; i < recentIds.length; i++) {
-        recencyScore.set(recentIds[i]!, recentIds.length - i);
+        recencyScore.set(recentIds[i]!, i + 1);
     }
     return items.slice().sort((a, b) => {
         const ra = recencyScore.get(a.id) || 0;
@@ -1476,10 +1481,29 @@ export function drawDimensions(
 
     const target = Math.min(n, pool.length);
     const flatRecent = memory.flatMap(m => m.dimensionIds || []);
-    const biased = downWeightRecent(pool, flatRecent);
+    const recencyScore = new Map<string, number>();
+    for (let i = 0; i < flatRecent.length; i++) {
+        recencyScore.set(flatRecent[i]!, i + 1); // oldest = 1, most recent = length
+    }
     const rng = makeRng(stringHash32(`${angleKey}|${seed}`));
-    const shuffledBiased = shuffled(biased, rng);
-    const drawn = shuffledBiased.slice(0, target);
+    // Weighted sampling (Gumbel-max / exponential trick): each item gets
+    // a key = -log(rng()) / weight. Non-recent items (weight ≈ 1) draw
+    // small keys and sort first. Recent items (weight < 1) draw large keys
+    // and sort later — i.e. are down-weighted without being banned. The
+    // SET varies per seed because each item's key is a function of the
+    // per-seed RNG; bias only steers which items are preferred.
+    const weighted = pool.map((item) => {
+        const r = recencyScore.get(item.id) || 0;
+        const weight = 1 / (1 + r); // r=0 → w=1; r=length → w ≈ 0
+        const u = Math.max(rng(), 1e-12);
+        const key = -Math.log(u) / weight;
+        return { item, key };
+    });
+    weighted.sort((a, b) => a.key - b.key);
+    const drawn = shuffled(
+        weighted.slice(0, target).map((w) => w.item),
+        rng,
+    );
 
     // ─── T024 — Invariant guard: angle lock (HARD) ──────────────────────
     // The user's selected angle is NEVER changed. Every drawn dimension
@@ -1521,10 +1545,26 @@ export function drawOpenings(
         if (Array.isArray(m.openingIds)) flatRecent.push(...m.openingIds);
         if (typeof m.openingId === "string" && m.openingId) flatRecent.push(m.openingId);
     }
-    const biased = downWeightRecent(OPENING_STRUCTURES, flatRecent);
+    const recencyScore = new Map<string, number>();
+    for (let i = 0; i < flatRecent.length; i++) {
+        recencyScore.set(flatRecent[i]!, i + 1);
+    }
     const rng = makeRng(stringHash32(`openings|${seed}`));
-    const shuffledBiased = shuffled(biased, rng);
-    return shuffledBiased.slice(0, target);
+    // Same Gumbel-max weighted-sampling as drawDimensions (see that fn
+    // for the math). Biases recent ids down without ever banning them;
+    // the SET varies per seed because each item's key is RNG-derived.
+    const weighted = OPENING_STRUCTURES.map((item) => {
+        const r = recencyScore.get(item.id) || 0;
+        const weight = 1 / (1 + r);
+        const u = Math.max(rng(), 1e-12);
+        const key = -Math.log(u) / weight;
+        return { item, key };
+    });
+    weighted.sort((a, b) => a.key - b.key);
+    return shuffled(
+        weighted.slice(0, target).map((w) => w.item),
+        rng,
+    );
 }
 
 // Re-export the fingerprint shape from creativeMemory so call-sites that

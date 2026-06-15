@@ -71,9 +71,9 @@ All NEEDS CLARIFICATION items from the spec were resolved during `/speckit.clari
 - **Decision**: Derive a per-project rotation seed from a stable identifier (e.g., generation/creative id or `userId + projectId + angle` hash). Rotation and draws are pure functions of `(pool, seed, memory)` → deterministic, replayable, and auditable (Principle VI).
 - **Rationale**: Determinism makes the diversity logic testable (SC-002/003/006 require observing variation across N projects) and traceable; no reliance on temperature or wall-clock randomness.
 
-### D11 — Reference "Section 5.A" reconciliation (FR-022 / spec assumption)
-- **Decision**: `COPY_SYSTEM_REFERENCE.md` §17 points to a non-existent "Section 5.A". During this PR, reconcile by either adding a "Section 5.A — Carousel middle-slide plan" that mirrors the spec-001 contract, or correcting §17 to point at Section 6 + the spec-001 contract path. Document the chosen fix in the PR.
-- **Rationale**: Keeps the authoritative reference internally consistent and satisfies the same-PR sync rule.
+### D11 — Reference "Section 5.A" reconciliation (FR-022 / spec assumption) — RESOLVED
+- **Resolution (this PR)**: `COPY_SYSTEM_REFERENCE.md` §17 was updated in the same commit so that the carousel paragraph no longer points to a non-existent "Section 5.A". The reference now points directly at the canonical contract location: `specs/001-resolver-completeness-trace/contracts/carousel-slide-count-plan.md`. No "Section 5.A" was added; the spec-001 contract is the single canonical home for the middle-slide plan, and the reference + the spec-001 contract + the code (this PR) all agree.
+- **Rationale**: Keeps the authoritative reference internally consistent and satisfies the same-PR sync rule (FR-022).
 
 ## Open risks (carried to tasks)
 

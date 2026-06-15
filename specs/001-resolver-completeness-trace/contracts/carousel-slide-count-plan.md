@@ -19,7 +19,7 @@ interface SlidePlanOptions {
 function buildSlidePlan(
   campaignType: 'cold' | 'retargeting',
   slideCount: number,
-  seed?: number,                   // Phase 23 — optional per-project rotation seed
+  seed?: string,                   // Phase 23 — optional per-project rotation seed (string; the runtime helper hashes it to a number for modular indexing)
   options?: SlidePlanOptions
 ): SlidePlan;
 

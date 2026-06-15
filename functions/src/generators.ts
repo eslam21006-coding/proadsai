@@ -7282,9 +7282,10 @@ export async function generateCarouselAngles(
     // project so the same 4 families do not recur. No new taxonomy. Bias
     // never bans — if every option is recent, LRU is selected.
     let _phase23CarouselFamilies: string[] = [];
+    let _phase23Seed = 0;
     try {
         const _phase23ProjectId = ((inputs as any)._projectId as string | undefined) || (inputs as any).projectId;
-        const _phase23Seed = makeProjectSeed(_carouselUserId, _phase23ProjectId, `carousel-${campaignType}`);
+        _phase23Seed = makeProjectSeed(_carouselUserId, _phase23ProjectId, `carousel-${campaignType}`);
         const _phase23Recent = await getRecentFingerprintsForRotation(_carouselUserId, `carousel-${campaignType}`, 10);
         const recentFamilies: string[] = [];
         for (const f of _phase23Recent) {
@@ -7292,24 +7293,16 @@ export async function generateCarouselAngles(
         }
         _phase23CarouselFamilies = rotateCarouselAngles(campaignType, _phase23Seed, recentFamilies);
         // Phase 23 (T030) — record the drawn families into the copyDiversity survivor.
+        // (Fingerprint is recorded AFTER a successful model call below — see the
+        // post-call block. Recording before the call would pollute the memory
+        // pool with families the user never actually saw.)
         _lastCopyDiversity = {
-            ...(_lastCopyDiversity || {}),
             seed: String(_phase23Seed),
             angle: `carousel-${campaignType}`,
             storyDirectionFamilies: _phase23CarouselFamilies,
             memoryBiasApplied: recentFamilies.length > 0,
             fingerprintsConsidered: _phase23Recent.length,
         };
-        // Phase 23 (FAIL-3 / FR-019) — record a carousel fingerprint so cross-project
-        // memory bias actually accumulates (read at the top of this block). Non-blocking.
-        if (_carouselUserId) {
-            recordAngleFingerprint(_carouselUserId, {
-                angleKey: `carousel-${campaignType}`,
-                dimensionIds: [],
-                storyFamilies: _phase23CarouselFamilies,
-                timestamp: Date.now(),
-            }).catch((e) => console.warn("⚠️ carousel recordAngleFingerprint failed (non-blocking):", e));
-        }
     } catch (e) {
         console.warn("⚠️ Phase 23 carousel family rotation failed (non-blocking, falling back to first-4):", e);
         // Fallback: use the existing first-4 families
@@ -7515,6 +7508,43 @@ At least 1-2 of the 4 angles should directly leverage competitive differentiatio
             temperature: 0.85
         }
     }));
+
+    // Phase 23 (FAIL-3 / FR-019) — record the carousel fingerprint AFTER a
+    // successful model call so we only memorize families the user actually
+    // saw. Also attach the rotated middle-slide angle order to the
+    // copyDiversity trace (recorded in the same fire-and-forget block).
+    // Non-blocking — generation must not fail if this write fails.
+    if (_carouselUserId && (response.text || "").length > 0) {
+        // Build middleAngleOrder from the same buildSlidePlan() helper used
+        // by generateCarouselSlideCopies, so the trace matches the plan
+        // the model was actually given.
+        try {
+            const plan = buildSlidePlan(campaignType, slideCount, _phase23Seed);
+            const middleOrder = plan.filter((s) => s.role === "middle").map((s) => s.narrativeAngle);
+            // Spread the existing survivor (with the seed/angle/etc. it already has)
+            // and explicitly re-set required fields so the merged type satisfies
+            // `seed: string` and `angle: string` (both required by the
+            // ResolutionTrace.copyDiversity sub-object).
+            const existing = _lastCopyDiversity || {
+                seed: String(_phase23Seed),
+                angle: `carousel-${campaignType}`,
+                memoryBiasApplied: false,
+                fingerprintsConsidered: 0,
+            } as NonNullable<typeof _lastCopyDiversity>;
+            _lastCopyDiversity = {
+                ...existing,
+                middleAngleOrder: middleOrder,
+            };
+        } catch (e) {
+            console.warn("⚠️ Phase 23 middleAngleOrder trace build failed (non-blocking):", e);
+        }
+        recordAngleFingerprint(_carouselUserId, {
+            angleKey: `carousel-${campaignType}`,
+            dimensionIds: [],
+            storyFamilies: _phase23CarouselFamilies,
+            timestamp: Date.now(),
+        }).catch((e) => console.warn("⚠️ carousel recordAngleFingerprint failed (non-blocking):", e));
+    }
 
     // Return raw text — App.tsx will parse ANGLE_START_X / ANGLE_END_X blocks
     return response.text || '';

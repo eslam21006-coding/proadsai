@@ -349,7 +349,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }),
     updateVariation: (variant, index, hv) => set((state) => {
         const list = state.variationCarousels[variant];
-        if (!list || index < 0 || index >= list.length) return {} as any;
+        if (!list || index < 0 || index >= list.length) return {};
         const next = list.slice();
         next[index] = hv;
         return { variationCarousels: { ...state.variationCarousels, [variant]: next } };
