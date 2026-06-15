@@ -1,6 +1,6 @@
 ﻿# Pro Ads AI - SaaS - FAL Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-06-04
+Auto-generated from all feature plans. Last updated: 2026-06-14
 
 
 ## Project Structure

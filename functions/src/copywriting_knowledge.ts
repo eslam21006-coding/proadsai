@@ -1,6 +1,7 @@
 // copywriting_knowledge.ts
 // Version 7.1 - Based on: Edwards, Sugarman, Schwartz, Bly
 // Last Updated: 2024
+// Implements specs/_shared/COPY_SYSTEM_REFERENCE.md — edit the reference first, then sync these constants.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // LANGUAGE RULES: MARKETING FUSHA (WHITE ARABIC)
@@ -685,6 +686,146 @@ export const POWER_WORDS = {
     exclusivity: ["حصرياً", "لأول مرة", "سرّي", "خاص", "مخصص لك", "لن تجده في مكان آخر"],
     proof: ["مُثبت", "مُجرّب", "نتائج حقيقية", "شهادات", "أرقام"],
     ease: ["بسهولة", "دون جهد", "خطوة بخطوة", "نظام جاهز", "دون تعقيد", "ببساطة"],
-    transformation: ["تحوّل", "انتقل", "ارتقِ", "غيّر", "أطلق", "حقق", "ابنِ"],
+    transformation: ["تحوّل", "انتقل، ارتقِ", "غيّر", "أطلق", "حقق", "ابنِ"],
     emotion: ["أخيراً", "تخيّل", "اكتشف", "السر", "الحقيقة", "ما لا يخبرونك"]
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 22 — TRACK 1 COPY QUALITY BLOCKS
+// Transcribed from specs/_shared/COPY_SYSTEM_REFERENCE.md (Section 0 + Section 9).
+// These three rule blocks + the banned-CTA list are injected into the four
+// on-creative-copy prompt surfaces to ride the copy-fidelity contract.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── READING LEVEL (≤ 6th grade) ────────────────────────────────────────────
+
+export const READING_LEVEL_BLOCK = `
+READING LEVEL — 6TH GRADE OR BELOW (HARD RULE)
+
+RULE: Write every on-creative field (headline, subheadline, CTA, benefit, and every carousel slide caption) so a 12-year-old can read it on the first try.
+
+- Short everyday words. Short sentences. No jargon. No abstract nouns.
+- If a word sounds like a corporate press release or a textbook, swap it for the everyday word a 12-year-old would say to a friend.
+- Numbers and concrete things beat adjectives.
+- Prefer spoken, conversational rhythm. One idea per sentence.
+
+ARABIC SPECIFIC: Use simple spoken-style فصحى — nothing a 12-year-old would not say. Avoid bookish vocabulary, formal government register, or stiff news-paper phrasing. Keep the rhythm short and direct.
+
+HEADLINE: 3–8 words (max ~10). SUBHEADLINE: ≤ 12 words. CAROUSEL CAPTION: ≤ 12 words (ideal 4–8). CTA: ≤ 8 words including any arrow.
+`;
+
+// ─── LIVED SYMPTOM (dig deep — name the moment) ─────────────────────────────
+
+export const LIVED_SYMPTOM_BLOCK = `
+LIVED SYMPTOM — DIG DEEP (HARD RULE)
+
+RULE: Never state the problem in the abstract. Name the exact concrete moment the audience already lives — the scene, the time of day, the recognizable detail that makes them think "that's literally me."
+
+GOOD (concrete, recognizable moment):
+- "Staring at the phone at 11pm, still no reply."
+- "Every Monday you tell yourself 'this week I'll post every day' — and by Wednesday it's gone."
+- "Saying yes to the cheap client again because the calendar is empty."
+
+BAD (abstract category):
+- "Struggling with lead generation."
+- "Feeling overwhelmed by marketing."
+- "Having trouble growing your business."
+
+WHERE THE RAW MATERIAL COMES FROM: Pull the lived moment directly from the pain points input (CHALLENGES) and the audience input (TARGET AVATAR). If the pain says "leads ghost me", name the moment they ghost — a booked call that never shows, a DM left on read, a form submitted with no reply.
+`;
+
+// ─── FABRICATION POLICY (soft-flag, never block) ────────────────────────────
+
+export const FABRICATION_POLICY_BLOCK = `
+FABRICATION POLICY — SOFT FLAG, NEVER BLOCK
+
+RULE: You MAY invent persuasive framing freely — scenarios, hypotheticals, metaphors, illustrative composites. You do NOT need real proof to write persuasively.
+
+HOWEVER, when you write a fabricated VERIFIABLE specific — a named person or testimonial, an exact figure, a hard count, a star rating, a concrete deadline or quantity — flag it so the user is reminded to back it up. Never refuse or delete the claim. Only flag it.
+
+EXAMPLES THAT MUST BE FLAGGED:
+- A named person: "Ahmed, a Riyadh-based coach, tripled his calls in 30 days."
+- An exact figure: "9 out of 10 coaches leak leads here."
+- A hard count: "127 clients in 31 days."
+- A star rating: "Rated 4.9 stars by 1,200 users."
+- A concrete deadline: "Offer ends Thursday at midnight."
+
+EXAMPLES THAT MUST NOT BE FLAGGED (these are FRAMING — allowed freely):
+- Hypotheticals: "Imagine your calendar full of qualified calls."
+- Metaphors: "Leaky funnel", "the snowball effect", "filling the bucket."
+- Illustrative scenarios: "If you ran a 5-day challenge next month…"
+
+HARD INVARIANT — WHAT THIS BLOCK DOES NOT DO:
+- It does NOT relax numeric or identity compliance. Invented dates, seats, prices, named persons, precise stats, and testimonials still trigger the existing hard compliance guards (captionValidator NUMERIC FACT VIOLATION repair, hookAnglesKnowledge honest-degradation rules). The soft flag is a safety net BELOW those guards — never a replacement.
+- It does NOT delete, block, or refuse any claim. The copy is always produced in full.
+
+OUTPUT CONTRACT — emit one line per flagged claim AFTER the four copy fields, in this exact form:
+CLAIM_FLAG: <verbatim specific> — <one-line reason>
+
+Example:
+CLAIM_FLAG: 9 out of 10 coaches leak leads here — invented statistic, must be backed or removed
+CLAIM_FLAG: "Ahmed, a Riyadh-based coach" — invented testimonial name, must be backed
+`;
+
+// ─── BANNED CTA LIST (prompt guidance only) ────────────────────────────────
+
+export const BANNED_CTA_LIST = [
+    "Learn more",
+    "Sign up now",
+    "Book now",
+    "Get started",
+    "Click here",
+] as const;
+
+// ─── COPY SCORING DIMENSIONS (Section 12 — seeded for the later track) ───
+
+export const COPY_SCORING_DIMENSIONS = `
+COPY SCORING RUBRIC (1–10 PER DIMENSION)
+
+1. Audience specificity
+2. Pain / desire relevance
+3. Clarity
+4. Scroll-stopping tension
+5. Wording specificity
+6. Offer relevance
+7. Hook-angle fit
+8. Format fit
+9. Visual compatibility
+10. CTA strength (if used)
+11. Proof strength (if used)
+12. Objection handling (if retargeting)
+13. Non-generic language
+14. Reading level ≤ 6th grade — HARD dimension; reject if below 7
+15. Lived-symptom depth — HARD dimension; reject if below 7
+
+PASS CONDITION: average ≥ 8 AND no applicable dimension below 6 AND dimensions 14–15 ≥ 7.
+
+ENGINE: GPT-4o-mini, silent, non-blocking on edge cases. Hard-flag (not block) fabricated verifiable specifics. This block is SEEDED for the later scoring track; it is NOT consumed by any executing code path in this phase.
+`;
+
+// ─── COPY REWRITE DIAGNOSES (Section 13 — seeded for the later track) ─────
+
+export const COPY_REWRITE_DIAGNOSES = `
+REWRITE DIAGNOSES — DIAGNOSIS → FIX TABLE
+
+| Diagnosis | Fix |
+|-----------|-----|
+| Too generic | add concrete audience noun + specific number / outcome |
+| Too long | cut to word cap; split slide |
+| Too vague | name the specific pain / outcome |
+| Too clever | trade wordplay for clarity |
+| Too salesy | swap hype for diagnosis / proof |
+| No audience | add "for [audience] who…" trigger |
+| No pain / desire | pull from Pain / Outcome inputs |
+| No hook angle | re-apply Section 7 formula |
+| No tension | add gap / cost / contrast |
+| Weak CTA | apply Section 8 formula; ban generic verbs |
+| Weak benefit | tie payoff to specific pain / outcome |
+| Wrong structure | re-run decision tree |
+| Bad proof | drop proof if not present |
+| Bad objection | resolve, don't argue; one per line / slide |
+| Above 6th grade | replace every hard / abstract word with the simplest equivalent; shorten |
+| Surface-level | replace category with the concrete lived moment |
+
+MAX 2 REWRITE PASSES — if still failing after 2 passes, surface the best candidate with a flag rather than burning credits. This block is SEEDED for the later rewrite track; it is NOT consumed by any executing code path in this phase.
+`;
