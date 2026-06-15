@@ -94,7 +94,12 @@ export async function getRecentFingerprintsForRotation(
         // carousel recents don't cross-contaminate (avoids a composite Firestore
         // index on angleKey+timestamp). Bias-never-ban still holds downstream.
         const all = await getRecentFingerprints(userId, limit * 4);
-        return all.filter((f) => f.angleKey === angleKey).slice(0, limit);
+        // Firestore returns newest-first. The downstream drawer treats
+        // index 0 as the oldest entry (FIFO), so reverse before returning.
+        return all
+            .filter((f) => f.angleKey === angleKey)
+            .reverse()
+            .slice(0, limit);
     } catch (e) {
         console.warn("⚠️ getRecentFingerprintsForRotation failed (non-blocking):", e);
         return [];

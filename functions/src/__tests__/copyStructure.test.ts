@@ -256,17 +256,24 @@ function runTests(): void {
     const fams1 = rotateCarouselAngles("cold", 1, []);
     const fams2 = rotateCarouselAngles("cold", 1, []);
     assert(fams1.length === 4, `rotateCarouselAngles returns 4 families (got ${fams1.length})`);
-    const fams3 = rotateCarouselAngles("cold", 2, []);
     const sameSeed = fams1.join(",") === fams2.join(",");
     assert(sameSeed, "rotateCarouselAngles is deterministic for same seed");
-    const differentSeedDiffers = fams1.join(",") !== fams3.join(",");
-    assert(differentSeedDiffers, "rotateCarouselAngles draws a different 4-of-7 under a different seed");
+    // Multi-seed diversity: across N seeds, the SET of drawn families
+    // should vary (not be identical every time). A single-pair inequality
+    // check is flaky because two seeds can randomly collide; the proper
+    // assertion is "most of the draws are distinct".
     const coldPool = new Set(["A", "B", "C", "D", "E", "F", "G"]);
     for (const f of fams1) {
       assert(coldPool.has(f), `cold family "${f}" is a member of the 7-angle pool`);
     }
     const uniqFams = new Set(fams1);
     assert(uniqFams.size === 4, "no family appears twice in one draw");
+    // Diversity check: across 6 seeds, at least 3 distinct draws expected
+    const diversitySets = new Set<string>();
+    for (let s = 0; s < 6; s++) {
+      diversitySets.add(rotateCarouselAngles("cold", s, []).join(","));
+    }
+    assert(diversitySets.size >= 3, `6 seeds produce ≥3 distinct 4-of-7 draws (got ${diversitySets.size})`);
   }
 
   // ─── T025 / US2 — drawDimensions + drawOpenings contract ─────────────
@@ -417,7 +424,7 @@ function runTests(): void {
     assert(/export function getLastCopyDiversity\b/.test(genSrc), "getLastCopyDiversity is exported");
     // Single-hook path populates it with the drawn dimensions + openings
     assert(/_lastCopyDiversity = \{[\s\S]*?drawnDimensionIds:/.test(genSrc), "single-hook path sets _lastCopyDiversity.drawnDimensionIds");
-    assert(/openingIds:\s*\(_phase23DrawnOpenings/.test(genSrc), "single-hook path sets _lastCopyDiversity.openingIds");
+    assert(/openingIds:\s*(?:seenOpenings|_phase23DrawnOpenings)/.test(genSrc), "single-hook path sets _lastCopyDiversity.openingIds (from seenOpenings or _phase23DrawnOpenings)");
     // It is merged into the persisted ResolutionTrace
     assert(/copyDiversity:\s*_lastCopyDiversity/.test(genSrc), "copyDiversity merged into _lastResolutionTrace in generateFinalAd");
     // resetResolutionTrace must NOT clear the survivor (it survives to generateFinalAd)
@@ -455,11 +462,12 @@ function runTests(): void {
     assert(/\.filter\(\(f\)\s*=>\s*f\.angleKey === angleKey\)/.test(cdSrc), "getRecentFingerprintsForRotation is angle-scoped");
     // Runtime stub: recordAngleFingerprint is non-blocking — calling it returns a Promise
     // and never throws synchronously even with no firebase app initialised.
+    // (timestamp is intentionally NOT supplied — the writer always
+    // overwrites it with FieldValue.serverTimestamp().)
     const ret = recordAngleFingerprint("audit-test-user", {
       angleKey: "carousel-cold",
       dimensionIds: [],
       storyFamilies: ["A", "B", "C", "D"],
-      timestamp: Date.now(),
     });
     assert(ret instanceof Promise, "recordAngleFingerprint returns a Promise (callable as a stub)");
     ret.catch(() => { /* non-blocking by contract */ });

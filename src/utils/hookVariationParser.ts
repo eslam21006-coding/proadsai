@@ -76,7 +76,11 @@ export function parseHookVariation(block: string, index: number): HookVariation 
     .replace(/\*\*/g, "").replace(/^\s*[:：\-–•]+\s*/g, "").trim();
   const storyArc = extractBetween(block, "STORY_ARC", "CTA_BUTTON")
     .replace(/\*\*/g, "").replace(/^\s*[:：\-–•]+\s*/g, "").trim();
-  const subheadText = storyArc ? `${subheadRaw} — ${storyArc}` : subheadRaw;
+  // Phase 23 (CodeRabbit): join subhead + storyArc with a separator only
+  // when both have content, so we never emit a leading "— " on a partial
+  // subhead or a trailing "— " when storyArc is empty.
+  const subheadText =
+    subheadRaw && storyArc ? `${subheadRaw} — ${storyArc}` : (subheadRaw || storyArc);
 
   let ctaRaw = extractBetween(block, "CTA_BUTTON", "HOOK_END");
   if (!ctaRaw) ctaRaw = extractBetween(block, "CTA_BUTTON", "ANGLE_END");

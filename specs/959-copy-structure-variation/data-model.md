@@ -77,23 +77,25 @@ One generated variation inside a card.
 
 ## Backend — anti-repetition memory (23.B/23.C)
 
-### Entity: DiversityFingerprint — NEW (additive to `creativeMemory`)
-Recorded per generation; read back (recent ~10 per angle per user) to bias new draws.
+### Entity: `AngleFingerprint` — NEW (additive, single canonical storage)
+Recorded per generation; read back (recent ~10 per user, then caller filters by `angleKey`) to bias new draws. Schema field names and the storage path are **fixed** by the contract at `specs/959-copy-structure-variation/contracts/anti-repetition-memory.md`; the data model and code match that contract verbatim.
 
 | Field | Type | Notes |
 |---|---|---|
-| `userId` | `string` | Scope key (no cross-user leakage). |
-| `angle` | `string` | Locked hook angle (single) or campaign type (carousel). |
-| `dimensionIds` | `string[]` | The 4 `DimensionEntry.id`s drawn (single-hook path). |
-| `openingIds` | `string[]` | The opening-structure ids used. |
-| `storyDirectionFamilies?` | `string[]` | The 4-of-7 carousel families drawn (carousel path). 23.C. |
-| `middleAngleOrder?` | `string[]` | The rotated middle-slide angle sequence (carousel path). 23.C. |
-| `createdAt` | `number \| FieldValue` | Server timestamp; write-time `FieldValue.serverTimestamp()`, read-time `number` (epoch ms after `Timestamp.toMillis()`). For recency windowing (~10 most recent per angle). |
+| `userId` | `string` | Scope key (no cross-user leakage). Stored alongside the fingerprint (writer adds it; reader is keyed on the collection path). |
+| `angleKey` | `string` | Locked hook angle (single) or `carousel-cold` / `carousel-retargeting` (carousel). |
+| `dimensionIds` | `string[]` | The `DimensionEntry.id`s drawn (single-hook path). |
+| `openingIds?` | `string[]` | The opening-structure ids drawn (single-hook path). |
+| `storyFamilies?` | `string[]` | The 4-of-7 carousel families drawn (carousel path). 23.C. |
+| `timestamp` | `FirebaseFirestore.Timestamp` (read) | Server timestamp. Write-time `FieldValue.serverTimestamp()`; reader receives a Firestore `Timestamp` (callers can convert with `.toMillis()`). Always set by the writer — callers should NOT supply it. |
 
-**Storage**: additive fields on the existing `CreativeMemoryRecord` (`creativeMemory/{creativeId}`), or a small companion write — chosen at task time to minimize coupling. No migration; legacy records simply lack these fields and contribute no bias (FR-016 ages out / absent = no bias).
+**Storage** (single canonical home — matches the contract):
+- Collection: `creativeMemoryFingerprints/{userId}/entries/{entryId}`
+- Each entry stores one `AngleFingerprint` plus the inherited `userId` field.
+- No migration: legacy `creativeMemory/{creativeId}` records continue to work as before; they simply lack the fingerprint fields and contribute no bias (FR-016 ages out / absent = no bias).
 
 **Validation / rules**
-- Read is scoped `where userId == … and angle == … order by createdAt desc limit ~10`. D7.
+- Reads are scoped by the writer's `userId` (encoded in the collection path), ordered by `timestamp` desc, limited to `FINGERPRINT_WINDOW = 10`. Callers then filter by `angleKey` (FIFO oldest-first; oldest entry at index 0).
 - Bias **down-weights** recent ids; never excludes. If all options are recent → least-recently-used selection. FR-017, SC-008.
 - First-ever project: zero fingerprints → rotation-only selection, no error. Edge case + SC-008.
 

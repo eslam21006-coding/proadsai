@@ -18,7 +18,7 @@ The work is grounded in the existing `tovText` string model, the inline hook-car
 **Language/Version**: TypeScript 5.7 (Cloud Functions), TypeScript 5.9 (frontend)
 **Primary Dependencies**: Firebase Cloud Functions v2, Firebase Admin SDK, Firestore; React 19, Zustand 4, Tailwind CSS 3, Vite 7; Gemini (text/copy generation — unchanged); OpenAI gpt-image-2 for visuals (unchanged, gated by `MODEL_PROVIDER`)
 **Storage**: Firestore — `creativeMemory/{creativeId}` and `creativePatterns/{userId}/indexes/{indexKey}` (extended additively with anti-repetition fingerprints); no schema migration; frontend `tovText` string + new per-card variation state in the Zustand store
-**Testing**: `cd functions && npm test` (Vitest/Jest-style suite in `functions/src/__tests__/`); new unit tests for the dimension-pool drawer, opening rotation, fingerprint memory bias, and the rotated slide-plan engine
+**Testing**: `cd functions && npm run test:contracts` (plain Node.js contract fixture runner in `functions/src/__tests__/`; new files must be registered in `functions/package.json` `test:contracts` chain because the runner stays manual); new unit tests for the dimension-pool drawer, opening rotation, fingerprint memory bias, and the rotated slide-plan engine
 **Target Platform**: Web (Vite SPA frontend + Firebase Functions v2 backend)
 **Project Type**: Web application (React frontend `src/` + Firebase Functions backend `functions/src/`)
 **Performance Goals**: No added model calls beyond the existing one-call-per-"Generate 4 More" path; pool draw, rotation, and fingerprint bias are pure in-memory functions (microsecond cost); one extra Firestore read (recent fingerprints) per generation, bounded to ~10 records

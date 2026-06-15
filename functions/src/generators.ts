@@ -1488,8 +1488,11 @@ export async function generateTOV(inputs: AdInputs, resolvedUniverse: string, mo
         let modeInstruction = "";
         const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
         const _hookRtCtx = buildNormalizedRetargetingContext(inputs as any);
-        const campaignType = (inputs as any).campaignType || 'cold';
+        // Phase 23 (CodeRabbit): derive campaignType from the normalized
+        // retargeting context (authoritative), not the raw `inputs.campaignType`
+        // which can be missing or stale.
         const isRetargeting = _hookRtCtx.isRetargeting;
+        const campaignType: "cold" | "retargeting" = isRetargeting ? "retargeting" : "cold";
         // Use canonical single field via normalized context; keep array for downstream compat
         const objectionIds = _hookRtCtx.objectionId ? [_hookRtCtx.objectionId] : [];
         const customObjection = _hookRtCtx.customObjection;
@@ -2622,15 +2625,25 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
     // After a successful generation, record the drawn dimension + opening ids
     // and populate the resolutionTrace.copyDiversity sub-object. These calls
     // are non-blocking — they MUST NOT cause generateTOV to fail.
+    // Count actually-emitted HOOK_START_* blocks so we never persist a
+    // dimension the user did not actually see (retry path accepts count >= 3).
+    const _emittedHookCount = (text.match(/\bHOOK_START_[A-D]\b/g) || []).length;
     try {
-        if (_phase23DrawnDimensions && _phase23DrawnDimensions.length > 0 && inputs.coldHookAngle) {
+        if (
+            _phase23DrawnDimensions && _phase23DrawnDimensions.length > 0 &&
+            _emittedHookCount > 0 && inputs.coldHookAngle
+        ) {
             const _phase23UserId = (inputs as any)._userId as string | undefined;
             if (_phase23UserId) {
-                const fp: AngleFingerprint = {
+                // Only persist the dimensions the user actually saw.
+                const seenDimensions = _phase23DrawnDimensions.slice(0, _emittedHookCount);
+                const seenOpenings = (_phase23DrawnOpenings || []).slice(0, _emittedHookCount);
+                // timestamp is intentionally NOT supplied — the writer
+                // overwrites it with FieldValue.serverTimestamp().
+                const fp: Omit<AngleFingerprint, "timestamp"> = {
                     angleKey: inputs.coldHookAngle,
-                    dimensionIds: _phase23DrawnDimensions.map((d) => d.id),
-                    openingId: _phase23DrawnOpenings && _phase23DrawnOpenings[0] ? _phase23DrawnOpenings[0].id : undefined,
-                    timestamp: Date.now(),
+                    dimensionIds: seenDimensions.map((d) => d.id),
+                    openingIds: seenOpenings.map((o) => o.id),
                 };
                 // Fire-and-forget; do not await
                 recordAngleFingerprint(_phase23UserId, fp).catch((e) => {
@@ -2640,14 +2653,21 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
         }
         // Phase 23 (T023) — populate the copyDiversity survivor so generateFinalAd
         // can merge it into the persisted ResolutionTrace. Non-blocking.
-        if (_phase23DrawnDimensions && _phase23DrawnDimensions.length > 0 && inputs.coldHookAngle) {
+        // Only include the drawn dimensions + openings the user actually saw
+        // (matches the fingerprint's "seen" set above).
+        if (
+            _phase23DrawnDimensions && _phase23DrawnDimensions.length > 0 &&
+            _emittedHookCount > 0 && inputs.coldHookAngle
+        ) {
             const _cdUserId = (inputs as any)._userId as string | undefined;
             const _cdProjectId = ((inputs as any)._projectId as string | undefined) || (inputs as any).projectId;
+            const seenDimensions = _phase23DrawnDimensions.slice(0, _emittedHookCount);
+            const seenOpenings = (_phase23DrawnOpenings || []).slice(0, _emittedHookCount);
             _lastCopyDiversity = {
                 seed: String(makeProjectSeed(_cdUserId, _cdProjectId, inputs.coldHookAngle)),
                 angle: inputs.coldHookAngle,
-                drawnDimensionIds: _phase23DrawnDimensions.map((d) => d.id),
-                openingIds: (_phase23DrawnOpenings || []).map((o) => o.id),
+                drawnDimensionIds: seenDimensions.map((d) => d.id),
+                openingIds: seenOpenings.map((o) => o.id),
                 memoryBiasApplied: _phase23MemoryBiasApplied,
                 fingerprintsConsidered: _phase23FingerprintsConsidered,
             };
@@ -7251,8 +7271,13 @@ export async function generateCarouselAngles(
         throw new HttpsError("permission-denied", carouselDecision.reason || "carousel_limit_exceeded");
     }
     const _angRtCtx = buildNormalizedRetargetingContext(inputs as any);
-    const campaignType = (inputs as any).campaignType || 'cold';
+    // Phase 23 (CodeRabbit): derive campaignType from the normalized
+    // retargeting context (authoritative), not the raw `inputs.campaignType`
+    // which can be missing or stale. This keeps the carousel memory key
+    // (and the prompt's RETARGETING-vs-COLD guidance) consistent with
+    // buildNormalizedRetargetingContext.
     const isRetargeting = _angRtCtx.isRetargeting;
+    const campaignType: "cold" | "retargeting" = isRetargeting ? "retargeting" : "cold";
     const customObjection = _angRtCtx.customObjection;
     const testimonial = _angRtCtx.testimonial;
     const effectiveObjection = _angRtCtx.effectiveObjectionText;
@@ -7515,6 +7540,24 @@ At least 1-2 of the 4 angles should directly leverage competitive differentiatio
     // copyDiversity trace (recorded in the same fire-and-forget block).
     // Non-blocking — generation must not fail if this write fails.
     if (_carouselUserId && (response.text || "").length > 0) {
+        // Phase 23 (CodeRabbit): validate the response contains a properly
+        // formatted block for EACH drawn family before recording. The
+        // frontend parser only understands ANGLE_START_${family} /
+        // ANGLE_END_${family} blocks; if any family is missing the user did
+        // not successfully receive it and we must not pollute the memory
+        // pool with it.
+        const responseText = response.text || "";
+        const allFamiliesPresent = _phase23CarouselFamilies.every((f) =>
+            responseText.includes(`ANGLE_START_${f}`) &&
+            responseText.includes(`ANGLE_END_${f}`),
+        );
+        if (!allFamiliesPresent) {
+            console.warn(
+                "⚠️ carousel response missing one or more drawn ANGLE_START/END blocks; skipping fingerprint record to avoid memory pollution",
+            );
+            return responseText;
+        }
+
         // Build middleAngleOrder from the same buildSlidePlan() helper used
         // by generateCarouselSlideCopies, so the trace matches the plan
         // the model was actually given.
@@ -7542,7 +7585,6 @@ At least 1-2 of the 4 angles should directly leverage competitive differentiatio
             angleKey: `carousel-${campaignType}`,
             dimensionIds: [],
             storyFamilies: _phase23CarouselFamilies,
-            timestamp: Date.now(),
         }).catch((e) => console.warn("⚠️ carousel recordAngleFingerprint failed (non-blocking):", e));
     }
 
@@ -7718,7 +7760,10 @@ ${
         try {
             const _carUserId = (inputs as any)._userId as string | undefined;
             const _carProjectId = ((inputs as any)._projectId as string | undefined) || (inputs as any).projectId;
-            const _carSeed = makeProjectSeed(_carUserId, _carProjectId, `carousel-slides-${campaignType}`);
+            // Phase 23 (CodeRabbit): use the SAME seed key as the family-rotation
+            // fingerprint above (`carousel-${campaignType}`) so the recorded
+            // middleAngleOrder is reproducible from the fingerprint's seed.
+            const _carSeed = makeProjectSeed(_carUserId, _carProjectId, `carousel-${campaignType}`);
             const plan = buildSlidePlan(campaignType as "cold" | "retargeting", slideCount, _carSeed);
             const middlePlans = plan.filter((s) => s.role === "middle");
             // Phase 23 (T031) — record the rotated middle-slide angle order for audit.

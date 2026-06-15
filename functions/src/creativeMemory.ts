@@ -443,16 +443,27 @@ Do NOT copy past creatives — use these patterns to INFORM composition and angl
 export interface AngleFingerprint {
     angleKey: string;
     dimensionIds: string[];
+    /** Optional primary opening form drawn (single-hook path). The new
+     *  `openingIds[]` field is preferred and is what the runner actually
+     *  persists now; the singular field is kept for back-compat. */
     openingId?: string;
+    /** All opening forms drawn (Phase 23 — plural). */
+    openingIds?: string[];
     storyFamilies?: string[];
-    timestamp: number | FirebaseFirestore.FieldValue;
+    /**
+     * OPTIONAL. The writer (`recordAngleFingerprint`) always overwrites this
+     * with `FieldValue.serverTimestamp()` — caller-supplied values are ignored.
+     * Reads return a Firestore `Timestamp` (not `number`). Kept in the
+     * type for documentation, but new call-sites should not supply it.
+     */
+    timestamp?: FirebaseFirestore.Timestamp | number;
 }
 
 export const FINGERPRINT_WINDOW = 10;
 
 export async function recordAngleFingerprint(
     userId: string,
-    fingerprint: AngleFingerprint,
+    fingerprint: Omit<AngleFingerprint, "timestamp">,
 ): Promise<void> {
     try {
         const db = getDb();
@@ -486,6 +497,9 @@ export async function getRecentFingerprints(
             .get();
         if (snap.empty) return [];
         return snap.docs.map((d) => {
+            // At runtime the `timestamp` field is a Firestore `Timestamp`,
+            // not the `number | FieldValue` shape the interface describes.
+            // The cast is intentional and documented in the interface.
             const data = d.data() as AngleFingerprint;
             return { ...data };
         });
