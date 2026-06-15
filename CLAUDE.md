@@ -1,6 +1,6 @@
 ﻿# Pro Ads AI - SaaS - FAL Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-06-14
+Auto-generated from all feature plans. Last updated: 2026-06-15
 
 
 ## Project Structure
@@ -45,6 +45,8 @@ specs/            # Feature specs (speckit workflow)
 - Firestore — existing `generations/{genId}` document; new `resolutionTrace.modeComposition` sub-object (additive only, no migration). (016-creative-modes-qa)
 - TypeScript 5.7 (Firebase Cloud Functions v2), TypeScript 5.9 (Vite frontend) + Firebase Functions v2, Firebase Admin SDK, Sharp `^0.33.5` (already installed for `reflowOutpaint.ts` / `offerOverlay.ts` / `textCompositing.ts`), Gemini 3.5 Flash (text + image via `reflowRerender.ts`), React 19, Zustand 4, Tailwind CSS 3 (017-resize-reflow)
 - Firestore — `generations/{genId}` (extends existing doc — adds `mockupHistory` chip-map shape change, new `resolutionTrace.brandColorReinforced` / `resolutionTrace.textReflowOverflow` flags); `users/{uid}` (credits — unchanged read/write path) (017-resize-reflow)
+- TypeScript 5.7 (Cloud Functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Firebase Admin SDK, Firestore; React 19, Zustand 4, Tailwind CSS 3, Vite 7; Gemini (text/copy generation — unchanged); OpenAI gpt-image-2 for visuals (unchanged, gated by `MODEL_PROVIDER`) (959-copy-structure-variation)
+- Firestore — `creativeMemory/{creativeId}` and `creativePatterns/{userId}/indexes/{indexKey}` (extended additively with anti-repetition fingerprints); no schema migration; frontend `tovText` string + new per-card variation state in the Zustand store (959-copy-structure-variation)
 
 ## Recent Changes
 - 025-openai-image-swap: Swapped visual image engine from Gemini to OpenAI gpt-image-2. New files `functions/src/modelConfig.ts` (provider selector + size map), `functions/src/openAIImageCaller.ts` (drop-in GeminiCaller backed by OpenAI SDK). Model-aware routing caller `createVisualRoutingCaller()` in `index.ts` routes VISUAL_MODEL calls to gpt-image-2 when `MODEL_PROVIDER='openai'`, keeps text/JSON calls on Gemini. GPT-native prompt in `buildFinalImagePrompt()` replaces rigid text-rendering rules with free-form placement instructions. Copy-fidelity retry gated to single pass on OpenAI path. `ResolutionTrace.visualProvider` sub-object added for per-generation audit. Three visual callables routed: `serverGenerateFinalAd`, `reflowImage`, `serverEditRegion`. Fully reversible via `MODEL_PROVIDER='gemini'` flag + git revert of prompt block. Arabic Text QA loop kept active. Sharp text compositing unchanged (already inert in live path). No frontend, billing, or Firestore schema changes.

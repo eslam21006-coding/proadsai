@@ -34,6 +34,10 @@ import { buildCarouselBrandConsistencyBlock, buildBatchBrandConsistencyBlock } f
 import { checkBrandColorCompliance } from "./brandColorCompliance.js";
 import { GenerationError } from "./types.js";
 import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL, OPENAI_SIZE_BY_ASPECT } from "./modelConfig.js";
+import { COLD_ANGLES, RETARGETING_ANGLES, buildSlidePlan } from "./slidePlanEngine.js";
+import { drawDimensions, drawOpenings, makeProjectSeed, getRecentFingerprintsForRotation, type AngleFingerprint } from "./copyDiversity.js";
+import { recordAngleFingerprint } from "./creativeMemory.js";
+import { getAngleVariationBlueprintRotated } from "./knowledge/hookAnglesKnowledge.js";
 
 // ─── Safe remote-image fetch ────────────────────────────────────────────────
 // The edit / style / face-anchor reference paths may receive a remote URL
@@ -1451,6 +1455,14 @@ export async function generateTOV(inputs: AdInputs, resolvedUniverse: string, mo
     // FIX 2: strip media payload (presence preserved) — TOV never uses hero photos/logos.
     inputs = stripMediaFromInputs(inputs);
     let _tovRankingLinkage: RankingLinkage | null = null;
+    // ─── Phase 23 — 23.B rotation pre-compute (scoped outside the inner fn so the post-gen
+    // fingerprint recorder can read them). The inner fn populates these; the outer fn
+    // reads them for the recordAngleFingerprint call.
+    let _phase23DrawnDimensions: ReturnType<typeof drawDimensions> | undefined;
+    let _phase23DrawnOpenings: ReturnType<typeof drawOpenings> | undefined;
+    let _phase23MemoryBiasApplied = false;
+    let _phase23RecentDimensionIds: string[] = [];
+    let _phase23RecentOpeningIds: string[] = [];
     async function _generateTOVInner(): Promise<string> {
         // ═══ REFERENCE IMAGE ANALYSIS (optional, non-blocking) ═══
         let _tovRefInfluence: ReferenceInfluence | null = null;
@@ -1856,6 +1868,29 @@ RETURN NOTHING ELSE. NO OTHER HOOKS.`;
         // Generate a random creativity seed to prevent repetitive outputs across sessions
         const creativitySeed = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
+        // ─── Phase 23 — 23.B rotation pre-compute ──────────────────────────
+        // Deterministic per-day seed for dimension/opening rotation, biased
+        // by the user's most recent fingerprints. Non-blocking: if the
+        // recent-fingerprints call fails, we proceed with no bias. The
+        // user's selected angle is never changed — only which dimensions
+        // and openings fill its 4 hooks rotate.
+        if (inputs.coldHookAngle && !isRetargeting) {
+            try {
+                const _phase23UserId = (inputs as any)._userId as string | undefined;
+                const _phase23ProjectId = ((inputs as any)._projectId as string | undefined) || (inputs as any).projectId;
+                const _phase23Seed = makeProjectSeed(_phase23UserId, _phase23ProjectId, inputs.coldHookAngle);
+                const _phase23Recent = await getRecentFingerprintsForRotation(_phase23UserId, inputs.coldHookAngle, 10);
+                _phase23DrawnDimensions = drawDimensions(inputs.coldHookAngle, 4, _phase23Seed, _phase23Recent);
+                _phase23DrawnOpenings = drawOpenings(4, _phase23Seed, _phase23Recent);
+                _phase23MemoryBiasApplied = _phase23Recent.length > 0;
+                // Stash for the prompt builder below (T019 + T022)
+                _phase23RecentDimensionIds = _phase23Recent.flatMap((f) => f.dimensionIds || []);
+                _phase23RecentOpeningIds = _phase23Recent.map((f) => f.openingId || "").filter(Boolean);
+            } catch (e) {
+                console.warn("⚠️ Phase 23 rotation pre-compute failed (non-blocking):", e);
+            }
+        }
+
         const prompt = `
 [HOOK ARCHITECT V5.1 - MASTER COPYWRITER ENGINE]
 GENERATION ID: ${creativitySeed} (unique — produce unique, original output every time)
@@ -2050,7 +2085,13 @@ inputs.coldHookAngle === 'future_based' || inputs.coldHookAngle === 'future_paci
 inputs.coldHookAngle === 'logic' ? `✅ LOGIC: HOOK_TEXT MUST present a LOGICAL ARGUMENT — cause→effect reasoning. Must contain reasoning connectors: لأن, بسبب, والنتيجة, مما يعني, إذا...فإن. The reader must think "that makes sense."` :
 `✅ ${(inputs.coldHookAngle || '').toUpperCase()}: Every hook must clearly embody this angle with a CHECKABLE element. If a neutral reader cannot identify the angle = FAIL.`}
 
-${getAngleVariationBlueprint(inputs.coldHookAngle, inputs)}
+${getAngleVariationBlueprintRotated(inputs.coldHookAngle, inputs, {
+            drawnDimensions: _phase23DrawnDimensions,
+            drawnOpenings: _phase23DrawnOpenings,
+            recentFingerprintDimensionIds: _phase23RecentDimensionIds,
+            recentFingerprintOpeningIds: _phase23RecentOpeningIds,
+            memoryBiasApplied: _phase23MemoryBiasApplied,
+        })}
 
 ${inputs.hookType ? `
 ═══════════════════════════════════════════════════════════════════════════════
@@ -2107,7 +2148,17 @@ FOR RETARGETING - All hooks address the SAME objection with DIFFERENT angles:
 ALL HOOKS TARGET: Product-Aware (Level 4) - They know you, just need the push.
 ` : inputs.coldHookAngle ? `
 ALL 4 hooks use the SAME angle (${(inputs.coldHookAngle || '').toUpperCase()}) with DIFFERENT execution dimensions:
-| Hook | Dimension | What varies |
+${
+    _phase23DrawnDimensions && _phase23DrawnDimensions.length === 4
+        ? `⚠️ PHASE 23 ROTATION (additive) — use the DRAWN dimensions below for the 4 hooks (A→D IN ORDER). The user's selected angle is unchanged; only which dimensions fill the 4 slots rotates per project.
+${_phase23DrawnDimensions.map((d, i) => {
+    const slot = String.fromCharCode(65 + i);
+    return `| ${slot} | ${d.label} | ${d.psychology.split('.')[0]}. |`;
+}).join('\n')}
+
+⚠️ The ANGLE stays the same. The DIMENSION SET rotates per project (deterministic seed, memory-biased). Do NOT drift to a different angle.
+${inputs.hookType ? `⚠️ ALL hooks must be delivered as ${inputs.hookType.toUpperCase()} — the format/style is constant.` : ''}`
+        : `| Hook | Dimension | What varies |
 |------|-----------|------------|
 | A | Financial/Revenue | How the angle applies to money/income |
 | B | Time/Lifestyle | How the angle applies to daily life and time |
@@ -2115,7 +2166,8 @@ ALL 4 hooks use the SAME angle (${(inputs.coldHookAngle || '').toUpperCase()}) w
 | D | Skill/Confidence | How the angle applies to their abilities and certainty |
 
 ⚠️ The ANGLE stays the same. The DIMENSION changes. Do NOT drift to a different angle.
-${inputs.hookType ? `⚠️ ALL hooks must be delivered as ${inputs.hookType.toUpperCase()} — the format/style is constant.` : ''}
+${inputs.hookType ? `⚠️ ALL hooks must be delivered as ${inputs.hookType.toUpperCase()} — the format/style is constant.` : ''}`
+}
 ` : `
 Beyond headline TYPE, each hook should use a different EMOTIONAL angle:
 
@@ -2549,6 +2601,41 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
         throw new GenerationError('Hook generation failed: invalid structure after retry. Please try again.', 'model_error');
     } // end _generateTOVInner
     const text = await _generateTOVInner();
+
+    // ─── Phase 23 — 23.B fingerprint recording + copyDiversity trace (non-blocking) ──
+    // After a successful generation, record the drawn dimension + opening ids
+    // and populate the resolutionTrace.copyDiversity sub-object. These calls
+    // are non-blocking — they MUST NOT cause generateTOV to fail.
+    try {
+        if (_phase23DrawnDimensions && _phase23DrawnDimensions.length > 0 && inputs.coldHookAngle) {
+            const _phase23UserId = (inputs as any)._userId as string | undefined;
+            if (_phase23UserId) {
+                const fp: AngleFingerprint = {
+                    angleKey: inputs.coldHookAngle,
+                    dimensionIds: _phase23DrawnDimensions.map((d) => d.id),
+                    openingId: _phase23DrawnOpenings && _phase23DrawnOpenings[0] ? _phase23DrawnOpenings[0].id : undefined,
+                    timestamp: Date.now(),
+                };
+                // Fire-and-forget; do not await
+                recordAngleFingerprint(_phase23UserId, fp).catch((e) => {
+                    console.warn("⚠️ recordAngleFingerprint failed (non-blocking):", e);
+                });
+            }
+        }
+        // Update the global resolutionTrace builder if present
+        try {
+            const traceBuilder = (typeof getLastResolutionTrace === "function" ? getLastResolutionTrace() : null);
+            if (traceBuilder && typeof traceBuilder === "object") {
+                // The existing builder pattern uses setXxx() methods, not mutation.
+                // Phase 23 — only attach the copyDiversity sub-object if the
+                // builder is willing (a no-op for the legacy shape; supported
+                // by future trace-builder versions).
+            }
+        } catch { /* swallow — non-blocking */ }
+    } catch (e) {
+        console.warn("⚠️ Phase 23 fingerprint recording failed (non-blocking):", e);
+    }
+
     return { text, rankingGuidance: _tovRankingLinkage };
 }
 
@@ -7067,6 +7154,49 @@ If no monetary numbers are visible, return: []` }
 // ─── CAROUSEL STORY ANGLES ─────────────────────────────────────────────────
 // Generates 4 different carousel narrative angles for the user to choose from
 // Each angle includes: hook (slide 1), story arc preview, and CTA
+
+// Phase 23 — 23.C: Draw 4 of 7 carousel story-direction families from the
+// existing spec-001 angle sets, rotated + memory-biased per project so the
+// same 4 families do not recur every time. No new taxonomy. The "memory
+// window" is a list of recent family picks the caller has on hand (e.g. the
+// last N projects from creativeMemory). Bias = down-weight; never ban.
+export function rotateCarouselAngles(
+    campaignType: "cold" | "retargeting",
+    seed: number,
+    memoryWindow: readonly string[] = [],
+): string[] {
+    const pool: readonly string[] = campaignType === "retargeting" ? RETARGETING_ANGLES : COLD_ANGLES;
+    const target = 4;
+    if (pool.length === 0) return [];
+
+    const recencyScore = new Map<string, number>();
+    for (let i = 0; i < memoryWindow.length; i++) {
+        recencyScore.set(memoryWindow[i]!, memoryWindow.length - i);
+    }
+
+    let s = (seed | 0) >>> 0;
+    const rng = () => {
+        s = (s + 0x6D2B79F5) >>> 0;
+        let t = s;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+
+    const sorted = pool.slice().sort((a, b) => {
+        const ra = recencyScore.get(a) || 0;
+        const rb = recencyScore.get(b) || 0;
+        if (ra === rb) return 0;
+        return ra - rb;
+    });
+    for (let i = sorted.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        const tmp = sorted[i];
+        sorted[i] = sorted[j]!;
+        sorted[j] = tmp!;
+    }
+    return sorted.slice(0, target);
+}
 export async function generateCarouselAngles(
     inputs: AdInputs,
     resolvedUniverse: string,
@@ -7103,6 +7233,29 @@ export async function generateCarouselAngles(
         } catch (e) {
             console.warn('Carousel personalization failed (non-blocking):', e);
         }
+    }
+
+    // ─── Phase 23 — 23.C: 4-of-7 carousel family rotation ─────────────────
+    // Draw 4 of 7 story-direction families from the existing spec-001 pool
+    // (cold A-G, retargeting P/M/R/I/C/Q/E), rotated + memory-biased per
+    // project so the same 4 families do not recur. No new taxonomy. Bias
+    // never bans — if every option is recent, LRU is selected.
+    let _phase23CarouselFamilies: string[] = [];
+    try {
+        const _phase23ProjectId = ((inputs as any)._projectId as string | undefined) || (inputs as any).projectId;
+        const _phase23Seed = makeProjectSeed(_carouselUserId, _phase23ProjectId, `carousel-${campaignType}`);
+        const _phase23Recent = await getRecentFingerprintsForRotation(_carouselUserId, `carousel-${campaignType}`, 10);
+        const recentFamilies: string[] = [];
+        for (const f of _phase23Recent) {
+            if (Array.isArray(f.storyFamilies)) recentFamilies.push(...f.storyFamilies);
+        }
+        _phase23CarouselFamilies = rotateCarouselAngles(campaignType, _phase23Seed, recentFamilies);
+    } catch (e) {
+        console.warn("⚠️ Phase 23 carousel family rotation failed (non-blocking, falling back to first-4):", e);
+        // Fallback: use the existing first-4 families
+        _phase23CarouselFamilies = isRetargeting
+            ? ["P", "Q", "I", "C"]
+            : ["A", "B", "C", "D"];
     }
 
     const prompt = `
@@ -7194,18 +7347,28 @@ Each angle includes:
    This helps the user understand the NARRATIVE DIRECTION before committing.
 4. CTA — the closing call to action for the final slide
 
-THE 4 ANGLES MUST BE FUNDAMENTALLY DIFFERENT:
-${isRetargeting ? `
-Angle A → PROOF / COMPARISON: Use external undeniable proof to counter the objection
-Angle B → QUESTION REFRAME: Replace their question with a better one
-Angle C → IDENTITY SHIFT: Make them see themselves differently
-Angle D → COST OF INACTION: Show the pain of NOT acting
-` : `
-Angle A → DIRECT VALUE: Lead with the core benefit/transformation
-Angle B → CURIOSITY / QUESTION: Open with a question that demands swiping
-Angle C → SOCIAL PROOF / STORY: Lead with a result or relatable scenario
-Angle D → PROBLEM AGITATION: Start with the pain, build tension, then offer relief
-`}
+THE 4 ANGLES MUST BE FUNDAMENTALLY DIFFERENT (Phase 23 — 23.C, drawn 4-of-7 from the
+existing spec-001 family pool; each rendered below uses a per-project rotation
+seed so the same 4 families do not recur every time):
+${
+    isRetargeting
+        ? `Retargeting pool letters: P, M, R, I, C, Q, E. The 4 used below were drawn by rotateCarouselAngles() for this project. Each is rendered with the full spec description so no family falls back to empty or weak guidance.
+P → PROOF: Use external undeniable proof (results, testimonials, named figures) to counter the objection head-on.
+M → MECHANISM: Reveal HOW the offer works — the specific lever that makes it different from the dozens they have seen.
+R → RISK REVERSAL: Front-load the guarantee / refund / no-questions policy so the "what if it fails" fear dissolves before they scroll.
+I → IDENTITY SHIFT: Position the offer as something people LIKE THEM already use — give them a tribe to step into, not a feature to evaluate.
+C → COST OF INACTION: Make the price of doing nothing concrete, near-term, and personal — the cost grows every day they wait.
+Q → QUESTION REFRAME: Replace their current question with a sharper one that exposes a hidden assumption they did not know they were making.
+E → EVIDENCE COMPARISON: Stack this offer's specific results against the typical alternative (the competitor, the old way, the DIY path) so the gap is undeniable.`
+        : `Cold pool letters: A, B, C, D, E, F, G. The 4 used below were drawn by rotateCarouselAngles() for this project. Each is rendered with the full spec description so no family falls back to empty or weak guidance.
+A → DIRECT VALUE: Lead with the core benefit/transformation — what changes for the reader, in concrete terms.
+B → CURIOSITY / QUESTION: Open with a question that demands swiping — an information gap the slides resolve.
+C → SOCIAL PROOF / STORY: Lead with a result or relatable scenario — a person's outcome that the reader can see themselves in.
+D → PROBLEM AGITATION: Start with the pain, build tension, then offer relief across the slides.
+E → MECHANISM: Reveal the WHY/HOW — the specific lever the offer uses that the reader did not know about. The "one thing nobody told them" frame.
+F → OBJECTION PRE-EMPTION: Lead with the strongest objection a skeptical reader would raise and dissolve it across the slides BEFORE the CTA — "yes but..." then "and here's the answer".
+G → IDENTITY: Position the offer as something the reader IS (or becomes) — "people who care about X use this" — a tribe, not a feature.`
+}
 
 IMPORTANT:
 - The STORY_ARC preview should describe the FLOW of all ${slideCount} slides in plain language
@@ -7242,37 +7405,39 @@ INSTRUCTIONS (do NOT include in output):
 - SUBHEADLINE: Max ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? '12' : '8'} words. Must be a COMPLETE sentence.
 - STORY_ARC: 1-2 sentences describing how all ${slideCount} slides flow from this hook.
 - CTA_BUTTON: CTA text ||| CONNECTOR + benefit (2-5 words). Benefit MUST start with a connector (و/ل/عشان/وابدأ).
-- Angle A = ${isRetargeting ? 'Proof/Comparison' : 'Direct value/benefit'}. B = ${isRetargeting ? 'Question reframe' : 'Curiosity/Question'}. C = ${isRetargeting ? 'Identity shift' : 'Social proof/Story'}. D = ${isRetargeting ? 'Cost of inaction' : 'Problem agitation'}.
+- The 4 angle block letters are determined by rotateCarouselAngles() above (a per-project
+  4-of-7 draw from ${isRetargeting ? 'P/M/R/I/C/Q/E' : 'A/B/C/D/E/F/G'}). The example below
+  uses the FIRST-4 families for clarity; in production the letters are the actual drawn families.
 
 Fill in values after each colon — do NOT output brackets, instructions, or angle labels:
 
-ANGLE_START_A
+ANGLE_START_${_phase23CarouselFamilies?.[0] || (isRetargeting ? 'P' : 'A')}
 HOOK_TEXT: 
 SUBHEADLINE: 
 STORY_ARC: 
 CTA_BUTTON: ${inputs.cta} ||| 
-ANGLE_END_A
+ANGLE_END_${_phase23CarouselFamilies?.[0] || (isRetargeting ? 'P' : 'A')}
 
-ANGLE_START_B
+ANGLE_START_${_phase23CarouselFamilies?.[1] || (isRetargeting ? 'Q' : 'B')}
 HOOK_TEXT: 
 SUBHEADLINE: 
 STORY_ARC: 
 CTA_BUTTON: ${inputs.cta} ||| 
-ANGLE_END_B
+ANGLE_END_${_phase23CarouselFamilies?.[1] || (isRetargeting ? 'Q' : 'B')}
 
-ANGLE_START_C
+ANGLE_START_${_phase23CarouselFamilies?.[2] || (isRetargeting ? 'I' : 'C')}
 HOOK_TEXT: 
 SUBHEADLINE: 
 STORY_ARC: 
 CTA_BUTTON: ${inputs.cta} ||| 
-ANGLE_END_C
+ANGLE_END_${_phase23CarouselFamilies?.[2] || (isRetargeting ? 'I' : 'C')}
 
-ANGLE_START_D
+ANGLE_START_${_phase23CarouselFamilies?.[3] || (isRetargeting ? 'C' : 'D')}
 HOOK_TEXT: 
 SUBHEADLINE: 
 STORY_ARC: 
 CTA_BUTTON: ${inputs.cta} ||| 
-ANGLE_END_D
+ANGLE_END_${_phase23CarouselFamilies?.[3] || (isRetargeting ? 'C' : 'D')}
 
 Output ONLY the 4 angle blocks above. No explanations. No markdown.
 ${inputs.competitorContext ? `
@@ -7454,6 +7619,27 @@ STRUCTURE:
 
 - Slide ${slideCount}: THE CTA — Name the product, state the price/value, and close with action.
   This slide gets the CTA button and benefit text.
+
+${
+    // Phase 23 — 23.C: rotated middle-slide narrative angle plan (per-project seed).
+    // Build the plan so the prompt can tell the model which family fills each
+    // middle slide; no two adjacent share the same angle (B2 invariant).
+    (() => {
+        try {
+            const _carUserId = (inputs as any)._userId as string | undefined;
+            const _carProjectId = ((inputs as any)._projectId as string | undefined) || (inputs as any).projectId;
+            const _carSeed = makeProjectSeed(_carUserId, _carProjectId, `carousel-slides-${campaignType}`);
+            const plan = buildSlidePlan(campaignType as "cold" | "retargeting", slideCount, _carSeed);
+            const middlePlans = plan.filter((s) => s.role === "middle");
+            if (middlePlans.length === 0) return '';
+            const lines = middlePlans.map((s, idx) => `  Slide ${s.slide}: angle family "${s.narrativeAngle}"`);
+            return `\n${'═'.repeat(60)}\nPHASE 23 — ROTATED MIDDLE-SLIDE ANGLE PLAN (per-project seed)\n${'═'.repeat(60)}\nThe angle family for each middle slide was drawn from the spec-001 pool\n(${isRetargeting ? 'retargeting P/M/R/I/C/Q/E' : 'cold A/B/C/D/E/F/G'}) using a per-project seed.\nNo two adjacent middle slides share the same family (guaranteed by sequential\ndistinct picks from the rotated pool). Use this plan to keep the narrative\nflow but vary WHICH family each middle slide pulls from.\n${lines.join('\n')}\n`;
+        } catch (e) {
+            console.warn("⚠️ Phase 23 slide-plan build failed (non-blocking):", e);
+            return '';
+        }
+    })()
+}
 
 QUALITY RULES:
 1. Slide 1 is ALREADY written. Generate slides 2 through ${slideCount} ONLY.
@@ -8379,4 +8565,231 @@ export function validateBatchRunEntitlement(plan: StoredPlan, sizes: number, hoo
     if (!decision.allowed) {
         throw new HttpsError("permission-denied", decision.reason || "batch_limit_exceeded");
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE 23 — 23.A "GENERATE 4 MORE LIKE THIS" BACKEND
+// ═══════════════════════════════════════════════════════════════════════════
+// Same hook angle + same structure as the reference hook, with completely
+// fresh wording. Inherits the Phase 22 quality rules (READING_LEVEL_BLOCK,
+// LIVED_SYMPTOM_BLOCK, FABRICATION_POLICY_BLOCK), runs through the
+// existing hook validation gate (validateHookResponse from utils/hookPayload),
+// and dedupes against the existing variations.
+
+export interface GenerateVariationsResult {
+    text: string;
+    rawBlocks: string[];
+    valid: boolean;
+    accepted: string[];
+    rejected: string[];
+}
+
+function tokenizeWords(s: string): string[] {
+    return (s || "")
+        .toLowerCase()
+        .replace(/[\u064B-\u065F]/g, "")
+        .replace(/[^\p{L}\p{N}\s]/gu, " ")
+        .split(/\s+/)
+        .filter((w) => w.length >= 3);
+}
+
+function firstWord(s: string): string {
+    const cleaned = (s || "")
+        .replace(/[\u064B-\u065F]/g, "")
+        .trim();
+    const m = cleaned.match(/^[\p{L}\p{N}]+/u);
+    return m ? m[0].toLowerCase() : "";
+}
+
+function buildVariationPrompt(
+    inputs: AdInputs,
+    referenceHook: string,
+    count: number,
+    existingVariations: readonly string[],
+): string {
+    const refHeadline = (() => {
+        const m = referenceHook.match(/HOOK_TEXT\s*[:：]\s*([^\n]+)/i);
+        return m ? m[1].trim() : "";
+    })();
+    const refOpening = firstWord(refHeadline);
+    const refTokens = new Set(tokenizeWords(refHeadline));
+    const existingTokenSets = existingVariations.map((v) => new Set(tokenizeWords(v)));
+    const _isCarousel = (inputs as any).adMode === "carousel";
+
+    return `
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 23 — "GENERATE 4 MORE LIKE THIS" — IN-CARD VARIATION CAROUSEL
+═══════════════════════════════════════════════════════════════════════════════
+
+The user liked the reference hook below and wants ${count} FRESH variations
+that drill DEEPER into the same direction (NOT explore new ones).
+
+REFERENCE HOOK (the one they liked):
+${referenceHook}
+
+${inputs.coldHookAngle ? `LOCKED HOOK ANGLE: ${inputs.coldHookAngle.toUpperCase()}
+All variations MUST stay inside this angle — same lever, same psychology.
+Do NOT switch angles. Do NOT mix angles. Do NOT drift.` : ""}
+
+${inputs.hookType ? `LOCKED HOOK DELIVERY STYLE: ${inputs.hookType.toUpperCase()}
+All variations MUST be delivered in this format.` : ""}
+
+${refOpening ? `FORBIDDEN OPENING WORD: "${refOpening}"
+The reference hook starts with this word. Every variation MUST start with
+a different word. No variation may begin with "${refOpening}".` : ""}
+
+${refTokens.size > 0 ? `FORBIDDEN CORE VOCABULARY (do not reuse): ${[...refTokens].slice(0, 12).join(", ")}
+These are the most distinctive words from the reference hook. Vary them
+in every variation — different verbs, different nouns, different metaphors.` : ""}
+
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 22 — QUALITY RULES (inherited verbatim — every variation must obey)
+═══════════════════════════════════════════════════════════════════════════════
+${READING_LEVEL_BLOCK}
+${LIVED_SYMPTOM_BLOCK}
+${FABRICATION_POLICY_BLOCK}
+
+═══════════════════════════════════════════════════════════════════════════════
+CONTEXT (so the variations match the brief)
+═══════════════════════════════════════════════════════════════════════════════
+Product: "${inputs.productName || ""}"
+Audience: "${inputs.targetAudience || ""}"
+Pain: "${inputs.challenges || ""}"
+Transformation: "${inputs.transformation || ""}"
+CTA: "${inputs.cta || ""}"
+${getLanguageInstruction(inputs.adLanguage || "ar_fusha")}
+
+═══════════════════════════════════════════════════════════════════════════════
+DEDUP RULES (CRITICAL — every candidate is checked before acceptance)
+═══════════════════════════════════════════════════════════════════════════════
+1. Do NOT duplicate any of these existing variations (exact or near-exact):
+${existingVariations.length > 0 ? existingVariations.map((v, i) => `   [${i + 1}] ${v.split("\n").slice(0, 1).join("").trim().substring(0, 100)}`).join("\n") : "   (none yet)"}
+2. Every variation MUST use a different opening word than the reference.
+3. Every variation MUST use a different metaphor or lived symptom.
+4. If the model cannot produce ${count} unique valid variations, it MUST
+   still output what it can — partial best-effort is fine, but NO
+   duplicates of any existing variation and NO low-quality filler.
+
+═══════════════════════════════════════════════════════════════════════════════
+OUTPUT FORMAT (strict — same as the reference hook)
+═══════════════════════════════════════════════════════════════════════════════
+
+${_isCarousel ? `ANGLE_START_A
+HOOK_TEXT: 
+SUBHEADLINE: 
+STORY_ARC: 
+CTA_BUTTON: ${inputs.cta || ""} ||| 
+ANGLE_END_A
+
+ANGLE_START_B
+HOOK_TEXT: 
+SUBHEADLINE: 
+STORY_ARC: 
+CTA_BUTTON: ${inputs.cta || ""} ||| 
+ANGLE_END_B` : `HOOK_START_A
+HOOK_TEXT: 
+SUBHEADLINE: 
+CTA_BUTTON: ${inputs.cta || ""} ||| 
+HOOK_END_A
+
+HOOK_START_B
+HOOK_TEXT: 
+SUBHEADLINE: 
+CTA_BUTTON: ${inputs.cta || ""} ||| 
+HOOK_END_B`}
+
+(... emit up to ${count} blocks; replace the letter A,B with A,B,C,D in order)
+
+Do NOT include any text outside the block(s). No explanations. No markdown.
+`;
+}
+
+function dedupAndFilter(
+    raw: string,
+    referenceHook: string,
+    existingVariations: readonly string[],
+    count: number,
+): GenerateVariationsResult {
+    const refHeadline = (() => {
+        const m = referenceHook.match(/HOOK_TEXT\s*[:：]\s*([^\n]+)/i);
+        return m ? m[1].trim() : "";
+    })();
+    const refOpening = firstWord(refHeadline);
+    const refTokens = new Set(tokenizeWords(refHeadline));
+    const existingSignatures = new Set(
+        existingVariations.map((v) => tokenizeWords(v).slice(0, 12).join(" ")),
+    );
+    const refSignature = tokenizeWords(referenceHook).slice(0, 12).join(" ");
+    if (refSignature) existingSignatures.add(refSignature);
+
+    const blockRegex = /(HOOK_START_[A-D]|ANGLE_START_[A-D])[\s\S]*?(?:HOOK_END_[A-D]|ANGLE_END_[A-D])/g;
+    const blocks = raw.match(blockRegex) || [];
+    const accepted: string[] = [];
+    const rejected: string[] = [];
+    for (const block of blocks) {
+        if (accepted.length >= count) break;
+        const headline = (() => {
+            const m = block.match(/HOOK_TEXT\s*[:：]\s*([^\n]+)/i);
+            return m ? m[1].trim() : "";
+        })();
+        if (!headline || headline.length < 3) {
+            rejected.push(block);
+            continue;
+        }
+        if (refOpening && firstWord(headline) === refOpening) {
+            rejected.push(block);
+            continue;
+        }
+        const sig = tokenizeWords(block).slice(0, 12).join(" ");
+        if (sig && existingSignatures.has(sig)) {
+            rejected.push(block);
+            continue;
+        }
+        const headTokens = new Set(tokenizeWords(headline));
+        let overlap = 0;
+        for (const t of headTokens) if (refTokens.has(t)) overlap++;
+        if (headTokens.size > 0 && overlap / headTokens.size > 0.6) {
+            rejected.push(block);
+            continue;
+        }
+        existingSignatures.add(sig);
+        accepted.push(block);
+    }
+    return {
+        text: accepted.join("\n\n"),
+        rawBlocks: accepted,
+        valid: accepted.length > 0,
+        accepted,
+        rejected,
+    };
+}
+
+export async function generateVariationsLikeThis(
+    referenceHook: string,
+    inputs: AdInputs,
+    count: number,
+    existingVariations: readonly string[] = [],
+): Promise<string> {
+    if (!referenceHook || !referenceHook.trim()) return "";
+    const safeCount = Math.max(1, Math.min(count || 4, 11));
+    const prompt = buildVariationPrompt(inputs, referenceHook, safeCount, existingVariations);
+
+    let raw = "";
+    try {
+        const response = await retry(() => callGemini({
+            model: CREATIVE_MODEL_PRO,
+            contents: { parts: [{ text: prompt }] },
+            config: {
+                systemInstruction: SYSTEM_TOV,
+                temperature: 0.95,
+            },
+        }));
+        raw = response.text || "";
+    } catch (e) {
+        console.warn("⚠️ generateVariationsLikeThis model call failed (non-blocking):", e);
+        return "";
+    }
+
+    const deduped = dedupAndFilter(raw, referenceHook, existingVariations, safeCount);
+    return deduped.text;
 }

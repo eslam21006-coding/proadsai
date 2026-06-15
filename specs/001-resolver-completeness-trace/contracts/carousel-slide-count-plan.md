@@ -2,6 +2,11 @@
 
 **Feature**: 001-resolver-completeness-trace
 **Location**: `functions/src/slidePlanEngine.ts` (new file)
+**Updated by**: Phase 23 (959-copy-structure-variation, FR-022) — middle-slide
+angle assignment is now rotated per-project instead of fixed lockstep.
+**Lockstep files (FR-022)**: this contract + `generators.ts` +
+`specs/_shared/COPY_SYSTEM_REFERENCE.md` Section 17 (and the
+"Section 5.A" reference) MUST change together in this PR.
 
 ## Function Signature
 
@@ -14,6 +19,7 @@ interface SlidePlanOptions {
 function buildSlidePlan(
   campaignType: 'cold' | 'retargeting',
   slideCount: number,
+  seed?: number,                   // Phase 23 — optional per-project rotation seed
   options?: SlidePlanOptions
 ): SlidePlan;
 
@@ -51,20 +57,29 @@ type SlidePlan = SlideEntry[];
 | Slide | Role | CTA | Angle | Photo Injection |
 |-------|------|-----|-------|-----------------|
 | 1 | hook | true | `'hook'` | true (Box A) |
-| 2..N-1 | middle | false | A, B, C, D, E, F, G (in order, first N-2) | false |
+| 2..N-1 | middle | false | `pool[(i + offset) % 7]` (Phase 23 rotated) | false |
 | N | close | true | `'close'` | false |
 
-**Cold angles**: A=Direct value, B=Curiosity, C=Social proof, D=Problem agitation, E=Mechanism, F=Objection pre-emption, G=Identity
+**Cold angles pool**: A=Direct value, B=Curiosity, C=Social proof, D=Problem agitation, E=Mechanism, F=Objection pre-emption, G=Identity
+
+**Phase 23 — middle-slide rotation**: When `seed` is supplied, `offset = (seed mod 7)`
+rotates the pool so the assignment is `pool[(i + offset) % 7]` instead of the
+old fixed `pool[i % 7]` lockstep. `offset` is derived deterministically
+from the per-project seed (`userId + projectId + day`); with a fixed seed,
+the plan is fully deterministic (Principle VI). When `seed` is omitted,
+behavior is identical to the pre-Phase-23 lockstep (backwards compatible).
 
 ## Retargeting Carousel Rules
 
 | Slide | Role | CTA | Angle | Photo Injection |
 |-------|------|-----|-------|-----------------|
 | 1 | hook | true | `'objection_hook'` | true (Box A) |
-| 2..N-1 | middle | false | P, M, R, I, C, Q, E (in order, first N-2) | false |
+| 2..N-1 | middle | false | `pool[(i + offset) % 7]` (Phase 23 rotated) | false |
 | N | close | true | `'close'` | false |
 
-**Retargeting angles**: P=Proof, M=Mechanism, R=Risk reversal, I=Identity shift, C=Cost of inaction, Q=Question reframe, E=Evidence comparison
+**Retargeting angles pool**: P=Proof, M=Mechanism, R=Risk reversal, I=Identity shift, C=Cost of inaction, Q=Question reframe, E=Evidence comparison
+
+**Phase 23 — middle-slide rotation**: Same offset mechanic as cold.
 
 ## Value Stack Auto-Adjustment
 
@@ -76,10 +91,25 @@ resolvedSlideCount = min(giftCount + 2, 9)
 - If `resolvedSlideCount !== userSelectedCount`: `wasOverridden = true`
 - User notification: `"Carousel adjusted to {N} slides — one gift per slide."`
 
-## Invariants
+## Invariants (re-verified post-rotation, unchanged from pre-Phase-23)
 
-- Pure function: same inputs → same output (deterministic)
+- Pure function: same `(campaignType, slideCount, seed)` → same plan
+  (deterministic; the offset is derived from the seed, not from time)
 - `slideCount` must be 2–9 (throw if outside range)
-- CTA on slide 1 and last slide only — never on middle slides
-- No two adjacent middle slides share the same angle (guaranteed by sequential assignment)
-- `photoInjection` is `true` only for slide 1
+- CTA on slide 1 and last slide only — never on middle slides (FR-021, B3)
+- **No two adjacent middle slides share the same angle** (FR-021, B2) —
+  guaranteed by sequential distinct picks from the rotated 7-element pool
+  (distinct pool entries in order, then wrap via modulo; no two consecutive
+  `i` values map to the same `(i + offset) % 7`).
+- `photoInjection` is `true` only for slide 1 (FR-021, B4)
+- Short carousels (2–3 slides, 0–1 middle) still satisfy all invariants
+  trivially (B5)
+
+## Phase 23 — Why the rotation
+
+Pre-Phase-23, every project with `slideCount=5` got the SAME middle-slide
+sequence A→B→C→D, so the middle slides always repeated across projects.
+Phase 23 rotates this with a per-project seed so the order varies
+across projects while the contract's invariants (no adjacent repeat,
+CTA slide 1 + last only, photo slide 1 only) are preserved.
+

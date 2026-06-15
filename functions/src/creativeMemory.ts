@@ -431,3 +431,66 @@ Do NOT copy past creatives — use these patterns to INFORM composition and angl
 // All queries are scoped to userId — no cross-account leakage.
 // Patterns influence composition choices, never clone exact designs.
 // Memory records don't store full images — only metadata and performance.
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. ANTI-REPETITION FINGERPRINTS (Phase 23 — 23.B / 23.C)
+// ═══════════════════════════════════════════════════════════════════════════
+// Per-generation lightweight fingerprints used to bias-but-never-ban future
+// generations away from recently used angle + dimension + opening combinations.
+// Stored on a small companion sub-collection (no schema migration; legacy
+// `creativeMemory/{creativeId}` records continue to work as before).
+
+export interface AngleFingerprint {
+    angleKey: string;
+    dimensionIds: string[];
+    openingId?: string;
+    storyFamilies?: string[];
+    timestamp: number | FirebaseFirestore.FieldValue;
+}
+
+export const FINGERPRINT_WINDOW = 10;
+
+export async function recordAngleFingerprint(
+    userId: string,
+    fingerprint: AngleFingerprint,
+): Promise<void> {
+    try {
+        const db = getDb();
+        const ref = db
+            .collection("creativeMemoryFingerprints")
+            .doc(userId)
+            .collection("entries")
+            .doc();
+        await ref.set({
+            ...fingerprint,
+            userId,
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        });
+    } catch (e) {
+        console.warn("⚠️ recordAngleFingerprint failed (non-blocking):", e);
+    }
+}
+
+export async function getRecentFingerprints(
+    userId: string,
+    window: number = FINGERPRINT_WINDOW,
+): Promise<AngleFingerprint[]> {
+    try {
+        const db = getDb();
+        const snap = await db
+            .collection("creativeMemoryFingerprints")
+            .doc(userId)
+            .collection("entries")
+            .orderBy("timestamp", "desc")
+            .limit(window)
+            .get();
+        if (snap.empty) return [];
+        return snap.docs.map((d) => {
+            const data = d.data() as AngleFingerprint;
+            return { ...data };
+        });
+    } catch (e) {
+        console.warn("⚠️ getRecentFingerprints failed (non-blocking, returns []):", e);
+        return [];
+    }
+}

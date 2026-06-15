@@ -676,17 +676,39 @@ export interface ReflowImageResponse {
 }
 
 export interface VariantSet {
-  setId: string;
-  userId: string;
-  createdAt: number;
-  baseTemplate: string;
-  baseCreativeModes: string[];
-  baseHookAngle: string;
-  baseHookType: string;
-  baseAspectRatio: string;
-  baseCta: string;
-  variants: VariantSpec[];
-  winnerId: string | null;
-  winnerDimensions: { dimension: string; value: string }[] | null;
-  status: 'draft' | 'pushed' | 'tracking' | 'complete';
+    setId: string;
+    userId: string;
+    createdAt: number;
+    baseTemplate: string;
+    baseCreativeModes: string[];
+    baseHookAngle: string;
+    baseHookType: string;
+    baseAspectRatio: string;
+    baseCta: string;
+    variants: VariantSpec[];
+    winnerId: string | null;
+    winnerDimensions: { dimension: string; value: string }[] | null;
+    status: 'draft' | 'pushed' | 'tracking' | 'complete';
+}
+
+// ─── PHASE 23 — IN-CARD VARIATION CAROUSEL (23.A) ────────────────────────────
+// One generated variation inside a hook card. Belongs to a parent card
+// (HookVariantKey), occupies a carousel position (2..12, with the reference
+// at 1), shares the reference hook's resolved angle/structure, and carries
+// its own 4 copy fields subject to all Phase 22 quality rules.
+
+export interface ClaimFlagEntry {
+    text: string;
+    reason: string;
+    field?: "hook" | "subhead" | "cta" | "benefit" | "slide";
+}
+
+export interface HookVariation {
+    hookText: string;
+    subheadText: string;
+    ctaName: string;
+    benefitText: string;
+    rawBlock: string;
+    claimFlags?: readonly ClaimFlagEntry[];
+    variationIndex: number;
 }

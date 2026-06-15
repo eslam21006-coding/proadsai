@@ -289,6 +289,20 @@ export interface ResolutionTrace {
     // policy emitted by the model after the four copy fields. Non-blocking; the copy
     // is always produced in full and never deleted/refused.
     readonly claimFlags?: readonly ClaimFlagEntry[];
+    // Phase 23 — additive copy-diversity sub-object. Records what the
+    // dimension/rotation/fingerprint machinery decided this generation.
+    // No existing consumer is required to read it; populating it is
+    // non-blocking and never affects copy output.
+    readonly copyDiversity?: {
+        seed: string;
+        angle: string;
+        drawnDimensionIds?: string[];
+        openingIds?: string[];
+        storyDirectionFamilies?: string[];
+        middleAngleOrder?: string[];
+        memoryBiasApplied: boolean;
+        fingerprintsConsidered: number;
+    };
 }
 
 export interface ModeCompositionTrace {

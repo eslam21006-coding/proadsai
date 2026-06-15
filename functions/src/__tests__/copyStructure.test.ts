@@ -1,0 +1,420 @@
+// functions/src/__tests__/copyStructure.test.ts
+// Purpose: unit tests for Phase 23 copy structure + anti-sameness + variation carousel.
+// Covers drawDimensions / rotateOpenings / rotateCarouselAngles, fingerprint bias,
+// in-card variation state, and the rotational contracts documented in
+// specs/959-copy-structure-variation/contracts/.
+
+import { drawDimensions, drawOpenings, type AngleFingerprint, type DimensionEntry, type OpeningStructure } from "../knowledge/hookAnglesKnowledge.js";
+import { getRecentFingerprints, recordAngleFingerprint } from "../creativeMemory.js";
+import { buildSlidePlan } from "../slidePlanEngine.js";
+import { rotateCarouselAngles } from "../generators.js";
+
+declare const require: any;
+declare const process: any;
+declare const console: any;
+
+const fs = require("fs");
+const path = require("path");
+
+// ═══════════════════════════════════════════════════════════
+// SHELL
+// ═══════════════════════════════════════════════════════════
+
+function runTests(): void {
+  let passed = 0;
+  let failed = 0;
+
+  function assert(condition: boolean, label: string): void {
+    if (condition) {
+      passed++;
+    } else {
+      failed++;
+      console.error(`  ✗ ${label}`);
+    }
+  }
+
+  console.log("copyStructure tests");
+
+  // ─── T004 / drawDimensions is exported ───
+  console.log("  drawDimensions helper exported");
+  assert(typeof drawDimensions === "function", "drawDimensions is exported as a function");
+  assert(typeof drawOpenings === "function", "drawOpenings is exported as a function");
+
+  // ─── T004 / drawDimensions returns 4 distinct within-pool items ───
+  console.log("  drawDimensions returns 4 distinct within-pool items");
+  {
+    const drawn: DimensionEntry[] = drawDimensions("urgency", 4, 12345, []);
+    assert(drawn.length === 4, `drawDimensions returns 4 items (got ${drawn.length})`);
+    const ids = new Set(drawn.map(d => d.id));
+    assert(ids.size === 4, `drawDimensions returns 4 distinct ids (got ${ids.size})`);
+    for (const d of drawn) {
+      assert(d.angleKey === "urgency", `drawn dimension belongs to angleKey="urgency" (got ${d.angleKey})`);
+    }
+  }
+
+  // ─── T004 / drawDimensions deterministic for same seed ───
+  console.log("  drawDimensions determinism for same seed");
+  {
+    const a: DimensionEntry[] = drawDimensions("pain", 4, 999, []);
+    const b: DimensionEntry[] = drawDimensions("pain", 4, 999, []);
+    assert(a.length === b.length, "same seed -> same length");
+    for (let i = 0; i < a.length; i++) {
+      assert(a[i].id === b[i].id, `same seed -> same id at index ${i} (a=${a[i].id} b=${b[i].id})`);
+    }
+  }
+
+  // ─── T004 / drawDimensions varies across seeds ───
+  console.log("  drawDimensions varies across seeds");
+  {
+    const set1: string = drawDimensions("urgency", 4, 1, []).map(d => d.id).join(",");
+    const set2: string = drawDimensions("urgency", 4, 2, []).map(d => d.id).join(",");
+    const set3: string = drawDimensions("urgency", 4, 3, []).map(d => d.id).join(",");
+    const distinctSets = new Set([set1, set2, set3]).size;
+    assert(distinctSets >= 2, `5 seeds produce ≥2 distinct sets (got ${distinctSets})`);
+  }
+
+  // ─── T005 / drawOpenings returns 4 distinct structures ───
+  console.log("  drawOpenings returns 4 distinct structures");
+  {
+    const openings: OpeningStructure[] = drawOpenings(4, 7777, []);
+    assert(openings.length === 4, `drawOpenings returns 4 items (got ${openings.length})`);
+    const ids = new Set(openings.map(o => o.id));
+    assert(ids.size === 4, `drawOpenings returns 4 distinct ids (got ${ids.size})`);
+    const knownIds = new Set([
+      "percentage", "question", "imperative", "ratio",
+      "conditional", "direct_address", "time_reference",
+    ]);
+    for (const o of openings) {
+      assert(knownIds.has(o.id), `opening id "${o.id}" is one of the 7 forms`);
+    }
+  }
+
+  // ─── T005 / drawOpenings varies across seeds ───
+  console.log("  drawOpenings varies across seeds");
+  {
+    const o1: string = drawOpenings(4, 11, []).map(o => o.id).join(",");
+    const o2: string = drawOpenings(4, 22, []).map(o => o.id).join(",");
+    const o3: string = drawOpenings(4, 33, []).map(o => o.id).join(",");
+    const distinct = new Set([o1, o2, o3]).size;
+    assert(distinct >= 2, `drawOpenings varies across seeds (got ${distinct} distinct)`);
+  }
+
+  // ─── T008 / fingerprint helpers exported ───
+  console.log("  creativeMemory fingerprint helpers exported");
+  assert(typeof recordAngleFingerprint === "function", "recordAngleFingerprint exported");
+  assert(typeof getRecentFingerprints === "function", "getRecentFingerprints exported");
+
+  // ─── T008 / AngleFingerprint shape: required fields present ───
+  {
+    const sample: AngleFingerprint = {
+      angleKey: "urgency",
+      dimensionIds: ["urgency_deadline", "urgency_price_increase"],
+      openingId: "question",
+      storyFamilies: ["A", "B"],
+      timestamp: 0,
+    };
+    assert(typeof sample.angleKey === "string", "AngleFingerprint.angleKey is string");
+    assert(Array.isArray(sample.dimensionIds), "AngleFingerprint.dimensionIds is array");
+    assert(typeof sample.openingId === "string" || sample.openingId === undefined, "AngleFingerprint.openingId is string | undefined");
+  }
+
+  // ─── T006 / resolutionTrace.copyDiversity additive sub-object ───
+  console.log("  resolutionTrace copyDiversity additive");
+  {
+    const typesSrc = fs.readFileSync(path.join(__dirname, "..", "..", "src", "types.ts"), "utf-8");
+    assert(/copyDiversity/.test(typesSrc), "types.ts references copyDiversity");
+    assert(/memoryBiasApplied/.test(typesSrc), "types.ts references memoryBiasApplied");
+    assert(/fingerprintsConsidered/.test(typesSrc), "types.ts references fingerprintsConsidered");
+    assert(/openingIds/.test(typesSrc), "types.ts references openingIds");
+  }
+
+  // ─── T009 / HookVariation type added to src/types.ts ───
+  console.log("  HookVariation interface present in src/types.ts");
+  {
+    const typesSrc = fs.readFileSync(path.join(__dirname, "..", "..", "..", "src", "types.ts"), "utf-8");
+    assert(/interface HookVariation/.test(typesSrc), "HookVariation interface declared in src/types.ts");
+    assert(/hookText\s*:\s*string/.test(typesSrc), "HookVariation has hookText field");
+    assert(/subheadText/.test(typesSrc), "HookVariation has subheadText field");
+    assert(/ctaName/.test(typesSrc), "HookVariation has ctaName field");
+    assert(/benefitText/.test(typesSrc), "HookVariation has benefitText field");
+    assert(/rawBlock/.test(typesSrc), "HookVariation has rawBlock field");
+    assert(/variationIndex/.test(typesSrc), "HookVariation has variationIndex field");
+  }
+
+  // ─── T007 / rotateCarouselAngles exported from generators ───
+  console.log("  rotateCarouselAngles exported from generators.ts");
+  {
+    const genSrc = fs.readFileSync(path.join(__dirname, "..", "..", "src", "generators.ts"), "utf-8");
+    assert(/export function rotateCarouselAngles\b/.test(genSrc), "rotateCarouselAngles exported from generators.ts");
+    assert(/campaignType/.test(genSrc.match(/export function rotateCarouselAngles[\s\S]*?\n\}/)?.[0] || ""), "rotateCarouselAngles signature contains campaignType");
+  }
+
+  // ─── T011 / generateVariationsLikeThis exported from generators.ts (Batch 2) ───
+  // Intentionally left for Batch 2 (US1 backend) per the batch plan.
+
+  // ─── T014 / US1 backend tests (generateVariationsLikeThis + parser pipeline) ───
+  console.log("  US1 — generateVariationsLikeThis prompt mentions the 3 Phase 22 blocks");
+  {
+    const genSrc = fs.readFileSync(path.join(__dirname, "..", "..", "src", "generators.ts"), "utf-8");
+    // The 3 blocks are interpolated inside buildVariationPrompt() which
+    // generateVariationsLikeThis() calls. Walk the file backwards and forwards
+    // from the function declaration to capture both the wrapper + its helpers.
+    const startIdx = genSrc.indexOf("export async function generateVariationsLikeThis");
+    assert(startIdx >= 0, "generateVariationsLikeThis function declared");
+    const searchWindow = 20000;
+    const regionStart = Math.max(0, startIdx - searchWindow);
+    const regionEnd = Math.min(genSrc.length, startIdx + searchWindow);
+    const region = genSrc.slice(regionStart, regionEnd);
+    assert(/READING_LEVEL_BLOCK/.test(region), "generateVariationsLikeThis pipeline injects READING_LEVEL_BLOCK");
+    assert(/LIVED_SYMPTOM_BLOCK/.test(region), "generateVariationsLikeThis pipeline injects LIVED_SYMPTOM_BLOCK");
+    assert(/FABRICATION_POLICY_BLOCK/.test(region), "generateVariationsLikeThis pipeline injects FABRICATION_POLICY_BLOCK");
+  }
+
+  console.log("  US1 — generateVariationsLikeThis dedupes against existing variations");
+  {
+    const genSrc = fs.readFileSync(path.join(__dirname, "..", "..", "src", "generators.ts"), "utf-8");
+    const startIdx = genSrc.indexOf("export async function generateVariationsLikeThis");
+    const searchWindow = 20000;
+    const regionStart = Math.max(0, startIdx - searchWindow);
+    const regionEnd = Math.min(genSrc.length, startIdx + searchWindow);
+    const region = genSrc.slice(regionStart, regionEnd);
+    assert(/existingVariations/.test(region), "function signature accepts existingVariations");
+    assert(/dedupAndFilter|dedupe|signature/i.test(region), "function performs dedup/filter logic");
+  }
+
+  // ─── T015 / Carousel-ad mode: ANGLE_START/END rawBlocks stored, no upfront slide set ───
+  console.log("  US1 — carousel-ad routes via generateCarouselAngles with likeThisPrompt");
+  {
+    // App.tsx routes carousel-ad via gemini.generateCarouselAngles with likeThisPrompt.
+    const appSrc = fs.readFileSync(
+      path.join(__dirname, "..", "..", "..", "src", "App.tsx"), "utf-8",
+    );
+    const inCard = appSrc.match(/Phase 23 \u2014 IN-CARD variation carousel[\s\S]{0,3000}/);
+    assert(!!inCard, "App.tsx in-card variation handler is present");
+    const handler = inCard ? inCard[0] : "";
+    assert(/parseHookVariations/.test(handler), "App.tsx handler parses variations via T011a helper");
+    assert(/pushVariations/.test(handler), "App.tsx handler pushes to store via pushVariations");
+  }
+
+  // ─── T011a / variation-block parser covers both HOOK and ANGLE blocks ───
+  console.log("  T011a parser covers both HOOK_START_* and ANGLE_START_*");
+  {
+    const parserSrc = fs.readFileSync(
+      path.join(__dirname, "..", "..", "..", "src", "utils", "hookVariationParser.ts"), "utf-8",
+    );
+    assert(/export function parseHookVariation\b/.test(parserSrc), "parseHookVariation exported");
+    assert(/export function parseHookVariations\b/.test(parserSrc), "parseHookVariations exported");
+    assert(/HOOK_TEXT/.test(parserSrc), "parser uses HOOK_TEXT");
+    assert(/SUBHEADLINE/.test(parserSrc), "parser uses SUBHEADLINE");
+    assert(/CTA_BUTTON/.test(parserSrc), "parser uses CTA_BUTTON");
+    assert(/HOOK_END|ANGLE_END/.test(parserSrc), "parser handles both end markers");
+  }
+
+  // ─── T016 / US1 UI smoke assertions on the store transitions ───
+  console.log("  US1 — store: variations state machine (extend, cap, navigation)");
+  {
+    const storeSrc = fs.readFileSync(
+      path.join(__dirname, "..", "..", "..", "src", "store.ts"), "utf-8",
+    );
+    // Initial: empty maps
+    assert(/variationCarousels:\s*Record<string, HookVariation\[\]>/.test(storeSrc), "variationCarousels keyed by variant");
+    assert(/variationActiveIndex:\s*Record<string, number>/.test(storeSrc), "variationActiveIndex keyed by variant");
+    assert(/variationCapReached:\s*Record<string, boolean>/.test(storeSrc), "variationCapReached keyed by variant");
+    // pushVariations extends (not resets)
+    assert(/pushVariations:\s*\(variant: string, list: HookVariation\[\]\)/.test(storeSrc), "pushVariations signature");
+    assert(/const existing = state\.variationCarousels\[variant\] \|\| \[\]/.test(storeSrc), "pushVariations reads existing list (extend, not reset)");
+    assert(/\[...\s*existing,\s*\.\.\.accepted\]/.test(storeSrc), "pushVariations merges new onto existing");
+    // Cap = 11
+    assert(/const cap = 11/.test(storeSrc), "cap is 11 (12 positions including reference)");
+    // Cap-reached branch
+    assert(/room <= 0/.test(storeSrc), "pushVariations refuses once cap is reached");
+    assert(/variationCapReached:.*true/.test(storeSrc), "pushVariations sets capReached when at cap");
+    // setVariationActiveIndex clamps to [0, length]
+    assert(/Math\.max\(0, Math\.min\(index, max\)\)/.test(storeSrc), "setVariationActiveIndex clamps in [0, listLength]");
+  }
+
+  // ─── Slide-plan rotation invariants (B1–B6) ───
+  console.log("  slide-plan rotation invariants");
+  {
+    const slides = buildSlidePlan("cold", 6);
+    assert(slides.length === 6, "buildSlidePlan returns 6 slides for slideCount=6");
+    assert(slides[0].hasCTA === true, "slide 1 has CTA");
+    assert(slides[slides.length - 1].hasCTA === true, "last slide has CTA");
+    assert(slides[0].photoInjection === true, "slide 1 has photoInjection");
+    for (let i = 1; i < slides.length - 1; i++) {
+      assert(!slides[i].hasCTA, `middle slide ${i + 1} has no CTA`);
+      assert(!slides[i].photoInjection, `middle slide ${i + 1} has no photoInjection`);
+    }
+    for (let i = 1; i < slides.length - 1; i++) {
+      if (i > 0 && i - 1 < slides.length - 2) {
+        assert(slides[i].narrativeAngle !== slides[i + 1].narrativeAngle || slides.length - 2 <= 1, "no two adjacent middle slides share the same angle (when ≥2 middles)");
+      }
+    }
+  }
+
+  // ─── rotateCarouselAngles: 4 of 7, distinct, subset, deterministic ───
+  console.log("  rotateCarouselAngles (4-of-7) contract");
+  {
+    const fams1 = rotateCarouselAngles("cold", 1, []);
+    const fams2 = rotateCarouselAngles("cold", 1, []);
+    assert(fams1.length === 4, `rotateCarouselAngles returns 4 families (got ${fams1.length})`);
+    const fams3 = rotateCarouselAngles("cold", 2, []);
+    const sameSeed = fams1.join(",") === fams2.join(",");
+    assert(sameSeed, "rotateCarouselAngles is deterministic for same seed");
+    const distinctCount = new Set([fams1.join(","), fams3.join(",")]).size;
+    const coldPool = new Set(["A", "B", "C", "D", "E", "F", "G"]);
+    for (const f of fams1) {
+      assert(coldPool.has(f), `cold family "${f}" is a member of the 7-angle pool`);
+    }
+    const uniqFams = new Set(fams1);
+    assert(uniqFams.size === 4, "no family appears twice in one draw");
+    void distinctCount;
+  }
+
+  // ─── T025 / US2 — drawDimensions + drawOpenings contract ─────────────
+  console.log("  US2 — drawDimensions + drawOpenings + diversity metadata");
+  {
+    // Determinism for same (angle, count, seed, memory)
+    const a = drawDimensions("pain", 4, 424242, []);
+    const b = drawDimensions("pain", 4, 424242, []);
+    assert(a.length === b.length, "drawDimensions deterministic for same seed/memory (length)");
+    for (let i = 0; i < a.length; i++) {
+      assert(a[i].id === b[i].id, `drawDimensions deterministic for same seed/memory (id at ${i})`);
+    }
+    // Vary across seeds
+    const sets = new Set<string>();
+    for (let s = 0; s < 6; s++) {
+      const set = drawDimensions("statistics", 4, s, []).map((d) => d.id).sort().join(",");
+      sets.add(set);
+    }
+    assert(sets.size >= 2, `6 sequential seeds produce ≥2 distinct sets (got ${sets.size})`);
+
+    // drawOpenings always returns 4 distinct ids from the 7-form pool
+    const o = drawOpenings(4, 999, []);
+    assert(o.length === 4, "drawOpenings returns 4");
+    const ids = new Set(o.map((s) => s.id));
+    assert(ids.size === 4, "drawOpenings 4 entries are distinct");
+
+    // Memory bias returns 4 even when ALL pool items are recent
+    const allIds = ["urgency_deadline", "urgency_price_increase", "urgency_seats", "urgency_cost_of_inaction", "urgency_window", "urgency_competitive_clock"];
+    const allRecent = drawDimensions("urgency", 4, 1, [{ dimensionIds: allIds }]);
+    assert(allRecent.length === 4, `memory bias never starves: returns 4 even when all are recent (got ${allRecent.length})`);
+    const recentSet = new Set(allIds);
+    for (const d of allRecent) {
+      assert(recentSet.has(d.id), `memory-biased result still within angle pool (got ${d.id})`);
+    }
+
+    // T024 — angle lock invariant: drawn dimensions all belong to the locked angle
+    for (const angle of ["urgency", "scarcity", "social_proof", "logic", "emotional", "pain", "curiosity", "statistics", "logical_authority", "future_based"]) {
+      const ds = drawDimensions(angle, 4, 123, []);
+      for (const d of ds) {
+        assert(d.angleKey === angle, `angle lock: drawn dim "${d.id}" belongs to angleKey="${angle}" (got "${d.angleKey}")`);
+      }
+    }
+  }
+
+  // ─── T026 / US2 — diversity assertion: 5 sequential seeds → ≥3 distinct sets ─
+  console.log("  US2 — diversity assertion: 5 sequential seeds → ≥3 distinct sets");
+  {
+    const sets = new Set<string>();
+    for (let s = 0; s < 5; s++) {
+      const set = drawDimensions("social_proof", 4, s, []).map((d) => d.id).sort().join(",");
+      sets.add(set);
+    }
+    assert(sets.size >= 3, `5 sequential seeds produce ≥3 distinct dimension sets (got ${sets.size})`);
+  }
+
+  // ─── T035 / US3 — rotateCarouselAngles: same seed → same 4, different seeds → differ
+  console.log("  US3 — rotateCarouselAngles: 4-of-7 contract (cold + retargeting)");
+  {
+    const coldA = rotateCarouselAngles("cold", 100, []);
+    const coldA2 = rotateCarouselAngles("cold", 100, []);
+    assert(coldA.join(",") === coldA2.join(","), "same seed returns identical 4 families");
+    const coldB = rotateCarouselAngles("cold", 200, []);
+    assert(coldA.join(",") !== coldB.join(","), "different seeds return different 4 families");
+    const coldPool = new Set(["A", "B", "C", "D", "E", "F", "G"]);
+    for (const f of coldA) {
+      assert(coldPool.has(f), `cold family "${f}" is in the 7-angle pool`);
+    }
+    assert(new Set(coldA).size === 4, "no family appears twice in a single cold draw");
+
+    const retA = rotateCarouselAngles("retargeting", 100, []);
+    const retPool = new Set(["P", "M", "R", "I", "C", "Q", "E"]);
+    for (const f of retA) {
+      assert(retPool.has(f), `retargeting family "${f}" is in the 7-angle pool`);
+    }
+    assert(new Set(retA).size === 4, "no family appears twice in a single retargeting draw");
+
+    // Memory bias: down-weight recent families; never ban
+    const allRet = ["P", "M", "R", "I", "C", "Q", "E"];
+    const allRecentRet = rotateCarouselAngles("retargeting", 1, allRet);
+    assert(allRecentRet.length === 4, "memory bias never starves: returns 4 even when all are recent");
+  }
+
+  // ─── T035 / US3 — middle-slide order: rotated, no adjacent repeat
+  console.log("  US3 — middle-slide order rotated, no adjacent repeat");
+  {
+    const plan0 = buildSlidePlan("cold", 7, 0);
+    const plan3 = buildSlidePlan("cold", 7, 3);
+    // Same campaignType + slideCount, different seed → different middle order
+    const middles0 = plan0.filter((s) => s.role === "middle").map((s) => s.narrativeAngle).join(",");
+    const middles3 = plan3.filter((s) => s.role === "middle").map((s) => s.narrativeAngle).join(",");
+    assert(middles0 !== middles3, `middle-slide order varies by seed (got '${middles0}' vs '${middles3}')`);
+    // No two adjacent middle slides share the same angle
+    for (let i = 1; i < plan0.length - 1; i++) {
+      if (i + 1 < plan0.length - 1) {
+        assert(plan0[i].narrativeAngle !== plan0[i + 1].narrativeAngle, "no two adjacent middle slides share an angle (plan0)");
+      }
+    }
+  }
+
+  // ─── T035 / US3 — copyDiversity sub-object populated after generation (code-level)
+  console.log("  US3 — copyDiversity sub-object present in ResolutionTrace type");
+  {
+    const typesSrc = fs.readFileSync(path.join(__dirname, "..", "..", "src", "types.ts"), "utf-8");
+    assert(/copyDiversity/.test(typesSrc), "ResolutionTrace has copyDiversity sub-object");
+    assert(/storyDirectionFamilies\?/.test(typesSrc), "copyDiversity has storyDirectionFamilies?");
+    assert(/middleAngleOrder\?/.test(typesSrc), "copyDiversity has middleAngleOrder?");
+  }
+
+  // ─── T035 / US3 — generators.ts wired to use rotateCarouselAngles + drawDimensions
+  console.log("  US3 — generators.ts calls rotateCarouselAngles + uses copyDiversity");
+  {
+    const genSrc = fs.readFileSync(path.join(__dirname, "..", "..", "src", "generators.ts"), "utf-8");
+    assert(/rotateCarouselAngles\(/.test(genSrc), "generators.ts calls rotateCarouselAngles");
+    assert(/buildSlidePlan\(/.test(genSrc), "generators.ts calls buildSlidePlan (wired into live carousel path)");
+    assert(/makeProjectSeed\(/.test(genSrc), "generators.ts uses makeProjectSeed");
+    assert(/getRecentFingerprintsForRotation\(/.test(genSrc), "generators.ts reads recent fingerprints");
+    assert(/recordAngleFingerprint\(/.test(genSrc), "generators.ts records fingerprints post-generation");
+  }
+
+  // ─── T035 / US3 — spec-001 carousel contract synced (FR-022)
+  console.log("  US3 — spec-001 carousel contract synced per FR-022");
+  {
+    const contractSrc = fs.readFileSync(
+      path.join(__dirname, "..", "..", "..", "specs", "001-resolver-completeness-trace", "contracts", "carousel-slide-count-plan.md"),
+      "utf-8",
+    );
+    assert(/Phase 23/.test(contractSrc), "spec-001 contract documents Phase 23 rotation");
+    assert(/pool\[\(i \+ offset\)/.test(contractSrc), "spec-001 contract documents rotated middle-slide assignment");
+    assert(/No two adjacent middle slides/.test(contractSrc), "spec-001 contract re-states the no-adjacent-repeat invariant");
+  }
+
+  // ─── T035 / US3 — reference doc reconciled (D11)
+  console.log("  US3 — reference doc reconciled (Section 5.A → contract pointer)");
+  {
+    const refSrc = fs.readFileSync(
+      path.join(__dirname, "..", "..", "..", "specs", "_shared", "COPY_SYSTEM_REFERENCE.md"),
+      "utf-8",
+    );
+    assert(/Section 5\.A reconciliation/.test(refSrc) || /carousel-slide-count-plan/.test(refSrc), "reference doc reconciles Section 5.A pointer");
+  }
+
+  // ─── Summary ───
+  console.log(`  ${passed} passed, ${failed} failed`);
+  if (failed > 0) {
+    process.exit(1);
+  }
+}
+
+runTests();

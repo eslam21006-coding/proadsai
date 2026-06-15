@@ -10,6 +10,8 @@ import { ref as storageRef, deleteObject } from 'firebase/storage';
 import { gemini, type GenerationResult } from './services/geminiService';
 import { resolveCreativeSpec, CREATIVE_MODE_CATALOG, type ResolvedCreativeSpec } from './creativeResolver';
 import { isValidHookPayload, validateCanonicalHooks, normalizeHooksToCanonical, getHookValidationSummary } from './utils/hookPayload';
+import { parseHookVariations, parseHookVariation } from './utils/hookVariationParser';
+import { useAppStore } from './store';
 import FeedbackButtons from './components/FeedbackButtons';
 import FavoritesPanel from './components/FavoritesPanel';
 import SavedProjectsPanel from './components/SavedProjectsPanel/SavedProjectsPanel';
@@ -1040,6 +1042,14 @@ const normalizeFieldLabels = (text: string): string => {
 const App: React.FC = () => {
   // --- i18n ---
   const { t, lang, setLang } = useT();
+  // ─── Phase 23 — in-card variation carousel store bindings (23.A) ──────
+  const variationCarousels = useAppStore((s) => s.variationCarousels);
+  const variationActiveIndex = useAppStore((s) => s.variationActiveIndex);
+  const variationCapReached = useAppStore((s) => s.variationCapReached);
+  const pushVariations = useAppStore((s) => s.pushVariations);
+  const setVariationActiveIndex = useAppStore((s) => s.setVariationActiveIndex);
+  const resetVariations = useAppStore((s) => s.resetVariations);
+  const isRtl = lang === 'ar';
   // Mutable ref for effective UID — updated each render, safe to use in effects before state declarations
   const effectiveUidRef = React.useRef<string | null>(null);
   // Guards the startup project auto-restore so it runs exactly ONCE per signed-in session.
@@ -6628,6 +6638,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                           <button
                             onClick={async () => {
                               if (!inputs) return;
+                              if (variationCapReached[v]) {
+                                showToast("Carousel is full — this card already has the maximum of 11 variations.", "info");
+                                return;
+                              }
                               if (!deductCredits('refreshHooks')) return;
                               startLoad("Generating 4 similar hooks...");
                               const angleLabel = ({ A: 'Direct Value', B: 'Curiosity', C: 'Social Proof', D: 'Problem Agitation' } as Record<string, string>)[v] || 'same style';
@@ -6648,11 +6662,23 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                   ? (await gemini.generateCarouselAngles(inputs, resolvedUniverse, inputs.slideCount || 5, likeThisPrompt)).text
                                   : unwrapGen(await gemini.generateTOV(inputs, resolvedUniverse, 'refresh', tovText, likeThisPrompt));
                                 if (res) {
-                                  // Validate the new hooks before appending
                                   const newHookValidation = validateCanonicalHooks(res);
                                   if (newHookValidation.count >= 1) {
-                                    setTovText((prev: string) => prev + '\n' + res);
-                                    showToast(`${newHookValidation.count} new hooks added!`, "success");
+                                    // ─── Phase 23 — IN-CARD variation carousel (23.A) ───
+                                    // Parse the returned blocks into HookVariation objects
+                                    // via the T011a helper. Push to the per-card store; the
+                                    // reference hook (position 1) stays at tovText and is
+                                    // NEVER replaced. Extend, never reset.
+                                    const existingVariations = (variationCarousels[v] || []).map((hv) => hv.rawBlock);
+                                    const parsed = parseHookVariations(newHookValidation.hooks.map((h) => `HOOK_START_${h.variant}\nHOOK_TEXT: ${h.hookText}\nSUBHEADLINE: ${h.subheadline}\nCTA_BUTTON: ${h.ctaButton}\nHOOK_END_${h.variant}\n`));
+                                    if (parsed.length === 0) {
+                                      // C8 — non-blocking notice, carousel unchanged
+                                      refundCredits('refreshHooks');
+                                      showToast("Couldn't generate fresh variations — try again.", "info");
+                                    } else {
+                                      pushVariations(v, parsed);
+                                      showToast(`${parsed.length} fresh variation${parsed.length === 1 ? '' : 's'} added to card ${v} (position ${(variationCarousels[v]?.length || 0) + 2} of up to 12).`, "success");
+                                    }
                                   } else {
                                     refundCredits('refreshHooks');
                                     showToast("Generated hooks were malformed. Credits refunded.", "error");
@@ -6666,6 +6692,73 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                             <i className="fa-solid fa-clone text-[9px]"></i>
                             <span>Generate 4 More Like This · <i className="fa-solid fa-coins text-[7px] text-amber-400 mr-0.5"></i>{CREDIT_COSTS.refreshHooks}</span>
                           </button>
+                          {/* Phase 23 — In-card variation carousel (23.A) */}
+                          {(variationCarousels[v] && variationCarousels[v]!.length > 0) && (
+                            <div className="mt-3 p-3 rounded-xl bg-slate-950/30 border border-slate-800/40" data-testid={`variation-carousel-${v}`}>
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                                  Variations · {(variationActiveIndex[v] ?? 0) + 1} / {variationCarousels[v]!.length + 1}
+                                </div>
+                                <button
+                                  onClick={() => resetVariations(v)}
+                                  className="text-[9px] text-slate-600 hover:text-red-400 transition-colors"
+                                  title="Clear this card's variation carousel"
+                                >
+                                  <i className="fa-solid fa-trash-can mr-1"></i>clear
+                                </button>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => {
+                                    const cur = variationActiveIndex[v] ?? 0;
+                                    const next = isRtl ? cur + 1 : cur - 1;
+                                    if (next < 0) return;
+                                    if (next > variationCarousels[v]!.length) return;
+                                    setVariationActiveIndex(v, next);
+                                  }}
+                                  disabled={(variationActiveIndex[v] ?? 0) === 0}
+                                  className="px-2 py-1 rounded bg-slate-800/60 text-slate-400 text-[10px] disabled:opacity-30 hover:bg-slate-700/60 transition-colors"
+                                  title={isRtl ? 'Previous' : 'Previous'}
+                                >
+                                  <i className={`fa-solid ${isRtl ? 'fa-chevron-right' : 'fa-chevron-left'}`}></i>
+                                </button>
+                                <div className="flex-1 flex items-center justify-center gap-1">
+                                  {[...Array(variationCarousels[v]!.length + 1)].map((_, i) => (
+                                    <button
+                                      key={i}
+                                      onClick={() => setVariationActiveIndex(v, i)}
+                                      className={`w-1.5 h-1.5 rounded-full transition-all ${(variationActiveIndex[v] ?? 0) === i ? 'bg-blue-500 w-3' : 'bg-slate-600'}`}
+                                      title={`Position ${i + 1}`}
+                                    />
+                                  ))}
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    const cur = variationActiveIndex[v] ?? 0;
+                                    const next = isRtl ? cur - 1 : cur + 1;
+                                    if (next < 0) return;
+                                    if (next > variationCarousels[v]!.length) return;
+                                    setVariationActiveIndex(v, next);
+                                  }}
+                                  disabled={(variationActiveIndex[v] ?? 0) === variationCarousels[v]!.length}
+                                  className="px-2 py-1 rounded bg-slate-800/60 text-slate-400 text-[10px] disabled:opacity-30 hover:bg-slate-700/60 transition-colors"
+                                  title={isRtl ? 'Next' : 'Next'}
+                                >
+                                  <i className={`fa-solid ${isRtl ? 'fa-chevron-left' : 'fa-chevron-right'}`}></i>
+                                </button>
+                              </div>
+                              {(variationActiveIndex[v] ?? 0) > 0 && (
+                                <div className="mt-2 text-[10px] text-slate-400 italic" data-testid={`variation-active-text-${v}`}>
+                                  {variationCarousels[v]![variationActiveIndex[v]! - 1]?.hookText || ''}
+                                </div>
+                              )}
+                              {variationCapReached[v] && (
+                                <div className="mt-2 text-[9px] text-amber-500/80">
+                                  <i className="fa-solid fa-circle-info mr-1"></i>Carousel full (12 positions).
+                                </div>
+                              )}
+                            </div>
+                          )}
                           {activeEditHookIndex === v && (
                             <div className="mt-6 p-6 bg-slate-950 border border-blue-500/30 rounded-2xl space-y-4 animate-in slide-in-from-top-4">
                               <textarea value={editFeedback} onChange={e => setEditFeedback(e.target.value)} placeholder="Contextual patching..." className="w-full bg-slate-900 border border-slate-800 rounded-xl px-6 py-4 text-slate-100 h-24 focus:ring-1 focus:ring-blue-500 outline-none text-sm shadow-inner" />

@@ -15,7 +15,7 @@ import { create } from 'zustand';
 import type {
     AdInputs, AppPhase, AspectRatio, BatchResult,
     CarouselSlide, SavedProject, AudienceAvatar,
-    CompetitorResearch, Toast, Workspace
+    CompetitorResearch, Toast, Workspace, HookVariation
 } from './types';
 import type { UserPlan } from './planconfig';
 
@@ -142,6 +142,19 @@ interface AppState {
     // Auto-save status (Phase 13)
     saveStatus: { phase: string } | null;
     setSaveStatus: (status: { phase: string } | null) => void;
+
+    // ─── Phase 23 — In-card variation carousel (23.A) ────────────────────
+    // Per-card ordered list of variations (positions 2..N). Position 1
+    // is always the reference hook rendered from `tovText`. Cap is 11
+    // variations (12 positions total). Approve/Edit/AI Edit/Batch read
+    // `activeIndex` to know which variation is currently displayed.
+    variationCarousels: Record<string, HookVariation[]>;
+    variationActiveIndex: Record<string, number>;
+    variationCapReached: Record<string, boolean>;
+    pushVariations: (variant: string, list: HookVariation[]) => void;
+    setVariationActiveIndex: (variant: string, index: number) => void;
+    resetVariations: (variant: string) => void;
+    resetAllVariations: () => void;
 
     // Reset (new project)
     resetPipeline: () => void;
@@ -279,6 +292,60 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     saveStatus: null,
     setSaveStatus: (status) => set({ saveStatus: status }),
+
+    // Phase 23 — In-card variation carousel
+    variationCarousels: {},
+    variationActiveIndex: {},
+    variationCapReached: {},
+    pushVariations: (variant, list) => set((state) => {
+        if (!variant || !Array.isArray(list) || list.length === 0) return {};
+        const existing = state.variationCarousels[variant] || [];
+        const cap = 11;
+        const room = Math.max(0, cap - existing.length);
+        if (room <= 0) {
+            return {
+                variationCapReached: { ...state.variationCapReached, [variant]: true },
+            };
+        }
+        const accepted = list.slice(0, room);
+        const merged = [...existing, ...accepted];
+        const capped = merged.length >= cap;
+        return {
+            variationCarousels: { ...state.variationCarousels, [variant]: merged },
+            variationActiveIndex: state.variationActiveIndex[variant] === undefined
+                ? { ...state.variationActiveIndex, [variant]: 0 }
+                : state.variationActiveIndex,
+            variationCapReached: capped
+                ? { ...state.variationCapReached, [variant]: true }
+                : state.variationCapReached,
+        };
+    }),
+    setVariationActiveIndex: (variant, index) => set((state) => {
+        const list = state.variationCarousels[variant] || [];
+        const max = list.length;
+        const clamped = Math.max(0, Math.min(index, max));
+        return {
+            variationActiveIndex: { ...state.variationActiveIndex, [variant]: clamped },
+        };
+    }),
+    resetVariations: (variant) => set((state) => {
+        const nextCarousels = { ...state.variationCarousels };
+        const nextActive = { ...state.variationActiveIndex };
+        const nextCap = { ...state.variationCapReached };
+        delete nextCarousels[variant];
+        delete nextActive[variant];
+        delete nextCap[variant];
+        return {
+            variationCarousels: nextCarousels,
+            variationActiveIndex: nextActive,
+            variationCapReached: nextCap,
+        };
+    }),
+    resetAllVariations: () => set({
+        variationCarousels: {},
+        variationActiveIndex: {},
+        variationCapReached: {},
+    }),
 
     // Reset
     resetPipeline: () => set({
