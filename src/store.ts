@@ -371,6 +371,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         batchResults: [],
         competitorData: null,
         loadedFavoriteId: null,
+        // Phase 23 (CodeRabbit): clear per-card variation carousel state so
+        // a fresh pipeline doesn't inherit variations from a previous run.
+        variationCarousels: {},
+        variationActiveIndex: {},
+        variationCapReached: {},
     }),
 }));
 

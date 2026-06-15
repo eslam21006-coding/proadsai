@@ -1904,7 +1904,11 @@ RETURN NOTHING ELSE. NO OTHER HOOKS.`;
                 _phase23FingerprintsConsidered = _phase23Recent.length;
                 // Stash for the prompt builder below (T019 + T022)
                 _phase23RecentDimensionIds = _phase23Recent.flatMap((f) => f.dimensionIds || []);
-                _phase23RecentOpeningIds = _phase23Recent.map((f) => f.openingId || "").filter(Boolean);
+                // Phase 23 (CodeRabbit): openingIds is a plural array (the writer
+                // records all 4 drawn openings per block — see FIX A above). Read
+                // the array and flatten so the prompt builder sees one flat list of
+                // recent opening ids.
+                _phase23RecentOpeningIds = _phase23Recent.flatMap((f) => f.openingIds || []).filter(Boolean);
             } catch (e) {
                 console.warn("⚠️ Phase 23 rotation pre-compute failed (non-blocking):", e);
             }
