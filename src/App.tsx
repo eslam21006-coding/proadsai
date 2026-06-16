@@ -6733,7 +6733,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                   }
                                 }
                                 else { refundCredits('refreshHooks'); showToast(t('variation.failed_refund'), "error"); }
-                              } catch (e) { refundCredits('refreshHooks'); } finally { stopLoad(); }
+                              } catch { refundCredits('refreshHooks'); } finally { stopLoad(); }
                             }}
                             className="w-full mt-2 py-2.5 rounded-xl bg-slate-950/40 border border-dashed border-slate-700/40 text-slate-500 text-[9px] font-bold uppercase tracking-wider hover:border-blue-500/40 hover:text-blue-400 hover:bg-blue-500/5 transition-all flex items-center justify-center gap-2"
                           >

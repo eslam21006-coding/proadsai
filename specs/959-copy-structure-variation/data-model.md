@@ -132,7 +132,7 @@ Shape unchanged: `{ slide, role, hasCTA, narrativeAngle, photoInjection }`.
 
 | Field | Type | Notes |
 |---|---|---|
-| `seed` | `string` | The project rotation seed used. |
+| `seed` | `number` | The project rotation seed used (hashed 32-bit int from `makeProjectSeed()`). |
 | `angle` | `string` | Locked angle / campaign type. |
 | `drawnDimensionIds?` | `string[]` | Single-hook draw result. |
 | `openingIds?` | `string[]` | Opening rotation result. |

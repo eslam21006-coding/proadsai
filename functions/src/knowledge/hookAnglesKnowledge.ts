@@ -1438,34 +1438,6 @@ function shuffled<T>(arr: readonly T[], rng: () => number): T[] {
 }
 
 /**
- * Down-weight (never exclude) items that appear in `recentIds` so the
- * returned sequence prefers less-recently-used ids. The recentIds array
- * is treated as FIFO recency (index 0 = oldest, last = most recent).
- * The last `recentIds` entry carries the strongest down-weight.
- */
-function downWeightRecent<T extends { id: string }>(
-    items: readonly T[],
-    recentIds: readonly string[],
-): T[] {
-    if (recentIds.length === 0) return items.slice();
-    const recencyScore = new Map<string, number>();
-    // Score = position+1: oldest (index 0) gets the lowest score (1), most
-    // recent gets the highest. The subsequent ascending sort by `ra - rb`
-    // then places the LEAST-recent (lowest score) items first — which is
-    // the bias we want. (Previously `recentIds.length - i` produced the
-    // opposite: most-recent scored highest, so they sorted first.)
-    for (let i = 0; i < recentIds.length; i++) {
-        recencyScore.set(recentIds[i]!, i + 1);
-    }
-    return items.slice().sort((a, b) => {
-        const ra = recencyScore.get(a.id) || 0;
-        const rb = recencyScore.get(b.id) || 0;
-        if (ra === rb) return 0;
-        return ra - rb; // smaller recency score (= older or absent) first
-    });
-}
-
-/**
  * Draw `n` distinct dimensions from the locked angle's pool.
  * Deterministic for a fixed (angleKey, n, seed, memory) tuple.
  * Bias-never-ban: if all options are recent, the least-recently-used

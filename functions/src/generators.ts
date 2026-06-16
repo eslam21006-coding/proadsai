@@ -49,6 +49,8 @@ import { getAngleVariationBlueprintRotated } from "./knowledge/hookAnglesKnowled
 // timeout, requires an image/* content-type, and caps the payload size. It
 // returns the decoded base64 + real MIME so callers preserve the source format
 // (previously every reference was force-tagged image/png, mis-decoding JPEGs).
+import { lookup as dnsLookup } from "node:dns/promises";
+
 const REMOTE_IMAGE_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 const REMOTE_IMAGE_FETCH_TIMEOUT_MS = 12000;
 
@@ -57,6 +59,9 @@ function isPrivateOrLocalHost(hostname: string): boolean {
     if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return true;
     if (h === "::1" || h === "::") return true;
     if (/^f[cd][0-9a-f]{2}:/.test(h) || /^fe80:/.test(h)) return true; // IPv6 ULA / link-local
+    // IPv4-mapped IPv6 (::ffff:10.0.0.1 etc.) — strip the prefix and re-check.
+    const v4mapped = h.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+    if (v4mapped) return isPrivateOrLocalHost(v4mapped[1]);
     const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
     if (v4) {
         const a = Number(v4[1]);
@@ -68,6 +73,38 @@ function isPrivateOrLocalHost(hostname: string): boolean {
         if (a >= 224) return true; // multicast / reserved
     }
     return false;
+}
+
+// Phase 23 (CodeRabbit): close the DNS-rebinding bypass. A public hostname
+// can resolve to 169.254.169.254 / RFC1918 / loopback on the actual fetch,
+// so a string-only hostname check is insufficient. Resolve A + AAAA and
+// reject if ANY returned address is private/loopback/link-local. This
+// narrows the TOCTOU window but does not eliminate it; for full pinning
+// the caller would need to set the Host header manually. We also
+// short-circuit if the DNS lookup itself fails (NXDOMAIN / timeout).
+async function assertHostIsPublic(hostname: string, label: string): Promise<boolean> {
+    if (isPrivateOrLocalHost(hostname)) {
+        console.warn(`⚠️ ${label}: private/local host rejected — skipped (${hostname})`);
+        return false;
+    }
+    let addrs: { address: string }[];
+    try {
+        addrs = await dnsLookup(hostname, { all: true, verbatim: true });
+    } catch (e) {
+        console.warn(`⚠️ ${label}: DNS lookup failed for ${hostname} — skipped`);
+        return false;
+    }
+    if (addrs.length === 0) {
+        console.warn(`⚠️ ${label}: DNS lookup returned no records for ${hostname} — skipped`);
+        return false;
+    }
+    for (const a of addrs) {
+        if (isPrivateOrLocalHost(a.address)) {
+            console.warn(`⚠️ ${label}: ${hostname} resolves to private IP ${a.address} — skipped`);
+            return false;
+        }
+    }
+    return true;
 }
 
 export async function fetchRemoteImageAsBase64(
@@ -85,8 +122,7 @@ export async function fetchRemoteImageAsBase64(
         console.warn(`⚠️ ${label}: non-http(s) URL rejected — skipped`);
         return null;
     }
-    if (isPrivateOrLocalHost(url.hostname)) {
-        console.warn(`⚠️ ${label}: private/local host rejected — skipped`);
+    if (!(await assertHostIsPublic(url.hostname, label))) {
         return null;
     }
     const controller = new AbortController();
@@ -96,11 +132,14 @@ export async function fetchRemoteImageAsBase64(
         // A user-supplied public URL can 3xx to a private host
         // (169.254.169.254, RFC1918, loopback) and bypass the hostname
         // check above. Manually follow up to MAX_REDIRECTS hops, re-running
-        // the protocol + private-host guard on every Location target.
+        // the protocol + DNS + private-host guard on every Location target.
         const MAX_REDIRECTS = 5;
         let resp: Response | null = null;
         let current = url;
         for (let hops = 0; ; hops++) {
+            if (!(await assertHostIsPublic(current.hostname, label))) {
+                return null;
+            }
             resp = await fetch(current.toString(), {
                 signal: controller.signal,
                 redirect: "manual",
@@ -124,10 +163,6 @@ export async function fetchRemoteImageAsBase64(
             }
             if (next.protocol !== "http:" && next.protocol !== "https:") {
                 console.warn(`⚠️ ${label}: redirect to non-http(s) — skipped`);
-                return null;
-            }
-            if (isPrivateOrLocalHost(next.hostname)) {
-                console.warn(`⚠️ ${label}: redirect to private host — skipped`);
                 return null;
             }
             current = next;

@@ -9,7 +9,7 @@
 
 import type { HookVariation, ClaimFlagEntry } from "../types";
 
-const CLAIM_FLAG_RE = /CLAIM_FLAG\s*[:：]?\s*([^\n]+?)\s*—\s*([^\n]+)/gi;
+const CLAIM_FLAG_RE = /CLAIM_FLAG\s*[:：]?\s*([^\n]+?)\s*[-–—]\s*([^\n]+)/gi;
 const CLAIM_FLAG_LINE_RE = /^\s*CLAIM_FLAG\s*[:：]?.*$/gim;
 
 function extractBetween(text: string, startKey: string, endKey: string): string {
