@@ -24,7 +24,7 @@ interface AngleFingerprint {
   dimensionIds: string[];                               // 4 dim ids drawn (single-hook path)
   openingId?: string;                                    // primary opening form drawn (single-hook path)
   storyFamilies?: string[];                             // 4-of-7 carousel story-direction families drawn (carousel path)
-  timestamp: number | FieldValue;                        // Firestore server timestamp; write-time FieldValue.serverTimestamp(), read-time number (epoch ms).
+  timestamp?: FirebaseFirestore.Timestamp | FieldValue; // OPTIONAL on the writer; the writer (recordAngleFingerprint) always overwrites this with `FieldValue.serverTimestamp()`. Read-time type is `FirebaseFirestore.Timestamp` (NOT number/epoch ms — callers can convert via `.toMillis()` if a number is needed).
 }
 ```
 

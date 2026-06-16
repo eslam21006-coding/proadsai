@@ -9,7 +9,7 @@
 ```typescript
 function rotateCarouselAngles(
   campaignType: 'cold' | 'retargeting',
-  seed: string,
+  seed: number,                  // Phase 23 — per-project rotation seed; `makeProjectSeed()` in copyDiversity.ts already returns a hashed 32-bit int
   memory: DiversityFingerprint[]
 ): string[];   // length 4, drawn from the 7-angle pool, rotated + memory-biased
 ```

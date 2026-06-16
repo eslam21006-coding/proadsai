@@ -10,12 +10,12 @@
 function drawDimensions(
   angleId: string,
   count: number,                 // = 4
-  seed: string,                  // per-project rotation seed
+  seed: number,                  // per-project rotation seed (hashed by makeProjectSeed)
   memory: DiversityFingerprint[] // recent ~10 for this angle/user
 ): DimensionEntry[];             // length === count, distinct ids
 
 function rotateOpenings(
-  seed: string,
+  seed: number,                  // per-project rotation seed (hashed by makeProjectSeed)
   count: number,                 // = 4
   memory: DiversityFingerprint[]
 ): OpeningStructure[];           // length === count, distinct ids

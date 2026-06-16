@@ -57,14 +57,14 @@ type SlidePlan = SlideEntry[];
 | Slide | Role | CTA | Angle | Photo Injection |
 |-------|------|-----|-------|-----------------|
 | 1 | hook | true | `'hook'` | true (Box A) |
-| 2..N-1 | middle | false | `pool[(i + offset) % 7]` (Phase 23 rotated) | false |
+| 2..N-1 | middle | false | `pool[(i + offset) % pool.length]` (Phase 23 rotated) | false |
 | N | close | true | `'close'` | false |
 
 **Cold angles pool**: A=Direct value, B=Curiosity, C=Social proof, D=Problem agitation, E=Mechanism, F=Objection pre-emption, G=Identity
 
-**Phase 23 — middle-slide rotation**: When `seed` is supplied, `offset = (seed mod 7)`
-rotates the pool so the assignment is `pool[(i + offset) % 7]` instead of the
-old fixed `pool[i % 7]` lockstep. `offset` is derived deterministically
+**Phase 23 — middle-slide rotation**: When `seed` is supplied, `offset = (seed mod pool.length)`
+rotates the pool so the assignment is `pool[(i + offset) % pool.length]` instead of the
+old fixed `pool[i % pool.length]` lockstep. `offset` is derived deterministically
 from the per-project seed (`userId + projectId + day`); with a fixed seed,
 the plan is fully deterministic (Principle VI). When `seed` is omitted,
 behavior is identical to the pre-Phase-23 lockstep (backwards compatible).
@@ -74,7 +74,7 @@ behavior is identical to the pre-Phase-23 lockstep (backwards compatible).
 | Slide | Role | CTA | Angle | Photo Injection |
 |-------|------|-----|-------|-----------------|
 | 1 | hook | true | `'objection_hook'` | true (Box A) |
-| 2..N-1 | middle | false | `pool[(i + offset) % 7]` (Phase 23 rotated) | false |
+| 2..N-1 | middle | false | `pool[(i + offset) % pool.length]` (Phase 23 rotated) | false |
 | N | close | true | `'close'` | false |
 
 **Retargeting angles pool**: P=Proof, M=Mechanism, R=Risk reversal, I=Identity shift, C=Cost of inaction, Q=Question reframe, E=Evidence comparison

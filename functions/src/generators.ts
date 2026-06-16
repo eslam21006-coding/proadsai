@@ -7488,8 +7488,11 @@ INSTRUCTIONS (do NOT include in output):
 - STORY_ARC: 1-2 sentences describing how all ${slideCount} slides flow from this hook.
 - CTA_BUTTON: CTA text ||| CONNECTOR + benefit (2-5 words). Benefit MUST start with a connector (و/ل/عشان/وابدأ).
 - The 4 angle block letters are determined by rotateCarouselAngles() above (a per-project
-  4-of-7 draw from ${isRetargeting ? 'P/M/R/I/C/Q/E' : 'A/B/C/D/E/F/G'}). The example below
-  uses the FIRST-4 families for clarity; in production the letters are the actual drawn families.
+  4-of-7 draw from ${isRetargeting ? 'P/M/R/I/C/Q/E' : 'A/B/C/D/E/F/G'}). The block letters
+  below are injected from the drawn set _phase23CarouselFamilies — do NOT output the
+  FIRST-4 (A, B, C, D / P, Q, R, M) families unless they are the actual drawn ones.
+  Outputting the wrong letters breaks the allFamiliesPresent validation downstream
+  and pollutes the carousel memory pool with families the user did not actually receive.
 
 Fill in values after each colon — do NOT output brackets, instructions, or angle labels:
 
@@ -7589,11 +7592,19 @@ At least 1-2 of the 4 angles should directly leverage competitive differentiatio
         } catch (e) {
             console.warn("⚠️ Phase 23 middleAngleOrder trace build failed (non-blocking):", e);
         }
-        recordAngleFingerprint(_carouselUserId, {
-            angleKey: `carousel-${campaignType}`,
-            dimensionIds: [],
-            storyFamilies: _phase23CarouselFamilies,
-        }).catch((e) => console.warn("⚠️ carousel recordAngleFingerprint failed (non-blocking):", e));
+        // Phase 23 (CodeRabbit): await (not fire-and-forget) the carousel
+        // fingerprint so the Firestore write settles before the serverless
+        // function is torn down. The wrapper catches + logs (non-blocking)
+        // but the await guarantees no teardown race drops the memory write.
+        try {
+            await recordAngleFingerprint(_carouselUserId, {
+                angleKey: `carousel-${campaignType}`,
+                dimensionIds: [],
+                storyFamilies: _phase23CarouselFamilies,
+            });
+        } catch (e) {
+            console.warn("⚠️ carousel recordAngleFingerprint failed (non-blocking):", e);
+        }
     }
 
     // Return raw text — App.tsx will parse ANGLE_START_X / ANGLE_END_X blocks

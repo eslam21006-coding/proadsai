@@ -56,20 +56,39 @@ function splitCtaAndBenefit(ctaBlock: string): { cta: string; benefit: string } 
   const benefitMarker = ctaBlock.match(/^\s*BENEFIT\s*[:：]\s*([^\n]*)/im);
   if (benefitMarker && typeof benefitMarker.index === "number") {
     const cta = ctaBlock.slice(0, benefitMarker.index).replace(/\*\*/g, "").trim();
-    const inlineBenefit = (benefitMarker[1] || "").trim();
+    const inlineBenefit = (benefitMarker[1] || "").replace(/\*\*/g, "").trim();
     const tailBenefit = ctaBlock
       .slice(benefitMarker.index + benefitMarker[0].length)
       .replace(/\*\*/g, "")
+      .replace(CLAIM_FLAG_LINE_RE, "")
       .trim();
-    const benefit = [inlineBenefit, tailBenefit].filter(Boolean).join("\n").trim();
+    // Phase 23 (CodeRabbit): normalize the joined benefit so markdown
+    // emphasis and CLAIM_FLAG warning lines never reach the carousel UI.
+    const benefit = [inlineBenefit, tailBenefit]
+      .filter(Boolean)
+      .join("\n")
+      .replace(CLAIM_FLAG_LINE_RE, "")
+      .replace(/\*\*/g, "")
+      .trim();
     return { cta, benefit };
   }
   const triplePipe = ctaBlock.indexOf("|||");
   if (triplePipe === -1) {
-    return { cta: ctaBlock.replace(/\*\*/g, "").trim(), benefit: "" };
+    return {
+      cta: ctaBlock.replace(/\*\*/g, "").replace(CLAIM_FLAG_LINE_RE, "").trim(),
+      benefit: "",
+    };
   }
-  const cta = ctaBlock.slice(0, triplePipe).replace(/\*\*/g, "").trim();
-  const benefit = ctaBlock.slice(triplePipe + 3).replace(/\*\*/g, "").trim();
+  const cta = ctaBlock
+    .slice(0, triplePipe)
+    .replace(/\*\*/g, "")
+    .replace(CLAIM_FLAG_LINE_RE, "")
+    .trim();
+  const benefit = ctaBlock
+    .slice(triplePipe + 3)
+    .replace(/\*\*/g, "")
+    .replace(CLAIM_FLAG_LINE_RE, "")
+    .trim();
   return { cta, benefit };
 }
 
@@ -91,7 +110,12 @@ export function parseHookVariation(block: string, index: number): HookVariation 
 
   const hookText = extractBetween(block, "HOOK_TEXT", "SUBHEADLINE")
     .replace(/\*\*/g, "").replace(/^\s*[:：\-–•]+\s*/g, "").trim();
-  const subheadRaw = extractBetween(block, "SUBHEADLINE", "CTA_BUTTON")
+  // Phase 23 (CodeRabbit): stop subhead extraction at STORY_ARC first so
+  // we never capture the STORY_ARC marker + value into subheadRaw when
+  // STORY_ARC is ordered BEFORE CTA_BUTTON. Fall back to CTA_BUTTON for
+  // blocks that omit STORY_ARC.
+  const subheadRaw = (extractBetween(block, "SUBHEADLINE", "STORY_ARC")
+    || extractBetween(block, "SUBHEADLINE", "CTA_BUTTON"))
     .replace(/\*\*/g, "").replace(/^\s*[:：\-–•]+\s*/g, "").trim();
   const storyArc = extractBetween(block, "STORY_ARC", "CTA_BUTTON")
     .replace(/\*\*/g, "").replace(/^\s*[:：\-–•]+\s*/g, "").trim();
