@@ -18,6 +18,7 @@
 import {
     drawDimensions as _drawDimensions,
     drawOpenings as _drawOpenings,
+    stringHash32,
 } from "./knowledge/hookAnglesKnowledge.js";
 import { getRecentFingerprints, type AngleFingerprint } from "./creativeMemory.js";
 import type { DimensionEntry, OpeningStructure } from "./knowledge/hookAnglesKnowledge.js";
@@ -40,15 +41,6 @@ export function makeProjectSeed(userId?: string | null, projectId?: string | nul
     const day = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
     const seedStr = `${userId || "anon"}|${projectId || "default"}|${angleKey || "any"}|${day}`;
     return stringHash32(seedStr);
-}
-
-function stringHash32(s: string): number {
-    let h = 2166136261 >>> 0;
-    for (let i = 0; i < s.length; i++) {
-        h ^= s.charCodeAt(i);
-        h = Math.imul(h, 16777619) >>> 0;
-    }
-    return h >>> 0;
 }
 
 // ─── Down-weight recent ids, never ban ────────────────────────────────────────

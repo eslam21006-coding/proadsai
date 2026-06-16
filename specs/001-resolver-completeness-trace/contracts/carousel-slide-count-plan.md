@@ -11,16 +11,10 @@ angle assignment is now rotated per-project instead of fixed lockstep.
 ## Function Signature
 
 ```typescript
-interface SlidePlanOptions {
-  valueStackGiftCount?: number;    // For value_stack auto-adjustment
-  objectionId?: string;            // For retargeting slide 1 framing
-}
-
 function buildSlidePlan(
   campaignType: 'cold' | 'retargeting',
   slideCount: number,
-  seed?: string,                   // Phase 23 — optional per-project rotation seed (string; the runtime helper hashes it to a number for modular indexing)
-  options?: SlidePlanOptions
+  seed?: number                   // Phase 23 — optional per-project rotation seed (number; the runtime helper `makeProjectSeed()` in copyDiversity.ts already hashes userId+projectId+day into a 32-bit int)
 ): SlidePlan;
 
 // Value stack auto-adjustment

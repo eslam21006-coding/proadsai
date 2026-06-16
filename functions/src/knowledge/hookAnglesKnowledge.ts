@@ -1402,7 +1402,9 @@ export const OPENING_STRUCTURES: readonly OpeningStructure[] = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Small, dependency-free string hash. Deterministic across runs.
-function stringHash32(s: string): number {
+// Phase 23 (CodeRabbit): exported so copyDiversity.ts can reuse the
+// same FNV-1a implementation (was duplicated verbatim before).
+export function stringHash32(s: string): number {
     let h = 2166136261 >>> 0;
     for (let i = 0; i < s.length; i++) {
         h ^= s.charCodeAt(i);

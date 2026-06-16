@@ -92,9 +92,48 @@ export async function fetchRemoteImageAsBase64(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REMOTE_IMAGE_FETCH_TIMEOUT_MS);
     try {
-        const resp = await fetch(url.toString(), { signal: controller.signal });
-        if (!resp.ok) {
-            console.warn(`⚠️ ${label}: fetch ${resp.status} — skipped`);
+        // Phase 23 (CodeRabbit): disable automatic redirect following.
+        // A user-supplied public URL can 3xx to a private host
+        // (169.254.169.254, RFC1918, loopback) and bypass the hostname
+        // check above. Manually follow up to MAX_REDIRECTS hops, re-running
+        // the protocol + private-host guard on every Location target.
+        const MAX_REDIRECTS = 5;
+        let resp: Response | null = null;
+        let current = url;
+        for (let hops = 0; ; hops++) {
+            resp = await fetch(current.toString(), {
+                signal: controller.signal,
+                redirect: "manual",
+            });
+            if (resp.status < 300 || resp.status >= 400) break;
+            if (hops >= MAX_REDIRECTS) {
+                console.warn(`⚠️ ${label}: too many redirects (>${MAX_REDIRECTS}) — skipped`);
+                return null;
+            }
+            const location = resp.headers.get("location");
+            if (!location) {
+                console.warn(`⚠️ ${label}: redirect without Location — skipped`);
+                return null;
+            }
+            let next: URL;
+            try {
+                next = new URL(location, current);
+            } catch {
+                console.warn(`⚠️ ${label}: invalid redirect target — skipped`);
+                return null;
+            }
+            if (next.protocol !== "http:" && next.protocol !== "https:") {
+                console.warn(`⚠️ ${label}: redirect to non-http(s) — skipped`);
+                return null;
+            }
+            if (isPrivateOrLocalHost(next.hostname)) {
+                console.warn(`⚠️ ${label}: redirect to private host — skipped`);
+                return null;
+            }
+            current = next;
+        }
+        if (!resp || !resp.ok) {
+            console.warn(`⚠️ ${label}: fetch ${resp?.status} — skipped`);
             return null;
         }
         const contentType = (resp.headers.get("content-type") || "").split(";")[0].trim();
@@ -107,11 +146,31 @@ export async function fetchRemoteImageAsBase64(
             console.warn(`⚠️ ${label}: declared size ${declaredLen} exceeds cap — skipped`);
             return null;
         }
-        const buf = Buffer.from(await resp.arrayBuffer());
-        if (buf.length > REMOTE_IMAGE_MAX_BYTES) {
-            console.warn(`⚠️ ${label}: size ${buf.length} exceeds cap — skipped`);
+        // Phase 23 (CodeRabbit): enforce the byte cap while streaming
+        // the body. The Content-Length header can be missing or wrong,
+        // so we cannot rely on declaredLen as a hard cap. Read in
+        // chunks and abort the stream the moment the running total
+        // crosses REMOTE_IMAGE_MAX_BYTES.
+        const reader = resp.body?.getReader();
+        if (!reader) {
+            console.warn(`⚠️ ${label}: empty response body — skipped`);
             return null;
         }
+        const chunks: Buffer[] = [];
+        let received = 0;
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!value) continue;
+            received += value.byteLength;
+            if (received > REMOTE_IMAGE_MAX_BYTES) {
+                await reader.cancel();
+                console.warn(`⚠️ ${label}: size exceeds cap (${received} bytes) — skipped`);
+                return null;
+            }
+            chunks.push(Buffer.from(value));
+        }
+        const buf = Buffer.concat(chunks, received);
         return { data: buf.toString("base64"), mimeType: contentType || "image/png" };
     } catch (e) {
         console.warn(`⚠️ ${label}: fetch failed — skipped:`, e);

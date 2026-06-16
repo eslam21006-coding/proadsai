@@ -676,19 +676,19 @@ export interface ReflowImageResponse {
 }
 
 export interface VariantSet {
-    setId: string;
-    userId: string;
-    createdAt: number;
-    baseTemplate: string;
-    baseCreativeModes: string[];
-    baseHookAngle: string;
-    baseHookType: string;
-    baseAspectRatio: string;
-    baseCta: string;
-    variants: VariantSpec[];
-    winnerId: string | null;
-    winnerDimensions: { dimension: string; value: string }[] | null;
-    status: 'draft' | 'pushed' | 'tracking' | 'complete';
+  setId: string;
+  userId: string;
+  createdAt: number;
+  baseTemplate: string;
+  baseCreativeModes: string[];
+  baseHookAngle: string;
+  baseHookType: string;
+  baseAspectRatio: string;
+  baseCta: string;
+  variants: VariantSpec[];
+  winnerId: string | null;
+  winnerDimensions: { dimension: string; value: string }[] | null;
+  status: 'draft' | 'pushed' | 'tracking' | 'complete';
 }
 
 // ─── PHASE 23 — IN-CARD VARIATION CAROUSEL (23.A) ────────────────────────────
