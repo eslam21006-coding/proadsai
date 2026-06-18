@@ -164,12 +164,18 @@ HOOK_END_D`;
     assert(typeof result.claimFlags[0].reason === "string" && result.claimFlags[0].reason.length > 0, `first claim flag has a reason (got ${JSON.stringify(result.claimFlags[0])})`);
     assert(result.claimFlags[1].text.toLowerCase().includes("coach ahmed"), `second claim flag text captured verbatim (got ${JSON.stringify(result.claimFlags[1])})`);
     assert(result.fields.hookText.length > 0, "parser returned a non-empty hookText");
-    assert(result.fields.subheadText.length > 0, "parser returned a non-empty subheadText");
-    assert(result.fields.ctaName.length > 0, "parser returned a non-empty ctaName");
+    // Phase 24B: optional fields widen to `string | null`. Coerce to string for
+    // .length / .test() calls so the Phase 22 invariants stay asserted under the
+    // new type contract (a present field is always a non-empty string).
+    const _subhead = result.fields.subheadText ?? "";
+    const _cta = result.fields.ctaName ?? "";
+    const _benefit = result.fields.benefitText ?? "";
+    assert(_subhead.length > 0, "parser returned a non-empty subheadText");
+    assert(_cta.length > 0, "parser returned a non-empty ctaName");
     assert(!/CLAIM_FLAG/i.test(result.fields.hookText), "hookText has no CLAIM_FLAG substring");
-    assert(!/CLAIM_FLAG/i.test(result.fields.subheadText), "subheadText has no CLAIM_FLAG substring");
-    assert(!/CLAIM_FLAG/i.test(result.fields.ctaName), "ctaName has no CLAIM_FLAG substring");
-    assert(!/CLAIM_FLAG/i.test(result.fields.benefitText), "benefitText has no CLAIM_FLAG substring");
+    assert(!/CLAIM_FLAG/i.test(_subhead), "subheadText has no CLAIM_FLAG substring");
+    assert(!/CLAIM_FLAG/i.test(_cta), "ctaName has no CLAIM_FLAG substring");
+    assert(!/CLAIM_FLAG/i.test(_benefit), "benefitText has no CLAIM_FLAG substring");
   }
 
   // ─── US3: parser with NO CLAIM_FLAG line returns unchanged fields + empty claimFlags ───

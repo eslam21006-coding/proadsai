@@ -244,9 +244,12 @@ function mustShowSatisfied(token: string, haystack: string, ownership: ContentOw
 export function buildContentOwnershipMap(
     ownedText: {
         hookText?: string;
-        subheadText?: string;
-        ctaName?: string;
-        benefitText?: string;
+        // Phase 24B: optional fields widen to `string | null` so the parser
+        // can distinguish "absent by design" from "synthesized empty string".
+        // `compact()` below treats both null and undefined the same way.
+        subheadText?: string | null;
+        ctaName?: string | null;
+        benefitText?: string | null;
     },
     inputs: OwnershipInputShape,
 ): ContentOwnershipMap {
@@ -683,9 +686,9 @@ export function validateStructuredBuildPlan(
 
 export interface CopyFidelityFields {
     hookText: string;
-    subheadText: string;
-    ctaName: string;
-    benefitText: string;
+    subheadText: string | null;
+    ctaName: string | null;
+    benefitText: string | null;
 }
 
 export interface CopyFidelityResult {
@@ -699,7 +702,11 @@ export function validateCopyFidelity(
     technicalPrompt: string | null,
     copyFieldsOrHookText: CopyFidelityFields | string,
 ): CopyFidelityResult | boolean {
-    const normalizeText = (s: string) => s.normalize("NFC").trim().replace(/\s+/g, " ");
+    // Phase 24B: optional fields widen to `string | null`. Null entries must be
+    // treated as intentionally absent and skipped — never fed to .normalize()
+    // (which would throw on null) and never counted as failures (FR-009).
+    const normalizeText = (s: string | null | undefined): string =>
+        (s ?? "").normalize("NFC").trim().replace(/\s+/g, " ");
 
     if (typeof copyFieldsOrHookText === "string") {
         const hookText = copyFieldsOrHookText;
@@ -708,22 +715,22 @@ export function validateCopyFidelity(
     }
 
     const fields = copyFieldsOrHookText;
-    // hookText is required — blank hookText always fails
+    // hookText is required — blank hookText always fails (FR-002 / D5).
     if (!fields.hookText?.trim()) {
         return { passed: false, failedFields: ["hookText"] };
     }
     if (!technicalPrompt) {
         return {
             passed: false,
-            failedFields: ["hookText", "subheadText", "ctaName", "benefitText"].filter(
-                (k) => (fields as unknown as Record<string, string>)[k]?.trim(),
+            failedFields: (["hookText", "subheadText", "ctaName", "benefitText"] as const).filter(
+                (k) => normalizeText((fields as unknown as Record<string, string | null>)[k]).length > 0,
             ),
         };
     }
 
     const normalizedPrompt = normalizeText(technicalPrompt);
     const failedFields: string[] = [];
-    const checks: [string, string][] = [
+    const checks: [string, string | null][] = [
         ["hookText", fields.hookText],
         ["subheadText", fields.subheadText],
         ["ctaName", fields.ctaName],
@@ -731,7 +738,12 @@ export function validateCopyFidelity(
     ];
 
     for (const [name, value] of checks) {
-        if (value?.trim() && !normalizedPrompt.includes(normalizeText(value))) {
+        // Null/absent optional fields are accepted as valid (FR-009) — they
+        // cannot appear in the prompt by definition, so they cannot fail.
+        if (value == null) continue;
+        const trimmed = value.trim();
+        if (!trimmed) continue;
+        if (!normalizedPrompt.includes(normalizeText(value))) {
             failedFields.push(name);
         }
     }

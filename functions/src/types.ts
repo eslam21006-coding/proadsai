@@ -234,6 +234,19 @@ export interface ClaimFlagEntry {
     field?: "hook" | "subhead" | "cta" | "benefit" | "slide";
 }
 
+// ─── Phase 24B — Conditional Copy Fields (Optional Fields Plumbing) ─────────
+// Per FR-006/FR-007/FR-008: the parser represents an absent optional field as
+// `null` (NEVER `""` or a placeholder) and surfaces a tri-state status so
+// "intentionally absent" is separately observable from "failed to parse".
+// `hookText` is NEVER `absent` — it is always required.
+export type CopyFieldStatus = "present" | "absent" | "parse_failure";
+export interface CopyFieldStatuses {
+    hookText: CopyFieldStatus;       // "present" | "parse_failure" (NEVER "absent")
+    subheadText: CopyFieldStatus;    // "present" | "absent" | "parse_failure"
+    ctaName: CopyFieldStatus;        // "present" | "absent" | "parse_failure"
+    benefitText: CopyFieldStatus;    // "present" | "absent" | "parse_failure"
+}
+
 export interface ResolutionTrace {
     resolvedCampaignType: "cold" | "retargeting";
     resolvedAdMode: "single" | "carousel" | "batch";
@@ -302,6 +315,20 @@ export interface ResolutionTrace {
         middleAngleOrder?: string[];
         memoryBiasApplied: boolean;
         fingerprintsConsidered: number;
+    };
+    // Phase 24B — additive copy-field-status sub-object. Records the final
+    // per-field status (present/absent/parse_failure) for the four copy
+    // fields, plus the lists of fields that were degraded-to-absent after the
+    // parse-failure retry cap was exhausted, and fields that were nulled by
+    // the dedup/QA layer. Conforms to FR-008 (no silent absence) and
+    // Constitution VI/VII (overrides are traceable). Additive — no migration.
+    readonly copyFieldStatus?: {
+        readonly hookText: CopyFieldStatus;
+        readonly subheadText: CopyFieldStatus;
+        readonly ctaName: CopyFieldStatus;
+        readonly benefitText: CopyFieldStatus;
+        readonly degradedToAbsent?: readonly ("subheadText" | "ctaName" | "benefitText")[];
+        readonly dedupBlanked?: readonly ("subheadText" | "ctaName" | "benefitText")[];
     };
 }
 

@@ -28,7 +28,7 @@ import { storeCreativeToMemory, retrieveCreativePatterns } from "./creativeMemor
 import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.js";
 import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreservation, type SemanticLock } from "./utils/hookPayload.js";
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
-import type { FailureClass, CostEstimate, LogoPlacement, ClaimFlagEntry } from "./types.js";
+import type { FailureClass, CostEstimate, LogoPlacement, ClaimFlagEntry, CopyFieldStatuses } from "./types.js";
 import { resolveBrandColors, type ResolveBrandColorsInput } from "./brandColorResolver.js";
 import { buildCarouselBrandConsistencyBlock, buildBatchBrandConsistencyBlock } from "./brandPromptBlocks.js";
 import { checkBrandColorCompliance } from "./brandColorCompliance.js";
@@ -535,9 +535,9 @@ function containsUnresolvedCommercialPlaceholders(value: string): boolean {
 
 interface OwnedRenderText {
     hookText: string;
-    subheadText: string;
-    ctaName: string;
-    benefitText: string;
+    subheadText: string | null;
+    ctaName: string | null;
+    benefitText: string | null;
 }
 
 interface FinalAdDebugInfo {
@@ -556,11 +556,15 @@ interface FinalAdDebugInfo {
  * prompts. Applied at EVERY channel that feeds a CTA into the render — TOV parse, the
  * `textOverride` bypass, and the model's `machinePlan.ownership.ctaText` — so the literal
  * "|||" (and the fused benefit text) can never reach the rendered image (BUG 2).
+ *
+ * Phase 24B: returns `null` (not "") for genuinely-absent benefit halves so the UI
+ * and downstream layers can tell "intentionally absent" from "present but empty" —
+ * FR-006 mandates null/undefined, never "" / placeholder / duplicate.
  */
-function splitCta(raw: string): { ctaName: string; benefitText: string } {
-    if (!raw?.includes('|||')) return { ctaName: raw?.trim() || '', benefitText: '' };
+function splitCta(raw: string): { ctaName: string; benefitText: string | null } {
+    if (!raw?.includes('|||')) return { ctaName: raw?.trim() || '', benefitText: null };
     const parts = raw.split('|||');
-    return { ctaName: parts[0].trim(), benefitText: parts[1]?.trim() || '' };
+    return { ctaName: parts[0].trim(), benefitText: parts[1]?.trim() || null };
 }
 
 function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverride?: TextOverride): OwnedRenderText {
@@ -568,11 +572,15 @@ function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverr
         // textOverride bypasses the TOV ||| splitter — split here too, otherwise a
         // "cta ||| benefit" supplied in textOverride.ctaName renders the literal bars.
         const { ctaName: splitName, benefitText: splitBenefit } = splitCta(textOverride.ctaName || '');
+        // Phase 24B: never synthesize an absent field — if both textOverride.benefitText
+        // AND the ||| half are empty, the field is genuinely absent → null (FR-006).
+        const benefitOverride = (textOverride.benefitText ?? '').trim();
+        const resolvedBenefit = benefitOverride || (splitBenefit ?? null) || null;
         return {
             hookText: textOverride.hookText,
-            subheadText: textOverride.subheadText,
-            ctaName: splitName,
-            benefitText: (textOverride.benefitText || '').trim() || splitBenefit,
+            subheadText: textOverride.subheadText ?? null,
+            ctaName: splitName || null,
+            benefitText: resolvedBenefit,
         };
     }
 
@@ -600,26 +608,43 @@ function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverr
     subheadText = stripMarkerLines(subheadText);
     ctaBlock = stripMarkerLines(ctaBlock);
 
-    let ctaName = inputs.cta;
-    let benefitText = "";
-    const ctaBlockText = ctaBlock.trim();
+    // Phase 24B: optional fields (subheadText, ctaName, benefitText) widen to
+    // `string | null`. When the generator never produced a value (or only
+    // whitespace), normalize to `null` — NEVER fall back to inputs.cta / ""
+    // (FR-006). hookText is required and falls through untouched.
+    const normalizeOptional = (v: string): string | null => {
+        const trimmed = v.trim();
+        return trimmed.length > 0 ? trimmed : null;
+    };
+
+    let ctaName: string | null = normalizeOptional(ctaBlock);
+    let benefitText: string | null = null;
+    const ctaBlockText = (ctaBlock || '').trim();
 
     if (ctaBlockText.includes('|||')) {
         const parts = ctaBlockText.split('|||');
-        ctaName = parts[0].trim() || inputs.cta;
-        benefitText = parts[1]?.trim() || "";
+        ctaName = normalizeOptional(parts[0] || '');
+        benefitText = normalizeOptional(parts[1] || '');
     } else if (ctaBlockText.includes('+')) {
         const parts = ctaBlockText.split('+');
-        ctaName = parts[0].trim() || inputs.cta;
-        benefitText = parts[1]?.trim() || "";
+        ctaName = normalizeOptional(parts[0] || '');
+        benefitText = normalizeOptional(parts[1] || '');
     } else if (ctaBlockText.toLowerCase().startsWith((inputs.cta || '').toLowerCase())) {
-        benefitText = ctaBlockText.substring((inputs.cta || '').length).trim();
-        ctaName = inputs.cta;
-    } else {
-        ctaName = ctaBlockText || inputs.cta;
+        // The model's CTA block begins with the user-supplied inputs.cta; the
+        // remainder is the benefit. Use inputs.cta as-is (the user authorized
+        // it) and split off the trailing benefit text.
+        const userCta = (inputs.cta || '').trim();
+        ctaName = userCta.length > 0 ? userCta : null;
+        benefitText = normalizeOptional(ctaBlockText.substring(userCta.length));
     }
+    // else: ctaName / benefitText already set to normalized ctaBlock / null above.
 
-    return { hookText, subheadText, ctaName, benefitText };
+    return {
+        hookText,
+        subheadText: normalizeOptional(subheadText),
+        ctaName,
+        benefitText,
+    };
 }
 
 /**
@@ -668,15 +693,32 @@ export function extractClaimFlagsFromResponse(text: string): { claimFlags: Claim
  * claim-flag parser so callers that care about claim flags get a single source of
  * truth. Callers that don't care (carousel, batch) continue to use
  * `resolveOwnedRenderText` directly and only need the fields.
+ *
+ * Phase 24B — also returns `CopyFieldStatuses` so callers can tell "intentionally
+ * absent" (`absent`) from "failed to parse" (`parse_failure`) for each optional
+ * field. `hookText` is NEVER `absent` — it is either `present` (default) or
+ * `parse_failure` (rare hard-fail path).
  */
 export function extractCopyFieldsFromResponse(
     selectedTov: string,
     inputs: AdInputs,
     textOverride?: TextOverride,
-): { fields: OwnedRenderText; claimFlags: ClaimFlagEntry[] } {
+): { fields: OwnedRenderText; statuses: CopyFieldStatuses; claimFlags: ClaimFlagEntry[] } {
     const { claimFlags, cleanedText } = extractClaimFlagsFromResponse(selectedTov || "");
     const fields = resolveOwnedRenderText(cleanedText, inputs, textOverride);
-    return { fields, claimFlags };
+    // Initial statuses derived directly from the parsed value. The retry-loop
+    // may escalate an optional field's status from `absent` to `parse_failure`
+    // later (FR-008) if fidelity validation cannot recover it within the cap.
+    const statuses: CopyFieldStatuses = {
+        // hookText is NEVER `absent` (FR-002) — if it's empty here the
+        // downstream retry loop will route it to the hard-fail path, not the
+        // degrade-to-absent path.
+        hookText: fields.hookText.trim().length > 0 ? "present" : "parse_failure",
+        subheadText: fields.subheadText == null ? "absent" : "present",
+        ctaName: fields.ctaName == null ? "absent" : "present",
+        benefitText: fields.benefitText == null ? "absent" : "present",
+    };
+    return { fields, statuses, claimFlags };
 }
 
 const BUILD_PLAN_RESPONSE_SCHEMA = {
@@ -970,13 +1012,19 @@ export function setOpenAIKey(key: string) {
 // ─── Type aliases for server-side use ────────────────────────────────────
 export type AspectRatio = "1:1" | "4:5" | "9:16" | "16:9" | "3:4" | "4:3";
 export interface TextOverride {
-    hookText: string; subheadText: string; ctaName: string; benefitText: string;
+    hookText: string;
+    subheadText: string | null;
+    ctaName: string | null;
+    benefitText: string | null;
 }
 export interface VisualPolish {
     id: string; label: string; instruction: string;
 }
 export interface CarouselSlideCopy {
-    hookText: string; subheadText: string; ctaText: string; benefitText: string;
+    hookText: string;
+    subheadText: string | null;
+    ctaText: string | null;
+    benefitText: string | null;
 }
 
 // --- STRATEGY CONFIGURATION ---
@@ -4205,6 +4253,13 @@ export interface GenerateBuildPlanResult {
         matchedWords: string[];
         sourceLayer: "imagePrompt" | "adCopy" | "both";
     };
+    // Phase 24B — additive copy-field status rollup. Records which optional
+    // fields were degraded to absent after the parse-failure retry cap (FR-008)
+    // so the caller can persist them into resolutionTrace.copyFieldStatus.
+    // Absent when no optional fields were degraded.
+    copyFieldStatus?: {
+        degradedToAbsent: readonly ("subheadText" | "ctaName" | "benefitText")[];
+    };
 }
 
 export async function generateBuildPlan(conceptRaw: string, selectedTov: string, inputs: AdInputs, resolvedUniverse: string, currentAspectRatio: AspectRatio, textOverride?: TextOverride): Promise<GenerateBuildPlanResult> {
@@ -4557,11 +4612,19 @@ ${JSON.stringify(machinePlan)}`;
     let bestMachinePlan = machinePlan;
     let bestFidelityResult: CopyFidelityResult | null = null;
     let copyFidelityPassed = false;
+    // Phase 24B: track per-attempt optional-field fidelity failures so we can
+    // distinguish "absent by design" from "parse failure" (FR-007/FR-008).
+    // Only OPTIONAL fields can be degraded to absent; hookText failures route
+    // to the existing hard-fail/retry path (D5/FR-002).
+    let lastOptionalFailedFields: ReadonlyArray<"subheadText" | "ctaName" | "benefitText"> = [];
     for (let attempt = 1; attempt <= MAX_COPY_FIDELITY_ATTEMPTS; attempt++) {
         const tp = extractTechnicalPromptFromBlueprint(machinePlan.blueprint);
         const fidelityResult = tp ? validateCopyFidelity(tp, copyFields) : {
             passed: false,
-            failedFields: (['hookText', 'subheadText', 'ctaName', 'benefitText'] as const).filter(k => copyFields[k]?.trim()),
+            failedFields: (['hookText', 'subheadText', 'ctaName', 'benefitText'] as const).filter(k => {
+                const v = copyFields[k];
+                return typeof v === 'string' && v.trim().length > 0;
+            }),
         } as CopyFidelityResult;
         const contractOk = structuredValidation.contractCheck.passed;
         if (fidelityResult.passed && contractOk) {
@@ -4573,12 +4636,23 @@ ${JSON.stringify(machinePlan)}`;
             }
             break;
         }
-        // Keep the best plan seen so far — prefer hookText present, then fewer failed fields
+        // Track which OPTIONAL fields failed fidelity on this attempt (hookText
+        // failures route to hard-fail, not degrade-to-absent).
+        lastOptionalFailedFields = fidelityResult.failedFields.filter(
+            (f): f is "subheadText" | "ctaName" | "benefitText" => f !== "hookText",
+        );
+        // Keep the best plan seen so far — prefer hookText present, then fewer
+        // failed fields. Among equal hookText/failed-count plans, prefer plans
+        // with fewer OPTIONAL parse_failures so the degrade path produces the
+        // cleanest trace.
         const isBetter = (curr: CopyFidelityResult, best: CopyFidelityResult | null): boolean => {
             if (!best) return true;
             const currHasHook = !curr.failedFields.includes('hookText');
             const bestHasHook = !best.failedFields.includes('hookText');
             if (currHasHook !== bestHasHook) return currHasHook;
+            const currOptionalFailures = curr.failedFields.filter((f) => f !== "hookText").length;
+            const bestOptionalFailures = best.failedFields.filter((f) => f !== "hookText").length;
+            if (currOptionalFailures !== bestOptionalFailures) return currOptionalFailures < bestOptionalFailures;
             return curr.failedFields.length < best.failedFields.length;
         };
         if (contractOk) {
@@ -4612,6 +4686,20 @@ ${JSON.stringify(machinePlan)}`;
         : null;
     if (copyFidelityWarning) {
         console.warn(`⚠️ Copy fidelity warning: fields [${copyFidelityWarning.failedFields.join(', ')}] may not appear verbatim in TECHNICAL_PROMPT — using best available plan`);
+    }
+    // Phase 24B: degrade OPTIONAL parse-failures to absent (FR-008/SC-010).
+    // The retry loop has been exhausted; log a surfaced warning per failed
+    // optional field and null the value. hookText is NEVER degraded — it's a
+    // hard requirement and is handled by the existing retry path above.
+    const optionalDegradedToAbsent: Array<"subheadText" | "ctaName" | "benefitText"> = [];
+    if (lastOptionalFailedFields.length > 0) {
+        for (const f of lastOptionalFailedFields) {
+            console.warn(`⚠️ Phase 24B — optional field ${f} failed fidelity after ${MAX_COPY_FIDELITY_ATTEMPTS} attempt(s); degrading to absent (null) so the ad still ships. Status will be recorded as parse_failure in resolutionTrace.copyFieldStatus.`);
+            optionalDegradedToAbsent.push(f);
+            if (f === "subheadText") subheadText = null;
+            else if (f === "ctaName") ctaName = null;
+            else benefitText = null;
+        }
     }
 
     try {
@@ -4755,7 +4843,10 @@ ${JSON.stringify(machinePlan)}`;
             // pre-scan data.
             finalCopyFidelityWarning = {
                 passed: false,
-                failedFields: (["hookText", "subheadText", "ctaName", "benefitText"] as const).filter(k => sanitizedCopyFields[k]?.trim()),
+                failedFields: (["hookText", "subheadText", "ctaName", "benefitText"] as const).filter(k => {
+                    const v = sanitizedCopyFields[k];
+                    return typeof v === 'string' && v.trim().length > 0;
+                }),
             } as CopyFidelityResult;
             console.warn("⚠️ copyFidelityWarning set to conservative fail: sanitized blueprint has no TECHNICAL_PROMPT region to re-validate against.");
         }
@@ -4765,6 +4856,9 @@ ${JSON.stringify(machinePlan)}`;
         buildPlan: serializeBuildPlanEnvelope(finalMachinePlan.blueprint, finalMachinePlan),
         copyFidelityWarning: finalCopyFidelityWarning,
         culturalViolation,
+        copyFieldStatus: optionalDegradedToAbsent.length > 0
+            ? { degradedToAbsent: [...optionalDegradedToAbsent] }
+            : undefined,
     };
 }
 
@@ -4972,9 +5066,9 @@ export interface BuildFinalImagePromptInput {
     inputs: AdInputs;
     aspectRatio: AspectRatio;
     hookText: string;
-    subheadText: string;
-    ctaName: string;
-    benefitText: string;
+    subheadText: string | null;
+    ctaName: string | null;
+    benefitText: string | null;
     badges?: string;
     resolvedUniverse: string;
     costumeRules: string;
@@ -5379,49 +5473,64 @@ export async function generateFinalAd(
     if (_machineOwnership && typeof _machineOwnership.ctaText === 'string' && _machineOwnership.ctaText.includes('|||')) {
         const { ctaName: ownCta, benefitText: ownBenefit } = splitCta(_machineOwnership.ctaText);
         _machineOwnership.ctaText = ownCta;
-        if (!benefitText.trim() && ownBenefit) benefitText = ownBenefit;
+        // Phase 24B: benefitText is `string | null`. Only adopt the split
+        // benefit if our canonical benefit is currently absent and the
+        // machine-ownership half is non-empty.
+        if ((benefitText == null || !benefitText.trim()) && ownBenefit) benefitText = ownBenefit;
     }
     const ownershipMap = _machineOwnership
         ? mergeContentOwnership(buildContentOwnershipMap(ownedRenderText, inputs), _machineOwnership)
         : buildContentOwnershipMap(ownedRenderText, inputs);
 
     // ═══ ARABIC ANTI-REPETITION & TEXT QA LAYER ═══
-    // Normalize and deduplicate copy fields before sending to image generation
+    // Normalize and deduplicate copy fields before sending to image generation.
+    // Phase 24B: blanked optional fields are normalized to `null` (not ""),
+    // per FR-006 + FR-010. The dedup RULES themselves are unchanged — only the
+    // sentinel for "blanked" switched from "" to null. hookText remains
+    // untouched (never optional). Compact-ratio truncation keeps a present
+    // (shorter) string; truncation is NOT absence, status stays "present".
     {
-        const fields = [hookText, subheadText, ctaName, benefitText].map(f => f.trim());
+        const subheadTrim = (subheadText ?? '').trim();
+        const ctaTrim = (ctaName ?? '').trim();
+        const benefitTrim = (benefitText ?? '').trim();
 
         // 1. Remove exact duplicates between fields
-        if (subheadText.trim() === hookText.trim() && subheadText.trim()) {
-            subheadText = ''; // Don't repeat headline as subheadline
+        if (subheadTrim && subheadTrim === hookText.trim()) {
+            subheadText = null; // Don't repeat headline as subheadline
         }
-        if (benefitText.trim() === ctaName.trim() && benefitText.trim()) {
-            benefitText = ''; // Don't repeat CTA as benefit
+        if (benefitTrim && benefitTrim === ctaTrim) {
+            benefitText = null; // Don't repeat CTA as benefit
         }
-        if (benefitText.trim() === hookText.trim() && benefitText.trim()) {
-            benefitText = ''; // Don't repeat headline as benefit
+        if (benefitTrim && benefitTrim === hookText.trim()) {
+            benefitText = null; // Don't repeat headline as benefit
         }
-        if (benefitText.trim() === subheadText.trim() && benefitText.trim()) {
-            benefitText = ''; // Don't repeat subheadline as benefit
+        if (benefitTrim && subheadText != null && benefitTrim === subheadText.trim()) {
+            benefitText = null; // Don't repeat subheadline as benefit
         }
 
         // 2. Detect near-duplicate (one field contains another)
         const normalize = (s: string) => s.replace(/[\s\u200B-\u200D\uFEFF]/g, '').replace(/[.!?،,؟!]/g, '');
-        if (subheadText && normalize(hookText).includes(normalize(subheadText))) {
-            subheadText = ''; // Subhead is substring of headline
+        if (subheadTrim && normalize(hookText).includes(normalize(subheadTrim))) {
+            subheadText = null; // Subhead is substring of headline
         }
-        if (benefitText && normalize(ctaName).includes(normalize(benefitText))) {
-            benefitText = ''; // Benefit is substring of CTA
+        if (benefitTrim && ctaTrim && normalize(ctaTrim).includes(normalize(benefitTrim))) {
+            benefitText = null; // Benefit is substring of CTA
         }
 
         // 3. Copy compression for tight formats (9:16, 4:5)
         const isCompactRatio = currentAspectRatio === '9:16' || currentAspectRatio === '4:5';
         if (isCompactRatio) {
             // Limit total text density — prefer fewer, cleaner elements
-            const totalChars = hookText.length + subheadText.length + (ctaName || '').length + (benefitText || '').length;
+            const totalChars = hookText.length + (subheadText?.length ?? 0) + (ctaName?.length ?? 0) + (benefitText?.length ?? 0);
             if (totalChars > 120) {
-                // Prioritize: headline > CTA > subheadline > benefit
-                if (benefitText.length > 30) benefitText = benefitText.substring(0, 30).trim();
-                if (subheadText.length > 50 && totalChars > 140) subheadText = subheadText.substring(0, 50).trim();
+                // Prioritize: headline > CTA > subheadline > benefit. Truncation
+                // keeps the field PRESENT (a shorter string) — never blank it.
+                if (benefitText != null && benefitText.length > 30) {
+                    benefitText = benefitText.substring(0, 30).trim();
+                }
+                if (subheadText != null && subheadText.length > 50 && totalChars > 140) {
+                    subheadText = subheadText.substring(0, 50).trim();
+                }
             }
         }
     }
@@ -7784,16 +7893,21 @@ export async function generateCarouselSlideCopies(
     // Also try extracting story arc for context in the prompt
     const storyArc = extract(_carouselTovScrubbed, "STORY_ARC:", "CTA_BUTTON:") || '';
 
-    let ctaName = inputs.cta;
-    let benefitText = "";
+    // Phase 24B: optional fields widen to `string | null`. Default to null when
+    // absent — never fall back to inputs.cta / "" (FR-006). hookText remains
+    // required and falls through untouched.
+    let ctaName: string | null = null;
+    let benefitText: string | null = null;
     // Clean any leaked markers from ctaBlock
     const cleanCtaBlock = ctaBlock.replace(/ANGLE_END[_\s]*\w*/gi, '').replace(/HOOK_END[_\s]*\w*/gi, '').trim();
     if (cleanCtaBlock.includes("|||")) {
         const parts = cleanCtaBlock.split("|||");
-        ctaName = (parts[0] || "").trim() || inputs.cta;
-        benefitText = (parts[1] || "").trim();
+        const first = (parts[0] || "").trim();
+        ctaName = first.length > 0 ? first : null;
+        const second = (parts[1] || "").trim();
+        benefitText = second.length > 0 ? second : null;
     } else {
-        ctaName = cleanCtaBlock.trim() || inputs.cta;
+        ctaName = cleanCtaBlock.trim().length > 0 ? cleanCtaBlock.trim() : null;
     }
 
     const _carRtCtx = buildNormalizedRetargetingContext(inputs as any);
@@ -7818,9 +7932,9 @@ RETARGETING MODE — CRITICAL CONTEXT
             const isLastSlide = i === Math.min(testimonialTexts.length, slideCount - 1) - 1;
             testimonialSlides.push({
                 hookText: t.text.length > 80 ? t.text.substring(0, 77) + '...' : t.text,
-                subheadText: t.speakerName ? `— ${t.speakerName}` : '',
-                ctaText: isLastSlide ? ctaName : '',
-                benefitText: isLastSlide ? benefitText : '',
+                subheadText: t.speakerName ? `— ${t.speakerName}` : null,
+                ctaText: isLastSlide ? ctaName : null,
+                benefitText: isLastSlide ? benefitText : null,
             });
         }
         return testimonialSlides;
@@ -8005,7 +8119,9 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
 
     const text = response.text || '';
 
-    // Parse: Slide 1 = approved TOV, Slides 2-N = parsed from response
+    // Parse: Slide 1 = approved TOV, Slides 2-N = parsed from response.
+    // Phase 24B: optional fields widen to `string | null`. Empty parser outputs
+    // become null (not ""), so absent fields render as no nodes downstream.
     const copies: CarouselSlideCopy[] = [
         { hookText, subheadText, ctaText: ctaName, benefitText }
     ];
@@ -8025,12 +8141,15 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
         const subLine = lines.find((l: string) => l.startsWith('SUBHEADLINE:'))?.replace('SUBHEADLINE:', '').trim() || '';
         const showCta = lines.find((l: string) => l.startsWith('SHOW_CTA:'))?.replace('SHOW_CTA:', '').trim().toLowerCase() === 'yes';
 
+        const onCtaSlide = (showCta || i === slideCount);
         copies.push({
             hookText: headline,
-            subheadText: subLine,
-            // Only the last slide (or slides marked SHOW_CTA: yes) get CTA
-            ctaText: (showCta || i === slideCount) ? ctaName : '',
-            benefitText: (showCta || i === slideCount) ? benefitText : '',
+            subheadText: subLine.length > 0 ? subLine : null,
+            // Only the last slide (or slides marked SHOW_CTA: yes) get CTA.
+            // ctaName/benefitText may already be null (intentionally absent);
+            // preserve that signal — never synthesize "" from null.
+            ctaText: onCtaSlide ? ctaName : null,
+            benefitText: onCtaSlide ? benefitText : null,
         });
     }
 
