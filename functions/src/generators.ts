@@ -91,6 +91,18 @@ function isPrivateOrLocalHost(hostname: string): boolean {
 // those hosts upfront — anything else fails closed. The existing private-
 // host + DNS check stays as a defense-in-depth layer.
 const REMOTE_IMAGE_ALLOWED_HOST_RE = /^(?:[a-z0-9-]+\.)*storage\.googleapis\.com$|^storage\.googleapis\.com$|^[a-z0-9-]+\.firebaseio\.com$/i;
+/**
+ * Test whether a hostname is on the allowlist of remote-image source hosts.
+ * Only Google Cloud Storage buckets (storage.googleapis.com and any
+ * `*.storage.googleapis.com` subdomain) and Firebase Realtime DB hosts
+ * (`*.firebaseio.com`) are accepted; every other host fails closed.
+ *
+ * Closes the DNS-rebinding SSRF window by ensuring the fetch cannot resolve
+ * to a host the assertHostIsPublic check did not see.
+ *
+ * @param hostname - The hostname to test (case-insensitive).
+ * @returns true if the hostname is allowlisted; false otherwise.
+ */
 function isAllowedRemoteImageHost(hostname: string): boolean {
     return REMOTE_IMAGE_ALLOWED_HOST_RE.test(hostname);
 }
@@ -1638,6 +1650,17 @@ function stripMediaFromInputs(inputs: AdInputs): AdInputs {
 // empty (no work) or when ownership is undefined. The returned values use
 // `undefined` (not `null`) to match the optional-field contract of
 // ContentOwnershipMap and let `compact()` in mergeContentOwnership fall through.
+/**
+ * Strip the ContentOwnershipMap keys that correspond to copy fields which were
+ * degraded-to-absent in this build-plan run, so the machine-plan ownership
+ * cannot reintroduce text the degrade step explicitly nulled.
+ *
+ * @param ownership - The machine-plan ownership object (may be undefined).
+ * @param degraded - The list of copy fields that were degraded to null.
+ * @returns A shallow-copied ownership object with degraded-key values set to
+ *          `undefined`, or `null` if no work was done (no degraded fields,
+ *          or ownership is undefined).
+ */
 function stripDegradedFieldsFromOwnership(
     ownership: { [k: string]: any } | null | undefined,
     degraded: ReadonlyArray<"subheadText" | "ctaName" | "benefitText">,
