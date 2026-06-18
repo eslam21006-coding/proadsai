@@ -86,7 +86,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | Phase 12 — Workspace Logic | `createWorkspace` rejects below-Scale plans correctly. Meta ad account linking works. |
 | Phase 13 — Saved Projects | Per-plan project limits enforced (10/30/Unlimited). Status filter works. |
 
-### ✅ Done (22 items)
+### ✅ Done (23 items)
 
 | Item | Spec folder | Notes |
 |---|---|---|
@@ -111,6 +111,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | HOTFIX-F (aspect reflow) | `955-aspect-reflow` | |
 | HOTFIX-G (FLUX cleanup) | `0955-hotfix-flux-cleanup` | Deploy crash fixed via lazy-access pattern. |
 | Phase 021 — Stripe Migration | `specs/021-stripe-migration` | Complete |
+| Phase 023 — Conditional Copy Structure | `specs/959-copy-structure-variation` | ✅ Done 2026-06-18. 23.A in-card hook variation carousel, 23.B hook anti-sameness (dimension/opening rotation + cross-project memory), 23.C carousel angle rotation, plus FAIL-1/2/3 fixes and the carousel family-label remap hotfix. All merged to main (a64e120) and deployed to production. |
 | Phase 025 — OpenAI gpt-image-2 Swap | `specs/025-openai-swap` | Complete. Replaces Gemini image generation with gpt-image-2 across all render paths. Includes edit-recompose reflow, blueprint bleeding fixes, carousel prompt optimization, and unified ALL VERSIONS gallery. |
 
 ### ⏳ TODO — Critical (build first)
@@ -121,7 +122,6 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | **Phase 20 — Concept Director + Brief Coherence Check** | Solves "every ad looks like the same machine made it." User-facing impact: Brief Coherence Check (live banner) + Variance Mode (Balanced/Aggressive). Backend stays hidden. **Depends on Phase 14 (which depends on Phase 21).** |
 | **Phase 17 — Resize & Reflow (re-verify)** | Rebuilt in Phase 025 as edit-recompose — needs smoke test verification |
 | **Phase 22 — Copy Quality Upgrade** | **NEXT — ready for implementation.** Lifts every on-creative text string: enforces ≤6th-grade reading level, mandates lived-symptom depth (concrete moment, not abstract problem), replaces the hard fake-proof block with a soft user-facing claim flag, and adds a silent GPT-4o-mini scoring + rewrite gate. **Rides the existing copy-fidelity contract — improvements propagate to the rendered image automatically. Independent of billing; can run in parallel with Phase 21.** |
-| **Phase 23 — Conditional Copy Structure** | **NEXT — ready for implementation.** Makes the on-creative text *count* conditional (headline-only, headline+proof, diagnostic-only, etc.) instead of forcing 4 fields. Adds the Hook Angle / Hook Type / Awareness taxonomy cleanup, the 8 static / 11 carousel structures, the decision tree, the `creativeTextDirector` module, (23.A) the "Generate 4 More Like This" in-card variation carousel, and (23.B) within-angle dimension/entry rotation + cross-project anti-repetition memory so new projects stop feeling samey (the user's angle lock stays intact), and (23.C) carousel anti-sameness — rotated story-direction choices + rotated middle-slide sequencing (carousel stays a multi-angle picker; spec 001 + Section 5.A updated in lockstep). **Depends on Phase 22 (quality rules + scoring must exist first) and Phase 5 (fidelity gate + compositor).** |
 
 ### ⏳ TODO — Major
 
