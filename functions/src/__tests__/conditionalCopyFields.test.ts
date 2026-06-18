@@ -4,6 +4,8 @@
 // Tests are intentionally pure (no Gemini calls): they exercise the parser + fidelity
 // gate + dedup-block logic in isolation, asserting the absent-vs-parse_failure distinction.
 
+import { readFileSync } from "fs";
+import { join } from "path";
 import { extractCopyFieldsFromResponse } from "../generators.js";
 import {
     validateCopyFidelity,
@@ -11,22 +13,29 @@ import {
 } from "../buildPlanSlotMap.js";
 import type { CopyFieldStatuses } from "../types.js";
 
-// The `OwnedRenderText` interface and `AdInputs` type are local to generators.ts
-// (not exported). Re-declare them locally with the new `string | null` shape.
+// The `OwnedRenderText` interface is local to generators.ts (not exported).
+// Re-declare it locally with the new `string | null` shape so the test can
+// assert on it directly.
 interface OwnedRenderText {
     hookText: string;
     subheadText: string | null;
     ctaName: string | null;
     benefitText: string | null;
 }
-type AdInputs = Record<string, any>;
 
-declare const require: any;
-declare const process: any;
-declare const console: any;
+// A narrowly-typed test input shape — mirrors the subset of AdInputs fields
+// the parser actually reads. Replaces the previous `Record<string, any>`
+// alias (which spread `any` into backend test code).
+interface TestAdInputs {
+    adLanguage?: string;
+    cta?: string;
+    productName?: string;
+    targetAudience?: string;
+    offerType?: string;
+}
 
-const fs = require("fs");
-const path = require("path");
+declare const process: { exit(code: number): void };
+declare const console: { log(...args: unknown[]): void; error(...args: unknown[]): void };
 
 // ─── shell ─────────────────────────────────────────────────────────────────
 
@@ -68,7 +77,7 @@ function runTests(): void {
             `${label}: benefitText is never "" or undefined (must be null when absent)`);
     }
 
-    const _baseInputs: Partial<AdInputs> = {
+    const _baseInputs: Partial<TestAdInputs> = {
         adLanguage: "en",
         cta: "Get the playbook",
         productName: "Test Product",
@@ -85,7 +94,7 @@ function runTests(): void {
         const raw = `HOOK_START_A
 HOOK_TEXT: Still posting daily but no calls
 HOOK_END_A`;
-        const result = extractCopyFieldsFromResponse(raw, _baseInputs as AdInputs);
+        const result = extractCopyFieldsFromResponse(raw, _baseInputs as TestAdInputs);
         // hookText may contain trailing marker artifact due to pre-existing parser
         // regex behavior; assert it BEGINS with the expected headline.
         assert(result.fields.hookText.startsWith("Still posting daily but no calls"),
@@ -164,7 +173,7 @@ HOOK_TEXT: Get the playbook
 SUBHEADLINE: Get the playbook
 CTA_BUTTON: Get the playbook ||| And fill next month
 HOOK_END_A`;
-        const result = extractCopyFieldsFromResponse(raw, _baseInputs as AdInputs);
+        const result = extractCopyFieldsFromResponse(raw, _baseInputs as TestAdInputs);
         // The parser pulls out the four fields. After dedup, fields that are
         // duplicates get blanked. The PARSER itself does not dedup — that lives
         // in generateFinalAd's dedup block — but the parser must return the
@@ -189,7 +198,7 @@ HOOK_END_A`;
 HOOK_TEXT: Still posting daily but no calls
 SUBHEADLINE: The funnel step everyone skips
 HOOK_END_A`;
-        const result = extractCopyFieldsFromResponse(raw, _baseInputs as AdInputs);
+        const result = extractCopyFieldsFromResponse(raw, _baseInputs as TestAdInputs);
         // The pre-existing parser regex leaves a trailing `\n_A` artifact from
         // HOOK_END_A on the captured subhead (a quirk of the boundary regex).
         // Assert the value BEGINS with the expected subhead — the trailing
@@ -244,7 +253,7 @@ SUBHEADLINE: Find the one fix
 CTA_BUTTON: Get the playbook ||| And fix the leak
 HOOK_END_A
 CLAIM_FLAG: 9 out of 10 coaches — invented statistic, must be backed or removed`;
-        const result = extractCopyFieldsFromResponse(raw, _baseInputs as AdInputs);
+        const result = extractCopyFieldsFromResponse(raw, _baseInputs as TestAdInputs);
         assert(result.claimFlags.length === 1, "P8: claimFlag captured (Phase 22 behavior preserved)");
         assert(result.claimFlags[0].text.includes("9 out of 10"), "P8: claimFlag text captured verbatim");
         assertEq(result.fields.hookText, "9 out of 10 coaches leak leads here", "P8: hookText extracted");
@@ -264,7 +273,7 @@ CLAIM_FLAG: 9 out of 10 coaches — invented statistic, must be backed or remove
         // Case A: marker absent → status = absent (legitimately absent).
         const a = extractCopyFieldsFromResponse(
             `HOOK_START_A\nHOOK_TEXT: Headline only\nHOOK_END_A`,
-            _baseInputs as AdInputs,
+            _baseInputs as TestAdInputs,
         );
         assertEq(a.statuses.subheadText, "absent", "P9a: missing SUBHEADLINE marker → absent (legit)");
         assertEq(a.fields.subheadText, null, "P9a: value is null (not empty string)");
@@ -272,7 +281,7 @@ CLAIM_FLAG: 9 out of 10 coaches — invented statistic, must be backed or remove
         // Case B: marker present, value present → status = present.
         const b = extractCopyFieldsFromResponse(
             `HOOK_START_A\nHOOK_TEXT: Headline\nSUBHEADLINE: Real subhead\nHOOK_END_A`,
-            _baseInputs as AdInputs,
+            _baseInputs as TestAdInputs,
         );
         assertEq(b.statuses.subheadText, "present", "P9b: present subhead → present");
         assert((b.fields.subheadText ?? "").startsWith("Real subhead"),
@@ -308,8 +317,8 @@ CLAIM_FLAG: 9 out of 10 coaches — invented statistic, must be backed or remove
             `HOOK_START_A\nHOOK_TEXT: Hi\nSUBHEADLINE: Sub\nCTA_BUTTON: Btn ||| Benefit\nHOOK_END_A`, // all four
         ];
         for (const raw of inputsArr) {
-            const result = extractCopyFieldsFromResponse(raw, _baseInputs as AdInputs);
-            assertNoOptionalIsEmptyString(result.fields, `FR-006 (${raw.split('\n')[1]?.slice(0, 40)}...)`);
+            const result = extractCopyFieldsFromResponse(raw, _baseInputs as TestAdInputs);
+            assertNoOptionalIsEmptyString(result.fields, "FR-006 (" + (raw.split("\n")[1]?.slice(0, 40) ?? "") + "...)");
         }
     }
 
@@ -318,9 +327,9 @@ CLAIM_FLAG: 9 out of 10 coaches — invented statistic, must be backed or remove
     {
         // Read the source files (compiled .ts lives at src/, but we walk up to the
         // functions/ root).
-        const sourceRoot = path.join(__dirname, "..", "..", "src");
-        const cwSrc = fs.readFileSync(path.join(sourceRoot, "copywriting_knowledge.ts"), "utf-8");
-        const generatorsSrc = fs.readFileSync(path.join(sourceRoot, "generators.ts"), "utf-8");
+        const sourceRoot = join(__dirname, "..", "..", "src");
+        const cwSrc = readFileSync(join(sourceRoot, "copywriting_knowledge.ts"), "utf-8");
+        const generatorsSrc = readFileSync(join(sourceRoot, "generators.ts"), "utf-8");
         // These signatures / strings exist in the prompt constants. If any of them
         // are mutated in a way that TELLS the model to omit optional fields, the
         // signatures will change. This is a regression guard.
@@ -339,3 +348,5 @@ CLAIM_FLAG: 9 out of 10 coaches — invented statistic, must be backed or remove
 }
 
 runTests();
+
+

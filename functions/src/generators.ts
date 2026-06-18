@@ -18,7 +18,7 @@ import { getCopywritingStrategyPrompt, getCopywritingStrategyCaptionStructure, g
 import { getOfferHookPsychology, getCreativeModeConceptInstruction, getCreativeModeBuildPlanInstruction, getOfferCaptionStructure } from "./knowledge/offerCreativeModes.js";
 import { resolveCreativeSpec, getResolvedSpecPromptBlock, getCaptionCreativeModeAnchors, validateCombination, CREATIVE_MODE_CATALOG as _MODE_CATALOG, type ResolvedCreativeSpec, getSubStyleModeFusion, getBeforeAfterSubStyleFusion } from "./creativeResolver.js";
 import { compileFullContract, getContractRenderBlock, getContractCaptionBlock, getContractForScoring, type FullLayoutContract, type OverlayDataFilter } from "./layoutContract.js";
-import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, parseBuildPlanEnvelope, parseStructuredBuildPlanResponse, serializeBuildPlanEnvelope, validateStructuredBuildPlan, validateCopyFidelity, stripTechnicalPrompt, validateLogoPlacements, TECHNICAL_PROMPT_START, TECHNICAL_PROMPT_END, type BuildPlanSlotMap, type ContractCheckResult, type StructuredBuildPlanPayload, type CopyFidelityFields, type CopyFidelityResult } from "./buildPlanSlotMap.js";
+import { buildContentOwnershipMap, buildPlanSlotMap, mergeContentOwnership, parseBuildPlanEnvelope, parseStructuredBuildPlanResponse, serializeBuildPlanEnvelope, validateStructuredBuildPlan, validateCopyFidelity, stripTechnicalPrompt, validateLogoPlacements, TECHNICAL_PROMPT_START, TECHNICAL_PROMPT_END, type BuildPlanSlotMap, type ContractCheckResult, type StructuredBuildPlanPayload, type CopyFidelityFields, type CopyFidelityResult, type ContentOwnershipMap } from "./buildPlanSlotMap.js";
 import { compileModePayload, getModePayloadPromptBlock, getModePayloadPromptBlock_RenderSafe, getModePayloadCaptionAnchors, extractAuthorizedNumbers, getNumericFidelityPolicy, type ModePayload, type NumericFidelityPolicy } from "./modeFieldSchema.js";
 import { compositeOfferOverlay, isOverlayAvailable, extractOfferFacts, validateResolvedOfferFacts } from "./offerOverlay.js";
 import { validateCaption, validateArabicCompliance, validateBlueprintLanguage, validateBlueprintModeContribution, validateBlueprintMinimalStyle, sanitizeReferenceAdSummary, validateLanguageQuality, type CaptionValidationInput, type CaptionQualityResult, type CaptionQualityCheck } from "./captionValidator.js";
@@ -85,18 +85,20 @@ function isPrivateOrLocalHost(hostname: string): boolean {
 //
 // Phase 24B (CodeRabbit): the DNS check still leaves a TOCTOU window
 // between the assert and the fetch. All callers in this module only ever
-// receive Google Cloud Storage or Firebase Storage URLs (Firebase Storage
-// resolves to a `storage.googleapis.com` subdomain). Closing the rebinding
-// window without complex IP-binding is therefore as simple as allowlisting
-// those hosts upfront — anything else fails closed. The existing private-
-// host + DNS check stays as a defense-in-depth layer.
-const REMOTE_IMAGE_ALLOWED_HOST_RE = /^(?:[a-z0-9-]+\.)*storage\.googleapis\.com$|^storage\.googleapis\.com$|^[a-z0-9-]+\.firebaseio\.com$/i;
+// receive Google Cloud Storage or Firebase Storage URLs. Firebase Storage
+// serves downloads from `firebasestorage.googleapis.com` (not the older
+// `storage.googleapis.com` subdomain). Closing the rebinding window without
+// complex IP-binding is therefore as simple as allowlisting those hosts
+// upfront — anything else fails closed. The existing private-host + DNS
+// check stays as a defense-in-depth layer.
+const REMOTE_IMAGE_ALLOWED_HOST_RE = /^(?:[a-z0-9-]+\.)*storage\.googleapis\.com$|^storage\.googleapis\.com$|^[a-z0-9-]+\.firebasestorage\.googleapis\.com$|^firebasestorage\.googleapis\.com$|^[a-z0-9-]+\.firebaseio\.com$/i;
 /**
  * Test whether a hostname is on the allowlist of remote-image source hosts.
- * Only Google Cloud Storage buckets (storage.googleapis.com and any
- * `*.storage.googleapis.com` subdomain) and Firebase Realtime DB hosts
- * (`*.firebaseio.com`) are accepted; every other host fails closed.
- *
+ * Only Google Cloud Storage buckets (`storage.googleapis.com` and any
+ * `*.storage.googleapis.com` subdomain), Firebase Storage buckets
+ * (`firebasestorage.googleapis.com` and any `*.firebasestorage.googleapis.com`
+ * subdomain), and Firebase Realtime DB hosts (`*.firebaseio.com`) are
+ * accepted; every other host fails closed.
  * Closes the DNS-rebinding SSRF window by ensuring the fetch cannot resolve
  * to a host the assertHostIsPublic check did not see.
  *
@@ -1662,17 +1664,17 @@ function stripMediaFromInputs(inputs: AdInputs): AdInputs {
  *          or ownership is undefined).
  */
 function stripDegradedFieldsFromOwnership(
-    ownership: { [k: string]: any } | null | undefined,
+    ownership: Partial<ContentOwnershipMap> | null | undefined,
     degraded: ReadonlyArray<"subheadText" | "ctaName" | "benefitText">,
-): { [k: string]: any } | null {
+): Partial<ContentOwnershipMap> | null {
     if (!ownership || degraded.length === 0) return null;
     // Map each degraded copy field to the ownership key(s) it can fill.
-    const ownershipKeyByCopyField: Record<"subheadText" | "ctaName" | "benefitText", string[]> = {
+    const ownershipKeyByCopyField: Record<"subheadText" | "ctaName" | "benefitText", (keyof ContentOwnershipMap)[]> = {
         subheadText: ["supportingHeadline"],
         ctaName: ["ctaText"],
         benefitText: ["supportingHeadline", "urgencyText"], // benefit can backfill urgencyText in some modes
     };
-    const cloned: { [k: string]: any } = { ...ownership };
+    const cloned: Partial<ContentOwnershipMap> = { ...ownership };
     let mutated = false;
     for (const f of degraded) {
         for (const key of ownershipKeyByCopyField[f]) {
@@ -4919,7 +4921,16 @@ ${JSON.stringify(machinePlan)}`;
         );
         // If a machine-plan ownership existed with degraded-field text, overlay the
         // sanitized/degraded fields on top so they cannot leak back into the envelope.
-        if (strippedMachineOwnership) {
+        // Phase 24B (CodeRabbit): guard the overlay merge — only copy fields that
+        // we explicitly nulled should be re-stripped from `strippedMachineOwnership`.
+        // Any other copy keys (primaryHeadline, supportingHeadline, ctaText, urgencyText)
+        // that may still be present in the machine-plan ownership must NOT be
+        // overlaid on top of the sanitized values, since they would reintroduce
+        // pre-sanitize text. The helper already nulls only the degraded keys, so
+        // this guard restricts the overlay to the case where at least one field was
+        // actually degraded (so the overlay is the minimal fix-up, not a wholesale
+        // copy-fields re-strip).
+        if (strippedMachineOwnership && optionalDegradedToAbsent.length > 0) {
             finalMachinePlan.ownership = mergeContentOwnership(
                 finalMachinePlan.ownership,
                 strippedMachineOwnership,
@@ -6444,12 +6455,12 @@ CTA BUTTON: Solid primary color (red/blue/yellow) — thick black outline.
          - Keep RTL.Keep spacing between words.If you must wrap lines, wrap ONLY at word boundaries(never split a word).
          - Headline: "${hookText}"
 ${subheadText ? `  - Subheadline: "${subheadText}"` : `  - NO SUBHEADLINE on this slide. Do not render any subheadline.`}
-${ctaName ? `    - Button: "${ctaName}"${benefitText ? `\n      - Benefit: "${benefitText}"` : ''}` : `    ⚠️ NO BUTTON / NO CTA / NO BENEFIT on this slide. Do NOT render any button, CTA bar, or benefit text whatsoever. This is a middle carousel slide with headline and subheadline ONLY.`}
+${ctaName ? `    - Button: "${ctaName}"${benefitText ? `\n      - Benefit: "${benefitText}"` : ''}` : `    ⚠️ NO BUTTON / NO CTA / NO BENEFIT on this slide. Do NOT render any button, CTA bar, or benefit text whatsoever.${inputs.adMode === "carousel" ? " This carousel slide is intentionally CTA-less." : ""}`}
          ${inputs.badges ? `5. Badge: "${inputs.badges}"` : ''}
 - CONDITIONAL RENDER: ${ctaName ? `If the Benefit string("${benefitText || ''}") is empty or null, DO NOT render it at all. Only render the Button.` : `This slide has NO CTA and NO BENEFIT. Render only Headline and Subheadline. NO BUTTON AT ALL.`}
          - NO DUPES: If the Benefit string exists, render it exactly ONCE below the button.
 
-         - LAYOUT: Use the[LAYOUT_STYLE] from the blueprint.Use the 'Negative Space' described in the blueprint.Use typography that stands out from the background.
+         - LAYOUT: Use the layout style described in the blueprint (text paragraph stating the chosen layout family). Use the Negative Space described in the blueprint. Use typography that stands out from the background.
          - STRICT: DO NOT summarize, translate, or mutate the Arabic characters.Arabic characters always in RTL.
 
         2. CTA CONVERSION STACK(CRITICAL AESTHETICS):
