@@ -1952,6 +1952,30 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
+## HOTFIX-I — Carousel Review UX (Deferred Phase) ⏳ BACKLOG
+
+> **Context:** Phase 23.A shipped the per-card variation carousel (in-card navigation, generate-4-more flow, cap at 11 fresh variations). The user-facing "review all slides" surface is still rough: the Step-2 grid is hard-keyed to fixed `ANGLE_START_A..D` and the in-card carousel only shows hook variations — it does not yet show the full slide-by-slide review. This hotfix captures the deferred items for the post-Phase-23 review UX.
+
+**Carousel Review UX (deferred phase):**
+1. slides collapse into one navigable in-card carousel with arrows
+2. maximize/minimize popup with outside-click protection
+3. per-slide AI editor
+4. fix chip labels mismatch after family remap
+
+| # | File | Action | Done when |
+|---|---|---|---|
+| HFI.1 | `src/components/CarouselReview.tsx` (new) | New component: a fullscreen "review all slides" surface that collapses the N generated slides into a single in-card carousel with left/right arrows, position indicator, and RTL-aware gestures. Replaces the static Step-2 grid for carousel mode. | Opening a carousel generation in Step 2 shows one slide at a time with arrows. Swiping / clicking arrows advances. Position indicator shows "3 / 5". |
+| HFI.2 | `src/components/CarouselReview.tsx` | Maximize/minimize popup with outside-click protection. Add a fullscreen toggle: maximize = the carousel expands to fill the viewport (mod overlay), minimize = returns to the inline card. Outside-click on the maximized overlay is a no-op while the carousel is open; closes only via the explicit close button or `Esc` key. | Maximize button expands to fullscreen. Clicking outside does NOT close (intentional, prevents accidental dismiss during review). Close button + `Esc` both work. |
+| HFI.3 | `src/components/CarouselReview.tsx`, `src/store.ts` | Per-slide AI editor. Add an "Edit" affordance on the active slide that opens a slide-scoped editor (copy + image regenerate) without leaving the carousel. Edits update the slide in place; the carousel position stays at the edited slide. | Clicking "Edit" on slide 3 opens a slide-scoped editor. Saving the edit updates slide 3 and keeps the carousel at position 3. Other slides unchanged. |
+| HFI.4 | `src/App.tsx`, `src/components/CarouselReview.tsx` | Fix chip labels mismatch after family remap. The `remapCarouselFamiliesToSlots` helper relabels `ANGLE_START_X` → `ANGLE_START_A..D` for the Step-2 grid, but the chip labels (the small tag pills that show each slide's narrative angle, e.g. "Curiosity", "Objection pre-emption") are still keyed to the original drawn family letters. The chips need to be remapped in the same two-phase order as the block labels so chip text matches the rendered slide. | After a carousel render, the chip on slot A shows the narrative angle that was DRAWN as `families[0]` (not the literal "A" pool label). Each chip text matches the slide's actual content. |
+
+> **Out of scope for HOTFIX-I:**
+> - Replacing the existing 23.A in-card variation carousel (the hook-level "Generate 4 More" flow). That ships; HOTFIX-I adds the sibling slide-level review surface.
+> - Any backend changes. The deferred work is frontend-only.
+> - The two-phase `remapCarouselFamiliesToSlots` helper itself (already shipped in commit `c36ec07`).
+
+---
+
 ## Phase 20 — Concept Director + Brief Coherence Check ⏳ TODO — CRITICAL
 **Requires:** Phase 5 + Phase 14 (Creative Memory must be feeding generations) + HOTFIX-G (FLUX cleanup) complete.
 
