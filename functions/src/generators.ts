@@ -7354,6 +7354,46 @@ export function rotateCarouselAngles(
     }
     return sorted.slice(0, target);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 23 (HOTFIX) — remap drawn family block labels to positional slots A–D.
+//
+// 23.C draws a per-project 4-of-7 family set (e.g. ["C","F","A","E"]) and the
+// model emits ANGLE_START_<family> blocks. The Step-2 carousel grid in
+// src/App.tsx is hard-keyed to fixed ANGLE_START_A..D, so any drawn family that
+// isn't A–D renders as "⚠️ Angle unavailable" and out-of-range families
+// (E/F/G, P/M/R/I/Q) are silently dropped. We relabel the blocks back to
+// positional slots in DRAW ORDER (families[0]→A, [1]→B, [2]→C, [3]→D) at the
+// response boundary so the frontend stays unchanged.
+//
+// Two-phase placeholder swap: a naïve sequential replace would corrupt cases
+// where a drawn family letter collides with a target slot (e.g. a drawn "A"
+// that must become "C" — a prior pass would already have turned some "C" into
+// "A"). Phase 1 maps each family → a unique non-letter placeholder; phase 2
+// maps placeholders → slot letters. The actual drawn families remain untouched
+// in `_phase23CarouselFamilies` for the resolutionTrace audit + memory
+// fingerprint — ONLY the returned text is relabeled.
+// ═══════════════════════════════════════════════════════════════════════════
+export function remapCarouselFamiliesToSlots(text: string, families: readonly string[]): string {
+    if (!text || families.length === 0) return text;
+    const SLOTS = ["A", "B", "C", "D"];
+    let out = text;
+    // Phase 1: ANGLE_(START|END)_<family> → ANGLE_(START|END)_@@i@@
+    for (let i = 0; i < families.length && i < SLOTS.length; i++) {
+        const f = families[i]!;
+        out = out
+            .replace(new RegExp(`ANGLE_START_${f}\\b`, "g"), `ANGLE_START_@@${i}@@`)
+            .replace(new RegExp(`ANGLE_END_${f}\\b`, "g"), `ANGLE_END_@@${i}@@`);
+    }
+    // Phase 2: placeholder → positional slot letter
+    for (let i = 0; i < SLOTS.length; i++) {
+        out = out
+            .replace(new RegExp(`ANGLE_START_@@${i}@@`, "g"), `ANGLE_START_${SLOTS[i]}`)
+            .replace(new RegExp(`ANGLE_END_@@${i}@@`, "g"), `ANGLE_END_${SLOTS[i]}`);
+    }
+    return out;
+}
+
 export async function generateCarouselAngles(
     inputs: AdInputs,
     resolvedUniverse: string,
@@ -7557,19 +7597,19 @@ IMPORTANT:
 ═══════════════════════════════════════════════════════════════════════════════
 EXAMPLE (for a 5-slide cold carousel selling a course):
 
-ANGLE_START_A
+ANGLE_START_${_phase23CarouselFamilies?.[0] || (isRetargeting ? 'P' : 'A')}
 HOOK_TEXT: ماذا يمكنك أن تشتري بـ 27 دولاراً؟
 SUBHEADLINE: سؤال بسيط... إجابته تغيّر كل شيء
 STORY_ARC: Slides 2-3 list everyday things you buy for $27 that vanish instantly (dinner, coffee). Slide 4 pivots with "أو..." to reveal the real investment. Slide 5 names the product and CTA.
 CTA_BUTTON: ${inputs.cta}
-ANGLE_END_A
+ANGLE_END_${_phase23CarouselFamilies?.[0] || (isRetargeting ? 'P' : 'A')}
 
-ANGLE_START_B
+ANGLE_START_${_phase23CarouselFamilies?.[1] || (isRetargeting ? 'Q' : 'B')}
 HOOK_TEXT: كم خبيراً تعرفه يبيع بأقل مما يستحق؟
 SUBHEADLINE: أنت واحد منهم... وهذا يتغير اليوم
 STORY_ARC: Slides 2-3 describe the expert's daily frustration (undercharging, comparing to competitors). Slide 4 pivots to "الفرق بينك وبينهم = نظام واحد". Slide 5 introduces the product.
 CTA_BUTTON: ${inputs.cta}
-ANGLE_END_B
+ANGLE_END_${_phase23CarouselFamilies?.[1] || (isRetargeting ? 'Q' : 'B')}
 ═══════════════════════════════════════════════════════════════════════════════
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -7660,7 +7700,9 @@ At least 1-2 of the 4 angles should directly leverage competitive differentiatio
             console.warn(
                 "⚠️ carousel response missing one or more drawn ANGLE_START/END blocks; skipping fingerprint record to avoid memory pollution",
             );
-            return responseText;
+            // Phase 23 (HOTFIX) — best-effort relabel even on partial responses
+            // so any blocks that DID arrive land in their positional slots.
+            return remapCarouselFamiliesToSlots(responseText, _phase23CarouselFamilies);
         }
 
         // Build middleAngleOrder from the same buildSlidePlan() helper used
@@ -7701,8 +7743,12 @@ At least 1-2 of the 4 angles should directly leverage competitive differentiatio
         }
     }
 
-    // Return raw text — App.tsx will parse ANGLE_START_X / ANGLE_END_X blocks
-    return response.text || '';
+    // Phase 23 (HOTFIX) — relabel drawn-family blocks to positional slots A–D
+    // so the fixed-A..D Step-2 carousel grid renders every angle. The audit
+    // record (storyDirectionFamilies) and the memory fingerprint keep the real
+    // drawn family keys; only the returned text is relabeled. App.tsx parses
+    // ANGLE_START_A..D / ANGLE_END_A..D unchanged.
+    return remapCarouselFamiliesToSlots(response.text || '', _phase23CarouselFamilies);
 }
 
 // ─── CAROUSEL SLIDE COPIES ─────────────────────────────────────────────────

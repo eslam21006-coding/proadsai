@@ -8,7 +8,7 @@ import { drawDimensions, drawOpenings, type DimensionEntry, type OpeningStructur
 import type { AngleFingerprint } from "../creativeMemory.js";
 import { getRecentFingerprints, recordAngleFingerprint } from "../creativeMemory.js";
 import { buildSlidePlan } from "../slidePlanEngine.js";
-import { rotateCarouselAngles } from "../generators.js";
+import { rotateCarouselAngles, remapCarouselFamiliesToSlots } from "../generators.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -475,6 +475,62 @@ function runTests(): void {
     });
     assert(ret instanceof Promise, "recordAngleFingerprint returns a Promise (callable as a stub)");
     ret.catch(() => { /* non-blocking by contract */ });
+  }
+
+  // ─── HOTFIX — remapCarouselFamiliesToSlots: drawn family labels → fixed A–D ─
+  console.log("  HOTFIX — remapCarouselFamiliesToSlots relabels drawn families to A–D");
+  {
+    const mkBlock = (f: string) =>
+      `ANGLE_START_${f}\nHOOK_TEXT: hook ${f}\nSUBHEADLINE: sub ${f}\nSTORY_ARC: arc ${f}\nCTA_BUTTON: cta ${f}\nANGLE_END_${f}`;
+
+    // Cold draw with a collision: drawn "A" must become slot C, NOT stay A.
+    const coldFamilies = ["C", "F", "A", "E"];
+    const coldInput = coldFamilies.map(mkBlock).join("\n\n");
+    const coldOut = remapCarouselFamiliesToSlots(coldInput, coldFamilies);
+
+    // Draw order → positional slots A,B,C,D
+    assert(/ANGLE_START_A\b/.test(coldOut) && /ANGLE_END_A\b/.test(coldOut), "remap: slot A present");
+    assert(/ANGLE_START_B\b/.test(coldOut) && /ANGLE_END_B\b/.test(coldOut), "remap: slot B present");
+    assert(/ANGLE_START_C\b/.test(coldOut) && /ANGLE_END_C\b/.test(coldOut), "remap: slot C present");
+    assert(/ANGLE_START_D\b/.test(coldOut) && /ANGLE_END_D\b/.test(coldOut), "remap: slot D present");
+
+    // Content moved with the label: families[0]="C" content lands in slot A, etc.
+    assert(/ANGLE_START_A\nHOOK_TEXT: hook C\b/.test(coldOut), "remap: families[0] (C) content → slot A");
+    assert(/ANGLE_START_B\nHOOK_TEXT: hook F\b/.test(coldOut), "remap: families[1] (F) content → slot B");
+    // Collision case: drawn "A" → slot C, and its content is the A content (not double-rewritten)
+    assert(/ANGLE_START_C\nHOOK_TEXT: hook A\b/.test(coldOut), "remap: families[2] (A) content → slot C (collision)");
+    assert(/ANGLE_START_D\nHOOK_TEXT: hook E\b/.test(coldOut), "remap: families[3] (E) content → slot D");
+
+    // Exactly one of each slot label (no stray drawn-family labels left, no dup A)
+    const startCount = (l: string) => (coldOut.match(new RegExp(`ANGLE_START_${l}\\b`, "g")) || []).length;
+    assert(startCount("A") === 1, "remap: exactly one ANGLE_START_A (no double-rewrite)");
+    assert(startCount("B") === 1, "remap: exactly one ANGLE_START_B");
+    assert(startCount("C") === 1, "remap: exactly one ANGLE_START_C");
+    assert(startCount("D") === 1, "remap: exactly one ANGLE_START_D");
+    assert(startCount("E") === 0 && startCount("F") === 0, "remap: no out-of-range drawn-family labels remain");
+
+    // Retargeting draw also remaps to A/B/C/D
+    const rtFamilies = ["M", "R", "P", "Q"];
+    const rtInput = rtFamilies.map(mkBlock).join("\n\n");
+    const rtOut = remapCarouselFamiliesToSlots(rtInput, rtFamilies);
+    assert(/ANGLE_START_A\nHOOK_TEXT: hook M\b/.test(rtOut), "remap(retargeting): families[0] (M) → slot A");
+    assert(/ANGLE_START_B\nHOOK_TEXT: hook R\b/.test(rtOut), "remap(retargeting): families[1] (R) → slot B");
+    assert(/ANGLE_START_C\nHOOK_TEXT: hook P\b/.test(rtOut), "remap(retargeting): families[2] (P) → slot C");
+    assert(/ANGLE_START_D\nHOOK_TEXT: hook Q\b/.test(rtOut), "remap(retargeting): families[3] (Q) → slot D");
+    assert(
+      ["M", "R", "P", "Q"].every((l) => (rtOut.match(new RegExp(`ANGLE_START_${l}\\b`, "g")) || []).length === 0),
+      "remap(retargeting): no original drawn-family labels remain",
+    );
+
+    // The audit record (the families array) is NOT mutated by the remap.
+    assert(
+      coldFamilies.join(",") === "C,F,A,E" && rtFamilies.join(",") === "M,R,P,Q",
+      "remap: _phase23CarouselFamilies-style input array is not mutated (audit keeps real keys)",
+    );
+
+    // Empty / no-family inputs are passed through unchanged (defensive).
+    assert(remapCarouselFamiliesToSlots("", coldFamilies) === "", "remap: empty text passthrough");
+    assert(remapCarouselFamiliesToSlots(coldInput, []) === coldInput, "remap: empty families passthrough");
   }
 
   // ─── Summary ───
