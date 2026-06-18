@@ -3,7 +3,7 @@
 
 > **Authority**: This file overrides all older behavior assumptions, the Compatibility Matrix v2, and the ChatGPT master plan for launch scope.
 > Where this file and any other document disagree, this file wins.
-> Last updated: v6 — v5 + Phase 23.C (carousel anti-sameness) + fabrication-policy reconciliation (soft-flag is a safety net below the retained honest-degradation / numeric compliance guards, not a replacement). Codebase audit April 11, 2026.
+> Last updated: v7 — v6 + Phase 23 complete (2026-06-18) + Phase 24 added. Phase 20 and Phase 24 confirmed separate: Phase 20 = visual differentiation (conceptDirector.ts, needs Phase 14). Phase 24 = copy structure (creativeTextDirector.ts, no Phase 14 dependency).
 
 ---
 
@@ -111,7 +111,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | HOTFIX-F (aspect reflow) | `955-aspect-reflow` | |
 | HOTFIX-G (FLUX cleanup) | `0955-hotfix-flux-cleanup` | Deploy crash fixed via lazy-access pattern. |
 | Phase 021 — Stripe Migration | `specs/021-stripe-migration` | Complete |
-| Phase 023 — Conditional Copy Structure | `specs/959-copy-structure-variation` | ✅ Done 2026-06-18. 23.A in-card hook variation carousel, 23.B hook anti-sameness (dimension/opening rotation + cross-project memory), 23.C carousel angle rotation, plus FAIL-1/2/3 fixes and the carousel family-label remap hotfix. All merged to main (a64e120) and deployed to production. |
+| Phase 023 — Copy Anti-Sameness + Variation Carousel | `specs/959-copy-structure-variation` | ✅ Done 2026-06-18. 23.A in-card hook variation carousel, 23.B hook anti-sameness (dimension/opening rotation + cross-project memory), 23.C carousel angle rotation, plus FAIL-1/2/3 fixes and the carousel family-label remap hotfix. All merged to main (a64e120) and deployed to production. |
 | Phase 025 — OpenAI gpt-image-2 Swap | `specs/025-openai-swap` | Complete. Replaces Gemini image generation with gpt-image-2 across all render paths. Includes edit-recompose reflow, blueprint bleeding fixes, carousel prompt optimization, and unified ALL VERSIONS gallery. |
 
 ### ⏳ TODO — Critical (build first)
@@ -119,6 +119,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | Item | Why critical |
 |---|---|
 | **Phase 19 — Direct-Response Design Upgrades** | Single biggest paid-traffic conversion lever. Adds gaze direction, one-highlight cap, price hierarchy, CTA outcome framing, hook↔visual alignment, campaign coherence. **Independent of billing — can run in parallel with Phase 21.** |
+| **Phase 24 — Conditional Copy Structure (creativeTextDirector)** | Replaces fixed 4-field copy structure with a decision system: 8 static structures + 11 carousel frameworks chosen per inputs. Phase B ships first (make subheadline/CTA/benefit truly optional — highest risk, touches live step-2 UI). Phase C ships second (creativeTextDirector module — input diagnosis, auto-selection, scoring, rewrite loop). No dependency on Phase 14 or Phase 20. Spec: specs/_shared/COPY_SYSTEM_REFERENCE.md + creative-text-decision-system-spec.md. |
 | **Phase 20 — Concept Director + Brief Coherence Check** | Solves "every ad looks like the same machine made it." User-facing impact: Brief Coherence Check (live banner) + Variance Mode (Balanced/Aggressive). Backend stays hidden. **Depends on Phase 14 (which depends on Phase 21).** |
 | **Phase 17 — Resize & Reflow (re-verify)** | Rebuilt in Phase 025 as edit-recompose — needs smoke test verification |
 | **Phase 22 — Copy Quality Upgrade** | **NEXT — ready for implementation.** Lifts every on-creative text string: enforces ≤6th-grade reading level, mandates lived-symptom depth (concrete moment, not abstract problem), replaces the hard fake-proof block with a soft user-facing claim flag, and adds a silent GPT-4o-mini scoring + rewrite gate. **Rides the existing copy-fidelity contract — improvements propagate to the rendered image automatically. Independent of billing; can run in parallel with Phase 21.** |
