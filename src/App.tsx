@@ -6481,8 +6481,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   // Use activeBlock (which is _activeVar?.rawBlock || raw) for the
                   // visible fields and the action payloads so the user sees and
                   // approves the same hook they're looking at.
+                  // Phase 24B (FR-006 / US1): the three optional copy fields are
+                  // normalized to `null` (never "" / never t('default.cta')) when the
+                  // parser produces empty/whitespace output. hookText remains a
+                  // required string — the `"⚠️ Hook unavailable"` fallback below
+                  // is the only place hookText can appear empty, and it stays a
+                  // required sentinel on the render path.
                   const hookText = normalize(getSection(activeBlock, "HOOK_TEXT", "SUBHEADLINE"));
-                  const subhead = normalize(getSection(activeBlock, "SUBHEADLINE", "CTA_BUTTON"));
+                  const subheadRaw = normalize(getSection(activeBlock, "SUBHEADLINE", "CTA_BUTTON"));
+                  const subhead = subheadRaw.trim().length > 0 ? subheadRaw : null;
 
                   const actionBlockRaw =
                     getSection(activeBlock, "CTA_BUTTON", "HOOK_END") ||
@@ -6496,8 +6503,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                     .map(s => s.trim())
                     .filter(Boolean);
 
-                  const ctaText = actionParts[0] || t('default.cta');
-                  const benefitText = actionParts[1] || "";
+                  // Phase 24B (US1): optional-field fallbacks are now `null`.
+                  // An absent CTA renders zero DOM nodes downstream (not the
+                  // localized "default.cta" string) so the UI doesn't show a
+                  // button when the generator never produced one.
+                  const ctaText = (actionParts[0] ?? '').trim().length > 0 ? actionParts[0]!.trim() : null;
+                  const benefitText = (actionParts[1] ?? '').trim().length > 0 ? actionParts[1]!.trim() : null;
 
 
                   const isLoadingItem = itemLoading[v];
@@ -6582,6 +6593,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                             </div>
                           ) : (
                             <div className="space-y-4 flex-1">
+                              {/* hookText render path is UNTOUCHED per US1 brief — the
+                                 `"⚠️ Hook unavailable"` fallback remains the only place
+                                 hookText can appear empty (it's the required identity).
+                                 The regenerate button always renders — hookText is never
+                                 absent, so there is always a regenerate affordance. */}
                               <div className="flex items-start gap-2 group/field">
                                 <div dir="rtl" className="arabic-text text-3xl font-black text-white leading-tight text-right flex-1">{renderHighlightedText(hookText || (isLoadingItem ? "...Generating Headline" : "⚠️ Hook unavailable"))}</div>
                                 <button onClick={() => handlePrecisionHookEdit(v, 'Regenerate the HOOK_TEXT headline. Write a COMPLETELY DIFFERENT headline — different opening word, different psychological angle, different emotional trigger. Do NOT keep the same approach. Keep the subheadline, CTA, and benefit EXACTLY as they are.')}
@@ -6589,25 +6605,39 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                                   <i className="fa-solid fa-rotate-right"></i>
                                 </button>
                               </div>
-                              <div className="flex items-start gap-2 group/field">
-                                <div dir="rtl" className="arabic-text text-base text-slate-400 font-medium leading-relaxed italic text-right flex-1">{renderHighlightedText(subhead || (isLoadingItem ? "...Generating Subheadline" : ""))}</div>
-                                <button onClick={() => handlePrecisionHookEdit(v, 'Regenerate the SUBHEADLINE. Write a COMPLETELY DIFFERENT subheadline — different supporting angle, different mechanism, different benefit point. Do NOT reuse similar wording. Keep the HOOK_TEXT headline, CTA, and benefit EXACTLY unchanged.')}
-                                  className="opacity-0 group-hover/field:opacity-100 transition-opacity shrink-0 w-6 h-6 rounded-lg bg-slate-800/80 hover:bg-blue-600 text-slate-500 hover:text-white text-[8px] flex items-center justify-center" title="Retry subheadline only">
-                                  <i className="fa-solid fa-rotate-right"></i>
-                                </button>
-                              </div>
+                              {/* Phase 24B (US1 / FR-003 / FR-004): absent optional fields
+                                 render ZERO DOM nodes (no empty container, no placeholder,
+                                 no orphan label). The regenerate button is HIDDEN (not
+                                 disabled) when the field is null — there is nothing to
+                                 regenerate. The Arabic `dir="rtl"` is kept on the
+                                 inner div but only renders when subhead is present. */}
+                              {subhead !== null && (
+                                <div className="flex items-start gap-2 group/field">
+                                  <div dir="rtl" className="arabic-text text-base text-slate-400 font-medium leading-relaxed italic text-right flex-1">{renderHighlightedText(subhead)}</div>
+                                  <button onClick={() => handlePrecisionHookEdit(v, 'Regenerate the SUBHEADLINE. Write a COMPLETELY DIFFERENT subheadline — different supporting angle, different mechanism, different benefit point. Do NOT reuse similar wording. Keep the HOOK_TEXT headline, CTA, and benefit EXACTLY unchanged.')}
+                                    className="opacity-0 group-hover/field:opacity-100 transition-opacity shrink-0 w-6 h-6 rounded-lg bg-slate-800/80 hover:bg-blue-600 text-slate-500 hover:text-white text-[8px] flex items-center justify-center" title="Retry subheadline only">
+                                    <i className="fa-solid fa-rotate-right"></i>
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           )}
-                          {editingHook !== v && (
+                          {editingHook !== v && ctaText !== null && (
+                            /* Phase 24B (US1 / FR-003 / FR-004): the entire CTA
+                               panel renders ZERO DOM nodes when ctaText is null.
+                               benefitText conditional is preserved: if ctaText is
+                               present but benefitText is null, render CTA only
+                               with no benefit line. Regenerate button hidden when
+                               absent (no button on a button-less slide). */
                             <div className="bg-blue-600/10 border border-blue-500/20 p-4 rounded-xl text-center mb-4 group/cta relative">
                               <div dir="rtl" className="arabic-text text-blue-500 font-black text-xs uppercase tracking-widest shadow-sm">
-                                {ctaText || "Loading CTA..."}
+                                {ctaText}
                               </div>
-                              {benefitText ? (
+                              {benefitText !== null && (
                                 <div dir="rtl" className="arabic-text mt-2 text-slate-300 font-semibold text-xs leading-relaxed">
                                   {benefitText}
                                 </div>
-                              ) : null}
+                              )}
                               <button onClick={() => handlePrecisionHookEdit(v, 'Regenerate the CTA_BUTTON and benefit text. Write a COMPLETELY DIFFERENT CTA — different action verb, different benefit payoff, different emotional hook. Do NOT reuse similar phrasing. Keep the HOOK_TEXT and SUBHEADLINE EXACTLY unchanged.')}
                                 className="absolute top-2 right-2 opacity-0 group-hover/cta:opacity-100 transition-opacity w-6 h-6 rounded-lg bg-slate-800/80 hover:bg-blue-600 text-slate-500 hover:text-white text-[8px] flex items-center justify-center" title="Retry CTA & benefit">
                                 <i className="fa-solid fa-rotate-right"></i>
@@ -9318,7 +9348,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       <div>
                         <label className="text-[9px] font-bold text-slate-500 uppercase">Subheadline</label>
                         <input
-                          value={copy.subheadText}
+                          value={copy.subheadText ?? ''}
                           onChange={(e) => updateCarouselCopy(idx, 'subheadText', e.target.value)}
                           className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-300 outline-none focus:ring-1 focus:ring-blue-500"
                           dir="auto"
@@ -9330,7 +9360,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                           <div>
                             <label className="text-[9px] font-bold text-amber-500/80 uppercase">CTA (Final Slide)</label>
                             <input
-                              value={copy.ctaText}
+                              value={copy.ctaText ?? ''}
                               onChange={(e) => updateCarouselCopy(idx, 'ctaText', e.target.value)}
                               className="w-full bg-slate-950 border border-amber-500/30 rounded-lg px-3 py-1.5 text-[11px] text-blue-400 font-bold outline-none focus:ring-1 focus:ring-amber-500"
                               dir="auto"
@@ -9339,7 +9369,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                           <div>
                             <label className="text-[9px] font-bold text-amber-500/80 uppercase">Benefit</label>
                             <input
-                              value={copy.benefitText}
+                              value={copy.benefitText ?? ''}
                               onChange={(e) => updateCarouselCopy(idx, 'benefitText', e.target.value)}
                               className="w-full bg-slate-950 border border-amber-500/30 rounded-lg px-3 py-1.5 text-[11px] text-slate-400 outline-none focus:ring-1 focus:ring-amber-500"
                               dir="auto"

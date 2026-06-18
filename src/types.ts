@@ -354,19 +354,30 @@ export interface ABVariation {
   historyIdx: number;  // index in mockupHistory when pushed
 }
 
+// ─── PHASE 24B — Copy Field Status (frontend mirror of backend contract) ─────
+// hookText is NEVER "absent" — it is always required and either "present"
+// (parsed cleanly) or "parse_failure" (model failed to emit a usable value).
+// The three optional fields widen to the full tri-state.
+export type RequiredFieldStatus = "present" | "parse_failure";
+export type CopyFieldStatus = "present" | "absent" | "parse_failure";
+
 // ─── CAROUSEL SLIDES ─────────────────────────────────────────────────────────
+// Phase 24B — optional fields widen to `string | null` so an absent optional
+// copy field is unambiguously distinguishable from a present-but-empty one.
+// `null` is the ONLY sentinel for absence; "" / undefined / placeholder
+// strings are never used at rest (FR-006). hookText stays required.
 export interface TextOverride {
   hookText: string;
-  subheadText: string;
-  ctaName: string;
-  benefitText: string;
+  subheadText: string | null;
+  ctaName: string | null;
+  benefitText: string | null;
 }
 
 export interface CarouselSlideCopy {
   hookText: string;
-  subheadText: string;
-  ctaText: string;
-  benefitText: string;
+  subheadText: string | null;
+  ctaText: string | null;
+  benefitText: string | null;
 }
 
 export interface CarouselSlide {
@@ -705,9 +716,11 @@ export interface ClaimFlagEntry {
 
 export interface HookVariation {
     hookText: string;
-    subheadText: string;
-    ctaName: string;
-    benefitText: string;
+    // Phase 24B — optional fields widen to `string | null`. An absent optional
+    // is `null` (never "", never a placeholder). hookText stays required.
+    subheadText: string | null;
+    ctaName: string | null;
+    benefitText: string | null;
     rawBlock: string;
     claimFlags?: readonly ClaimFlagEntry[];
     variationIndex: number;

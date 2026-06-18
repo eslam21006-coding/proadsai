@@ -102,10 +102,24 @@ function splitCtaAndBenefit(ctaBlock: string): { cta: string; benefit: string } 
  *
  * For carousel blocks (ANGLE_START_X), HOOK_TEXT is used as `hookText`
  * and STORY_ARC is folded into the subheadText as additional context.
+ *
+ * Phase 24B — the three optional fields (subheadText / ctaName /
+ * benefitText) are normalized to `null` whenever the parser finds them
+ * empty or whitespace-only (FR-006 / FR-014). `hookText` stays required
+ * and may be returned as an empty string only when the input block itself
+ * is missing — the calling convention is that hookText is the variation's
+ * identity and must always be present.
  */
 export function parseHookVariation(block: string, index: number): HookVariation {
   if (!block || typeof block !== "string") {
-    return { hookText: "", subheadText: "", ctaName: "", benefitText: "", rawBlock: "", variationIndex: index };
+    return {
+      hookText: "",
+      subheadText: null,
+      ctaName: null,
+      benefitText: null,
+      rawBlock: "",
+      variationIndex: index,
+    };
   }
 
   const hookText = extractBetween(block, "HOOK_TEXT", "SUBHEADLINE")
@@ -137,11 +151,24 @@ export function parseHookVariation(block: string, index: number): HookVariation 
   const claimFlags = extractClaimFlags(block);
   const rawBlock = block.replace(CLAIM_FLAG_LINE_RE, "").trim();
 
+  // Phase 24B (FR-006 / FR-014): normalize absent optional fields to null.
+  // An optional field is "absent" iff its extracted value is empty or
+  // whitespace-only. `""` and `undefined` are NEVER used at rest so the
+  // downstream render guards (App.tsx tov_review) can distinguish
+  // intentionally-absent from present-but-empty via a single
+  // truthiness check on the field. hookText is intentionally NOT
+  // normalized — it stays `string` because it's the variation's
+  // required identity.
+  const normalizeOptional = (v: string): string | null => {
+    const trimmed = v.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+
   return {
     hookText,
-    subheadText,
-    ctaName: cta,
-    benefitText: benefit,
+    subheadText: normalizeOptional(subheadText),
+    ctaName: normalizeOptional(cta),
+    benefitText: normalizeOptional(benefit),
     rawBlock,
     claimFlags: claimFlags.length > 0 ? claimFlags : undefined,
     variationIndex: index,
