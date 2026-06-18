@@ -73,6 +73,32 @@ After a run that degraded a field or had a dedup blank, inspect the generation's
 - `degradedToAbsent[]` lists any field that hit `parse_failure`;
 - `dedupBlanked[]` lists any field nulled by dedup.
 
+### Where to find the trace (reviewer onboarding)
+
+The trace is written through **two** channels; pick whichever is closest to your debugging surface.
+
+**1. Backend Cloud Functions logs** (live production + emulator).
+Search the function logs for the run ID. The trace object is logged by the `persistTrace(genId, trace)` call in `resolutionTrace.ts`. Pattern:
+```bash
+firebase functions:log --only generateFinalAd | grep -E "(copyFieldStatus|degradedToAbsent|dedupBlanked)"
+```
+
+**2. Firestore document** (durable record after the run).
+The trace is persisted to the same generation document by `persistTrace`:
+```
+Firestore path:    /generations/{generationId}
+Field:             resolutionTrace.copyFieldStatus
+Sub-fields:        hookText, subheadText, ctaName, benefitText, degradedToAbsent[], dedupBlanked[]
+```
+Read it via:
+```bash
+firebase firestore:get /generations/<generationId> | jq .resolutionTrace.copyFieldStatus
+```
+Or in the Firebase Console: Firestore → `generations` collection → open the document by ID → expand the `resolutionTrace` map → expand the `copyFieldStatus` sub-object.
+
+**3. Frontend response payload** (per-call, transient).
+For an interactive debugging session, the trace round-trips back to the client inside the function response. Open browser DevTools → Network tab → filter by the callable (`generateFinalAd`) → click the request → inspect the response body → find `data.resolutionTrace.copyFieldStatus`.
+
 **Pass:** the override paths (degrade, dedup-blank) are traceable — no silent absence.
 
 ## 6. Regression guard

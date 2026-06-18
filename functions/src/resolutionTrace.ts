@@ -12,6 +12,7 @@ import type {
     AdaptStateAuditResult,
     ClaimFlagEntry,
     CopyFieldStatus,
+    RequiredFieldStatus,
 } from "./types.js";
 
 type Mutable<T> = { -readonly [P in keyof T]: T[P] extends readonly (infer U)[] ? U[] : T[P] };
@@ -74,8 +75,9 @@ export interface TraceBuilder {
     // Phase 24B — record the four per-field copy statuses plus the lists of
     // fields that were degraded-to-absent (after the parse-failure retry cap)
     // and fields that were nulled by the dedup/QA layer. Mirrors setClaimFlags.
+    // hookText uses the stricter RequiredFieldStatus (no "absent" sentinel).
     setCopyFieldStatus(status: {
-        hookText: CopyFieldStatus;
+        hookText: RequiredFieldStatus;
         subheadText: CopyFieldStatus;
         ctaName: CopyFieldStatus;
         benefitText: CopyFieldStatus;

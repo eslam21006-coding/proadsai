@@ -238,10 +238,13 @@ export interface ClaimFlagEntry {
 // Per FR-006/FR-007/FR-008: the parser represents an absent optional field as
 // `null` (NEVER `""` or a placeholder) and surfaces a tri-state status so
 // "intentionally absent" is separately observable from "failed to parse".
-// `hookText` is NEVER `absent` — it is always required.
+// `hookText` is NEVER `absent` — it is always required — so we model it as a
+// stricter RequiredFieldStatus that excludes the "absent" sentinel at the
+// type level (CodeRabbit review).
 export type CopyFieldStatus = "present" | "absent" | "parse_failure";
+export type RequiredFieldStatus = "present" | "parse_failure";
 export interface CopyFieldStatuses {
-    hookText: CopyFieldStatus;       // "present" | "parse_failure" (NEVER "absent")
+    hookText: RequiredFieldStatus;   // "present" | "parse_failure" (NEVER "absent")
     subheadText: CopyFieldStatus;    // "present" | "absent" | "parse_failure"
     ctaName: CopyFieldStatus;        // "present" | "absent" | "parse_failure"
     benefitText: CopyFieldStatus;    // "present" | "absent" | "parse_failure"
@@ -323,7 +326,7 @@ export interface ResolutionTrace {
     // the dedup/QA layer. Conforms to FR-008 (no silent absence) and
     // Constitution VI/VII (overrides are traceable). Additive — no migration.
     readonly copyFieldStatus?: {
-        readonly hookText: CopyFieldStatus;
+        readonly hookText: RequiredFieldStatus;
         readonly subheadText: CopyFieldStatus;
         readonly ctaName: CopyFieldStatus;
         readonly benefitText: CopyFieldStatus;

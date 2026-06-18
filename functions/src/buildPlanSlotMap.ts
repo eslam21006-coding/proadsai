@@ -286,7 +286,7 @@ export function buildContentOwnershipMap(
     };
 }
 
-export function mergeContentOwnership(base: ContentOwnershipMap, override?: Partial<ContentOwnershipMap> | null): ContentOwnershipMap {
+export function mergeContentOwnership(base: ContentOwnershipMap, override?: Partial<ContentOwnershipMap> | null | undefined): ContentOwnershipMap {
     const bonuses = unique([...(base.bonuses || []), ...((override?.bonuses || []).map((item) => compact(item)).filter(Boolean))]);
     const proofItems = unique([...(base.proofItems || []), ...((override?.proofItems || []).map((item) => compact(item)).filter(Boolean))]);
     return {

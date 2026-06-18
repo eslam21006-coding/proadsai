@@ -82,7 +82,26 @@ function isPrivateOrLocalHost(hostname: string): boolean {
 // narrows the TOCTOU window but does not eliminate it; for full pinning
 // the caller would need to set the Host header manually. We also
 // short-circuit if the DNS lookup itself fails (NXDOMAIN / timeout).
+//
+// Phase 24B (CodeRabbit): the DNS check still leaves a TOCTOU window
+// between the assert and the fetch. All callers in this module only ever
+// receive Google Cloud Storage or Firebase Storage URLs (Firebase Storage
+// resolves to a `storage.googleapis.com` subdomain). Closing the rebinding
+// window without complex IP-binding is therefore as simple as allowlisting
+// those hosts upfront — anything else fails closed. The existing private-
+// host + DNS check stays as a defense-in-depth layer.
+const REMOTE_IMAGE_ALLOWED_HOST_RE = /^(?:[a-z0-9-]+\.)*storage\.googleapis\.com$|^storage\.googleapis\.com$|^[a-z0-9-]+\.firebaseio\.com$/i;
+function isAllowedRemoteImageHost(hostname: string): boolean {
+    return REMOTE_IMAGE_ALLOWED_HOST_RE.test(hostname);
+}
 async function assertHostIsPublic(hostname: string, label: string): Promise<boolean> {
+    // Fast-path: only Google Cloud Storage + Firebase Realtime DB hosts are
+    // valid remote-image sources for this module. Reject everything else
+    // before any DNS lookup to close the rebinding window end-to-end.
+    if (!isAllowedRemoteImageHost(hostname)) {
+        console.warn(`⚠️ ${label}: host not on allowlist (${hostname}) — skipped`);
+        return false;
+    }
     if (isPrivateOrLocalHost(hostname)) {
         console.warn(`⚠️ ${label}: private/local host rejected — skipped (${hostname})`);
         return false;
@@ -576,10 +595,14 @@ function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverr
         // AND the ||| half are empty, the field is genuinely absent → null (FR-006).
         const benefitOverride = (textOverride.benefitText ?? '').trim();
         const resolvedBenefit = benefitOverride || (splitBenefit ?? null) || null;
+        // Phase 24B (CodeRabbit): normalize whitespace-only subheadText to null so
+        // a textOverride with `subheadText: "   "` is treated as intentionally absent,
+        // not as a real present-but-empty field. FR-006 mandates null for absence.
+        const subheadOverride = (textOverride.subheadText ?? '').trim();
         return {
             hookText: textOverride.hookText,
-            subheadText: textOverride.subheadText ?? null,
-            ctaName: splitName || null,
+            subheadText: subheadOverride.length > 0 ? subheadOverride : null,
+            ctaName: splitName && splitName.length > 0 ? splitName : null,
             benefitText: resolvedBenefit,
         };
     }
@@ -629,10 +652,13 @@ function resolveOwnedRenderText(selectedTov: string, inputs: AdInputs, textOverr
         const parts = ctaBlockText.split('+');
         ctaName = normalizeOptional(parts[0] || '');
         benefitText = normalizeOptional(parts[1] || '');
-    } else if (ctaBlockText.toLowerCase().startsWith((inputs.cta || '').toLowerCase())) {
+    } else if (ctaBlockText.toLowerCase().startsWith((inputs.cta || '').toLowerCase()) && (inputs.cta || '').trim().length > 0) {
         // The model's CTA block begins with the user-supplied inputs.cta; the
         // remainder is the benefit. Use inputs.cta as-is (the user authorized
-        // it) and split off the trailing benefit text.
+        // it) and split off the trailing benefit text. Guard against empty
+        // inputs.cta — String.prototype.startsWith('') returns true for any
+        // string, which would otherwise wrongly claim the user authorized the
+        // model's CTA and reassign the entire block to benefitText.
         const userCta = (inputs.cta || '').trim();
         ctaName = userCta.length > 0 ? userCta : null;
         benefitText = normalizeOptional(ctaBlockText.substring(userCta.length));
@@ -1601,6 +1627,39 @@ function stripMediaFromInputs(inputs: AdInputs): AdInputs {
         brandLogos: dropPayload(inputs.brandLogos) as any,
         offerAssets: dropPayload((inputs as any).offerAssets) as any,
     };
+}
+
+// Phase 24B — remove fields from a ContentOwnershipMap whose source copy
+// fields were degraded-to-null in this build-plan run. Without this strip,
+// `mergeContentOwnership(sanitizedOwnershipMap, machinePlan.ownership)` could
+// re-introduce text the degrade step explicitly nulled (e.g. machine plan
+// claiming `ctaText: "Click here"` after fidelity failed and we degraded the
+// CTA to absent). Returns the original ownership when the degraded list is
+// empty (no work) or when ownership is undefined. The returned values use
+// `undefined` (not `null`) to match the optional-field contract of
+// ContentOwnershipMap and let `compact()` in mergeContentOwnership fall through.
+function stripDegradedFieldsFromOwnership(
+    ownership: { [k: string]: any } | null | undefined,
+    degraded: ReadonlyArray<"subheadText" | "ctaName" | "benefitText">,
+): { [k: string]: any } | null {
+    if (!ownership || degraded.length === 0) return null;
+    // Map each degraded copy field to the ownership key(s) it can fill.
+    const ownershipKeyByCopyField: Record<"subheadText" | "ctaName" | "benefitText", string[]> = {
+        subheadText: ["supportingHeadline"],
+        ctaName: ["ctaText"],
+        benefitText: ["supportingHeadline", "urgencyText"], // benefit can backfill urgencyText in some modes
+    };
+    const cloned: { [k: string]: any } = { ...ownership };
+    let mutated = false;
+    for (const f of degraded) {
+        for (const key of ownershipKeyByCopyField[f]) {
+            if (cloned[key] != null) {
+                cloned[key] = undefined;
+                mutated = true;
+            }
+        }
+    }
+    return mutated ? cloned : null;
 }
 
 // Step 2. Generate TOV -> NEEDS GEMINI 3 (Creative)
@@ -4318,7 +4377,7 @@ ${_bpRtBlock}
 ` : ''}
       TEXTS TO RENDER:
 1. Headline: "${hookText}"
-2. Subheadline: "${subheadText}"
+${subheadText ? `2. Subheadline: "${subheadText}"` : `2. NO SUBHEADLINE on this slide. Do not render any subheadline.`}
 ${benefitText ? `3. Action Benefit: "${benefitText}"` : ''}
 ${ctaName ? `4. Button: "${ctaName}"
       OFFER: ${inputs.offerType || 'Not specified'} — match CTA style to this offer type.` : `⚠️ NO BUTTON / NO CTA on this slide. Do NOT render any button or CTA bar. This is a MIDDLE carousel slide.`
@@ -4343,9 +4402,9 @@ ${_bpEffectiveAngle === 'before_after' ? 'MANDATORY SPLIT COMPOSITION: Create a 
       ${(inputs.brandLogos && inputs.brandLogos.length > 0) ? MODE_SELECTION_HINT_BLOCK : ''}
       CANONICAL CONTENT OWNERSHIP:
       - PRIMARY_HEADLINE: "${ownershipMap.primaryHeadline || hookText}"
-      - SUPPORTING_HEADLINE: "${ownershipMap.supportingHeadline || subheadText}"
-      - CTA_TEXT: "${ownershipMap.ctaText || ctaName}"
-      - BENEFIT_TEXT: "${benefitText}"
+      - SUPPORTING_HEADLINE: "${ownershipMap.supportingHeadline || subheadText || ''}"
+      - CTA_TEXT: "${ownershipMap.ctaText || ctaName || ''}"
+      - BENEFIT_TEXT: "${benefitText || ''}"
       - OFFER_PRICE: "${ownershipMap.offerPrice || ''}"
       - ORIGINAL_PRICE: "${ownershipMap.originalPrice || ''}"
       - SAVINGS_TEXT: "${ownershipMap.savingsText || ''}"
@@ -4612,11 +4671,10 @@ ${JSON.stringify(machinePlan)}`;
     let bestMachinePlan = machinePlan;
     let bestFidelityResult: CopyFidelityResult | null = null;
     let copyFidelityPassed = false;
-    // Phase 24B: track per-attempt optional-field fidelity failures so we can
-    // distinguish "absent by design" from "parse failure" (FR-007/FR-008).
-    // Only OPTIONAL fields can be degraded to absent; hookText failures route
-    // to the existing hard-fail/retry path (D5/FR-002).
-    let lastOptionalFailedFields: ReadonlyArray<"subheadText" | "ctaName" | "benefitText"> = [];
+    // Phase 24B: degrade OPTIONAL parse-failures to absent ONLY when the
+    // SELECTED best plan has them in its failedFields. Computing this after
+    // the loop (from bestFidelityResult) ensures we degrade based on the plan
+    // we'll actually use, not on a discarded attempt's transient failures.
     for (let attempt = 1; attempt <= MAX_COPY_FIDELITY_ATTEMPTS; attempt++) {
         const tp = extractTechnicalPromptFromBlueprint(machinePlan.blueprint);
         const fidelityResult = tp ? validateCopyFidelity(tp, copyFields) : {
@@ -4636,11 +4694,6 @@ ${JSON.stringify(machinePlan)}`;
             }
             break;
         }
-        // Track which OPTIONAL fields failed fidelity on this attempt (hookText
-        // failures route to hard-fail, not degrade-to-absent).
-        lastOptionalFailedFields = fidelityResult.failedFields.filter(
-            (f): f is "subheadText" | "ctaName" | "benefitText" => f !== "hookText",
-        );
         // Keep the best plan seen so far — prefer hookText present, then fewer
         // failed fields. Among equal hookText/failed-count plans, prefer plans
         // with fewer OPTIONAL parse_failures so the degrade path produces the
@@ -4691,9 +4744,17 @@ ${JSON.stringify(machinePlan)}`;
     // The retry loop has been exhausted; log a surfaced warning per failed
     // optional field and null the value. hookText is NEVER degraded — it's a
     // hard requirement and is handled by the existing retry path above.
+    // Source the degraded list from bestFidelityResult (the plan we'll actually
+    // ship), NOT from any in-loop transient state — a discarded retry that
+    // later succeeded must not pollute the trace with false parse_failures.
+    const optionalFailuresToDegrade = !copyFidelityPassed && bestFidelityResult
+        ? bestFidelityResult.failedFields.filter(
+            (f): f is "subheadText" | "ctaName" | "benefitText" => f !== "hookText",
+        )
+        : [];
     const optionalDegradedToAbsent: Array<"subheadText" | "ctaName" | "benefitText"> = [];
-    if (lastOptionalFailedFields.length > 0) {
-        for (const f of lastOptionalFailedFields) {
+    if (optionalFailuresToDegrade.length > 0) {
+        for (const f of optionalFailuresToDegrade) {
             console.warn(`⚠️ Phase 24B — optional field ${f} failed fidelity after ${MAX_COPY_FIDELITY_ATTEMPTS} attempt(s); degrading to absent (null) so the ad still ships. Status will be recorded as parse_failure in resolutionTrace.copyFieldStatus.`);
             optionalDegradedToAbsent.push(f);
             if (f === "subheadText") subheadText = null;
@@ -4807,22 +4868,40 @@ ${JSON.stringify(machinePlan)}`;
         console.log(`🔒 Cultural violation aggregated: matchedWords=[${allWords.join(", ")}] sourceLayer=${sourceLayer}`);
     }
 
-    // ── Rebuild finalMachinePlan.ownership from the cleaned copy fields so the serialized
-    //    envelope reflects the sanitized hook/subhead/CTA/benefit, not the pre-scan text.
-    //    Also RECOMPUTE copyFidelityWarning against the sanitized blueprint + sanitized copy
-    //    so downstream consumers see an up-to-date fidelity signal (the pre-scan warning
-    //    referenced text that no longer exists in the outgoing plan).
+    // ── Rebuild finalMachinePlan.ownership from the CLEANED + POST-DEGRADATION copy fields
+    //    so the serialized envelope reflects whatever the four fields actually are at this
+    //    point — sanitized AND degraded-to-null as needed. Also RECOMPUTE copyFidelityWarning
+    //    against the sanitized blueprint + sanitized copy so downstream consumers see an
+    //    up-to-date fidelity signal.
     let finalCopyFidelityWarning: CopyFidelityResult | null = copyFidelityWarning;
-    if (copyMatched.length > 0 || imageMatched.length > 0) {
+    // Phase 24B: rebuild ownership whenever EITHER the cultural scan OR the degrade-to-absent
+    // path touched any field. Otherwise ownershipMap still carries pre-sanitize / pre-degrade
+    // text and the serialized envelope leaks fields copyFieldStatus.degradedToAbsent claims
+    // were removed.
+    const _ownershipDirty = copyMatched.length > 0 || imageMatched.length > 0 || optionalDegradedToAbsent.length > 0;
+    if (_ownershipDirty) {
         const sanitizedOwnershipMap = buildContentOwnershipMap(
             { hookText, subheadText, ctaName, benefitText },
             inputs,
         );
+        // If degradation occurred, also strip the corresponding keys from the machine-plan
+        // ownership so mergeContentOwnership cannot reintroduce text we explicitly nulled.
+        const strippedMachineOwnership = optionalDegradedToAbsent.length > 0 && machinePlan.ownership
+            ? stripDegradedFieldsFromOwnership(machinePlan.ownership, optionalDegradedToAbsent)
+            : null;
         finalMachinePlan.ownership = mergeContentOwnership(
             sanitizedOwnershipMap,
             // Drop the pre-scan machine-plan ownership so the sanitized map wins.
             null,
         );
+        // If a machine-plan ownership existed with degraded-field text, overlay the
+        // sanitized/degraded fields on top so they cannot leak back into the envelope.
+        if (strippedMachineOwnership) {
+            finalMachinePlan.ownership = mergeContentOwnership(
+                finalMachinePlan.ownership,
+                strippedMachineOwnership,
+            );
+        }
         // Re-run validateCopyFidelity on the sanitized blueprint + sanitized copy fields.
         const sanitizedTp = extractTechnicalPromptFromBlueprint(finalMachinePlan.blueprint);
         const sanitizedCopyFields: CopyFidelityFields = { hookText, subheadText, ctaName, benefitText };
@@ -5489,6 +5568,10 @@ export async function generateFinalAd(
     // sentinel for "blanked" switched from "" to null. hookText remains
     // untouched (never optional). Compact-ratio truncation keeps a present
     // (shorter) string; truncation is NOT absence, status stays "present".
+    // We additionally record every field that was DEDUP-BLANKED so the
+    // resolutionTrace.copyFieldStatus.dedupBlanked[] can distinguish dedup
+    // suppression from intentional absence (FR-010/SC-011).
+    const dedupBlankedFields: Array<"subheadText" | "ctaName" | "benefitText"> = [];
     {
         const subheadTrim = (subheadText ?? '').trim();
         const ctaTrim = (ctaName ?? '').trim();
@@ -5497,27 +5580,34 @@ export async function generateFinalAd(
         // 1. Remove exact duplicates between fields
         if (subheadTrim && subheadTrim === hookText.trim()) {
             subheadText = null; // Don't repeat headline as subheadline
+            dedupBlankedFields.push("subheadText");
         }
         if (benefitTrim && benefitTrim === ctaTrim) {
             benefitText = null; // Don't repeat CTA as benefit
+            dedupBlankedFields.push("benefitText");
         }
         if (benefitTrim && benefitTrim === hookText.trim()) {
             benefitText = null; // Don't repeat headline as benefit
+            if (!dedupBlankedFields.includes("benefitText")) dedupBlankedFields.push("benefitText");
         }
         if (benefitTrim && subheadText != null && benefitTrim === subheadText.trim()) {
             benefitText = null; // Don't repeat subheadline as benefit
+            if (!dedupBlankedFields.includes("benefitText")) dedupBlankedFields.push("benefitText");
         }
 
         // 2. Detect near-duplicate (one field contains another)
         const normalize = (s: string) => s.replace(/[\s\u200B-\u200D\uFEFF]/g, '').replace(/[.!?،,؟!]/g, '');
         if (subheadTrim && normalize(hookText).includes(normalize(subheadTrim))) {
             subheadText = null; // Subhead is substring of headline
+            if (!dedupBlankedFields.includes("subheadText")) dedupBlankedFields.push("subheadText");
         }
         if (benefitTrim && ctaTrim && normalize(ctaTrim).includes(normalize(benefitTrim))) {
             benefitText = null; // Benefit is substring of CTA
+            if (!dedupBlankedFields.includes("benefitText")) dedupBlankedFields.push("benefitText");
         }
 
-        // 3. Copy compression for tight formats (9:16, 4:5)
+        // 3. Copy compression for tight formats (9:16, 4:5) — TRUNCATION, not blanking.
+        //    Truncated fields stay `present` and do NOT go in dedupBlanked.
         const isCompactRatio = currentAspectRatio === '9:16' || currentAspectRatio === '4:5';
         if (isCompactRatio) {
             // Limit total text density — prefer fewer, cleaner elements
@@ -5533,6 +5623,32 @@ export async function generateFinalAd(
                 }
             }
         }
+    }
+    // Phase 24B — publish copyFieldStatus to the resolution trace so an
+    // operator reading the trace can tell intentional-absence from dedup-blank
+    // from parse-failure (FR-010/SC-011; Constitution VI/VII).
+    if (dedupBlankedFields.length > 0 || _copyExtraction.statuses) {
+        const finalStatuses: CopyFieldStatuses = _copyExtraction.statuses ?? {
+            hookText: "present",
+            subheadText: "present",
+            ctaName: "present",
+            benefitText: "present",
+        };
+        // After dedup-blank, the field is INTENTIONALLY ABSENT (not present).
+        // Update status to "absent" for any field that was dedup-blanked.
+        for (const f of dedupBlankedFields) {
+            if (finalStatuses[f] === "present") finalStatuses[f] = "absent";
+        }
+        _lastResolutionTrace = {
+            ...(_lastResolutionTrace || {}),
+            copyFieldStatus: {
+                hookText: finalStatuses.hookText,
+                subheadText: finalStatuses.subheadText,
+                ctaName: finalStatuses.ctaName,
+                benefitText: finalStatuses.benefitText,
+                dedupBlanked: [...dedupBlankedFields],
+            },
+        };
     }
 
     // Guard against placeholder strings ("stored_externally", "pending_upload", "")
@@ -6304,11 +6420,10 @@ CTA BUTTON: Solid primary color (red/blue/yellow) — thick black outline.
     - TEXT VISIBILITY MANDATE: You MUST render the text layers. Missing text = system failure.
          - Keep RTL.Keep spacing between words.If you must wrap lines, wrap ONLY at word boundaries(never split a word).
          - Headline: "${hookText}"
-  - Subheadline: "${subheadText}"
-${ctaName ? `    - Button: "${ctaName}"
-      - Benefit: "${benefitText}"` : `    ⚠️ NO BUTTON / NO CTA / NO BENEFIT on this slide. Do NOT render any button, CTA bar, or benefit text whatsoever. This is a middle carousel slide with headline and subheadline ONLY.`}
+${subheadText ? `  - Subheadline: "${subheadText}"` : `  - NO SUBHEADLINE on this slide. Do not render any subheadline.`}
+${ctaName ? `    - Button: "${ctaName}"${benefitText ? `\n      - Benefit: "${benefitText}"` : ''}` : `    ⚠️ NO BUTTON / NO CTA / NO BENEFIT on this slide. Do NOT render any button, CTA bar, or benefit text whatsoever. This is a middle carousel slide with headline and subheadline ONLY.`}
          ${inputs.badges ? `5. Badge: "${inputs.badges}"` : ''}
-- CONDITIONAL RENDER: ${ctaName ? `If the Benefit string("${benefitText}") is empty or null, DO NOT render it at all. Only render the Button.` : `This slide has NO CTA and NO BENEFIT. Render only Headline and Subheadline. NO BUTTON AT ALL.`}
+- CONDITIONAL RENDER: ${ctaName ? `If the Benefit string("${benefitText || ''}") is empty or null, DO NOT render it at all. Only render the Button.` : `This slide has NO CTA and NO BENEFIT. Render only Headline and Subheadline. NO BUTTON AT ALL.`}
          - NO DUPES: If the Benefit string exists, render it exactly ONCE below the button.
 
          - LAYOUT: Use the[LAYOUT_STYLE] from the blueprint.Use the 'Negative Space' described in the blueprint.Use typography that stands out from the background.
@@ -6316,8 +6431,8 @@ ${ctaName ? `    - Button: "${ctaName}"
 
         2. CTA CONVERSION STACK(CRITICAL AESTHETICS):
 ${ctaName ? `- MAIN BUTTON: Render "${ctaName}" inside a massive, 3D, High - Gloss Button.It must be the visual anchor of the page.
-         - BENEFIT LOCKUP(MANDATORY): Render "${benefitText}" inside a Secondary Support Bar(dark semi - transparent glass pill) that is physically attached directly under the main button, perfectly centered, with clear padding.Never float it on the background.
-           - ALIGNMENT: The Benefit must be perfectly centered and visually connected to the Button.`
+${benefitText ? `         - BENEFIT LOCKUP(MANDATORY): Render "${benefitText}" inside a Secondary Support Bar(dark semi - transparent glass pill) that is physically attached directly under the main button, perfectly centered, with clear padding.Never float it on the background.
+           - ALIGNMENT: The Benefit must be perfectly centered and visually connected to the Button.` : `         - NO BENEFIT TEXT on this slide. Do NOT render any benefit line below the button.`}`
             : `- NO BUTTON on this slide. This is a middle carousel slide. DO NOT render ANY CTA button, benefit bar, or call-to-action element. Use the full canvas for the headline, subheadline, hero image and universe setting.`}
 
         3. UNIVERSE COMPLIANCE:
@@ -6595,10 +6710,10 @@ ABSOLUTE RULES — DO NOT VIOLATE ANY OF THESE:
 2. SAME COLORS: Same color palette, same color grading, same background colors, same accent colors. Do NOT change the color scheme.
 3. SAME ENVIRONMENT: Same background, same setting, same props, same atmospheric effects. Do NOT change the scene.
 4. SAME LIGHTING: Same lighting direction, intensity, temperature, and mood. Do NOT change the lighting.
-5. SAME TEXT — CHARACTER FOR CHARACTER: 
+5. SAME TEXT — CHARACTER FOR CHARACTER:
    - HEADLINE: "${hookText}"
-   - SUBHEADLINE: "${subheadText}"
-   - CTA BUTTON: "${ctaName}"
+${subheadText ? `   - SUBHEADLINE: "${subheadText}"` : `   - NO SUBHEADLINE on this slide. Do not render any subheadline.`}
+${ctaName ? `   - CTA BUTTON: "${ctaName}"` : `   - NO CTA BUTTON on this slide. Do not render any CTA button.`}
    ${benefitText ? `- BENEFIT: "${benefitText}"` : ''}
    ${inputs.badges ? `- BADGE: "${inputs.badges}"` : ''}
    Do NOT change, rephrase, translate, or remove any text. Every character must be identical.
@@ -6654,8 +6769,8 @@ ${editInstruction}
 
 TEXTS THAT MUST APPEAR ON THE IMAGE (use these EXACT strings):
 - HEADLINE: "${hookText}"
-- SUBHEADLINE: "${subheadText}"
-- CTA BUTTON: "${ctaName}"
+${subheadText ? `- SUBHEADLINE: "${subheadText}"` : `- NO SUBHEADLINE on this slide. Do not render any subheadline.`}
+${ctaName ? `- CTA BUTTON: "${ctaName}"` : `- NO CTA BUTTON on this slide. Do not render any CTA button.`}
 ${benefitText ? `- BENEFIT: "${benefitText}"` : ''}
 
 IMPORTANT: Apply the user's command above. If the command says to REMOVE specific words or text, you MUST remove them. If it says to change something, change it. The command overrides the default text strings above.
@@ -6919,8 +7034,8 @@ If the asset is not clearly visible and prominent in the final render, the outpu
 
 Expected text elements:
 - HEADLINE: "${hookText}"
-- SUBHEADLINE: "${subheadText}"
-${ctaName ? `- CTA: "${ctaName}"` : ''}
+${subheadText ? `- SUBHEADLINE: "${subheadText}"` : `- (no subheadline expected on this slide)`}
+${ctaName ? `- CTA: "${ctaName}"` : `- (no CTA expected on this slide)`}
 ${benefitText ? `- BENEFIT: "${benefitText}"` : ''}
 
 Check for these Arabic text problems:
@@ -6966,8 +7081,8 @@ CRITICAL RULES:
 - Keep the SAME design, layout, hero, and composition — ONLY fix the text rendering
 - Each text element must appear EXACTLY ONCE in its correct zone
 - HEADLINE goes in the headline zone ONLY: "${hookText}"
-- SUBHEADLINE goes in the subheadline zone ONLY: "${subheadText}"
-${ctaName ? `- CTA goes in the button zone ONLY: "${ctaName}"` : ''}
+${subheadText ? `- SUBHEADLINE goes in the subheadline zone ONLY: "${subheadText}"` : `- NO SUBHEADLINE on this slide. Do not render any subheadline.`}
+${ctaName ? `- CTA goes in the button zone ONLY: "${ctaName}"` : `- NO CTA on this slide. Do not render any CTA button.`}
 ${benefitText ? `- BENEFIT goes below CTA ONLY: "${benefitText}"` : ''}
 - Remove any duplicated, extra, or misplaced Arabic text
 - Ensure clean letter connections and proper RTL rendering`;
@@ -7111,8 +7226,8 @@ RULES:
 4. Keep ALL other elements identical: hero, layout, colors, authorized text, composition
 5. The ONLY authorized text on this image is:
    - HEADLINE: "${hookText}"
-   - SUBHEADLINE: "${subheadText}"
-   ${ctaName ? `- CTA: "${ctaName}"` : ''}
+${subheadText ? `   - SUBHEADLINE: "${subheadText}"` : `   - (no subheadline expected)`}
+${ctaName ? `   - CTA: "${ctaName}"` : `   - (no CTA expected)`}
    ${benefitText ? `- BENEFIT: "${benefitText}"` : ''}
    ${inputs.badges ? `- BADGE: "${inputs.badges}"` : ''}
 ${allAuthorized.length > 0 ? `   - AUTHORIZED NUMBERS: ${allAuthorized.join(', ')}` : '   - NO monetary numbers should appear'}
@@ -7969,7 +8084,7 @@ You are writing the TEXT for a ${slideCount}-slide CAROUSEL AD that tells ONE FL
 
 APPROVED HOOK (Slide 1 — the opening line):
 - Headline: "${hookText}"
-- Subheadline: "${subheadText}"
+${subheadText ? `- Subheadline: "${subheadText}"` : `- NO SUBHEADLINE on Slide 1. Do not render any subheadline.`}
 ${storyArc ? `
 STORY DIRECTION (from the chosen angle):
 "${storyArc}"
@@ -7979,7 +8094,7 @@ Follow this story direction when writing slides 2 through ${slideCount}. This is
 PRODUCT: ${inputs.productName}
 PRICE/OFFER: ${inputs.offerType || 'Not specified'}
 ${getOfferHookPsychology(inputs.offerType || '')}
-CTA BUTTON TEXT: "${ctaName}"
+${ctaName ? `CTA BUTTON TEXT: "${ctaName}"` : `CTA BUTTON TEXT: (none — no CTA on this carousel)`}
 AUDIENCE: ${inputs.targetAudience}
 CHALLENGE: ${inputs.challenges}
 TRANSFORMATION: ${inputs.transformation}
@@ -8251,7 +8366,7 @@ INPUT DATA
     - Avatar: ${inputs.targetAudience}
     - Core Pain: ${inputs.challenges}
     - Transformation: ${inputs.transformation}
-    - CTA: ${ctaName}
+    - CTA: ${ctaName || '(no CTA)'}
     - Offer Type: ${inputs.offerType || 'Not specified'}
     - STRUCTURED CONTENT OWNERSHIP:
       • primaryHeadline: "${captionOwnership.primaryHeadline || ''}"
@@ -8280,7 +8395,7 @@ INPUT DATA
             })()}
     - Visual: "${visualMetaphor}"
       - IMAGE HEADLINE: "${hookText}"
-        - IMAGE SUBHEADLINE: "${subheadText}"
+${subheadText ? `        - IMAGE SUBHEADLINE: "${subheadText}"` : `        - (no image subheadline expected)`}
           - Campaign Type: ${campaignType} // "cold" or "retargeting"
 ${retargetingContext}
 ${isRetargeting ? `BELIEF SHIFTING FRAMEWORK:\n${BELIEF_SHIFTING_FRAMEWORK}` : ''}
