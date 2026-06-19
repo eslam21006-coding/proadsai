@@ -20,7 +20,7 @@ Verified via GitHub API at `GET /repos/eslam21006-coding/proadsai/pulls/40/revie
   { "id": 4528655185, "commit_id": "5f3fd5883db4d8d08073c6f18f6d7dad2e6848cd",
     "state": "COMMENTED", "submitted_at": "2026-06-18T21:35:55Z" }
 ]
-```
+```json
 
 **CodeRabbit raised zero new review comments on commits `9f1838f` and `183e28d`.**
 
@@ -42,7 +42,7 @@ Commit `9f1838f` was itself a CodeRabbit-fix commit: it resolves every actionabl
 | **A** | Outside-diff Major (`4405-4407`, also applies to `6447-6459`) | `functions/src/generators.ts:6447-6459` | Don't describe every CTA-less render as a middle carousel slide. Phase 24B allows `ctaName === null` for single/static ads too. | **Fixed** — replaced the unconditional "This is a MIDDLE carousel slide" suffix with `inputs.adMode === "carousel" ? " This carousel slide is intentionally CTA-less." : ""`. Single/static ads no longer get a false carousel-slide label. |
 | **B** | Nitpick (`1664-1667`, also `1675-1681`) | `functions/src/generators.ts:1664-1681` | `stripDegradedFieldsFromOwnership` uses `{ [k: string]: any }` — spreads new `any` into backend code; violates "Avoid adding new `any`". | **Fixed** — imported `ContentOwnershipMap` from `./buildPlanSlotMap.js`; replaced parameter, return, and internal `cloned` with `Partial<ContentOwnershipMap>`; replaced `{ [k: string]: any }` in `ownershipKeyByCopyField` value-type with `(keyof ContentOwnershipMap)[]`. No `any` remains in the helper. |
 | **C** | Inline AI-agent (test file) | `functions/src/__tests__/conditionalCopyFields.test.ts:7-40` | Replace weak `any` types with a properly typed interface; remove ambient `any` declarations for `require`/`process`/`console`; convert CommonJS `require` to ES6 imports. | **Fixed** — added `interface TestAdInputs { adLanguage?: string; cta?: string; productName?: string; targetAudience?: string; offerType?: string; }`; replaced `Record<string, any>` alias; replaced all `as AdInputs` with `as TestAdInputs`; replaced `require("fs")` / `require("path")` with `import { readFileSync } from "fs"` and `import { join } from "path"`; replaced ambient `any` declarations for `process` / `console` with narrowly-typed declarations. |
-| **D** | Inline AI-agent (test file) | `functions/src/__tests__/conditionalCopyFields.test.ts:321` | Backtick template literal violates the functions/ ESLint double-quotes rule. | **Fixed** — replaced `\`FR-006 (${raw.split('\n')[1]?.slice(0, 40)}...\`` with `"FR-006 (" + (raw.split("\n")[1]?.slice(0, 40) ?? "") + "...)"`. |
+| **D** | Inline AI-agent (test file) | `functions/src/__tests__/conditionalCopyFields.test.ts:321` | Backtick template literal violates the functions/ ESLint double-quotes rule. | **Fixed** — replaced the original template literal (containing `raw.split("\n")[1]?.slice(0, 40)` interpolation) with a double-quoted string + concat: `"FR-006 (" + (raw.split("\n")\[1\]?.slice(0, 40) ?? "") + "...)"`. The `[1]` is escaped as `\[1\]` so markdownlint does not falsely interpret it as reversed-link syntax. |
 | **E** | Inline AI-agent (prompt text) | `functions/src/generators.ts:6452` | `[LAYOUT_STYLE]` bracket placeholder is copied verbatim by Gemini. | **Fixed** — replaced `Use the [LAYOUT_STYLE] from the blueprint.` with prose: `Use the layout style described in the blueprint (text paragraph stating the chosen layout family).` |
 | **F** | Inline AI-agent (overlay guard) | `functions/src/generators.ts:4912-4927` | Second `mergeContentOwnership` call can reintroduce stale copy data even though `stripDegradedFieldsFromOwnership` only removes degraded optional keys. | **Fixed** — wrapped the overlay merge in `if (strippedMachineOwnership && optionalDegradedToAbsent.length > 0)`. The overlay now only runs when at least one optional field was actually degraded, so the helper's targeted strip is never a wholesale copy-fields re-strip. |
 | **G** | Inline AI-agent (regex host allowlist) | `functions/src/generators.ts:93-98` | `REMOTE_IMAGE_ALLOWED_HOST_RE` doesn't accept `firebasestorage.googleapis.com` (the actual Firebase Storage host); comment incorrectly states Firebase Storage uses a `storage.googleapis.com` subdomain. | **Fixed** — extended regex to `firebasestorage.googleapis.com` and `*.firebasestorage.googleapis.com`; rewrote the comment to say "Firebase Storage serves from `firebasestorage.googleapis.com`, NOT from a `storage.googleapis.com` subdomain." |
@@ -59,7 +59,7 @@ All seven actionable comments resolved in commit `9f1838f`. Commit `183e28d` onl
 
 Command: `npm run build` (run from repo root after all fixes pushed).
 
-```
+```text
 > ai-ads-pro@0.0.0 build
 > tsc -b && vite build
 
@@ -95,7 +95,7 @@ dist/assets/index-BzW-bq6s.js                 1,758.43 kB │ gzip: 457.69 kB
 https://rollupjs.org/configuration-options/#output-manualchunks
 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
 ✓ built in 33.85s
-```
+```text
 
 **Zero errors.** The four warnings shown are pre-existing and unrelated to Phase 24B:
 
@@ -106,10 +106,10 @@ https://rollupjs.org/configuration-options/#output-manualchunks
 
 ### Backend build (cross-check)
 
-```
+```text
 > build
 > tsc && shx mkdir -p lib/assets && shx cp -r src/assets/* lib/assets/
-```
+```text
 
 Silent on success — zero TypeScript errors in the backend.
 
@@ -117,7 +117,7 @@ Silent on success — zero TypeScript errors in the backend.
 
 `npm test` (run inside `functions/`) — output abbreviated to the new file only:
 
-```
+```text
 [conditionalCopyFields] contract rows P2-P9 + FR-006 + FR-017:
   69 passed, 0 failed
 [projectStatus]    14 passed
@@ -130,7 +130,7 @@ Silent on success — zero TypeScript errors in the backend.
 [workspace]          5 passed (13 emulator-gated skipped)
 [creativeResolverParity] 3 passed
 Total: ~7,470+ assertions, 0 failed, 0 regressions
-```
+```text
 
 All non-skipped tests pass.
 

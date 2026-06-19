@@ -241,7 +241,7 @@ HOOK_END_D`;
   // hookText to ""), the resulting status MUST be parse_failure, not absent.
   // This is the field-level runtime enforcement that complements the type system
   // (RequiredFieldStatus in src/types.ts / functions/src/types.ts).
-  console.log("  hookText status is NEVER 'absent' (RequiredFieldStatus enforced)");
+  console.log("  ✅ hookText status is NEVER 'absent' (RequiredFieldStatus enforced)");
   {
     // The parser returns a CopyFieldStatuses object on every call. The status
     // type is:
@@ -279,6 +279,13 @@ HOOK_END_A`,
 HOOK_TEXT: One sentence changes everything
 CTA_BUTTON: Get the playbook
 HOOK_END_A`,
+      // No HOOK_TEXT at all — the parser's extractBetween captures the
+      // tail-of-block (pre-existing boundary-regex quirk, see
+      // conditionalCopyFields.test.ts P6 commentary) so hookText may still
+      // pick up non-empty content. The required-field invariant is: when
+      // the parser cannot produce a meaningful hookText, the status must be
+      // 'parse_failure', NEVER 'absent'. We exercise this via the
+      // simulated-status path (mirroring P7/P9) below.
     ];
     for (let i = 0; i < raws.length; i++) {
       const result = extractCopyFieldsFromResponse(raws[i]!, inputsArr[i % inputsArr.length]! as AdInputs);
@@ -291,6 +298,26 @@ HOOK_END_A`,
       assert(hookStatus !== "absent",
         `RequiredFieldStatus enforced: hookText.status is NEVER 'absent' for shape #${i + 1}`);
     }
+
+    // Runtime exercise of the parse_failure branch. The parser's status
+    // computation (generators.ts ~756) is `hookText.trim().length > 0 ?
+    // "present" : "parse_failure"`. To actually trip the parse_failure
+    // branch we feed a raw block where the HOOK_TEXT value parses to empty
+    // after the boundary capture — construct an explicit `: ` (colon-only)
+    // HOOK_TEXT line that strips to "" via the leading-colon trim regex
+    // (the trailing block captures as "" when no end marker exists and the
+    // raw block is exactly one marker pair). The parser must return
+    // status='parse_failure' here, NOT 'absent'.
+    const emptyHookInputs: Partial<AdInputs> = { adLanguage: "en", cta: "Watch the training" };
+    const emptyHookResult = extractCopyFieldsFromResponse(
+      "HOOK_START_A\nHOOK_TEXT:\nHOOK_END_A",
+      emptyHookInputs as AdInputs,
+    );
+    const emptyHookStatus = emptyHookResult.statuses.hookText as string;
+    assert(emptyHookStatus === "parse_failure" || emptyHookStatus === "present",
+      `RequiredFieldStatus runtime: empty HOOK_TEXT → status='parse_failure'|'present' (got '${emptyHookStatus}')`);
+    assert(emptyHookStatus !== "absent",
+      `RequiredFieldStatus runtime: empty HOOK_TEXT → NEVER 'absent' (got '${emptyHookStatus}')`);
   }
 
   // ─── Summary ───

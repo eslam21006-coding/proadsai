@@ -1756,7 +1756,7 @@ const App: React.FC = () => {
   const [cancelFeedback, setCancelFeedback] = useState('');
   const [cancelLoading, setCancelLoading] = useState(false);
   const [editingHook, setEditingHook] = useState<string | null>(null);
-  const [editHookData, setEditHookData] = useState<{ hookText: string; subhead: string; cta: string; benefit: string }>({ hookText: '', subhead: '', cta: '', benefit: '' });
+  const [editHookData, setEditHookData] = useState<{ hookText: string; subhead: string; cta: string; benefit: string; storyArc?: string }>({ hookText: '', subhead: '', cta: '', benefit: '' });
   const accountMenuRef = useRef<HTMLDivElement>(null);
 
   // ─── GHL CHECKOUT URLS (external marketing funnel) ───
@@ -2087,7 +2087,7 @@ const App: React.FC = () => {
       subhead: d.subhead,
       cta: d.cta,
       benefit: d.benefit,
-      storyArc: (editHookData as any).storyArc,
+      storyArc: d.storyArc,
       isCarousel,
     });
     const regex = new RegExp(`${startTag}[\\s\\S]*?${endTag}`, 'i');
@@ -4769,12 +4769,24 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const buildSlide = async (i: number, styleRef?: string) => {
       const copy = carouselCopies[i];
       const isLastSlide = i === slideCount - 1;
-      const ctaSplit = splitCtaField(copy.ctaText || inputs.cta || '');
+      // Phase 24B (CodeRabbit — Major): the TextOverride builder was using
+      // `copy.ctaText || inputs.cta || ''` — a fallback chain that can
+      // RESURRECT the default CTA from inputs.cta when the user intentionally
+      // cleared the field (FR-006 / UINV-3). Normalize optional fields to
+      // `null` explicitly: empty/whitespace → null, otherwise the cleaned
+      // value. hookText is required and stays a string.
+      const ctaSplit = copy.ctaText
+        ? splitCtaField(copy.ctaText)
+        : { ctaName: null as string | null, benefitText: null as string | null };
+      const optText = (v: string | null): string | null => {
+        const cleaned = v ? cleanField(v) : '';
+        return cleaned.length > 0 ? cleaned : null;
+      };
       const txOverride: TextOverride = {
         hookText: cleanField(copy.hookText),
-        subheadText: cleanField(copy.subheadText || ''),
-        ctaName: isLastSlide ? ctaSplit.ctaName : '',
-        benefitText: isLastSlide ? (cleanField(copy.benefitText || '') || ctaSplit.benefitText) : '',
+        subheadText: optText(copy.subheadText),
+        ctaName: isLastSlide ? ctaSplit.ctaName : null,
+        benefitText: isLastSlide ? (optText(copy.benefitText) ?? ctaSplit.benefitText) : null,
       };
       const slideInstruction = i === 0
         ? `This is SLIDE 1 (the HOOK slide) of a ${slideCount}-slide carousel. Hero pose: CONFIDENT STANCE — arms relaxed, looking at camera or slightly off-camera. NO pointing.`
@@ -4943,12 +4955,21 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       return { ctaName: c.trim(), benefitText: b?.trim() || '' };
     };
     const isLastSlide = slideIndex === slideCount - 1;
-    const ctaSplit = splitCtaField(copy.ctaText || inputs.cta || '');
+    // Phase 24B (CodeRabbit — Major): same null normalization as buildSlide
+    // above — drop the `inputs.cta` fallback that can resurrect the default
+    // CTA when the user has intentionally cleared the field (FR-006).
+    const ctaSplit = copy.ctaText
+      ? splitCtaField(copy.ctaText)
+      : { ctaName: null as string | null, benefitText: null as string | null };
+    const optText = (v: string | null): string | null => {
+      const cleaned = v ? cleanField(v) : '';
+      return cleaned.length > 0 ? cleaned : null;
+    };
     const txOverride: TextOverride = {
       hookText: cleanField(copy.hookText),
-      subheadText: cleanField(copy.subheadText || ''),
-      ctaName: isLastSlide ? ctaSplit.ctaName : '',
-      benefitText: isLastSlide ? (cleanField(copy.benefitText || '') || ctaSplit.benefitText) : '',
+      subheadText: optText(copy.subheadText),
+      ctaName: isLastSlide ? ctaSplit.ctaName : null,
+      benefitText: isLastSlide ? (optText(copy.benefitText) ?? ctaSplit.benefitText) : null,
     };
     const slideInstruction = slideIndex === 0
       ? `This is SLIDE 1 (the HOOK slide) of a ${slideCount}-slide carousel. Hero pose: CONFIDENT STANCE — arms relaxed, looking at camera or slightly off-camera. NO pointing.`
@@ -5074,12 +5095,20 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         return { ctaName: c.trim(), benefitText: b?.trim() || '' };
       };
       const isLastSlide = editTarget.index === carouselCopies.length - 1;
-      const ctaSplit = splitCtaField(copy.ctaText || inputs.cta || '');
+      // Phase 24B (CodeRabbit — Major): same null normalization as the other
+      // two TextOverride builders — drop the `inputs.cta` fallback.
+      const ctaSplit = copy.ctaText
+        ? splitCtaField(copy.ctaText)
+        : { ctaName: null as string | null, benefitText: null as string | null };
+      const optText = (v: string | null): string | null => {
+        const cleaned = v ? cleanField(v) : '';
+        return cleaned.length > 0 ? cleaned : null;
+      };
       carouselTextOverride = {
         hookText: cleanField(copy.hookText),
-        subheadText: cleanField(copy.subheadText || ''),
-        ctaName: isLastSlide ? ctaSplit.ctaName : '',
-        benefitText: isLastSlide ? (cleanField(copy.benefitText || '') || ctaSplit.benefitText) : '',
+        subheadText: optText(copy.subheadText),
+        ctaName: isLastSlide ? ctaSplit.ctaName : null,
+        benefitText: isLastSlide ? (optText(copy.benefitText) ?? ctaSplit.benefitText) : null,
       };
     }
     try {
@@ -6501,8 +6530,40 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   // required string — the `"⚠️ Hook unavailable"` fallback below
                   // is the only place hookText can appear empty, and it stays a
                   // required sentinel on the render path.
-                  const hookText = normalize(getSection(activeBlock, "HOOK_TEXT", "SUBHEADLINE"));
-                  const subheadRaw = normalize(getSection(activeBlock, "SUBHEADLINE", "CTA_BUTTON"));
+                  //
+                  // Phase 24B (CodeRabbit — Major): parse each field up to the
+                  // EARLIEST of its possible end markers. With Phase 24B the three
+                  // optional fields (SUBHEADLINE / CTA_BUTTON) are legitimately
+                  // absent in raw blocks, so we cannot treat any one optional
+                  // marker as a required boundary — if it's missing, getSection
+                  // would read through the next field's content. We list every
+                  // possible boundary and pick the first one that appears.
+                  const findEarliest = (text: string, startAt: number, markers: string[]): number => {
+                    const upper = text.toUpperCase();
+                    let earliest = -1;
+                    for (const marker of markers) {
+                      const idx = upper.indexOf(marker.toUpperCase(), startAt);
+                      if (idx !== -1 && (earliest === -1 || idx < earliest)) earliest = idx;
+                    }
+                    return earliest;
+                  };
+                  const getFieldSection = (text: string, startKey: string, endMarkers: string[]): string => {
+                    if (!text) return "";
+                    const upper = text.toUpperCase();
+                    const skU = startKey.toUpperCase().replace(/:\s*$/, "");
+                    const si = upper.indexOf(skU);
+                    if (si === -1) return "";
+                    let cs = si + skU.length;
+                    if (cs < text.length && (text[cs] === ":" || text[cs] === "：")) cs++;
+                    while (cs < text.length && /\s/.test(text[cs])) cs++;
+                    const ei = findEarliest(text, cs, endMarkers);
+                    if (ei === -1) return text.slice(cs).trim();
+                    return text.slice(cs, ei).trim();
+                  };
+                  const hookText = normalize(getFieldSection(activeBlock, "HOOK_TEXT",
+                    ["SUBHEADLINE", "CTA_BUTTON", "HOOK_END", "ANGLE_END"]));
+                  const subheadRaw = normalize(getFieldSection(activeBlock, "SUBHEADLINE",
+                    ["CTA_BUTTON", "HOOK_END", "ANGLE_END"]));
                   const subhead = subheadRaw.trim().length > 0 ? subheadRaw : null;
 
                   const actionBlockRaw =
@@ -6722,9 +6783,19 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                               startLoad(t('variation.generating'));
                               const angleLabel = ({ A: 'Direct Value', B: 'Curiosity', C: 'Social Proof', D: 'Problem Agitation' } as Record<string, string>)[v] || 'same style';
                               try {
+                                // Phase 24B (CodeRabbit): when `subhead` is `null` (the
+                                // optional field was absent / cleared by the user),
+                                // the template literal must NOT serialize it as the
+                                // literal string "null" — that would inject a fake
+                                // reference subheadline into the variation prompt.
+                                // Conditionally emit the REFERENCE SUBHEADLINE line
+                                // only when the field has a value.
+                                const subheadLine = subhead !== null
+                                  ? `REFERENCE SUBHEADLINE: "${subhead}"\n`
+                                  : "";
                                 const likeThisPrompt = `Generate 4 NEW hooks inspired by this specific hook's psychological angle and style:
 REFERENCE HOOK: "${hookText}"
-REFERENCE SUBHEADLINE: "${subhead}"
+${subheadLine}
 
 RULES:
 - Use the SAME psychological trigger (${angleLabel}) but COMPLETELY DIFFERENT wording, metaphors, and entry points.
