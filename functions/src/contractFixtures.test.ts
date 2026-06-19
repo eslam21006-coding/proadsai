@@ -739,7 +739,7 @@ import {
     type BuildFinalImagePromptInput,
 } from "./generators.js";
 
-function makePromptInput(overrides: Partial<BuildFinalImagePromptInput> & { hookText?: string; subheadText?: string; ctaName?: string } = {}): BuildFinalImagePromptInput {
+function makePromptInput(overrides: Partial<BuildFinalImagePromptInput> & { hookText?: string; subheadText?: string | null; ctaName?: string | null } = {}): BuildFinalImagePromptInput {
     const contract = compileFullContract({
         selectedModes: ["standard_hero"],
         hookAngle: undefined,

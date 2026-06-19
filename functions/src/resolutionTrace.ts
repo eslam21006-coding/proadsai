@@ -11,6 +11,8 @@ import type {
     ModeCompositionWarning,
     AdaptStateAuditResult,
     ClaimFlagEntry,
+    CopyFieldStatus,
+    RequiredFieldStatus,
 } from "./types.js";
 
 type Mutable<T> = { -readonly [P in keyof T]: T[P] extends readonly (infer U)[] ? U[] : T[P] };
@@ -25,6 +27,7 @@ type ResolutionTraceDraft = Partial<Mutable<ResolutionTrace>> & {
     _adaptStateAudit?: AdaptStateAuditResult;
     _visualProvider?: ResolutionTrace["visualProvider"];
     _claimFlags?: ClaimFlagEntry[];
+    _copyFieldStatus?: ResolutionTrace["copyFieldStatus"];
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -69,6 +72,18 @@ export interface TraceBuilder {
         timedOut?: boolean;
     }): TraceBuilder;
     setClaimFlags(flags: readonly ClaimFlagEntry[]): TraceBuilder;
+    // Phase 24B — record the four per-field copy statuses plus the lists of
+    // fields that were degraded-to-absent (after the parse-failure retry cap)
+    // and fields that were nulled by the dedup/QA layer. Mirrors setClaimFlags.
+    // hookText uses the stricter RequiredFieldStatus (no "absent" sentinel).
+    setCopyFieldStatus(status: {
+        hookText: RequiredFieldStatus;
+        subheadText: CopyFieldStatus;
+        ctaName: CopyFieldStatus;
+        benefitText: CopyFieldStatus;
+        degradedToAbsent?: readonly ("subheadText" | "ctaName" | "benefitText")[];
+        dedupBlanked?: readonly ("subheadText" | "ctaName" | "benefitText")[];
+    }): TraceBuilder;
     build(): ResolutionTrace;
 }
 
@@ -204,6 +219,17 @@ export function createTraceBuilder(): TraceBuilder {
             state._claimFlags = flags.map(f => ({ ...f }));
             return builder;
         },
+        setCopyFieldStatus(status) {
+            state._copyFieldStatus = {
+                hookText: status.hookText,
+                subheadText: status.subheadText,
+                ctaName: status.ctaName,
+                benefitText: status.benefitText,
+                degradedToAbsent: status.degradedToAbsent ? [...status.degradedToAbsent] : undefined,
+                dedupBlanked: status.dedupBlanked ? [...status.dedupBlanked] : undefined,
+            };
+            return builder;
+        },
         build(): ResolutionTrace {
             if (!state.resolvedCampaignType) throw new Error("TraceBuilder: resolvedCampaignType not set");
             if (!state.resolvedAdMode) throw new Error("TraceBuilder: resolvedAdMode not set");
@@ -256,6 +282,18 @@ export function createTraceBuilder(): TraceBuilder {
                 adaptStateAudit: state._adaptStateAudit,
                 visualProvider: state._visualProvider,
                 claimFlags: state._claimFlags ? state._claimFlags.map(e => ({ ...e })) : undefined,
+                copyFieldStatus: state._copyFieldStatus ? {
+                    hookText: state._copyFieldStatus.hookText,
+                    subheadText: state._copyFieldStatus.subheadText,
+                    ctaName: state._copyFieldStatus.ctaName,
+                    benefitText: state._copyFieldStatus.benefitText,
+                    degradedToAbsent: state._copyFieldStatus.degradedToAbsent
+                        ? state._copyFieldStatus.degradedToAbsent.map((f) => f)
+                        : undefined,
+                    dedupBlanked: state._copyFieldStatus.dedupBlanked
+                        ? state._copyFieldStatus.dedupBlanked.map((f) => f)
+                        : undefined,
+                } : undefined,
             });
         },
     };
