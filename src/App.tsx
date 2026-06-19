@@ -11,6 +11,7 @@ import { gemini, type GenerationResult } from './services/geminiService';
 import { resolveCreativeSpec, CREATIVE_MODE_CATALOG, type ResolvedCreativeSpec } from './creativeResolver';
 import { isValidHookPayload, validateCanonicalHooks, normalizeHooksToCanonical, getHookValidationSummary } from './utils/hookPayload';
 import { parseHookVariations, parseHookVariation } from './utils/hookVariationParser';
+import { buildInlineEditedBlock } from './utils/inlineHookEdit';
 import { useAppStore } from './store';
 import FeedbackButtons from './components/FeedbackButtons';
 import FavoritesPanel from './components/FavoritesPanel';
@@ -2073,9 +2074,22 @@ const App: React.FC = () => {
     const isCarousel = inputs?.adMode === 'carousel' && (inputs?.slideCount || 1) > 1;
     const startTag = isCarousel ? `ANGLE_START_${variant}` : `HOOK_START_${variant}`;
     const endTag = isCarousel ? `ANGLE_END_${variant}` : `HOOK_END_${variant}`;
-    const newBlock = isCarousel
-      ? `${startTag}\nHOOK_TEXT: ${d.hookText}\nSUBHEADLINE: ${d.subhead}\nSTORY_ARC: ${(editHookData as any).storyArc || ''}\nCTA_BUTTON: ${d.benefit ? `${d.cta} ||| ${d.benefit}` : d.cta}\n${endTag}`
-      : `${startTag}\nHOOK_TEXT: ${d.hookText}\nSUBHEADLINE: ${d.subhead}\nCTA_BUTTON: ${d.benefit ? `${d.cta} ||| ${d.benefit}` : d.cta}\n${endTag}`;
+    // Phase 24B (T026 / FR-006 / U10 / UINV-3): delegate to the pure helper so
+    // cleared optional fields are OMITTED from the serialized block (instead of
+    // written as `SUBHEADLINE: ` / `CTA_BUTTON: `). parseHookVariation() then
+    // reads no marker and returns null for that field — the frontend never
+    // persists "" into the stored copy data (FR-006 / UINV-3). hookText save
+    // path is UNTOUCHED — the headline is never optional.
+    const newBlock = buildInlineEditedBlock({
+      startTag,
+      endTag,
+      hookText: d.hookText,
+      subhead: d.subhead,
+      cta: d.cta,
+      benefit: d.benefit,
+      storyArc: (editHookData as any).storyArc,
+      isCarousel,
+    });
     const regex = new RegExp(`${startTag}[\\s\\S]*?${endTag}`, 'i');
     // Phase 23 (FR-004): if a variation is displayed for this variant, edit IT, not the reference.
     const _vIdx = variationActiveIndex[variant] ?? 0;

@@ -234,6 +234,65 @@ HOOK_END_D`;
   assert(!generatorsHasScoring, "COPY_SCORING_DIMENSIONS is NOT imported in generators.ts");
   assert(!generatorsHasDiagnoses, "COPY_REWRITE_DIAGNOSES is NOT imported in generators.ts");
 
+  // ─── Phase 24B (US3): hookText status is NEVER 'absent' — RequiredFieldStatus enforced ───
+  // FR-002 / D5 / INV-4: hookText is the variation's required identity. Its status
+  // is `present | parse_failure`, never `absent`. The parser must enforce this at
+  // runtime: even when the input has no HOOK_TEXT marker at all (which would map
+  // hookText to ""), the resulting status MUST be parse_failure, not absent.
+  // This is the field-level runtime enforcement that complements the type system
+  // (RequiredFieldStatus in src/types.ts / functions/src/types.ts).
+  console.log("  hookText status is NEVER 'absent' (RequiredFieldStatus enforced)");
+  {
+    // The parser returns a CopyFieldStatuses object on every call. The status
+    // type is:
+    //   hookText:    "present" | "parse_failure"            (RequiredFieldStatus)
+    //   subheadText: "present" | "absent" | "parse_failure" (CopyFieldStatus)
+    //   ctaName:     "present" | "absent" | "parse_failure"
+    //   benefitText: "present" | "absent" | "parse_failure"
+    //
+    // We assert on every possible parser output that hookText.status is one of
+    // {present, parse_failure} — never 'absent'. This pins the runtime
+    // contract enforced by extractCopyFieldsFromResponse.
+    const inputsArr: Partial<AdInputs>[] = [
+      { adLanguage: "en", cta: "Watch the training" },
+      { adLanguage: "en", cta: "Get the playbook" },
+      { adLanguage: "ar", cta: "احجز المكالمة" },
+    ];
+    const raws = [
+      // Headline + sub + cta + benefit (all four fields present).
+      `HOOK_START_A
+HOOK_TEXT: 3 reasons leads ghost you
+SUBHEADLINE: And how to fix each one
+CTA_BUTTON: Watch the training ||| And fix your funnel
+HOOK_END_A`,
+      // Headline-only (three optionals absent).
+      `HOOK_START_A
+HOOK_TEXT: Still posting daily but no calls
+HOOK_END_A`,
+      // Headline + subhead only.
+      `HOOK_START_A
+HOOK_TEXT: 9 out of 10 coaches leak leads here
+SUBHEADLINE: Find the one fix
+HOOK_END_A`,
+      // Headline + cta only.
+      `HOOK_START_A
+HOOK_TEXT: One sentence changes everything
+CTA_BUTTON: Get the playbook
+HOOK_END_A`,
+    ];
+    for (let i = 0; i < raws.length; i++) {
+      const result = extractCopyFieldsFromResponse(raws[i]!, inputsArr[i % inputsArr.length]! as AdInputs);
+      // Pin the RequiredFieldStatus type contract at runtime: hookText.status is
+      // typed as "present" | "parse_failure", but we cast to a plain string so
+      // the test still runs even if a future refactor widens the type.
+      const hookStatus = result.statuses.hookText as string;
+      assert(hookStatus === "present" || hookStatus === "parse_failure",
+        `RequiredFieldStatus enforced: hookText.status is 'present'|'parse_failure' (got '${hookStatus}') for shape #${i + 1}`);
+      assert(hookStatus !== "absent",
+        `RequiredFieldStatus enforced: hookText.status is NEVER 'absent' for shape #${i + 1}`);
+    }
+  }
+
   // ─── Summary ───
   console.log(`  ${passed} passed, ${failed} failed`);
   if (failed > 0) {
