@@ -6745,18 +6745,27 @@ ABSOLUTE RULES — DO NOT VIOLATE ANY OF THESE:
 3. SAME ENVIRONMENT: Same background, same setting, same props, same atmospheric effects. Do NOT change the scene.
 4. SAME LIGHTING: Same lighting direction, intensity, temperature, and mood. Do NOT change the lighting.
 5. SAME TEXT — CHARACTER FOR CHARACTER:
-   - HEADLINE: "${hookText}"
-${subheadText ? `   - SUBHEADLINE: "${subheadText}"` : `   - NO SUBHEADLINE on this slide. Do not render any subheadline.`}
-${ctaName ? `   - CTA BUTTON: "${ctaName}"` : `   - NO CTA BUTTON on this slide. Do not render any CTA button.`}
-   ${benefitText ? `- BENEFIT: "${benefitText}"` : ''}
-   ${inputs.badges ? `- BADGE: "${inputs.badges}"` : ''}
+   - HEADLINE (always present): "${hookText}"
+${subheadText ? `   - SUBHEADLINE: "${subheadText}"` : `   - NO SUBHEADLINE: This ad has no subheadline. Do not render any subheadline text anywhere on the canvas.`}
+${ctaName ? `   - CTA BUTTON: "${ctaName}"` : `   - NO CTA BUTTON: This ad has no CTA button. Do not render any button, pill, or call-to-action element.`}
+${benefitText ? `   - BENEFIT LINE: "${benefitText}"` : `   - NO BENEFIT LINE: This ad has no benefit line. Do not render any benefit or supporting text below the CTA.`}
+${inputs.badges ? `   - BADGE: "${inputs.badges}"` : ''}
    Do NOT change, rephrase, translate, or remove any text. Every character must be identical.
 6. SAME TYPOGRAPHY: Same fonts, same font weights, same text colors, same text effects.
 7. SAME STYLE: Same design style, same gradient scrims, same overlays, same decorative elements.
 8. SAME BRAND ELEMENTS: Same logo placements (for all uploaded logos), same brand colors, same badge design.
 
+PRESENT ELEMENTS COUNT: ${[hookText, subheadText, ctaName, benefitText].filter(Boolean).length} text element(s) on this ad.
+LAYOUT RULE FOR PRESENT ELEMENTS:
+- Distribute ALL present text elements across the FULL available text zone. Do not cluster them at the top.
+- The freed vertical space from any absent element MUST be redistributed proportionally between the remaining present elements — use it to increase spacing between elements, not to enlarge the headline or add blank whitespace.
+- If only 1 or 2 text elements are present, they should feel spacious and confident on the canvas — generous spacing, not crammed together.
+${ctaName ? `- CTA PROTECTION (NON-NEGOTIABLE): The CTA button "${ctaName}" MUST always render. It is the most important element. If the canvas feels crowded, reduce the headline font size — NEVER drop or omit the CTA button under any circumstances.` : ''}
+${benefitText && ctaName ? `- BENEFIT PROTECTION: The benefit line "${benefitText}" MUST render directly below the CTA button. If space is very tight, reduce its font size — NEVER drop it.` : ''}
+${benefitText && !ctaName ? `- BENEFIT AS ANCHOR: No CTA button on this ad. The benefit line "${benefitText}" should anchor the bottom of the text zone, styled as a supporting line below the headline.` : ''}
+
 WHAT YOU ARE ALLOWED TO CHANGE:
-- Spatial layout ONLY — rearrange the zones (headline, hero, CTA) to fit the new ${currentAspectRatio} ratio
+- Spatial layout ONLY — rearrange the zones (headline, hero${ctaName ? ', CTA' : ''}${benefitText ? ', benefit' : ''}${inputs.badges ? ', badge' : ''}) to fit the new ${currentAspectRatio} ratio
 - Crop/extend the background naturally to fill the new canvas shape
 - Adjust text zone positions to fit the new dimensions while respecting safe zones
 
