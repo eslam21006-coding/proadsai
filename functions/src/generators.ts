@@ -6765,7 +6765,7 @@ ${benefitText && ctaName ? `- BENEFIT PROTECTION: The benefit line "${benefitTex
 ${benefitText && !ctaName ? `- BENEFIT AS ANCHOR: No CTA button on this ad. The benefit line "${benefitText}" should anchor the bottom of the text zone, styled as a supporting line below the headline.` : ''}
 
 WHAT YOU ARE ALLOWED TO CHANGE:
-- Spatial layout ONLY — rearrange the zones (headline, hero, ${ctaName ? 'CTA, ' : ''}${benefitText ? 'benefit, ' : ''}${inputs.badges ? 'badge' : ''}) to fit the new ${currentAspectRatio} ratio
+- Spatial layout ONLY — rearrange the zones (headline, hero${ctaName ? ', CTA' : ''}${benefitText ? ', benefit' : ''}${inputs.badges ? ', badge' : ''}) to fit the new ${currentAspectRatio} ratio
 - Crop/extend the background naturally to fill the new canvas shape
 - Adjust text zone positions to fit the new dimensions while respecting safe zones
 
