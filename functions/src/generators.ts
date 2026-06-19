@@ -6734,7 +6734,7 @@ You are RESIZING the attached image to a new aspect ratio: ${currentAspectRatio}
 
 REFLOW RULES — READ BEFORE ANYTHING ELSE:
 1. PRESERVE THE HERO FACE EXACTLY — do not regenerate, reinterpret, or soften the face. The hero's face in the output must be pixel-level identical to the input image. Copy it as-is, do not redraw it.
-2. USE THE FULL CANVAS HEIGHT — spread all elements across the entire available space between the safe zones. Do not compress or center everything in the middle third. The headline goes near the top, the hero fills the middle, the CTA anchors near the bottom safe zone boundary.
+2. USE THE FULL CANVAS HEIGHT — spread all elements across the entire available space between the safe zones. Do not compress or center everything in the middle third. The headline goes near the top, the hero fills the middle, the CTA sits in the lower third clearly above the platform UI zone at the very bottom.
 3. PRESERVE ALL VISUAL STYLE EXACTLY — same colors, same lighting, same background, same typography style, same decorative elements. Only the spatial layout changes.
 4. PRESERVE ALL TEXT EXACTLY — every word, every character, every punctuation mark must be identical to the input. Do not paraphrase, summarize, or omit any text.
 5. SCALE THE HERO UP — in Story (9:16) format, the hero should fill more vertical space than in Square. Make the hero larger and more prominent, not smaller.
@@ -6783,8 +6783,8 @@ ${currentAspectRatio === '9:16'
                         ? `⚠️ CRITICAL SAFE ZONES FOR 9:16 STORY FORMAT:
 - TOP 8% of canvas (≈130px): NO text, logos, or UI elements. Fill this area with background scene/environment only.
 - BOTTOM 20% of canvas (≈320px): NO CTA button, NO text, NO interactive elements. Fill this area with background scene, environment, gradient, or texture that naturally extends the design — it must look intentional, not empty.
-- ALL text, CTA button, and copy elements MUST be placed between 8% and 78% of canvas height.
-- CTA button MUST be above the 75% mark.
+- ALL text, CTA button, and copy elements MUST be placed between the top margin and the bottom platform UI zone. The CTA sits in the lower third of the canvas, above the bottom platform UI zone.
+
 - The bottom 20% is covered by platform UI (Meta/TikTok/Snapchat controls) so it will never look empty to end users — but it must contain ONLY background visual, never interactive elements.
 - This is non-negotiable for platform compliance.`
                         : currentAspectRatio === '3:4'
