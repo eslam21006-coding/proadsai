@@ -1065,6 +1065,72 @@ const App: React.FC = () => {
   // Tracks whether the batch already had done items, so we default reflowScope to 'batch_all'
   // exactly once when a batch finishes — without clobbering a later manual 'single' choice.
   const prevHasDoneBatchRef = React.useRef(false);
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PHASE 24B — HOOK FIELD PARSING HELPERS (hoisted from four-card closure)
+  // ═══════════════════════════════════════════════════════════════════════
+  // Phase 24B (FR-006 / US1): the three optional copy fields (subhead, CTA,
+  // benefit) are normalized to `null` when the parser produces empty output.
+  // hookText remains a required string. Because optional fields can be absent
+  // in raw blocks, no single marker can be a required end boundary — we list
+  // every possible boundary and pick the first one that appears. This is the
+  // same logic previously duplicated in the four-card JSX render closure
+  // (lines 6504-6562 pre-hoist); hoisting makes it accessible to both the
+  // step-3 batch handler (line 6982) and the feedback-service path (line 3728)
+  // so neither leaks CTA_BUTTON / BENEFIT content when SUBHEADLINE is absent.
+  const normalize = (t: string) =>
+    (t || '')
+      .replace(/\*\*/g, '')
+      .replace(/^\s*[:：\-–•]+\s*/g, '')
+      .replace(/VISUAL_DIRECTION[\s\S]*/gi, '')
+      .replace(/TECHNICAL_PROMPT[\s\S]*/gi, '')
+      .replace(/CONCEPT_START[\s\S]*/gi, '')
+      .replace(/CONCEPT_END[\s\S]*/gi, '')
+      .replace(/SUBJECT_ACTION[\s\S]*/gi, '')
+      .replace(/ENVIRONMENT_DESC[\s\S]*/gi, '')
+      .replace(/LIGHTING_LOGIC[\s\S]*/gi, '')
+      .replace(/MOOD_EMOTION[\s\S]*/gi, '')
+      .replace(/TEXT_LAYOUT[\s\S]*/gi, '')
+      .replace(/#[0-9a-fA-F]{6}/g, '')
+      .replace(/\(#[^)]*\)/g, '')
+      .trim();
+  // Anchor a marker word to the start of a line (after optional whitespace and
+  // optional ** bold open), and require a valid field-label suffix. Valid
+  // suffixes are: optional ** bold close, ":" / "：" colon, "_LETTERS" like
+  // HOOK_END_A, or end-of-line / end-of-string (so `HOOK_END` alone on a line
+  // still matches). The old `[A-Z0-9]*\b` suffix over-matched mid-sentence
+  // content like `HOOK_TEXT Great` (greedy 0-char then word boundary at G).
+  const markerRegex = (marker: string): RegExp => {
+    const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(
+      `(?:^|\\n)\\s*(?:\\*\\*)?${escaped}(?:\\*\\*)?(?:[_][A-Z0-9_]*\\b|[：:]|(?=\\s*(?:\\n|$)))`,
+      'i'
+    );
+  };
+  const findEarliest = (text: string, startAt: number, markers: string[]): number => {
+    let earliest = -1;
+    const slice = text.substring(startAt);
+    for (const marker of markers) {
+      const regex = markerRegex(marker);
+      const match = slice.match(regex);
+      const idx = match && typeof match.index === "number" ? startAt + match.index : -1;
+      if (idx !== -1 && (earliest === -1 || idx < earliest)) earliest = idx;
+    }
+    return earliest;
+  };
+  const getFieldSection = (text: string, startKey: string, endMarkers: string[]): string => {
+    if (!text) return "";
+    const skU = startKey.toUpperCase().replace(/:\s*$/, "");
+    const startRegex = markerRegex(skU);
+    const startMatch = startRegex.exec(text);
+    const si = startMatch ? startMatch.index : -1;
+    if (si === -1) return "";
+    let cs = si + startMatch![0].length;
+    while (cs < text.length && /\s/.test(text[cs])) cs++;
+    const ei = findEarliest(text, cs, endMarkers);
+    if (ei === -1) return text.slice(cs).trim();
+    return text.slice(cs, ei).trim();
+  };
   // --- STATE ---
   const [view, setView] = useState<'app' | 'privacy'>('app');
   const [showSidebar, setShowSidebar] = useState(false);
@@ -3725,7 +3791,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           for (const v of ['A', 'B', 'C', 'D']) {
             const hookRaw = getSection(res, `HOOK_START_${v}`, `HOOK_END_${v}`);
             if (hookRaw.trim()) {
-              const ht = getSection(hookRaw, "HOOK_TEXT", "SUBHEADLINE").replace(/\*\*/g, '').trim();
+              const ht = normalize(getFieldSection(hookRaw, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"]));
               const sh = getSection(hookRaw, "SUBHEADLINE", "CTA_BUTTON").replace(/\*\*/g, '').trim();
               const genId = await feedbackService.saveGeneration(
                 user.uid, cleanInputs, 'hooks',
@@ -5659,14 +5725,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       hookMetadata: {
         angle: inputs?.coldHookAngle || undefined,
         type: inputs?.hookType || undefined,
-        text: getSection(selectedTov, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim().substring(0, 100) || undefined,
+        text: normalize(getFieldSection(selectedTov, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).substring(0, 100) || undefined,
       },
       conceptMetadata: {
         text: (selectedConcept || '').substring(0, 300) || undefined,
       },
       copySnapshot: {
-        headline: getSection(selectedTov, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim().substring(0, 100) || undefined,
-        subhead: getSection(selectedTov, "SUBHEADLINE:", "CTA_BUTTON:").replace(/\*\*/g, '').trim().substring(0, 100) || undefined,
+        headline: normalize(getFieldSection(selectedTov, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).substring(0, 100) || undefined,
+        subhead: normalize(getFieldSection(selectedTov, "SUBHEADLINE", ["CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).substring(0, 100) || undefined,
         cta: inputs?.cta || undefined,
       },
       language: inputs?.adLanguage || undefined,
@@ -6501,22 +6567,6 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   const _varIdx = variationActiveIndex[v] ?? 0;
                   const _activeVar = _varIdx > 0 ? variationCarousels[v]?.[_varIdx - 1] : undefined;
                   const activeBlock = _activeVar?.rawBlock || raw;
-                  const normalize = (t: string) =>
-                    (t || '')
-                      .replace(/\*\*/g, '')
-                      .replace(/^\s*[:：\-–•]+\s*/g, '')
-                      .replace(/VISUAL_DIRECTION[\s\S]*/gi, '')
-                      .replace(/TECHNICAL_PROMPT[\s\S]*/gi, '')
-                      .replace(/CONCEPT_START[\s\S]*/gi, '')
-                      .replace(/CONCEPT_END[\s\S]*/gi, '')
-                      .replace(/SUBJECT_ACTION[\s\S]*/gi, '')
-                      .replace(/ENVIRONMENT_DESC[\s\S]*/gi, '')
-                      .replace(/LIGHTING_LOGIC[\s\S]*/gi, '')
-                      .replace(/MOOD_EMOTION[\s\S]*/gi, '')
-                      .replace(/TEXT_LAYOUT[\s\S]*/gi, '')
-                      .replace(/#[0-9a-fA-F]{6}/g, '')
-                      .replace(/\(#[^)]*\)/g, '')
-                      .trim();
 
                   // Phase 23 (T014 / FR-004): the four card actions (display, approve,
                   // edit, regenerate) operate on the CURRENTLY DISPLAYED carousel
@@ -6531,39 +6581,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   // is the only place hookText can appear empty, and it stays a
                   // required sentinel on the render path.
                   //
-                  // Phase 24B (CodeRabbit — Major): parse each field up to the
-                  // EARLIEST of its possible end markers. With Phase 24B the three
-                  // optional fields (SUBHEADLINE / CTA_BUTTON) are legitimately
-                  // absent in raw blocks, so we cannot treat any one optional
-                  // marker as a required boundary — if it's missing, getSection
-                  // would read through the next field's content. We list every
-                  // possible boundary and pick the first one that appears.
-                  const findEarliest = (text: string, startAt: number, markers: string[]): number => {
-                    const upper = text.toUpperCase();
-                    let earliest = -1;
-                    for (const marker of markers) {
-                      const idx = upper.indexOf(marker.toUpperCase(), startAt);
-                      if (idx !== -1 && (earliest === -1 || idx < earliest)) earliest = idx;
-                    }
-                    return earliest;
-                  };
-                  const getFieldSection = (text: string, startKey: string, endMarkers: string[]): string => {
-                    if (!text) return "";
-                    const upper = text.toUpperCase();
-                    const skU = startKey.toUpperCase().replace(/:\s*$/, "");
-                    const si = upper.indexOf(skU);
-                    if (si === -1) return "";
-                    let cs = si + skU.length;
-                    if (cs < text.length && (text[cs] === ":" || text[cs] === "：")) cs++;
-                    while (cs < text.length && /\s/.test(text[cs])) cs++;
-                    const ei = findEarliest(text, cs, endMarkers);
-                    if (ei === -1) return text.slice(cs).trim();
-                    return text.slice(cs, ei).trim();
-                  };
+                  // Helpers `findEarliest`, `getFieldSection`, and `normalize` are
+                  // hoisted to function-component scope (see top of App component)
+                  // so they are also accessible from the step-3 batch handler and
+                  // the feedback-service hook extraction path.
                   const hookText = normalize(getFieldSection(activeBlock, "HOOK_TEXT",
-                    ["SUBHEADLINE", "CTA_BUTTON", "HOOK_END", "ANGLE_END"]));
+                    ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"]));
                   const subheadRaw = normalize(getFieldSection(activeBlock, "SUBHEADLINE",
-                    ["CTA_BUTTON", "HOOK_END", "ANGLE_END"]));
+                    ["CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"]));
                   const subhead = subheadRaw.trim().length > 0 ? subheadRaw : null;
 
                   const actionBlockRaw =
@@ -6979,7 +7004,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                               if (!hookRaw.trim()) hookRaw = getSection(tovText, `HOOK_START_${v}`, `HOOK_END_${v}`);
                               if (!hookRaw.trim()) continue;
 
-                              const headline = getSection(hookRaw, "HOOK_TEXT", "SUBHEADLINE").replace(/\*\*/g, '').replace(/^[\s:：\-–•]+/g, '').trim();
+                              const headline = normalize(getFieldSection(hookRaw, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"]));
 
                               startLoad(`Concepts for Hook ${v} (${i + 1}/${hookLetters.length})...`);
                               if (!deductCredits('generateConcepts')) break;
@@ -7054,7 +7079,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
               : [{
                 hookKey: 'S',
                 hookText: selectedTov,
-                hookHeadline: getSection(selectedTov, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim(),
+                hookHeadline: normalize(getFieldSection(selectedTov, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])),
                 conceptsSource: conceptsText,
                 selectedConcepts: singleSelectedConcepts,
                 isBatch: false,
@@ -7203,9 +7228,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                 {hookGroups.map((group, gi) => {
                   const headline = group.hookHeadline;
-                  const subhead = (getSection(group.hookText, "SUBHEADLINE:", "STORY_ARC:")
-                    || getSection(group.hookText, "SUBHEADLINE:", "CTA_BUTTON:") || '')
-                    .replace(/\*\*/g, '').replace(/STORY_ARC[\s\S]*/gi, '').replace(/CTA[_\s]*BUTTON[\s\S]*/gi, '').replace(/VISUAL_DIRECTION[\s\S]*/gi, '').replace(/TECHNICAL_PROMPT[\s\S]*/gi, '').replace(/#[0-9a-fA-F]{6}/g, '').trim();
+                  const subhead = normalize(getFieldSection(group.hookText, "SUBHEADLINE", ["CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])) || null;
 
                   const concepts = [1, 2, 3].map(n => ({
                     n,
@@ -7964,7 +7987,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                                   for (const [hookKey, items] of hookGroups) {
                                     const hookHeadline = batchHookGroups.find(g => g.hookKey === hookKey)?.hookHeadline
-                                      || getSection(selectedTov, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim().substring(0, 30)
+                                      || normalize(getFieldSection(selectedTov, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).substring(0, 30)
                                       || `Hook_${hookKey}`;
                                     const safeHeadline = hookHeadline.replace(/[^a-zA-Z0-9\u0600-\u06FF\s]/g, '').trim().substring(0, 25);
                                     const folderName = `Hook_${hookKey}_${safeHeadline}`;
@@ -8073,7 +8096,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                                   creativeMode: (inputs as any)?.offerCreativeMode || ['standard_hero'],
                                                   universe: resolvedUniverse || null,
                                                   adFormat: inputs?.adMode || 'single',
-                                                  hookText: getSection(item.hookText, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim().substring(0, 100),
+                                                  hookText: normalize(getFieldSection(item.hookText, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).substring(0, 100),
                                                   imageUrl: item.url || null,
                                                 }, { merge: true });
                                               } catch (e) { console.warn('Linkage save failed:', e); }
@@ -8252,7 +8275,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                           creativeMode: (inputs as any)?.offerCreativeMode || ['standard_hero'],
                                           universe: resolvedUniverse || null,
                                           adFormat: inputs?.adMode || 'single',
-                                          hookText: getSection(selectedTov, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim().substring(0, 100),
+                                          hookText: normalize(getFieldSection(selectedTov, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).substring(0, 100),
                                           imageUrl: currentMockup || null,
                                           metaImageHash: result.imageHash || null,
                                         }, { merge: true });
@@ -8879,7 +8902,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   <div className="flex gap-2 flex-wrap">
                     {batchCaptions.map(bc => {
                       const isActive = activeBatchCaptionKey === bc.hookKey;
-                      const headline = getSection(bc.hookText, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim();
+                      const headline = normalize(getFieldSection(bc.hookText, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"]));
                       return (
                         <button key={bc.hookKey}
                           onClick={() => {
@@ -8970,7 +8993,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       const capProduct = (inputs?.productName || 'ad').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '-').substring(0, 20);
                       const capCampaign = inputs?.campaignType === 'retargeting' ? 'Retargeting' : 'Cold';
                       const capAngle = inputs?.coldHookAngle ? `_${inputs.coldHookAngle}` : '';
-                      const firstHeadline = getSection(selectedTov, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').replace(/[^a-zA-Z0-9\u0600-\u06FF\s]/g, '').trim().substring(0, 30).trim();
+                      const firstHeadline = normalize(getFieldSection(selectedTov, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).replace(/[^a-zA-Z0-9\u0600-\u06FF\s]/g, '').trim().substring(0, 30).trim();
                       const capHeadline = firstHeadline ? `_${firstHeadline.replace(/\s+/g, '-')}` : '';
                       a.download = `${capProduct}_${capCampaign}${capAngle}${capHeadline}_Caption.txt`;
                       a.click();
@@ -9014,7 +9037,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         for (const hookKey of allHookKeys) {
                           const hookHeadline = batchHookGroups.find(g => g.hookKey === hookKey)?.hookHeadline
                             || batchCaptions.find(bc => bc.hookKey === hookKey)?.hookText?.substring(0, 30)
-                            || getSection(selectedTov, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim().substring(0, 30)
+                            || normalize(getFieldSection(selectedTov, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).substring(0, 30)
                             || `Hook_${hookKey}`;
                           const safeName = hookHeadline.replace(/[^a-zA-Z0-9\u0600-\u06FF\s]/g, '').trim().substring(0, 25);
                           const folder = zip.folder(`Hook_${hookKey}_${safeName}`)!;
