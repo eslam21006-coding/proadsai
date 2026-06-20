@@ -1095,12 +1095,17 @@ const App: React.FC = () => {
       .replace(/\(#[^)]*\)/g, '')
       .trim();
   // Anchor a marker word to the start of a line (after optional whitespace and
-  // optional ** bold), and require a field-label suffix (":" / "：" colon, or
-  // "_LETTERS" like HOOK_END_A). Prevents mid-sentence matches like
-  // "The hidden benefit your offer has" truncating on the word "benefit".
+  // optional ** bold open), and require a valid field-label suffix. Valid
+  // suffixes are: optional ** bold close, ":" / "：" colon, "_LETTERS" like
+  // HOOK_END_A, or end-of-line / end-of-string (so `HOOK_END` alone on a line
+  // still matches). The old `[A-Z0-9]*\b` suffix over-matched mid-sentence
+  // content like `HOOK_TEXT Great` (greedy 0-char then word boundary at G).
   const markerRegex = (marker: string): RegExp => {
     const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(?:^|\\n)\\s*(?:\\*\\*)?${escaped}(?:\\s*[:：]|[_\\s-]*[A-Z0-9]*\\b)`, 'i');
+    return new RegExp(
+      `(?:^|\\n)\\s*(?:\\*\\*)?${escaped}(?:\\*\\*)?(?:[_][A-Z0-9_]*\\b|[：:]|(?=\\s*(?:\\n|$)))`,
+      'i'
+    );
   };
   const findEarliest = (text: string, startAt: number, markers: string[]): number => {
     let earliest = -1;
