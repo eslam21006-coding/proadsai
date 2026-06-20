@@ -3776,7 +3776,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           for (const v of ['A', 'B', 'C', 'D']) {
             const hookRaw = getSection(res, `HOOK_START_${v}`, `HOOK_END_${v}`);
             if (hookRaw.trim()) {
-              const ht = normalize(getFieldSection(hookRaw, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "HOOK_END", "ANGLE_END"]));
+              const ht = normalize(getFieldSection(hookRaw, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"]));
               const sh = getSection(hookRaw, "SUBHEADLINE", "CTA_BUTTON").replace(/\*\*/g, '').trim();
               const genId = await feedbackService.saveGeneration(
                 user.uid, cleanInputs, 'hooks',
@@ -6571,9 +6571,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   // so they are also accessible from the step-3 batch handler and
                   // the feedback-service hook extraction path.
                   const hookText = normalize(getFieldSection(activeBlock, "HOOK_TEXT",
-                    ["SUBHEADLINE", "CTA_BUTTON", "HOOK_END", "ANGLE_END"]));
+                    ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"]));
                   const subheadRaw = normalize(getFieldSection(activeBlock, "SUBHEADLINE",
-                    ["CTA_BUTTON", "HOOK_END", "ANGLE_END"]));
+                    ["CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"]));
                   const subhead = subheadRaw.trim().length > 0 ? subheadRaw : null;
 
                   const actionBlockRaw =
@@ -6989,7 +6989,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                               if (!hookRaw.trim()) hookRaw = getSection(tovText, `HOOK_START_${v}`, `HOOK_END_${v}`);
                               if (!hookRaw.trim()) continue;
 
-                              const headline = normalize(getFieldSection(hookRaw, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "HOOK_END", "ANGLE_END"]));
+                              const headline = normalize(getFieldSection(hookRaw, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"]));
 
                               startLoad(`Concepts for Hook ${v} (${i + 1}/${hookLetters.length})...`);
                               if (!deductCredits('generateConcepts')) break;
