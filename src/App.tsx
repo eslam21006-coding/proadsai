@@ -5710,14 +5710,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       hookMetadata: {
         angle: inputs?.coldHookAngle || undefined,
         type: inputs?.hookType || undefined,
-        text: getSection(selectedTov, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim().substring(0, 100) || undefined,
+        text: normalize(getFieldSection(selectedTov, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).substring(0, 100) || undefined,
       },
       conceptMetadata: {
         text: (selectedConcept || '').substring(0, 300) || undefined,
       },
       copySnapshot: {
-        headline: getSection(selectedTov, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim().substring(0, 100) || undefined,
-        subhead: getSection(selectedTov, "SUBHEADLINE:", "CTA_BUTTON:").replace(/\*\*/g, '').trim().substring(0, 100) || undefined,
+        headline: normalize(getFieldSection(selectedTov, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).substring(0, 100) || undefined,
+        subhead: normalize(getFieldSection(selectedTov, "SUBHEADLINE", ["CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).substring(0, 100) || undefined,
         cta: inputs?.cta || undefined,
       },
       language: inputs?.adLanguage || undefined,
@@ -7064,7 +7064,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
               : [{
                 hookKey: 'S',
                 hookText: selectedTov,
-                hookHeadline: getSection(selectedTov, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim(),
+                hookHeadline: normalize(getFieldSection(selectedTov, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])),
                 conceptsSource: conceptsText,
                 selectedConcepts: singleSelectedConcepts,
                 isBatch: false,
@@ -7213,9 +7213,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                 {hookGroups.map((group, gi) => {
                   const headline = group.hookHeadline;
-                  const subhead = (getSection(group.hookText, "SUBHEADLINE:", "STORY_ARC:")
-                    || getSection(group.hookText, "SUBHEADLINE:", "CTA_BUTTON:") || '')
-                    .replace(/\*\*/g, '').replace(/STORY_ARC[\s\S]*/gi, '').replace(/CTA[_\s]*BUTTON[\s\S]*/gi, '').replace(/VISUAL_DIRECTION[\s\S]*/gi, '').replace(/TECHNICAL_PROMPT[\s\S]*/gi, '').replace(/#[0-9a-fA-F]{6}/g, '').trim();
+                  const subhead = normalize(getFieldSection(group.hookText, "SUBHEADLINE", ["CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])) || null;
 
                   const concepts = [1, 2, 3].map(n => ({
                     n,
@@ -7974,7 +7972,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
 
                                   for (const [hookKey, items] of hookGroups) {
                                     const hookHeadline = batchHookGroups.find(g => g.hookKey === hookKey)?.hookHeadline
-                                      || getSection(selectedTov, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim().substring(0, 30)
+                                      || normalize(getFieldSection(selectedTov, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).substring(0, 30)
                                       || `Hook_${hookKey}`;
                                     const safeHeadline = hookHeadline.replace(/[^a-zA-Z0-9\u0600-\u06FF\s]/g, '').trim().substring(0, 25);
                                     const folderName = `Hook_${hookKey}_${safeHeadline}`;
@@ -8083,7 +8081,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                                   creativeMode: (inputs as any)?.offerCreativeMode || ['standard_hero'],
                                                   universe: resolvedUniverse || null,
                                                   adFormat: inputs?.adMode || 'single',
-                                                  hookText: getSection(item.hookText, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim().substring(0, 100),
+                                                  hookText: normalize(getFieldSection(item.hookText, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).substring(0, 100),
                                                   imageUrl: item.url || null,
                                                 }, { merge: true });
                                               } catch (e) { console.warn('Linkage save failed:', e); }
@@ -8262,7 +8260,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                           creativeMode: (inputs as any)?.offerCreativeMode || ['standard_hero'],
                                           universe: resolvedUniverse || null,
                                           adFormat: inputs?.adMode || 'single',
-                                          hookText: getSection(selectedTov, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim().substring(0, 100),
+                                          hookText: normalize(getFieldSection(selectedTov, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).substring(0, 100),
                                           imageUrl: currentMockup || null,
                                           metaImageHash: result.imageHash || null,
                                         }, { merge: true });
@@ -8889,7 +8887,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   <div className="flex gap-2 flex-wrap">
                     {batchCaptions.map(bc => {
                       const isActive = activeBatchCaptionKey === bc.hookKey;
-                      const headline = getSection(bc.hookText, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim();
+                      const headline = normalize(getFieldSection(bc.hookText, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"]));
                       return (
                         <button key={bc.hookKey}
                           onClick={() => {
@@ -8980,7 +8978,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                       const capProduct = (inputs?.productName || 'ad').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '-').substring(0, 20);
                       const capCampaign = inputs?.campaignType === 'retargeting' ? 'Retargeting' : 'Cold';
                       const capAngle = inputs?.coldHookAngle ? `_${inputs.coldHookAngle}` : '';
-                      const firstHeadline = getSection(selectedTov, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').replace(/[^a-zA-Z0-9\u0600-\u06FF\s]/g, '').trim().substring(0, 30).trim();
+                      const firstHeadline = normalize(getFieldSection(selectedTov, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).replace(/[^a-zA-Z0-9\u0600-\u06FF\s]/g, '').trim().substring(0, 30).trim();
                       const capHeadline = firstHeadline ? `_${firstHeadline.replace(/\s+/g, '-')}` : '';
                       a.download = `${capProduct}_${capCampaign}${capAngle}${capHeadline}_Caption.txt`;
                       a.click();
@@ -9024,7 +9022,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         for (const hookKey of allHookKeys) {
                           const hookHeadline = batchHookGroups.find(g => g.hookKey === hookKey)?.hookHeadline
                             || batchCaptions.find(bc => bc.hookKey === hookKey)?.hookText?.substring(0, 30)
-                            || getSection(selectedTov, "HOOK_TEXT:", "SUBHEADLINE:").replace(/\*\*/g, '').trim().substring(0, 30)
+                            || normalize(getFieldSection(selectedTov, "HOOK_TEXT", ["SUBHEADLINE", "CTA_BUTTON", "BENEFIT", "HOOK_END", "ANGLE_END"])).substring(0, 30)
                             || `Hook_${hookKey}`;
                           const safeName = hookHeadline.replace(/[^a-zA-Z0-9\u0600-\u06FF\s]/g, '').trim().substring(0, 25);
                           const folder = zip.folder(`Hook_${hookKey}_${safeName}`)!;
