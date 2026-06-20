@@ -1094,23 +1094,33 @@ const App: React.FC = () => {
       .replace(/#[0-9a-fA-F]{6}/g, '')
       .replace(/\(#[^)]*\)/g, '')
       .trim();
+  // Anchor a marker word to the start of a line (after optional whitespace and
+  // optional ** bold), and require a field-label suffix (":" / "：" colon, or
+  // "_LETTERS" like HOOK_END_A). Prevents mid-sentence matches like
+  // "The hidden benefit your offer has" truncating on the word "benefit".
+  const markerRegex = (marker: string): RegExp => {
+    const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?:^|\\n)\\s*(?:\\*\\*)?${escaped}(?:\\s*[:：]|[_\\s-]*[A-Z0-9]*\\b)`, 'i');
+  };
   const findEarliest = (text: string, startAt: number, markers: string[]): number => {
-    const upper = text.toUpperCase();
     let earliest = -1;
+    const slice = text.substring(startAt);
     for (const marker of markers) {
-      const idx = upper.indexOf(marker.toUpperCase(), startAt);
+      const regex = markerRegex(marker);
+      const match = slice.match(regex);
+      const idx = match && typeof match.index === "number" ? startAt + match.index : -1;
       if (idx !== -1 && (earliest === -1 || idx < earliest)) earliest = idx;
     }
     return earliest;
   };
   const getFieldSection = (text: string, startKey: string, endMarkers: string[]): string => {
     if (!text) return "";
-    const upper = text.toUpperCase();
     const skU = startKey.toUpperCase().replace(/:\s*$/, "");
-    const si = upper.indexOf(skU);
+    const startRegex = markerRegex(skU);
+    const startMatch = startRegex.exec(text);
+    const si = startMatch ? startMatch.index : -1;
     if (si === -1) return "";
-    let cs = si + skU.length;
-    if (cs < text.length && (text[cs] === ":" || text[cs] === "：")) cs++;
+    let cs = si + startMatch![0].length;
     while (cs < text.length && /\s/.test(text[cs])) cs++;
     const ei = findEarliest(text, cs, endMarkers);
     if (ei === -1) return text.slice(cs).trim();
