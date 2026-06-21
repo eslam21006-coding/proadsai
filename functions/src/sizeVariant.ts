@@ -21,6 +21,7 @@ import {
     setGeminiCaller,
     setOpenAIKey,
 } from "./generators.js";
+import { validateModeFormatCombination } from "./creativeResolver.js";
 import * as admin from "firebase-admin";
 import type {
     GenerateSizeVariantRequest,
@@ -70,6 +71,18 @@ function checkPreconditions(args: {
     }
     if (!["single", "batch", "carousel"].includes(String(data.scope))) {
         return { ok: false, code: "invalid-argument", message: `Invalid scope: ${String(data.scope)}.` };
+    }
+    // itemIndex must be null for single and a non-negative integer for batch/carousel.
+    // Validating here (before any credit charge) prevents a request that would otherwise
+    // pass preconditions, get charged, and then silently fail in buildVariantUpdate()
+    // because the wrong persistence branch matches (CodeRabbit review: itemIndex validation
+    // by scope before charging credits).
+    if (data.scope === "single" && data.itemIndex !== null && data.itemIndex !== undefined) {
+        return { ok: false, code: "invalid-argument", message: "itemIndex must be null for scope='single'." };
+    }
+    if ((data.scope === "batch" || data.scope === "carousel")
+        && (!Number.isInteger(data.itemIndex) || (data.itemIndex as number) < 0)) {
+        return { ok: false, code: "invalid-argument", message: "itemIndex must be a non-negative integer for scope='batch'|'carousel'." };
     }
     if (data.scope === "carousel" && (!data.sourceImageOverride || data.sourceImageOverride.length === 0)) {
         // VR-2: carousel is resize-only. A carousel request without a sourceImageOverride
@@ -267,6 +280,21 @@ export async function generateSizeVariantHandler(
     // ── Reference resolution (R3) ──
     const ref = resolveReference(parent, data, ctx.sourceImageUrl != null);
 
+    // ── Mode/format gate (Phase 17 — CodeRabbit review: enforce on size-variant
+    // callables before any credit deduction, mirroring the pattern in
+    // serverGenerateFinalAd and the other generation callables in index.ts).
+    // A size variant is always rendered as a SINGLE image for the target canvas,
+    // so the format is "single" for the gate regardless of the call's scope
+    // (scope only determines WHICH result the variant is appended to).
+    const fmtCheck = validateModeFormatCombination({
+        modes: (ctx.inputs as any)?.offerCreativeMode || ["standard_hero"],
+        adFormat: "single",
+        campaignType: ((ctx.inputs as any)?.campaignType as "cold" | "retargeting" | undefined) ?? "cold",
+    });
+    if (!fmtCheck.valid) {
+        throw new HttpsError("invalid-argument", fmtCheck.reason, { code: "invalid_mode_format" });
+    }
+
     // ── PRE-6: owner balance ≥ SIZE_VARIANT_CREDIT_COST ──
     const userRef = db.collection("users").doc(creditOwnerUid);
     const preflightUser = await userRef.get();
@@ -393,9 +421,11 @@ export async function generateSizeVariantHandler(
             updatedAt: Date.now(),
         };
         const update: Record<string, unknown> = buildVariantUpdate(data, ctx, successVariant);
-        update.resolutionTrace = {
-            sizeVariantTrace: admin.firestore.FieldValue.arrayUnion(traceEntry),
-        };
+        // Use dot-notation for nested updates — object replacement of resolutionTrace
+        // would erase sibling properties (reflowHistory, brandColorReinforced, etc.)
+        // that may have been set by other operations on this generation doc
+        // (CodeRabbit review: destructive Firestore map replacements).
+        update["resolutionTrace.sizeVariantTrace"] = admin.firestore.FieldValue.arrayUnion(traceEntry);
         update.updatedAt = admin.firestore.FieldValue.serverTimestamp();
         await genRef.update(update);
         return { success: true, variant: successVariant, netCreditsCharged: SIZE_VARIANT_CREDIT_COST };
@@ -413,9 +443,9 @@ export async function generateSizeVariantHandler(
         updatedAt: Date.now(),
     };
     const update: Record<string, unknown> = buildVariantUpdate(data, ctx, failedVariant);
-    update.resolutionTrace = {
-        sizeVariantTrace: admin.firestore.FieldValue.arrayUnion(traceEntry),
-    };
+    // Use dot-notation for the trace update (CodeRabbit review: destructive
+    // Firestore map replacements) — see the success-path comment above.
+    update["resolutionTrace.sizeVariantTrace"] = admin.firestore.FieldValue.arrayUnion(traceEntry);
     update.updatedAt = admin.firestore.FieldValue.serverTimestamp();
     await genRef.update(update);
     // Refund the credit owner.
@@ -445,8 +475,13 @@ function buildVariantUpdate(
     variant: SizeVariant,
 ): Record<string, unknown> {
     if (data.scope === "single") {
+        // Use dot-notation to update only the specific ratio's entry in the
+        // sizeVariants map — replacing the whole map would erase variants at
+        // other aspect ratios (CodeRabbit review: destructive Firestore map
+        // replacements). Matches the dot-notation pattern already used for
+        // batch/carousel scopes below.
         const update: Record<string, unknown> = {
-            sizeVariants: { [variant.ratio]: variant },
+            [`sizeVariants.${variant.ratio}`]: variant,
         };
         if (variant.status === "succeeded" && variant.url) {
             // Mirror the variant into the existing mockupHistory for the single-image

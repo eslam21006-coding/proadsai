@@ -9,7 +9,7 @@ Covers FR-012, FR-012a, FR-013, FR-014, FR-015, FR-011 and SC-005.
 
 ## Cost computation (frontend, pre-commit)
 
-```
+```text
 designs   = anchorCount + variantCount         // across all selected sizes & items, minus no-ops
 totalCost = designs × 5
 ```
@@ -32,7 +32,7 @@ Net effect: nothing starts if the whole request is unaffordable; per-variant gua
 
 ## Charge + refund lifecycle (per design)
 
-```
+```text
 affordability ok ──► charge 5 upfront (transaction) ──► generate
                                                           ├─ success ──► keep charge (net 5)
                                                           └─ failure ──► refund 5 (net 0)   (FR-015)
