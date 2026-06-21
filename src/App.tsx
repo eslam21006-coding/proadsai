@@ -2547,6 +2547,15 @@ const App: React.FC = () => {
                 const v = variantRes.data?.variant;
                 if (variantRes.data?.success && v?.url) {
                   pushMockup(v.url, extraRatio as AspectRatio);
+                  // Reconcile the displayed balance with the actual net charge
+                  // the backend applied (matches the batch extra-sizes and
+                  // carousel-all reconciliation pattern — CodeRabbit round 6
+                  // review: netCreditsCharged must be deducted or the UI balance
+                  // becomes stale until the next server refresh).
+                  const charged = variantRes.data.netCreditsCharged ?? 0;
+                  if (charged > 0) {
+                    setUserCredits(prev => Math.max(0, prev - charged));
+                  }
                 } else if (v?.noOp) {
                   // Same ratio already exists — surface as info, not an error.
                   console.log(`sizeVariant ${extraRatio} was a no-op (already exists)`);
