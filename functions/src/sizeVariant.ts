@@ -400,10 +400,20 @@ export async function generateSizeVariantHandler(
             tx.update(genRef, update);
         });
     } catch (chargeErr: unknown) {
-        // The charge itself failed (rare — only on concurrent spend racing the
-        // preflight). Surface as a typed error.
+        // Preserve intentional HttpsError throws (idempotency race guards
+        // HttpsError('aborted') + HttpsError('already-exists'), plus the
+        // pre-condition re-throws). Only convert UNEXPECTED errors or the
+        // race-on-balance InsufficientCredits string into a typed HttpsError
+        // (CodeRabbit review: preserve transaction idempotency error codes
+        // instead of rewriting them).
+        if (chargeErr instanceof HttpsError) {
+            throw chargeErr;
+        }
         const msg = chargeErr instanceof Error ? chargeErr.message : String(chargeErr);
-        throw new HttpsError("resource-exhausted", `Credit deduction failed: ${msg}`);
+        if (msg.includes("Insufficient credits at commit time")) {
+            throw new HttpsError("resource-exhausted", msg);
+        }
+        throw new HttpsError("internal", `Credit deduction failed: ${msg}`);
     }
 
     // ── Build the inputs copy for the target aspect ratio ──

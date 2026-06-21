@@ -562,7 +562,7 @@ export const ACTION_FEATURE_MAP: Record<string, GatedFeature | null> = {
     generateImage: null,
     polishImage: null,
     reflowImage: null,
-    generateSizeVariant: null,
+    generateSizeVariant: "visualPolishes",
     analyzePolishes: null,
     generateCaption: null,
     refineCaption: null,
