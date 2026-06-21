@@ -1,4 +1,5 @@
 // functions/src/reflowOutpaint.ts — Sharp-based pure margin extension + byte-identity verification (HOTFIX-F)
+// Superseded by Phase 17 independent multi-size generation. Kept for reversibility.
 
 import type { AspectRatio } from "./generators.js";
 import type { Sharp } from "sharp";

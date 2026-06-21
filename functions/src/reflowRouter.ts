@@ -1,4 +1,5 @@
 // functions/src/reflowRouter.ts — deterministic two-route reflow auto-router (HOTFIX-F)
+// Superseded by Phase 17 independent multi-size generation. Kept for reversibility.
 
 import type { AspectRatio } from "./generators.js";
 import type { ReflowDecision } from "./types.js";

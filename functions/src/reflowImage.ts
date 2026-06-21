@@ -1,4 +1,9 @@
 // functions/src/reflowImage.ts — onCall handler for deterministic aspect ratio reflow (HOTFIX-F)
+// Superseded by Phase 17 independent multi-size generation. Kept for reversibility.
+// The `reflowImage` callable registration in index.ts is commented out — the new
+// `generateSizeVariant` callable (see sizeVariant.ts) replaces the multi-size and
+// resize flows. File body is retained so the HFF test fixtures and the
+// outpaint/rerender building blocks remain available for any future revert.
 
 import type { CallableRequest } from "firebase-functions/v2/https";
 import type { AspectRatio } from "./generators.js";

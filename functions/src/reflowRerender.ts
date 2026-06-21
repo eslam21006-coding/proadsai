@@ -1,4 +1,5 @@
 // functions/src/reflowRerender.ts — full-pipeline rerender-from-plan wrapper (HOTFIX-F)
+// Superseded by Phase 17 independent multi-size generation. Kept for reversibility.
 
 import type { AspectRatio, GeminiCaller } from "./generators.js";
 import { generateFinalAd, INTERNAL_REFLOW_TOKEN } from "./generators.js";

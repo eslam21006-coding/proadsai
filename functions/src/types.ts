@@ -3,6 +3,60 @@
 
 import type { AspectRatio } from "./generators.js";
 
+// ─── Phase 17: Independent Multi-Size Variant Types ─────────────────────────
+
+export type SizeVariantStatus = "pending" | "succeeded" | "failed";
+// Lifecycle: absent → pending → succeeded
+//                          ↘ failed (terminal until explicit user retry)
+
+export type ReferenceSource = "uploaded" | "own_original" | "anchor" | "none";
+// Resolution priority (R3): uploaded → own_original → anchor → none.
+// "none" occurs when the anchor failed (FR-005a) and the variant generated from the brief alone.
+
+export interface SizeVariant {
+    ratio: AspectRatio;            // target canvas
+    status: SizeVariantStatus;
+    url: string | null;            // populated when status === "succeeded"
+    referenceSource: ReferenceSource;
+    creditsCharged: number;        // net for this variant (0 on no-op / after refund of a failure)
+    noOp?: boolean;                // true when same-size already succeeded (FR-011)
+    errorCode?: string;            // populated when status === "failed"
+    idempotencyKey: string;        // `${genId}:${scope}:${itemIndex}:${ratio}` (FR-014)
+    updatedAt: number;             // epoch ms
+}
+
+export interface SizeVariantTraceEntry {
+    ratio: AspectRatio;
+    scope: "single" | "batch" | "carousel";
+    itemIndex: number | null;      // null for single; item/slide index otherwise
+    referenceSource: ReferenceSource;
+    provider: "openai" | "gemini";
+    copyFidelityPasses: number;    // retries consumed by validateCopyFidelity
+    succeeded: boolean;
+    errorCode?: string;
+    charged: number;               // credits charged before any refund
+    refunded: number;              // credits refunded on failure (0 on success)
+    timestamp: number;             // epoch ms
+}
+
+export type GenerationScope = "single" | "batch" | "carousel";
+
+export interface GenerateSizeVariantRequest {
+    generationId: string;          // parent generation doc
+    scope: GenerationScope;
+    itemIndex: number | null;      // null for single; batch item / carousel slide index otherwise
+    targetAspectRatio: AspectRatio; // must be in UI_RATIOS
+    // Reference seed: backend resolves priority, but the client passes what it has.
+    sourceImageOverride?: string;  // data URL / storage ref of source-own original (resize) or anchor (pre-select)
+    activeWorkspaceId?: string;
+}
+
+export interface GenerateSizeVariantResponse {
+    success: boolean;
+    variant: SizeVariant;          // includes status, url, creditsCharged, noOp, errorCode
+    netCreditsCharged: number;     // 0 on no-op or after refund of a failure; 5 on success
+}
+
 // ─── Reflow Types (HOTFIX-F) ─────────────────────────────────────────────────
 
 export type ReflowMethod = "auto" | "outpaint" | "rerender";
@@ -283,6 +337,11 @@ export interface ResolutionTrace {
     };
     logoPipeline?: LogoPipelineEvents;
     readonly reflowHistory?: readonly ReflowHistoryEntry[];
+    // Phase 17 — independent multi-size variant trace. Appended by `generateSizeVariant`
+    // for each per-size variant attempt (success, failure, or no-op). Distinct from
+    // `reflowHistory` which tracks HOTFIX-F reflow events. A size variant is a fresh
+    // native generation, not a reflow.
+    readonly sizeVariantTrace?: readonly SizeVariantTraceEntry[];
     // Phase 17 — top-level rollup flags (set to OR of any reflow's per-entry flag).
     // Reflects what `reflowImage.ts:deductAndPersist()` writes alongside `reflowHistory`
     // so typed consumers can read the rollups directly without scanning the array.

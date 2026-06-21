@@ -27,6 +27,7 @@ export { getUserProjects } from "./savedProjects/getUserProjects.js";
 import { probeMetaRole } from "./workspaces/metaRoleProbe.js";
 import { writeAuditEntry } from "./workspaces/auditLog.js";
 import { reflowImageHandler } from "./reflowImage.js";
+import { generateSizeVariantHandler } from "./sizeVariant.js";
 import { purgeExpiredWorkspaces, cascadeReassignOnDelete, cascadeRevertOnRestore } from "./workspaces/workspacePurge.js";
 import { handleStripeWebhook, setNotifyGHL } from "./billing/stripeWebhook.js";
 import { createStripeCheckoutSessionImpl, createStripeTopUpSessionImpl } from "./stripe/stripeCheckout.js";
@@ -121,7 +122,7 @@ const PLAN_MAP: Record<string, { plan: string; credits: number; isTrial?: boolea
 const COSTS: Record<string, number> = {
     generateHooks: 4, refreshHooks: 4, editOneHook: 1,
     generateCarouselCopies: 1, generateConcepts: 3, editOneConcept: 1,
-    buildPlan: 0, generateImage: 5, polishImage: 5, reflowImage: 5,
+    buildPlan: 0, generateImage: 5, polishImage: 5, reflowImage: 5, generateSizeVariant: 5,
     analyzePolishes: 1, generateCaption: 1, refineCaption: 1,
     editRegion: 5,
     competitorResearch: 5,
@@ -134,6 +135,7 @@ const ACTION_FEATURE_MAP: Record<string, string> = {
     generateImage: "visualPolishes",
     polishImage: "visualPolishes",
     reflowImage: "visualPolishes",
+    generateSizeVariant: "visualPolishes",
     editRegion: "regionEditing",
 };
 
@@ -4347,7 +4349,15 @@ export const serverGenerateFinalAd = onCall({
     }
 });
 
-// ─── DETERMINISTIC ASPECT RATIO REFLOW (HOTFIX-F) ──────────────────────
+// ─── DETERMINISTIC ASPECT RATIO REFLOW (HOTFIX-F) — SUPERSEDED ────────────
+// Superseded by Phase 17 independent multi-size generation. The `reflowImage`
+// callable is no longer invoked by the frontend (US1, US2, US3 in
+// spec/961-independent-multisize all route through `generateSizeVariant`).
+// The registration is commented out below to keep the function out of the
+// Cloud Functions deploy list while preserving the module body for any
+// future revert. To re-enable, uncomment the block AND restore the frontend
+// callers (App.tsx handleRescale and the multi-size fan-out loops).
+/*
 export const reflowImage = onCall({
     region: "europe-west1",
     secrets: [geminiApiKey, openaiApiKey],
@@ -4356,6 +4366,29 @@ export const reflowImage = onCall({
     cors: true,
 }, async (request: CallableRequest) => {
     return reflowImageHandler(request, { db: admin.firestore(), admin, geminiCaller: createVisualRoutingCaller(geminiApiKey.value(), openaiApiKey.value()), openaiApiKey: openaiApiKey.value() });
+});
+*/
+
+// ─── PHASE 17 — INDEPENDENT MULTI-SIZE VARIANT (FR-003..FR-019a) ─────────
+// Each requested size is rendered as a fresh native design for the target canvas
+// using the parent generation's saved build plan (NEVER re-runs generateBuildPlan)
+// and a visual reference image. Charges 5 credits upfront per FR-012a, refunds on
+// failure per FR-015, idempotency-keyed per FR-014. HOTFIX-F reflow is being
+// superseded by this callable — see spec/961-independent-multisize.
+export const generateSizeVariant = onCall({
+    region: "europe-west1",
+    secrets: [geminiApiKey, openaiApiKey],
+    timeoutSeconds: 300,
+    memory: "2GiB",
+    cors: true,
+    maxInstances: 30,
+}, async (request: CallableRequest) => {
+    return generateSizeVariantHandler(request, {
+        db: admin.firestore(),
+        admin,
+        geminiCaller: createVisualRoutingCaller(geminiApiKey.value(), openaiApiKey.value()),
+        openaiApiKey: openaiApiKey.value(),
+    });
 });
 
 // ─── MAGIC SELECTOR: Region-targeted image editing ──────────────────────
