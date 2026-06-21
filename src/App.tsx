@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useState, useEffect, useMemo, useRef, useCallback, Suspense } from 'react';
-import type { AdInputs, AdMode, AppPhase, AspectRatio, ABVariation, BatchResult, BatchHookGroup, CarouselSlide, CarouselSlideCopy, TextOverride, VisualPolish, Toast, SavedProject, AudienceAvatar, CompetitorResearch, SemanticLock, TovEditIntent, RewriteScope, Workspace, ReflowImageRequest, ReflowImageResponse, GenerateSizeVariantRequest, GenerateSizeVariantResponse } from './types';
+import type { AdInputs, AdMode, AppPhase, AspectRatio, ABVariation, BatchResult, BatchHookGroup, CarouselSlide, CarouselSlideCopy, TextOverride, VisualPolish, Toast, SavedProject, AudienceAvatar, CompetitorResearch, SemanticLock, TovEditIntent, RewriteScope, Workspace, GenerateSizeVariantRequest, GenerateSizeVariantResponse } from './types';
 // --- FIREBASE IMPORTS ---
 import { auth, db, functions, storage } from './firebase';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, signOut, onAuthStateChanged, type User } from 'firebase/auth';
@@ -2519,30 +2519,45 @@ const App: React.FC = () => {
         setMagicEditHistory(allEdits);
         showToast('Magic edit applied!', 'success');
 
-        // Only auto-reflow if user explicitly selected multiple sizes
+        // Only auto-propagate the magic edit to other selected sizes. Phase 17 —
+        // repointed from the commented-out `reflowImage` callable to the new
+        // `generateSizeVariant` callable. The freshly-edited image (result.image)
+        // is the visual reference for each cross-size variant. The backend applies
+        // the uploaded-reference override (if any) via parent.referenceImage.
         if (selectedSizes.size > 1 && inputs && selectedTov && buildPlan) {
           const otherRatios = [...new Set(mockupHistory.map(m => m.ratio))].filter(r => r !== currentAspectRatio);
           for (const extraRatio of otherRatios) {
             try {
-              showToast(`Reflowing to ${extraRatio}...`, 'info');
+              showToast(`Generating ${extraRatio} variant...`, 'info');
               await new Promise(r => setTimeout(r, 500));
               if (renderGenerationId) {
-                const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
-                const reflowRes = await reflowFn({
+                const variantFn = httpsCallable<GenerateSizeVariantRequest, GenerateSizeVariantResponse>(
+                  functions, 'generateSizeVariant', { timeout: 300000 },
+                );
+                const variantRes = await variantFn({
                   generationId: renderGenerationId,
-                  targetAspectRatio: extraRatio as AspectRatio,
-                  method: 'auto',
                   scope: 'single',
+                  itemIndex: null,
+                  targetAspectRatio: extraRatio as AspectRatio,
+                  // The freshly-edited image is the visual reference for the variant
+                  // (the model uses it for hero/environment/palette consistency while
+                  // composing natively for the new ratio).
+                  sourceImageOverride: result.image || undefined,
                 });
-                const oc = reflowRes.data?.outcomes?.[0];
-                if (reflowRes.data?.success && oc?.outputUrl) {
-                  pushMockup(oc.outputUrl, extraRatio as AspectRatio);
+                const v = variantRes.data?.variant;
+                if (variantRes.data?.success && v?.url) {
+                  pushMockup(v.url, extraRatio as AspectRatio);
+                } else if (v?.noOp) {
+                  // Same ratio already exists — surface as info, not an error.
+                  console.log(`sizeVariant ${extraRatio} was a no-op (already exists)`);
+                } else {
+                  console.warn(`sizeVariant ${extraRatio} returned no image: success=${variantRes.data?.success}, errorCode=${v?.errorCode ?? 'none'}`);
                 }
               } else {
-                console.warn(`Skipping auto-reflow to ${extraRatio} — no generation ID for reflowImage callable`);
+                console.warn(`Skipping auto-propagate to ${extraRatio} — no generation ID for generateSizeVariant callable`);
               }
             } catch (e) {
-              console.warn(`Auto-reflow to ${extraRatio} failed:`, e);
+              console.warn(`Auto-propagate to ${extraRatio} failed:`, e);
             }
           }
           if (otherRatios.length > 0) showToast(`Edit applied to ${otherRatios.length + 1} sizes!`, 'success');
@@ -4820,17 +4835,25 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       // Use THIS item's own source generation (comboGenId) — fall back to the global only if absent.
       const reflowGenId = item.generationId || renderGenerationId;
       if (isReflow && reflowGenId) {
-        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
-        const reflowRes = await reflowFn({
+        // Phase 17 — repointed from the commented-out `reflowImage` callable to
+        // the new `generateSizeVariant` callable. The same-ratio reflow retry
+        // maps to: "regenerate the variant at this item's ratio using the
+        // original render as the visual reference." If the item already has a
+        // `sizeVariants[itemRatio]` entry from a prior retry, the call returns
+        // `noOp: true` (no charge); otherwise it renders a fresh variant.
+        const variantFn = httpsCallable<GenerateSizeVariantRequest, GenerateSizeVariantResponse>(
+          functions, 'generateSizeVariant', { timeout: 300000 },
+        );
+        const variantRes = await variantFn({
           generationId: reflowGenId,
-          targetAspectRatio: itemRatio,
-          method: 'auto',
           scope: 'single',
+          itemIndex: null,
+          targetAspectRatio: itemRatio,
           // Reflow from the ORIGINAL render, never a prior resize output (no chain degradation).
           sourceImageOverride: item.originalUrl || undefined,
         });
-        const reflowOc = reflowRes.data?.outcomes?.[0];
-        mockup = reflowRes.data?.success && reflowOc?.outputUrl ? reflowOc.outputUrl : null;
+        const v = variantRes.data?.variant;
+        mockup = variantRes.data?.success && v?.url ? v.url : null;
       } else {
         // Fallback when no generationId is available to anchor the reflowImage callable.
         // Degrade to a full fresh rerender for BOTH retry modes — NEVER send a "REFLOW ONLY"
