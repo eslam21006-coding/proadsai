@@ -38,6 +38,7 @@ interface GenerateSizeVariantResponse {
 | PRE-4 | `scope === 'carousel'` only valid for resize flow (not pre-select). | `invalid-argument` (VR-2) |
 | PRE-5 | Parent `generations/{generationId}` exists and is owned by the credit owner / workspace. | `not-found` / `permission-denied` |
 | PRE-6 | Credit owner balance ≥ 5. | `resource-exhausted` (per-variant guard; whole-request pre-check is frontend) |
+| PRE-7 | `itemIndex` is `null` when `scope === 'single'` and a non-negative integer (within the parent's `batchResults`/`carouselSlides` array bounds) when `scope === 'batch'` or `'carousel'`. Violation → `invalid-argument`. Aligns with the data-model.md scope-binding rule and the real bug fixed in commit `683af51` / `f5a4f7c`. | `invalid-argument` |
 
 ## Behavior (happy path)
 

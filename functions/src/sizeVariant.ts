@@ -245,6 +245,28 @@ export async function generateSizeVariantHandler(
 
     // ── Read parent context BEFORE any charge ──
     const ctx = readParentContext(parent, data.scope, data.itemIndex);
+    // itemIndex bounds: the integer check above ensures a non-negative number,
+    // but a value past the end of the batch/carousel array would silently
+    // fall back to the parent's first batchResults[0]/carouselSlides[0] entry
+    // and charge credits for a wrong/no-op render. Reject pre-charge
+    // (CodeRabbit review: itemIndex bounds validation).
+    if (data.scope === "batch") {
+        const batchLen = Array.isArray(parent.output?.batchResults) ? parent.output!.batchResults!.length : 0;
+        if (typeof data.itemIndex !== "number" || data.itemIndex >= batchLen) {
+            throw new HttpsError(
+                "invalid-argument",
+                `Invalid batch itemIndex: ${String(data.itemIndex)}. Parent has ${batchLen} batch result(s).`,
+            );
+        }
+    } else if (data.scope === "carousel") {
+        const carouselLen = Array.isArray(parent.output?.carouselSlides) ? parent.output!.carouselSlides!.length : 0;
+        if (typeof data.itemIndex !== "number" || data.itemIndex >= carouselLen) {
+            throw new HttpsError(
+                "invalid-argument",
+                `Invalid carousel itemIndex: ${String(data.itemIndex)}. Parent has ${carouselLen} slide(s).`,
+            );
+        }
+    }
     if (!ctx.buildPlan || ctx.buildPlan.length === 0) {
         throw new HttpsError(
             "failed-precondition",
@@ -283,12 +305,16 @@ export async function generateSizeVariantHandler(
     // ── Mode/format gate (Phase 17 — CodeRabbit review: enforce on size-variant
     // callables before any credit deduction, mirroring the pattern in
     // serverGenerateFinalAd and the other generation callables in index.ts).
-    // A size variant is always rendered as a SINGLE image for the target canvas,
-    // so the format is "single" for the gate regardless of the call's scope
-    // (scope only determines WHICH result the variant is appended to).
+    // The adFormat MUST match the parent's scope — a carousel-only creative
+    // mode (e.g. `testimonial_carousel`) would be incorrectly rejected by a
+    // hardcoded "single" format. Map scope→adFormat for the gate.
+    const adFormat: "single" | "batch" | "carousel" =
+        data.scope === "carousel" ? "carousel"
+        : data.scope === "batch" ? "batch"
+        : "single";
     const fmtCheck = validateModeFormatCombination({
         modes: (ctx.inputs as any)?.offerCreativeMode || ["standard_hero"],
-        adFormat: "single",
+        adFormat,
         campaignType: ((ctx.inputs as any)?.campaignType as "cold" | "retargeting" | undefined) ?? "cold",
     });
     if (!fmtCheck.valid) {
@@ -320,7 +346,42 @@ export async function generateSizeVariantHandler(
 
     try {
         await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
-            const [userSnap] = await Promise.all([tx.get(userRef)]);
+            // Re-read the gen doc inside the transaction so we can detect a
+            // concurrent retry against the same idempotency key (CodeRabbit
+            // review: idempotency enforced at debit time, not just computed
+            // and ignored). If a previous attempt already wrote a variant
+            // with the SAME idempotency key and status "pending", we are the
+            // second concurrent caller — reject. If status is "succeeded",
+            // short-circuit to no-op (already covered above, but re-checked
+            // here for races). If a different key already exists for the
+            // same (scope, itemIndex, ratio) we treat it as a new run (the
+            // caller would not normally re-call with the same params).
+            const [userSnap, genSnap] = await Promise.all([tx.get(userRef), tx.get(genRef)]);
+            const latestParent = genSnap.data() as SizeVariantParentDoc | undefined;
+            if (latestParent) {
+                const latestCtx = readParentContext(latestParent, data.scope, data.itemIndex);
+                const existingLatest = latestCtx.existingSizeVariants?.[data.targetAspectRatio];
+                if (existingLatest && existingLatest.idempotencyKey === idempotencyKey) {
+                    if (existingLatest.status === "pending") {
+                        // A previous concurrent attempt is still in-flight; refuse
+                        // to double-charge by aborting this transaction.
+                        throw new HttpsError(
+                            "aborted",
+                            "Variant generation already in progress for this (genId, scope, itemIndex, ratio).",
+                        );
+                    }
+                    if (existingLatest.status === "succeeded") {
+                        // Race: this caller just re-entered after a previous
+                        // success. Surface as already-exists so the caller
+                        // can short-circuit (the frontend will read this as
+                        // a no-op result via the existing no-op check).
+                        throw new HttpsError(
+                            "already-exists",
+                            "Variant already generated for this ratio.",
+                        );
+                    }
+                }
+            }
             const userBalance = (userSnap.data()?.credits as number | undefined) ?? 0;
             if (userBalance < SIZE_VARIANT_CREDIT_COST) {
                 throw new Error(

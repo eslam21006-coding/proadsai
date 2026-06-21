@@ -113,6 +113,7 @@ export interface GenerateSizeVariantResponse {
 - **VR-5** Credits charged net MUST equal `5 × (count of succeeded, non-noOp variants)` for any request (FR-012a). Failed → refunded; no-op → 0.
 - **VR-6** A user-uploaded reference on the parent generation forces `referenceSource = "uploaded"` regardless of scope (FR-008).
 - **VR-7** If the anchor failed in a pre-select run, variants set `referenceSource = "none"` and still generate (FR-005a).
+- **VR-8** `itemIndex` MUST be `null` when `scope === 'single'`; MUST be a non-negative integer within the parent's `output.batchResults` / `output.carouselSlides` array bounds when `scope === 'batch'` or `'carousel'`. Enforcement point: PRE-7 in `contracts/generateSizeVariant.md` (added in commit `f5a4f7c` per CodeRabbit review — previously, out-of-bounds `itemIndex` values would pass the integer check, get charged, and silently fall back to the parent context's first item).
 
 ---
 
