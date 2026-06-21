@@ -5511,7 +5511,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         showToast(restrictTo ? 'Select at least one ad to resize.' : (t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation.'), 'error');
         return;
       }
-      const totalCost = CREDIT_COSTS.reflowImage * batchItems.length;
+      const totalCost = (CREDIT_COSTS.generateSizeVariant ?? CREDIT_COSTS.generateImage) * batchItems.length;
       if (userCredits < totalCost) {
         setUpgradeReason(t('studio.reflow.upgrade_single_credits').replace('{cost}', String(totalCost)).replace('{have}', String(userCredits)));
         setShowUpgradeModal(true);
@@ -5532,45 +5532,98 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       setActiveBatchRatio(newRatio);
       startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
       setBatchResults(prev => prev.map((r, idx) => targetIdxs.has(idx) ? { ...r, ratio: newRatio, status: 'rendering' as const } : r));
-      setUserCredits(prev => prev - totalCost);
-      const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
-      let creditsCharged = 0;
-      const settled = await Promise.allSettled(batchItems.map(async ({ r, idx }) => {
-        const orig = originals.get(idx)!;
-        const result = await reflowFn({
-          generationId: r.generationId!,
-          targetAspectRatio: newRatio,
-          method: 'auto',
-          scope: 'single',           // resize each combo on its OWN generation id
-          sourceImageOverride: orig.src,   // ALWAYS the original render, never a prior resize
-        });
-        if (typeof result.data?.totalCreditsCharged === 'number') creditsCharged += result.data.totalCreditsCharged;
-        const oc = result.data?.outcomes?.[0];
-        if (oc?.success && oc.outputUrl) {
-          const outUrl = oc.outputUrl;
+      // Phase 17 — the size-variant callable charges 5 credits per variant
+      // atomically (server-side), so we do NOT pre-deduct in the frontend here.
+      // We reconcile the displayed balance after the loop from each call's
+      // netCreditsCharged response (which is 0 on no-op/failure, 5 on success).
+      // T022a — 429 rate-limit backoff (exponential, base 1s, ×2, max 4 attempts).
+      const runBatchItemWithBackoff = async (
+        generationId: string,
+        itemIndex: number,
+        sourceImageOverride: string | undefined,
+        attempt = 1,
+      ): Promise<{ url: string | null; netCharged: number; noOp?: boolean }> => {
+        try {
+          const variantFn = httpsCallable<GenerateSizeVariantRequest, GenerateSizeVariantResponse>(
+            functions, 'generateSizeVariant', { timeout: 300000 },
+          );
+          const res = await variantFn({
+            generationId,
+            scope: 'batch',
+            itemIndex,
+            targetAspectRatio: newRatio,
+            sourceImageOverride,
+          });
+          return {
+            url: res.data?.variant?.url ?? null,
+            netCharged: res.data?.netCreditsCharged ?? 0,
+            noOp: res.data?.variant?.noOp,
+          };
+        } catch (e: any) {
+          const code = e?.code || e?.details?.code;
+          const is429 = code === 'functions/v2/https/ResourceExhausted' || code === 'resource-exhausted' || e?.message?.includes('429');
+          if (is429 && attempt < 4) {
+            const delay = Math.min(8000, 1000 * Math.pow(2, attempt - 1)) + Math.random() * 250;
+            console.warn(`Batch resize item ${itemIndex} 429 attempt ${attempt}; retrying in ${delay.toFixed(0)}ms`);
+            await new Promise(r => setTimeout(r, delay));
+            return runBatchItemWithBackoff(generationId, itemIndex, sourceImageOverride, attempt + 1);
+          }
+          return { url: null, netCharged: 0 };
+        }
+      };
+      // T020 — concurrency cap: chunk into waves of ≤10, run waves sequentially,
+      // within a wave run all in parallel via Promise.allSettled.
+      const CONCURRENCY_CAP = 10;
+      type ItemSettled = { idx: number; url: string | null; netCharged: number; noOp?: boolean };
+      const settled: ItemSettled[] = [];
+      for (let waveStart = 0; waveStart < batchItems.length; waveStart += CONCURRENCY_CAP) {
+        const wave = batchItems.slice(waveStart, waveStart + CONCURRENCY_CAP);
+        const waveResults = await Promise.allSettled(
+          wave.map(({ r, idx }) => {
+            const orig = originals.get(idx)!;
+            return runBatchItemWithBackoff(r.generationId!, idx, orig.src);
+          }),
+        );
+        for (let i = 0; i < wave.length; i++) {
+          const wr = waveResults[i];
+          const item = wave[i];
+          if (wr.status === 'fulfilled') {
+            settled.push({ idx: item.idx, ...wr.value });
+          } else {
+            settled.push({ idx: item.idx, url: null, netCharged: 0 });
+          }
+        }
+      }
+      // Apply results + reconcile credits.
+      let netChargedSum = 0;
+      let successCount = 0;
+      let failedCount = 0;
+      for (const s of settled) {
+        const orig = originals.get(s.idx)!;
+        netChargedSum += s.netCharged;
+        if (s.url) {
           // Preserve the pre-resize version in mockupHistory BEFORE the in-place overwrite
           // below discards it (the gallery never reads originalUrl) — so ALL VERSIONS keeps
           // both sizes. Mirrors the auto-reflow path (65513f1).
           if (orig.url) pushMockup(orig.url, orig.ratio);
-          setBatchResults(prev => prev.map((rr, i) => i === idx ? { ...rr, url: outUrl, ratio: newRatio, status: 'done' as const } : rr));
+          setBatchResults(prev => prev.map((rr, i) => i === s.idx ? { ...rr, url: s.url, ratio: newRatio, status: 'done' as const } : rr));
+          successCount += 1;
         } else {
           // No image produced — revert this item to its original image AND ratio so it
           // returns to its own ratio bucket (it simply won't appear in the new-ratio view).
-          setBatchResults(prev => prev.map((rr, i) => i === idx ? { ...rr, url: orig.url, ratio: orig.ratio, status: 'done' as const } : rr));
-          throw new Error('reflow_failed');
+          setBatchResults(prev => prev.map((rr, i) => i === s.idx ? { ...rr, url: orig.url, ratio: orig.ratio, status: 'done' as const } : rr));
+          failedCount += 1;
         }
-      }));
+      }
       stopLoad();
-      // Reconcile the optimistic charge against the backend's authoritative total
-      // (failed/throwing items contribute 0 and are refunded via the delta).
-      const delta = totalCost - creditsCharged;
-      if (delta !== 0) setUserCredits(prev => prev + delta);
-      const failedCount = settled.filter(s => s.status === 'rejected').length;
+      // Reconcile the displayed balance with the actual net charge the backend applied.
+      if (netChargedSum > 0) {
+        setUserCredits(prev => prev - netChargedSum);
+      }
       if (failedCount === batchItems.length) {
-        const firstErr = settled.find(s => s.status === 'rejected') as PromiseRejectedResult | undefined;
-        handleApiError(firstErr?.reason);
+        showToast('All batch resizes failed', 'error');
       } else if (failedCount > 0) {
-        showToast(`Resized ${batchItems.length - failedCount}/${batchItems.length} — ${failedCount} failed`, 'error');
+        showToast(`Resized ${successCount}/${batchItems.length} — ${failedCount} failed`, 'error');
       } else {
         showToast(`Resized ${batchItems.length} to ${newRatio}`, 'success');
       }
@@ -5582,7 +5635,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     if (effectiveScope === 'carousel_slide') {
       const slideIdx = effectiveSlideIndex ?? 0;
       if (!renderGenerationId) { showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation.', 'error'); return; }
-      const cost = CREDIT_COSTS.reflowImage;
+      const cost = CREDIT_COSTS.generateSizeVariant ?? CREDIT_COSTS.generateImage;
       if (userCredits < cost) {
         setUpgradeReason(t('studio.reflow.upgrade_single_credits').replace('{cost}', String(cost)).replace('{have}', String(userCredits)));
         setShowUpgradeModal(true);
@@ -5590,30 +5643,32 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
       setCurrentAspectRatio(newRatio);
       startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
-      setUserCredits(prev => prev - cost);
+      // Phase 17 — the size-variant callable charges 5 credits atomically
+      // server-side per call. We do NOT pre-deduct here; we reconcile after
+      // the call returns (the backend may return netCreditsCharged=0 on
+      // no-op/refund).
       try {
-        const reflowFn = httpsCallable<ReflowImageRequest, ReflowImageResponse>(functions, 'reflowImage', { timeout: 300000 });
-        const result = await reflowFn({
+        const variantFn = httpsCallable<GenerateSizeVariantRequest, GenerateSizeVariantResponse>(
+          functions, 'generateSizeVariant', { timeout: 300000 },
+        );
+        const result = await variantFn({
           generationId: renderGenerationId,
+          scope: 'carousel',
+          itemIndex: slideIdx,
           targetAspectRatio: newRatio,
-          method: 'auto',
-          scope: 'carousel_slide',
-          slideIndex: slideIdx,
           // Displayed slide image, passed directly (see single-scope note).
           sourceImageOverride: currentRawBase64 || undefined,
         });
-        if (typeof result.data.totalCreditsCharged === 'number') {
-          const delta = cost - result.data.totalCreditsCharged;
-          if (delta !== 0) setUserCredits(prev => prev + delta);
+        const v = result.data?.variant;
+        if (typeof result.data?.netCreditsCharged === 'number' && result.data.netCreditsCharged > 0) {
+          setUserCredits(prev => prev - result.data!.netCreditsCharged);
         }
-        const oc = result.data.outcomes?.[0];
-        if (oc?.success && oc.outputUrl) {
-          setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: oc.outputUrl, status: 'done' as const } : s));
-        } else if (oc && !oc.success) {
+        if (result.data?.success && v?.url) {
+          setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, imageUrl: v.url, status: 'done' as const } : s));
+        } else {
           setCarouselSlides(prev => prev.map((s, idx) => idx === slideIdx ? { ...s, status: 'error' as const } : s));
         }
       } catch (e) {
-        setUserCredits(prev => prev + cost);
         handleApiError(e);
       } finally { stopLoad(); }
       return;

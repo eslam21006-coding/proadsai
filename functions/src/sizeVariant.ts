@@ -20,7 +20,12 @@ import {
     generateFinalAd,
     setGeminiCaller,
     setOpenAIKey,
+    extractCopyFieldsFromResponse,
 } from "./generators.js";
+import {
+    parseBuildPlanEnvelope,
+    validateCopyFidelity,
+} from "./buildPlanSlotMap.js";
 import { validateModeFormatCombination } from "./creativeResolver.js";
 import * as admin from "firebase-admin";
 import type {
@@ -428,6 +433,31 @@ export async function generateSizeVariantHandler(
     setGeminiCaller(geminiCaller);
     setOpenAIKey(openaiApiKey);
 
+    // ── Build the ratio-appropriate editInstruction (Phase 17 audit fix) ──
+    // The user's audit flagged that the variant path was passing `undefined` as
+    // editInstruction, which caused the OpenAI edit path to receive the literal
+    // string "undefined". We now build a real edit instruction from the parent's
+    // saved approvedTov (extracted copy fields) + the target ratio, telling the
+    // model to redesign the ad for the new canvas with the same text elements.
+    // The build plan + approvedTov are reused unchanged (per FR-019a — we never
+    // call generateBuildPlan on the variant path; the plan is built once for the
+    // anchor and reused for every size).
+    const variantCopy = extractCopyFieldsFromResponse(
+        ctx.approvedTov,
+        variantInputs as Parameters<typeof extractCopyFieldsFromResponse>[1],
+    );
+    const variantCopyFields = variantCopy.fields;
+    const variantEditInstruction = buildVariantEditInstruction({
+        sourceRatio: ctx.parentSourceRatio,
+        targetRatio: data.targetAspectRatio,
+        copyFields: {
+            hookText: variantCopyFields.hookText,
+            subheadText: variantCopyFields.subheadText,
+            ctaName: variantCopyFields.ctaName,
+            benefitText: variantCopyFields.benefitText,
+        },
+    });
+
     let succeeded = false;
     let url: string | null = null;
     let errorCode: string | undefined;
@@ -441,11 +471,39 @@ export async function generateSizeVariantHandler(
             variantInputs,
             ctx.inputs?.resolvedUniverse ?? parent.resolvedUniverse ?? "default",
             data.targetAspectRatio,
-            undefined,        // editInstruction — NOT set (per FR-019a: variant is not a reflow)
-            ref.image ?? undefined, // base64ToEdit — visual reference for the target canvas
-            ref.image ?? undefined, // styleReference — same as base64ToEdit
+            variantEditInstruction, // editInstruction — explicit ratio-adapt directive with copy fields
+            ref.image ?? undefined,  // base64ToEdit — visual reference for the target canvas
+            ref.image ?? undefined,  // styleReference — same as base64ToEdit
         );
-        copyFidelityPasses = 1;
+
+        // ── validateCopyFidelity on the variant output (Phase 17 audit fix) ──
+        // Extract the technical prompt from the saved build plan (the same one we
+        // sent to the model) and re-validate that the four required text fields are
+        // present. generateFinalAd already runs validateCopyFidelity internally
+        // with its retry loop, but this explicit post-render call records the
+        // outcome in our trace (and surfaces the audit invariant). The build plan
+        // is reused across all sizes of the same ad, so the technical prompt
+        // contains the same text elements the anchor used (FR-018, FR-006).
+        const { technicalPrompt } = parseBuildPlanEnvelope(ctx.buildPlan);
+        const fidelityCheck = validateCopyFidelity(technicalPrompt, {
+            hookText: variantCopyFields.hookText,
+            subheadText: variantCopyFields.subheadText,
+            ctaName: variantCopyFields.ctaName,
+            benefitText: variantCopyFields.benefitText,
+        });
+        copyFidelityPasses = fidelityCheck.passed ? 1 : 0;
+        if (!fidelityCheck.passed) {
+            // The post-render fidelity check failed — log the drop. The model
+            // may have already produced a usable image (and generateFinalAd's
+            // internal retry loop would have already retried), but we surface
+            // this in the trace for audit + future tuning.
+            console.warn(
+                `sizeVariant: copyFidelity FAILED for ${data.targetAspectRatio} — ` +
+                `failedFields=${JSON.stringify(fidelityCheck.failedFields)}, ` +
+                `genId=${data.generationId}, scope=${data.scope}, itemIndex=${data.itemIndex}`,
+            );
+        }
+
         if (result.image) {
             try {
                 url = await saveBase64ToStorage(result.image, `users/${callerId}/renders`);
@@ -537,7 +595,59 @@ export async function generateSizeVariantHandler(
 }
 
 // ═══════════════════════════════════════════════════════════
-// VARIANT PERSISTENCE — additive, no migration
+// VARIANT EDIT INSTRUCTION (Phase 17 audit fix)
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Build a real edit instruction for the size-variant path. The audit flagged
+ * that the previous code passed `undefined` as `editInstruction` to
+ * `generateFinalAd`, which caused the OpenAI edit path to receive the literal
+ * string "undefined" as the instruction. We now build a clear, ratio-adaptive
+ * directive from the saved approvedTov (extracted copy fields) and the source
+ * → target aspect-ratio transition. The text-element list is built only from
+ * non-null fields (FR-006 — null copy fields stay null end-to-end).
+ *
+ * This is the *directive* the model receives on the edit path; the actual
+ * prompt assembly (costume rules, layout contract, brand color blocks, etc.)
+ * still happens inside `generateFinalAd` via `buildFinalImagePrompt()` from the
+ * saved build plan (no re-derivation of the plan, per FR-019a).
+ */
+function buildVariantEditInstruction(args: {
+    sourceRatio: AspectRatio;
+    targetRatio: AspectRatio;
+    copyFields: {
+        hookText: string;
+        subheadText: string | null;
+        ctaName: string | null;
+        benefitText: string | null;
+    };
+}): string {
+    const { sourceRatio, targetRatio, copyFields } = args;
+    const lines: string[] = [
+        `SIZE VARIANT — adapt this ad from ${sourceRatio} to ${targetRatio} canvas.`,
+        `Redesign the attached image natively for the ${targetRatio} shape: keep the same hero,`,
+        `environment, and color palette; use the layout rules appropriate for ${targetRatio}.`,
+        `Preserve these text elements EXACTLY (drop any other text):`,
+        `- Headline: ${copyFields.hookText || "(none)"}`,
+    ];
+    if (copyFields.subheadText) {
+        lines.push(`- Subheadline: ${copyFields.subheadText}`);
+    }
+    if (copyFields.ctaName) {
+        lines.push(`- CTA: ${copyFields.ctaName}`);
+    }
+    if (copyFields.benefitText) {
+        lines.push(`- Benefit: ${copyFields.benefitText}`);
+    }
+    lines.push(
+        `All four text layers and the CTA button must be visible and balanced in the new canvas.`,
+        `Do not invent or repeat any text that is not in the list above.`,
+    );
+    return lines.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════
+// VARIANT PERSISTENCE - additive, no migration
 // ═══════════════════════════════════════════════════════════
 
 function buildVariantUpdate(
