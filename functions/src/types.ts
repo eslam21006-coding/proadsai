@@ -48,6 +48,10 @@ export interface GenerateSizeVariantRequest {
     targetAspectRatio: AspectRatio; // must be in UI_RATIOS
     // Reference seed: backend resolves priority, but the client passes what it has.
     sourceImageOverride?: string;  // data URL / storage ref of source-own original (resize) or anchor (pre-select)
+    // Phase 17 race-proofing: the approved copy text (HOOK_TEXT/SUBHEADLINE/CTA_BUTTON/BENEFIT
+    // markers). Passed in the payload so the variant never depends on the client-side
+    // saveGeneration write landing in Firestore first. Backend priority: payload > output.approvedTov > reconstruction.
+    approvedTov?: string;
     activeWorkspaceId?: string;
 }
 

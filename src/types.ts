@@ -754,6 +754,7 @@ export interface GenerateSizeVariantRequest {
     itemIndex: number | null;
     targetAspectRatio: AspectRatio;
     sourceImageOverride?: string;
+    approvedTov?: string; // Phase 17 — approved copy text, passed in payload to avoid racing the client save
     activeWorkspaceId?: string;
 }
 

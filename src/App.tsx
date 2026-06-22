@@ -2542,6 +2542,7 @@ const App: React.FC = () => {
                   // The freshly-edited image is the visual reference for the variant
                   // (the model uses it for hero/environment/palette consistency while
                   // composing natively for the new ratio).
+                  approvedTov: selectedTov || undefined, // Phase 17 — race-proof: send approved copy in payload (backend prefers it over the Firestore read)
                   sourceImageOverride: result.image || undefined,
                 });
                 const v = variantRes.data?.variant;
@@ -4464,6 +4465,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   // back to `referenceSource: 'none'` and generates from the
                   // brief alone (FR-005a). The backend also overrides this with
                   // an uploaded reference if the user attached one.
+                  approvedTov: selectedTov || undefined, // Phase 17 — race-proof: send approved copy in payload (backend prefers it over the Firestore read)
                   sourceImageOverride: (mockupResult as any)?.imageBase64 || (mockupResult as any)?.storageUrl || mockupResult?.image || undefined,
                 });
                 console.log(`${variantRes.data?.success ? '✅' : '❌'} [size-variant] → ${extraRatio} returned`, Date.now(), { success: variantRes.data?.success, noOp: variantRes.data?.variant?.noOp, hasUrl: !!variantRes.data?.variant?.url, errorCode: variantRes.data?.variant?.errorCode ?? 'none' });
@@ -4736,6 +4738,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               scope: 'single', // batch items share the per-combo generationId; the sizeVariant callable keys by (genId, scope='batch', itemIndex)
               itemIndex: null,
               targetAspectRatio: job.ratio,
+              approvedTov: combo.hookText || combo.conceptText || undefined, // Phase 17 — race-proof: send approved copy in payload (backend prefers it over the Firestore read)
               sourceImageOverride: primaryUrl || undefined,
             });
             return {
@@ -4870,6 +4873,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           itemIndex: null,
           targetAspectRatio: itemRatio,
           // Reflow from the ORIGINAL render, never a prior resize output (no chain degradation).
+          approvedTov: item.hookText || item.conceptText || undefined, // Phase 17 — race-proof: send approved copy in payload (backend prefers it over the Firestore read)
           sourceImageOverride: item.originalUrl || undefined,
         });
         const v = variantRes.data?.variant;
@@ -5701,6 +5705,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           itemIndex: slideIdx,
           targetAspectRatio: newRatio,
           // Displayed slide image, passed directly (see single-scope note).
+          approvedTov: selectedTov || undefined, // Phase 17 — race-proof: send approved copy in payload (backend prefers it over the Firestore read)
           sourceImageOverride: currentRawBase64 || undefined,
         });
         const v = result.data?.variant;
@@ -5771,6 +5776,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               // Resize source: the slide's own rendered image. The backend applies
               // the uploaded > own_original > anchor > none precedence; for a
               // carousel slide resize, the slide's own image IS the reference.
+              approvedTov: selectedTov || undefined, // Phase 17 — race-proof: send approved copy in payload (backend prefers it over the Firestore read)
               sourceImageOverride: sourceUrl,
             });
             return { url: res.data?.variant?.url ?? null, netCharged: res.data?.netCreditsCharged ?? 0, noOp: res.data?.variant?.noOp };
@@ -5876,6 +5882,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         targetAspectRatio: newRatio,
         // ALWAYS the ORIGINAL generation source (API-safe base64 / Storage URL — never a
         // blob: display url and never a prior resize output), so quality never chain-degrades.
+        approvedTov: selectedTov || undefined, // Phase 17 — race-proof: send approved copy in payload (backend prefers it over the Firestore read)
         sourceImageOverride: reflowSource || undefined,
       });
       if (!result.data) {

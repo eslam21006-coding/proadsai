@@ -323,6 +323,13 @@ export async function generateSizeVariantHandler(
 
     // ── Read parent context BEFORE any charge ──
     const ctx = readParentContext(parent, data.scope, data.itemIndex);
+    // Phase 17 race-proofing: prefer the approvedTov passed in the request payload
+    // (the frontend always has it in memory) over the Firestore read. This makes the
+    // variant independent of whether the client's saveGeneration write has landed yet —
+    // payload > output.approvedTov > reconstruction. (FR-018: same copy reaches every size.)
+    if (typeof data.approvedTov === "string" && data.approvedTov.trim().length > 0) {
+        ctx.approvedTov = data.approvedTov;
+    }
     // itemIndex bounds: the integer check above ensures a non-negative number,
     // but a value past the end of the batch/carousel array would silently
     // fall back to the parent's first batchResults[0]/carouselSlides[0] entry
