@@ -428,7 +428,7 @@ function buildCopyRules(
             ...baseContract.copyRules.mustReference,
         ])],
         maxHeadlineChars: isCompact ? 40 : 55,
-        maxSubheadChars: isCompact ? 50 : 70,
+        maxSubheadChars: isCompact ? 80 : 70,
         maxCtaChars: 20,
         maxBenefitChars: isCompact ? 30 : 45,
         captionWordRange: [120, 150],
