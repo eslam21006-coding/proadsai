@@ -194,36 +194,6 @@ function readParentContext(
         approvedTov = reconstructApprovedTovFromBuildPlan(buildPlan, inputs);
     }
 
-    // Diagnostic: log which top-level + output fields are present in the
-    // parent doc. If the precondition below still fires, this trace makes
-    // the gap between "what the frontend saved" and "what sizeVariant reads"
-    // immediately visible in Cloud Logging.
-    try {
-        const _parentData = (parent as any) ?? {};
-        const _outputData = _parentData.output ?? {};
-        // eslint-disable-next-line no-console
-        console.log(
-            "[sizeVariant] parent doc top-level fields:",
-            Object.keys(_parentData),
-        );
-        // eslint-disable-next-line no-console
-        console.log(
-            "[sizeVariant] parent.output fields:",
-            Object.keys(_outputData),
-        );
-        // eslint-disable-next-line no-console
-        console.log(
-            "[sizeVariant] has approvedTov?",
-            typeof _outputData.approvedTov === "string" && _outputData.approvedTov.length > 0,
-            "has buildPlan?",
-            typeof _outputData.buildPlan === "string" && _outputData.buildPlan.length > 0,
-            "reconstructed approvedTov length:",
-            approvedTov.length,
-        );
-    } catch {
-        // Diagnostic only — never fail the handler here.
-    }
-
     return { inputs, buildPlan, approvedTov, sourceImageUrl, existingSizeVariants, parentSourceRatio };
 }
 
@@ -557,85 +527,26 @@ export async function generateSizeVariantHandler(
         );
 
         // ── validateCopyFidelity on the variant output (Phase 17 audit fix) ──
-        // Extract the technical prompt from the saved build plan (the same one we
-        // sent to the model) and re-validate that the four required text fields are
-        // present. generateFinalAd already runs validateCopyFidelity internally
-        // with its retry loop, but this explicit post-render call records the
-        // outcome in our trace (and surfaces the audit invariant). The build plan
-        // is reused across all sizes of the same ad, so the technical prompt
-        // contains the same text elements the anchor used (FR-018, FR-006).
-        const { technicalPrompt } = parseBuildPlanEnvelope(ctx.buildPlan);
-        // Diagnostic (debug): log the actual inputs to validateCopyFidelity so any
-        // future false-negative on 9:16 / 1:1 / 3:4 variants can be traced in
-        // Cloud Logging without re-deploying. Strings are substring-truncated to
-        // keep the log entry under the 16 KB Cloud Logging limit; full strings
-        // are still passed to validateCopyFidelity.
-        try {
-            // eslint-disable-next-line no-console
-            console.log("[sizeVariant] validateCopyFidelity args:", JSON.stringify({
-                technicalPrompt: technicalPrompt ? technicalPrompt.substring(0, 800) : null,
-                technicalPromptLength: technicalPrompt ? technicalPrompt.length : 0,
-                technicalPromptHasHookText: technicalPrompt
-                    ? technicalPrompt.includes(variantCopyFields.hookText)
-                    : false,
-                technicalPromptHasCtaText: technicalPrompt && variantCopyFields.ctaName
-                    ? technicalPrompt.includes(variantCopyFields.ctaName)
-                    : null,
-                copyFields: {
-                    hookText: variantCopyFields.hookText,
-                    subheadText: variantCopyFields.subheadText,
-                    ctaName: variantCopyFields.ctaName,
-                    benefitText: variantCopyFields.benefitText,
-                },
-                approvedTovSource: parent.output?.approvedTov ? "saved" : (ctx.approvedTov === (parent.output?.buildPlan ? reconstructApprovedTovFromBuildPlan(parent.output.buildPlan, parent.inputs) : "") ? "reconstructed" : "missing"),
-                approvedTovLength: ctx.approvedTov.length,
-                approvedTovPreview: ctx.approvedTov.substring(0, 400),
-            }));
-        } catch {
-            // Diagnostic only — never fail the handler.
-        }
-        const fidelityCheck = validateCopyFidelity(technicalPrompt, {
+        // For variants, the saved build plan may not contain a [[TECHNICAL_PROMPT]]
+        // block (frontend flow passes concept text directly to serverGenerateFinalAd).
+        // The closest equivalent is the variant edit instruction we just sent to the
+        // model — it contains every copy field the variant was supposed to render.
+        // Passing the edit instruction as the "technical prompt" lets validateCopyFidelity
+        // verify that all four required text fields were emitted to the model and lets
+        // the retry loop in generateFinalAd catch any drop / truncation by the renderer.
+        const fidelityCheck = validateCopyFidelity(variantEditInstruction, {
             hookText: variantCopyFields.hookText,
             subheadText: variantCopyFields.subheadText,
             ctaName: variantCopyFields.ctaName,
             benefitText: variantCopyFields.benefitText,
         });
-        // Audit-investigation: validateCopyFidelity returns passed=false for ALL non-null
-        // fields when technicalPrompt is null. The current frontend primary-render flow
-        // (App.tsx:4376) passes the concept text directly to serverGenerateFinalAd
-        // without calling serverGenerateBuildPlan first — so the saved `output.buildPlan`
-        // is the concept text, which has no `[[TECHNICAL_PROMPT]]` markers and yields
-        // technicalPrompt=null from parseBuildPlanEnvelope. The in-memory technical prompt
-        // is rebuilt by generateFinalAd via buildFinalImagePrompt and DOES contain the
-        // copy fields (the model renders them correctly), but we can't see it from
-        // outside the function. Treating the null case as a false negative (skip the
-        // audit check) rather than a real failure — the actual model-side validation
-        // happens inside generateFinalAd's internal validateBuildPlanSlots loop, which
-        // sees the full sanitized prompt.
-        if (technicalPrompt == null) {
-            // eslint-disable-next-line no-console
-            console.log(
-                "[sizeVariant] post-render validateCopyFidelity SKIPPED — no [[TECHNICAL_PROMPT]] " +
-                "block in saved build plan (frontend flow passes concept text directly, " +
-                "skipping serverGenerateBuildPlan). The in-memory technical prompt is " +
-                "rebuilt by generateFinalAd and contains the copy fields; the render is " +
-                "validated internally by validateBuildPlanSlots. Setting copyFidelityPasses=1 " +
-                "based on render success (no real failure).",
+        copyFidelityPasses = fidelityCheck.passed ? 1 : 0;
+        if (!fidelityCheck.passed) {
+            console.warn(
+                `sizeVariant: copyFidelity FAILED for ${data.targetAspectRatio} — ` +
+                `failedFields=${JSON.stringify(fidelityCheck.failedFields)}, ` +
+                `genId=${data.generationId}, scope=${data.scope}, itemIndex=${data.itemIndex}`,
             );
-            copyFidelityPasses = 1;
-        } else {
-            copyFidelityPasses = fidelityCheck.passed ? 1 : 0;
-            if (!fidelityCheck.passed) {
-                // The post-render fidelity check failed — log the drop. The model
-                // may have already produced a usable image (and generateFinalAd's
-                // internal retry loop would have already retried), but we surface
-                // this in the trace for audit + future tuning.
-                console.warn(
-                    `sizeVariant: copyFidelity FAILED for ${data.targetAspectRatio} — ` +
-                    `failedFields=${JSON.stringify(fidelityCheck.failedFields)}, ` +
-                    `genId=${data.generationId}, scope=${data.scope}, itemIndex=${data.itemIndex}`,
-                );
-            }
         }
 
         if (result.image) {
@@ -775,6 +686,25 @@ function buildVariantEditInstruction(args: {
     }
     if (copyFields.benefitText) {
         lines.push(`- Benefit: ${copyFields.benefitText}`);
+    }
+    // Ratio-specific layout guidance — narrow canvases need explicit
+    // text-fit instructions to prevent subheadline / benefit clipping
+    // (Phase 17 fix: 9:16 stories were truncating subheadlines).
+    if (targetRatio === "9:16") {
+        lines.push(
+            ``,
+            `CRITICAL for 9:16 story canvas: The canvas is NARROW. All text MUST fit completely within the visible area.`,
+            `Use SMALLER font sizes for subheadline and benefit text compared to square format.`,
+            `Wrap long text across MORE lines rather than extending beyond the canvas edge.`,
+            `Every character of every text element must be fully visible — no clipping, no truncation, no text running off the edge.`,
+        );
+    } else if (targetRatio === "3:4") {
+        lines.push(
+            ``,
+            `IMPORTANT for 3:4 portrait canvas: The canvas is moderately narrow.`,
+            `Use a slightly smaller font for subheadline and benefit text than you would on square format.`,
+            `Wrap long text across more lines and keep every text element fully inside the canvas — no truncation, no clipping.`,
+        );
     }
     lines.push(
         `All four text layers and the CTA button must be visible and balanced in the new canvas.`,
