@@ -25,6 +25,7 @@ import {
 import {
     parseBuildPlanEnvelope,
     validateCopyFidelity,
+    type ContentOwnershipMap,
 } from "./buildPlanSlotMap.js";
 import { validateModeFormatCombination } from "./creativeResolver.js";
 import * as admin from "firebase-admin";
@@ -180,7 +181,49 @@ function readParentContext(
         }
     }
 
+    // Backward-compat fallback for pre-Phase-17 generations: the frontend
+    // saveGeneration() never persisted `output.approvedTov` (only the build
+    // plan). To keep the size-variant path working for these existing docs
+    // without requiring a new Firestore write, reconstruct an approvedTov
+    // string from the build plan's machine plan ownership map. The format
+    // matches what `extractCopyFieldsFromResponse()` expects (HOOK_TEXT:,
+    // SUBHEADLINE:, CTA_BUTTON:, BENEFIT:). Benefit is best-effort — the
+    // machine plan doesn't carry a dedicated benefit slot, so it falls
+    // back to supportingHeadline when available.
+    if (!approvedTov && buildPlan) {
+        approvedTov = reconstructApprovedTovFromBuildPlan(buildPlan, inputs);
+    }
+
     return { inputs, buildPlan, approvedTov, sourceImageUrl, existingSizeVariants, parentSourceRatio };
+}
+
+/**
+ * Build a minimal approvedTov-shaped string from the build plan's machine
+ * plan ownership map. Used as a backward-compat fallback when the parent
+ * generation document does not have `output.approvedTov` persisted (pre-Phase
+ * 17 generations). The returned string is consumed by `extractCopyFieldsFromResponse`
+ * which parses the same HOOK_TEXT:/SUBHEADLINE:/CTA_BUTTON:/BENEFIT: section
+ * format used by the original concept generator.
+ */
+function reconstructApprovedTovFromBuildPlan(buildPlan: string, inputs: any): string {
+    let ownership: ContentOwnershipMap | null = null;
+    try {
+        const envelope = parseBuildPlanEnvelope(buildPlan);
+        ownership = (envelope.machinePlan as any)?.ownership ?? null;
+    } catch {
+        // Malformed machine plan — fall through to a minimal reconstruction.
+        ownership = null;
+    }
+    const lines: string[] = [];
+    const hook = (ownership?.primaryHeadline || "").trim();
+    const sub = (ownership?.supportingHeadline || "").trim();
+    const cta = (ownership?.ctaText || inputs?.cta || "").trim();
+    const benefit = (ownership?.supportingHeadline || "").trim();
+    if (hook) lines.push(`HOOK_TEXT: ${hook}`);
+    if (sub && sub !== hook) lines.push(`SUBHEADLINE: ${sub}`);
+    if (cta) lines.push(`CTA_BUTTON: ${cta}`);
+    if (benefit && benefit !== sub && benefit !== hook) lines.push(`BENEFIT: ${benefit}`);
+    return lines.join("\n");
 }
 
 // ═══════════════════════════════════════════════════════════
