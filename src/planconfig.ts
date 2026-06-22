@@ -23,7 +23,8 @@ export const CREDIT_COSTS = {
     buildPlan: 0,                  // free
     generateImage: 5,              // 1 image × 5 credits
     polishImage: 5,                // 1 image × 5 credits
-    reflowImage: 5,                // 1 image × 5 credits
+    reflowImage: 5,                // 1 image × 5 credits (HOTFIX-F — superseded by generateSizeVariant for multi-size)
+    generateSizeVariant: 5,        // 1 size variant × 5 credits (Phase 17 — reuses generateImage cost)
     analyzePolishes: 1,            // 1 analysis × 1 credit
     generateCaption: 1,            // 1 copy × 1 credit
     refineCaption: 1,              // 1 refinement × 1 credit

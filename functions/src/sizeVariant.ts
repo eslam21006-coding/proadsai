@@ -1,0 +1,755 @@
+// functions/src/sizeVariant.ts — onCall handler for Phase 17 independent multi-size
+// variant generation. Replaces HOTFIX-F reflow for additional sizes and resize:
+// each size is rendered as a fresh native design (no transform of pixels) using
+// the parent's saved build plan (NEVER re-runs generateBuildPlan) and a visual
+// reference image (anchor for pre-select, own-original for resize, uploaded
+// reference takes priority over both). Charges 5 credits upfront per FR-012a,
+// refunds on failure per FR-015, idempotency-keyed per FR-014.
+
+import type { CallableRequest } from "firebase-functions/v2/https";
+import type { AspectRatio } from "./generators.js";
+import {
+    resolveCreditOwner,
+    SIZE_VARIANT_CREDIT_COST,
+    hasOwnerBalanceForVariant,
+} from "./entitlements.js";
+import { saveBase64ToStorage } from "./storageUpload.js";
+import type { GeminiCaller } from "./generators.js";
+import { MODEL_PROVIDER } from "./modelConfig.js";
+import {
+    generateFinalAd,
+    setGeminiCaller,
+    setOpenAIKey,
+    extractCopyFieldsFromResponse,
+} from "./generators.js";
+import {
+    parseBuildPlanEnvelope,
+    validateCopyFidelity,
+    type ContentOwnershipMap,
+} from "./buildPlanSlotMap.js";
+import { validateModeFormatCombination } from "./creativeResolver.js";
+import * as admin from "firebase-admin";
+import type {
+    GenerateSizeVariantRequest,
+    GenerateSizeVariantResponse,
+    SizeVariant,
+    SizeVariantTraceEntry,
+    ReferenceSource,
+} from "./types.js";
+
+// UI_RATIOS is the single source of truth for allowed sizes. Must match
+// src/App.tsx:UI_RATIOS = ['1:1', '3:4', '9:16'] (see contracts/generateSizeVariant.md
+// PRE-3 / VR-1).
+const UI_RATIOS: ReadonlyArray<AspectRatio> = ["1:1", "3:4", "9:16"];
+
+function isUIRatio(r: string | null | undefined): r is AspectRatio {
+    return typeof r === "string" && (UI_RATIOS as readonly string[]).includes(r);
+}
+
+export interface SizeVariantDeps {
+    db: FirebaseFirestore.Firestore;
+    admin: typeof import("firebase-admin");
+    geminiCaller: GeminiCaller;
+    openaiApiKey: string;
+    // Test seam: override the visual provider. Defaults to MODEL_PROVIDER.
+    modelProvider?: "openai" | "gemini";
+}
+
+// ═══════════════════════════════════════════════════════════
+// PRECONDITIONS (PRE-1..6) — return typed HttpsError before any charge
+// ═══════════════════════════════════════════════════════════
+
+function checkPreconditions(args: {
+    request: CallableRequest<GenerateSizeVariantRequest>;
+    data: Partial<GenerateSizeVariantRequest>;
+    genDocExists: boolean;
+    isOwner: boolean;
+}): { ok: true } | { ok: false; code: "unauthenticated" | "permission-denied" | "invalid-argument" | "not-found"; message: string } {
+    if (!args.request.auth) {
+        return { ok: false, code: "unauthenticated", message: "Login required." };
+    }
+    const { data } = args;
+    if (!data.generationId || typeof data.generationId !== "string") {
+        return { ok: false, code: "invalid-argument", message: "generationId is required." };
+    }
+    if (!isUIRatio(data.targetAspectRatio)) {
+        return { ok: false, code: "invalid-argument", message: `Unsupported targetAspectRatio: ${String(data.targetAspectRatio)}. Allowed: ${UI_RATIOS.join(", ")}` };
+    }
+    if (!["single", "batch", "carousel"].includes(String(data.scope))) {
+        return { ok: false, code: "invalid-argument", message: `Invalid scope: ${String(data.scope)}.` };
+    }
+    // itemIndex must be null for single and a non-negative integer for batch/carousel.
+    // Validating here (before any credit charge) prevents a request that would otherwise
+    // pass preconditions, get charged, and then silently fail in buildVariantUpdate()
+    // because the wrong persistence branch matches (CodeRabbit review: itemIndex validation
+    // by scope before charging credits).
+    if (data.scope === "single" && data.itemIndex !== null && data.itemIndex !== undefined) {
+        return { ok: false, code: "invalid-argument", message: "itemIndex must be null for scope='single'." };
+    }
+    if ((data.scope === "batch" || data.scope === "carousel")
+        && (!Number.isInteger(data.itemIndex) || (data.itemIndex as number) < 0)) {
+        return { ok: false, code: "invalid-argument", message: "itemIndex must be a non-negative integer for scope='batch'|'carousel'." };
+    }
+    if (data.scope === "carousel" && (!data.sourceImageOverride || data.sourceImageOverride.length === 0)) {
+        // VR-2: carousel is resize-only. A carousel request without a sourceImageOverride
+        // is a pre-select attempt and must be rejected.
+        return { ok: false, code: "invalid-argument", message: "Carousel multi-size is available only via the resize flow (sourceImageOverride is required)." };
+    }
+    if (!args.genDocExists || !args.isOwner) {
+        return { ok: false, code: "not-found", message: "Generation not found." };
+    }
+    return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════
+// IDEMPOTENCY KEY (FR-014 / INV-2) — genId:scope:itemIndex:ratio
+// ═══════════════════════════════════════════════════════════
+
+export function buildIdempotencyKey(
+    generationId: string,
+    scope: GenerateSizeVariantRequest["scope"],
+    itemIndex: number | null,
+    targetAspectRatio: AspectRatio,
+): string {
+    return `${generationId}:${scope}:${itemIndex ?? "null"}:${targetAspectRatio}`;
+}
+
+// ═══════════════════════════════════════════════════════════
+// PARENT DOC SHAPE (loose by design; legacy docs read defensively)
+// ═══════════════════════════════════════════════════════════
+
+interface SizeVariantParentDoc {
+    userId?: string;
+    creditOwnerUid?: string;
+    inputs?: any; // AdInputs (loose)
+    resolvedUniverse?: string;
+    output?: {
+        buildPlan?: string;
+        approvedTov?: string;
+        imageUrl?: string;
+        carouselSlides?: Array<{
+            imageUrl?: string;
+            buildPlan?: string;
+            sizeVariants?: Record<string, SizeVariant>;
+        }>;
+        batchResults?: Array<{
+            url?: string;
+            buildPlan?: string;
+            sizeVariants?: Record<string, SizeVariant>;
+        }>;
+    };
+    referenceImage?: string | null;
+    metadata?: { aspectRatio?: AspectRatio };
+    mockupHistory?: Array<{ url: string; ratio: AspectRatio }>;
+    sizeVariants?: Record<string, SizeVariant>; // single-scope map
+    resolutionTrace?: { sizeVariantTrace?: SizeVariantTraceEntry[] };
+}
+
+// Read the source-of-truth inputs/buildPlan/approvedTov for the (scope, itemIndex).
+function readParentContext(
+    parent: SizeVariantParentDoc,
+    scope: GenerateSizeVariantRequest["scope"],
+    itemIndex: number | null,
+): {
+    inputs: any;
+    buildPlan: string;
+    approvedTov: string;
+    sourceImageUrl: string | null;
+    existingSizeVariants: Record<string, SizeVariant> | undefined;
+    parentSourceRatio: AspectRatio;
+} {
+    const inputs = parent.inputs ?? {};
+    let buildPlan = parent.output?.buildPlan ?? "";
+    let approvedTov = parent.output?.approvedTov ?? "";
+    let sourceImageUrl: string | null = parent.output?.imageUrl ?? null;
+    let existingSizeVariants: Record<string, SizeVariant> | undefined = parent.sizeVariants;
+    const parentSourceRatio: AspectRatio = parent.metadata?.aspectRatio ?? "1:1";
+
+    if (scope === "batch" && typeof itemIndex === "number") {
+        const item = parent.output?.batchResults?.[itemIndex];
+        if (item) {
+            buildPlan = item.buildPlan ?? buildPlan;
+            sourceImageUrl = item.url ?? sourceImageUrl;
+            existingSizeVariants = item.sizeVariants;
+        }
+    } else if (scope === "carousel" && typeof itemIndex === "number") {
+        const slide = parent.output?.carouselSlides?.[itemIndex];
+        if (slide) {
+            buildPlan = slide.buildPlan ?? buildPlan;
+            sourceImageUrl = slide.imageUrl ?? sourceImageUrl;
+            existingSizeVariants = slide.sizeVariants;
+        }
+    }
+
+    // Backward-compat fallback for pre-Phase-17 generations: the frontend
+    // saveGeneration() never persisted `output.approvedTov` (only the build
+    // plan). To keep the size-variant path working for these existing docs
+    // without requiring a new Firestore write, reconstruct an approvedTov
+    // string from the build plan's machine plan ownership map. The format
+    // matches what `extractCopyFieldsFromResponse()` expects (HOOK_TEXT:,
+    // SUBHEADLINE:, CTA_BUTTON:, BENEFIT:). Benefit is best-effort — the
+    // machine plan doesn't carry a dedicated benefit slot, so it falls
+    // back to supportingHeadline when available.
+    if (!approvedTov && buildPlan) {
+        approvedTov = reconstructApprovedTovFromBuildPlan(buildPlan, inputs);
+    }
+
+    return { inputs, buildPlan, approvedTov, sourceImageUrl, existingSizeVariants, parentSourceRatio };
+}
+
+/**
+ * Build a minimal approvedTov-shaped string from the build plan's machine
+ * plan ownership map. Used as a backward-compat fallback when the parent
+ * generation document does not have `output.approvedTov` persisted (pre-Phase
+ * 17 generations). The returned string is consumed by `extractCopyFieldsFromResponse`
+ * which parses the same HOOK_TEXT:/SUBHEADLINE:/CTA_BUTTON:/BENEFIT: section
+ * format used by the original concept generator.
+ */
+function reconstructApprovedTovFromBuildPlan(buildPlan: string, inputs: any): string {
+    let ownership: ContentOwnershipMap | null = null;
+    try {
+        const envelope = parseBuildPlanEnvelope(buildPlan);
+        ownership = (envelope.machinePlan as any)?.ownership ?? null;
+    } catch {
+        // Malformed machine plan — fall through to a minimal reconstruction.
+        ownership = null;
+    }
+    const lines: string[] = [];
+    const hook = (ownership?.primaryHeadline || "").trim();
+    const sub = (ownership?.supportingHeadline || "").trim();
+    const cta = (ownership?.ctaText || inputs?.cta || "").trim();
+    const benefit = (ownership?.supportingHeadline || "").trim();
+    if (hook) lines.push(`HOOK_TEXT: ${hook}`);
+    if (sub && sub !== hook) lines.push(`SUBHEADLINE: ${sub}`);
+    if (cta) lines.push(`CTA_BUTTON: ${cta}`);
+    if (benefit && benefit !== sub && benefit !== hook) lines.push(`BENEFIT: ${benefit}`);
+    return lines.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════
+// REFERENCE RESOLUTION (R3 / FR-003 / FR-007 / FR-008 / FR-005a)
+// Priority: uploaded > sourceImageOverride (own_original) > anchor > none
+// ═══════════════════════════════════════════════════════════
+
+function resolveReference(
+    parent: SizeVariantParentDoc,
+    data: GenerateSizeVariantRequest,
+    anchorSucceeded: boolean,
+): { source: ReferenceSource; image: string | null } {
+    if (parent.referenceImage) {
+        return { source: "uploaded", image: parent.referenceImage };
+    }
+    if (data.sourceImageOverride) {
+        return { source: "own_original", image: data.sourceImageOverride };
+    }
+    if (parent.output?.imageUrl && anchorSucceeded) {
+        return { source: "anchor", image: parent.output.imageUrl };
+    }
+    return { source: "none", image: null };
+}
+
+// ═══════════════════════════════════════════════════════════
+// MAIN HANDLER
+// ═══════════════════════════════════════════════════════════
+
+export async function generateSizeVariantHandler(
+    request: CallableRequest<GenerateSizeVariantRequest>,
+    deps: SizeVariantDeps,
+): Promise<GenerateSizeVariantResponse> {
+    const { db, geminiCaller, openaiApiKey } = deps;
+    const { HttpsError } = await import("firebase-functions/v2/https");
+
+    // ── PRE-1: authentication ──
+    if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Login required.");
+    }
+    const callerId = request.auth.uid;
+
+    if (typeof request.data !== "object" || request.data === null) {
+        throw new HttpsError("invalid-argument", "request.data must be an object.");
+    }
+    const data = request.data as GenerateSizeVariantRequest;
+
+    // ── PRE-1b: resolve team credit owner ──
+    const { creditOwnerUid, teamRole } = await resolveCreditOwner(callerId);
+    if (teamRole === "viewer") {
+        throw new HttpsError("permission-denied", "Viewers cannot perform credit-consuming actions.");
+    }
+
+    // ── Read parent generation doc + ownership check ──
+    const genRef = db.collection("generations").doc(data.generationId);
+    const genDoc = await genRef.get();
+    if (!genDoc.exists) {
+        throw new HttpsError("not-found", "Generation not found.");
+    }
+    const parent = genDoc.data() as SizeVariantParentDoc;
+    const isOwner = parent.userId === creditOwnerUid;
+    const pre = checkPreconditions({
+        request, data, genDocExists: true, isOwner,
+    });
+    if (!pre.ok) {
+        throw new HttpsError(pre.code, pre.message);
+    }
+
+    // ── Read parent context BEFORE any charge ──
+    const ctx = readParentContext(parent, data.scope, data.itemIndex);
+    // Phase 17 race-proofing: prefer the approvedTov passed in the request payload
+    // (the frontend always has it in memory) over the Firestore read. This makes the
+    // variant independent of whether the client's saveGeneration write has landed yet —
+    // payload > output.approvedTov > reconstruction. (FR-018: same copy reaches every size.)
+    if (typeof data.approvedTov === "string" && data.approvedTov.trim().length > 0) {
+        ctx.approvedTov = data.approvedTov;
+    }
+    // itemIndex bounds: the integer check above ensures a non-negative number,
+    // but a value past the end of the batch/carousel array would silently
+    // fall back to the parent's first batchResults[0]/carouselSlides[0] entry
+    // and charge credits for a wrong/no-op render. Reject pre-charge
+    // (CodeRabbit review: itemIndex bounds validation).
+    if (data.scope === "batch") {
+        const batchLen = Array.isArray(parent.output?.batchResults) ? parent.output!.batchResults!.length : 0;
+        if (typeof data.itemIndex !== "number" || data.itemIndex >= batchLen) {
+            throw new HttpsError(
+                "invalid-argument",
+                `Invalid batch itemIndex: ${String(data.itemIndex)}. Parent has ${batchLen} batch result(s).`,
+            );
+        }
+    } else if (data.scope === "carousel") {
+        const carouselLen = Array.isArray(parent.output?.carouselSlides) ? parent.output!.carouselSlides!.length : 0;
+        if (typeof data.itemIndex !== "number" || data.itemIndex >= carouselLen) {
+            throw new HttpsError(
+                "invalid-argument",
+                `Invalid carousel itemIndex: ${String(data.itemIndex)}. Parent has ${carouselLen} slide(s).`,
+            );
+        }
+    }
+    if (!ctx.buildPlan || ctx.buildPlan.length === 0) {
+        throw new HttpsError(
+            "failed-precondition",
+            "Parent generation has no saved build plan; cannot generate variant.",
+        );
+    }
+    if (!ctx.approvedTov || ctx.approvedTov.length === 0) {
+        throw new HttpsError(
+            "failed-precondition",
+            "Parent generation has no saved approvedTov; cannot generate variant.",
+        );
+    }
+
+    // ── Idempotency key (FR-014) ──
+    const idempotencyKey = buildIdempotencyKey(
+        data.generationId, data.scope, data.itemIndex, data.targetAspectRatio,
+    );
+
+    // ── VR-3 / FR-011: same-size already succeeded → no-op short-circuit ──
+    const existing = ctx.existingSizeVariants?.[data.targetAspectRatio];
+    if (existing && existing.status === "succeeded") {
+        const noOpVariant: SizeVariant = {
+            ...existing,
+            noOp: true,
+            creditsCharged: 0,
+            idempotencyKey,
+            updatedAt: Date.now(),
+        };
+        console.log(`ℹ️ sizeVariant no-op (already succeeded): ${idempotencyKey}`);
+        return { success: true, variant: noOpVariant, netCreditsCharged: 0 };
+    }
+
+    // ── Reference resolution (R3) ──
+    const ref = resolveReference(parent, data, ctx.sourceImageUrl != null);
+
+    // ── Mode/format gate (Phase 17 — CodeRabbit review: enforce on size-variant
+    // callables before any credit deduction, mirroring the pattern in
+    // serverGenerateFinalAd and the other generation callables in index.ts).
+    // The adFormat MUST match the parent's scope — a carousel-only creative
+    // mode (e.g. `testimonial_carousel`) would be incorrectly rejected by a
+    // hardcoded "single" format. Map scope→adFormat for the gate.
+    const adFormat: "single" | "batch" | "carousel" =
+        data.scope === "carousel" ? "carousel"
+        : data.scope === "batch" ? "batch"
+        : "single";
+    const fmtCheck = validateModeFormatCombination({
+        modes: (ctx.inputs as any)?.offerCreativeMode || ["standard_hero"],
+        adFormat,
+        campaignType: ((ctx.inputs as any)?.campaignType as "cold" | "retargeting" | undefined) ?? "cold",
+    });
+    if (!fmtCheck.valid) {
+        throw new HttpsError("invalid-argument", fmtCheck.reason, { code: "invalid_mode_format" });
+    }
+
+    // ── PRE-6: owner balance ≥ SIZE_VARIANT_CREDIT_COST ──
+    const userRef = db.collection("users").doc(creditOwnerUid);
+    const preflightUser = await userRef.get();
+    const preflightBalance = (preflightUser.data()?.credits as number | undefined) ?? 0;
+    if (!hasOwnerBalanceForVariant(preflightBalance)) {
+        throw new HttpsError(
+            "resource-exhausted",
+            `Insufficient credits. Need ${SIZE_VARIANT_CREDIT_COST}, have ${preflightBalance}.`,
+        );
+    }
+
+    // ── Charge 5 credits upfront + write pending variant in a single transaction ──
+    const now = Date.now();
+    const pendingVariant: SizeVariant = {
+        ratio: data.targetAspectRatio,
+        status: "pending",
+        url: null,
+        referenceSource: ref.source,
+        creditsCharged: 0, // charged-but-not-yet-succeeded → will be 5 on success or 0 on refund
+        idempotencyKey,
+        updatedAt: now,
+    };
+
+    try {
+        await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
+            // Re-read the gen doc inside the transaction so we can detect a
+            // concurrent retry against the same idempotency key (CodeRabbit
+            // review: idempotency enforced at debit time, not just computed
+            // and ignored). If a previous attempt already wrote a variant
+            // with the SAME idempotency key and status "pending", we are the
+            // second concurrent caller — reject. If status is "succeeded",
+            // short-circuit to no-op (already covered above, but re-checked
+            // here for races). If a different key already exists for the
+            // same (scope, itemIndex, ratio) we treat it as a new run (the
+            // caller would not normally re-call with the same params).
+            const [userSnap, genSnap] = await Promise.all([tx.get(userRef), tx.get(genRef)]);
+            const latestParent = genSnap.data() as SizeVariantParentDoc | undefined;
+            if (latestParent) {
+                const latestCtx = readParentContext(latestParent, data.scope, data.itemIndex);
+                const existingLatest = latestCtx.existingSizeVariants?.[data.targetAspectRatio];
+                if (existingLatest && existingLatest.idempotencyKey === idempotencyKey) {
+                    if (existingLatest.status === "pending") {
+                        // A previous concurrent attempt is still in-flight; refuse
+                        // to double-charge by aborting this transaction.
+                        throw new HttpsError(
+                            "aborted",
+                            "Variant generation already in progress for this (genId, scope, itemIndex, ratio).",
+                        );
+                    }
+                    if (existingLatest.status === "succeeded") {
+                        // Race: this caller just re-entered after a previous
+                        // success. Surface as already-exists so the caller
+                        // can short-circuit (the frontend will read this as
+                        // a no-op result via the existing no-op check).
+                        throw new HttpsError(
+                            "already-exists",
+                            "Variant already generated for this ratio.",
+                        );
+                    }
+                }
+            }
+            const userBalance = (userSnap.data()?.credits as number | undefined) ?? 0;
+            if (userBalance < SIZE_VARIANT_CREDIT_COST) {
+                throw new Error(
+                    `Insufficient credits at commit time (have ${userBalance}, need ${SIZE_VARIANT_CREDIT_COST}).`,
+                );
+            }
+            tx.update(userRef, {
+                credits: admin.firestore.FieldValue.increment(-SIZE_VARIANT_CREDIT_COST),
+                lastActivity: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            // Mirror the pending variant into the parent doc's sizeVariants map so
+            // a concurrent retry sees it (the in-flight idempotency-key reservation
+            // is implicit in the deduction above). The pending status is replaced by
+            // a terminal succeeded/failed status at the end of generation.
+            const update = buildVariantUpdate(data, ctx, pendingVariant);
+            tx.update(genRef, update);
+        });
+    } catch (chargeErr: unknown) {
+        // Preserve intentional HttpsError throws (idempotency race guards
+        // HttpsError('aborted') + HttpsError('already-exists'), plus the
+        // pre-condition re-throws). Only convert UNEXPECTED errors or the
+        // race-on-balance InsufficientCredits string into a typed HttpsError
+        // (CodeRabbit review: preserve transaction idempotency error codes
+        // instead of rewriting them).
+        if (chargeErr instanceof HttpsError) {
+            throw chargeErr;
+        }
+        const msg = chargeErr instanceof Error ? chargeErr.message : String(chargeErr);
+        if (msg.includes("Insufficient credits at commit time")) {
+            throw new HttpsError("resource-exhausted", msg);
+        }
+        throw new HttpsError("internal", `Credit deduction failed: ${msg}`);
+    }
+
+    // ── Build the inputs copy for the target aspect ratio ──
+    // The build plan, approvedTov, and inputs are reused unchanged from the parent.
+    // We override the aspect ratio on the inputs so generateFinalAd rebuilds the
+    // layout contract for the TARGET ratio (per research.md R1).
+    const variantInputs = {
+        ...ctx.inputs,
+        aspectRatio: data.targetAspectRatio,
+    };
+
+    setGeminiCaller(geminiCaller);
+    setOpenAIKey(openaiApiKey);
+
+    // ── Build the ratio-appropriate editInstruction (Phase 17 audit fix) ──
+    // The user's audit flagged that the variant path was passing `undefined` as
+    // editInstruction, which caused the OpenAI edit path to receive the literal
+    // string "undefined". We now build a real edit instruction from the parent's
+    // saved approvedTov (extracted copy fields) + the target ratio, telling the
+    // model to redesign the ad for the new canvas with the same text elements.
+    // The build plan + approvedTov are reused unchanged (per FR-019a — we never
+    // call generateBuildPlan on the variant path; the plan is built once for the
+    // anchor and reused for every size).
+    const variantCopy = extractCopyFieldsFromResponse(
+        ctx.approvedTov,
+        variantInputs as Parameters<typeof extractCopyFieldsFromResponse>[1],
+    );
+    const variantCopyFields = variantCopy.fields;
+    const variantEditInstruction = buildVariantEditInstruction({
+        sourceRatio: ctx.parentSourceRatio,
+        targetRatio: data.targetAspectRatio,
+        copyFields: {
+            hookText: variantCopyFields.hookText,
+            subheadText: variantCopyFields.subheadText,
+            ctaName: variantCopyFields.ctaName,
+            benefitText: variantCopyFields.benefitText,
+        },
+    });
+
+    let succeeded = false;
+    let url: string | null = null;
+    let errorCode: string | undefined;
+    let copyFidelityPasses = 0;
+    const provider: "openai" | "gemini" = (deps.modelProvider ?? MODEL_PROVIDER) === "openai" ? "openai" : "gemini";
+
+    try {
+        const result = await generateFinalAd(
+            ctx.buildPlan,
+            ctx.approvedTov,
+            variantInputs,
+            ctx.inputs?.resolvedUniverse ?? parent.resolvedUniverse ?? "default",
+            data.targetAspectRatio,
+            variantEditInstruction, // editInstruction — explicit ratio-adapt directive with copy fields
+            ref.image ?? undefined,  // base64ToEdit — visual reference for the target canvas
+            ref.image ?? undefined,  // styleReference — same as base64ToEdit
+        );
+
+        // ── validateCopyFidelity on the variant output (Phase 17 audit fix) ──
+        // For variants, the saved build plan may not contain a [[TECHNICAL_PROMPT]]
+        // block (frontend flow passes concept text directly to serverGenerateFinalAd).
+        // The closest equivalent is the variant edit instruction we just sent to the
+        // model — it contains every copy field the variant was supposed to render.
+        // Passing the edit instruction as the "technical prompt" lets validateCopyFidelity
+        // verify that all four required text fields were emitted to the model and lets
+        // the retry loop in generateFinalAd catch any drop / truncation by the renderer.
+        const fidelityCheck = validateCopyFidelity(variantEditInstruction, {
+            hookText: variantCopyFields.hookText,
+            subheadText: variantCopyFields.subheadText,
+            ctaName: variantCopyFields.ctaName,
+            benefitText: variantCopyFields.benefitText,
+        });
+        copyFidelityPasses = fidelityCheck.passed ? 1 : 0;
+        if (!fidelityCheck.passed) {
+            console.warn(
+                `sizeVariant: copyFidelity FAILED for ${data.targetAspectRatio} — ` +
+                `failedFields=${JSON.stringify(fidelityCheck.failedFields)}, ` +
+                `genId=${data.generationId}, scope=${data.scope}, itemIndex=${data.itemIndex}`,
+            );
+        }
+
+        if (result.image) {
+            try {
+                url = await saveBase64ToStorage(result.image, `users/${callerId}/renders`);
+            } catch (uploadErr: unknown) {
+                console.warn("sizeVariant: storage upload failed (non-blocking):", uploadErr);
+                url = null;
+            }
+            if (url) {
+                succeeded = true;
+            } else {
+                errorCode = "storage_upload_failed";
+            }
+        } else {
+            errorCode = (result as { errorCode?: string }).errorCode ?? "no_image_returned";
+        }
+    } catch (err: unknown) {
+        errorCode = err instanceof Error ? err.message : String(err);
+        console.error("sizeVariant generation failed:", err);
+    }
+
+    // ── Persist the terminal variant state + trace + credit reconciliation ──
+    const traceEntry: SizeVariantTraceEntry = {
+        ratio: data.targetAspectRatio,
+        scope: data.scope,
+        itemIndex: data.itemIndex,
+        referenceSource: ref.source,
+        provider,
+        copyFidelityPasses,
+        succeeded,
+        errorCode: succeeded ? undefined : errorCode,
+        charged: SIZE_VARIANT_CREDIT_COST,
+        refunded: succeeded ? 0 : SIZE_VARIANT_CREDIT_COST,
+        timestamp: Date.now(),
+    };
+
+    if (succeeded && url) {
+        const successVariant: SizeVariant = {
+            ratio: data.targetAspectRatio,
+            status: "succeeded",
+            url,
+            referenceSource: ref.source,
+            creditsCharged: SIZE_VARIANT_CREDIT_COST,
+            idempotencyKey,
+            updatedAt: Date.now(),
+        };
+        const update: Record<string, unknown> = buildVariantUpdate(data, ctx, successVariant);
+        // Use dot-notation for nested updates — object replacement of resolutionTrace
+        // would erase sibling properties (reflowHistory, brandColorReinforced, etc.)
+        // that may have been set by other operations on this generation doc
+        // (CodeRabbit review: destructive Firestore map replacements).
+        update["resolutionTrace.sizeVariantTrace"] = admin.firestore.FieldValue.arrayUnion(traceEntry);
+        update.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+        await genRef.update(update);
+        return { success: true, variant: successVariant, netCreditsCharged: SIZE_VARIANT_CREDIT_COST };
+    }
+
+    // Failure path: refund the 5 credits and persist the failed variant.
+    const failedVariant: SizeVariant = {
+        ratio: data.targetAspectRatio,
+        status: "failed",
+        url: null,
+        referenceSource: ref.source,
+        creditsCharged: 0,
+        errorCode,
+        idempotencyKey,
+        updatedAt: Date.now(),
+    };
+    const update: Record<string, unknown> = buildVariantUpdate(data, ctx, failedVariant);
+    // Use dot-notation for the trace update (CodeRabbit review: destructive
+    // Firestore map replacements) — see the success-path comment above.
+    update["resolutionTrace.sizeVariantTrace"] = admin.firestore.FieldValue.arrayUnion(traceEntry);
+    update.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+    await genRef.update(update);
+    // Refund the SAME account that was debited (creditOwnerUid / userRef), NOT a
+    // parent-derived uid. If parent.creditOwnerUid / parent.userId drift from the
+    // resolved creditOwnerUid (e.g. a team-membership change between the original
+    // render and this variant), a parent-derived refund would credit the wrong
+    // account while the debit hit creditOwnerUid (CodeRabbit: refund the debited account).
+    const refundRef = userRef;
+    try {
+        await refundRef.update({
+            credits: admin.firestore.FieldValue.increment(SIZE_VARIANT_CREDIT_COST),
+            lastActivity: admin.firestore.FieldValue.serverTimestamp(),
+        });
+    } catch (refundErr: unknown) {
+        // Refund failure is logged but not thrown — the failed variant + trace are
+        // already persisted, and a follow-up reconciliation pass can pick up the
+        // dangling balance.
+        console.warn(`sizeVariant: refund failed for ${creditOwnerUid}:`, refundErr);
+    }
+    return { success: false, variant: failedVariant, netCreditsCharged: 0 };
+}
+
+// ═══════════════════════════════════════════════════════════
+// VARIANT EDIT INSTRUCTION (Phase 17 audit fix)
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Build a real edit instruction for the size-variant path. The audit flagged
+ * that the previous code passed `undefined` as `editInstruction` to
+ * `generateFinalAd`, which caused the OpenAI edit path to receive the literal
+ * string "undefined" as the instruction. We now build a clear, ratio-adaptive
+ * directive from the saved approvedTov (extracted copy fields) and the source
+ * → target aspect-ratio transition. The text-element list is built only from
+ * non-null fields (FR-006 — null copy fields stay null end-to-end).
+ *
+ * This is the *directive* the model receives on the edit path; the actual
+ * prompt assembly (costume rules, layout contract, brand color blocks, etc.)
+ * still happens inside `generateFinalAd` via `buildFinalImagePrompt()` from the
+ * saved build plan (no re-derivation of the plan, per FR-019a).
+ */
+function buildVariantEditInstruction(args: {
+    sourceRatio: AspectRatio;
+    targetRatio: AspectRatio;
+    copyFields: {
+        hookText: string;
+        subheadText: string | null;
+        ctaName: string | null;
+        benefitText: string | null;
+    };
+}): string {
+    const { sourceRatio, targetRatio, copyFields } = args;
+    const lines: string[] = [
+        `SIZE VARIANT — adapt this ad from ${sourceRatio} to ${targetRatio} canvas.`,
+        `Redesign the attached image natively for the ${targetRatio} shape: keep the same hero,`,
+        `environment, and color palette; use the layout rules appropriate for ${targetRatio}.`,
+        `Preserve these text elements EXACTLY (drop any other text):`,
+        `- Headline: ${copyFields.hookText || "(none)"}`,
+    ];
+    if (copyFields.subheadText) {
+        lines.push(`- Subheadline: ${copyFields.subheadText}`);
+    }
+    if (copyFields.ctaName) {
+        lines.push(`- CTA: ${copyFields.ctaName}`);
+    }
+    if (copyFields.benefitText) {
+        lines.push(`- Benefit: ${copyFields.benefitText}`);
+    }
+    // Ratio-specific layout guidance — narrow canvases need explicit
+    // text-fit instructions to prevent subheadline / benefit clipping
+    // (Phase 17 fix: 9:16 stories were truncating subheadlines).
+    if (targetRatio === "9:16") {
+        lines.push(
+            ``,
+            `CRITICAL for 9:16 story canvas: The canvas is NARROW. All text MUST fit completely within the visible area.`,
+            `Use SMALLER font sizes for subheadline and benefit text compared to square format.`,
+            `Wrap long text across MORE lines rather than extending beyond the canvas edge.`,
+            `Every character of every text element must be fully visible — no clipping, no truncation, no text running off the edge.`,
+        );
+    } else if (targetRatio === "3:4") {
+        lines.push(
+            ``,
+            `IMPORTANT for 3:4 portrait canvas: The canvas is moderately narrow.`,
+            `Use a slightly smaller font for subheadline and benefit text than you would on square format.`,
+            `Wrap long text across more lines and keep every text element fully inside the canvas — no truncation, no clipping.`,
+        );
+    }
+    lines.push(
+        `All four text layers and the CTA button must be visible and balanced in the new canvas.`,
+        `Do not invent or repeat any text that is not in the list above.`,
+    );
+    return lines.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════
+// VARIANT PERSISTENCE - additive, no migration
+// ═══════════════════════════════════════════════════════════
+
+function buildVariantUpdate(
+    data: GenerateSizeVariantRequest,
+    _ctx: ReturnType<typeof readParentContext>,
+    variant: SizeVariant,
+): Record<string, unknown> {
+    if (data.scope === "single") {
+        // Use dot-notation to update only the specific ratio's entry in the
+        // sizeVariants map — replacing the whole map would erase variants at
+        // other aspect ratios (CodeRabbit review: destructive Firestore map
+        // replacements). Matches the dot-notation pattern already used for
+        // batch/carousel scopes below.
+        const update: Record<string, unknown> = {
+            [`sizeVariants.${variant.ratio}`]: variant,
+        };
+        if (variant.status === "succeeded" && variant.url) {
+            // Mirror the variant into the existing mockupHistory for the single-image
+            // happy path (FR-005: the single-image display reads mockupHistory).
+            update.mockupHistory = admin.firestore.FieldValue.arrayUnion({
+                url: variant.url,
+                ratio: variant.ratio,
+            });
+        }
+        return update;
+    }
+    if (data.scope === "batch" && typeof data.itemIndex === "number") {
+        return {
+            [`output.batchResults.${data.itemIndex}.sizeVariants.${variant.ratio}`]: variant,
+        };
+    }
+    if (data.scope === "carousel" && typeof data.itemIndex === "number") {
+        return {
+            [`output.carouselSlides.${data.itemIndex}.sizeVariants.${variant.ratio}`]: variant,
+        };
+    }
+    return {};
+}

@@ -6662,9 +6662,9 @@ This is a TYPOGRAPHY-FIRST render. Strict rules:
   // --- CRITICAL COSTUME & FIDELITY RE-ENFORCEMENT ---
   ${costumeRules}
 // --- END RE-ENFORCEMENT ---
-- REFLOW: Ratio ${currentAspectRatio}. Spatial reflow only.Subjects and all 3 text layers and the button are visible and perfectly balanced.
+${reflowInstruction ? `- REFLOW: Ratio ${currentAspectRatio}. Spatial reflow only.Subjects and all 3 text layers and the button are visible and perfectly balanced.
           - CONTRAST: Ensure all text is placed in "Negative Space" areas where it is easily readable.
-    `;
+` : ''}    `;
 
     const parts: any[] = [];
     if (base64ToEdit) {

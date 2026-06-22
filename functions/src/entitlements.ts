@@ -562,6 +562,7 @@ export const ACTION_FEATURE_MAP: Record<string, GatedFeature | null> = {
     generateImage: null,
     polishImage: null,
     reflowImage: null,
+    generateSizeVariant: "visualPolishes",
     analyzePolishes: null,
     generateCaption: null,
     refineCaption: null,
@@ -573,3 +574,26 @@ export const ACTION_FEATURE_MAP: Record<string, GatedFeature | null> = {
 
 // ─── EXPORTS ────────────────────────────────────────────────────────────────
 export { PLAN_CREDITS, TRIAL_CREDITS, PLAN_FEATURES };
+
+// ─── PHASE 17: Multi-Size Credit Cost Helpers ────────────────────────────────
+// Reuse COSTS.generateImage (5 credits) for each rendered design (anchor + variants).
+// Same-size no-ops are excluded from the cost total at the call site (FR-011, FR-013).
+
+/** Per-design cost for a size variant. Reuses generateImage (5) — see research.md R4. */
+export const SIZE_VARIANT_CREDIT_COST = 5;
+
+/** Compute the total credit cost of a multi-size request (designs × 5). */
+export function computeMultiSizeCost(designs: number): number {
+    if (!Number.isFinite(designs) || designs < 0) return 0;
+    return Math.floor(designs) * SIZE_VARIANT_CREDIT_COST;
+}
+
+/**
+ * Owner-balance guard for per-variant transactions. Returns true when the owner has
+ * at least `SIZE_VARIANT_CREDIT_COST` credits available. The transaction that calls
+ * this MUST also re-check the balance at commit time — this is a pre-flight check
+ * only, to give a clear HttpsError code before we spend an image-generation call.
+ */
+export function hasOwnerBalanceForVariant(ownerBalance: number): boolean {
+    return ownerBalance >= SIZE_VARIANT_CREDIT_COST;
+}

@@ -725,3 +725,41 @@ export interface HookVariation {
     claimFlags?: readonly ClaimFlagEntry[];
     variationIndex: number;
 }
+
+// ─── PHASE 17 — INDEPENDENT MULTI-SIZE VARIANT TYPES (frontend) ─────────────
+// Mirrors functions/src/types.ts SizeVariant*. The frontend never persists a
+// sizeVariantTrace directly — it reads it from the server's resolutionTrace for
+// debug UI. The frontend keeps its own per-design loading state derived from
+// (scope, itemIndex, ratio).
+
+export type SizeVariantStatus = "pending" | "succeeded" | "failed";
+export type ReferenceSource = "uploaded" | "own_original" | "anchor" | "none";
+export type GenerationScope = "single" | "batch" | "carousel";
+
+export interface SizeVariant {
+    ratio: AspectRatio;
+    status: SizeVariantStatus;
+    url: string | null;
+    referenceSource: ReferenceSource;
+    creditsCharged: number;
+    noOp?: boolean;
+    errorCode?: string;
+    idempotencyKey: string;
+    updatedAt: number;
+}
+
+export interface GenerateSizeVariantRequest {
+    generationId: string;
+    scope: GenerationScope;
+    itemIndex: number | null;
+    targetAspectRatio: AspectRatio;
+    sourceImageOverride?: string;
+    approvedTov?: string; // Phase 17 — approved copy text, passed in payload to avoid racing the client save
+    activeWorkspaceId?: string;
+}
+
+export interface GenerateSizeVariantResponse {
+    success: boolean;
+    variant: SizeVariant;
+    netCreditsCharged: number;
+}

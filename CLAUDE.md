@@ -1,6 +1,6 @@
 ﻿# Pro Ads AI - SaaS - FAL Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-06-18
+Auto-generated from all feature plans. Last updated: 2026-06-21
 
 
 ## Project Structure
@@ -47,6 +47,8 @@ specs/            # Feature specs (speckit workflow)
 - Firestore — `generations/{genId}` (extends existing doc — adds `mockupHistory` chip-map shape change, new `resolutionTrace.brandColorReinforced` / `resolutionTrace.textReflowOverflow` flags); `users/{uid}` (credits — unchanged read/write path) (017-resize-reflow)
 - TypeScript 5.7 (Cloud Functions), TypeScript 5.9 (frontend) + Firebase Cloud Functions v2, Firebase Admin SDK, Firestore; React 19, Zustand 4, Tailwind CSS 3, Vite 7; Gemini (text/copy generation — unchanged); OpenAI gpt-image-2 for visuals (unchanged, gated by `MODEL_PROVIDER`) (959-copy-structure-variation)
 - Firestore — `creativeMemoryFingerprints/{userId}/entries/{entryId}` (Phase 23 anti-repetition fingerprint store, `angleKey` + `timestamp` schema, additive only; no schema migration). Frontend `tovText` string + new per-card variation state in the Zustand store. (959-copy-structure-variation)
+- TypeScript 5.7 (Cloud Functions), TypeScript 5.9 (Vite frontend) + Firebase Cloud Functions v2, Firebase Admin SDK, Firestore, Firebase Storage; OpenAI `gpt-image-2` for visuals (gated by `MODEL_PROVIDER` in `modelConfig.ts`), Gemini 3.5 for copy/concepts; React 19, Zustand, Tailwind CSS 3, Vite 7 (961-independent-multisize)
+- Firestore `generations/{genId}` (additive only — no migration): single-image variants reuse existing `mockupHistory: {url, ratio}[]`; batch items and carousel slides gain `sizeVariants: { [ratio]: SizeVariant }`; `ResolutionTrace` gains optional `sizeVariantTrace`. Rendered images in Firebase Storage (existing path scheme). (961-independent-multisize)
 
 ## Recent Changes
 - 025-openai-image-swap: Swapped visual image engine from Gemini to OpenAI gpt-image-2. New files `functions/src/modelConfig.ts` (provider selector + size map), `functions/src/openAIImageCaller.ts` (drop-in GeminiCaller backed by OpenAI SDK). Model-aware routing caller `createVisualRoutingCaller()` in `index.ts` routes VISUAL_MODEL calls to gpt-image-2 when `MODEL_PROVIDER='openai'`, keeps text/JSON calls on Gemini. GPT-native prompt in `buildFinalImagePrompt()` replaces rigid text-rendering rules with free-form placement instructions. Copy-fidelity retry gated to single pass on OpenAI path. `ResolutionTrace.visualProvider` sub-object added for per-generation audit. Three visual callables routed: `serverGenerateFinalAd`, `reflowImage`, `serverEditRegion`. Fully reversible via `MODEL_PROVIDER='gemini'` flag + git revert of prompt block. Arabic Text QA loop kept active. Sharp text compositing unchanged (already inert in live path). No frontend, billing, or Firestore schema changes.
