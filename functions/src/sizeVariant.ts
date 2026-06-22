@@ -194,6 +194,36 @@ function readParentContext(
         approvedTov = reconstructApprovedTovFromBuildPlan(buildPlan, inputs);
     }
 
+    // Diagnostic: log which top-level + output fields are present in the
+    // parent doc. If the precondition below still fires, this trace makes
+    // the gap between "what the frontend saved" and "what sizeVariant reads"
+    // immediately visible in Cloud Logging.
+    try {
+        const _parentData = (parent as any) ?? {};
+        const _outputData = _parentData.output ?? {};
+        // eslint-disable-next-line no-console
+        console.log(
+            "[sizeVariant] parent doc top-level fields:",
+            Object.keys(_parentData),
+        );
+        // eslint-disable-next-line no-console
+        console.log(
+            "[sizeVariant] parent.output fields:",
+            Object.keys(_outputData),
+        );
+        // eslint-disable-next-line no-console
+        console.log(
+            "[sizeVariant] has approvedTov?",
+            typeof _outputData.approvedTov === "string" && _outputData.approvedTov.length > 0,
+            "has buildPlan?",
+            typeof _outputData.buildPlan === "string" && _outputData.buildPlan.length > 0,
+            "reconstructed approvedTov length:",
+            approvedTov.length,
+        );
+    } catch {
+        // Diagnostic only — never fail the handler here.
+    }
+
     return { inputs, buildPlan, approvedTov, sourceImageUrl, existingSizeVariants, parentSourceRatio };
 }
 

@@ -4394,9 +4394,20 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             // in the generations doc. If the server upload failed, storageUrl is null
             // and we fall back to 'pending_upload' (reflow then rerenders from plan).
             const storedImageUrl = mockupResult.storageUrl || 'pending_upload';
+            // Phase 17 — persist `approvedTov` alongside the build plan so the
+            // `generateSizeVariant` callable can read the user's approved copy
+            // (the build plan's machine-plan ownership map is a best-effort
+            // fallback; the canonical approvedTov is the TOV string the user
+            // approved at the concept step). Without this, every new primary
+            // generation would rely on the in-memory reconstruction path
+            // (sizeVariant.ts:reconstructApprovedTovFromBuildPlan) which
+            // silently produces empty output for build plans without a
+            // [[PROADS_MACHINE_PLAN_V1]] block. The 5th positional arg of
+            // saveGeneration is the `fullResponse` (truncated to 5000 chars);
+            // the approvedTov is captured in output.approvedTov (no truncation).
             savedGenId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
-              { imageUrl: storedImageUrl, conceptText: conceptRaw.substring(0, 500), buildPlan: conceptRaw },
+              { imageUrl: storedImageUrl, conceptText: conceptRaw.substring(0, 500), buildPlan: conceptRaw, approvedTov: selectedTov },
               conceptRaw, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
               canUseWorkspaces ? activeWorkspaceId : null,
               null, null, mockupResult.resolutionTrace
@@ -4680,7 +4691,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           try {
             comboGenId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
-              { imageUrl: primaryStorageUrl || 'pending_upload', conceptText: combo.conceptText.substring(0, 500), hookText: (combo.hookText || '').substring(0, 200), buildPlan: combo.conceptText },
+              { imageUrl: primaryStorageUrl || 'pending_upload', conceptText: combo.conceptText.substring(0, 500), hookText: (combo.hookText || '').substring(0, 200), buildPlan: combo.conceptText, approvedTov: combo.hookText || combo.conceptText },
               combo.conceptText, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
               canUseWorkspaces ? activeWorkspaceId : null
             );
@@ -5052,6 +5063,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           {
             conceptText: conceptRaw.substring(0, 500),
             buildPlan: conceptRaw,
+            approvedTov: selectedTov || conceptRaw, // Phase 17 — persist approved TOV so the carousel-resize path can read it
             carouselSlides: renderedSlides.map(s => ({
               index: s.index,
               // Base64 data URLs are megabytes each; storing several would blow Firestore's
@@ -5333,7 +5345,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           const storedImageUrl = editResult.storageUrl || 'pending_upload';
           const genId = await feedbackService.saveGeneration(
             user.uid, inputs, 'render',
-            { imageUrl: storedImageUrl, conceptText: (selectedConcept || '').substring(0, 500), buildPlan: buildPlan || '' },
+            { imageUrl: storedImageUrl, conceptText: (selectedConcept || '').substring(0, 500), buildPlan: buildPlan || '', approvedTov: buildPlan || '' },
             buildPlan, resolvedUniverse, 'gemini-3.1-flash-image', 0, editRatio, buildCreativeIdentity(),
             canUseWorkspaces ? activeWorkspaceId : null
           );
@@ -5958,7 +5970,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
       const genId = await feedbackService.saveGeneration(
         user.uid, inputs, 'render',
-        { imageUrl: storedImageUrl, conceptText: (conceptText || selectedConcept || '').substring(0, 500), hookText: (hookText || '').substring(0, 200), buildPlan: bPlan || buildPlan || '' },
+        { imageUrl: storedImageUrl, conceptText: (conceptText || selectedConcept || '').substring(0, 500), hookText: (hookText || '').substring(0, 200), buildPlan: bPlan || buildPlan || '', approvedTov: bPlan || buildPlan || '' },
         bPlan || buildPlan || '', resolvedUniverse, 'gemini-flash', 0, ratio, buildCreativeIdentity(),
         canUseWorkspaces ? activeWorkspaceId : null
       );

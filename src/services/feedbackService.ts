@@ -107,6 +107,14 @@ export interface GenerationRecord {
         ctaText?: string;
         conceptText?: string;
         buildPlan?: string;
+        // Phase 17 — user's approved TOV string (the concept-response text that was
+        // fed to serverGenerateBuildPlan + serverGenerateFinalAd). Persisted so the
+        // `generateSizeVariant` Cloud Function can read it for the cross-size edit
+        // instruction + post-render validateCopyFidelity. Falls back to a best-effort
+        // reconstruction from the build plan's machine plan ownership when missing
+        // (pre-Phase-17 docs and the small fraction of new docs where the frontend
+        // save raced and the field wasn't included).
+        approvedTov?: string;
         blueprintText?: string;
         resolvedImagePrompt?: string;
         imageUrl?: string;
