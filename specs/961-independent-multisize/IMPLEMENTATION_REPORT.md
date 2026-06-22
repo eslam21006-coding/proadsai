@@ -1,0 +1,270 @@
+# Phase 17 — Implementation Report: Independent Multi-Size Ad Generation
+
+**Branch**: `961-independent-multisize`
+**PR**: [#44](https://github.com/eslam21006-coding/proadsai/pull/44)
+**Spec**: [specs/961-independent-multisize/](./)
+**Date**: 2026-06-21
+**Status**: CodeRabbit-clean across 4 review rounds, 11 real bugs fixed, 3 false positives acknowledged.
+
+---
+
+## 1. Files Created
+
+| File | Purpose |
+|---|---|
+| `functions/src/sizeVariant.ts` | New onCall handler for `generateSizeVariant` callable. ~570 LOC. Implements preconditions (PRE-1..7), reference resolution priority (uploaded > own_original > anchor > none), idempotency-keyed debit transaction with race-guard re-read of `genRef`, mode/format gate, itemIndex bounds validation, no-op short-circuit, additive Firestore persistence (single → `mockupHistory` + `sizeVariants[ratio]`; batch → `output.batchResults[i].sizeVariants[ratio]`; carousel → `output.carouselSlides[i].sizeVariants[ratio]`), `SizeVariantTraceEntry` append, charge+refund reconciliation. |
+| `functions/src/__tests__/sizeVariant.test.ts` | 51 contract/unit fixtures covering all 9 spec fixtures (Story-no-drop, null subhead carry-forward, uploaded-reference, same-ratio no-op, fail→refund→retry, anchor-fail `referenceSource: 'none'`, ratio-outside-UI_RATIOS reject, carousel-pre-select reject, no-anti-sameness-fingerprint) + invariants (credit cost, idempotency key shape, callable registration). |
+
+---
+
+## 2. Files Modified
+
+### Backend (`functions/src/`)
+
+| File | Change | Why |
+|---|---|---|
+| `types.ts` | Added `SizeVariantStatus`, `ReferenceSource`, `SizeVariant`, `SizeVariantTraceEntry`, `GenerationScope`, `GenerateSizeVariantRequest`, `GenerateSizeVariantResponse`. Extended `ResolutionTrace` with `readonly sizeVariantTrace?: readonly SizeVariantTraceEntry[]`. | Phase 17 additive type definitions (data-model.md § Type Definitions). |
+| `entitlements.ts` | Added `SIZE_VARIANT_CREDIT_COST = 5`, `computeMultiSizeCost(designs)`, `hasOwnerBalanceForVariant(balance)`, and `generateSizeVariant: "visualPolishes"` entry in `ACTION_FEATURE_MAP`. | Reuse `COSTS.generateImage = 5` for variants (research.md R4). Align authorization across both feature maps after CodeRabbit round 3. |
+| `index.ts` | Imported `generateSizeVariantHandler`; added `COSTS.generateSizeVariant = 5`; added `ACTION_FEATURE_MAP['generateSizeVariant'] = 'visualPolishes'`; registered `generateSizeVariant` onCall (region `europe-west1`, secrets `geminiApiKey`+`openaiApiKey`, 300s, 2GiB, maxInstances 30); **commented out** the `reflowImage` onCall registration. | New callable per spec; HOTFIX-F reflow is superseded (FR-021). |
+| `package.json` | Added `node lib/__tests__/sizeVariant.test.js` to the `test` script chain (after `creativeResolverParity`, before `contractFixtures`). | Wire the new test into the existing test runner. |
+
+### Frontend (`src/`)
+
+| File | Change | Why |
+|---|---|---|
+| `types.ts` | Imported `SizeVariantStatus`, `ReferenceSource`, `SizeVariant`, `GenerateSizeVariantRequest`, `GenerateSizeVariantResponse` from `./types`. | Mirror backend types for typed callables. |
+| `App.tsx` | Repointed 4 call sites from `reflowImage` → `generateSizeVariant`: (1) single-image auto-reflow in the main render path (US1 anchor-first fan-out, FR-002a/FR-005), (2) single-mode resize in `handleRescale` (US2, FR-007), (3) batch pre-select fan-out with ≤10 concurrency waves + 429 exponential backoff (US3, FR-010/FR-016), (4) carousel resize-only fan-out with same concurrency + backoff (US3, FR-009). Added `runWithBackoff` helper (base 1s, ×2, max 4 attempts, jitter). Added per-item/per-size loading state, partial-failure retry surface, no-op short-circuit UX. | Frontend fan-out is client-side per research.md R2. |
+| `planconfig.ts` | Added `generateSizeVariant: 5` to `CREDIT_COSTS`. | Reuse `generateImage` cost (5) for the size-variant path. |
+
+### Specs & docs
+
+| File | Change | Why |
+|---|---|---|
+| `specs/961-independent-multisize/quickstart.md` | Baseline note recorded (T001): `culturalCompliance 929, copyQuality 71, copyStructure 206, conditionalCopyFields 77, step2OptionalFields 22, modeFormatValidator 6144 fuzz` with date stamp. | SC-007 regression-proof reference. |
+| `specs/961-independent-multisize/tasks.md` | T001–T029 marked `[x]`; T030 left as `[ ]` for manual `npm run dev` verification. | Task ledger closeout. |
+| `specs/961-independent-multisize/contracts/generateSizeVariant.md` | Added **PRE-7** to the preconditions table: `itemIndex` MUST be `null` for `scope === 'single'` and a non-negative integer within `output.batchResults` / `output.carouselSlides` array bounds for `scope === 'batch'` / `'carousel'`. | CodeRabbit round 2 spec-gap fix. |
+| `specs/961-independent-multisize/data-model.md` | Added **VR-8** validation rule documenting the `itemIndex` scope-binding constraint. | CodeRabbit round 2 spec-gap fix. |
+| `specs/961-independent-multisize/contracts/credit-flow.md` | Added `text` language tags to both fenced code-block examples (lines 12-15 and 35-40). | CodeRabbit round 1 MD040 lint fix. |
+| `docs/LAUNCH_MATRIX.md` | Added a "Phase 17 (v2) — Independent Multi-Size Generation (rework)" blockquote under the existing Phase 17 entry, describing the supersession of HOTFIX-F. | Documentation traceability. |
+| `vitest.config.ts` | Added `include: ['src/**/*.{test,spec}.?(c|m)[jt]s?(x)']` and `exclude: ['node_modules', 'dist', 'functions/lib', 'functions/src', ...]`. | Prevent the frontend `npm test` (vitest) from picking up the transpiled backend tests in `functions/lib/`. Without this, 32 of 34 vitest test files were the wrong-suite `lib/__tests__/*.test.js` files. |
+
+---
+
+## 3. Files Commented Out (HOTFIX-F, not deleted — FR-021 reversibility)
+
+| File | What was done | Reversibility note |
+|---|---|---|
+| `functions/src/reflowImage.ts` | Header comment added: "Superseded by Phase 17 independent multi-size generation. Kept for reversibility." Body intentionally preserved (HOTFIX-F test fixtures HFF.6.a–o and the HFF building blocks reference it). | To re-enable: restore the `reflowImage` registration in `index.ts` AND restore the frontend callers in `App.tsx`. |
+| `functions/src/reflowOutpaint.ts` | Header comment added. | Same. |
+| `functions/src/reflowRerender.ts` | Header comment added. | Same. |
+| `functions/src/reflowRouter.ts` | Header comment added. | Same. |
+| `functions/src/index.ts` — `reflowImage` onCall registration | Block commented out with `/* ... */` + reversibility note in the preceding comment. | The `reflowImage` callable is no longer in the Cloud Functions deploy list. Re-enabling requires uncommenting AND restoring the frontend callers. |
+| `functions/src/generators.ts` — "REFLOW: Ratio" prompt block at line ~6665 | **NOT commented** — the TypeScript parser treats long `========` sequences inside template literals as merge-conflict markers and errors out. The reversibility is provided by the file content itself (the lines are still in the template literal) + the `reflowImage` callable that consumed them is now commented out, so the code path is unreachable from the frontend. | To re-enable: restore the `reflowImage` registration. |
+
+---
+
+## 4. Key Architectural Decisions
+
+### 4.1 Anchor-first fan-out (FR-002a)
+In a pre-select multi-size run, the **anchor** (primary) size is generated first via the existing unchanged `serverGenerateFinalAd` pipeline. The completed anchor image is then passed as `sourceImageOverride` to `generateSizeVariant` calls for each remaining size, so variants have a high-quality visual reference. The frontend, not the backend, orchestrates this sequencing.
+
+### 4.2 Client-side fan-out (research.md R2)
+- The frontend fires the anchor via `serverGenerateFinalAd`, then loops `generateSizeVariant` for remaining sizes.
+- Each variant is its own Cloud Function invocation (300s timeout), so the 540s per-request ceiling is never approached.
+- The frontend (not the backend) is the single point of concurrency control.
+- Anchor-first means variants have a completed reference image before they start, not in parallel with the anchor.
+
+### 4.3 Concurrency cap ≤10 (FR-010)
+Both batch and carousel fan-out chunk into waves of ≤10 concurrent calls via `Promise.allSettled`. Within a wave, all calls run in parallel; waves run sequentially. This is implemented in `App.tsx` in two places (batch pre-select and carousel resize).
+
+### 4.4 429 rate-limit handling (FR-016)
+`runWithBackoff` helper in `App.tsx` wraps each `generateSizeVariant` call. On a `functions/v2/https/ResourceExhausted` or `resource-exhausted` error (or any error message containing "429"), it retries with exponential backoff: base 1s, ×2 per attempt, max 4 attempts, capped at 8s, with random jitter. A failed run does NOT abort the rest of the wave.
+
+### 4.5 No anti-sameness fingerprint for variants (FR-019a)
+A size variant is the **same ad at a different size**, not a new creative. The `SizeVariantTraceEntry` lives in its own array on `resolutionTrace.sizeVariantTrace` — structurally separate from `copyDiversity` (Phase 23). The variant path never calls `generateBuildPlan()` and never writes a fingerprint. This is asserted by fixture 9 in `sizeVariant.test.ts` ("variant does NOT write anti-sameness fingerprint").
+
+### 4.6 Ratio-appropriate layout derivation (research.md R1)
+The full prompt is rebuilt for the target canvas via `buildFinalImagePrompt({ aspectRatio: target, ...})` inside the new `generateSizeVariantHandler`. The parent's saved build plan is **reused** (not re-derived), so the visual style and copy semantics are preserved, but the layout contract (zones, safe-areas, typography) is recomputed for the target ratio.
+
+### 4.7 Per-variant idempotency at transaction level (FR-014, code review)
+The debit transaction re-reads `genRef` and rejects with `HttpsError('aborted')` when a previous concurrent attempt already wrote a `pending` variant with the same `idempotencyKey`, and `HttpsError('already-exists')` if a previous attempt already reached `succeeded`. The catch block preserves these HttpsError codes instead of rewriting them to `resource-exhausted` (CodeRabbit round 3 fix).
+
+### 4.8 Reference resolution priority (R3, FR-008, FR-003, FR-005a)
+Priority order: `parent.referenceImage` (uploaded) > `data.sourceImageOverride` (own_original) > `parent.output.imageUrl` (anchor) > `null` (none). The `ReferenceSource` is recorded in the trace for auditability.
+
+### 4.9 No migration — additive persistence
+Single-image variants reuse the existing `mockupHistory` array (FR-005) + add a `sizeVariants[ratio]` map for O(1) no-op lookups. Batch/carousel add `output.batchResults[i].sizeVariants[ratio]` / `output.carouselSlides[i].sizeVariants[ratio]`. The `resolutionTrace` gains a `sizeVariantTrace` array. Legacy documents without the new fields behave exactly as before.
+
+### 4.10 Frontend + backend agreement (Constitution XI)
+- UI_RATIOS, no-op short-circuit, refund semantics, itemIndex scope-binding, mode/format gate, and `referenceSource: 'none'` fallback are enforced in **both** layers.
+- `ACTION_FEATURE_MAP` in `entitlements.ts` and `ACTION_FEATURE_MAP` in `index.ts` now agree on `generateSizeVariant: "visualPolishes"` (CodeRabbit round 3 alignment fix).
+
+---
+
+## 5. New TypeScript Types
+
+All in `functions/src/types.ts` (and mirrored in `src/types.ts` for the frontend):
+
+```typescript
+export type SizeVariantStatus = "pending" | "succeeded" | "failed";
+
+export type ReferenceSource = "uploaded" | "own_original" | "anchor" | "none";
+
+export interface SizeVariant {
+    ratio: AspectRatio;
+    status: SizeVariantStatus;
+    url: string | null;
+    referenceSource: ReferenceSource;
+    creditsCharged: number;        // net (0 on no-op / after refund)
+    noOp?: boolean;                // true when same-size already succeeded
+    errorCode?: string;
+    idempotencyKey: string;        // `${genId}:${scope}:${itemIndex}:${ratio}`
+    updatedAt: number;
+}
+
+export interface SizeVariantTraceEntry {
+    ratio: AspectRatio;
+    scope: "single" | "batch" | "carousel";
+    itemIndex: number | null;
+    referenceSource: ReferenceSource;
+    provider: "openai" | "gemini";
+    copyFidelityPasses: number;
+    succeeded: boolean;
+    errorCode?: string;
+    charged: number;               // pre-refund
+    refunded: number;              // 0 on success, 5 on failure
+    timestamp: number;
+}
+
+export type GenerationScope = "single" | "batch" | "carousel";
+
+export interface GenerateSizeVariantRequest {
+    generationId: string;
+    scope: GenerationScope;
+    itemIndex: number | null;
+    targetAspectRatio: AspectRatio;     // MUST be in UI_RATIOS
+    sourceImageOverride?: string;
+    activeWorkspaceId?: string;
+}
+
+export interface GenerateSizeVariantResponse {
+    success: boolean;
+    variant: SizeVariant;
+    netCreditsCharged: number;          // 0 (no-op/refund) | 5 (success)
+}
+```
+
+`ResolutionTrace` extended with:
+
+```typescript
+readonly sizeVariantTrace?: readonly SizeVariantTraceEntry[];
+```
+
+---
+
+## 6. New Callable Endpoints
+
+| Endpoint | Type | Region | Timeout | Memory | Notes |
+|---|---|---|---|---|---|
+| `generateSizeVariant` | Firebase `onCall` | `europe-west1` | 300s | 2GiB | Secrets: `geminiApiKey`, `openaiApiKey`. MaxInstances 30. CORS enabled. **Registered.** Replaces the `reflowImage` onCall for multi-size and resize flows. |
+| `reflowImage` | (HOTFIX-F) | — | — | — | **Commented out** in `functions/src/index.ts` with a reversibility note. The `reflowImageHandler` import + module body are preserved; the Cloud Function export is not. |
+
+---
+
+## 7. Test Files
+
+| File | Coverage |
+|---|---|
+| `functions/src/__tests__/sizeVariant.test.ts` (51 tests, all passing) | **Fixture 1**: UI_RATIOS acceptance for `1:1`/`3:4`/`9:16` and rejection of `4:5`/`16:9`/`2:1`/`1:2`/`21:9`/`9:21`/empty. **Fixture 2**: Null subheadText carry-forward (FR-006/VR-4/INV-4). **Fixture 3**: Uploaded reference precedence over own_original + anchor (FR-008/VR-6). **Fixture 4**: Same-ratio no-op short-circuit with `noOp:true`, `netCreditsCharged:0` (FR-011/VR-3). **Fixture 5**: Fail→refund→retry idempotency (FR-014/FR-015/INV-1/INV-2). **Fixture 6**: Anchor-failed pre-select → `referenceSource:'none'`, still generates (FR-005a/VR-7). **Fixture 7**: `targetAspectRatio` outside UI_RATIOS rejected pre-charge (VR-1). **Fixture 8**: Carousel pre-select rejected; carousel resize accepted (VR-2). **Fixture 9**: Variant does NOT write anti-sameness fingerprint (FR-019a/INV-6). **Invariants**: Credit cost helper (0/1/3/5/8/40/25 designs, defensive NaN/Infinity/negative), idempotency key shape (single uses `'null'`, batch uses itemIndex), callable registered in `lib/index.js`. |
+
+**Existing baseline tests (untouched, all green)**:
+- Backend `culturalCompliance` (929), `copyQuality` (71), `copyStructure` (206), `conditionalCopyFields` (77), `modeFormatValidator` (6144 fuzz), `languageQuality`, `workspace` (5 passed + 13 skipped), `savedProjects.*` (14+8), `creativeResolverParity`, `contractFixtures`, `HFF.6.a–o`, `Phase 16` creative-mode QA.
+- Frontend `step2OptionalFields` (22), `FavoritesPanel.a11y` (4).
+
+---
+
+## 8. Credit Model
+
+### Per-design cost
+**5 credits per rendered design** (anchor + each additional size + each carousel slide). Reuses `COSTS.generateImage = 5` — no separate cost key (research.md R4, FR-012). Defined as `SIZE_VARIANT_CREDIT_COST = 5` in `functions/src/entitlements.ts` and mirrored as `CREDIT_COSTS.generateSizeVariant = 5` in `src/planconfig.ts`.
+
+### Frontend pre-check (FR-013)
+`totalCreditCost = designs × 5` (anchor + variants, minus same-size no-ops). Displayed before the user commits. If `userCredits < totalCost`, block the request with a "Need X credits, you have Y" message and **do not call the backend at all**.
+
+### Per-variant backend flow
+Each `generateSizeVariant` invocation:
+1. **No-op short-circuit** (FR-011): if a `succeeded` variant already exists for the same `(genId, scope, itemIndex, ratio)` → return `{ success: true, variant: { ...noOp:true, creditsCharged:0 }, netCreditsCharged: 0 }`. **No charge.**
+2. **Affordability pre-check** (PRE-6): if owner balance < 5 → `resource-exhausted`. **No charge.**
+3. **Upfront charge** (FR-012a): in a Firestore transaction, decrement owner credits by 5, write a `pending` variant, mark the idempotency key as in-flight, and re-read `genRef` to detect concurrent retries.
+4. **Generate**: render the variant via `generateFinalAd` with the rebuilt prompt for the target canvas.
+5. **Terminal write**:
+   - On success: write `succeeded` variant + `SizeVariantTraceEntry`. **Keep the 5-credit charge.**
+   - On failure: write `failed` variant + `SizeVariantTraceEntry` + **refund 5 credits** to the owner.
+
+### Net invariant (SC-005)
+`net credits charged = 5 × number of successfully rendered designs` (no-ops + failed designs contribute 0).
+
+### Idempotency (FR-014)
+Key shape: `${genId}:${scope}:${itemIndex ?? "null"}:${ratio}`. Reuse-keyed: a retry of a failed variant reuses the same key and never double-charges; a re-request of a `succeeded` variant short-circuits to no-op. Enforced at the transaction level via re-read of `genRef` + `HttpsError('aborted')` / `HttpsError('already-exists')` race guards.
+
+---
+
+## 9. Known Limitations & TODOs
+
+### 9.1 T030 — Manual `npm run dev` verification (deferred)
+- Quickstart Flows A (pre-select), B (resize), C (batch/carousel) and the credit accounting check require a live Firebase + Gemini/OpenAI connection.
+- **Not done in this session.** Should be exercised by the user before merge.
+
+### 9.2 `functions/src/generators.ts` "REFLOW: Ratio" prompt block — not commented
+- The TypeScript parser (v5.7) misinterprets long `====` sequences inside template literals as merge-conflict markers and errors out.
+- The block was reverted to its original text (preserved in `git diff bdf6f4d`). The code path is unreachable from the frontend because the `reflowImage` callable is commented out.
+- Reversibility is therefore at the call-site level (index.ts registration), not the prompt-text level.
+
+### 9.3 `sizeVariant.test.ts` uses `declare const require: any` / `require("fs")` (intentional, CodeRabbit round 1 false positive)
+- All other backend tests in `functions/__tests__/` use the same CommonJS pattern.
+- A separate refactor PR could migrate all of them to typed ES imports at once; that was deemed out of scope for Phase 17 and CR acknowledged this with a `<review_comment_withdrawn>`.
+
+### 9.4 `vitest.config.ts` `include: ['src/***']` (intentional, CodeRabbit round 1 false positive)
+- The AGENTS.md note "There is no Vitest" is **out of date** — the project has `vitest@4.1.4` + `@testing-library/react` + `vitest-axe` installed, and the frontend has two test suites (`step2OptionalFields.test.tsx` 22 tests, `FavoritesPanel.a11y.test.tsx` 4 tests).
+- The `include`/`exclude` scopes are required to make `npm test` work for the frontend without picking up the transpiled `functions/lib/` JS files.
+- CR acknowledged this with a `<review_comment_withdrawn>` after the explanation.
+
+### 9.5 Size-variant end-to-end coverage
+- The 51 contract/unit fixtures cover the structural shape, idempotency key, credit cost, and FR-019a separation. They do **not** exercise a real `generateSizeVariant` end-to-end call with a live Firestore emulator + a real provider API.
+- The full end-to-end happy path (buildFinalImagePrompt + validateCopyFidelity with a real reference image) is covered indirectly by the existing 7,690+ baseline tests (SC-007).
+- A future test suite could add emulator-based integration tests for the callable.
+
+### 9.6 Carousel pre-select deliberately unsupported (VR-2, FR-001)
+- The backend rejects `scope: 'carousel'` requests without a `sourceImageOverride` (carousel is resize-only).
+- The frontend UI does not expose a carousel pre-select; carousel reaches multiple sizes only via the resize flow.
+- This is intentional and aligned with the spec.
+
+### 9.7 No anti-sameness fingerprint for variants (FR-019a, by design)
+- The variant path never calls `generateBuildPlan()` and never writes a Phase 23 `copyDiversity` fingerprint. A variant is the same ad at a new size, not a new creative.
+- Asserted by fixture 9 in `sizeVariant.test.ts`.
+
+---
+
+## 10. PR / Commit Ledger
+
+| Commit | Type | Description |
+|---|---|---|
+| `bdf6f4d` | feat | Independent multi-size generation (17 files, +1411/-198) |
+| `683af51` | fix | CR round 1: itemIndex scope validation, mode-format gate, Firestore dot-notation, MD040 language tags |
+| `cb52cb3` | fix | CR round 2: itemIndex bounds, idempotency-at-debit, scope-derived adFormat, PRE-7 + VR-8 spec docs |
+| `ed29aad` | fix | CR round 3: align `generateSizeVariant` feature gate to `visualPolishes` across both maps; preserve HttpsError codes (aborted, already-exists) in the debit-transaction catch block |
+
+**PR**: https://github.com/eslam21006-coding/proadsai/pull/44
+**CodeRabbit status**: 4 review rounds, 11 real bugs fixed, 3 false positives acknowledged with `<review_comment_withdrawn>`, final round "Confirmed — round 3 is clean ✅" (id `4762108509` at 2026-06-21T13:21:09Z).
+
+---
+
+## 11. Next Steps (per the gate order)
+
+1. **Claude audit** of the diff (the user has not yet requested this).
+2. **Manual `npm run dev` smoke test** of quickstart Flows A, B, C — **T030 remains open**.
+3. **Merge via GitHub UI** to `main`.
+4. **Deploy functions** (`cd functions && npm run build && firebase deploy --only functions` per AGENTS.md Critical Architecture Rule #1).
+5. **Production test** on `app.proadsai.com`.
+
+No source code files were modified during the creation of this report.

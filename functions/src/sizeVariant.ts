@@ -623,18 +623,19 @@ export async function generateSizeVariantHandler(
                 "based on render success (no real failure).",
             );
             copyFidelityPasses = 1;
-        }
-        copyFidelityPasses = fidelityCheck.passed ? 1 : 0;
-        if (!fidelityCheck.passed) {
-            // The post-render fidelity check failed — log the drop. The model
-            // may have already produced a usable image (and generateFinalAd's
-            // internal retry loop would have already retried), but we surface
-            // this in the trace for audit + future tuning.
-            console.warn(
-                `sizeVariant: copyFidelity FAILED for ${data.targetAspectRatio} — ` +
-                `failedFields=${JSON.stringify(fidelityCheck.failedFields)}, ` +
-                `genId=${data.generationId}, scope=${data.scope}, itemIndex=${data.itemIndex}`,
-            );
+        } else {
+            copyFidelityPasses = fidelityCheck.passed ? 1 : 0;
+            if (!fidelityCheck.passed) {
+                // The post-render fidelity check failed — log the drop. The model
+                // may have already produced a usable image (and generateFinalAd's
+                // internal retry loop would have already retried), but we surface
+                // this in the trace for audit + future tuning.
+                console.warn(
+                    `sizeVariant: copyFidelity FAILED for ${data.targetAspectRatio} — ` +
+                    `failedFields=${JSON.stringify(fidelityCheck.failedFields)}, ` +
+                    `genId=${data.generationId}, scope=${data.scope}, itemIndex=${data.itemIndex}`,
+                );
+            }
         }
 
         if (result.image) {
