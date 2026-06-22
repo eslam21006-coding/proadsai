@@ -37,7 +37,7 @@ interface GenerateSizeVariantResponse {
 | PRE-3 | `targetAspectRatio ∈ UI_RATIOS`. | `invalid-argument` (VR-1) |
 | PRE-4 | `scope === 'carousel'` only valid for resize flow (not pre-select). | `invalid-argument` (VR-2) |
 | PRE-5 | Parent `generations/{generationId}` exists and is owned by the credit owner / workspace. | `not-found` / `permission-denied` |
-| PRE-6 | Credit owner balance ≥ 5. | `resource-exhausted` (per-variant guard; whole-request pre-check is frontend) |
+| PRE-6 | Credit owner balance ≥ 5. Evaluated **only after** the no-op short-circuit (Behavior step 2): a same-size request that already succeeded returns `netCreditsCharged: 0` without reaching this balance gate (FR-011). | `resource-exhausted` (per-variant guard; whole-request pre-check is frontend) |
 | PRE-7 | `itemIndex` is `null` when `scope === 'single'` and a non-negative integer (within the parent's `batchResults`/`carouselSlides` array bounds) when `scope === 'batch'` or `'carousel'`. Violation → `invalid-argument`. Aligns with the data-model.md scope-binding rule and the real bug fixed in commit `683af51` / `f5a4f7c`. | `invalid-argument` |
 
 ## Behavior (happy path)
@@ -46,7 +46,7 @@ interface GenerateSizeVariantResponse {
 2. **No-op check** — if a `succeeded` variant already exists for the key → return `{ success: true, variant: {...noOp:true, creditsCharged:0}, netCreditsCharged: 0 }`. (FR-011 / VR-3)
 3. Resolve **reference image** by priority: uploaded reference on parent → `sourceImageOverride` (own original / anchor) → none. Set `referenceSource`. (R3 / VR-6 / VR-7)
 4. In a Firestore transaction: deduct 5 from owner, write variant `status: pending`, record idempotency key as in-flight.
-5. Read parent brief (build plan + copy fields, `null` preserved). Rebuild prompt for `targetAspectRatio` via `buildFinalImagePrompt({ aspectRatio: target, imageParts:[reference], styleReferencePresent:true, reflowInstruction: undefined, ...brief })`.
+5. Read parent brief (build plan + copy fields, `null` preserved). Rebuild the directive for `targetAspectRatio` via `buildVariantEditInstruction({ sourceRatio, targetRatio: targetAspectRatio, copyFields })` and pass it as `editInstruction` into `generateFinalAd(...)` (the shipped edit-instruction path; the reference image is the visual anchor). `null` copy fields stay omitted (FR-006).
 6. Render via `createVisualRoutingCaller` (respects `MODEL_PROVIDER`); run `validateCopyFidelity()` with existing retry loop.
 7. On success: persist `url`, set `status: succeeded`, write `SizeVariantTraceEntry`, return `netCreditsCharged: 5`.
 8. On failure: refund 5 in a transaction, set `status: failed` + `errorCode`, write trace, return `success:false, netCreditsCharged: 0`. (FR-015)

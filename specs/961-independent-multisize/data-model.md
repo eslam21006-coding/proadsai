@@ -78,6 +78,7 @@ export interface GenerateSizeVariantRequest {
   targetAspectRatio: AspectRatio; // must be in UI_RATIOS
   // Reference seed: backend resolves priority, but the client passes what it has.
   sourceImageOverride?: string;  // data URL / storage ref of source-own original (resize) or anchor (pre-select)
+  //   NOTE (FR-008): a user-uploaded reference on the PARENT generation overrides this — backend priority is uploaded > own_original (sourceImageOverride) > anchor > none.
   activeWorkspaceId?: string;
 }
 

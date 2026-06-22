@@ -657,9 +657,12 @@ export async function generateSizeVariantHandler(
     update["resolutionTrace.sizeVariantTrace"] = admin.firestore.FieldValue.arrayUnion(traceEntry);
     update.updatedAt = admin.firestore.FieldValue.serverTimestamp();
     await genRef.update(update);
-    // Refund the credit owner.
-    const refundOwnerUid = parent.creditOwnerUid ?? parent.userId ?? creditOwnerUid;
-    const refundRef = db.collection("users").doc(refundOwnerUid);
+    // Refund the SAME account that was debited (creditOwnerUid / userRef), NOT a
+    // parent-derived uid. If parent.creditOwnerUid / parent.userId drift from the
+    // resolved creditOwnerUid (e.g. a team-membership change between the original
+    // render and this variant), a parent-derived refund would credit the wrong
+    // account while the debit hit creditOwnerUid (CodeRabbit: refund the debited account).
+    const refundRef = userRef;
     try {
         await refundRef.update({
             credits: admin.firestore.FieldValue.increment(SIZE_VARIANT_CREDIT_COST),
@@ -669,7 +672,7 @@ export async function generateSizeVariantHandler(
         // Refund failure is logged but not thrown — the failed variant + trace are
         // already persisted, and a follow-up reconciliation pass can pick up the
         // dangling balance.
-        console.warn(`sizeVariant: refund failed for ${refundOwnerUid}:`, refundErr);
+        console.warn(`sizeVariant: refund failed for ${creditOwnerUid}:`, refundErr);
     }
     return { success: false, variant: failedVariant, netCreditsCharged: 0 };
 }

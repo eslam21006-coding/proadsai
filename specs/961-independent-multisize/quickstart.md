@@ -18,7 +18,7 @@ cd functions ; npm test ; cd ..
 npm test                 # frontend step2OptionalFields suite
 ```
 
-Baseline (captured 2026-06-21, T001): culturalCompliance 929, copyQuality 71, copyStructure 206, conditionalCopyFields 77, step2OptionalFields 22, modeFormatValidator 6144 fuzz (~7,690+ total, 0 failed). Exit code 0.
+Baseline (captured 2026-06-21, T001): culturalCompliance 929, copyQuality 71, copyStructure 206, conditionalCopyFields 77, step2OptionalFields 22, modeFormatValidator 6144 fuzz (7,449 across these listed suites, 0 failed; the 6144 entry is a combinatorial fuzz count). Exit code 0.
 
 ## Flow A — Pre-select multiple sizes (User Story 1)
 
