@@ -565,12 +565,58 @@ export async function generateSizeVariantHandler(
         // is reused across all sizes of the same ad, so the technical prompt
         // contains the same text elements the anchor used (FR-018, FR-006).
         const { technicalPrompt } = parseBuildPlanEnvelope(ctx.buildPlan);
+        // Diagnostic (debug): log the actual inputs to validateCopyFidelity so any
+        // future false-negative on 9:16 / 1:1 / 3:4 variants can be traced in
+        // Cloud Logging without re-deploying. Strings are substring-truncated to
+        // keep the log entry under the 16 KB Cloud Logging limit; full strings
+        // are still passed to validateCopyFidelity.
+        try {
+            // eslint-disable-next-line no-console
+            console.log("[sizeVariant] validateCopyFidelity args:", JSON.stringify({
+                technicalPrompt: technicalPrompt ? technicalPrompt.substring(0, 800) : null,
+                technicalPromptLength: technicalPrompt ? technicalPrompt.length : 0,
+                technicalPromptHasHookText: technicalPrompt
+                    ? technicalPrompt.includes(variantCopyFields.hookText)
+                    : false,
+                technicalPromptHasCtaText: technicalPrompt && variantCopyFields.ctaName
+                    ? technicalPrompt.includes(variantCopyFields.ctaName)
+                    : null,
+                copyFields: {
+                    hookText: variantCopyFields.hookText,
+                    subheadText: variantCopyFields.subheadText,
+                    ctaName: variantCopyFields.ctaName,
+                    benefitText: variantCopyFields.benefitText,
+                },
+                approvedTovSource: parent.output?.approvedTov ? "saved" : (ctx.approvedTov === (parent.output?.buildPlan ? reconstructApprovedTovFromBuildPlan(parent.output.buildPlan, parent.inputs) : "") ? "reconstructed" : "missing"),
+                approvedTovLength: ctx.approvedTov.length,
+                approvedTovPreview: ctx.approvedTov.substring(0, 400),
+            }));
+        } catch {
+            // Diagnostic only — never fail the handler.
+        }
         const fidelityCheck = validateCopyFidelity(technicalPrompt, {
             hookText: variantCopyFields.hookText,
             subheadText: variantCopyFields.subheadText,
             ctaName: variantCopyFields.ctaName,
             benefitText: variantCopyFields.benefitText,
         });
+        // Diagnostic (debug): per-field substring check on the raw prompt (bypasses
+        // validateCopyFidelity's own normalization). This is the actual underlying check
+        // — if the raw string is contained, validation should pass; if not, the
+        // strings genuinely differ (e.g. sanitization, encoding, or reconstruction drift).
+        try {
+            const norm = (s: string | null) => (s ?? "").normalize("NFC").trim().replace(/\s+/g, " ");
+            const tp = norm(technicalPrompt);
+            // eslint-disable-next-line no-console
+            console.log("[sizeVariant] per-field substring check (raw):", JSON.stringify({
+                hookText: { value: variantCopyFields.hookText, included: tp.includes(norm(variantCopyFields.hookText)) },
+                subheadText: { value: variantCopyFields.subheadText, included: variantCopyFields.subheadText ? tp.includes(norm(variantCopyFields.subheadText)) : null },
+                ctaName: { value: variantCopyFields.ctaName, included: variantCopyFields.ctaName ? tp.includes(norm(variantCopyFields.ctaName)) : null },
+                benefitText: { value: variantCopyFields.benefitText, included: variantCopyFields.benefitText ? tp.includes(norm(variantCopyFields.benefitText)) : null },
+            }));
+        } catch {
+            // Diagnostic only.
+        }
         copyFidelityPasses = fidelityCheck.passed ? 1 : 0;
         if (!fidelityCheck.passed) {
             // The post-render fidelity check failed — log the drop. The model
