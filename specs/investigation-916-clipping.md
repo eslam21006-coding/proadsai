@@ -41,7 +41,7 @@ There are **three secondary amplifiers** (soft prompt instructions and shrunken 
 `buildFinalImagePrompt` itself does **not** branch its text content on `aspectRatio`. It receives the four copy fields (`hookText`, `subheadText`, `ctaName`, `benefitText`) already resolved by the caller (`generateFinalAd`) and emits them verbatim:
 
 - **Does the prompt include ALL copy fields for both ratios?** Yes — the MANDATORY TEXT ELEMENTS block (`5377-5383`) lists every non-null field identically regardless of ratio:
-  ```
+  ```ts
   ✓ HEADLINE (REQUIRED): "${hookText}"
   ✓ SUBHEADLINE (REQUIRED): "${subheadText}"
   ✓ CTA BUTTON (REQUIRED): "${ctaName}"
@@ -84,7 +84,7 @@ For every other mode (including the default `standard_hero` → `hero_focus`), *
 **File:** `functions/src/generators.ts:1356-1547`
 
 For paired modes there are explicit `isTall` (9:16) branches, e.g.:
-```
+```ts
 1375: '- 9:16 EXECUTION: Stack cards should be LARGER and more spaced vertically...'
 1392: '- 9:16 EXECUTION: Extended ticket with speaker portrait prominent...'
 ```
@@ -126,7 +126,7 @@ maxSubheadChars:  isCompact ? 50 : 70,   // ← 50 for 9:16 vs 70 for 1:1
 maxBenefitChars:  isCompact ? 30 : 45,
 ```
 These surface in the prompt as a soft instruction (`layoutContract.ts:648-649`):
-```
+```ts
 COPY LIMITS:
 Headline: max 40 chars | Subhead: max 50 chars | CTA: max 20 chars | Benefit: max 30 chars
 ```
@@ -188,6 +188,8 @@ console.log('[9:16 DEBUG] textPrompt length:', _promptResult.textPrompt.length);
 ---
 
 ## Hypothesis & Recommended Fix Direction (NOT yet applied)
+
+> **Status (as of commit `f094123`, 2026-06-22):** Recommendation #1 has been applied in commit `f094123` — the hard `substring(0, 50)` block at `generators.ts:5643-5658` is now commented out (kept for reversibility). The companion soft `maxSubheadChars: 50` was bumped to `65` to remove the numeric coincidence and the inverted ratio ordering. Recommendations #2–#4 remain open and will be evaluated in a follow-up after production validation of the current fix.
 
 **Primary cause:** `generators.ts:5656` — `subheadText = subheadText.substring(0, 50).trim()` for 9:16/4:5 physically deletes the tail of the subheadline before render. This is a hard mid-string chop (often mid-word), which is exactly the "last few words cut off" symptom, present on both fresh and resize paths.
 
