@@ -827,6 +827,16 @@ interface ResolutionTrace {
   }>;
   launchMatrixCheckPassed: boolean;
   launchMatrixBlockReason?: string;
+  // Phase 28 — additive expression-adaptation sub-object (mirrors types.ts
+  // ResolutionTrace.expressionAdaptation). Records the emotional direction
+  // resolved from the active hook angle or retargeting objection. Omitted
+  // when no hook/objection is active (no regression vs pre-Phase-28).
+  expressionAdaptation?: {
+    source: 'hook' | 'objection';
+    sourceId: string;
+    emotion: string;
+    applied: boolean;
+  };
 }
 ```
 
@@ -2358,25 +2368,55 @@ Same checklist as the old Phase 8.E.6 — recreate products in Live mode, genera
 
 ---
 
-## Phase 28 — Expression Adaptation
+## Phase 28 — Expression Adaptation ✅ DONE (2026-06-23)
 **Requires:** Phase 5 (pipeline).
 **Blocks:** Nothing.
 
 **Scope:** The model currently preserves the uploaded face identity (correct per the face identity protection rules) but does NOT adapt the facial expression to match the hook's emotional context. A pain hook showing someone struggling should show concern or frustration on the hero's face — not a bright smile from the uploaded photo. The generation prompt must instruct the model to transform the expression while preserving the bone structure and identity.
 
+**Architecture (resolved 2026-06-23):** The hook→expression mapping is **guidance input to the concept/blueprint generation step**, NOT a rigid override injected into `TECHNICAL_PROMPT`. An `EXPRESSION DIRECTION:` line is emitted into the `[VISUAL ARCHITECT V5.0]` concept prompt in `generators.ts` (line ~3100) immediately after `MOOD DIRECTION:`, mirroring the existing tone guidance. Gemini authors the concept-specific expression into each concept's `MOOD_EMOTION` / `SUBJECT_ACTION` fields, which then flow into the synthesized `TECHNICAL_PROMPT` through the existing blueprint→technical-prompt synthesis. Face-identity protection stays a `TECHNICAL_PROMPT` rule at priority #1.
+
+**Canonical hook-angle mapping (10 ids from `HOOK_ANGLE_KNOWLEDGE`):**
+- `pain` → concern, frustration (slight frown, tired eyes, jaw tension — NOT anger)
+- `curiosity` → intrigue, thoughtfulness (raised eyebrow, slight head tilt)
+- `logic` → analytical clarity (focused gaze, neutral mouth, evaluating)
+- `social_proof` → confidence, quiet pride (relaxed confident expression)
+- `urgency` → alertness, focused intensity (focused eyes, compressed lips)
+- `emotional` → empathetic, heartfelt (warm vulnerability — confirmed default)
+- `statistics` → sober, analytical (confirmed default)
+- `scarcity` → urgent, alert (confirmed default)
+- `logical_authority` → commanding, assured (confirmed default)
+- `future_based` → aspirational, hopeful, looking forward (confirmed default)
+- Defensive aliases: `shocking_stat`→`statistics`, `fear_of_missing_out`→`urgency`, `future_pacing`→`future_based`
+- Unknown non-null id → fallback "confident, approachable" (never null for a real run)
+- Null input → no `EXPRESSION DIRECTION:` line emitted (no regression; FR-007)
+
+**Retargeting objection families (12 ids from `RETARGETING_OBJECTION_DATA`):**
+- Price/budget/payment (`price_too_high`, `no_budget_now`, `need_installments`) → analytical, evaluating
+- Trust/been-burned/tried-before (`dont_trust`, `tried_before_failed`, `will_it_work_for_me`) → reassuring, confident
+- Timing/no-time/not-ready (`no_time`, `not_ready_yet`) → urgent, focused
+- All others (`overwhelmed`, `need_approval`, `dont_want_call`, `dont_need_it`) → confident, approachable (fallback)
+
 **Key behaviors:**
-- Map each hook angle to an appropriate facial expression:
-  - pain → concern, frustration, slight frown, tired eyes
-  - aspiration → determined, focused, slight confident smile
-  - curiosity → raised eyebrow, thoughtful, intrigued
-  - fear → worried, tense, guarded
-  - social_proof → confident, validated, proud
-  - authority → commanding, serious, assured
-  - urgency → alert, intense, leaning forward
-- The expression instruction is added to the TECHNICAL_PROMPT alongside the existing face identity protection rules
+- The expression instruction is added to the `[VISUAL ARCHITECT V5.0]` concept prompt (as guidance, NOT a rigid block in TECHNICAL_PROMPT) — a single shared injection point covers single / carousel / batch / retargeting / before-after
+- Art-direction character blends with hook emotion (e.g. "powerful concern", not flat concern)
 - Priority: face IDENTITY (bone structure, features) is still #1 — expression adaptation is #2
 - The expression change must be subtle and natural — not exaggerated or theatrical
-- Gaze direction is addressed separately in Phase 19
+- Gaze direction is addressed separately in Phase 19 (NOT introduced here — Contract B5 / FR-014)
+- No-op semantics: no hook AND no objection → mapper returns `null` → no line emitted (Contract C3)
+- Carousel = one hook → one direction across all slides (shared injection point)
+- Batch = per-item hook → per-item direction (each item passes its own `coldHookAngle`)
+
+**Additive trace (FR-017):**
+`ResolutionTrace.expressionAdaptation?: { source: "hook" | "objection", sourceId: string, emotion: string, applied: boolean }` — optional; omitted / `applied:false` when no hook or objection is active. Mirrored in `functions/src/types.ts`, `functions/src/generators.ts`, and `docs/LAUNCH_MATRIX.md` Section 8. No Firestore schema migration.
+
+**Source files:**
+- NEW: `functions/src/expressionMap.ts` — pure mapper (angle/objection → `ExpressionDirective`) and `EXPRESSION DIRECTION:` block builder
+- NEW: `functions/src/__tests__/expressionMap.test.ts` — Contract A/B/C/D/E coverage (188 assertions, all green)
+- EDIT: `functions/src/generators.ts` — import mapper; compute directive; emit line at concept prompt; populate trace
+- EDIT: `functions/src/types.ts` — `ExpressionDirective` type + `ResolutionTrace.expressionAdaptation` mirror
+- EDIT: `functions/package.json` — `test:expressionMap` script; new test added to `test` script
+- EDIT: `docs/LAUNCH_MATRIX.md` — Section 8 mirror (this section)
 
 ---
 

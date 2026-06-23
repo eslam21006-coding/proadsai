@@ -396,6 +396,18 @@ export interface ResolutionTrace {
         readonly degradedToAbsent?: readonly ("subheadText" | "ctaName" | "benefitText")[];
         readonly dedupBlanked?: readonly ("subheadText" | "ctaName" | "benefitText")[];
     };
+    // Phase 28 — additive expression-adaptation sub-object. Records the
+    // emotional direction resolved for this generation (source = hook angle
+    // or retargeting objection), so reviewers / tests can confirm every
+    // hero-bearing run received emotion guidance. `applied: true` means the
+    // `EXPRESSION DIRECTION:` line was emitted into the concept prompt;
+    // `applied: false` (or omitted) means no hook/objection was active.
+    readonly expressionAdaptation?: {
+        readonly source: "hook" | "objection";
+        readonly sourceId: string;
+        readonly emotion: string;
+        readonly applied: boolean;
+    };
 }
 
 export interface ModeCompositionTrace {
@@ -491,4 +503,16 @@ export interface BrandColorComplianceEntry {
     dominantSwatch: string | null;
     deductedScore: number;
     skippedReason?: "no_brand_colors" | "image_unanalyzable";
+}
+
+// ─── Phase 28: Expression Adaptation ────────────────────────────────────────
+// Mirror of `ExpressionDirective` declared in `functions/src/expressionMap.ts`.
+// Re-declared here so downstream consumers (e.g. ResolutionTrace mirrors,
+// Firestore shape documentation, frontend parity checks) can import the type
+// without dragging in the mapper's full module surface. Keep shape in sync.
+export interface ExpressionDirective {
+    source: "hook" | "objection";
+    sourceId: string;
+    emotion: string;
+    description: string;
 }

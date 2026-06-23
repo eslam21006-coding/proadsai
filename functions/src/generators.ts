@@ -12,6 +12,7 @@ import { HttpsError } from "firebase-functions/v2/https";
 import { RETARGETING_OBJECTION_DATA, getBestAngleForObjection, buildNormalizedRetargetingContext, getRetargetingPromptBlock } from "./retargetingObjections.js";
 import { LANGUAGE_RULES, SLIPPERY_SLIDE, HEADLINE_TYPES, COLD_TRAFFIC_RULES, RETARGETING_RULES, BELIEF_SHIFTING_FRAMEWORK, QUALITY_CHECKLIST } from "./copywriting_knowledge.js";
 import { getHookAnglePrompt, getHookAngleVisualDirection, getHookAngleCaptionStrategy, getAngleVariationBlueprint, getAnglePlusDeliveryInstruction, getAngleValidationChecklist } from "./knowledge/hookAnglesKnowledge.js";
+import { getHookExpressionDirection, getObjectionExpressionDirection, buildExpressionDirectionBlock } from "./expressionMap.js";
 import { getHookTypePrompt, getHookTypeCaptionStyle, getHookTypeVisualDirection, getDeliveryStyleFormatOverride } from "./knowledge/hookTypesKnowledge.js";
 import { getAdTonePrompt, getAdToneVisualMood, getAdToneCaptionCalibration } from "./knowledge/adTonesKnowledge.js";
 import { getCopywritingStrategyPrompt, getCopywritingStrategyCaptionStructure, getCopywritingStrategyVisualHint } from "./knowledge/copywritingStrategies.js";
@@ -3094,6 +3095,33 @@ DO NOT return the other concepts.`;
         const _rtConceptBlock = getRetargetingPromptBlock(_rtCtx);
         const _effectiveColdHookAngle = _rtCtx.isRetargeting ? null : inputs.coldHookAngle;
 
+        // Phase 28 — Expression adaptation (T008). Resolve the active hook
+        // angle (cold) or retargeting objection to an `ExpressionDirective`,
+        // then build the EXPRESSION DIRECTION guidance line. Cold hook takes
+        // priority; if absent (retargeting), fall back to the objection.
+        // `null` directive → empty string → no line emitted (FR-007).
+        const _exprDirective = _effectiveColdHookAngle
+            ? getHookExpressionDirection(_effectiveColdHookAngle)
+            : getObjectionExpressionDirection(_rtCtx.objectionId);
+        const _exprDirectionBlock = buildExpressionDirectionBlock(_exprDirective);
+
+        // Phase 28 — Trace the resolved direction (FR-017, T009, Contract
+        // E1–E3). When a directive was emitted, record source/sourceId/emotion
+        // with `applied: true`; otherwise leave the existing trace untouched
+        // (omission is the canonical "no hook/objection" signal). Spread on
+        // the existing survivor so other trace fields stay intact.
+        if (_exprDirective) {
+            _lastResolutionTrace = {
+                ...(_lastResolutionTrace || {}),
+                expressionAdaptation: {
+                    source: _exprDirective.source,
+                    sourceId: _exprDirective.sourceId,
+                    emotion: _exprDirective.emotion,
+                    applied: true,
+                },
+            };
+        }
+
         const prompt = `
 [VISUAL ARCHITECT V5.0]
       ${getLanguageInstruction(inputs.adLanguage || 'ar_fusha')}
@@ -3101,6 +3129,7 @@ DO NOT return the other concepts.`;
       ${_rtConceptBlock ? `\n${_rtConceptBlock}\n` : ''}
       LANGUAGE MANDATE: ALL OUTPUT (Subject, Environment, Mood) MUST follow the language above. ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'ALL concept field content MUST be in Arabic — not English.' : ''}
       ${inputs.adTone ? `MOOD DIRECTION: ${getAdToneVisualMood(inputs.adTone)}` : ''}
+      ${_exprDirectionBlock ? `${_exprDirectionBlock}\n` : ''}
       ${inputs.offerType ? `OFFER TYPE: ${inputs.offerType} — adapt the scene energy and props to match this offer format.` : ''}
       ${(() => {
           const modes = (inputs as any).offerCreativeMode || ['standard_hero'];
@@ -5162,6 +5191,19 @@ export interface ResolutionTrace {
         middleAngleOrder?: string[];
         memoryBiasApplied: boolean;
         fingerprintsConsidered: number;
+    };
+    // Phase 28 — additive expression-adaptation sub-object (mirrors types.ts
+    // ResolutionTrace.expressionAdaptation). Records the emotional direction
+    // resolved from the active hook angle or retargeting objection, so
+    // reviewers / tests can confirm a hero-bearing run received emotion
+    // guidance. `applied: true` means the EXPRESSION DIRECTION line was
+    // emitted into the [VISUAL ARCHITECT V5.0] concept prompt; omitted or
+    // `applied: false` means no hook/objection was active (FR-007).
+    expressionAdaptation?: {
+        source: "hook" | "objection";
+        sourceId: string;
+        emotion: string;
+        applied: boolean;
     };
 }
 
