@@ -5642,21 +5642,24 @@ export async function generateFinalAd(
 
         // 3. Copy compression for tight formats (9:16, 4:5) — TRUNCATION, not blanking.
         //    Truncated fields stay `present` and do NOT go in dedupBlanked.
-        const isCompactRatio = currentAspectRatio === '9:16' || currentAspectRatio === '4:5';
-        if (isCompactRatio) {
-            // Limit total text density — prefer fewer, cleaner elements
-            const totalChars = hookText.length + (subheadText?.length ?? 0) + (ctaName?.length ?? 0) + (benefitText?.length ?? 0);
-            if (totalChars > 120) {
-                // Prioritize: headline > CTA > subheadline > benefit. Truncation
-                // keeps the field PRESENT (a shorter string) — never blank it.
-                if (benefitText != null && benefitText.length > 30) {
-                    benefitText = benefitText.substring(0, 30).trim();
-                }
-                if (subheadText != null && subheadText.length > 50 && totalChars > 140) {
-                    subheadText = subheadText.substring(0, 50).trim();
-                }
-            }
-        }
+        // Removed by 9:16 clipping fix — destructive substring truncation was silently chopping
+        // subheadline and benefit text before sending to OpenAI. The model can handle full-length
+        // text on narrow canvases when given proper layout instructions. Kept for reversibility.
+        // const isCompactRatio = currentAspectRatio === '9:16' || currentAspectRatio === '4:5';
+        // if (isCompactRatio) {
+        //     // Limit total text density — prefer fewer, cleaner elements
+        //     const totalChars = hookText.length + (subheadText?.length ?? 0) + (ctaName?.length ?? 0) + (benefitText?.length ?? 0);
+        //     if (totalChars > 120) {
+        //         // Prioritize: headline > CTA > subheadline > benefit. Truncation
+        //         // keeps the field PRESENT (a shorter string) — never blank it.
+        //         if (benefitText != null && benefitText.length > 30) {
+        //             benefitText = benefitText.substring(0, 30).trim();
+        //         }
+        //         if (subheadText != null && subheadText.length > 50 && totalChars > 140) {
+        //             subheadText = subheadText.substring(0, 50).trim();
+        //         }
+        //     }
+        // }
     }
     // Phase 24B — publish copyFieldStatus to the resolution trace so an
     // operator reading the trace can tell intentional-absence from dedup-blank
