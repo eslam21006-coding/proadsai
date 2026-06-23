@@ -27,6 +27,12 @@ declare const console: { log(...args: unknown[]): void; error(...args: unknown[]
 // SHELL
 // ═══════════════════════════════════════════════════════════
 
+/**
+ * Test runner. Executes every Contract A–E assertion in document order,
+ * logs a per-section pass/fail line, then prints the totals. Exits the
+ * process with code 1 if any assertion failed so the npm `test` script
+ * surfaces a non-zero exit code.
+ */
 function runTests(): void {
     let passed = 0;
     let failed = 0;
