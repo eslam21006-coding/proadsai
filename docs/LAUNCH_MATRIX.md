@@ -86,7 +86,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | Phase 12 — Workspace Logic | `createWorkspace` rejects below-Scale plans correctly. Meta ad account linking works. |
 | Phase 13 — Saved Projects | Per-plan project limits enforced (10/30/Unlimited). Status filter works. |
 
-### ✅ Done (23 items)
+### ✅ Done (25 items)
 
 | Item | Spec folder | Notes |
 |---|---|---|
@@ -113,6 +113,8 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | Phase 021 — Stripe Migration | `specs/021-stripe-migration` | Complete |
 | Phase 023 — Copy Anti-Sameness + Variation Carousel | `specs/959-copy-structure-variation` | ✅ Done 2026-06-18. 23.A in-card hook variation carousel, 23.B hook anti-sameness (dimension/opening rotation + cross-project memory), 23.C carousel angle rotation, plus FAIL-1/2/3 fixes and the carousel family-label remap hotfix. All merged to main (a64e120) and deployed to production. |
 | Phase 025 — OpenAI gpt-image-2 Swap | `specs/025-openai-swap` | Complete. Replaces Gemini image generation with gpt-image-2 across all render paths. Includes edit-recompose reflow, blueprint bleeding fixes, carousel prompt optimization, and unified ALL VERSIONS gallery. |
+| Phase 17 — Independent Multi-Size Generation | `961-independent-multisize` | ✅ DONE (PR #44, merged 2026-06-22). Replaced broken reflow with native per-size generation via edit path. Anchor-first sequencing, client-side fan-out with max-10 concurrency, approvedTov in payload. |
+| fix-916-text-clipping | — | ✅ DONE (PR #45, merged 2026-06-22). Removed destructive `substring(0,50)` truncation of subheadline/benefit on compact ratios. `maxSubheadChars` advisory hint adjusted to 65 for compact. |
 
 ### ⏳ TODO — Critical (build first)
 
@@ -1032,6 +1034,12 @@ Phase 19 — Direct-Response Design Upgrades (requires Phase 5 + HOTFIX-E + HOTF
 Phase 20 — Concept Director + Brief Coherence Check (requires Phase 5 + Phase 14 + HOTFIX-G)
 
 Phase 21 — Stripe Migration (CRITICAL — replaces Phase 8, no production users yet, do BEFORE launch)
+
+Phase 26 — Generation History & Filters (independent — no pipeline dependency)
+
+Phase 27 — Universe-Aware Copy (independent — requires Phase 5 pipeline)
+
+Phase 28 — Expression Adaptation (independent — requires Phase 5 pipeline)
 ```
 
 ---
@@ -1121,6 +1129,10 @@ Phase 22  requires nothing in matrix — copy-quality is a Step-2 prompt + scori
 Phase 23  requires Phase 22 + Phase 5 (quality rules + scoring must exist; fidelity gate + compositor must be stable before fields go conditional)
 Phase 025 — OpenAI Swap (complete).
           Unblocks: Phase 17 (reflow done), Phase 22, Phase 23
+
+Phase 26  (no dependency — frontend-only, start any time)
+Phase 27  requires Phase 5 (pipeline — copy generation changes)
+Phase 28  requires Phase 5 (pipeline — prompt engineering for expression matching)
 ```
 
 Complete all tasks in a phase before starting any phase that depends on it.
@@ -1886,6 +1898,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ## Phase 19 — Direct-Response Design Upgrades ⏳ TODO — CRITICAL
 **Requires:** Phase 5 + HOTFIX-E + HOTFIX-F complete (pipeline + logos + reflow must be stable first).
+**Includes:** Gaze direction (hero looks toward CTA/headline), one-highlight cap, price hierarchy, CTA outcome framing, hook↔visual alignment, campaign coherence.
 
 **Context:** Direct-response ads live or die on six levers: gaze, contrast, one-highlight discipline, price hierarchy, CTA outcome framing, and hook↔visual alignment. The current pipeline has none of these as enforced primitives — Gemini chooses randomly within style constraints. This phase adds them as deterministic rules in the build plan prompt and post-generation validation.
 
@@ -1981,6 +1994,7 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ## Phase 20 — Concept Director + Brief Coherence Check ⏳ TODO — CRITICAL
 **Requires:** Phase 5 + Phase 14 (Creative Memory must be feeding generations) + HOTFIX-G (FLUX cleanup) complete.
+**Note:** Phase 20 fixes concept variety — the "all concepts look the same" issue. It produces specialized briefs per ad with explicit visual metaphor, headline architecture, forbidden props, and gaze direction. Requires Phase 14 (RAG + Meta Reporting for creative memory).
 
 > **Context:** The current pipeline (`Inputs → Hook Lab → Visual Plan → Art Direction → Render → Caption`) optimizes for constraint compliance, not creative differentiation. Three sibling concepts in a batch differ in pose but share metaphor, layout, and headline architecture — every ad looks like the same machine made it. The Visual Architect V5.0 step generates **layout archetypes** (where the hero stands), not **visual concepts** (what the ad is about). The hookType→visualDirection mapping in `hookTypesKnowledge.ts` is a 12-template lookup that returns identical visual direction for every hook of the same type.
 >
@@ -2307,6 +2321,62 @@ Same checklist as the old Phase 8.E.6 — recreate products in Live mode, genera
 **Why the carousel stays a picker:** the 4 cards exist to give the user a choice of narrative direction. Locking to one angle would show 4 identical-direction cards and defeat the feature. The fix removes the SAMENESS (same 4 families every time) without removing the CHOICE.
 
 **Contract-sync warning:** 23.C4 (code), 23.C6 (spec 001 contract), and 23.C7 (Section 5.A) describe the same behavior in three places. They MUST be changed together in one PR. A drift here means the resolution trace, the contract test, and the running code disagree — exactly the "marked Done ≠ deployed" failure mode. Paranoid checkpoint.
+
+---
+
+## Phase 26 — Generation History & Filters
+**Requires:** Nothing (frontend-only).
+**Blocks:** Nothing.
+
+**Scope:** Replace the long projects list in Step 1 with a dedicated history tab. Users can browse all past generations and filter by hook, universe, and art direction using AND/OR logic. Filters are combinable (e.g., "pain hook AND mythic_epic universe" or "any hook OR luxury_magazine art direction"). Each history entry links to its full generation result.
+
+**Key behaviors:**
+- History tab shows all generations for the current workspace, newest first
+- Filter by hook angle (multi-select, OR within category)
+- Filter by universe (multi-select, OR within category)
+- Filter by art direction / visual sub-style (multi-select, OR within category)
+- Cross-category filters combine with AND (hook=pain AND universe=mythic_epic)
+- Pagination or infinite scroll for large histories
+- Each entry shows thumbnail, hook text, universe, art direction, date
+- Click to view full generation result
+
+---
+
+## Phase 27 — Universe-Aware Copy
+**Requires:** Phase 5 (pipeline).
+**Blocks:** Nothing.
+
+**Scope:** When a fantasy universe is selected, Gemini copy generation must include a small metaphor in the subheadline or benefit text that connects the hook to the universe theme. The blueprint must describe that metaphor visually so the image generation renders it coherently. Example: a mythic_epic universe with a pricing hook might use "ساحة المعركة" (battlefield) as a metaphor for the market, and the blueprint would describe the hero standing in an arena holding a price scroll.
+
+**Key behaviors:**
+- Gemini receives the selected universe when generating copy
+- For fantasy universes (mythic_epic, anime_manga, etc.), copy includes a universe-appropriate metaphor
+- The metaphor appears in subheadline or benefit text (not headline — headline stays direct)
+- The build plan / blueprint describes the metaphor visually so the image matches
+- Realistic and minimal universes: no forced metaphor (copy stays literal)
+- The metaphor must be natural, not forced — it should feel like the universe IS the world the hook lives in
+
+---
+
+## Phase 28 — Expression Adaptation
+**Requires:** Phase 5 (pipeline).
+**Blocks:** Nothing.
+
+**Scope:** The model currently preserves the uploaded face identity (correct per the face identity protection rules) but does NOT adapt the facial expression to match the hook's emotional context. A pain hook showing someone struggling should show concern or frustration on the hero's face — not a bright smile from the uploaded photo. The generation prompt must instruct the model to transform the expression while preserving the bone structure and identity.
+
+**Key behaviors:**
+- Map each hook angle to an appropriate facial expression:
+  - pain → concern, frustration, slight frown, tired eyes
+  - aspiration → determined, focused, slight confident smile
+  - curiosity → raised eyebrow, thoughtful, intrigued
+  - fear → worried, tense, guarded
+  - social_proof → confident, validated, proud
+  - authority → commanding, serious, assured
+  - urgency → alert, intense, leaning forward
+- The expression instruction is added to the TECHNICAL_PROMPT alongside the existing face identity protection rules
+- Priority: face IDENTITY (bone structure, features) is still #1 — expression adaptation is #2
+- The expression change must be subtle and natural — not exaggerated or theatrical
+- Gaze direction is addressed separately in Phase 19
 
 ---
 
