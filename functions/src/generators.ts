@@ -13,6 +13,15 @@ import { RETARGETING_OBJECTION_DATA, getBestAngleForObjection, buildNormalizedRe
 import { LANGUAGE_RULES, SLIPPERY_SLIDE, HEADLINE_TYPES, COLD_TRAFFIC_RULES, RETARGETING_RULES, BELIEF_SHIFTING_FRAMEWORK, QUALITY_CHECKLIST } from "./copywriting_knowledge.js";
 import { getHookAnglePrompt, getHookAngleVisualDirection, getHookAngleCaptionStrategy, getAngleVariationBlueprint, getAnglePlusDeliveryInstruction, getAngleValidationChecklist } from "./knowledge/hookAnglesKnowledge.js";
 import { buildImagePromptExpressionBlock, resolveExpressionDirective } from "./expressionMap.js";
+import {
+    buildImagePromptGazeBlock,
+    resolveGazeDirective,
+    ONE_HIGHLIGHT_BLOCK,
+    buildHookVisualMoodBlock,
+    detectPriceContent,
+    buildPriceHierarchyBlock,
+    CTA_OUTCOME_FRAMING_BLOCK,
+} from "./gazeMap.js";
 import { getHookTypePrompt, getHookTypeCaptionStyle, getHookTypeVisualDirection, getDeliveryStyleFormatOverride } from "./knowledge/hookTypesKnowledge.js";
 import { getAdTonePrompt, getAdToneVisualMood, getAdToneCaptionCalibration } from "./knowledge/adTonesKnowledge.js";
 import { getCopywritingStrategyPrompt, getCopywritingStrategyCaptionStructure, getCopywritingStrategyVisualHint } from "./knowledge/copywritingStrategies.js";
@@ -2513,6 +2522,8 @@ Each hook MUST have a DIFFERENT benefit that addresses a DIFFERENT pain from the
 - The benefit line must be a grammatically COMPLETE and natural Arabic phrase that flows directly from the main CTA. Read the CTA button text and the benefit together as ONE fluent, spoken line.
 - Do NOT begin the benefit with و (waw) or any dangling conjunction. A benefit that starts with "و..." reads as a cut-off fragment that disconnects from the preceding CTA line — this is forbidden.
 - Write a self-contained phrase (a clear outcome or a natural continuation of the CTA) that stands on its own grammatically — never a hanging clause that depends on words not shown on the button.
+
+${CTA_OUTCOME_FRAMING_BLOCK}
 
 ═══════════════════════════════════════════════════════════════════════════════
 COPYWRITING QUALITY RULES (CRITICAL — READ EVERY LINE)
@@ -5426,6 +5437,57 @@ ${(() => {
     const _isBA = isBeforeAfterSelection(inputs as any, (inputs as any).coldHookAngle);
     return buildImagePromptExpressionBlock(_imExprDirective, { beforeAfterSplit: _isBA });
 })()}
+${(() => {
+    // Phase 19 — Direct-Response Design Upgrades (gaze direction).
+    //
+    // Emits THREE blocks at this single injection point so every render
+    // path (single / carousel slide / batch item / retargeting /
+    // before-after) receives the same DR guidance (FR-007). Ordering
+    // follows the contracts:
+    //   1. GAZE DIRECTION (hook-gated, US1) — uses the same
+    //      `resolveGazeDirective(...)` shape as Phase 28's expression
+    //      so a null directive emits no block. before/after mode
+    //      splits BEFORE = hook gaze, AFTER = aspirational forward
+    //      horizon (FR-008, mirroring Phase 28's expression split).
+    //   2. ONE_HIGHLIGHT_BLOCK (always-on, US2) — there is exactly one
+    //      primary focal point (the hero); the block is injected
+    //      UNCONDITIONALLY for every prompt here, including the
+    //      no-hook path, because the Pro Ads AI pipeline is uniformly
+    //      hero-centric (FR-011 / FR-012). No hero-detection gate.
+    //   3. HOOK ↔ VISUAL MOOD (hook-gated, US4) — modulates the
+    //      palette / lighting / composition WITHIN the active art
+    //      direction / universe. Null on the no-hook path.
+    //   4. PRICE HIERARCHY (content-gated, US5) — only when the
+    //      assembled copy actually contains a price / discount signal.
+    //
+    // The blocks all sit AFTER the BLUEPRINT and the Phase 28
+    // expression block so the renderer sees the full scene + emotion
+    // context first, then the gaze / focal / mood / price guidance
+    // (audit #8 mirror from Phase 28; FR-018 identity priority #1
+    // stays in the upstream #1 identity rule and is preserved
+    // verbatim).
+    const _imGazeDirective = resolveGazeDirective({
+        coldHookAngle: (inputs as any).coldHookAngle ?? null,
+        retargetingObjection: (inputs as any).retargetingObjection ?? (inputs as any).retargetingObjections?.[0] ?? null,
+    });
+    const _isBAGaze = isBeforeAfterSelection(inputs as any, (inputs as any).coldHookAngle);
+    const _gazeBlock = _imGazeDirective
+        ? buildImagePromptGazeBlock(_imGazeDirective, {
+            beforeAfterSplit: _isBAGaze,
+            aspectRatio,
+        })
+        : "";
+    const _moodBlock = buildHookVisualMoodBlock(_imGazeDirective);
+    const _priceBlock = detectPriceContent({
+        hookText,
+        subheadText,
+        benefitText,
+        badges: (badges ?? null) as string | null,
+    })
+        ? buildPriceHierarchyBlock()
+        : "";
+    return `${_gazeBlock}\n${ONE_HIGHLIGHT_BLOCK}\n${_moodBlock}\n${_priceBlock}`.trim();
+})()}
 ${MODEL_PROVIDER === 'openai' ? `BLUEPRINT contains layout structure only — render ONLY the text elements listed below, nothing else from the BLUEPRINT.
 ` : ''}
 MANDATORY TEXT ELEMENTS — render ALL of these, no exceptions:
@@ -5517,6 +5579,41 @@ export async function generateFinalAd(
                     source: null,
                     sourceId: null,
                     emotion: null,
+                    applied: false,
+                    reason: "no-hook-or-objection-active",
+                },
+        };
+    }
+    // Phase 19 — Gaze direction trace (FR-022, Contract E). Written here
+    // (in `generateFinalAd`) so the trace covers every render path
+    // uniformly: single, carousel slide, batch item, edit, reflow-
+    // rerender. Resolves the cold hook angle OR the retargeting
+    // objection via the same `resolveGazeDirective(...)` shape used
+    // at the image-prompt injection site; if neither applies, writes
+    // `applied:false` with an explicit `reason` so the absent case
+    // is auditable (mirrors Phase 28's expression-adaptation trace
+    // contract — additive, no migration, `null` is the canonical
+    // absent sentinel for sub-fields).
+    {
+        const _gazeDirective = resolveGazeDirective({
+            coldHookAngle: (inputs as any).coldHookAngle ?? null,
+            retargetingObjection: (inputs as any).retargetingObjection
+                ?? (inputs as any).retargetingObjections?.[0]
+                ?? null,
+        });
+        _lastResolutionTrace = {
+            ...(_lastResolutionTrace || {}),
+            gazeDirection: _gazeDirective
+                ? {
+                    source: _gazeDirective.source,
+                    sourceId: _gazeDirective.sourceId,
+                    treatment: _gazeDirective.treatment,
+                    applied: true,
+                }
+                : {
+                    source: null,
+                    sourceId: null,
+                    treatment: null,
                     applied: false,
                     reason: "no-hook-or-objection-active",
                 },
