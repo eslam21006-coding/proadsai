@@ -12,7 +12,7 @@ import { HttpsError } from "firebase-functions/v2/https";
 import { RETARGETING_OBJECTION_DATA, getBestAngleForObjection, buildNormalizedRetargetingContext, getRetargetingPromptBlock } from "./retargetingObjections.js";
 import { LANGUAGE_RULES, SLIPPERY_SLIDE, HEADLINE_TYPES, COLD_TRAFFIC_RULES, RETARGETING_RULES, BELIEF_SHIFTING_FRAMEWORK, QUALITY_CHECKLIST } from "./copywriting_knowledge.js";
 import { getHookAnglePrompt, getHookAngleVisualDirection, getHookAngleCaptionStrategy, getAngleVariationBlueprint, getAnglePlusDeliveryInstruction, getAngleValidationChecklist } from "./knowledge/hookAnglesKnowledge.js";
-import { getHookExpressionDirection, getObjectionExpressionDirection, buildExpressionDirectionBlock } from "./expressionMap.js";
+import { buildImagePromptExpressionBlock, resolveExpressionDirective } from "./expressionMap.js";
 import { getHookTypePrompt, getHookTypeCaptionStyle, getHookTypeVisualDirection, getDeliveryStyleFormatOverride } from "./knowledge/hookTypesKnowledge.js";
 import { getAdTonePrompt, getAdToneVisualMood, getAdToneCaptionCalibration } from "./knowledge/adTonesKnowledge.js";
 import { getCopywritingStrategyPrompt, getCopywritingStrategyCaptionStructure, getCopywritingStrategyVisualHint } from "./knowledge/copywritingStrategies.js";
@@ -3095,32 +3095,14 @@ DO NOT return the other concepts.`;
         const _rtConceptBlock = getRetargetingPromptBlock(_rtCtx);
         const _effectiveColdHookAngle = _rtCtx.isRetargeting ? null : inputs.coldHookAngle;
 
-        // Phase 28 — Expression adaptation (T008). Resolve the active hook
-        // angle (cold) or retargeting objection to an `ExpressionDirective`,
-        // then build the EXPRESSION DIRECTION guidance line. Cold hook takes
-        // priority; if absent (retargeting), fall back to the objection.
-        // `null` directive → empty string → no line emitted (FR-007).
-        const _exprDirective = _effectiveColdHookAngle
-            ? getHookExpressionDirection(_effectiveColdHookAngle)
-            : getObjectionExpressionDirection(_rtCtx.objectionId);
-        const _exprDirectionBlock = buildExpressionDirectionBlock(_exprDirective);
-
-        // Phase 28 — Trace the resolved direction (FR-017, T009, Contract
-        // E1–E3). When a directive was emitted, record source/sourceId/emotion
-        // with `applied: true`; otherwise leave the existing trace untouched
-        // (omission is the canonical "no hook/objection" signal). Spread on
-        // the existing survivor so other trace fields stay intact.
-        if (_exprDirective) {
-            _lastResolutionTrace = {
-                ...(_lastResolutionTrace || {}),
-                expressionAdaptation: {
-                    source: _exprDirective.source,
-                    sourceId: _exprDirective.sourceId,
-                    emotion: _exprDirective.emotion,
-                    applied: true,
-                },
-            };
-        }
+        // Phase 28 — Expression adaptation note: the EXPRESSION DIRECTION
+        // injection itself was moved to the IMAGE prompt (`buildFinalImagePrompt`)
+        // so it reaches single / carousel / batch uniformly (audit #17) and is
+        // placed AFTER the BLUEPRINT hero / environment / universe description
+        // (audit #8). The trace entry is written in `generateFinalAd` (called
+        // by every render path) so it covers single / carousel slide / batch
+        // item uniformly and records both `applied:true` and `applied:false`
+        // with a reason (audit #13).
 
         const prompt = `
 [VISUAL ARCHITECT V5.0]
@@ -3129,7 +3111,6 @@ DO NOT return the other concepts.`;
       ${_rtConceptBlock ? `\n${_rtConceptBlock}\n` : ''}
       LANGUAGE MANDATE: ALL OUTPUT (Subject, Environment, Mood) MUST follow the language above. ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'ALL concept field content MUST be in Arabic — not English.' : ''}
       ${inputs.adTone ? `MOOD DIRECTION: ${getAdToneVisualMood(inputs.adTone)}` : ''}
-      ${_exprDirectionBlock ? `${_exprDirectionBlock}\n` : ''}
       ${inputs.offerType ? `OFFER TYPE: ${inputs.offerType} — adapt the scene energy and props to match this offer format.` : ''}
       ${(() => {
           const modes = (inputs as any).offerCreativeMode || ['standard_hero'];
@@ -5197,13 +5178,16 @@ export interface ResolutionTrace {
     // resolved from the active hook angle or retargeting objection, so
     // reviewers / tests can confirm a hero-bearing run received emotion
     // guidance. `applied: true` means the EXPRESSION DIRECTION line was
-    // emitted into the [VISUAL ARCHITECT V5.0] concept prompt; omitted or
-    // `applied: false` means no hook/objection was active (FR-007).
+    // emitted into the image-rendering prompt (single / carousel / batch —
+    // audit fix #17); `applied: false` with a `reason` means no hook /
+    // objection was active (audit fix #13) so the prompt is byte-identical
+    // to pre-Phase-28 behavior.
     expressionAdaptation?: {
-        source: "hook" | "objection";
-        sourceId: string;
-        emotion: string;
+        source: "hook" | "objection" | null;
+        sourceId: string | null;
+        emotion: string | null;
         applied: boolean;
+        reason?: string;
     };
 }
 
@@ -5414,6 +5398,34 @@ ${MODEL_PROVIDER === 'openai' && styleReferencePresent
   ? '' /* OpenAI reflow/anchor: the style-reference image supplies all visual direction; omit the
           blueprint so its (Arabic) scene prose can't bleed onto the image as rendered text. */
   : `BLUEPRINT: ${strippedBlueprint}`}
+${(() => {
+    // Phase 28 — Expression adaptation (audit fixes #8, #9, #15, #17).
+    //
+    // The EXPRESSION DIRECTION block is emitted into the IMAGE prompt
+    // AFTER the BLUEPRINT (which carries hero / environment / universe
+    // descriptions) so the renderer sees the full scene context before
+    // receiving the emotion direction (audit #8).
+    //
+    // In before/after mode the block splits BEFORE = hook emotion,
+    // AFTER = aspirational so the two halves render two visibly
+    // different expressions for the same face (audit #15, FR-010).
+    //
+    // This single injection point covers single / carousel / batch /
+    // retargeting / before-after uniformly because every render path
+    // (single concept, per-slide carousel, per-item batch) routes
+    // through `buildFinalImagePrompt` (audit #17, FR-011/FR-012).
+    //
+    // The block builder also emits the explicit MOOD_EMOTION /
+    // SUBJECT_ACTION routing instruction so the renderer knows WHERE
+    // to apply the emotion (audit #9, FR-002).
+    const _imExprDirective = resolveExpressionDirective({
+        coldHookAngle: (inputs as any).coldHookAngle ?? null,
+        retargetingObjection: (inputs as any).retargetingObjection ?? (inputs as any).retargetingObjections?.[0] ?? null,
+    });
+    if (!_imExprDirective) return '';
+    const _isBA = isBeforeAfterSelection(inputs as any, (inputs as any).coldHookAngle);
+    return buildImagePromptExpressionBlock(_imExprDirective, { beforeAfterSplit: _isBA });
+})()}
 ${MODEL_PROVIDER === 'openai' ? `BLUEPRINT contains layout structure only — render ONLY the text elements listed below, nothing else from the BLUEPRINT.
 ` : ''}
 MANDATORY TEXT ELEMENTS — render ALL of these, no exceptions:
@@ -5478,6 +5490,37 @@ export async function generateFinalAd(
     // _lastResolutionTrace but intentionally NOT _lastCopyDiversity.
     if (_lastCopyDiversity) {
         _lastResolutionTrace = { ...(_lastResolutionTrace || {}), copyDiversity: _lastCopyDiversity };
+    }
+    // Phase 28 — Expression adaptation trace (audit fix #13). Written here
+    // (in `generateFinalAd`) so it covers every render path uniformly:
+    // single, carousel slide, batch item, edit, reflow-rerender. Resolves the
+    // cold hook angle OR the retargeting objection; if neither applies, writes
+    // `applied:false` with an explicit `reason` so the absent case is auditable
+    // (previously signaled only by field omission).
+    {
+        const _exprDirective = resolveExpressionDirective({
+            coldHookAngle: (inputs as any).coldHookAngle ?? null,
+            retargetingObjection: (inputs as any).retargetingObjection
+                ?? (inputs as any).retargetingObjections?.[0]
+                ?? null,
+        });
+        _lastResolutionTrace = {
+            ...(_lastResolutionTrace || {}),
+            expressionAdaptation: _exprDirective
+                ? {
+                    source: _exprDirective.source,
+                    sourceId: _exprDirective.sourceId,
+                    emotion: _exprDirective.emotion,
+                    applied: true,
+                }
+                : {
+                    source: null,
+                    sourceId: null,
+                    emotion: null,
+                    applied: false,
+                    reason: "no-hook-or-objection-active",
+                },
+        };
     }
     const _referenceAdOverrideActive = _resolverSpec.resolutionTrace?.referenceAdOverrideActive ?? false;
     const _artDirectionCleared = _resolverSpec.resolutionTrace?.artDirectionCleared ?? false;

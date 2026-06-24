@@ -189,6 +189,12 @@ export interface BuildExpressionDirectionBlockOptions {
      * Set to true to suppress the art-direction blending clause.
      */
     omitBlendingClause?: boolean;
+    /**
+     * Set to true to suppress the explicit MOOD_EMOTION / SUBJECT_ACTION
+     * routing instruction. Default false — production always emits it so
+     * Gemini knows WHERE to apply the emotion (Contract #9 / FR-002).
+     */
+    omitFieldRoutingClause?: boolean;
 }
 
 /**
@@ -204,6 +210,10 @@ export interface BuildExpressionDirectionBlockOptions {
  *     hook/objection (Contract B3 / FR-008)
  *   - Subtle / natural, never exaggerated (Contract B4 / FR-009)
  *   - NO gaze-direction instruction (Contract B5 / FR-014)
+ *   - Explicit field routing: "Reflect this in MOOD_EMOTION and SUBJECT_ACTION"
+ *     (Audit fix #9 / FR-002 — without this, Gemini is free to ignore the
+ *     emotion; with it, the concept template's MOOD_EMOTION / SUBJECT_ACTION
+ *     fields carry the resolved emotion through blueprint→technical synthesis.)
  */
 export function buildExpressionDirectionBlock(
     directive: ExpressionDirective | null,
@@ -226,10 +236,148 @@ export function buildExpressionDirectionBlock(
             "BLEND with the selected art direction: art direction sets the CHARACTER / STYLE / ENERGY (e.g. mythic, neon, watercolor, cinematic) and the hook/objection sets the EMOTION — combine them into one cohesive expression (e.g. a 'mythic' art direction with a 'pain' emotion reads as 'powerful concern', not flat concern and not a default smile).",
         );
     }
+    if (!opts.omitFieldRoutingClause) {
+        lines.push(
+            "Reflect this emotional direction in the MOOD_EMOTION and SUBJECT_ACTION fields of your concept output — these are the fields that flow into the TECHNICAL_PROMPT.",
+        );
+    }
     lines.push(
         "Keep the expression SUBTLE and NATURAL — never exaggerated, theatrical, or caricatured.",
     );
     return lines.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════
+// IMAGE-PROMPT BLOCK — for the IMAGE-rendering prompt (audit #8 / #15 / #17)
+// ═══════════════════════════════════════════════════════════
+// The IMAGE prompt (built by `buildFinalImagePrompt`) is the SINGLE shared
+// prompt-assembly point for single, carousel, and batch generations. Injecting
+// here — AFTER the BLUEPRINT (which contains hero / environment / universe
+// descriptions) — means:
+//   - Gemini sees the hero/environment first, then the expression direction
+//     applied on top (audit #8 fix).
+//   - Carousel slides all see the same hook direction (FR-011).
+//   - Batch items each carry their own `inputs.coldHookAngle`, so each gets
+//     its own direction (FR-012).
+//   - Before/after mode splits BEFORE=hook / AFTER=aspirational (audit #15
+//     fix — FR-010).
+
+/**
+ * Aspirational fallback directive used for the AFTER half in before/after
+ * mode (and any time the AFTER half needs a forward-looking, hopeful
+ * emotion). Matches the `future_based` cold-hook mapping verbatim so the
+ * AFTER state reads as confident and forward-looking regardless of the
+ * problem-oriented hook that drives the BEFORE half.
+ */
+const ASPIRATIONAL_DIRECTIVE: Omit<ExpressionDirective, "source" | "sourceId"> = {
+    emotion: "aspirational, hopeful, looking forward",
+    description: "uplifted gaze, soft smile at the corners of the mouth, open posture, settled confident shoulders — already seeing the result",
+};
+
+export interface BuildImagePromptExpressionBlockOptions extends BuildExpressionDirectionBlockOptions {
+    /**
+     * Set to true to emit a BEFORE/AFTER split block (used by
+     * `buildFinalImagePrompt` when `inputs.offerCreativeMode` includes
+     * `before_after`). The BEFORE half uses the hook-derived directive;
+     * the AFTER half uses an aspirational directive regardless of the
+     * hook (FR-010: BEFORE = problem emotion, AFTER = aspirational /
+     * confident).
+     *
+     * When `false` (default), the block is a single EXPRESSION DIRECTION
+     * line for the whole image — the canonical single/carousel/batch case.
+     */
+    beforeAfterSplit?: boolean;
+}
+
+/**
+ * Build the EXPRESSION DIRECTION block for the IMAGE-rendering prompt
+ * (`buildFinalImagePrompt`). Returns `''` for a null directive.
+ *
+ * The block always contains:
+ *   - The emotion + physical description
+ *   - Identity-is-priority-#1 clause
+ *   - Art-direction blending clause
+ *   - Subtle / natural requirement
+ *   - Explicit MOOD_EMOTION / SUBJECT_ACTION routing instruction
+ *     (audit #9 fix — Gemini knows WHERE to apply the emotion)
+ *   - NO gaze-direction instruction
+ *
+ * In before/after mode (`opts.beforeAfterSplit === true`), the block is
+ * split into two clearly labelled halves (BEFORE / AFTER) — audit #15 fix.
+ */
+export function buildImagePromptExpressionBlock(
+    directive: ExpressionDirective | null,
+    opts: BuildImagePromptExpressionBlockOptions = {},
+): string {
+    if (directive == null) return "";
+
+    const emitBeforeAfterSplit = opts.beforeAfterSplit === true;
+
+    const lines: string[] = [];
+
+    if (emitBeforeAfterSplit) {
+        // Before/after split: BEFORE half = hook emotion (the problem), AFTER
+        // half = aspirational (the resolution). Each half gets its own
+        // physical description so the model can render two visibly different
+        // emotional states for the same face.
+        const beforeDirective = directive;
+        const afterDirective: ExpressionDirective = {
+            source: directive.source,
+            sourceId: `${directive.sourceId}::after`,
+            ...ASPIRATIONAL_DIRECTIVE,
+        };
+        lines.push(
+            `EXPRESSION DIRECTION — BEFORE HALF: ${beforeDirective.emotion}.`,
+            `BEFORE physical description: ${beforeDirective.description}.`,
+            `EXPRESSION DIRECTION — AFTER HALF: ${afterDirective.emotion}.`,
+            `AFTER physical description: ${afterDirective.description}.`,
+            "Same face / same person on BOTH halves — only the expression (and any props) change.",
+        );
+    } else {
+        lines.push(
+            `EXPRESSION DIRECTION: ${directive.emotion}.`,
+            `Physical description: ${directive.description}.`,
+        );
+    }
+
+    if (!opts.omitIdentityClause) {
+        lines.push(
+            "Identity is PRIORITY #1 — do NOT change bone structure, facial features, or skin texture; the expression must adapt without altering who the person is.",
+        );
+    }
+    if (!opts.omitBlendingClause) {
+        lines.push(
+            "BLEND with the selected art direction: art direction sets the CHARACTER / STYLE / ENERGY (e.g. mythic, neon, watercolor, cinematic) and the hook/objection sets the EMOTION — combine them into one cohesive expression (e.g. a 'mythic' art direction with a 'pain' emotion reads as 'powerful concern', not flat concern and not a default smile).",
+        );
+    }
+    if (!opts.omitFieldRoutingClause) {
+        lines.push(
+            "Reflect this emotional direction in the MOOD_EMOTION and SUBJECT_ACTION fields of your concept output — these are the fields that flow into the TECHNICAL_PROMPT.",
+        );
+    }
+    lines.push(
+        "Keep the expression SUBTLE and NATURAL — never exaggerated, theatrical, or caricatured.",
+    );
+    return lines.join("\n");
+}
+
+/**
+ * Resolve the directive for a given render context. Single shared helper
+ * used by both `generateFinalAd` (and downstream `buildFinalImagePrompt`)
+ * and `generateConcepts`. Picks the cold hook angle first, falling back to
+ * the retargeting objection. Returns `null` if neither applies.
+ */
+export function resolveExpressionDirective(inputs: {
+    coldHookAngle?: string | null;
+    retargetingObjection?: string | null;
+}): ExpressionDirective | null {
+    if (inputs.coldHookAngle) {
+        return getHookExpressionDirection(inputs.coldHookAngle);
+    }
+    if (inputs.retargetingObjection) {
+        return getObjectionExpressionDirection(inputs.retargetingObjection);
+    }
+    return null;
 }
 
 // ═══════════════════════════════════════════════════════════

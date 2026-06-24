@@ -399,14 +399,23 @@ export interface ResolutionTrace {
     // Phase 28 — additive expression-adaptation sub-object. Records the
     // emotional direction resolved for this generation (source = hook angle
     // or retargeting objection), so reviewers / tests can confirm every
-    // hero-bearing run received emotion guidance. `applied: true` means the
-    // `EXPRESSION DIRECTION:` line was emitted into the concept prompt;
-    // `applied: false` (or omitted) means no hook/objection was active.
+    // hero-bearing run received emotion guidance.
+    //
+    // `applied: true`  → an `EXPRESSION DIRECTION:` line was emitted into
+    //   the image-rendering prompt (single / carousel slide / batch item).
+    //   `emotion` and `sourceId` carry the resolved direction.
+    // `applied: false` → no hook / objection was active for this run, so
+    //   no guidance was emitted. `emotion` and `sourceId` are null and
+    //   `reason` explains WHY (audit fix #13).
+    //
+    // Field absence on a legacy generation is also accepted as "no
+    // guidance" — see the contract for migration behavior.
     readonly expressionAdaptation?: {
-        readonly source: "hook" | "objection";
-        readonly sourceId: string;
-        readonly emotion: string;
+        readonly source: "hook" | "objection" | null;
+        readonly sourceId: string | null;
+        readonly emotion: string | null;
         readonly applied: boolean;
+        readonly reason?: string;
     };
 }
 
