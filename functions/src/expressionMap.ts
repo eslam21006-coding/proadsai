@@ -389,6 +389,14 @@ export function resolveExpressionDirective(inputs: {
 
 // Re-export the canonical id set so the test scaffold can iterate it without
 // importing `hookAnglesKnowledge` directly from outside the package.
+/**
+ * Returns the canonical list of cold hook-angle IDs the mapper recognizes
+ * (the keys of `HOOK_EXPRESSION_MAP`). Exposed so test code can iterate
+ * the canonical set without importing from `hookAnglesKnowledge` (the
+ * `functions/` package must not import from the frontend bundle). Order
+ * is whatever `Object.keys` produces; callers that need a stable order
+ * should sort the result themselves.
+ */
 export function getKnownHookAngleIds(): readonly string[] {
     return Object.keys(HOOK_EXPRESSION_MAP);
 }
