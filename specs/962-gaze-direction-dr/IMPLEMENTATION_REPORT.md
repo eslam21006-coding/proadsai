@@ -38,7 +38,7 @@ Phase 19 ships five additive prompt blocks through the single shared image-promp
 
 ### Tests
 
-```
+```shell
 $ cd functions && npm run test:gazeMap
   A1–A11: resolver coverage (10 hooks + 12 objections + aliases + fallback + null/empty + hook>objection priority)
   B1–B7:  image-prompt gaze block (label, identity clause, advisory + failure-mode prohibitions, 9:16 vertical note, before/after split, null→"", guide-toward-content)
@@ -50,17 +50,17 @@ $ cd functions && npm run test:gazeMap
   244 passed, 0 failed
 ```
 
-```
+```shell
 $ cd functions && npm test    # full backend suite
   ... (all 14 test files green, EXIT_CODE 0)
 ```
 
-```
+```shell
 $ cd functions && npm run test:expressionMap    # Phase 28 regression
   223 passed, 0 failed
 ```
 
-```
+```shell
 $ cd functions && npm run build    # TypeScript compile
   tsc && shx mkdir -p lib/assets && shx cp -r src/assets/* lib/assets/
   (no errors, EXIT_CODE 0)
@@ -196,7 +196,7 @@ The quickstart (`specs/962-gaze-direction-dr/quickstart.md`) defines a qualitati
 
 For full traceability, all 8 speckit artifacts live under `specs/962-gaze-direction-dr/`:
 
-```
+```text
 specs/962-gaze-direction-dr/
 ├── checklists/
 │   └── requirements.md                    # 17/17 items complete
@@ -216,7 +216,7 @@ specs/962-gaze-direction-dr/
 
 ## No regressions — proof
 
-```
+```shell
 $ cd functions && npm test
   phase13 ▸ projectStatus — all 14 tests passed
   phase13 ▸ projectQuota — all 8 tests passed

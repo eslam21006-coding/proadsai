@@ -1,7 +1,9 @@
 # Quickstart: Direct-Response Design Upgrades (Phase 19)
 
 How to build, test, and verify Phase 19. Backend-only; work in the worktree
-`D:\proads-worktrees\phase-19-gaze-direction`.
+(this branch — `962-gaze-direction-dr` — is a per-feature worktree; use
+the worktree root that `git rev-parse --show-toplevel` prints in your
+local checkout).
 
 ## Prerequisites
 
@@ -13,13 +15,18 @@ How to build, test, and verify Phase 19. Backend-only; work in the worktree
 ```bash
 cd functions
 npm run build            # tsc — must compile clean (gazeMap.ts + edits)
-npm run test:gazeMap     # NEW — Contracts A–C in functions/src/__tests__/gazeMap.test.ts
+npm run test:gazeMap     # NEW — Contracts A–G (resolver, image-prompt gaze block, one-highlight cap, hook-mood block, price detector, injection gating, audit trace, CTA outcome framing, reversibility) in functions/src/__tests__/gazeMap.test.ts
 npm run test:expressionMap   # regression — Phase 28 still green (Contract F2)
 npm test                 # full backend suite — zero regressions (SC-007, F3)
 ```
 
 `test:gazeMap` mirrors `test:expressionMap`: a standalone Node script over the
 compiled `lib/__tests__/gazeMap.test.js` that exits 1 on any failed assertion.
+It covers the deterministic contract surface — Contracts A (resolver), B
+(image-prompt gaze block), C (one-highlight + hook-mood + price helpers),
+D (injection gating), E (audit trace), G (CTA outcome framing), and a
+reversibility assertion (R1). Qualitative (sampling) checks for SC-001…SC-006
+and SC-008–SC-010 are described below; they require actual model runs.
 
 ## What to verify (maps to spec Success Criteria & contracts)
 

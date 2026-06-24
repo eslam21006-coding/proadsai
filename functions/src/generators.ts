@@ -5466,11 +5466,24 @@ ${(() => {
     // (audit #8 mirror from Phase 28; FR-018 identity priority #1
     // stays in the upstream #1 identity rule and is preserved
     // verbatim).
+    // Narrow the inputs view for the gaze helper — declares the two
+    // optional cold-hook / retargeting fields the gaze resolver reads.
+    // (No new `any` cast — the existing pattern in the Phase 28
+    // expression block uses `(inputs as any).…` because the underlying
+    // type is a legacy Firestore shape; this is a small additive
+    // typed projection of those fields only, scoped to the gaze
+    // resolution. Keeps the new code free of `any` while not
+    // disturbing the surrounding legacy typing.)
+    const _gazeInputs = inputs as AdInputs & {
+        coldHookAngle?: string | null;
+        retargetingObjection?: string | null;
+        retargetingObjections?: readonly string[] | null;
+    };
     const _imGazeDirective = resolveGazeDirective({
-        coldHookAngle: (inputs as any).coldHookAngle ?? null,
-        retargetingObjection: (inputs as any).retargetingObjection ?? (inputs as any).retargetingObjections?.[0] ?? null,
+        coldHookAngle: _gazeInputs.coldHookAngle ?? null,
+        retargetingObjection: _gazeInputs.retargetingObjection ?? _gazeInputs.retargetingObjections?.[0] ?? null,
     });
-    const _isBAGaze = isBeforeAfterSelection(inputs as any, (inputs as any).coldHookAngle);
+    const _isBAGaze = isBeforeAfterSelection(_gazeInputs, _gazeInputs.coldHookAngle);
     const _gazeBlock = _imGazeDirective
         ? buildImagePromptGazeBlock(_imGazeDirective, {
             beforeAfterSplit: _isBAGaze,
@@ -5595,10 +5608,20 @@ export async function generateFinalAd(
     // contract — additive, no migration, `null` is the canonical
     // absent sentinel for sub-fields).
     {
+        // Narrow the inputs view for the gaze resolver — same
+        // additive typed projection as the image-prompt injection
+        // site, scoped to the trace write here. Keeps the new
+        // code free of `any` without disturbing the surrounding
+        // legacy typing.
+        const _gazeTraceInputs = inputs as AdInputs & {
+            coldHookAngle?: string | null;
+            retargetingObjection?: string | null;
+            retargetingObjections?: readonly string[] | null;
+        };
         const _gazeDirective = resolveGazeDirective({
-            coldHookAngle: (inputs as any).coldHookAngle ?? null,
-            retargetingObjection: (inputs as any).retargetingObjection
-                ?? (inputs as any).retargetingObjections?.[0]
+            coldHookAngle: _gazeTraceInputs.coldHookAngle ?? null,
+            retargetingObjection: _gazeTraceInputs.retargetingObjection
+                ?? _gazeTraceInputs.retargetingObjections?.[0]
                 ?? null,
         });
         _lastResolutionTrace = {

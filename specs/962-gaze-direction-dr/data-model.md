@@ -6,7 +6,7 @@ This phase is prompt-engineering; the "data model" is a small set of in-memory t
 
 The five canonical gaze options from the spec.
 
-```
+```ts
 type GazeTreatment =
   | "direct_to_viewer"      // level gaze to camera — authority, social_proof, urgency, statistics, logic, logical_authority
   | "toward_content"        // natural glance toward headline/CTA zone — scarcity, soft emotional
@@ -62,7 +62,7 @@ Additive optional sub-object on the existing `ResolutionTrace` (Firestore `gener
 | `applied` | `boolean` | true when a gaze block was injected. |
 | `reason?` | `string` | e.g., `"no-hook-or-objection-active"` when `applied:false`. |
 
-```
+```ts
 readonly gazeDirection?: {
     readonly source: "hook" | "objection" | "fallback" | null;
     readonly sourceId: string | null;

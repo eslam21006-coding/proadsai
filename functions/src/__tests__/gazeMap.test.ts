@@ -199,6 +199,18 @@ function runTests(): void {
 
         const r3 = resolveGazeDirective({ coldHookAngle: "", retargetingObjection: null });
         assert(r3 === null, `empty-string coldHookAngle → null`);
+
+        // Fall-through: a whitespace-only hook id resolves to null
+        // inside getHookGazeDirection (canonical after .trim()), so
+        // resolveGazeDirective must continue to the retargeting
+        // objection (not return null just because the hook field was
+        // non-empty-but-whitespace). This matches the Phase 28
+        // expression-adaptation resolveExpressionDirective semantics.
+        const r4 = resolveGazeDirective({ coldHookAngle: "   ", retargetingObjection: "dont_trust" });
+        assert(r4 !== null && r4.source === "objection" && r4.sourceId === "dont_trust", `whitespace-only hook → falls through to objection (got "${r4?.source}:${r4?.sourceId}")`);
+
+        const r5 = resolveGazeDirective({ coldHookAngle: "   ", retargetingObjection: null });
+        assert(r5 === null, `whitespace-only hook + null objection → null`);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -350,6 +362,11 @@ function runTests(): void {
         assert(detectPriceContent({}) === false, `empty input → false`);
         assert(detectPriceContent({ hookText: "", subheadText: "", benefitText: "", badges: "" }) === false, `all-empty input → false`);
         assert(detectPriceContent({ hookText: "Build your coaching business", subheadText: "Learn the framework", benefitText: "without overwhelm", badges: "" }) === false, `all-price-free fields → false`);
+        // Word-boundary guards on Latin currency codes — must NOT
+        // match "SAR" inside "Sarah" or "AED" inside "AEDUCATION".
+        assert(detectPriceContent({ hookText: "Meet Sarah at the conference", subheadText: "", benefitText: "", badges: "" }) === false, `"Sarah" must NOT trigger on SAR substring`);
+        assert(detectPriceContent({ hookText: "AEDUCATION for the modern coach", subheadText: "", benefitText: "", badges: "" }) === false, `"AEDUCATION" must NOT trigger on AED substring`);
+        assert(detectPriceContent({ hookText: "KNOWLEDGE is the new leverage", subheadText: "", benefitText: "", badges: "" }) === false, `"KNOWLEDGE" must NOT trigger on "now" or "ledg" — the discount keyword scan is \b-gated`);
     }
 
     // ─── C7: buildPriceHierarchyBlock — original smaller/struck, new larger, savings secondary ───

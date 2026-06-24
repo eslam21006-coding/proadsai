@@ -68,6 +68,12 @@ export interface GazeDirective {
  * the hook's Phase 28 emotion (e.g., pain = quiet suffering →
  * reflective-downward gaze; logical_authority = commanding →
  * direct-to-viewer) so gaze and expression never contradict (FR-019).
+ *
+ * Typed as `Record<string, ...>` (not `as const`) because the resolver
+ * looks up keys dynamically — narrowing the type with `as const`
+ * breaks the open-keyed lookup. Treatment / description string
+ * literals are kept as the canonical `GazeTreatment` value to ensure
+ * typos surface at the type level.
  */
 const HOOK_GAZE_MAP: Record<string, Omit<GazeDirective, "source" | "sourceId">> = {
     pain: {
@@ -116,7 +122,9 @@ const HOOK_GAZE_MAP: Record<string, Omit<GazeDirective, "source" | "sourceId">> 
  * Defensive aliases — older runs / legacy inputs may carry these IDs.
  * They MUST resolve to a defined direction (never null) so a real
  * generation is never left without gaze guidance. Mirrors the alias
- * map in `expressionMap.ts` (Phase 28, FR-010).
+ * map in `expressionMap.ts` (Phase 28, FR-010). Open-keyed
+ * `Record<string, string>` so the resolver can look up arbitrary
+ * legacy ids.
  */
 const HOOK_ALIAS_MAP: Record<string, string> = {
     shocking_stat: "statistics",
@@ -129,11 +137,13 @@ const HOOK_ALIAS_MAP: Record<string, string> = {
  * a real run must NEVER receive null for a non-null input; instead it
  * gets a confident, approachable direction that keeps the generation
  * viable without misrepresenting a hook the codebase doesn't know.
+ * Frozen with `as const satisfies` so the treatment stays a narrow
+ * literal (typos in the value would surface at the type level).
  */
-const GAZE_FALLBACK_DIRECTIVE: Omit<GazeDirective, "source" | "sourceId"> = {
+const GAZE_FALLBACK_DIRECTIVE = {
     treatment: "three_quarter",
     description: "natural, intentional three-quarter gaze, approachable and engaged — never staring into empty space",
-};
+} as const satisfies Omit<GazeDirective, "source" | "sourceId">;
 
 /**
  * Aspirational fallback used for the AFTER half in before/after mode
@@ -142,10 +152,10 @@ const GAZE_FALLBACK_DIRECTIVE: Omit<GazeDirective, "source" | "sourceId"> = {
  * state reads as confident and forward-looking regardless of the
  * problem-oriented hook that drives the BEFORE half.
  */
-const GAZE_ASPIRATIONAL_DIRECTIVE: Omit<GazeDirective, "source" | "sourceId"> = {
+const GAZE_ASPIRATIONAL_DIRECTIVE = {
     treatment: "forward_horizon",
     description: "uplifted forward gaze, already seeing the result",
-};
+} as const satisfies Omit<GazeDirective, "source" | "sourceId">;
 
 /**
  * Resolve a cold hook angle id to a `GazeDirective`. Returns `null`
@@ -224,13 +234,22 @@ export function getObjectionGazeDirection(objectionId: string | null | undefined
  * helper used by `buildFinalImagePrompt` and `generateFinalAd`. Picks
  * the cold hook angle first, falling back to the retargeting
  * objection. Returns `null` if neither applies (FR-005).
+ *
+ * The cold-hook path is only short-circuited if `getHookGazeDirection`
+ * actually returns a directive — a whitespace-only hook id resolves
+ * to `null` inside the helper, in which case we continue to the
+ * retargeting objection (mirrors the Phase 28 expression
+ * `resolveExpressionDirective` semantics so a real run is never left
+ * without guidance just because the hook field was a string of
+ * spaces).
  */
 export function resolveGazeDirective(inputs: {
     coldHookAngle?: string | null;
     retargetingObjection?: string | null;
 }): GazeDirective | null {
     if (inputs.coldHookAngle) {
-        return getHookGazeDirection(inputs.coldHookAngle);
+        const _hookDir = getHookGazeDirection(inputs.coldHookAngle);
+        if (_hookDir) return _hookDir;
     }
     if (inputs.retargetingObjection) {
         return getObjectionGazeDirection(inputs.retargetingObjection);
@@ -546,9 +565,16 @@ export function detectPriceContent(copy: PriceContentInput): boolean {
 
     if (blob.trim() === "") return false;
 
-    // 1. Currency symbols / words (Arabic + Latin).
-    const currencyRe = /(ر\.س|د\.إ|د\.ك|د\.ع|ر\.ع|ر\.ق|SAR|AED|KWD|USD|EUR|GBP|JOD|OMR|QAR|BHD|\$|€|£|¥)/i;
-    if (currencyRe.test(blob)) return true;
+    // 1. Currency symbols / words (Arabic + Latin). Latin codes are
+    //    wrapped in `\b` word boundaries so the codes only match as
+    //    standalone tokens — "Sarah" must NOT trigger on "SAR", and
+    //    "AED" must NOT match inside "AEDUCATION". Arabic codes use
+    //    the period-separated form (ر.س, د.إ) which is unambiguous.
+    //    The bare-symbol set ($/€/£/¥) is left without `\b` because
+    //    the symbols themselves already serve as boundaries.
+    const currencyCodeRe = /(?<![A-Za-z])(ر\.س|د\.إ|د\.ك|د\.ع|ر\.ع|ر\.ق|SAR|AED|KWD|USD|EUR|GBP|JOD|OMR|QAR|BHD)(?![A-Za-z])/i;
+    if (currencyCodeRe.test(blob)) return true;
+    if (/[€£¥]/.test(blob) || /\$/.test(blob)) return true;
 
     // 2. Percent / discount markers (Arabic ٪ + Latin %).
     if (/[٪%]/.test(blob)) return true;
@@ -566,9 +592,12 @@ export function detectPriceContent(copy: PriceContentInput): boolean {
     // 4. Numeric price patterns: a digit cluster immediately followed
     //    by a currency word/symbol (e.g. "199 SAR", "$49", "50 ر.س").
     //    Bare years (e.g. "2026") MUST NOT trigger this pattern because
-    //    they are not followed by a currency marker — the currencyRe
-    //    above already gates that.
-    const priceWithCurrencyRe = /\d+(\.\d+)?\s*(ر\.س|د\.إ|SAR|AED|KWD|USD|EUR|GBP|JOD|OMR|QAR|BHD|\$|€|£|¥)/i;
+    //    they are not followed by a currency marker — the
+    //    `priceWithCurrencyRe` below requires a currency token.
+    //    Latin codes are wrapped in `\b` so "199 something" (where
+    //    "something" does not START with a currency code) does not
+    //    accidentally match.
+    const priceWithCurrencyRe = /\d+(\.\d+)?\s*(ر\.س|د\.إ|(?<![A-Za-z])(SAR|AED|KWD|USD|EUR|GBP|JOD|OMR|QAR|BHD)(?![A-Za-z])|[€£¥$])/i;
     if (priceWithCurrencyRe.test(blob)) return true;
 
     return false;
