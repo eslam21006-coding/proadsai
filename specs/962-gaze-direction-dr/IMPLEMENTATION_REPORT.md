@@ -34,25 +34,25 @@ Phase 19 ships five additive prompt blocks through the single shared image-promp
 | `docs/LAUNCH_MATRIX.md` | **EDIT** | +34/-13 | Phase 19 status flipped from TODO to DONE; status-table row added; Section 8 mirror written. |
 | `specs/962-gaze-direction-dr/*` | **NEW** | n/a | Full speckit artifacts (spec, plan, research, data-model, quickstart, contracts, tasks, requirements checklist) for traceability. |
 
-**Total diff:** 17 files changed, 2300 insertions(+), 13 deletions(-).
+**Total diff:** 17 files changed, 2300 insertions(+), 13 deletions(-). After CodeRabbit review (round 1 + round 2), 8 files changed, +107/-31, with +5 new test assertions added (final tally: 254 assertions, 0 failures).
 
 ### Tests
 
 ```shell
 $ cd functions && npm run test:gazeMap
-  A1–A11: resolver coverage (10 hooks + 12 objections + aliases + fallback + null/empty + hook>objection priority)
+  A1–A11: resolver coverage (10 hooks + 12 objections + aliases + fallback + null/empty + hook>objection priority + whitespace-only hook fall-through to objection)
   B1–B7:  image-prompt gaze block (label, identity clause, advisory + failure-mode prohibitions, 9:16 vertical note, before/after split, null→"", guide-toward-content)
-  C1–C7:  one-highlight cap, hook-mood block (4 families + null), price detector (true on currency/percent/discount, false on price-free copy and on a bare year "2026")
-  D1–D8:  injection-site placement (gaze AFTER BLUEPRINT + expression, exactly one call, aspectRatio passed, provider-agnostic)
-  E1–E4:  audit trace (sub-object shape, applied:true with non-null fields, applied:false with reason, source:fallback path, additive no-migration)
-  G1–G6:  CTA outcome framing (outcome-framing, advisory, ≈3–5 words, language adaptation, Arabic grammar rules preserved, English path covered, copy-fidelity contract preserved, generators.ts imports the constant from gazeMap.ts)
+  C1–C7:  one-highlight cap, hook-mood block (4 families + null), price detector (true on currency/percent/discount, false on price-free copy + bare year "2026" + Sarah / AEDUCATION / KNOWLEDGE false-positive edge cases)
+  D1–D9:  injection-site placement (gaze AFTER BLUEPRINT + expression, exactly one call, aspectRatio passed, provider-agnostic, text-only mode suppresses gaze / one-highlight / mood)
+  E1–E4:  audit trace (sub-object shape, applied:true with non-null fields, applied:false with reason + distinct text-only reason, source:fallback path, additive no-migration)
+  G1–G7:  CTA outcome framing (outcome-framing, advisory, ≈3–5 words, language adaptation, Arabic grammar rules preserved + explicit connector clarification, English path covered, copy-fidelity contract preserved, generators.ts imports the constant from gazeMap.ts)
   R1:     reversibility (null resolvers + no pricing → only ONE_HIGHLIGHT_BLOCK survives)
-  244 passed, 0 failed
+  254 passed, 0 failed
 ```
 
 ```shell
-$ cd functions && npm test    # full backend suite
-  ... (all 14 test files green, EXIT_CODE 0)
+$ cd functions && npm test    # full backend suite (now includes gazeMap.test.js via the aggregate 'test' script)
+  ... (all 15 test files green, EXIT_CODE 0)
 ```
 
 ```shell
@@ -268,9 +268,39 @@ The full backend test suite (14 test files, hundreds of contract fixtures) is gr
 
 ---
 
-## CodeRabbit / review handling
+## CodeRabbit review handling
 
-CodeRabbit review is in progress on PR #47. To be handled iteratively: pull the inline comments via `gh api /repos/eslam21006-coding/proadsai/pulls/47/comments` and the review bodies via `gh pr view 47 --json reviews`, address each comment (or push back with a citation), and push a fix-up commit. See `docs/LAUNCH_MATRIX.md` (or the project's review-process convention) for the review-iteration protocol.
+CodeRabbit reviewed the PR in two rounds (`aa7030f` round 1, `8ac7d77` round 2). All 11 actionable comments + 2 nitpicks have been addressed. Three comments were resolved with a **push-back + citation** rather than a code change; two were resolved with a deeper fix than CodeRabbit suggested (text-only mode gate + Arabic connector clarification).
+
+### Round 1 (`aa7030f`) — 8 of 11 actionable + 2 of 2 nitpicks fixed
+
+- **✅ Applied:**
+  - `package.json`: added `gazeMap.test.js` to the aggregate `test` script (mirrors the existing `expressionMap` entry).
+  - `gazeMap.ts` currency regex: tightened with explicit lookbehind/lookahead boundaries + `\b` so `Sarah` / `AEDUCATION` / `KNOWLEDGE` no longer false-trigger; bare-symbol set (`$/€/£/¥`) keeps its boundary semantics because the symbols are themselves boundaries.
+  - `gazeMap.ts resolveGazeDirective`: fall-through fix so a whitespace-only hook id (which canonicalizes to `null` inside `getHookGazeDirection` after `.trim()`) continues to the retargeting objection. Matches Phase 28 `resolveExpressionDirective` semantics. New A11 sub-cases cover this.
+  - `generators.ts`: introduced a small local typed view `AdInputs & { coldHookAngle?, retargetingObjection?, retargetingObjections? }` around the gaze input reads at BOTH the image-prompt injection site AND the `generateFinalAd` trace write, so no new `as any` cast is added to the hot path (Nitpick #2).
+  - `gazeMap.ts`: froze `GAZE_FALLBACK_DIRECTIVE` and `GAZE_ASPIRATIONAL_DIRECTIVE` with `as const satisfies` so the literal treatment values stay narrow and typos surface at the type level (Nitpick #1). `HOOK_GAZE_MAP` and `HOOK_ALIAS_MAP` stay as `Record<string, ...>` because the resolver looks up keys dynamically — `as const` would break the open-keyed lookup (commented in source).
+  - `spec/quickstart.md`: replaced the hardcoded machine-specific worktree path with a generic instruction; expanded the `test:gazeMap` description to cover Contracts A–G + reversibility (not just A–C).
+  - `spec/data-model.md` + `IMPLEMENTATION_REPORT.md`: added `ts` / `shell` / `text` language tags to all fenced blocks (markdownlint MD040).
+  - `spec/tasks.md`: updated T005 to include Contract B7 (guide-toward-content) and the whitespace-only fall-through assertion; updated T010 to reflect the actual `retargetingObjection ?? retargetingObjections?.[0] ?? null` pattern + the typed-view pattern.
+
+- **❌ Pushed back on (with citations in the PR comment thread):**
+  - "Hero gating": the spec explicitly states "All generations are hero-bearing — no hero-detection gate needed" (user context; mirrored in `research.md` R6 + FR-011 / FR-012). `text_only` mode was an oversight — fixed in round 2 instead of pushing back.
+  - "Arabic rules contradiction": the existing rules describe different cases (standalone benefit vs CTA-button connector). Pushed back with a citation; resolved in round 2 with a clarification in `CTA_OUTCOME_FRAMING_BLOCK`.
+  - "Use singular `retargetingObjection`": the array-fall-through pattern matches Phase 28's expression-block shape at `generators.ts:5421-5424`; some callers pass the array form. Kept the pattern; updated `tasks.md` to make the rationale explicit.
+
+### Round 2 (`8ac7d77`) — 2 of 3 remaining comments fixed
+
+- **✅ Applied:**
+  - **text-only mode gate** (CodeRabbit comment 5 — initially pushed back, then accepted): US1 / US2 / US4 are now suppressed in `text_only` mode (no hero, no universe — the prompt itself says "NO hero person. NO universe environment."). Re-uses the existing typed `isTextOnlyMode(inputs)` helper at line 562 of `generators.ts`. US5's price-hierarchy block is content-gated and stays in (typography is the carrier for the price). The trace write uses a distinct reason `text-only-mode-no-hero` so the absent case stays auditable. New D9 source-coverage assertion verifies the gate is wired at both call sites.
+  - **Arabic rules clarification** (CodeRabbit comment 4 — initially pushed back, then resolved differently): instead of modifying the existing mandatory-layer rule (which would break the standard `CTA ||| وابدأ تحقق...` pattern), `CTA_OUTCOME_FRAMING_BLOCK` is updated to be explicit that a leading و (or other natural connector like ل/عشان/وابدأ) IS allowed in the CTA-button format because there the connector is a continuation of the CTA, not a hanging conjunction. The "no leading و" rule applies to a STANDALONE benefit line. New G7 assertion verifies the clarification is present (mentions `continuation of the CTA` + `STANDALONE` + the canonical `CTA ||| وابدأ...` example).
+
+- **❌ Still pushed back on:**
+  - "Use singular `retargetingObjection`" (CodeRabbit comment 11): the array-fall-through pattern is the EXACT shape Phase 28 uses for the same reason. Phase 19's gaze code mirrors the Phase 28 shape exactly so cross-call-site behavior is identical. Removing the array fall-through would silently break callers passing the array form. Documented in `tasks.md` T010 and the PR comment thread.
+
+### CodeRabbit confirmation
+
+After the round-2 fix-up, CodeRabbit re-evaluated the original 11 actionable + 2 nitpick comments. Each is now marked "✅ Addressed in commit aa7030f" or "✅ Addressed in commits aa7030f to 8ac7d77" inline. The single review record is in `COMMENTED` state with all comments resolved.
 
 ---
 
@@ -280,6 +310,6 @@ CodeRabbit review is in progress on PR #47. To be handled iteratively: pull the 
 - Source files: `functions/src/gazeMap.ts`, `functions/src/__tests__/gazeMap.test.ts`, `functions/src/generators.ts` (edits), `functions/src/types.ts` (edits), `functions/package.json` (edits)
 - Docs: `CLAUDE.md` (Recent Changes), `docs/LAUNCH_MATRIX.md` (Phase 19 → DONE; Section 8 mirror)
 - Pattern reference: `functions/src/expressionMap.ts` (Phase 28 — the exact same shape)
-- Test runner: `npm run test:gazeMap` (mirrors `test:expressionMap`)
+- Test runner: `npm run test:gazeMap` (mirrors `test:expressionMap`); wired into the aggregate `npm test` script
 - PR: https://github.com/eslam21006-coding/proadsai/pull/47
-- Commit: `10fb254` on branch `962-gaze-direction-dr`
+- Commits on branch `962-gaze-direction-dr`: `10fb254` (initial) → `6ddd57e` (IMPLEMENTATION_REPORT) → `aa7030f` (round-1 fixes) → `8ac7d77` (round-2 fixes)
