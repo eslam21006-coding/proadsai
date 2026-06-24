@@ -5466,6 +5466,19 @@ ${(() => {
     // (audit #8 mirror from Phase 28; FR-018 identity priority #1
     // stays in the upstream #1 identity rule and is preserved
     // verbatim).
+    // text_only mode is the one explicit exception to "every
+    // generation is hero-bearing" — it is typographic-only with no
+    // hero person, no universe, no visual scene (the prompt itself
+    // spells this out at line ~3153: "NO hero person. NO universe
+    // environment."). Emitting gaze / one-highlight / mood blocks
+    // there is wasteful at best and could prompt the model to
+    // hallucinate a hero. The price-hierarchy block is content-gated
+    // and is fine to keep (typography is just the carrier for the
+    // price). US1 / US2 / US4 are skipped in text_only mode; US5
+    // still fires when pricing is present. `isTextOnlyMode` is the
+    // existing typed helper at line 562 of this file.
+    const _isTextOnly = isTextOnlyMode(inputs);
+
     // Narrow the inputs view for the gaze helper — declares the two
     // optional cold-hook / retargeting fields the gaze resolver reads.
     // (No new `any` cast — the existing pattern in the Phase 28
@@ -5479,10 +5492,12 @@ ${(() => {
         retargetingObjection?: string | null;
         retargetingObjections?: readonly string[] | null;
     };
-    const _imGazeDirective = resolveGazeDirective({
-        coldHookAngle: _gazeInputs.coldHookAngle ?? null,
-        retargetingObjection: _gazeInputs.retargetingObjection ?? _gazeInputs.retargetingObjections?.[0] ?? null,
-    });
+    const _imGazeDirective = _isTextOnly
+        ? null
+        : resolveGazeDirective({
+            coldHookAngle: _gazeInputs.coldHookAngle ?? null,
+            retargetingObjection: _gazeInputs.retargetingObjection ?? _gazeInputs.retargetingObjections?.[0] ?? null,
+        });
     const _isBAGaze = isBeforeAfterSelection(_gazeInputs, _gazeInputs.coldHookAngle);
     const _gazeBlock = _imGazeDirective
         ? buildImagePromptGazeBlock(_imGazeDirective, {
@@ -5490,7 +5505,7 @@ ${(() => {
             aspectRatio,
         })
         : "";
-    const _moodBlock = buildHookVisualMoodBlock(_imGazeDirective);
+    const _moodBlock = _isTextOnly ? "" : buildHookVisualMoodBlock(_imGazeDirective);
     const _priceBlock = detectPriceContent({
         hookText,
         subheadText,
@@ -5499,7 +5514,15 @@ ${(() => {
     })
         ? buildPriceHierarchyBlock()
         : "";
-    return `${_gazeBlock}\n${ONE_HIGHLIGHT_BLOCK}\n${_moodBlock}\n${_priceBlock}`.trim();
+    // ONE_HIGHLIGHT_BLOCK is suppressed in text_only mode because
+    // there is no hero to be the focal point — the prompt text
+    // already says "TYPOGRAPHY-ONLY design. NO hero person." and
+    // emitting "one primary focal point (the hero)" would be
+    // contradictory. US5's price-hierarchy block is content-gated
+    // and stays in (the typography is just the carrier for the
+    // price).
+    const _oneHighlightBlock = _isTextOnly ? "" : ONE_HIGHLIGHT_BLOCK;
+    return `${_gazeBlock}\n${_oneHighlightBlock}\n${_moodBlock}\n${_priceBlock}`.trim();
 })()}
 ${MODEL_PROVIDER === 'openai' ? `BLUEPRINT contains layout structure only — render ONLY the text elements listed below, nothing else from the BLUEPRINT.
 ` : ''}
@@ -5618,12 +5641,20 @@ export async function generateFinalAd(
             retargetingObjection?: string | null;
             retargetingObjections?: readonly string[] | null;
         };
-        const _gazeDirective = resolveGazeDirective({
-            coldHookAngle: _gazeTraceInputs.coldHookAngle ?? null,
-            retargetingObjection: _gazeTraceInputs.retargetingObjection
-                ?? _gazeTraceInputs.retargetingObjections?.[0]
-                ?? null,
-        });
+        // text_only mode has no hero — write applied:false with
+        // a distinct reason so the absent case is still
+        // auditable. Mirrors the image-prompt injection-site
+        // gate (US1 / US2 / US4 are suppressed in text_only;
+        // US5 is content-gated and runs independently).
+        const _isTextOnlyTrace = isTextOnlyMode(inputs);
+        const _gazeDirective = _isTextOnlyTrace
+            ? null
+            : resolveGazeDirective({
+                coldHookAngle: _gazeTraceInputs.coldHookAngle ?? null,
+                retargetingObjection: _gazeTraceInputs.retargetingObjection
+                    ?? _gazeTraceInputs.retargetingObjections?.[0]
+                    ?? null,
+            });
         _lastResolutionTrace = {
             ...(_lastResolutionTrace || {}),
             gazeDirection: _gazeDirective
@@ -5638,7 +5669,9 @@ export async function generateFinalAd(
                     sourceId: null,
                     treatment: null,
                     applied: false,
-                    reason: "no-hook-or-objection-active",
+                    reason: _isTextOnlyTrace
+                        ? "text-only-mode-no-hero"
+                        : "no-hook-or-objection-active",
                 },
         };
     }

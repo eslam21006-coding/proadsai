@@ -564,6 +564,32 @@ function runTests(): void {
         assert(/from\s+["']\.\/gazeMap\.js["']/.test(genSrc), `generators.ts imports from "./gazeMap.js"`);
     }
 
+    // ─── G7: CTA_OUTCOME_FRAMING_BLOCK clarifies the Arabic connector rule (FR-014, G4) ───
+    console.log("  G7: CTA_OUTCOME_FRAMING_BLOCK clarifies the Arabic connector rule");
+    {
+        // The benefit can use a natural connector (و/ل/عشان/وابدأ)
+        // in the "CTA ||| وابدأ تحقق..." format because there the
+        // connector is a continuation of the CTA, not a hanging
+        // conjunction. The "no leading و" rule applies to a
+        // STANDALONE benefit line. Phase 19's block must not be
+        // misread as forbidding the standard "وابدأ تحقق..." pattern.
+        assert(/continuation of the CTA/i.test(CTA_OUTCOME_FRAMING_BLOCK), `block clarifies و as a continuation of the CTA`);
+        assert(/STANDALONE/i.test(CTA_OUTCOME_FRAMING_BLOCK), `block applies the no-leading-و rule to standalone benefits only`);
+        assert(/CTA\s*\|\|\|\s*وَ?ابدِ?أ?/.test(CTA_OUTCOME_FRAMING_BLOCK), `block uses the canonical "CTA ||| وابدأ..." example`);
+    }
+
+    // ─── D9: text-only mode suppresses gaze / one-highlight / mood blocks (CodeRabbit fix) ───
+    console.log("  D9: text-only mode suppresses gaze / one-highlight / mood blocks");
+    {
+        const genSrc = readFileSync(join(__dirname, "..", "..", "src", "generators.ts"), "utf8");
+        // isTextOnlyMode(inputs) is the existing typed helper at
+        // line 562. The injection IIFE must call it and suppress the
+        // gaze + mood + one-highlight blocks in text-only mode.
+        assert(/isTextOnlyMode\s*\(\s*inputs\s*\)/.test(genSrc), `generators.ts gates on isTextOnlyMode(inputs)`);
+        // Trace write also uses the text-only gate.
+        assert(/text-only-mode-no-hero/.test(genSrc), `gazeDirection trace has a distinct reason for text-only mode`);
+    }
+
     // ═══════════════════════════════════════════════════════════
     // REVERSIBILITY (F4) — verify that null resolvers + content gate
     // produce no gaze / mood / price text. ONE_HIGHLIGHT_BLOCK is

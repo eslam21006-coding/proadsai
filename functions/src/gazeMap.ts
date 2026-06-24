@@ -636,13 +636,18 @@ export function buildPriceHierarchyBlock(): string {
  *     length adapts per language.
  *   - G4: Arabic path preserves existing Arabic grammar / flow
  *     rules (no leading و, self-contained phrase) — the guidance
- *     does NOT weaken or override them.
+ *     does NOT weaken or override them. A leading و (or other
+ *     connector like ل/عشان/وابدأ) IS allowed in the standard
+ *     "CTA ||| وابدأ..." format because there the و is a natural
+ *     continuation of the CTA, not a hanging conjunction. The
+ *     "no leading و" rule applies to a STANDALONE benefit line
+ *     that does not flow from a CTA on the same button row.
  *   - G5: English path receives the same outcome-framing guidance.
  */
 export const CTA_OUTCOME_FRAMING_BLOCK: string = `CTA OUTCOME FRAMING (ADVISORY — both languages):
 - The CTA / benefit line should hint at an OUTCOME or benefit the reader gets, not just name the action. "Start your growth journey" / "ابدأ رحلة النمو" reads as an outcome; "Subscribe now" / "اشترك الآن" reads as a bare action.
 - This is ADVISORY, not mandatory. When a direct action reads better for the offer (e.g. time-sensitive registration, one-tap sign-up), a direct-action CTA is still the right call.
 - Keep the CTA / benefit short (≈3–5 words). Length adapts per language — Arabic allows slightly more for natural phrasing.
-- Arabic grammar / flow rules are UNCHANGED: the benefit must still be a grammatically complete phrase that flows directly from the CTA, never starting with a dangling و (waw) or any other conjunction, and never a hanging clause that depends on words not shown on the button.
+- Arabic grammar / flow rules are UNCHANGED. The benefit must still be a grammatically complete phrase that flows directly from the CTA on the same button row, never a hanging clause that depends on words not shown on the button. A leading و (or other natural connector like ل/عشان/وابدأ) IS allowed in the standard "CTA ||| وابدأ تحقق..." format because there the connector is a continuation of the CTA, not a hanging conjunction. The "no leading و" rule applies to a STANDALONE benefit line that does not flow from a CTA — not to the connector in a CTA-button pair.
 - English CTAs follow the same outcome-framing guidance — the copy engine may choose "Start your growth journey" over "Join now" when an outcome framing is natural for the offer.
 - The copy-fidelity contract, banned-benefit-pattern rules, and Phase 24B optional copy fields are all UNCHANGED. This guidance only nudges the CTA / benefit toward outcome framing when natural.`;
