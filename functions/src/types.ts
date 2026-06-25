@@ -417,6 +417,29 @@ export interface ResolutionTrace {
         readonly applied: boolean;
         readonly reason?: string;
     };
+    // Phase 19 — additive gaze-direction sub-object. Records the gaze
+    // treatment resolved for this generation (source = cold hook angle,
+    // retargeting objection, or safe fallback), so reviewers / tests can
+    // confirm every hero-bearing run received gaze guidance.
+    //
+    // `applied: true`  → a `GAZE DIRECTION:` line was emitted into the
+    //   image-rendering prompt (single / carousel slide / batch item).
+    //   `treatment` and `sourceId` carry the resolved direction.
+    // `applied: false` → no hook / objection was active for this run, so
+    //   no guidance was emitted. `treatment` and `sourceId` are null and
+    //   `reason` explains WHY.
+    //
+    // Field absence on a legacy generation is accepted as "no guidance" —
+    // see the contract for migration behavior. Additive — no migration.
+    // Art-direction gaze override is reserved for a future phase
+    // (deferred per Phase 19 clarification).
+    readonly gazeDirection?: {
+        readonly source: "hook" | "objection" | "fallback" | null;
+        readonly sourceId: string | null;
+        readonly treatment: string | null;
+        readonly applied: boolean;
+        readonly reason?: string;
+    };
 }
 
 export interface ModeCompositionTrace {

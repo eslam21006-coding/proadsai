@@ -13,6 +13,15 @@ import { RETARGETING_OBJECTION_DATA, getBestAngleForObjection, buildNormalizedRe
 import { LANGUAGE_RULES, SLIPPERY_SLIDE, HEADLINE_TYPES, COLD_TRAFFIC_RULES, RETARGETING_RULES, BELIEF_SHIFTING_FRAMEWORK, QUALITY_CHECKLIST } from "./copywriting_knowledge.js";
 import { getHookAnglePrompt, getHookAngleVisualDirection, getHookAngleCaptionStrategy, getAngleVariationBlueprint, getAnglePlusDeliveryInstruction, getAngleValidationChecklist } from "./knowledge/hookAnglesKnowledge.js";
 import { buildImagePromptExpressionBlock, resolveExpressionDirective } from "./expressionMap.js";
+import {
+    buildImagePromptGazeBlock,
+    resolveGazeDirective,
+    ONE_HIGHLIGHT_BLOCK,
+    buildHookVisualMoodBlock,
+    detectPriceContent,
+    buildPriceHierarchyBlock,
+    CTA_OUTCOME_FRAMING_BLOCK,
+} from "./gazeMap.js";
 import { getHookTypePrompt, getHookTypeCaptionStyle, getHookTypeVisualDirection, getDeliveryStyleFormatOverride } from "./knowledge/hookTypesKnowledge.js";
 import { getAdTonePrompt, getAdToneVisualMood, getAdToneCaptionCalibration } from "./knowledge/adTonesKnowledge.js";
 import { getCopywritingStrategyPrompt, getCopywritingStrategyCaptionStructure, getCopywritingStrategyVisualHint } from "./knowledge/copywritingStrategies.js";
@@ -2513,6 +2522,8 @@ Each hook MUST have a DIFFERENT benefit that addresses a DIFFERENT pain from the
 - The benefit line must be a grammatically COMPLETE and natural Arabic phrase that flows directly from the main CTA. Read the CTA button text and the benefit together as ONE fluent, spoken line.
 - Do NOT begin the benefit with و (waw) or any dangling conjunction. A benefit that starts with "و..." reads as a cut-off fragment that disconnects from the preceding CTA line — this is forbidden.
 - Write a self-contained phrase (a clear outcome or a natural continuation of the CTA) that stands on its own grammatically — never a hanging clause that depends on words not shown on the button.
+
+${CTA_OUTCOME_FRAMING_BLOCK}
 
 ═══════════════════════════════════════════════════════════════════════════════
 COPYWRITING QUALITY RULES (CRITICAL — READ EVERY LINE)
@@ -5426,6 +5437,93 @@ ${(() => {
     const _isBA = isBeforeAfterSelection(inputs as any, (inputs as any).coldHookAngle);
     return buildImagePromptExpressionBlock(_imExprDirective, { beforeAfterSplit: _isBA });
 })()}
+${(() => {
+    // Phase 19 — Direct-Response Design Upgrades (gaze direction).
+    //
+    // Emits THREE blocks at this single injection point so every render
+    // path (single / carousel slide / batch item / retargeting /
+    // before-after) receives the same DR guidance (FR-007). Ordering
+    // follows the contracts:
+    //   1. GAZE DIRECTION (hook-gated, US1) — uses the same
+    //      `resolveGazeDirective(...)` shape as Phase 28's expression
+    //      so a null directive emits no block. before/after mode
+    //      splits BEFORE = hook gaze, AFTER = aspirational forward
+    //      horizon (FR-008, mirroring Phase 28's expression split).
+    //   2. ONE_HIGHLIGHT_BLOCK (always-on, US2) — there is exactly one
+    //      primary focal point (the hero); the block is injected
+    //      UNCONDITIONALLY for every prompt here, including the
+    //      no-hook path, because the Pro Ads AI pipeline is uniformly
+    //      hero-centric (FR-011 / FR-012). No hero-detection gate.
+    //   3. HOOK ↔ VISUAL MOOD (hook-gated, US4) — modulates the
+    //      palette / lighting / composition WITHIN the active art
+    //      direction / universe. Null on the no-hook path.
+    //   4. PRICE HIERARCHY (content-gated, US5) — only when the
+    //      assembled copy actually contains a price / discount signal.
+    //
+    // The blocks all sit AFTER the BLUEPRINT and the Phase 28
+    // expression block so the renderer sees the full scene + emotion
+    // context first, then the gaze / focal / mood / price guidance
+    // (audit #8 mirror from Phase 28; FR-018 identity priority #1
+    // stays in the upstream #1 identity rule and is preserved
+    // verbatim).
+    // text_only mode is the one explicit exception to "every
+    // generation is hero-bearing" — it is typographic-only with no
+    // hero person, no universe, no visual scene (the prompt itself
+    // spells this out at line ~3153: "NO hero person. NO universe
+    // environment."). Emitting gaze / one-highlight / mood blocks
+    // there is wasteful at best and could prompt the model to
+    // hallucinate a hero. The price-hierarchy block is content-gated
+    // and is fine to keep (typography is just the carrier for the
+    // price). US1 / US2 / US4 are skipped in text_only mode; US5
+    // still fires when pricing is present. `isTextOnlyMode` is the
+    // existing typed helper at line 562 of this file.
+    const _isTextOnly = isTextOnlyMode(inputs);
+
+    // Narrow the inputs view for the gaze helper — declares the two
+    // optional cold-hook / retargeting fields the gaze resolver reads.
+    // (No new `any` cast — the existing pattern in the Phase 28
+    // expression block uses `(inputs as any).…` because the underlying
+    // type is a legacy Firestore shape; this is a small additive
+    // typed projection of those fields only, scoped to the gaze
+    // resolution. Keeps the new code free of `any` while not
+    // disturbing the surrounding legacy typing.)
+    const _gazeInputs = inputs as AdInputs & {
+        coldHookAngle?: string | null;
+        retargetingObjection?: string | null;
+        retargetingObjections?: readonly string[] | null;
+    };
+    const _imGazeDirective = _isTextOnly
+        ? null
+        : resolveGazeDirective({
+            coldHookAngle: _gazeInputs.coldHookAngle ?? null,
+            retargetingObjection: _gazeInputs.retargetingObjection ?? _gazeInputs.retargetingObjections?.[0] ?? null,
+        });
+    const _isBAGaze = isBeforeAfterSelection(_gazeInputs, _gazeInputs.coldHookAngle);
+    const _gazeBlock = _imGazeDirective
+        ? buildImagePromptGazeBlock(_imGazeDirective, {
+            beforeAfterSplit: _isBAGaze,
+            aspectRatio,
+        })
+        : "";
+    const _moodBlock = _isTextOnly ? "" : buildHookVisualMoodBlock(_imGazeDirective);
+    const _priceBlock = detectPriceContent({
+        hookText,
+        subheadText,
+        benefitText,
+        badges: (badges ?? null) as string | null,
+    })
+        ? buildPriceHierarchyBlock()
+        : "";
+    // ONE_HIGHLIGHT_BLOCK is suppressed in text_only mode because
+    // there is no hero to be the focal point — the prompt text
+    // already says "TYPOGRAPHY-ONLY design. NO hero person." and
+    // emitting "one primary focal point (the hero)" would be
+    // contradictory. US5's price-hierarchy block is content-gated
+    // and stays in (the typography is just the carrier for the
+    // price).
+    const _oneHighlightBlock = _isTextOnly ? "" : ONE_HIGHLIGHT_BLOCK;
+    return `${_gazeBlock}\n${_oneHighlightBlock}\n${_moodBlock}\n${_priceBlock}`.trim();
+})()}
 ${MODEL_PROVIDER === 'openai' ? `BLUEPRINT contains layout structure only — render ONLY the text elements listed below, nothing else from the BLUEPRINT.
 ` : ''}
 MANDATORY TEXT ELEMENTS — render ALL of these, no exceptions:
@@ -5519,6 +5617,61 @@ export async function generateFinalAd(
                     emotion: null,
                     applied: false,
                     reason: "no-hook-or-objection-active",
+                },
+        };
+    }
+    // Phase 19 — Gaze direction trace (FR-022, Contract E). Written here
+    // (in `generateFinalAd`) so the trace covers every render path
+    // uniformly: single, carousel slide, batch item, edit, reflow-
+    // rerender. Resolves the cold hook angle OR the retargeting
+    // objection via the same `resolveGazeDirective(...)` shape used
+    // at the image-prompt injection site; if neither applies, writes
+    // `applied:false` with an explicit `reason` so the absent case
+    // is auditable (mirrors Phase 28's expression-adaptation trace
+    // contract — additive, no migration, `null` is the canonical
+    // absent sentinel for sub-fields).
+    {
+        // Narrow the inputs view for the gaze resolver — same
+        // additive typed projection as the image-prompt injection
+        // site, scoped to the trace write here. Keeps the new
+        // code free of `any` without disturbing the surrounding
+        // legacy typing.
+        const _gazeTraceInputs = inputs as AdInputs & {
+            coldHookAngle?: string | null;
+            retargetingObjection?: string | null;
+            retargetingObjections?: readonly string[] | null;
+        };
+        // text_only mode has no hero — write applied:false with
+        // a distinct reason so the absent case is still
+        // auditable. Mirrors the image-prompt injection-site
+        // gate (US1 / US2 / US4 are suppressed in text_only;
+        // US5 is content-gated and runs independently).
+        const _isTextOnlyTrace = isTextOnlyMode(inputs);
+        const _gazeDirective = _isTextOnlyTrace
+            ? null
+            : resolveGazeDirective({
+                coldHookAngle: _gazeTraceInputs.coldHookAngle ?? null,
+                retargetingObjection: _gazeTraceInputs.retargetingObjection
+                    ?? _gazeTraceInputs.retargetingObjections?.[0]
+                    ?? null,
+            });
+        _lastResolutionTrace = {
+            ...(_lastResolutionTrace || {}),
+            gazeDirection: _gazeDirective
+                ? {
+                    source: _gazeDirective.source,
+                    sourceId: _gazeDirective.sourceId,
+                    treatment: _gazeDirective.treatment,
+                    applied: true,
+                }
+                : {
+                    source: null,
+                    sourceId: null,
+                    treatment: null,
+                    applied: false,
+                    reason: _isTextOnlyTrace
+                        ? "text-only-mode-no-hero"
+                        : "no-hook-or-objection-active",
                 },
         };
     }

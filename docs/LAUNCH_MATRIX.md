@@ -3,7 +3,7 @@
 
 > **Authority**: This file overrides all older behavior assumptions, the Compatibility Matrix v2, and the ChatGPT master plan for launch scope.
 > Where this file and any other document disagree, this file wins.
-> Last updated: v7 — v6 + Phase 23 complete (2026-06-18) + Phase 24 added. Phase 20 and Phase 24 confirmed separate: Phase 20 = visual differentiation (conceptDirector.ts, needs Phase 14). Phase 24 = copy structure (creativeTextDirector.ts, no Phase 14 dependency).
+> Last updated: v8 — v7 + Phase 28 complete (2026-06-23) + Phase 19 complete (2026-06-24). Phase 19 ships the gaze-direction + DR-design mapper (5 additive prompt blocks through the shared image-prompt assembly point + CTA outcome framing in the copy prompt). Phase 20 and Phase 24 confirmed separate: Phase 20 = visual differentiation (conceptDirector.ts, needs Phase 14). Phase 24 = copy structure (creativeTextDirector.ts, no Phase 14 dependency).
 
 ---
 
@@ -115,12 +115,13 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | Phase 025 — OpenAI gpt-image-2 Swap | `specs/025-openai-swap` | Complete. Replaces Gemini image generation with gpt-image-2 across all render paths. Includes edit-recompose reflow, blueprint bleeding fixes, carousel prompt optimization, and unified ALL VERSIONS gallery. |
 | Phase 17 — Independent Multi-Size Generation | `961-independent-multisize` | ✅ DONE (PR #44, merged 2026-06-22). Replaced broken reflow with native per-size generation via edit path. Anchor-first sequencing, client-side fan-out with max-10 concurrency, approvedTov in payload. |
 | fix-916-text-clipping | — | ✅ DONE (PR #45, merged 2026-06-22). Removed destructive `substring(0,50)` truncation of subheadline/benefit on compact ratios. `maxSubheadChars` advisory hint adjusted to 65 for compact. |
+| Phase 28 — Expression Adaptation | `specs/960-expression-adaptation` | ✅ DONE 2026-06-23 (PR #46). Hook→expression mapper; EXPRESSION DIRECTION block injected into the IMAGE prompt after the BLUEPRINT; `expressionAdaptation?` trace. See Section 8 mirror. |
+| Phase 19 — Direct-Response Design Upgrades (gaze + DR) | `962-gaze-direction-dr` | ✅ DONE 2026-06-24 (this PR). Five additive prompt blocks through the single shared `buildFinalImagePrompt()` injection point: (1) `GAZE DIRECTION` (hook-gated, US1), (2) `ONE_HIGHLIGHT_BLOCK` (always-on, US2), (3) hook↔visual mood modulation (hook-gated, US4), (4) price hierarchy (content-gated, US5), (5) CTA outcome framing (copy prompt, both languages, US3). Additive `gazeDirection?` trace. 244 unit assertions (Contracts A–G) green; Phase 28 expression tests still green. Art-direction gaze override deferred to a later phase. See Section 8 mirror. |
 
 ### ⏳ TODO — Critical (build first)
 
 | Item | Why critical |
 |---|---|
-| **Phase 19 — Direct-Response Design Upgrades** | Single biggest paid-traffic conversion lever. Adds gaze direction, one-highlight cap, price hierarchy, CTA outcome framing, hook↔visual alignment, campaign coherence. **Independent of billing — can run in parallel with Phase 21.** |
 | **Phase 24 — Conditional Copy Structure (creativeTextDirector)** | Replaces fixed 4-field copy structure with a decision system: 8 static structures + 11 carousel frameworks chosen per inputs. Phase B ships first (make subheadline/CTA/benefit truly optional — highest risk, touches live step-2 UI). Phase C ships second (creativeTextDirector module — input diagnosis, auto-selection, scoring, rewrite loop). No dependency on Phase 14 or Phase 20. Spec: specs/_shared/COPY_SYSTEM_REFERENCE.md + creative-text-decision-system-spec.md. |
 | **Phase 20 — Concept Director + Brief Coherence Check** | Solves "every ad looks like the same machine made it." User-facing impact: Brief Coherence Check (live banner) + Variance Mode (Balanced/Aggressive). Backend stays hidden. **Depends on Phase 14 (which depends on Phase 21).** |
 | **Phase 17 — Resize & Reflow (re-verify)** | Rebuilt in Phase 025 as edit-recompose — needs smoke test verification |
@@ -1906,19 +1907,40 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## Phase 19 — Direct-Response Design Upgrades ⏳ TODO — CRITICAL
+## Phase 19 — Direct-Response Design Upgrades ✅ DONE (2026-06-24)
 **Requires:** Phase 5 + HOTFIX-E + HOTFIX-F complete (pipeline + logos + reflow must be stable first).
-**Includes:** Gaze direction (hero looks toward CTA/headline), one-highlight cap, price hierarchy, CTA outcome framing, hook↔visual alignment, campaign coherence.
 
-**Context:** Direct-response ads live or die on six levers: gaze, contrast, one-highlight discipline, price hierarchy, CTA outcome framing, and hook↔visual alignment. The current pipeline has none of these as enforced primitives — Gemini chooses randomly within style constraints. This phase adds them as deterministic rules in the build plan prompt and post-generation validation.
+**Scope (shipped in `specs/962-gaze-direction-dr/`):** Five additive prompt blocks emitted through the single shared image-prompt assembly point `buildFinalImagePrompt()` (`generators.ts:5260`), all of them subordinate to the #1 face-identity rule:
 
-**What's missing (verified from code audit):**
-- No gaze direction control. Subject's eyes are an arrow being pointed at random elements.
-- No highlight count cap. Gemini highlights every punchy phrase — 3+ highlights on a single ad = 0 highlights.
-- No price visual hierarchy rule. A $19 offer buried in 18pt CTA text is leaving money on the table.
-- No CTA outcome-framing requirement. "Join the training" (description) vs "Reserve my spot — 3 days that change your career" (outcome).
-- No hook↔visual promise validation. Hook says "end your confusion forever"; visual shows man standing in boardroom.
-- No campaign coherence layer. Same offer across 6 ads = 6 different color palettes.
+1. **Gaze direction (US1, hook-gated)** — new pure mapper `functions/src/gazeMap.ts` resolves each of the 10 canonical cold hook angles and the 12 retargeting objection ids to a `GazeDirective` (treatment + concrete physical description). Gaze follows hook emotion (pain → reflective_downward, logical_authority → direct_to_viewer, future_based → forward_horizon, curiosity → three_quarter, scarcity → toward_content, etc.) and the emitted `GAZE DIRECTION:` block carries (a) the identity-priority clause (gaze is eye/head orientation only — never alters facial features), (b) the advisory / natural clause, (c) the explicit failure-mode prohibitions (no empty-space stare, no cross-eyed / wall-eyed, no robotic always-at-CTA), (d) the positive guide-toward-content clause (FR-004), and (e) a 9:16 / 4:5 / 16:9 aspect-ratio note (FR-009). Before/after mode splits BEFORE = hook gaze, AFTER = aspirational forward horizon (FR-008).
+2. **One-highlight cap (US2, always-on, hook-independent)** — `ONE_HIGHLIGHT_BLOCK` constant says: one primary focal point (the hero) + ≤1 supporting secondary emphasis that supports the hero or guides the eye toward the CTA; no multiple glow / sparkle / highlight. Injected UNCONDITIONALLY for every prompt that flows through the shared assembly point, including the no-hook path (FR-011 / FR-012 — the Pro Ads AI pipeline is uniformly hero-centric).
+3. **Hook↔visual mood modulation (US4, hook-gated)** — `buildHookVisualMoodBlock(directive)` maps hook emotion to a mood shape: pain → moodier / dramatic shadows, future_based / emotional → brighter / warmer / open, logic / statistics → structured / symmetrical, urgency / scarcity → tighter / warm accents, logical_authority / social_proof → settled / confident. The block explicitly states it MODULATES WITHIN the active art direction / universe and never overrides the universe's signature aesthetic.
+4. **Price hierarchy (US5, content-gated)** — `buildPriceHierarchyBlock()` (gated on `detectPriceContent(...)`) emits: original price smaller / struck-through, discounted price larger / prominent / distinct color, savings highlighted but secondary. The detector covers currency symbols (`$`, `ر.س`, `د.إ`, `SAR`, `AED`, `USD`, `EUR`, `GBP`, etc.), Arabic ٪ + Latin %, and discount keywords in both languages. A bare year like "2026" MUST NOT trigger the block.
+5. **CTA outcome framing (US3, copy prompt, both languages)** — exported constant `CTA_OUTCOME_FRAMING_BLOCK` defined in the side-effect-free `gazeMap.ts` and spliced into the existing CTA / benefit block of the Gemini copy-generation prompt (`generators.ts:~2478-2516`). The guidance is ADVISORY (direct-action CTAs still allowed when natural), keeps CTA / benefit short (≈3–5 words, length adapts per language), and explicitly preserves the existing Arabic grammar / flow rules (no leading و, self-contained phrase) and the copy-fidelity contract.
+
+**Resolvers & trace:**
+- `HOOK_GAZE_MAP` covers the 10 canonical hook ids; `HOOK_ALIAS_MAP` (`shocking_stat`→`statistics`, `fear_of_missing_out`→`urgency`, `future_pacing`→`future_based`) and a safe `three_quarter` fallback (`GAZE_FALLBACK_DIRECTIVE`) keep the lookup safe (FR-010: never throws, never null for a non-null id).
+- `getObjectionGazeDirection(...)` reuses the Phase 28 family grouping (price / trust / timing) so gaze and expression stay aligned for retargeting heroes (FR-019).
+- `resolveGazeDirective({ coldHookAngle, retargetingObjection })` picks hook first, then objection, returns `null` only for null/empty input.
+- Additive `ResolutionTrace.gazeDirection?` = `{ source: "hook" | "objection" | "fallback" | null, sourceId, treatment, applied, reason? }` written in `generateFinalAd()` next to the existing `expressionAdaptation` trace. `null` is the canonical absent sentinel; legacy records without the field read as "not applied" (no migration, FR-022 / Contract E).
+- Art-direction gaze override is DEFERRED to a later phase (per clarification 2026-06-24); the mapper is structured so an `art-direction` source can be layered in later without reworking the injection point.
+
+**Key behaviors:**
+- Single shared injection point at `buildFinalImagePrompt()` covers single / carousel / batch / retargeting / before-after / reflow-rerender / edit uniformly (FR-007) — one edit, all render paths inherit.
+- Face-identity protection stays priority #1; the gaze block explicitly forbids altering facial features (FR-018).
+- `MODEL_PROVIDER` switch remains operative; the gaze block is plain prompt text, no provider branch (FR-021).
+- No new model calls, no Firestore schema migration, no frontend change, no billing / plan-gating change. Fully reversible: comment out the single DR-injection line + set the helpers to return empty to restore pre-Phase-19 output. Replaced code is commented out, not deleted; `null` is the canonical absent sentinel (FR-023).
+
+**Tests:** 244 unit assertions cover Contracts A–G (all green) — see `functions/src/__tests__/gazeMap.test.ts`. Mirror of Phase 28's `expressionMap.test.ts`. Tests cover: resolver coverage (10 hooks + 12 objections + aliases + fallback + null/empty); image-block builder (label, identity clause, advisory + failure-mode prohibitions, aspect-ratio notes, before/after split, null → `""`); one-highlight cap; hook-mood block (4 hook families + null); price detector (true on currency/percent/discount, false on price-free coach copy + bare year); injection-site placement (gaze AFTER BLUEPRINT + expression, exactly one call, aspectRatio passed, provider-agnostic); audit trace (sub-object shape, applied:true/with-non-null-fields, applied:false/with-reason, source:fallback path, additive no-migration); CTA outcome framing (outcome-framing, advisory, ≈3–5 words, language adaptation, Arabic grammar rules preserved, English path covered, copy-fidelity contract preserved); reversibility (null resolvers + no pricing → only `ONE_HIGHLIGHT_BLOCK` survives).
+
+**Source files:**
+- NEW: `functions/src/gazeMap.ts` — pure mapper (10 hooks + 12 objections → `GazeDirective`) and all five DR block builders
+- NEW: `functions/src/__tests__/gazeMap.test.ts` — 244 assertions covering Contracts A–G + reversibility
+- EDIT: `functions/src/generators.ts` — import gaze mapper + blocks; inject into `buildFinalImagePrompt()` (right after the Phase 28 expression block); splice `CTA_OUTCOME_FRAMING_BLOCK` into the copy prompt CTA / benefit block; write `gazeDirection` trace in `generateFinalAd()`
+- EDIT: `functions/src/types.ts` — additive `ResolutionTrace.gazeDirection?` sub-object
+- EDIT: `functions/package.json` — `test:gazeMap` script
+- EDIT: `CLAUDE.md` — Phase 19 entry in Recent Changes
+- EDIT: `docs/LAUNCH_MATRIX.md` — Phase 19 status flipped to DONE (this section)
 
 | # | File | Action | Done when |
 |---|---|---|---|
