@@ -51,7 +51,7 @@ This is the authoritative pass/fail table. The test file `functions/src/__tests_
 
 ## Contract C — Blueprint visual-coherence instruction
 
-**Rule**: When (and only when) `applied:true`, the build-plan/blueprint prompt (`generateBuildPlan` and/or `generateConcepts`) MUST include the visual-coherence instruction ("if the copy uses a universe metaphor, describe one matching visual element so the image renders it coherently"). When `applied:false`, that instruction MUST be absent.
+**Rule**: When (and only when) `applied:true`, the visual-coherence instruction ("if the copy uses a universe metaphor, describe one matching visual element so the image renders it coherently") MUST reach the **rendered-image prompt (TECHNICAL_PROMPT)** — i.e. it must be injected at the actual scene-authoring site (confirm which of `generateConcepts` ~L3100 / `generateBuildPlan` ~L4370 authors the rendered scene; Phase 28 used `generateConcepts`). Injecting only into a build plan that does not flow into the TECHNICAL_PROMPT FAILS this contract. When `applied:false`, the instruction MUST be absent.
 
 | # | Decision `applied` | blueprint instruction |
 |---|--------------------|-----------------------|

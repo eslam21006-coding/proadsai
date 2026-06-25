@@ -101,4 +101,4 @@ This order guarantees the spec edge case "reference ad + fantasy + carousel" →
 
 - `universeAwareCopy` is a sibling of `expressionAdaptation` and `gazeDirection` under `ResolutionTrace`. It is written once per generation in `generateFinalAd()`.
 - The decision is computed from the SAME `AdInputs` used by `generateTOV()`/`generateConcepts()`/`generateBuildPlan()`, so the trace cannot disagree with the prompt that was emitted.
-- For carousels, the per-slide nature of `isCarouselNonHookSlide` means slides 2+ record `carousel-non-hook-slide` while the hook slide records the family-driven reason (see plan § Carousel nuance).
+- For carousels, the per-slide values arise naturally because `generateFinalAd()` is invoked **once per slide** (`carouselSlideIndex` is injected per call — confirmed `generators.ts` L5682–5689, same mechanism as the Phase 19 gaze / Phase 28 expression traces). The single `universeAwareCopy` object therefore reflects the CURRENT slide's decision: slides 2+ record `carousel-non-hook-slide` while the hook slide (index 0) records the family-driven reason. No array/per-slide schema is needed on this field (see plan § Carousel nuance).
