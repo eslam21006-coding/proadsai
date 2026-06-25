@@ -22,6 +22,13 @@ import {
     buildPriceHierarchyBlock,
     CTA_OUTCOME_FRAMING_BLOCK,
 } from "./gazeMap.js";
+import {
+    resolveUniverseCopyDecision,
+    buildFantasyMetaphorCopyBlock,
+    buildBlueprintMetaphorVisualBlock,
+    STRICT_METAPHOR_BLOCK,
+    STRICT_METAPHOR_REFRESH_LINE,
+} from "./universeCopyMap.js";
 import { getHookTypePrompt, getHookTypeCaptionStyle, getHookTypeVisualDirection, getDeliveryStyleFormatOverride } from "./knowledge/hookTypesKnowledge.js";
 import { getAdTonePrompt, getAdToneVisualMood, getAdToneCaptionCalibration } from "./knowledge/adTonesKnowledge.js";
 import { getCopywritingStrategyPrompt, getCopywritingStrategyCaptionStructure, getCopywritingStrategyVisualHint } from "./knowledge/copywritingStrategies.js";
@@ -1882,6 +1889,28 @@ MINIMAL STYLE HOOK BIAS:
 - DE-PRIORITIZE: cinematic narrative hooks, scene-dependent before/after, fantasy/worldbuilding hooks, environment-led lifestyle storytelling
 - WORDING STYLE: concise, sharp, commercial, clean, visually legible, less theatrical` : '';
 
+            // Phase 27 — Universe-Aware Copy (FR-001 / FR-002). Compute the
+            // metaphor DECISION here so the copy-prompt assembly below
+            // (L1899–1915) can choose strict vs relaxed via the same
+            // mapper that emits the trace + blueprint block. Copy is
+            // authored ONCE for the hook slide, so the
+            // `isCarouselNonHookSlide` flag is `false` at this site —
+            // carousel suppression is enforced at the trace site (T013)
+            // and at the per-slide blueprint site (T023).
+            // CANONICAL REFERENCE-AD SIGNAL (T020) — must match the
+            // expression site, the trace site, and the blueprint site
+            // exactly so the four sites cannot disagree on the same
+            // generation.
+            const _ucCopyDecision = resolveUniverseCopyDecision({
+                styleFamily: resolveStyleFamily(inputs),
+                referenceAdPresent: !!(inputs as any).referenceAd,
+                isTextOnly: isTextOnlyMode(inputs),
+                isCarouselNonHookSlide: false,
+            });
+            const _metaphorCopyBlock = _ucCopyDecision.applied
+                ? buildFantasyMetaphorCopyBlock(resolvedUniverse, (inputs as any).customUniverseDetails)
+                : STRICT_METAPHOR_BLOCK;
+
             modeInstruction = `PHASE 2: THEMATIC MARKETING FUSION.
       - Product: ${inputs.productName}
       - Brand URL: ${inputs.brandUrl}
@@ -1896,23 +1925,7 @@ ${minimalHookBias}
 
       MANDATE FOR TONE ADAPTATION (CRITICAL):
 
-      ⚠️ METAPHOR RULE (ABSOLUTELY CRITICAL):
-      - The universe/theme is primarily for VISUAL SETTING. You MAY use subtle vocabulary from the universe theme (e.g. one evocative word or short phrase that echoes the visual) but do NOT build the copy logic around the theme.
-      - Do NOT write full thematic metaphors or sentences that only make sense in context of the universe.
-      - The copy must stand on its own and make complete sense to someone who has never seen the visual.
-
-      ❌ WRONG (Rooftop Garden theme): "المشكلة في جودة التربة وليست في سعر المحصول النهائي"
-         → This is NONSENSE. What is "soil" and "crop"? The reader won't understand.
-      ❌ WRONG (Ocean theme): "اغوص في أعماق النجاح" (Dive into the depths of success)
-         → Too metaphorical. Not direct.
-      ❌ WRONG (Space theme): "أطلق صاروخ مبيعاتك" (Launch your sales rocket)
-         → Forced metaphor. Nobody talks like 
-
-      ✅ RIGHT: Use DIRECT, CLEAR language about the ACTUAL problem/solution:
-      ✅ "جمهورك يدفع 1000 دولار لغيرك... ليه مش ليك؟" (Your audience pays $1000 to others... why not you?)
-      ✅ "خبراء يحصدون أرباحاً مرتفعة بينما تتردد أنت" (Experts reap high profits while you hesitate)
-      ✅ "مش محتاج محتوى أكتر... محتاج نظام يحول المحتوى لفلوس" (You don't need more content... you need a system to convert content to money)
-
+      ${_metaphorCopyBlock}
       VOCABULARY INTEGRATION (SUBTLE ONLY):
       - You MAY use a SINGLE thematic word as a metaphorical touch, MAX ONCE in all 4 hooks.
       - Example (Garden): "حصاد" (harvest) can be used ONCE: "وابدأ حصادك اليوم"
@@ -1989,6 +2002,21 @@ ${minimalHookBias}
       ═══════════════════════════════════════════════════════════════════════════════
       ` : ''}`;
         } else if (mode === 'refresh') {
+            // Phase 27 — Universe-Aware Copy (T011). Same conditional swap
+            // as `mode === 'initial'` — relax the strict anti-metaphor line
+            // only when the decision is `applied:true` (fantasy + no
+            // suppression). `isCarouselNonHookSlide:false` because refresh
+            // edits the hook-slide copy.
+            const _ucRefreshDecision = resolveUniverseCopyDecision({
+                styleFamily: resolveStyleFamily(inputs),
+                referenceAdPresent: !!(inputs as any).referenceAd,
+                isTextOnly: isTextOnlyMode(inputs),
+                isCarouselNonHookSlide: false,
+            });
+            const _metaphorRefreshBlock = _ucRefreshDecision.applied
+                ? `✨ UNIVERSE METAPHOR (FANTASY — RELAXED): The copy MAY carry ONE subtle, evocative universe-echoing word or short phrase (Gemini chooses the placement: headline, subheadline, CTA, or benefit). Keep it SUBTLE — never a full themed sentence. The copy MUST still stand on its own to a reader who never sees the image. Advisory; no rejection pass.`
+                : STRICT_METAPHOR_REFRESH_LINE;
+
             modeInstruction = `REFINEMENT MODE — APPLY USER'S SPECIFIC INSTRUCTIONS:
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -2017,7 +2045,7 @@ IMPORTANT:
 - FOCUS on pain: "${inputs.challenges}"
 - FOCUS on result: "${inputs.transformation}"
 - UNIVERSE: ${resolveStyleFamily(inputs) === "minimal" ? "MINIMAL (clean backdrop)" : resolvedUniverse}
-- UNIVERSE/THEME USAGE: The theme is primarily for VISUAL SETTING. You MAY use subtle vocabulary from the universe theme (one evocative word or short phrase that echoes the visual) but do NOT build the copy logic around the theme. Do NOT write full thematic metaphors or sentences that only make sense in context of the universe. The copy must stand on its own and make complete sense to someone who has never seen the visual.`;
+- ${_metaphorRefreshBlock}`;
         } else if (mode === 'precision') {
             const semanticLockBlock = semanticLock ? `
 SEMANTIC LOCK (DO NOT BREAK):
@@ -5438,6 +5466,49 @@ ${(() => {
     return buildImagePromptExpressionBlock(_imExprDirective, { beforeAfterSplit: _isBA });
 })()}
 ${(() => {
+    // Phase 27 — Universe-Aware Copy (FR-005 / Contract C).
+    //
+    // The blueprint visual-coherence instruction tells the renderer that
+    // if the copy carries a universe-echoing metaphor, the rendered
+    // image must include a matching visual element so the words and
+    // the picture stay in the same world. Emitted into the IMAGE
+    // prompt AFTER the BLUEPRINT (which carries the hero / environment
+    // / universe scene description) so the renderer sees the scene
+    // context first, then the visual-coherence guidance — mirroring
+    // Phase 28's expression-block placement (audit #8).
+    //
+    // Single shared injection point: every render path (single concept,
+    // per-slide carousel, per-item batch, retargeting, before-after)
+    // routes through `buildFinalImagePrompt` (audit #17). For carousels,
+    // `inputs.carouselSlideIndex` is the runtime-injected per-slide
+    // index (hook slide = 0; slides 2+ = `isCarouselNonHookSlide:true`)
+    // — the suppression matches the copy + trace sites so slides 2+
+    // stay literal end-to-end. No new parallel path; FR-011 preserved.
+    //
+    // Subordinate to existing identity / costume rules — the
+    // `buildBlueprintMetaphorVisualBlock` text is explicit about
+    // "never override identity, costume, or composition rules" so the
+    // metaphor is a small worldbuilding detail, not a dominant focal
+    // point (FR-014).
+    //
+    // CANONICAL REFERENCE-AD SIGNAL (T020) — must match the copy site
+    // (T010 / T011) and the trace site (T013) exactly so the four
+    // sites cannot disagree on the same generation.
+    const _multiAssetView = inputs as AdInputs & {
+        carouselSlideIndex?: number;
+    };
+    const _isCarouselNonHookSlide = (inputs.adMode === 'carousel' && (_multiAssetView.carouselSlideIndex ?? 0) > 0);
+    const _ucBlueprintDecision = resolveUniverseCopyDecision({
+        styleFamily: resolveStyleFamily(inputs),
+        referenceAdPresent: !!(inputs as any).referenceAd,
+        isTextOnly: isTextOnlyMode(inputs),
+        isCarouselNonHookSlide: _isCarouselNonHookSlide,
+    });
+    return _ucBlueprintDecision.applied
+        ? buildBlueprintMetaphorVisualBlock(resolvedUniverse)
+        : '';
+})()}
+${(() => {
     // Phase 19 — Direct-Response Design Upgrades (gaze direction).
     //
     // Emits THREE blocks at this single injection point so every render
@@ -5673,6 +5744,40 @@ export async function generateFinalAd(
                         ? "text-only-mode-no-hero"
                         : "no-hook-or-objection-active",
                 },
+        };
+    }
+    // Phase 27 — Universe-Aware Copy trace (Contract D). Written here
+    // (in `generateFinalAd`) so the trace covers every render path
+    // uniformly: single, carousel slide, batch item, edit, reflow-
+    // rerender. The decision object spreads directly from the mapper
+    // (no new fields beyond {applied, styleFamily, reason} — prompt-
+    // level record, NOT an output verification, matches the Phase 19
+    // gaze / Phase 28 expression trace precedent).
+    //
+    // For carousels, `generateFinalAd` is invoked once per slide
+    // (`carouselSlideIndex` is runtime-injected per call — see the
+    // per-slide loop wrappers below), so this single-object write
+    // naturally carries the CURRENT slide's decision: slides 2+
+    // record `carousel-non-hook-slide` while the hook slide (index 0)
+    // records the family-driven reason (data-model.md § 5).
+    //
+    // CANONICAL REFERENCE-AD SIGNAL (T020) — must match the copy
+    // sites (T010 / T011) and the blueprint site (T012) exactly so
+    // the four sites cannot disagree on the same generation.
+    {
+        const _ucTraceInputs = inputs as AdInputs & {
+            carouselSlideIndex?: number;
+        };
+        const _isCarouselNonHookSlide = (inputs.adMode === 'carousel' && (_ucTraceInputs.carouselSlideIndex ?? 0) > 0);
+        const _ucTraceDecision = resolveUniverseCopyDecision({
+            styleFamily: resolveStyleFamily(inputs),
+            referenceAdPresent: !!(inputs as any).referenceAd,
+            isTextOnly: isTextOnlyMode(inputs),
+            isCarouselNonHookSlide: _isCarouselNonHookSlide,
+        });
+        _lastResolutionTrace = {
+            ...(_lastResolutionTrace || {}),
+            universeAwareCopy: _ucTraceDecision,
         };
     }
     const _referenceAdOverrideActive = _resolverSpec.resolutionTrace?.referenceAdOverrideActive ?? false;

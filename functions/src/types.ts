@@ -440,6 +440,37 @@ export interface ResolutionTrace {
         readonly applied: boolean;
         readonly reason?: string;
     };
+    // Phase 27 — additive universe-aware-copy sub-object. Records the
+    // COPY-LEVEL metaphor DECISION for this generation (prompt-level,
+    // NOT an output verification — matches the Phase 19 gaze /
+    // Phase 28 expression trace precedent).
+    //
+    // `applied: true`  → the RELAXED fantasy-metaphor instruction was
+    //   emitted into the copy prompt (style family is fantasy and no
+    //   suppression applied).
+    // `applied: false` → the STRICT anti-metaphor rule was emitted
+    //   (realistic / minimal / unknown family) OR the metaphor was
+    //   suppressed (reference ad / text-only / carousel non-hook
+    //   slide); `reason` explains which.
+    //
+    // `styleFamily` ALWAYS carries the resolved family, never null,
+    // even when suppressed (FR-013a). Field absence on a legacy
+    // generation is accepted as "no Phase-27 data". Additive — no
+    // migration. The `reason` union is duplicated here as an inline
+    // literal (not imported from `universeCopyMap.ts`) to keep that
+    // module side-effect-free and avoid any circular-dependency
+    // surface — see Phase 27 spec § "Circular-import guard (T003)".
+    readonly universeAwareCopy?: {
+        readonly applied: boolean;
+        readonly styleFamily: "fantasy" | "realistic" | "minimal";
+        readonly reason:
+            | "fantasy-universe-metaphor-active"
+            | "realistic-no-metaphor"
+            | "minimal-no-metaphor"
+            | "reference-ad-override"
+            | "text-only-mode"
+            | "carousel-non-hook-slide";
+    };
 }
 
 export interface ModeCompositionTrace {
