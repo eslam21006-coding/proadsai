@@ -19,6 +19,16 @@ This is a backend copy-prompt change only. There is no new screen, no new button
 
 ---
 
+## Clarifications
+
+### Session 2026-06-25
+
+- Q: What does `universeAwareCopy.applied: true` assert — that the relaxed rule was emitted into the copy prompt, or that a metaphor was verified present in the output? → A: **Rule emitted (prompt-level)**. `applied: true` means the relaxed metaphor instruction was injected into the copy prompt for an eligible (fantasy, non-suppressed) run. It records the DECISION, not the model's obedience — matching the Phase 19 gaze / Phase 28 expression trace precedent. It is deterministic and testable by inspecting the assembled prompt. Output-quality measures (e.g. "exactly one subtle metaphor appeared") are QA/manual checks, not automated trace assertions.
+- Q: When the reason is not fantasy-derived (e.g. `text-only-mode`, or `reference-ad-override` on a non-fantasy universe), what should `styleFamily` carry? → A: **Always the resolved family**. `styleFamily` always carries the actually-resolved family (`'fantasy' | 'realistic' | 'minimal'`) even when the metaphor is suppressed; `reason` explains the suppression. (e.g. a suppressed fantasy run records `styleFamily: 'fantasy', applied: false, reason: 'reference-ad-override'`.) The field is never null.
+- Q: Is the "at most one subtle metaphor" subtlety limit a hard enforced cap or advisory guidance? → A: **Advisory (prompt guidance only)**. The relaxed rule steers the AI toward one subtle word/short phrase and away from full themed sentences, but there is NO new post-generation enforcement/rejection pass. Over-aggressive output is a QA-caught quality issue, consistent with how every other copy-style rule works today and with the "no new parallel path" constraint.
+
+---
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Fantasy universe gets a subtle, coherent metaphor (Priority: P1)
@@ -27,14 +37,14 @@ A user generates an ad and selects a **fantasy** universe (for example a mythic-
 
 **Why this priority**: This is the entire purpose of the phase. Without it, fantasy universes deliver disconnected copy + image. It is the MVP — if only this ships, the feature delivers value.
 
-**Independent Test**: Generate a single ad with any fantasy universe and a hook. Confirm (a) the copy contains exactly one subtle universe-echoing word/phrase (not a full thematic sentence, not a sci-fi story), (b) the build plan / blueprint describes a visual element matching that metaphor, and (c) the resolution trace records `universeAwareCopy.applied: true` with `styleFamily: 'fantasy'`.
+**Independent Test**: Generate a single ad with any fantasy universe and a hook. Confirm (a) the assembled copy prompt carries the relaxed metaphor instruction (the strict rule is NOT emitted), (b) the build plan / blueprint describes a visual element matching the metaphor, (c) the resolution trace records `universeAwareCopy.applied: true` with `styleFamily: 'fantasy'`, and (d) — as a QA/manual quality check, not an automated trace assertion — the copy reads with at most one subtle universe-echoing word/phrase (not a full thematic sentence, not a sci-fi story).
 
 **Acceptance Scenarios**:
 
-1. **Given** a fantasy universe is selected and a hook is active, **When** copy is generated, **Then** the copy contains at most one subtle universe-echoing word or short phrase that still makes complete sense to a reader who never sees the image.
-2. **Given** the copy contains a universe metaphor, **When** the build plan / blueprint is produced, **Then** the blueprint describes a concrete visual element that renders that metaphor coherently in the image.
+1. **Given** a fantasy universe is selected and a hook is active, **When** the copy prompt is assembled, **Then** the relaxed metaphor instruction is emitted (and the strict anti-metaphor rule is NOT), permitting at most one subtle universe-echoing word or short phrase that still makes complete sense to a reader who never sees the image.
+2. **Given** the copy carries a universe metaphor, **When** the build plan / blueprint is produced, **Then** the blueprint describes a concrete visual element that renders that metaphor coherently in the image.
 3. **Given** a fantasy universe generation completes, **When** the resolution trace is written, **Then** it contains `universeAwareCopy: { applied: true, styleFamily: 'fantasy', reason: 'fantasy-universe-metaphor-active' }`.
-4. **Given** a fantasy universe, **When** copy is generated, **Then** the copy is NOT a multi-sentence themed narrative and does NOT depend on the image to be understood (subtlety guardrail).
+4. **Given** a fantasy universe, **When** copy is generated, **Then** as a QA/manual quality check the copy is NOT a multi-sentence themed narrative and does NOT depend on the image to be understood (advisory subtlety guardrail — prompt-steered, not code-enforced).
 
 ---
 
@@ -129,7 +139,7 @@ A user types their **own custom universe** description and the style family reso
 - **FR-001**: The system MUST relax the existing copy-generation anti-metaphor rule ONLY when the resolved style family is `fantasy`, permitting one subtle, evocative universe-echoing word or short phrase in the copy.
 - **FR-002**: The system MUST keep the existing strict anti-metaphor METAPHOR RULE fully intact (unchanged behavior) for `realistic` and `minimal` style families, and for any unrecognized/absent style family (literal default).
 - **FR-003**: The metaphor placement MUST be left to the copy AI's judgement across headline, subheadline, CTA, or benefit text — there is no fixed field priority.
-- **FR-004**: The relaxed rule MUST enforce subtlety: at most one evocative word or short phrase, NOT a full thematic sentence and NOT a multi-sentence narrative; the copy MUST still make complete sense to a reader who never sees the image.
+- **FR-004**: The relaxed rule MUST steer toward subtlety as ADVISORY prompt guidance (not a code-enforced cap): at most one evocative word or short phrase, NOT a full thematic sentence and NOT a multi-sentence narrative; the copy MUST still make complete sense to a reader who never sees the image. No new post-generation enforcement/rejection pass is introduced — over-aggressive output is a QA-caught quality issue.
 - **FR-005**: When the copy carries a universe metaphor, the build plan / blueprint MUST describe a concrete matching visual element so the rendered image renders the metaphor coherently.
 - **FR-006**: Metaphor vocabulary MAY be informed by the selected universe's existing descriptive attributes (visual motifs, aspiration signals, tone) and by a custom universe's user-typed text.
 - **FR-007**: When a reference ad is present, the system MUST suppress the metaphor entirely regardless of style family (reference ad overrides the universe per the existing visual precedence chain).
@@ -137,8 +147,9 @@ A user types their **own custom universe** description and the style family reso
 - **FR-009**: In text-only mode, the system MUST NOT add a metaphor (no universe is rendered).
 - **FR-010**: In batch mode, the system MUST require no special-case logic — each batch item resolves its own metaphor state through the shared copy path.
 - **FR-011**: The relaxation MUST flow through the existing single copy-prompt assembly point (the same shared path used today) — no new parallel copy-generation path may be created.
-- **FR-012**: The system MUST record a `universeAwareCopy` sub-object on the resolution trace for every generation, with fields `applied` (boolean), `styleFamily` (`'fantasy' | 'realistic' | 'minimal'`), and `reason` (string).
+- **FR-012**: The system MUST record a `universeAwareCopy` sub-object on the resolution trace for every generation, with fields `applied` (boolean), `styleFamily` (`'fantasy' | 'realistic' | 'minimal'`), and `reason` (string). `applied: true` means the relaxed metaphor instruction was EMITTED into the copy prompt (a prompt-level decision record, NOT a verification that a metaphor appeared in the output) — matching the Phase 19 gaze / Phase 28 expression trace precedent.
 - **FR-013**: The `reason` value MUST accurately reflect the decision path, using the canonical set: `fantasy-universe-metaphor-active`, `realistic-no-metaphor`, `minimal-no-metaphor`, `reference-ad-override`, `text-only-mode`, `carousel-non-hook-slide`.
+- **FR-013a**: The `styleFamily` field MUST always carry the actually-resolved family (`'fantasy' | 'realistic' | 'minimal'`), never null, even when the metaphor is suppressed for another reason (e.g. a suppressed fantasy run records `styleFamily: 'fantasy', applied: false` with the suppressing `reason`).
 - **FR-014**: The change MUST NOT alter the image-generation prompt assembly itself beyond the blueprint content that already flows through it (no edits to gaze/expression blocks, no edits to the final image-prompt builder's structure).
 - **FR-015**: The change MUST NOT alter copy-fidelity validation behavior — the metaphor lives within the copy the AI authors and is still subject to the existing fidelity contract unchanged.
 - **FR-016**: The feature MUST be fully reversible: restoring the strict rule for fantasy (and neutralizing the trace decision) MUST return output to byte-equivalent pre-Phase-27 behavior, with replaced rule text retained (commented) rather than deleted.
@@ -156,7 +167,7 @@ A user types their **own custom universe** description and the style family reso
 - **Style Family**: The resolved visual world category for a generation — one of `fantasy`, `realistic`, or `minimal`. The single controller for whether the metaphor is permitted. Resolved from existing inputs; minimal is a style-family setting, not a catalog universe.
 - **Universe**: The selected visual world (catalog entry or custom user text), carrying descriptive attributes (visual motifs, aspiration signals, tone) that can inform metaphor vocabulary. Already available to the copy prompt.
 - **Universe Metaphor**: At most one subtle evocative word or short phrase in the copy that echoes the universe theme; paired with a blueprint visual element so the image renders it coherently.
-- **Resolution Trace `universeAwareCopy`**: The additive per-generation audit record of the metaphor decision — `applied`, `styleFamily`, `reason`.
+- **Resolution Trace `universeAwareCopy`**: The additive per-generation audit record of the metaphor DECISION (prompt-level, not output verification) — `applied` (was the relaxed instruction emitted), `styleFamily` (always the resolved family, never null), `reason` (canonical decision-path string).
 
 ---
 
@@ -164,13 +175,13 @@ A user types their **own custom universe** description and the style family reso
 
 ### Measurable Outcomes
 
-- **SC-001**: In 100% of fantasy-universe single-ad generations (with a reference ad absent and not text-only), the copy contains exactly one subtle universe-echoing word or short phrase and the blueprint describes a matching visual element.
-- **SC-002**: In 100% of realistic and minimal generations, the copy contains zero universe metaphors — identical to pre-Phase-27 output.
+- **SC-001**: In 100% of fantasy-universe single-ad generations (reference ad absent, not text-only), the assembled copy prompt emits the relaxed metaphor instruction and the trace records `applied: true` (automated/deterministic check); and on QA/manual review the copy reads with at most one subtle universe-echoing word or short phrase with the blueprint describing a matching visual element (quality check, not an automated trace assertion).
+- **SC-002**: In 100% of realistic and minimal generations, the strict anti-metaphor rule is emitted and the copy contains zero universe metaphors — identical to pre-Phase-27 output.
 - **SC-003**: In 100% of generations where a reference ad is present, no universe metaphor appears regardless of style family.
 - **SC-004**: In 100% of fantasy-universe carousels, the metaphor appears only on slide 1; slides 2+ contain zero metaphors.
 - **SC-005**: In 100% of text-only generations, no universe metaphor appears.
 - **SC-006**: 100% of generations write a `universeAwareCopy` trace sub-object whose `reason` matches the actual decision path from the canonical reason set.
-- **SC-007**: Zero fantasy-universe copy outputs are multi-sentence themed narratives or depend on the image to be understood (subtlety guardrail holds).
+- **SC-007**: On QA/manual review, zero fantasy-universe copy outputs are multi-sentence themed narratives or depend on the image to be understood (advisory subtlety guardrail holds; this is a prompt-steered quality target, not a code-enforced gate).
 - **SC-008**: Disabling the feature (restoring the strict rule for fantasy) returns realistic, minimal, and fantasy copy to byte-equivalent pre-Phase-27 output — proving full reversibility.
 
 ---
