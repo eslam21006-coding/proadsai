@@ -783,6 +783,41 @@ function runTests(): void {
         }
     }
 
+    // ─── E7: ASSEMBLED call-site byte-identity (closes the audit M1 blind
+    // spot). E2/E4 prove the CONSTANTS are byte-identical to the frozen
+    // pre-Phase-27 snapshots, but they do NOT prove the EMITTED prompt is
+    // identical — the call site could prepend a duplicate prefix on top of
+    // the constant (e.g. "      ${block}" → 12-space first line, or
+    // "- ${block}" → "- - UNIVERSE/THEME USAGE"). This test reads the
+    // generators.ts source and asserts the interpolation tokens have an
+    // EMPTY line-prefix, so the assembled strict output === the constant. ───
+    console.log("  E7: assembled call-site interpolation adds no duplicate prefix (M1)");
+    {
+        const genSrc = readFileSync(join(__dirname, "..", "..", "src", "generators.ts"), "utf8");
+
+        // Initial site: STRICT_METAPHOR_BLOCK already carries its own
+        // 6-space indent, so the template line must interpolate it with
+        // NO leading whitespace (else the first line gets 12 spaces).
+        const initMatch = genSrc.match(/\n([^\n]*)\$\{_metaphorCopyBlock\}/);
+        assert(initMatch !== null, `found the \${_metaphorCopyBlock} interpolation site`);
+        const initPrefix = initMatch ? initMatch[1] : "<none>";
+        assert(initPrefix === "", `initial interpolation has EMPTY line-prefix (got ${JSON.stringify(initPrefix)}) — no double indent`);
+        assert((initPrefix + STRICT_METAPHOR_BLOCK) === STRICT_METAPHOR_BLOCK, `emitted initial strict text === STRICT_METAPHOR_BLOCK (byte-identical)`);
+
+        // Refresh site: STRICT_METAPHOR_REFRESH_LINE already starts with
+        // "- ", so the template line must interpolate it with NO prefix
+        // (else the strict path emits "- - UNIVERSE/THEME USAGE").
+        const refMatch = genSrc.match(/\n([^\n]*)\$\{_metaphorRefreshBlock\}/);
+        assert(refMatch !== null, `found the \${_metaphorRefreshBlock} interpolation site`);
+        const refPrefix = refMatch ? refMatch[1] : "<none>";
+        assert(refPrefix === "", `refresh interpolation has EMPTY line-prefix (got ${JSON.stringify(refPrefix)}) — no doubled "- " bullet`);
+        assert((refPrefix + STRICT_METAPHOR_REFRESH_LINE) === STRICT_METAPHOR_REFRESH_LINE, `emitted refresh strict text === STRICT_METAPHOR_REFRESH_LINE (byte-identical)`);
+
+        // The relaxed refresh variant must still carry its own single
+        // bullet so the fantasy path stays a clean list item.
+        assert(/\?\s*`- ✨ UNIVERSE METAPHOR \(FANTASY/.test(genSrc), `relaxed refresh variant carries its own single "- " bullet`);
+    }
+
     // ═══════════════════════════════════════════════════════════
     // SUMMARY
     // ═══════════════════════════════════════════════════════════

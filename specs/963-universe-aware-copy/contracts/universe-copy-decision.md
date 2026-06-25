@@ -51,7 +51,7 @@ This is the authoritative pass/fail table. The test file `functions/src/__tests_
 
 ## Contract C — Blueprint visual-coherence instruction
 
-**Rule**: When (and only when) `applied:true`, the visual-coherence instruction ("if the copy uses a universe metaphor, describe one matching visual element so the image renders it coherently") MUST reach the **rendered-image prompt (TECHNICAL_PROMPT)** — i.e. it must be injected at the actual scene-authoring site (confirm which of `generateConcepts` ~L3100 / `generateBuildPlan` ~L4370 authors the rendered scene; Phase 28 used `generateConcepts`). Injecting only into a build plan that does not flow into the TECHNICAL_PROMPT FAILS this contract. When `applied:false`, the instruction MUST be absent.
+**Rule**: When (and only when) `applied:true`, the visual-coherence instruction ("if the copy uses a universe metaphor, describe one matching visual element so the image renders it coherently") MUST reach the **rendered-image prompt**. **As-built (accepted 2026-06-25)**: it is injected into the single shared image-prompt assembly point `buildFinalImagePrompt()`, immediately AFTER the `BLUEPRINT:` line — the same single-injection-point pattern Phase 19 (gaze) uses. This site reaches EVERY render path (single, carousel slide, batch item, retargeting, before-after, edit, reflow-rerender), which the upstream `generateConcepts`/`generateBuildPlan` sites do not. When `applied:false`, the instruction MUST be absent. (The earlier plan suggested `generateConcepts`; the implementation chose `buildFinalImagePrompt` for universal render coverage — coherence confirmed in localhost QA.)
 
 | # | Decision `applied` | blueprint instruction |
 |---|--------------------|-----------------------|

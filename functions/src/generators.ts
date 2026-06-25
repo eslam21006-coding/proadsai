@@ -1925,7 +1925,7 @@ ${minimalHookBias}
 
       MANDATE FOR TONE ADAPTATION (CRITICAL):
 
-      ${_metaphorCopyBlock}
+${_metaphorCopyBlock}
       VOCABULARY INTEGRATION (SUBTLE ONLY):
       - You MAY use a SINGLE thematic word as a metaphorical touch, MAX ONCE in all 4 hooks.
       - Example (Garden): "حصاد" (harvest) can be used ONCE: "وابدأ حصادك اليوم"
@@ -2013,8 +2013,12 @@ ${minimalHookBias}
                 isTextOnly: isTextOnlyMode(inputs),
                 isCarouselNonHookSlide: false,
             });
+            // Both ternary branches carry their OWN leading "- " bullet so
+            // the template interpolation below adds NO prefix — otherwise
+            // the strict branch (which already starts with "- ") would emit
+            // a doubled "- - UNIVERSE/THEME USAGE" bullet (audit M1).
             const _metaphorRefreshBlock = _ucRefreshDecision.applied
-                ? `✨ UNIVERSE METAPHOR (FANTASY — RELAXED): The copy MAY carry ONE subtle, evocative universe-echoing word or short phrase (Gemini chooses the placement: headline, subheadline, CTA, or benefit). Keep it SUBTLE — never a full themed sentence. The copy MUST still stand on its own to a reader who never sees the image. Advisory; no rejection pass.`
+                ? `- ✨ UNIVERSE METAPHOR (FANTASY — RELAXED): The copy MAY carry ONE subtle, evocative universe-echoing word or short phrase (Gemini chooses the placement: headline, subheadline, CTA, or benefit). Keep it SUBTLE — never a full themed sentence. The copy MUST still stand on its own to a reader who never sees the image. Advisory; no rejection pass.`
                 : STRICT_METAPHOR_REFRESH_LINE;
 
             modeInstruction = `REFINEMENT MODE — APPLY USER'S SPECIFIC INSTRUCTIONS:
@@ -2045,7 +2049,7 @@ IMPORTANT:
 - FOCUS on pain: "${inputs.challenges}"
 - FOCUS on result: "${inputs.transformation}"
 - UNIVERSE: ${resolveStyleFamily(inputs) === "minimal" ? "MINIMAL (clean backdrop)" : resolvedUniverse}
-- ${_metaphorRefreshBlock}`;
+${_metaphorRefreshBlock}`;
         } else if (mode === 'precision') {
             const semanticLockBlock = semanticLock ? `
 SEMANTIC LOCK (DO NOT BREAK):
