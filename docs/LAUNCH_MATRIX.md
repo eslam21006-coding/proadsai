@@ -2374,19 +2374,27 @@ Same checklist as the old Phase 8.E.6 — recreate products in Live mode, genera
 
 ---
 
-## Phase 27 — Universe-Aware Copy
+## Phase 27 — Universe-Aware Copy ✅ DONE (2026-06-25)
 **Requires:** Phase 5 (pipeline).
 **Blocks:** Nothing.
 
-**Scope:** When a fantasy universe is selected, Gemini copy generation must include a small metaphor in the subheadline or benefit text that connects the hook to the universe theme. The blueprint must describe that metaphor visually so the image generation renders it coherently. Example: a mythic_epic universe with a pricing hook might use "ساحة المعركة" (battlefield) as a metaphor for the market, and the blueprint would describe the hero standing in an arena holding a price scroll.
+**Scope:** When a fantasy universe is selected, Gemini copy generation may include a subtle, evocative universe-echoing word or short phrase that connects the hook to the universe theme, and the blueprint/visual-coherence block tells the renderer to include a matching visual element so the image stays coherent with the words. Example: a mythic_epic universe with a pricing hook might use "ساحة المعركة" (battlefield) as a metaphor for the market, and the blueprint would describe the hero standing in an arena holding a price scroll. The placement is **Gemini's choice** across headline / subheadline / CTA / benefit — not restricted to subheadline/benefit (this supersedes the older launch-matrix note).
+
+**Architecture (resolved 2026-06-25):** Pure side-effect-free mapper module `functions/src/universeCopyMap.ts` owns (a) the decision function `resolveUniverseCopyDecision({ styleFamily, referenceAdPresent, isTextOnly, isCarouselNonHookSlide })` returning `{ applied, styleFamily, reason }`, (b) the relaxed-fantasy copy block (`buildFantasyMetaphorCopyBlock`), (c) the byte-for-byte lifted strict constants (`STRICT_METAPHOR_BLOCK`, `STRICT_METAPHOR_REFRESH_LINE`) for reversibility, and (d) the blueprint visual-coherence instruction (`buildBlueprintMetaphorVisualBlock`). The decision is consumed at three emission sites: the two `generateTOV` copy sites (mode `initial` ~L1899 + mode `refresh` ~L2020) and `buildFinalImagePrompt()` (blueprint injection AFTER the BLUEPRINT line). The trace is written in `generateFinalAd()` next to `expressionAdaptation` / `gazeDirection`. No new parallel generation path; the existing strict-vs-relaxed text swap is the only behavior change. Fully reversible: the strict text is retained (commented / lifted) and a neutralized mapper restores byte-identical pre-Phase-27 prompts (Contract E).
 
 **Key behaviors:**
 - Gemini receives the selected universe when generating copy
-- For fantasy universes (mythic_epic, anime_manga, etc.), copy includes a universe-appropriate metaphor
-- The metaphor appears in subheadline or benefit text (not headline — headline stays direct)
-- The build plan / blueprint describes the metaphor visually so the image matches
-- Realistic and minimal universes: no forced metaphor (copy stays literal)
-- The metaphor must be natural, not forced — it should feel like the universe IS the world the hook lives in
+- For fantasy universes (mythic_epic, anime_manga, etc.), copy MAY carry one subtle, evocative universe-echoing word or short phrase (placement is Gemini's choice across headline/subheadline/CTA/benefit — advisory, not mandatory)
+- The metaphor vocabulary may be informed by the universe's descriptive attributes (visual motifs, aspiration signals, tone) and by a custom universe's user-typed text
+- The blueprint/visual-coherence instruction tells the renderer to describe ONE matching visual element so the image reflects the metaphor coherently (FR-005). The visual element is subordinate to existing identity / costume / composition rules so it cannot override them (FR-014).
+- Realistic and minimal universes: no metaphor (copy stays literal — strict anti-metaphor rule byte-identical to pre-Phase-27)
+- Reference ad present: metaphor fully suppressed (reason `reference-ad-override`; reference ad wins over universe in the visual precedence chain — FR-007)
+- Carousel slides 2+: metaphor suppressed (reason `carousel-non-hook-slide`; only the hook slide (index 0) carries the metaphor — FR-008)
+- Text-only mode: metaphor suppressed (reason `text-only-mode`; no universe is rendered so the metaphor has nothing to anchor to — FR-009)
+- Batch mode: each item resolves its own metaphor state independently through the shared copy path (no batch-specific logic — FR-010)
+- Custom fantasy universes: a fantasy custom universe is eligible for the metaphor (US6) — `customUniverseDetails` takes priority over `resolvedUniverse` as the vocabulary source, matching the existing "CUSTOM UNIVERSE (TOP PRIORITY)" precedence at `generators.ts:1875–1877`
+- The relaxation is permissive, not mandatory: if no copy scenario benefits, Gemini may keep a given field literal — the failure mode is over-aggressive metaphor (full themed sentence) or metaphor leaking into realistic/minimal, both caught in QA, not in code
+- Additive `universeAwareCopy` trace field on every generation — `applied` (prompt-level decision, NOT output verification), `styleFamily` (always the resolved family, never null — FR-013a), `reason` (canonical value from the 6-value union — FR-013). Legacy generations without the field remain valid (no migration).
 
 ---
 
