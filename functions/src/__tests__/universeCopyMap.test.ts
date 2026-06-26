@@ -447,12 +447,21 @@ function runTests(): void {
         assert(!/METAPHOR RULE \(ABSOLUTELY CRITICAL\)/.test(emitted), `strict METAPHOR RULE absent from emitted fantasy block`);
         assert(!/❌ WRONG/.test(emitted), `strict WRONG examples absent from emitted fantasy block`);
         assert(/mythic battlefield/.test(emitted), `emitted block carries the resolved universe text`);
-        // The relaxed block carries all the advisory / Arabic guardrails
-        // required by FR-004 / FR-006 / NFR-005.
+        // The mandatory metaphor wording: copy MUST include exactly one
+        // subtle, evocative universe-echoing word/phrase. Advisory
+        // "MAY carry" / "permissive, not mandatory" / "ADVISORY guidance"
+        // framing is intentionally removed (founder direction, post-
+        // clarification; the constraint remains prompt-level only —
+        // no post-generation validator).
+        assert(/MUST include exactly (?:ONE|one) subtle/i.test(emitted), `emitted block uses MANDATORY "MUST include exactly one" wording`);
+        assert(!/\bMAY carry\b/i.test(emitted), `emitted block no longer says "MAY carry"`);
+        assert(!/permissive, not mandatory/i.test(emitted), `emitted block no longer says "permissive, not mandatory"`);
+        assert(!/ADVISORY guidance/i.test(emitted), `emitted block no longer says "ADVISORY guidance"`);
+        // Subtlety constraint and Arabic guardrails preserved.
         assert(/subtle|evocative/i.test(emitted), `relaxed block mentions subtle / evocative`);
         assert(/stand on its own/i.test(emitted), `relaxed block preserves stand-on-its-own rule`);
         assert(/Arabic/i.test(emitted), `relaxed block carries Arabic quality reminder`);
-        assert(/ADVISORY|advisory/i.test(emitted), `relaxed block is marked advisory (no enforcement)`);
+        assert(/prompt-level mandate|no post-generation rejection pass/i.test(emitted), `emitted block notes prompt-level-only (no validator)`);
     }
 
     // ─── B2: literal decision → strict block present + relaxed absent ───
@@ -535,12 +544,16 @@ function runTests(): void {
             isTextOnly: false,
             isCarouselNonHookSlide: false,
         });
+        // Mirrors the inline text emitted in `generators.ts` mode 'refresh'.
         const emitted = decision.applied
-            ? `✨ UNIVERSE METAPHOR (FANTASY — RELAXED): The copy MAY carry ONE subtle, evocative universe-echoing word or short phrase (Gemini chooses the placement: headline, subheadline, CTA, or benefit). Keep it SUBTLE — never a full themed sentence. The copy MUST still stand on its own to a reader who never sees the image. Advisory; no rejection pass.`
+            ? `✨ UNIVERSE METAPHOR (FANTASY — REQUIRED): The copy MUST include exactly ONE subtle, evocative universe-echoing word or short phrase (Gemini chooses the placement: headline, subheadline, CTA, or benefit). Keep it SUBTLE — exactly one word or short phrase, never a full themed sentence. The copy MUST still stand on its own to a reader who never sees the image. Prompt-level mandate; no post-generation rejection pass.`
             : STRICT_METAPHOR_REFRESH_LINE;
         assert(decision.applied === true, `fantasy refresh → applied:true (precondition for B4)`);
-        assert(emitted.startsWith("✨ UNIVERSE METAPHOR"), `refresh relaxed variant emitted`);
-        assert(/subtle|evocative/i.test(emitted), `refresh relaxed variant mentions subtle / evocative`);
+        assert(emitted.startsWith("✨ UNIVERSE METAPHOR"), `refresh variant emitted`);
+        assert(/REQUIRED/.test(emitted), `refresh variant is labeled REQUIRED (mandatory)`);
+        assert(/MUST include exactly (?:ONE|one) subtle/i.test(emitted), `refresh variant uses MANDATORY wording`);
+        assert(/subtle|evocative/i.test(emitted), `refresh variant mentions subtle / evocative`);
+        assert(!/Advisory; no rejection pass\./i.test(emitted), `refresh variant no longer says "Advisory; no rejection pass."`);
         assert(!emitted.startsWith("- UNIVERSE/THEME USAGE:"), `refresh strict line is NOT emitted for fantasy`);
     }
 

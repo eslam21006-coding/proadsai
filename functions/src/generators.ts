@@ -2018,7 +2018,7 @@ ${_metaphorCopyBlock}
             // the strict branch (which already starts with "- ") would emit
             // a doubled "- - UNIVERSE/THEME USAGE" bullet (audit M1).
             const _metaphorRefreshBlock = _ucRefreshDecision.applied
-                ? `- ✨ UNIVERSE METAPHOR (FANTASY — RELAXED): The copy MAY carry ONE subtle, evocative universe-echoing word or short phrase (Gemini chooses the placement: headline, subheadline, CTA, or benefit). Keep it SUBTLE — never a full themed sentence. The copy MUST still stand on its own to a reader who never sees the image. Advisory; no rejection pass.`
+                ? `- ✨ UNIVERSE METAPHOR (FANTASY — REQUIRED): The copy MUST include exactly ONE subtle, evocative universe-echoing word or short phrase (Gemini chooses the placement: headline, subheadline, CTA, or benefit). Keep it SUBTLE — exactly one word or short phrase, never a full themed sentence. The copy MUST still stand on its own to a reader who never sees the image. Prompt-level mandate; no post-generation rejection pass.`
                 : STRICT_METAPHOR_REFRESH_LINE;
 
             modeInstruction = `REFINEMENT MODE — APPLY USER'S SPECIFIC INSTRUCTIONS:

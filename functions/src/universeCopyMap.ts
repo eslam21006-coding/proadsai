@@ -183,16 +183,15 @@ export function buildFantasyMetaphorCopyBlock(
         ? ` The active universe is "${universeLabel}".`
         : " The active fantasy universe is the visual world you are rendering.";
     return (
-        "      ✨ UNIVERSE METAPHOR RULE (FANTASY — RELAXED):\n" +
-        "      - The copy MAY carry ONE subtle, evocative universe-echoing word or short phrase (Gemini chooses the placement: headline, subheadline, CTA, or benefit — wherever it reads most natural for the hook and the offer).\n" +
-        "      - Keep it SUBTLE — one word or a short phrase, never a full thematic sentence, never a multi-sentence narrative. The metaphor is a hint that the words and the picture live in the same world, not a story.\n" +
-        "      - The copy MUST still stand on its own and make complete sense to a reader who has never seen the image. If the metaphor only works WITH the visual, drop it.\n" +
-        "      - DO NOT force a metaphor into a field that reads better literal — the relaxation is permissive, not mandatory. Skip it if no copy scenario benefits.\n" +
+        "      ✨ UNIVERSE METAPHOR RULE (FANTASY — REQUIRED):\n" +
+        "      - The copy MUST include exactly ONE subtle, evocative universe-echoing word or short phrase (Gemini chooses the placement: headline, subheadline, CTA, or benefit — wherever it reads most natural for the hook and the offer). The metaphor is required for fantasy; it is not optional.\n" +
+        "      - Keep it SUBTLE — exactly one word or a short phrase, never a full thematic sentence, never a multi-sentence narrative. The metaphor is a hint that the words and the picture live in the same world, not a story.\n" +
+        "      - The copy MUST still stand on its own and make complete sense to a reader who has never seen the image. If the only metaphor you can land also requires the visual to make sense, pick a different metaphor — do NOT drop the requirement, change the metaphor.\n" +
         "      - DO NOT echo the universe name literally (e.g. dropping the universe word verbatim into the headline). Echo a vocabulary MOTIF (a concept, object, action, or setting native to the universe) so it reads as natural language, not as a label.\n" +
         "      - DO NOT exceed one metaphor across all four hooks; never use more than one subtle phrase per single line of copy.\n" +
         "      - DO NOT break the existing copy rules to land a metaphor. Direct, clear, conversational copy still wins. The metaphor is a small flavor, never the main course.\n" +
         "      - Arabic quality rules UNCHANGED: no leading و on a STANDALONE line; phrases must be self-contained and culturally compliant; no broken half-metaphors (Arabic must work as spoken language, not as assembled vocabulary blocks). The metaphor must respect every Arabic-quality guardrail that already exists.\n" +
-        "      - This is ADVISORY guidance. There is no rejection pass for over-aggressive metaphor — but over-aggressive output (full themed sentences, image-dependent copy, forced vocabulary) is a quality failure and should be rewritten before output.\n" +
+        "      - This is a prompt-level mandate, NOT a code-enforced cap. There is no post-generation rejection pass for over-aggressive metaphor — over-aggressive output (full themed sentences, image-dependent copy, forced vocabulary) is a quality failure and should be rewritten before output.\n" +
         `      - Universe vocabulary source:${universeCtx} If a custom universe was provided, draw metaphor vocabulary from that text rather than from a default catalog entry.\n`
     );
 }
