@@ -54,8 +54,10 @@ All NEEDS CLARIFICATION items from the spec's clarification round are already re
 
 **Important nuance**: Founder decision #4 says the kill switch disables the stage; SC-006 says flipping it reverts users within 60s. To make "kill switch ON ⇒ everyone reverts" robust even if the config service is unreachable, the cache holds the **last known good** value and only the **first** successful read after a flip starts the 60s clock. A read failure does not silently re-enable a killed feature within a live cache window — it serves the cached value.
 
+**PINNED (D1 remediation 2026-06-26)**: The mechanism is **fixed to Firebase Remote Config server template**. The Firestore-doc alternative below is retained ONLY as a break-glass fallback and MUST NOT be implemented unless Remote Config wiring is blocked; switching would require a one-line spec/plan/tasks update first (no silent substitution).
+
 **Alternatives considered**:
-- Firestore global config doc `app_config/conceptDirector` with a 60s cache — simpler and uses already-familiar Firestore tooling; **documented as the fallback** if Remote Config server-template wiring proves heavy for the implementer. Rejected as primary only because the founder explicitly confirmed "Remote Config." Behaviorally equivalent (global boolean + 60s cache); if chosen, update D4 and 20.D.6 references. Either satisfies all FRs/SCs.
+- Firestore global config doc `app_config/conceptDirector` with a 60s cache — simpler and uses already-familiar Firestore tooling; retained as a **documented break-glass fallback only** (see PINNED note). Behaviorally equivalent (global boolean + 60s cache); if ever chosen, update D4, T021, and 20.D.6 references in the same change. Not to be built in this phase.
 - No cache (read every call) — rejected: violates cost discipline, adds latency.
 
 ---
