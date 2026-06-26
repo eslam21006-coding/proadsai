@@ -117,6 +117,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | fix-916-text-clipping | — | ✅ DONE (PR #45, merged 2026-06-22). Removed destructive `substring(0,50)` truncation of subheadline/benefit on compact ratios. `maxSubheadChars` advisory hint adjusted to 65 for compact. |
 | Phase 28 — Expression Adaptation | `specs/960-expression-adaptation` | ✅ DONE 2026-06-23 (PR #46). Hook→expression mapper; EXPRESSION DIRECTION block injected into the IMAGE prompt after the BLUEPRINT; `expressionAdaptation?` trace. See Section 8 mirror. |
 | Phase 19 — Direct-Response Design Upgrades (gaze + DR) | `962-gaze-direction-dr` | ✅ DONE 2026-06-24 (this PR). Five additive prompt blocks through the single shared `buildFinalImagePrompt()` injection point: (1) `GAZE DIRECTION` (hook-gated, US1), (2) `ONE_HIGHLIGHT_BLOCK` (always-on, US2), (3) hook↔visual mood modulation (hook-gated, US4), (4) price hierarchy (content-gated, US5), (5) CTA outcome framing (copy prompt, both languages, US3). Additive `gazeDirection?` trace. 244 unit assertions (Contracts A–G) green; Phase 28 expression tests still green. Art-direction gaze override deferred to a later phase. See Section 8 mirror. |
+| Phase 27 — Universe-Aware Copy | `specs/963-universe-aware-copy` | ✅ DONE 2026-06-26 (PR #48). Fantasy universes get one mandatory subtle metaphor per hook; realistic/minimal stay literal. Decision module `universeCopyMap.ts`, injected at copy prompt (generateTOV) + visual element at `buildFinalImagePrompt()`. Suppressed for reference ads, text-only, carousel slides 2+. Additive `universeAwareCopy?` trace. 237 unit assertions. |
 
 ### ⏳ TODO — Critical (build first)
 
@@ -838,6 +839,15 @@ interface ResolutionTrace {
     emotion: string;
     applied: boolean;
   };
+  // Phase 27 — additive universe-aware-copy sub-object (mirrors types.ts
+  // ResolutionTrace.universeAwareCopy). Records whether the fantasy metaphor
+  // block was emitted and why. Omitted when not fantasy; carries `applied:false`
+  // when fantasy but suppressed by reference-ad / text-only / carousel-non-hook.
+  universeAwareCopy?: {
+    applied: boolean;
+    styleFamily: 'realistic' | 'fantasy' | 'minimal';
+    reason: string;
+  };
 }
 ```
 
@@ -1048,7 +1058,7 @@ Phase 21 — Stripe Migration (CRITICAL — replaces Phase 8, no production user
 
 Phase 26 — Generation History & Filters (independent — no pipeline dependency)
 
-Phase 27 — Universe-Aware Copy (independent — requires Phase 5 pipeline)
+Phase 27 — Universe-Aware Copy (independent — requires Phase 5 pipeline) — done
 
 Phase 28 — Expression Adaptation (independent — requires Phase 5 pipeline)
 ```
@@ -1142,7 +1152,7 @@ Phase 025 — OpenAI Swap (complete).
           Unblocks: Phase 17 (reflow done), Phase 22, Phase 23
 
 Phase 26  (no dependency — frontend-only, start any time)
-Phase 27  requires Phase 5 (pipeline — copy generation changes)
+Phase 27  requires Phase 5 (pipeline — copy generation changes) — done
 Phase 28  requires Phase 5 (pipeline — prompt engineering for expression matching)
 ```
 
@@ -2028,6 +2038,8 @@ These are manual steps for Eslam to complete before any code tasks begin.
 **Requires:** Phase 5 + Phase 14 (Creative Memory must be feeding generations) + HOTFIX-G (FLUX cleanup) complete.
 **Note:** Phase 20 fixes concept variety — the "all concepts look the same" issue. It produces specialized briefs per ad with explicit visual metaphor, headline architecture, forbidden props, and gaze direction. Requires Phase 14 (RAG + Meta Reporting for creative memory).
 
+Phase 20 will also improve universe metaphor↔visual coherence — currently the metaphor visual element is a late advisory injection via buildFinalImagePrompt; Phase 20 bakes visual metaphor into the concept from the start.
+
 > **Context:** The current pipeline (`Inputs → Hook Lab → Visual Plan → Art Direction → Render → Caption`) optimizes for constraint compliance, not creative differentiation. Three sibling concepts in a batch differ in pose but share metaphor, layout, and headline architecture — every ad looks like the same machine made it. The Visual Architect V5.0 step generates **layout archetypes** (where the hero stands), not **visual concepts** (what the ad is about). The hookType→visualDirection mapping in `hookTypesKnowledge.ts` is a 12-template lookup that returns identical visual direction for every hook of the same type.
 >
 > This phase adds two hidden backend stages and one hidden coherence checker — none of which are user-visible:
@@ -2378,7 +2390,7 @@ Same checklist as the old Phase 8.E.6 — recreate products in Live mode, genera
 **Requires:** Phase 5 (pipeline).
 **Blocks:** Nothing.
 
-**Scope:** When a fantasy universe is selected, Gemini copy generation may include a subtle, evocative universe-echoing word or short phrase that connects the hook to the universe theme, and the blueprint/visual-coherence block tells the renderer to include a matching visual element so the image stays coherent with the words. Example: a mythic_epic universe with a pricing hook might use "ساحة المعركة" (battlefield) as a metaphor for the market, and the blueprint would describe the hero standing in an arena holding a price scroll. The placement is **Gemini's choice** across headline / subheadline / CTA / benefit — not restricted to subheadline/benefit (this supersedes the older launch-matrix note).
+**Scope:** When a fantasy universe is selected, Gemini copy generation may include a subtle, evocative universe-echoing word or short phrase that connects the hook to the universe theme, and the blueprint/visual-coherence block tells the renderer to include a matching visual element so the image stays coherent with the words. Example: a mythic_epic universe with a pricing hook might use "ساحة المعركة" (battlefield) as a metaphor for the market, and the blueprint would describe the hero standing in an arena holding a price scroll. Gemini chooses metaphor placement across headline, subheadline, CTA, or benefit — wherever most natural for the hook and offer.
 
 **Architecture (resolved 2026-06-25):** Pure side-effect-free mapper module `functions/src/universeCopyMap.ts` owns (a) the decision function `resolveUniverseCopyDecision({ styleFamily, referenceAdPresent, isTextOnly, isCarouselNonHookSlide })` returning `{ applied, styleFamily, reason }`, (b) the relaxed-fantasy copy block (`buildFantasyMetaphorCopyBlock`), (c) the byte-for-byte lifted strict constants (`STRICT_METAPHOR_BLOCK`, `STRICT_METAPHOR_REFRESH_LINE`) for reversibility, and (d) the blueprint visual-coherence instruction (`buildBlueprintMetaphorVisualBlock`). The decision is consumed at three emission sites: the two `generateTOV` copy sites (mode `initial` ~L1899 + mode `refresh` ~L2020) and `buildFinalImagePrompt()` (blueprint injection AFTER the BLUEPRINT line). The trace is written in `generateFinalAd()` next to `expressionAdaptation` / `gazeDirection`. No new parallel generation path; the existing strict-vs-relaxed text swap is the only behavior change. Fully reversible: the strict text is retained (commented / lifted) and a neutralized mapper restores byte-identical pre-Phase-27 prompts (Contract E).
 
@@ -2394,6 +2406,8 @@ Same checklist as the old Phase 8.E.6 — recreate products in Live mode, genera
 - Batch mode: each item resolves its own metaphor state independently through the shared copy path (no batch-specific logic — FR-010)
 - Custom fantasy universes: a fantasy custom universe is eligible for the metaphor (US6) — `customUniverseDetails` takes priority over `resolvedUniverse` as the vocabulary source, matching the existing "CUSTOM UNIVERSE (TOP PRIORITY)" precedence at `generators.ts:1875–1877`
 - The relaxation is permissive, not mandatory: if no copy scenario benefits, Gemini may keep a given field literal — the failure mode is over-aggressive metaphor (full themed sentence) or metaphor leaking into realistic/minimal, both caught in QA, not in code
+
+**Known limitation:** Universe metaphor visual coherence is advisory (late injection via buildFinalImagePrompt). The rendered image reflects the universe scene but may not always depict the specific metaphor word in the copy. Phase 20 (Concept Director) will improve this.
 - Additive `universeAwareCopy` trace field on every generation — `applied` (prompt-level decision, NOT output verification), `styleFamily` (always the resolved family, never null — FR-013a), `reason` (canonical value from the 6-value union — FR-013). Legacy generations without the field remain valid (no migration).
 
 ---
