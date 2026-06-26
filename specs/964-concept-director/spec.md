@@ -15,6 +15,14 @@ The whole stage is invisible to the user (no new screens, no new buttons), addit
 
 **Scope note (Option A):** This build delivers the Concept Director, the Variance Validator, the pipeline wiring, and the tests. It deliberately excludes the user-facing "Brief Coherence Check" banner (20.A/20.E), the user-facing "Variance Mode" toggle (20.F), live telemetry collection (the analytics part of 20.G), and any wiring to past winning ads / creative memory (20.D.7) — those are deferred to later phases. The "variance mode" concept is hardcoded to `balanced` for this build, but the interface accepts the mode so a future toggle can drive it without re-architecting.
 
+## Clarifications
+
+### Session 2026-06-26
+
+- Q: Should the Concept Director run for carousel and batch generations in this build, or only the standard single-ad 3-concept flow? → A: Single-ad 3-concept flow only — carousel and batch generations keep today's behavior in this build.
+- Q: What per-concept time limit should bound the Concept Director before it falls back to existing logic? → A: 15 seconds per concept.
+- Q: How should the Variance Validator decide that two concepts' variance markers are "the same"? → A: Normalized exact match (compare canonical tokens after lowercasing + trimming whitespace).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Three concepts that actually look different (Priority: P1)
@@ -88,7 +96,7 @@ The team needs to turn this feature on for a few test users first, watch results
 ### Edge Cases
 
 - **Hero-less ads** (text-only, value-stack, ticket-only, device/book mockup modes): concepts that have no hero person must still be enriched where it makes sense (metaphor, layout, headline, forbidden props) without forcing a hero gaze or hero pose. The Director must produce a coherent brief for a hero-absent concept (its hero-presence is "absent") and the validator must not penalize that.
-- **Carousel and batch generations**: the Director's three-sibling logic is defined for the standard three-concept single-ad flow. For multi-item flows (carousel slides, batch ads), the stage must either apply coherently or fall back cleanly — it must never crash or mismatch counts. (Assumption A7 records the chosen behavior.)
+- **Carousel and batch generations**: in this build the Director/Validator stage runs ONLY for the standard single-ad three-concept flow (per Clarifications 2026-06-26). Carousel and batch generations keep today's behavior unchanged — the new stage is not invoked for them. The integration MUST detect the single-ad three-concept flow and skip enrichment for any other flow without crashing or mismatching item counts.
 - **Inviolable user choices**: the user's explicit selections — sub-style, creative mode, language, aspect ratio, brand colors/logo — are never overridden by the Director. Each concept brief specializes *within* the user's chosen sub-style; it never swaps it for another.
 - **Non-Latin / Arabic output**: human-readable brief fields (metaphor description, pose description) must be in the user's language; internal category labels (the fixed choices the downstream pipeline reads) stay in their fixed English form so the existing pipeline keeps working.
 - **Partial sibling visibility**: the first concept has no prior siblings to differ from; the second sees the first; the third sees the first two. The stage must work correctly at each step, including when an earlier sibling fell back (and therefore exposes no variance markers to avoid).
@@ -116,12 +124,12 @@ The team needs to turn this feature on for a few test users first, watch results
 
 - **FR-010**: If the Director fails for a concept — model call failure, timeout beyond a per-concept limit, malformed/unparseable output, schema mismatch, or hard-constraint violation — the system MUST fall back to today's existing concept-generation logic for that concept only, leaving any successfully enriched siblings unaffected.
 - **FR-011**: A Director fallback MUST NOT surface a user-facing error and MUST NOT change how credits are charged relative to a normal successful generation.
-- **FR-012**: The Director stage MUST NOT be able to hold a generation open indefinitely; a per-concept time limit MUST bound how long enrichment may take before falling back.
+- **FR-012**: The Director stage MUST NOT be able to hold a generation open indefinitely; a per-concept time limit of **15 seconds** MUST bound how long enrichment may take before that concept falls back to existing logic.
 
 **Variance Validator**
 
-- **FR-013**: The system MUST provide a Variance Validator that compares the three sibling briefs and decides whether they are sufficiently distinct, using only the briefs' variance markers — with no model/AI call — and returning effectively instantly.
-- **FR-014**: In `balanced` mode the validator MUST flag a blocking duplication when any of these is true: the same visual-metaphor marker appears in two or more of the three concepts; all three share the same layout marker; or all three share the same headline marker.
+- **FR-013**: The system MUST provide a Variance Validator that compares the three sibling briefs and decides whether they are sufficiently distinct, using only the briefs' variance markers — with no model/AI call — and returning effectively instantly. Two markers are considered "the same" when their canonical tokens match after **normalization (lowercasing + trimming surrounding whitespace)** — an exact match on the normalized token, not a fuzzy/semantic similarity.
+- **FR-014**: In `balanced` mode the validator MUST flag a blocking duplication when any of these is true (using the normalized-match rule from FR-013): the same visual-metaphor marker appears in two or more of the three concepts; all three share the same layout marker; or all three share the same headline marker.
 - **FR-015**: When the validator flags a blocking duplication and no retry has yet happened for this request, the system MUST regenerate the offending concept(s) by re-running the Director with the duplicated markers added to that concept's avoid-list. This retry MUST be limited to **at most one** per concept.
 - **FR-016**: If a retry still fails validation, the system MUST ship the concepts as-is, perform no further retries, and record that full variance was not achieved. The validator MUST NEVER block or fail the user's generation.
 - **FR-017**: The validator MAY additionally raise non-blocking (warn-level) observations that are recorded but never trigger a retry.
@@ -154,6 +162,7 @@ The team needs to turn this feature on for a few test users first, watch results
 - The user-facing "Brief Coherence Check" banner and the pre-generation coherence reviewer (20.A, 20.E).
 - The user-facing "Variance Mode" toggle and its workspace setting (20.F); the mode is hardcoded to `balanced` here.
 - Wiring the Director to past winning ads / creative memory / RAG (20.D.7) — deferred until that upstream system exists.
+- Running the stage for carousel and batch generations (per Clarifications 2026-06-26) — this build covers the single-ad three-concept flow only.
 - Aggregate telemetry collection into an analytics store (the analytics portion of 20.G).
 - Any frontend change, any new user-triggered backend entry point, any data-schema migration, any pricing/credit/plan change, and any change to the existing expression, gaze, universe-copy, copy-fidelity, or final-image-prompt logic.
 
@@ -188,7 +197,7 @@ The team needs to turn this feature on for a few test users first, watch results
 - **A4 (default ship state)**: At ship time the per-user flag is off for all users and the kill switch is off; the feature reaches users only as the flag is deliberately enabled, starting with test users.
 - **A5 (fail-open is mandatory)**: Any ambiguity about behavior on error resolves toward "fall back to existing behavior and never block the user."
 - **A6 (no schema migration)**: All new persisted data is additive and optional. Existing generation records remain valid without it; no migration runs.
-- **A7 (multi-item flows)**: The three-sibling Director/validator logic targets the standard three-concept single-ad flow. For carousel and batch flows the stage must apply coherently where it cleanly maps, and otherwise fall back without error or count mismatch. The precise per-flow behavior is confirmed during planning; the invariant is "never crash, never block, never mismatch counts."
+- **A7 (multi-item flows — RESOLVED)**: Per Clarifications 2026-06-26, this build runs the Director/Validator stage ONLY for the standard single-ad three-concept flow. Carousel and batch flows are explicitly out of scope here and keep today's behavior; the integration detects the single-ad flow and skips enrichment for any other flow. Extending to carousel/batch is a possible later phase. The invariant for the skip path is "never crash, never block, never mismatch counts."
 - **A8 (advisory enrichment)**: The Director enriches the existing concept prompt; it does not replace the existing logic, which remains the fallback path for every concept.
 - **A9 (user invisibility)**: This build adds no user-visible UI. Users perceive the feature only as more varied concepts.
 - **A10 (consistency per generation)**: The decision to run the stage is evaluated once at generation start and held for the whole generation, so the kill switch cannot produce a half-enriched, half-fallback inconsistency within a single request.
