@@ -1910,9 +1910,6 @@ MINIMAL STYLE HOOK BIAS:
             const _metaphorCopyBlock = _ucCopyDecision.applied
                 ? buildFantasyMetaphorCopyBlock(resolvedUniverse, (inputs as any).customUniverseDetails)
                 : STRICT_METAPHOR_BLOCK;
-            // TEMP-INVESTIGATION (Phase 27): log the full metaphor block so
-            // we can confirm whether the relaxed or strict path is firing.
-            console.log('🔍 METAPHOR BLOCK (initial):', _metaphorCopyBlock);
 
             modeInstruction = `PHASE 2: THEMATIC MARKETING FUSION.
       - Product: ${inputs.productName}
@@ -2023,9 +2020,6 @@ ${_metaphorCopyBlock}
             const _metaphorRefreshBlock = _ucRefreshDecision.applied
                 ? `- ✨ UNIVERSE METAPHOR (FANTASY — REQUIRED): The copy MUST include exactly ONE subtle, evocative universe-echoing word or short phrase (Gemini chooses the placement: headline, subheadline, CTA, or benefit). Keep it SUBTLE — exactly one word or short phrase, never a full themed sentence. The copy MUST still stand on its own to a reader who never sees the image. Prompt-level mandate; no post-generation rejection pass.`
                 : STRICT_METAPHOR_REFRESH_LINE;
-            // TEMP-INVESTIGATION (Phase 27): log the full refresh-mode
-            // metaphor block.
-            console.log('🔍 METAPHOR BLOCK (refresh):', _metaphorRefreshBlock);
 
             modeInstruction = `REFINEMENT MODE — APPLY USER'S SPECIFIC INSTRUCTIONS:
 
