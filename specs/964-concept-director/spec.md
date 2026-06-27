@@ -205,6 +205,7 @@ The team needs to turn this feature on for a few test users first, watch results
 - **A8 (advisory enrichment)**: The Director enriches the existing concept prompt; it does not replace the existing logic, which remains the fallback path for every concept.
 - **A9 (user invisibility)**: This build adds no user-visible UI. Users perceive the feature only as more varied concepts.
 - **A10 (consistency per generation)**: The decision to run the stage is evaluated once at generation start and held for the whole generation, so the kill switch cannot produce a half-enriched, half-fallback inconsistency within a single request.
+- **A11 (batch latency/cost — accepted, 2026-06-27)**: Because batch is in scope (C1), the Director runs per hook, so a batch of N hooks adds N×3 sequential reasoning calls (each ≤15s, +≤1 retry/concept) — up to 36 hooks on the Scale plan. This added latency/cost is **accepted** for this build, mitigated by the per-user feature flag (off by default), the global kill switch (≤60s, no deploy), and the per-generation trace counters (FR-025) used to monitor real batch impact; if batch latency proves painful in practice, the kill switch is the immediate lever and capping the Director to the first N batch hooks is the documented next step.
 
 ## Dependencies
 
