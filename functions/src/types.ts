@@ -440,6 +440,39 @@ export interface ResolutionTrace {
         readonly applied: boolean;
         readonly reason?: string;
     };
+    // Phase 20 — additive concept-director sub-object. Records what the
+    // hidden Concept Director stage did for this generation. Mirrors the
+    // `expressionAdaptation` / `gazeDirection` precedent: additive,
+    // optional, legacy generations may omit it (SC-008). Field absence
+    // on a legacy generation is accepted as "no Phase-20 data".
+    //
+    // `ran: true`  → the stage executed (per-user flag on, kill switch
+    //   off, `mode === 'initial'`). Counters reflect the real run:
+    //   `enabled`, `killSwitch`, `mode` (fixed `"balanced"` this build),
+    //   `conceptCount` (3 on the live path), `fallbackCount` (concepts
+    //   that fell back to existing logic), `validatorTriggered` (a
+    //   blocking violation was found), `retryCount` (≤ `conceptCount`,
+    //   each concept ≤ 1 per FR-015 / SC-005), and `varianceAchieved`
+    //   (final validation passed OR no violation was ever raised).
+    //
+    // `ran: false` → the gate skipped the stage; `reason` explains why
+    //   (`"flag-disabled"` / `"kill-switch-on"` / `"non-initial-mode"`).
+    //   Counters are `0`/`false` and `varianceAchieved:false` (D2.2).
+    //
+    // The trace stores COUNTERS and BOOLEANS only — never the brief
+    // text itself — to keep it small and PII-safe (Contract D2.4).
+    readonly conceptDirector?: {
+        readonly ran: boolean;
+        readonly enabled: boolean;
+        readonly killSwitch: boolean;
+        readonly mode: "balanced";
+        readonly conceptCount: number;
+        readonly fallbackCount: number;
+        readonly validatorTriggered: boolean;
+        readonly retryCount: number;
+        readonly varianceAchieved: boolean;
+        readonly reason?: string;
+    };
     // Phase 27 — additive universe-aware-copy sub-object. Records the
     // COPY-LEVEL metaphor DECISION for this generation (prompt-level,
     // NOT an output verification — matches the Phase 19 gaze /
