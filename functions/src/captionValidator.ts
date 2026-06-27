@@ -774,8 +774,19 @@ const ENVIRONMENT_HEAVY_TERMS = [
 export function validateBlueprintMinimalStyle(
     blueprintText: string,
     isMinimal: boolean,
+    conceptArchitectures?: ReadonlySet<string>,
 ): { passed: boolean; repairPrompt: string | null } {
     if (!isMinimal) return { passed: true, repairPrompt: null };
+
+    // Phase 20 — Concept Director awareness (Contract C5.4 / FR-019).
+    // When the orchestrator passes the headline-architecture whitelist
+    // from a Concept Director brief set, intentionally novel headline
+    // shapes (manifesto, oversized_question, numerical_anchor, etc.)
+    // are NOT rejected as "broken headline". The minimal style check
+    // is about environment-heavy terms (cinematic lighting, dust,
+    // haze, etc.) and is independent of headline shape — but the
+    // whitelist seam is preserved for future per-headline-shape checks.
+    void conceptArchitectures;
 
     // Strip ALL prohibition/instruction content before checking.
     // The prompt template and Gemini's output may echo FORBIDDEN lists that mention

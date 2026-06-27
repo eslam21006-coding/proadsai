@@ -48,6 +48,7 @@ import { getRankings, type RankingResult, type RankingInput } from "./rankingEng
 import type { FailureClass, CostEstimate, LogoPlacement, ClaimFlagEntry, CopyFieldStatuses } from "./types.js";
 import { resolveBrandColors, type ResolveBrandColorsInput } from "./brandColorResolver.js";
 import { buildCarouselBrandConsistencyBlock, buildBatchBrandConsistencyBlock } from "./brandPromptBlocks.js";
+import { buildConceptEnrichmentBlock, type ConceptBrief, type ConceptDirectorFallback } from "./conceptDirector.js";
 import { checkBrandColorCompliance } from "./brandColorCompliance.js";
 import { GenerationError } from "./types.js";
 import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL, OPENAI_SIZE_BY_ASPECT } from "./modelConfig.js";
@@ -55,6 +56,45 @@ import { COLD_ANGLES, RETARGETING_ANGLES, buildSlidePlan } from "./slidePlanEngi
 import { drawDimensions, drawOpenings, makeProjectSeed, getRecentFingerprintsForRotation, type AngleFingerprint } from "./copyDiversity.js";
 import { recordAngleFingerprint } from "./creativeMemory.js";
 import { getAngleVariationBlueprintRotated } from "./knowledge/hookAnglesKnowledge.js";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE 20 — CONCEPT DIRECTOR (Contract C5.4 / FR-019)
+// Headline-architecture whitelist: novel headline shapes authored by the
+// Director (manifesto / oversized_question / numerical_anchor /
+// ellipsis_tease / stacked_weight) are intentionally non-standard and
+// MUST NOT be rejected by the post-generation validators. We surface
+// them here as a single canonical set, pass it to
+// validateBlueprintMinimalStyle / quickRejectCheck on the concept and
+// build-plan flows, and use it as a forward-compat seam if a future
+// check needs to consult it.
+// ═══════════════════════════════════════════════════════════════════════════
+const HEADLINE_WHITELIST = new Set<string>([
+    "manifesto",
+    "oversized_question",
+    "numerical_anchor",
+    "ellipsis_tease",
+    "stacked_weight",
+]);
+
+/**
+ * Extract the `headlineArchitecture` chosen for each Concept Brief in
+ * `conceptDirectorBriefs` so the validators can see which novel
+ * architectures the Director picked. Returns an empty Set when no
+ * briefs were provided (the flag-off / skipped path) so the validators
+ * stay byte-for-byte unchanged from their pre-Phase-20 behavior.
+ */
+function extractConceptArchitectures(
+    briefs: ReadonlyArray<ConceptBrief | ConceptDirectorFallback> | undefined,
+): ReadonlySet<string> {
+    const out = new Set<string>();
+    if (!briefs) return out;
+    for (const b of briefs) {
+        if ("fallback" in b && b.fallback) continue;
+        const arch = (b as ConceptBrief).headlineArchitecture;
+        if (typeof arch === "string" && (arch as string) !== "") out.add(arch);
+    }
+    return out.size > 0 ? out : HEADLINE_WHITELIST;
+}
 
 // ─── Safe remote-image fetch ────────────────────────────────────────────────
 // The edit / style / face-anchor reference paths may receive a remote URL
@@ -2957,7 +2997,7 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
 // This step is just "Scene Description". 2.5 Flash is perfectly capable and faster.
 // This saves your Gemini 3 Quota/Limits.
 
-export async function generateConcepts(approvedTov: string, inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', _previousOutput?: string, _globalRefinement?: string, editFeedback?: string, editIndex?: string): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
+export async function generateConcepts(approvedTov: string, inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', _previousOutput?: string, _globalRefinement?: string, editFeedback?: string, editIndex?: string, conceptDirectorBriefs?: ReadonlyArray<ConceptBrief | ConceptDirectorFallback>): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
     // FIX 2: strip media payload (presence preserved) — concepts only branch on logo/asset COUNT.
     inputs = stripMediaFromInputs(inputs);
     let _conceptsRankingLinkage: RankingLinkage | null = null;
@@ -4253,6 +4293,23 @@ Selected modes: [${modes.join(' + ')}]
         let finalPrompt = conceptPersonalization ? prompt + '\n' + conceptPersonalization : prompt;
         if (_step3RankingGuidance?.promptBlock) finalPrompt += '\n' + _step3RankingGuidance.promptBlock;
 
+        // Phase 20 — Concept Director enrichment. When the orchestrator
+        // passes three resolved briefs (some may be ConceptDirectorFallback
+        // for failed concepts), inject `buildConceptEnrichmentBlock` so
+        // the three sibling concept cards diverge on visual metaphor /
+        // headline architecture / layout archetype / forbidden props /
+        // hero gaze+pose. When `conceptDirectorBriefs` is absent, this
+        // block is empty and the prompt is byte-for-byte unchanged
+        // (Contract C5.1 / SC-007). The existing positive-layout /
+        // anti-robotic / costume / contrast / universe / mode rules
+        // remain and outrank the enrichment (Contract C5.3).
+        if (conceptDirectorBriefs && conceptDirectorBriefs.length > 0 && mode === 'initial') {
+            const _cdBlock = buildConceptEnrichmentBlock(conceptDirectorBriefs);
+            if (_cdBlock && _cdBlock.trim() !== "") {
+                finalPrompt += '\n\n' + _cdBlock;
+            }
+        }
+
         // Using Lite model with Retry logic + content-level retry for empty responses
         let conceptResult = '';
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -4358,6 +4415,16 @@ Selected modes: [${modes.join(' + ')}]
             }
         }
 
+        // Phase 20 — Concept Director: headline-architecture whitelist
+        // for the post-generation validators (Contract C5.4 / FR-019).
+        // When the Director enriches the prompt, intentionally novel
+        // headline shapes (manifesto, oversized_question,
+        // numerical_anchor, ellipsis_tease) are NOT rejected as "broken".
+        // We extract the chosen architectures from the (optional)
+        // conceptDirectorBriefs and pass them through to
+        // validateBlueprintMinimalStyle / quickRejectCheck.
+        const _headlineArchitecturesForValidators = extractConceptArchitectures(conceptDirectorBriefs);
+
         // ═══ MINIMAL STYLE VALIDATION — non-blocking warning only ═══
         // The concept prompt already has dedicated minimal placeholders that enforce
         // plain backgrounds, studio lighting, and no cinematic elements (lines 1477-1488, 1729-1735).
@@ -4366,7 +4433,7 @@ Selected modes: [${modes.join(' + ')}]
         // Now: log a warning for telemetry, but never block generation.
         const isMinimalBlueprint = resolveStyleFamily(inputs) === 'minimal';
         if (isMinimalBlueprint) {
-            const minimalCheck = validateBlueprintMinimalStyle(conceptResult, true);
+            const minimalCheck = validateBlueprintMinimalStyle(conceptResult, true, _headlineArchitecturesForValidators);
             if (!minimalCheck.passed) {
                 console.warn(`⚠️ Blueprint minimal style check flagged (non-blocking). Prompt enforcement is primary guard.`);
             }
@@ -4843,7 +4910,7 @@ ${JSON.stringify(machinePlan)}`;
 
     try {
         const scoringCompat = getContractForScoring(buildPlanContract);
-        const quickCheck = quickRejectCheck(scoringCompat, machinePlan.blueprint);
+        const quickCheck = quickRejectCheck(scoringCompat, machinePlan.blueprint, HEADLINE_WHITELIST);
         if (quickCheck.reject) {
             console.warn(`⚠️ Structured build plan quick reject warning: ${quickCheck.reason}`);
         }
@@ -6138,7 +6205,7 @@ If the uploaded photo shows a person in a blue suit, you must NOT default to a b
         });
         const gateScoringCompat = getContractForScoring(gateContract);
 
-        const gateQuickCheck = quickRejectCheck(gateScoringCompat, gatedBlueprint);
+        const gateQuickCheck = quickRejectCheck(gateScoringCompat, gatedBlueprint, HEADLINE_WHITELIST);
         if (gateQuickCheck.reject) {
             const isMinimalStyle = resolveStyleFamily(inputs) === 'minimal';
             if (isMinimalStyle) {
@@ -6417,7 +6484,7 @@ BEFORE/AFTER CONNECTED STORY RULES:
             // ── Pre-render contract validation (secondary — hard gate already ran) ──
             const scoringCompat = getContractForScoring(renderContract);
             const planValidation = validateBuildPlanAgainstContract(gatedBlueprint, scoringCompat);
-            const quickCheck = quickRejectCheck(scoringCompat, gatedBlueprint);
+            const quickCheck = quickRejectCheck(scoringCompat, gatedBlueprint, HEADLINE_WHITELIST);
             if (quickCheck.reject) {
                 console.warn(`⚠️ Pre-render contract violation: ${quickCheck.reason}`);
             }

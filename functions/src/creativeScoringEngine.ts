@@ -224,7 +224,7 @@ function clamp(value: number): number {
     return Math.max(0, Math.min(100, Math.round(value)));
 }
 
-export function quickRejectCheck(contract: LayoutContract, buildPlanText: string): {
+export function quickRejectCheck(contract: LayoutContract, buildPlanText: string, conceptArchitectures?: ReadonlySet<string>): {
     reject: boolean;
     reason: string | null;
 } {
@@ -256,6 +256,15 @@ export function quickRejectCheck(contract: LayoutContract, buildPlanText: string
             return { reject: true, reason: 'Hero must remain visible and dominant in value stack layouts.' };
         }
     }
+
+    // Phase 20 — Concept Director awareness (Contract C5.4 / FR-019).
+    // When the orchestrator passes the headline-architecture whitelist
+    // from a Concept Director brief set, intentionally novel headline
+    // shapes (manifesto, oversized_question, numerical_anchor, etc.)
+    // are NOT rejected as "broken headline". Today this validator does
+    // not perform a headline-shape check; the whitelist is recorded
+    // here as a forward-compat seam so a future check can consult it.
+    void conceptArchitectures;
 
     return { reject: false, reason: null };
 }
