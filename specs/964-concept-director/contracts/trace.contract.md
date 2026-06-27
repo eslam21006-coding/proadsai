@@ -22,7 +22,7 @@ readonly conceptDirector?: {
 ## D2 — Write guarantees
 
 - **D2.1 (ran path)**: When the stage runs, the trace records the real counters: `ran:true`, `enabled:true`, the observed `killSwitch`, `conceptCount` (3), the actual `fallbackCount`, `validatorTriggered`, `retryCount`, and `varianceAchieved`.
-- **D2.2 (skipped path)**: When the gate skips the stage, write `ran:false` with `reason` ∈ {`"flag-disabled"`, `"kill-switch-on"`, `"non-initial-mode"`, `"not-single-ad-flow"`}, and `enabled`/`killSwitch` reflecting why; counters are `0`/`false` and `varianceAchieved:false`.
+- **D2.2 (skipped path)**: When the gate skips the stage, write `ran:false` with `reason` ∈ {`"flag-disabled"`, `"kill-switch-on"`, `"non-initial-mode"`}, and `enabled`/`killSwitch` reflecting why; counters are `0`/`false` and `varianceAchieved:false`. (No `"not-single-ad-flow"` reason — batch is in scope as of 2026-06-27, C1, and carousel never reaches this callable.)
 - **D2.3 (additive)**: The field is optional. Legacy generations and flag-off generations may omit it entirely; consumers treat absence as "no Phase-20 data" (SC-008). No existing trace field changes shape.
 - **D2.4 (no PII / no copy)**: The trace stores counters and booleans only — not the brief text — keeping it small and safe.
 

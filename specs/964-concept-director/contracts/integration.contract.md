@@ -6,7 +6,7 @@ Orchestration lives where `uid` and the Gemini caller already exist. The pure mo
 
 The stage runs **iff all** hold:
 1. `mode === 'initial'` (not refresh/precision/edit).
-2. The request is the standard single-ad three-concept flow (not carousel/batch). *(Carousel/batch callables never reach this loop.)*
+2. The call is `serverGenerateConcepts` (revised 2026-06-27, C1) — this serves both single-ad and batch-per-hook, so condition 1 (`mode === 'initial'`) is the only flow gate needed here. *(Carousel uses separate callables — `serverGenerateCarouselAngles` / `serverGenerateCarouselSlideCopies` — and never reaches this loop, so it needs no explicit check.)*
 3. Per-user flag `users/{uid}.conceptDirectorEnabled === true` (absent ⇒ false).
 4. Global kill switch `conceptDirectorKillSwitch !== true`.
 

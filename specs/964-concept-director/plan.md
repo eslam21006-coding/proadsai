@@ -5,7 +5,7 @@
 
 ## Summary
 
-Insert a hidden, fail-open **Concept Director** stage ahead of the existing single-call concept generator. For an enabled user on the standard single-ad three-concept flow (`mode === 'initial'`), the stage runs a pure-reasoning text model **3× sequentially** — each call seeing the prior siblings' varianceAxes tokens — to author three deliberately distinct creative briefs (visual metaphor, headline architecture, layout archetype, forbidden props, hero gaze/pose, etc.). A deterministic, no-AI **Variance Validator** then checks the three briefs for collisions on core axes and triggers **at most one** retry of the offending concept(s). The validated briefs **enrich** the existing `[VISUAL ARCHITECT V5.0]` prompt inside `generateConcepts()` — they do not replace it. Any failure (model error, >15s timeout, malformed output, schema/hard-rule violation) falls back to today's exact behavior for that concept. The stage is gated by a per-user flag (`users/{uid}.conceptDirectorEnabled`, default `false`) and a global Firebase Remote Config kill switch (`conceptDirectorKillSwitch`, 60s cache). An additive `ResolutionTrace.conceptDirector` records what happened. No frontend change, no new callable, no schema migration, no pricing change.
+Insert a hidden, fail-open **Concept Director** stage ahead of the existing single-call concept generator. For an enabled user, on every `serverGenerateConcepts` call with `mode === 'initial'` (single-ad AND batch-per-hook; carousel excluded via separate callables — C1, 2026-06-27), the stage runs a pure-reasoning text model **3× sequentially** — each call seeing the prior siblings' varianceAxes tokens — to author three deliberately distinct creative briefs (visual metaphor, headline architecture, layout archetype, forbidden props, hero gaze/pose, etc.). A deterministic, no-AI **Variance Validator** then checks the three briefs for collisions on core axes and triggers **at most one** retry of the offending concept(s). The validated briefs **enrich** the existing `[VISUAL ARCHITECT V5.0]` prompt inside `generateConcepts()` — they do not replace it. Any failure (model error, >15s timeout, malformed output, schema/hard-rule violation) falls back to today's exact behavior for that concept. The stage is gated by a per-user flag (`users/{uid}.conceptDirectorEnabled`, default `false`) and a global Firebase Remote Config kill switch (`conceptDirectorKillSwitch`, 60s cache). An additive `ResolutionTrace.conceptDirector` records what happened. No frontend change, no new callable, no schema migration, no pricing change.
 
 **Technical approach** follows the established pure-mapper pattern (`expressionMap.ts`, `gazeMap.ts`, `universeCopyMap.ts`): a side-effect-free module owns the schema, prompt-builder, enum sets, hard-constraint validation, and the enrichment-block builder; orchestration (model calls, flag/kill-switch reads, retry loop, trace write) lives in the callable/generator layer that already holds `uid` and the Gemini caller.
 
@@ -22,7 +22,7 @@ Insert a hidden, fail-open **Concept Director** stage ahead of the existing sing
 **Project Type**: Web app (React frontend + Functions backend). **This feature is backend-only.**
 **Performance Goals**: Director adds ≤3 sequential text calls (each bounded at **15s**) plus ≤1 retry call on the live path; Variance Validator is pure and returns in <5ms (no AI). Flag read = 1 cached Firestore doc read already loaded for the generation; kill-switch read cached 60s in-process.
 **Constraints**: Fail-open (never block, never error to user, credits unchanged on fallback); additive only (no schema migration, no existing-behavior change); single consistent run/skip decision per generation; enum category labels stay canonical English; human-readable brief fields in user's language; `conservative`/`aggressive` modes defined but only `balanced` exercised.
-**Scale/Scope**: One new pure module (`conceptDirector.ts`), one new pure validator (`varianceValidator.ts`), one additive trace field, one flag field, one kill-switch read helper, enrichment wiring at the single `generateConcepts()` prompt-assembly point, and tests. Runs only for `mode === 'initial'` single-ad three-concept generations.
+**Scale/Scope**: One new pure module (`conceptDirector.ts`), one new pure validator (`varianceValidator.ts`), one additive trace field, one flag field, one kill-switch read helper, enrichment wiring at the single `generateConcepts()` prompt-assembly point, and tests. Runs for every `serverGenerateConcepts` call with `mode === 'initial'` — single-ad AND batch-per-hook (revised 2026-06-27, C1); carousel is excluded structurally (separate callables).
 
 ## Constitution Check
 
@@ -32,7 +32,7 @@ Insert a hidden, fail-open **Concept Director** stage ahead of the existing sing
 |-----------|-----------|---------|
 | I. Reliability Over Feature Count | Fail-open fallback + flag + kill switch = zero added launch risk; ships dark. | ✅ Pass |
 | II. The Selected Mode MUST Be Obeyed | User's inviolable choices (sub-style, mode, language, ratio, brand) are never overridden (FR-008); brief specializes within sub-style. | ✅ Pass |
-| III. Launch Surface Is Frozen | Scope reduced to single-ad 3-concept flow; carousel/batch/deferred parts explicitly excluded. | ✅ Pass |
+| III. Launch Surface Is Frozen | Scope = `serverGenerateConcepts` `mode='initial'` (single-ad + batch-per-hook); carousel + deferred parts (20.A/E/F, memory, telemetry) explicitly excluded. | ✅ Pass |
 | IV. Behavior Contracts Beat Subjective Judgment | Pass/fail rules per FR; contracts/ define inputs, required output, blocked behaviors, variance rules, fail conditions. | ✅ Pass |
 | V. Arabic Quality Is First-Class | Brief human-readable fields authored in user's language; enums stay English for the pipeline; no relaxation of existing Arabic rules. | ✅ Pass |
 | VI. Hidden Machine Layers MUST Be Auditable | `ResolutionTrace.conceptDirector` records ran/fallbacks/retries/variance-achieved (FR-025). | ✅ Pass |
@@ -41,7 +41,7 @@ Insert a hidden, fail-open **Concept Director** stage ahead of the existing sing
 | IX. Proof Is Required for Every Claimed Fix | Tests (FR-027/028) + quickstart give reproducible before/after evidence. | ✅ Pass |
 | X. Spec Before Code | Spec + clarifications + this plan precede implementation. | ✅ Pass |
 | XI. Frontend and Backend MUST Agree | Backend-only; flag enforced server-side; no frontend state exposed; no invalid state reachable. | ✅ Pass |
-| XII. Deferred Scope MUST Remain Deferred | 20.A/20.E/20.F, creative-memory (20.D.7), carousel/batch, telemetry collection explicitly deferred in spec + plan. | ✅ Pass |
+| XII. Deferred Scope MUST Remain Deferred | 20.A/20.E/20.F, creative-memory (20.D.7), carousel, telemetry collection explicitly deferred in spec + plan (batch is in scope as of 2026-06-27, C1). | ✅ Pass |
 
 **Result: PASS — no violations. Complexity Tracking section omitted (nothing to justify).**
 

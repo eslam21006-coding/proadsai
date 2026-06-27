@@ -27,7 +27,7 @@ All NEEDS CLARIFICATION items from the spec's clarification round are already re
 - Keeps `conceptDirector.ts` and `varianceValidator.ts` pure (no Firebase/Gemini imports), matching the established mapper pattern and making them unit-testable without mocks of Firestore/Remote Config.
 
 **Alternatives considered**:
-- Passing `uid` down into `generateConcepts` and running the loop there — rejected: `generateConcepts` is also called for `refresh`/`precision`/edit paths and from other call sites; concentrating the gate in the callable keeps the "initial single-ad only" scope crisp and avoids threading `uid` through a large function.
+- Passing `uid` down into `generateConcepts` and running the loop there — rejected: `generateConcepts` is also called for `refresh`/`precision`/edit paths and from other call sites; concentrating the gate in the callable keeps the `mode === 'initial'` scope crisp (single-ad + batch-per-hook; carousel excluded — D10) and avoids threading `uid` through a large function.
 - A brand-new callable for the Director — rejected by founder constraint (no new callable).
 
 **Note on single-call reality**: Today `generateConcepts` emits **all three** concepts from **one** Gemini call (the prompt asks for "3 UNIQUE VISUAL BLUEPRINTS"). The Director does **not** change that final call's 1-call shape; it produces three **briefs** beforehand and injects them as three labeled concept directives into that one prompt. So the pipeline becomes: 3 Director calls (sequential) → validate → 1 enriched Visual Architect call. This preserves the existing render contract while making the three blueprints diverge by construction.
@@ -137,13 +137,13 @@ Follows the `expressionAdaptation` / `gazeDirection` precedent: `applied/ran` bo
 
 ---
 
-## D10 — Scope gating (single-ad, initial mode only)
+## D10 — Scope gating (`serverGenerateConcepts` `mode === 'initial'`; revised 2026-06-27, C1)
 
-**Decision**: The stage runs only when `mode === 'initial'` AND the generation is the standard single-ad three-concept flow. Carousel slide generation, batch generation, `refresh`/`precision`, and `editOneConcept` paths never invoke the Director (they pass no briefs and run today's logic). The gate is a simple condition in `serverGenerateConcepts` before the loop.
+**Decision**: The stage runs whenever `serverGenerateConcepts` is called with `mode === 'initial'`. This covers the **single-ad** flow (App.tsx:4202) AND each **batch** hook (App.tsx:7225) — both are "3 concepts for one hook" generations through the same callable with identical payloads, so the 3-sibling design fits each unchanged. **Carousel is excluded structurally** — it uses separate callables (`serverGenerateCarouselAngles` / `serverGenerateCarouselSlideCopies`, geminiService.ts:17–18) that never reach this path. `refresh` / `precision` / `editOneConcept` are excluded by the mode check (they pass no briefs and run today's logic). The gate is a simple `mode === 'initial'` condition in `serverGenerateConcepts` before the loop.
 
-**Rationale**: Clarification 2026-06-26 (single-ad 3-concept only). Keeps blast radius minimal and the 3-sibling design exact. Carousel/batch extension is a later phase.
+**Rationale**: `/speckit.analyze` (C1) found that the backend cannot distinguish single-ad from batch without a frontend-supplied discriminant, and frontend changes are out of scope. Rather than add a frontend signal, the founder chose (2026-06-27) to **include batch** — it is genuinely desirable (batch ads get variety too) and requires no frontend change. This supersedes the 2026-06-26 "single-ad only" clarification. Carousel staying out keeps the surface bounded.
 
-**Alternatives considered**: applying to carousel/batch now (rejected by clarification — larger surface + test matrix).
+**Alternatives considered**: keep single-ad-only via a new frontend `isBatchItem` discriminant the gate reads (rejected 2026-06-27 — violates the no-frontend-change scope for no real benefit, since batch fits the same 3-sibling model); applying to carousel too (rejected — different callables, variable slide counts, larger surface; deferred).
 
 ---
 
@@ -160,6 +160,6 @@ Follows the `expressionAdaptation` / `gazeDirection` precedent: `applied/ran` bo
 | Retry | Offenders only, ≤1 per concept, ship-as-is after (D7) |
 | Trace | Additive `ResolutionTrace.conceptDirector` (D8) |
 | Quick-reject | Headline-architecture-aware whitelist (D9) |
-| Scope gate | `mode === 'initial'` single-ad only (D10) |
+| Scope gate | `serverGenerateConcepts` `mode === 'initial'` — single-ad + batch-per-hook; carousel excluded (D10, rev. 2026-06-27) |
 
 No NEEDS CLARIFICATION markers remain.

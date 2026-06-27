@@ -54,11 +54,14 @@ Set `conceptDirectorEnabled: true` on a test user.
 - [ ] Within ≤60s, new generations skip the stage for **all** users including flag-on ones; trace `ran:false`, `reason:"kill-switch-on"` (SC-006).
 - [ ] Flip back to false → stage resumes within ≤60s. No deploy in either direction.
 
-## G. Scope boundaries (must NOT run)
+## G. Scope boundaries (revised 2026-06-27, C1)
 
-- [ ] Carousel generation with flag on → Director does **not** run; today's behavior; no count mismatch.
-- [ ] Batch generation with flag on → Director does **not** run.
-- [ ] `refresh` / `precision` / edit-one-concept → Director does **not** run.
+**Must NOT run:**
+- [ ] Carousel generation with flag on → Director does **not** run (separate callables); today's behavior; no count mismatch.
+- [ ] `refresh` / `precision` / edit-one-concept → Director does **not** run (mode check excludes them).
+
+**SHOULD run (batch is in scope):**
+- [ ] Batch generation with flag on → Director **runs per hook** (each batch hook is a `serverGenerateConcepts` `mode='initial'` call); each hook's 3 concepts are distinct; trace `ran:true` recorded per hook.
 
 ## H. Constitution / audit
 

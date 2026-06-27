@@ -19,9 +19,13 @@ The whole stage is invisible to the user (no new screens, no new buttons), addit
 
 ### Session 2026-06-26
 
-- Q: Should the Concept Director run for carousel and batch generations in this build, or only the standard single-ad 3-concept flow? → A: Single-ad 3-concept flow only — carousel and batch generations keep today's behavior in this build.
+- Q: Should the Concept Director run for carousel and batch generations in this build, or only the standard single-ad 3-concept flow? → A: Single-ad 3-concept flow only — carousel and batch generations keep today's behavior in this build. **(SUPERSEDED 2026-06-27 — see below.)**
 - Q: What per-concept time limit should bound the Concept Director before it falls back to existing logic? → A: 15 seconds per concept.
 - Q: How should the Variance Validator decide that two concepts' variance markers are "the same"? → A: Normalized exact match (compare canonical tokens after lowercasing + trimming whitespace).
+
+### Session 2026-06-27
+
+- Q (C1, raised in /speckit.analyze): The backend cannot distinguish single-ad from batch — both call `serverGenerateConcepts` with `mode='initial'` and identical payloads (single-ad App.tsx:4202; batch per-hook App.tsx:7225); carousel uses separate callables (`serverGenerateCarouselAngles` / `serverGenerateCarouselSlideCopies`). Given "no frontend changes," how should the gate scope resolve? → A: **Include batch.** The stage gates on `mode === 'initial'` at `serverGenerateConcepts`, which covers single-ad AND each batch hook (every such call is a "3 concepts for one hook" flow that fits the 3-sibling design). **Carousel remains excluded** because it uses separate callables. This **supersedes** the 2026-06-26 "single-ad only" answer. No frontend change.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -96,7 +100,7 @@ The team needs to turn this feature on for a few test users first, watch results
 ### Edge Cases
 
 - **Hero-less ads** (text-only, value-stack, ticket-only, device/book mockup modes): concepts that have no hero person must still be enriched where it makes sense (metaphor, layout, headline, forbidden props) without forcing a hero gaze or hero pose. The Director must produce a coherent brief for a hero-absent concept (its hero-presence is "absent") and the validator must not penalize that.
-- **Carousel and batch generations**: in this build the Director/Validator stage runs ONLY for the standard single-ad three-concept flow (per Clarifications 2026-06-26). Carousel and batch generations keep today's behavior unchanged — the new stage is not invoked for them. The integration MUST detect the single-ad three-concept flow and skip enrichment for any other flow without crashing or mismatching item counts.
+- **Carousel vs batch generations** (per Clarifications 2026-06-27): the stage runs for every `serverGenerateConcepts` call with `mode === 'initial'` — this includes the **single-ad** flow AND each **batch** hook (both are "3 concepts for one hook" generations). **Carousel is excluded** because it uses separate callables (`serverGenerateCarouselAngles` / `serverGenerateCarouselSlideCopies`) that never reach this path. `refresh` / `precision` / edit calls are excluded by the mode check. The integration MUST NOT crash or mismatch item counts on any non-`initial` path.
 - **Inviolable user choices**: the user's explicit selections — sub-style, creative mode, language, aspect ratio, brand colors/logo — are never overridden by the Director. Each concept brief specializes *within* the user's chosen sub-style; it never swaps it for another.
 - **Non-Latin / Arabic output**: human-readable brief fields (metaphor description, pose description) must be in the user's language; internal category labels (the fixed choices the downstream pipeline reads) stay in their fixed English form so the existing pipeline keeps working.
 - **Partial sibling visibility**: the first concept has no prior siblings to differ from; the second sees the first; the third sees the first two. The stage must work correctly at each step, including when an earlier sibling fell back (and therefore exposes no varianceAxes tokens to avoid).
@@ -162,7 +166,7 @@ The team needs to turn this feature on for a few test users first, watch results
 - The user-facing "Brief Coherence Check" banner and the pre-generation coherence reviewer (20.A, 20.E).
 - The user-facing "Variance Mode" toggle and its workspace setting (20.F); the mode is hardcoded to `balanced` here.
 - Wiring the Director to past winning ads / creative memory / RAG (20.D.7) — deferred until that upstream system exists.
-- Running the stage for carousel and batch generations (per Clarifications 2026-06-26) — this build covers the single-ad three-concept flow only.
+- Running the stage for **carousel** generations (per Clarifications 2026-06-27) — carousel uses separate callables and is excluded. (Batch IS in scope as of 2026-06-27: each batch hook is a `serverGenerateConcepts` `mode='initial'` call and is covered.)
 - Aggregate telemetry collection into an analytics store (the analytics portion of 20.G).
 - Any frontend change, any new user-triggered backend entry point, any data-schema migration, any pricing/credit/plan change, and any change to the existing expression, gaze, universe-copy, copy-fidelity, or final-image-prompt logic.
 
@@ -197,7 +201,7 @@ The team needs to turn this feature on for a few test users first, watch results
 - **A4 (default ship state)**: At ship time the per-user flag is off for all users and the kill switch is off; the feature reaches users only as the flag is deliberately enabled, starting with test users.
 - **A5 (fail-open is mandatory)**: Any ambiguity about behavior on error resolves toward "fall back to existing behavior and never block the user."
 - **A6 (no schema migration)**: All new persisted data is additive and optional. Existing generation records remain valid without it; no migration runs.
-- **A7 (multi-item flows — RESOLVED)**: Per Clarifications 2026-06-26, this build runs the Director/Validator stage ONLY for the standard single-ad three-concept flow. Carousel and batch flows are explicitly out of scope here and keep today's behavior; the integration detects the single-ad flow and skips enrichment for any other flow. Extending to carousel/batch is a possible later phase. The invariant for the skip path is "never crash, never block, never mismatch counts."
+- **A7 (multi-item flows — RESOLVED, revised 2026-06-27)**: The stage runs for every `serverGenerateConcepts` call with `mode === 'initial'` — covering single-ad AND batch-per-hook (each is a 3-concept-for-one-hook generation that fits the 3-sibling design). **Carousel is excluded** structurally (separate callables). This revises the 2026-06-26 "single-ad only" assumption after analyze found batch and single-ad indistinguishable at the backend without a frontend signal (which is out of scope). The invariant for non-`initial` / carousel paths is "never invoked; never crash, never block, never mismatch counts."
 - **A8 (advisory enrichment)**: The Director enriches the existing concept prompt; it does not replace the existing logic, which remains the fallback path for every concept.
 - **A9 (user invisibility)**: This build adds no user-visible UI. Users perceive the feature only as more varied concepts.
 - **A10 (consistency per generation)**: The decision to run the stage is evaluated once at generation start and held for the whole generation, so the kill switch cannot produce a half-enriched, half-fallback inconsistency within a single request.
