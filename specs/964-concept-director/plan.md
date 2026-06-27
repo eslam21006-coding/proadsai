@@ -76,8 +76,9 @@ functions/
 │   │                               #       fallback signal. No Gemini/Firebase imports.
 │   ├── varianceValidator.ts        # NEW — pure module: deterministic token comparison,
 │   │                               #       balanced-mode rejection rules, normalized match.
-│   ├── conceptDirectorConfig.ts    # NEW (small) — kill-switch read + 60s cache + flag read helper.
-│   │                               #       (May be folded into index.ts if simpler; see research.)
+│   ├── conceptDirectorConfig.ts    # NEW (small, REQUIRED separate file — pinned 2026-06-27) —
+│   │                               #       kill-switch read (Remote Config + 60s cache) + flag read helper;
+│   │                               #       imported by index.ts. Not inlined.
 │   ├── generators.ts               # EDIT — generateConcepts(): accept optional director briefs,
 │   │                               #       enrich the [VISUAL ARCHITECT V5.0] prompt, leave existing
 │   │                               #       logic intact as fallback; headline-architecture-aware
