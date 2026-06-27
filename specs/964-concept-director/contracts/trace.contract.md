@@ -5,19 +5,39 @@ Additive, optional sub-object on the existing `ResolutionTrace`. No migration. F
 ## D1 — Type
 
 ```ts
-readonly conceptDirector?: {
-  readonly ran: boolean;
-  readonly enabled: boolean;       // per-user flag value
-  readonly killSwitch: boolean;    // global kill-switch value at run time
-  readonly mode: "balanced";       // variance mode used (fixed this build)
-  readonly conceptCount: number;   // briefs attempted (3 on the live path)
-  readonly fallbackCount: number;  // concepts that fell back to existing logic (0..conceptCount)
-  readonly validatorTriggered: boolean; // a blocking violation was found
-  readonly retryCount: number;     // 0..conceptCount, each concept ≤1
-  readonly varianceAchieved: boolean;    // final validation passed (or no violation)
-  readonly reason?: string;        // present when ran === false
-};
+readonly conceptDirector?:
+  | {
+      readonly ran: true;
+      readonly enabled: boolean;             // per-user flag value
+      readonly killSwitch: boolean;          // global kill-switch value at run time
+      readonly mode: "balanced";             // variance mode used (fixed this build)
+      readonly conceptCount: number;         // briefs attempted (3 on the live path)
+      readonly fallbackCount: number;        // concepts that fell back to existing logic (0..conceptCount)
+      readonly validatorTriggered: boolean;  // a blocking violation was found
+      readonly retryCount: number;           // 0..conceptCount, each concept ≤1
+      readonly varianceAchieved: boolean;    // final validation passed (or no violation)
+      readonly reason?: never;               // reserved for the skip variant — must NOT appear on `ran: true`
+    }
+  | {
+      readonly ran: false;
+      readonly enabled: boolean;             // observed per-user flag value at gate decision
+      readonly killSwitch: boolean;          // observed global kill-switch value at gate decision
+      readonly mode: "balanced";             // variance mode used (fixed this build)
+      readonly conceptCount: 0;              // skip-path default: stage did not run
+      readonly fallbackCount: 0;             // skip-path default: stage did not run
+      readonly validatorTriggered: false;     // skip-path default: stage did not run
+      readonly retryCount: 0;                // skip-path default: stage did not run
+      readonly varianceAchieved: false;      // skip-path default: stage did not run
+      readonly reason: "flag-disabled"       // REQUIRED on the skip variant — the canonical
+                  | "kill-switch-on"          // skip reasons. `reason` MUST be exactly one of
+                  | "non-initial-mode";       // these three (no other string is accepted).
+    };
 ```
+
+The shape is a DISCRIMINATED UNION keyed by `ran` so the skip-path branch is type-safe:
+- A `ran: false` variant MUST carry exactly one of the three canonical `reason` values (never `undefined` / `null` / free text).
+- All counter fields collapse to their skip-path defaults (`0` / `false`) — the stage did not run, so no live counters apply.
+- A `ran: true` variant sets `reason?: never` so it cannot accidentally be persisted on the ran path.
 
 ## D2 — Write guarantees
 

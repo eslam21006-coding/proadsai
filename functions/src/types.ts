@@ -446,23 +446,34 @@ export interface ResolutionTrace {
     // optional, legacy generations may omit it (SC-008). Field absence
     // on a legacy generation is accepted as "no Phase-20 data".
     //
-    // `ran: true`  → the stage executed (per-user flag on, kill switch
-    //   off, `mode === 'initial'`). Counters reflect the real run:
-    //   `enabled`, `killSwitch`, `mode` (fixed `"balanced"` this build),
-    //   `conceptCount` (3 on the live path), `fallbackCount` (concepts
-    //   that fell back to existing logic), `validatorTriggered` (a
-    //   blocking violation was found), `retryCount` (≤ `conceptCount`,
-    //   each concept ≤ 1 per FR-015 / SC-005), and `varianceAchieved`
-    //   (final validation passed OR no violation was ever raised).
+    // The shape is a DISCRIMINATED UNION keyed by `ran` so the skip-path
+    // branch is type-safe: a `ran: false` variant MUST carry one of the
+    // three canonical skip reasons (and never `reason: undefined`),
+    // and all the counter fields collapse to their skip-path defaults
+    // (zero / false). The `ran: true` variant keeps the loose counter
+    // set so retries and aggregations still work.
     //
-    // `ran: false` → the gate skipped the stage; `reason` explains why
-    //   (`"flag-disabled"` / `"kill-switch-on"` / `"non-initial-mode"`).
-    //   Counters are `0`/`false` and `varianceAchieved:false` (D2.2).
+    //   - ran: true  → the stage executed (per-user flag on, kill switch
+    //     off, `mode === 'initial'`). Counters reflect the real run:
+    //     `enabled`, `killSwitch`, `mode` (fixed `"balanced"` this build),
+    //     `conceptCount` (3 on the live path), `fallbackCount` (concepts
+    //     that fell back to existing logic, computed AFTER all retries
+    //     — see D2.1a in the trace contract), `validatorTriggered` (a
+    //     blocking violation was found), `retryCount` (≤ `conceptCount`,
+    //     each concept ≤ 1 per FR-015 / SC-005), and `varianceAchieved`
+    //     (final validation passed OR no violation was ever raised).
+    //     `reason` is `never` here — it is reserved for the skip variant.
+    //   - ran: false → the gate skipped the stage; `reason` is REQUIRED
+    //     and must be exactly one of `"flag-disabled"`, `"kill-switch-on"`,
+    //     `"non-initial-mode"`. `enabled`/`killSwitch` reflect the observed
+    //     values at the time of the gate decision so a reviewer can
+    //     reconstruct why; counters collapse to `0`/`false` and
+    //     `varianceAchieved:false` (D2.2).
     //
     // The trace stores COUNTERS and BOOLEANS only — never the brief
     // text itself — to keep it small and PII-safe (Contract D2.4).
     readonly conceptDirector?: {
-        readonly ran: boolean;
+        readonly ran: true;
         readonly enabled: boolean;
         readonly killSwitch: boolean;
         readonly mode: "balanced";
@@ -471,7 +482,18 @@ export interface ResolutionTrace {
         readonly validatorTriggered: boolean;
         readonly retryCount: number;
         readonly varianceAchieved: boolean;
-        readonly reason?: string;
+        readonly reason?: never;
+    } | {
+        readonly ran: false;
+        readonly enabled: boolean;
+        readonly killSwitch: boolean;
+        readonly mode: "balanced";
+        readonly conceptCount: 0;
+        readonly fallbackCount: 0;
+        readonly validatorTriggered: false;
+        readonly retryCount: 0;
+        readonly varianceAchieved: false;
+        readonly reason: "flag-disabled" | "kill-switch-on" | "non-initial-mode";
     };
     // Phase 27 — additive universe-aware-copy sub-object. Records the
     // COPY-LEVEL metaphor DECISION for this generation (prompt-level,

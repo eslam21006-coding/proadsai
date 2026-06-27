@@ -614,16 +614,19 @@ async function runTestsImpl(): Promise<RunResult> {
     {
         const typesSrc = readFileSync(join(__dirname, "..", "..", "src", "types.ts"), "utf8");
         assert(/conceptDirector\?:/.test(typesSrc), "types.ts defines conceptDirector? as optional");
-        assert(/ran:\s*boolean/.test(typesSrc), "conceptDirector has ran: boolean");
+        // Discriminated union: the ran field is now `ran: true | ran: false`
+        // (NOT a flat boolean) so the skip-path branch can carry an
+        // exact discriminated `reason`. Match either form.
+        assert(/ran:\s*(boolean|true|false)/.test(typesSrc), "conceptDirector has ran field (boolean or literal true/false)");
         assert(/enabled:\s*boolean/.test(typesSrc), "conceptDirector has enabled: boolean");
         assert(/killSwitch:\s*boolean/.test(typesSrc), "conceptDirector has killSwitch: boolean");
         assert(/mode:\s*["']balanced["']/.test(typesSrc), "conceptDirector has mode: 'balanced'");
-        assert(/conceptCount:\s*number/.test(typesSrc), "conceptDirector has conceptCount: number");
-        assert(/fallbackCount:\s*number/.test(typesSrc), "conceptDirector has fallbackCount: number");
-        assert(/validatorTriggered:\s*boolean/.test(typesSrc), "conceptDirector has validatorTriggered: boolean");
-        assert(/retryCount:\s*number/.test(typesSrc), "conceptDirector has retryCount: number");
-        assert(/varianceAchieved:\s*boolean/.test(typesSrc), "conceptDirector has varianceAchieved: boolean");
-        assert(/reason\?:\s*string/.test(typesSrc), "conceptDirector has reason?: string");
+        assert(/conceptCount:\s*number|conceptCount:\s*0/.test(typesSrc), "conceptDirector has conceptCount: number or 0 literal");
+        assert(/fallbackCount:\s*number|fallbackCount:\s*0/.test(typesSrc), "conceptDirector has fallbackCount: number or 0 literal");
+        assert(/validatorTriggered:\s*boolean|validatorTriggered:\s*false/.test(typesSrc), "conceptDirector has validatorTriggered: boolean or false literal");
+        assert(/retryCount:\s*number|retryCount:\s*0/.test(typesSrc), "conceptDirector has retryCount: number or 0 literal");
+        assert(/varianceAchieved:\s*boolean|varianceAchieved:\s*false/.test(typesSrc), "conceptDirector has varianceAchieved: boolean or false literal");
+        assert(/reason\?:\s*string|reason:\s*["']flag-disabled["']/.test(typesSrc), "conceptDirector has reason field (optional string OR required literal union)");
     }
 
     // ─── D2: ran:true and ran:false trace objects both satisfy the type ───
