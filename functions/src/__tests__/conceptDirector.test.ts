@@ -31,6 +31,7 @@ import {
     type ConceptDirectorFallback,
 } from "../conceptDirector.js";
 import { normalizeToken, validateBatchVariance } from "../varianceValidator.js";
+import type { ResolutionTrace } from "../types.js";
 
 declare const process: { exit(code: number): void };
 declare const console: { log(...args: unknown[]): void; error(...args: unknown[]): void };
@@ -510,9 +511,26 @@ async function runTestsImpl(): Promise<RunResult> {
     // ─── B8: conservative / aggressive modes defined for forward-compat ───
     console.log("  B8: conservative + aggressive modes do not throw");
     {
-        const a = sampleBrief({ conceptIndex: 0, varianceAxes: { metaphorToken: "x", layoutToken: "y", headlineToken: "z" } });
-        const b = sampleBrief({ conceptIndex: 1, varianceAxes: { metaphorToken: "y", layoutToken: "z", headlineToken: "x" } });
-        const c = sampleBrief({ conceptIndex: 2, varianceAxes: { metaphorToken: "z", layoutToken: "x", headlineToken: "y" } });
+        // Vary BOTH the varianceAxes tokens AND backgroundComplexity so
+        // the aggressive-mode backgroundComplexity duplicate check
+        // (Contract B4) also passes — the sample fixture's default
+        // `backgroundComplexity: "moderate"` is intentionally uniform
+        // for most tests, but here we need all four axes distinct.
+        const a = sampleBrief({
+            conceptIndex: 0,
+            varianceAxes: { metaphorToken: "x", layoutToken: "y", headlineToken: "z" },
+            backgroundComplexity: "minimal",
+        });
+        const b = sampleBrief({
+            conceptIndex: 1,
+            varianceAxes: { metaphorToken: "y", layoutToken: "z", headlineToken: "x" },
+            backgroundComplexity: "moderate",
+        });
+        const c = sampleBrief({
+            conceptIndex: 2,
+            varianceAxes: { metaphorToken: "z", layoutToken: "x", headlineToken: "y" },
+            backgroundComplexity: "rich",
+        });
         const rCons = validateBatchVariance([a, b, c], "conservative");
         assert(rCons.passed === true, "conservative passes on a distinct set");
         const rAgg = validateBatchVariance([a, b, c], "aggressive");
@@ -611,22 +629,26 @@ async function runTestsImpl(): Promise<RunResult> {
     // ─── D2: ran:true and ran:false trace objects both satisfy the type ───
     console.log("  D2: sample ran:true + ran:false trace objects both satisfy ResolutionTrace.conceptDirector");
     {
-        const ranTrue = {
-            ran: true as const,
+        // Explicitly type both samples as the additive trace sub-object
+        // so the test acts as a COMPILE-TIME guard against changes in
+        // `types.ts` (a missing/renamed field here would surface as a
+        // TS error, not just a runtime round-trip mismatch).
+        const ranTrue: NonNullable<ResolutionTrace["conceptDirector"]> = {
+            ran: true,
             enabled: true,
             killSwitch: false,
-            mode: "balanced" as const,
+            mode: "balanced",
             conceptCount: 3,
             fallbackCount: 0,
             validatorTriggered: true,
             retryCount: 1,
             varianceAchieved: true,
         };
-        const ranFalse = {
-            ran: false as const,
+        const ranFalse: NonNullable<ResolutionTrace["conceptDirector"]> = {
+            ran: false,
             enabled: false,
             killSwitch: false,
-            mode: "balanced" as const,
+            mode: "balanced",
             conceptCount: 0,
             fallbackCount: 0,
             validatorTriggered: false,
@@ -642,6 +664,10 @@ async function runTestsImpl(): Promise<RunResult> {
         assertEq(j1.varianceAchieved, true, "ran:true varianceAchieved round-trips");
         assertEq(j2.ran, false, "ran:false round-trips");
         assertEq(j2.reason, "flag-disabled", "ran:false reason round-trips");
+        // Type-level assertions: each sample IS a ResolutionTrace["conceptDirector"].
+        const _t1: ResolutionTrace["conceptDirector"] = ranTrue;
+        const _t2: ResolutionTrace["conceptDirector"] = ranFalse;
+        assert(_t1 !== undefined && _t2 !== undefined, "typed samples satisfy ResolutionTrace['conceptDirector']");
     }
 
     // ─── D3: index.ts writes the trace in BOTH branches ───

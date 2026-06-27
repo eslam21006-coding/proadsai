@@ -105,7 +105,7 @@ A pure `validateBrief(brief)` enforces the hard constraints: `highlightCardinali
 ## D8 — Trace shape & write site
 
 **Decision**: Add optional `ResolutionTrace.conceptDirector` (additive, no migration), written in the concepts flow. Shape:
-```
+```ts
 conceptDirector?: {
   ran: boolean;                 // stage executed (flag on, kill switch off, initial mode)
   enabled: boolean;             // per-user flag value

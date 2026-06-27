@@ -186,6 +186,8 @@ Task: "Add ResolutionTrace.conceptDirector type in types.ts (T004)"
 
 ### Ship gate (hardened order)
 
-implement → `npm run build` → `npm test` → commit → push → PR → CodeRabbit → Claude audit → `npm run dev` smoke → merge via GitHub UI → deploy → production test (flag on for one test user → widen → kill switch ready).
+implement → **clean rebuild** (`Remove-Item -Recurse -Force functions/lib`, then `cd functions && npm run build` — see Rule #1 of `CLAUDE.md`, "After any change to `functions/src/*.ts`, rebuild the Functions package before deploying; the `lib/` directory is the compiled output and does not auto-update") → `npm test` → commit → push → PR → CodeRabbit → Claude audit → `npm run dev` smoke → **clean rebuild again before deploy** (same sequence as above) → `firebase deploy --only functions` → production test (flag on for one test user → widen → kill switch ready).
+
+**Critical**: between CodeRabbit review iterations and before `firebase deploy --only functions`, the Functions package MUST be cleaned and rebuilt. Skipping this step lets stale JS artifacts in `functions/lib/` reach production even when the TypeScript source has been updated.
 
 > **Do not enable the per-user flag for any real user until US2 + US4 are complete** (fail-open + kill switch must exist before live exposure).

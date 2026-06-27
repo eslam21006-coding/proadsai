@@ -21,8 +21,8 @@ The stage runs **iff all** hold:
 
 ## C3 — Director loop (sequential, in the callable)
 
-- **C3.1**: For `conceptIndex` 0→1→2, call `directConcept(input, callModel, 15000)` where `callModel` wraps the already-set Gemini caller. Each call's `siblingConcepts` = the accepted briefs produced so far.
-- **C3.2**: Collect 3 results (`ConceptBrief | ConceptDirectorFallback`).
+- **C3.1**: For `conceptIndex` 0→1→2, call `directConcept(input, callModel, 15000)` where `callModel` wraps the already-set Gemini caller. Each call's `siblingConcepts` MUST be the FULL ordered array of all preceding slots — accepted `ConceptBrief` entries AND `ConceptDirectorFallback` entries — so a fallback slot at index `i` still occupies its position when later siblings are authored (the variance validator relies on positional alignment to deduplicate against the right sibling; the prompt-builder relies on positional alignment to render the correct "use existing logic" marker). A fallback entry exposes no `varianceAxes` so the prompt-builder renders it as a "no brief available" marker and the validator skips it (B5).
+- **C3.2**: Collect 3 results (`ConceptBrief | ConceptDirectorFallback`) — exactly 3 slots, ordered 0..2.
 - **C3.3 (isolation)**: A fallback for one concept does not abort the loop; the other concepts still produce briefs.
 
 ## C4 — Validate + retry (≤1 per concept)

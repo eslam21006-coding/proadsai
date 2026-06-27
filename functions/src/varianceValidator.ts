@@ -79,23 +79,29 @@ export function normalizeToken(token: string): string {
 
 /**
  * Return only the varianceAxes tokens of a brief slot. A `ConceptBrief`
- * returns its three tokens; a `ConceptDirectorFallback` returns an
- * empty record so the validator skips the slot entirely (B5 — a
- * fallback cannot create or satisfy a duplicate).
+ * returns its tokens; a `ConceptDirectorFallback` returns an empty
+ * record so the validator skips the slot entirely (B5 — a fallback
+ * cannot create or satisfy a duplicate). The fourth token
+ * (`backgroundComplexity`) is normalized from the brief's
+ * `backgroundComplexity` field so the `aggressive` mode (B4) can apply
+ * its Contract B4 duplicate-across-all-3 rule without needing an
+ * additional varianceAxes token.
  */
 function axesFor(slot: ConceptBrief | ConceptDirectorFallback): {
     metaphor: string;
     layout: string;
     headline: string;
+    backgroundComplexity: string;
 } {
     if ("fallback" in slot && slot.fallback) {
-        return { metaphor: "", layout: "", headline: "" };
+        return { metaphor: "", layout: "", headline: "", backgroundComplexity: "" };
     }
     const b = slot as ConceptBrief;
     return {
         metaphor: normalizeToken(b.varianceAxes?.metaphorToken ?? ""),
         layout: normalizeToken(b.varianceAxes?.layoutToken ?? ""),
         headline: normalizeToken(b.varianceAxes?.headlineToken ?? ""),
+        backgroundComplexity: normalizeToken(b.backgroundComplexity ?? ""),
     };
 }
 
@@ -104,11 +110,14 @@ function axesFor(slot: ConceptBrief | ConceptDirectorFallback): {
  * `target`. Excludes fallback slots (empty target short-circuits).
  */
 function findDuplicates(
-    axes: Array<{ metaphor: string; layout: string; headline: string }>,
-    axis: "metaphor" | "layout" | "headline",
+    axes: Array<{ metaphor: string; layout: string; headline: string; backgroundComplexity: string }>,
+    axis: "metaphor" | "layout" | "headline" | "backgroundComplexity",
 ): number[] {
-    const target = (a: { metaphor: string; layout: string; headline: string }) =>
-        axis === "metaphor" ? a.metaphor : axis === "layout" ? a.layout : a.headline;
+    const target = (a: { metaphor: string; layout: string; headline: string; backgroundComplexity: string }) =>
+        axis === "metaphor" ? a.metaphor
+            : axis === "layout" ? a.layout
+            : axis === "headline" ? a.headline
+            : a.backgroundComplexity;
     const values = axes.map(target);
     const matched: number[] = [];
     for (let i = 0; i < values.length; i++) {
@@ -129,7 +138,7 @@ function findDuplicates(
 // BALANCED MODE (live) — Contract B2
 // ═══════════════════════════════════════════════════════════
 
-function validateBalanced(axes: Array<{ metaphor: string; layout: string; headline: string }>): VarianceViolation[] {
+function validateBalanced(axes: Array<{ metaphor: string; layout: string; headline: string; backgroundComplexity: string }>): VarianceViolation[] {
     const violations: VarianceViolation[] = [];
 
     // Rule 1: same metaphor appears in ≥ 2 of 3 → block.
@@ -168,7 +177,7 @@ function validateBalanced(axes: Array<{ metaphor: string; layout: string; headli
 // FORWARD-COMPAT MODES (Contract B3 / B4)
 // ═══════════════════════════════════════════════════════════
 
-function validateConservative(axes: Array<{ metaphor: string; layout: string; headline: string }>): VarianceViolation[] {
+function validateConservative(axes: Array<{ metaphor: string; layout: string; headline: string; backgroundComplexity: string }>): VarianceViolation[] {
     const violations: VarianceViolation[] = [];
     const metaphorDupes = findDuplicates(axes, "metaphor");
     const distinctMetaphorTokens = new Set(axes.map(a => a.metaphor).filter(t => t !== ""));
@@ -178,16 +187,30 @@ function validateConservative(axes: Array<{ metaphor: string; layout: string; he
     return violations;
 }
 
-function validateAggressive(axes: Array<{ metaphor: string; layout: string; headline: string }>): VarianceViolation[] {
-    // Aggressive = balanced + backgroundComplexity duplicate across all 3.
-    // We do not have a backgroundComplexity token in the varianceAxes
-    // triple (the token set is metaphor / layout / headline per
-    // data-model.md §3); we keep `backgroundComplexity` as an axis for
-    // forward-compat so the data structure covers it, but treat it as
-    // always-passing here until/unless the brief schema adds a 4th
-    // varianceAxes token. Aggressive mode therefore currently behaves
-    // identically to balanced mode.
-    return validateBalanced(axes);
+function validateAggressive(axes: Array<{ metaphor: string; layout: string; headline: string; backgroundComplexity: string }>): VarianceViolation[] {
+    // Aggressive = balanced rules PLUS a `backgroundComplexity`
+    // duplicate-across-all-3 block rule (Contract B4). The background
+    // complexity value is read from the brief's
+    // `backgroundComplexity` field directly (not a 4th varianceAxes
+    // token) — keeping the varianceAxes triple unchanged while still
+    // letting aggressive mode enforce one extra axis.
+    const violations = validateBalanced(axes);
+    const bgDupes = findDuplicates(axes, "backgroundComplexity");
+    const distinctBgTokens = new Set(axes.map(a => a.backgroundComplexity).filter(t => t !== ""));
+    if (bgDupes.length === 3 && distinctBgTokens.size === 1) {
+        violations.push({
+            axis: "backgroundComplexity",
+            duplicateConceptIndices: bgDupes,
+            severity: "block",
+        });
+    } else if (bgDupes.length >= 2 && bgDupes.length < 3) {
+        violations.push({
+            axis: "backgroundComplexity",
+            duplicateConceptIndices: bgDupes,
+            severity: "warn",
+        });
+    }
+    return violations;
 }
 
 // ═══════════════════════════════════════════════════════════

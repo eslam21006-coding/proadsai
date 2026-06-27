@@ -4255,7 +4255,6 @@ export const serverGenerateConcepts = onCall({
                     _directorResults.push(result);
                 }
                 _cdTrace.conceptCount = 3;
-                _cdTrace.fallbackCount = _directorResults.filter(r => "fallback" in r && r.fallback === true).length;
 
                 // Validate. If a blocking violation fires for an
                 // offending concept that has NOT been retried yet, retry
@@ -4264,40 +4263,60 @@ export const serverGenerateConcepts = onCall({
                 _cdTrace.validatorTriggered = !validation.passed;
                 const retried = new Set<number>();
                 if (!validation.passed) {
+                    // Aggregate ALL block-severity violations PER concept
+                    // so a single retry escapes every axis the concept
+                    // is colliding on, not just the first one the loop
+                    // happened to encounter. Without this aggregation a
+                    // concept that duplicates on BOTH metaphor and
+                    // headline would only get one of the two tokens in
+                    // its avoid-list.
+                    const aggregatedAvoidTokens = new Map<number, ConceptDirectorInput["avoidTokens"]>();
                     for (const v of validation.violations) {
                         if (v.severity !== "block") continue;
                         for (const idx of v.duplicateConceptIndices) {
-                            if (retried.has(idx)) continue;
                             if (idx < 0 || idx > 2) continue;
-                            retried.add(idx);
-                            const avoid: ConceptDirectorInput["avoidTokens"] = {};
+                            if (retried.has(idx)) continue;
+                            let avoid = aggregatedAvoidTokens.get(idx);
+                            if (!avoid) {
+                                avoid = {};
+                                aggregatedAvoidTokens.set(idx, avoid);
+                            }
                             const slot = _directorResults[idx];
                             if (!("fallback" in slot && slot.fallback)) {
                                 const va = (slot as ConceptBrief).varianceAxes;
                                 if (va) {
-                                    if (v.axis === "metaphor") avoid.metaphor = [va.metaphorToken];
-                                    else if (v.axis === "layout") avoid.layout = [va.layoutToken];
-                                    else if (v.axis === "headline") avoid.headline = [va.headlineToken];
+                                    if (v.axis === "metaphor") {
+                                        avoid.metaphor = Array.from(new Set([...(avoid.metaphor ?? []), va.metaphorToken]));
+                                    } else if (v.axis === "layout") {
+                                        avoid.layout = Array.from(new Set([...(avoid.layout ?? []), va.layoutToken]));
+                                    } else if (v.axis === "headline") {
+                                        avoid.headline = Array.from(new Set([...(avoid.headline ?? []), va.headlineToken]));
+                                    }
                                 }
                             }
-                            const retryInput: ConceptDirectorInput = {
-                                brief: (inputs as Record<string, unknown>) || {},
-                                inviolable: {
-                                    subStyle: String((inputs as any)?.subStyle || (inputs as any)?.preferredSubStyle || ""),
-                                    creativeMode: String(((inputs as any)?.offerCreativeMode || ["standard_hero"])[0] || "standard_hero"),
-                                    language: String((inputs as any)?.adLanguage || "en"),
-                                    aspectRatio: String((inputs as any)?.aspectRatio || "1:1"),
-                                    brand: null,
-                                },
-                                conceptIndex: idx === 0 ? 0 : idx === 1 ? 1 : 2,
-                                siblingConcepts: _directorResults.filter((_, j) => j !== idx),
-                                varianceMode: "balanced",
-                                avoidTokens: avoid,
-                                pastWinningAds: [],
-                            };
-                            const retryResult = await directConcept(retryInput, _directorCallModel, 15000);
-                            _directorResults[idx] = retryResult;
                         }
+                    }
+                    // Now retry each offending concept exactly once with
+                    // the aggregated avoid-list.
+                    for (const [idx, avoid] of aggregatedAvoidTokens.entries()) {
+                        retried.add(idx);
+                        const retryInput: ConceptDirectorInput = {
+                            brief: (inputs as Record<string, unknown>) || {},
+                            inviolable: {
+                                subStyle: String((inputs as any)?.subStyle || (inputs as any)?.preferredSubStyle || ""),
+                                creativeMode: String(((inputs as any)?.offerCreativeMode || ["standard_hero"])[0] || "standard_hero"),
+                                language: String((inputs as any)?.adLanguage || "en"),
+                                aspectRatio: String((inputs as any)?.aspectRatio || "1:1"),
+                                brand: null,
+                            },
+                            conceptIndex: idx === 0 ? 0 : idx === 1 ? 1 : 2,
+                            siblingConcepts: _directorResults.filter((_, j) => j !== idx),
+                            varianceMode: "balanced",
+                            avoidTokens: avoid,
+                            pastWinningAds: [],
+                        };
+                        const retryResult = await directConcept(retryInput, _directorCallModel, 15000);
+                        _directorResults[idx] = retryResult;
                     }
                     // Re-validate once. If still failing, ship as-is
                     // (Contract C4.3 / FR-016 / SC-005).
@@ -4305,6 +4324,11 @@ export const serverGenerateConcepts = onCall({
                 }
                 _cdTrace.retryCount = retried.size;
                 _cdTrace.varianceAchieved = validation.passed;
+                // Recompute fallbackCount AFTER the retry pass so the
+                // persisted trace reflects any additional fallback slots
+                // produced by the retry itself (e.g. a retry that hit the
+                // timeout or a constraint violation adds to the count).
+                _cdTrace.fallbackCount = _directorResults.filter(r => "fallback" in r && r.fallback === true).length;
                 _cdBriefs = _directorResults;
             }
         }
@@ -4339,14 +4363,16 @@ export const serverGenerateConcepts = onCall({
             }
         }
         const rg = result.rankingGuidance;
-        // Persist the additive concept-director trace. Fire-and-forget
-        // — a trace write failure never converts a successful generation
-        // into a user-facing error (Contract D2 / C6.2). The
-        // `conceptDirector` key on the trace carries either `ran: true`
-        // (when the stage ran) or `ran: false` (when the gate skipped).
-        persistConceptDirectorTrace(_cdGenId, _cdTrace).catch((e) => {
-            console.warn("⚠️ Phase 20 trace persistence failed (non-blocking):", e);
-        });
+        // Persist the additive concept-director trace. The helper
+        // itself is non-blocking on write errors (Contract D2 / C6.2 —
+        // a trace failure must NEVER convert a successful generation
+        // into a user-facing error), but we await the helper here so
+        // the trace is written before the callable returns, giving the
+        // client / reviewer an accurate record of every enabled
+        // generation. If the helper throws (it shouldn't — it catches
+        // internally), the outer catch below keeps the generation
+        // successful.
+        await persistConceptDirectorTrace(_cdGenId, _cdTrace);
         // Inline trace shape for reviewers / log scrapers:
         //   ran: true   → ran, ran, ran, conceptDirector: { ran: true, ... }
         //   ran: false  → skipped, conceptDirector: { ran: false, reason: "..." }

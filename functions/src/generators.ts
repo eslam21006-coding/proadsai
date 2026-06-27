@@ -59,17 +59,19 @@ import { getAngleVariationBlueprintRotated } from "./knowledge/hookAnglesKnowled
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 20 — CONCEPT DIRECTOR (Contract C5.4 / FR-019)
-// Headline-architecture whitelist: novel headline shapes authored by the
-// Director (manifesto / oversized_question / numerical_anchor /
-// ellipsis_tease / stacked_weight) are intentionally non-standard and
-// MUST NOT be rejected by the post-generation validators. We surface
-// them here as a single canonical set, pass it to
-// validateBlueprintMinimalStyle / quickRejectCheck on the concept and
-// build-plan flows, and use it as a forward-compat seam if a future
-// check needs to consult it.
+// Headline-architecture whitelist: ALL eight HeadlineArchitecture
+// values declared in `conceptDirector.ts` are surfaced here as a single
+// canonical set so the post-generation validators
+// (validateBlueprintMinimalStyle / quickRejectCheck) do not reject
+// intentionally novel headline shapes the Director picks. We pass the
+// same set to every quick-reject call site to keep the source of truth
+// in lockstep with the brief schema.
 // ═══════════════════════════════════════════════════════════════════════════
 const HEADLINE_WHITELIST = new Set<string>([
     "manifesto",
+    "editorial",
+    "annotated",
+    "dual_state",
     "oversized_question",
     "numerical_anchor",
     "ellipsis_tease",

@@ -315,17 +315,20 @@ export const LOGO_TREATMENTS: ReadonlySet<LogoTreatment> = new Set<LogoTreatment
  */
 export function buildDirectorPrompt(input: ConceptDirectorInput): string {
     const language = String(input.inviolable.language || "en");
-    const subStyle = String(input.inviolable.subStyle || "");
-    const creativeMode = String(input.inviolable.creativeMode || "standard_hero");
-    const aspectRatio = String(input.inviolable.aspectRatio || "1:1");
+    const subStyle = stripBrackets(String(input.inviolable.subStyle || ""));
+    const creativeMode = stripBrackets(String(input.inviolable.creativeMode || "standard_hero"));
+    const aspectRatio = stripBrackets(String(input.inviolable.aspectRatio || "1:1"));
     const brand = input.inviolable.brand;
     const brandLine = brand && (brand.primary || brand.secondary)
-        ? `Brand colors are fixed: primary ${brand.primary || "n/a"}${brand.secondary ? `, secondary ${brand.secondary}` : ""}. These inform accentBehavior.primaryUse and accentBehavior.secondaryUse but you MUST NOT change them.`
+        ? `Brand colors are fixed: primary ${stripBrackets(String(brand.primary || "n/a"))}${brand.secondary ? `, secondary ${stripBrackets(String(brand.secondary))}` : ""}. These inform accentBehavior.primaryUse and accentBehavior.secondaryUse but you MUST NOT change them.`
         : "No brand colors specified.";
 
     // Sibling / avoid list — surfaces tokens that this brief must NOT
     // reuse. A fallback slot in siblingConcepts exposes no tokens, so
-    // its index is simply skipped (no false duplicates).
+    // its index is simply skipped (no false duplicates). Every value is
+    // sanitized through stripBrackets so user-derived tokens can never
+    // reintroduce `[]` or `{}` into the prompt (Gemini literal-copy
+    // hazard per the repo rule).
     const avoidLines: string[] = [];
     for (let i = 0; i < input.siblingConcepts.length; i++) {
         const s = input.siblingConcepts[i];
@@ -335,18 +338,18 @@ export function buildDirectorPrompt(input: ConceptDirectorInput): string {
         }
         const b = s as ConceptBrief;
         avoidLines.push(
-            `Sibling ${i + 1}: metaphorToken=${b.varianceAxes.metaphorToken}; layoutToken=${b.varianceAxes.layoutToken}; headlineToken=${b.varianceAxes.headlineToken}.`,
+            `Sibling ${i + 1}: metaphorToken=${stripBrackets(String(b.varianceAxes.metaphorToken))}; layoutToken=${stripBrackets(String(b.varianceAxes.layoutToken))}; headlineToken=${stripBrackets(String(b.varianceAxes.headlineToken))}.`,
         );
     }
     const retryAvoidLines: string[] = [];
     if (input.avoidTokens.metaphor?.length) {
-        retryAvoidLines.push(`Metaphor tokens to AVOID (retry): ${input.avoidTokens.metaphor.join(", ")}.`);
+        retryAvoidLines.push(`Metaphor tokens to AVOID (retry): ${input.avoidTokens.metaphor.map(stripBrackets).join(", ")}.`);
     }
     if (input.avoidTokens.layout?.length) {
-        retryAvoidLines.push(`Layout tokens to AVOID (retry): ${input.avoidTokens.layout.join(", ")}.`);
+        retryAvoidLines.push(`Layout tokens to AVOID (retry): ${input.avoidTokens.layout.map(stripBrackets).join(", ")}.`);
     }
     if (input.avoidTokens.headline?.length) {
-        retryAvoidLines.push(`Headline tokens to AVOID (retry): ${input.avoidTokens.headline.join(", ")}.`);
+        retryAvoidLines.push(`Headline tokens to AVOID (retry): ${input.avoidTokens.headline.map(stripBrackets).join(", ")}.`);
     }
     const avoidanceBlock = [
         avoidLines.length > 0 ? `Prior siblings (this concept MUST deliberately differ on at least one of metaphor / layout / headline):\n${avoidLines.join("\n")}` : "This is concept 1 of 3 — no prior siblings.",
@@ -358,7 +361,9 @@ export function buildDirectorPrompt(input: ConceptDirectorInput): string {
     // per the repo rule — see `simple literal sentences over structured
     // templates`). The brief is internal model context, so a flat list
     // is enough for Gemini to ground the metaphor and headline
-    // architecture.
+    // architecture. Every line is pre-sanitized through stripBrackets
+    // (inside flattenBriefForPrompt) so user-supplied free text cannot
+    // reintroduce brackets.
     const briefBlob = flattenBriefForPrompt(input.brief || {});
 
     return [
@@ -511,8 +516,20 @@ export function validateBrief(brief: unknown, expectedSubStyle: string): { ok: t
     }
     const b = brief as Partial<ConceptBrief>;
 
-    // Required field shape.
+    // Required nested leaf fields. Each leaf is checked explicitly so a
+    // model that emits a top-level key with an empty / missing nested
+    // value cannot slip past as a "valid" brief. Without these checks
+    // a brief like `{visualMetaphor: {}}` would pass the top-level key
+    // gate but produce a useless enrichment block downstream.
     if (!b.visualMetaphor || typeof b.visualMetaphor !== "object") {
+        return { ok: false, reason: "constraint_violation:required_field_missing" };
+    }
+    const vm = b.visualMetaphor as Record<string, unknown>;
+    if (
+        typeof vm.description !== "string" || normalizeWhitespace(vm.description) === "" ||
+        typeof vm.keyVisualElement !== "string" || normalizeWhitespace(vm.keyVisualElement) === "" ||
+        typeof vm.emotionalReason !== "string" || normalizeWhitespace(vm.emotionalReason) === ""
+    ) {
         return { ok: false, reason: "constraint_violation:required_field_missing" };
     }
     if (typeof b.headlineArchitecture !== "string" || !HEADLINE_ARCHITECTURES.has(b.headlineArchitecture as HeadlineArchitecture)) {
@@ -545,7 +562,26 @@ export function validateBrief(brief: unknown, expectedSubStyle: string): { ok: t
     if (!Array.isArray(hc.phrases) || hc.phrases.length !== hc.count) {
         return { ok: false, reason: "constraint_violation:highlightCardinality_max2" };
     }
-    if (typeof hc.treatment !== "string") {
+    if (typeof hc.treatment !== "string" || normalizeWhitespace(hc.treatment) === "") {
+        return { ok: false, reason: "constraint_violation:required_field_missing" };
+    }
+
+    // heroPoseSpecific — must be a non-empty string ONLY when a hero
+    // is present. Hero-absent briefs (text-only, value-stack,
+    // ticket-only, device/book mockup, multi-subject-without-an-individual)
+    // legitimately have no hero pose to describe, so an empty string
+    // is the correct value there. Without this carve-out, every
+    // hero-less concept would falsely trip required_field_missing.
+    if (b.heroPresence !== "absent") {
+        if (typeof b.heroPoseSpecific !== "string" || normalizeWhitespace(b.heroPoseSpecific) === "") {
+            return { ok: false, reason: "constraint_violation:required_field_missing" };
+        }
+    } else if (typeof b.heroPoseSpecific !== "string") {
+        return { ok: false, reason: "constraint_violation:required_field_missing" };
+    }
+
+    // propsAllowed must be an array (may be empty).
+    if (!Array.isArray(b.propsAllowed)) {
         return { ok: false, reason: "constraint_violation:required_field_missing" };
     }
 
@@ -563,7 +599,14 @@ export function validateBrief(brief: unknown, expectedSubStyle: string): { ok: t
     if (!b.subStyleSpecialization || typeof b.subStyleSpecialization !== "object") {
         return { ok: false, reason: "constraint_violation:required_field_missing" };
     }
-    if (b.subStyleSpecialization.inheritedFrom !== expectedSubStyle) {
+    const ss = b.subStyleSpecialization as Record<string, unknown>;
+    if (
+        typeof ss.specializedAs !== "string" || normalizeWhitespace(ss.specializedAs) === "" ||
+        typeof ss.keyDeparture !== "string" || normalizeWhitespace(ss.keyDeparture) === ""
+    ) {
+        return { ok: false, reason: "constraint_violation:required_field_missing" };
+    }
+    if (ss.inheritedFrom !== expectedSubStyle) {
         return { ok: false, reason: "constraint_violation:subStyle_inheritedFrom_mismatch" };
     }
 
@@ -584,7 +627,14 @@ export function validateBrief(brief: unknown, expectedSubStyle: string): { ok: t
     if (!b.accentBehavior || typeof b.accentBehavior !== "object") {
         return { ok: false, reason: "constraint_violation:required_field_missing" };
     }
-    if (typeof b.accentBehavior.cardinality !== "number" || b.accentBehavior.cardinality < 1 || b.accentBehavior.cardinality > 3) {
+    const ab = b.accentBehavior as Record<string, unknown>;
+    if (
+        typeof ab.primaryUse !== "string" || normalizeWhitespace(ab.primaryUse) === "" ||
+        typeof ab.secondaryUse !== "string" || normalizeWhitespace(ab.secondaryUse) === ""
+    ) {
+        return { ok: false, reason: "constraint_violation:required_field_missing" };
+    }
+    if (typeof ab.cardinality !== "number" || ab.cardinality < 1 || ab.cardinality > 3) {
         return { ok: false, reason: "constraint_violation:required_field_missing" };
     }
 
@@ -601,12 +651,32 @@ function normalizeWhitespace(s: string): string {
 }
 
 /**
+ * Strip every `[]` and `{}` character from a string before it lands in
+ * the prompt. Brackets are a known Gemini literal-copy hazard — the
+ * repo rule (`GEMINI_BRACKET_RULE`) forbids emitting bracket characters
+ * anywhere in the prompt text because Gemini tends to copy them
+ * verbatim into its output JSON, breaking strict-mode parsers. We
+ * apply this to EVERY interpolated value (subStyle, brand color,
+ * sibling tokens, avoid-list tokens, brief values) so even a user who
+ * picks `subStyle = "ugly_ad [test]"` cannot reintroduce brackets.
+ */
+function stripBrackets(value: string): string {
+    return value
+        .replace(/\[/g, "")
+        .replace(/\]/g, "")
+        .replace(/\{/g, "")
+        .replace(/\}/g, "");
+}
+
+/**
  * Flatten the brief object into a single multi-line `key = value`
  * blob. We deliberately avoid JSON.stringify (which emits brackets)
  * because brackets are a known Gemini literal-copy hazard — the rule
  * is `do not use brackets or braces in prompt text`. The brief is
  * internal context, so a flat key=value list is sufficient for Gemini
- * to ground the metaphor + headline architecture.
+ * to ground the metaphor + headline architecture. Every value is run
+ * through `stripBrackets` so even a deep user-supplied payload cannot
+ * sneak brackets back into the final prompt.
  */
 function flattenBriefForPrompt(brief: Record<string, unknown>, prefix = ""): string {
     const lines: string[] = [];
@@ -619,10 +689,24 @@ function flattenBriefForPrompt(brief: Record<string, unknown>, prefix = ""): str
             continue;
         }
         if (Array.isArray(v)) {
-            lines.push(`${key} = ${v.map(item => typeof item === "object" ? JSON.stringify(item) : String(item)).join(", ")}`);
+            // Render array elements as a bracketed-free key=value line.
+            // Each element is flattened to its own line under the parent
+            // key so JSON.stringify is never used (which would emit `{}`).
+            const subLines: string[] = [];
+            v.forEach((item, idx) => {
+                if (item === null || item === undefined) return;
+                if (typeof item === "object" && !Array.isArray(item)) {
+                    const flat = flattenBriefForPrompt(item as Record<string, unknown>, `${key}.${idx}`);
+                    if (flat) subLines.push(flat);
+                } else {
+                    subLines.push(`${key}.${idx} = ${stripBrackets(String(item))}`);
+                }
+            });
+            const joined = subLines.join("\n");
+            if (joined) lines.push(joined);
             continue;
         }
-        lines.push(`${key} = ${typeof v === "string" ? v : String(v)}`);
+        lines.push(`${key} = ${stripBrackets(typeof v === "string" ? v : String(v))}`);
     }
     return lines.join("\n");
 }
