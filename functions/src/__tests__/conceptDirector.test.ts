@@ -753,6 +753,52 @@ async function runTestsImpl(): Promise<RunResult> {
     }
 
     // ═══════════════════════════════════════════════════════════
+    // CONTRACT F — Director budget guard (audit fix round 4)
+    // ═══════════════════════════════════════════════════════════
+
+    // ─── F1: Director budget guard exists and is consulted before each call ───
+    console.log("  F1: index.ts bounds the Director stage with a timeout-aware budget guard");
+    {
+        const idxSrc = readFileSync(join(__dirname, "..", "..", "src", "index.ts"), "utf8");
+        assert(/_directorBudgetMs/.test(idxSrc), "index.ts declares _directorBudgetMs (Director budget ceiling)");
+        assert(/_directorRemainingMs\(\)\s*<=\s*0/.test(idxSrc) || /_directorRemainingMs\(\)\s*<=\s*0/.test(idxSrc), "index.ts consults _directorRemainingMs() <= 0 as a budget-exhausted guard");
+        // The budget guard appears in BOTH the initial 3× loop AND the retry loop.
+        const inInitLoop = /for \(let i = 0; i < 3; i\+\+\)[\s\S]*?_directorRemainingMs\(\)[\s\S]*?if[\s\S]*?break/.test(idxSrc);
+        const inRetryLoop = /for \(const \[idx, avoid\] of aggregatedAvoidTokens\.entries\(\)\)[\s\S]*?_directorRemainingMs\(\)/.test(idxSrc);
+        assert(inInitLoop, "Director budget guard is present in the initial 3× loop");
+        assert(inRetryLoop, "Director budget guard is present in the retry loop");
+    }
+
+    // ─── F2: catch block uses 'director-failed' reason (not 'flag-disabled') ───
+    console.log("  F2: Director exception catch uses 'director-failed' reason (distinct from gate-skip reasons)");
+    {
+        const idxSrc = readFileSync(join(__dirname, "..", "..", "src", "index.ts"), "utf8");
+        // The catch block sets reason = "director-failed" (not flag-disabled).
+        assert(/_cdTrace\.reason\s*=\s*_cdTrace\.reason\s*\|\|\s*["']director-failed["']/.test(idxSrc),
+            "catch block sets _cdTrace.reason = 'director-failed' on exception");
+        // 'director-failed' is in the discriminated union.
+        const typesSrc = readFileSync(join(__dirname, "..", "..", "src", "types.ts"), "utf8");
+        assert(/["']director-failed["']/.test(typesSrc), "types.ts includes 'director-failed' in the trace reason union");
+    }
+
+    // ─── F3: index.ts avoids `(inputs as any)` for Director inputs ───
+    console.log("  F3: index.ts uses a typed view for Director inputs (no new any casts)");
+    {
+        const idxSrc = readFileSync(join(__dirname, "..", "..", "src", "index.ts"), "utf8");
+        assert(/interface DirectorInputsView/.test(idxSrc),
+            "index.ts declares a DirectorInputsView typed interface");
+        // No remaining `(inputs as any)?.subStyle` reads.
+        assert(!/\(inputs as any\)\?\.subStyle/.test(idxSrc),
+            "index.ts no longer reads (inputs as any)?.subStyle");
+        assert(!/\(inputs as any\)\?\.adLanguage/.test(idxSrc),
+            "index.ts no longer reads (inputs as any)?.adLanguage");
+        assert(!/\(inputs as any\)\?\.aspectRatio/.test(idxSrc),
+            "index.ts no longer reads (inputs as any)?.aspectRatio");
+        assert(/Array\.isArray\(_cdInputs\.offerCreativeMode\)/.test(idxSrc),
+            "index.ts guards offerCreativeMode access with Array.isArray");
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // Summary
     // ═══════════════════════════════════════════════════════════
     return { passed, failed };

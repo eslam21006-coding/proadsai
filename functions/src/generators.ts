@@ -1253,6 +1253,23 @@ let _lastCopyDiversity: ResolutionTrace["copyDiversity"] | null = null;
 // generation doc is created by the frontend at render-stage — writing
 // it earlier would persist to a non-existent doc (dead write).
 //
+// WARM-INSTANCE LEAK NOTE: this is a module-level variable, identical
+// to `_lastResolutionTrace` (Phase 19/27/28 precedent) and
+// `_lastCopyDiversity` (Phase 23). The risk of cross-generation leak
+// across warm Cloud Function instances is mitigated by:
+//   1. `serverGenerateConcepts` ALWAYS evaluates the gate (even on the
+//      skip path) and sets the trace via `setLastConceptDirectorTrace`
+//      before the callable returns — so a new request overwrites any
+//      stale value left over from a previous request.
+//   2. `generateFinalAd` ALWAYS clears `_lastResolutionTrace` via
+//      `resetResolutionTrace()` at the top, but `_lastConceptDirectorTrace`
+//      is preserved for the same reason `_lastCopyDiversity` is
+//      preserved (the survivor is read AFTER the reset, during the
+//      trace-merge block).
+//   3. The Concept Director path is gated by the per-user flag
+//      (default off), so even a leaked survivor only matters for the
+//      single user's current generation.
+//
 // Typed as `ConceptDirectorTraceEntry` (aliased from types.ts) rather
 // than `ResolutionTrace["conceptDirector"]` because the discriminated
 // union return type confuses the type system on the property lookup

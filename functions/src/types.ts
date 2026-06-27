@@ -318,6 +318,13 @@ export interface CopyFieldStatuses {
  * Discriminated union keyed by `ran`:
  *   - `ran: true`  → the live run path with the real counters.
  *   - `ran: false` → the gate-skip path with the canonical reason.
+ *                   The reason union distinguishes a USER-disabled gate
+ *                   (flag-disabled / kill-switch-on) from a FAILURE
+ *                   (director-failed = the gate ran but threw /
+ *                   timed out) and from the non-initial-mode bypass —
+ *                   so reviewers can tell "user turned it off" from
+ *                   "it broke" without inferring from the absence of
+ *                   ran=true counters.
  */
 export type ConceptDirectorTraceEntry = {
     readonly ran: true;
@@ -340,7 +347,7 @@ export type ConceptDirectorTraceEntry = {
     readonly validatorTriggered: false;
     readonly retryCount: 0;
     readonly varianceAchieved: false;
-    readonly reason: "flag-disabled" | "kill-switch-on" | "non-initial-mode";
+    readonly reason: "flag-disabled" | "kill-switch-on" | "non-initial-mode" | "director-failed";
 };
 
 export interface ResolutionTrace {

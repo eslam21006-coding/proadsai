@@ -4182,6 +4182,49 @@ export const serverGenerateConcepts = onCall({
     // global kill switch `conceptDirectorKillSwitch` is off, and
     // (implicitly) the `serverGenerateConcepts` callable — which
     // already excludes carousel via separate callables (C1, 2026-06-27).
+    //
+    // Budget guard (audit fix "Bound the Director stage"): the
+    // callable's `timeoutSeconds` is 120s. With 3 initial 15s calls
+    // + up to 3 15s retries, the Director could spend ~90s alone,
+    // leaving ~30s for the actual `generateConcepts` step (the
+    // architecture call + Arabic repair + mode-contribution repair).
+    // To avoid burning the budget on retries when there isn't time,
+    // we cap the Director budget at `_directorBudgetMs` and skip
+    // further retries (fail open → existing logic) when the budget
+    // is exhausted. Measured elapsed time per directConcept call.
+    const _directorBudgetMs = 60_000; // < 50% of the callable timeout
+    const _directorStartMs = Date.now();
+    const _directorRemainingMs = (): number =>
+        _directorBudgetMs - (Date.now() - _directorStartMs);
+
+    // Narrow typed view over `inputs` for the Director stage. The
+    // Director only reads a few scalar fields and an optional
+    // offerCreativeMode array; using a typed view avoids scattering
+    // `(inputs as any)?.field` reads across both the initial and
+    // retry paths (and is safer if offerCreativeMode is ever
+    // malformed as a non-array). Audit fix: avoid new `any` casts.
+    interface DirectorInputsView {
+        subStyle?: unknown;
+        preferredSubStyle?: unknown;
+        offerCreativeMode?: unknown;
+        adLanguage?: unknown;
+        aspectRatio?: unknown;
+    }
+    const _cdInputs = inputs as DirectorInputsView;
+    const _cdInviolable = {
+        subStyle: String(_cdInputs.subStyle ?? _cdInputs.preferredSubStyle ?? ""),
+        creativeMode: String(
+            Array.isArray(_cdInputs.offerCreativeMode) && _cdInputs.offerCreativeMode.length > 0
+                ? (_cdInputs.offerCreativeMode[0] as string)
+                : "standard_hero",
+        ),
+        language: String(_cdInputs.adLanguage ?? "en"),
+        aspectRatio: String(_cdInputs.aspectRatio ?? "1:1"),
+        brand: null as null,
+    };
+    const _cdBrief = (inputs as Record<string, unknown>) || {};
+
+    // already excludes carousel via separate callables (C1, 2026-06-27).
     const _cdCallModel = createGeminiCaller(geminiApiKey.value());
     generators.setGeminiCaller(_cdCallModel);
     const _cdTrace: {
@@ -4207,6 +4250,7 @@ export const serverGenerateConcepts = onCall({
         varianceAchieved: false,
     };
     let _cdBriefs: ReadonlyArray<ConceptBrief | ConceptDirectorFallback> | undefined = undefined;
+    let _cdResultsBudgetExhausted = false;
     try {
         if (mode !== "initial") {
             _cdTrace.reason = "non-initial-mode";
@@ -4232,15 +4276,23 @@ export const serverGenerateConcepts = onCall({
                     return (r?.text || "") as string;
                 };
                 for (let i = 0; i < 3; i++) {
+                    // Budget guard (audit fix): if the Director stage has
+                    // already burned its 60s share of the 120s callable
+                    // timeout, fail open for the remaining slots — those
+                    // concepts will use the existing pipeline (Contract
+                    // C3.3 / FR-010). The budget check is consulted here
+                    // AND before each retry below so we never start a
+                    // 15s call we cannot afford.
+                    if (_directorRemainingMs() <= 0) {
+                        _cdResultsBudgetExhausted = true;
+                        for (let j = i; j < 3; j++) {
+                            _directorResults.push({ fallback: true, reason: "timeout_15s" });
+                        }
+                        break;
+                    }
                     const input: ConceptDirectorInput = {
-                        brief: (inputs as Record<string, unknown>) || {},
-                        inviolable: {
-                            subStyle: String((inputs as any)?.subStyle || (inputs as any)?.preferredSubStyle || ""),
-                            creativeMode: String(((inputs as any)?.offerCreativeMode || ["standard_hero"])[0] || "standard_hero"),
-                            language: String((inputs as any)?.adLanguage || "en"),
-                            aspectRatio: String((inputs as any)?.aspectRatio || "1:1"),
-                            brand: null,
-                        },
+                        brief: _cdBrief,
+                        inviolable: _cdInviolable,
                         conceptIndex: i === 0 ? 0 : i === 1 ? 1 : 2,
                         siblingConcepts: _directorResults.slice(),
                         varianceMode: "balanced",
@@ -4298,16 +4350,17 @@ export const serverGenerateConcepts = onCall({
                     // Now retry each offending concept exactly once with
                     // the aggregated avoid-list.
                     for (const [idx, avoid] of aggregatedAvoidTokens.entries()) {
+                        // Budget guard (audit fix): skip retries when the
+                        // Director budget is exhausted — fail open for
+                        // this concept (FR-016: ship as-is).
+                        if (_directorRemainingMs() <= 0) {
+                            _cdResultsBudgetExhausted = true;
+                            break;
+                        }
                         retried.add(idx);
                         const retryInput: ConceptDirectorInput = {
-                            brief: (inputs as Record<string, unknown>) || {},
-                            inviolable: {
-                                subStyle: String((inputs as any)?.subStyle || (inputs as any)?.preferredSubStyle || ""),
-                                creativeMode: String(((inputs as any)?.offerCreativeMode || ["standard_hero"])[0] || "standard_hero"),
-                                language: String((inputs as any)?.adLanguage || "en"),
-                                aspectRatio: String((inputs as any)?.aspectRatio || "1:1"),
-                                brand: null,
-                            },
+                            brief: _cdBrief,
+                            inviolable: _cdInviolable,
                             conceptIndex: idx === 0 ? 0 : idx === 1 ? 1 : 2,
                             siblingConcepts: _directorResults.filter((_, j) => j !== idx),
                             varianceMode: "balanced",
@@ -4335,10 +4388,12 @@ export const serverGenerateConcepts = onCall({
         // The Director stage is fail-open (FR-011). A failure here MUST
         // not convert a successful generation into a user-facing error
         // — just log and fall back to today's behavior with a
-        // ran:false trace.
+        // ran:false trace. Distinct `director-failed` reason so
+        // reviewers can tell apart "user turned it off" from
+        // "the gate threw" (audit fix).
         console.warn("⚠️ Phase 20 Concept Director gate failed (non-blocking):", (e as Error)?.message || e);
         _cdTrace.ran = false;
-        _cdTrace.reason = _cdTrace.reason || "flag-disabled";
+        _cdTrace.reason = _cdTrace.reason || "director-failed";
         _cdBriefs = undefined;
     }
 
