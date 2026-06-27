@@ -4207,7 +4207,6 @@ export const serverGenerateConcepts = onCall({
         varianceAchieved: false,
     };
     let _cdBriefs: ReadonlyArray<ConceptBrief | ConceptDirectorFallback> | undefined = undefined;
-    let _cdGenId: string | undefined = undefined;
     try {
         if (mode !== "initial") {
             _cdTrace.reason = "non-initial-mode";
@@ -4343,10 +4342,6 @@ export const serverGenerateConcepts = onCall({
         _cdBriefs = undefined;
     }
 
-    // Capture generationId for trace write (optional). The client may
-    // supply a projectId; otherwise the trace is fire-and-forget only.
-    _cdGenId = (request.data as any)?.generationId || (request.data as any)?.projectId;
-
     try {
         const result = await generators.generateConcepts(approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, _cdBriefs);
         // ── Cultural compliance: scan the concept/blueprint text returned to the client.
@@ -4367,12 +4362,25 @@ export const serverGenerateConcepts = onCall({
         // itself is non-blocking on write errors (Contract D2 / C6.2 —
         // a trace failure must NEVER convert a successful generation
         // into a user-facing error), but we await the helper here so
-        // the trace is written before the callable returns, giving the
-        // client / reviewer an accurate record of every enabled
-        // generation. If the helper throws (it shouldn't — it catches
-        // internally), the outer catch below keeps the generation
-        // successful.
-        await persistConceptDirectorTrace(_cdGenId, _cdTrace);
+        // Phase 20 — Concept Director trace persistence (audit fix
+        // #30/#32/#33): the trace is carried in memory to the
+        // render-stage (`generateFinalAd` in generators.ts ~5903) where
+        // it is merged into `_lastResolutionTrace` alongside
+        // expressionAdaptation / gazeDirection / universeAwareCopy.
+        // Writing at concept-stage was a dead write — the
+        // `generations/{genId}` doc is created by the frontend at
+        // render-stage, so any concept-stage write would target a
+        // non-existent doc. Mirrors the proven Phase 19/27/28 pattern.
+        //
+        // `setLastConceptDirectorTrace` writes to a module variable
+        // in generators.ts that `resetResolutionTrace()` (called at
+        // the start of `generateFinalAd`) deliberately preserves —
+        // same precedent as `_lastCopyDiversity` for the same reason.
+        // After `generateFinalAd` runs, `getLastResolutionTrace()`
+        // returns the full trace (incl. conceptDirector) and the
+        // frontend persists it to the generation doc alongside the
+        // render-side trace entries.
+        generators.setLastConceptDirectorTrace(_cdTrace as Parameters<typeof generators.setLastConceptDirectorTrace>[0]);
         // Inline trace shape for reviewers / log scrapers:
         //   ran: true   → ran, ran, ran, conceptDirector: { ran: true, ... }
         //   ran: false  → skipped, conceptDirector: { ran: false, reason: "..." }
@@ -4392,40 +4400,9 @@ export const serverGenerateConcepts = onCall({
     }
 });
 
-/**
- * Persist the additive `ResolutionTrace.conceptDirector` sub-object
- * to `generations/{genId}` (Contract D1 / D2). If `genId` is absent,
- * no-op — the trace is optional by design (SC-008, additive optional).
- *
- * Fire-and-forget per call site; failures are logged and swallowed
- * so a Firestore hiccup never converts a successful generation into
- * a user-facing error (Contract C6.2).
- */
-async function persistConceptDirectorTrace(
-    genId: string | undefined,
-    trace: {
-        ran: boolean;
-        enabled: boolean;
-        killSwitch: boolean;
-        mode: "balanced";
-        conceptCount: number;
-        fallbackCount: number;
-        validatorTriggered: boolean;
-        retryCount: number;
-        varianceAchieved: boolean;
-        reason?: string;
-    },
-): Promise<void> {
-    if (!genId || typeof genId !== "string") return;
-    try {
-        const db = admin.firestore();
-        await db.collection("generations").doc(genId).set({
-            resolutionTrace: { conceptDirector: trace },
-        }, { merge: true });
-    } catch (e) {
-        console.warn(`⚠️ Phase 20 Concept Director trace write failed (non-blocking) for ${genId}:`, e);
-    }
-}
+// (removed persistConceptDirectorTrace — see audit fix #30/#32/#33;
+// the trace now rides to render-stage via setLastConceptDirectorTrace
+// above and merges into _lastResolutionTrace inside generateFinalAd)
 
 // ─── GENERATE BUILD PLAN ─────────────────────────────────────────────────
 export const serverGenerateBuildPlan = onCall({

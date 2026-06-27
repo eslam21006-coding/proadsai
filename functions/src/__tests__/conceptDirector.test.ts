@@ -674,7 +674,7 @@ async function runTestsImpl(): Promise<RunResult> {
     }
 
     // ─── D3: index.ts writes the trace in BOTH branches ───
-    console.log("  D3: index.ts writes resolutionTrace.conceptDirector in both ran and skipped branches");
+    console.log("  D3: index.ts writes the trace in BOTH ran and skipped branches");
     {
         const idxSrc = readFileSync(join(__dirname, "..", "..", "src", "index.ts"), "utf8");
         assert(/conceptDirector:/.test(idxSrc), "index.ts references conceptDirector trace key");
@@ -683,6 +683,52 @@ async function runTestsImpl(): Promise<RunResult> {
         assert(/["']flag-disabled["']/.test(idxSrc), "index.ts records reason 'flag-disabled' on skip");
         assert(/["']kill-switch-on["']/.test(idxSrc), "index.ts records reason 'kill-switch-on' on skip");
         assert(/["']non-initial-mode["']/.test(idxSrc), "index.ts records reason 'non-initial-mode' on skip");
+        // Audit fix #30/#32/#33 — the trace now persists at RENDER stage,
+        // not concept stage. index.ts must hand the trace off to the
+        // generators survivor so generateFinalAd can merge it into
+        // _lastResolutionTrace at the end of the render pipeline.
+        assert(/setLastConceptDirectorTrace/.test(idxSrc), "index.ts hands trace off to generators.setLastConceptDirectorTrace (audit fix #30/#32/#33)");
+        // The dead concept-stage Firestore write must be GONE (it would
+        // target a non-existent generations/{genId} doc).
+        assert(!/persistConceptDirectorTrace\s*\(/.test(idxSrc), "index.ts no longer calls the dead concept-stage persistConceptDirectorTrace");
+    }
+
+    // ─── D4: trace flows to render-stage via the survivor (audit #30/#32/#33) ───
+    console.log("  D4: conceptDirector trace flows to render-stage via generators survivor");
+    {
+        const genSrc = readFileSync(join(__dirname, "..", "..", "src", "generators.ts"), "utf8");
+        // 1. The survivor + setter/getter exist and are exported.
+        assert(/_lastConceptDirectorTrace/.test(genSrc), "generators.ts declares _lastConceptDirectorTrace survivor");
+        assert(/export function setLastConceptDirectorTrace/.test(genSrc), "generators.ts exports setLastConceptDirectorTrace");
+        assert(/export function getLastConceptDirectorTrace/.test(genSrc), "generators.ts exports getLastConceptDirectorTrace");
+        // 2. The survivor is preserved across resetResolutionTrace()
+        //    (same precedent as _lastCopyDiversity — both must survive
+        //    so generateFinalAd can still read them after the reset).
+        //    We assert the survivor variable is at MODULE LEVEL
+        //    (declared outside any function body) by checking the
+        //    leading whitespace of the line that declares it.
+        const declLine = genSrc.split("\n").find(l => /let _lastConceptDirectorTrace\s*:/.test(l)) || "";
+        assert(declLine.length > 0, "_lastConceptDirectorTrace is declared");
+        assert(/^\s*let _lastConceptDirectorTrace\s*:/.test(declLine), "_lastConceptDirectorTrace is declared at module level (no leading function-body indent)");
+        // 3. The survivor is merged into _lastResolutionTrace inside generateFinalAd.
+        //    Look for the merge pattern: `_lastResolutionTrace = { ..., conceptDirector: _lastConceptDirectorTrace, }`.
+        const genFinalAdIdx = genSrc.indexOf("export async function generateFinalAd");
+        const tailIdx = genSrc.indexOf("return { image", genFinalAdIdx);
+        const genFinalAdBody = genSrc.slice(genFinalAdIdx, tailIdx);
+        assert(/conceptDirector:\s*_lastConceptDirectorTrace/.test(genFinalAdBody), "generateFinalAd merges _lastConceptDirectorTrace into _lastResolutionTrace");
+        // 4. The merge happens AFTER the expressionAdaptation / gazeDirection /
+        //    universeAwareCopy writes (same render-stage precedent).
+        const exprIdx = genFinalAdBody.indexOf("expressionAdaptation:");
+        const cdMergeIdx = genFinalAdBody.indexOf("conceptDirector: _lastConceptDirectorTrace");
+        assert(cdMergeIdx > exprIdx, "conceptDirector merge happens AFTER expressionAdaptation in generateFinalAd");
+    }
+
+    // ─── D5: types.ts exposes the trace entry as an exportable type alias ───
+    console.log("  D5: types.ts exports ConceptDirectorTraceEntry type alias");
+    {
+        const typesSrc = readFileSync(join(__dirname, "..", "..", "src", "types.ts"), "utf8");
+        assert(/export type ConceptDirectorTraceEntry\s*=/.test(typesSrc), "types.ts exports ConceptDirectorTraceEntry type alias");
+        assert(/readonly conceptDirector\?:\s*ConceptDirectorTraceEntry/.test(typesSrc), "ResolutionTrace.conceptDirector references the alias");
     }
 
     // ═══════════════════════════════════════════════════════════

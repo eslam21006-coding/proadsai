@@ -308,6 +308,41 @@ export interface CopyFieldStatuses {
     benefitText: CopyFieldStatus;    // "present" | "absent" | "parse_failure"
 }
 
+/**
+ * Phase 20 — Concept Director trace entry (additive, optional). Aliased
+ * to its own top-level type so consumers (e.g. `generators.ts`'s
+ * module-level survivor) can name it without using
+ * `ResolutionTrace["conceptDirector"]` (which TypeScript struggles to
+ * use as a property type on a discriminated union field).
+ *
+ * Discriminated union keyed by `ran`:
+ *   - `ran: true`  → the live run path with the real counters.
+ *   - `ran: false` → the gate-skip path with the canonical reason.
+ */
+export type ConceptDirectorTraceEntry = {
+    readonly ran: true;
+    readonly enabled: boolean;
+    readonly killSwitch: boolean;
+    readonly mode: "balanced";
+    readonly conceptCount: number;
+    readonly fallbackCount: number;
+    readonly validatorTriggered: boolean;
+    readonly retryCount: number;
+    readonly varianceAchieved: boolean;
+    readonly reason?: never;
+} | {
+    readonly ran: false;
+    readonly enabled: boolean;
+    readonly killSwitch: boolean;
+    readonly mode: "balanced";
+    readonly conceptCount: 0;
+    readonly fallbackCount: 0;
+    readonly validatorTriggered: false;
+    readonly retryCount: 0;
+    readonly varianceAchieved: false;
+    readonly reason: "flag-disabled" | "kill-switch-on" | "non-initial-mode";
+};
+
 export interface ResolutionTrace {
     resolvedCampaignType: "cold" | "retargeting";
     resolvedAdMode: "single" | "carousel" | "batch";
@@ -472,29 +507,7 @@ export interface ResolutionTrace {
     //
     // The trace stores COUNTERS and BOOLEANS only — never the brief
     // text itself — to keep it small and PII-safe (Contract D2.4).
-    readonly conceptDirector?: {
-        readonly ran: true;
-        readonly enabled: boolean;
-        readonly killSwitch: boolean;
-        readonly mode: "balanced";
-        readonly conceptCount: number;
-        readonly fallbackCount: number;
-        readonly validatorTriggered: boolean;
-        readonly retryCount: number;
-        readonly varianceAchieved: boolean;
-        readonly reason?: never;
-    } | {
-        readonly ran: false;
-        readonly enabled: boolean;
-        readonly killSwitch: boolean;
-        readonly mode: "balanced";
-        readonly conceptCount: 0;
-        readonly fallbackCount: 0;
-        readonly validatorTriggered: false;
-        readonly retryCount: 0;
-        readonly varianceAchieved: false;
-        readonly reason: "flag-disabled" | "kill-switch-on" | "non-initial-mode";
-    };
+    readonly conceptDirector?: ConceptDirectorTraceEntry;
     // Phase 27 — additive universe-aware-copy sub-object. Records the
     // COPY-LEVEL metaphor DECISION for this generation (prompt-level,
     // NOT an output verification — matches the Phase 19 gaze /

@@ -45,7 +45,7 @@ import { storeCreativeToMemory, retrieveCreativePatterns } from "./creativeMemor
 import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.js";
 import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreservation, type SemanticLock } from "./utils/hookPayload.js";
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
-import type { FailureClass, CostEstimate, LogoPlacement, ClaimFlagEntry, CopyFieldStatuses } from "./types.js";
+import type { FailureClass, CostEstimate, LogoPlacement, ClaimFlagEntry, CopyFieldStatuses, ConceptDirectorTraceEntry } from "./types.js";
 import { resolveBrandColors, type ResolveBrandColorsInput } from "./brandColorResolver.js";
 import { buildCarouselBrandConsistencyBlock, buildBatchBrandConsistencyBlock } from "./brandPromptBlocks.js";
 import { buildConceptEnrichmentBlock, type ConceptBrief, type ConceptDirectorFallback } from "./conceptDirector.js";
@@ -1242,6 +1242,46 @@ export function resetResolutionTrace(): void {
 // it is reset at the START of each step-2 entry point instead, to avoid
 // leaking a previous generation's diversity data into a new one.
 let _lastCopyDiversity: ResolutionTrace["copyDiversity"] | null = null;
+
+// Phase 20 — Concept Director trace survivor. Set by index.ts after the
+// gate + 3× Director loop + ≤1 retry has decided (ran / skipped / failed)
+// and merged into the persisted ResolutionTrace in generateFinalAd. Same
+// pattern as _lastCopyDiversity: deliberately NOT cleared by
+// resetResolutionTrace() (which runs inside generateFinalAd AFTER the
+// trace was set) and cleared at the START of the next concept stage.
+// The trace is written at render-stage (not concept-stage) because the
+// generation doc is created by the frontend at render-stage — writing
+// it earlier would persist to a non-existent doc (dead write).
+//
+// Typed as `ConceptDirectorTraceEntry` (aliased from types.ts) rather
+// than `ResolutionTrace["conceptDirector"]` because the discriminated
+// union return type confuses the type system on the property lookup
+// when used as a module-level variable type annotation.
+let _lastConceptDirectorTrace: ConceptDirectorTraceEntry | null = null;
+
+/**
+ * Set the latest Concept Director trace (additive, optional). Called by
+ * index.ts after the Director gate has decided so the trace survives
+ * until render-stage and gets persisted alongside expressionAdaptation /
+ * gazeDirection / universeAwareCopy on the generation doc.
+ *
+ * The trace object MUST be a valid `ConceptDirectorTraceEntry`
+ * (discriminated union — `ran: true` carries the live counters;
+ * `ran: false` carries the canonical skip reason).
+ */
+export function setLastConceptDirectorTrace(trace: ConceptDirectorTraceEntry): void {
+    _lastConceptDirectorTrace = trace;
+}
+
+/**
+ * Read the latest Concept Director trace, or `null` if none was set
+ * (the gate was never evaluated — should not happen in production
+ * because `serverGenerateConcepts` always evaluates the gate before
+ * calling `generateConcepts`).
+ */
+export function getLastConceptDirectorTrace(): ConceptDirectorTraceEntry | null {
+    return _lastConceptDirectorTrace;
+}
 export function getLastCopyDiversity(): ResolutionTrace["copyDiversity"] | null {
     return _lastCopyDiversity;
 }
@@ -5837,6 +5877,17 @@ export async function generateFinalAd(
     // CANONICAL REFERENCE-AD SIGNAL (T020) — must match the copy
     // sites (T010 / T011) and the blueprint site (T012) exactly so
     // the four sites cannot disagree on the same generation.
+    //
+    // For carousels, `generateFinalAd` is invoked once per slide
+    // (`carouselSlideIndex` is runtime-injected per call — see the
+    // per-slide loop wrappers below), so this single-object write
+    // naturally carries the CURRENT slide's decision: slides 2+
+    // record `carousel-non-hook-slide` while the hook slide (index 0)
+    // records the family-driven reason (data-model.md § 5).
+    //
+    // CANONICAL REFERENCE-AD SIGNAL (T020) — must match the copy
+    // sites (T010 / T011) and the blueprint site (T012) exactly so
+    // the four sites cannot disagree on the same generation.
     {
         const _ucTraceInputs = inputs as AdInputs & {
             carouselSlideIndex?: number;
@@ -5851,6 +5902,25 @@ export async function generateFinalAd(
         _lastResolutionTrace = {
             ...(_lastResolutionTrace || {}),
             universeAwareCopy: _ucTraceDecision,
+        };
+    }
+    // Phase 20 — Concept Director trace (audit fix #30/#32/#33).
+    // Merged here (in `generateFinalAd`) so the trace covers every
+    // render path uniformly (single, carousel slide, batch item,
+    // edit, reflow-rerender) — same precedent as Phase 19 gaze,
+    // Phase 28 expression, and Phase 27 universeAwareCopy above.
+    //
+    // The trace is set by index.ts's `serverGenerateConcepts` after
+    // the Director gate has decided (ran / skipped / failed). We
+    // persist it at render-stage because the generation doc is
+    // created by the frontend at render-stage — writing at concept
+    // stage is a dead write (no doc yet exists to merge into).
+    // _lastConceptDirectorTrace survives `resetResolutionTrace()`
+    // for the same reason as _lastCopyDiversity above.
+    if (_lastConceptDirectorTrace) {
+        _lastResolutionTrace = {
+            ...(_lastResolutionTrace || {}),
+            conceptDirector: _lastConceptDirectorTrace,
         };
     }
     const _referenceAdOverrideActive = _resolverSpec.resolutionTrace?.referenceAdOverrideActive ?? false;
