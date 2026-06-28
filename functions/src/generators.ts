@@ -1138,9 +1138,9 @@ ${cdContext}
 YOUR TASK:
 Extract ALL visual intent from the blueprint above and rewrite it as a concise English scene description. Cover EVERY one of these aspects:
 
-1. HERO: Exact pose, body position, hand placement, facial expression, where they are looking, what they are wearing (be specific — not "nice clothes" but "deep emerald tailored jacket with gold buttons")
-2. COMPOSITION: Where the hero sits on the canvas (left third, center, right third), camera angle, distance (close-up, medium, full body)
-3. ENVIRONMENT: Specific scene elements, props, background objects, depth layers — be concrete (not "fantasy forest" but "towering bioluminescent mushrooms with amber caps, misty forest floor, floating spores")
+1. PRIMARY VISUAL SUBJECT: If a hero or person is explicitly present, describe exact pose, body position, hand placement, facial expression, gaze, and wardrobe. If the blueprint is text-only, product-only, device-only, or no-hero, state that no person appears and describe the typographic, product, or object focal point instead.
+2. COMPOSITION: Where the primary visual subject or typographic system sits on the canvas, plus camera angle or viewpoint and distance when applicable.
+3. ENVIRONMENT / BACKGROUND: Specific scene elements, props, background objects, depth layers, or no-environment background treatment — be concrete (not "fantasy forest" but "towering bioluminescent mushrooms with amber caps, misty forest floor, floating spores")
 4. LIGHTING: Direction, color temperature, mood (not "dramatic lighting" but "warm amber side-light from the left, cool blue fill from mushroom glow, soft rim light separating hero from background")
 5. COLOR PALETTE: Dominant colors, accent colors, contrast strategy
 6. MOOD/ATMOSPHERE: The emotional feeling the image should evoke
@@ -1170,7 +1170,7 @@ OUTPUT:`;
         const arabicChars = (translated.match(/[\u0600-\u06FF]/g) || []).length;
         const arabicRatio = arabicChars / Math.max(translated.length, 1);
         if (arabicRatio > 0.05) {
-            console.warn('[translateBlueprint] Arabic detected in translation, discarding');
+            console.warn("⚠️ [translateBlueprint] Arabic detected in translation, discarding");
             return '';
         }
 
@@ -1181,7 +1181,7 @@ OUTPUT:`;
 
         return translated;
     } catch (err) {
-        console.warn('[translateBlueprint] Translation failed, proceeding without:', err);
+        console.warn("⚠️ [translateBlueprint] Translation failed, proceeding without:", err);
         return '';
     }
 }
@@ -5611,7 +5611,7 @@ ${MODEL_PROVIDER === 'openai' && styleReferencePresent
           blueprint so its (Arabic) scene prose can't bleed onto the image as rendered text. */
   : `BLUEPRINT: ${strippedBlueprint}`}
 ${MODEL_PROVIDER === 'openai' && params.englishSceneDescription
-  ? `\nVISUAL SCENE DIRECTION (FOLLOW THIS PRECISELY — THIS IS THE MOST IMPORTANT SECTION):\n${params.englishSceneDescription}\n`
+  ? `\nVISUAL SCENE DIRECTION (FOLLOW THIS PRECISELY — THIS IS THE MOST IMPORTANT SECTION):\n${params.englishSceneDescription.replace(/[[\]{}]/g, '').replace(/[ \t]+/g, ' ').trim()}\n`
   : ''}
 ${(() => {
     // Phase 28 — Expression adaptation (audit fixes #8, #9, #15, #17).
