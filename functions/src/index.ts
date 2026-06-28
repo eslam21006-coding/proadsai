@@ -4552,33 +4552,83 @@ export const serverGenerateBuildPlan = onCall({
 // frontend bug cannot inject an arbitrary string into the persisted
 // `ResolutionTrace.conceptDirector`. A failed re-validation drops the
 // payload to `null` so the merge in `generateFinalAd` is a no-op.
-function isValidConceptDirectorTrace(v: unknown): v is NonNullable<ConceptDirectorTraceEntry> {
-    if (typeof v !== "object" || v === null) return false;
+//
+// Audit fix round 9: canonicalize the trace — return a NEW object
+// containing ONLY the allowlisted fields. The plain `isValid` guard
+// accepted objects with extra keys, which would persist arbitrary
+// fields to the generation doc. The sanitizer also enforces the
+// closed union of `reason` strings on the skip path and the literal
+// 0/false values for the skip-path counters (they are not free
+// numbers — they are 0/false literals in the type).
+function sanitizeConceptDirectorTrace(
+    v: unknown,
+): ConceptDirectorTraceEntry | null {
+    if (typeof v !== "object" || v === null) return null;
     const t = v as Record<string, unknown>;
-    if (t.mode !== "balanced") return false;
+    if (t.mode !== "balanced") return null;
+
     if (t.ran === true) {
-        return typeof t.enabled === "boolean"
-            && typeof t.killSwitch === "boolean"
-            && typeof t.conceptCount === "number" && t.conceptCount >= 0
-            && typeof t.fallbackCount === "number" && t.fallbackCount >= 0
-            && typeof t.validatorTriggered === "boolean"
-            && typeof t.retryCount === "number" && t.retryCount >= 0
-            && typeof t.varianceAchieved === "boolean";
+        if (
+            typeof t.enabled !== "boolean"
+            || typeof t.killSwitch !== "boolean"
+            || typeof t.conceptCount !== "number" || t.conceptCount < 0
+            || typeof t.fallbackCount !== "number" || t.fallbackCount < 0
+            || typeof t.validatorTriggered !== "boolean"
+            || typeof t.retryCount !== "number" || t.retryCount < 0
+            || typeof t.varianceAchieved !== "boolean"
+        ) {
+            return null;
+        }
+        return {
+            ran: true,
+            enabled: t.enabled,
+            killSwitch: t.killSwitch,
+            mode: "balanced",
+            conceptCount: t.conceptCount,
+            fallbackCount: t.fallbackCount,
+            validatorTriggered: t.validatorTriggered,
+            retryCount: t.retryCount,
+            varianceAchieved: t.varianceAchieved,
+        };
     }
+
     if (t.ran === false) {
-        return typeof t.enabled === "boolean"
-            && typeof t.killSwitch === "boolean"
-            && t.conceptCount === 0
-            && t.fallbackCount === 0
-            && t.validatorTriggered === false
-            && t.retryCount === 0
-            && t.varianceAchieved === false
-            && (t.reason === "flag-disabled"
-                || t.reason === "kill-switch-on"
-                || t.reason === "non-initial-mode"
-                || t.reason === "director-failed");
+        if (
+            typeof t.enabled !== "boolean"
+            || typeof t.killSwitch !== "boolean"
+            || t.conceptCount !== 0
+            || t.fallbackCount !== 0
+            || t.validatorTriggered !== false
+            || t.retryCount !== 0
+            || t.varianceAchieved !== false
+        ) {
+            return null;
+        }
+        if (
+            t.reason !== "flag-disabled"
+            && t.reason !== "kill-switch-on"
+            && t.reason !== "non-initial-mode"
+            && t.reason !== "director-failed"
+        ) {
+            return null;
+        }
+        return {
+            ran: false,
+            enabled: t.enabled,
+            killSwitch: t.killSwitch,
+            mode: "balanced",
+            conceptCount: 0,
+            fallbackCount: 0,
+            validatorTriggered: false,
+            retryCount: 0,
+            varianceAchieved: false,
+            // t.reason is narrowed to one of the 4 canonical literal
+            // values by the inArray guard above; the cast is safe.
+            reason: t.reason as NonNullable<ConceptDirectorTraceEntry> extends { ran: false } ? Extract<NonNullable<ConceptDirectorTraceEntry>, { ran: false }>["reason"] : never,
+        } as NonNullable<ConceptDirectorTraceEntry>;
     }
-    return false;
+
+    return null;
 }
 
 // ─── GENERATE FINAL AD (IMAGE) ───
@@ -4634,12 +4684,13 @@ export const serverGenerateFinalAd = onCall({
         // the frontend's `isValidConceptDirectorTrace` guard is the
         // primary line of defense, but we re-validate on the backend as
         // well so a future frontend bug or tampered request cannot
-        // inject an arbitrary string into the persisted trace. A failed
-        // re-validation is dropped to `undefined` here (the merge in
+        // inject an arbitrary string into the persisted trace. Audit
+        // fix round 9: also CANONICALIZE — return a NEW object with
+        // only the allowlisted fields so extra keys from a tampered
+        // request never reach the persisted trace. A failed sanitization
+        // drops the payload to `undefined` here (the merge in
         // `generateFinalAd` no-ops on `undefined` / `null`).
-        const _sanitizedConceptDirectorTrace = isValidConceptDirectorTrace(conceptDirectorTrace)
-            ? conceptDirectorTrace
-            : undefined;
+        const _sanitizedConceptDirectorTrace = sanitizeConceptDirectorTrace(conceptDirectorTrace) ?? undefined;
         const result = await generators.generateFinalAd(
             buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio,
             editInstruction, base64ToEdit, styleReference, textOverride,
