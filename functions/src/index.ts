@@ -4575,6 +4575,11 @@ function sanitizeConceptDirectorTrace(
             || typeof t.fallbackCount !== "number" || t.fallbackCount < 0
             || typeof t.validatorTriggered !== "boolean"
             || typeof t.retryCount !== "number" || t.retryCount < 0
+            // Per FR-015 / SC-005, each concept can be retried at most
+            // once in the live run path. Cap retryCount to 0 or 1 so
+            // a forged payload with a large retryCount can't bypass
+            // the per-concept retry ceiling.
+            || (t.retryCount !== 0 && t.retryCount !== 1)
             || typeof t.varianceAchieved !== "boolean"
         ) {
             return null;

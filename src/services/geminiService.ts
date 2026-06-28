@@ -124,6 +124,9 @@ function isNonNegativeCount(v: unknown): v is number {
  * is a no-op. The returned object contains ONLY the allowlisted
  * fields (no extra keys from a tampered request).
  */
+const CONCEPT_DIRECTOR_SKIP_REASON_SET: ReadonlySet<string> =
+  new Set(CONCEPT_DIRECTOR_SKIP_REASONS);
+
 export function sanitizeConceptDirectorTrace(
   v: unknown,
 ): ConceptDirectorTraceEntry | null {
@@ -138,7 +141,12 @@ export function sanitizeConceptDirectorTrace(
       !isNonNegativeCount(t.conceptCount) ||
       !isNonNegativeCount(t.fallbackCount) ||
       typeof t.validatorTriggered !== "boolean" ||
-      !isNonNegativeCount(t.retryCount) ||
+      // Per FR-015 / SC-005, each concept can be retried at most
+      // once in the live run path (no concept retried 2+ times in
+      // a single batch). Cap retryCount to 0 or 1 so a forged
+      // payload with a large retryCount can't bypass the
+      // per-concept retry ceiling.
+      (t.retryCount !== 0 && t.retryCount !== 1) ||
       typeof t.varianceAchieved !== "boolean"
     ) {
       return null;
@@ -154,7 +162,7 @@ export function sanitizeConceptDirectorTrace(
       conceptCount: t.conceptCount,
       fallbackCount: t.fallbackCount,
       validatorTriggered: t.validatorTriggered,
-      retryCount: t.retryCount,
+      retryCount: t.retryCount as 0 | 1,
       varianceAchieved: t.varianceAchieved,
     };
   }
@@ -171,12 +179,10 @@ export function sanitizeConceptDirectorTrace(
     ) {
       return null;
     }
-    if (
-      t.reason !== "flag-disabled" &&
-      t.reason !== "kill-switch-on" &&
-      t.reason !== "non-initial-mode" &&
-      t.reason !== "director-failed"
-    ) {
+    // CONCEPT_DIRECTOR_SKIP_REASON_SET is the single source of
+    // truth for the canonical reason union. Built from the same
+    // `as const` tuple the type derives its values from.
+    if (!CONCEPT_DIRECTOR_SKIP_REASON_SET.has(t.reason as string)) {
       return null;
     }
     return {
@@ -189,9 +195,9 @@ export function sanitizeConceptDirectorTrace(
       validatorTriggered: false,
       retryCount: 0,
       varianceAchieved: false,
-      // Safe: the inArray guard above narrowed the type to one of
-      // the 4 canonical reason strings; CONCEPT_DIRECTOR_SKIP_REASONS
-      // includes exactly the same literal union.
+      // The Set membership check above narrowed `t.reason` to
+      // one of the 4 canonical literal values; CONCEPT_DIRECTOR_SKIP_REASONS
+      // is the matching literal tuple.
       reason: t.reason as (typeof CONCEPT_DIRECTOR_SKIP_REASONS)[number],
     };
   }
