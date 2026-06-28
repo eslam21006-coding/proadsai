@@ -4392,8 +4392,21 @@ export const serverGenerateConcepts = onCall({
         // reviewers can tell apart "user turned it off" from
         // "the gate threw" (audit fix).
         console.warn("⚠️ Phase 20 Concept Director gate failed (non-blocking):", (e as Error)?.message || e);
+        // Audit fix round 3: fully reset the trace to its `ran:false`
+        // shape (the `ConceptDirectorTraceEntry` discriminated union
+        // requires `conceptCount:0`, `fallbackCount:0`,
+        // `validatorTriggered:false`, `retryCount:0`,
+        // `varianceAchieved:false` on the skip variant — leaving
+        // them at the partially-populated ran:true values would
+        // violate the type and confuse any consumer narrowing on
+        // `ran`).
         _cdTrace.ran = false;
         _cdTrace.reason = _cdTrace.reason || "director-failed";
+        _cdTrace.conceptCount = 0;
+        _cdTrace.fallbackCount = 0;
+        _cdTrace.validatorTriggered = false;
+        _cdTrace.retryCount = 0;
+        _cdTrace.varianceAchieved = false;
         _cdBriefs = undefined;
     }
 

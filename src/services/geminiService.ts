@@ -62,6 +62,37 @@ export interface WebsiteSuggestions {
   brandTone: string;
 }
 
+// Phase 20 — Concept Director trace shape (mirrored from
+// functions/src/types.ts `ConceptDirectorTraceEntry`). Defined here
+// as a minimal local interface so the service boundary stays
+// type-safe (no `any` in the public surface). Kept as a discriminated
+// union by `ran` to mirror the backend's exact shape — the consumer
+// narrows on `ran` to read the counter set or the reason.
+export type ConceptDirectorTraceEntry =
+  | {
+      ran: true;
+      enabled: boolean;
+      killSwitch: boolean;
+      mode: "balanced";
+      conceptCount: number;
+      fallbackCount: number;
+      validatorTriggered: boolean;
+      retryCount: number;
+      varianceAchieved: boolean;
+    }
+  | {
+      ran: false;
+      enabled: boolean;
+      killSwitch: boolean;
+      mode: "balanced";
+      conceptCount: 0;
+      fallbackCount: 0;
+      validatorTriggered: false;
+      retryCount: 0;
+      varianceAchieved: false;
+      reason: "flag-disabled" | "kill-switch-on" | "non-initial-mode" | "director-failed";
+    };
+
 export interface GenerationResult {
   text: string;
   rankingRequestId: string | null;
@@ -74,7 +105,7 @@ export interface GenerationResult {
   // into the persisted resolution trace. The frontend persists it
   // to the generation doc alongside the render-side trace entries
   // via `feedbackService.saveGeneration(..., resolutionTrace)`.
-  conceptDirectorTrace?: any | null;
+  conceptDirectorTrace?: ConceptDirectorTraceEntry | null;
 }
 
 function parseGenerationResult(data: any): GenerationResult {
@@ -84,7 +115,7 @@ function parseGenerationResult(data: any): GenerationResult {
     rankingRequestFingerprint: data?.rankingRequestFingerprint || null,
     rankingAppliedSummary: data?.rankingAppliedSummary || null,
     costEstimate: data?.costEstimate || null,
-    conceptDirectorTrace: data?.conceptDirectorTrace ?? null,
+    conceptDirectorTrace: (data?.conceptDirectorTrace as ConceptDirectorTraceEntry | null | undefined) ?? null,
   };
 }
 
@@ -273,7 +304,7 @@ Use this information to better understand the brand's positioning, tone, and tar
     // server-side. Field absence means the gate was never evaluated
     // (legacy / pre-Phase-20 / new flag-off) — the backend just
     // skips the merge.
-    conceptDirectorTrace?: any | null,
+    conceptDirectorTrace?: ConceptDirectorTraceEntry | null,
   ): Promise<{ image: string | null; storageUrl?: string | null; errorCode?: string; debug?: any; resolutionTrace?: any }> {
     const inputsWithPhotos = { ...inputs } as any;
     inputsWithPhotos.personalPhotos = (inputs.personalPhotos || []).slice(0, 5);

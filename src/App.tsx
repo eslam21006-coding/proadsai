@@ -7,7 +7,7 @@ import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVe
 import { doc, getDoc, setDoc, deleteDoc, updateDoc, onSnapshot, collection, addDoc, getDocs, query, orderBy, where, limit, serverTimestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { ref as storageRef, deleteObject } from 'firebase/storage';
-import { gemini, type GenerationResult } from './services/geminiService';
+import { gemini, type GenerationResult, type ConceptDirectorTraceEntry } from './services/geminiService';
 import { resolveCreativeSpec, CREATIVE_MODE_CATALOG, type ResolvedCreativeSpec } from './creativeResolver';
 import { isValidHookPayload, validateCanonicalHooks, normalizeHooksToCanonical, getHookValidationSummary } from './utils/hookPayload';
 import { parseHookVariations, parseHookVariation } from './utils/hookVariationParser';
@@ -2437,8 +2437,11 @@ const App: React.FC = () => {
   // container boundary in the HTTP payload (the previous module-
   // global bridge worked in the emulator but never in production).
   // Set on every successful concept generation and forwarded to
-  // `gemini.generateFinalAd` for every subsequent render.
-  const [conceptDirectorTrace, setConceptDirectorTrace] = useState<any | null>(null);
+  // `gemini.generateFinalAd` for every subsequent render. Typed as
+  // the same `ConceptDirectorTraceEntry` discriminated union the
+  // backend returns (mirrored in geminiService.ts) so the boundary
+  // stays type-safe.
+  const [conceptDirectorTrace, setConceptDirectorTrace] = useState<ConceptDirectorTraceEntry | null>(null);
   const [activeEditHookIndex, setActiveEditHookIndex] = useState<string | null>(null);
   const [activeEditConceptIndex, setActiveEditConceptIndex] = useState<string | null>(null);
   const [expandedConcepts, setExpandedConcepts] = useState<Set<number>>(new Set([11, 12, 13, 21, 22, 23, 31, 32, 33, 41, 42, 43]));
@@ -4943,9 +4946,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
         // forward the trace captured from the most recent concept
         // generation so the rendered image carries the audit trail.
+        // arg layout (12 total): buildPlan, approvedTov, inputs,
+        // resolvedUniverse, currentAspectRatio, editInstruction,
+        // base64ToEdit, styleReference, textOverride,
+        // activeWorkspaceId, batchTotal, conceptDirectorTrace.
         const retryResult = await gemini.generateFinalAd(
           item.conceptText, item.hookText || selectedTov, inputs, resolvedUniverse, itemRatio, variationInstruction,
-          undefined, undefined, undefined, undefined, undefined, undefined,
+          undefined, undefined, undefined, undefined, undefined,
           conceptDirectorTrace,
         );
         mockup = retryResult.image;
@@ -5059,10 +5066,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
       // forward the trace captured from the most recent concept
       // generation so every carousel slide carries the audit trail.
+      // arg layout (12 total): buildPlan, approvedTov, inputs,
+      // resolvedUniverse, currentAspectRatio, editInstruction,
+      // base64ToEdit, styleReference, textOverride,
+      // activeWorkspaceId, batchTotal, conceptDirectorTrace.
       const slideResult = await gemini.generateFinalAd(
         slideConceptText, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
         undefined, undefined, styleRef, txOverride,
-        undefined, undefined, undefined, // reflowInstruction, batchTotal
+        undefined, undefined, // activeWorkspaceId, batchTotal
         conceptDirectorTrace,
       );
       const mockup: string | null = slideResult.image;
@@ -5260,11 +5271,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     try {
       // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
       // forward the trace captured from the most recent concept
-      // generation so every carousel slide carries the audit trail.
+      // generation so the re-rendered image carries the audit trail.
+      // arg layout (12 total): buildPlan, approvedTov, inputs,
+      // resolvedUniverse, currentAspectRatio, editInstruction,
+      // base64ToEdit, styleReference, textOverride,
+      // activeWorkspaceId, batchTotal, conceptDirectorTrace.
       const slideResult = await gemini.generateFinalAd(
         slideConceptText, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
         undefined, undefined, styleRef, txOverride,
-        undefined, undefined, undefined, // reflowInstruction, batchTotal
+        undefined, undefined, // activeWorkspaceId, batchTotal
         conceptDirectorTrace,
       );
       const mockup: string | null = slideResult.image;
