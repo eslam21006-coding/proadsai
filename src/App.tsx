@@ -2325,7 +2325,15 @@ const App: React.FC = () => {
       setAbVariations(prev => prev.map((v, idx) => idx === i ? { ...v, status: 'rendering' } : v));
       if (!deductCredits('generateImage')) break;
       try {
-        const img = (await gemini.generateFinalAd(selectedConcept, selectedTov, inputs, resolvedUniverse, currentAspectRatio, initial[i].tweak || undefined)).image;
+        // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
+        // forward the trace captured from the most recent concept
+        // generation so the rendered image carries the audit trail.
+        const img = (await gemini.generateFinalAd(
+          selectedConcept, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
+          initial[i].tweak || undefined,
+          undefined, undefined, undefined, undefined, undefined,
+          conceptDirectorTrace,
+        )).image;
         setAbVariations(prev => prev.map((v, idx) => idx === i ? { ...v, url: img, status: img ? 'done' : 'error' } : v));
       } catch {
         refundCredits('generateImage');
@@ -2344,7 +2352,15 @@ const App: React.FC = () => {
     setAbVariations(prev => prev.map((v, idx) => idx === index ? { ...v, status: 'rendering', url: null } : v));
     if (!deductCredits('generateImage')) return;
     try {
-      const img = (await gemini.generateFinalAd(selectedConcept, selectedTov, inputs, resolvedUniverse, currentAspectRatio, abVariations[index]?.tweak || undefined)).image;
+      // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
+      // forward the trace captured from the most recent concept
+      // generation so the rendered image carries the audit trail.
+      const img = (await gemini.generateFinalAd(
+        selectedConcept, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
+        abVariations[index]?.tweak || undefined,
+        undefined, undefined, undefined, undefined, undefined,
+        conceptDirectorTrace,
+      )).image;
       setAbVariations(prev => prev.map((v, idx) => idx === index ? { ...v, url: img, status: img ? 'done' : 'error' } : v));
     } catch {
       refundCredits('generateImage');
@@ -2415,6 +2431,14 @@ const App: React.FC = () => {
   const [captionRefinement, setCaptionRefinement] = useState('');
   const [selectedTov, setSelectedTov] = useState('');
   const [selectedConcept, setSelectedConcept] = useState('');
+  // Phase 20 — Concept Director trace (audit fix #30/#32/#33 — round 2):
+  // held in frontend state between `serverGenerateConcepts` and
+  // `serverGenerateFinalAd` so the trace crosses the Cloud Run
+  // container boundary in the HTTP payload (the previous module-
+  // global bridge worked in the emulator but never in production).
+  // Set on every successful concept generation and forwarded to
+  // `gemini.generateFinalAd` for every subsequent render.
+  const [conceptDirectorTrace, setConceptDirectorTrace] = useState<any | null>(null);
   const [activeEditHookIndex, setActiveEditHookIndex] = useState<string | null>(null);
   const [activeEditConceptIndex, setActiveEditConceptIndex] = useState<string | null>(null);
   const [expandedConcepts, setExpandedConcepts] = useState<Set<number>>(new Set([11, 12, 13, 21, 22, 23, 31, 32, 33, 41, 42, 43]));
@@ -3149,16 +3173,32 @@ const App: React.FC = () => {
   const storeRankingLinkage = (result: GenerationResult) => {
     lastRankingLinkage.current = result.rankingRequestId
       ? {
-        rankingRequestId: result.rankingRequestId || undefined,
-        rankingRequestFingerprint: result.rankingRequestFingerprint || undefined,
-        rankingAppliedSummary: result.rankingAppliedSummary || undefined,
-      }
+          rankingRequestId: result.rankingRequestId || undefined,
+          rankingRequestFingerprint: result.rankingRequestFingerprint || undefined,
+          rankingAppliedSummary: result.rankingAppliedSummary || undefined,
+        }
       : null;
   };
 
-  /** Unwrap GenerationResult: extract text + store ranking linkage in one step */
+  /** Unwrap GenerationResult: extract text + store ranking linkage + capture
+   *  Phase 20 Concept Director trace in one step. The trace rides the
+   *  HTTP boundary to `serverGenerateFinalAd` via the call payload, so
+   *  the trace MUST be captured from the response here (it never arrives
+   *  through any other channel). */
   const unwrapGen = (result: GenerationResult): string => {
     storeRankingLinkage(result);
+    // Phase 20 — Concept Director trace (audit fix #30/#32/#33 — round 2).
+    // serverGenerateConcepts ran the gate + 3× Director loop + ≤1 retry
+    // and returned the trace in `result.conceptDirectorTrace`. We hold
+    // it in state so the next `serverGenerateFinalAd` call (for the
+    // chosen concept) can forward it back in the request payload.
+    // `null` here is the canonical "no trace" sentinel — a new
+    // generation cycle (e.g. retrying after a precision edit) simply
+    // overwrites the previous value. The backend normalizes the absence
+    // by recording a default `non-initial-mode` / `flag-disabled` /
+    // `kill-switch-on` reason in the discriminated union, so the doc
+    // never lands without a reason when the gate ran.
+    setConceptDirectorTrace(result.conceptDirectorTrace ?? null);
     return result.text;
   };
 
@@ -4373,7 +4413,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
     try {
       // Pass concept directly to image generation (no Step 3.5 build plan)
-      const mockupResult = await gemini.generateFinalAd(conceptRaw, selectedTov, inputs, resolvedUniverse, primaryRatio);
+      // Phase 20 — Concept Director trace (audit fix #30/#32/#33 —
+      // round 2): forward the trace captured from the most recent
+      // `serverGenerateConcepts` response to the render-stage callable.
+      const mockupResult = await gemini.generateFinalAd(
+        conceptRaw, selectedTov, inputs, resolvedUniverse, primaryRatio,
+        undefined, undefined, undefined, undefined, undefined,
+        undefined, // batchTotal
+        conceptDirectorTrace,
+      );
       const mockup = mockupResult.image;
       setBuildPlan(conceptRaw);
 
@@ -4680,7 +4728,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       const primaryIdx = resultIdx;
       setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, status: 'rendering' } : r));
       try {
-        const genResult = await gemini.generateFinalAd(combo.conceptText, combo.hookText, inputs, resolvedUniverse, primaryRatio, undefined, undefined, undefined, undefined, undefined, combos.length * allSizes.length);
+        // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
+        // forward the trace captured from the most recent concept
+        // generation so the rendered image carries the audit trail.
+        const genResult = await gemini.generateFinalAd(
+          combo.conceptText, combo.hookText, inputs, resolvedUniverse, primaryRatio,
+          undefined, undefined, undefined, undefined, undefined, combos.length * allSizes.length,
+          conceptDirectorTrace,
+        );
         primaryUrl = genResult.image;
         const primaryStorageUrl = genResult.storageUrl || null;
         // Capture originalUrl = the primary render: the un-reflowed, highest-quality source
@@ -4885,7 +4940,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         // by the deprecated REFLOW gate (FR-026) and always returns image: null. This mirrors
         // the retryMode === 'rerender' path exactly (variation instruction, no source image).
         const variationInstruction = `IMPORTANT: This is a RETRY — you MUST generate a DIFFERENT composition, layout, camera angle, and color palette from previous attempts. Vary the hero pose, background elements, and text placement while keeping the same concept and Arabic text strings. Do NOT reproduce the same design.${refinementNote ? ' ' + refinementNote : ''}`;
-        const retryResult = await gemini.generateFinalAd(item.conceptText, item.hookText || selectedTov, inputs, resolvedUniverse, itemRatio, variationInstruction);
+        // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
+        // forward the trace captured from the most recent concept
+        // generation so the rendered image carries the audit trail.
+        const retryResult = await gemini.generateFinalAd(
+          item.conceptText, item.hookText || selectedTov, inputs, resolvedUniverse, itemRatio, variationInstruction,
+          undefined, undefined, undefined, undefined, undefined, undefined,
+          conceptDirectorTrace,
+        );
         mockup = retryResult.image;
       }
 
@@ -4994,9 +5056,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           : `This is SLIDE ${i + 1} of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: ${['THOUGHTFUL — hand on chin, looking contemplative', 'ACTIVE — leaning forward slightly, engaged expression', 'CONVERSATIONAL — relaxed, one hand gesturing naturally to the side', 'PROFESSIONAL — arms crossed confidently, slight smile', 'DYNAMIC — walking pose, captured mid-stride'][i % 5]}. NO pointing finger. NO CTA button on this slide. NO logo on this slide. NO promo badge on this slide.`;
       setCarouselSlides(prev => prev.map((s, idx) => idx === i ? { ...s, status: 'rendering' } : s));
       const slideConceptText = conceptRaw + `\n\n[CAROUSEL SLIDE ${i + 1}/${slideCount}]: ${slideInstruction}`;
+      // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
+      // forward the trace captured from the most recent concept
+      // generation so every carousel slide carries the audit trail.
       const slideResult = await gemini.generateFinalAd(
         slideConceptText, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
-        undefined, undefined, styleRef, txOverride
+        undefined, undefined, styleRef, txOverride,
+        undefined, undefined, undefined, // reflowInstruction, batchTotal
+        conceptDirectorTrace,
       );
       const mockup: string | null = slideResult.image;
       // Surface why a slide failed (non-blocking) so carousel render failures are diagnosable.
@@ -5191,9 +5258,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       : undefined;
 
     try {
+      // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
+      // forward the trace captured from the most recent concept
+      // generation so every carousel slide carries the audit trail.
       const slideResult = await gemini.generateFinalAd(
         slideConceptText, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
-        undefined, undefined, styleRef, txOverride
+        undefined, undefined, styleRef, txOverride,
+        undefined, undefined, undefined, // reflowInstruction, batchTotal
+        conceptDirectorTrace,
       );
       const mockup: string | null = slideResult.image;
       if (mockup) {
@@ -5312,7 +5384,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       };
     }
     try {
-      const editResult = await gemini.generateFinalAd(buildPlan, selectedTov, inputs, resolvedUniverse, editRatio, combinedInstructions, (currentRawBase64 || currentMockup) || undefined, undefined, carouselTextOverride);
+      // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
+      // forward the trace captured from the most recent concept
+      // generation so the re-rendered image carries the audit trail.
+      const editResult = await gemini.generateFinalAd(
+        buildPlan, selectedTov, inputs, resolvedUniverse, editRatio,
+        combinedInstructions, (currentRawBase64 || currentMockup) || undefined, undefined, carouselTextOverride,
+        undefined, undefined, // reflowInstruction, batchTotal
+        conceptDirectorTrace,
+      );
       const res = editResult.image;
 
       // ═══ WRITE-BACK: Route result to correct source ═══

@@ -683,44 +683,62 @@ async function runTestsImpl(): Promise<RunResult> {
         assert(/["']flag-disabled["']/.test(idxSrc), "index.ts records reason 'flag-disabled' on skip");
         assert(/["']kill-switch-on["']/.test(idxSrc), "index.ts records reason 'kill-switch-on' on skip");
         assert(/["']non-initial-mode["']/.test(idxSrc), "index.ts records reason 'non-initial-mode' on skip");
-        // Audit fix #30/#32/#33 — the trace now persists at RENDER stage,
-        // not concept stage. index.ts must hand the trace off to the
-        // generators survivor so generateFinalAd can merge it into
-        // _lastResolutionTrace at the end of the render pipeline.
-        assert(/setLastConceptDirectorTrace/.test(idxSrc), "index.ts hands trace off to generators.setLastConceptDirectorTrace (audit fix #30/#32/#33)");
+        // Audit fix #30/#32/#33 — round 2: the trace rides the HTTP
+        // boundary (NOT a module global, which worked in the emulator
+        // but NEVER in production because serverGenerateConcepts and
+        // serverGenerateFinalAd run in SEPARATE Cloud Run containers).
+        // The concept stage RETURNS the trace in the response; the
+        // render stage READS it from the request. We assert both
+        // directions exist.
+        assert(/conceptDirectorTrace:\s*_cdTrace/.test(idxSrc), "serverGenerateConcepts returns conceptDirectorTrace in its response");
+        assert(/conceptDirectorTrace[,\s}]/.test(idxSrc), "serverGenerateFinalAd destructures conceptDirectorTrace from request.data");
         // The dead concept-stage Firestore write must be GONE (it would
         // target a non-existent generations/{genId} doc).
         assert(!/persistConceptDirectorTrace\s*\(/.test(idxSrc), "index.ts no longer calls the dead concept-stage persistConceptDirectorTrace");
+        // The module-global setter (which worked only in the emulator
+        // because Cloud Run containers don't share process memory)
+        // must be GONE.
+        assert(!/setLastConceptDirectorTrace\s*\(/.test(idxSrc), "index.ts no longer calls the dead module-global setLastConceptDirectorTrace");
     }
 
-    // ─── D4: trace flows to render-stage via the survivor (audit #30/#32/#33) ───
-    console.log("  D4: conceptDirector trace flows to render-stage via generators survivor");
+    // ─── D4: trace flows to render-stage via HTTP payload (audit #30/#32/#33 round 2) ───
+    console.log("  D4: conceptDirector trace flows to render-stage via the generateFinalAd function parameter (no module global)");
     {
         const genSrc = readFileSync(join(__dirname, "..", "..", "src", "generators.ts"), "utf8");
-        // 1. The survivor + setter/getter exist and are exported.
-        assert(/_lastConceptDirectorTrace/.test(genSrc), "generators.ts declares _lastConceptDirectorTrace survivor");
-        assert(/export function setLastConceptDirectorTrace/.test(genSrc), "generators.ts exports setLastConceptDirectorTrace");
-        assert(/export function getLastConceptDirectorTrace/.test(genSrc), "generators.ts exports getLastConceptDirectorTrace");
-        // 2. The survivor is preserved across resetResolutionTrace()
-        //    (same precedent as _lastCopyDiversity — both must survive
-        //    so generateFinalAd can still read them after the reset).
-        //    We assert the survivor variable is at MODULE LEVEL
-        //    (declared outside any function body) by checking the
-        //    leading whitespace of the line that declares it.
-        const declLine = genSrc.split("\n").find(l => /let _lastConceptDirectorTrace\s*:/.test(l)) || "";
-        assert(declLine.length > 0, "_lastConceptDirectorTrace is declared");
-        assert(/^\s*let _lastConceptDirectorTrace\s*:/.test(declLine), "_lastConceptDirectorTrace is declared at module level (no leading function-body indent)");
-        // 3. The survivor is merged into _lastResolutionTrace inside generateFinalAd.
-        //    Look for the merge pattern: `_lastResolutionTrace = { ..., conceptDirector: _lastConceptDirectorTrace, }`.
+        // 1. generateFinalAd has a `conceptDirectorTrace` parameter
+        //    (the test regex must handle multi-line signatures with
+        //    comments and nested `)` — use [\s\S] with the closest
+        //    `): Promise<` terminator).
+        const sigMatch = genSrc.match(/export async function generateFinalAd\(([\s\S]*?)\):\s*Promise/);
+        assert(sigMatch !== null, "generateFinalAd signature found");
+        const sigBody = sigMatch![1];
+        assert(/conceptDirectorTrace\s*\??:/.test(sigBody),
+            "generateFinalAd signature includes conceptDirectorTrace parameter");
+        assert(/ConceptDirectorTraceEntry/.test(sigBody),
+            "conceptDirectorTrace parameter is typed as ConceptDirectorTraceEntry | null");
+        // 2. The merge is from the parameter, NOT the module global.
         const genFinalAdIdx = genSrc.indexOf("export async function generateFinalAd");
         const tailIdx = genSrc.indexOf("return { image", genFinalAdIdx);
         const genFinalAdBody = genSrc.slice(genFinalAdIdx, tailIdx);
-        assert(/conceptDirector:\s*_lastConceptDirectorTrace/.test(genFinalAdBody), "generateFinalAd merges _lastConceptDirectorTrace into _lastResolutionTrace");
-        // 4. The merge happens AFTER the expressionAdaptation / gazeDirection /
+        assert(/if\s*\(\s*conceptDirectorTrace\s*\)/.test(genFinalAdBody),
+            "generateFinalAd guards the merge with `if (conceptDirectorTrace)`");
+        assert(/conceptDirector:\s*conceptDirectorTrace/.test(genFinalAdBody),
+            "generateFinalAd merges `conceptDirectorTrace` (the parameter) into _lastResolutionTrace");
+        // 3. The merge happens AFTER the expressionAdaptation / gazeDirection /
         //    universeAwareCopy writes (same render-stage precedent).
         const exprIdx = genFinalAdBody.indexOf("expressionAdaptation:");
-        const cdMergeIdx = genFinalAdBody.indexOf("conceptDirector: _lastConceptDirectorTrace");
+        const cdMergeIdx = genFinalAdBody.indexOf("conceptDirector: conceptDirectorTrace");
         assert(cdMergeIdx > exprIdx, "conceptDirector merge happens AFTER expressionAdaptation in generateFinalAd");
+        // 4. The module-global survivor and its setter/getter must be GONE.
+        //    (The previous round-1 fix used a module-level variable; round
+        //    2 removes it because Cloud Run containers don't share process
+        //    memory, so the module-global bridge never worked in prod.)
+        assert(!/let _lastConceptDirectorTrace\s*:/.test(genSrc),
+            "generators.ts no longer declares the module-global _lastConceptDirectorTrace survivor");
+        assert(!/setLastConceptDirectorTrace/.test(genSrc),
+            "generators.ts no longer exports the dead setLastConceptDirectorTrace setter");
+        assert(!/getLastConceptDirectorTrace/.test(genSrc),
+            "generators.ts no longer exports the dead getLastConceptDirectorTrace getter");
     }
 
     // ─── D5: types.ts exposes the trace entry as an exportable type alias ───

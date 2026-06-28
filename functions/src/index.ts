@@ -4413,38 +4413,63 @@ export const serverGenerateConcepts = onCall({
             }
         }
         const rg = result.rankingGuidance;
-        // Persist the additive concept-director trace. The helper
-        // itself is non-blocking on write errors (Contract D2 / C6.2 —
-        // a trace failure must NEVER convert a successful generation
-        // into a user-facing error), but we await the helper here so
         // Phase 20 — Concept Director trace persistence (audit fix
-        // #30/#32/#33): the trace is carried in memory to the
-        // render-stage (`generateFinalAd` in generators.ts ~5903) where
-        // it is merged into `_lastResolutionTrace` alongside
-        // expressionAdaptation / gazeDirection / universeAwareCopy.
-        // Writing at concept-stage was a dead write — the
-        // `generations/{genId}` doc is created by the frontend at
-        // render-stage, so any concept-stage write would target a
-        // non-existent doc. Mirrors the proven Phase 19/27/28 pattern.
+        // #30/#32/#33 — round 2): the trace rides the HTTP boundary,
+        // not a module global. `serverGenerateConcepts` and
+        // `serverGenerateFinalAd` are two SEPARATE Cloud Run containers
+        // in production (they were sharing process memory in the
+        // emulator via the module-global bridge, which never survives
+        // deployment). The trace now travels:
+        //   serverGenerateConcepts response.conceptDirectorTrace
+        //     → frontend holds in state
+        //     → serverGenerateFinalAd request.data.conceptDirectorTrace
+        //     → generateFinalAd parameter (NOT module global)
+        //     → _lastResolutionTrace.conceptDirector
+        //     → getLastResolutionTrace() in the response
+        //     → frontend saveGeneration writes it to the doc.
+        // This is the same pattern as approvedTov (passed in the
+        // payload to avoid Firestore race conditions; comment at
+        // serverGenerateFinalAd). The trace itself is read-only on
+        // both sides — index.ts only writes it from the concept stage,
+        // generators.ts only merges it into the render trace.
         //
-        // `setLastConceptDirectorTrace` writes to a module variable
-        // in generators.ts that `resetResolutionTrace()` (called at
-        // the start of `generateFinalAd`) deliberately preserves —
-        // same precedent as `_lastCopyDiversity` for the same reason.
-        // After `generateFinalAd` runs, `getLastResolutionTrace()`
-        // returns the full trace (incl. conceptDirector) and the
-        // frontend persists it to the generation doc alongside the
-        // render-side trace entries.
-        generators.setLastConceptDirectorTrace(_cdTrace as Parameters<typeof generators.setLastConceptDirectorTrace>[0]);
-        // Inline trace shape for reviewers / log scrapers:
-        //   ran: true   → ran, ran, ran, conceptDirector: { ran: true, ... }
-        //   ran: false  → skipped, conceptDirector: { ran: false, reason: "..." }
+        // Trace shape (ConceptDirectorTraceEntry, a discriminated
+        // union keyed by `ran`):
+        //   { ran: true,  enabled, killSwitch, mode, conceptCount,
+        //     fallbackCount, validatorTriggered, retryCount,
+        //     varianceAchieved }                     ← live counters
+        //   { ran: false, enabled, killSwitch, mode, conceptCount: 0,
+        //     fallbackCount: 0, validatorTriggered: false,
+        //     retryCount: 0, varianceAchieved: false,
+        //     reason: "flag-disabled" | "kill-switch-on"
+        //           | "non-initial-mode" | "director-failed" }
+        //                                              ← gate-skip / failure
+        // The ConceptDirectorTraceEntry is set on `_cdTrace` during
+        // the gate/loop/retry block above; the `conceptDirector:`
+        // key is its merged-into-_lastResolutionTrace counterpart on
+        // the render side (generators.ts:5945+).
         if (_cdTrace.ran) {
             console.log(`✅ Phase 20 Concept Director ran=true (concepts=${_cdTrace.conceptCount}, fallback=${_cdTrace.fallbackCount}, retry=${_cdTrace.retryCount}, varianceAchieved=${_cdTrace.varianceAchieved})`);
         } else {
             console.log(`⏭️ Phase 20 Concept Director ran=false (reason=${_cdTrace.reason || "unknown"})`);
         }
-        return { success: true, text: conceptText, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null, costEstimate: generators.getCostEstimate() };
+        return {
+            success: true,
+            text: conceptText,
+            rankingRequestId: rg?.rankingRequestId || null,
+            rankingRequestFingerprint: rg?.rankingRequestFingerprint || null,
+            rankingAppliedSummary: rg?.rankingAppliedSummary || null,
+            costEstimate: generators.getCostEstimate(),
+            // The Concept Director trace payload (additive optional). The
+            // frontend must carry this back into its
+            // `serverGenerateFinalAd` call so `generateFinalAd` can merge
+            // it into the persisted resolution trace (Contract C7.1,
+            // D1, D2.1). Field absence on the response means the gate
+            // skipped and produced no trace — semantically equivalent
+            // to `reason:"non-initial-mode"` etc., but the frontend
+            // forwards `undefined` in that case.
+            conceptDirectorTrace: _cdTrace,
+        };
     } catch (error: any) {
         console.error("generateConcepts error:", error);
         const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateConcepts", inputs });
@@ -4455,9 +4480,12 @@ export const serverGenerateConcepts = onCall({
     }
 });
 
-// (removed persistConceptDirectorTrace — see audit fix #30/#32/#33;
-// the trace now rides to render-stage via setLastConceptDirectorTrace
-// above and merges into _lastResolutionTrace inside generateFinalAd)
+// (audit fix #30/#32/#33 — round 2): the Concept Director trace rides
+// the HTTP boundary (this response.conceptDirectorTrace → frontend
+// request.data.conceptDirectorTrace → generateFinalAd param) rather
+// than a module global, because serverGenerateConcepts and
+// serverGenerateFinalAd run in separate Cloud Run containers in
+// production and do not share process memory.)
 
 // ─── GENERATE BUILD PLAN ─────────────────────────────────────────────────
 export const serverGenerateBuildPlan = onCall({
@@ -4511,7 +4539,7 @@ export const serverGenerateFinalAd = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId, _batchTotal } = request.data;
+    const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId, _batchTotal, conceptDirectorTrace } = request.data;
     void activeWorkspaceId;
     // ═══ MODE-FORMAT GATE (before any credit spend) ═══
     // Always run — even on edit/regen paths. An edit request that arrives with
@@ -4541,7 +4569,20 @@ export const serverGenerateFinalAd = onCall({
     }
 
     try {
-        const result = await generators.generateFinalAd(buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride);
+        // Phase 20 — Concept Director trace (audit fix #30/#32/#33 —
+        // round 2): the trace rides the HTTP boundary from
+        // serverGenerateConcepts. serverGenerateFinalAd runs in a
+        // SEPARATE Cloud Run container in production (the module-
+        // global bridge never survives deployment) so the trace must
+        // arrive as a function parameter. `conceptDirectorTrace` is
+        // optional: if absent (legacy / pre-Phase-20 / new flag-off
+        // generation), generateFinalAd just skips the merge.
+        const result = await generators.generateFinalAd(
+            buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio,
+            editInstruction, base64ToEdit, styleReference, textOverride,
+            undefined, // reflowInstruction (unchanged)
+            conceptDirectorTrace, // Phase 20: forwarded from serverGenerateConcepts
+        );
 
         // ═══ CREATIVE MEMORY: Store creative metadata (fire-and-forget) ═══
         // Only store primary renders, not edits/reflows. Requires creativeMemory feature.

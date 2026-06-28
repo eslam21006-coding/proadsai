@@ -68,6 +68,13 @@ export interface GenerationResult {
   rankingRequestFingerprint: string | null;
   rankingAppliedSummary: string | null;
   costEstimate: { modelTier: string | null; retryCount: number; estimatedTokens: number } | null;
+  // Phase 20 — Concept Director trace (additive optional). The
+  // trace rides the HTTP boundary from `serverGenerateConcepts` →
+  // frontend state → `serverGenerateFinalAd` request data → merged
+  // into the persisted resolution trace. The frontend persists it
+  // to the generation doc alongside the render-side trace entries
+  // via `feedbackService.saveGeneration(..., resolutionTrace)`.
+  conceptDirectorTrace?: any | null;
 }
 
 function parseGenerationResult(data: any): GenerationResult {
@@ -77,6 +84,7 @@ function parseGenerationResult(data: any): GenerationResult {
     rankingRequestFingerprint: data?.rankingRequestFingerprint || null,
     rankingAppliedSummary: data?.rankingAppliedSummary || null,
     costEstimate: data?.costEstimate || null,
+    conceptDirectorTrace: data?.conceptDirectorTrace ?? null,
   };
 }
 
@@ -257,7 +265,15 @@ Use this information to better understand the brand's positioning, tone, and tar
     resolvedUniverse: string, currentAspectRatio: AspectRatio,
     editInstruction?: string, base64ToEdit?: string,
     styleReference?: string, textOverride?: TextOverride,
-    activeWorkspaceId?: string, batchTotal?: number
+    activeWorkspaceId?: string, batchTotal?: number,
+    // Phase 20 — Concept Director trace (audit fix #30/#32/#33 —
+    // round 2): the trace rides the HTTP boundary from
+    // `serverGenerateConcepts` (the gate + 3× Director loop + ≤1
+    // retry) and is now merged into the persisted resolution trace
+    // server-side. Field absence means the gate was never evaluated
+    // (legacy / pre-Phase-20 / new flag-off) — the backend just
+    // skips the merge.
+    conceptDirectorTrace?: any | null,
   ): Promise<{ image: string | null; storageUrl?: string | null; errorCode?: string; debug?: any; resolutionTrace?: any }> {
     const inputsWithPhotos = { ...inputs } as any;
     inputsWithPhotos.personalPhotos = (inputs.personalPhotos || []).slice(0, 5);
@@ -268,6 +284,12 @@ Use this information to better understand the brand's positioning, tone, and tar
       resolvedUniverse, currentAspectRatio,
       editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId,
       _batchTotal: batchTotal,
+      // Forward the trace to the backend so it can be merged into
+      // the resolution trace at render-stage. `undefined` is
+      // stripped by the callable so the backend sees a clean
+      // `request.data.conceptDirectorTrace` either as the trace or
+      // as `undefined`.
+      conceptDirectorTrace: conceptDirectorTrace ?? undefined,
     });
     const data = result.data as any;
     if (import.meta.env.DEV && data.debug) {

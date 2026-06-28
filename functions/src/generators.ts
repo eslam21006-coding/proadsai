@@ -1243,62 +1243,16 @@ export function resetResolutionTrace(): void {
 // leaking a previous generation's diversity data into a new one.
 let _lastCopyDiversity: ResolutionTrace["copyDiversity"] | null = null;
 
-// Phase 20 — Concept Director trace survivor. Set by index.ts after the
-// gate + 3× Director loop + ≤1 retry has decided (ran / skipped / failed)
-// and merged into the persisted ResolutionTrace in generateFinalAd. Same
-// pattern as _lastCopyDiversity: deliberately NOT cleared by
-// resetResolutionTrace() (which runs inside generateFinalAd AFTER the
-// trace was set) and cleared at the START of the next concept stage.
-// The trace is written at render-stage (not concept-stage) because the
-// generation doc is created by the frontend at render-stage — writing
-// it earlier would persist to a non-existent doc (dead write).
-//
-// WARM-INSTANCE LEAK NOTE: this is a module-level variable, identical
-// to `_lastResolutionTrace` (Phase 19/27/28 precedent) and
-// `_lastCopyDiversity` (Phase 23). The risk of cross-generation leak
-// across warm Cloud Function instances is mitigated by:
-//   1. `serverGenerateConcepts` ALWAYS evaluates the gate (even on the
-//      skip path) and sets the trace via `setLastConceptDirectorTrace`
-//      before the callable returns — so a new request overwrites any
-//      stale value left over from a previous request.
-//   2. `generateFinalAd` ALWAYS clears `_lastResolutionTrace` via
-//      `resetResolutionTrace()` at the top, but `_lastConceptDirectorTrace`
-//      is preserved for the same reason `_lastCopyDiversity` is
-//      preserved (the survivor is read AFTER the reset, during the
-//      trace-merge block).
-//   3. The Concept Director path is gated by the per-user flag
-//      (default off), so even a leaked survivor only matters for the
-//      single user's current generation.
-//
-// Typed as `ConceptDirectorTraceEntry` (aliased from types.ts) rather
-// than `ResolutionTrace["conceptDirector"]` because the discriminated
-// union return type confuses the type system on the property lookup
-// when used as a module-level variable type annotation.
-let _lastConceptDirectorTrace: ConceptDirectorTraceEntry | null = null;
-
-/**
- * Set the latest Concept Director trace (additive, optional). Called by
- * index.ts after the Director gate has decided so the trace survives
- * until render-stage and gets persisted alongside expressionAdaptation /
- * gazeDirection / universeAwareCopy on the generation doc.
- *
- * The trace object MUST be a valid `ConceptDirectorTraceEntry`
- * (discriminated union — `ran: true` carries the live counters;
- * `ran: false` carries the canonical skip reason).
- */
-export function setLastConceptDirectorTrace(trace: ConceptDirectorTraceEntry): void {
-    _lastConceptDirectorTrace = trace;
-}
-
-/**
- * Read the latest Concept Director trace, or `null` if none was set
- * (the gate was never evaluated — should not happen in production
- * because `serverGenerateConcepts` always evaluates the gate before
- * calling `generateConcepts`).
- */
-export function getLastConceptDirectorTrace(): ConceptDirectorTraceEntry | null {
-    return _lastConceptDirectorTrace;
-}
+// Phase 20 — Concept Director trace (audit fix #30/#32/#33 —
+// round 2): REMOVED the module-global survivor (`_lastConceptDirectorTrace`)
+// and its setters/getters. The trace now rides the HTTP boundary
+// (serverGenerateConcepts response.conceptDirectorTrace → frontend
+// state → serverGenerateFinalAd request.data.conceptDirectorTrace →
+// generateFinalAd parameter → _lastResolutionTrace.conceptDirector).
+// The previous module-global bridge worked in the emulator (shared
+// process) but NEVER in production because serverGenerateConcepts
+// and serverGenerateFinalAd run in separate Cloud Run containers
+// and do not share process memory.
 export function getLastCopyDiversity(): ResolutionTrace["copyDiversity"] | null {
     return _lastCopyDiversity;
 }
@@ -5774,7 +5728,18 @@ export async function generateFinalAd(
     base64ToEdit?: string,
     styleReference?: string,
     textOverride?: TextOverride,
-    reflowInstruction?: string
+    reflowInstruction?: string,
+    // Phase 20 — Concept Director trace (audit fix #30/#32/#33 —
+    // round 2): forwarded from `serverGenerateConcepts` via the HTTP
+    // payload rather than a module global. serverGenerateConcepts
+    // and serverGenerateFinalAd run in SEPARATE Cloud Run containers
+    // in production — the previous module-global bridge worked in
+    // the emulator (shared process) but NEVER in production. The
+    // trace rides the request payload so the data crosses the
+    // container boundary correctly. The default null keeps the
+    // legacy call sites (e.g. backend self-tests, old reflow path)
+    // working without an explicit conceptDirectorTrace.
+    conceptDirectorTrace?: ConceptDirectorTraceEntry | null,
 ): Promise<{ image: string; failureClass?: "numeric_hallucination"; costEstimate?: CostEstimate } | { image: null; errorCode: string; failureClass?: FailureClass; debug?: FinalAdDebugInfo }> {
     const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
     resetResolutionTrace();
@@ -5921,23 +5886,23 @@ export async function generateFinalAd(
             universeAwareCopy: _ucTraceDecision,
         };
     }
-    // Phase 20 — Concept Director trace (audit fix #30/#32/#33).
-    // Merged here (in `generateFinalAd`) so the trace covers every
-    // render path uniformly (single, carousel slide, batch item,
-    // edit, reflow-rerender) — same precedent as Phase 19 gaze,
-    // Phase 28 expression, and Phase 27 universeAwareCopy above.
+    // Phase 20 — Concept Director trace (audit fix #30/#32/#33 —
+    // round 2). Merged here (in `generateFinalAd`) from the
+    // `conceptDirectorTrace` function parameter — NOT a module global,
+    // because serverGenerateConcepts and serverGenerateFinalAd run in
+    // SEPARATE Cloud Run containers in production. The trace was
+    // produced by `serverGenerateConcepts` (the gate + 3× Director
+    // loop + ≤1 retry), carried through the HTTP boundary in the
+    // request payload, and is now merged alongside Phase 19 gaze,
+    // Phase 28 expression, and Phase 27 universeAwareCopy.
     //
-    // The trace is set by index.ts's `serverGenerateConcepts` after
-    // the Director gate has decided (ran / skipped / failed). We
-    // persist it at render-stage because the generation doc is
-    // created by the frontend at render-stage — writing at concept
-    // stage is a dead write (no doc yet exists to merge into).
-    // _lastConceptDirectorTrace survives `resetResolutionTrace()`
-    // for the same reason as _lastCopyDiversity above.
-    if (_lastConceptDirectorTrace) {
+    // Field absence means the concept gate was never evaluated (legacy
+    // call site, or pre-Phase-20 record) — the merge just no-ops
+    // and the persisted trace simply lacks the `conceptDirector` key.
+    if (conceptDirectorTrace) {
         _lastResolutionTrace = {
             ...(_lastResolutionTrace || {}),
-            conceptDirector: _lastConceptDirectorTrace,
+            conceptDirector: conceptDirectorTrace,
         };
     }
     const _referenceAdOverrideActive = _resolverSpec.resolutionTrace?.referenceAdOverrideActive ?? false;
