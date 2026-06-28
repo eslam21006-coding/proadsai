@@ -3521,10 +3521,11 @@ STILL MANDATORY:
       ${(() => {
           const _modesCV = (inputs as any).offerCreativeMode || ['standard_hero'];
           const _isTextOnlyCV = _modesCV.includes('text_only');
+          const _isBeforeAfterCV = isBeforeAfterSelection(inputs, _effectiveColdHookAngle);
           const _hasPersonCV = !_isTextOnlyCV && (
               _modesCV.includes('standard_hero') ||
               _modesCV.includes('speaker_card') ||
-              _modesCV.includes('before_after') ||
+              _isBeforeAfterCV ||
               _modesCV.length >= 2
           );
           if (!_hasPersonCV) {
