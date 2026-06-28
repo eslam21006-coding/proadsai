@@ -1114,10 +1114,18 @@ export function setGeminiCaller(fn: GeminiCaller) {
 //
 // Fail-open: returns "" on any error. The render proceeds without the
 // English scene description (same as current pre-hotfix behavior).
+interface ConceptDirectorSceneBrief {
+    visualMetaphor?: { description?: string; keyVisualElement?: string };
+    layoutArchetype?: string;
+    heroPoseSpecific?: string;
+    propsForbidden?: string[];
+    heroGazeDirection?: string;
+}
+
 async function translateBlueprintToEnglishScene(
     blueprint: string,
     caller: GeminiCaller,
-    conceptDirectorBrief?: { visualMetaphor?: { description?: string; keyVisualElement?: string }; layoutArchetype?: string; heroPoseSpecific?: string; propsForbidden?: string[]; heroGazeDirection?: string } | null
+    conceptDirectorBrief?: ConceptDirectorSceneBrief | null
 ): Promise<string> {
     try {
         const cdContext = conceptDirectorBrief ? `
@@ -5610,8 +5618,8 @@ ${MODEL_PROVIDER === 'openai' && styleReferencePresent
   ? '' /* OpenAI reflow/anchor: the style-reference image supplies all visual direction; omit the
           blueprint so its (Arabic) scene prose can't bleed onto the image as rendered text. */
   : `BLUEPRINT: ${strippedBlueprint}`}
-${MODEL_PROVIDER === 'openai' && params.englishSceneDescription
-  ? `\nVISUAL SCENE DIRECTION (FOLLOW THIS PRECISELY — THIS IS THE MOST IMPORTANT SECTION):\n${params.englishSceneDescription.replace(/[[\]{}]/g, '').replace(/[ \t]+/g, ' ').trim()}\n`
+${MODEL_PROVIDER === 'openai' && params.englishSceneDescription && !params.styleReferencePresent
+  ? `\nVISUAL SCENE DIRECTION (follow this precisely):\n${params.englishSceneDescription.replace(/[[\]{}]/g, '').replace(/[ \t]+/g, ' ').trim()}\n`
   : ''}
 ${(() => {
     // Phase 28 — Expression adaptation (audit fixes #8, #9, #15, #17).
