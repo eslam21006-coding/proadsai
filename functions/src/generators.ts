@@ -1101,6 +1101,91 @@ export function setGeminiCaller(fn: GeminiCaller) {
     };
 }
 
+// ─── Blueprint translation (OpenAI path — prompt fidelity hotfix) ─────
+// On the OpenAI path the visual-direction fields (SUBJECT_ACTION,
+// ENVIRONMENT_DESC, MOOD_EMOTION, etc.) are stripped from the blueprint
+// to prevent their Arabic scene prose from being rendered verbatim as
+// visible text on the image by gpt-image-2. The side effect is that
+// gpt-image-2 also loses ALL concept-specific visual direction — every
+// render collapses to the same generic visual. This helper calls the
+// fast LOGIC_MODEL to extract the visual intent and re-express it as a
+// concise English scene description that survives the stripping and
+// reaches gpt-image-2.
+//
+// Fail-open: returns "" on any error. The render proceeds without the
+// English scene description (same as current pre-hotfix behavior).
+async function translateBlueprintToEnglishScene(
+    blueprint: string,
+    caller: GeminiCaller,
+    conceptDirectorBrief?: { visualMetaphor?: { description?: string; keyVisualElement?: string }; layoutArchetype?: string; heroPoseSpecific?: string; propsForbidden?: string[]; heroGazeDirection?: string } | null
+): Promise<string> {
+    try {
+        const cdContext = conceptDirectorBrief ? `
+CONCEPT DIRECTOR BRIEF (use this to guide your description):
+- Visual metaphor: ${conceptDirectorBrief.visualMetaphor?.description || 'none'}
+- Key visual element: ${conceptDirectorBrief.visualMetaphor?.keyVisualElement || 'none'}
+- Layout archetype: ${conceptDirectorBrief.layoutArchetype || 'none'}
+- Hero pose: ${conceptDirectorBrief.heroPoseSpecific || 'none'}
+- Forbidden props: ${conceptDirectorBrief.propsForbidden?.join(', ') || 'none'}
+- Hero gaze: ${conceptDirectorBrief.heroGazeDirection || 'none'}
+` : '';
+
+        const prompt = `You are a visual director translating a concept blueprint into a precise English scene description for an AI image generator.
+
+INPUT BLUEPRINT:
+${blueprint}
+${cdContext}
+YOUR TASK:
+Extract ALL visual intent from the blueprint above and rewrite it as a concise English scene description. Cover EVERY one of these aspects:
+
+1. HERO: Exact pose, body position, hand placement, facial expression, where they are looking, what they are wearing (be specific — not "nice clothes" but "deep emerald tailored jacket with gold buttons")
+2. COMPOSITION: Where the hero sits on the canvas (left third, center, right third), camera angle, distance (close-up, medium, full body)
+3. ENVIRONMENT: Specific scene elements, props, background objects, depth layers — be concrete (not "fantasy forest" but "towering bioluminescent mushrooms with amber caps, misty forest floor, floating spores")
+4. LIGHTING: Direction, color temperature, mood (not "dramatic lighting" but "warm amber side-light from the left, cool blue fill from mushroom glow, soft rim light separating hero from background")
+5. COLOR PALETTE: Dominant colors, accent colors, contrast strategy
+6. MOOD/ATMOSPHERE: The emotional feeling the image should evoke
+7. TEXT ZONES: Where on the image there is clear space for overlaying text (headline zone, CTA zone)
+
+OUTPUT RULES:
+- Write in English ONLY — no Arabic text anywhere
+- Be SPECIFIC and CONCRETE — no vague descriptions
+- Maximum 2000 characters
+- No labels or headers — write as one flowing scene description
+- Do NOT include any text content (headlines, CTAs) — only describe the visual scene
+- Start directly with the scene description — no preamble
+
+OUTPUT:`;
+
+        const result = await caller({
+            model: LOGIC_MODEL,
+            contents: { parts: [{ text: prompt }] },
+            config: { temperature: 0.3 },
+        });
+
+        const translated = (result?.text || '').trim();
+
+        if (!translated) return '';
+
+        // Safety: ensure no Arabic leaked through
+        const arabicChars = (translated.match(/[\u0600-\u06FF]/g) || []).length;
+        const arabicRatio = arabicChars / Math.max(translated.length, 1);
+        if (arabicRatio > 0.05) {
+            console.warn('[translateBlueprint] Arabic detected in translation, discarding');
+            return '';
+        }
+
+        // Safety: respect the character budget
+        if (translated.length > 3000) {
+            return translated.substring(0, 3000);
+        }
+
+        return translated;
+    } catch (err) {
+        console.warn('[translateBlueprint] Translation failed, proceeding without:', err);
+        return '';
+    }
+}
+
 // ─── OpenAI Key (injected for design critique — different model catches Gemini blind spots) ────
 let openaiKey: string = '';
 
@@ -5350,6 +5435,10 @@ export interface BuildFinalImagePromptInput {
     // path this suppresses the BLUEPRINT block — the reference image already carries all visual
     // direction, so dumping the (Arabic) blueprint prose only risks it bleeding onto the image.
     styleReferencePresent?: boolean;
+    // English scene description translated from the Arabic blueprint. Injected on the OpenAI
+    // path AFTER the stripped blueprint to preserve concept-specific visual direction that
+    // would otherwise be removed by the Arabic text-bleeding prevention regex.
+    englishSceneDescription?: string;
 }
 
 export interface BuildFinalImagePromptResult {
@@ -5521,6 +5610,9 @@ ${MODEL_PROVIDER === 'openai' && styleReferencePresent
   ? '' /* OpenAI reflow/anchor: the style-reference image supplies all visual direction; omit the
           blueprint so its (Arabic) scene prose can't bleed onto the image as rendered text. */
   : `BLUEPRINT: ${strippedBlueprint}`}
+${MODEL_PROVIDER === 'openai' && params.englishSceneDescription
+  ? `\nVISUAL SCENE DIRECTION (FOLLOW THIS PRECISELY — THIS IS THE MOST IMPORTANT SECTION):\n${params.englishSceneDescription}\n`
+  : ''}
 ${(() => {
     // Phase 28 — Expression adaptation (audit fixes #8, #9, #15, #17).
     //
@@ -7368,6 +7460,20 @@ Use your judgment — consistency where it serves the story, change where the co
 `
             : undefined;
 
+        // Hotfix: translate Arabic blueprint to English scene description for gpt-image-2.
+        // The OpenAI path strips Arabic visual-direction fields to prevent text bleeding,
+        // which also removes all concept-specific content. This translation preserves the
+        // visual intent in English so each concept renders differently. Fail-open: returns ""
+        // on any error so the render proceeds unchanged.
+        let _englishSceneDescription = '';
+        if (MODEL_PROVIDER === 'openai') {
+            _englishSceneDescription = await translateBlueprintToEnglishScene(
+                gatedBlueprint,
+                callGemini,
+                null
+            );
+        }
+
         const _promptResult = buildFinalImagePrompt({
             technicalPrompt: '',
             blueprint: cleanBuildPlan,
@@ -7388,6 +7494,7 @@ Use your judgment — consistency where it serves the story, change where the co
             reflowInstruction,
             slideVisualDirective: _slideVisualDirective,
             styleReferencePresent: !!styleReference,
+            englishSceneDescription: _englishSceneDescription,
         });
 
         parts.push({ text: _promptResult.textPrompt });
