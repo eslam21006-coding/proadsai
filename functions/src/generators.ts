@@ -3424,9 +3424,17 @@ STILL MANDATORY:
       
       POSITIVE LAYOUT INSTRUCTIONS(Architecting the Text Space):
     - You must design the image specifically to hold the text layers(Headline, Subhead, CTA, Badge).
-      - CONCEPT 1(The asymmetric Balance): Place the Hero clearly on one side(Left or Right Rule of Thirds).Create a clean, high - contrast "Void" on the opposite side specifically for the text stack.
-      - CONCEPT 2(The Central Power): Center the Hero.Ensure there is ample "Headroom"(empty space above) or "Base-weight"(dark space below) to hold the text without covering the face.
-      - CONCEPT 3(The Environmental Depth): Place the Hero in the mid - ground.Use the foreground or background environment(e.g., a wall, a screen, the sky) as a natural canvas for the text.
+
+      COMPOSITION VARIETY CONTRACT (MANDATORY): Each of the 3 concepts MUST use a fundamentally different visual approach. Vary ALL of these across concepts:
+      - HERO PLACEMENT: Different position on canvas (rule-of-thirds left, centered, rule-of-thirds right, foreground close-up, mid-ground full body, off-center diagonal)
+      - CAMERA PERSPECTIVE: Different angles (eye-level, slightly low angle for authority, slightly elevated for overview, Dutch tilt for tension — but hero face always clearly visible, front or 3/4 view)
+      - HERO-ENVIRONMENT RELATIONSHIP: Different interactions (hero dominates scene, hero embedded in scene, hero emerging from scene, hero contrasted against scene, hero framing with environmental elements)
+      - VISUAL ENERGY: Different dynamics (static/posed/powerful, dynamic/in-motion/arriving, contemplative/seated/reflecting, commanding/standing/addressing)
+      - TEXT SPACE STRATEGY: Different approaches to creating room for text overlay (void on one side, headroom above, base-weight below, environment as natural text canvas, depth-of-field separation)
+
+      CRITICAL: Do NOT default to "standing, sitting, walking" as your 3 variations. Think about what VISUAL STORY best communicates the hook's emotional logic for each concept. A pain hook might show the hero confronting the problem physically. A future hook might show the hero already in the result state. A curiosity hook might show the hero mid-discovery.
+
+      Match the composition to the HOOK EMOTION, not to a template.
 
       CTA & Benefit & BADGE PLOTTING:
       - The Benefit must sit DIRECTLY BELOW the CTA button.Plan the negative space of the image accordingly.
@@ -3636,9 +3644,6 @@ LIGHTING: Available/natural light ONLY — window light, harsh overhead,
   outdoor overcast. NO studio lighting. Imperfect is intentional.
 TYPOGRAPHY IN SCENE: Simple functional sans-serif. Caption/field-report style.
 TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 1 (Classic Scrim — dark functional overlay)
-  Concept 2 → Style 8 (Color Block — muted desaturated tones only)
-  Concept 3 → Style 4 (Magazine Editorial — news feature layout)
 TECHNICAL_PROMPT MUST START WITH:
   "Documentary photography advertisement, desaturated real-world setting,
    film grain texture, available natural light,"
@@ -3676,9 +3681,6 @@ NEON LIGHTS (MANDATORY): Multiple colored neon sources visible in scene:
   Hero must have rim lighting from at least one colored neon source.
 ATMOSPHERE: Deep background bokeh city lights. Optional: light rain or mist.
 TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 5 (Neon Glow — headline emits neon matching scene)
-  Concept 2 → Style 3 (Bold Cutout — massive headline over night scene)
-  Concept 3 → Style 7 (Floating 3D — headline in neon-lit 3D space)
 TECHNICAL_PROMPT MUST START WITH:
   "Neon urban night advertisement, wet city streets,
    multiple colored neon light sources, dark night environment,"
@@ -3716,9 +3718,6 @@ COLOR: Vibrant, saturated, high-contrast anime palette.
 EFFECTS: Speed lines for energy (mandatory on at least 1 concept).
   Screen tone / halftone patterns for shading on mid-tones.
 TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 3 (Bold Cutout — manga chapter title energy)
-  Concept 2 → Style 5 (Neon Glow — anime accent color glow on headline)
-  Concept 3 → Style 7 (Floating 3D — anime-style dimensional text)
 TECHNICAL_PROMPT MUST START WITH:
   "Anime manga style illustration advertisement, cel-shaded characters,
    bold black outlines, vibrant saturated colors,"
@@ -3753,9 +3752,6 @@ BASE CANVAS: Soft watercolor washes on textured paper — cream/warm white base.
 LIGHTING: Diffused, ambient — light comes from everywhere gently.
   No harsh directional light. Everything feels soft and dreamy.
 TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 4 (Magazine Editorial — delicate, with watercolor paper texture)
-  Concept 2 → Style 6 (Ribbon Banner — painted ribbon with handwritten-feel text)
-  Concept 3 → Style 1 (Classic Scrim — soft wash overlay for text zone)
 TECHNICAL_PROMPT MUST START WITH:
   "Watercolor illustration advertisement, soft painted edges,
    color washes bleeding, textured watercolor paper,"
@@ -3788,9 +3784,6 @@ BASE CANVAS: Bold comic page — 4-color palette, thick panel borders.
 COLOR: Primary CMYK energy — bold reds, blues, yellows. Heavy black outlines.
   Halftone dot patterns for shading. NO photorealistic gradients.
 TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 3 (Bold Cutout — massive comic title energy)
-  Concept 2 → Style 5 (Neon Glow — but in comic accent color)
-  Concept 3 → Style 7 (Floating 3D — comic-style 3D lettering)
 TECHNICAL_PROMPT MUST START WITH:
   "Comic book style illustration advertisement, bold 4-color palette,
    thick black outlines, halftone dot shading,"
@@ -3826,9 +3819,6 @@ BASE CANVAS: Deep black (#0A0A0F) to dark navy (#0D1B3E). SINGLE KEY LIGHT
   Atmospheric layers (smoke wisps, particles, haze) — REQUIRED, not optional.
 FORBIDDEN: Natural daylight, white/cream backgrounds, pastel colors.
 TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 5 (Neon Glow — cinematic highlight)
-  Concept 2 → Style 7 (Floating 3D — headline with material texture)
-  Concept 3 → Style 3 (Bold Cutout — massive headline over dark scene)
 TECHNICAL_PROMPT MUST START WITH:
   "Cinematic dark movie poster advertisement, deep black background,
    single dramatic key light, atmospheric smoke and particles,"
@@ -3860,9 +3850,6 @@ BASE CANVAS: Warm, vibrant, saturated — golden amber, rich cream,
   Scene is ILLUSTRATED with painterly quality — NOT a dark photo.
 FORBIDDEN: Dark backgrounds, heavy shadow, smoke/haze, neon, black canvas.
 TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 4 (Magazine Editorial — warm version)
-  Concept 2 → Style 8 (Color Block — vivid warm tones)
-  Concept 3 → Style 1 (Classic Scrim — warm, light scrim)
 TECHNICAL_PROMPT MUST START WITH:
   "Bright illustrated lifestyle advertisement, warm saturated colors,
    even soft lighting, optimistic inviting atmosphere,"
@@ -3899,9 +3886,6 @@ MULTIPLE COLORED LIGHT SOURCES: contrasting temperature lights.
   mystical sparks, or colored mist — REQUIRED.
 FORBIDDEN: Plain black background, pastel, flat/graphic style, studio aesthetics.
 TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 7 (Floating 3D — metallic/jewel texture)
-  Concept 2 → Style 3 (Bold Cutout — gold leaf or iridescent texture)
-  Concept 3 → Style 5 (Neon Glow — jewel tones: emerald, crimson, gold)
 TECHNICAL_PROMPT MUST START WITH:
   "Epic fantasy advertisement, rich jewel-toned background,
    multiple dramatic colored light sources,"
@@ -3938,9 +3922,6 @@ COLOR: GRAYSCALE ONLY. Absolutely zero color. Pure blacks, clean whites,
 BORDERS: MANDATORY thick black rectangular border frame.
 TYPOGRAPHY: Vintage serif font — bold, all-caps, high weight. No modern sans-serif.
 TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 1 (Classic Scrim — bold vintage ink overlay)
-  Concept 2 → Style 4 (Magazine Editorial — vintage newspaper column layout)
-  Concept 3 → Style 3 (Bold Cutout — massive vintage headline, ink-filled)
 TECHNICAL_PROMPT MUST START WITH:
   "Vintage 1950s newspaper advertisement illustration, black and white ink art,
    cross-hatching technique, bold pen outlines,"
@@ -3968,9 +3949,6 @@ COLOR: WARM SEPIA MONOCHROME throughout. Base tone: aged amber (#704214 range).
 PAPER TEXTURE: Subtle aged paper grain visible in lighter areas.
 BORDERS: MANDATORY thick warm-brown border frame.
 TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 1 (Classic Scrim — warm sepia overlay, cream text)
-  Concept 2 → Style 4 (Magazine Editorial — vintage broadsheet newspaper layout)
-  Concept 3 → Style 6 (Ribbon Banner — aged brown ribbon with cream text)
 TECHNICAL_PROMPT MUST START WITH:
   "Vintage sepia-toned newspaper advertisement illustration, warm aged ink art,
    cross-hatching technique, parchment paper texture,"
