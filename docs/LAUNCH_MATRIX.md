@@ -3,7 +3,7 @@
 
 > **Authority**: This file overrides all older behavior assumptions, the Compatibility Matrix v2, and the ChatGPT master plan for launch scope.
 > Where this file and any other document disagree, this file wins.
-> Last updated: v8 — v7 + Phase 28 complete (2026-06-23) + Phase 19 complete (2026-06-24). Phase 19 ships the gaze-direction + DR-design mapper (5 additive prompt blocks through the shared image-prompt assembly point + CTA outcome framing in the copy prompt). Phase 20 and Phase 24 confirmed separate: Phase 20 = visual differentiation (conceptDirector.ts, needs Phase 14). Phase 24 = copy structure (creativeTextDirector.ts, no Phase 14 dependency).
+Last updated: v9 — Phase 20 Concept Director complete (2026-06-28). All active pipeline phases (17, 28, 19, 27, 20) shipped. Phase 20 ships Option A (no creative memory wiring — Phase 14 deferred). Feature flag conceptDirectorEnabled defaults to false; kill switch via Remote Config.
 
 ---
 
@@ -66,7 +66,7 @@ All product owner decisions. These are final for launch.
 | Logo rendering | **Hybrid — mode-per-placement.** Build plan assigns each logo a mode: `ui` (post-composited via Sharp for pixel-perfect corner/badge placement) or `environmental` (Gemini renders as physical object in scene — logo on mug, laptop lid, wall art, t-shirt, signage). AI picks mode based on creative style. **Absolute ban:** no logos, text, charts, or dashboards on any device screen (laptop/monitor/tablet/phone). Screens stay blank or abstract only. |
 | Aspect ratio reflow | **Deterministic two-method reflow.** Small ratio change (<30%) → outpaint-only (extends margins, locks hero/text). Large ratio change → re-render from original build plan at new ratio. No more generative reflow that stretches faces. Auto-routing with user override. |
 | Direct-response design primitives | **6 new enforced rules:** (1) `heroGaze` field directs subject's eyes at headline or CTA, (2) max ONE highlighted element per ad, (3) `priceIsHook` toggle for price-shock creatives, (4) CTA outcome framing required (no generic "join/register"), (5) `visualPromiseMapping` scores hook↔visual alignment, (6) campaign coherence inherits palette/environment from prior ads in same project. |
-| Concept differentiation | **Two hidden backend stages + one hidden checker.** Concept Director (GPT-5, runs 3× sequential per batch) produces specialized brief per ad with explicit visual metaphor, headline architecture, forbidden props, gaze direction. Variance Validator (deterministic, no AI) blocks duplicate metaphor/layout/headline tokens with max 1 retry. Selection Reviewer (Gemini 2.5 Flash) catches strong incoherences in user brief BEFORE generation. All three are fail-open — pipeline runs unchanged on error. Remote Config kill switch. Per-user feature flag. **Engineering names** (Concept Director, Variance Validator, Selection Reviewer) NEVER appear in UI. **User-facing names**: "Brief Coherence Check" (live banner) + "Variance Mode" (workspace toggle: Balanced/Aggressive). |
+| Concept differentiation | Two hidden backend stages. Concept Director (Gemini, runs 3× sequential per batch) produces specialized brief per ad with explicit visual metaphor, headline architecture, layout archetype, forbidden props, gaze direction. Variance Validator (deterministic, no AI) checks diversity across sibling concepts with max 1 retry. Both are fail-open — pipeline runs unchanged on error. Remote Config kill switch. Per-user feature flag (conceptDirectorEnabled, default false). Option A shipped: no creative memory wiring (pastWinningAds defaults to empty array — Phase 14 wires later). Variance mode hardcoded to "balanced". Selection Reviewer (20.A), Brief Coherence banner (20.E), and Variance Mode toggle (20.F) deferred. Engineering names (Concept Director, Variance Validator) NEVER appear in UI. |
 | FLUX deletion | `falGeneration.ts` and `falEditing.ts` are orphaned dead code (zero imports). Deleted in HOTFIX-G. Magic Edit (Phase 11) migrated to Gemini's edit endpoint. |
 
 ---
@@ -118,14 +118,13 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | Phase 28 — Expression Adaptation | `specs/960-expression-adaptation` | ✅ DONE 2026-06-23 (PR #46). Hook→expression mapper; EXPRESSION DIRECTION block injected into the IMAGE prompt after the BLUEPRINT; `expressionAdaptation?` trace. See Section 8 mirror. |
 | Phase 19 — Direct-Response Design Upgrades (gaze + DR) | `962-gaze-direction-dr` | ✅ DONE 2026-06-24 (this PR). Five additive prompt blocks through the single shared `buildFinalImagePrompt()` injection point: (1) `GAZE DIRECTION` (hook-gated, US1), (2) `ONE_HIGHLIGHT_BLOCK` (always-on, US2), (3) hook↔visual mood modulation (hook-gated, US4), (4) price hierarchy (content-gated, US5), (5) CTA outcome framing (copy prompt, both languages, US3). Additive `gazeDirection?` trace. 244 unit assertions (Contracts A–G) green; Phase 28 expression tests still green. Art-direction gaze override deferred to a later phase. See Section 8 mirror. |
 | Phase 27 — Universe-Aware Copy | `specs/963-universe-aware-copy` | ✅ DONE 2026-06-26 (PR #48). Fantasy universes get one mandatory subtle metaphor per hook; realistic/minimal stay literal. Decision module `universeCopyMap.ts`, injected at copy prompt (generateTOV) + visual element at `buildFinalImagePrompt()`. Suppressed for reference ads, text-only, carousel slides 2+. Additive `universeAwareCopy?` trace. 237 unit assertions. |
+| Phase 20 — Concept Director (Option A) | specs/964-concept-director | ✅ DONE 2026-06-28 (PR #49). Core Concept Director module + Variance Validator + pipeline integration. Feature flag conceptDirectorEnabled (default false) + Remote Config kill switch. Fail-open to Visual Architect V5.0. Backend-only (frontend plumbing for trace pass-through only). Deferred: 20.A (Selection Reviewer), 20.E (Brief Coherence banner), 20.F (Variance Mode toggle), 20.D.7 (creative memory wiring). |
 
 ### ⏳ TODO — Critical (build first)
 
 | Item | Why critical |
 |---|---|
 | **Phase 24 — Conditional Copy Structure (creativeTextDirector)** | Replaces fixed 4-field copy structure with a decision system: 8 static structures + 11 carousel frameworks chosen per inputs. Phase B ships first (make subheadline/CTA/benefit truly optional — highest risk, touches live step-2 UI). Phase C ships second (creativeTextDirector module — input diagnosis, auto-selection, scoring, rewrite loop). No dependency on Phase 14 or Phase 20. Spec: specs/_shared/COPY_SYSTEM_REFERENCE.md + creative-text-decision-system-spec.md. |
-| **Phase 20 — Concept Director + Brief Coherence Check** | Solves "every ad looks like the same machine made it." User-facing impact: Brief Coherence Check (live banner) + Variance Mode (Balanced/Aggressive). Backend stays hidden. **Depends on Phase 14 (which depends on Phase 21).** |
-| **Phase 17 — Resize & Reflow (re-verify)** | Rebuilt in Phase 025 as edit-recompose — needs smoke test verification |
 | **Phase 22 — Copy Quality Upgrade** | **NEXT — ready for implementation.** Lifts every on-creative text string: enforces ≤6th-grade reading level, mandates lived-symptom depth (concrete moment, not abstract problem), replaces the hard fake-proof block with a soft user-facing claim flag, and adds a silent GPT-4o-mini scoring + rewrite gate. **Rides the existing copy-fidelity contract — improvements propagate to the rendered image automatically. Independent of billing; can run in parallel with Phase 21.** |
 
 ### ⏳ TODO — Major
@@ -133,7 +132,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | Item | Why major |
 |---|---|
 | **Phase 11 — Magic Edit** | Re-spec'd to use Gemini's edit endpoint after HOTFIX-G. User-facing feature: lasso → edit → text re-composite. Pro+ gated. |
-| **Phase 14 — RAG + Meta Reporting** | Required by Phase 20 (`pastWinningAds` feeds Concept Director). Daily Meta Insights sync + RAG context injection into prompts. **Blocked until Phase 21 ships** (user data shape may shift). **Priority after Phase 22 and Phase 23.** |
+| **Phase 14 — RAG + Meta Reporting** | Feeds Phase 20 Concept Director when wired (20.D.7 deferred). Currently pastWinningAds defaults to empty array. Daily Meta Insights sync + RAG context injection into prompts. **Blocked until Phase 21 ships** (user data shape may shift). **Priority after Phase 22 and Phase 23.** |
 | **Phase 18 — Multi-Hero Support** | Up to 5 distinct people per ad. Required for webinar / mini-course / co-host / summit / speaker-grid use cases. |
 
 ### ⏳ TODO — Minor
@@ -146,6 +145,9 @@ _(none — Phase 17, the last minor item, shipped 2026-06-01; see ✅ Done above
 |---|---|---|
 | Creative resolver | `functions/src/creativeResolver.ts` (1292 lines) | Exists |
 | 6-stage generation pipeline | `functions/src/generators.ts` (6926 lines) | Exists |
+| Concept Director | `functions/src/conceptDirector.ts` | Phase 20 — Concept Director module (brief generation, variance enforcement) |
+| Variance Validator | `functions/src/varianceValidator.ts` | Phase 20 — deterministic variance checker across sibling concepts |
+| Concept Director config | `functions/src/conceptDirectorConfig.ts` | Phase 20 — feature flag + kill switch config |
 | Layout contract system | `functions/src/layoutContract.ts`, `layoutTemplates.ts` | Exists |
 | Build plan validation | `functions/src/buildPlanSlotMap.ts` | Exists |
 | Caption validation | `functions/src/captionValidator.ts` | Exists |
@@ -848,6 +850,18 @@ interface ResolutionTrace {
     styleFamily: 'realistic' | 'fantasy' | 'minimal';
     reason: string;
   };
+  // Phase 20 — additive concept-director sub-object (mirrors types.ts
+  // ConceptDirectorTraceEntry). Records whether the Concept Director ran,
+  // skip/fallback reasons, and fallback count. Persisted via request payload
+  // (serverGenerateConcepts → frontend → serverGenerateFinalAd → generateFinalAd).
+  conceptDirector?: {
+    ran: boolean;
+    reason?: 'flag-disabled' | 'kill-switch-on' | 'non-initial-mode' | 'director-failed';
+    fallbackCount?: number;
+    conceptCount?: number;
+    varianceValidatorTriggered?: boolean;
+    varianceRetries?: number;
+  };
 }
 ```
 
@@ -1052,7 +1066,7 @@ Phase 18 — Multi-Hero Support (requires Phase 5 + Phase 11)
 
 Phase 19 — Direct-Response Design Upgrades (requires Phase 5 + HOTFIX-E + HOTFIX-F)
 
-Phase 20 — Concept Director + Brief Coherence Check (requires Phase 5 + Phase 14 + HOTFIX-G)
+Phase 20 — Concept Director + Brief Coherence Check (requires Phase 5 + HOTFIX-G) — DONE 2026-06-28. Phase 14 dependency REMOVED (pastWinningAds defaults to empty array).
 
 Phase 21 — Stripe Migration (CRITICAL — replaces Phase 8, no production users yet, do BEFORE launch)
 
@@ -1144,7 +1158,7 @@ Phase 16  requires Phase 1 + Phase 3 + Phase 5
 Phase 17  requires Phase 5 + Phase 15 (pipeline + brand colors)
 Phase 18  requires Phase 5 + Phase 11 (pipeline + magic edit face consistency)
 Phase 19  requires Phase 5 + HOTFIX-E + HOTFIX-F (pipeline + logos + reflow must be stable)
-Phase 20  requires Phase 5 + Phase 14 + HOTFIX-G (pipeline + creative memory + FLUX cleanup)
+Phase 20  requires Phase 5 + HOTFIX-G (pipeline + FLUX cleanup) — DONE (PR #49, 2026-06-28). Phase 14 dependency removed.
 Phase 21  requires nothing in matrix — pre-launch migration, blocks production launch
 Phase 22  requires nothing in matrix — copy-quality is a Step-2 prompt + scoring change that rides the Phase 5 fidelity contract. Can run in parallel with Phase 21. Start any time.
 Phase 23  requires Phase 22 + Phase 5 (quality rules + scoring must exist; fidelity gate + compositor must be stable before fields go conditional)
@@ -2034,9 +2048,11 @@ These are manual steps for Eslam to complete before any code tasks begin.
 
 ---
 
-## Phase 20 — Concept Director + Brief Coherence Check ⏳ TODO — CRITICAL
-**Requires:** Phase 5 + Phase 14 (Creative Memory must be feeding generations) + HOTFIX-G (FLUX cleanup) complete.
-**Note:** Phase 20 fixes concept variety — the "all concepts look the same" issue. It produces specialized briefs per ad with explicit visual metaphor, headline architecture, forbidden props, and gaze direction. Requires Phase 14 (RAG + Meta Reporting for creative memory).
+## Phase 20 — Concept Director (Option A) ✅ DONE (2026-06-28)
+**Requires:** Phase 5 + HOTFIX-G complete. Phase 14 dependency REMOVED.
+Shipped (Option A — PR #49, 2026-06-28): Core Concept Director (20.B), Variance Validator (20.C), Pipeline Integration (20.D minus 20.D.7 creative memory), Tests (20.G minus telemetry). Gate: mode='initial' (covers single-ad + batch; carousel excluded via separate callables). Feature flag conceptDirectorEnabled defaults to false. Remote Config kill switch. Fail-open to Visual Architect V5.0. Variance mode hardcoded to "balanced". pastWinningAds param exists but defaults to empty array (Phase 14 wires later). Trace persisted via request payload (serverGenerateConcepts response → frontend state → serverGenerateFinalAd request → generateFinalAd → resolutionTrace.conceptDirector). Uses existing Gemini model infrastructure (no new API). 41/44 Claude audit pass (3 remaining are LOW/acceptable). 167 tests green.
+Deferred: 20.A (Selection Reviewer), 20.E (Brief Coherence banner), 20.F (Variance Mode toggle), 20.D.7 (creative memory wiring — awaits Phase 14).
+New files: functions/src/conceptDirector.ts, functions/src/varianceValidator.ts, functions/src/conceptDirectorConfig.ts, functions/src/__tests__/conceptDirector.test.ts
 
 Phase 20 will also improve universe metaphor↔visual coherence — currently the metaphor visual element is a late advisory injection via buildFinalImagePrompt; Phase 20 bakes visual metaphor into the concept from the start.
 
@@ -2089,9 +2105,9 @@ Phase 20 will also improve universe metaphor↔visual coherence — currently th
 | 20.D.2 | `functions/src/generators.ts` | Modify Visual Architect V5.0 to read Concept Director output if present. Use `visualMetaphor.description` to inform scene description (currently inferred from hook + hookType). Use `layoutArchetype` to override the default 3-archetype rotation. Use `propsForbidden` to populate the FORBIDDEN block in the Gemini prompt. Use `heroGazeDirection` and `heroPoseSpecific` to override the current generic anti-robotic-pose rules. If Concept Director returned `fallback: true` for a concept, run existing logic for that concept only. **All existing logic remains as fallback path.** | Visual Architect uses Concept Director output when present. Falls back to existing logic when not. |
 | 20.D.3 | `functions/src/generators.ts` | Update `quickRejectCheck` and `validateBlueprintMinimalStyle` to accept `headlineArchitecture` parameter. Validators check against the *intended* shape, not assume standard headline. Whitelist novel architectures (manifesto, oversized_question, numerical_anchor, etc.) so they don't trigger false positives. | Validators no longer reject manifesto-style or numerical-anchor builds as "broken". |
 | 20.D.4 | `functions/src/index.ts` | Wire the new pipeline order: Hook Lab → **Concept Director loop (3× sequential, each sees siblings)** → **Variance Validator (with max 1 retry)** → Visual Architect V5.0 → Art Direction → Render → Caption. Add Selection Reviewer pre-flight check before Concept Director runs (if `state === 'red'` and user pressed "Generate anyway", proceed; otherwise this branch isn't reached because frontend already gates it). | Pipeline order matches spec. Logs show Concept Director and Variance Validator running before render. |
-| 20.D.5 | `functions/src/index.ts` | Add feature flag: `conceptDirectorEnabled` boolean field on `users/{uid}` Firestore doc. Default `false` for all users. When `false`, skip Concept Director and Variance Validator entirely — pipeline runs old path. When `true`, new path runs. Allows per-user A/B rollout. | Flag controls whether new stages run. Default `false`. |
+| 20.D.5 | `functions/src/index.ts` | Add feature flag: `conceptDirectorEnabled` boolean field on `users/{uid}` Firestore doc. Default `false` for all users. When `false`, skip Concept Director and Variance Validator entirely — pipeline runs old path. When `true`, new path runs. Allows per-user A/B rollout. **SHIPPED — flag defaults to false, checked via conceptDirectorConfig.ts.** | Flag controls whether new stages run. Default `false`. |
 | 20.D.6 | `functions/src/index.ts` | Add Remote Config kill switch: `conceptDirectorKillSwitch` boolean. When `true`, ALL users skip new stages regardless of their `conceptDirectorEnabled` flag. Read at the start of every generation call. Cache for 60 seconds to avoid hammering Remote Config. | Kill switch globally disables new stages within 60s of being flipped. |
-| 20.D.7 | `functions/src/conceptDirector.ts` | Wire `pastWinningAds` to `creativeMemory.ts`. Before each Concept Director call, fetch `getRAGContext(userId, { hookAngle, mode, dialect, styleFamily, subStyle })` (Phase 14 task 14.4). If `topPerformers` array has ≥3 entries, pass last 5 as `pastWinningAds` to Concept Director. Concept Director prompt includes: "Past winning ads from this user. Use these as positive reference for what works in this user's market — but generate something NEW, not a clone." | Concept Director receives last 5 winners when available. Falls back gracefully when memory has <3 entries. |
+| 20.D.7 | `functions/src/conceptDirector.ts` | **DEFERRED — awaits Phase 14.** Wire `pastWinningAds` to `creativeMemory.ts`. Before each Concept Director call, fetch `getRAGContext(userId, { hookAngle, mode, dialect, styleFamily, subStyle })` (Phase 14 task 14.4). If `topPerformers` array has ≥3 entries, pass last 5 as `pastWinningAds` to Concept Director. Concept Director prompt includes: "Past winning ads from this user. Use these as positive reference for what works in this user's market — but generate something NEW, not a clone." | Concept Director receives last 5 winners when available. Falls back gracefully when memory has <3 entries. |
 
 ### 20.E — Frontend: Brief Coherence Check (User-Facing)
 
