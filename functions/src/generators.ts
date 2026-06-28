@@ -3431,6 +3431,7 @@ STILL MANDATORY:
           const _hasPersonCV = !_isTextOnlyCV && (
               _modesCV.includes('standard_hero') ||
               _modesCV.includes('speaker_card') ||
+              _modesCV.includes('before_after') ||
               _modesCV.length >= 2
           );
           if (!_hasPersonCV) {
