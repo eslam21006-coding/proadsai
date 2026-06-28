@@ -45,9 +45,10 @@ import { storeCreativeToMemory, retrieveCreativePatterns } from "./creativeMemor
 import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.js";
 import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreservation, type SemanticLock } from "./utils/hookPayload.js";
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
-import type { FailureClass, CostEstimate, LogoPlacement, ClaimFlagEntry, CopyFieldStatuses } from "./types.js";
+import type { FailureClass, CostEstimate, LogoPlacement, ClaimFlagEntry, CopyFieldStatuses, ConceptDirectorTraceEntry } from "./types.js";
 import { resolveBrandColors, type ResolveBrandColorsInput } from "./brandColorResolver.js";
 import { buildCarouselBrandConsistencyBlock, buildBatchBrandConsistencyBlock } from "./brandPromptBlocks.js";
+import { buildConceptEnrichmentBlock, type ConceptBrief, type ConceptDirectorFallback } from "./conceptDirector.js";
 import { checkBrandColorCompliance } from "./brandColorCompliance.js";
 import { GenerationError } from "./types.js";
 import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL, OPENAI_SIZE_BY_ASPECT } from "./modelConfig.js";
@@ -55,6 +56,47 @@ import { COLD_ANGLES, RETARGETING_ANGLES, buildSlidePlan } from "./slidePlanEngi
 import { drawDimensions, drawOpenings, makeProjectSeed, getRecentFingerprintsForRotation, type AngleFingerprint } from "./copyDiversity.js";
 import { recordAngleFingerprint } from "./creativeMemory.js";
 import { getAngleVariationBlueprintRotated } from "./knowledge/hookAnglesKnowledge.js";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE 20 — CONCEPT DIRECTOR (Contract C5.4 / FR-019)
+// Headline-architecture whitelist: ALL eight HeadlineArchitecture
+// values declared in `conceptDirector.ts` are surfaced here as a single
+// canonical set so the post-generation validators
+// (validateBlueprintMinimalStyle / quickRejectCheck) do not reject
+// intentionally novel headline shapes the Director picks. We pass the
+// same set to every quick-reject call site to keep the source of truth
+// in lockstep with the brief schema.
+// ═══════════════════════════════════════════════════════════════════════════
+const HEADLINE_WHITELIST = new Set<string>([
+    "manifesto",
+    "editorial",
+    "annotated",
+    "dual_state",
+    "oversized_question",
+    "numerical_anchor",
+    "ellipsis_tease",
+    "stacked_weight",
+]);
+
+/**
+ * Extract the `headlineArchitecture` chosen for each Concept Brief in
+ * `conceptDirectorBriefs` so the validators can see which novel
+ * architectures the Director picked. Returns an empty Set when no
+ * briefs were provided (the flag-off / skipped path) so the validators
+ * stay byte-for-byte unchanged from their pre-Phase-20 behavior.
+ */
+function extractConceptArchitectures(
+    briefs: ReadonlyArray<ConceptBrief | ConceptDirectorFallback> | undefined,
+): ReadonlySet<string> {
+    const out = new Set<string>();
+    if (!briefs) return out;
+    for (const b of briefs) {
+        if ("fallback" in b && b.fallback) continue;
+        const arch = (b as ConceptBrief).headlineArchitecture;
+        if (typeof arch === "string" && (arch as string) !== "") out.add(arch);
+    }
+    return out.size > 0 ? out : HEADLINE_WHITELIST;
+}
 
 // ─── Safe remote-image fetch ────────────────────────────────────────────────
 // The edit / style / face-anchor reference paths may receive a remote URL
@@ -1200,6 +1242,17 @@ export function resetResolutionTrace(): void {
 // it is reset at the START of each step-2 entry point instead, to avoid
 // leaking a previous generation's diversity data into a new one.
 let _lastCopyDiversity: ResolutionTrace["copyDiversity"] | null = null;
+
+// Phase 20 — Concept Director trace (audit fix #30/#32/#33 —
+// round 2): REMOVED the module-global survivor (`_lastConceptDirectorTrace`)
+// and its setters/getters. The trace now rides the HTTP boundary
+// (serverGenerateConcepts response.conceptDirectorTrace → frontend
+// state → serverGenerateFinalAd request.data.conceptDirectorTrace →
+// generateFinalAd parameter → _lastResolutionTrace.conceptDirector).
+// The previous module-global bridge worked in the emulator (shared
+// process) but NEVER in production because serverGenerateConcepts
+// and serverGenerateFinalAd run in separate Cloud Run containers
+// and do not share process memory.
 export function getLastCopyDiversity(): ResolutionTrace["copyDiversity"] | null {
     return _lastCopyDiversity;
 }
@@ -2957,7 +3010,7 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
 // This step is just "Scene Description". 2.5 Flash is perfectly capable and faster.
 // This saves your Gemini 3 Quota/Limits.
 
-export async function generateConcepts(approvedTov: string, inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', _previousOutput?: string, _globalRefinement?: string, editFeedback?: string, editIndex?: string): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
+export async function generateConcepts(approvedTov: string, inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', _previousOutput?: string, _globalRefinement?: string, editFeedback?: string, editIndex?: string, conceptDirectorBriefs?: ReadonlyArray<ConceptBrief | ConceptDirectorFallback>): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
     // FIX 2: strip media payload (presence preserved) — concepts only branch on logo/asset COUNT.
     inputs = stripMediaFromInputs(inputs);
     let _conceptsRankingLinkage: RankingLinkage | null = null;
@@ -4253,6 +4306,23 @@ Selected modes: [${modes.join(' + ')}]
         let finalPrompt = conceptPersonalization ? prompt + '\n' + conceptPersonalization : prompt;
         if (_step3RankingGuidance?.promptBlock) finalPrompt += '\n' + _step3RankingGuidance.promptBlock;
 
+        // Phase 20 — Concept Director enrichment. When the orchestrator
+        // passes three resolved briefs (some may be ConceptDirectorFallback
+        // for failed concepts), inject `buildConceptEnrichmentBlock` so
+        // the three sibling concept cards diverge on visual metaphor /
+        // headline architecture / layout archetype / forbidden props /
+        // hero gaze+pose. When `conceptDirectorBriefs` is absent, this
+        // block is empty and the prompt is byte-for-byte unchanged
+        // (Contract C5.1 / SC-007). The existing positive-layout /
+        // anti-robotic / costume / contrast / universe / mode rules
+        // remain and outrank the enrichment (Contract C5.3).
+        if (conceptDirectorBriefs && conceptDirectorBriefs.length > 0 && mode === 'initial') {
+            const _cdBlock = buildConceptEnrichmentBlock(conceptDirectorBriefs);
+            if (_cdBlock && _cdBlock.trim() !== "") {
+                finalPrompt += '\n\n' + _cdBlock;
+            }
+        }
+
         // Using Lite model with Retry logic + content-level retry for empty responses
         let conceptResult = '';
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -4358,6 +4428,16 @@ Selected modes: [${modes.join(' + ')}]
             }
         }
 
+        // Phase 20 — Concept Director: headline-architecture whitelist
+        // for the post-generation validators (Contract C5.4 / FR-019).
+        // When the Director enriches the prompt, intentionally novel
+        // headline shapes (manifesto, oversized_question,
+        // numerical_anchor, ellipsis_tease) are NOT rejected as "broken".
+        // We extract the chosen architectures from the (optional)
+        // conceptDirectorBriefs and pass them through to
+        // validateBlueprintMinimalStyle / quickRejectCheck.
+        const _headlineArchitecturesForValidators = extractConceptArchitectures(conceptDirectorBriefs);
+
         // ═══ MINIMAL STYLE VALIDATION — non-blocking warning only ═══
         // The concept prompt already has dedicated minimal placeholders that enforce
         // plain backgrounds, studio lighting, and no cinematic elements (lines 1477-1488, 1729-1735).
@@ -4366,7 +4446,7 @@ Selected modes: [${modes.join(' + ')}]
         // Now: log a warning for telemetry, but never block generation.
         const isMinimalBlueprint = resolveStyleFamily(inputs) === 'minimal';
         if (isMinimalBlueprint) {
-            const minimalCheck = validateBlueprintMinimalStyle(conceptResult, true);
+            const minimalCheck = validateBlueprintMinimalStyle(conceptResult, true, _headlineArchitecturesForValidators);
             if (!minimalCheck.passed) {
                 console.warn(`⚠️ Blueprint minimal style check flagged (non-blocking). Prompt enforcement is primary guard.`);
             }
@@ -4843,7 +4923,7 @@ ${JSON.stringify(machinePlan)}`;
 
     try {
         const scoringCompat = getContractForScoring(buildPlanContract);
-        const quickCheck = quickRejectCheck(scoringCompat, machinePlan.blueprint);
+        const quickCheck = quickRejectCheck(scoringCompat, machinePlan.blueprint, HEADLINE_WHITELIST);
         if (quickCheck.reject) {
             console.warn(`⚠️ Structured build plan quick reject warning: ${quickCheck.reason}`);
         }
@@ -5648,7 +5728,18 @@ export async function generateFinalAd(
     base64ToEdit?: string,
     styleReference?: string,
     textOverride?: TextOverride,
-    reflowInstruction?: string
+    reflowInstruction?: string,
+    // Phase 20 — Concept Director trace (audit fix #30/#32/#33 —
+    // round 2): forwarded from `serverGenerateConcepts` via the HTTP
+    // payload rather than a module global. serverGenerateConcepts
+    // and serverGenerateFinalAd run in SEPARATE Cloud Run containers
+    // in production — the previous module-global bridge worked in
+    // the emulator (shared process) but NEVER in production. The
+    // trace rides the request payload so the data crosses the
+    // container boundary correctly. The default null keeps the
+    // legacy call sites (e.g. backend self-tests, old reflow path)
+    // working without an explicit conceptDirectorTrace.
+    conceptDirectorTrace?: ConceptDirectorTraceEntry | null,
 ): Promise<{ image: string; failureClass?: "numeric_hallucination"; costEstimate?: CostEstimate } | { image: null; errorCode: string; failureClass?: FailureClass; debug?: FinalAdDebugInfo }> {
     const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
     resetResolutionTrace();
@@ -5768,6 +5859,17 @@ export async function generateFinalAd(
     // CANONICAL REFERENCE-AD SIGNAL (T020) — must match the copy
     // sites (T010 / T011) and the blueprint site (T012) exactly so
     // the four sites cannot disagree on the same generation.
+    //
+    // For carousels, `generateFinalAd` is invoked once per slide
+    // (`carouselSlideIndex` is runtime-injected per call — see the
+    // per-slide loop wrappers below), so this single-object write
+    // naturally carries the CURRENT slide's decision: slides 2+
+    // record `carousel-non-hook-slide` while the hook slide (index 0)
+    // records the family-driven reason (data-model.md § 5).
+    //
+    // CANONICAL REFERENCE-AD SIGNAL (T020) — must match the copy
+    // sites (T010 / T011) and the blueprint site (T012) exactly so
+    // the four sites cannot disagree on the same generation.
     {
         const _ucTraceInputs = inputs as AdInputs & {
             carouselSlideIndex?: number;
@@ -5782,6 +5884,25 @@ export async function generateFinalAd(
         _lastResolutionTrace = {
             ...(_lastResolutionTrace || {}),
             universeAwareCopy: _ucTraceDecision,
+        };
+    }
+    // Phase 20 — Concept Director trace (audit fix #30/#32/#33 —
+    // round 2). Merged here (in `generateFinalAd`) from the
+    // `conceptDirectorTrace` function parameter — NOT a module global,
+    // because serverGenerateConcepts and serverGenerateFinalAd run in
+    // SEPARATE Cloud Run containers in production. The trace was
+    // produced by `serverGenerateConcepts` (the gate + 3× Director
+    // loop + ≤1 retry), carried through the HTTP boundary in the
+    // request payload, and is now merged alongside Phase 19 gaze,
+    // Phase 28 expression, and Phase 27 universeAwareCopy.
+    //
+    // Field absence means the concept gate was never evaluated (legacy
+    // call site, or pre-Phase-20 record) — the merge just no-ops
+    // and the persisted trace simply lacks the `conceptDirector` key.
+    if (conceptDirectorTrace) {
+        _lastResolutionTrace = {
+            ...(_lastResolutionTrace || {}),
+            conceptDirector: conceptDirectorTrace,
         };
     }
     const _referenceAdOverrideActive = _resolverSpec.resolutionTrace?.referenceAdOverrideActive ?? false;
@@ -6138,7 +6259,7 @@ If the uploaded photo shows a person in a blue suit, you must NOT default to a b
         });
         const gateScoringCompat = getContractForScoring(gateContract);
 
-        const gateQuickCheck = quickRejectCheck(gateScoringCompat, gatedBlueprint);
+        const gateQuickCheck = quickRejectCheck(gateScoringCompat, gatedBlueprint, HEADLINE_WHITELIST);
         if (gateQuickCheck.reject) {
             const isMinimalStyle = resolveStyleFamily(inputs) === 'minimal';
             if (isMinimalStyle) {
@@ -6417,7 +6538,7 @@ BEFORE/AFTER CONNECTED STORY RULES:
             // ── Pre-render contract validation (secondary — hard gate already ran) ──
             const scoringCompat = getContractForScoring(renderContract);
             const planValidation = validateBuildPlanAgainstContract(gatedBlueprint, scoringCompat);
-            const quickCheck = quickRejectCheck(scoringCompat, gatedBlueprint);
+            const quickCheck = quickRejectCheck(scoringCompat, gatedBlueprint, HEADLINE_WHITELIST);
             if (quickCheck.reject) {
                 console.warn(`⚠️ Pre-render contract violation: ${quickCheck.reason}`);
             }

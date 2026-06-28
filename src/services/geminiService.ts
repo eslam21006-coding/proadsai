@@ -62,12 +62,174 @@ export interface WebsiteSuggestions {
   brandTone: string;
 }
 
+// Phase 20 — Concept Director trace shape (mirrored from
+// functions/src/types.ts `ConceptDirectorTraceEntry`). Defined here
+// as a minimal local interface so the service boundary stays
+// type-safe (no `any` in the public surface). Kept as a discriminated
+// union by `ran` to mirror the backend's exact shape — the consumer
+// narrows on `ran` to read the counter set or the reason.
+//
+// Per project convention: `interface` for object shapes, `type` for
+// unions / aliases. The two variants are hoisted into named interfaces
+// so the shape is reusable and so future fields (e.g. stage timing)
+// can be added in one place.
+export interface ConceptDirectorTraceRan {
+  ran: true;
+  enabled: boolean;
+  killSwitch: boolean;
+  mode: "balanced";
+  conceptCount: number;
+  fallbackCount: number;
+  validatorTriggered: boolean;
+  retryCount: number;
+  varianceAchieved: boolean;
+}
+
+export interface ConceptDirectorTraceSkipped {
+  ran: false;
+  enabled: boolean;
+  killSwitch: boolean;
+  mode: "balanced";
+  conceptCount: 0;
+  fallbackCount: 0;
+  validatorTriggered: false;
+  retryCount: 0;
+  varianceAchieved: false;
+  reason: "flag-disabled" | "kill-switch-on" | "non-initial-mode" | "director-failed";
+}
+
+export type ConceptDirectorTraceEntry =
+  | ConceptDirectorTraceRan
+  | ConceptDirectorTraceSkipped;
+
+const CONCEPT_DIRECTOR_SKIP_REASONS = [
+  "flag-disabled",
+  "kill-switch-on",
+  "non-initial-mode",
+  "director-failed",
+] as const;
+
+function isNonNegativeCount(v: unknown): v is number {
+  return typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+}
+
+/**
+ * Defensive sanitizer for the `conceptDirectorTrace` payload that
+ * rides the HTTP boundary from `serverGenerateConcepts` to
+ * `serverGenerateFinalAd` (audit fix #30/#32/#33 — round 2). The
+ * frontend and the backend MUST both validate the discriminator
+ * (`ran` boolean + closed `reason` enum) and DROP any extra keys
+ * before the trace touches the persisted `_lastResolutionTrace`. A
+ * failed validation returns `null` so the merge in `generateFinalAd`
+ * is a no-op. The returned object contains ONLY the allowlisted
+ * fields (no extra keys from a tampered request).
+ */
+const CONCEPT_DIRECTOR_SKIP_REASON_SET: ReadonlySet<string> =
+  new Set(CONCEPT_DIRECTOR_SKIP_REASONS);
+
+export function sanitizeConceptDirectorTrace(
+  v: unknown,
+): ConceptDirectorTraceEntry | null {
+  if (typeof v !== "object" || v === null) return null;
+  const t = v as Record<string, unknown>;
+  if (t.mode !== "balanced") return null;
+
+  if (t.ran === true) {
+    if (
+      typeof t.enabled !== "boolean" ||
+      typeof t.killSwitch !== "boolean" ||
+      !isNonNegativeCount(t.conceptCount) ||
+      !isNonNegativeCount(t.fallbackCount) ||
+      typeof t.validatorTriggered !== "boolean" ||
+      // Per FR-015 / SC-005, each concept can be retried at most
+      // once in the live run path (no concept retried 2+ times in
+      // a single batch). Cap retryCount to 0 or 1 so a forged
+      // payload with a large retryCount can't bypass the
+      // per-concept retry ceiling.
+      (t.retryCount !== 0 && t.retryCount !== 1) ||
+      typeof t.varianceAchieved !== "boolean"
+    ) {
+      return null;
+    }
+    // Canonicalize: return a NEW object containing ONLY the
+    // allowlisted fields (drops any extra keys a tampered
+    // request may have added).
+    return {
+      ran: true,
+      enabled: t.enabled,
+      killSwitch: t.killSwitch,
+      mode: "balanced",
+      conceptCount: t.conceptCount,
+      fallbackCount: t.fallbackCount,
+      validatorTriggered: t.validatorTriggered,
+      retryCount: t.retryCount as 0 | 1,
+      varianceAchieved: t.varianceAchieved,
+    };
+  }
+
+  if (t.ran === false) {
+    if (
+      typeof t.enabled !== "boolean" ||
+      typeof t.killSwitch !== "boolean" ||
+      t.conceptCount !== 0 ||
+      t.fallbackCount !== 0 ||
+      t.validatorTriggered !== false ||
+      t.retryCount !== 0 ||
+      t.varianceAchieved !== false
+    ) {
+      return null;
+    }
+    // CONCEPT_DIRECTOR_SKIP_REASON_SET is the single source of
+    // truth for the canonical reason union. Built from the same
+    // `as const` tuple the type derives its values from.
+    if (!CONCEPT_DIRECTOR_SKIP_REASON_SET.has(t.reason as string)) {
+      return null;
+    }
+    return {
+      ran: false,
+      enabled: t.enabled,
+      killSwitch: t.killSwitch,
+      mode: "balanced",
+      conceptCount: 0,
+      fallbackCount: 0,
+      validatorTriggered: false,
+      retryCount: 0,
+      varianceAchieved: false,
+      // The Set membership check above narrowed `t.reason` to
+      // one of the 4 canonical literal values; CONCEPT_DIRECTOR_SKIP_REASONS
+      // is the matching literal tuple.
+      reason: t.reason as (typeof CONCEPT_DIRECTOR_SKIP_REASONS)[number],
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Convenience type guard wrapper around `sanitizeConceptDirectorTrace`.
+ * Use this for boolean checks (`if (isValidConceptDirectorTrace(t)) { ... }`).
+ * Prefer `sanitizeConceptDirectorTrace` directly when the caller needs
+ * the canonical object.
+ */
+export function isValidConceptDirectorTrace(
+  v: unknown,
+): v is ConceptDirectorTraceEntry {
+  return sanitizeConceptDirectorTrace(v) !== null;
+}
+
 export interface GenerationResult {
   text: string;
   rankingRequestId: string | null;
   rankingRequestFingerprint: string | null;
   rankingAppliedSummary: string | null;
   costEstimate: { modelTier: string | null; retryCount: number; estimatedTokens: number } | null;
+  // Phase 20 — Concept Director trace (additive optional). The
+  // trace rides the HTTP boundary from `serverGenerateConcepts` →
+  // frontend state → `serverGenerateFinalAd` request data → merged
+  // into the persisted resolution trace. The frontend persists it
+  // to the generation doc alongside the render-side trace entries
+  // via `feedbackService.saveGeneration(..., resolutionTrace)`.
+  conceptDirectorTrace?: ConceptDirectorTraceEntry | null;
 }
 
 function parseGenerationResult(data: any): GenerationResult {
@@ -77,6 +239,18 @@ function parseGenerationResult(data: any): GenerationResult {
     rankingRequestFingerprint: data?.rankingRequestFingerprint || null,
     rankingAppliedSummary: data?.rankingAppliedSummary || null,
     costEstimate: data?.costEstimate || null,
+    // Phase 20 — Concept Director trace (audit fix round 8): the
+    // frontend sanitizes any client-supplied payload via
+    // `isValidConceptDirectorTrace` before holding it in state or
+    // forwarding it back. This is the second line of defense — the
+    // primary guard lives server-side (in `serverGenerateFinalAd`
+    // and `generateFinalAd`). The discriminator is the `ran` boolean
+    // plus the closed enum of `reason` strings on the skip path; any
+    // shape that fails is dropped to `null` and the merge is a
+    // no-op. `sanitizeConceptDirectorTrace` returns a NEW object
+    // with only the allowlisted fields (audit fix round 9) so extra
+    // keys from a tampered request never reach the persisted trace.
+    conceptDirectorTrace: sanitizeConceptDirectorTrace(data?.conceptDirectorTrace),
   };
 }
 
@@ -257,7 +431,15 @@ Use this information to better understand the brand's positioning, tone, and tar
     resolvedUniverse: string, currentAspectRatio: AspectRatio,
     editInstruction?: string, base64ToEdit?: string,
     styleReference?: string, textOverride?: TextOverride,
-    activeWorkspaceId?: string, batchTotal?: number
+    activeWorkspaceId?: string, batchTotal?: number,
+    // Phase 20 — Concept Director trace (audit fix #30/#32/#33 —
+    // round 2): the trace rides the HTTP boundary from
+    // `serverGenerateConcepts` (the gate + 3× Director loop + ≤1
+    // retry) and is now merged into the persisted resolution trace
+    // server-side. Field absence means the gate was never evaluated
+    // (legacy / pre-Phase-20 / new flag-off) — the backend just
+    // skips the merge.
+    conceptDirectorTrace?: ConceptDirectorTraceEntry | null,
   ): Promise<{ image: string | null; storageUrl?: string | null; errorCode?: string; debug?: any; resolutionTrace?: any }> {
     const inputsWithPhotos = { ...inputs } as any;
     inputsWithPhotos.personalPhotos = (inputs.personalPhotos || []).slice(0, 5);
@@ -268,6 +450,16 @@ Use this information to better understand the brand's positioning, tone, and tar
       resolvedUniverse, currentAspectRatio,
       editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId,
       _batchTotal: batchTotal,
+      // Forward the trace to the backend so it can be merged into
+      // the resolution trace at render-stage. `undefined` is
+      // stripped by the callable so the backend sees a clean
+      // `request.data.conceptDirectorTrace` either as the trace or
+      // as `undefined`. We re-validate + canonicalize here (audit
+      // fix round 9): the App-level state may have been mutated by
+      // another tab / hook, so we never forward a payload that
+      // doesn't pass the discriminated-union guard OR a payload with
+      // extra fields a tampered request may have added.
+      conceptDirectorTrace: sanitizeConceptDirectorTrace(conceptDirectorTrace) ?? undefined,
     });
     const data = result.data as any;
     if (import.meta.env.DEV && data.debug) {

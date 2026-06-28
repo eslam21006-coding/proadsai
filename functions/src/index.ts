@@ -37,6 +37,18 @@ import type { GHLEventType } from "./billing/ghlBillingSync.js";
 import { STRIPE_PRICE_TO_PLAN } from "./stripe/stripeClient.js";
 import { createOpenAIImageCaller } from "./openAIImageCaller.js";
 import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL } from "./modelConfig.js";
+import {
+    directConcept,
+    type ConceptBrief,
+    type ConceptDirectorFallback,
+    type ConceptDirectorInput,
+    HEADLINE_ARCHITECTURES,
+    LAYOUT_ARCHETYPES,
+    HERO_GAZE_DIRECTIONS,
+} from "./conceptDirector.js";
+import { validateBatchVariance } from "./varianceValidator.js";
+import { getConceptDirectorKillSwitch, getConceptDirectorEnabled } from "./conceptDirectorConfig.js";
+import type { ConceptDirectorTraceEntry } from "./types.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
@@ -4162,9 +4174,245 @@ export const serverGenerateConcepts = onCall({
     await enforceModeFormatGate(inputs);
     // ═══ ENTITLEMENT: Check retargeting gate on concept generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
-    generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+
+    // ═══ PHASE 20 — CONCEPT DIRECTOR GATE (Contract C1 / C2 / FR-021-024) ═══
+    // The decision is computed ONCE and held for the whole generation
+    // so a mid-flight flag flip cannot produce a half-enriched result.
+    // The stage runs iff all four gates pass: `mode === 'initial'`,
+    // per-user flag `users/{uid}.conceptDirectorEnabled` is on,
+    // global kill switch `conceptDirectorKillSwitch` is off, and
+    // (implicitly) the `serverGenerateConcepts` callable — which
+    // already excludes carousel via separate callables (C1, 2026-06-27).
+    //
+    // Budget guard (audit fix "Bound the Director stage"): the
+    // callable's `timeoutSeconds` is 120s. With 3 initial 15s calls
+    // + up to 3 15s retries, the Director could spend ~90s alone,
+    // leaving ~30s for the actual `generateConcepts` step (the
+    // architecture call + Arabic repair + mode-contribution repair).
+    // To avoid burning the budget on retries when there isn't time,
+    // we cap the Director budget at `_directorBudgetMs` and skip
+    // further retries (fail open → existing logic) when the budget
+    // is exhausted. Measured elapsed time per directConcept call.
+    const _directorBudgetMs = 60_000; // < 50% of the callable timeout
+    const _directorStartMs = Date.now();
+    const _directorRemainingMs = (): number =>
+        _directorBudgetMs - (Date.now() - _directorStartMs);
+
+    // Narrow typed view over `inputs` for the Director stage. The
+    // Director only reads a few scalar fields and an optional
+    // offerCreativeMode array; using a typed view avoids scattering
+    // `(inputs as any)?.field` reads across both the initial and
+    // retry paths (and is safer if offerCreativeMode is ever
+    // malformed as a non-array). Audit fix: avoid new `any` casts.
+    interface DirectorInputsView {
+        subStyle?: unknown;
+        preferredSubStyle?: unknown;
+        offerCreativeMode?: unknown;
+        adLanguage?: unknown;
+        aspectRatio?: unknown;
+    }
+    const _cdInputs = inputs as DirectorInputsView;
+    const _cdInviolable = {
+        subStyle: String(_cdInputs.subStyle ?? _cdInputs.preferredSubStyle ?? ""),
+        creativeMode: String(
+            Array.isArray(_cdInputs.offerCreativeMode) && _cdInputs.offerCreativeMode.length > 0
+                ? (_cdInputs.offerCreativeMode[0] as string)
+                : "standard_hero",
+        ),
+        language: String(_cdInputs.adLanguage ?? "en"),
+        aspectRatio: String(_cdInputs.aspectRatio ?? "1:1"),
+        brand: null as null,
+    };
+    const _cdBrief = (inputs as Record<string, unknown>) || {};
+
+    // already excludes carousel via separate callables (C1, 2026-06-27).
+    const _cdCallModel = createGeminiCaller(geminiApiKey.value());
+    generators.setGeminiCaller(_cdCallModel);
+    const _cdTrace: {
+        ran: boolean;
+        enabled: boolean;
+        killSwitch: boolean;
+        mode: "balanced";
+        conceptCount: number;
+        fallbackCount: number;
+        validatorTriggered: boolean;
+        retryCount: number;
+        varianceAchieved: boolean;
+        reason?: string;
+    } = {
+        ran: false,
+        enabled: false,
+        killSwitch: false,
+        mode: "balanced",
+        conceptCount: 0,
+        fallbackCount: 0,
+        validatorTriggered: false,
+        retryCount: 0,
+        varianceAchieved: false,
+    };
+    let _cdBriefs: ReadonlyArray<ConceptBrief | ConceptDirectorFallback> | undefined = undefined;
+    let _cdResultsBudgetExhausted = false;
     try {
-        const result = await generators.generateConcepts(approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex);
+        if (mode !== "initial") {
+            _cdTrace.reason = "non-initial-mode";
+        } else {
+            const _killSwitch = await getConceptDirectorKillSwitch();
+            const _enabled = await getConceptDirectorEnabled(request.auth.uid);
+            _cdTrace.enabled = _enabled;
+            _cdTrace.killSwitch = _killSwitch;
+            if (!_enabled) {
+                _cdTrace.reason = "flag-disabled";
+            } else if (_killSwitch) {
+                _cdTrace.reason = "kill-switch-on";
+            } else {
+                // ═══ RUN: 3x sequential Director loop + validator + ≤1 retry (Contract C3/C4) ═══
+                _cdTrace.ran = true;
+                const _directorResults: Array<ConceptBrief | ConceptDirectorFallback> = [];
+                const _directorCallModel = async (prompt: string): Promise<string> => {
+                    const r = await _cdCallModel({
+                        model: LOGIC_MODEL,
+                        contents: { parts: [{ text: prompt }] },
+                        config: { temperature: 0.7 },
+                    });
+                    return (r?.text || "") as string;
+                };
+                for (let i = 0; i < 3; i++) {
+                    // Budget guard (audit fix): if the Director stage has
+                    // already burned its 60s share of the 120s callable
+                    // timeout, fail open for the remaining slots — those
+                    // concepts will use the existing pipeline (Contract
+                    // C3.3 / FR-010). The budget check is consulted here
+                    // AND before each retry below so we never start a
+                    // 15s call we cannot afford.
+                    if (_directorRemainingMs() <= 0) {
+                        _cdResultsBudgetExhausted = true;
+                        for (let j = i; j < 3; j++) {
+                            _directorResults.push({ fallback: true, reason: "timeout_15s" });
+                        }
+                        break;
+                    }
+                    const input: ConceptDirectorInput = {
+                        brief: _cdBrief,
+                        inviolable: _cdInviolable,
+                        conceptIndex: i === 0 ? 0 : i === 1 ? 1 : 2,
+                        siblingConcepts: _directorResults.slice(),
+                        varianceMode: "balanced",
+                        avoidTokens: {},
+                        pastWinningAds: [],
+                    };
+                    // A failure for one concept must NOT abort the loop
+                    // (Contract C3.3 / FR-010). directConcept returns a
+                    // typed fallback and never throws, so this is safe.
+                    const result = await directConcept(input, _directorCallModel, 15000);
+                    _directorResults.push(result);
+                }
+                _cdTrace.conceptCount = 3;
+
+                // Validate. If a blocking violation fires for an
+                // offending concept that has NOT been retried yet, retry
+                // once (Contract C4 / FR-015 / SC-005).
+                let validation = validateBatchVariance(_directorResults, "balanced");
+                _cdTrace.validatorTriggered = !validation.passed;
+                const retried = new Set<number>();
+                if (!validation.passed) {
+                    // Aggregate ALL block-severity violations PER concept
+                    // so a single retry escapes every axis the concept
+                    // is colliding on, not just the first one the loop
+                    // happened to encounter. Without this aggregation a
+                    // concept that duplicates on BOTH metaphor and
+                    // headline would only get one of the two tokens in
+                    // its avoid-list.
+                    const aggregatedAvoidTokens = new Map<number, ConceptDirectorInput["avoidTokens"]>();
+                    for (const v of validation.violations) {
+                        if (v.severity !== "block") continue;
+                        for (const idx of v.duplicateConceptIndices) {
+                            if (idx < 0 || idx > 2) continue;
+                            if (retried.has(idx)) continue;
+                            let avoid = aggregatedAvoidTokens.get(idx);
+                            if (!avoid) {
+                                avoid = {};
+                                aggregatedAvoidTokens.set(idx, avoid);
+                            }
+                            const slot = _directorResults[idx];
+                            if (!("fallback" in slot && slot.fallback)) {
+                                const va = (slot as ConceptBrief).varianceAxes;
+                                if (va) {
+                                    if (v.axis === "metaphor") {
+                                        avoid.metaphor = Array.from(new Set([...(avoid.metaphor ?? []), va.metaphorToken]));
+                                    } else if (v.axis === "layout") {
+                                        avoid.layout = Array.from(new Set([...(avoid.layout ?? []), va.layoutToken]));
+                                    } else if (v.axis === "headline") {
+                                        avoid.headline = Array.from(new Set([...(avoid.headline ?? []), va.headlineToken]));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Now retry each offending concept exactly once with
+                    // the aggregated avoid-list.
+                    for (const [idx, avoid] of aggregatedAvoidTokens.entries()) {
+                        // Budget guard (audit fix): skip retries when the
+                        // Director budget is exhausted — fail open for
+                        // this concept (FR-016: ship as-is).
+                        if (_directorRemainingMs() <= 0) {
+                            _cdResultsBudgetExhausted = true;
+                            break;
+                        }
+                        retried.add(idx);
+                        const retryInput: ConceptDirectorInput = {
+                            brief: _cdBrief,
+                            inviolable: _cdInviolable,
+                            conceptIndex: idx === 0 ? 0 : idx === 1 ? 1 : 2,
+                            siblingConcepts: _directorResults.filter((_, j) => j !== idx),
+                            varianceMode: "balanced",
+                            avoidTokens: avoid,
+                            pastWinningAds: [],
+                        };
+                        const retryResult = await directConcept(retryInput, _directorCallModel, 15000);
+                        _directorResults[idx] = retryResult;
+                    }
+                    // Re-validate once. If still failing, ship as-is
+                    // (Contract C4.3 / FR-016 / SC-005).
+                    validation = validateBatchVariance(_directorResults, "balanced");
+                }
+                _cdTrace.retryCount = retried.size;
+                _cdTrace.varianceAchieved = validation.passed;
+                // Recompute fallbackCount AFTER the retry pass so the
+                // persisted trace reflects any additional fallback slots
+                // produced by the retry itself (e.g. a retry that hit the
+                // timeout or a constraint violation adds to the count).
+                _cdTrace.fallbackCount = _directorResults.filter(r => "fallback" in r && r.fallback === true).length;
+                _cdBriefs = _directorResults;
+            }
+        }
+    } catch (e) {
+        // The Director stage is fail-open (FR-011). A failure here MUST
+        // not convert a successful generation into a user-facing error
+        // — just log and fall back to today's behavior with a
+        // ran:false trace. Distinct `director-failed` reason so
+        // reviewers can tell apart "user turned it off" from
+        // "the gate threw" (audit fix).
+        console.warn("⚠️ Phase 20 Concept Director gate failed (non-blocking):", (e as Error)?.message || e);
+        // Audit fix round 3: fully reset the trace to its `ran:false`
+        // shape (the `ConceptDirectorTraceEntry` discriminated union
+        // requires `conceptCount:0`, `fallbackCount:0`,
+        // `validatorTriggered:false`, `retryCount:0`,
+        // `varianceAchieved:false` on the skip variant — leaving
+        // them at the partially-populated ran:true values would
+        // violate the type and confuse any consumer narrowing on
+        // `ran`).
+        _cdTrace.ran = false;
+        _cdTrace.reason = _cdTrace.reason || "director-failed";
+        _cdTrace.conceptCount = 0;
+        _cdTrace.fallbackCount = 0;
+        _cdTrace.validatorTriggered = false;
+        _cdTrace.retryCount = 0;
+        _cdTrace.varianceAchieved = false;
+        _cdBriefs = undefined;
+    }
+
+    try {
+        const result = await generators.generateConcepts(approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, _cdBriefs);
         // ── Cultural compliance: scan the concept/blueprint text returned to the client.
         // The prompt and final-copy pipelines are already scanned in generators.ts, but
         // the raw concept text shown in the client's concept cards was not — so haram
@@ -4179,7 +4427,63 @@ export const serverGenerateConcepts = onCall({
             }
         }
         const rg = result.rankingGuidance;
-        return { success: true, text: conceptText, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null, costEstimate: generators.getCostEstimate() };
+        // Phase 20 — Concept Director trace persistence (audit fix
+        // #30/#32/#33 — round 2): the trace rides the HTTP boundary,
+        // not a module global. `serverGenerateConcepts` and
+        // `serverGenerateFinalAd` are two SEPARATE Cloud Run containers
+        // in production (they were sharing process memory in the
+        // emulator via the module-global bridge, which never survives
+        // deployment). The trace now travels:
+        //   serverGenerateConcepts response.conceptDirectorTrace
+        //     → frontend holds in state
+        //     → serverGenerateFinalAd request.data.conceptDirectorTrace
+        //     → generateFinalAd parameter (NOT module global)
+        //     → _lastResolutionTrace.conceptDirector
+        //     → getLastResolutionTrace() in the response
+        //     → frontend saveGeneration writes it to the doc.
+        // This is the same pattern as approvedTov (passed in the
+        // payload to avoid Firestore race conditions; comment at
+        // serverGenerateFinalAd). The trace itself is read-only on
+        // both sides — index.ts only writes it from the concept stage,
+        // generators.ts only merges it into the render trace.
+        //
+        // Trace shape (ConceptDirectorTraceEntry, a discriminated
+        // union keyed by `ran`):
+        //   { ran: true,  enabled, killSwitch, mode, conceptCount,
+        //     fallbackCount, validatorTriggered, retryCount,
+        //     varianceAchieved }                     ← live counters
+        //   { ran: false, enabled, killSwitch, mode, conceptCount: 0,
+        //     fallbackCount: 0, validatorTriggered: false,
+        //     retryCount: 0, varianceAchieved: false,
+        //     reason: "flag-disabled" | "kill-switch-on"
+        //           | "non-initial-mode" | "director-failed" }
+        //                                              ← gate-skip / failure
+        // The ConceptDirectorTraceEntry is set on `_cdTrace` during
+        // the gate/loop/retry block above; the `conceptDirector:`
+        // key is its merged-into-_lastResolutionTrace counterpart on
+        // the render side (generators.ts:5945+).
+        if (_cdTrace.ran) {
+            console.log(`✅ Phase 20 Concept Director ran=true (concepts=${_cdTrace.conceptCount}, fallback=${_cdTrace.fallbackCount}, retry=${_cdTrace.retryCount}, varianceAchieved=${_cdTrace.varianceAchieved})`);
+        } else {
+            console.log(`⏭️ Phase 20 Concept Director ran=false (reason=${_cdTrace.reason || "unknown"})`);
+        }
+        return {
+            success: true,
+            text: conceptText,
+            rankingRequestId: rg?.rankingRequestId || null,
+            rankingRequestFingerprint: rg?.rankingRequestFingerprint || null,
+            rankingAppliedSummary: rg?.rankingAppliedSummary || null,
+            costEstimate: generators.getCostEstimate(),
+            // The Concept Director trace payload (additive optional). The
+            // frontend must carry this back into its
+            // `serverGenerateFinalAd` call so `generateFinalAd` can merge
+            // it into the persisted resolution trace (Contract C7.1,
+            // D1, D2.1). Field absence on the response means the gate
+            // skipped and produced no trace — semantically equivalent
+            // to `reason:"non-initial-mode"` etc., but the frontend
+            // forwards `undefined` in that case.
+            conceptDirectorTrace: _cdTrace,
+        };
     } catch (error: any) {
         console.error("generateConcepts error:", error);
         const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateConcepts", inputs });
@@ -4189,6 +4493,13 @@ export const serverGenerateConcepts = onCall({
         throw new HttpsError("internal", "Concept generation failed: " + error.message);
     }
 });
+
+// (audit fix #30/#32/#33 — round 2): the Concept Director trace rides
+// the HTTP boundary (this response.conceptDirectorTrace → frontend
+// request.data.conceptDirectorTrace → generateFinalAd param) rather
+// than a module global, because serverGenerateConcepts and
+// serverGenerateFinalAd run in separate Cloud Run containers in
+// production and do not share process memory.)
 
 // ─── GENERATE BUILD PLAN ─────────────────────────────────────────────────
 export const serverGenerateBuildPlan = onCall({
@@ -4232,6 +4543,99 @@ export const serverGenerateBuildPlan = onCall({
     }
 });
 
+// ═══ PHASE 20 — CONCEPT DIRECTOR TRACE TYPE GUARD ═══
+// Defensive sanitization for the `conceptDirectorTrace` payload that
+// rides the HTTP boundary from `serverGenerateConcepts` to
+// `serverGenerateFinalAd` (audit fix round 8). The frontend runs an
+// identical guard in `src/services/geminiService.ts`; we re-validate
+// here as a second line of defense so a tampered request or a future
+// frontend bug cannot inject an arbitrary string into the persisted
+// `ResolutionTrace.conceptDirector`. A failed re-validation drops the
+// payload to `null` so the merge in `generateFinalAd` is a no-op.
+//
+// Audit fix round 9: canonicalize the trace — return a NEW object
+// containing ONLY the allowlisted fields. The plain `isValid` guard
+// accepted objects with extra keys, which would persist arbitrary
+// fields to the generation doc. The sanitizer also enforces the
+// closed union of `reason` strings on the skip path and the literal
+// 0/false values for the skip-path counters (they are not free
+// numbers — they are 0/false literals in the type).
+function sanitizeConceptDirectorTrace(
+    v: unknown,
+): ConceptDirectorTraceEntry | null {
+    if (typeof v !== "object" || v === null) return null;
+    const t = v as Record<string, unknown>;
+    if (t.mode !== "balanced") return null;
+
+    if (t.ran === true) {
+        if (
+            typeof t.enabled !== "boolean"
+            || typeof t.killSwitch !== "boolean"
+            || typeof t.conceptCount !== "number" || t.conceptCount < 0
+            || typeof t.fallbackCount !== "number" || t.fallbackCount < 0
+            || typeof t.validatorTriggered !== "boolean"
+            || typeof t.retryCount !== "number" || t.retryCount < 0
+            // Per FR-015 / SC-005, each concept can be retried at most
+            // once in the live run path. Cap retryCount to 0 or 1 so
+            // a forged payload with a large retryCount can't bypass
+            // the per-concept retry ceiling.
+            || (t.retryCount !== 0 && t.retryCount !== 1)
+            || typeof t.varianceAchieved !== "boolean"
+        ) {
+            return null;
+        }
+        return {
+            ran: true,
+            enabled: t.enabled,
+            killSwitch: t.killSwitch,
+            mode: "balanced",
+            conceptCount: t.conceptCount,
+            fallbackCount: t.fallbackCount,
+            validatorTriggered: t.validatorTriggered,
+            retryCount: t.retryCount,
+            varianceAchieved: t.varianceAchieved,
+        };
+    }
+
+    if (t.ran === false) {
+        if (
+            typeof t.enabled !== "boolean"
+            || typeof t.killSwitch !== "boolean"
+            || t.conceptCount !== 0
+            || t.fallbackCount !== 0
+            || t.validatorTriggered !== false
+            || t.retryCount !== 0
+            || t.varianceAchieved !== false
+        ) {
+            return null;
+        }
+        if (
+            t.reason !== "flag-disabled"
+            && t.reason !== "kill-switch-on"
+            && t.reason !== "non-initial-mode"
+            && t.reason !== "director-failed"
+        ) {
+            return null;
+        }
+        return {
+            ran: false,
+            enabled: t.enabled,
+            killSwitch: t.killSwitch,
+            mode: "balanced",
+            conceptCount: 0,
+            fallbackCount: 0,
+            validatorTriggered: false,
+            retryCount: 0,
+            varianceAchieved: false,
+            // t.reason is narrowed to one of the 4 canonical literal
+            // values by the inArray guard above; the cast is safe.
+            reason: t.reason as NonNullable<ConceptDirectorTraceEntry> extends { ran: false } ? Extract<NonNullable<ConceptDirectorTraceEntry>, { ran: false }>["reason"] : never,
+        } as NonNullable<ConceptDirectorTraceEntry>;
+    }
+
+    return null;
+}
+
 // ─── GENERATE FINAL AD (IMAGE) ───
 export const serverGenerateFinalAd = onCall({
     region: "europe-west1",
@@ -4242,7 +4646,7 @@ export const serverGenerateFinalAd = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId, _batchTotal } = request.data;
+    const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId, _batchTotal, conceptDirectorTrace } = request.data;
     void activeWorkspaceId;
     // ═══ MODE-FORMAT GATE (before any credit spend) ═══
     // Always run — even on edit/regen paths. An edit request that arrives with
@@ -4272,7 +4676,32 @@ export const serverGenerateFinalAd = onCall({
     }
 
     try {
-        const result = await generators.generateFinalAd(buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride);
+        // Phase 20 — Concept Director trace (audit fix #30/#32/#33 —
+        // round 2): the trace rides the HTTP boundary from
+        // serverGenerateConcepts. serverGenerateFinalAd runs in a
+        // SEPARATE Cloud Run container in production (the module-
+        // global bridge never survives deployment) so the trace must
+        // arrive as a function parameter. `conceptDirectorTrace` is
+        // optional: if absent (legacy / pre-Phase-20 / new flag-off
+        // generation), generateFinalAd just skips the merge.
+        //
+        // Audit fix round 8 — defensive sanitization (frontend mirror):
+        // the frontend's `isValidConceptDirectorTrace` guard is the
+        // primary line of defense, but we re-validate on the backend as
+        // well so a future frontend bug or tampered request cannot
+        // inject an arbitrary string into the persisted trace. Audit
+        // fix round 9: also CANONICALIZE — return a NEW object with
+        // only the allowlisted fields so extra keys from a tampered
+        // request never reach the persisted trace. A failed sanitization
+        // drops the payload to `undefined` here (the merge in
+        // `generateFinalAd` no-ops on `undefined` / `null`).
+        const _sanitizedConceptDirectorTrace = sanitizeConceptDirectorTrace(conceptDirectorTrace) ?? undefined;
+        const result = await generators.generateFinalAd(
+            buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio,
+            editInstruction, base64ToEdit, styleReference, textOverride,
+            undefined, // reflowInstruction (unchanged)
+            _sanitizedConceptDirectorTrace, // Phase 20: forwarded from serverGenerateConcepts
+        );
 
         // ═══ CREATIVE MEMORY: Store creative metadata (fire-and-forget) ═══
         // Only store primary renders, not edits/reflows. Requires creativeMemory feature.

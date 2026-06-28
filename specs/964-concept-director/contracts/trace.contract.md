@@ -1,0 +1,57 @@
+# Contract D — Resolution trace (`functions/src/types.ts`)
+
+Additive, optional sub-object on the existing `ResolutionTrace`. No migration. Follows the `expressionAdaptation` / `gazeDirection` precedent.
+
+## D1 — Type
+
+```ts
+readonly conceptDirector?:
+  | {
+      readonly ran: true;
+      readonly enabled: boolean;             // per-user flag value
+      readonly killSwitch: boolean;          // global kill-switch value at run time
+      readonly mode: "balanced";             // variance mode used (fixed this build)
+      readonly conceptCount: number;         // briefs attempted (3 on the live path)
+      readonly fallbackCount: number;        // concepts that fell back to existing logic (0..conceptCount)
+      readonly validatorTriggered: boolean;  // a blocking violation was found
+      readonly retryCount: number;           // 0..conceptCount, each concept ≤1
+      readonly varianceAchieved: boolean;    // final validation passed (or no violation)
+      readonly reason?: never;               // reserved for the skip variant — must NOT appear on `ran: true`
+    }
+  | {
+      readonly ran: false;
+      readonly enabled: boolean;             // observed per-user flag value at gate decision
+      readonly killSwitch: boolean;          // observed global kill-switch value at gate decision
+      readonly mode: "balanced";             // variance mode used (fixed this build)
+      readonly conceptCount: 0;              // skip-path default: stage did not run
+      readonly fallbackCount: 0;             // skip-path default: stage did not run
+      readonly validatorTriggered: false;     // skip-path default: stage did not run
+      readonly retryCount: 0;                // skip-path default: stage did not run
+      readonly varianceAchieved: false;      // skip-path default: stage did not run
+      readonly reason: "flag-disabled"       // REQUIRED on the skip variant — the canonical
+                  | "kill-switch-on"          // skip reasons. `reason` MUST be exactly one of
+                  | "non-initial-mode";       // these three (no other string is accepted).
+    };
+```
+
+The shape is a DISCRIMINATED UNION keyed by `ran` so the skip-path branch is type-safe:
+- A `ran: false` variant MUST carry exactly one of the three canonical `reason` values (never `undefined` / `null` / free text).
+- All counter fields collapse to their skip-path defaults (`0` / `false`) — the stage did not run, so no live counters apply.
+- A `ran: true` variant sets `reason?: never` so it cannot accidentally be persisted on the ran path.
+
+## D2 — Write guarantees
+
+- **D2.1 (ran path)**: When the stage runs (gate passed and the Director loop executed), the trace records the real counters: `ran:true`, `enabled:true`, the observed `killSwitch`, `conceptCount` (3 on the live path), the actual `fallbackCount` (computed AFTER all retries — D2.1a), `validatorTriggered`, `retryCount`, and `varianceAchieved`.
+- **D2.1a (fallbackCount timing)**: `fallbackCount` is the count of `ConceptDirectorFallback` slots in the FINAL `_directorResults` array — i.e. after the retry pass completes. Recording it from the pre-retry snapshot would under-count any concept that the retry itself failed for.
+- **D2.2 (skipped path)**: When the gate skips the stage, the callable writes `ran:false` with `reason` ∈ {`"flag-disabled"`, `"kill-switch-on"`, `"non-initial-mode"`}. `enabled`/`killSwitch` reflect the observed values at the time of the gate decision so a reviewer can reconstruct why; counters are `0`/`false` and `varianceAchieved:false`. (No `"not-single-ad-flow"` reason — batch is in scope as of 2026-06-27, C1, and carousel never reaches this callable.) The skip-path write is ALWAYS performed for any generation that hits `serverGenerateConcepts` so the trace is consistent across all generations served by the callable.
+- **D2.3 (additive + field absence vs. ran:false)**: The field is OPTIONAL on the legacy generation docs that pre-date Phase 20 — field absence on those docs means "no Phase-20 data" (SC-008) and is the historical default. NEW generations served by the current `serverGenerateConcepts` callable ALWAYS write the field (either `ran:true` or `ran:false`) so consumers reading any recent doc do not have to disambiguate absence from ran:false. No existing trace field changes shape; the new field is purely additive.
+- **D2.4 (no PII / no copy)**: The trace stores counters and booleans only — not the brief text — keeping it small and safe.
+
+## D3 — Relationship to deferred telemetry
+
+The richer counters (`fallbackCount`, `retryCount`, `varianceAchieved`) are exactly the rollout-health / rollback signals the deferred telemetry phase (20.G.4) will later aggregate into a `pipelineTelemetry` store. Collecting them on the trace now satisfies auditability (Principle VI) **without** building the analytics pipeline this build (FR-026).
+
+## D4 — Test hooks
+
+- A unit test asserts the `conceptDirector` field shape compiles and that a sample `ran:false` skip object and a sample `ran:true` object both satisfy the type.
+- An integration-style assertion (source-scan, mirroring `gazeMap.test.ts`) confirms the trace is written in the concepts flow for both the ran and skipped branches.
