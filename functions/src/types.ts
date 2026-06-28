@@ -490,7 +490,7 @@ export interface ResolutionTrace {
     //
     // The shape is a DISCRIMINATED UNION keyed by `ran` so the skip-path
     // branch is type-safe: a `ran: false` variant MUST carry one of the
-    // three canonical skip reasons (and never `reason: undefined`),
+    // four canonical skip reasons (and never `reason: undefined`),
     // and all the counter fields collapse to their skip-path defaults
     // (zero / false). The `ran: true` variant keeps the loose counter
     // set so retries and aggregations still work.
@@ -505,9 +505,10 @@ export interface ResolutionTrace {
     //     each concept ≤ 1 per FR-015 / SC-005), and `varianceAchieved`
     //     (final validation passed OR no violation was ever raised).
     //     `reason` is `never` here — it is reserved for the skip variant.
-    //   - ran: false → the gate skipped the stage; `reason` is REQUIRED
-    //     and must be exactly one of `"flag-disabled"`, `"kill-switch-on"`,
-    //     `"non-initial-mode"`. `enabled`/`killSwitch` reflect the observed
+    //   - ran: false → the gate skipped the stage OR the stage threw;
+    //     `reason` is REQUIRED and must be exactly one of `"flag-disabled"`,
+    //     `"kill-switch-on"`, `"non-initial-mode"`, `"director-failed"`.
+    //     `enabled`/`killSwitch` reflect the observed
     //     values at the time of the gate decision so a reviewer can
     //     reconstruct why; counters collapse to `0`/`false` and
     //     `varianceAchieved:false` (D2.2).
