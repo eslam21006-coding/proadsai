@@ -68,30 +68,87 @@ export interface WebsiteSuggestions {
 // type-safe (no `any` in the public surface). Kept as a discriminated
 // union by `ran` to mirror the backend's exact shape — the consumer
 // narrows on `ran` to read the counter set or the reason.
+//
+// Per project convention: `interface` for object shapes, `type` for
+// unions / aliases. The two variants are hoisted into named interfaces
+// so the shape is reusable and so future fields (e.g. stage timing)
+// can be added in one place.
+export interface ConceptDirectorTraceRan {
+    ran: true;
+    enabled: boolean;
+    killSwitch: boolean;
+    mode: "balanced";
+    conceptCount: number;
+    fallbackCount: number;
+    validatorTriggered: boolean;
+    retryCount: number;
+    varianceAchieved: boolean;
+}
+
+export interface ConceptDirectorTraceSkipped {
+    ran: false;
+    enabled: boolean;
+    killSwitch: boolean;
+    mode: "balanced";
+    conceptCount: 0;
+    fallbackCount: 0;
+    validatorTriggered: false;
+    retryCount: 0;
+    varianceAchieved: false;
+    reason: "flag-disabled" | "kill-switch-on" | "non-initial-mode" | "director-failed";
+}
+
 export type ConceptDirectorTraceEntry =
-  | {
-      ran: true;
-      enabled: boolean;
-      killSwitch: boolean;
-      mode: "balanced";
-      conceptCount: number;
-      fallbackCount: number;
-      validatorTriggered: boolean;
-      retryCount: number;
-      varianceAchieved: boolean;
+    | ConceptDirectorTraceRan
+    | ConceptDirectorTraceSkipped;
+
+/**
+ * Defensive type guard: is this an unknown value a well-formed
+ * `ConceptDirectorTraceEntry`? Phase 20 rides the trace across the
+ * Cloud Run container boundary in the HTTP payload (audit fix
+ * #30/#32/#33 — round 2), so the backend MUST sanitize any
+ * client-supplied payload before merging it into the persisted
+ * `_lastResolutionTrace.conceptDirector`. The discriminator is `ran`
+ * (boolean) plus the closed enum of allowed `reason` strings. Any
+ * value that fails these checks is dropped to `null` and the merge
+ * is a no-op (the backend already has its own
+ * `ConceptDirectorTraceEntry` type guard in `serverGenerateFinalAd`).
+ */
+export function isValidConceptDirectorTrace(
+    v: unknown,
+): v is ConceptDirectorTraceEntry {
+    if (typeof v !== "object" || v === null) return false;
+    const t = v as Record<string, unknown>;
+    if (t.mode !== "balanced") return false;
+    if (t.ran === true) {
+        // ConceptDirectorTraceRan: the live-run path. Counters are
+        // non-negative numbers; enabled/killSwitch are booleans.
+        return typeof t.enabled === "boolean"
+            && typeof t.killSwitch === "boolean"
+            && typeof t.conceptCount === "number" && t.conceptCount >= 0
+            && typeof t.fallbackCount === "number" && t.fallbackCount >= 0
+            && typeof t.validatorTriggered === "boolean"
+            && typeof t.retryCount === "number" && t.retryCount >= 0
+            && typeof t.varianceAchieved === "boolean";
     }
-  | {
-      ran: false;
-      enabled: boolean;
-      killSwitch: boolean;
-      mode: "balanced";
-      conceptCount: 0;
-      fallbackCount: 0;
-      validatorTriggered: false;
-      retryCount: 0;
-      varianceAchieved: false;
-      reason: "flag-disabled" | "kill-switch-on" | "non-initial-mode" | "director-failed";
-    };
+    if (t.ran === false) {
+        // ConceptDirectorTraceSkipped: the gate-skip / failure path.
+        // Counters are 0 (literal), flags are false (literal), reason
+        // is one of the 4 canonical values.
+        return typeof t.enabled === "boolean"
+            && typeof t.killSwitch === "boolean"
+            && t.conceptCount === 0
+            && t.fallbackCount === 0
+            && t.validatorTriggered === false
+            && t.retryCount === 0
+            && t.varianceAchieved === false
+            && (t.reason === "flag-disabled"
+                || t.reason === "kill-switch-on"
+                || t.reason === "non-initial-mode"
+                || t.reason === "director-failed");
+    }
+    return false;
+}
 
 export interface GenerationResult {
   text: string;
@@ -115,7 +172,18 @@ function parseGenerationResult(data: any): GenerationResult {
     rankingRequestFingerprint: data?.rankingRequestFingerprint || null,
     rankingAppliedSummary: data?.rankingAppliedSummary || null,
     costEstimate: data?.costEstimate || null,
-    conceptDirectorTrace: (data?.conceptDirectorTrace as ConceptDirectorTraceEntry | null | undefined) ?? null,
+    // Phase 20 — Concept Director trace (audit fix round 8): the
+    // frontend sanitizes any client-supplied payload via
+    // `isValidConceptDirectorTrace` before holding it in state or
+    // forwarding it back. This is the second line of defense — the
+    // primary guard lives server-side (in `serverGenerateFinalAd`
+    // and `generateFinalAd`). The discriminator is the `ran` boolean
+    // plus the closed enum of `reason` strings on the skip path; any
+    // shape that fails is dropped to `null` and the merge is a
+    // no-op.
+    conceptDirectorTrace: isValidConceptDirectorTrace(data?.conceptDirectorTrace)
+        ? (data!.conceptDirectorTrace as ConceptDirectorTraceEntry)
+        : null,
   };
 }
 
@@ -319,8 +387,13 @@ Use this information to better understand the brand's positioning, tone, and tar
       // the resolution trace at render-stage. `undefined` is
       // stripped by the callable so the backend sees a clean
       // `request.data.conceptDirectorTrace` either as the trace or
-      // as `undefined`.
-      conceptDirectorTrace: conceptDirectorTrace ?? undefined,
+      // as `undefined`. We re-validate here as a defensive double
+      // check (audit fix round 8): the App-level state may have
+      // been mutated by another tab / hook, so we never forward a
+      // payload that doesn't pass the discriminated-union guard.
+      conceptDirectorTrace: isValidConceptDirectorTrace(conceptDirectorTrace)
+        ? (conceptDirectorTrace ?? undefined)
+        : undefined,
     });
     const data = result.data as any;
     if (import.meta.env.DEV && data.debug) {

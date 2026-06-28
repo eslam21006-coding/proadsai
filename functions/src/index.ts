@@ -48,6 +48,7 @@ import {
 } from "./conceptDirector.js";
 import { validateBatchVariance } from "./varianceValidator.js";
 import { getConceptDirectorKillSwitch, getConceptDirectorEnabled } from "./conceptDirectorConfig.js";
+import type { ConceptDirectorTraceEntry } from "./types.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
@@ -4542,6 +4543,44 @@ export const serverGenerateBuildPlan = onCall({
     }
 });
 
+// ═══ PHASE 20 — CONCEPT DIRECTOR TRACE TYPE GUARD ═══
+// Defensive sanitization for the `conceptDirectorTrace` payload that
+// rides the HTTP boundary from `serverGenerateConcepts` to
+// `serverGenerateFinalAd` (audit fix round 8). The frontend runs an
+// identical guard in `src/services/geminiService.ts`; we re-validate
+// here as a second line of defense so a tampered request or a future
+// frontend bug cannot inject an arbitrary string into the persisted
+// `ResolutionTrace.conceptDirector`. A failed re-validation drops the
+// payload to `null` so the merge in `generateFinalAd` is a no-op.
+function isValidConceptDirectorTrace(v: unknown): v is NonNullable<ConceptDirectorTraceEntry> {
+    if (typeof v !== "object" || v === null) return false;
+    const t = v as Record<string, unknown>;
+    if (t.mode !== "balanced") return false;
+    if (t.ran === true) {
+        return typeof t.enabled === "boolean"
+            && typeof t.killSwitch === "boolean"
+            && typeof t.conceptCount === "number" && t.conceptCount >= 0
+            && typeof t.fallbackCount === "number" && t.fallbackCount >= 0
+            && typeof t.validatorTriggered === "boolean"
+            && typeof t.retryCount === "number" && t.retryCount >= 0
+            && typeof t.varianceAchieved === "boolean";
+    }
+    if (t.ran === false) {
+        return typeof t.enabled === "boolean"
+            && typeof t.killSwitch === "boolean"
+            && t.conceptCount === 0
+            && t.fallbackCount === 0
+            && t.validatorTriggered === false
+            && t.retryCount === 0
+            && t.varianceAchieved === false
+            && (t.reason === "flag-disabled"
+                || t.reason === "kill-switch-on"
+                || t.reason === "non-initial-mode"
+                || t.reason === "director-failed");
+    }
+    return false;
+}
+
 // ─── GENERATE FINAL AD (IMAGE) ───
 export const serverGenerateFinalAd = onCall({
     region: "europe-west1",
@@ -4590,11 +4629,22 @@ export const serverGenerateFinalAd = onCall({
         // arrive as a function parameter. `conceptDirectorTrace` is
         // optional: if absent (legacy / pre-Phase-20 / new flag-off
         // generation), generateFinalAd just skips the merge.
+        //
+        // Audit fix round 8 — defensive sanitization (frontend mirror):
+        // the frontend's `isValidConceptDirectorTrace` guard is the
+        // primary line of defense, but we re-validate on the backend as
+        // well so a future frontend bug or tampered request cannot
+        // inject an arbitrary string into the persisted trace. A failed
+        // re-validation is dropped to `undefined` here (the merge in
+        // `generateFinalAd` no-ops on `undefined` / `null`).
+        const _sanitizedConceptDirectorTrace = isValidConceptDirectorTrace(conceptDirectorTrace)
+            ? conceptDirectorTrace
+            : undefined;
         const result = await generators.generateFinalAd(
             buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio,
             editInstruction, base64ToEdit, styleReference, textOverride,
             undefined, // reflowInstruction (unchanged)
-            conceptDirectorTrace, // Phase 20: forwarded from serverGenerateConcepts
+            _sanitizedConceptDirectorTrace, // Phase 20: forwarded from serverGenerateConcepts
         );
 
         // ═══ CREATIVE MEMORY: Store creative metadata (fire-and-forget) ═══
