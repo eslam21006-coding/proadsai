@@ -5446,20 +5446,29 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         conceptDirectorTrace,
       );
       const res = editResult.image;
+      // Prefer the server-uploaded Storage URL so the bound batch/carousel/A/B
+      // state survives the Firestore doc-size stripper on autosave. Fall back to
+      // the in-memory base64 only when the server upload failed.
+      const editedDisplayUrl = editResult.storageUrl || res;
 
       // ═══ WRITE-BACK: Route result to correct source ═══
       if (editTarget && res) {
         if (editTarget.source === 'batch') {
           // Write back to the exact batch result
-          setBatchResults(prev => prev.map((r, i) => i === editTarget.index ? { ...r, url: res, status: 'done' as const } : r));
+          setBatchResults(prev => prev.map((r, i) => i === editTarget.index ? { ...r, url: editedDisplayUrl, status: 'done' as const } : r));
           showToast(`${editTarget.label} updated!`, 'success');
         } else if (editTarget.source === 'carousel') {
           // Write back to the exact carousel slide
-          setCarouselSlides(prev => prev.map((s, i) => i === editTarget.index ? { ...s, imageUrl: res, status: 'done' as const } : s));
+          setCarouselSlides(prev => prev.map((s, i) => i === editTarget.index ? { ...s, imageUrl: editedDisplayUrl, status: 'done' as const } : s));
           showToast(`${editTarget.label} updated!`, 'success');
         } else if (editTarget.source === 'ab') {
           // Write back to the exact A/B variation
-          setAbVariations(prev => prev.map((v, i) => i === editTarget.index ? { ...v, url: res, status: 'done' as const } : v));
+          setAbVariations(prev => prev.map((v, i) => i === editTarget.index ? {
+            ...v,
+            url: editedDisplayUrl,
+            storageUrl: editResult.storageUrl || null,
+            status: 'done' as const,
+          } : v));
           showToast(`${editTarget.label} updated!`, 'success');
         } else {
           // Default: add to history
