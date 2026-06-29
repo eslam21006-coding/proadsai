@@ -4780,7 +4780,17 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         const primaryStorageUrl = genResult.storageUrl || null;
         // Capture originalUrl = the primary render: the un-reflowed, highest-quality source
         // every later resize of any size for this combo reflows from (no chain degradation).
-        setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, buildPlan: combo.conceptText, url: primaryUrl, originalUrl: primaryUrl, status: primaryUrl ? 'done' : 'error' } : r));
+        // url prefers the Storage URL when available so the rendered image survives the
+        // Firestore doc-size stripper on autosave; originalUrl keeps the base64 for reflow
+        // operations that need an in-memory source.
+        setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? {
+          ...r,
+          buildPlan: combo.conceptText,
+          url: primaryStorageUrl || primaryUrl,
+          storageUrl: primaryStorageUrl,
+          originalUrl: primaryUrl,
+          status: primaryUrl ? 'done' : 'error',
+        } : r));
         // Persist a generation doc for this combo so its extra-size reflows have a
         // generationId to anchor to (the reflowImage callable requires one) and the
         // correct per-combo buildPlan for any rerender route. Non-blocking.
