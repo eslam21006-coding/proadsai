@@ -28,6 +28,7 @@ import { probeMetaRole } from "./workspaces/metaRoleProbe.js";
 import { writeAuditEntry } from "./workspaces/auditLog.js";
 import { reflowImageHandler } from "./reflowImage.js";
 import { generateSizeVariantHandler } from "./sizeVariant.js";
+import { saveBase64ToStorage } from "./storageUpload.js";
 import { purgeExpiredWorkspaces, cascadeReassignOnDelete, cascadeRevertOnRestore } from "./workspaces/workspacePurge.js";
 import { handleStripeWebhook, setNotifyGHL } from "./billing/stripeWebhook.js";
 import { createStripeCheckoutSessionImpl, createStripeTopUpSessionImpl } from "./stripe/stripeCheckout.js";
@@ -4751,10 +4752,9 @@ export const serverGenerateFinalAd = onCall({
             // stores this URL — not the ~1-5 MB base64 — in the generations doc, and
             // the reflow backend downloads it as the outpaint source. Non-blocking:
             // a Storage failure must not fail generation, so we still return the
-            // base64 for instant display and let imageUrl fall back to pending_upload.
+            // base64 for instant display and let storageUrl fall back to null.
             let storageUrl: string | null = null;
             try {
-                const { saveBase64ToStorage } = await import("./storageUpload.js");
                 storageUrl = await saveBase64ToStorage(result.image, `users/${request.auth.uid}/renders`);
             } catch (uploadErr) {
                 console.warn("serverGenerateFinalAd: server-side render upload failed (non-blocking):", uploadErr);

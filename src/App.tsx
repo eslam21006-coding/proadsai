@@ -2907,7 +2907,7 @@ const App: React.FC = () => {
       // path's stripHeavyImageData then reduces the base64 to 'stored_externally' as usual).
       mockupHistory: mockupHistory.map(m => ({
         ...m,
-        url: m.url?.startsWith('blob:') ? (m.rawBase64 || 'pending_upload') : m.url,
+        url: m.url?.startsWith('blob:') ? (m.rawBase64 || '') : m.url,
       })),
       historyIndex,
       resolvedUniverse,
@@ -4444,8 +4444,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             // serverGenerateFinalAd (admin SDK — no client Storage write, no
             // storage/unauthorized). Store that durable URL — NOT the ~1-5 MB base64 —
             // in the generations doc. If the server upload failed, storageUrl is null
-            // and we fall back to 'pending_upload' (reflow then rerenders from plan).
-            const storedImageUrl = mockupResult.storageUrl || 'pending_upload';
+            // and we fall back to the in-memory base64 (instant display) or empty
+            // string (won't render — but won't pretend to be a URL either).
+            const storedImageUrl = mockupResult.storageUrl || mockupResult.image || '';
             // Phase 17 — persist `approvedTov` alongside the build plan so the
             // `generateSizeVariant` callable can read the user's approved copy
             // (the build plan's machine-plan ownership map is a best-effort
@@ -4751,7 +4752,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           try {
             comboGenId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
-              { imageUrl: primaryStorageUrl || 'pending_upload', conceptText: combo.conceptText.substring(0, 500), hookText: (combo.hookText || '').substring(0, 200), buildPlan: combo.conceptText, approvedTov: combo.hookText || combo.conceptText },
+              { imageUrl: primaryStorageUrl || primaryUrl || '', conceptText: combo.conceptText.substring(0, 500), hookText: (combo.hookText || '').substring(0, 200), buildPlan: combo.conceptText, approvedTov: combo.hookText || combo.conceptText },
               combo.conceptText, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
               canUseWorkspaces ? activeWorkspaceId : null
             );
@@ -5150,8 +5151,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               index: s.index,
               // Base64 data URLs are megabytes each; storing several would blow Firestore's
               // 1 MiB doc limit and fail the write. Persist only short Storage/http URLs —
-              // otherwise 'pending_upload', and reflow/retry rerenders from the saved buildPlan.
-              imageUrl: (typeof s.imageUrl === 'string' && s.imageUrl.startsWith('http')) ? s.imageUrl : 'pending_upload',
+              // otherwise empty string, and reflow/retry rerenders from the saved buildPlan.
+              imageUrl: (typeof s.imageUrl === 'string' && s.imageUrl.startsWith('http')) ? s.imageUrl : '',
               buildPlan: s.buildPlan,
               copy: s.copy,
             })),
@@ -5439,9 +5440,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       if (user && res) {
         try {
           // The edited render was persisted to Storage server-side by
-          // serverGenerateFinalAd; store that URL (fall back to pending_upload if the
-          // server upload failed). No client-side Storage write.
-          const storedImageUrl = editResult.storageUrl || 'pending_upload';
+          // serverGenerateFinalAd; store that URL. Fall back to the in-memory base64
+          // (instant display) or empty string (no client-side Storage write).
+          const storedImageUrl = editResult.storageUrl || editResult.image || '';
           const genId = await feedbackService.saveGeneration(
             user.uid, inputs, 'render',
             { imageUrl: storedImageUrl, conceptText: (selectedConcept || '').substring(0, 500), buildPlan: buildPlan || '', approvedTov: buildPlan || '' },
@@ -6062,13 +6063,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     try {
       // Persist the image to Storage SERVER-SIDE (admin SDK — no client Storage write,
       // no storage/unauthorized). An http URL is returned unchanged by the callable.
-      // Non-blocking: fall back to a placeholder if the callable fails.
-      let storedImageUrl = 'pending_upload';
+      // Non-blocking: fall back to an empty string if the callable fails (don't write
+      // a base64 back to Firestore — would blow the 1 MiB doc limit).
+      let storedImageUrl: string = '';
       try {
         const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
-        storedImageUrl = (await uploadFn({ imageBase64: imageUrl })).data.storageUrl || 'pending_upload';
+        storedImageUrl = (await uploadFn({ imageBase64: imageUrl })).data.storageUrl || '';
       } catch (uploadErr) {
-        console.warn('Server render upload failed (non-blocking) — saving favorite with placeholder imageUrl:', uploadErr);
+        console.warn('Server render upload failed (non-blocking) — saving favorite with empty imageUrl:', uploadErr);
       }
       const genId = await feedbackService.saveGeneration(
         user.uid, inputs, 'render',
@@ -8180,13 +8182,14 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                           if (!user?.uid || !inputs) return;
                                           try {
                                             // Persist to Storage SERVER-SIDE (admin SDK). http URLs pass through.
-                                            // Non-blocking: fall back to a placeholder if the callable fails.
-                                            let storedImageUrl = 'pending_upload';
+                                            // Non-blocking: fall back to an empty string if the callable fails
+                                            // (don't write a base64 back to Firestore — would blow the 1 MiB doc limit).
+                                            let storedImageUrl: string = '';
                                             try {
                                               const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
-                                              storedImageUrl = (await uploadFn({ imageBase64: item.url || '' })).data.storageUrl || 'pending_upload';
+                                              storedImageUrl = (await uploadFn({ imageBase64: item.url || '' })).data.storageUrl || '';
                                             } catch (uploadErr) {
-                                              console.warn('Server render upload failed (non-blocking) — saving favorite with placeholder imageUrl:', uploadErr);
+                                              console.warn('Server render upload failed (non-blocking) — saving favorite with empty imageUrl:', uploadErr);
                                             }
                                             const genId = await feedbackService.saveGeneration(
                                               user.uid, inputs, 'render',
