@@ -1101,6 +1101,99 @@ export function setGeminiCaller(fn: GeminiCaller) {
     };
 }
 
+// ─── Blueprint translation (OpenAI path — prompt fidelity hotfix) ─────
+// On the OpenAI path the visual-direction fields (SUBJECT_ACTION,
+// ENVIRONMENT_DESC, MOOD_EMOTION, etc.) are stripped from the blueprint
+// to prevent their Arabic scene prose from being rendered verbatim as
+// visible text on the image by gpt-image-2. The side effect is that
+// gpt-image-2 also loses ALL concept-specific visual direction — every
+// render collapses to the same generic visual. This helper calls the
+// fast LOGIC_MODEL to extract the visual intent and re-express it as a
+// concise English scene description that survives the stripping and
+// reaches gpt-image-2.
+//
+// Fail-open: returns "" on any error. The render proceeds without the
+// English scene description (same as current pre-hotfix behavior).
+interface ConceptDirectorSceneBrief {
+    visualMetaphor?: { description?: string; keyVisualElement?: string };
+    layoutArchetype?: string;
+    heroPoseSpecific?: string;
+    propsForbidden?: string[];
+    heroGazeDirection?: string;
+}
+
+async function translateBlueprintToEnglishScene(
+    blueprint: string,
+    caller: GeminiCaller,
+    conceptDirectorBrief?: ConceptDirectorSceneBrief | null
+): Promise<string> {
+    try {
+        const cdContext = conceptDirectorBrief ? `
+CONCEPT DIRECTOR BRIEF (use this to guide your description):
+- Visual metaphor: ${conceptDirectorBrief.visualMetaphor?.description || 'none'}
+- Key visual element: ${conceptDirectorBrief.visualMetaphor?.keyVisualElement || 'none'}
+- Layout archetype: ${conceptDirectorBrief.layoutArchetype || 'none'}
+- Hero pose: ${conceptDirectorBrief.heroPoseSpecific || 'none'}
+- Forbidden props: ${conceptDirectorBrief.propsForbidden?.join(', ') || 'none'}
+- Hero gaze: ${conceptDirectorBrief.heroGazeDirection || 'none'}
+` : '';
+
+        const prompt = `You are a visual director translating a concept blueprint into a precise English scene description for an AI image generator.
+
+INPUT BLUEPRINT:
+${blueprint}
+${cdContext}
+YOUR TASK:
+Extract ALL visual intent from the blueprint above and rewrite it as a concise English scene description. Cover EVERY one of these aspects:
+
+1. PRIMARY VISUAL SUBJECT: If a hero or person is explicitly present, describe exact pose, body position, hand placement, facial expression, gaze, and wardrobe. If the blueprint is text-only, product-only, device-only, or no-hero, state that no person appears and describe the typographic, product, or object focal point instead.
+2. COMPOSITION: Where the primary visual subject or typographic system sits on the canvas, plus camera angle or viewpoint and distance when applicable.
+3. ENVIRONMENT / BACKGROUND: Specific scene elements, props, background objects, depth layers, or no-environment background treatment — be concrete (not "fantasy forest" but "towering bioluminescent mushrooms with amber caps, misty forest floor, floating spores")
+4. LIGHTING: Direction, color temperature, mood (not "dramatic lighting" but "warm amber side-light from the left, cool blue fill from mushroom glow, soft rim light separating hero from background")
+5. COLOR PALETTE: Dominant colors, accent colors, contrast strategy
+6. MOOD/ATMOSPHERE: The emotional feeling the image should evoke
+7. TEXT ZONES: Where on the image there is clear space for overlaying text (headline zone, CTA zone)
+
+OUTPUT RULES:
+- Write in English ONLY — no Arabic text anywhere
+- Be SPECIFIC and CONCRETE — no vague descriptions
+- Maximum 2000 characters
+- No labels or headers — write as one flowing scene description
+- Do NOT include any text content (headlines, CTAs) — only describe the visual scene
+- Start directly with the scene description — no preamble
+
+OUTPUT:`;
+
+        const result = await caller({
+            model: LOGIC_MODEL,
+            contents: { parts: [{ text: prompt }] },
+            config: { temperature: 0.3 },
+        });
+
+        const translated = (result?.text || '').trim();
+
+        if (!translated) return '';
+
+        // Safety: ensure no Arabic leaked through
+        const arabicChars = (translated.match(/[\u0600-\u06FF]/g) || []).length;
+        const arabicRatio = arabicChars / Math.max(translated.length, 1);
+        if (arabicRatio > 0.05) {
+            console.warn("⚠️ [translateBlueprint] Arabic detected in translation, discarding");
+            return '';
+        }
+
+        // Safety: respect the character budget
+        if (translated.length > 3000) {
+            return translated.substring(0, 3000);
+        }
+
+        return translated;
+    } catch (err) {
+        console.warn("⚠️ [translateBlueprint] Translation failed, proceeding without:", err);
+        return '';
+    }
+}
+
 // ─── OpenAI Key (injected for design critique — different model catches Gemini blind spots) ────
 let openaiKey: string = '';
 
@@ -3424,9 +3517,40 @@ STILL MANDATORY:
       
       POSITIVE LAYOUT INSTRUCTIONS(Architecting the Text Space):
     - You must design the image specifically to hold the text layers(Headline, Subhead, CTA, Badge).
-      - CONCEPT 1(The asymmetric Balance): Place the Hero clearly on one side(Left or Right Rule of Thirds).Create a clean, high - contrast "Void" on the opposite side specifically for the text stack.
-      - CONCEPT 2(The Central Power): Center the Hero.Ensure there is ample "Headroom"(empty space above) or "Base-weight"(dark space below) to hold the text without covering the face.
-      - CONCEPT 3(The Environmental Depth): Place the Hero in the mid - ground.Use the foreground or background environment(e.g., a wall, a screen, the sky) as a natural canvas for the text.
+
+      ${(() => {
+          const _modesCV = (inputs as any).offerCreativeMode || ['standard_hero'];
+          const _isTextOnlyCV = _modesCV.includes('text_only');
+          const _isBeforeAfterCV = isBeforeAfterSelection(inputs, _effectiveColdHookAngle);
+          const _hasPersonCV = !_isTextOnlyCV && (
+              _modesCV.includes('standard_hero') ||
+              _modesCV.includes('speaker_card') ||
+              _isBeforeAfterCV ||
+              _modesCV.length >= 2
+          );
+          if (!_hasPersonCV) {
+              return `COMPOSITION VARIETY CONTRACT (MANDATORY — NO HERO IN THIS AD): Each of the 3 concepts MUST use a fundamentally different visual approach. Vary ALL of these across concepts:
+      - PRIMARY VISUAL PLACEMENT: Different position on canvas (rule-of-thirds left, centered, rule-of-thirds right, foreground close-up, mid-ground full body, off-center diagonal)
+      - CAMERA PERSPECTIVE: Different angles (eye-level, slightly low angle for authority, slightly elevated for overview, Dutch tilt for tension)
+      - VISUAL-ENVIRONMENT RELATIONSHIP: Different interactions (primary visual dominates scene, embedded in scene, emerging from scene, contrasted against scene, framing with environmental elements)
+      - VISUAL ENERGY: Different dynamics (static/posed/powerful, dynamic/in-motion/arriving, contemplative/seated/reflecting, commanding/standing/addressing)
+      - TEXT SPACE STRATEGY: Different approaches to creating room for text overlay (void on one side, headroom above, base-weight below, environment as natural text canvas, depth-of-field separation)
+
+      CRITICAL: Do NOT default to a single arrangement as your 3 variations. Think about what VISUAL STORY best communicates the hook's emotional logic for each concept.
+
+      Match the composition to the HOOK EMOTION, not to a template.`;
+          }
+          return `COMPOSITION VARIETY CONTRACT (MANDATORY): Each of the 3 concepts MUST use a fundamentally different visual approach. Vary ALL of these across concepts:
+      - HERO PLACEMENT: Different position on canvas (rule-of-thirds left, centered, rule-of-thirds right, foreground close-up, mid-ground full body, off-center diagonal)
+      - CAMERA PERSPECTIVE: Different angles (eye-level, slightly low angle for authority, slightly elevated for overview, Dutch tilt for tension — but hero face always clearly visible, front or 3/4 view)
+      - HERO-ENVIRONMENT RELATIONSHIP: Different interactions (hero dominates scene, hero embedded in scene, hero emerging from scene, hero contrasted against scene, hero framing with environmental elements)
+      - VISUAL ENERGY: Different dynamics (static/posed/powerful, dynamic/in-motion/arriving, contemplative/seated/reflecting, commanding/standing/addressing)
+      - TEXT SPACE STRATEGY: Different approaches to creating room for text overlay (void on one side, headroom above, base-weight below, environment as natural text canvas, depth-of-field separation)
+
+      CRITICAL: Do NOT default to "standing, sitting, walking" as your 3 variations. Think about what VISUAL STORY best communicates the hook's emotional logic for each concept. A pain hook might show the hero confronting the problem physically. A future hook might show the hero already in the result state. A curiosity hook might show the hero mid-discovery.
+
+      Match the composition to the HOOK EMOTION, not to a template.`;
+      })()}
 
       CTA & Benefit & BADGE PLOTTING:
       - The Benefit must sit DIRECTLY BELOW the CTA button.Plan the negative space of the image accordingly.
@@ -3635,10 +3759,7 @@ FILM GRAIN: Visible grain/noise texture across the ENTIRE image — mandatory.
 LIGHTING: Available/natural light ONLY — window light, harsh overhead,
   outdoor overcast. NO studio lighting. Imperfect is intentional.
 TYPOGRAPHY IN SCENE: Simple functional sans-serif. Caption/field-report style.
-TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 1 (Classic Scrim — dark functional overlay)
-  Concept 2 → Style 8 (Color Block — muted desaturated tones only)
-  Concept 3 → Style 4 (Magazine Editorial — news feature layout)
+TEXT VARIETY: Across the 3 concepts, vary typography treatment, hierarchy, and text-zone placement while preserving this sub-style. Do NOT use fixed concept-to-style assignments.
 TECHNICAL_PROMPT MUST START WITH:
   "Documentary photography advertisement, desaturated real-world setting,
    film grain texture, available natural light,"
@@ -3675,10 +3796,7 @@ NEON LIGHTS (MANDATORY): Multiple colored neon sources visible in scene:
   At least 2 different neon colors present casting visible spills.
   Hero must have rim lighting from at least one colored neon source.
 ATMOSPHERE: Deep background bokeh city lights. Optional: light rain or mist.
-TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 5 (Neon Glow — headline emits neon matching scene)
-  Concept 2 → Style 3 (Bold Cutout — massive headline over night scene)
-  Concept 3 → Style 7 (Floating 3D — headline in neon-lit 3D space)
+TEXT VARIETY: Across the 3 concepts, vary typography treatment, hierarchy, and text-zone placement while preserving this sub-style. Do NOT use fixed concept-to-style assignments.
 TECHNICAL_PROMPT MUST START WITH:
   "Neon urban night advertisement, wet city streets,
    multiple colored neon light sources, dark night environment,"
@@ -3715,10 +3833,7 @@ COLOR: Vibrant, saturated, high-contrast anime palette.
   Backgrounds: detailed but flat-painted anime style backgrounds.
 EFFECTS: Speed lines for energy (mandatory on at least 1 concept).
   Screen tone / halftone patterns for shading on mid-tones.
-TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 3 (Bold Cutout — manga chapter title energy)
-  Concept 2 → Style 5 (Neon Glow — anime accent color glow on headline)
-  Concept 3 → Style 7 (Floating 3D — anime-style dimensional text)
+TEXT VARIETY: Across the 3 concepts, vary typography treatment, hierarchy, and text-zone placement while preserving this sub-style. Do NOT use fixed concept-to-style assignments.
 TECHNICAL_PROMPT MUST START WITH:
   "Anime manga style illustration advertisement, cel-shaded characters,
    bold black outlines, vibrant saturated colors,"
@@ -3752,10 +3867,7 @@ BASE CANVAS: Soft watercolor washes on textured paper — cream/warm white base.
   Colors: dreamscape palette (lavender, rose, sage, soft gold, sky blue).
 LIGHTING: Diffused, ambient — light comes from everywhere gently.
   No harsh directional light. Everything feels soft and dreamy.
-TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 4 (Magazine Editorial — delicate, with watercolor paper texture)
-  Concept 2 → Style 6 (Ribbon Banner — painted ribbon with handwritten-feel text)
-  Concept 3 → Style 1 (Classic Scrim — soft wash overlay for text zone)
+TEXT VARIETY: Across the 3 concepts, vary typography treatment, hierarchy, and text-zone placement while preserving this sub-style. Do NOT use fixed concept-to-style assignments.
 TECHNICAL_PROMPT MUST START WITH:
   "Watercolor illustration advertisement, soft painted edges,
    color washes bleeding, textured watercolor paper,"
@@ -3787,10 +3899,7 @@ HERO POSE (COMIC-SPECIFIC):
 BASE CANVAS: Bold comic page — 4-color palette, thick panel borders.
 COLOR: Primary CMYK energy — bold reds, blues, yellows. Heavy black outlines.
   Halftone dot patterns for shading. NO photorealistic gradients.
-TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 3 (Bold Cutout — massive comic title energy)
-  Concept 2 → Style 5 (Neon Glow — but in comic accent color)
-  Concept 3 → Style 7 (Floating 3D — comic-style 3D lettering)
+TEXT VARIETY: Across the 3 concepts, vary typography treatment, hierarchy, and text-zone placement while preserving this sub-style. Do NOT use fixed concept-to-style assignments.
 TECHNICAL_PROMPT MUST START WITH:
   "Comic book style illustration advertisement, bold 4-color palette,
    thick black outlines, halftone dot shading,"
@@ -3825,10 +3934,7 @@ BASE CANVAS: Deep black (#0A0A0F) to dark navy (#0D1B3E). SINGLE KEY LIGHT
   casting visible directional shadow across 60%+ of the canvas.
   Atmospheric layers (smoke wisps, particles, haze) — REQUIRED, not optional.
 FORBIDDEN: Natural daylight, white/cream backgrounds, pastel colors.
-TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 5 (Neon Glow — cinematic highlight)
-  Concept 2 → Style 7 (Floating 3D — headline with material texture)
-  Concept 3 → Style 3 (Bold Cutout — massive headline over dark scene)
+TEXT VARIETY: Across the 3 concepts, vary typography treatment, hierarchy, and text-zone placement while preserving this sub-style. Do NOT use fixed concept-to-style assignments.
 TECHNICAL_PROMPT MUST START WITH:
   "Cinematic dark movie poster advertisement, deep black background,
    single dramatic key light, atmospheric smoke and particles,"
@@ -3859,10 +3965,7 @@ BASE CANVAS: Warm, vibrant, saturated — golden amber, rich cream,
   vivid illustrated color fields. Multi-fill even lighting.
   Scene is ILLUSTRATED with painterly quality — NOT a dark photo.
 FORBIDDEN: Dark backgrounds, heavy shadow, smoke/haze, neon, black canvas.
-TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 4 (Magazine Editorial — warm version)
-  Concept 2 → Style 8 (Color Block — vivid warm tones)
-  Concept 3 → Style 1 (Classic Scrim — warm, light scrim)
+TEXT VARIETY: Across the 3 concepts, vary typography treatment, hierarchy, and text-zone placement while preserving this sub-style. Do NOT use fixed concept-to-style assignments.
 TECHNICAL_PROMPT MUST START WITH:
   "Bright illustrated lifestyle advertisement, warm saturated colors,
    even soft lighting, optimistic inviting atmosphere,"
@@ -3898,10 +4001,7 @@ MULTIPLE COLORED LIGHT SOURCES: contrasting temperature lights.
   Volumetric light rays MUST be visible. MAGICAL PARTICLES: glowing embers,
   mystical sparks, or colored mist — REQUIRED.
 FORBIDDEN: Plain black background, pastel, flat/graphic style, studio aesthetics.
-TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 7 (Floating 3D — metallic/jewel texture)
-  Concept 2 → Style 3 (Bold Cutout — gold leaf or iridescent texture)
-  Concept 3 → Style 5 (Neon Glow — jewel tones: emerald, crimson, gold)
+TEXT VARIETY: Across the 3 concepts, vary typography treatment, hierarchy, and text-zone placement while preserving this sub-style. Do NOT use fixed concept-to-style assignments.
 TECHNICAL_PROMPT MUST START WITH:
   "Epic fantasy advertisement, rich jewel-toned background,
    multiple dramatic colored light sources,"
@@ -3937,10 +4037,7 @@ COLOR: GRAYSCALE ONLY. Absolutely zero color. Pure blacks, clean whites,
   mid-tones only through cross-hatch density.
 BORDERS: MANDATORY thick black rectangular border frame.
 TYPOGRAPHY: Vintage serif font — bold, all-caps, high weight. No modern sans-serif.
-TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 1 (Classic Scrim — bold vintage ink overlay)
-  Concept 2 → Style 4 (Magazine Editorial — vintage newspaper column layout)
-  Concept 3 → Style 3 (Bold Cutout — massive vintage headline, ink-filled)
+TEXT VARIETY: Across the 3 concepts, vary typography treatment, hierarchy, and text-zone placement while preserving this sub-style. Do NOT use fixed concept-to-style assignments.
 TECHNICAL_PROMPT MUST START WITH:
   "Vintage 1950s newspaper advertisement illustration, black and white ink art,
    cross-hatching technique, bold pen outlines,"
@@ -3967,10 +4064,7 @@ COLOR: WARM SEPIA MONOCHROME throughout. Base tone: aged amber (#704214 range).
   All blacks become warm dark brown. All whites become aged cream/parchment.
 PAPER TEXTURE: Subtle aged paper grain visible in lighter areas.
 BORDERS: MANDATORY thick warm-brown border frame.
-TEXT STYLE ROTATION (each concept uses a DIFFERENT style):
-  Concept 1 → Style 1 (Classic Scrim — warm sepia overlay, cream text)
-  Concept 2 → Style 4 (Magazine Editorial — vintage broadsheet newspaper layout)
-  Concept 3 → Style 6 (Ribbon Banner — aged brown ribbon with cream text)
+TEXT VARIETY: Across the 3 concepts, vary typography treatment, hierarchy, and text-zone placement while preserving this sub-style. Do NOT use fixed concept-to-style assignments.
 TECHNICAL_PROMPT MUST START WITH:
   "Vintage sepia-toned newspaper advertisement illustration, warm aged ink art,
    cross-hatching technique, parchment paper texture,"
@@ -5350,6 +5444,10 @@ export interface BuildFinalImagePromptInput {
     // path this suppresses the BLUEPRINT block — the reference image already carries all visual
     // direction, so dumping the (Arabic) blueprint prose only risks it bleeding onto the image.
     styleReferencePresent?: boolean;
+    // English scene description translated from the Arabic blueprint. Injected on the OpenAI
+    // path AFTER the stripped blueprint to preserve concept-specific visual direction that
+    // would otherwise be removed by the Arabic text-bleeding prevention regex.
+    englishSceneDescription?: string;
 }
 
 export interface BuildFinalImagePromptResult {
@@ -5521,6 +5619,9 @@ ${MODEL_PROVIDER === 'openai' && styleReferencePresent
   ? '' /* OpenAI reflow/anchor: the style-reference image supplies all visual direction; omit the
           blueprint so its (Arabic) scene prose can't bleed onto the image as rendered text. */
   : `BLUEPRINT: ${strippedBlueprint}`}
+${MODEL_PROVIDER === 'openai' && params.englishSceneDescription && !params.styleReferencePresent
+  ? `\nVISUAL SCENE DIRECTION (follow this precisely):\n${params.englishSceneDescription.replace(/[[\]{}]/g, '').replace(/[ \t]+/g, ' ').trim()}\n`
+  : ''}
 ${(() => {
     // Phase 28 — Expression adaptation (audit fixes #8, #9, #15, #17).
     //
@@ -7368,6 +7469,20 @@ Use your judgment — consistency where it serves the story, change where the co
 `
             : undefined;
 
+        // Hotfix: translate Arabic blueprint to English scene description for gpt-image-2.
+        // The OpenAI path strips Arabic visual-direction fields to prevent text bleeding,
+        // which also removes all concept-specific content. This translation preserves the
+        // visual intent in English so each concept renders differently. Fail-open: returns ""
+        // on any error so the render proceeds unchanged.
+        let _englishSceneDescription = '';
+        if (MODEL_PROVIDER === 'openai') {
+            _englishSceneDescription = await translateBlueprintToEnglishScene(
+                gatedBlueprint,
+                callGemini,
+                null
+            );
+        }
+
         const _promptResult = buildFinalImagePrompt({
             technicalPrompt: '',
             blueprint: cleanBuildPlan,
@@ -7388,6 +7503,7 @@ Use your judgment — consistency where it serves the story, change where the co
             reflowInstruction,
             slideVisualDirective: _slideVisualDirective,
             styleReferencePresent: !!styleReference,
+            englishSceneDescription: _englishSceneDescription,
         });
 
         parts.push({ text: _promptResult.textPrompt });
