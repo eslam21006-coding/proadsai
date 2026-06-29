@@ -3281,8 +3281,7 @@ const App: React.FC = () => {
   const startLoad = (msg: string) => { setIsLoading(true); setLoadingMsg(msg); };
   const stopLoad = () => { setIsLoading(false); setLoadingMsg(''); };
 
-
-const pushMockup = (imageOrUrl: string | null, ratio: AspectRatio, storageUrl?: string | null) => {
+  const pushMockup = (imageOrUrl: string | null, ratio: AspectRatio, storageUrl?: string | null) => {
     if (!imageOrUrl) return;
     // Prefer the server-uploaded Storage URL when available — it's durable across
     // reloads, survives the Firestore doc-size stripper, and is what <img> actually
@@ -5464,8 +5463,16 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       // ═══ WRITE-BACK: Route result to correct source ═══
       if (editTarget && res) {
         if (editTarget.source === 'batch') {
-          // Write back to the exact batch result
-          setBatchResults(prev => prev.map((r, i) => i === editTarget.index ? { ...r, url: editedDisplayUrl, status: 'done' as const } : r));
+          // Write back to the exact batch result. Refresh BOTH url (durable
+          // display URL) AND originalUrl (the base64 used as the resize-reflow
+          // source) so subsequent resizes reflow from the edited image, not the
+          // stale pre-edit render.
+          setBatchResults(prev => prev.map((r, i) => i === editTarget.index ? {
+            ...r,
+            url: editedDisplayUrl,
+            originalUrl: res,
+            status: 'done' as const,
+          } : r));
           showToast(`${editTarget.label} updated!`, 'success');
         } else if (editTarget.source === 'carousel') {
           // Write back to the exact carousel slide
