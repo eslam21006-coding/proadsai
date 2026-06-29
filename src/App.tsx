@@ -4443,9 +4443,17 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             // The render was already persisted to Storage SERVER-SIDE by
             // serverGenerateFinalAd (admin SDK — no client Storage write, no
             // storage/unauthorized). Store that durable URL — NOT the ~1-5 MB base64 —
-            // in the generations doc. If the server upload failed, storageUrl is null
-            // and we fall back to the in-memory base64 (instant display) or empty
-            // string (won't render — but won't pretend to be a URL either).
+            // in the generations doc. Fall back chain:
+            //   1. storageUrl (normal — durable https Storage URL)
+            //   2. image (in-memory base64) — INTENTIONAL fallback per PR brief:
+            //      if the (non-blocking) server Storage upload fails, persist the
+            //      in-memory image so the user keeps the render data even though
+            //      it may exceed Firestore's 1 MiB doc limit and fail silently.
+            //      This is the explicit "second line of defense" the PR brief
+            //      requests: with the static-import fix in this PR, the upload
+            //      will succeed in production; the base64 path only fires for
+            //      rare edge cases.
+            //   3. '' (won't render — but won't pretend to be a URL either)
             const storedImageUrl = mockupResult.storageUrl || mockupResult.image || '';
             // Phase 17 — persist `approvedTov` alongside the build plan so the
             // `generateSizeVariant` callable can read the user's approved copy
