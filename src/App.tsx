@@ -2335,7 +2335,12 @@ const App: React.FC = () => {
           conceptDirectorTrace,
         );
         const img = abResult.image;
-        setAbVariations(prev => prev.map((v, idx) => idx === i ? { ...v, url: img, status: img ? 'done' : 'error' } : v));
+        setAbVariations(prev => prev.map((v, idx) => idx === i ? {
+          ...v,
+          url: img,
+          storageUrl: abResult.storageUrl || null,
+          status: img ? 'done' : 'error',
+        } : v));
       } catch {
         refundCredits('generateImage');
         setAbVariations(prev => prev.map((v, idx) => idx === i ? { ...v, status: 'error' } : v));
@@ -2363,7 +2368,12 @@ const App: React.FC = () => {
         conceptDirectorTrace,
       );
       const img = abRetryResult.image;
-      setAbVariations(prev => prev.map((v, idx) => idx === index ? { ...v, url: img, status: img ? 'done' : 'error' } : v));
+      setAbVariations(prev => prev.map((v, idx) => idx === index ? {
+        ...v,
+        url: img,
+        storageUrl: abRetryResult.storageUrl || null,
+        status: img ? 'done' : 'error',
+      } : v));
     } catch {
       refundCredits('generateImage');
       setAbVariations(prev => prev.map((v, idx) => idx === index ? { ...v, status: 'error' } : v));
@@ -2373,7 +2383,7 @@ const App: React.FC = () => {
   const handleSelectAB = (index: number) => {
     const v = abVariations[index];
     if (v?.status !== 'done' || !v.url) return;
-    pushMockup(v.url, currentAspectRatio);
+    pushMockup(v.url, currentAspectRatio, v.storageUrl);
     // pushMockup sets historyIndex internally, scroll to top
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -8688,7 +8698,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                               <img src={v.url} className="w-full h-full object-cover" />
                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2.5 opacity-0 group-hover:opacity-100">
                                 <div className="flex gap-1.5">
-                                  <button onClick={(e) => { e.stopPropagation(); pushMockup(v.url!, currentAspectRatio); setStudioTweak(''); setEditTarget({ source: 'ab', index: idx, imageUrl: v.url!, label: `A/B V${idx + 1}` }); showToast(`Editing V${idx + 1} — changes will update this variation`, 'info'); }} className="px-2.5 py-1.5 bg-violet-600 text-white rounded-lg text-[8px] font-bold" title="Edit"><i className="fa-solid fa-pen-to-square"></i></button>
+                                  <button onClick={(e) => { e.stopPropagation(); pushMockup(v.url!, currentAspectRatio, v.storageUrl); setStudioTweak(''); setEditTarget({ source: 'ab', index: idx, imageUrl: v.url!, label: `A/B V${idx + 1}` }); showToast(`Editing V${idx + 1} — changes will update this variation`, 'info'); }} className="px-2.5 py-1.5 bg-violet-600 text-white rounded-lg text-[8px] font-bold" title="Edit"><i className="fa-solid fa-pen-to-square"></i></button>
                                   <button onClick={async (e) => { e.stopPropagation(); const url = await applyTrialWatermark(v.url!); await downloadImage(url, `AB_V${idx + 1}.png`); }} className="px-2.5 py-1.5 bg-white/90 text-slate-900 rounded-lg text-[8px] font-bold"><i className="fa-solid fa-download"></i></button>
                                   <button onClick={(e) => { e.stopPropagation(); handleRetryAB(idx); }} className="px-2.5 py-1.5 bg-blue-600 text-white rounded-lg text-[8px] font-bold"><i className="fa-solid fa-rotate"></i></button>
                                   <button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(v.url!, currentAspectRatio); }} className="px-2.5 py-1.5 bg-amber-500/90 text-white rounded-lg text-[8px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button>

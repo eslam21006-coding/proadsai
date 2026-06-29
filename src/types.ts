@@ -349,6 +349,11 @@ export interface BatchHookGroup {
 
 export interface ABVariation {
   url: string | null;
+  // Durable Storage URL returned by serverGenerateFinalAd. When set, prefer this
+  // over `url` for persistence paths (pushMockup / saveGeneration) so the selected
+  // variation survives project save/reload instead of being stripped to
+  // 'stored_externally' by the Firestore doc-size stripper.
+  storageUrl?: string | null;
   status: 'pending' | 'rendering' | 'done' | 'error';
   tweak: string;
   historyIdx: number;  // index in mockupHistory when pushed
