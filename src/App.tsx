@@ -2328,12 +2328,13 @@ const App: React.FC = () => {
         // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
         // forward the trace captured from the most recent concept
         // generation so the rendered image carries the audit trail.
-        const img = (await gemini.generateFinalAd(
+        const abResult = await gemini.generateFinalAd(
           selectedConcept, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
           initial[i].tweak || undefined,
           undefined, undefined, undefined, undefined, undefined,
           conceptDirectorTrace,
-        )).image;
+        );
+        const img = abResult.image;
         setAbVariations(prev => prev.map((v, idx) => idx === i ? { ...v, url: img, status: img ? 'done' : 'error' } : v));
       } catch {
         refundCredits('generateImage');
@@ -2355,12 +2356,13 @@ const App: React.FC = () => {
       // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
       // forward the trace captured from the most recent concept
       // generation so the rendered image carries the audit trail.
-      const img = (await gemini.generateFinalAd(
+      const abRetryResult = await gemini.generateFinalAd(
         selectedConcept, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
         abVariations[index]?.tweak || undefined,
         undefined, undefined, undefined, undefined, undefined,
         conceptDirectorTrace,
-      )).image;
+      );
+      const img = abRetryResult.image;
       setAbVariations(prev => prev.map((v, idx) => idx === index ? { ...v, url: img, status: img ? 'done' : 'error' } : v));
     } catch {
       refundCredits('generateImage');
@@ -3270,21 +3272,37 @@ const App: React.FC = () => {
   const stopLoad = () => { setIsLoading(false); setLoadingMsg(''); };
 
 
-  const pushMockup = (url: string | null, ratio: AspectRatio) => {
-    if (!url) return;
-    // Convert base64 data URLs to blob URLs for Chrome right-click "Copy image" support
-    let displayUrl = url;
+const pushMockup = (imageOrUrl: string | null, ratio: AspectRatio, storageUrl?: string | null) => {
+    if (!imageOrUrl) return;
+    // Prefer the server-uploaded Storage URL when available — it's durable across
+    // reloads, survives the Firestore doc-size stripper, and is what <img> actually
+    // needs. Fall back to a blob URL decoded from the base64 only when no Storage
+    // URL is provided (legacy callers, undo-stack pushes, etc). The base64 is always
+    // stashed in rawBase64 for reflow/edit operations that need an in-memory source.
+    const isStorageUrl = typeof storageUrl === 'string'
+      && (storageUrl.startsWith('https://') || storageUrl.startsWith('http://'));
+    let displayUrl: string;
     let rawBase64: string | undefined;
-    if (url.startsWith('data:')) {
-      rawBase64 = url;
+    if (isStorageUrl) {
+      displayUrl = storageUrl;
+      // imageOrUrl is the base64 in this branch (caller passed a fresh render).
+      rawBase64 = imageOrUrl.startsWith('data:') ? imageOrUrl : undefined;
+    } else if (imageOrUrl.startsWith('data:')) {
+      // Legacy path: base64 only — convert to a blob URL for Chrome right-click "Copy image".
+      rawBase64 = imageOrUrl;
       try {
-        const [header, b64] = url.split(',');
+        const [header, b64] = imageOrUrl.split(',');
         const mime = header.match(/:(.*?);/)?.[1] || 'image/png';
         const bin = atob(b64);
         const arr = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        for (let i = 0; i < arr.length; i++) arr[i] = bin.charCodeAt(i);
         displayUrl = URL.createObjectURL(new Blob([arr], { type: mime }));
-      } catch { /* fallback to base64 if conversion fails */ }
+      } catch {
+        displayUrl = imageOrUrl; // fallback to base64 if conversion fails
+      }
+    } else {
+      // Non-data URL without an explicit storageUrl — treat as already-durable.
+      displayUrl = imageOrUrl;
     }
     setMockupHistory(prev => {
       const newHistory = [...prev, { url: displayUrl, ratio, rawBase64 }];
@@ -4429,7 +4447,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       setBuildPlan(conceptRaw);
 
       if (mockup) {
-        pushMockup(mockup, primaryRatio);
+        pushMockup(mockup, primaryRatio, mockupResult.storageUrl);
         // Reflow quality fix: anchor the original source to THIS first render so every later
         // resize reflows from it (never from an auto-reflowed extra size or a prior resize).
         originalMockupRef.current = mockup;
@@ -5435,11 +5453,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           showToast(`${editTarget.label} updated!`, 'success');
         } else {
           // Default: add to history
-          pushMockup(res, editRatio);
+          pushMockup(res, editRatio, editResult.storageUrl);
         }
         setEditTarget(null); // Clear edit binding
       } else {
-        pushMockup(res, editRatio);
+        pushMockup(res, editRatio, editResult.storageUrl);
       }
 
       setStudioTweak('');
