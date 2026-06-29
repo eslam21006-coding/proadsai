@@ -6062,15 +6062,19 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     if (!user?.uid || !inputs) return;
     try {
       // Persist the image to Storage SERVER-SIDE (admin SDK — no client Storage write,
-      // no storage/unauthorized). An http URL is returned unchanged by the callable.
-      // Non-blocking: fall back to an empty string if the callable fails (don't write
-      // a base64 back to Firestore — would blow the 1 MiB doc limit).
-      let storedImageUrl: string = '';
-      try {
-        const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
-        storedImageUrl = (await uploadFn({ imageBase64: imageUrl })).data.storageUrl || '';
-      } catch (uploadErr) {
-        console.warn('Server render upload failed (non-blocking) — saving favorite with empty imageUrl:', uploadErr);
+      // no storage/unauthorized). An http URL is durable as-is — skip the callable
+      // round-trip and use it directly. Otherwise upload (data: URL → Storage) and
+      // fall back to empty string if the upload fails (don't write a base64 back to
+      // Firestore — would blow the 1 MiB doc limit).
+      const isAlreadyHttp = typeof imageUrl === 'string' && imageUrl.startsWith('http');
+      let storedImageUrl: string = isAlreadyHttp ? imageUrl : '';
+      if (!isAlreadyHttp) {
+        try {
+          const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
+          storedImageUrl = (await uploadFn({ imageBase64: imageUrl })).data.storageUrl || '';
+        } catch (uploadErr) {
+          console.warn('Server render upload failed (non-blocking) — saving favorite with empty imageUrl:', uploadErr);
+        }
       }
       const genId = await feedbackService.saveGeneration(
         user.uid, inputs, 'render',
@@ -8181,15 +8185,21 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                         <button onClick={async () => {
                                           if (!user?.uid || !inputs) return;
                                           try {
-                                            // Persist to Storage SERVER-SIDE (admin SDK). http URLs pass through.
-                                            // Non-blocking: fall back to an empty string if the callable fails
-                                            // (don't write a base64 back to Firestore — would blow the 1 MiB doc limit).
-                                            let storedImageUrl: string = '';
-                                            try {
-                                              const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
-                                              storedImageUrl = (await uploadFn({ imageBase64: item.url || '' })).data.storageUrl || '';
-                                            } catch (uploadErr) {
-                                              console.warn('Server render upload failed (non-blocking) — saving favorite with empty imageUrl:', uploadErr);
+                                            // Persist to Storage SERVER-SIDE (admin SDK). An http URL is durable as-is —
+                                            // skip the callable round-trip and use it directly. Otherwise upload
+                                            // (data: URL → Storage) and fall back to empty string if the upload
+                                            // fails (don't write a base64 back to Firestore — would blow the
+                                            // 1 MiB doc limit).
+                                            const candidateUrl = item.url || '';
+                                            const isAlreadyHttp = typeof candidateUrl === 'string' && candidateUrl.startsWith('http');
+                                            let storedImageUrl: string = isAlreadyHttp ? candidateUrl : '';
+                                            if (!isAlreadyHttp) {
+                                              try {
+                                                const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
+                                                storedImageUrl = (await uploadFn({ imageBase64: candidateUrl })).data.storageUrl || '';
+                                              } catch (uploadErr) {
+                                                console.warn('Server render upload failed (non-blocking) — saving favorite with empty imageUrl:', uploadErr);
+                                              }
                                             }
                                             const genId = await feedbackService.saveGeneration(
                                               user.uid, inputs, 'render',
