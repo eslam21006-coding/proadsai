@@ -116,6 +116,42 @@ function formatRelative(date: Date | null, lang: "en" | "ar"): string {
   });
 }
 
+// ─── STATUS BADGE ────────────────────────────────────────────────────────────
+
+/**
+ * Props for the status chip rendered on a card. Drafts / rendered / published
+ * each get their own color so the user can scan a grid and tell at a glance
+ * which projects are still in draft form.
+ */
+interface StatusBadgeProps {
+  status: 'draft' | 'rendered' | 'published';
+  langKey: "en" | "ar";
+}
+
+const STATUS_STYLES: Record<'draft' | 'rendered' | 'published', string> = {
+  draft:     'bg-slate-500/15 text-slate-300 border-slate-500/30',
+  rendered:  'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+  published: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
+};
+
+const STATUS_LABELS: Record<'draft' | 'rendered' | 'published', { en: string; ar: string }> = {
+  draft:     { en: "DRAFT",     ar: "مسودة" },
+  rendered:  { en: "RENDERED",  ar: "معروض" },
+  published: { en: "PUBLISHED", ar: "منشور" },
+};
+
+const StatusBadge: React.FC<StatusBadgeProps> = ({ status, langKey }) => {
+  const label = STATUS_LABELS[status]?.[langKey] ?? status;
+  const style = STATUS_STYLES[status];
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide border ${style}`}
+    >
+      {label}
+    </span>
+  );
+};
+
 // ─── HOOK ANGLE BADGE ───────────────────────────────────────────────────────
 
 /**
@@ -281,6 +317,7 @@ const GenerationCard: React.FC<CardProps> = React.memo(({ item, langKey, dir, on
   const [imgFailed, setImgFailed] = useState(false);
   const [prevImageUrl, setPrevImageUrl] = useState<string | null | undefined>(item.thumbnailUrl);
   const imageUrl = item.thumbnailUrl;
+  const isDraft = item.status === 'draft';
 
   // Reset the image-failure flag whenever the resolved image URL changes —
   // otherwise a broken/pending URL would permanently disable rendering for
@@ -293,13 +330,19 @@ const GenerationCard: React.FC<CardProps> = React.memo(({ item, langKey, dir, on
   }
 
   const hookText = item.hookText;
-  const universe = item.universe;
-  const artDir = item.artDirection;
-  const hookId = item.hookAngle;
+  const projectName = item.projectName;
+  // Drafts have no render output, so we surface the project name as the
+  // headline instead. For rendered / published rows the hook text wins.
+  const displayTitle = isDraft
+    ? (projectName ?? null)
+    : (hookText ?? projectName ?? null);
+  const universe = isDraft ? null : item.universe;
+  const artDir = isDraft ? null : item.artDirection;
+  const hookId = isDraft ? null : item.hookAngle;
   const date = readDate(item.timestamp);
   const dateLabel = formatRelative(date, langKey);
   // The HTML `title` attribute accepts `string | undefined`, not null.
-  const titleText = hookText ?? undefined;
+  const titleText = displayTitle ?? undefined;
 
   const handleActivate = () => {
     onSelect(item);
@@ -330,10 +373,17 @@ const GenerationCard: React.FC<CardProps> = React.memo(({ item, langKey, dir, on
       className="group relative flex flex-col bg-slate-900/60 border border-slate-800 rounded-xl overflow-hidden cursor-pointer hover:border-blue-500/60 hover:shadow-lg hover:shadow-blue-500/10 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
     >
       <div className="aspect-[4/5] w-full bg-slate-800 flex items-center justify-center overflow-hidden relative">
-        {imageUrl && !imgFailed ? (
+        {isDraft ? (
+          // Drafts render a stable placeholder so the grid stays uniform even
+          // before the user has run a render pass.
+          <div className="flex flex-col items-center justify-center text-slate-600 gap-2">
+            <i className="fa-solid fa-pen-ruler text-3xl" />
+            <span className="text-[10px]">{historyLabels.draftThumbnailAlt[langKey]}</span>
+          </div>
+        ) : imageUrl && !imgFailed ? (
           <img
             src={imageUrl}
-            alt={truncate(hookText, 60) || historyLabels.noHookText[langKey]}
+            alt={truncate(displayTitle, 60) || historyLabels.noHookText[langKey]}
             loading="lazy"
             onError={() => setImgFailed(true)}
             className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
@@ -344,33 +394,44 @@ const GenerationCard: React.FC<CardProps> = React.memo(({ item, langKey, dir, on
             <span className="text-[10px]">{historyLabels.noHookText[langKey]}</span>
           </div>
         )}
-        <div className="absolute top-2 start-2">
-          <HookBadge hookId={hookId} langKey={langKey} />
+        <div className="absolute top-2 start-2 flex flex-col gap-1 items-start">
+          {isDraft ? (
+            <StatusBadge status="draft" langKey={langKey} />
+          ) : (
+            <>
+              <StatusBadge status={item.status} langKey={langKey} />
+              <HookBadge hookId={hookId} langKey={langKey} />
+            </>
+          )}
         </div>
       </div>
       <div className="flex flex-col gap-1.5 p-2.5">
         <div className="text-[11px] font-semibold text-white line-clamp-2 leading-snug" title={titleText}>
-          {truncate(hookText, 60) || (
-            <span className="text-slate-500 italic font-normal">{historyLabels.noHookText[langKey]}</span>
+          {truncate(displayTitle, 60) || (
+            <span className="text-slate-500 italic font-normal">
+              {isDraft ? historyLabels.noProjectName[langKey] : historyLabels.noHookText[langKey]}
+            </span>
           )}
         </div>
-        <div className="flex items-center gap-1.5 text-[9px] text-slate-400">
-          {universe ? (
-            <span className="px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700 truncate max-w-[60%]" title={universe ?? undefined}>
-              {universe}
-            </span>
-          ) : (
-            <span className="text-slate-600 italic">{historyLabels.noUniverse[langKey]}</span>
-          )}
-          <span className="text-slate-700">•</span>
-          {artDirLabel ? (
-            <span className="px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700 truncate max-w-[40%]" title={artDirLabel ?? undefined}>
-              {artDirLabel}
-            </span>
-          ) : (
-            <span className="text-slate-600 italic">{historyLabels.noArtDirection[langKey]}</span>
-          )}
-        </div>
+        {!isDraft && (universe || artDirLabel) && (
+          <div className="flex items-center gap-1.5 text-[9px] text-slate-400">
+            {universe ? (
+              <span className="px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700 truncate max-w-[60%]" title={universe ?? undefined}>
+                {universe}
+              </span>
+            ) : (
+              <span className="text-slate-600 italic">{historyLabels.noUniverse[langKey]}</span>
+            )}
+            <span className="text-slate-700">•</span>
+            {artDirLabel ? (
+              <span className="px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700 truncate max-w-[40%]" title={artDirLabel ?? undefined}>
+                {artDirLabel}
+              </span>
+            ) : (
+              <span className="text-slate-600 italic">{historyLabels.noArtDirection[langKey]}</span>
+            )}
+          </div>
+        )}
         {dateLabel && (
           <div className="text-[9px] text-slate-500 mt-0.5" title={date ? date.toLocaleString(langKey === "ar" ? "ar-EG" : "en-US") : undefined}>
             {dateLabel}
@@ -397,14 +458,20 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, o
   const [hookFilter, setHookFilter] = useState<string[]>([]);
   const [universeFilter, setUniverseFilter] = useState<string[]>([]);
   const [artFilter, setArtFilter] = useState<string[]>([]);
+  // Status filter is single-select (chip group) rather than multi-select — the
+  // spec is "All / Drafts / Rendered / Published", each one a discrete bucket.
+  const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'rendered' | 'published'>('all');
+  const [search, setSearch] = useState('');
 
   const filters: HistoryFilters = useMemo(
     () => ({
       hookAngle: hookFilter,
       universe: universeFilter,
       artDirection: artFilter,
+      status: statusFilter === 'all' ? [] : [statusFilter],
+      search,
     }),
-    [hookFilter, universeFilter, artFilter]
+    [hookFilter, universeFilter, artFilter, statusFilter, search]
   );
 
   const { items, facets, loading, hasMore, loadMore, totalCount } = useGenerationHistory({
@@ -449,12 +516,18 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, o
   const anyUniverseLabel = historyLabels.filterAnyCount[langKey].replace("{n}", String(universeOptions.length));
   const anyArtLabel = historyLabels.filterAnyCount[langKey].replace("{n}", String(artDirectionOptions.length));
 
-  const totalActiveFilters = hookFilter.length + universeFilter.length + artFilter.length;
+  const totalActiveFilters = hookFilter.length
+    + universeFilter.length
+    + artFilter.length
+    + (statusFilter === 'all' ? 0 : 1)
+    + (search.trim().length > 0 ? 1 : 0);
 
   const clearAll = useCallback(() => {
     setHookFilter([]);
     setUniverseFilter([]);
     setArtFilter([]);
+    setStatusFilter('all');
+    setSearch('');
   }, []);
 
   // Active-filter chip list — flat array used to render the chip row.
@@ -509,6 +582,59 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, o
           </h3>
           <span className="text-[10px] text-slate-500 mt-0.5">{countLabel}</span>
         </div>
+      </div>
+
+      {/* Search bar */}
+      <div className="px-1">
+        <div className="relative">
+          <i className="fa-solid fa-magnifying-glass absolute start-2.5 top-1/2 -translate-y-1/2 text-slate-500 text-[11px]" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={historyLabels.searchPlaceholder[langKey]}
+            className="w-full ps-8 pe-3 py-1.5 bg-slate-800/50 border border-slate-700 rounded-lg text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-slate-500"
+          />
+          {search.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              aria-label={historyLabels.clearFilter[langKey]}
+              className="absolute end-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-[11px]"
+            >
+              <i className="fa-solid fa-xmark" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Status filter chips */}
+      <div className="flex items-center gap-1 px-1" role="tablist" aria-label="Status filter">
+        {(['all', 'draft', 'rendered', 'published'] as const).map((s) => {
+          const labelMap = {
+            all:       historyLabels.statusAll[langKey],
+            draft:     historyLabels.statusDraft[langKey],
+            rendered:  historyLabels.statusRendered[langKey],
+            published: historyLabels.statusPublished[langKey],
+          } as const;
+          const isActive = statusFilter === s;
+          return (
+            <button
+              key={s}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => setStatusFilter(s)}
+              className={`px-2.5 py-1 text-[10px] font-semibold rounded-md transition-colors ${
+                isActive
+                  ? 'bg-slate-700 text-white'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+              }`}
+            >
+              {labelMap[s]}
+            </button>
+          );
+        })}
       </div>
 
       {/* Filter bar */}

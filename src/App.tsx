@@ -15,7 +15,6 @@ import { buildInlineEditedBlock } from './utils/inlineHookEdit';
 import { useAppStore } from './store';
 import FeedbackButtons from './components/FeedbackButtons';
 import FavoritesPanel from './components/FavoritesPanel';
-import SavedProjectsPanel from './components/SavedProjectsPanel/SavedProjectsPanel';
 import GenerationHistory from './components/GenerationHistory';
 import DeleteProjectDialog from './components/SavedProjectsPanel/DeleteProjectDialog';
 import SaveStatusIndicator from './components/SavedProjectsPanel/SaveStatusIndicator';
@@ -2290,10 +2289,6 @@ const App: React.FC = () => {
   }), []);
   const [mockupHistory, setMockupHistory] = useState<{ url: string; ratio: AspectRatio; rawBase64?: string }[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
-
-  // Phase 26 — Projects/History tab state for the saved-projects panel.
-  // Default is 'projects' to preserve existing behavior for returning users.
-  const [projectsTab, setProjectsTab] = useState<'projects' | 'history'>('projects');
   const [captionText, setCaptionText] = useState('');
   const [batchCaptions, setBatchCaptions] = useState<{ hookKey: string; hookText: string; captionText: string }[]>([]);
   const [activeBatchCaptionKey, setActiveBatchCaptionKey] = useState<string>('');
@@ -6662,7 +6657,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           </div>
         )}
 
-{/* ═══ PROJECT GALLERY (shown on input phase) ═══ */}
+{/* ═══ HISTORY GALLERY (shown on input phase) — Phase 26 ═══
+                Phase 26 Batch 5: the flat saved-projects list is GONE.
+                History is the only view. Saved projects are still loaded
+                into state (used by handleHistorySelect + autosave) but the
+                user only sees them here, merged with their live generations.
+                The `projectLimitReached` banner is preserved so users with
+                too many saved projects still see the upgrade nudge. */}
         {phase === 'input' && (
           <div className="max-w-5xl mx-auto mb-10 animate-in fade-in duration-700">
             {projectLimitReached && (() => {
@@ -6683,65 +6684,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 </div>
               );
             })()}
-            {/* Phase 26 — Projects / History tab bar. The History tab is
-                always available so users with zero saved projects (or a
-                single in-progress project) can still browse their
-                generations. The Projects panel keeps its existing
-                `projects.length > 1` guard inside the Projects tab — listing
-                only the current in-progress project would be redundant. */}
-            <div className="flex items-center gap-1 mb-3 border-b border-slate-800" role="tablist">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={projectsTab === 'projects'}
-                onClick={() => setProjectsTab('projects')}
-                className={`px-3 py-1.5 text-[11px] font-semibold transition-colors border-b-2 -mb-px ${
-                  projectsTab === 'projects'
-                    ? 'text-white border-blue-500'
-                    : 'text-slate-400 border-transparent hover:text-slate-200'
-                }`}
-              >
-                <i className="fa-solid fa-folder-open text-[10px] me-1.5" />
-                {t('projects.tab.projects')}
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={projectsTab === 'history'}
-                onClick={() => setProjectsTab('history')}
-                className={`px-3 py-1.5 text-[11px] font-semibold transition-colors border-b-2 -mb-px ${
-                  projectsTab === 'history'
-                    ? 'text-white border-blue-500'
-                    : 'text-slate-400 border-transparent hover:text-slate-200'
-                }`}
-              >
-                <i className="fa-solid fa-clock-rotate-left text-[10px] me-1.5" />
-                {t('projects.tab.history')}
-              </button>
-            </div>
-            {projectsTab === 'projects' ? (
-              projects.length > 1 ? (
-                <SavedProjectsPanel
-                  projects={projects}
-                  workspaces={workspaces.map(w => ({ id: w.id, name: w.name }))}
-                  metaConnected={metaConnection?.connected ?? false}
-                  onLoad={loadProject}
-                  onDelete={deleteProject}
-                  onBulkDelete={confirmBulkDelete}
-                />
-              ) : (
-                <div className="text-center py-10 text-slate-500 text-xs">
-                  {t('projects.empty_projects')}
-                </div>
-              )
-            ) : (
-<GenerationHistory
-                uid={effectiveUid}
-                workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
-                savedProjects={filteredProjects}
-                onSelectHistory={handleHistorySelect}
-              />
-            )}
+            <GenerationHistory
+              uid={effectiveUid}
+              workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+              savedProjects={filteredProjects}
+              onSelectHistory={handleHistorySelect}
+            />
           </div>
         )}
 

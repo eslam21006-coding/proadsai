@@ -54,6 +54,12 @@ export interface HistoryFilters {
   artDirection?: string[];
   /** OR'd within the category. Empty array = no filter. */
   status?: HistoryItemStatus[];
+  /**
+   * Free-text query matched (case-insensitive, trimmed) against the
+   * project's name (when source === 'project'), the hook text, and the
+   * product name. Empty string = no search.
+   */
+  search?: string;
 }
 
 interface UseGenerationHistoryOptions {
@@ -367,12 +373,16 @@ function applyHistoryFilters(
   const universeList = filters.universe ?? [];
   const artList = filters.artDirection ?? [];
   const statusList = filters.status ?? [];
+  // Trim once; treat whitespace-only as no-search so the chip-clear UX
+  // round-trips cleanly without matching nothing.
+  const searchTerm = (filters.search ?? "").trim().toLocaleLowerCase('en-US');
 
   if (
     hookList.length === 0
     && universeList.length === 0
     && artList.length === 0
     && statusList.length === 0
+    && searchTerm.length === 0
   ) {
     return items;
   }
@@ -394,6 +404,19 @@ function applyHistoryFilters(
     }
     if (statusSet.size > 0) {
       if (!statusSet.has(it.status)) return false;
+    }
+    if (searchTerm.length > 0) {
+      // Search across the user-visible text fields. Empty fields are skipped
+      // so a project with no hook text still matches by its name.
+      const haystacks: (string | null | undefined)[] = [
+        it.projectName,
+        it.hookText,
+      ];
+      const matched = haystacks.some((s) => {
+        if (!s) return false;
+        return s.toLocaleLowerCase('en-US').includes(searchTerm);
+      });
+      if (!matched) return false;
     }
     return true;
   });

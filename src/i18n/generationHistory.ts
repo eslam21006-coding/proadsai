@@ -16,8 +16,22 @@ export const historyLabels: Record<string, { en: string; ar: string }> = {
   clearFilter: { en: "Remove", ar: "إزالة" },
   filtersActive: { en: "Filters active", ar: "فلاتر نشطة" },
 
+  // Status filter
+  statusAll: { en: "All", ar: "الكل" },
+  statusDraft: { en: "Drafts", ar: "مسودات" },
+  statusRendered: { en: "Rendered", ar: "معروضة" },
+  statusPublished: { en: "Published", ar: "منشورة" },
+  badgeDraft: { en: "DRAFT", ar: "مسودة" },
+  badgePublished: { en: "PUBLISHED", ar: "منشور" },
+  badgeRendered: { en: "RENDERED", ar: "معروض" },
+
+  // Search
+  searchPlaceholder: { en: "Search by name or hook text...", ar: "بحث بالاسم أو نص الهوك..." },
+
   // Card content
   noHookText: { en: "Untitled generation", ar: "عنصر بدون عنوان" },
+  noProjectName: { en: "Untitled project", ar: "مشروع بدون عنوان" },
+  draftThumbnailAlt: { en: "Draft project — no render yet", ar: "مشروع مسودة — بدون عرض بعد" },
   noUniverse: { en: "No universe", ar: "بدون عالم" },
   noArtDirection: { en: "No art direction", ar: "بدون اتجاه فني" },
   openGenerationAria: { en: "Open generation", ar: "فتح الإعلان" },
