@@ -21,17 +21,26 @@ export interface HistoryFilters {
 }
 
 interface UseGenerationHistoryOptions {
+  /** Authenticated user id; the hook resets and idles when null. */
   uid: string | null;
+  /** Optional workspace scope. When set, queries by `workspaceId`; when null, queries by `userId` and filters out workspace-tagged records. */
   workspaceId?: string | null;
+  /** Client-side AND/OR filters applied to the merged head + tail results. */
   filters?: HistoryFilters;
+  /** Page size for the head snapshot and each `loadMore` call. Defaults to 20. */
   pageSize?: number;
 }
 
 interface GenerationHistoryResult {
+  /** Deduplicated, filtered history rows ordered newest-first. */
   items: GenerationRecord[];
+  /** True while the head snapshot is loading or a `loadMore` is in flight. */
   loading: boolean;
+  /** True when more pages are available past the current tail. */
   hasMore: boolean;
+  /** Loads the next page (no-op when no more pages or already loading). */
   loadMore: () => Promise<void>;
+  /** Count of the items the user is currently seeing (post-filter, post-dedup). */
   totalCount: number;
 }
 
@@ -61,6 +70,11 @@ function getUniverseOf(record: GenerationRecord): string | null {
   return null;
 }
 
+/**
+ * Resolve the cold hook angle for filter matching. Prefers the canonical
+ * `creativeIdentity.hookAngle`, falls back to the legacy `input.coldHookAngle`
+ * for older records that predate the creative-identity block.
+ */
 function getHookAngleOf(record: GenerationRecord): string | null {
   const creative = record.creativeIdentity?.hookAngle;
   if (creative != null && creative !== '') return creative;
@@ -70,6 +84,10 @@ function getHookAngleOf(record: GenerationRecord): string | null {
   return legacy != null && legacy !== '' ? legacy : null;
 }
 
+/**
+ * Resolve the art-direction (sub-style) identifier for filter matching.
+ * Reads `input.visualSubStyle`, which is the single canonical source.
+ */
 function getArtDirectionOf(record: GenerationRecord): string | null {
   const input = record.input;
   if (!input) return null;
