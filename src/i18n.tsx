@@ -715,6 +715,12 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'fidelity.ctaName': 'CTA Button',
         'fidelity.benefitText': 'Benefit Text',
 
+        // ── Phase 26 — Saved-Projects / History tab + card click routing ──
+        'projects.tab.projects': 'Projects',
+        'projects.tab.history': 'History',
+        'projects.empty_projects': 'No saved projects yet. Create your first ad and it will appear here.',
+        'history.card.project_missing': "This generation's project is no longer available",
+
         // ── Workspace ──
         'workspace.switch_guard.title': 'Switch workspace?',
         'workspace.switch_guard.body': 'Switching workspace will start a new project. Save current work?',
@@ -1481,6 +1487,12 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'fidelity.retry_empty_refunded': 'فشل إنشاء المخطط. تم استرداد الرصيد.',
         'fidelity.technicalPrompt': 'موجّه التصميم',
         'fidelity.hookText': 'العنوان الرئيسي',
+
+        // ── Phase 26 — Saved-Projects / History tab + card click routing ──
+        'projects.tab.projects': 'المشاريع',
+        'projects.tab.history': 'السجل',
+        'projects.empty_projects': 'لا توجد مشاريع محفوظة بعد. أنشئ أول إعلان لك ليظهر هنا.',
+        'history.card.project_missing': 'مشروع هذا الإعلان لم يعد متاحًا.',
         'fidelity.subheadText': 'العنوان الفرعي',
         'fidelity.ctaName': 'زر الإجراء',
         'fidelity.benefitText': 'نص الفائدة',

@@ -3611,10 +3611,7 @@ const App: React.FC = () => {
     } else {
       // Project may have been deleted; the generation record alone survives.
       // Show a localized toast so the user understands the click did nothing.
-      const msg = lang === 'ar'
-        ? 'مشروع هذا الإعلان لم يعد متاحًا.'
-        : "This generation's project is no longer available";
-      showToast(msg, 'info');
+      showToast(t('history.card.project_missing'), 'info');
       // Touch generationId so TS knows we used the parameter (and future
       // telemetry can read it without a noisy `void` cast).
       void generationId;
@@ -6701,7 +6698,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 }`}
               >
                 <i className="fa-solid fa-folder-open text-[10px] me-1.5" />
-                {lang === 'ar' ? 'المشاريع' : 'Projects'}
+                {t('projects.tab.projects')}
               </button>
               <button
                 type="button"
@@ -6715,7 +6712,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 }`}
               >
                 <i className="fa-solid fa-clock-rotate-left text-[10px] me-1.5" />
-                {lang === 'ar' ? 'السجل' : 'History'}
+                {t('projects.tab.history')}
               </button>
             </div>
             {projectsTab === 'projects' ? (
@@ -6730,9 +6727,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 />
               ) : (
                 <div className="text-center py-10 text-slate-500 text-xs">
-                  {lang === 'ar'
-                    ? 'لا توجد مشاريع محفوظة بعد. أنشئ أول إعلان لك ليظهر هنا.'
-                    : 'No saved projects yet. Create your first ad and it will appear here.'}
+                  {t('projects.empty_projects')}
                 </div>
               )
             ) : (
