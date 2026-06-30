@@ -3589,7 +3589,11 @@ const App: React.FC = () => {
   // found we route to render_studio so the user lands on the matching mockup
   // — otherwise we surface a non-blocking toast and leave them on the
   // History tab.
-  const loadProjectFromGeneration = useCallback((generationId: string, record: GenerationRecord) => {
+  //
+  // Intentionally a plain function (not `useCallback`): the surrounding
+  // component already has auth/billing early returns above this point, so
+  // a hook here would break React's hook ordering across renders.
+  const loadProjectFromGeneration = (generationId: string, record: GenerationRecord) => {
     const targetUrl = record.output?.imageUrl;
     const candidates = filteredProjects.length > 0 ? filteredProjects : projects;
     const match = candidates.find((p) =>
@@ -3615,7 +3619,7 @@ const App: React.FC = () => {
       // telemetry can read it without a noisy `void` cast).
       void generationId;
     }
-  }, [filteredProjects, projects, loadProject, showToast, lang]);
+  };
 
   // Non-interactive reset (no window.confirm prompt). Called by the
   // post-deletion path so the user doesn't get a second confirmation dialog
@@ -6657,8 +6661,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           </div>
         )}
 
-        {/* ═══ PROJECT GALLERY (shown on input phase) ═══ */}
-        {phase === 'input' && projects.length > 1 && (
+{/* ═══ PROJECT GALLERY (shown on input phase) ═══ */}
+        {phase === 'input' && (
           <div className="max-w-5xl mx-auto mb-10 animate-in fade-in duration-700">
             {projectLimitReached && (() => {
               const cap = getSavedProjectLimit(userPlan);
@@ -6678,9 +6682,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 </div>
               );
             })()}
-            {/* Phase 26 — Projects / History tab bar. The two panels share
-                the same outer container so they line up identically; only
-                the active tab's body is mounted. */}
+            {/* Phase 26 — Projects / History tab bar. The History tab is
+                always available so users with zero saved projects (or a
+                single in-progress project) can still browse their
+                generations. The Projects panel keeps its existing
+                `projects.length > 1` guard inside the Projects tab — listing
+                only the current in-progress project would be redundant. */}
             <div className="flex items-center gap-1 mb-3 border-b border-slate-800" role="tablist">
               <button
                 type="button"
@@ -6712,20 +6719,28 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               </button>
             </div>
             {projectsTab === 'projects' ? (
-              <SavedProjectsPanel
-                projects={projects}
-                workspaces={workspaces.map(w => ({ id: w.id, name: w.name }))}
-                metaConnected={metaConnection?.connected ?? false}
-                onLoad={loadProject}
-                onDelete={deleteProject}
-                onBulkDelete={confirmBulkDelete}
-              />
+              projects.length > 1 ? (
+                <SavedProjectsPanel
+                  projects={projects}
+                  workspaces={workspaces.map(w => ({ id: w.id, name: w.name }))}
+                  metaConnected={metaConnection?.connected ?? false}
+                  onLoad={loadProject}
+                  onDelete={deleteProject}
+                  onBulkDelete={confirmBulkDelete}
+                />
+              ) : (
+                <div className="text-center py-10 text-slate-500 text-xs">
+                  {lang === 'ar'
+                    ? 'لا توجد مشاريع محفوظة بعد. أنشئ أول إعلان لك ليظهر هنا.'
+                    : 'No saved projects yet. Create your first ad and it will appear here.'}
+                </div>
+              )
             ) : (
               <GenerationHistory
                 uid={effectiveUid}
                 workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
                 onSelectGeneration={loadProjectFromGeneration}
-              />
+/>
             )}
           </div>
         )}
