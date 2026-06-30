@@ -34,6 +34,8 @@ interface UseGenerationHistoryOptions {
 interface GenerationHistoryResult {
   /** Deduplicated, filtered history rows ordered newest-first. */
   items: GenerationRecord[];
+  /** Unique universe + art-direction values seen across every loaded row (head + tail). Powers the filter dropdowns. */
+  facets: { universes: string[]; artDirections: string[] };
   /** True while the head snapshot is loading or a `loadMore` is in flight. */
   loading: boolean;
   /** True when more pages are available past the current tail. */
@@ -183,6 +185,32 @@ export function useGenerationHistory({
   // totalCount is the count the user sees — derived from the same deduped +
   // filtered list so it never disagrees with the rendered rows.
   const totalCount = items.length;
+
+  // Facets are computed from the UNFILTERED head + tail union so the filter
+  // dropdowns always expose every universe / art-direction the user has ever
+  // produced — even one currently hidden by an active filter. The consumer
+  // (GenerationHistory) renders them into dropdowns; switching a filter then
+  // makes the matching rows visible without the option disappearing.
+  const facets = useMemo<{ universes: string[]; artDirections: string[] }>(() => {
+    const universes = new Set<string>();
+    const artDirections = new Set<string>();
+    for (const r of headItems) {
+      const u = getUniverseOf(r);
+      if (u) universes.add(u);
+      const a = getArtDirectionOf(r);
+      if (a) artDirections.add(a);
+    }
+    for (const r of tailItems) {
+      const u = getUniverseOf(r);
+      if (u) universes.add(u);
+      const a = getArtDirectionOf(r);
+      if (a) artDirections.add(a);
+    }
+    return {
+      universes: Array.from(universes).sort(),
+      artDirections: Array.from(artDirections).sort(),
+    };
+  }, [headItems, tailItems]);
 
   useEffect(() => {
     if (!uid) {
@@ -459,5 +487,5 @@ export function useGenerationHistory({
     }
   }, [hasMore, uid, workspaceId, useWorkspace, pageSize]);
 
-  return { items, loading, hasMore, loadMore, totalCount };
+  return { items, facets, loading, hasMore, loadMore, totalCount };
 }

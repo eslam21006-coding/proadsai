@@ -79,7 +79,7 @@ function formatRelative(date: Date | null, lang: "en" | "ar"): string {
   // Try Intl.RelativeTimeFormat first — gives localized strings for free.
   try {
     const rtf = new Intl.RelativeTimeFormat(lang === "ar" ? "ar" : "en", { numeric: "auto" });
-    if (absSec < 60) return rtf.format(future ? diffSec : -absSec, "second");
+    if (absSec < 60) return rtf.format(future ? absSec : -absSec, "second");
     if (minutes < 60) return rtf.format(future ? minutes : -minutes, "minute");
     if (hours < 24) return rtf.format(future ? hours : -hours, "hour");
     if (days < 7) return rtf.format(future ? days : -days, "day");
@@ -103,7 +103,11 @@ function getUniverseDisplay(record: GenerationRecord): string | null {
   if ((input as { resolvedUniverse?: string }).resolvedUniverse) {
     return (input as { resolvedUniverse?: string }).resolvedUniverse as string;
   }
-  if (input.tone) return input.tone;
+  // NOTE: `input.tone` is intentionally NOT used as a universe fallback for
+  // DISPLAY. The backend write path persists `resolvedUniverse` into `tone`,
+  // so tone can sometimes hold a universe value — but `tone` is semantically
+  // a different field (ad tone), so showing it as a universe would mislead
+  // the user. The filter hook still reads tone so legacy rows stay findable.
   return null;
 }
 
@@ -265,7 +269,19 @@ interface CardProps {
 
 const GenerationCard: React.FC<CardProps> = React.memo(({ record, langKey, dir, onSelect, openLabel }) => {
   const [imgFailed, setImgFailed] = useState(false);
+  const [prevImageUrl, setPrevImageUrl] = useState<string | null | undefined>(record.output?.imageUrl);
   const imageUrl = record.output?.imageUrl;
+
+  // Reset the image-failure flag whenever the resolved image URL changes —
+  // otherwise a broken/pending URL would permanently disable rendering for
+  // the same card even if a live snapshot later swaps in a working one.
+  // Adjusted during render (not in an effect) per the React-recommended
+  // pattern for "reset state when a prop changes".
+  if (prevImageUrl !== imageUrl) {
+    setPrevImageUrl(imageUrl);
+    setImgFailed(false);
+  }
+
   const hookText = getHookText(record);
   const universe = getUniverseDisplay(record);
   const artDir = getArtDirectionDisplay(record);
@@ -373,49 +389,33 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, onSelectGenerati
     [hookFilter, universeFilter, artFilter]
   );
 
-  const { items, loading, hasMore, loadMore, totalCount } = useGenerationHistory({
+  const { items, facets, loading, hasMore, loadMore, totalCount } = useGenerationHistory({
     uid,
     workspaceId,
     filters,
   });
 
-  // Dynamic universe + art direction option lists are built from the FULLY
-  // loaded items (not the filtered subset). This keeps options available even
-  // when a filter has hidden every current card — the user can still see and
-  // remove that filter to bring cards back.
-  //
-  // To populate these from outside the filter, we tap into the same hook with
-  // empty filters. To avoid duplicate subscriptions, we instead derive them
-  // from a separate unfiltered hook call below.
-  const { items: unfilteredItems } = useGenerationHistory({
-    uid,
-    workspaceId,
-    filters: undefined,
-  });
+  // Facets come from the SAME subscription as `items` — they include the
+  // unfiltered universe / art-direction values from every loaded row (head +
+  // tail), so dropdown options stay populated even when an active filter
+  // happens to hide every current card. This is the project's chosen shape:
+  // a single Firestore subscription, no duplicated queries.
+  const universeOptions = useMemo(
+    () => facets.universes.map((v) => ({ value: v, label: v })),
+    [facets.universes]
+  );
 
-  const universeOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of unfilteredItems) {
-      const u = getUniverseDisplay(r);
-      if (u) set.add(u);
-    }
-    return Array.from(set).sort().map((v) => ({ value: v, label: v }));
-  }, [unfilteredItems]);
-
-  const artDirectionOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of unfilteredItems) {
-      const a = getArtDirectionDisplay(r);
-      if (a) set.add(a);
-    }
-    return Array.from(set)
-      .sort()
-      .map((v) => {
+  const artDirectionOptions = useMemo(
+    () =>
+      facets.artDirections.map((v) => {
         const card = getCardById(v);
-        const label = card ? (langKey === "ar" ? card.labelAr : card.labelEn) : v.replace(/_/g, " ");
+        const label = card
+          ? (langKey === "ar" ? card.labelAr : card.labelEn)
+          : v.replace(/_/g, " ");
         return { value: v, label };
-      });
-  }, [unfilteredItems, langKey]);
+      }),
+    [facets.artDirections, langKey]
+  );
 
   const hookAngleOptions = useMemo(
     () =>
@@ -596,7 +596,13 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, onSelectGenerati
           {hasMore ? (
             <button
               type="button"
-              onClick={() => { void loadMore(); }}
+              onClick={() => {
+                // Catch pagination rejections so they surface as a sanitized
+                // warning rather than an unhandled promise rejection.
+                loadMore().catch((error: unknown) => {
+                  console.warn('Failed to load more generation history records', error);
+                });
+              }}
               disabled={loading}
               className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-60 disabled:cursor-not-allowed text-[11px] font-semibold text-white transition-colors flex items-center gap-2"
             >
