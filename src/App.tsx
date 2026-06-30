@@ -6576,6 +6576,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               onClose={() => setShowAccountMenu(false)}
               title={t('history.menu_title')}
               subtitle={user?.email ?? ''}
+              closeLabel={t('common.close')}
             >
               {/* Section: Account */}
               <div className="px-5 py-4 border-b border-white/[0.04] bg-slate-900/40">

@@ -25,8 +25,8 @@ export interface SideDrawerProps {
   children: React.ReactNode;
   /** Render a sticky header at the top of the drawer. */
   header?: React.ReactNode;
-  /** Optional aria-label override for the close button. */
-  closeLabel?: string;
+  /** Required localized aria-label for both the backdrop and the close button. */
+  closeLabel: string;
 }
 
 /**
@@ -77,7 +77,7 @@ const SideDrawer: React.FC<SideDrawerProps> = ({
       {/* Backdrop — click to close. Visible only when open. */}
       <button
         type="button"
-        aria-label={closeLabel ?? "Close"}
+            aria-label={closeLabel}
         onClick={onClose}
         disabled={!open}
         tabIndex={open ? 0 : -1}
@@ -101,7 +101,7 @@ const SideDrawer: React.FC<SideDrawerProps> = ({
           <button
             type="button"
             onClick={onClose}
-            aria-label={closeLabel ?? "Close"}
+        aria-label={closeLabel}
             className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-white/[0.04] transition-colors"
           >
             <i className="fa-solid fa-xmark text-sm"></i>
