@@ -183,12 +183,16 @@ function toMillis(value: unknown): number {
 // ─── FIELD RESOLVERS (SavedProject side) ────────────────────────────────────
 
 /**
- * Extract universe id from a saved project's inputs. Uses the same precedence
- * as the generation-side resolver so the filter dropdowns stay unified.
+ * Extract universe id from a saved project. Uses the same precedence as
+ * the generation-side resolver so the filter dropdowns stay unified. The
+ * project itself carries a top-level `resolvedUniverse` field; inputs may
+ * also carry it as a legacy quirk.
  */
 function getUniverseOfProject(p: SavedProject): string | null {
   const creative = (p as { creativeIdentity?: { universeId?: string | null } }).creativeIdentity?.universeId;
   if (creative != null && creative !== '') return creative;
+  // Top-level SavedProject field (canonical source on the project).
+  if (p.resolvedUniverse != null && p.resolvedUniverse !== '') return p.resolvedUniverse;
   const inputs = p.inputs;
   if (!inputs) return null;
   if ((inputs as { preferredUniverse?: string | null }).preferredUniverse) {
@@ -589,15 +593,20 @@ export function useGenerationHistory({
                   });
                 } else {
                   applyHead(raw, lastDoc);
-                  setHasMore(raw.length === FALLBACK_PAGE_SIZE);
+                  // Base hasMore on the UNFILTERED page size — `raw` is already
+                  // narrowed to `output.phase === 'render'`, so a full page of
+                  // docs that happens to include a few non-render rows would
+                  // otherwise cut off pagination prematurely.
+                  setHasMore(snap.docs.length === FALLBACK_PAGE_SIZE);
                 }
                 setLoading(false);
               },
-              () => {
+              (err) => {
                 // Non-blocking: log a sanitized warning so index/rules/connectivity
                 // failures are diagnosable without exposing identifiers.
                 console.warn('useGenerationHistory: fallback listener failed', {
-                  scope: useWorkspace ? 'workspace' : 'personal'
+                  scope: useWorkspace ? 'workspace' : 'personal',
+                  err
                 });
                 setLoading(false);
               }

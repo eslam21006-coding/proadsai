@@ -492,8 +492,13 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, o
       ? historyLabels.countSingular[langKey].replace("{n}", "1")
       : historyLabels.countPlural[langKey].replace("{n}", String(totalCount));
 
-  const showEmpty = !loading && items.length === 0;
+  const showEmpty = !loading && items.length === 0 && !hasMore;
   const isFilteredEmpty = showEmpty && totalActiveFilters > 0;
+  // The footer (load-more / end-of-list) must stay reachable whenever the
+  // hook reports more pages, even if the current filtered page is empty —
+  // client-side filters can legitimately hide every row on the first page
+  // while older pages contain matches.
+  const showFooter = items.length > 0 || hasMore;
 
   return (
     <div className="space-y-3" dir={dir}>
@@ -595,8 +600,8 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, o
         </div>
       )}
 
-      {/* Load more / end-of-list */}
-      {items.length > 0 && (
+      {/* Load more / end-of-list — always reachable when hasMore is true */}
+      {showFooter && (
         <div className="flex items-center justify-center pt-2">
           {hasMore ? (
             <button
