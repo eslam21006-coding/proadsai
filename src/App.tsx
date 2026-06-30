@@ -6485,20 +6485,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
       <nav className="border-b border-white/[0.06] bg-slate-950/90 backdrop-blur-2xl sticky top-0 z-[60]">
         <div className="max-w-[1400px] mx-auto px-6 md:px-10 h-16 flex items-center justify-between">
-          {/* ── LEFT: Menu + Logo + New ── */}
+          {/* ── LEFT (Context): Logo + Workspace ── */}
           <div className="flex items-center gap-2.5">
-            <button data-tour="sidebar-menu" onClick={() => setShowSidebar(!showSidebar)} className="w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-white transition-colors">
-              <i className="fa-solid fa-bars text-xs"></i>
-            </button>
-            <div className="cursor-pointer" onClick={() => window.location.reload()}>
+            <div className="cursor-pointer" onClick={() => window.location.reload()} aria-label="Pro Ads AI" role="button" tabIndex={0}>
               <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center hover:scale-105 transition-transform shadow-lg shadow-blue-600/20">
                 <i className="fa-solid fa-wand-magic-sparkles text-white text-sm"></i>
               </div>
             </div>
-            <button onClick={() => { if (confirm('Start a new project?')) { resetToBlankProject(); } }}
-              className="hidden sm:flex h-9 px-3.5 rounded-lg bg-white/[0.04] text-slate-500 text-[10px] font-semibold hover:text-white transition-colors items-center gap-1.5">
-              <i className="fa-solid fa-plus text-[8px]"></i> {t('sidebar.new')}
-            </button>
             {canUseWorkspaces && workspaces.length > 0 && (
               <WorkspaceSwitcher
                 workspaces={workspaces}
@@ -6509,10 +6502,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 hasInProgressWork={isLoading || !!tovText || !!conceptsText || !!buildPlan || mockupHistory.length > 0 || carouselSlides.length > 0 || batchResults.length > 0}
               />
             )}
+            <SaveStatusIndicator state={autoSaveState} onRetry={autoSaveRetry} />
           </div>
 
-          {/* ── CENTER: Stepper (inline) ── */}
-          <div className="hidden md:flex items-center gap-1" data-tour="stepper">
+          {/* ── CENTER (Workflow): Step tabs — visual focus of the bar ── */}
+          <div className="hidden md:flex items-center gap-1.5" data-tour="stepper">
             {steps.map((s, idx) => {
               const active = phase === s.id;
               const completed = steps.findIndex(f => f.id === phase) > idx;
@@ -6520,12 +6514,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               const canClick = unlocked && !active;
               return (
                 <React.Fragment key={s.id}>
-                  {idx > 0 && <div className={`w-8 h-px mx-0.5 transition-colors duration-500 ${completed ? 'bg-blue-500/50' : 'bg-white/[0.06]'}`}></div>}
+                  {idx > 0 && <div className={`w-8 h-px mx-1 transition-colors duration-500 ${completed ? 'bg-blue-500/60' : 'bg-white/[0.06]'}`}></div>}
                   <button
                     onClick={() => canClick && navigateToStep(s.id, idx)}
                     disabled={!canClick}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all ${active
-                      ? 'bg-blue-600/15 text-blue-400'
+                    className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-[12px] font-semibold transition-all ${active
+                      ? 'bg-blue-600/15 text-blue-300 ring-1 ring-blue-500/30'
                       : completed
                         ? 'text-slate-400 hover:text-blue-400 hover:bg-white/[0.04]'
                         : unlocked
@@ -6552,95 +6546,145 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             <span className="text-[10px] text-slate-600">{steps.findIndex(s => s.id === phase) + 1}/{steps.length}</span>
           </div>
 
-          {/* ── RIGHT: Credits + Actions ── */}
+          {/* ── RIGHT (Tools): Credits + single More dropdown ── */}
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 h-9 px-3 rounded-lg bg-white/[0.04]" data-tour="credits">
-              <button onClick={() => { if (getFeatureLevel(userPlan, 'performanceDashboard') === 'none') { setUpgradeReason(`Performance Dashboard requires ${requiredPlanFor('performanceDashboard')} plan`); setShowUpgradeModal(true); return; } setShowDashboard(true); }} className="w-8 h-8 rounded-lg bg-slate-900/60 flex items-center justify-center text-slate-500 hover:text-blue-400 transition-all" title="Performance Dashboard">
-                <i className="fa-solid fa-chart-line text-[10px]"></i>
-              </button>
-              <button onClick={async () => {
-                setShowFavorites(true);
-                setFavoritesLoading(true);
-                try {
-                  const uid = user?.uid;
-                  if (!uid) return;
-                  try {
-                    // Primary query: uses composite index (userId + feedback.savedToFavorites + timestamp)
-                    const fSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), where('feedback.savedToFavorites', '==', true), orderBy('timestamp', 'desc'), limit(50)));
-                    setFavoritesData(fSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-                  } catch (indexErr) {
-                    // Fallback: if composite index not deployed, use simpler query + client filter
-                    console.warn('Favorites index query failed, using fallback:', indexErr);
-                    try {
-                      const fallbackSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), orderBy('timestamp', 'desc'), limit(200)));
-                      const allGens = fallbackSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-                      const favorites = allGens.filter((g: any) => g.feedback?.savedToFavorites === true);
-                      setFavoritesData(favorites);
-                    } catch (fallbackErr) {
-                      console.error('Fallback favorites query also failed:', fallbackErr);
-                      setFavoritesData([]);
-                    }
-                  }
-                } catch (e) { console.warn('Failed to load favorites:', e); }
-                finally { setFavoritesLoading(false); }
-              }} className="w-8 h-8 rounded-lg bg-slate-900/60 flex items-center justify-center text-slate-500 hover:text-amber-400 transition-all" title="Favorites">
-                <i className="fa-solid fa-bookmark text-[10px]"></i>
-              </button>
-              <i className="fa-solid fa-coins text-amber-500 text-[10px]"></i>
-              <span className="text-[11px] font-bold text-amber-400">{userCredits}</span>
-              <span className="text-[9px] text-slate-600 hidden sm:inline">{PLANS[userPlan]?.name}</span>
-            </div>
             <button onClick={() => { setUpgradeReason(''); setShowUpgradeModal(true); }}
-              className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500 hover:bg-amber-500/20 transition-colors">
-              <i className="fa-solid fa-plus text-[9px]"></i>
-            </button>
-            {!milestones.watchVideo && (
-              <button onClick={() => setShowVideoPopup(true)} title="Watch tutorial (+2 credits)"
-                className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-400 hover:bg-amber-500/20 transition-colors relative">
-                <i className="fa-solid fa-play text-[9px]"></i>
-                <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-amber-500 rounded-full text-[7px] font-bold text-black flex items-center justify-center">+2</span>
-              </button>
-            )}
-            {phase === 'input' && (
-              <button onClick={() => setShowWalkthrough(true)} title="Guided tour"
-                className="w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-blue-400 transition-colors">
-                <i className="fa-solid fa-circle-question text-xs"></i>
-              </button>
-            )}
-            <button onClick={toggleTheme}
-              className="w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-amber-400 transition-colors"
-              title={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}>
-              <i className={`fa-solid ${isDarkMode ? 'fa-sun' : 'fa-moon'} text-[11px]`}></i>
-            </button>
-            <button onClick={() => setLang(lang === 'en' ? 'ar' : 'en')}
-              className="w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-[10px] font-bold text-slate-500 hover:text-white transition-colors">
-              {t('lang.switch_short')}
+              className="flex items-center gap-1.5 h-9 px-3 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] transition-colors"
+              data-tour="credits"
+              title={t('header.get_credits')}
+            >
+              <i className="fa-solid fa-coins text-amber-500 text-[11px]"></i>
+              <span className="text-[11px] font-bold text-amber-400">{userCredits}</span>
+              <span className="text-[9px] text-slate-500 hidden sm:inline">{PLANS[userPlan]?.name}</span>
             </button>
             <div className="relative" ref={accountMenuRef}>
-              <button onClick={() => setShowAccountMenu(!showAccountMenu)}
-                className="w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-white transition-colors">
-                <i className="fa-solid fa-user text-[10px]"></i>
+              <button
+                data-tour="sidebar-menu"
+                onClick={() => setShowAccountMenu(!showAccountMenu)}
+                className="w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-white transition-colors"
+                aria-label={t('topbar.menu_more')}
+                aria-expanded={showAccountMenu}
+              >
+                <i className="fa-solid fa-ellipsis-vertical text-xs"></i>
               </button>
               {showAccountMenu && (
-                <div className="absolute right-0 top-full mt-2 w-52 bg-slate-900 border border-slate-800/80 rounded-xl shadow-2xl shadow-black/60 overflow-hidden z-[100]">
+                <div
+                  className="absolute end-0 top-full mt-2 w-60 bg-slate-900 border border-slate-800/80 rounded-xl shadow-2xl shadow-black/60 overflow-hidden z-[100]"
+                  role="menu"
+                >
+                  {/* Section: Account */}
                   <div className="px-4 py-3 border-b border-white/[0.04]">
                     <p className="text-[10px] text-slate-400 truncate">{user?.email}</p>
                     <p className="text-[9px] text-blue-400 font-bold uppercase mt-1">{PLANS[userPlan]?.name || 'Free'} {t('header.plan')}</p>
                   </div>
-                  <button onClick={() => { handleManageBilling(); setShowAccountMenu(false); }} className="w-full px-4 py-2.5 text-left text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3">
+                  {/* Section: Quick actions */}
+                  <button
+                    onClick={() => { if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); } setShowAccountMenu(false); }}
+                    className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                    role="menuitem"
+                  >
+                    <i className="fa-solid fa-plus text-slate-600 w-4"></i> {t('history.newProject')}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setShowAccountMenu(false);
+                      setShowFavorites(true);
+                      setFavoritesLoading(true);
+                      try {
+                        const uid = user?.uid;
+                        if (!uid) return;
+                        try {
+                          const fSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), where('feedback.savedToFavorites', '==', true), orderBy('timestamp', 'desc'), limit(50)));
+                          setFavoritesData(fSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+                        } catch (indexErr) {
+                          console.warn('Favorites index query failed, using fallback:', indexErr);
+                          try {
+                            const fallbackSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), orderBy('timestamp', 'desc'), limit(200)));
+                            const allGens = fallbackSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                            setFavoritesData(allGens.filter((g: any) => g.feedback?.savedToFavorites === true));
+                          } catch (fallbackErr) {
+                            console.error('Fallback favorites query also failed:', fallbackErr);
+                            setFavoritesData([]);
+                          }
+                        }
+                      } catch (e) { console.warn('Failed to load favorites:', e); }
+                      finally { setFavoritesLoading(false); }
+                    }}
+                    className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                    role="menuitem"
+                  >
+                    <i className="fa-solid fa-bookmark text-slate-600 w-4"></i> {t('topbar.menu_bookmarks')}
+                  </button>
+                  <button
+                    onClick={() => { setShowSettingsModal(true); setSettingsEditingName(false); setSettingsEditingEmail(false); setShowAccountMenu(false); }}
+                    className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                    role="menuitem"
+                  >
+                    <i className="fa-solid fa-gear text-slate-600 w-4"></i> {t('topbar.menu_settings')}
+                  </button>
+                  {/* Divider */}
+                  <div className="border-t border-white/[0.04]"></div>
+                  {/* Section: Appearance / locale */}
+                  <button
+                    onClick={() => { toggleTheme(); setShowAccountMenu(false); }}
+                    className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                    role="menuitem"
+                  >
+                    <i className={`fa-solid ${isDarkMode ? 'fa-sun' : 'fa-moon'} text-slate-600 w-4`}></i> {isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
+                  </button>
+                  <button
+                    onClick={() => { setLang(lang === 'en' ? 'ar' : 'en'); setShowAccountMenu(false); }}
+                    className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                    role="menuitem"
+                  >
+                    <i className="fa-solid fa-language text-slate-600 w-4"></i> {t('topbar.menu_language')} ({t('lang.switch_short')})
+                  </button>
+                  {!milestones.watchVideo && (
+                    <button
+                      onClick={() => { setShowVideoPopup(true); setShowAccountMenu(false); }}
+                      className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                      role="menuitem"
+                    >
+                      <i className="fa-solid fa-play text-amber-500 w-4"></i> {t('topbar.menu_tutorial')}
+                    </button>
+                  )}
+                  {phase === 'input' && (
+                    <button
+                      onClick={() => { setShowWalkthrough(true); setShowAccountMenu(false); }}
+                      className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                      role="menuitem"
+                    >
+                      <i className="fa-solid fa-circle-question text-slate-600 w-4"></i> {t('topbar.menu_tour')}
+                    </button>
+                  )}
+                  {/* Divider */}
+                  <div className="border-t border-white/[0.04]"></div>
+                  {/* Section: Plan / logout */}
+                  <button
+                    onClick={() => { handleManageBilling(); setShowAccountMenu(false); }}
+                    className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                    role="menuitem"
+                  >
                     <i className="fa-solid fa-credit-card text-slate-600 w-4"></i> Manage Billing
                   </button>
-                  <button onClick={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowAccountMenu(false); }} className="w-full px-4 py-2.5 text-left text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3">
+                  <button
+                    onClick={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowAccountMenu(false); }}
+                    className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                    role="menuitem"
+                  >
                     <i className="fa-solid fa-arrow-up text-slate-600 w-4"></i> {t('header.upgrade')}
                   </button>
                   <div className="border-t border-white/[0.04]"></div>
-                  <button onClick={() => { handleLogout(); setShowAccountMenu(false); }} className="w-full px-4 py-2.5 text-left text-[10px] text-red-500/70 hover:bg-red-500/5 hover:text-red-400 transition-all flex items-center gap-3">
+                  <button
+                    onClick={() => { handleLogout(); setShowAccountMenu(false); }}
+                    className="w-full px-4 py-2.5 text-start text-[10px] text-red-500/70 hover:bg-red-500/5 hover:text-red-400 transition-all flex items-center gap-3"
+                    role="menuitem"
+                  >
                     <i className="fa-solid fa-right-from-bracket w-4"></i> {t('header.logout')}
                   </button>
                 </div>
-            )}
-            <SaveStatusIndicator state={autoSaveState} onRetry={autoSaveRetry} />
-          </div>
+              )}
+            </div>
           </div>
         </div>
       </nav>
@@ -6663,9 +6707,24 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 into state (used by handleHistorySelect + autosave) but the
                 user only sees them here, merged with their live generations.
                 The `projectLimitReached` banner is preserved so users with
-                too many saved projects still see the upgrade nudge. */}
+                too many saved projects still see the upgrade nudge.
+                Phase 26 Batch 6: prominent "+ New Project" outline button
+                above the grid. This is where new-project creation lives
+                now — the top-bar button was moved into the More dropdown. */}
         {phase === 'input' && (
           <div className="max-w-5xl mx-auto mb-10 animate-in fade-in duration-700">
+            <div className="flex items-center justify-between mb-4 px-1">
+              <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
+                {lang === 'ar' ? 'السجل' : 'History'}
+              </h2>
+              <button
+                onClick={() => { if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); } }}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-700 bg-slate-900/40 text-slate-200 text-[11px] font-semibold hover:border-blue-500 hover:text-blue-300 hover:bg-blue-500/10 transition-all"
+              >
+                <i className="fa-solid fa-plus text-[9px]"></i>
+                {t('history.newProject')}
+              </button>
+            </div>
             {projectLimitReached && (() => {
               const cap = getSavedProjectLimit(userPlan);
               const capLabel = Number.isFinite(cap) ? String(cap) : 'plan';

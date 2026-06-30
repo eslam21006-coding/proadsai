@@ -43,6 +43,10 @@ export const historyLabels: Record<string, { en: string; ar: string }> = {
   empty: { en: "No generations yet. Create your first ad to see it here.", ar: "لا توجد إعلانات بعد. أنشئ أول إعلان لك ليظهر هنا." },
   emptyFiltered: { en: "No generations match the current filters.", ar: "لا توجد إعلانات تطابق الفلاتر الحالية." },
   endOfList: { en: "You've reached the end.", ar: "وصلت إلى نهاية السجل." },
+
+  // Page-level actions (Batch 6 — New Project button on the Brief page)
+  newProject: { en: "New Project", ar: "مشروع جديد" },
+  newProjectConfirm: { en: "Start a new project?", ar: "بدء مشروع جديد؟" },
 };
 
 // Hook angle → label, mirrors src/constants.ts COLD_HOOK_ANGLES.

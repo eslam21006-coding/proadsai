@@ -131,6 +131,17 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'header.logout': 'Log Out',
         'header.free_trial': 'Free Trial',
 
+        // ── Top-bar more menu (Batch 6) ──
+        'topbar.more': 'More',
+        'topbar.menu_more': 'Open menu',
+        'topbar.menu_bookmarks': 'Saved Renders',
+        'topbar.menu_settings': 'Settings',
+        'topbar.menu_tour': 'Guided Tour',
+        'topbar.menu_tutorial': 'Tutorial (+2 credits)',
+        'topbar.menu_dark': 'Switch to dark mode',
+        'topbar.menu_light': 'Switch to light mode',
+        'topbar.menu_language': 'Switch language',
+
         // ── InputForm ──
         'form.progress': 'Brief progress',
         'form.campaign_type': 'Campaign Type',
@@ -906,6 +917,17 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'header.privacy': 'سياسة الخصوصية',
         'header.logout': 'تسجيل الخروج',
         'header.free_trial': 'تجربة مجانية',
+
+        // ── Top-bar more menu (Batch 6) ──
+        'topbar.more': 'المزيد',
+        'topbar.menu_more': 'فتح القائمة',
+        'topbar.menu_bookmarks': 'العروض المحفوظة',
+        'topbar.menu_settings': 'الإعدادات',
+        'topbar.menu_tour': 'جولة إرشادية',
+        'topbar.menu_tutorial': 'شرح (+٢ رصيد)',
+        'topbar.menu_dark': 'التبديل للوضع الداكن',
+        'topbar.menu_light': 'التبديل للوضع الفاتح',
+        'topbar.menu_language': 'تبديل اللغة',
 
         // ── InputForm ──
         'form.progress': 'تقدم البيانات',
