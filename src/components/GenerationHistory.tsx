@@ -15,6 +15,12 @@ import {
   hookAngleStyles
 } from "../i18n/generationHistory";
 
+/**
+ * Public props for the GenerationHistory panel.
+ * `uid` / `workspaceId` drive the Firestore scope; `onSelectGeneration` fires
+ * when a card is clicked so the host (App.tsx) can route to the matching
+ * saved project.
+ */
 interface Props {
   uid: string | null;
   workspaceId?: string | null;
@@ -25,6 +31,10 @@ interface Props {
 
 const HOOK_ANGLE_OPTIONS = COLD_HOOK_ANGLES.map((a) => a.id);
 
+/**
+ * Truncate a string to `max` characters, appending an ellipsis when shortened.
+ * Empty / nullish input collapses to an empty string.
+ */
 function truncate(str: string | null | undefined, max: number): string {
   if (!str) return "";
   return str.length <= max ? str : str.slice(0, max - 1).trimEnd() + "…";
@@ -94,6 +104,14 @@ function formatRelative(date: Date | null, lang: "en" | "ar"): string {
   });
 }
 
+/**
+ * Resolve the human-readable universe identifier for DISPLAY. Mirrors the
+ * persisted GenerationRecord contract (creativeIdentity.universeId →
+ * input.preferredUniverse → input.resolvedUniverse). `input.tone` is
+ * intentionally NOT used here because tone is semantically the ad tone,
+ * not a universe — even though the legacy backend write path persisted
+ * `resolvedUniverse` into `input.tone`.
+ */
 function getUniverseDisplay(record: GenerationRecord): string | null {
   const creative = record.creativeIdentity?.universeId;
   if (creative) return creative;
@@ -103,14 +121,15 @@ function getUniverseDisplay(record: GenerationRecord): string | null {
   if ((input as { resolvedUniverse?: string }).resolvedUniverse) {
     return (input as { resolvedUniverse?: string }).resolvedUniverse as string;
   }
-  // NOTE: `input.tone` is intentionally NOT used as a universe fallback for
-  // DISPLAY. The backend write path persists `resolvedUniverse` into `tone`,
-  // so tone can sometimes hold a universe value — but `tone` is semantically
-  // a different field (ad tone), so showing it as a universe would mislead
-  // the user. The filter hook still reads tone so legacy rows stay findable.
   return null;
 }
 
+/**
+ * Resolve the cold hook angle identifier for display in the card badge.
+ * Prefers the canonical `creativeIdentity.hookAngle`, falls back to legacy
+ * `input.coldHookAngle` for older records that predate the creative-identity
+ * block.
+ */
 function getHookAngleDisplay(record: GenerationRecord): string | null {
   const creative = record.creativeIdentity?.hookAngle;
   if (creative) return creative;
@@ -118,10 +137,19 @@ function getHookAngleDisplay(record: GenerationRecord): string | null {
   return input?.coldHookAngle ?? null;
 }
 
+/**
+ * Resolve the art-direction (sub-style) identifier for display. Reads
+ * `input.visualSubStyle`, the single canonical source for this field.
+ */
 function getArtDirectionDisplay(record: GenerationRecord): string | null {
   return record.input?.visualSubStyle ?? null;
 }
 
+/**
+ * Best-effort text used for the card headline. Walks the most descriptive
+ * fields in priority order so the card shows something useful even when the
+ * copy stage never produced a final hook line.
+ */
 function getHookText(record: GenerationRecord): string {
   return (
     record.output?.hookText ||
@@ -134,11 +162,21 @@ function getHookText(record: GenerationRecord): string {
 
 // ─── HOOK ANGLE BADGE ───────────────────────────────────────────────────────
 
+/**
+ * Props for the small colored chip that renders the resolved cold-hook-angle
+ * on a generation card. Returns `null` (no chip) when the record has no hook
+ * angle — avoids showing an empty badge on legacy or malformed rows.
+ */
 interface HookBadgeProps {
   hookId: string | null;
   langKey: "en" | "ar";
 }
 
+/**
+ * Colored pill that visualizes the hook angle on a card. Each angle has a
+ * unique color so the user can scan a grid and identify the dominant angle
+ * without reading text.
+ */
 const HookBadge: React.FC<HookBadgeProps> = ({ hookId, langKey }) => {
   if (!hookId) return null;
   const label = hookAngleLabels[hookId]?.[langKey] ?? hookId.replace(/_/g, " ");
@@ -155,6 +193,11 @@ const HookBadge: React.FC<HookBadgeProps> = ({ hookId, langKey }) => {
 
 // ─── FILTER DROPDOWN ────────────────────────────────────────────────────────
 
+/**
+ * Props for the multi-select filter dropdown used by the history panel.
+ * `anyLabel` is the placeholder text shown in the trigger when nothing is
+ * selected; it usually includes the option count (e.g. "Any (12)").
+ */
 interface MultiSelectProps {
   label: string;
   options: { value: string; label: string }[];
@@ -163,6 +206,11 @@ interface MultiSelectProps {
   anyLabel: string;
 }
 
+/**
+ * Compact multi-select dropdown with checkbox options. Closes on outside
+ * click and Escape key. Trigger button shows the active count when more
+ * than one selection is present.
+ */
 const MultiSelectDropdown: React.FC<MultiSelectProps> = ({ label, options, selected, onChange, anyLabel }) => {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -259,6 +307,11 @@ const MultiSelectDropdown: React.FC<MultiSelectProps> = ({ label, options, selec
 
 // ─── HISTORY CARD ───────────────────────────────────────────────────────────
 
+/**
+ * Props for a single history card. `onSelect` fires when the card is
+ * activated (click or Enter/Space) and receives the Firestore id plus the
+ * full GenerationRecord so the host can route to the matching saved project.
+ */
 interface CardProps {
   record: GenerationRecord;
   langKey: "en" | "ar";
@@ -372,6 +425,12 @@ GenerationCard.displayName = "GenerationCard";
 
 // ─── COMPONENT ──────────────────────────────────────────────────────────────
 
+/**
+ * Phase 26 history panel: filter bar (hook angle / universe / art direction),
+ * responsive card grid, load-more pagination, and loading / empty / end-of-list
+ * states. All UI strings flow through `useT()`; the Firestore subscription is
+ * delegated to `useGenerationHistory`.
+ */
 const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, onSelectGeneration }) => {
   const { dir, lang } = useT();
   const langKey = (lang === "ar" ? "ar" : "en") as "en" | "ar";
