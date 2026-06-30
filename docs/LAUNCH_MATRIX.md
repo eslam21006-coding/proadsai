@@ -3,7 +3,7 @@
 
 > **Authority**: This file overrides all older behavior assumptions, the Compatibility Matrix v2, and the ChatGPT master plan for launch scope.
 > Where this file and any other document disagree, this file wins.
-Last updated: v9 — Phase 20 Concept Director complete (2026-06-28). All active pipeline phases (17, 28, 19, 27, 20) shipped. Phase 20 ships Option A (no creative memory wiring — Phase 14 deferred). Feature flag conceptDirectorEnabled defaults to false; kill switch via Remote Config.
+Last updated: v11 — v10 + Hotfix Image Persistence complete (2026-06-29). Fixes primary render images broken across browsers: static import for storageUpload, Storage URL passed to pushMockup and batch results so mockupHistory survives project save/reload.
 
 ---
 
@@ -119,6 +119,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | Phase 19 — Direct-Response Design Upgrades (gaze + DR) | `962-gaze-direction-dr` | ✅ DONE 2026-06-24 (this PR). Five additive prompt blocks through the single shared `buildFinalImagePrompt()` injection point: (1) `GAZE DIRECTION` (hook-gated, US1), (2) `ONE_HIGHLIGHT_BLOCK` (always-on, US2), (3) hook↔visual mood modulation (hook-gated, US4), (4) price hierarchy (content-gated, US5), (5) CTA outcome framing (copy prompt, both languages, US3). Additive `gazeDirection?` trace. 244 unit assertions (Contracts A–G) green; Phase 28 expression tests still green. Art-direction gaze override deferred to a later phase. See Section 8 mirror. |
 | Phase 27 — Universe-Aware Copy | `specs/963-universe-aware-copy` | ✅ DONE 2026-06-26 (PR #48). Fantasy universes get one mandatory subtle metaphor per hook; realistic/minimal stay literal. Decision module `universeCopyMap.ts`, injected at copy prompt (generateTOV) + visual element at `buildFinalImagePrompt()`. Suppressed for reference ads, text-only, carousel slides 2+. Additive `universeAwareCopy?` trace. 237 unit assertions. |
 | Phase 20 — Concept Director (Option A) | specs/964-concept-director | ✅ DONE 2026-06-28 (PR #49). Core Concept Director module + Variance Validator + pipeline integration. Feature flag conceptDirectorEnabled (default false) + Remote Config kill switch. Fail-open to Visual Architect V5.0. Backend-only (frontend plumbing for trace pass-through only). Deferred: 20.A (Selection Reviewer), 20.E (Brief Coherence banner), 20.F (Variance Mode toggle), 20.D.7 (creative memory wiring). |
+| Hotfix — Image Persistence | — | ✅ DONE 2026-06-29 (PR #51). Root cause: (1) dynamic import of storageUpload.js failed silently in serverGenerateFinalAd, (2) frontend wrote 'pending_upload' sentinel to Firestore when storageUrl was null, (3) pushMockup received base64 instead of Storage URL so mockupHistory[].url was stripped to 'stored_externally' on project save. Fix: static import for saveBase64ToStorage, removed 'pending_upload' fallback, pushMockup now accepts and prefers Storage URL, batch results store storageUrl. All render paths (single, batch, carousel, edit, A/B) now persist durable Storage URLs. |
 
 ### ⏳ TODO — Critical (build first)
 
