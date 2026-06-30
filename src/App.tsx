@@ -18,6 +18,7 @@ import FavoritesPanel from './components/FavoritesPanel';
 import GenerationHistory from './components/GenerationHistory';
 import DeleteProjectDialog from './components/SavedProjectsPanel/DeleteProjectDialog';
 import SaveStatusIndicator from './components/SavedProjectsPanel/SaveStatusIndicator';
+import SideDrawer from './components/SideDrawer';
 import { useFavorites } from './hooks/useFavorites';
 import type { GenerationRecord } from './services/feedbackService';
 
@@ -1745,6 +1746,11 @@ const App: React.FC = () => {
   const [loadedRenderRecord, setLoadedRenderRecord] = useState<GenerationRecord | null>(null);
   const [upgradeReason, setUpgradeReason] = useState('');
   const [showAccountMenu, setShowAccountMenu] = useState(false);
+  // Phase 26 Batch 6 — History side panel state.
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  // Live count badge value lifted from <GenerationHistory onTotalCountChange>.
+  // Starts at 0; updated as the panel loads.
+  const [historyTotalCount, setHistoryTotalCount] = useState(0);
 
   // ─── MANDATORY BILLING AUTO-DISMISS ──────────────────────────────────
   useEffect(() => {
@@ -1823,7 +1829,7 @@ const App: React.FC = () => {
   const [cancelLoading, setCancelLoading] = useState(false);
   const [editingHook, setEditingHook] = useState<string | null>(null);
   const [editHookData, setEditHookData] = useState<{ hookText: string; subhead: string; cta: string; benefit: string; storyArc?: string }>({ hookText: '', subhead: '', cta: '', benefit: '' });
-  const accountMenuRef = useRef<HTMLDivElement>(null);
+  // (Removed: accountMenuRef — SideDrawer handles its own outside-click + Escape close.)
 
   // ─── GHL CHECKOUT URLS (external marketing funnel) ───
   const GHL_URLS: Record<string, string> = {
@@ -2672,16 +2678,8 @@ const App: React.FC = () => {
     metaService.getConnection().then(conn => setMetaConnection(conn)).catch(() => { });
   }, [user]);
 
-  // Close account dropdown on outside click
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (accountMenuRef.current && !accountMenuRef.current.contains(e.target as Node)) {
-        setShowAccountMenu(false);
-      }
-    };
-    if (showAccountMenu) document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showAccountMenu]);
+  // SideDrawer handles its own outside-click + Escape-key close behavior, so
+  // no per-component click-outside effect is needed here.
 
   // FIX 3: when the user switches to a DIFFERENT hook in single mode, drop stale concepts so
   // Step 3 can't show a previous session's blueprints — forcing a fresh regenerate for the new
@@ -6557,134 +6555,132 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               <span className="text-[11px] font-bold text-amber-400">{userCredits}</span>
               <span className="text-[9px] text-slate-500 hidden sm:inline">{PLANS[userPlan]?.name}</span>
             </button>
-            <div className="relative" ref={accountMenuRef}>
+            <button
+              data-tour="sidebar-menu"
+              onClick={() => setShowAccountMenu(!showAccountMenu)}
+              className="w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-white transition-colors"
+              aria-label={t('topbar.menu_more')}
+              aria-expanded={showAccountMenu}
+            >
+              <i className="fa-solid fa-ellipsis-vertical text-xs"></i>
+            </button>
+            <SideDrawer
+              open={showAccountMenu}
+              onClose={() => setShowAccountMenu(false)}
+              title={t('history.menu_title')}
+              subtitle={user?.email ?? ''}
+            >
+              {/* Section: Account */}
+              <div className="px-5 py-4 border-b border-white/[0.04] bg-slate-900/40">
+                <p className="text-[10px] text-slate-400 truncate">{user?.email}</p>
+                <p className="text-[9px] text-blue-400 font-bold uppercase mt-1">{PLANS[userPlan]?.name || 'Free'} {t('header.plan')}</p>
+              </div>
+              {/* Section: Quick actions */}
               <button
-                data-tour="sidebar-menu"
-                onClick={() => setShowAccountMenu(!showAccountMenu)}
-                className="w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-white transition-colors"
-                aria-label={t('topbar.menu_more')}
-                aria-expanded={showAccountMenu}
+                onClick={() => { if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); } setShowAccountMenu(false); }}
+                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                role="menuitem"
               >
-                <i className="fa-solid fa-ellipsis-vertical text-xs"></i>
+                <i className="fa-solid fa-plus text-slate-500 w-5 text-center"></i> {t('history.newProject')}
               </button>
-              {showAccountMenu && (
-                <div
-                  className="absolute end-0 top-full mt-2 w-60 bg-slate-900 border border-slate-800/80 rounded-xl shadow-2xl shadow-black/60 overflow-hidden z-[100]"
-                  role="menu"
-                >
-                  {/* Section: Account */}
-                  <div className="px-4 py-3 border-b border-white/[0.04]">
-                    <p className="text-[10px] text-slate-400 truncate">{user?.email}</p>
-                    <p className="text-[9px] text-blue-400 font-bold uppercase mt-1">{PLANS[userPlan]?.name || 'Free'} {t('header.plan')}</p>
-                  </div>
-                  {/* Section: Quick actions */}
-                  <button
-                    onClick={() => { if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); } setShowAccountMenu(false); }}
-                    className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-                    role="menuitem"
-                  >
-                    <i className="fa-solid fa-plus text-slate-600 w-4"></i> {t('history.newProject')}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      setShowAccountMenu(false);
-                      setShowFavorites(true);
-                      setFavoritesLoading(true);
+              <button
+                onClick={async () => {
+                  setShowAccountMenu(false);
+                  setShowFavorites(true);
+                  setFavoritesLoading(true);
+                  try {
+                    const uid = user?.uid;
+                    if (!uid) return;
+                    try {
+                      const fSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), where('feedback.savedToFavorites', '==', true), orderBy('timestamp', 'desc'), limit(50)));
+                      setFavoritesData(fSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+                    } catch (indexErr) {
+                      console.warn('Favorites index query failed, using fallback:', indexErr);
                       try {
-                        const uid = user?.uid;
-                        if (!uid) return;
-                        try {
-                          const fSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), where('feedback.savedToFavorites', '==', true), orderBy('timestamp', 'desc'), limit(50)));
-                          setFavoritesData(fSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-                        } catch (indexErr) {
-                          console.warn('Favorites index query failed, using fallback:', indexErr);
-                          try {
-                            const fallbackSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), orderBy('timestamp', 'desc'), limit(200)));
-                            const allGens = fallbackSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-                            setFavoritesData(allGens.filter((g: any) => g.feedback?.savedToFavorites === true));
-                          } catch (fallbackErr) {
-                            console.error('Fallback favorites query also failed:', fallbackErr);
-                            setFavoritesData([]);
-                          }
-                        }
-                      } catch (e) { console.warn('Failed to load favorites:', e); }
-                      finally { setFavoritesLoading(false); }
-                    }}
-                    className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-                    role="menuitem"
-                  >
-                    <i className="fa-solid fa-bookmark text-slate-600 w-4"></i> {t('topbar.menu_bookmarks')}
-                  </button>
-                  <button
-                    onClick={() => { setShowSettingsModal(true); setSettingsEditingName(false); setSettingsEditingEmail(false); setShowAccountMenu(false); }}
-                    className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-                    role="menuitem"
-                  >
-                    <i className="fa-solid fa-gear text-slate-600 w-4"></i> {t('topbar.menu_settings')}
-                  </button>
-                  {/* Divider */}
-                  <div className="border-t border-white/[0.04]"></div>
-                  {/* Section: Appearance / locale */}
-                  <button
-                    onClick={() => { toggleTheme(); setShowAccountMenu(false); }}
-                    className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-                    role="menuitem"
-                  >
-                    <i className={`fa-solid ${isDarkMode ? 'fa-sun' : 'fa-moon'} text-slate-600 w-4`}></i> {isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
-                  </button>
-                  <button
-                    onClick={() => { setLang(lang === 'en' ? 'ar' : 'en'); setShowAccountMenu(false); }}
-                    className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-                    role="menuitem"
-                  >
-                    <i className="fa-solid fa-language text-slate-600 w-4"></i> {t('topbar.menu_language')} ({t('lang.switch_short')})
-                  </button>
-                  {!milestones.watchVideo && (
-                    <button
-                      onClick={() => { setShowVideoPopup(true); setShowAccountMenu(false); }}
-                      className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-                      role="menuitem"
-                    >
-                      <i className="fa-solid fa-play text-amber-500 w-4"></i> {t('topbar.menu_tutorial')}
-                    </button>
-                  )}
-                  {phase === 'input' && (
-                    <button
-                      onClick={() => { setShowWalkthrough(true); setShowAccountMenu(false); }}
-                      className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-                      role="menuitem"
-                    >
-                      <i className="fa-solid fa-circle-question text-slate-600 w-4"></i> {t('topbar.menu_tour')}
-                    </button>
-                  )}
-                  {/* Divider */}
-                  <div className="border-t border-white/[0.04]"></div>
-                  {/* Section: Plan / logout */}
-                  <button
-                    onClick={() => { handleManageBilling(); setShowAccountMenu(false); }}
-                    className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-                    role="menuitem"
-                  >
-                    <i className="fa-solid fa-credit-card text-slate-600 w-4"></i> Manage Billing
-                  </button>
-                  <button
-                    onClick={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowAccountMenu(false); }}
-                    className="w-full px-4 py-2.5 text-start text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-                    role="menuitem"
-                  >
-                    <i className="fa-solid fa-arrow-up text-slate-600 w-4"></i> {t('header.upgrade')}
-                  </button>
-                  <div className="border-t border-white/[0.04]"></div>
-                  <button
-                    onClick={() => { handleLogout(); setShowAccountMenu(false); }}
-                    className="w-full px-4 py-2.5 text-start text-[10px] text-red-500/70 hover:bg-red-500/5 hover:text-red-400 transition-all flex items-center gap-3"
-                    role="menuitem"
-                  >
-                    <i className="fa-solid fa-right-from-bracket w-4"></i> {t('header.logout')}
-                  </button>
-                </div>
+                        const fallbackSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), orderBy('timestamp', 'desc'), limit(200)));
+                        const allGens = fallbackSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                        setFavoritesData(allGens.filter((g: any) => g.feedback?.savedToFavorites === true));
+                      } catch (fallbackErr) {
+                        console.error('Fallback favorites query also failed:', fallbackErr);
+                        setFavoritesData([]);
+                      }
+                    }
+                  } catch (e) { console.warn('Failed to load favorites:', e); }
+                  finally { setFavoritesLoading(false); }
+                }}
+                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                role="menuitem"
+              >
+                <i className="fa-solid fa-bookmark text-slate-500 w-5 text-center"></i> {t('topbar.menu_bookmarks')}
+              </button>
+              <button
+                onClick={() => { setShowSettingsModal(true); setSettingsEditingName(false); setSettingsEditingEmail(false); setShowAccountMenu(false); }}
+                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                role="menuitem"
+              >
+                <i className="fa-solid fa-gear text-slate-500 w-5 text-center"></i> {t('topbar.menu_settings')}
+              </button>
+              {/* Divider */}
+              <div className="border-t border-white/[0.04]"></div>
+              {/* Section: Appearance / locale */}
+              <button
+                onClick={() => { toggleTheme(); setShowAccountMenu(false); }}
+                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                role="menuitem"
+              >
+                <i className={`fa-solid ${isDarkMode ? 'fa-sun' : 'fa-moon'} text-slate-500 w-5 text-center`}></i> {isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
+              </button>
+              <button
+                onClick={() => { setLang(lang === 'en' ? 'ar' : 'en'); setShowAccountMenu(false); }}
+                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                role="menuitem"
+              >
+                <i className="fa-solid fa-language text-slate-500 w-5 text-center"></i> {t('topbar.menu_language')} ({t('lang.switch_short')})
+              </button>
+              {!milestones.watchVideo && (
+                <button
+                  onClick={() => { setShowVideoPopup(true); setShowAccountMenu(false); }}
+                  className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                  role="menuitem"
+                >
+                  <i className="fa-solid fa-play text-amber-500 w-5 text-center"></i> {t('topbar.menu_tutorial')}
+                </button>
               )}
-            </div>
+              {phase === 'input' && (
+                <button
+                  onClick={() => { setShowWalkthrough(true); setShowAccountMenu(false); }}
+                  className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                  role="menuitem"
+                >
+                  <i className="fa-solid fa-circle-question text-slate-500 w-5 text-center"></i> {t('topbar.menu_tour')}
+                </button>
+              )}
+              {/* Divider */}
+              <div className="border-t border-white/[0.04]"></div>
+              {/* Section: Plan / logout */}
+              <button
+                onClick={() => { handleManageBilling(); setShowAccountMenu(false); }}
+                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                role="menuitem"
+              >
+                <i className="fa-solid fa-credit-card text-slate-500 w-5 text-center"></i> Manage Billing
+              </button>
+              <button
+                onClick={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowAccountMenu(false); }}
+                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                role="menuitem"
+              >
+                <i className="fa-solid fa-arrow-up text-slate-500 w-5 text-center"></i> {t('header.upgrade')}
+              </button>
+              <div className="border-t border-white/[0.04]"></div>
+              <button
+                onClick={() => { handleLogout(); setShowAccountMenu(false); }}
+                className="w-full px-5 py-3 text-start text-[12px] text-red-500/70 hover:bg-red-500/5 hover:text-red-400 transition-all flex items-center gap-3"
+                role="menuitem"
+              >
+                <i className="fa-solid fa-right-from-bracket w-5 text-center"></i> {t('header.logout')}
+              </button>
+            </SideDrawer>
           </div>
         </div>
       </nav>
@@ -6701,22 +6697,26 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           </div>
         )}
 
-{/* ═══ HISTORY GALLERY (shown on input phase) — Phase 26 ═══
-                Phase 26 Batch 5: the flat saved-projects list is GONE.
-                History is the only view. Saved projects are still loaded
-                into state (used by handleHistorySelect + autosave) but the
-                user only sees them here, merged with their live generations.
-                The `projectLimitReached` banner is preserved so users with
-                too many saved projects still see the upgrade nudge.
-                Phase 26 Batch 6: prominent "+ New Project" outline button
-                above the grid. This is where new-project creation lives
-                now — the top-bar button was moved into the More dropdown. */}
+{/* ═══ HISTORY TRIGGER + SIDE PANEL (Phase 26 Batch 6 revision) ═══
+                Phase 26 Batch 5: the flat saved-projects list was removed.
+                Batch 6 Revision: the inline history grid is GONE — the
+                Brief form is now the main content, and History lives in a
+                left-side drawer that opens from a "History (N)" trigger
+                button beside the "+ New Project" button. Saved projects are
+                still loaded into state (used by handleHistorySelect + the
+                projectLimitReached banner) but the user only sees them
+                inside the panel. */}
         {phase === 'input' && (
-          <div className="max-w-5xl mx-auto mb-10 animate-in fade-in duration-700">
-            <div className="flex items-center justify-between mb-4 px-1">
-              <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
-                {lang === 'ar' ? 'السجل' : 'History'}
-              </h2>
+          <div className="max-w-5xl mx-auto mb-6 animate-in fade-in duration-700">
+            <div className="flex items-center justify-between mb-4 px-1 gap-2 flex-wrap">
+              <button
+                onClick={() => setShowHistoryPanel(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-700 bg-slate-900/40 text-slate-200 text-[11px] font-semibold hover:border-blue-500 hover:text-blue-300 hover:bg-blue-500/10 transition-all"
+                aria-label={t('history.open_panel')}
+              >
+                <i className="fa-solid fa-clock-rotate-left text-[10px]"></i>
+                <span>{t('history.open_panel_with_count').replace("{n}", String(historyTotalCount))}</span>
+              </button>
               <button
                 onClick={() => { if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); } }}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-700 bg-slate-900/40 text-slate-200 text-[11px] font-semibold hover:border-blue-500 hover:text-blue-300 hover:bg-blue-500/10 transition-all"
@@ -6743,13 +6743,31 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 </div>
               );
             })()}
+          </div>
+        )}
+
+        {/* History side panel — renders GenerationHistory inside a left-edge
+            drawer. Slides in from the left in LTR, right in RTL (handled by
+            the SideDrawer's `side="start"` anchor, which uses Tailwind
+            `start-0`/`end-0`). When a card is clicked the panel also closes
+            so the user lands on the matching project without an extra step. */}
+        {phase === 'input' && (
+          <SideDrawer
+            open={showHistoryPanel}
+            onClose={() => setShowHistoryPanel(false)}
+            side="start"
+            title={t('history.title')}
+            closeLabel={t('history.close_panel')}
+          >
             <GenerationHistory
               uid={effectiveUid}
               workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
               savedProjects={filteredProjects}
-              onSelectHistory={handleHistorySelect}
+              onSelectHistory={(item) => { handleHistorySelect(item); setShowHistoryPanel(false); }}
+              compact
+              onTotalCountChange={setHistoryTotalCount}
             />
-          </div>
+          </SideDrawer>
         )}
 
         {/* Quick-Start Templates — always available on input phase */}

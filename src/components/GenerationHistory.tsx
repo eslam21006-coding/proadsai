@@ -37,6 +37,19 @@ interface Props {
    * matching saved project by imageUrl (when `item.source === 'generation'`).
    */
   onSelectHistory: (item: HistoryItem) => void;
+  /**
+   * Compact mode — single-column layout with small horizontal cards used
+   * inside the History side panel. Default `false` keeps the legacy 2-column
+   * grid for inline rendering.
+   */
+  compact?: boolean;
+  /**
+   * Optional callback that fires whenever the post-filter total changes.
+   * Lets the parent show a live count badge without re-querying Firestore.
+   * The handler receives the total count (matches `totalCount` returned by
+   * the hook). Not invoked when undefined.
+   */
+  onTotalCountChange?: (count: number) => void;
 }
 
 // ─── HELPERS ────────────────────────────────────────────────────────────────
@@ -304,6 +317,11 @@ const MultiSelectDropdown: React.FC<MultiSelectProps> = ({ label, options, selec
  * activated (click or Enter/Space) and receives the unified HistoryItem so
  * the host can route to the matching saved project (or load it directly
  * when source === 'project').
+ *
+ * `compact` switches the layout to a horizontal-row variant used by the
+ * History side panel — small square thumbnail on the left, text + metadata
+ * on the right. The default (`compact={false}`) is the vertical-card
+ * variant used when the history grid renders inline (legacy mode).
  */
 interface CardProps {
   item: HistoryItem;
@@ -311,9 +329,10 @@ interface CardProps {
   dir: "ltr" | "rtl";
   onSelect: (item: HistoryItem) => void;
   openLabel: string;
+  compact?: boolean;
 }
 
-const GenerationCard: React.FC<CardProps> = React.memo(({ item, langKey, dir, onSelect, openLabel }) => {
+const GenerationCard: React.FC<CardProps> = React.memo(({ item, langKey, dir, onSelect, openLabel, compact = false }) => {
   const [imgFailed, setImgFailed] = useState(false);
   const [prevImageUrl, setPrevImageUrl] = useState<string | null | undefined>(item.thumbnailUrl);
   const imageUrl = item.thumbnailUrl;
@@ -362,6 +381,69 @@ const GenerationCard: React.FC<CardProps> = React.memo(({ item, langKey, dir, on
     ? (getCardById(artDir)?.[langKey === "ar" ? "labelAr" : "labelEn"] ?? artDir.replace(/_/g, " "))
     : null;
 
+  // Compact variant — used inside the History side panel. Horizontal row
+  // with a small square thumbnail on the left and text metadata on the
+  // right. Fits inside ~360px-wide panels without crowding.
+  if (compact) {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label={openLabel}
+        onClick={handleActivate}
+        onKeyDown={handleKeyDown}
+        dir={dir}
+        className="group flex items-stretch gap-3 p-2 bg-slate-900/60 border border-slate-800 rounded-lg cursor-pointer hover:border-blue-500/60 hover:bg-slate-900/80 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+      >
+        <div className="relative w-[80px] h-[80px] flex-shrink-0 bg-slate-800 rounded-lg overflow-hidden flex items-center justify-center">
+          {isDraft ? (
+            <i className="fa-solid fa-pen-ruler text-slate-600 text-xl" />
+          ) : imageUrl && !imgFailed ? (
+            <img
+              src={imageUrl}
+              alt={truncate(displayTitle, 40) || historyLabels.noHookText[langKey]}
+              loading="lazy"
+              onError={() => setImgFailed(true)}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <i className="fa-regular fa-image text-slate-600 text-xl" />
+          )}
+          {isDraft && (
+            <div className="absolute top-1 start-1">
+              <StatusBadge status="draft" langKey={langKey} />
+            </div>
+          )}
+        </div>
+        <div className="flex-1 min-w-0 flex flex-col justify-center gap-1">
+          <div className="text-[11px] font-semibold text-white line-clamp-2 leading-tight" title={titleText}>
+            {truncate(displayTitle, 40) || (
+              <span className="text-slate-500 italic font-normal">
+                {isDraft ? historyLabels.noProjectName[langKey] : historyLabels.noHookText[langKey]}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 text-[9px] text-slate-500">
+            {isDraft ? (
+              <StatusBadge status="draft" langKey={langKey} />
+            ) : (
+              <>
+                {hookId && <HookBadge hookId={hookId} langKey={langKey} />}
+                {universe && (
+                  <span className="truncate max-w-[140px]" title={universe}>{universe}</span>
+                )}
+              </>
+            )}
+          </div>
+          {dateLabel && (
+            <div className="text-[9px] text-slate-600 mt-0.5">{dateLabel}</div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Default variant — vertical card with 4:5 thumbnail.
   return (
     <div
       role="button"
@@ -451,7 +533,7 @@ GenerationCard.displayName = "GenerationCard";
  * states. All UI strings flow through `useT()`; the Firestore subscription is
  * delegated to `useGenerationHistory`.
  */
-const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, onSelectHistory }) => {
+const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, onSelectHistory, compact = false, onTotalCountChange }) => {
   const { dir, lang } = useT();
   const langKey = (lang === "ar" ? "ar" : "en") as "en" | "ar";
 
@@ -480,6 +562,16 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, o
     filters,
     savedProjects,
   });
+
+  // Lift the post-filter total up to the parent so it can render a live
+  // count badge (e.g. "History (95)") without re-querying Firestore. Uses
+  // a useState + "adjust during render" pattern (the React 18+ idiom) to
+  // skip the lint rule against reading/writing refs during render.
+  const [lastCount, setLastCount] = React.useState<number>(totalCount);
+  if (onTotalCountChange && lastCount !== totalCount) {
+    setLastCount(totalCount);
+    onTotalCountChange(totalCount);
+  }
 
   // Facets come from the SAME subscription as `items` — they include the
   // unfiltered universe / art-direction values from every loaded row (head +
@@ -575,17 +667,22 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, o
 
   return (
     <div className="space-y-3" dir={dir}>
-      <div className="flex items-center justify-between px-1">
-        <div className="flex flex-col">
-          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-            {historyLabels.title[langKey]}
-          </h3>
-          <span className="text-[10px] text-slate-500 mt-0.5">{countLabel}</span>
+      {!compact && (
+        <div className="flex items-center justify-between px-1">
+          <div className="flex flex-col">
+            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+              {historyLabels.title[langKey]}
+            </h3>
+            <span className="text-[10px] text-slate-500 mt-0.5">{countLabel}</span>
+          </div>
         </div>
-      </div>
+      )}
+      {compact && (
+        <div className="px-1 text-[10px] text-slate-500">{countLabel}</div>
+      )}
 
       {/* Search bar */}
-      <div className="px-1">
+      <div className={compact ? 'px-1 sticky top-0 z-[1] bg-slate-950 py-2 border-b border-slate-800' : 'px-1'}>
         <div className="relative">
           <i className="fa-solid fa-magnifying-glass absolute start-2.5 top-1/2 -translate-y-1/2 text-slate-500 text-[11px]" />
           <input
@@ -609,7 +706,7 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, o
       </div>
 
       {/* Status filter chips */}
-      <div className="flex items-center gap-1 px-1" role="tablist" aria-label="Status filter">
+      <div className={`flex items-center gap-1 px-1 ${compact ? 'sticky top-[53px] z-[1] bg-slate-950 py-2 border-b border-slate-800' : ''}`} role="tablist" aria-label="Status filter">
         {(['all', 'draft', 'rendered', 'published'] as const).map((s) => {
           const labelMap = {
             all:       historyLabels.statusAll[langKey],
@@ -638,7 +735,7 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, o
       </div>
 
       {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-2 px-1">
+      <div className={`flex flex-wrap items-center gap-2 px-1 ${compact ? 'sticky top-[91px] z-[1] bg-slate-950 py-2 border-b border-slate-800' : ''}`}>
         <MultiSelectDropdown
           label={historyLabels.filterHookAngle[langKey]}
           options={hookAngleOptions}
@@ -664,7 +761,7 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, o
 
       {/* Active filter chips */}
       {activeChips.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 px-1">
+        <div className={`flex flex-wrap items-center gap-1.5 px-1 ${compact ? 'sticky top-[131px] z-[1] bg-slate-950 py-2 border-b border-slate-800' : ''}`}>
           {activeChips.map((chip) => (
             <span
               key={chip.id}
@@ -697,7 +794,7 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, o
           {isFilteredEmpty ? historyLabels.emptyFiltered[langKey] : historyLabels.empty[langKey]}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-[70vh] overflow-y-auto pr-1 scrollbar-thin">
+        <div className={`grid gap-2.5 ${compact ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'} max-h-[70vh] overflow-y-auto pr-1 scrollbar-thin`}>
           {items.map((item) => (
             <GenerationCard
               key={item.id}
@@ -706,6 +803,7 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, o
               dir={dir}
               onSelect={onSelectHistory}
               openLabel={historyLabels.openGenerationAria[langKey]}
+              compact={compact}
             />
           ))}
         </div>
@@ -713,14 +811,26 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, o
 
       {/* Loading skeletons */}
       {loading && items.length === 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-          {Array.from({ length: 4 }).map((_, i) => (
+        <div className={`grid gap-2.5 ${compact ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
+          {Array.from({ length: compact ? 3 : 4 }).map((_, i) => (
             <div key={i} className="bg-slate-900/40 border border-slate-800 rounded-xl overflow-hidden animate-pulse">
-              <div className="aspect-[4/5] bg-slate-800" />
-              <div className="p-2.5 space-y-2">
-                <div className="h-3 bg-slate-800 rounded w-3/4" />
-                <div className="h-2 bg-slate-800 rounded w-1/2" />
-              </div>
+              {compact ? (
+                <div className="flex gap-3 p-2">
+                  <div className="w-[80px] h-[80px] bg-slate-800 rounded-lg" />
+                  <div className="flex-1 space-y-2 py-1">
+                    <div className="h-3 bg-slate-800 rounded w-3/4" />
+                    <div className="h-2 bg-slate-800 rounded w-1/2" />
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="aspect-[4/5] bg-slate-800" />
+                  <div className="p-2.5 space-y-2">
+                    <div className="h-3 bg-slate-800 rounded w-3/4" />
+                    <div className="h-2 bg-slate-800 rounded w-1/2" />
+                  </div>
+                </>
+              )}
             </div>
           ))}
         </div>
