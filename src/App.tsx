@@ -2328,13 +2328,19 @@ const App: React.FC = () => {
         // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
         // forward the trace captured from the most recent concept
         // generation so the rendered image carries the audit trail.
-        const img = (await gemini.generateFinalAd(
+        const abResult = await gemini.generateFinalAd(
           selectedConcept, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
           initial[i].tweak || undefined,
           undefined, undefined, undefined, undefined, undefined,
           conceptDirectorTrace,
-        )).image;
-        setAbVariations(prev => prev.map((v, idx) => idx === i ? { ...v, url: img, status: img ? 'done' : 'error' } : v));
+        );
+        const img = abResult.image;
+        setAbVariations(prev => prev.map((v, idx) => idx === i ? {
+          ...v,
+          url: img,
+          storageUrl: abResult.storageUrl || null,
+          status: img ? 'done' : 'error',
+        } : v));
       } catch {
         refundCredits('generateImage');
         setAbVariations(prev => prev.map((v, idx) => idx === i ? { ...v, status: 'error' } : v));
@@ -2355,13 +2361,19 @@ const App: React.FC = () => {
       // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
       // forward the trace captured from the most recent concept
       // generation so the rendered image carries the audit trail.
-      const img = (await gemini.generateFinalAd(
+      const abRetryResult = await gemini.generateFinalAd(
         selectedConcept, selectedTov, inputs, resolvedUniverse, currentAspectRatio,
         abVariations[index]?.tweak || undefined,
         undefined, undefined, undefined, undefined, undefined,
         conceptDirectorTrace,
-      )).image;
-      setAbVariations(prev => prev.map((v, idx) => idx === index ? { ...v, url: img, status: img ? 'done' : 'error' } : v));
+      );
+      const img = abRetryResult.image;
+      setAbVariations(prev => prev.map((v, idx) => idx === index ? {
+        ...v,
+        url: img,
+        storageUrl: abRetryResult.storageUrl || null,
+        status: img ? 'done' : 'error',
+      } : v));
     } catch {
       refundCredits('generateImage');
       setAbVariations(prev => prev.map((v, idx) => idx === index ? { ...v, status: 'error' } : v));
@@ -2371,7 +2383,7 @@ const App: React.FC = () => {
   const handleSelectAB = (index: number) => {
     const v = abVariations[index];
     if (v?.status !== 'done' || !v.url) return;
-    pushMockup(v.url, currentAspectRatio);
+    pushMockup(v.url, currentAspectRatio, v.storageUrl);
     // pushMockup sets historyIndex internally, scroll to top
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -2907,7 +2919,7 @@ const App: React.FC = () => {
       // path's stripHeavyImageData then reduces the base64 to 'stored_externally' as usual).
       mockupHistory: mockupHistory.map(m => ({
         ...m,
-        url: m.url?.startsWith('blob:') ? (m.rawBase64 || 'pending_upload') : m.url,
+        url: m.url?.startsWith('blob:') ? (m.rawBase64 || '') : m.url,
       })),
       historyIndex,
       resolvedUniverse,
@@ -3269,22 +3281,37 @@ const App: React.FC = () => {
   const startLoad = (msg: string) => { setIsLoading(true); setLoadingMsg(msg); };
   const stopLoad = () => { setIsLoading(false); setLoadingMsg(''); };
 
-
-  const pushMockup = (url: string | null, ratio: AspectRatio) => {
-    if (!url) return;
-    // Convert base64 data URLs to blob URLs for Chrome right-click "Copy image" support
-    let displayUrl = url;
+  const pushMockup = (imageOrUrl: string | null, ratio: AspectRatio, storageUrl?: string | null) => {
+    if (!imageOrUrl) return;
+    // Prefer the server-uploaded Storage URL when available — it's durable across
+    // reloads, survives the Firestore doc-size stripper, and is what <img> actually
+    // needs. Fall back to a blob URL decoded from the base64 only when no Storage
+    // URL is provided (legacy callers, undo-stack pushes, etc). The base64 is always
+    // stashed in rawBase64 for reflow/edit operations that need an in-memory source.
+    const isStorageUrl = typeof storageUrl === 'string'
+      && (storageUrl.startsWith('https://') || storageUrl.startsWith('http://'));
+    let displayUrl: string;
     let rawBase64: string | undefined;
-    if (url.startsWith('data:')) {
-      rawBase64 = url;
+    if (isStorageUrl) {
+      displayUrl = storageUrl;
+      // imageOrUrl is the base64 in this branch (caller passed a fresh render).
+      rawBase64 = imageOrUrl.startsWith('data:') ? imageOrUrl : undefined;
+    } else if (imageOrUrl.startsWith('data:')) {
+      // Legacy path: base64 only — convert to a blob URL for Chrome right-click "Copy image".
+      rawBase64 = imageOrUrl;
       try {
-        const [header, b64] = url.split(',');
+        const [header, b64] = imageOrUrl.split(',');
         const mime = header.match(/:(.*?);/)?.[1] || 'image/png';
         const bin = atob(b64);
         const arr = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        for (let i = 0; i < arr.length; i++) arr[i] = bin.charCodeAt(i);
         displayUrl = URL.createObjectURL(new Blob([arr], { type: mime }));
-      } catch { /* fallback to base64 if conversion fails */ }
+      } catch {
+        displayUrl = imageOrUrl; // fallback to base64 if conversion fails
+      }
+    } else {
+      // Non-data URL without an explicit storageUrl — treat as already-durable.
+      displayUrl = imageOrUrl;
     }
     setMockupHistory(prev => {
       const newHistory = [...prev, { url: displayUrl, ratio, rawBase64 }];
@@ -4429,7 +4456,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       setBuildPlan(conceptRaw);
 
       if (mockup) {
-        pushMockup(mockup, primaryRatio);
+        pushMockup(mockup, primaryRatio, mockupResult.storageUrl);
         // Reflow quality fix: anchor the original source to THIS first render so every later
         // resize reflows from it (never from an auto-reflowed extra size or a prior resize).
         originalMockupRef.current = mockup;
@@ -4443,9 +4470,18 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             // The render was already persisted to Storage SERVER-SIDE by
             // serverGenerateFinalAd (admin SDK — no client Storage write, no
             // storage/unauthorized). Store that durable URL — NOT the ~1-5 MB base64 —
-            // in the generations doc. If the server upload failed, storageUrl is null
-            // and we fall back to 'pending_upload' (reflow then rerenders from plan).
-            const storedImageUrl = mockupResult.storageUrl || 'pending_upload';
+            // in the generations doc. Fall back chain:
+            //   1. storageUrl (normal — durable https Storage URL)
+            //   2. image (in-memory base64) — INTENTIONAL fallback per PR brief:
+            //      if the (non-blocking) server Storage upload fails, persist the
+            //      in-memory image so the user keeps the render data even though
+            //      it may exceed Firestore's 1 MiB doc limit and fail silently.
+            //      This is the explicit "second line of defense" the PR brief
+            //      requests: with the static-import fix in this PR, the upload
+            //      will succeed in production; the base64 path only fires for
+            //      rare edge cases.
+            //   3. '' (won't render — but won't pretend to be a URL either)
+            const storedImageUrl = mockupResult.storageUrl || mockupResult.image || '';
             // Phase 17 — persist `approvedTov` alongside the build plan so the
             // `generateSizeVariant` callable can read the user's approved copy
             // (the build plan's machine-plan ownership map is a best-effort
@@ -4743,7 +4779,17 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         const primaryStorageUrl = genResult.storageUrl || null;
         // Capture originalUrl = the primary render: the un-reflowed, highest-quality source
         // every later resize of any size for this combo reflows from (no chain degradation).
-        setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, buildPlan: combo.conceptText, url: primaryUrl, originalUrl: primaryUrl, status: primaryUrl ? 'done' : 'error' } : r));
+        // url prefers the Storage URL when available so the rendered image survives the
+        // Firestore doc-size stripper on autosave; originalUrl keeps the base64 for reflow
+        // operations that need an in-memory source.
+        setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? {
+          ...r,
+          buildPlan: combo.conceptText,
+          url: primaryStorageUrl || primaryUrl,
+          storageUrl: primaryStorageUrl,
+          originalUrl: primaryUrl,
+          status: primaryUrl ? 'done' : 'error',
+        } : r));
         // Persist a generation doc for this combo so its extra-size reflows have a
         // generationId to anchor to (the reflowImage callable requires one) and the
         // correct per-combo buildPlan for any rerender route. Non-blocking.
@@ -4751,7 +4797,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           try {
             comboGenId = await feedbackService.saveGeneration(
               user.uid, inputs, 'render',
-              { imageUrl: primaryStorageUrl || 'pending_upload', conceptText: combo.conceptText.substring(0, 500), hookText: (combo.hookText || '').substring(0, 200), buildPlan: combo.conceptText, approvedTov: combo.hookText || combo.conceptText },
+              { imageUrl: primaryStorageUrl || primaryUrl || '', conceptText: combo.conceptText.substring(0, 500), hookText: (combo.hookText || '').substring(0, 200), buildPlan: combo.conceptText, approvedTov: combo.hookText || combo.conceptText },
               combo.conceptText, resolvedUniverse, 'gemini-3.1-flash-image', 0, primaryRatio, buildCreativeIdentity(),
               canUseWorkspaces ? activeWorkspaceId : null
             );
@@ -5150,8 +5196,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               index: s.index,
               // Base64 data URLs are megabytes each; storing several would blow Firestore's
               // 1 MiB doc limit and fail the write. Persist only short Storage/http URLs —
-              // otherwise 'pending_upload', and reflow/retry rerenders from the saved buildPlan.
-              imageUrl: (typeof s.imageUrl === 'string' && s.imageUrl.startsWith('http')) ? s.imageUrl : 'pending_upload',
+              // otherwise empty string, and reflow/retry rerenders from the saved buildPlan.
+              imageUrl: (typeof s.imageUrl === 'string' && s.imageUrl.startsWith('http')) ? s.imageUrl : '',
               buildPlan: s.buildPlan,
               copy: s.copy,
             })),
@@ -5409,28 +5455,45 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         conceptDirectorTrace,
       );
       const res = editResult.image;
+      // Prefer the server-uploaded Storage URL so the bound batch/carousel/A/B
+      // state survives the Firestore doc-size stripper on autosave. Fall back to
+      // the in-memory base64 only when the server upload failed.
+      const editedDisplayUrl = editResult.storageUrl || res;
 
       // ═══ WRITE-BACK: Route result to correct source ═══
       if (editTarget && res) {
         if (editTarget.source === 'batch') {
-          // Write back to the exact batch result
-          setBatchResults(prev => prev.map((r, i) => i === editTarget.index ? { ...r, url: res, status: 'done' as const } : r));
+          // Write back to the exact batch result. Refresh BOTH url (durable
+          // display URL) AND originalUrl (the base64 used as the resize-reflow
+          // source) so subsequent resizes reflow from the edited image, not the
+          // stale pre-edit render.
+          setBatchResults(prev => prev.map((r, i) => i === editTarget.index ? {
+            ...r,
+            url: editedDisplayUrl,
+            originalUrl: res,
+            status: 'done' as const,
+          } : r));
           showToast(`${editTarget.label} updated!`, 'success');
         } else if (editTarget.source === 'carousel') {
           // Write back to the exact carousel slide
-          setCarouselSlides(prev => prev.map((s, i) => i === editTarget.index ? { ...s, imageUrl: res, status: 'done' as const } : s));
+          setCarouselSlides(prev => prev.map((s, i) => i === editTarget.index ? { ...s, imageUrl: editedDisplayUrl, status: 'done' as const } : s));
           showToast(`${editTarget.label} updated!`, 'success');
         } else if (editTarget.source === 'ab') {
           // Write back to the exact A/B variation
-          setAbVariations(prev => prev.map((v, i) => i === editTarget.index ? { ...v, url: res, status: 'done' as const } : v));
+          setAbVariations(prev => prev.map((v, i) => i === editTarget.index ? {
+            ...v,
+            url: editedDisplayUrl,
+            storageUrl: editResult.storageUrl || null,
+            status: 'done' as const,
+          } : v));
           showToast(`${editTarget.label} updated!`, 'success');
         } else {
           // Default: add to history
-          pushMockup(res, editRatio);
+          pushMockup(res, editRatio, editResult.storageUrl);
         }
         setEditTarget(null); // Clear edit binding
       } else {
-        pushMockup(res, editRatio);
+        pushMockup(res, editRatio, editResult.storageUrl);
       }
 
       setStudioTweak('');
@@ -5439,9 +5502,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       if (user && res) {
         try {
           // The edited render was persisted to Storage server-side by
-          // serverGenerateFinalAd; store that URL (fall back to pending_upload if the
-          // server upload failed). No client-side Storage write.
-          const storedImageUrl = editResult.storageUrl || 'pending_upload';
+          // serverGenerateFinalAd; store that URL. Fall back to the in-memory base64
+          // (instant display) or empty string (no client-side Storage write).
+          const storedImageUrl = editResult.storageUrl || editResult.image || '';
           const genId = await feedbackService.saveGeneration(
             user.uid, inputs, 'render',
             { imageUrl: storedImageUrl, conceptText: (selectedConcept || '').substring(0, 500), buildPlan: buildPlan || '', approvedTov: buildPlan || '' },
@@ -6061,14 +6124,19 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     if (!user?.uid || !inputs) return;
     try {
       // Persist the image to Storage SERVER-SIDE (admin SDK — no client Storage write,
-      // no storage/unauthorized). An http URL is returned unchanged by the callable.
-      // Non-blocking: fall back to a placeholder if the callable fails.
-      let storedImageUrl = 'pending_upload';
-      try {
-        const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
-        storedImageUrl = (await uploadFn({ imageBase64: imageUrl })).data.storageUrl || 'pending_upload';
-      } catch (uploadErr) {
-        console.warn('Server render upload failed (non-blocking) — saving favorite with placeholder imageUrl:', uploadErr);
+      // no storage/unauthorized). An http URL is durable as-is — skip the callable
+      // round-trip and use it directly. Otherwise upload (data: URL → Storage) and
+      // fall back to empty string if the upload fails (don't write a base64 back to
+      // Firestore — would blow the 1 MiB doc limit).
+      const isAlreadyHttp = typeof imageUrl === 'string' && imageUrl.startsWith('http');
+      let storedImageUrl: string = isAlreadyHttp ? imageUrl : '';
+      if (!isAlreadyHttp) {
+        try {
+          const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
+          storedImageUrl = (await uploadFn({ imageBase64: imageUrl })).data.storageUrl || '';
+        } catch (uploadErr) {
+          console.warn('Server render upload failed (non-blocking) — saving favorite with empty imageUrl:', uploadErr);
+        }
       }
       const genId = await feedbackService.saveGeneration(
         user.uid, inputs, 'render',
@@ -8179,14 +8247,21 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                         <button onClick={async () => {
                                           if (!user?.uid || !inputs) return;
                                           try {
-                                            // Persist to Storage SERVER-SIDE (admin SDK). http URLs pass through.
-                                            // Non-blocking: fall back to a placeholder if the callable fails.
-                                            let storedImageUrl = 'pending_upload';
-                                            try {
-                                              const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
-                                              storedImageUrl = (await uploadFn({ imageBase64: item.url || '' })).data.storageUrl || 'pending_upload';
-                                            } catch (uploadErr) {
-                                              console.warn('Server render upload failed (non-blocking) — saving favorite with placeholder imageUrl:', uploadErr);
+                                            // Persist to Storage SERVER-SIDE (admin SDK). An http URL is durable as-is —
+                                            // skip the callable round-trip and use it directly. Otherwise upload
+                                            // (data: URL → Storage) and fall back to empty string if the upload
+                                            // fails (don't write a base64 back to Firestore — would blow the
+                                            // 1 MiB doc limit).
+                                            const candidateUrl = item.url || '';
+                                            const isAlreadyHttp = typeof candidateUrl === 'string' && candidateUrl.startsWith('http');
+                                            let storedImageUrl: string = isAlreadyHttp ? candidateUrl : '';
+                                            if (!isAlreadyHttp) {
+                                              try {
+                                                const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
+                                                storedImageUrl = (await uploadFn({ imageBase64: candidateUrl })).data.storageUrl || '';
+                                              } catch (uploadErr) {
+                                                console.warn('Server render upload failed (non-blocking) — saving favorite with empty imageUrl:', uploadErr);
+                                              }
                                             }
                                             const genId = await feedbackService.saveGeneration(
                                               user.uid, inputs, 'render',
@@ -8649,7 +8724,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                               <img src={v.url} className="w-full h-full object-cover" />
                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2.5 opacity-0 group-hover:opacity-100">
                                 <div className="flex gap-1.5">
-                                  <button onClick={(e) => { e.stopPropagation(); pushMockup(v.url!, currentAspectRatio); setStudioTweak(''); setEditTarget({ source: 'ab', index: idx, imageUrl: v.url!, label: `A/B V${idx + 1}` }); showToast(`Editing V${idx + 1} — changes will update this variation`, 'info'); }} className="px-2.5 py-1.5 bg-violet-600 text-white rounded-lg text-[8px] font-bold" title="Edit"><i className="fa-solid fa-pen-to-square"></i></button>
+                                  <button onClick={(e) => { e.stopPropagation(); pushMockup(v.url!, currentAspectRatio, v.storageUrl); setStudioTweak(''); setEditTarget({ source: 'ab', index: idx, imageUrl: v.url!, label: `A/B V${idx + 1}` }); showToast(`Editing V${idx + 1} — changes will update this variation`, 'info'); }} className="px-2.5 py-1.5 bg-violet-600 text-white rounded-lg text-[8px] font-bold" title="Edit"><i className="fa-solid fa-pen-to-square"></i></button>
                                   <button onClick={async (e) => { e.stopPropagation(); const url = await applyTrialWatermark(v.url!); await downloadImage(url, `AB_V${idx + 1}.png`); }} className="px-2.5 py-1.5 bg-white/90 text-slate-900 rounded-lg text-[8px] font-bold"><i className="fa-solid fa-download"></i></button>
                                   <button onClick={(e) => { e.stopPropagation(); handleRetryAB(idx); }} className="px-2.5 py-1.5 bg-blue-600 text-white rounded-lg text-[8px] font-bold"><i className="fa-solid fa-rotate"></i></button>
                                   <button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(v.url!, currentAspectRatio); }} className="px-2.5 py-1.5 bg-amber-500/90 text-white rounded-lg text-[8px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button>

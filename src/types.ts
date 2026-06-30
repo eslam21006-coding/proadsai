@@ -320,6 +320,11 @@ export interface BatchResult {
   hookText: string;         // Full hook text
   buildPlan: string;
   url: string | null;
+  // Durable Storage URL returned by serverGenerateFinalAd. When set, prefer this
+  // over `url` for persistence (Firestore saveGeneration, autosave stripper) so
+  // the rendered image survives save/reload instead of being replaced with
+  // 'stored_externally' by the doc-size stripper.
+  storageUrl?: string | null;
   // The ORIGINAL (un-reflowed) render for this combo — the first successful primary output.
   // Every resize reflows from this source instead of the previous resize output, so repeated
   // resizes never chain-degrade quality. Updated only on a full rerender (new base image).
@@ -349,6 +354,11 @@ export interface BatchHookGroup {
 
 export interface ABVariation {
   url: string | null;
+  // Durable Storage URL returned by serverGenerateFinalAd. When set, prefer this
+  // over `url` for persistence paths (pushMockup / saveGeneration) so the selected
+  // variation survives project save/reload instead of being stripped to
+  // 'stored_externally' by the Firestore doc-size stripper.
+  storageUrl?: string | null;
   status: 'pending' | 'rendering' | 'done' | 'error';
   tweak: string;
   historyIdx: number;  // index in mockupHistory when pushed
