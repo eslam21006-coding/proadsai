@@ -3582,39 +3582,43 @@ const App: React.FC = () => {
   };
 
   // Phase 26 — wire history card click → saved project.
-  // The `mockupHistory` schema doesn't carry a `generationId`, so the
-  // canonical join is by image URL: both the generations collection
-  // (`output.imageUrl`) and the saved project's `mockupHistory[].url`
-  // persist the same Storage URL when a render completes. When a match is
-  // found we route to render_studio so the user lands on the matching mockup
-  // — otherwise we surface a non-blocking toast and leave them on the
-  // History tab.
+  // History items now carry a `source` discriminator:
+  //   - 'project'  → the item IS a saved project; load it directly via id.
+  //   - 'generation' → join by imageUrl to find the matching saved project
+  //     (mockupHistory doesn't carry a generationId). The joined project is
+  //     loaded at the matching mockup index so the user lands on the same
+  //     render they clicked.
   //
   // Intentionally a plain function (not `useCallback`): the surrounding
   // component already has auth/billing early returns above this point, so
   // a hook here would break React's hook ordering across renders.
-  const loadProjectFromGeneration = (generationId: string, record: GenerationRecord) => {
-    const targetUrl = record.output?.imageUrl;
+  const handleHistorySelect = (item: import('./hooks/useGenerationHistory').HistoryItem) => {
+    if (item.source === 'project' && item.projectId) {
+      const project = (filteredProjects.length > 0 ? filteredProjects : projects)
+        .find((p) => p.id === item.projectId);
+      if (project) {
+        loadProject(project);
+      } else {
+        showToast(t('history.card.project_missing'), 'info');
+      }
+      return;
+    }
+    // Generation source — find the project by matching imageUrl.
+    const targetUrl = item.thumbnailUrl;
     const candidates = filteredProjects.length > 0 ? filteredProjects : projects;
     const match = candidates.find((p) =>
       p.mockupHistory?.some((m) => m.url && targetUrl && m.url === targetUrl)
     );
-    if (match) {
-      // Find the index of the matching mockup so the load lands on it.
+    if (match && targetUrl) {
       const mockupIdx = match.mockupHistory.findIndex(
-        (m) => m.url && targetUrl && m.url === targetUrl
+        (m) => m.url && m.url === targetUrl
       );
       loadProject(match, 'render_studio');
       if (mockupIdx >= 0) {
         setHistoryIndex(mockupIdx);
       }
     } else {
-      // Project may have been deleted; the generation record alone survives.
-      // Show a localized toast so the user understands the click did nothing.
       showToast(t('history.card.project_missing'), 'info');
-      // Touch generationId so TS knows we used the parameter (and future
-      // telemetry can read it without a noisy `void` cast).
-      void generationId;
     }
   };
 
@@ -6731,11 +6735,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 </div>
               )
             ) : (
-              <GenerationHistory
+<GenerationHistory
                 uid={effectiveUid}
                 workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
-                onSelectGeneration={loadProjectFromGeneration}
-/>
+                savedProjects={filteredProjects}
+                onSelectHistory={handleHistorySelect}
+              />
             )}
           </div>
         )}

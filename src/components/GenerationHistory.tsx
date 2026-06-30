@@ -4,9 +4,10 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from "react"
 import { useT } from "../i18n";
 import {
   useGenerationHistory,
-  type HistoryFilters
+  type HistoryFilters,
+  type HistoryItem,
 } from "../hooks/useGenerationHistory";
-import type { GenerationRecord } from "../services/feedbackService";
+import type { SavedProject } from "../types";
 import { COLD_HOOK_ANGLES } from "../constants";
 import { getCardById } from "../artDirectionConfig";
 import {
@@ -17,14 +18,25 @@ import {
 
 /**
  * Public props for the GenerationHistory panel.
- * `uid` / `workspaceId` drive the Firestore scope; `onSelectGeneration` fires
+ * `uid` / `workspaceId` drive the Firestore scope; `onSelectHistory` fires
  * when a card is clicked so the host (App.tsx) can route to the matching
  * saved project.
  */
 interface Props {
   uid: string | null;
   workspaceId?: string | null;
-  onSelectGeneration: (generationId: string, record: GenerationRecord) => void;
+  /**
+   * Locally-available saved projects. Already loaded by the host (App.tsx
+   * keeps them in state), so this component does NOT issue a second
+   * Firestore query. Pass an empty array to skip the merge entirely.
+   */
+  savedProjects?: SavedProject[];
+  /**
+   * Fires when a card is clicked. The host decides whether to load the
+   * project directly (when `item.source === 'project'`) or look up the
+   * matching saved project by imageUrl (when `item.source === 'generation'`).
+   */
+  onSelectHistory: (item: HistoryItem) => void;
 }
 
 // ─── HELPERS ────────────────────────────────────────────────────────────────
@@ -102,62 +114,6 @@ function formatRelative(date: Date | null, lang: "en" | "ar"): string {
     day: "numeric",
     year: days > 365 ? "numeric" : undefined,
   });
-}
-
-/**
- * Resolve the human-readable universe identifier for DISPLAY. Mirrors the
- * persisted GenerationRecord contract (creativeIdentity.universeId →
- * input.preferredUniverse → input.resolvedUniverse). `input.tone` is
- * intentionally NOT used here because tone is semantically the ad tone,
- * not a universe — even though the legacy backend write path persisted
- * `resolvedUniverse` into `input.tone`.
- */
-function getUniverseDisplay(record: GenerationRecord): string | null {
-  const creative = record.creativeIdentity?.universeId;
-  if (creative) return creative;
-  const input = record.input;
-  if (!input) return null;
-  if (input.preferredUniverse) return input.preferredUniverse;
-  if ((input as { resolvedUniverse?: string }).resolvedUniverse) {
-    return (input as { resolvedUniverse?: string }).resolvedUniverse as string;
-  }
-  return null;
-}
-
-/**
- * Resolve the cold hook angle identifier for display in the card badge.
- * Prefers the canonical `creativeIdentity.hookAngle`, falls back to legacy
- * `input.coldHookAngle` for older records that predate the creative-identity
- * block.
- */
-function getHookAngleDisplay(record: GenerationRecord): string | null {
-  const creative = record.creativeIdentity?.hookAngle;
-  if (creative) return creative;
-  const input = record.input as { coldHookAngle?: string | null } | undefined;
-  return input?.coldHookAngle ?? null;
-}
-
-/**
- * Resolve the art-direction (sub-style) identifier for display. Reads
- * `input.visualSubStyle`, the single canonical source for this field.
- */
-function getArtDirectionDisplay(record: GenerationRecord): string | null {
-  return record.input?.visualSubStyle ?? null;
-}
-
-/**
- * Best-effort text used for the card headline. Walks the most descriptive
- * fields in priority order so the card shows something useful even when the
- * copy stage never produced a final hook line.
- */
-function getHookText(record: GenerationRecord): string {
-  return (
-    record.output?.hookText ||
-    record.output?.subhead ||
-    record.output?.conceptText ||
-    record.input?.productName ||
-    ""
-  );
 }
 
 // ─── HOOK ANGLE BADGE ───────────────────────────────────────────────────────
@@ -309,21 +265,22 @@ const MultiSelectDropdown: React.FC<MultiSelectProps> = ({ label, options, selec
 
 /**
  * Props for a single history card. `onSelect` fires when the card is
- * activated (click or Enter/Space) and receives the Firestore id plus the
- * full GenerationRecord so the host can route to the matching saved project.
+ * activated (click or Enter/Space) and receives the unified HistoryItem so
+ * the host can route to the matching saved project (or load it directly
+ * when source === 'project').
  */
 interface CardProps {
-  record: GenerationRecord;
+  item: HistoryItem;
   langKey: "en" | "ar";
   dir: "ltr" | "rtl";
-  onSelect: (id: string, record: GenerationRecord) => void;
+  onSelect: (item: HistoryItem) => void;
   openLabel: string;
 }
 
-const GenerationCard: React.FC<CardProps> = React.memo(({ record, langKey, dir, onSelect, openLabel }) => {
+const GenerationCard: React.FC<CardProps> = React.memo(({ item, langKey, dir, onSelect, openLabel }) => {
   const [imgFailed, setImgFailed] = useState(false);
-  const [prevImageUrl, setPrevImageUrl] = useState<string | null | undefined>(record.output?.imageUrl);
-  const imageUrl = record.output?.imageUrl;
+  const [prevImageUrl, setPrevImageUrl] = useState<string | null | undefined>(item.thumbnailUrl);
+  const imageUrl = item.thumbnailUrl;
 
   // Reset the image-failure flag whenever the resolved image URL changes —
   // otherwise a broken/pending URL would permanently disable rendering for
@@ -335,15 +292,17 @@ const GenerationCard: React.FC<CardProps> = React.memo(({ record, langKey, dir, 
     setImgFailed(false);
   }
 
-  const hookText = getHookText(record);
-  const universe = getUniverseDisplay(record);
-  const artDir = getArtDirectionDisplay(record);
-  const hookId = getHookAngleDisplay(record);
-  const date = readDate(record.timestamp);
+  const hookText = item.hookText;
+  const universe = item.universe;
+  const artDir = item.artDirection;
+  const hookId = item.hookAngle;
+  const date = readDate(item.timestamp);
   const dateLabel = formatRelative(date, langKey);
+  // The HTML `title` attribute accepts `string | undefined`, not null.
+  const titleText = hookText ?? undefined;
 
   const handleActivate = () => {
-    if (record.id) onSelect(record.id, record);
+    onSelect(item);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -390,14 +349,14 @@ const GenerationCard: React.FC<CardProps> = React.memo(({ record, langKey, dir, 
         </div>
       </div>
       <div className="flex flex-col gap-1.5 p-2.5">
-        <div className="text-[11px] font-semibold text-white line-clamp-2 leading-snug" title={hookText}>
+        <div className="text-[11px] font-semibold text-white line-clamp-2 leading-snug" title={titleText}>
           {truncate(hookText, 60) || (
             <span className="text-slate-500 italic font-normal">{historyLabels.noHookText[langKey]}</span>
           )}
         </div>
         <div className="flex items-center gap-1.5 text-[9px] text-slate-400">
           {universe ? (
-            <span className="px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700 truncate max-w-[60%]" title={universe}>
+            <span className="px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700 truncate max-w-[60%]" title={universe ?? undefined}>
               {universe}
             </span>
           ) : (
@@ -405,7 +364,7 @@ const GenerationCard: React.FC<CardProps> = React.memo(({ record, langKey, dir, 
           )}
           <span className="text-slate-700">•</span>
           {artDirLabel ? (
-            <span className="px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700 truncate max-w-[40%]" title={artDirLabel}>
+            <span className="px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700 truncate max-w-[40%]" title={artDirLabel ?? undefined}>
               {artDirLabel}
             </span>
           ) : (
@@ -431,7 +390,7 @@ GenerationCard.displayName = "GenerationCard";
  * states. All UI strings flow through `useT()`; the Firestore subscription is
  * delegated to `useGenerationHistory`.
  */
-const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, onSelectGeneration }) => {
+const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, onSelectHistory }) => {
   const { dir, lang } = useT();
   const langKey = (lang === "ar" ? "ar" : "en") as "en" | "ar";
 
@@ -452,6 +411,7 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, onSelectGenerati
     uid,
     workspaceId,
     filters,
+    savedProjects,
   });
 
   // Facets come from the SAME subscription as `items` — they include the
@@ -607,30 +567,16 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, onSelectGenerati
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-[70vh] overflow-y-auto pr-1 scrollbar-thin">
-          {items.map((record, idx) => {
-            // Stable key: prefer Firestore doc id; fall back to a string made
-            // from the row's timestamp (always unique in practice for renders
-            // produced in this app) and finally to the loop index when both
-            // are missing. Math.random is intentionally NOT used — that would
-            // be an impure call during render and could change every paint.
-            let key: string;
-            if (record.id) {
-              key = record.id;
-            } else {
-              const ts = record.timestamp?.toMillis?.();
-              key = typeof ts === "number" ? `ts-${ts}` : `idx-${idx}`;
-            }
-            return (
-              <GenerationCard
-                key={key}
-                record={record}
-                langKey={langKey}
-                dir={dir}
-                onSelect={onSelectGeneration}
-                openLabel={historyLabels.openGenerationAria[langKey]}
-              />
-            );
-          })}
+          {items.map((item) => (
+            <GenerationCard
+              key={item.id}
+              item={item}
+              langKey={langKey}
+              dir={dir}
+              onSelect={onSelectHistory}
+              openLabel={historyLabels.openGenerationAria[langKey]}
+            />
+          ))}
         </div>
       )}
 

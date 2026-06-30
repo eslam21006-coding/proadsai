@@ -1,4 +1,4 @@
-// src/hooks/useGenerationHistory.ts — paginated subscription hook for all rendered generations (Phase 26)
+// src/hooks/useGenerationHistory.ts — Phase 26 unified history hook (generations + saved projects)
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { db } from '../firebase';
@@ -8,8 +8,42 @@ import {
   type DocumentSnapshot, type Query, type QuerySnapshot, type Unsubscribe, type DocumentData
 } from 'firebase/firestore';
 import type { GenerationRecord } from '../services/feedbackService';
+import type { SavedProject } from '../types';
 
 // ─── TYPES ──────────────────────────────────────────────────────────────────
+
+export type HistoryItemStatus = 'draft' | 'rendered' | 'published';
+
+/**
+ * Unified row type for the History view. A HistoryItem either originates from
+ * the `generations` collection (rich metadata, always rendered) or from a
+ * `SavedProject` that may be a draft, rendered, or published state and may
+ * not have a matching generation record (older projects).
+ */
+export interface HistoryItem {
+  /** Stable id: generation doc id or `project-{projectId}`. */
+  id: string;
+  source: 'generation' | 'project';
+  /** Unix ms for sorting. */
+  timestamp: number;
+  /** Display image (render output for generations, mockupHistory[0] for projects). */
+  thumbnailUrl: string | null;
+  /** Headline text from the generated hook output (or fallbacks). */
+  hookText: string | null;
+  /** Hook angle id for filtering. */
+  hookAngle: string | null;
+  /** Universe id for filtering. */
+  universe: string | null;
+  /** Art-direction id for filtering. */
+  artDirection: string | null;
+  /** Lifecycle status for filtering & badge display. */
+  status: HistoryItemStatus;
+  /** Saved-project display name (used when no hook text or as a secondary label). */
+  projectName: string | null;
+  /** Source references — exactly one is set, but both are kept for convenience. */
+  generationId?: string;
+  projectId?: string;
+}
 
 export interface HistoryFilters {
   /** OR'd within the category — `['pain', 'curiosity']` matches either. Empty array = no filter. */
@@ -18,6 +52,8 @@ export interface HistoryFilters {
   universe?: string[];
   /** OR'd within the category. Empty array = no filter. */
   artDirection?: string[];
+  /** OR'd within the category. Empty array = no filter. */
+  status?: HistoryItemStatus[];
 }
 
 interface UseGenerationHistoryOptions {
@@ -25,22 +61,28 @@ interface UseGenerationHistoryOptions {
   uid: string | null;
   /** Optional workspace scope. When set, queries by `workspaceId`; when null, queries by `userId` and filters out workspace-tagged records. */
   workspaceId?: string | null;
-  /** Client-side AND/OR filters applied to the merged head + tail results. */
+  /** Client-side AND/OR filters applied to the merged history. */
   filters?: HistoryFilters;
   /** Page size for the head snapshot and each `loadMore` call. Defaults to 20. */
   pageSize?: number;
+  /**
+   * Locally-available saved projects. Already loaded by the host (App.tsx
+   * keeps them in state), so the hook does NOT issue a second Firestore
+   * query. Pass an empty array to skip the merge entirely.
+   */
+  savedProjects?: SavedProject[];
 }
 
 interface GenerationHistoryResult {
-  /** Deduplicated, filtered history rows ordered newest-first. */
-  items: GenerationRecord[];
-  /** Unique universe + art-direction values seen across every loaded row (head + tail). Powers the filter dropdowns. */
+  /** Deduped, filtered, time-sorted history rows (newest first). */
+  items: HistoryItem[];
+  /** Unique universe + art-direction values across the merged history. Powers the filter dropdowns. */
   facets: { universes: string[]; artDirections: string[] };
-  /** True while the head snapshot is loading or a `loadMore` is in flight. */
+  /** True while the generations subscription is loading or a `loadMore` is in flight. */
   loading: boolean;
-  /** True when more pages are available past the current tail. */
+  /** True when more generation pages are available past the current tail. */
   hasMore: boolean;
-  /** Loads the next page (no-op when no more pages or already loading). */
+  /** Loads the next generation page (no-op when no more pages or already loading). */
   loadMore: () => Promise<void>;
   /** Count of the items the user is currently seeing (post-filter, post-dedup). */
   totalCount: number;
@@ -49,17 +91,16 @@ interface GenerationHistoryResult {
 const DEFAULT_PAGE_SIZE = 20;
 const FALLBACK_PAGE_SIZE = 40;
 
-// ─── HELPER ─────────────────────────────────────────────────────────────────
+// ─── FIELD RESOLVERS (GenerationRecord side) ─────────────────────────────────
 
 /**
  * Resolve the universe identifier for filter matching. The `creativeIdentity`
- * block is the canonical location (per `GenerationRecord.creativeIdentity`),
- * with `input.preferredUniverse` / `input.universeMode` as documented
- * fallbacks. Legacy `input.resolvedUniverse` and the `input.tone` quirk (the
- * write path persists the resolved universe under `tone`) are read last so
- * older records still match.
+ * block is the canonical location, with `input.preferredUniverse` /
+ * `input.universeMode` as documented fallbacks. Legacy `input.resolvedUniverse`
+ * and the `input.tone` quirk (the write path persists the resolved universe
+ * under `tone`) are read last so older records still match.
  */
-function getUniverseOf(record: GenerationRecord): string | null {
+function getUniverseOfGen(record: GenerationRecord): string | null {
   const creativeUniverse = record.creativeIdentity?.universeId;
   if (creativeUniverse != null && creativeUniverse !== '') return creativeUniverse;
   const input = record.input;
@@ -74,10 +115,9 @@ function getUniverseOf(record: GenerationRecord): string | null {
 
 /**
  * Resolve the cold hook angle for filter matching. Prefers the canonical
- * `creativeIdentity.hookAngle`, falls back to the legacy `input.coldHookAngle`
- * for older records that predate the creative-identity block.
+ * `creativeIdentity.hookAngle`, falls back to legacy `input.coldHookAngle`.
  */
-function getHookAngleOf(record: GenerationRecord): string | null {
+function getHookAngleOfGen(record: GenerationRecord): string | null {
   const creative = record.creativeIdentity?.hookAngle;
   if (creative != null && creative !== '') return creative;
   const input = record.input;
@@ -90,7 +130,7 @@ function getHookAngleOf(record: GenerationRecord): string | null {
  * Resolve the art-direction (sub-style) identifier for filter matching.
  * Reads `input.visualSubStyle`, which is the single canonical source.
  */
-function getArtDirectionOf(record: GenerationRecord): string | null {
+function getArtDirectionOfGen(record: GenerationRecord): string | null {
   const input = record.input;
   if (!input) return null;
   const v = input.visualSubStyle;
@@ -98,40 +138,258 @@ function getArtDirectionOf(record: GenerationRecord): string | null {
 }
 
 /**
+ * Resolve the best display hook text from the generation record. Walks
+ * hookText → subhead → conceptText → productName in priority order so the
+ * card shows something useful even when the copy stage never produced a
+ * final hook line.
+ */
+function getHookTextOfGen(record: GenerationRecord): string | null {
+  return (
+    record.output?.hookText ||
+    record.output?.subhead ||
+    record.output?.conceptText ||
+    record.input?.productName ||
+    null
+  );
+}
+
+/**
+ * Convert a Firestore Timestamp / Date / ISO string to ms. Returns null when
+ * unparseable so the caller can fall back to a placeholder without throwing.
+ */
+function toMillis(value: unknown): number {
+  if (!value) return 0;
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isNaN(ms) ? 0 : ms;
+  }
+  if (typeof (value as { toMillis?: () => number }).toMillis === "function") {
+    try {
+      return (value as { toMillis: () => number }).toMillis();
+    } catch {
+      return 0;
+    }
+  }
+  if (typeof value === "string") {
+    const ms = new Date(value).getTime();
+    return Number.isNaN(ms) ? 0 : ms;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+  return 0;
+}
+
+// ─── FIELD RESOLVERS (SavedProject side) ────────────────────────────────────
+
+/**
+ * Extract universe id from a saved project's inputs. Uses the same precedence
+ * as the generation-side resolver so the filter dropdowns stay unified.
+ */
+function getUniverseOfProject(p: SavedProject): string | null {
+  const creative = (p as { creativeIdentity?: { universeId?: string | null } }).creativeIdentity?.universeId;
+  if (creative != null && creative !== '') return creative;
+  const inputs = p.inputs;
+  if (!inputs) return null;
+  if ((inputs as { preferredUniverse?: string | null }).preferredUniverse) {
+    return (inputs as { preferredUniverse?: string | null }).preferredUniverse as string;
+  }
+  if ((inputs as { universeMode?: string | null }).universeMode) {
+    return (inputs as { universeMode?: string | null }).universeMode as string;
+  }
+  const resolved = (inputs as { resolvedUniverse?: string | null }).resolvedUniverse;
+  if (resolved != null && resolved !== '') return resolved;
+  // Legacy quirk: older saves may persist the universe under `tone`.
+  if ((inputs as { tone?: string | null }).tone) {
+    return (inputs as { tone?: string | null }).tone as string;
+  }
+  return null;
+}
+
+function getHookAngleOfProject(p: SavedProject): string | null {
+  const creative = (p as { creativeIdentity?: { hookAngle?: string | null } }).creativeIdentity?.hookAngle;
+  if (creative != null && creative !== '') return creative;
+  const inputs = p.inputs;
+  if (!inputs) return null;
+  const legacy = (inputs as { coldHookAngle?: string | null }).coldHookAngle;
+  return legacy != null && legacy !== '' ? legacy : null;
+}
+
+function getArtDirectionOfProject(p: SavedProject): string | null {
+  const inputs = p.inputs;
+  if (!inputs) return null;
+  const v = (inputs as { visualSubStyle?: string | null }).visualSubStyle;
+  return v != null && v !== '' ? v : null;
+}
+
+function getHookTextOfProject(p: SavedProject): string | null {
+  // Projects may not carry copy text directly. Walk the same fields used by
+  // the SavedProject card header (productName, then inputs fallback).
+  return p.inputs?.productName || null;
+}
+
+// ─── MAPPERS ─────────────────────────────────────────────────────────────────
+
+/**
+ * Map a `GenerationRecord` to a unified `HistoryItem`. Generations always
+ * count as `rendered` since they only exist after a render completes.
+ */
+function generationToItem(record: GenerationRecord): HistoryItem | null {
+  const id = record.id;
+  if (!id) return null;
+  const ts = toMillis(record.timestamp);
+  return {
+    id,
+    source: 'generation',
+    timestamp: ts,
+    thumbnailUrl: record.output?.imageUrl ?? null,
+    hookText: getHookTextOfGen(record),
+    hookAngle: getHookAngleOfGen(record),
+    universe: getUniverseOfGen(record),
+    artDirection: getArtDirectionOfGen(record),
+    status: 'rendered',
+    projectName: record.input?.productName ?? null,
+    generationId: id,
+    projectId: undefined,
+  };
+}
+
+/**
+ * Map a `SavedProject` to a unified `HistoryItem`. Status comes from the
+ * project's persisted status (with safe fallback to 'draft'). Thumbnail
+ * derives from `mockupHistory[0].url` so the card mirrors what the user
+ * previously saved.
+ */
+function projectToItem(project: SavedProject): HistoryItem | null {
+  if (!project.id) return null;
+  const ts = typeof project.timestamp === 'number' ? project.timestamp : 0;
+  const firstMockup = project.mockupHistory?.[0];
+  const thumbnail = firstMockup?.url ?? project.thumbnailUrl ?? null;
+  const status: HistoryItemStatus = project.status ?? 'draft';
+  // Prefix the project id so it can never collide with a generation doc id —
+  // both are unique within their own collection but the History grid needs
+  // a single namespace.
+  return {
+    id: `project-${project.id}`,
+    source: 'project',
+    timestamp: ts,
+    thumbnailUrl: thumbnail,
+    hookText: getHookTextOfProject(project),
+    hookAngle: getHookAngleOfProject(project),
+    universe: getUniverseOfProject(project),
+    artDirection: getArtDirectionOfProject(project),
+    status,
+    projectName: project.name ?? null,
+    generationId: undefined,
+    projectId: project.id,
+  };
+}
+
+// ─── DEDUPLICATION + FILTERING ───────────────────────────────────────────────
+
+/**
+ * Build a deduplicated, time-sorted list of HistoryItems from a list of
+ * generations + locally available saved projects.
+ *
+ * Dedup rule: if a project's first mockup URL matches a generation's image
+ * URL, keep the generation (richer metadata) and drop the project duplicate.
+ * This collapses the "old project + matching new generation" pair into one
+ * card without losing the metadata.
+ *
+ * Projects whose workspace doesn't match the current scope are filtered out
+ * at this stage (same pattern as useFavorites.ts).
+ */
+function buildItems(
+  headItems: GenerationRecord[],
+  tailItems: GenerationRecord[],
+  savedProjects: SavedProject[] | undefined,
+  useWorkspace: boolean
+): HistoryItem[] {
+  const out: HistoryItem[] = [];
+  const seenIds = new Set<string>();
+
+  // Generations first — they win on dedup collisions. Both the live head
+  // snapshot and the paginated tail contribute; concatenating them in
+  // (head first) order keeps the dedup deterministic.
+  const generationImageUrls = new Set<string>();
+  for (const r of headItems) {
+    const item = generationToItem(r);
+    if (!item) continue;
+    seenIds.add(item.id);
+    out.push(item);
+    if (item.thumbnailUrl) generationImageUrls.add(item.thumbnailUrl);
+  }
+  for (const r of tailItems) {
+    const item = generationToItem(r);
+    if (!item) continue;
+    if (seenIds.has(item.id)) continue;
+    seenIds.add(item.id);
+    out.push(item);
+    if (item.thumbnailUrl) generationImageUrls.add(item.thumbnailUrl);
+  }
+
+  if (savedProjects && savedProjects.length > 0) {
+    for (const p of savedProjects) {
+      // Workspace scope filter mirrors the generations path: personal-scope
+      // MUST NOT see workspace-tagged records.
+      if (!useWorkspace && p.workspaceId) continue;
+      const item = projectToItem(p);
+      if (!item) continue;
+      if (seenIds.has(item.id)) continue;
+      // Drop project entries whose thumbnail matches an existing
+      // generation — the generation already represents the same render.
+      if (item.thumbnailUrl && generationImageUrls.has(item.thumbnailUrl)) continue;
+      seenIds.add(item.id);
+      out.push(item);
+    }
+  }
+
+  out.sort((a, b) => b.timestamp - a.timestamp);
+  return out;
+}
+
+/**
  * Apply client-side filters with AND across categories and OR within each.
  * - Empty array for a category means "no filter on this category" (show all).
- * - A record that has no value for a filtered category matches nothing under
- *   that category, so it is excluded — same behavior as a SQL `WHERE x IN (...)`.
+ * - A record that has no value for an active category is excluded — same
+ *   behavior as a SQL `WHERE x IN (...)`.
  */
 function applyHistoryFilters(
-  records: GenerationRecord[],
+  items: HistoryItem[],
   filters: HistoryFilters | undefined
-): GenerationRecord[] {
-  if (!filters) return records;
+): HistoryItem[] {
+  if (!filters) return items;
   const hookList = filters.hookAngle ?? [];
   const universeList = filters.universe ?? [];
   const artList = filters.artDirection ?? [];
+  const statusList = filters.status ?? [];
 
-  if (hookList.length === 0 && universeList.length === 0 && artList.length === 0) {
-    return records;
+  if (
+    hookList.length === 0
+    && universeList.length === 0
+    && artList.length === 0
+    && statusList.length === 0
+  ) {
+    return items;
   }
 
   const hookSet = new Set(hookList);
   const universeSet = new Set(universeList);
   const artSet = new Set(artList);
+  const statusSet = new Set(statusList);
 
-  return records.filter((r) => {
+  return items.filter((it) => {
     if (hookSet.size > 0) {
-      const v = getHookAngleOf(r);
-      if (v == null || !hookSet.has(v)) return false;
+      if (it.hookAngle == null || !hookSet.has(it.hookAngle)) return false;
     }
     if (universeSet.size > 0) {
-      const v = getUniverseOf(r);
-      if (v == null || !universeSet.has(v)) return false;
+      if (it.universe == null || !universeSet.has(it.universe)) return false;
     }
     if (artSet.size > 0) {
-      const v = getArtDirectionOf(r);
-      if (v == null || !artSet.has(v)) return false;
+      if (it.artDirection == null || !artSet.has(it.artDirection)) return false;
+    }
+    if (statusSet.size > 0) {
+      if (!statusSet.has(it.status)) return false;
     }
     return true;
   });
@@ -143,8 +401,13 @@ export function useGenerationHistory({
   uid,
   workspaceId,
   filters,
-  pageSize = DEFAULT_PAGE_SIZE
+  pageSize = DEFAULT_PAGE_SIZE,
+  savedProjects,
 }: UseGenerationHistoryOptions): GenerationHistoryResult {
+  // Generations come from a paginated Firestore subscription (live + cursor).
+  // We keep the underlying GenerationRecord[] around so future calls can
+  // re-merge with the saved-projects list (which lives in App state and
+  // changes independently of Firestore).
   const [headItems, setHeadItems] = useState<GenerationRecord[]>([]);
   const [tailItems, setTailItems] = useState<GenerationRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -163,54 +426,35 @@ export function useGenerationHistory({
   const useWorkspace = !!workspaceId;
   const resolvedFilters = filters;
 
-  // Head + tail merge with dedup by id, head winning on collision so live
-  // updates to records already in the static tail flow through to the view.
-  const items = useMemo(() => {
-    const headIds = new Set<string>();
-    const merged: GenerationRecord[] = [];
-    for (const h of headItems) {
-      if (h.id) {
-        merged.push(h);
-        headIds.add(h.id);
-      }
-    }
-    for (const t of tailItems) {
-      if (t.id && !headIds.has(t.id)) {
-        merged.push(t);
-      }
-    }
+  // Step 1: merge generations (head + tail) with saved projects (dedup by
+  //   imageUrl so a project + matching generation collapse to one card).
+  // Step 2: time-sort.
+  // Step 3: apply client-side filters.
+  const items = useMemo<HistoryItem[]>(() => {
+    const merged = buildItems(headItems, tailItems, savedProjects, useWorkspace);
     return applyHistoryFilters(merged, resolvedFilters);
-  }, [headItems, tailItems, resolvedFilters]);
+  }, [headItems, tailItems, savedProjects, useWorkspace, resolvedFilters]);
 
-  // totalCount is the count the user sees — derived from the same deduped +
-  // filtered list so it never disagrees with the rendered rows.
-  const totalCount = items.length;
-
-  // Facets are computed from the UNFILTERED head + tail union so the filter
-  // dropdowns always expose every universe / art-direction the user has ever
-  // produced — even one currently hidden by an active filter. The consumer
-  // (GenerationHistory) renders them into dropdowns; switching a filter then
-  // makes the matching rows visible without the option disappearing.
+  // Facets come from the MERGED pre-filter list so the dropdowns always
+  // expose every universe / art-direction the user has ever produced, even
+  // those currently hidden by an active filter.
   const facets = useMemo<{ universes: string[]; artDirections: string[] }>(() => {
+    const merged = buildItems(headItems, tailItems, savedProjects, useWorkspace);
     const universes = new Set<string>();
     const artDirections = new Set<string>();
-    for (const r of headItems) {
-      const u = getUniverseOf(r);
-      if (u) universes.add(u);
-      const a = getArtDirectionOf(r);
-      if (a) artDirections.add(a);
-    }
-    for (const r of tailItems) {
-      const u = getUniverseOf(r);
-      if (u) universes.add(u);
-      const a = getArtDirectionOf(r);
-      if (a) artDirections.add(a);
+    for (const it of merged) {
+      if (it.universe) universes.add(it.universe);
+      if (it.artDirection) artDirections.add(it.artDirection);
     }
     return {
       universes: Array.from(universes).sort(),
       artDirections: Array.from(artDirections).sort(),
     };
-  }, [headItems, tailItems]);
+  }, [headItems, tailItems, savedProjects, useWorkspace]);
+
+  // totalCount is the count the user sees — derived from the same deduped +
+  // filtered list so it never disagrees with the rendered rows.
+  const totalCount = items.length;
 
   useEffect(() => {
     if (!uid) {
@@ -325,9 +569,6 @@ export function useGenerationHistory({
                   .filter((r: GenerationRecord) => r.output?.phase === 'render');
                 const lastDoc = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
                 if (tailAttemptedRef.current) {
-                  // Re-use applyHead — but hasMore for the fallback is computed
-                  // off the raw page length here too, so pass the un-scoped
-                  // page length. Head/tail preservation still applies.
                   setHeadItems((prevHead) => {
                     const filtered = scopeFilter(raw);
                     const newIds = new Set<string>();
