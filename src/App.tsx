@@ -16,6 +16,7 @@ import { useAppStore } from './store';
 import FeedbackButtons from './components/FeedbackButtons';
 import FavoritesPanel from './components/FavoritesPanel';
 import SavedProjectsPanel from './components/SavedProjectsPanel/SavedProjectsPanel';
+import GenerationHistory from './components/GenerationHistory';
 import DeleteProjectDialog from './components/SavedProjectsPanel/DeleteProjectDialog';
 import SaveStatusIndicator from './components/SavedProjectsPanel/SaveStatusIndicator';
 import { useFavorites } from './hooks/useFavorites';
@@ -2289,6 +2290,10 @@ const App: React.FC = () => {
   }), []);
   const [mockupHistory, setMockupHistory] = useState<{ url: string; ratio: AspectRatio; rawBase64?: string }[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+
+  // Phase 26 — Projects/History tab state for the saved-projects panel.
+  // Default is 'projects' to preserve existing behavior for returning users.
+  const [projectsTab, setProjectsTab] = useState<'projects' | 'history'>('projects');
   const [captionText, setCaptionText] = useState('');
   const [batchCaptions, setBatchCaptions] = useState<{ hookKey: string; hookText: string; captionText: string }[]>([]);
   const [activeBatchCaptionKey, setActiveBatchCaptionKey] = useState<string>('');
@@ -3575,6 +3580,42 @@ const App: React.FC = () => {
     setShowSidebar(false);
     showToast(`Loaded "${p.name}"`, 'success');
   };
+
+  // Phase 26 — wire history card click → saved project.
+  // The `mockupHistory` schema doesn't carry a `generationId`, so the
+  // canonical join is by image URL: both the generations collection
+  // (`output.imageUrl`) and the saved project's `mockupHistory[].url`
+  // persist the same Storage URL when a render completes. When a match is
+  // found we route to render_studio so the user lands on the matching mockup
+  // — otherwise we surface a non-blocking toast and leave them on the
+  // History tab.
+  const loadProjectFromGeneration = useCallback((generationId: string, record: GenerationRecord) => {
+    const targetUrl = record.output?.imageUrl;
+    const candidates = filteredProjects.length > 0 ? filteredProjects : projects;
+    const match = candidates.find((p) =>
+      p.mockupHistory?.some((m) => m.url && targetUrl && m.url === targetUrl)
+    );
+    if (match) {
+      // Find the index of the matching mockup so the load lands on it.
+      const mockupIdx = match.mockupHistory.findIndex(
+        (m) => m.url && targetUrl && m.url === targetUrl
+      );
+      loadProject(match, 'render_studio');
+      if (mockupIdx >= 0) {
+        setHistoryIndex(mockupIdx);
+      }
+    } else {
+      // Project may have been deleted; the generation record alone survives.
+      // Show a localized toast so the user understands the click did nothing.
+      const msg = lang === 'ar'
+        ? 'مشروع هذا الإعلان لم يعد متاحًا.'
+        : "This generation's project is no longer available";
+      showToast(msg, 'info');
+      // Touch generationId so TS knows we used the parameter (and future
+      // telemetry can read it without a noisy `void` cast).
+      void generationId;
+    }
+  }, [filteredProjects, projects, loadProject, showToast, lang]);
 
   // Non-interactive reset (no window.confirm prompt). Called by the
   // post-deletion path so the user doesn't get a second confirmation dialog
@@ -6637,14 +6678,55 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 </div>
               );
             })()}
-            <SavedProjectsPanel
-              projects={projects}
-              workspaces={workspaces.map(w => ({ id: w.id, name: w.name }))}
-              metaConnected={metaConnection?.connected ?? false}
-              onLoad={loadProject}
-              onDelete={deleteProject}
-              onBulkDelete={confirmBulkDelete}
-            />
+            {/* Phase 26 — Projects / History tab bar. The two panels share
+                the same outer container so they line up identically; only
+                the active tab's body is mounted. */}
+            <div className="flex items-center gap-1 mb-3 border-b border-slate-800" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={projectsTab === 'projects'}
+                onClick={() => setProjectsTab('projects')}
+                className={`px-3 py-1.5 text-[11px] font-semibold transition-colors border-b-2 -mb-px ${
+                  projectsTab === 'projects'
+                    ? 'text-white border-blue-500'
+                    : 'text-slate-400 border-transparent hover:text-slate-200'
+                }`}
+              >
+                <i className="fa-solid fa-folder-open text-[10px] me-1.5" />
+                {lang === 'ar' ? 'المشاريع' : 'Projects'}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={projectsTab === 'history'}
+                onClick={() => setProjectsTab('history')}
+                className={`px-3 py-1.5 text-[11px] font-semibold transition-colors border-b-2 -mb-px ${
+                  projectsTab === 'history'
+                    ? 'text-white border-blue-500'
+                    : 'text-slate-400 border-transparent hover:text-slate-200'
+                }`}
+              >
+                <i className="fa-solid fa-clock-rotate-left text-[10px] me-1.5" />
+                {lang === 'ar' ? 'السجل' : 'History'}
+              </button>
+            </div>
+            {projectsTab === 'projects' ? (
+              <SavedProjectsPanel
+                projects={projects}
+                workspaces={workspaces.map(w => ({ id: w.id, name: w.name }))}
+                metaConnected={metaConnection?.connected ?? false}
+                onLoad={loadProject}
+                onDelete={deleteProject}
+                onBulkDelete={confirmBulkDelete}
+              />
+            ) : (
+              <GenerationHistory
+                uid={effectiveUid}
+                workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+                onSelectGeneration={loadProjectFromGeneration}
+              />
+            )}
           </div>
         )}
 
