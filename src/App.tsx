@@ -6485,7 +6485,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         <div className="max-w-[1400px] mx-auto px-6 md:px-10 h-16 flex items-center justify-between">
           {/* ── LEFT (Context): Logo + Workspace ── */}
           <div className="flex items-center gap-2.5">
-            <div className="cursor-pointer" onClick={() => window.location.reload()} aria-label="Pro Ads AI" role="button" tabIndex={0}>
+            <div
+              className="cursor-pointer"
+              onClick={() => window.location.reload()}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.reload(); } }}
+              aria-label="Pro Ads AI"
+              role="button"
+              tabIndex={0}
+            >
               <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center hover:scale-105 transition-transform shadow-lg shadow-blue-600/20">
                 <i className="fa-solid fa-wand-magic-sparkles text-white text-sm"></i>
               </div>
@@ -6663,7 +6670,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
                 role="menuitem"
               >
-                <i className="fa-solid fa-credit-card text-slate-500 w-5 text-center"></i> Manage Billing
+                    <i className="fa-solid fa-credit-card text-slate-500 w-5 text-center"></i> {t('header.manage_billing')}
               </button>
               <button
                 onClick={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowAccountMenu(false); }}

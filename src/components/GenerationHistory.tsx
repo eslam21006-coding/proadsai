@@ -706,7 +706,7 @@ const GenerationHistory: React.FC<Props> = ({ uid, workspaceId, savedProjects, o
       </div>
 
       {/* Status filter chips */}
-      <div className={`flex items-center gap-1 px-1 ${compact ? 'sticky top-[53px] z-[1] bg-slate-950 py-2 border-b border-slate-800' : ''}`} role="tablist" aria-label="Status filter">
+      <div className={`flex items-center gap-1 px-1 ${compact ? 'sticky top-[53px] z-[1] bg-slate-950 py-2 border-b border-slate-800' : ''}`} role="tablist" aria-label={historyLabels.statusFilterAria[langKey]}>
         {(['all', 'draft', 'rendered', 'published'] as const).map((s) => {
           const labelMap = {
             all:       historyLabels.statusAll[langKey],

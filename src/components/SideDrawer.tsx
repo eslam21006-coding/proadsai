@@ -77,7 +77,7 @@ const SideDrawer: React.FC<SideDrawerProps> = ({
       {/* Backdrop — click to close. Visible only when open. */}
       <button
         type="button"
-        aria-label="Close"
+        aria-label={closeLabel ?? "Close"}
         onClick={onClose}
         disabled={!open}
         tabIndex={open ? 0 : -1}

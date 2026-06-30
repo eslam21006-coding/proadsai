@@ -130,6 +130,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'header.privacy': 'Privacy Policy',
         'header.logout': 'Log Out',
         'header.free_trial': 'Free Trial',
+        'header.manage_billing': 'Manage Billing',
+        'common.close': 'Close',
 
         // ── Top-bar more menu (Batch 6) ──
         'topbar.more': 'More',
@@ -923,6 +925,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'header.privacy': 'سياسة الخصوصية',
         'header.logout': 'تسجيل الخروج',
         'header.free_trial': 'تجربة مجانية',
+        'header.manage_billing': 'إدارة الفواتير',
+        'common.close': 'إغلاق',
 
         // ── Top-bar more menu (Batch 6) ──
         'topbar.more': 'المزيد',
