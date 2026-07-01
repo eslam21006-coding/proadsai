@@ -61,7 +61,13 @@ const SideDrawer: React.FC<SideDrawerProps> = ({
   // every parent re-render (which would churn the keydown listener and steal
   // focus while the panel is animating in).
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+
+  // Sync the latest onClose into the ref after every render. Doing this in an
+  // effect (rather than during render) satisfies the react-hooks/refs rule
+  // while still keeping the focus listener pointed at the freshest callback.
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
 
   useEffect(() => {
     if (!open || !backdrop) return;
@@ -126,8 +132,10 @@ const SideDrawer: React.FC<SideDrawerProps> = ({
 
   // Backdrop only renders when `backdrop` is true. For persistent
   // sidebars, the panel sits directly on top of the page at its anchor
-  // edge with no full-screen scrim.
-  const containerZ = zIndex ?? (backdrop ? 200 : 55);
+  // edge with no full-screen scrim. Z-index defaults live in a shared
+  // lookup so they can be reused by future overlay components.
+  const Z_INDEX = { modal: 200, persistent: 55 } as const;
+  const containerZ = zIndex ?? (backdrop ? Z_INDEX.modal : Z_INDEX.persistent);
 
   return (
     <div
@@ -155,7 +163,7 @@ const SideDrawer: React.FC<SideDrawerProps> = ({
         // `inert` on a closed dialog removes every descendant from the tab
         // order and hides them from AT, complementing the outer `aria-hidden`
         // we set on the wrapper. Modern browsers all support `inert` natively.
-        {...(!open ? { inert: '' as unknown as boolean } : {})}
+        inert={!open}
         className={`absolute top-0 bottom-0 ${side === 'start' ? 'start-0' : 'end-0'} ${anchorClass} w-[80vw] sm:w-[85vw] md:w-[280px] max-w-md bg-slate-950 ${borderClass} border-slate-800 shadow-2xl shadow-black/60 flex flex-col transition-transform duration-200 ease-out
           ${open ? 'translate-x-0 pointer-events-auto' : closedTranslate}
           ${sideMargin}
