@@ -4,7 +4,7 @@
 //   - `backdrop={false}` — PERSISTENT sidebar; the panel is fixed at the chosen
 //     edge and the main content remains fully visible + interactive. No scrim.
 
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 
 export interface SideDrawerProps {
   open: boolean;
@@ -50,15 +50,64 @@ const SideDrawer: React.FC<SideDrawerProps> = ({
   panelClassName,
   zIndex,
 }) => {
-  // Escape-key handler — only attach the listener while the panel is open.
+  // Escape-key handler + focus management for modal mode only.
+  // Focus trap and restore only kick in when backdrop is enabled (modal). For
+  // persistent sidebars (backdrop={false}) the page is meant to stay
+  // interactive, so we leave focus alone.
+  const panelRef = useRef<HTMLElement | null>(null);
+  const closeBtnRef = useRef<HTMLButtonElement | null>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+
   useEffect(() => {
-    if (!open) return;
+    if (!open || !backdrop) return;
+
+    // Remember the element that had focus when the dialog opened, so we can
+    // restore it on close.
+    previouslyFocusedRef.current = (document.activeElement as HTMLElement) ?? null;
+
+    // Move initial focus to the close button so keyboard users land inside
+    // the dialog immediately. Use a microtask to give the panel time to
+    // mount + animate in.
+    const focusTimer = window.setTimeout(() => {
+      closeBtnRef.current?.focus();
+    }, 0);
+
+    // Basic focus trap: keep Tab cycling inside the panel.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusables = panel.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey && (active === first || !panel.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', onKey);
+      // Restore focus to the trigger on close.
+      const prev = previouslyFocusedRef.current;
+      if (prev && typeof prev.focus === 'function') {
+        prev.focus();
+      }
+    };
+  }, [open, backdrop, onClose]);
 
   // Translate the panel off-screen when closed. `translate-x-0` is the
   // visible state, `start-0` / `end-0` anchors the drawer to the chosen
@@ -97,6 +146,7 @@ const SideDrawer: React.FC<SideDrawerProps> = ({
         />
       )}
       <aside
+        ref={panelRef}
         className={`absolute top-0 bottom-0 ${side === 'start' ? 'start-0' : 'end-0'} ${anchorClass} w-[80vw] sm:w-[85vw] md:w-[280px] max-w-md bg-slate-950 ${borderClass} border-slate-800 shadow-2xl shadow-black/60 flex flex-col transition-transform duration-200 ease-out
           ${open ? 'translate-x-0 pointer-events-auto' : closedTranslate}
           ${sideMargin}
@@ -115,6 +165,8 @@ const SideDrawer: React.FC<SideDrawerProps> = ({
             type="button"
             onClick={onClose}
             aria-label={closeLabel}
+            data-sidedrawer-close
+            ref={closeBtnRef}
             className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-white/[0.04] transition-colors"
           >
             <i className="fa-solid fa-xmark text-sm"></i>

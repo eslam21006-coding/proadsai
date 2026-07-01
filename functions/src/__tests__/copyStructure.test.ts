@@ -181,10 +181,6 @@ function runTests(): void {
   // ─── T015 / Carousel-ad mode: ANGLE_START/END rawBlocks stored, no upfront slide set ───
   console.log("  US1 — carousel-ad routes via generateCarouselAngles with likeThisPrompt");
   {
-    // App.tsx routes carousel-ad via gemini.generateCarouselAngles with likeThisPrompt.
-    const appSrc = fs.readFileSync(
-      path.join(__dirname, "..", "..", "..", "src", "App.tsx"), "utf-8",
-    );
     // SKIP: Phase 23.A frontend wiring deferred — handler not yet in App.tsx
     // These 3 assertions were written for Phase 23.A (in-card variation
     // carousel UI). Phase 23.A was never merged — only the backend contracts

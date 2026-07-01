@@ -82,10 +82,7 @@ html.light-mode {
     --text-secondary: #374151;
     --text-muted: #52525b;
     --text-faint: #71717a;
-    --border-subtle: #c0c7d4;
     --border-strong: #a3acbb;
-    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
-    --shadow-elevated: 0 4px 14px rgba(0, 0, 0, 0.10), 0 2px 4px rgba(0, 0, 0, 0.06);
     /* Blue scale — STRONG for light mode */
     --blue-surface-strong: #bfdbfe;
     --blue-surface-medium: #dbeafe;
@@ -869,14 +866,8 @@ html.light-mode aside[role="dialog"] header {
 html.light-mode aside[role="dialog"] h2 {
     color: #0F172A !important;
 }
-html.light-mode aside[role="dialog"] button[aria-label]:not([aria-label="Close"]) {
+html.light-mode aside[role="dialog"] button:not([data-sidedrawer-close]) {
     color: #0F172A !important;
-}
-
-/* Side drawer backdrop — soft white wash, not a heavy black scrim */
-html.light-mode [class*="bg-slate-950/70"][class*="backdrop-blur"] {
-    background-color: rgba(15, 23, 42, 0.20) !important;
-
 }
 
 /* Side drawer menu items — text + hover + dividers */
