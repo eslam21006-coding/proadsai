@@ -6481,7 +6481,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         </div>
       </div>
 
-      <nav className="border-b border-white/[0.06] bg-slate-950/90 backdrop-blur-2xl sticky top-0 z-[60]">
+      <nav className="border-b border-white/[0.06] bg-slate-950 sticky top-0 z-[60]">
         <div className="max-w-[1400px] mx-auto px-6 md:px-10 h-16 flex items-center justify-between">
           {/* â”€â”€ LEFT (Context): Logo + Workspace â”€â”€ */}
           <div className="flex items-center gap-2.5">
@@ -6569,22 +6569,23 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               aria-label={t('topbar.menu_more')}
               aria-expanded={showMenuDrawer}
             >
-              <i className="fa-solid fa-ellipsis-vertical text-xs"></i>
+              <i className="fa-solid fa-bars text-xs"></i>
             </button>
 
           </div>
         </div>
       </nav>
 
-      {/* Phase 26 Batch 6 Revision 2 — the menu drawer is rendered at the
-          root level (outside the nav's stacking context) so its z-index is
-          always above the top bar. */}
+      {/* Phase 26 Batch 6 Revision 3 - persistent sidebar (no backdrop).
+          Slides in from the right (LTR) / left (RTL). z-55 so the top nav
+          (z-60) stays visible above the sidebar. \*/}
       <SideDrawer
         open={showMenuDrawer}
         onClose={() => setShowMenuDrawer(false)}
         title={t('history.menu_title')}
         subtitle={user?.email ?? ''}
         closeLabel={t('common.close')}
+        backdrop={false}
       >
         {/* Section: Account */}
         <div className="px-5 py-4 border-b border-white/[0.04] bg-slate-900/40">
@@ -6702,7 +6703,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       {/* Main Content Render Logic */}
       <main className="flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative w-full">
         {isLoading && (
-          <div className="fixed inset-0 bg-slate-950/98 backdrop-blur-[40px] z-[100] flex flex-col items-center justify-center text-center">
+          <div className="fixed inset-0 bg-slate-950/98 z-[100] flex flex-col items-center justify-center text-center">
             <div className="relative w-32 h-32 mb-12">
               <div className="absolute inset-0 border-8 border-blue-500 border-t-transparent rounded-full animate-spin shadow-[0_0_40px_rgba(37,99,235,0.2)]"></div>
             </div>
@@ -6772,6 +6773,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             side="start"
             title={t('history.title')}
             closeLabel={t('history.close_panel')}
+            backdrop={false}
           >
             <GenerationHistory
               uid={effectiveUid}

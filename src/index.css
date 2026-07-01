@@ -1,4 +1,4 @@
-@tailwind base;
+﻿@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -876,7 +876,7 @@ html.light-mode aside[role="dialog"] button[aria-label]:not([aria-label="Close"]
 /* Side drawer backdrop — soft white wash, not a heavy black scrim */
 html.light-mode [class*="bg-slate-950/70"][class*="backdrop-blur"] {
     background-color: rgba(15, 23, 42, 0.20) !important;
-    backdrop-filter: blur(4px);
+
 }
 
 /* Side drawer menu items — text + hover + dividers */
@@ -924,8 +924,8 @@ html.light-mode aside[role="dialog"] .hover\:bg-red-500\/5:hover {
 
 /* Top nav bar */
 html.light-mode nav[class*="sticky"][class*="top-0"] {
-    background-color: rgba(255, 255, 255, 0.92) !important;
-    backdrop-filter: blur(20px) !important;
+    background-color: #FFFFFF !important;
+
     border-bottom-color: #E2E8F0 !important;
     box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04) !important;
 }
