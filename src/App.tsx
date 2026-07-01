@@ -1,4 +1,4 @@
-﻿import * as React from 'react';
+import * as React from 'react';
 import { useState, useEffect, useMemo, useRef, useCallback, Suspense } from 'react';
 import type { AdInputs, AdMode, AppPhase, AspectRatio, ABVariation, BatchResult, BatchHookGroup, CarouselSlide, CarouselSlideCopy, TextOverride, VisualPolish, Toast, SavedProject, AudienceAvatar, CompetitorResearch, SemanticLock, TovEditIntent, RewriteScope, Workspace, GenerateSizeVariantRequest, GenerateSizeVariantResponse } from './types';
 // --- FIREBASE IMPORTS ---
@@ -63,7 +63,7 @@ const InputForm = React.lazy(() => import('./components/InputForm'));
 const PerformanceDashboard = React.lazy(() => import('./components/PerformanceDashboard'));
 const PricingTableLazy = React.lazy(() => import('./components/PricingTable'));
 const BillingPage = React.lazy(() => import('./pages/Billing'));
-// ReflowPreview lazy-import removed 2026-05-30 â€” CSS preview step was dropped from the
+// ReflowPreview lazy-import removed 2026-05-30 — CSS preview step was dropped from the
 // resize flow as a product decision. The component file is retained so it can be
 // re-imported here if the preview is reintroduced.
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
@@ -171,7 +171,7 @@ const LoginScreen = ({ onEmailLogin, onCreateAccount, onForgotPassword, isSubmit
           </p>
         </div>
 
-        {/* â•â•â• Tab Buttons â•â•â• */}
+        {/* ═══ Tab Buttons ═══ */}
         <div className="flex max-w-md mx-auto bg-slate-900/60 rounded-2xl p-1">
           <button
             onClick={() => handleSwitchTab('login')}
@@ -187,14 +187,14 @@ const LoginScreen = ({ onEmailLogin, onCreateAccount, onForgotPassword, isSubmit
           </button>
         </div>
 
-        {/* â•â•â• Inline Error â•â•â• */}
+        {/* ═══ Inline Error ═══ */}
         {inlineError && (
           <div className="w-full max-w-md mx-auto bg-red-500/10 border border-red-500/20 rounded-2xl p-4">
             <p className="text-sm font-bold text-red-400">{inlineError}</p>
           </div>
         )}
 
-        {/* â•â•â• Login Tab â•â•â• */}
+        {/* ═══ Login Tab ═══ */}
         {activeTab === 'login' && (
           <div className="flex flex-col items-center space-y-4 w-full max-w-md mx-auto">
             <div className="w-full relative group">
@@ -243,7 +243,7 @@ const LoginScreen = ({ onEmailLogin, onCreateAccount, onForgotPassword, isSubmit
           </div>
         )}
 
-        {/* â•â•â• Create Account Tab â•â•â• */}
+        {/* ═══ Create Account Tab ═══ */}
         {activeTab === 'create' && (
           <div className="flex flex-col items-center space-y-4 w-full max-w-md mx-auto">
             <div className="w-full relative group">
@@ -294,7 +294,7 @@ const LoginScreen = ({ onEmailLogin, onCreateAccount, onForgotPassword, isSubmit
           </div>
         )}
 
-        {/* â•â•â• Switch Tab Links â•â•â• */}
+        {/* ═══ Switch Tab Links ═══ */}
         <div className="pt-4 border-t border-white/5 flex flex-col items-center gap-3">
           {activeTab === 'login' && (
             <button onClick={() => handleSwitchTab('create')} className="text-[10px] text-slate-600 font-bold uppercase tracking-widest">
@@ -391,10 +391,10 @@ const stripUndefined = (obj: any): any => {
 // Recursively replace heavy inline image data (base64 `data:` URLs and raw base64
 // blobs) anywhere in the project with a short placeholder. Mirrors the backend
 // saveProject stripper (functions/src/index.ts). Firestore rejects docs > 1 MiB
-// and a single render is ~1â€“5 MB; this catches every oversized payload regardless
+// and a single render is ~1–5 MB; this catches every oversized payload regardless
 // of field name (referenceImage, referenceAd, offerAssets[], testimonialScreenshots[],
-// uploadedAssets[], mockupHistory[].url, carouselSlides[].imageUrl, â€¦) while sparing
-// legitimate long text (buildPlan, conceptsText) â€” text always contains whitespace,
+// uploadedAssets[], mockupHistory[].url, carouselSlides[].imageUrl, …) while sparing
+// legitimate long text (buildPlan, conceptsText) — text always contains whitespace,
 // base64 never does. Short Storage URLs are preserved.
 const HEAVY_STR_THRESHOLD = 5000;
 const stripHeavyImageData = (value: any): any => {
@@ -468,7 +468,7 @@ const steps: { id: AppPhase; tKey: string }[] = [
   { id: 'primary_text', tKey: 'step.script' },
 ];
 
-// Launch size set â€” Square / Portrait / Story only. Backend supports the full 6 ratios;
+// Launch size set — Square / Portrait / Story only. Backend supports the full 6 ratios;
 // restore others by extending this list. Shared by the Step 3 size selector and the
 // Step 4 reflow picker so the two can never drift.
 const UI_RATIOS: AspectRatio[] = ['1:1', '3:4', '9:16'];
@@ -507,9 +507,9 @@ const PrivacyPolicy: React.FC<{ onBack: () => void }> = ({ onBack }) => (
   </div>
 );
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// ONBOARDING QUIZ â€” First login only (3 steps)
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════════
+// ONBOARDING QUIZ — First login only (3 steps)
+// ═══════════════════════════════════════════════════════════════════
 const ONBOARDING_CHALLENGES = [
   { id: 'ideas', icon: 'fa-lightbulb', label: 'Lack of creative ad ideas' },
   { id: 'time', icon: 'fa-clock', label: 'Not enough time to create ads' },
@@ -631,9 +631,9 @@ const OnboardingQuiz: React.FC<{ onComplete: (data: { challenge: string; busines
   );
 };
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// WELCOME SCREEN â€” Shows after login before entering studio
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════════
+// WELCOME SCREEN — Shows after login before entering studio
+// ═══════════════════════════════════════════════════════════════════
 const WelcomeScreen: React.FC<{
   userName: string; isTrial: boolean; onStart: () => void;
 }> = ({ userName, isTrial, onStart }) => {
@@ -693,9 +693,9 @@ const WelcomeScreen: React.FC<{
   );
 };
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// SIGN-OUT SCREEN â€” "See you soon" after logout
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════════
+// SIGN-OUT SCREEN — "See you soon" after logout
+// ═══════════════════════════════════════════════════════════════════
 const SignOutScreen: React.FC<{ onSignIn: () => void }> = ({ onSignIn }) => {
   const { t } = useT();
   return (
@@ -710,7 +710,7 @@ const SignOutScreen: React.FC<{ onSignIn: () => void }> = ({ onSignIn }) => {
           </div>
         </div>
         <div className="space-y-3">
-          <p className="text-3xl">ðŸ‘‹</p>
+          <p className="text-3xl">👋</p>
           <h2 className="text-3xl font-black text-white tracking-tight">{t('signout.title')}</h2>
           <p className="text-slate-400 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: t('signout.message') }}></p>
         </div>
@@ -724,9 +724,9 @@ const SignOutScreen: React.FC<{ onSignIn: () => void }> = ({ onSignIn }) => {
   );
 };
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// WIN-BACK SCREEN â€” Returning cancelled users
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════════
+// WIN-BACK SCREEN — Returning cancelled users
+// ═══════════════════════════════════════════════════════════════════
 const WinBackScreen: React.FC<{ userName: string; cancelledAt: string; onResubscribe: () => void; onLogout: () => void }> = ({ userName, cancelledAt, onResubscribe, onLogout }) => {
   const { t } = useT();
   const firstName = userName.split(' ')[0] || userName;
@@ -737,7 +737,7 @@ const WinBackScreen: React.FC<{ userName: string; cancelledAt: string; onResubsc
       </div>
       <div className="max-w-lg w-full text-center space-y-8 animate-in fade-in zoom-in-95 duration-700">
         <div className="w-20 h-20 mx-auto rounded-2xl bg-amber-500/10 flex items-center justify-center">
-          <span className="text-4xl">ðŸ‘‹</span>
+          <span className="text-4xl">👋</span>
         </div>
         <div className="space-y-3">
           <h2 className="text-3xl font-black text-white tracking-tight">Welcome back, {firstName}</h2>
@@ -745,12 +745,12 @@ const WinBackScreen: React.FC<{ userName: string; cancelledAt: string; onResubsc
             Your subscription was cancelled on <span className="font-bold text-white">{cancelledAt}</span>.
           </p>
           <p className="text-slate-500 text-sm">
-            We've been improving â€” new features, faster renders, better quality. Ready to pick up where you left off?
+            We've been improving — new features, faster renders, better quality. Ready to pick up where you left off?
           </p>
         </div>
 
         <div className="bg-emerald-500/5 border border-emerald-500/15 rounded-2xl p-6 space-y-2">
-          <p className="text-emerald-400 text-sm font-bold">ðŸŽ‰ Welcome-back offer</p>
+          <p className="text-emerald-400 text-sm font-bold">🎉 Welcome-back offer</p>
           <p className="text-slate-300 text-xs leading-relaxed">Re-subscribe now and keep all your saved projects, avatars, and settings intact.</p>
         </div>
 
@@ -772,13 +772,13 @@ const WinBackScreen: React.FC<{ userName: string; cancelledAt: string; onResubsc
   );
 };
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// WALKTHROUGH OVERLAY â€” Step-by-step guide for first-time users
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════════
+// WALKTHROUGH OVERLAY — Step-by-step guide for first-time users
+// ═══════════════════════════════════════════════════════════════════
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// SPOTLIGHT TOUR â€” Points to real UI elements with bubble tooltips
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════════
+// SPOTLIGHT TOUR — Points to real UI elements with bubble tooltips
+// ═══════════════════════════════════════════════════════════════════
 interface TourStep { selector: string; title: string; desc: string; position?: 'bottom' | 'top' | 'left' | 'right' }
 
 const SpotlightTour: React.FC<{ steps: TourStep[]; onComplete: () => void }> = ({ steps, onComplete }) => {
@@ -881,9 +881,9 @@ const SpotlightTour: React.FC<{ steps: TourStep[]; onComplete: () => void }> = (
   );
 };
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// ONBOARDING MILESTONES â€” Earn credits by completing steps
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════════
+// ONBOARDING MILESTONES — Earn credits by completing steps
+// ═══════════════════════════════════════════════════════════════════
 interface Milestones {
   watchVideo: boolean;
   hooksGenerated: boolean;
@@ -895,7 +895,7 @@ interface Milestones {
 const EMPTY_MILESTONES: Milestones = { watchVideo: false, hooksGenerated: false, conceptsGenerated: false, designGenerated: false, copyGenerated: false, allComplete: false };
 const MILESTONE_REWARDS: Record<string, number> = { watchVideo: 2, hooksGenerated: 2, conceptsGenerated: 2, designGenerated: 2, copyGenerated: 2, allComplete: 40 };
 
-// Tutorial video URL â€” replace VIDEO_ID with your actual YouTube video ID
+// Tutorial video URL — replace VIDEO_ID with your actual YouTube video ID
 // Example: if your YouTube URL is https://www.youtube.com/watch?v=abc123, use 'abc123'
 const TUTORIAL_VIDEO_ID = 'XoJ7YQJZhC8';
 
@@ -945,75 +945,24 @@ const VideoPopup: React.FC<{ onComplete: () => void; onClose: () => void }> = ({
   );
 };
 
-const EarnCreditsPanel: React.FC<{ milestones: Milestones; onWatchVideo: () => void }> = ({ milestones, onWatchVideo }) => {
-  const steps = [
-    { key: 'watchVideo' as const, icon: 'fa-play', label: 'Watch quick start video', reward: 2, action: onWatchVideo },
-    { key: 'hooksGenerated' as const, icon: 'fa-bolt', label: 'Generate your first hooks', reward: 2 },
-    { key: 'conceptsGenerated' as const, icon: 'fa-palette', label: 'Generate visual concepts', reward: 2 },
-    { key: 'designGenerated' as const, icon: 'fa-image', label: 'Render your first ad', reward: 2 },
-    { key: 'copyGenerated' as const, icon: 'fa-file-lines', label: 'Generate ad caption', reward: 2 },
-    { key: 'allComplete' as const, icon: 'fa-trophy', label: 'Complete all steps', reward: 40 },
-  ];
-  const completedCount = steps.filter(s => milestones[s.key]).length;
-  const totalEarned = steps.filter(s => milestones[s.key]).reduce((sum, s) => sum + s.reward, 0);
-
-  if (milestones.allComplete) return null; // Hide once fully completed
-
-  return (
-    <div className="mx-4 mb-4 bg-gradient-to-b from-amber-500/5 to-transparent border border-amber-500/10 rounded-2xl p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-amber-500/15 flex items-center justify-center">
-            <i className="fa-solid fa-gift text-amber-400 text-xs"></i>
-          </div>
-          <div>
-            <p className="text-[10px] font-bold text-white">Earn 50 credits</p>
-            <p className="text-[9px] text-slate-500">{completedCount}/{steps.length} steps Â· {totalEarned} earned</p>
-          </div>
-        </div>
-      </div>
-      {/* Progress bar */}
-      <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-        <div className="h-full bg-gradient-to-r from-amber-500 to-amber-400 rounded-full transition-all duration-700" style={{ width: `${(completedCount / steps.length) * 100}%` }}></div>
-      </div>
-      {/* Steps */}
-      <div className="space-y-1.5">
-        {steps.map(s => (
-          <div key={s.key}
-            onClick={!milestones[s.key] && s.action ? s.action : undefined}
-            className={`flex items-center gap-2.5 py-1.5 px-2 rounded-lg transition-all ${milestones[s.key] ? 'opacity-50' : s.action ? 'hover:bg-white/[0.04] cursor-pointer' : ''}`}>
-            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] ${milestones[s.key] ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-600'}`}>
-              {milestones[s.key] ? <i className="fa-solid fa-check"></i> : <i className={`fa-solid ${s.icon}`}></i>}
-            </div>
-            <span className={`text-[10px] flex-1 ${milestones[s.key] ? 'text-slate-500 line-through' : 'text-slate-300'}`}>{s.label}</span>
-            <span className={`text-[9px] font-bold ${milestones[s.key] ? 'text-emerald-500' : 'text-amber-400'}`}>
-              {milestones[s.key] ? 'âœ“' : `+${s.reward}`}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-// â•â•â• LEGACY MODE SANITIZER (shared across all project/draft loading paths) â•â•â•
+// ═══ LEGACY MODE SANITIZER (shared across all project/draft loading paths) ═══
 const VALID_MODE_IDS = new Set(Object.keys(CREATIVE_MODE_CATALOG));
 function sanitizeProjectModes(inputs: any): any {
   if (!inputs) return inputs;
   const clean = { ...inputs };
-  // Sanitize creative modes â€” remove any that no longer exist
+  // Sanitize creative modes — remove any that no longer exist
   if (clean.offerCreativeMode) {
     const before = clean.offerCreativeMode as string[];
     const after = before.filter((m: string) => VALID_MODE_IDS.has(m));
     if (after.length !== before.length) {
       const removed = before.filter((m: string) => !VALID_MODE_IDS.has(m));
-      console.warn(`ðŸ§¹ Legacy mode sanitization: removed [${removed.join(', ')}]`);
+      console.warn(`🧹 Legacy mode sanitization: removed [${removed.join(', ')}]`);
     }
     clean.offerCreativeMode = after.length > 0 ? after : ['standard_hero'];
   }
   // Sanitize removed offer types
   if (clean.offerType && !OFFER_TYPES.includes(clean.offerType)) {
-    console.warn(`ðŸ§¹ Legacy offer type: "${clean.offerType}" â†’ "Mini-Course"`);
+    console.warn(`🧹 Legacy offer type: "${clean.offerType}" → "Mini-Course"`);
     clean.offerType = 'Mini-Course';
   }
   return clean;
@@ -1044,7 +993,7 @@ const normalizeFieldLabels = (text: string): string => {
 const App: React.FC = () => {
   // --- i18n ---
   const { t, lang, setLang } = useT();
-  // â”€â”€â”€ Phase 23 â€” in-card variation carousel store bindings (23.A) â”€â”€â”€â”€â”€â”€
+  // ─── Phase 23 — in-card variation carousel store bindings (23.A) ──────
   const variationCarousels = useAppStore((s) => s.variationCarousels);
   const variationActiveIndex = useAppStore((s) => s.variationActiveIndex);
   const variationCapReached = useAppStore((s) => s.variationCapReached);
@@ -1053,27 +1002,27 @@ const App: React.FC = () => {
   const resetVariations = useAppStore((s) => s.resetVariations);
   const updateVariation = useAppStore((s) => s.updateVariation);
   const isRtl = lang === 'ar';
-  // Mutable ref for effective UID â€” updated each render, safe to use in effects before state declarations
+  // Mutable ref for effective UID — updated each render, safe to use in effects before state declarations
   const effectiveUidRef = React.useRef<string | null>(null);
   // Guards the startup project auto-restore so it runs exactly ONCE per signed-in session.
   // The restore effect's deps include `user`/`effectiveUid`, which change reference on token
-  // refresh and on async team `teamOwnerUid` resolution â€” re-running it would overwrite live
+  // refresh and on async team `teamOwnerUid` resolution — re-running it would overwrite live
   // session work (e.g. a freshly rendered carousel) with the saved snapshot. Reset on logout.
   const hasRestoredRef = React.useRef(false);
   // FIX 3: tracks the previous selectedTov so we only clear concepts when the user SWITCHES
-  // between two real hooks â€” never on first set or session restore (prev is '').
+  // between two real hooks — never on first set or session restore (prev is '').
   const prevSelectedTovRef = React.useRef('');
   // Tracks whether the batch already had done items, so we default reflowScope to 'batch_all'
-  // exactly once when a batch finishes â€” without clobbering a later manual 'single' choice.
+  // exactly once when a batch finishes — without clobbering a later manual 'single' choice.
   const prevHasDoneBatchRef = React.useRef(false);
 
-  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-  // PHASE 24B â€” HOOK FIELD PARSING HELPERS (hoisted from four-card closure)
-  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // ═══════════════════════════════════════════════════════════════════════
+  // PHASE 24B — HOOK FIELD PARSING HELPERS (hoisted from four-card closure)
+  // ═══════════════════════════════════════════════════════════════════════
   // Phase 24B (FR-006 / US1): the three optional copy fields (subhead, CTA,
   // benefit) are normalized to `null` when the parser produces empty output.
   // hookText remains a required string. Because optional fields can be absent
-  // in raw blocks, no single marker can be a required end boundary â€” we list
+  // in raw blocks, no single marker can be a required end boundary — we list
   // every possible boundary and pick the first one that appears. This is the
   // same logic previously duplicated in the four-card JSX render closure
   // (lines 6504-6562 pre-hoist); hoisting makes it accessible to both the
@@ -1082,7 +1031,7 @@ const App: React.FC = () => {
   const normalize = (t: string) =>
     (t || '')
       .replace(/\*\*/g, '')
-      .replace(/^\s*[:ï¼š\-â€“â€¢]+\s*/g, '')
+      .replace(/^\s*[:：\-–•]+\s*/g, '')
       .replace(/VISUAL_DIRECTION[\s\S]*/gi, '')
       .replace(/TECHNICAL_PROMPT[\s\S]*/gi, '')
       .replace(/CONCEPT_START[\s\S]*/gi, '')
@@ -1097,14 +1046,14 @@ const App: React.FC = () => {
       .trim();
   // Anchor a marker word to the start of a line (after optional whitespace and
   // optional ** bold open), and require a valid field-label suffix. Valid
-  // suffixes are: optional ** bold close, ":" / "ï¼š" colon, "_LETTERS" like
+  // suffixes are: optional ** bold close, ":" / "：" colon, "_LETTERS" like
   // HOOK_END_A, or end-of-line / end-of-string (so `HOOK_END` alone on a line
   // still matches). The old `[A-Z0-9]*\b` suffix over-matched mid-sentence
   // content like `HOOK_TEXT Great` (greedy 0-char then word boundary at G).
   const markerRegex = (marker: string): RegExp => {
     const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(
-      `(?:^|\\n)\\s*(?:\\*\\*)?${escaped}(?:\\*\\*)?(?:[_][A-Z0-9_]*\\b|[ï¼š:]|(?=\\s*(?:\\n|$)))`,
+      `(?:^|\\n)\\s*(?:\\*\\*)?${escaped}(?:\\*\\*)?(?:[_][A-Z0-9_]*\\b|[：:]|(?=\\s*(?:\\n|$)))`,
       'i'
     );
   };
@@ -1134,7 +1083,6 @@ const App: React.FC = () => {
   };
   // --- STATE ---
   const [view, setView] = useState<'app' | 'privacy'>('app');
-  const [showSidebar, setShowSidebar] = useState(false);
   // --- THEME ---
   const [isDarkMode, setIsDarkMode] = useState(() => {
     const saved = localStorage.getItem('proads-theme');
@@ -1159,7 +1107,7 @@ const App: React.FC = () => {
   });
   const [projects, setProjects] = useState<SavedProject[]>([]);
   // Non-blocking project-limit warning. Set when a new project is saved at/over the plan cap
-  // (auto-save still succeeds â€” the backend evicts the oldest draft). Shown as a dismissible
+  // (auto-save still succeeds — the backend evicts the oldest draft). Shown as a dismissible
   // banner in the saved-projects panel; never blocks generation, navigation, or auto-save.
   const [projectLimitReached, setProjectLimitReached] = useState(false);
   const [currentProjectId, setCurrentProjectId] = useState<string>(() => Date.now().toString());
@@ -1225,7 +1173,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
-        // â”€â”€â”€ T047: Email verification gate â”€â”€â”€
+        // ─── T047: Email verification gate ───
         // First fire after signup carries a stale token where emailVerified can
         // be false even right after the user clicked the verification link.
         // Reload once before bailing so the consume flow runs on the same tick.
@@ -1238,12 +1186,12 @@ const App: React.FC = () => {
           }
         }
 
-        // Email verified â€” proceed to Firestore lookup
+        // Email verified — proceed to Firestore lookup
         const userRef = doc(db, "users", currentUser.uid);
         const userSnap = await getDoc(userRef);
 
         if (userSnap.exists()) {
-          // EXISTING USER â€” normal login
+          // EXISTING USER — normal login
           const userData = userSnap.data();
           setUser(currentUser);
 
@@ -1304,7 +1252,7 @@ const App: React.FC = () => {
             setShowWelcome(true);
           }
         } else {
-          // â”€â”€â”€ T048: No Firestore doc â€” check pending_plans â”€â”€â”€
+          // ─── T048: No Firestore doc — check pending_plans ───
           let hasPendingPlan = false;
 
           if (currentUser.email) {
@@ -1385,7 +1333,7 @@ const App: React.FC = () => {
             }
 
             if (!isTeamMember) {
-              // â”€â”€â”€ T049: Create minimal user doc (DO NOT delete auth account) â”€â”€â”€
+              // ─── T049: Create minimal user doc (DO NOT delete auth account) ───
               await setDoc(userRef, {
                 email: currentUser.email,
                 credits: 0,
@@ -1419,7 +1367,7 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // â”€â”€â”€ CHATBOT WIDGET (Tawk.to) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── CHATBOT WIDGET (Tawk.to) ──────────────────────────────────────
   useEffect(() => {
     const s = document.createElement('script');
     s.async = true;
@@ -1430,9 +1378,9 @@ const App: React.FC = () => {
     return () => { document.head.removeChild(s); };
   }, []);
 
-  // â”€â”€â”€ REAL-TIME CREDIT/PLAN LISTENER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── REAL-TIME CREDIT/PLAN LISTENER ──────────────────────────────────
   // When GHL webhook updates Firestore (upgrade, top-up, or cancellation),
-  // this listener instantly reflects the change in the app â€” no refresh needed.
+  // this listener instantly reflects the change in the app — no refresh needed.
   useEffect(() => {
     if (!user) return;
     const userRef = doc(db, 'users', user.uid);
@@ -1471,7 +1419,7 @@ const App: React.FC = () => {
     return () => unsubSnap();
   }, [user]);
 
-  // â”€â”€â”€ AUDIENCE AVATARS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── AUDIENCE AVATARS ──────────────────────────────────────────────────
   // Fetch avatars from Firestore (uses effectiveUidRef so team members see owner's avatars)
   useEffect(() => {
     const uid = effectiveUidRef.current;
@@ -1529,7 +1477,7 @@ const App: React.FC = () => {
     const uid = effectiveUidRef.current;
     if (!user || !uid) return;
     try {
-      // Same undefined-stripping as handleSaveAvatar â€” optional fields are undefined when unset.
+      // Same undefined-stripping as handleSaveAvatar — optional fields are undefined when unset.
       const cleanAvatar = Object.fromEntries(Object.entries(avatar).filter(([, v]) => v !== undefined));
       await setDoc(doc(db, 'users', uid, 'avatars', avatarId), { ...cleanAvatar, createdAt: Date.now() });
       setAvatars(prev => prev.map(a => a.id === avatarId ? { ...a, ...avatar, createdAt: Date.now() } : a));
@@ -1539,13 +1487,13 @@ const App: React.FC = () => {
     }
   };
 
-  // â”€â”€â”€ COMPETITOR RESEARCH â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── COMPETITOR RESEARCH ──────────────────────────────────────────────
   const getCacheKey = (data: AdInputs) => `${data.productName}::${data.productCategory}::${data.targetAudience}`.toLowerCase().trim();
 
   const runCompetitorResearch = async (formData: AdInputs, force = false) => {
     // Only for Ultimate + Agency
     if (!canUse(userPlan, 'competitorResearch')) return;
-    // Check cache â€” skip if same product+audience unless forced
+    // Check cache — skip if same product+audience unless forced
     const cacheKey = getCacheKey(formData);
     if (!force && competitorData && competitorData.cachedFor === cacheKey) return;
 
@@ -1574,7 +1522,7 @@ const App: React.FC = () => {
       // Credits were deducted server-side, onSnapshot will update
     } catch (e: any) {
       console.error('Competitor research failed:', e);
-      // Don't show error toast â€” this is a background feature
+      // Don't show error toast — this is a background feature
     } finally {
       setCompetitorLoading(false);
     }
@@ -1587,7 +1535,7 @@ const App: React.FC = () => {
       await signInWithEmailAndPassword(auth, email, password);
     } catch (error: any) {
       console.error("Email login failed", error);
-      // Auto-switch: user-not-found â†’ Create Account tab with email pre-filled
+      // Auto-switch: user-not-found → Create Account tab with email pre-filled
       if (error.code === 'auth/user-not-found') {
         setPendingEmail(email);
         setLoginTab('create');
@@ -1614,7 +1562,7 @@ const App: React.FC = () => {
       await sendEmailVerification(cred.user);
     } catch (error: any) {
       console.error("Create account failed", error);
-      // Auto-switch: email-already-in-use â†’ Login tab with email pre-filled
+      // Auto-switch: email-already-in-use → Login tab with email pre-filled
       if (error.code === 'auth/email-already-in-use') {
         setPendingEmail(email);
         setLoginTab('login');
@@ -1631,7 +1579,7 @@ const App: React.FC = () => {
     }
   };
 
-  // Handle Forgot Password â€” Firebase built-in, non-revealing confirmation
+  // Handle Forgot Password — Firebase built-in, non-revealing confirmation
   const handleForgotPassword = async (email: string) => {
     if (!email) {
       showToast(t('login.forgotPasswordDialog.emailPrompt'), 'error');
@@ -1656,7 +1604,7 @@ const App: React.FC = () => {
     setShowSignOut(true);
   };
 
-  // Onboarding quiz completion â€” save to Firestore + trigger welcome
+  // Onboarding quiz completion — save to Firestore + trigger welcome
   const handleOnboardingComplete = async (data: { challenge: string; businessType: string; niche: string }) => {
     if (!user) return;
     const userRef = doc(db, 'users', user.uid);
@@ -1670,7 +1618,7 @@ const App: React.FC = () => {
     setShowWelcome(true);
   };
 
-  // Welcome screen â†’ enter studio + show walkthrough for first time
+  // Welcome screen → enter studio + show walkthrough for first time
   const handleWelcomeStart = () => {
     setShowWelcome(false);
     // Show video popup if they haven't earned that milestone yet
@@ -1703,7 +1651,7 @@ const App: React.FC = () => {
     }
   };
 
-  // SignOut screen â†’ back to login
+  // SignOut screen → back to login
   const handleSignOutToLogin = () => {
     setShowSignOut(false);
   };
@@ -1745,23 +1693,29 @@ const App: React.FC = () => {
   const [favUpdatePrompt, setFavUpdatePrompt] = useState<FavUpdatePrompt | null>(null);
   const [loadedRenderRecord, setLoadedRenderRecord] = useState<GenerationRecord | null>(null);
   const [upgradeReason, setUpgradeReason] = useState('');
-  const [showMenuDrawer, setShowMenuDrawer] = useState(false);
-  // Phase 26 Batch 6 â€” History side panel state.
+  // Phase 26 Batch 6 Revision 5 — menu sidebar is a flex sibling of <main>,
+// so its open state is owned here. Default-open on desktop (md+) where the
+// 280px column comfortably sits next to the brief form; default-closed on
+// mobile where a fixed overlay is used instead.
+const [showMenuDrawer, setShowMenuDrawer] = useState(() =>
+  typeof window !== 'undefined' && window.innerWidth >= 768,
+);
+  // Phase 26 Batch 6 — History side panel state.
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   // Live count badge value lifted from <GenerationHistory onTotalCountChange>.
   // Starts at 0; updated as the panel loads.
   const [historyTotalCount, setHistoryTotalCount] = useState(0);
 
-  // â”€â”€â”€ MANDATORY BILLING AUTO-DISMISS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── MANDATORY BILLING AUTO-DISMISS ──────────────────────────────────
   useEffect(() => {
     if (showMandatoryBilling && userPlan !== 'none') {
       setShowMandatoryBilling(false);
     }
   }, [userPlan, showMandatoryBilling]);
 
-  // â”€â”€â”€ WELCOME TOAST â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── WELCOME TOAST ───────────────────────────────────────────────────
   // FR-024b: fires once when users/{uid}.createdAt is within 60s AND welcomeToastShown !== true.
-  // Covers both pending_plans consumption and mandatory-modal â†’ paid transitions.
+  // Covers both pending_plans consumption and mandatory-modal → paid transitions.
   const welcomeToastFiredRef = React.useRef(false);
   const wasTeamMemberRef = React.useRef(false);
   useEffect(() => {
@@ -1793,14 +1747,14 @@ const App: React.FC = () => {
         showToast(t('login.welcomeTrial'), 'success');
         await updateDoc(doc(db, 'users', user.uid), { welcomeToastShown: true });
       } catch {
-        // Non-blocking â€” welcome toast failure should never break sign-in
+        // Non-blocking — welcome toast failure should never break sign-in
       }
     })();
 
     return () => { cancelled = true; };
   }, [user, userPlan]);
 
-  // â”€â”€â”€ BILLING MODAL STATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── BILLING MODAL STATE ───────────────────────────────────────────
   const [showBillingModal, setShowBillingModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showTeamModal, setShowTeamModal] = useState(false);
@@ -1829,9 +1783,9 @@ const App: React.FC = () => {
   const [cancelLoading, setCancelLoading] = useState(false);
   const [editingHook, setEditingHook] = useState<string | null>(null);
   const [editHookData, setEditHookData] = useState<{ hookText: string; subhead: string; cta: string; benefit: string; storyArc?: string }>({ hookText: '', subhead: '', cta: '', benefit: '' });
-  // (Removed: accountMenuRef â€” SideDrawer handles its own outside-click + Escape close.)
+  // (Removed: accountMenuRef — SideDrawer handles its own outside-click + Escape close.)
 
-  // â”€â”€â”€ GHL CHECKOUT URLS (external marketing funnel) â”€â”€â”€
+  // ─── GHL CHECKOUT URLS (external marketing funnel) ───
   const GHL_URLS: Record<string, string> = {
     starter_monthly: 'https://proadsai.com/checkout/starter',
     starter_annual: 'https://proadsai.com/checkout/starter',
@@ -1841,7 +1795,7 @@ const App: React.FC = () => {
     scale_annual: 'https://proadsai.com/checkout/scaling',
   };
 
-  // â”€â”€â”€ WORKSPACE STATE & LOGIC (Multi-Brand â€” Scaling only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── WORKSPACE STATE & LOGIC (Multi-Brand — Scaling only) ───────────────
   const [workspaces, setWorkspacesLocal] = useState<Workspace[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceIdLocal] = useState<string | null>(null);
   const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
@@ -1882,7 +1836,7 @@ const App: React.FC = () => {
         }
       } catch (e: any) {
         console.error('Failed to load workspaces:', e);
-        showToast('Failed to load workspaces â€” check console', 'error');
+        showToast('Failed to load workspaces — check console', 'error');
       }
     };
     fetchWorkspaces();
@@ -1952,8 +1906,8 @@ const App: React.FC = () => {
     ? avatars.filter(a => (a.workspaceId || defaultWsId) === activeWorkspaceId)
     : avatars;
 
-  // â”€â”€â”€ STRIPE BILLING PORTAL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // â”€â”€â”€ TEAM MANAGEMENT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── STRIPE BILLING PORTAL ─────────────────────────────────────────
+  // ─── TEAM MANAGEMENT ──────────────────────────────────────────────
   const loadTeamMembers = async () => {
     if (!user) return;
     try {
@@ -2124,7 +2078,7 @@ const App: React.FC = () => {
     try {
       const applyDiscount = httpsCallable(functions, 'applyRetentionDiscount');
       await applyDiscount({ couponId });
-      showToast(couponId.includes('50') ? 'ðŸŽ‰ 50% discount applied for 3 months!' : 'ðŸŽ‰ 25% discount applied forever!', 'success');
+      showToast(couponId.includes('50') ? '🎉 50% discount applied for 3 months!' : '🎉 25% discount applied forever!', 'success');
       setShowCancelFlow(false);
       setCancelStep(1);
       handleManageBilling();
@@ -2140,7 +2094,7 @@ const App: React.FC = () => {
     }
   };
 
-  // â”€â”€â”€ INLINE HOOK EDIT (no AI, no credits) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── INLINE HOOK EDIT (no AI, no credits) ─────────────────────────
   const handleInlineHookSave = (variant: string) => {
     const d = editHookData;
     const isCarousel = inputs?.adMode === 'carousel' && (inputs?.slideCount || 1) > 1;
@@ -2149,9 +2103,9 @@ const App: React.FC = () => {
     // Phase 24B (T026 / FR-006 / U10 / UINV-3): delegate to the pure helper so
     // cleared optional fields are OMITTED from the serialized block (instead of
     // written as `SUBHEADLINE: ` / `CTA_BUTTON: `). parseHookVariation() then
-    // reads no marker and returns null for that field â€” the frontend never
+    // reads no marker and returns null for that field — the frontend never
     // persists "" into the stored copy data (FR-006 / UINV-3). hookText save
-    // path is UNTOUCHED â€” the headline is never optional.
+    // path is UNTOUCHED — the headline is never optional.
     const newBlock = buildInlineEditedBlock({
       startTag,
       endTag,
@@ -2174,8 +2128,8 @@ const App: React.FC = () => {
     setEditingHook(null);
   };
 
-  // â”€â”€â”€ CREDIT DEDUCTION HELPER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // count param supports per-unit billing (e.g., carousel copies: 1 credit Ã— slideCount)
+  // ─── CREDIT DEDUCTION HELPER ─────────────────────────────────────────
+  // count param supports per-unit billing (e.g., carousel copies: 1 credit × slideCount)
   const deductCredits = (action: keyof typeof CREDIT_COSTS, count = 1): boolean => {
     // Team viewers cannot perform credit-consuming actions
     if (isTeamViewer) {
@@ -2199,7 +2153,7 @@ const App: React.FC = () => {
         setUserCredits(res.data.creditsRemaining);
       }
     }).catch((err: any) => {
-      // Server rejected â€” restore local balance
+      // Server rejected — restore local balance
       console.error('Server deduction failed:', err);
       setUserCredits(prev => prev + cost);
       if (err.code === 'functions/failed-precondition') {
@@ -2222,7 +2176,7 @@ const App: React.FC = () => {
     return true;
   };
 
-  // â”€â”€â”€ REFUND CREDITS ON API FAILURE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── REFUND CREDITS ON API FAILURE ─────────────────────────────────────
   const refundCredits = (action: keyof typeof CREDIT_COSTS, count = 1) => {
     const cost = CREDIT_COSTS[action] * count;
     // Optimistic local refund
@@ -2238,7 +2192,7 @@ const App: React.FC = () => {
     });
   };
 
-  // â”€â”€â”€ MILESTONE CREDIT AWARDS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── MILESTONE CREDIT AWARDS ──────────────────────────────────────────
   const awardMilestone = (key: keyof Milestones) => {
     if (!user) return;
     if (milestones[key]) return; // Already earned
@@ -2261,9 +2215,9 @@ const App: React.FC = () => {
         const regularDone = updated.watchVideo && updated.hooksGenerated && updated.conceptsGenerated && updated.designGenerated && updated.copyGenerated;
         if (regularDone && !milestones.allComplete) {
           setMilestones(prev => ({ ...prev, allComplete: true }));
-          showToast(`ðŸŽ‰ All steps complete! +${totalReward} bonus credits!`, 'success');
+          showToast(`🎉 All steps complete! +${totalReward} bonus credits!`, 'success');
         } else {
-          showToast(`âœ¨ Milestone unlocked! +${totalReward} credits earned`, 'success');
+          showToast(`✨ Milestone unlocked! +${totalReward} credits earned`, 'success');
         }
       }
     }).catch((err: any) => {
@@ -2299,7 +2253,7 @@ const App: React.FC = () => {
   const [batchCaptions, setBatchCaptions] = useState<{ hookKey: string; hookText: string; captionText: string }[]>([]);
   const [activeBatchCaptionKey, setActiveBatchCaptionKey] = useState<string>('');
   const [batchResults, setBatchResults] = useState<BatchResult[]>([]);
-  // Snapshot of the batch grid taken when a gallery thumbnail is clicked in batch mode â€”
+  // Snapshot of the batch grid taken when a gallery thumbnail is clicked in batch mode —
   // lets the canvas drop to single view for that image while a "Back to batch" button
   // restores the grid. Cleared on a fresh batch render so stale grids never reappear.
   const [batchSnapshot, setBatchSnapshot] = useState<typeof batchResults>([]);
@@ -2331,7 +2285,7 @@ const App: React.FC = () => {
       setAbVariations(prev => prev.map((v, idx) => idx === i ? { ...v, status: 'rendering' } : v));
       if (!deductCredits('generateImage')) break;
       try {
-        // Phase 20 â€” Concept Director trace (audit fix #30/#32/#33):
+        // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
         // forward the trace captured from the most recent concept
         // generation so the rendered image carries the audit trail.
         const abResult = await gemini.generateFinalAd(
@@ -2364,7 +2318,7 @@ const App: React.FC = () => {
     setAbVariations(prev => prev.map((v, idx) => idx === index ? { ...v, status: 'rendering', url: null } : v));
     if (!deductCredits('generateImage')) return;
     try {
-      // Phase 20 â€” Concept Director trace (audit fix #30/#32/#33):
+      // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
       // forward the trace captured from the most recent concept
       // generation so the rendered image carries the audit trail.
       const abRetryResult = await gemini.generateFinalAd(
@@ -2401,16 +2355,16 @@ const App: React.FC = () => {
   // before a carousel_all reflow. Lets the user restore the pre-resize version.
   const [previousCarouselSlides, setPreviousCarouselSlides] = useState<CarouselSlide[] | null>(null);
   const [previousCarouselRatio, setPreviousCarouselRatio] = useState<AspectRatio | null>(null);
-  // ISSUE 3: one-level undo for SINGLE-image resize â€” snapshot of the displayed mockup
+  // ISSUE 3: one-level undo for SINGLE-image resize — snapshot of the displayed mockup
   // (+ its raw base64/Storage source and ratio) taken right before a single reflow. Lets
   // the user flip back to the pre-resize size, mirroring the carousel snapshot pattern.
   const [previousSingleMockup, setPreviousSingleMockup] = useState<{ url: string; rawBase64?: string; ratio: AspectRatio } | null>(null);
   // ISSUE 2: collapse state for the unified "All Versions" gallery (collapsed by default).
   const [showAllVersionsGallery, setShowAllVersionsGallery] = useState(false);
-  // 3-dot options menu in the unified gallery â€” holds the URL of the card whose menu is
+  // 3-dot options menu in the unified gallery — holds the URL of the card whose menu is
   // open (null = none). Closed on any mousedown outside an element tagged data-version-menu.
   const [openVersionMenu, setOpenVersionMenu] = useState<string | null>(null);
-  // Full-size preview for a unified-gallery card â€” opened via the expand icon on each
+  // Full-size preview for a unified-gallery card — opened via the expand icon on each
   // card, closed by clicking the overlay or the X. Non-destructive: batch grid untouched.
   const [galleryLightbox, setGalleryLightbox] = useState<{ url: string; ratio: string } | null>(null);
   useEffect(() => {
@@ -2426,7 +2380,7 @@ const App: React.FC = () => {
   // instead of the previous resize output, so repeated resizes never chain-degrade quality.
   // Cleared on every fresh generation / reset so a new render anchors to its own original.
   const originalMockupRef = useRef<string | null>(null);
-  // Carousel slide lightbox â€” null = closed, otherwise the index of the slide shown full-screen.
+  // Carousel slide lightbox — null = closed, otherwise the index of the slide shown full-screen.
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const lightboxPrev = useCallback(() => {
     setLightboxIndex(i => (i === null || carouselSlides.length === 0) ? i : (i - 1 + carouselSlides.length) % carouselSlides.length);
@@ -2438,7 +2392,7 @@ const App: React.FC = () => {
     if (lightboxIndex === null) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setLightboxIndex(null);
-      // RTL-aware: in Arabic the visual â†/â†’ are mirrored, so ArrowLeft = next, ArrowRight = prev.
+      // RTL-aware: in Arabic the visual ←/→ are mirrored, so ArrowLeft = next, ArrowRight = prev.
       else if (e.key === 'ArrowLeft') (lang === 'ar' ? lightboxNext : lightboxPrev)();
       else if (e.key === 'ArrowRight') (lang === 'ar' ? lightboxPrev : lightboxNext)();
     };
@@ -2449,7 +2403,7 @@ const App: React.FC = () => {
   const [captionRefinement, setCaptionRefinement] = useState('');
   const [selectedTov, setSelectedTov] = useState('');
   const [selectedConcept, setSelectedConcept] = useState('');
-  // Phase 20 â€” Concept Director trace (audit fix #30/#32/#33 â€” round 2):
+  // Phase 20 — Concept Director trace (audit fix #30/#32/#33 — round 2):
   // held in frontend state between `serverGenerateConcepts` and
   // `serverGenerateFinalAd` so the trace crosses the Cloud Run
   // container boundary in the HTTP payload (the previous module-
@@ -2464,7 +2418,7 @@ const App: React.FC = () => {
   const [activeEditConceptIndex, setActiveEditConceptIndex] = useState<string | null>(null);
   const [expandedConcepts, setExpandedConcepts] = useState<Set<number>>(new Set([11, 12, 13, 21, 22, 23, 31, 32, 33, 41, 42, 43]));
   const [editFeedback, setEditFeedback] = useState('');
-  // FIX 2: direct raw-blueprint text editing (single mode) â€” index of concept being edited + its draft text
+  // FIX 2: direct raw-blueprint text editing (single mode) — index of concept being edited + its draft text
   const [directEditIndex, setDirectEditIndex] = useState<string | null>(null);
   const [directEditText, setDirectEditText] = useState('');
   const [globalRefinement, setGlobalRefinement] = useState(''); // cumulative refinement history (sent to AI)
@@ -2472,13 +2426,13 @@ const App: React.FC = () => {
   const [studioTweak, setStudioTweak] = useState('');
   // Reflow is a permanently-visible 3-button control (no picker toggle): the only
   // states are 'idle' (buttons shown, accepting a selection) and 'committing'
-  // (a resize is in flight). 'picker_open' was removed â€” the buttons always render.
+  // (a resize is in flight). 'picker_open' was removed — the buttons always render.
   const [reflowStep, setReflowStep] = useState<'idle' | 'committing'>('idle');
   const [reflowTarget, setReflowTarget] = useState<AspectRatio | null>(null);
   const [reflowScope, setReflowScope] = useState<'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'>('single');
   // ISSUE 5: batch cards checked for "Resize Selected" (stores global batchResults indices).
   const [selectedBatchIndices, setSelectedBatchIndices] = useState<Set<number>>(new Set());
-  // Ratio of the batch tile currently being viewed â€” drives the reflow "Current"
+  // Ratio of the batch tile currently being viewed — drives the reflow "Current"
   // badge in batch mode (where displayRatio reflects the single-render history, not
   // the focused batch tile).
   const [activeBatchRatio, setActiveBatchRatio] = useState<AspectRatio>(currentAspectRatio);
@@ -2490,7 +2444,7 @@ const App: React.FC = () => {
   const [showStrippedAssetsWarning, setShowStrippedAssetsWarning] = useState(false);
   const [visualPolishes, setVisualPolishes] = useState<VisualPolish[]>([]);
   const [selectedPolishIds, setSelectedPolishIds] = useState<Set<string>>(new Set());
-  // â”€â”€â”€ EDIT TARGET â€” tracks which exact design is being edited â”€â”€â”€â”€â”€
+  // ─── EDIT TARGET — tracks which exact design is being edited ─────
   // When null, polish edits go to generic mockupHistory (default behavior)
   // When set, polish edits write back to the specific source
   const [editTarget, setEditTarget] = useState<{
@@ -2499,7 +2453,7 @@ const App: React.FC = () => {
     imageUrl: string;
     label: string;        // display label like "Batch H-A C1" or "Slide 3"
   } | null>(null);
-  // â”€â”€â”€ MAGIC SELECTOR STATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── MAGIC SELECTOR STATE ──────────────────────────────────
   const [magicEditActive, setMagicEditActive] = useState(false);
   const [magicProcessing, setMagicProcessing] = useState(false);
   const [magicUndoStack, setMagicUndoStack] = useState<string[]>([]);
@@ -2564,7 +2518,7 @@ const App: React.FC = () => {
         setMagicEditHistory(allEdits);
         showToast('Magic edit applied!', 'success');
 
-        // Only auto-propagate the magic edit to other selected sizes. Phase 17 â€”
+        // Only auto-propagate the magic edit to other selected sizes. Phase 17 —
         // repointed from the commented-out `reflowImage` callable to the new
         // `generateSizeVariant` callable. The freshly-edited image (result.image)
         // is the visual reference for each cross-size variant. The backend applies
@@ -2587,7 +2541,7 @@ const App: React.FC = () => {
                   // The freshly-edited image is the visual reference for the variant
                   // (the model uses it for hero/environment/palette consistency while
                   // composing natively for the new ratio).
-                  approvedTov: selectedTov || undefined, // Phase 17 â€” race-proof: send approved copy in payload (backend prefers it over the Firestore read)
+                  approvedTov: selectedTov || undefined, // Phase 17 — race-proof: send approved copy in payload (backend prefers it over the Firestore read)
                   sourceImageOverride: result.image || undefined,
                 });
                 const v = variantRes.data?.variant;
@@ -2595,7 +2549,7 @@ const App: React.FC = () => {
                   pushMockup(v.url, extraRatio as AspectRatio);
                   // Reconcile the displayed balance with the actual net charge
                   // the backend applied (matches the batch extra-sizes and
-                  // carousel-all reconciliation pattern â€” CodeRabbit round 6
+                  // carousel-all reconciliation pattern — CodeRabbit round 6
                   // review: netCreditsCharged must be deducted or the UI balance
                   // becomes stale until the next server refresh).
                   const charged = variantRes.data.netCreditsCharged ?? 0;
@@ -2603,13 +2557,13 @@ const App: React.FC = () => {
                     setUserCredits(prev => Math.max(0, prev - charged));
                   }
                 } else if (v?.noOp) {
-                  // Same ratio already exists â€” surface as info, not an error.
+                  // Same ratio already exists — surface as info, not an error.
                   console.log(`sizeVariant ${extraRatio} was a no-op (already exists)`);
                 } else {
                   console.warn(`sizeVariant ${extraRatio} returned no image: success=${variantRes.data?.success}, errorCode=${v?.errorCode ?? 'none'}`);
                 }
               } else {
-                console.warn(`Skipping auto-propagate to ${extraRatio} â€” no generation ID for generateSizeVariant callable`);
+                console.warn(`Skipping auto-propagate to ${extraRatio} — no generation ID for generateSizeVariant callable`);
               }
             } catch (e) {
               console.warn(`Auto-propagate to ${extraRatio} failed:`, e);
@@ -2618,7 +2572,7 @@ const App: React.FC = () => {
           if (otherRatios.length > 0) showToast(`Edit applied to ${otherRatios.length + 1} sizes!`, 'success');
         }
       } else {
-        showToast('Edit failed â€” no image returned. Try a different selection.', 'error');
+        showToast('Edit failed — no image returned. Try a different selection.', 'error');
       }
     } catch (e: any) {
       console.error('Magic edit failed:', e);
@@ -2637,11 +2591,11 @@ const App: React.FC = () => {
     pushMockup(prev, currentAspectRatio);
     showToast('Undo applied', 'info');
   };
-  // â”€â”€â”€ FEEDBACK TRACKING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── FEEDBACK TRACKING ─────────────────────────────────────
   const [hookGenerationIds, setHookGenerationIds] = useState<Record<string, string>>({});
   const [renderGenerationId, setRenderGenerationId] = useState<string>('');
   const [captionGenerationId, setCaptionGenerationId] = useState<string>('');
-  // â”€â”€â”€ FAVORITES COUNT PER PHASE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── FAVORITES COUNT PER PHASE ──────────────────────────────
   const favWsId = canUseWorkspaces ? activeWorkspaceId : null;
   const { favorites: hooksFavs } = useFavorites({ phase: 'hooks', workspaceId: favWsId });
   const { favorites: conceptsFavs } = useFavorites({ phase: 'concepts', workspaceId: favWsId });
@@ -2651,7 +2605,7 @@ const App: React.FC = () => {
   // Derive favoriteIds from the live per-phase subscriptions instead of a
   // separate bulk bootstrap query. Covers pagination ("Show older" items flow
   // through the hook's merged view) and removes the prior LIMIT 200 cap that
-  // could drop older bookmarks. See data-model.md Â§ "Favorite IDs set".
+  // could drop older bookmarks. See data-model.md § "Favorite IDs set".
   const favoriteIds = useMemo(() => {
     const set = new Set<string>();
     for (const r of hooksFavs) if (r.id) set.add(r.id);
@@ -2661,18 +2615,18 @@ const App: React.FC = () => {
     return set;
   }, [hooksFavs, conceptsFavs, renderFavs, captionFavs]);
 
-  // â”€â”€â”€ META ADS CONNECTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── META ADS CONNECTION ─────────────────────────────────────
   const [metaConnection, setMetaConnection] = useState<MetaConnection | null>(null);
   const [metaSyncing, setMetaSyncing] = useState(false);
   const [metaPushing, setMetaPushing] = useState(false);
-  // â”€â”€â”€ MULTI-SIZE SELECTION (Step 3 â†’ Step 4) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── MULTI-SIZE SELECTION (Step 3 → Step 4) ─────────────────────
   const [selectedSizes, setSelectedSizes] = useState<Set<AspectRatio>>(new Set(['1:1'] as AspectRatio[]));
   const [singleSelectedConcepts, setSingleSelectedConcepts] = useState<Set<number>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   // --- RENDER GATES (after all hooks) ---
 
-  // â”€â”€â”€ META: Load connection status on login â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── META: Load connection status on login ─────────────────────
   useEffect(() => {
     if (!user) return;
     metaService.getConnection().then(conn => setMetaConnection(conn)).catch(() => { });
@@ -2682,7 +2636,7 @@ const App: React.FC = () => {
   // no per-component click-outside effect is needed here.
 
   // FIX 3: when the user switches to a DIFFERENT hook in single mode, drop stale concepts so
-  // Step 3 can't show a previous session's blueprints â€” forcing a fresh regenerate for the new
+  // Step 3 can't show a previous session's blueprints — forcing a fresh regenerate for the new
   // hook. The prev-ref guard means this never fires on first set or session restore (prev is '').
   useEffect(() => {
     const prev = prevSelectedTovRef.current;
@@ -2693,8 +2647,8 @@ const App: React.FC = () => {
   }, [selectedTov, batchHookGroups.length]);
 
   // When a batch produces done items, force the resize scope to 'single' (the global batch_all
-  // scope toggle is hidden in batch mode â€” users resize per-card instead). Fires only on the
-  // emptyâ†’done transition (prev-ref guard) so it clears any stale carousel/batch_all scope.
+  // scope toggle is hidden in batch mode — users resize per-card instead). Fires only on the
+  // empty→done transition (prev-ref guard) so it clears any stale carousel/batch_all scope.
   useEffect(() => {
     const hasDoneBatch = batchResults.some(r => r.status === 'done' && r.url);
     if (hasDoneBatch && !prevHasDoneBatchRef.current) {
@@ -2784,13 +2738,13 @@ const App: React.FC = () => {
     initLoad();
   }, [user, effectiveUid]);
 
-  // â”€â”€â”€ Auto-save (Phase 13) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── Auto-save (Phase 13) ─────────────────────────────────────────────────
   // The save callback is registered once with the projectAutoSave module via the
   // hook. The hook keeps it fresh via a ref, so the closure below sees the latest
   // setProjects / showToast on every fire. Local IndexedDB write happens BEFORE
   // the cloud round-trip (FR-017) so a cloud failure never loses work locally.
   // QUOTA_EXCEEDED is surfaced as a toast and treated as a successful no-op for
-  // the auto-save state machine â€” the 3-strike banner is for transport failures
+  // the auto-save state machine — the 3-strike banner is for transport failures
   // (offline, auth expired), not for product-level rejections that the user has
   // already been told about.
   const saveCurrentProject = useCallback(async (project: SavedProject) => {
@@ -2809,7 +2763,7 @@ const App: React.FC = () => {
       // cloud copy is trimmed. stripHeavyImageData deep-clones, so `project`
       // (used below for thumbnail resolution) is untouched.
       const saveRes = await saveProjectFn({ project: stripHeavyImageData(project), source: 'autosave' });
-      // Non-blocking over-limit warning â€” the save still succeeded server-side (oldest draft
+      // Non-blocking over-limit warning — the save still succeeded server-side (oldest draft
       // evicted to stay within the cap). Surface a dismissible banner in the panel; do NOT
       // roll back, block, or error.
       if ((saveRes?.data as { overLimit?: boolean } | undefined)?.overLimit) {
@@ -2822,7 +2776,7 @@ const App: React.FC = () => {
       );
       // Defensive: the project limit is no longer a hard error (the backend never throws
       // QUOTA_EXCEEDED), but if a legacy/edge response surfaces it, treat it as a non-blocking
-      // warning â€” keep the local save, do not roll back, do not block the user.
+      // warning — keep the local save, do not roll back, do not block the user.
       if (firestoreErr?.code === 'failed-precondition' && firestoreErr?.message?.includes('QUOTA_EXCEEDED')) {
         setProjectLimitReached(true);
         return;
@@ -2851,7 +2805,7 @@ const App: React.FC = () => {
           callable({ project: stripHeavyImageData(updated), source: 'autosave' }).catch(() => {});
         })
         .catch((err) => {
-          console.warn("phase13 â–¸ thumbnail upload failed (non-blocking):", err);
+          console.warn("phase13 ▸ thumbnail upload failed (non-blocking):", err);
         });
     }
   }, []);
@@ -2868,7 +2822,7 @@ const App: React.FC = () => {
     const uid = effectiveUidRef.current;
     if (!uid) return;
 
-    // Client-side cap detection â€” surface a NON-BLOCKING warning, but never stop the auto-save.
+    // Client-side cap detection — surface a NON-BLOCKING warning, but never stop the auto-save.
     // The server allows the save (evicting the oldest draft to stay within the cap), so the user
     // is never blocked from working. The warning shows as a dismissible banner in the panel.
     const isNewProject = !projects.some((p: SavedProject) => p.id === currentProjectId);
@@ -2910,7 +2864,7 @@ const App: React.FC = () => {
       selectedTov,
       selectedConcept,
       buildPlan,
-      // FIX 1: never persist ephemeral blob: URLs â€” they die on page reload (object URLs
+      // FIX 1: never persist ephemeral blob: URLs — they die on page reload (object URLs
       // are document-scoped) and the heavy-data stripper misses them (~50 chars, no
       // whitespace, not a data: URL), so they round-tripped into a broken <img> on restore.
       // Swap any blob: url for the durable rawBase64 (local IndexedDB keeps it; the cloud
@@ -2940,8 +2894,8 @@ const App: React.FC = () => {
     autoSaveQueue(currentProject);
   }, [user, inputs, phase, tovText, conceptsText, selectedTov, selectedConcept, buildPlan, mockupHistory, historyIndex, resolvedUniverse, captionText, batchResults, batchCaptions, batchHookGroups, carouselSlides, currentProjectId, activeWorkspaceId, canUseWorkspaces, autoSaveQueue]);
 
-  // Ranking linkage â€” stores the latest ranking metadata from generation responses
-  // âš ï¸ MUST be above all early returns to satisfy React hooks ordering rules
+  // Ranking linkage — stores the latest ranking metadata from generation responses
+  // ⚠️ MUST be above all early returns to satisfy React hooks ordering rules
   const lastRankingLinkage = React.useRef<{ rankingRequestId?: string; rankingRequestFingerprint?: string; rankingAppliedSummary?: string } | null>(null);
 
   if (loadingAuth) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-500">{t('loading')}</div>;
@@ -2973,7 +2927,7 @@ const App: React.FC = () => {
         const refreshed = auth.currentUser;
         if (!refreshed) return;
         // Keep the real Firebase User instance (no spread) so its methods
-        // (sendEmailVerification, reload, â€¦) and prototype getters stay intact.
+        // (sendEmailVerification, reload, …) and prototype getters stay intact.
         setUser(refreshed);
         if (!refreshed.emailVerified) return;
 
@@ -3049,12 +3003,12 @@ const App: React.FC = () => {
   }
 
   // Cancelled user win-back screen
-  // Onboarding quiz (first login â€” user exists but hasn't completed quiz)
+  // Onboarding quiz (first login — user exists but hasn't completed quiz)
   if (onboardingComplete === false) return <>{trialBanner}{lowCreditsBanner}<OnboardingQuiz onComplete={handleOnboardingComplete} /></>;
 
   if (showWelcome) return <>{trialBanner}{lowCreditsBanner}<WelcomeScreen userName={user.displayName || user.email || ''} isTrial={isTrialUser} onStart={handleWelcomeStart} /></>;
 
-  // â•â•â• BILLING STATE GATING â€” past_due and cancelled block app access â•â•â•
+  // ═══ BILLING STATE GATING — past_due and cancelled block app access ═══
   if (billingStatus === 'past_due') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
@@ -3064,20 +3018,20 @@ const App: React.FC = () => {
           </div>
           <div className="space-y-3">
             <h1 className="text-3xl font-black text-white">
-              {lang === 'ar' ? 'Ù…Ø´ÙƒÙ„Ø© ÙÙŠ Ø§Ù„Ø¯ÙØ¹' : 'Payment Issue'}
+              {lang === 'ar' ? 'مشكلة في الدفع' : 'Payment Issue'}
             </h1>
             <p className="text-slate-400 text-sm leading-relaxed max-w-md mx-auto">
               {lang === 'ar'
-                ? 'ÙØ´Ù„Øª Ø¹Ù…Ù„ÙŠØ© Ø§Ù„Ø¯ÙØ¹ Ø§Ù„Ø£Ø®ÙŠØ±Ø©. ÙŠØ±Ø¬Ù‰ ØªØ­Ø¯ÙŠØ« Ø·Ø±ÙŠÙ‚Ø© Ø§Ù„Ø¯ÙØ¹ Ø®Ù„Ø§Ù„ ÙØªØ±Ø© Ø§Ù„Ø³Ù…Ø§Ø­ Ù„Ù„Ø­ÙØ§Ø¸ Ø¹Ù„Ù‰ Ø­Ø³Ø§Ø¨Ùƒ.'
+                ? 'فشلت عملية الدفع الأخيرة. يرجى تحديث طريقة الدفع خلال فترة السماح للحفاظ على حسابك.'
                 : 'Your last payment failed. Please update your payment method within the grace period to keep your account active.'}
             </p>
           </div>
           <div className="flex flex-col gap-3 max-w-xs mx-auto">
             <a href="https://app.proadsai.com/settings" className="w-full bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2 transition-all">
-              <i className="fa-solid fa-gear"></i> {lang === 'ar' ? 'Ø¥Ø¹Ø¯Ø§Ø¯Ø§Øª Ø§Ù„ÙÙˆØªØ±Ø©' : 'Billing Settings'}
+              <i className="fa-solid fa-gear"></i> {lang === 'ar' ? 'إعدادات الفوترة' : 'Billing Settings'}
             </a>
             <button onClick={() => { signOut(auth); }} className="text-slate-500 hover:text-slate-300 text-xs transition-colors">
-              {lang === 'ar' ? 'ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø®Ø±ÙˆØ¬' : 'Sign Out'}
+              {lang === 'ar' ? 'تسجيل الخروج' : 'Sign Out'}
             </button>
           </div>
         </div>
@@ -3094,20 +3048,20 @@ const App: React.FC = () => {
           </div>
           <div className="space-y-3">
             <h1 className="text-3xl font-black text-white">
-              {lang === 'ar' ? 'ØªÙ… Ø¥Ù„ØºØ§Ø¡ Ø§Ù„Ø§Ø´ØªØ±Ø§Ùƒ' : 'Subscription Cancelled'}
+              {lang === 'ar' ? 'تم إلغاء الاشتراك' : 'Subscription Cancelled'}
             </h1>
             <p className="text-slate-400 text-sm leading-relaxed max-w-md mx-auto">
               {lang === 'ar'
-                ? 'ØªÙ… Ø¥Ù„ØºØ§Ø¡ Ø§Ø´ØªØ±Ø§ÙƒÙƒ. Ø¨ÙŠØ§Ù†Ø§ØªÙƒ ÙˆØªØ§Ø±ÙŠØ®Ùƒ Ù…Ø­ÙÙˆØ¸Ø§Ù†. Ø£Ø¹Ø¯ Ø§Ù„Ø§Ø´ØªØ±Ø§Ùƒ Ù„Ø§Ø³ØªØ¹Ø§Ø¯Ø© Ø§Ù„ÙˆØµÙˆÙ„ Ø§Ù„ÙƒØ§Ù…Ù„.'
+                ? 'تم إلغاء اشتراكك. بياناتك وتاريخك محفوظان. أعد الاشتراك لاستعادة الوصول الكامل.'
                 : 'Your subscription has been cancelled. Your data and history are preserved. Resubscribe to restore full access.'}
             </p>
           </div>
           <div className="flex flex-col gap-3 max-w-xs mx-auto">
             <a href="https://proadsai.com/#pricing" className="w-full bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2 transition-all">
-              <i className="fa-solid fa-rotate-right"></i> {lang === 'ar' ? 'Ø¥Ø¹Ø§Ø¯Ø© Ø§Ù„Ø§Ø´ØªØ±Ø§Ùƒ' : 'Resubscribe'}
+              <i className="fa-solid fa-rotate-right"></i> {lang === 'ar' ? 'إعادة الاشتراك' : 'Resubscribe'}
             </a>
             <button onClick={() => { signOut(auth); }} className="text-slate-500 hover:text-slate-300 text-xs transition-colors">
-              {lang === 'ar' ? 'ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø®Ø±ÙˆØ¬' : 'Sign Out'}
+              {lang === 'ar' ? 'تسجيل الخروج' : 'Sign Out'}
             </button>
           </div>
         </div>
@@ -3115,7 +3069,7 @@ const App: React.FC = () => {
     );
   }
 
-  // â•â•â• TRIAL ENDED â€” Blocking screen when trial credits are exhausted â•â•â•
+  // ═══ TRIAL ENDED — Blocking screen when trial credits are exhausted ═══
   // Trial users get 50 credits + up to 50 from gamification. Once they hit 0, they must upgrade.
   if (isTrialUser && userCredits <= 0 && userPlan !== 'none') {
     return (
@@ -3129,11 +3083,11 @@ const App: React.FC = () => {
           {/* Title */}
           <div className="space-y-3">
             <h1 className="text-3xl font-black text-white">
-              {lang === 'ar' ? 'Ø§Ù†ØªÙ‡Øª Ø§Ù„ÙØªØ±Ø© Ø§Ù„ØªØ¬Ø±ÙŠØ¨ÙŠØ©' : 'Your Trial Has Ended'}
+              {lang === 'ar' ? 'انتهت الفترة التجريبية' : 'Your Trial Has Ended'}
             </h1>
             <p className="text-slate-400 text-sm leading-relaxed max-w-md mx-auto">
               {lang === 'ar'
-                ? `Ù„Ù‚Ø¯ Ø§Ø³ØªØ®Ø¯Ù…Øª Ø¬Ù…ÙŠØ¹ Ø±ØµÙŠØ¯Ùƒ Ø§Ù„ØªØ¬Ø±ÙŠØ¨ÙŠ Ø¹Ù„Ù‰ Ø®Ø·Ø© ${PLANS[userPlan]?.name}. Ù‚Ù… Ø¨Ø§Ù„ØªØ±Ù‚ÙŠØ© Ø§Ù„Ø¢Ù† Ù„Ù„Ø­ØµÙˆÙ„ Ø¹Ù„Ù‰ ${PLANS[userPlan]?.monthlyCredits} Ø±ØµÙŠØ¯ Ø´Ù‡Ø±ÙŠØ§Ù‹ ÙˆØ§Ø³ØªÙ…Ø± ÙÙŠ Ø¥Ù†Ø´Ø§Ø¡ Ø¥Ø¹Ù„Ø§Ù†Ø§Øª Ø§Ø­ØªØ±Ø§ÙÙŠØ©.`
+                ? `لقد استخدمت جميع رصيدك التجريبي على خطة ${PLANS[userPlan]?.name}. قم بالترقية الآن للحصول على ${PLANS[userPlan]?.monthlyCredits} رصيد شهرياً واستمر في إنشاء إعلانات احترافية.`
                 : `You've used all your trial credits on the ${PLANS[userPlan]?.name} plan. Upgrade now to get ${PLANS[userPlan]?.monthlyCredits} credits every month and keep creating professional ads.`
               }
             </p>
@@ -3150,17 +3104,17 @@ const App: React.FC = () => {
                   <div className={lang === 'ar' ? 'text-right' : 'text-left'}>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-black text-white">{plan.name}</span>
-                      <span className="text-[9px] bg-blue-600/20 text-blue-400 px-2 py-0.5 rounded-full font-bold">{getApproxAdsPerMonth(plan)} {lang === 'ar' ? 'Ø¥Ø¹Ù„Ø§Ù†/Ø´Ù‡Ø±' : 'Ads / month'}</span>
-                      <span className="text-[8px] text-slate-500">({plan.monthlyCredits} {lang === 'ar' ? 'Ø±ØµÙŠØ¯' : 'credits'})</span>
-                      {isCurrentTrial && <span className="text-[8px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full font-black">{lang === 'ar' ? 'Ø®Ø·ØªÙƒ Ø§Ù„ØªØ¬Ø±ÙŠØ¨ÙŠØ©' : 'YOUR TRIAL'}</span>}
+                      <span className="text-[9px] bg-blue-600/20 text-blue-400 px-2 py-0.5 rounded-full font-bold">{getApproxAdsPerMonth(plan)} {lang === 'ar' ? 'إعلان/شهر' : 'Ads / month'}</span>
+                      <span className="text-[8px] text-slate-500">({plan.monthlyCredits} {lang === 'ar' ? 'رصيد' : 'credits'})</span>
+                      {isCurrentTrial && <span className="text-[8px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full font-black">{lang === 'ar' ? 'خطتك التجريبية' : 'YOUR TRIAL'}</span>}
                     </div>
-                    <div className="text-lg font-black text-white mt-1">${plan.priceMonthly}<span className="text-[10px] text-slate-500 font-normal">/{lang === 'ar' ? 'Ø´Ù‡Ø±' : 'mo'}</span></div>
+                    <div className="text-lg font-black text-white mt-1">${plan.priceMonthly}<span className="text-[10px] text-slate-500 font-normal">/{lang === 'ar' ? 'شهر' : 'mo'}</span></div>
                   </div>
                   <button
                     onClick={() => window.open(GHL_URLS[billingKey], '_blank')}
                     className={`px-6 py-3 rounded-xl text-white text-[10px] font-bold uppercase tracking-wider transition-all active:scale-95 ${isCurrentTrial ? 'bg-amber-600 hover:bg-amber-500 shadow-lg shadow-amber-500/20' : 'bg-blue-600 hover:bg-blue-500'}`}
                   >
-                    {lang === 'ar' ? 'Ø§Ø´ØªØ±Ùƒ Ø§Ù„Ø¢Ù†' : 'Subscribe Now'}
+                    {lang === 'ar' ? 'اشترك الآن' : 'Subscribe Now'}
                   </button>
                 </div>
               );
@@ -3169,7 +3123,7 @@ const App: React.FC = () => {
 
           {/* Sign out */}
           <button onClick={handleLogout} className="text-[10px] text-slate-600 hover:text-slate-400 transition-all underline underline-offset-2">
-            {lang === 'ar' ? 'ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø®Ø±ÙˆØ¬' : 'Sign Out'}
+            {lang === 'ar' ? 'تسجيل الخروج' : 'Sign Out'}
           </button>
         </div>
       </div>
@@ -3200,12 +3154,12 @@ const App: React.FC = () => {
    *  through any other channel). */
   const unwrapGen = (result: GenerationResult): string => {
     storeRankingLinkage(result);
-    // Phase 20 â€” Concept Director trace (audit fix #30/#32/#33 â€” round 2).
-    // serverGenerateConcepts ran the gate + 3Ã— Director loop + â‰¤1 retry
+    // Phase 20 — Concept Director trace (audit fix #30/#32/#33 — round 2).
+    // serverGenerateConcepts ran the gate + 3× Director loop + ≤1 retry
     // and returned the trace in `result.conceptDirectorTrace`. We hold
     // it in state so the next `serverGenerateFinalAd` call (for the
     // chosen concept) can forward it back in the request payload.
-    // `null` here is the canonical "no trace" sentinel â€” a new
+    // `null` here is the canonical "no trace" sentinel — a new
     // generation cycle (e.g. retrying after a precision edit) simply
     // overwrites the previous value. The backend normalizes the absence
     // by recording a default `non-initial-mode` / `flag-disabled` /
@@ -3281,7 +3235,7 @@ const App: React.FC = () => {
 
   const pushMockup = (imageOrUrl: string | null, ratio: AspectRatio, storageUrl?: string | null) => {
     if (!imageOrUrl) return;
-    // Prefer the server-uploaded Storage URL when available â€” it's durable across
+    // Prefer the server-uploaded Storage URL when available — it's durable across
     // reloads, survives the Firestore doc-size stripper, and is what <img> actually
     // needs. Fall back to a blob URL decoded from the base64 only when no Storage
     // URL is provided (legacy callers, undo-stack pushes, etc). The base64 is always
@@ -3295,7 +3249,7 @@ const App: React.FC = () => {
       // imageOrUrl is the base64 in this branch (caller passed a fresh render).
       rawBase64 = imageOrUrl.startsWith('data:') ? imageOrUrl : undefined;
     } else if (imageOrUrl.startsWith('data:')) {
-      // Legacy path: base64 only â€” convert to a blob URL for Chrome right-click "Copy image".
+      // Legacy path: base64 only — convert to a blob URL for Chrome right-click "Copy image".
       rawBase64 = imageOrUrl;
       try {
         const [header, b64] = imageOrUrl.split(',');
@@ -3308,7 +3262,7 @@ const App: React.FC = () => {
         displayUrl = imageOrUrl; // fallback to base64 if conversion fails
       }
     } else {
-      // Non-data URL without an explicit storageUrl â€” treat as already-durable.
+      // Non-data URL without an explicit storageUrl — treat as already-durable.
       displayUrl = imageOrUrl;
     }
     setMockupHistory(prev => {
@@ -3333,12 +3287,12 @@ const App: React.FC = () => {
     let startIndex = upper.indexOf(skUpper);
     if (startIndex === -1) return '';
 
-    // Move contentStart after the key, then skip optional ":" or "ï¼š" and whitespace/newlines
+    // Move contentStart after the key, then skip optional ":" or "：" and whitespace/newlines
     let contentStart = startIndex + sk.length;
 
     // If the model output includes a colon after the key, skip it
     const maybeColon = text.slice(contentStart, contentStart + 2);
-    if (maybeColon.startsWith(':') || maybeColon.startsWith('ï¼š')) contentStart += 1;
+    if (maybeColon.startsWith(':') || maybeColon.startsWith('：')) contentStart += 1;
 
     // Skip spaces / tabs / newlines after key
     while (contentStart < text.length && /\s/.test(text[contentStart])) contentStart++;
@@ -3418,7 +3372,7 @@ const App: React.FC = () => {
     }
 
     // 3) Fallback: split by SUBJECT_ACTION field markers
-    const actionRe = /SUBJECT_ACTION\s*[:ï¼š]?/gi;
+    const actionRe = /SUBJECT_ACTION\s*[:：]?/gi;
     const actionIdx: number[] = [];
     while ((m = actionRe.exec(text)) !== null) actionIdx.push(m.index);
     if (actionIdx.length >= 2) {
@@ -3433,7 +3387,7 @@ const App: React.FC = () => {
     }
 
     // 4) Fallback: split by SUBJECT_ACTION
-    const saRe = /SUBJECT_ACTION\s*[:ï¼š]?/gi;
+    const saRe = /SUBJECT_ACTION\s*[:：]?/gi;
     const saIdx: number[] = [];
     while ((m = saRe.exec(text)) !== null) saIdx.push(m.index);
     if (saIdx.length) {
@@ -3474,10 +3428,10 @@ const App: React.FC = () => {
 
   // --- HISTORY ENGINE moved to before render gates ---
 
-  // Plan-agnostic shape migration: universe remap (r_sushi_bar â†’ r_sushi_counter,
-  // "Premium Sushi Bar" â†’ "Premium Sushi Counter") and style/universe mode normalization.
+  // Plan-agnostic shape migration: universe remap (r_sushi_bar → r_sushi_counter,
+  // "Premium Sushi Bar" → "Premium Sushi Counter") and style/universe mode normalization.
   // Safe to run before userPlan is resolved (i.e., on the startup auto-restore path).
-  // Declared as a function (not const arrow) so it hoists to the top of App â€” render
+  // Declared as a function (not const arrow) so it hoists to the top of App — render
   // gates above this line would otherwise leave it in TDZ when the auto-restore
   // useEffect callback fires.
   function migrateProjectInputsShape(rawInputs: any): any {
@@ -3496,7 +3450,7 @@ const App: React.FC = () => {
 
   // Plan-aware migration: calls the shape migration first, then enforces retargeting
   // entitlement based on the explicit `plan` argument. MUST NOT be called before
-  // userPlan is resolved â€” an unresolved 'none' would incorrectly strip retargeting
+  // userPlan is resolved — an unresolved 'none' would incorrectly strip retargeting
   // from a saved project that belongs to a user who actually has a paid tier.
   const migrateProjectInputs = (rawInputs: any, plan: UserPlan = userPlan): any => {
     const shaped = migrateProjectInputsShape(rawInputs);
@@ -3526,7 +3480,7 @@ const App: React.FC = () => {
     setBuildPlan(p.buildPlan);
     setMockupHistory(p.mockupHistory);
     setHistoryIndex(p.historyIndex);
-    // Reflow quality fix: a loaded project has no in-memory original anchor â€” clear it so the
+    // Reflow quality fix: a loaded project has no in-memory original anchor — clear it so the
     // first reflow re-captures the loaded current mockup as this session's original source.
     originalMockupRef.current = null;
     setPreviousSingleMockup(null);
@@ -3542,7 +3496,7 @@ const App: React.FC = () => {
     setBatchConceptsLoading(false);
     setCarouselCopies([]);
     setShowCarouselPreview(false);
-    // Phase 17 reflow surface â€” reset the resize control when switching projects so
+    // Phase 17 reflow surface — reset the resize control when switching projects so
     // a committing state / stale target from a previous project doesn't bleed in.
     setReflowStep('idle');
     setReflowTarget(null);
@@ -3562,7 +3516,7 @@ const App: React.FC = () => {
     // FR-010 / FR-011: honour an explicit targetPhase (validated against
     // stepsWithData), otherwise resume at the project's saved p.phase rather
     // than the auto-derived highestPhaseWithData. The saved phase reflects
-    // where the user actually left off â€” preserving the existing card-body
+    // where the user actually left off — preserving the existing card-body
     // open behaviour from before Phase 13.
     const steps = stepsWithData(p);
     if (targetPhase && steps[targetPhase]) {
@@ -3570,14 +3524,13 @@ const App: React.FC = () => {
     } else {
       setPhase(p.phase || highestPhaseWithData);
     }
-    setShowSidebar(false);
     showToast(`Loaded "${p.name}"`, 'success');
   };
 
-  // Phase 26 â€” wire history card click â†’ saved project.
+  // Phase 26 — wire history card click → saved project.
   // History items now carry a `source` discriminator:
-  //   - 'project'  â†’ the item IS a saved project; load it directly via id.
-  //   - 'generation' â†’ join by imageUrl to find the matching saved project
+  //   - 'project'  → the item IS a saved project; load it directly via id.
+  //   - 'generation' → join by imageUrl to find the matching saved project
   //     (mockupHistory doesn't carry a generationId). The joined project is
   //     loaded at the matching mockup index so the user lands on the same
   //     render they clicked.
@@ -3596,7 +3549,7 @@ const App: React.FC = () => {
       }
       return;
     }
-    // Generation source â€” find the project by matching imageUrl.
+    // Generation source — find the project by matching imageUrl.
     const targetUrl = item.thumbnailUrl;
     const candidates = filteredProjects.length > 0 ? filteredProjects : projects;
     const match = candidates.find((p) =>
@@ -3647,13 +3600,12 @@ const App: React.FC = () => {
     setBatchCaptions([]);
     setCarouselCopies([]);
     setShowCarouselPreview(false);
-    // Phase 17 reflow surface â€” clear so previous reflow state never bleeds into a new project.
+    // Phase 17 reflow surface — clear so previous reflow state never bleeds into a new project.
     setReflowStep('idle');
     setReflowTarget(null);
     setReflowScope('single');
     setReflowFallbackNotice(null);
     setHighestUnlockedPhase(0);
-    setShowSidebar(false);
     localStorage.removeItem('adInputsDraft');
   };
 
@@ -3729,7 +3681,7 @@ const App: React.FC = () => {
       return;
     }
     if (status === 429 || msg.includes("429") || msg.includes("Quota") || msg.includes("RESOURCE_EXHAUSTED")) {
-      showToast("Quota Limit Hit. Wait 60 sec or click ðŸ”‘ icon in header to use a different key.", "error");
+      showToast("Quota Limit Hit. Wait 60 sec or click 🔑 icon in header to use a different key.", "error");
       return;
     }
     // Generic error - don't logout
@@ -3743,7 +3695,7 @@ const App: React.FC = () => {
     const draftProject: SavedProject = {
       id: currentProjectId,
       userId: uid,
-      name: `ðŸ“ ${draftName}`,
+      name: `📝 ${draftName}`,
       timestamp: Date.now(),
       inputs: formData,
       phase: 'input',
@@ -3791,7 +3743,7 @@ const App: React.FC = () => {
     }
 
     // Competitor research is available on the Brief page (manual trigger)
-    // No need to auto-fire here â€” avoids potential double deduction
+    // No need to auto-fire here — avoids potential double deduction
 
     // RESET: Clear previous design session data
     setMockupHistory([]);
@@ -3820,7 +3772,7 @@ const App: React.FC = () => {
 
     setResolvedUniverse(universe);
 
-    // â”€â”€â”€ AUTO-INJECT COMPETITOR CONTEXT INTO GENERATION PIPELINE â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── AUTO-INJECT COMPETITOR CONTEXT INTO GENERATION PIPELINE ─────────
     // If competitor research has been run, automatically feed insights into prompts
     // so the AI can differentiate and position against competitors.
     // This works alongside the manual "Use" buttons in InputForm.
@@ -3839,7 +3791,7 @@ ${compAngles}
 ATTACK HOOKS (use these to stand out):
 ${compHooks}
 
-DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highlight what makes this offer unique. Do NOT copy competitor messaging â€” position AGAINST them.`.trim();
+DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highlight what makes this offer unique. Do NOT copy competitor messaging — position AGAINST them.`.trim();
     }
 
     setInputs({ ...formData, _userId: user?.uid, competitorContext } as any); // Keep images in React State for later
@@ -3852,7 +3804,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const cleanInputs = { ...formData, personalPhotos: [], brandLogos: [], _userId: user?.uid, competitorContext };
 
     try {
-      // â•â•â• TESTIMONIAL MODE: Extract text from screenshots before generation â•â•â•
+      // ═══ TESTIMONIAL MODE: Extract text from screenshots before generation ═══
       const selectedModes = (formData as any).offerCreativeMode || ['standard_hero'];
       if (selectedModes.includes('testimonial_carousel') && (formData as any).testimonialScreenshots?.length > 0) {
         try {
@@ -3893,7 +3845,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         hookCostEstimate = tovResult.costEstimate;
       }
 
-      // â”€â”€â”€ HOOK VALIDATION GATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      // ─── HOOK VALIDATION GATE ─────────────────────────────────────────
       // Validate hook structure before entering Hook Lab
       if (!res || !res.trim()) {
         refundCredits('generateHooks');
@@ -3918,7 +3870,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       setPhase('tov_review');
       updateHighestUnlocked('tov_review');
       awardMilestone('hooksGenerated');
-      // â”€â”€â”€ SAVE GENERATIONS FOR FEEDBACK FLYWHEEL (non-blocking) â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      // ─── SAVE GENERATIONS FOR FEEDBACK FLYWHEEL (non-blocking) ─────────
       if (user && res) {
         try {
           const hookIds: Record<string, string> = {};
@@ -3997,7 +3949,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     } catch (e) { refundCredits('refreshHooks'); handleApiError(e); } finally { stopLoad(); }
   };
 
-  // â”€â”€â”€ CUMULATIVE REFINEMENTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── CUMULATIVE REFINEMENTS ───────────────────────────────────────────────
   // Refinement instructions accumulate instead of replacing: each submitted entry
   // is appended to globalRefinement (newline-separated) so all prior instructions
   // persist and are sent together to the AI. Returns the merged string for
@@ -4014,7 +3966,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
   // `refinementValue` lets callers pass the freshly-merged refinement directly
   // (setState is async). Type-guarded so a button wired as onClick={handleGlobalHookRefinement}
-  // â€” which passes a click event â€” falls back to the accumulated globalRefinement.
+  // — which passes a click event — falls back to the accumulated globalRefinement.
   const handleGlobalHookRefinement = async (refinementValue?: string) => {
     if (!inputs) return;
     const refinement = typeof refinementValue === 'string' ? refinementValue : globalRefinement;
@@ -4053,7 +4005,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
 
       setTovText(res);
-      // Clear downstream state since hooks changed â€” concepts and batches are now stale
+      // Clear downstream state since hooks changed — concepts and batches are now stale
       const isFullRegen = !refinement || !refinement.trim();
       if (isFullRegen) {
         setConceptsText('');
@@ -4071,28 +4023,28 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const normalized = (instruction || '').trim().toLowerCase();
 
     if (!normalized) return { editIntent: 'freeform', rewriteScope: 'full' };
-    if (/same psychological angle|same angle|simpler terms|simplify|Ø³Ø·|Ø£Ø¨Ø³Ø·|Ø¨Ø³Ù‘Ø·|Ø£ÙˆØ¶Ø­|more direct/.test(normalized)) {
+    if (/same psychological angle|same angle|simpler terms|simplify|سط|أبسط|بسّط|أوضح|more direct/.test(normalized)) {
       return { editIntent: 'simplify_terms', rewriteScope: 'wording_only' };
     }
-    if (/shorter|shorten|Ù…Ø®ØªØµØ±|Ù‚ØµÙŠØ±/.test(normalized)) {
+    if (/shorter|shorten|مختصر|قصير/.test(normalized)) {
       return { editIntent: 'shorten', rewriteScope: 'wording_only' };
     }
-    if (/stronger|sharper|sharpen|Ø£Ù‚ÙˆÙ‰|Ø£Ø­Ø¯|Ø£Ù‚Ø³Ù‰/.test(normalized)) {
+    if (/stronger|sharper|sharpen|أقوى|أحد|أقسى/.test(normalized)) {
       return { editIntent: 'sharpen', rewriteScope: 'wording_only' };
     }
-    if (/formal|professional|Ø±Ø³Ù…ÙŠ|Ø§Ø­ØªØ±Ø§ÙÙŠ/.test(normalized)) {
+    if (/formal|professional|رسمي|احترافي/.test(normalized)) {
       return { editIntent: 'formalize', rewriteScope: 'wording_only' };
     }
-    if (/change angle|new angle|ØºÙŠÙ‘Ø± Ø§Ù„Ø²Ø§ÙˆÙŠØ©|Ø²Ø§ÙˆÙŠØ© Ø¬Ø¯ÙŠØ¯Ø©/.test(normalized)) {
+    if (/change angle|new angle|غيّر الزاوية|زاوية جديدة/.test(normalized)) {
       return { editIntent: 'change_angle', rewriteScope: 'full' };
     }
-    if (/cta_button|change cta|cta only|button|Ø§Ù„Ø²Ø±|Ø§Ù„Ø¯Ø¹ÙˆØ©/.test(normalized)) {
+    if (/cta_button|change cta|cta only|button|الزر|الدعوة/.test(normalized)) {
       return { editIntent: 'change_cta', rewriteScope: 'cta_only' };
     }
-    if (/subheadline|subtitle|Ø§Ù„ÙˆØµÙ|Ø§Ù„Ø³Ø·Ø± Ø§Ù„Ø«Ø§Ù†ÙŠ/.test(normalized)) {
+    if (/subheadline|subtitle|الوصف|السطر الثاني/.test(normalized)) {
       return { editIntent: 'change_subheadline', rewriteScope: 'subheadline_only' };
     }
-    if (/headline|hook_text|title|Ø§Ù„Ø¹Ù†ÙˆØ§Ù†|Ø§Ù„Ù‡ÙŠØ¯Ù„Ø§ÙŠÙ†/.test(normalized)) {
+    if (/headline|hook_text|title|العنوان|الهيدلاين/.test(normalized)) {
       return { editIntent: 'change_headline', rewriteScope: 'hook_only' };
     }
 
@@ -4107,43 +4059,43 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const transformation = (currentInputs.transformation || '').trim();
     const challenge = (currentInputs.challenges || '').trim();
 
-    const angle = /\?|ØŸ|Ù„Ù…Ø§Ø°Ø§|why|Ù„ÙŠØ´|Ù‡Ù„/.test(combined)
+    const angle = /\?|؟|لماذا|why|ليش|هل/.test(combined)
       ? 'question_reframe'
-      : /(Ø³Ø±|secret|mechanism|system|framework|protocol|formula|method|Ù…Ù†Ù‡Ø¬|Ù†Ø¸Ø§Ù…|Ø¨Ø±ÙˆØªÙˆÙƒÙˆÙ„)/i.test(combined)
+      : /(سر|secret|mechanism|system|framework|protocol|formula|method|منهج|نظام|بروتوكول)/i.test(combined)
         ? 'mechanism'
-        : /(90%|\d+%|case study|proof|Ø¯Ù„ÙŠÙ„|Ø£Ø±Ù‚Ø§Ù…|Ù†ØªØ§Ø¦Ø¬|Ø´Ø§Ù‡Ø¯|Ù…Ø«Ø§Ù„)/i.test(combined)
+        : /(90%|\d+%|case study|proof|دليل|أرقام|نتائج|شاهد|مثال)/i.test(combined)
           ? 'proof'
-          : /(Ø§Ù„Ø¢Ù†|today|before it|too late|ÙØ§Øª|Ø§Ù„ÙØ±ØµØ©|urgent|now)/i.test(combined)
+          : /(الآن|today|before it|too late|فات|الفرصة|urgent|now)/i.test(combined)
             ? 'urgency'
-            : /(Ù…ØªÙˆØ§Ø¶Ø¹Ø©|Ø¶Ø¹ÙŠÙØ©|problem|mistake|Ø®Ø·Ø£|ÙØ¬ÙˆØ©|leak|Ù†Ø²ÙŠÙ)/i.test(combined)
+            : /(متواضعة|ضعيفة|problem|mistake|خطأ|فجوة|leak|نزيف)/i.test(combined)
               ? 'pain_agitation'
               : 'authority';
 
-    const mechanismMatch = combined.match(/(?:Ø³Ø±|system|framework|protocol|method|mechanism|Ù†Ø¸Ø§Ù…|Ø¨Ø±ÙˆØªÙˆÙƒÙˆÙ„|Ù…Ù†Ù‡Ø¬)\s+([^ØŒ,.!?ØŸ]{2,40})/i);
+    const mechanismMatch = combined.match(/(?:سر|system|framework|protocol|method|mechanism|نظام|بروتوكول|منهج)\s+([^،,.!?؟]{2,40})/i);
     const mechanism = mechanismMatch?.[0]?.trim()
-      || (/Ø³Ø¹Ø±|price|premium|offer|Ø¹Ø±Ø¶|rate/i.test(combined) ? 'price-positioning mechanism' : '')
+      || (/سعر|price|premium|offer|عرض|rate/i.test(combined) ? 'price-positioning mechanism' : '')
       || transformation
       || challenge
       || currentInputs.productName
       || 'core commercial mechanism';
 
-    const promiseType = /lead|client|Ø¹Ù…ÙŠÙ„|calls|Ù…ÙƒØ§Ù„Ù…Ø§Øª|book|Ø­Ø¬Ø²/i.test(normalized)
+    const promiseType = /lead|client|عميل|calls|مكالمات|book|حجز/i.test(normalized)
       ? 'client acquisition'
-      : /price|premium|Ø³Ø¹Ø±|ØªØ³Ø¹ÙŠØ±|offer|Ø¹Ø±Ø¶/i.test(normalized)
+      : /price|premium|سعر|تسعير|offer|عرض/i.test(normalized)
         ? 'pricing power'
-        : /content|creator|content creator|Ù…Ø­ØªÙˆÙ‰/i.test(normalized)
+        : /content|creator|content creator|محتوى/i.test(normalized)
           ? 'content monetization'
-          : /sale|revenue|profit|cash|Ù…Ø¨ÙŠØ¹Ø§Øª|Ø£Ø±Ø¨Ø§Ø­|ÙÙ„ÙˆØ³|Ø¯Ø®Ù„/i.test(normalized + ' ' + transformation.toLowerCase())
+          : /sale|revenue|profit|cash|مبيعات|أرباح|فلوس|دخل/i.test(normalized + ' ' + transformation.toLowerCase())
             ? 'revenue growth'
             : 'commercial transformation';
 
-    const emotionalFrame = /fear|risk|Ù†Ø²ÙŠÙ|Ø®Ø³Ø§Ø±Ø©|ÙØ§ØªÙƒ|cost of inaction/i.test(normalized)
+    const emotionalFrame = /fear|risk|نزيف|خسارة|فاتك|cost of inaction/i.test(normalized)
       ? 'loss aversion'
-      : /secret|curious|Ø³Ø±|Ù…Ø§Ø°Ø§|why/.test(normalized)
+      : /secret|curious|سر|ماذا|why/.test(normalized)
         ? 'curiosity'
-        : /authority|expert|Ø®Ø¨ÙŠØ±|ÙƒØ¨Ø§Ø± Ø§Ù„Ø®Ø¨Ø±Ø§Ø¡|trusted/i.test(normalized)
+        : /authority|expert|خبير|كبار الخبراء|trusted/i.test(normalized)
           ? 'authority'
-          : /proof|Ø£Ø±Ù‚Ø§Ù…|results|case/i.test(normalized)
+          : /proof|أرقام|results|case/i.test(normalized)
             ? 'proof'
             : 'clarity';
 
@@ -4204,7 +4156,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           // Validate: ensure the edited hook has at least a HOOK_TEXT
           const editedHookText = getSection(editedHook, 'HOOK_TEXT', 'SUBHEADLINE');
           if (!editedHookText || editedHookText.trim().length < 3) {
-            // Edited hook is invalid â€” keep original
+            // Edited hook is invalid — keep original
             refundCredits('editOneHook');
             showToast(`Hook ${index} edit returned invalid content. Keeping original.`, "error");
             return;
@@ -4225,7 +4177,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             showToast(`Hook ${index} updated!`, "success");
           }
         } else {
-          // Fallback: response didn't have proper markers â€” don't blindly overwrite
+          // Fallback: response didn't have proper markers — don't blindly overwrite
           refundCredits('editOneHook');
           showToast(`Hook ${index} edit returned malformed response. Keeping original.`, "error");
         }
@@ -4237,7 +4189,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     if (!inputs) return;
     setSelectedTov(variationText);
 
-    // â”€â”€â”€ CAROUSEL MODE: Generate detailed slide copies from the chosen angle â”€â”€â”€â”€â”€
+    // ─── CAROUSEL MODE: Generate detailed slide copies from the chosen angle ─────
     if (inputs.adMode === 'carousel' && (inputs.slideCount || 1) > 1) {
       // If copies already exist (e.g. user cancelled preview), just reshow them without re-charging
       if (carouselCopies.length > 0 && selectedTov === variationText) {
@@ -4259,10 +4211,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       } finally {
         stopLoad();
       }
-      return; // Don't generate concepts yet â€” wait for user to confirm copies
+      return; // Don't generate concepts yet — wait for user to confirm copies
     }
 
-    // â”€â”€â”€ SINGLE MODE: Generate concepts directly â”€â”€â”€â”€â”€
+    // ─── SINGLE MODE: Generate concepts directly ─────
     if (!deductCredits('generateConcepts')) return;
     startLoad(`Creating Concepts...`);
     // Clear stale batch state on single-hook approval so Step 3 reads the global conceptsText
@@ -4300,7 +4252,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     } catch (e) { refundCredits('generateConcepts'); handleApiError(e); } finally { stopLoad(); }
   };
 
-  // â”€â”€â”€ CAROUSEL: Confirm copies â†’ generate concepts â”€â”€â”€â”€â”€
+  // ─── CAROUSEL: Confirm copies → generate concepts ─────
   const handleCarouselCopyConfirm = async () => {
     if (!inputs || !selectedTov) return;
     if (!deductCredits('generateConcepts')) return;
@@ -4323,7 +4275,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   };
 
   // BUTTON 2 ("Regenerate All Blueprints"): regenerate the 3 concepts FRESH from the CURRENT
-  // hook â€” no refinement direction, no hook/TOV regeneration. Carousel keeps its slide-copy flow.
+  // hook — no refinement direction, no hook/TOV regeneration. Carousel keeps its slide-copy flow.
   const handleRegenerateConceptsFresh = async () => {
     if (!inputs) return;
     // FIX 2: surface a toast instead of silently no-op'ing when no hook is selected.
@@ -4351,9 +4303,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   };
 
   // Robustly replace ONLY concept `n`'s body inside the full multi-concept text, mirroring
-  // getConceptBlock's boundary detection (numbered â†’ positional, 1-based; numbered/unnumbered/
+  // getConceptBlock's boundary detection (numbered → positional, 1-based; numbered/unnumbered/
   // spaced markers all handled). Returns the merged text, or null when no concept markers exist
-  // at all (genuine single-concept text â€” caller decides) or the target can't be safely located.
+  // at all (genuine single-concept text — caller decides) or the target can't be safely located.
   const spliceConceptBody = (full: string, n: number, edited: string): string | null => {
     if (!full) return null;
     const startRe = /CONCEPT[\s_\-]*START[\s_\-]*(\d*)/gi;
@@ -4365,7 +4317,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     if (starts.length === 0) return null;
     let ti = starts.findIndex(s => s.num === n);
     if (ti === -1 && n >= 1 && n <= starts.length) ti = n - 1; // fall back to positional (1-based)
-    if (ti === -1) return null; // target out of range â€” caller must NOT wipe siblings
+    if (ti === -1) return null; // target out of range — caller must NOT wipe siblings
     const tStart = starts[ti];
     const lineEnd = full.indexOf('\n', tStart.idx);
     const contentStart = lineEnd === -1 ? tStart.mEnd : lineEnd + 1; // body begins after the START line
@@ -4397,7 +4349,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       res = res ? normalizeFieldLabels(res) : res;
       if (res && (res.includes('CONCEPT_START') || res.includes('SUBJECT_ACTION'))) {
         // Precision mode returns ONLY the edited concept. Splice it back into its slot using
-        // the same boundary detection the cards use â€” NEVER replace the whole multi-concept
+        // the same boundary detection the cards use — NEVER replace the whole multi-concept
         // text on a marker miss (that wiped the sibling concepts and blanked the edited card).
         const n = parseInt(index, 10);
         const startCount = (prevConceptsText.match(/CONCEPT[\s_\-]*START/gi) || []).length;
@@ -4408,18 +4360,18 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           setBatchHookGroups(prev => prev.map(g => g.conceptsText === prevConceptsText ? { ...g, conceptsText: merged } : g));
           showToast(`Blueprint updated.`, "success");
         } else if (startCount <= 1) {
-          // Genuine single-concept text (0â€“1 markers) â€” replacing the whole body drops no siblings.
+          // Genuine single-concept text (0–1 markers) — replacing the whole body drops no siblings.
           const body = res.replace(/CONCEPT[\s_\-]*START[\s_\-]*\d*/gi, '').replace(/CONCEPT[\s_\-]*END[\s_\-]*\d*/gi, '').trim();
           const next = body || res;
           setConceptsText(next);
           setBatchHookGroups(prev => prev.map(g => g.conceptsText === prevConceptsText ? { ...g, conceptsText: next } : g));
           showToast(`Blueprint updated.`, "success");
         } else {
-          // Multiple concepts exist but the target couldn't be located â€” refund rather than
+          // Multiple concepts exist but the target couldn't be located — refund rather than
           // overwrite the whole set (which is what made concepts disappear before).
-          console.warn('[precisionEdit] could not locate concept', n, 'in', startCount, 'concepts â€” aborting splice to avoid wiping siblings');
+          console.warn('[precisionEdit] could not locate concept', n, 'in', startCount, 'concepts — aborting splice to avoid wiping siblings');
           refundCredits('editOneConcept');
-          showToast('Could not locate that blueprint to patch. Credits refunded â€” try again.', 'error');
+          showToast('Could not locate that blueprint to patch. Credits refunded — try again.', 'error');
         }
       } else {
         refundCredits('editOneConcept');
@@ -4441,7 +4393,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         // Splice the edited body back between this concept's markers, preserving siblings.
         return prev.slice(0, si + start.length) + '\n' + trimmed + '\n' + prev.slice(ei);
       }
-      // No CONCEPT_START/END markers (single-concept / alt format) â€” replace the whole text.
+      // No CONCEPT_START/END markers (single-concept / alt format) — replace the whole text.
       return trimmed;
     });
     setDirectEditIndex(null);
@@ -4471,7 +4423,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     setBatchResults([]);
     setBatchRendering(false);
     // A fresh single render invalidates any prior resize-undo snapshot (ISSUE 3) and the
-    // original-source anchor â€” the first reflow of THIS render will capture its own original.
+    // original-source anchor — the first reflow of THIS render will capture its own original.
     setPreviousSingleMockup(null);
     originalMockupRef.current = null;
 
@@ -4482,7 +4434,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
     try {
       // Pass concept directly to image generation (no Step 3.5 build plan)
-      // Phase 20 â€” Concept Director trace (audit fix #30/#32/#33 â€”
+      // Phase 20 — Concept Director trace (audit fix #30/#32/#33 —
       // round 2): forward the trace captured from the most recent
       // `serverGenerateConcepts` response to the render-stage callable.
       const mockupResult = await gemini.generateFinalAd(
@@ -4500,18 +4452,18 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         // resize reflows from it (never from an auto-reflowed extra size or a prior resize).
         originalMockupRef.current = mockup;
         setVisualPolishes([]);
-        // â”€â”€â”€ SAVE RENDER FOR FEEDBACK (non-blocking â€” must not prevent phase transition) â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ─── SAVE RENDER FOR FEEDBACK (non-blocking — must not prevent phase transition) ─────────
         // Capture the freshly returned id locally; React state setter is async and the auto-reflow
         // loop below would otherwise read a stale renderGenerationId from the previous render.
         let savedGenId: string | null = null;
         if (user) {
           try {
             // The render was already persisted to Storage SERVER-SIDE by
-            // serverGenerateFinalAd (admin SDK â€” no client Storage write, no
-            // storage/unauthorized). Store that durable URL â€” NOT the ~1-5 MB base64 â€”
+            // serverGenerateFinalAd (admin SDK — no client Storage write, no
+            // storage/unauthorized). Store that durable URL — NOT the ~1-5 MB base64 —
             // in the generations doc. Fall back chain:
-            //   1. storageUrl (normal â€” durable https Storage URL)
-            //   2. image (in-memory base64) â€” INTENTIONAL fallback per PR brief:
+            //   1. storageUrl (normal — durable https Storage URL)
+            //   2. image (in-memory base64) — INTENTIONAL fallback per PR brief:
             //      if the (non-blocking) server Storage upload fails, persist the
             //      in-memory image so the user keeps the render data even though
             //      it may exceed Firestore's 1 MiB doc limit and fail silently.
@@ -4519,9 +4471,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             //      requests: with the static-import fix in this PR, the upload
             //      will succeed in production; the base64 path only fires for
             //      rare edge cases.
-            //   3. '' (won't render â€” but won't pretend to be a URL either)
+            //   3. '' (won't render — but won't pretend to be a URL either)
             const storedImageUrl = mockupResult.storageUrl || mockupResult.image || '';
-            // Phase 17 â€” persist `approvedTov` alongside the build plan so the
+            // Phase 17 — persist `approvedTov` alongside the build plan so the
             // `generateSizeVariant` callable can read the user's approved copy
             // (the build plan's machine-plan ownership map is a best-effort
             // fallback; the canonical approvedTov is the TOV string the user
@@ -4553,7 +4505,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         updateHighestUnlocked('render_studio');
         awardMilestone('designGenerated');
 
-        // Phase 17 â€” fan out additional sizes via `generateSizeVariant` (the new
+        // Phase 17 — fan out additional sizes via `generateSizeVariant` (the new
         // size-variant path that supersedes the HOTFIX-F reflow for multi-size).
         // Each variant is a fresh native design for the target canvas, using the
         // anchor (primary) image as the visual reference. Credits are charged
@@ -4580,7 +4532,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 const variantFn = httpsCallable<GenerateSizeVariantRequest, GenerateSizeVariantResponse>(
                   functions, 'generateSizeVariant', { timeout: 300000 },
                 );
-                console.log(`ðŸ†• [size-variant] â†’ ${extraRatio} starting (genId=${savedGenId}, client timeout=300s)`, Date.now());
+                console.log(`🆕 [size-variant] → ${extraRatio} starting (genId=${savedGenId}, client timeout=300s)`, Date.now());
                 const variantRes = await variantFn({
                   generationId: savedGenId,
                   scope: 'single',
@@ -4591,24 +4543,24 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   // back to `referenceSource: 'none'` and generates from the
                   // brief alone (FR-005a). The backend also overrides this with
                   // an uploaded reference if the user attached one.
-                  approvedTov: selectedTov || undefined, // Phase 17 â€” race-proof: send approved copy in payload (backend prefers it over the Firestore read)
+                  approvedTov: selectedTov || undefined, // Phase 17 — race-proof: send approved copy in payload (backend prefers it over the Firestore read)
                   sourceImageOverride: (mockupResult as any)?.imageBase64 || (mockupResult as any)?.storageUrl || mockupResult?.image || undefined,
                 });
-                console.log(`${variantRes.data?.success ? 'âœ…' : 'âŒ'} [size-variant] â†’ ${extraRatio} returned`, Date.now(), { success: variantRes.data?.success, noOp: variantRes.data?.variant?.noOp, hasUrl: !!variantRes.data?.variant?.url, errorCode: variantRes.data?.variant?.errorCode ?? 'none' });
+                console.log(`${variantRes.data?.success ? '✅' : '❌'} [size-variant] → ${extraRatio} returned`, Date.now(), { success: variantRes.data?.success, noOp: variantRes.data?.variant?.noOp, hasUrl: !!variantRes.data?.variant?.url, errorCode: variantRes.data?.variant?.errorCode ?? 'none' });
                 const v = variantRes.data?.variant;
                 if (variantRes.data?.success && v?.url) {
                   pushMockup(v.url, extraRatio as AspectRatio);
                   variantProduced = true;
                   netCharged += v.creditsCharged ?? 0;
                 } else if (v?.noOp) {
-                  // FR-011: same-size already succeeded â†’ no-op, 0 charge.
+                  // FR-011: same-size already succeeded → no-op, 0 charge.
                   variantProduced = true;
                   noOpCount += 1;
                 } else {
                   console.warn(`Size variant ${extraRatio} returned no image: success=${variantRes.data?.success}, errorCode=${v?.errorCode ?? 'none'}`);
                 }
               } else {
-                // No persisted generation id â€” generateSizeVariant requires one
+                // No persisted generation id — generateSizeVariant requires one
                 // (size variants must be anchored to a source generation; same
                 // constraint as the old reflowImage path). Skip rather than
                 // fall back to a stale renderGenerationId from a different
@@ -4622,11 +4574,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               showToast(t('studio.reflow.refunded_extra').replace('{ratio}', extraRatio), 'info');
             }
           }
-          // T014 â€” reconciliation: align the displayed balance with the actual
+          // T014 — reconciliation: align the displayed balance with the actual
           // net charge the backend applied. The server-side per-variant
           // transaction has already charged/refunded; we just update the UI to
           // match. (No pre-deduction is performed in the frontend for this path,
-          // unlike the old reflow path â€” the per-callable transaction model
+          // unlike the old reflow path — the per-callable transaction model
           // makes the UI balance authoritative from the response.)
           if (netCharged > 0) {
             setUserCredits(prev => prev - netCharged);
@@ -4644,7 +4596,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           'validation_failed': 'Creative mode combination is invalid. Go back and adjust your settings.',
           'quality_rejected': 'Blueprint quality check failed. Try regenerating the blueprint.',
           'generation_failed': 'Image generation failed during processing. Try again.',
-          'copy_fidelity_failed': 'Blueprint text didn\'t match the approved copy â€” please retry.',
+          'copy_fidelity_failed': 'Blueprint text didn\'t match the approved copy — please retry.',
         };
         const msg = errorMessages[mockupResult.errorCode || ''] || 'Image generation returned no result. Credits refunded.';
         showToast(msg, 'error');
@@ -4658,7 +4610,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     }
   };
 
-  // â”€â”€â”€ BATCH RENDER â€” Agency: render all 3 concepts Ã— 3 variants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── BATCH RENDER — Agency: render all 3 concepts × 3 variants ────────────
   const handleBatchRender = async () => {
     if (!inputs) return;
     if (!canUse(userPlan, 'batchGeneration')) {
@@ -4765,14 +4717,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     // Drop any "Back to batch" snapshot from a prior batch run so a stale grid can't
     // reappear behind this fresh render.
     setBatchSnapshot([]);
-    // Clear stale carousel slides â€” mirrors handleCarouselRender clearing batchResults
+    // Clear stale carousel slides — mirrors handleCarouselRender clearing batchResults
     // (5787330): the ALL VERSIONS gallery is gated on carouselSlides.length === 0, so
     // leftovers from an earlier carousel run would keep it hidden for this batch.
     setCarouselSlides([]);
     setBatchRendering(true);
     setCurrentAspectRatio(primaryRatio);
     // The reflow panel's "Current" badge reads activeBatchRatio in batch scope (not
-    // currentAspectRatio) â€” sync it to the rendered ratio so the correct size button
+    // currentAspectRatio) — sync it to the rendered ratio so the correct size button
     // shows CURRENT instead of whatever ratio was active before this batch.
     setActiveBatchRatio(primaryRatio);
     setPhase('render_studio');
@@ -4791,8 +4743,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     try { await autoSaveForceFlush(); } catch { /* non-blocking */ }
 
     // ISSUE 4: a single outer try/finally guarantees the rendering flag is cleared even if an
-    // unexpected error escapes the per-combo handlers â€” otherwise the UI stays stuck on
-    // "Renderingâ€¦" forever with every control disabled.
+    // unexpected error escapes the per-combo handlers — otherwise the UI stays stuck on
+    // "Rendering…" forever with every control disabled.
     try {
     // Render per combo: primary size first, then reflow to extra sizes
     let resultIdx = 0;
@@ -4802,11 +4754,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       let primaryUrl: string | null = null;
       let comboGenId: string | null = null;
 
-      // Primary render â€” concept text goes directly to image generation
+      // Primary render — concept text goes directly to image generation
       const primaryIdx = resultIdx;
       setBatchResults(prev => prev.map((r, idx) => idx === primaryIdx ? { ...r, status: 'rendering' } : r));
       try {
-        // Phase 20 â€” Concept Director trace (audit fix #30/#32/#33):
+        // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
         // forward the trace captured from the most recent concept
         // generation so the rendered image carries the audit trail.
         const genResult = await gemini.generateFinalAd(
@@ -4857,12 +4809,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
       resultIdx++;
 
-      // Phase 17 â€” fan out extra sizes via generateSizeVariant (the new size-variant
+      // Phase 17 — fan out extra sizes via generateSizeVariant (the new size-variant
       // path that supersedes HOTFIX-F reflow for multi-size). Each variant is a
       // fresh native design for the target canvas, with the just-rendered primary
       // image as the visual reference. Fan-out is concurrency-capped at 10 per
       // FR-010; per-item loading state is tracked independently (FR-020). 429
-      // rate-limit errors are re-queued with exponential backoff (base 1s, Ã—2, max
+      // rate-limit errors are re-queued with exponential backoff (base 1s, ×2, max
       // 4 attempts, jitter) per FR-016.
       if (extraRatios.length > 0 && primaryUrl && comboGenId) {
         const variantFn = httpsCallable<GenerateSizeVariantRequest, GenerateSizeVariantResponse>(
@@ -4872,7 +4824,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           ratio: ratio as AspectRatio,
           idx: resultIdx + i,
         }));
-        // T022a â€” rate-limit backoff: detect 429 (RESOURCE_EXHAUSTED) and retry with
+        // T022a — rate-limit backoff: detect 429 (RESOURCE_EXHAUSTED) and retry with
         // exponential backoff. Other errors fail fast.
         const runWithBackoff = async (job: { ratio: AspectRatio; idx: number }, attempt = 1): Promise<{ url: string | null; error?: string; noOp?: boolean; netCharged: number }> => {
           try {
@@ -4881,7 +4833,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               scope: 'single', // batch items share the per-combo generationId; the sizeVariant callable keys by (genId, scope='batch', itemIndex)
               itemIndex: null,
               targetAspectRatio: job.ratio,
-              approvedTov: combo.hookText || combo.conceptText || undefined, // Phase 17 â€” race-proof: send approved copy in payload (backend prefers it over the Firestore read)
+              approvedTov: combo.hookText || combo.conceptText || undefined, // Phase 17 — race-proof: send approved copy in payload (backend prefers it over the Firestore read)
               sourceImageOverride: primaryUrl || undefined,
             });
             return {
@@ -4901,7 +4853,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             return { url: null, error: e?.message || String(e), netCharged: 0 };
           }
         };
-        // T020 â€” concurrency cap: chunk into waves of â‰¤10, run waves sequentially,
+        // T020 — concurrency cap: chunk into waves of ≤10, run waves sequentially,
         // within a wave run all in parallel via Promise.allSettled.
         const CONCURRENCY_CAP = 10;
         const settled: Array<{ ratio: AspectRatio; idx: number; url: string | null; error?: string; noOp?: boolean; netCharged: number }> = [];
@@ -4940,7 +4892,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         }
         resultIdx += extraRatios.length;
       } else if (extraRatios.length > 0) {
-        // Primary failed or no generation id â€” mark all extra-size items as error.
+        // Primary failed or no generation id — mark all extra-size items as error.
         for (let si = 0; si < extraRatios.length; si++) {
           const reflowIdx = resultIdx + si;
           setBatchResults(prev => prev.map((r, idx) => idx === reflowIdx ? { ...r, status: 'error' } : r));
@@ -4962,12 +4914,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     }
   };
 
-  // â”€â”€â”€ BATCH RETRY â€” Retry a single failed/unwanted batch image â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── BATCH RETRY — Retry a single failed/unwanted batch image ─────────────
   /**
    * Per-image retry: re-renders a single batch image independently.
-   * mode='rerender' â€” new build plan + render (full retry)
-   * mode='reflow' â€” keep existing build plan, re-render only (faster, preserves layout)
-   * localRefinement â€” optional per-image instruction applied to this image only
+   * mode='rerender' — new build plan + render (full retry)
+   * mode='reflow' — keep existing build plan, re-render only (faster, preserves layout)
+   * localRefinement — optional per-image instruction applied to this image only
    */
   const handleBatchRetry = async (index: number, retryMode: 'rerender' | 'reflow' = 'rerender', localRefinement?: string) => {
     if (!inputs || !selectedTov) return;
@@ -4981,7 +4933,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const item = batchResults[index];
     if (!item) return;
 
-    // Mark only THIS image as rendering â€” siblings untouched
+    // Mark only THIS image as rendering — siblings untouched
     setBatchResults(prev => prev.map((r, idx) => idx === index ? { ...r, status: 'rendering', url: null } : r));
 
     // Deduct credits
@@ -4998,10 +4950,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
       let mockup: string | null = null;
 
-      // Use THIS item's own source generation (comboGenId) â€” fall back to the global only if absent.
+      // Use THIS item's own source generation (comboGenId) — fall back to the global only if absent.
       const reflowGenId = item.generationId || renderGenerationId;
       if (isReflow && reflowGenId) {
-        // Phase 17 â€” repointed from the commented-out `reflowImage` callable to
+        // Phase 17 — repointed from the commented-out `reflowImage` callable to
         // the new `generateSizeVariant` callable. The same-ratio reflow retry
         // maps to: "regenerate the variant at this item's ratio using the
         // original render as the visual reference." If the item already has a
@@ -5016,19 +4968,19 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           itemIndex: null,
           targetAspectRatio: itemRatio,
           // Reflow from the ORIGINAL render, never a prior resize output (no chain degradation).
-          approvedTov: item.hookText || item.conceptText || undefined, // Phase 17 â€” race-proof: send approved copy in payload (backend prefers it over the Firestore read)
+          approvedTov: item.hookText || item.conceptText || undefined, // Phase 17 — race-proof: send approved copy in payload (backend prefers it over the Firestore read)
           sourceImageOverride: item.originalUrl || undefined,
         });
         const v = variantRes.data?.variant;
         mockup = variantRes.data?.success && v?.url ? v.url : null;
       } else {
         // Fallback when no generationId is available to anchor the reflowImage callable.
-        // Degrade to a full fresh rerender for BOTH retry modes â€” NEVER send a "REFLOW ONLY"
+        // Degrade to a full fresh rerender for BOTH retry modes — NEVER send a "REFLOW ONLY"
         // instruction + source image into generateFinalAd, since that combination is blocked
         // by the deprecated REFLOW gate (FR-026) and always returns image: null. This mirrors
         // the retryMode === 'rerender' path exactly (variation instruction, no source image).
-        const variationInstruction = `IMPORTANT: This is a RETRY â€” you MUST generate a DIFFERENT composition, layout, camera angle, and color palette from previous attempts. Vary the hero pose, background elements, and text placement while keeping the same concept and Arabic text strings. Do NOT reproduce the same design.${refinementNote ? ' ' + refinementNote : ''}`;
-        // Phase 20 â€” Concept Director trace (audit fix #30/#32/#33):
+        const variationInstruction = `IMPORTANT: This is a RETRY — you MUST generate a DIFFERENT composition, layout, camera angle, and color palette from previous attempts. Vary the hero pose, background elements, and text placement while keeping the same concept and Arabic text strings. Do NOT reproduce the same design.${refinementNote ? ' ' + refinementNote : ''}`;
+        // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
         // forward the trace captured from the most recent concept
         // generation so the rendered image carries the audit trail.
         // arg layout (12 total): buildPlan, approvedTov, inputs,
@@ -5043,12 +4995,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         mockup = retryResult.image;
       }
 
-      // Update ONLY this image â€” siblings completely untouched
+      // Update ONLY this image — siblings completely untouched
       setBatchResults(prev => prev.map((r, idx) => idx === index ? {
         ...r,
         buildPlan: item.conceptText,
         url: mockup,
-        // A full rerender produces a NEW base image â†’ it becomes the new original source.
+        // A full rerender produces a NEW base image → it becomes the new original source.
         // A reflow retry keeps the existing original (it's just another resize of it).
         originalUrl: isReflow ? r.originalUrl : (mockup || r.originalUrl),
         status: mockup ? 'done' as const : 'error' as const,
@@ -5066,8 +5018,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     }
   };
 
-  // â”€â”€â”€ CAROUSEL RENDER â€” Render N slides sequentially with style anchor â”€â”€â”€â”€â”€
-  // â”€â”€â”€ CAROUSEL: Render all slides using existing copies â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── CAROUSEL RENDER — Render N slides sequentially with style anchor ─────
+  // ─── CAROUSEL: Render all slides using existing copies ─────────
   const handleCarouselRender = async (conceptRaw: string) => {
     if (!inputs || !selectedTov || carouselCopies.length === 0) return;
     const slideCount = carouselCopies.length;
@@ -5088,7 +5040,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       index: i + 1, copy, buildPlan: '', imageUrl: null, status: 'pending' as const,
     }));
     setCarouselSlides(initialSlides);
-    // Clear stale batch results â€” the canvas ternary gives batchResults priority over
+    // Clear stale batch results — the canvas ternary gives batchResults priority over
     // carouselSlides, so leftovers from an earlier batch run would hijack the canvas
     // and hide the freshly rendered carousel.
     setBatchResults([]);
@@ -5096,7 +5048,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     setPreviousCarouselSlides(null);
     setPreviousCarouselRatio(null);
 
-    // Deduct all credits upfront â€” we reconcile at the end
+    // Deduct all credits upfront — we reconcile at the end
     const startingCredits = userCredits;
     const afterDeduction = startingCredits - totalNeeded;
     setUserCredits(afterDeduction);
@@ -5122,11 +5074,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const buildSlide = async (i: number, styleRef?: string) => {
       const copy = carouselCopies[i];
       const isLastSlide = i === slideCount - 1;
-      // Phase 24B (CodeRabbit â€” Major): the TextOverride builder was using
-      // `copy.ctaText || inputs.cta || ''` â€” a fallback chain that can
+      // Phase 24B (CodeRabbit — Major): the TextOverride builder was using
+      // `copy.ctaText || inputs.cta || ''` — a fallback chain that can
       // RESURRECT the default CTA from inputs.cta when the user intentionally
       // cleared the field (FR-006 / UINV-3). Normalize optional fields to
-      // `null` explicitly: empty/whitespace â†’ null, otherwise the cleaned
+      // `null` explicitly: empty/whitespace → null, otherwise the cleaned
       // value. hookText is required and stays a string.
       const ctaSplit = copy.ctaText
         ? splitCtaField(copy.ctaText)
@@ -5142,13 +5094,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         benefitText: isLastSlide ? (optText(copy.benefitText) ?? ctaSplit.benefitText) : null,
       };
       const slideInstruction = i === 0
-        ? `This is SLIDE 1 (the HOOK slide) of a ${slideCount}-slide carousel. Hero pose: CONFIDENT STANCE â€” arms relaxed, looking at camera or slightly off-camera. NO pointing.`
+        ? `This is SLIDE 1 (the HOOK slide) of a ${slideCount}-slide carousel. Hero pose: CONFIDENT STANCE — arms relaxed, looking at camera or slightly off-camera. NO pointing.`
         : i === slideCount - 1
-          ? `This is SLIDE ${i + 1} (FINAL SLIDE) of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: INVITING GESTURE â€” open palm toward camera, welcoming. This slide HAS a CTA button. Show logo ONLY on this final slide.`
-          : `This is SLIDE ${i + 1} of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: ${['THOUGHTFUL â€” hand on chin, looking contemplative', 'ACTIVE â€” leaning forward slightly, engaged expression', 'CONVERSATIONAL â€” relaxed, one hand gesturing naturally to the side', 'PROFESSIONAL â€” arms crossed confidently, slight smile', 'DYNAMIC â€” walking pose, captured mid-stride'][i % 5]}. NO pointing finger. NO CTA button on this slide. NO logo on this slide. NO promo badge on this slide.`;
+          ? `This is SLIDE ${i + 1} (FINAL SLIDE) of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: INVITING GESTURE — open palm toward camera, welcoming. This slide HAS a CTA button. Show logo ONLY on this final slide.`
+          : `This is SLIDE ${i + 1} of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: ${['THOUGHTFUL — hand on chin, looking contemplative', 'ACTIVE — leaning forward slightly, engaged expression', 'CONVERSATIONAL — relaxed, one hand gesturing naturally to the side', 'PROFESSIONAL — arms crossed confidently, slight smile', 'DYNAMIC — walking pose, captured mid-stride'][i % 5]}. NO pointing finger. NO CTA button on this slide. NO logo on this slide. NO promo badge on this slide.`;
       setCarouselSlides(prev => prev.map((s, idx) => idx === i ? { ...s, status: 'rendering' } : s));
       const slideConceptText = conceptRaw + `\n\n[CAROUSEL SLIDE ${i + 1}/${slideCount}]: ${slideInstruction}`;
-      // Phase 20 â€” Concept Director trace (audit fix #30/#32/#33):
+      // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
       // forward the trace captured from the most recent concept
       // generation so every carousel slide carries the audit trail.
       // arg layout (12 total): buildPlan, approvedTov, inputs,
@@ -5167,23 +5119,23 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         console.warn('[carousel] slide', i + 1, 'failed:', (slideResult as any)?.errorCode, (slideResult as any)?.errorMessage);
       }
       // STEP 2: prefer the durable server-uploaded Storage URL so the generation doc persists a
-      // REAL source image for each slide. Previously only base64 was stored â†’ the saveGeneration
-      // map collapsed it to 'pending_upload', leaving carousel reflow with no source image â†’
-      // rerenderFromPlan regenerated BLIND â†’ a completely different person/style. Fall back to the
+      // REAL source image for each slide. Previously only base64 was stored → the saveGeneration
+      // map collapsed it to 'pending_upload', leaving carousel reflow with no source image →
+      // rerenderFromPlan regenerated BLIND → a completely different person/style. Fall back to the
       // base64 for display only if the (non-blocking) Storage upload failed.
       const slideUrl: string | null = mockup ? (slideResult.storageUrl || mockup) : null;
       setCarouselSlides(prev => prev.map((s, idx) => idx === i ? { ...s, buildPlan: slideConceptText, imageUrl: slideUrl, status: mockup ? 'done' : 'error' } : s));
       renderedSlides[i] = { ...renderedSlides[i], buildPlan: slideConceptText, imageUrl: slideUrl, status: mockup ? 'done' : 'error' };
       if (mockup) creditsActuallyUsed += perSlideCost;
-      // Return the base64 (not the Storage URL) â€” it's used as the styleReference anchor for
+      // Return the base64 (not the Storage URL) — it's used as the styleReference anchor for
       // subsequent slides, and generateFinalAd reads a base64 data URL for that.
       return mockup;
     };
 
     try {
-      // â”€â”€ PHASE 1: Render Slide 1 (anchor) sequentially â”€â”€
+      // ── PHASE 1: Render Slide 1 (anchor) sequentially ──
       // Per-slide try/catch (same pattern as slides 2+ below): a slide-1 exception must
-      // show an error tile and let the remaining slides render â€” not fall through to the
+      // show an error tile and let the remaining slides render — not fall through to the
       // outer catch, which aborts the whole carousel and strands the user on the concept
       // screen. Slide-1 credits refund via the finally-block reconciliation
       // (creditsActuallyUsed is never incremented for a failed slide). When slide 1
@@ -5198,7 +5150,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
       if (slide1Result) anchorImage = slide1Result;
 
-      // â”€â”€ PHASE 2: Render slides 2-N in PARALLEL (staggered 2s apart to avoid rate limits) â”€â”€
+      // ── PHASE 2: Render slides 2-N in PARALLEL (staggered 2s apart to avoid rate limits) ──
       if (slideCount > 1) {
         const parallelPromises = [];
         for (let i = 1; i < slideCount; i++) {
@@ -5216,13 +5168,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         await Promise.all(parallelPromises);
       }
 
-      // â”€â”€â”€ SAVE CAROUSEL GENERATION (FIX 1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      // ─── SAVE CAROUSEL GENERATION (FIX 1) ─────────────────────────────────────
       // Persist a generation doc with the per-slide buildPlan + source URL so slide
       // retry and the reflowImage callable (carousel_slide / carousel_all) have a
-      // generationId to act on. Non-blocking â€” must not prevent the phase transition.
+      // generationId to act on. Non-blocking — must not prevent the phase transition.
       if (user) {
         // feedbackService.saveGeneration swallows Firestore write errors and returns '' (it
-        // never throws), so the old try/catch could leave renderGenerationId empty silently â€”
+        // never throws), so the old try/catch could leave renderGenerationId empty silently —
         // which disables carousel retry + resize. Capture the id, and retry the save once if
         // the first attempt came back empty. Only set the state when we have a real id.
         const doSaveCarousel = () => feedbackService.saveGeneration(
@@ -5230,11 +5182,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           {
             conceptText: conceptRaw.substring(0, 500),
             buildPlan: conceptRaw,
-            approvedTov: selectedTov || conceptRaw, // Phase 17 â€” persist approved TOV so the carousel-resize path can read it
+            approvedTov: selectedTov || conceptRaw, // Phase 17 — persist approved TOV so the carousel-resize path can read it
             carouselSlides: renderedSlides.map(s => ({
               index: s.index,
               // Base64 data URLs are megabytes each; storing several would blow Firestore's
-              // 1 MiB doc limit and fail the write. Persist only short Storage/http URLs â€”
+              // 1 MiB doc limit and fail the write. Persist only short Storage/http URLs —
               // otherwise empty string, and reflow/retry rerenders from the saved buildPlan.
               imageUrl: (typeof s.imageUrl === 'string' && s.imageUrl.startsWith('http')) ? s.imageUrl : '',
               buildPlan: s.buildPlan,
@@ -5248,7 +5200,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         try {
           savedGenId = await doSaveCarousel();
           if (!savedGenId) {
-            console.warn('[carousel] saveGeneration returned empty id â€” retrying once');
+            console.warn('[carousel] saveGeneration returned empty id — retrying once');
             savedGenId = await doSaveCarousel();
           }
         } catch (saveErr) {
@@ -5258,7 +5210,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         if (savedGenId) {
           setRenderGenerationId(savedGenId);
         } else {
-          showToast('Could not save the carousel â€” retry & resize are unavailable. Try generating again.', 'error');
+          showToast('Could not save the carousel — retry & resize are unavailable. Try generating again.', 'error');
         }
       }
 
@@ -5270,7 +5222,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     } catch (e: any) {
       handleApiError(e);
     } finally {
-      // â”€â”€ CREDIT RECONCILIATION â”€â”€
+      // ── CREDIT RECONCILIATION ──
       // Refund credits for any slides that failed (null) or never rendered (crash)
       const refundAmount = totalNeeded - creditsActuallyUsed;
       if (refundAmount > 0) {
@@ -5281,11 +5233,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       stopLoad();
     }
   };
-  // â”€â”€â”€ CAROUSEL: Regenerate a single slide â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── CAROUSEL: Regenerate a single slide ─────────────────────────────
   const handleCarouselSlideRetry = async (slideIndex: number) => {
     if (!inputs || !selectedTov || !carouselConceptRaw) return;
     // The carousel generation now saves a doc and sets renderGenerationId. If it isn't set
-    // yet, the save is still in flight (or failed) â€” ask the user to wait rather than showing
+    // yet, the save is still in flight (or failed) — ask the user to wait rather than showing
     // the misleading "generate an ad first" error.
     if (!renderGenerationId) {
       showToast(t('studio.reflow.wait_for_generation') || 'Please wait for generation to complete first.', 'error');
@@ -5309,7 +5261,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, status: 'rendering' } : s));
 
     // Reconstruct the SAME inputs buildSlide uses for this slide, then render directly via
-    // generateFinalAd (NOT reflowImage â€” a same-ratio reflow no-ops and echoes the stored
+    // generateFinalAd (NOT reflowImage — a same-ratio reflow no-ops and echoes the stored
     // 'pending_upload' sentinel). This genuinely regenerates the failed slide.
     const cleanField = (s: string) => s.replace(/\|\|\|/g, '').trim();
     const splitCtaField = (raw: string): { ctaName: string; benefitText: string } => {
@@ -5318,8 +5270,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       return { ctaName: c.trim(), benefitText: b?.trim() || '' };
     };
     const isLastSlide = slideIndex === slideCount - 1;
-    // Phase 24B (CodeRabbit â€” Major): same null normalization as buildSlide
-    // above â€” drop the `inputs.cta` fallback that can resurrect the default
+    // Phase 24B (CodeRabbit — Major): same null normalization as buildSlide
+    // above — drop the `inputs.cta` fallback that can resurrect the default
     // CTA when the user has intentionally cleared the field (FR-006).
     const ctaSplit = copy.ctaText
       ? splitCtaField(copy.ctaText)
@@ -5335,10 +5287,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       benefitText: isLastSlide ? (optText(copy.benefitText) ?? ctaSplit.benefitText) : null,
     };
     const slideInstruction = slideIndex === 0
-      ? `This is SLIDE 1 (the HOOK slide) of a ${slideCount}-slide carousel. Hero pose: CONFIDENT STANCE â€” arms relaxed, looking at camera or slightly off-camera. NO pointing.`
+      ? `This is SLIDE 1 (the HOOK slide) of a ${slideCount}-slide carousel. Hero pose: CONFIDENT STANCE — arms relaxed, looking at camera or slightly off-camera. NO pointing.`
       : slideIndex === slideCount - 1
-        ? `This is SLIDE ${slideIndex + 1} (FINAL SLIDE) of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: INVITING GESTURE â€” open palm toward camera, welcoming. This slide HAS a CTA button. Show logo ONLY on this final slide.`
-        : `This is SLIDE ${slideIndex + 1} of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: ${['THOUGHTFUL â€” hand on chin, looking contemplative', 'ACTIVE â€” leaning forward slightly, engaged expression', 'CONVERSATIONAL â€” relaxed, one hand gesturing naturally to the side', 'PROFESSIONAL â€” arms crossed confidently, slight smile', 'DYNAMIC â€” walking pose, captured mid-stride'][slideIndex % 5]}. NO pointing finger. NO CTA button on this slide. NO logo on this slide. NO promo badge on this slide.`;
+        ? `This is SLIDE ${slideIndex + 1} (FINAL SLIDE) of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: INVITING GESTURE — open palm toward camera, welcoming. This slide HAS a CTA button. Show logo ONLY on this final slide.`
+        : `This is SLIDE ${slideIndex + 1} of ${slideCount}. MAINTAIN EXACT SAME visual style as Slide 1. Hero pose: ${['THOUGHTFUL — hand on chin, looking contemplative', 'ACTIVE — leaning forward slightly, engaged expression', 'CONVERSATIONAL — relaxed, one hand gesturing naturally to the side', 'PROFESSIONAL — arms crossed confidently, slight smile', 'DYNAMIC — walking pose, captured mid-stride'][slideIndex % 5]}. NO pointing finger. NO CTA button on this slide. NO logo on this slide. NO promo badge on this slide.`;
     // FIX (ISSUE 1): reuse the slide's OWN stored buildPlan (the exact concept + slide instruction
     // it was originally generated with) so retry can't drift to a different/first concept via a
     // stale carouselConceptRaw. Fall back to rebuilding only if the slide crashed before its
@@ -5354,7 +5306,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       : undefined;
 
     try {
-      // Phase 20 â€” Concept Director trace (audit fix #30/#32/#33):
+      // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
       // forward the trace captured from the most recent concept
       // generation so the re-rendered image carries the audit trail.
       // arg layout (12 total): buildPlan, approvedTov, inputs,
@@ -5373,7 +5325,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         showToast(`Slide ${slideIndex + 1} regenerated!`, 'success');
       } else {
         console.warn('[carousel retry] slide', slideIndex + 1, 'failed:', (slideResult as any)?.errorCode, (slideResult as any)?.errorMessage);
-        setUserCredits(startingCredits); // refund â€” no image produced
+        setUserCredits(startingCredits); // refund — no image produced
         setCarouselSlides(prev => prev.map((s, idx) => idx === slideIndex ? { ...s, status: 'error' as const } : s));
         showToast(`Slide ${slideIndex + 1} retry failed. Credits refunded.`, 'error');
       }
@@ -5384,7 +5336,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     }
   };
 
-  // â”€â”€â”€ CAROUSEL: Edit a single slide's copy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── CAROUSEL: Edit a single slide's copy ─────────────────────────────
   const updateCarouselCopy = (index: number, field: keyof CarouselSlideCopy, value: string) => {
     setCarouselCopies(prev => prev.map((c, i) => i === index ? { ...c, [field]: value } : c));
   };
@@ -5455,7 +5407,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const editRatio = displayRatio as AspectRatio;
     startLoad(editTarget ? `Editing ${editTarget.label}...` : "Applying Refinement...");
     // FIX 1: when editing a carousel slide, render with the user's EDITED copy from
-    // carouselCopies â€” not the original AI copy that resolveOwnedRenderText would re-parse
+    // carouselCopies — not the original AI copy that resolveOwnedRenderText would re-parse
     // from selectedTov. Build the same txOverride buildSlide / handleCarouselSlideRetry use.
     let carouselTextOverride: TextOverride | undefined;
     if (editTarget?.source === 'carousel' && carouselCopies[editTarget.index]) {
@@ -5467,8 +5419,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         return { ctaName: c.trim(), benefitText: b?.trim() || '' };
       };
       const isLastSlide = editTarget.index === carouselCopies.length - 1;
-      // Phase 24B (CodeRabbit â€” Major): same null normalization as the other
-      // two TextOverride builders â€” drop the `inputs.cta` fallback.
+      // Phase 24B (CodeRabbit — Major): same null normalization as the other
+      // two TextOverride builders — drop the `inputs.cta` fallback.
       const ctaSplit = copy.ctaText
         ? splitCtaField(copy.ctaText)
         : { ctaName: null as string | null, benefitText: null as string | null };
@@ -5484,7 +5436,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       };
     }
     try {
-      // Phase 20 â€” Concept Director trace (audit fix #30/#32/#33):
+      // Phase 20 — Concept Director trace (audit fix #30/#32/#33):
       // forward the trace captured from the most recent concept
       // generation so the re-rendered image carries the audit trail.
       const editResult = await gemini.generateFinalAd(
@@ -5499,7 +5451,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       // the in-memory base64 only when the server upload failed.
       const editedDisplayUrl = editResult.storageUrl || res;
 
-      // â•â•â• WRITE-BACK: Route result to correct source â•â•â•
+      // ═══ WRITE-BACK: Route result to correct source ═══
       if (editTarget && res) {
         if (editTarget.source === 'batch') {
           // Write back to the exact batch result. Refresh BOTH url (durable
@@ -5581,7 +5533,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
       // For carousel: pass all slide copies as extra context
       const carouselContext = carouselCopies.length > 1
-        ? carouselCopies.map((c, i) => `Slide ${i + 1}: ${c.hookText}${c.subheadText ? ' â€” ' + c.subheadText : ''}`).join('\n')
+        ? carouselCopies.map((c, i) => `Slide ${i + 1}: ${c.hookText}${c.subheadText ? ' — ' + c.subheadText : ''}`).join('\n')
         : undefined;
 
       const res = unwrapGen(await gemini.generateCaption(
@@ -5624,7 +5576,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     }
   };
 
-  // â”€â”€â”€ BATCH CAPTION GENERATION â€” 1 copy per hook â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── BATCH CAPTION GENERATION — 1 copy per hook ─────────────────────
   const handleBatchCaptions = async () => {
     if (!inputs || batchHookGroups.length === 0) return;
 
@@ -5665,7 +5617,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     // Generate sequentially per hook
     for (let i = 0; i < batchHookGroups.length; i++) {
       const group = batchHookGroups[i];
-      startLoad(`Writing copy ${i + 1}/${hookCount} â€” Hook ${group.hookKey}...`);
+      startLoad(`Writing copy ${i + 1}/${hookCount} — Hook ${group.hookKey}...`);
 
       try {
         const visualMetaphor = group.conceptsText
@@ -5703,7 +5655,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         }
       } catch (e) {
         console.error(`Caption for hook ${group.hookKey} failed:`, e);
-        setBatchCaptions(prev => prev.map((c, idx) => idx === i ? { ...c, captionText: 'âš ï¸ Generation failed â€” try refining individually.' } : c));
+        setBatchCaptions(prev => prev.map((c, idx) => idx === i ? { ...c, captionText: '⚠️ Generation failed — try refining individually.' } : c));
       }
 
       if (i < batchHookGroups.length - 1) await new Promise(r => setTimeout(r, 500));
@@ -5717,7 +5669,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   const handleRescale = async (newRatio: AspectRatio, scopeOverride?: { scope: 'single' | 'batch_all' | 'carousel_all' | 'carousel_slide'; slideIndex?: number; indices?: number[] }) => {
     if (!inputs || !selectedTov) return;
 
-    // â”€â”€â”€ EARLY-EXIT GUARDS (crash hardening) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── EARLY-EXIT GUARDS (crash hardening) ─────────────────────────────────
     // Reflow requires a persisted generation to read the source from. Without it
     // the callable rejects with invalid-argument; surface a clear toast instead.
     // This is also the ONLY place the no_generation_id message should fire (FR:
@@ -5738,15 +5690,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     const effectiveScope = scopeOverride?.scope;
     const effectiveSlideIndex = scopeOverride?.slideIndex;
 
-    // â”€â”€â”€ BATCH_ALL MODE: per-combo reflow â”€â”€â”€â”€â”€
+    // ─── BATCH_ALL MODE: per-combo reflow ─────
     // Each batch combo is its OWN generation doc, so a single generationId can't address
     // them all (the old scope:'batch_all' call only ever touched the first combo). Instead
     // loop per-combo and call reflowImage with SCOPE:'single' using each item's own
     // generationId + its rendered image as the source override. Runs in parallel
-    // (Promise.allSettled), best-effort partial success â€” a failed item reverts to its
+    // (Promise.allSettled), best-effort partial success — a failed item reverts to its
     // original image/ratio and never aborts the others.
     if (effectiveScope === 'batch_all') {
-      // Optional explicit subset (ISSUE 5 "Resize Selected") â€” restrict to checked indices.
+      // Optional explicit subset (ISSUE 5 "Resize Selected") — restrict to checked indices.
       const restrictTo = scopeOverride?.indices ? new Set(scopeOverride.indices) : null;
       const batchItems = safeBatch
         .map((r, idx) => ({ r, idx }))
@@ -5763,7 +5715,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         return;
       }
       // Flip the grid to the target ratio and move every target item into that ratio bucket
-      // as 'rendering' â€” the grid filters tiles by item.ratio === currentAspectRatio, so the
+      // as 'rendering' — the grid filters tiles by item.ratio === currentAspectRatio, so the
       // items must adopt newRatio up front to stay visible (with spinners) during the resize.
       const targetIdxs = new Set(batchItems.map(b => b.idx));
       // `url`/`ratio` are the item's CURRENT state (used to revert on failure); `src` is the
@@ -5773,15 +5725,15 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       setCurrentAspectRatio(newRatio);
       // Keep the reflow chips' "current ratio" in sync (it reads activeBatchRatio in batch mode).
       // Without this the picker still treats the OLD ratio as current after a batch resize, which
-      // disables that ratio's chip â€” so the user can't pick it again to resize back (FIX 3).
+      // disables that ratio's chip — so the user can't pick it again to resize back (FIX 3).
       setActiveBatchRatio(newRatio);
       startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
       setBatchResults(prev => prev.map((r, idx) => targetIdxs.has(idx) ? { ...r, ratio: newRatio, status: 'rendering' as const } : r));
-      // Phase 17 â€” the size-variant callable charges 5 credits per variant
+      // Phase 17 — the size-variant callable charges 5 credits per variant
       // atomically (server-side), so we do NOT pre-deduct in the frontend here.
       // We reconcile the displayed balance after the loop from each call's
       // netCreditsCharged response (which is 0 on no-op/failure, 5 on success).
-      // T022a â€” 429 rate-limit backoff (exponential, base 1s, Ã—2, max 4 attempts).
+      // T022a — 429 rate-limit backoff (exponential, base 1s, ×2, max 4 attempts).
       const runBatchItemWithBackoff = async (
         generationId: string,
         itemIndex: number,
@@ -5816,7 +5768,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           return { url: null, netCharged: 0 };
         }
       };
-      // T020 â€” concurrency cap: chunk into waves of â‰¤10, run waves sequentially,
+      // T020 — concurrency cap: chunk into waves of ≤10, run waves sequentially,
       // within a wave run all in parallel via Promise.allSettled.
       const CONCURRENCY_CAP = 10;
       type ItemSettled = { idx: number; url: string | null; netCharged: number; noOp?: boolean };
@@ -5848,13 +5800,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         netChargedSum += s.netCharged;
         if (s.url) {
           // Preserve the pre-resize version in mockupHistory BEFORE the in-place overwrite
-          // below discards it (the gallery never reads originalUrl) â€” so ALL VERSIONS keeps
+          // below discards it (the gallery never reads originalUrl) — so ALL VERSIONS keeps
           // both sizes. Mirrors the auto-reflow path (65513f1).
           if (orig.url) pushMockup(orig.url, orig.ratio);
           setBatchResults(prev => prev.map((rr, i) => i === s.idx ? { ...rr, url: s.url, ratio: newRatio, status: 'done' as const } : rr));
           successCount += 1;
         } else {
-          // No image produced â€” revert this item to its original image AND ratio so it
+          // No image produced — revert this item to its original image AND ratio so it
           // returns to its own ratio bucket (it simply won't appear in the new-ratio view).
           setBatchResults(prev => prev.map((rr, i) => i === s.idx ? { ...rr, url: orig.url, ratio: orig.ratio, status: 'done' as const } : rr));
           failedCount += 1;
@@ -5868,7 +5820,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       if (failedCount === batchItems.length) {
         showToast('All batch resizes failed', 'error');
       } else if (failedCount > 0) {
-        showToast(`Resized ${successCount}/${batchItems.length} â€” ${failedCount} failed`, 'error');
+        showToast(`Resized ${successCount}/${batchItems.length} — ${failedCount} failed`, 'error');
       } else {
         showToast(`Resized ${batchItems.length} to ${newRatio}`, 'success');
       }
@@ -5876,7 +5828,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       return;
     }
 
-    // â”€â”€â”€ CAROUSEL_SLIDE MODE (single slide) â”€â”€â”€â”€â”€
+    // ─── CAROUSEL_SLIDE MODE (single slide) ─────
     if (effectiveScope === 'carousel_slide') {
       const slideIdx = effectiveSlideIndex ?? 0;
       if (!renderGenerationId) { showToast(t('studio.reflow.no_generation_id') || 'Reflow requires a saved generation.', 'error'); return; }
@@ -5888,7 +5840,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       }
       setCurrentAspectRatio(newRatio);
       startLoad(t('studio.reflow.loading_single').replace('{ratio}', newRatio));
-      // Phase 17 â€” the size-variant callable charges 5 credits atomically
+      // Phase 17 — the size-variant callable charges 5 credits atomically
       // server-side per call. We do NOT pre-deduct here; we reconcile after
       // the call returns (the backend may return netCreditsCharged=0 on
       // no-op/refund).
@@ -5902,7 +5854,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           itemIndex: slideIdx,
           targetAspectRatio: newRatio,
           // Displayed slide image, passed directly (see single-scope note).
-          approvedTov: selectedTov || undefined, // Phase 17 â€” race-proof: send approved copy in payload (backend prefers it over the Firestore read)
+          approvedTov: selectedTov || undefined, // Phase 17 — race-proof: send approved copy in payload (backend prefers it over the Firestore read)
           sourceImageOverride: currentRawBase64 || undefined,
         });
         const v = result.data?.variant;
@@ -5920,8 +5872,8 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       return;
     }
 
-    // â”€â”€â”€ CAROUSEL MODE: Resize all slides via generateSizeVariant (Phase 17 supersedes HOTFIX-F) â”€
-    // T021 â€” carousel pre-select is intentionally NOT supported (VR-2). Carousel reaches
+    // ─── CAROUSEL MODE: Resize all slides via generateSizeVariant (Phase 17 supersedes HOTFIX-F) ─
+    // T021 — carousel pre-select is intentionally NOT supported (VR-2). Carousel reaches
     // multiple sizes only via the resize flow, with each slide as a separate generation.
     if (safeCarousel.length > 0 && safeCarousel.some(s => s.status === 'done')) {
       const doneSlides = safeCarousel.filter(s => s.status === 'done' && s.imageUrl);
@@ -5939,7 +5891,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       // FIX 2: snapshot the current slides + their ratio for a one-level undo before resizing.
       setPreviousCarouselSlides([...carouselSlides]);
       setPreviousCarouselRatio(currentAspectRatio);
-      // FIX 1A: do NOT flip currentAspectRatio yet â€” that would instantly reshape the grid
+      // FIX 1A: do NOT flip currentAspectRatio yet — that would instantly reshape the grid
       // (object-cover) and visually CROP the still-square slides before the resize lands.
       // currentAspectRatio is set only AFTER the new images are written back (below).
       setCarouselSlides(prev => prev.map(s => s.status === 'done' && s.imageUrl ? { ...s, status: 'rendering' as const } : s));
@@ -5947,13 +5899,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         .replace('{count}', String(doneSlides.length))
         .replace('{ratio}', newRatio));
       if (!renderGenerationId) {
-        showToast(t('studio.reflow.no_generation_id') || 'Resize requires a saved generation â€” try generating again first.', 'error');
+        showToast(t('studio.reflow.no_generation_id') || 'Resize requires a saved generation — try generating again first.', 'error');
         setCarouselSlides(prev => prev.map(s => s.status === 'rendering' && s.imageUrl ? { ...s, status: 'done' as const } : s));
         stopLoad();
         return;
       }
       try {
-        // T021 â€” fan out: each slide is a separate generateSizeVariant call, keyed
+        // T021 — fan out: each slide is a separate generateSizeVariant call, keyed
         // (genId, scope='carousel', itemIndex=slideIdx). Concurrency cap = 10.
         const variantFn = httpsCallable<GenerateSizeVariantRequest, GenerateSizeVariantResponse>(
           functions, 'generateSizeVariant', { timeout: 300000 },
@@ -5962,7 +5914,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           slideIdx: safeCarousel.findIndex(cs => cs === s || (cs.imageUrl === s.imageUrl && cs.status === s.status)),
           sourceUrl: s.imageUrl as string,
         })).filter(s => s.slideIdx >= 0);
-        // T022a â€” 429 rate-limit backoff
+        // T022a — 429 rate-limit backoff
         const runSlideWithBackoff = async (slideIdx: number, sourceUrl: string, attempt = 1): Promise<{ url: string | null; netCharged: number; noOp?: boolean }> => {
           try {
             const res = await variantFn({
@@ -5973,7 +5925,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               // Resize source: the slide's own rendered image. The backend applies
               // the uploaded > own_original > anchor > none precedence; for a
               // carousel slide resize, the slide's own image IS the reference.
-              approvedTov: selectedTov || undefined, // Phase 17 â€” race-proof: send approved copy in payload (backend prefers it over the Firestore read)
+              approvedTov: selectedTov || undefined, // Phase 17 — race-proof: send approved copy in payload (backend prefers it over the Firestore read)
               sourceImageOverride: sourceUrl,
             });
             return { url: res.data?.variant?.url ?? null, netCharged: res.data?.netCreditsCharged ?? 0, noOp: res.data?.variant?.noOp };
@@ -5989,7 +5941,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             return { url: null, netCharged: 0 };
           }
         };
-        // T020 â€” concurrency-capped waves of â‰¤10 slides
+        // T020 — concurrency-capped waves of ≤10 slides
         const CONCURRENCY_CAP = 10;
         const settledSlides: Array<{ slideIdx: number; url: string | null; netCharged: number; noOp?: boolean }> = [];
         for (let waveStart = 0; waveStart < slidesToResize.length; waveStart += CONCURRENCY_CAP) {
@@ -6007,7 +5959,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             }
           }
         }
-        // T022 â€” apply results: succeeded â†’ imageUrl, failed â†’ 'error' status (with retry possible).
+        // T022 — apply results: succeeded → imageUrl, failed → 'error' status (with retry possible).
         for (const r of settledSlides) {
           if (r.url) {
             setCarouselSlides(prev => prev.map((s, idx) => idx === r.slideIdx ? { ...s, imageUrl: r.url, status: 'done' as const } : s));
@@ -6032,7 +5984,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       return;
     }
 
-    // â”€â”€â”€ SINGLE MODE: Resize via generateSizeVariant (Phase 17 supersedes HOTFIX-F reflow) â”€
+    // ─── SINGLE MODE: Resize via generateSizeVariant (Phase 17 supersedes HOTFIX-F reflow) ─
     if (!selectedConcept || !currentMockup || !buildPlan) return;
     // ISSUE 3: snapshot the current displayed image + its source ratio BEFORE flipping the
     // aspect ratio, so the user can switch back to the pre-resize size. displayRatio reads
@@ -6043,7 +5995,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     // FIX 3: when a batch card is focused, target ITS generation, not the global one.
     const _focusedBatchItem = selectedBatchItemIndex != null ? safeBatch[selectedBatchItemIndex] : null;
     // Fall back to the first done batch item's own generation id when no tile is focused and the
-    // global renderGenerationId is empty â€” so a 'single'-scope resize in batch mode still works
+    // global renderGenerationId is empty — so a 'single'-scope resize in batch mode still works
     // instead of erroring with "Generate an ad first".
     const effectiveSingleGenId = _focusedBatchItem?.generationId
       || renderGenerationId
@@ -6060,11 +6012,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       : (originalMockupRef.current || currentRawBase64);
     // Per-variant cost: generateSizeVariant charges 5 atomically per design.
     // We do NOT pre-deduct in the frontend (the backend owns the transaction).
-    // The whole-request affordability gate (selectedSizes Ã— 5) is enforced
+    // The whole-request affordability gate (selectedSizes × 5) is enforced
     // upstream; here we just call the callable and reconcile after.
     const singleVariantCost = effectiveSingleGenId ? CREDIT_COSTS.generateSizeVariant ?? CREDIT_COSTS.generateImage : 0;
     if (!effectiveSingleGenId) {
-      showToast(t('studio.reflow.no_generation_id') || 'Resize requires a saved generation â€” try generating again first.', 'error');
+      showToast(t('studio.reflow.no_generation_id') || 'Resize requires a saved generation — try generating again first.', 'error');
       stopLoad();
       return;
     }
@@ -6077,21 +6029,21 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         scope: 'single',
         itemIndex: null,
         targetAspectRatio: newRatio,
-        // ALWAYS the ORIGINAL generation source (API-safe base64 / Storage URL â€” never a
+        // ALWAYS the ORIGINAL generation source (API-safe base64 / Storage URL — never a
         // blob: display url and never a prior resize output), so quality never chain-degrades.
-        approvedTov: selectedTov || undefined, // Phase 17 â€” race-proof: send approved copy in payload (backend prefers it over the Firestore read)
+        approvedTov: selectedTov || undefined, // Phase 17 — race-proof: send approved copy in payload (backend prefers it over the Firestore read)
         sourceImageOverride: reflowSource || undefined,
       });
       if (!result.data) {
         throw new Error('Size variant returned empty response');
       }
       const v = result.data.variant;
-      // T016 â€” same-size no-op (FR-011): backend returns noOp:true with 0 charge.
+      // T016 — same-size no-op (FR-011): backend returns noOp:true with 0 charge.
       if (v?.noOp) {
         showToast('Already generated at this size', 'info');
         return;
       }
-      // T017 â€” uploaded reference override is handled by the backend (precedence is
+      // T017 — uploaded reference override is handled by the backend (precedence is
       // uploaded > own_original > anchor > none). We just pass the original source
       // and the backend applies the override if a reference image is attached.
       // Reconcile: deduct the actual net charge (the backend's per-variant transaction
@@ -6099,13 +6051,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       if (typeof result.data.netCreditsCharged === 'number') {
         // The backend already deducted at transaction time. We display the new
         // balance by reading it from the response implicitly via the setUserCredits
-        // call below. For per-variant no-op, netCharged is 0 â†’ no balance change.
+        // call below. For per-variant no-op, netCharged is 0 → no balance change.
         if (result.data.netCreditsCharged > 0) {
           setUserCredits(prev => prev - result.data!.netCreditsCharged);
         }
       }
       if (result.data.success && v?.url) {
-        // T018 â€” add the new variant alongside the original (don't replace).
+        // T018 — add the new variant alongside the original (don't replace).
         pushMockup(v.url, newRatio);
       } else {
         throw new Error(v?.errorCode || 'Size variant returned no image');
@@ -6120,7 +6072,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
     void singleVariantCost; // kept for traceability (used by the legacy reflow path's reconciliation shape)
   };
 
-  // â•â•â• SHARED HELPERS: Deployment metadata + Design favorite â•â•â•
+  // ═══ SHARED HELPERS: Deployment metadata + Design favorite ═══
   const buildDeploymentMeta = (extra?: Record<string, any>) => {
     const modes = (inputs as any)?.offerCreativeMode || ['standard_hero'];
     const spec = inputs ? resolveCreativeSpec({ selectedModes: modes, hookAngle: inputs.coldHookAngle }) : null;
@@ -6149,7 +6101,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       mode: inputs?.adMode || 'single',
       ratio: currentAspectRatio || undefined,
       format: inputs?.campaignType || 'cold',
-      // â”€â”€â”€ Creative identity fields for deployment chain â”€â”€â”€
+      // ─── Creative identity fields for deployment chain ───
       selectedModes: modes,
       contractTemplateId: spec?.resolvedLayoutKey || undefined,
       numericFidelity: numFidelity,
@@ -6162,11 +6114,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   const saveDesignFavorite = async (imageUrl: string, ratio: AspectRatio, conceptText?: string, hookText?: string, bPlan?: string) => {
     if (!user?.uid || !inputs) return;
     try {
-      // Persist the image to Storage SERVER-SIDE (admin SDK â€” no client Storage write,
-      // no storage/unauthorized). An http URL is durable as-is â€” skip the callable
-      // round-trip and use it directly. Otherwise upload (data: URL â†’ Storage) and
+      // Persist the image to Storage SERVER-SIDE (admin SDK — no client Storage write,
+      // no storage/unauthorized). An http URL is durable as-is — skip the callable
+      // round-trip and use it directly. Otherwise upload (data: URL → Storage) and
       // fall back to empty string if the upload fails (don't write a base64 back to
-      // Firestore â€” would blow the 1 MiB doc limit).
+      // Firestore — would blow the 1 MiB doc limit).
       const isAlreadyHttp = typeof imageUrl === 'string' && imageUrl.startsWith('http');
       let storedImageUrl: string = isAlreadyHttp ? imageUrl : '';
       if (!isAlreadyHttp) {
@@ -6174,7 +6126,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
           storedImageUrl = (await uploadFn({ imageBase64: imageUrl })).data.storageUrl || '';
         } catch (uploadErr) {
-          console.warn('Server render upload failed (non-blocking) â€” saving favorite with empty imageUrl:', uploadErr);
+          console.warn('Server render upload failed (non-blocking) — saving favorite with empty imageUrl:', uploadErr);
         }
       }
       const genId = await feedbackService.saveGeneration(
@@ -6210,7 +6162,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('Pro Ads AI â€” Trial', 0, 0);
+        ctx.fillText('Pro Ads AI — Trial', 0, 0);
         ctx.restore();
         resolve(canvas.toDataURL('image/png'));
       };
@@ -6220,14 +6172,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   };
 
   // Force a real file download for Storage URLs (cross-origin URLs ignore the anchor
-  // `download` attr and open in-browser with a token filename). Fetch â†’ blob â†’ same-origin
+  // `download` attr and open in-browser with a token filename). Fetch → blob → same-origin
   // object URL makes `download` + a meaningful filename work. Data URLs (trial watermark)
   // pass through fetch fine. Falls back to opening in a new tab if fetch is CORS-blocked.
   const downloadImage = async (url: string, filename: string) => {
     try {
       const response = await fetch(url);
       if (!response.ok) {
-        console.warn(`downloadImage: fetch returned ${response.status} ${response.statusText} for ${url} â€” falling back to direct link`);
+        console.warn(`downloadImage: fetch returned ${response.status} ${response.statusText} for ${url} — falling back to direct link`);
         throw new Error(`HTTP ${response.status} ${response.statusText}`);
       }
       const blob = await response.blob();
@@ -6272,218 +6224,31 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   if (view === 'privacy') return <PrivacyPolicy onBack={() => setView('app')} />;
 
   return (
-    <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className={`min-h-screen bg-slate-950 text-slate-200 overflow-x-hidden flex flex-col transition-all duration-500 ${lang === 'ar' ? 'font-arabic' : ''}`} style={{ paddingLeft: showSidebar && lang !== 'ar' ? '320px' : '0', paddingRight: showSidebar && lang === 'ar' ? '320px' : '0' }}>
+    <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className={`min-h-screen bg-slate-950 text-slate-200 overflow-x-hidden flex flex-col ${lang === 'ar' ? 'font-arabic' : ''}`}>
       <ToastNotification toast={toast} onClose={() => setToast(null)} />
-      {/* VIDEO POPUP â€” first-time tutorial */}
+      {/* VIDEO POPUP — first-time tutorial */}
       {showVideoPopup && <VideoPopup onComplete={handleVideoComplete} onClose={handleVideoSkip} />}
-      {/* WALKTHROUGH OVERLAY â€” first-time guide */}
+      {/* WALKTHROUGH OVERLAY — first-time guide */}
       {showWalkthrough && (
         <SpotlightTour
           steps={[
             { selector: '[data-tour="stepper"]', title: 'Your progress', desc: 'Track your progress across 5 steps. Each step unlocks after completing the previous one. You can click any unlocked step to jump back.', position: 'bottom' },
             { selector: '[data-tour="credits"]', title: 'Credits balance', desc: 'Each action (hooks, blueprints, renders, scripts) costs credits. Keep an eye on your balance here. Click + to top up.', position: 'bottom' },
             { selector: '[data-tour="product-name"]', title: 'Name your product', desc: 'Enter the name of your product, service, or brand. This is the foundation of every ad we generate.', position: 'bottom' },
-            { selector: '[data-tour="target-avatar"]', title: 'Define your audience', desc: 'Who is your ideal customer? Be specific â€” "Freelancers under $5k/mo" is better than "Everyone".', position: 'bottom' },
+            { selector: '[data-tour="target-avatar"]', title: 'Define your audience', desc: 'Who is your ideal customer? Be specific — "Freelancers under $5k/mo" is better than "Everyone".', position: 'bottom' },
             { selector: '[data-tour="challenge"]', title: 'Their core pain', desc: 'What problem keeps your audience stuck? This becomes the emotional hook of your ad.', position: 'top' },
             { selector: '[data-tour="transformation"]', title: 'The promised result', desc: 'What does life look like AFTER they use your product? Paint a vivid picture of success.', position: 'top' },
             { selector: '[data-tour="photos"]', title: 'Upload your photos', desc: 'Add hero photos of yourself or your client. The AI will place them into professional ad compositions.', position: 'top' },
-            { selector: '[data-tour="submit"]', title: 'Launch the engine', desc: 'When your brief is ready, click here. The AI will generate hooks, blueprints, and visuals â€” all in one flow.', position: 'top' },
+            { selector: '[data-tour="submit"]', title: 'Launch the engine', desc: 'When your brief is ready, click here. The AI will generate hooks, blueprints, and visuals — all in one flow.', position: 'top' },
             { selector: '[data-tour="sidebar-menu"]', title: 'Menu & Dashboard', desc: 'Open this menu to access Performance Dashboard (analytics by hook angle, tone, strategy), Favorites, Team management, Meta Ads connection, and billing.', position: 'bottom' },
           ]}
           onComplete={handleTourComplete}
         />
       )}
 
-      {/* SIDEBAR DRAWER */}
-      <div className={`fixed top-0 ${lang === 'ar' ? 'right-0 border-l' : 'left-0 border-r'} h-full w-80 bg-slate-900 border-slate-800 z-[70] transform transition-transform duration-300 ${showSidebar ? 'translate-x-0' : lang === 'ar' ? 'translate-x-full' : '-translate-x-full'} flex flex-col`}>
-        <div className="p-6 border-b border-slate-800 flex justify-between items-center">
-          <span className="text-xs font-black uppercase tracking-widest text-slate-400">Menu</span>
-          <button onClick={() => setShowSidebar(false)} className="text-slate-500 hover:text-white"><i className="fa-solid fa-xmark"></i></button>
-        </div>
-
-        {/* New Project */}
-        <div className="p-4">
-          <button onClick={createNewProject} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg">
-            <i className="fa-solid fa-plus"></i><span>{t('sidebar.new')}</span>
-          </button>
-        </div>
-
-        {/* Earn Credits */}
-        <EarnCreditsPanel milestones={milestones} onWatchVideo={() => { setShowSidebar(false); setShowVideoPopup(true); }} />
-
-        {/* Navigation */}
-        <div className="px-4 flex-1 overflow-y-auto custom-scrollbar">
-          {/* Watch Demo â€” always accessible */}
-          <button onClick={() => { setShowSidebar(false); setShowVideoPopup(true); }} className="w-full flex items-center gap-3 px-4 py-3 mb-3 rounded-xl text-left bg-gradient-to-r from-blue-600/10 to-purple-600/10 border border-blue-500/15 hover:border-blue-500/30 transition-all group">
-            <span className="w-9 h-9 rounded-lg bg-blue-500/15 flex items-center justify-center"><i className="fa-solid fa-play text-blue-400 text-sm"></i></span>
-            <div className="flex-1">
-              <p className="text-[11px] font-bold text-white group-hover:text-blue-400 transition-colors">Watch Demo</p>
-              <p className="text-[8px] text-slate-500">Learn how to create ads in minutes</p>
-            </div>
-            {!milestones.watchVideo && <span className="text-[7px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">+2 <i className="fa-solid fa-coins text-[6px]"></i></span>}
-          </button>
-
-          <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-3">Account</p>
-          <div className="space-y-1">
-            <button onClick={() => { setShowSidebar(false); handleManageBilling(); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
-              <span className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center"><i className="fa-solid fa-credit-card text-emerald-400 text-xs"></i></span>
-              <div>
-                <p className="text-[11px] font-bold text-white group-hover:text-emerald-400 transition-colors">Manage Billing</p>
-                <p className="text-[8px] text-slate-500">{userPlan.charAt(0).toUpperCase() + userPlan.slice(1)} Plan &middot; <i className="fa-solid fa-coins text-[7px] text-amber-500"></i> {userCredits}</p>
-              </div>
-            </button>
-            <button onClick={() => { setShowSidebar(false); setShowSettingsModal(true); setSettingsEditingName(false); setSettingsEditingEmail(false); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
-              <span className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center"><i className="fa-solid fa-gear text-amber-400 text-xs"></i></span>
-              <div>
-                <p className="text-[11px] font-bold text-white group-hover:text-amber-400 transition-colors">Settings</p>
-                <p className="text-[8px] text-slate-500">Email, password, preferences</p>
-              </div>
-            </button>
-            {!teamOwnerUid && <button onClick={() => { setShowSidebar(false); setShowTeamModal(true); loadTeamMembers(); loadTeamInvites(); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
-              <span className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center"><i className="fa-solid fa-user-plus text-emerald-400 text-xs"></i></span>
-              <div>
-                <p className="text-[11px] font-bold text-white group-hover:text-emerald-400 transition-colors">Team</p>
-                <p className="text-[8px] text-slate-500">Invite &amp; manage members</p>
-              </div>
-            </button>}
-            {/* â”€â”€â”€ META ADS CONNECTION â”€â”€â”€â”€â”€ */}
-            {metaConnection?.connected ? (
-              <div className="w-full px-4 py-3 rounded-xl bg-blue-500/5 border border-blue-500/10">
-                <div className="flex items-center gap-3">
-                  <span className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center"><i className="fa-brands fa-meta text-blue-400 text-xs"></i></span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[11px] font-bold text-blue-400">Meta Ads Connected</p>
-                    <p className="text-[8px] text-slate-500 truncate">{metaConnection.adAccounts?.find((a: any) => a.id === metaConnection.selectedAccountId)?.name || 'Select an account'}</p>
-                  </div>
-                </div>
-                {/* Account Picker */}
-                {metaConnection.adAccounts?.length > 1 && (
-                  <select
-                    value={metaConnection.selectedAccountId || ''}
-                    onChange={async (e) => {
-                      const accountId = e.target.value;
-                      await metaService.selectAccount(accountId);
-                      setMetaConnection(prev => prev ? { ...prev, selectedAccountId: accountId } : prev);
-                      showToast(`Switched to ${metaConnection.adAccounts?.find((a: any) => a.id === accountId)?.name || accountId}`, 'success');
-                    }}
-                    className="w-full mt-2 bg-slate-900 border border-slate-700/50 rounded-lg px-3 py-2 text-[10px] text-slate-300 outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    {metaConnection.adAccounts.map((acc: any) => (
-                      <option key={acc.id} value={acc.id}>{acc.name} ({acc.currency})</option>
-                    ))}
-                  </select>
-                )}
-                <div className="flex gap-2 mt-2.5">
-                  <button
-                    onClick={async () => {
-                      if (!metaConnection.selectedAccountId) {
-                        showToast('Select an ad account first.', 'error');
-                        return;
-                      }
-                      setMetaSyncing(true);
-                      showToast('Syncing ad performance...', 'info');
-                      const result = await metaService.syncPerformance(canUseWorkspaces ? activeWorkspaceId : null);
-                      setMetaSyncing(false);
-                      if (result.success) showToast(`Synced ${result.adsSynced} ads!`, 'success');
-                      else showToast('Sync failed. Try again.', 'error');
-                    }}
-                    disabled={metaSyncing}
-                    className="flex-1 py-1.5 rounded-lg bg-blue-600/10 text-blue-400 text-[8px] font-bold hover:bg-blue-600/20 transition-all disabled:opacity-50"
-                  >
-                    <i className={`fa-solid ${metaSyncing ? 'fa-spinner fa-spin' : 'fa-arrows-rotate'} mr-1`}></i>
-                    {metaSyncing ? 'Syncing...' : 'Sync Now'}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      if (confirm('Disconnect Meta Ads? This will remove all synced performance data.')) {
-                        await metaService.disconnect();
-                        setMetaConnection({ connected: false, adAccounts: [], selectedAccountId: null, connectedAt: null, lastSyncAt: null, status: '', tokenExpiring: false });
-                        showToast('Meta Ads disconnected.', 'info');
-                      }
-                    }}
-                    className="px-2.5 py-1.5 rounded-lg bg-slate-800/60 text-slate-500 text-[8px] font-bold hover:text-red-400 hover:bg-red-500/10 transition-all"
-                  >
-                    <i className="fa-solid fa-link-slash"></i>
-                  </button>
-                </div>
-                {metaConnection.tokenExpiring && (
-                  <p className="text-[8px] text-amber-400 mt-2"><i className="fa-solid fa-triangle-exclamation mr-1"></i>Token expiring soon â€” reconnect to refresh</p>
-                )}
-              </div>
-            ) : (
-              <button
-                onClick={async () => {
-                  if (!user) return;
-                  showToast('Connecting to Meta Ads...', 'info');
-                  const connected = await metaService.startOAuthFlow(user.uid);
-                  if (connected) {
-                    const conn = await metaService.getConnection();
-                    setMetaConnection(conn);
-                    showToast(`Meta Ads connected! ${conn.adAccounts?.length || 0} account(s) found.`, 'success');
-                  }
-                }}
-                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-blue-500/5 border border-transparent hover:border-blue-500/20 transition-all group"
-              >
-                <span className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center"><i className="fa-brands fa-meta text-blue-400 text-xs"></i></span>
-                <div>
-                  <p className="text-[11px] font-bold text-white group-hover:text-blue-400 transition-colors">Connect Meta Ads</p>
-                  <p className="text-[8px] text-slate-500">Track real ad performance</p>
-                </div>
-              </button>
-            )}
-          </div>
-
-          {/* â”€â”€â”€ PERFORMANCE DASHBOARD â”€â”€â”€â”€â”€ */}
-          <div className="mt-4 px-0">
-            <button onClick={() => { if (getFeatureLevel(userPlan, 'performanceDashboard') === 'none') { setUpgradeReason(`Performance Dashboard requires ${requiredPlanFor('performanceDashboard')} plan`); setShowUpgradeModal(true); return; } setShowSidebar(false); setShowDashboard(true); }} className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left bg-gradient-to-r from-blue-600/10 to-purple-600/10 border border-blue-500/15 hover:border-blue-500/30 transition-all group">
-              <span className="w-9 h-9 rounded-lg bg-blue-500/15 flex items-center justify-center"><i className="fa-solid fa-chart-pie text-blue-400 text-sm"></i></span>
-              <div className="flex-1">
-                <p className="text-[11px] font-bold text-white group-hover:text-blue-400 transition-colors">{t('dashboard.title')}</p>
-                <p className="text-[8px] text-slate-500">{t('dashboard.subtitle')}</p>
-              </div>
-              <i className="fa-solid fa-arrow-right text-[9px] text-slate-600 group-hover:text-blue-400 transition-all group-hover:translate-x-0.5"></i>
-            </button>
-          </div>
-
-          <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-3 mt-6">Support</p>
-          <div className="space-y-1">
-            <button onClick={() => { setShowSidebar(false); if ((window as any).Tawk_API?.maximize) (window as any).Tawk_API.maximize(); else window.open('https://tawk.to/chat/YOUR_TAWK_ID', '_blank'); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
-              <span className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center"><i className="fa-solid fa-headset text-amber-400 text-xs"></i></span>
-              <div>
-                <p className="text-[11px] font-bold text-white group-hover:text-amber-400 transition-colors">Help & Support</p>
-                <p className="text-[8px] text-slate-500">Chat with our team</p>
-              </div>
-            </button>
-            <button onClick={() => { setShowSidebar(false); setShowChangelogModal(true); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
-              <span className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center"><i className="fa-solid fa-sparkles text-amber-400 text-xs"></i></span>
-              <div>
-                <p className="text-[11px] font-bold text-white group-hover:text-amber-400 transition-colors">What's New</p>
-                <p className="text-[8px] text-slate-500">Latest features &amp; updates</p>
-              </div>
-            </button>
-            <button onClick={() => showToast('Referral program launching soon! You\'ll earn free credits for every friend you invite.', 'info')} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left hover:bg-slate-800/60 transition-all group relative">
-              <span className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center"><i className="fa-solid fa-gift text-amber-400 text-xs"></i></span>
-              <div>
-                <p className="text-[11px] font-bold text-white group-hover:text-amber-400 transition-colors">Refer a Friend</p>
-                <p className="text-[8px] text-slate-500">Earn free credits</p>
-              </div>
-              <span className="absolute top-2 right-3 text-[7px] font-black uppercase px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400">Soon</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="p-4 border-t border-slate-800">
-          <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left hover:bg-red-500/10 transition-all group">
-            <i className="fa-solid fa-right-from-bracket text-slate-600 group-hover:text-red-400 text-xs"></i>
-            <span className="text-[10px] font-bold text-slate-500 group-hover:text-red-400 transition-colors">Sign Out</span>
-          </button>
-        </div>
-      </div>
-
-      <nav className={`border-b border-white/[0.06] bg-slate-950 sticky top-0 z-[60] transition-[margin] duration-200 ease-out md:${showMenuDrawer ? 'me-[280px]' : ''} md:${showHistoryPanel ? 'ms-[280px]' : ''}`}>
+      <nav className="border-b border-white/[0.06] bg-slate-950 sticky top-0 z-[60]">
         <div className="max-w-[1400px] mx-auto px-6 md:px-10 h-16 flex items-center justify-between">
-          {/* â”€â”€ LEFT (Context): Logo + Workspace â”€â”€ */}
+          {/* ── LEFT (Context): Logo + Workspace ── */}
           <div className="flex items-center gap-2.5">
             <div
               className="cursor-pointer"
@@ -6510,7 +6275,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             <SaveStatusIndicator state={autoSaveState} onRetry={autoSaveRetry} />
           </div>
 
-          {/* â”€â”€ CENTER (Workflow): Step tabs â€” visual focus of the bar â”€â”€ */}
+          {/* ── CENTER (Workflow): Step tabs — visual focus of the bar ── */}
           <div className="hidden md:flex items-center gap-1.5" data-tour="stepper">
             {steps.map((s, idx) => {
               const active = phase === s.id;
@@ -6545,13 +6310,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             })}
           </div>
 
-          {/* â”€â”€ Mobile stepper (pill) â”€â”€ */}
+          {/* ── Mobile stepper (pill) ── */}
           <div className="flex md:hidden items-center gap-2">
             <span className="text-[10px] font-bold text-blue-400">{t(steps.find(s => s.id === phase)?.tKey || 'step.brief')}</span>
             <span className="text-[10px] text-slate-600">{steps.findIndex(s => s.id === phase) + 1}/{steps.length}</span>
           </div>
 
-          {/* â”€â”€ RIGHT (Tools): Credits + single More dropdown â”€â”€ */}
+          {/* ── RIGHT (Tools): Credits + single More dropdown ── */}
           <div className="flex items-center gap-2">
             <button onClick={() => { setUpgradeReason(''); setShowUpgradeModal(true); }}
               className="flex items-center gap-1.5 h-9 px-3 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] transition-colors"
@@ -6576,132 +6341,18 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         </div>
       </nav>
 
-      {/* Phase 26 Batch 6 Revision 3 - persistent sidebar (no backdrop).
-          Slides in from the right (LTR) / left (RTL). z-55 so the top nav
-          (z-60) stays visible above the sidebar. \*/}
-      <SideDrawer
-        open={showMenuDrawer}
-        onClose={() => setShowMenuDrawer(false)}
-        title={t('history.menu_title')}
-        subtitle={user?.email ?? ''}
-        closeLabel={t('common.close')}
-        backdrop={false}
-      >
-        {/* Section: Account */}
-        <div className="px-5 py-4 border-b border-white/[0.04] bg-slate-900/40">
-          <p className="text-[10px] text-slate-400 truncate">{user?.email}</p>
-          <p className="text-[9px] text-blue-400 font-bold uppercase mt-1">{PLANS[userPlan]?.name || 'Free'} {t('header.plan')}</p>
-        </div>
-        {/* Section: Quick actions */}
-        <button
-          onClick={() => { if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); } setShowMenuDrawer(false); }}
-          className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-          role="menuitem"
-        >
-          <i className="fa-solid fa-plus text-slate-500 w-5 text-center"></i> {t('history.newProject')}
-        </button>
-        <button
-          onClick={async () => {
-            setShowMenuDrawer(false);
-            setShowFavorites(true);
-            setFavoritesLoading(true);
-            try {
-              const uid = user?.uid;
-              if (!uid) return;
-              try {
-                const fSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), where('feedback.savedToFavorites', '==', true), orderBy('timestamp', 'desc'), limit(50)));
-                setFavoritesData(fSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-              } catch (indexErr) {
-                console.warn('Favorites index query failed, using fallback:', indexErr);
-                try {
-                  const fallbackSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), orderBy('timestamp', 'desc'), limit(200)));
-                  const allGens = fallbackSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-                  setFavoritesData(allGens.filter((g: any) => g.feedback?.savedToFavorites === true));
-                } catch (fallbackErr) {
-                  console.error('Fallback favorites query also failed:', fallbackErr);
-                  setFavoritesData([]);
-                }
-              }
-            } catch (e) { console.warn('Failed to load favorites:', e); }
-            finally { setFavoritesLoading(false); }
-          }}
-          className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-          role="menuitem"
-        >
-          <i className="fa-solid fa-bookmark text-slate-500 w-5 text-center"></i> {t('topbar.menu_bookmarks')}
-        </button>
-        <button
-          onClick={() => { setShowSettingsModal(true); setSettingsEditingName(false); setSettingsEditingEmail(false); setShowMenuDrawer(false); }}
-          className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-          role="menuitem"
-        >
-          <i className="fa-solid fa-gear text-slate-500 w-5 text-center"></i> {t('topbar.menu_settings')}
-        </button>
-        {/* Divider */}
-        <div className="border-t border-white/[0.04]"></div>
-        {/* Section: Appearance / locale */}
-        <button
-          onClick={() => { toggleTheme(); setShowMenuDrawer(false); }}
-          className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-          role="menuitem"
-        >
-          <i className={`fa-solid ${isDarkMode ? 'fa-sun' : 'fa-moon'} text-slate-500 w-5 text-center`}></i> {isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
-        </button>
-        <button
-          onClick={() => { setLang(lang === 'en' ? 'ar' : 'en'); setShowMenuDrawer(false); }}
-          className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-          role="menuitem"
-        >
-          <i className="fa-solid fa-language text-slate-500 w-5 text-center"></i> {t('topbar.menu_language')} ({t('lang.switch_short')})
-        </button>
-        {!milestones.watchVideo && (
-          <button
-            onClick={() => { setShowVideoPopup(true); setShowMenuDrawer(false); }}
-            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-            role="menuitem"
-          >
-            <i className="fa-solid fa-play text-amber-500 w-5 text-center"></i> {t('topbar.menu_tutorial')}
-          </button>
-        )}
-        {phase === 'input' && (
-          <button
-            onClick={() => { setShowWalkthrough(true); setShowMenuDrawer(false); }}
-            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-            role="menuitem"
-          >
-            <i className="fa-solid fa-circle-question text-slate-500 w-5 text-center"></i> {t('topbar.menu_tour')}
-          </button>
-        )}
-        {/* Divider */}
-        <div className="border-t border-white/[0.04]"></div>
-        {/* Section: Plan / logout */}
-        <button
-          onClick={() => { handleManageBilling(); setShowMenuDrawer(false); }}
-          className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-          role="menuitem"
-        >
-          <i className="fa-solid fa-credit-card text-slate-500 w-5 text-center"></i> {t('header.manage_billing')}
-        </button>
-        <button
-          onClick={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }}
-          className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-          role="menuitem"
-        >
-          <i className="fa-solid fa-arrow-up text-slate-500 w-5 text-center"></i> {t('header.upgrade')}
-        </button>
-        <div className="border-t border-white/[0.04]"></div>
-        <button
-          onClick={() => { handleLogout(); setShowMenuDrawer(false); }}
-          className="w-full px-5 py-3 text-start text-[12px] text-red-500/70 hover:bg-red-500/5 hover:text-red-400 transition-all flex items-center gap-3"
-          role="menuitem"
-        >
-          <i className="fa-solid fa-right-from-bracket w-5 text-center"></i> {t('header.logout')}
-        </button>
-      </SideDrawer>
 
 
+
+      {/* Main + Sidebar flex container.
+           - Top nav above this row stays full width (no margin shift).
+           - main is flex-1 so it fills whatever space the sidebar doesn't claim.
+           - aside is a plain flex sibling that animates its own width.
+           - The History side panel (SideDrawer below) is still a slide-in
+             overlay; only the menu lives here as a flex column. */}
+      <div className="flex flex-1 overflow-hidden min-h-0">
       {/* Main Content Render Logic */}
-      <main className={`flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative w-full transition-[margin] duration-200 ease-out md:${showMenuDrawer ? 'me-[280px]' : ''} md:${showHistoryPanel ? 'ms-[280px]' : ''}`}>
+      <main className="flex-1 min-w-0 overflow-y-auto max-w-[1400px] w-full mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative">
         {isLoading && (
           <div className="fixed inset-0 bg-slate-950/98 z-[100] flex flex-col items-center justify-center text-center">
             <div className="relative w-32 h-32 mb-12">
@@ -6712,9 +6363,9 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           </div>
         )}
 
-{/* â•â•â• HISTORY TRIGGER + SIDE PANEL (Phase 26 Batch 6 revision) â•â•â•
+{/* ═══ HISTORY TRIGGER + SIDE PANEL (Phase 26 Batch 6 revision) ═══
                 Phase 26 Batch 5: the flat saved-projects list was removed.
-                Batch 6 Revision: the inline history grid is GONE â€” the
+                Batch 6 Revision: the inline history grid is GONE — the
                 Brief form is now the main content, and History lives in a
                 left-side drawer that opens from a "History (N)" trigger
                 button beside the "+ New Project" button. Saved projects are
@@ -6748,10 +6399,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   <i className="fa-solid fa-circle-info text-amber-400 mt-0.5"></i>
                   <p className="flex-1 text-[11px] leading-relaxed text-amber-200/90 font-medium">
                     {lang === 'ar'
-                      ? `ÙˆØµÙ„Øª Ø¥Ù„Ù‰ Ø­Ø¯ ${capLabel} Ù…Ø´Ø§Ø±ÙŠØ¹. Ø§Ø­Ø°Ù Ù…Ø´Ø§Ø±ÙŠØ¹ Ù‚Ø¯ÙŠÙ…Ø© Ù„Ø­ÙØ¸ Ù…Ø´Ø§Ø±ÙŠØ¹ Ø¬Ø¯ÙŠØ¯Ø©.`
+                      ? `وصلت إلى حد ${capLabel} مشاريع. احذف مشاريع قديمة لحفظ مشاريع جديدة.`
                       : `You've reached your ${capLabel}-project limit. Delete old projects to save new ones.`}
                   </p>
-                  <button onClick={() => setProjectLimitReached(false)} aria-label={lang === 'ar' ? 'Ø¥ØºÙ„Ø§Ù‚' : 'Dismiss'}
+                  <button onClick={() => setProjectLimitReached(false)} aria-label={lang === 'ar' ? 'إغلاق' : 'Dismiss'}
                     className="text-amber-400/60 hover:text-amber-300 transition-colors shrink-0">
                     <i className="fa-solid fa-xmark"></i>
                   </button>
@@ -6761,7 +6412,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           </div>
         )}
 
-        {/* History side panel â€” renders GenerationHistory inside a left-edge
+        {/* History side panel — renders GenerationHistory inside a left-edge
             drawer. Slides in from the left in LTR, right in RTL (handled by
             the SideDrawer's `side="start"` anchor, which uses Tailwind
             `start-0`/`end-0`). When a card is clicked the panel also closes
@@ -6786,7 +6437,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           </SideDrawer>
         )}
 
-        {/* Quick-Start Templates â€” always available on input phase */}
+        {/* Quick-Start Templates — always available on input phase */}
         {phase === 'input' && (
           <div className="max-w-3xl mx-auto mb-6">
             <details className="bg-slate-900/30 border border-slate-800/30 rounded-2xl overflow-hidden group">
@@ -6798,10 +6449,10 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               <div className="px-6 pb-5 pt-2">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {[
-                    { emoji: 'ðŸ’ª', nameAr: t('demo.weight_loss.nameAr'), name: 'Weight Loss Coach', product: t('demo.weight_loss.product'), category: 'Online fitness coaching', audience: t('demo.weight_loss.audience'), challenges: t('demo.weight_loss.challenges'), transformation: 'From tired & frustrated body to fit & confident in 90 days', offer: 'Nutrition program + home workouts + weekly follow-ups', offerType: 'Mini-Course', cta: t('default.cta'), badges: '', universe: 'Modern Bright Gym', hookAngle: 'emotional', hookType: 'transformation_promise', copyStrategy: 'problem_awareness', creativeMode: ['standard_hero'] },
-                    { emoji: 'ðŸ“ˆ', nameAr: t('demo.business.nameAr'), name: 'Business Mentor', product: t('demo.business.product'), category: 'Business mentorship', audience: t('demo.business.audience'), challenges: t('demo.business.challenges'), transformation: 'From struggling freelancer to business owner making $100,000+/mo', offer: '12-week mastermind + 1-on-1 sessions + private community', offerType: 'Mini-Course', cta: t('default.cta'), badges: '', universe: 'Executive Corner Office', hookAngle: 'social_proof', hookType: 'shocking_stat', copyStrategy: 'authority_builder', creativeMode: ['standard_hero', 'value_stack'] },
-                    { emoji: 'ðŸŽ¨', nameAr: t('demo.design.nameAr'), name: 'Design Course', product: t('demo.design.product'), category: 'Online design course', audience: t('demo.design.audience'), challenges: t('demo.design.challenges'), transformation: 'From beginner working for free to designer earning $2000+/mo', offer: '8-week course + real projects + certificate', offerType: 'Mini-Course', cta: t('default.cta'), badges: '', universe: 'Creative Studio Workspace', hookAngle: 'curiosity', hookType: 'curiosity_gap', copyStrategy: 'beginner_awareness', creativeMode: ['standard_hero'] },
-                    { emoji: 'ðŸ ', nameAr: t('demo.realestate.nameAr'), name: 'Real Estate', product: t('demo.realestate.product'), category: 'Real estate', audience: t('demo.realestate.audience'), challenges: t('demo.realestate.challenges'), transformation: 'From exhausting search to your dream apartment with easy installments', offer: '150m+ apartments in top compounds, installments up to 8 years', offerType: 'Free Guide', cta: t('default.cta'), badges: '', universe: 'Luxury Home Living Room', hookAngle: 'urgency', hookType: 'pain_point', copyStrategy: 'product_awareness', creativeMode: ['standard_hero'] },
+                    { emoji: '💪', nameAr: t('demo.weight_loss.nameAr'), name: 'Weight Loss Coach', product: t('demo.weight_loss.product'), category: 'Online fitness coaching', audience: t('demo.weight_loss.audience'), challenges: t('demo.weight_loss.challenges'), transformation: 'From tired & frustrated body to fit & confident in 90 days', offer: 'Nutrition program + home workouts + weekly follow-ups', offerType: 'Mini-Course', cta: t('default.cta'), badges: '', universe: 'Modern Bright Gym', hookAngle: 'emotional', hookType: 'transformation_promise', copyStrategy: 'problem_awareness', creativeMode: ['standard_hero'] },
+                    { emoji: '📈', nameAr: t('demo.business.nameAr'), name: 'Business Mentor', product: t('demo.business.product'), category: 'Business mentorship', audience: t('demo.business.audience'), challenges: t('demo.business.challenges'), transformation: 'From struggling freelancer to business owner making $100,000+/mo', offer: '12-week mastermind + 1-on-1 sessions + private community', offerType: 'Mini-Course', cta: t('default.cta'), badges: '', universe: 'Executive Corner Office', hookAngle: 'social_proof', hookType: 'shocking_stat', copyStrategy: 'authority_builder', creativeMode: ['standard_hero', 'value_stack'] },
+                    { emoji: '🎨', nameAr: t('demo.design.nameAr'), name: 'Design Course', product: t('demo.design.product'), category: 'Online design course', audience: t('demo.design.audience'), challenges: t('demo.design.challenges'), transformation: 'From beginner working for free to designer earning $2000+/mo', offer: '8-week course + real projects + certificate', offerType: 'Mini-Course', cta: t('default.cta'), badges: '', universe: 'Creative Studio Workspace', hookAngle: 'curiosity', hookType: 'curiosity_gap', copyStrategy: 'beginner_awareness', creativeMode: ['standard_hero'] },
+                    { emoji: '🏠', nameAr: t('demo.realestate.nameAr'), name: 'Real Estate', product: t('demo.realestate.product'), category: 'Real estate', audience: t('demo.realestate.audience'), challenges: t('demo.realestate.challenges'), transformation: 'From exhausting search to your dream apartment with easy installments', offer: '150m+ apartments in top compounds, installments up to 8 years', offerType: 'Free Guide', cta: t('default.cta'), badges: '', universe: 'Luxury Home Living Room', hookAngle: 'urgency', hookType: 'pain_point', copyStrategy: 'product_awareness', creativeMode: ['standard_hero'] },
                   ].map((d, i) => (
                     <button key={i} onClick={() => { setPhase('input'); setTovText(''); setSelectedTov(''); setConceptsText(''); setSelectedConcept(''); setBuildPlan(''); setMockupHistory([]); setHistoryIndex(-1); setCaptionText(''); setBatchResults([]); setCarouselSlides([]); setInputs({ productName: d.product, productCategory: d.category, targetAudience: d.audience, challenges: d.challenges, transformation: d.transformation, offerType: d.offerType, cta: d.cta, badges: d.badges || '', campaignType: 'cold', coldHookAngle: d.hookAngle, hookType: d.hookType, copywritingStrategy: d.copyStrategy, offerCreativeMode: d.creativeMode, aspectRatio: '1:1', universeMode: 'realistic', visualStyleFamily: 'realistic', preferredUniverse: d.universe || '', adLanguage: 'ar_egyptian', adMode: 'single', slideCount: 1, retargetingObjection: undefined, retargetingObjections: [], customObjection: '', testimonial: '', brandUrl: '', brandColorPrimary: '', brandColorSecondary: '', personalPhotos: [], brandLogos: [] } as any); setCurrentProjectId(`tpl-${Date.now()}`); showToast(`Template loaded: ${d.nameAr}`, 'success'); }}
                       className="group/tpl bg-slate-950/40 border border-slate-800/40 rounded-2xl p-4 text-center hover:border-blue-500/30 hover:bg-blue-500/5 transition-all space-y-2">
@@ -6840,7 +6491,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         {phase === 'tov_review' && (
           <div className="space-y-16 animate-in fade-in slide-in-from-bottom-12 duration-1000 max-w-5xl mx-auto relative">
             <button onClick={handleBack} className={`absolute -top-12 ${lang === 'ar' ? 'right-0' : 'left-0'} bg-slate-900/60 px-5 py-2.5 rounded-xl text-[10px] font-semibold text-slate-500 hover:text-white transition-all shadow-xl flex items-center ${lang === 'ar' ? 'flex-row-reverse' : ''} space-x-2`}>
-              <i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'}`}></i><span>{lang === 'ar' ? 'Ø±Ø¬ÙˆØ¹' : 'Back'}</span>
+              <i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'}`}></i><span>{lang === 'ar' ? 'رجوع' : 'Back'}</span>
             </button>
             <header className="text-center space-y-4 pt-10">
               <h2 className="text-5xl md:text-6xl font-black text-white italic tracking-tighter uppercase leading-none">
@@ -6890,7 +6541,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                     </div>
                     <ul className="space-y-0.5">
                       {globalRefinement.split('\n').filter(Boolean).map((line, i) => (
-                        <li key={i} className="text-[11px] text-slate-300 leading-snug">â€¢ {line}</li>
+                        <li key={i} className="text-[11px] text-slate-300 leading-snug">• {line}</li>
                       ))}
                     </ul>
                   </div>
@@ -6909,7 +6560,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 </button>
               </div>
 
-              {/* â”€â”€â”€ COMPETITOR INTEL PANEL (Step 2) â”€â”€â”€ */}
+              {/* ─── COMPETITOR INTEL PANEL (Step 2) ─── */}
               {competitorData && competitorData.competitors?.length > 0 && (
                 <details className="max-w-xl mx-auto mt-4 bg-slate-900/40 border border-amber-500/10 rounded-2xl overflow-hidden group">
                   <summary className="px-6 py-4 cursor-pointer text-[10px] font-black uppercase tracking-widest text-amber-400/70 hover:text-amber-400 transition-colors flex items-center gap-2">
@@ -6967,11 +6618,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               )}
             </header>
 
-            {/* â•â•â• CAROUSEL MODE: Show Story Angles â•â•â• */}
+            {/* ═══ CAROUSEL MODE: Show Story Angles ═══ */}
             {inputs?.adMode === 'carousel' && (inputs?.slideCount || 1) > 1 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
                 {['A', 'B', 'C', 'D'].map((v) => {
-                  // â”€â”€â”€ ROBUST BLOCK EXTRACTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                  // ─── ROBUST BLOCK EXTRACTION ─────────────────────
                   // Try ANGLE markers first, then HOOK markers
                   let raw = getSection(tovText, `ANGLE_START_${v}`, `ANGLE_END_${v}`);
                   if (!raw.trim()) raw = getSection(tovText, `HOOK_START_${v}`, `HOOK_END_${v}`);
@@ -6982,12 +6633,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   }
                   raw = (raw || '').replace(/\*\*/g, '').replace(/```/g, '');
 
-                  // â”€â”€â”€ LINE-BY-LINE FIELD EXTRACTION (most reliable) â”€â”€â”€â”€â”€
+                  // ─── LINE-BY-LINE FIELD EXTRACTION (most reliable) ─────
                   const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
                   const getField = (key: string): string => {
                     const line = lines.find(l => l.toUpperCase().startsWith(key.toUpperCase()));
                     if (!line) return '';
-                    return line.replace(new RegExp(`^${key}\\s*[:ï¼š]?\\s*`, 'i'), '').replace(/\*\*/g, '').trim();
+                    return line.replace(new RegExp(`^${key}\\s*[:：]?\\s*`, 'i'), '').replace(/\*\*/g, '').trim();
                   };
 
                   const hookText = getField('HOOK_TEXT');
@@ -7022,7 +6673,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                           {/* Angle Label */}
                           <div className="flex items-center justify-between">
                             <span className={`text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full ${v === 'A' ? 'bg-blue-500/20 text-blue-400' : v === 'B' ? 'bg-purple-500/20 text-purple-400' : v === 'C' ? 'bg-green-500/20 text-green-400' : 'bg-orange-500/20 text-orange-400'}`}>
-                              Angle {v} â€¢ {angleLabels[v]}
+                              Angle {v} • {angleLabels[v]}
                             </span>
                             <span className="text-[9px] font-bold text-slate-600 bg-slate-800/60 px-2 py-0.5 rounded-lg">
                               <i className="fa-solid fa-layer-group mr-1"></i>{inputs?.slideCount || 5} slides
@@ -7031,7 +6682,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
                           {/* Hook (Slide 1) */}
                           <div dir="rtl" className="arabic-text text-2xl font-black text-white leading-tight text-right">
-                            {hookText || "âš ï¸ Angle unavailable"}
+                            {hookText || "⚠️ Angle unavailable"}
                           </div>
                           {subhead && <div dir="rtl" className="arabic-text text-sm text-slate-400 font-medium leading-relaxed italic text-right">{subhead}</div>}
 
@@ -7071,7 +6722,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               </div>
             ) : (
 
-              /* â•â•â• SINGLE IMAGE MODE: Show Hook Cards â•â•â• */
+              /* ═══ SINGLE IMAGE MODE: Show Hook Cards ═══ */
               <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
                 {['A', 'B', 'C', 'D'].map((v) => {
                   const raw = getSection(tovText, `HOOK_START_${v}`, `HOOK_END_${v}`);
@@ -7091,7 +6742,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   // Phase 24B (FR-006 / US1): the three optional copy fields are
                   // normalized to `null` (never "" / never t('default.cta')) when the
                   // parser produces empty/whitespace output. hookText remains a
-                  // required string â€” the `"âš ï¸ Hook unavailable"` fallback below
+                  // required string — the `"⚠️ Hook unavailable"` fallback below
                   // is the only place hookText can appear empty, and it stays a
                   // required sentinel on the render path.
                   //
@@ -7107,7 +6758,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
                   const actionBlockRaw =
                     getSection(activeBlock, "CTA_BUTTON", "HOOK_END") ||
-                    (activeBlock.match(/CTA[_\s]*BUTTON\s*[:ï¼š]?\s*([\s\S]*?)(?:HOOK[_\s]*END|$)/i)?.[1] ?? '') ||
+                    (activeBlock.match(/CTA[_\s]*BUTTON\s*[:：]?\s*([\s\S]*?)(?:HOOK[_\s]*END|$)/i)?.[1] ?? '') ||
                     '';
 
                   const actionClean = normalize(actionBlockRaw);
@@ -7154,7 +6805,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                                 v === 'C' ? 'bg-green-500/20 text-green-400' :
                                   'bg-orange-500/20 text-orange-400'
                               }`}>
-                              Hook {v} {v === 'A' && hasVaultData && <span className="ml-1 text-[7px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/20 normal-case tracking-normal">ðŸ“Š Based on data</span>} â€¢ {(() => {
+                              Hook {v} {v === 'A' && hasVaultData && <span className="ml-1 text-[7px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/20 normal-case tracking-normal">📊 Based on data</span>} • {(() => {
                                 // Use the user's selected angle if available
                                 if (inputs?.coldHookAngle) {
                                   const angle = COLD_HOOK_ANGLES.find(a => a.id === inputs.coldHookAngle);
@@ -7207,14 +6858,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                             </div>
                           ) : (
                             <div className="space-y-4 flex-1">
-                              {/* hookText render path is UNTOUCHED per US1 brief â€” the
-                                 `"âš ï¸ Hook unavailable"` fallback remains the only place
+                              {/* hookText render path is UNTOUCHED per US1 brief — the
+                                 `"⚠️ Hook unavailable"` fallback remains the only place
                                  hookText can appear empty (it's the required identity).
-                                 The regenerate button always renders â€” hookText is never
+                                 The regenerate button always renders — hookText is never
                                  absent, so there is always a regenerate affordance. */}
                               <div className="flex items-start gap-2 group/field">
-                                <div dir="rtl" className="arabic-text text-3xl font-black text-white leading-tight text-right flex-1">{renderHighlightedText(hookText || (isLoadingItem ? "...Generating Headline" : "âš ï¸ Hook unavailable"))}</div>
-                                <button onClick={() => handlePrecisionHookEdit(v, 'Regenerate the HOOK_TEXT headline. Write a COMPLETELY DIFFERENT headline â€” different opening word, different psychological angle, different emotional trigger. Do NOT keep the same approach. Keep the subheadline, CTA, and benefit EXACTLY as they are.')}
+                                <div dir="rtl" className="arabic-text text-3xl font-black text-white leading-tight text-right flex-1">{renderHighlightedText(hookText || (isLoadingItem ? "...Generating Headline" : "⚠️ Hook unavailable"))}</div>
+                                <button onClick={() => handlePrecisionHookEdit(v, 'Regenerate the HOOK_TEXT headline. Write a COMPLETELY DIFFERENT headline — different opening word, different psychological angle, different emotional trigger. Do NOT keep the same approach. Keep the subheadline, CTA, and benefit EXACTLY as they are.')}
                                   className="opacity-0 group-hover/field:opacity-100 transition-opacity shrink-0 w-6 h-6 rounded-lg bg-slate-800/80 hover:bg-blue-600 text-slate-500 hover:text-white text-[8px] flex items-center justify-center" title="Retry headline only">
                                   <i className="fa-solid fa-rotate-right"></i>
                                 </button>
@@ -7222,13 +6873,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                               {/* Phase 24B (US1 / FR-003 / FR-004): absent optional fields
                                  render ZERO DOM nodes (no empty container, no placeholder,
                                  no orphan label). The regenerate button is HIDDEN (not
-                                 disabled) when the field is null â€” there is nothing to
+                                 disabled) when the field is null — there is nothing to
                                  regenerate. The Arabic `dir="rtl"` is kept on the
                                  inner div but only renders when subhead is present. */}
                               {subhead !== null && (
                                 <div className="flex items-start gap-2 group/field">
                                   <div dir="rtl" className="arabic-text text-base text-slate-400 font-medium leading-relaxed italic text-right flex-1">{renderHighlightedText(subhead)}</div>
-                                  <button onClick={() => handlePrecisionHookEdit(v, 'Regenerate the SUBHEADLINE. Write a COMPLETELY DIFFERENT subheadline â€” different supporting angle, different mechanism, different benefit point. Do NOT reuse similar wording. Keep the HOOK_TEXT headline, CTA, and benefit EXACTLY unchanged.')}
+                                  <button onClick={() => handlePrecisionHookEdit(v, 'Regenerate the SUBHEADLINE. Write a COMPLETELY DIFFERENT subheadline — different supporting angle, different mechanism, different benefit point. Do NOT reuse similar wording. Keep the HOOK_TEXT headline, CTA, and benefit EXACTLY unchanged.')}
                                     className="opacity-0 group-hover/field:opacity-100 transition-opacity shrink-0 w-6 h-6 rounded-lg bg-slate-800/80 hover:bg-blue-600 text-slate-500 hover:text-white text-[8px] flex items-center justify-center" title="Retry subheadline only">
                                     <i className="fa-solid fa-rotate-right"></i>
                                   </button>
@@ -7252,13 +6903,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                                   {benefitText}
                                 </div>
                               )}
-                              <button onClick={() => handlePrecisionHookEdit(v, 'Regenerate the CTA_BUTTON and benefit text. Write a COMPLETELY DIFFERENT CTA â€” different action verb, different benefit payoff, different emotional hook. Do NOT reuse similar phrasing. Keep the HOOK_TEXT and SUBHEADLINE EXACTLY unchanged.')}
+                              <button onClick={() => handlePrecisionHookEdit(v, 'Regenerate the CTA_BUTTON and benefit text. Write a COMPLETELY DIFFERENT CTA — different action verb, different benefit payoff, different emotional hook. Do NOT reuse similar phrasing. Keep the HOOK_TEXT and SUBHEADLINE EXACTLY unchanged.')}
                                 className="absolute top-2 right-2 opacity-0 group-hover/cta:opacity-100 transition-opacity w-6 h-6 rounded-lg bg-slate-800/80 hover:bg-blue-600 text-slate-500 hover:text-white text-[8px] flex items-center justify-center" title="Retry CTA & benefit">
                                 <i className="fa-solid fa-rotate-right"></i>
                               </button>
                             </div>
                           )}
-                          {/* â”€â”€â”€ FEEDBACK â”€â”€â”€â”€â”€ */}
+                          {/* ─── FEEDBACK ───── */}
                           <div className="relative mb-2">
                             <FeedbackButtons
                               generationId={hookGenerationIds[v] || ''}
@@ -7325,7 +6976,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                                 // Phase 24B (CodeRabbit): when `subhead` is `null` (the
                                 // optional field was absent / cleared by the user),
                                 // the template literal must NOT serialize it as the
-                                // literal string "null" â€” that would inject a fake
+                                // literal string "null" — that would inject a fake
                                 // reference subheadline into the variation prompt.
                                 // Conditionally emit the REFERENCE SUBHEADLINE line
                                 // only when the field has a value.
@@ -7342,7 +6993,7 @@ RULES:
 - Do NOT repeat any existing hooks. Here are ALL current hooks to AVOID duplicating:
 ${tovText.substring(0, 1500)}
 
-Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wrote it.`;
+Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote it.`;
                                 const isCarousel = inputs.adMode === 'carousel' && (inputs.slideCount || 1) > 1;
                                 const res = isCarousel
                                   ? (await gemini.generateCarouselAngles(inputs, resolvedUniverse, inputs.slideCount || 5, likeThisPrompt)).text
@@ -7350,7 +7001,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                 if (res) {
                                   const newHookValidation = validateCanonicalHooks(res);
                                   if (newHookValidation.count >= 1) {
-                                    // â”€â”€â”€ Phase 23 â€” IN-CARD variation carousel (23.A) â”€â”€â”€
+                                    // ─── Phase 23 — IN-CARD variation carousel (23.A) ───
                                     // Parse the returned blocks into HookVariation objects
                                     // via the T011a helper. Push to the per-card store; the
                                     // reference hook (position 1) stays at tovText and is
@@ -7360,7 +7011,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                     );
                                     const parsed = parseHookVariations(newHookValidation.hooks.map((h) => `HOOK_START_${h.variant}\nHOOK_TEXT: ${h.hookText}\nSUBHEADLINE: ${h.subheadline}\nCTA_BUTTON: ${h.ctaButton}\nHOOK_END_${h.variant}\n`));
                                     if (parsed.length === 0) {
-                                      // C8 â€” non-blocking notice, carousel unchanged
+                                      // C8 — non-blocking notice, carousel unchanged
                                       refundCredits('refreshHooks');
                                       showToast(t('variation.empty_result'), "info");
                                     } else {
@@ -7392,14 +7043,14 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                             className="w-full mt-2 py-2.5 rounded-xl bg-slate-950/40 border border-dashed border-slate-700/40 text-slate-500 text-[9px] font-bold uppercase tracking-wider hover:border-blue-500/40 hover:text-blue-400 hover:bg-blue-500/5 transition-all flex items-center justify-center gap-2"
                           >
                             <i className="fa-solid fa-clone text-[9px]"></i>
-                            <span>{t('variation.generate_button')} Â· <i className="fa-solid fa-coins text-[7px] text-amber-400 mr-0.5"></i>{CREDIT_COSTS.refreshHooks}</span>
+                            <span>{t('variation.generate_button')} · <i className="fa-solid fa-coins text-[7px] text-amber-400 mr-0.5"></i>{CREDIT_COSTS.refreshHooks}</span>
                           </button>
-                          {/* Phase 23 â€” In-card variation carousel (23.A) */}
+                          {/* Phase 23 — In-card variation carousel (23.A) */}
                           {(variationCarousels[v] && variationCarousels[v]!.length > 0) && (
                             <div className="mt-3 p-3 rounded-xl bg-slate-950/30 border border-slate-800/40" data-testid={`variation-carousel-${v}`}>
                               <div className="flex items-center justify-between mb-2">
                                 <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
-                                  {t('variation.label')} Â· {t('variation.position_indicator', { current: (variationActiveIndex[v] ?? 0) + 1, total: variationCarousels[v]!.length + 1 })}
+                                  {t('variation.label')} · {t('variation.position_indicator', { current: (variationActiveIndex[v] ?? 0) + 1, total: variationCarousels[v]!.length + 1 })}
                                 </div>
                                 <button
                                   onClick={() => resetVariations(v)}
@@ -7479,7 +7130,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
 
             )}
 
-            {/* â•â•â• BATCH SELECTION BAR (above regenerate) â•â•â• */}
+            {/* ═══ BATCH SELECTION BAR (above regenerate) ═══ */}
             {batchSelectedHooks.size > 0 && canUse(userPlan, 'batchGeneration') && inputs?.adMode !== 'carousel' && (
               <div className="animate-in slide-in-from-bottom-4 duration-300 mt-6">
                 <div className="max-w-3xl mx-auto">
@@ -7491,7 +7142,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                         </div>
                         <div>
                           <div className="text-[11px] font-bold text-white">{batchSelectedHooks.size} {t('batch.hooks_selected')}</div>
-                          <div className="text-[9px] text-slate-500">{t('batch.each_hook_gets')}{PLANS[userPlan]?.batchConfig ? ` Â· Up to ${PLANS[userPlan].batchConfig.maxAdsPerRun} ads/run` : ''}</div>
+                          <div className="text-[9px] text-slate-500">{t('batch.each_hook_gets')}{PLANS[userPlan]?.batchConfig ? ` · Up to ${PLANS[userPlan].batchConfig.maxAdsPerRun} ads/run` : ''}</div>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -7535,7 +7186,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                   });
                                 } else {
                                   refundCredits('generateConcepts');
-                                  showToast(`Hook ${v} concepts failed â€” credits refunded.`, 'error');
+                                  showToast(`Hook ${v} concepts failed — credits refunded.`, 'error');
                                 }
                               } catch (e) {
                                 refundCredits('generateConcepts');
@@ -7586,7 +7237,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
         )}
 
         {phase === 'concept_review' && (() => {
-          /* â”€â”€â”€ Unified hook groups: always treat as batch-style layout â”€â”€â”€ */
+          /* ─── Unified hook groups: always treat as batch-style layout ─── */
           const hookGroups: { hookKey: string; hookText: string; hookHeadline: string; conceptsSource: string; selectedConcepts: Set<number>; isBatch: boolean }[] =
             batchHookGroups.length > 0
               ? batchHookGroups.map(g => ({ hookKey: g.hookKey, hookText: g.hookText, hookHeadline: g.hookHeadline, conceptsSource: g.conceptsText, selectedConcepts: g.selectedConcepts, isBatch: true }))
@@ -7599,7 +7250,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                 isBatch: false,
               }];
 
-          /* â”€â”€â”€ Compute totals for the bottom Render bar â”€â”€â”€ */
+          /* ─── Compute totals for the bottom Render bar ─── */
           const totalSelectedConcepts = hookGroups.reduce((sum, g) => sum + g.selectedConcepts.size, 0);
           const numSizes = Math.max(1, selectedSizes.size);
           const totalImages = totalSelectedConcepts * numSizes;
@@ -7616,12 +7267,12 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
 
           return (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700 max-w-[1200px] mx-auto relative">
-              {/* â”€â”€â”€ Back Button â”€â”€â”€ */}
+              {/* ─── Back Button ─── */}
               <button onClick={handleBack} className={`absolute -top-10 ${lang === 'ar' ? 'right-0' : 'left-0'} bg-slate-900/60 px-5 py-2.5 rounded-xl text-[10px] font-semibold text-slate-500 hover:text-white transition-all flex items-center ${lang === 'ar' ? 'flex-row-reverse gap-2' : 'space-x-2'}`}>
-                <i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'}`}></i><span>{lang === 'ar' ? 'Ø±Ø¬ÙˆØ¹' : 'Back'}</span>
+                <i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'}`}></i><span>{lang === 'ar' ? 'رجوع' : 'Back'}</span>
               </button>
 
-              {/* â”€â”€â”€ Title â”€â”€â”€ */}
+              {/* ─── Title ─── */}
               <header className="text-center pt-8">
                 <h2 className="text-5xl md:text-6xl font-black text-white italic tracking-tighter uppercase leading-none">{t('concepts.blueprint')}</h2>
                 <p className="text-[10px] text-slate-400 max-w-lg mx-auto">{t('tip.step3')}</p>
@@ -7653,7 +7304,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                         </span>
                         {spec.secondaryMode && (
                           <span className="text-[8px] text-slate-500 bg-slate-800/50 px-1.5 py-0.5 rounded">
-                            {spec.primaryMode.replace(/_/g, ' ')} â†’ primary
+                            {spec.primaryMode.replace(/_/g, ' ')} → primary
                           </span>
                         )}
                       </div>
@@ -7663,7 +7314,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                 })()}
               </header>
 
-              {/* â”€â”€â”€ Global Refinement â”€â”€â”€ */}
+              {/* ─── Global Refinement ─── */}
               <div className="max-w-2xl mx-auto p-6 bg-slate-900/50 border border-blue-500/20 rounded-[2rem] shadow-2xl">
                 <label className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider mb-2 block">Refine All Blueprints (Global)</label>
                 {globalRefinement.trim() && (
@@ -7676,7 +7327,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                     </div>
                     <ul className="space-y-0.5">
                       {globalRefinement.split('\n').filter(Boolean).map((line, i) => (
-                        <li key={i} className="text-[11px] text-slate-300 leading-snug">â€¢ {line}</li>
+                        <li key={i} className="text-[11px] text-slate-300 leading-snug">• {line}</li>
                       ))}
                     </ul>
                   </div>
@@ -7704,7 +7355,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                       if (!res || (!res.includes('CONCEPT_START') && !res.includes('SUBJECT_ACTION'))) {
                         refundCredits('generateConcepts');
                         showToast("Blueprint generation returned empty. Credits refunded. Try again.", "error");
-                        return; // refinementEntry preserved, globalRefinement untouched â€” user can retry
+                        return; // refinementEntry preserved, globalRefinement untouched — user can retry
                       }
                       setConceptsText(res);
                       // Refresh ALL batch groups (cards read g.conceptsText). Text-match was unreliable
@@ -7724,14 +7375,14 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                 </button>
               </div>
 
-              {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-                HOOK GROUPS â€” each hook with its expandable concept cards
-               â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+              {/* ═══════════════════════════════════════════════════════════════════
+                HOOK GROUPS — each hook with its expandable concept cards
+               ═══════════════════════════════════════════════════════════════════ */}
               <div className="space-y-6">
                 {batchHookGroups.length > 0 && (
                   <div className="flex items-center justify-between px-1">
                     <h3 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">
-                      <i className="fa-solid fa-layer-group mr-2"></i>Batch Mode â€” {batchHookGroups.length} Hook Groups
+                      <i className="fa-solid fa-layer-group mr-2"></i>Batch Mode — {batchHookGroups.length} Hook Groups
                     </h3>
                     <button onClick={() => { setBatchHookGroups([]); setShowBatchConfig(false); }}
                       className="text-[9px] text-slate-500 hover:text-white transition-all">
@@ -7752,7 +7403,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                   return (
                     <div key={group.hookKey} className="rounded-2xl border border-slate-800 overflow-hidden bg-slate-950/60 shadow-xl">
 
-                      {/* â”€â”€â”€ Hook Header â”€â”€â”€ */}
+                      {/* ─── Hook Header ─── */}
                       <div className="px-6 py-5 border-b border-slate-800/60">
                         <div className="flex items-center gap-2 mb-2 flex-wrap">
                           <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase ${group.isBatch ? 'bg-emerald-600/20 text-emerald-400' : 'bg-blue-600/20 text-blue-400'}`}>
@@ -7768,7 +7419,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                         </div>
                       </div>
 
-                      {/* â”€â”€â”€ Concept Cards â”€â”€â”€ */}
+                      {/* ─── Concept Cards ─── */}
                       <div className="p-5 space-y-3 bg-slate-950/30">
                         {concepts.map(({ n, raw: rawOriginal }) => {
                           // Normalize any Arabic field labels to English
@@ -7843,7 +7494,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                 </div>
                               )}
 
-                              {/* Card Header â€” always visible, clickable to toggle selection */}
+                              {/* Card Header — always visible, clickable to toggle selection */}
                               <div className="flex items-start gap-3 px-5 py-4">
                                 {/* Selection checkbox */}
                                 <button
@@ -7894,7 +7545,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
 
                                 {/* Action buttons */}
                                 <div className="flex items-center gap-1 shrink-0">
-                                  {/* Render this one â€” single-ad path; hidden in carousel mode
+                                  {/* Render this one — single-ad path; hidden in carousel mode
                                        where the dedicated "Design N Slides" button (handleCarouselRender)
                                        is the only correct entry point. */}
                                   {!group.isBatch && singleSelectedConcepts.size <= 1 && inputs?.adMode !== 'carousel' && (
@@ -7920,7 +7571,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                       <i className="fa-solid fa-wand-magic-sparkles text-[10px]"></i>
                                     </button>
                                   )}
-                                  {/* FIX 2: Direct text edit (pen) â€” edit the raw blueprint text yourself */}
+                                  {/* FIX 2: Direct text edit (pen) — edit the raw blueprint text yourself */}
                                   {!group.isBatch && (
                                     <button
                                       onClick={() => { setDirectEditIndex(n.toString()); setDirectEditText(getConceptBlock(group.conceptsSource, n)); }}
@@ -7946,7 +7597,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                 </div>
                               </div>
 
-                              {/* â”€â”€â”€ Expanded Detail Panel â”€â”€â”€ */}
+                              {/* ─── Expanded Detail Panel ─── */}
                               {isExpanded && (
                                 <div className="px-5 pb-5 pt-3 border-t border-slate-800/50 space-y-4 animate-in slide-in-from-top-2 duration-300">
                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -7977,7 +7628,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                   </div>
                                   {inputs?.badges && <div className="text-[9px] text-amber-500/80 font-medium"><i className="fa-solid fa-certificate mr-1"></i>Badge: {inputs.badges}</div>}
 
-                                  {/* â”€â”€â”€ View Blueprint Panel â”€â”€â”€ */}
+                                  {/* ─── View Blueprint Panel ─── */}
                                   {raw && (() => {
                                     const tpStart = raw.indexOf('[[TECHNICAL_PROMPT]]');
                                     const tpEnd = raw.indexOf('[[/TECHNICAL_PROMPT]]');
@@ -7998,10 +7649,10 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                 </div>
                               )}
 
-                              {/* â”€â”€â”€ Edit Overlay (single mode only) â”€â”€â”€ */}
+                              {/* ─── Edit Overlay (single mode only) ─── */}
                               {!group.isBatch && activeEditConceptIndex === n.toString() && (
                                 <div className="absolute inset-0 bg-slate-950/95 backdrop-blur-xl p-6 z-30 flex flex-col justify-center overflow-y-auto animate-in zoom-in duration-300 rounded-xl">
-                                  <h4 className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider mb-4 text-center">Blueprint Patch â€” Concept {n}</h4>
+                                  <h4 className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider mb-4 text-center">Blueprint Patch — Concept {n}</h4>
                                   <textarea value={editFeedback} onChange={e => setEditFeedback(e.target.value)} placeholder="e.g. Change background to office, make hero more confident, add laptop as prop..." style={{ minHeight: '120px', maxHeight: '40vh', width: '100%' }} className="bg-slate-900 border border-slate-800/60 rounded-xl px-5 py-4 text-slate-100 focus:ring-1 focus:ring-blue-500 outline-none text-sm resize-y mb-4" />
                                   <div className="flex flex-col gap-2">
                                     <button onClick={() => handlePrecisionConceptEdit(n.toString())} className="bg-blue-600 text-white py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider">Update Blueprint</button>
@@ -8010,11 +7661,11 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                 </div>
                               )}
 
-                              {/* â”€â”€â”€ FIX 2: Direct Blueprint Text Editor (single mode only) â”€â”€â”€ */}
+                              {/* ─── FIX 2: Direct Blueprint Text Editor (single mode only) ─── */}
                               {!group.isBatch && directEditIndex === n.toString() && (
                                 <div className="absolute inset-0 bg-slate-950/95 backdrop-blur-xl p-6 z-30 flex flex-col justify-center overflow-y-auto animate-in zoom-in duration-300 rounded-xl">
-                                  <h4 className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider mb-4 text-center">Edit Blueprint Text â€” Concept {n}</h4>
-                                  <textarea value={directEditText} onChange={e => setDirectEditText(e.target.value)} dir="auto" placeholder="Edit the raw blueprint text directly â€” add or remove words..." className="w-full bg-slate-900 border border-slate-800/60 rounded-xl px-5 py-4 text-slate-100 min-h-[300px] focus:ring-1 focus:ring-emerald-500 outline-none text-xs font-mono resize-y mb-4" />
+                                  <h4 className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider mb-4 text-center">Edit Blueprint Text — Concept {n}</h4>
+                                  <textarea value={directEditText} onChange={e => setDirectEditText(e.target.value)} dir="auto" placeholder="Edit the raw blueprint text directly — add or remove words..." className="w-full bg-slate-900 border border-slate-800/60 rounded-xl px-5 py-4 text-slate-100 min-h-[300px] focus:ring-1 focus:ring-emerald-500 outline-none text-xs font-mono resize-y mb-4" />
                                   <div className="flex flex-col gap-2">
                                     <button onClick={() => saveDirectConceptEdit(n.toString(), directEditText)} className="bg-emerald-600 text-white py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider">Save</button>
                                     <button onClick={() => setDirectEditIndex(null)} className="text-slate-500 text-[10px] font-semibold py-2 hover:text-slate-300">Cancel</button>
@@ -8030,16 +7681,16 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                 })}
               </div>
 
-              {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-                BOTTOM BAR â€” Size Selector + Render All (batch/carousel only)
-               â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+              {/* ═══════════════════════════════════════════════════════════════════
+                BOTTOM BAR — Size Selector + Render All (batch/carousel only)
+               ═══════════════════════════════════════════════════════════════════ */}
               <div className="rounded-2xl border border-slate-800 overflow-hidden bg-slate-950/70 shadow-2xl">
 
-                {/* Size Selector â€” always visible */}
+                {/* Size Selector — always visible */}
                 <div className="px-6 pt-5 pb-4 border-b border-slate-800/60">
                   <p className="text-[9px] text-slate-400 uppercase tracking-widest font-bold mb-3">{t('studio.select_sizes')}</p>
                   <div className="flex gap-2">
-                    {/* Only UI_RATIOS (Square / Portrait / Story) are offered â€” same constant
+                    {/* Only UI_RATIOS (Square / Portrait / Story) are offered — same constant
                         as the Step 4 reflow picker so the two pickers never drift. */}
                     {([
                       { key: '1:1' as AspectRatio, label: 'Square', sub: 'Feed', icon: 'fa-square' },
@@ -8077,18 +7728,18 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                     })}
                   </div>
                   {selectedSizes.size > 1 && (
-                    <p className="text-[8px] text-blue-400/60 mt-2">{selectedSizes.size} sizes selected â€” additional sizes auto-reflow at {CREDIT_COSTS.generateImage} credits each</p>
+                    <p className="text-[8px] text-blue-400/60 mt-2">{selectedSizes.size} sizes selected — additional sizes auto-reflow at {CREDIT_COSTS.generateImage} credits each</p>
                   )}
                 </div>
 
-                {/* Render Summary + Button â€” always visible */}
+                {/* Render Summary + Button — always visible */}
                 <div className="px-6 py-5 border-t border-slate-800/40">
                   <div className="flex items-center justify-between mb-4">
                     <div className="text-[11px] text-slate-300">
                       <span className="text-white font-bold text-lg">{totalImages}</span>
                       <span className="ml-1.5">image{totalImages !== 1 ? 's' : ''}</span>
                       {(hookGroups.length > 1 || numSizes > 1) && (
-                        <span className="text-slate-500 ml-2">({totalSelectedConcepts} concepts Ã— {numSizes} size{numSizes > 1 ? 's' : ''})</span>
+                        <span className="text-slate-500 ml-2">({totalSelectedConcepts} concepts × {numSizes} size{numSizes > 1 ? 's' : ''})</span>
                       )}
                     </div>
                     <div className="flex items-center gap-2">
@@ -8135,10 +7786,10 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                         <button
                           onClick={() => {
                             if (singleSelectedConcepts.size > 1) {
-                              // Multiple concepts selected â†’ batch render with canvas grid
+                              // Multiple concepts selected → batch render with canvas grid
                               handleBatchRender();
                             } else {
-                              // Single concept â†’ direct render
+                              // Single concept → direct render
                               const selectedNum = singleSelectedConcepts.size === 1 ? Array.from(singleSelectedConcepts)[0] : 1;
                               const conceptBlock = getConceptBlock(conceptsText, selectedNum);
                               if (conceptBlock.trim()) handleApproveConcept(conceptBlock);
@@ -8175,13 +7826,13 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
           return (
             <div className="flex flex-col xl:flex-row gap-6 animate-in fade-in duration-700 max-w-[1500px] mx-auto relative">
               <button onClick={handleBack} className={`absolute -top-11 ${lang === 'ar' ? 'right-0' : 'left-0'} bg-slate-900/60 px-4 py-2 rounded-xl text-[10px] font-semibold text-slate-500 hover:text-white transition-all flex items-center ${lang === 'ar' ? 'flex-row-reverse gap-2' : 'gap-2'}`}>
-                <i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'}`}></i><span>{lang === 'ar' ? 'Ø±Ø¬ÙˆØ¹' : 'Back'}</span>
+                <i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'}`}></i><span>{lang === 'ar' ? 'رجوع' : 'Back'}</span>
               </button>
 
-              {/* â•â•â•â•â•â•â• LEFT: CANVAS â•â•â•â•â•â•â• */}
+              {/* ═══════ LEFT: CANVAS ═══════ */}
               <div className="flex-1 min-w-0 space-y-4">
 
-                {/* Size Navigator â€” shows all selected sizes with friendly names */}
+                {/* Size Navigator — shows all selected sizes with friendly names */}
                 {selectedSizes.size > 0 && batchResults.length > 0 && (() => {
                   const sizeLabels: Record<string, { label: string; icon: string }> = {
                     '1:1': { label: 'Square', icon: 'fa-square' },
@@ -8212,7 +7863,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                   ) : null;
                 })()}
 
-                {/* Header â€” compact single row */}
+                {/* Header — compact single row */}
                 <div className="flex items-center justify-between gap-4">
                   <h2 className="text-xl font-black text-white italic tracking-tight uppercase shrink-0">
                     <i className="fa-solid fa-paintbrush text-blue-500 mr-2 text-sm"></i>Master <span className="text-blue-500">Studio</span>
@@ -8236,7 +7887,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                         if (loadedRenderRecord.output?.buildPlan) setBuildPlan(loadedRenderRecord.output.buildPlan);
                         // Restore or explicitly clear the upstream hook. The render
                         // record's current output schema does not carry selectedTov,
-                        // so the typed lookup will miss on legacy records â€” clear
+                        // so the typed lookup will miss on legacy records — clear
                         // rather than leave a stale hook from the prior flow.
                         const recordTov = (loadedRenderRecord.output as { selectedTov?: string }).selectedTov;
                         setSelectedTov(recordTov || '');
@@ -8250,7 +7901,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                     </button>
                   )}
 
-                  {/* Size tabs â€” version navigation lives in the ALL VERSIONS gallery below
+                  {/* Size tabs — version navigation lives in the ALL VERSIONS gallery below
                       (the old "Version X of Y" arrow navigator was removed as redundant). */}
                   {mockupHistory.length > 1 && (() => {
                     const uniqueRatios = [...new Set(mockupHistory.map(m => m.ratio))];
@@ -8274,7 +7925,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                   })()}
                 </div>
 
-                {/* â•â•â• CANVAS â•â•â• */}
+                {/* ═══ CANVAS ═══ */}
                 {batchResults.length > 0 ? (
                   <div className="space-y-3">
                     {(() => {
@@ -8306,7 +7957,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                   })}
                                   className="text-[9px] font-bold text-blue-300 hover:text-blue-200 uppercase tracking-wider flex items-center gap-1 transition-colors">
                                   <i className={`fa-solid ${allVisibleSelected ? 'fa-square-check' : 'fa-square'} text-[9px]`}></i>
-                                  {allVisibleSelected ? (lang === 'ar' ? 'Ø¥Ù„ØºØ§Ø¡ Ø§Ù„ØªØ­Ø¯ÙŠØ¯' : 'Deselect All') : (lang === 'ar' ? 'ØªØ­Ø¯ÙŠØ¯ Ø§Ù„ÙƒÙ„' : 'Select All')}
+                                  {allVisibleSelected ? (lang === 'ar' ? 'إلغاء التحديد' : 'Deselect All') : (lang === 'ar' ? 'تحديد الكل' : 'Select All')}
                                 </button>
                               )}
                             </div>
@@ -8369,9 +8020,9 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                             source: 'batch',
                                             index: idx,
                                             imageUrl: item.url!,
-                                            label: `Batch H${item.hookKey}Â·C${item.conceptIndex}`,
+                                            label: `Batch H${item.hookKey}·C${item.conceptIndex}`,
                                           });
-                                          showToast(`Editing H${item.hookKey}Â·C${item.conceptIndex} â€” changes will update this card`, 'info');
+                                          showToast(`Editing H${item.hookKey}·C${item.conceptIndex} — changes will update this card`, 'info');
                                         }}
                                           className="px-2 py-1 bg-violet-600 text-white rounded text-[7px] font-bold flex items-center gap-0.5" title="Edit">
                                           <i className="fa-solid fa-pen-to-square text-[8px]"></i>
@@ -8385,10 +8036,10 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                         <button onClick={async () => {
                                           if (!user?.uid || !inputs) return;
                                           try {
-                                            // Persist to Storage SERVER-SIDE (admin SDK). An http URL is durable as-is â€”
+                                            // Persist to Storage SERVER-SIDE (admin SDK). An http URL is durable as-is —
                                             // skip the callable round-trip and use it directly. Otherwise upload
-                                            // (data: URL â†’ Storage) and fall back to empty string if the upload
-                                            // fails (don't write a base64 back to Firestore â€” would blow the
+                                            // (data: URL → Storage) and fall back to empty string if the upload
+                                            // fails (don't write a base64 back to Firestore — would blow the
                                             // 1 MiB doc limit).
                                             const candidateUrl = item.url || '';
                                             const isAlreadyHttp = typeof candidateUrl === 'string' && candidateUrl.startsWith('http');
@@ -8398,7 +8049,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                                 const uploadFn = httpsCallable<{ imageBase64: string }, { storageUrl: string }>(functions, 'uploadRenderImage');
                                                 storedImageUrl = (await uploadFn({ imageBase64: candidateUrl })).data.storageUrl || '';
                                               } catch (uploadErr) {
-                                                console.warn('Server render upload failed (non-blocking) â€” saving favorite with empty imageUrl:', uploadErr);
+                                                console.warn('Server render upload failed (non-blocking) — saving favorite with empty imageUrl:', uploadErr);
                                               }
                                             }
                                             const genId = await feedbackService.saveGeneration(
@@ -8443,11 +8094,11 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                     </div>
                                   </>
                                 ) : item.status === 'rendering' ? (
-                                  <div className="w-full h-full flex flex-col items-center justify-center gap-2"><div className="animate-spin w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full"></div><span className="text-[8px] text-slate-500 font-bold">H{item.hookKey}Â·C{item.conceptIndex}</span></div>
+                                  <div className="w-full h-full flex flex-col items-center justify-center gap-2"><div className="animate-spin w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full"></div><span className="text-[8px] text-slate-500 font-bold">H{item.hookKey}·C{item.conceptIndex}</span></div>
                                 ) : item.status === 'error' ? (
                                   <div className="w-full h-full flex flex-col items-center justify-center gap-2"><i className="fa-solid fa-triangle-exclamation text-red-400"></i><span className="text-[7px] text-red-300">Resize failed</span><button onClick={() => handleBatchRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[8px] font-bold">Try again</button></div>
                                 ) : (
-                                  <div className="w-full h-full flex items-center justify-center"><span className="text-[8px] text-slate-700 font-bold">H{item.hookKey}Â·C{item.conceptIndex}</span></div>
+                                  <div className="w-full h-full flex items-center justify-center"><span className="text-[8px] text-slate-700 font-bold">H{item.hookKey}·C{item.conceptIndex}</span></div>
                                 )}
                                 {/* ISSUE 5: selection checkbox (done items only) */}
                                 {item.status === 'done' && item.url && (
@@ -8464,7 +8115,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                     <i className="fa-solid fa-download text-[9px]"></i>
                                   </button>
                                 )}
-                                <div data-light-ctx="batch-badge" className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 bg-black/60 rounded text-[7px] font-bold text-white">H{item.hookKey}Â·C{item.conceptIndex}</div>
+                                <div data-light-ctx="batch-badge" className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 bg-black/60 rounded text-[7px] font-bold text-white">H{item.hookKey}·C{item.conceptIndex}</div>
                                 {(item.ratio === '9:16' || item.ratio === '16:9') && (
                                   <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-amber-500/80 rounded text-[6px] font-bold text-black" title="This aspect ratio will be cropped on Feed. Best for Stories/Reels.">Stories</div>
                                 )}
@@ -8472,7 +8123,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                             ))}
                           </div>
 
-                          {/* â”€â”€â”€ Bulk Actions â”€â”€â”€ */}
+                          {/* ─── Bulk Actions ─── */}
                           {totalDone > 0 && (
                             <div className="flex gap-2 flex-wrap">
                               {/* Download Creative Packs (organized by hook) */}
@@ -8534,7 +8185,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
 
                                     // Detailed README
                                     const readme = [
-                                      `Creative Pack â€” Hook ${hookKey}`,
+                                      `Creative Pack — Hook ${hookKey}`,
                                       '='.repeat(50),
                                       `Product: ${inputs?.productName || pName}`,
                                       `Headline: ${hookHeadline}`,
@@ -8544,21 +8195,21 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                       adTone ? `Ad Tone: ${adTone}` : '',
                                       '',
                                       `Images (${items.length}):`,
-                                      ...imageFiles.map(f => `  â€¢ ${f}`),
+                                      ...imageFiles.map(f => `  • ${f}`),
                                       '',
                                       'PLACEMENT GUIDE:',
-                                      '  Square (1:1)    â†’ Feed, Marketplace, Search Results',
-                                      '  Portrait (4:5)  â†’ Feed (mobile optimized)',
-                                      '  Story (9:16)    â†’ Stories, Reels, TikTok',
-                                      '  Landscape (16:9) â†’ In-stream video, YouTube',
+                                      '  Square (1:1)    → Feed, Marketplace, Search Results',
+                                      '  Portrait (4:5)  → Feed (mobile optimized)',
+                                      '  Story (9:16)    → Stories, Reels, TikTok',
+                                      '  Landscape (16:9) → In-stream video, YouTube',
                                       '',
                                       'HOW TO USE IN META ADS MANAGER:',
-                                      '1. Create a new campaign â†’ choose your objective',
+                                      '1. Create a new campaign → choose your objective',
                                       '2. At the Ad level, upload images from this folder',
                                       '3. Paste ad_copy.txt as your Primary Text',
                                       '4. Set each image size to its matching placement',
                                       '',
-                                      caption ? `AD COPY:\n${'-'.repeat(50)}\n${caption}` : 'âš ï¸ No copy yet â€” generate in Step 5.',
+                                      caption ? `AD COPY:\n${'-'.repeat(50)}\n${caption}` : '⚠️ No copy yet — generate in Step 5.',
                                     ].filter(Boolean).join('\n');
                                     folder.file('README.txt', readme);
                                   }
@@ -8596,7 +8247,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                           const result = await metaService.pushCreative(item.url!, `${inputs?.productName || 'Ad'}_H${item.hookKey}_C${item.conceptIndex}_${(item.ratio || '1:1').replace(':', 'x')}`, buildDeploymentMeta({ ratio: item.ratio }));
                                           if (result.success) {
                                             successCount++;
-                                            // Store generationâ†’ad linkage for performance tracking
+                                            // Store generation→ad linkage for performance tracking
                                             if (user?.uid) {
                                               try {
                                                 await setDoc(doc(db, 'pushedCreatives', `${user.uid}_${Date.now()}_${i}`), {
@@ -8630,7 +8281,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                       setMetaPushing(false);
                                       if (successCount > 0) {
                                         const warnings = [];
-                                        if (storyImages.length > 0) warnings.push(`${storyImages.length} Story/Landscape images â€” use for Stories/Reels placement only`);
+                                        if (storyImages.length > 0) warnings.push(`${storyImages.length} Story/Landscape images — use for Stories/Reels placement only`);
                                         showToast(`${successCount}/${doneItems.length} pushed!${warnings.length ? ' Note: ' + warnings.join('. ') : ''}`, 'success');
                                       } else {
                                         showToast(`Push failed: ${failureMsg || 'Check Meta connection'}`, 'error');
@@ -8659,23 +8310,23 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                 ) : carouselSlides.length > 0 ? (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Carousel â€” {carouselSlides.filter(s => s.status === 'done').length}/{carouselSlides.length}</span>
-                      {/* FIX 1: toggle between the current and the previous (pre-resize) version â€”
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Carousel — {carouselSlides.filter(s => s.status === 'done').length}/{carouselSlides.length}</span>
+                      {/* FIX 1: toggle between the current and the previous (pre-resize) version —
                           SWAP the snapshots so the user can flip back and forth. */}
                       {previousCarouselSlides && previousCarouselRatio && previousCarouselRatio !== currentAspectRatio && (() => {
                         const ratioName: Record<string, { en: string; ar: string }> = {
-                          '1:1': { en: 'Square', ar: 'Ù…Ø±Ø¨Ø¹' },
-                          '4:5': { en: 'Portrait', ar: 'Ø¹Ù…ÙˆØ¯ÙŠ' },
-                          '9:16': { en: 'Story', ar: 'Ø³ØªÙˆØ±ÙŠ' },
-                          '4:3': { en: 'Wide', ar: 'Ø¹Ø±ÙŠØ¶' },
-                          '3:4': { en: 'Tall', ar: 'Ø·ÙˆÙŠÙ„' },
-                          '16:9': { en: 'Landscape', ar: 'Ø£ÙÙ‚ÙŠ' },
+                          '1:1': { en: 'Square', ar: 'مربع' },
+                          '4:5': { en: 'Portrait', ar: 'عمودي' },
+                          '9:16': { en: 'Story', ar: 'ستوري' },
+                          '4:3': { en: 'Wide', ar: 'عريض' },
+                          '3:4': { en: 'Tall', ar: 'طويل' },
+                          '16:9': { en: 'Landscape', ar: 'أفقي' },
                         };
                         const label = ratioName[previousCarouselRatio] || { en: previousCarouselRatio, ar: previousCarouselRatio };
                         return (
                           <button
                             onClick={() => {
-                              // Swap, don't clear â€” keep the toggle available both ways.
+                              // Swap, don't clear — keep the toggle available both ways.
                               const tempSlides = [...carouselSlides];
                               const tempRatio = currentAspectRatio;
                               setCarouselSlides(previousCarouselSlides);
@@ -8685,7 +8336,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                             }}
                             className="text-[9px] font-bold text-blue-300 bg-blue-600/15 border border-blue-500/30 rounded-lg px-2.5 py-1 hover:bg-blue-600/25 transition-all flex items-center gap-1.5">
                             <i className="fa-solid fa-arrow-right-arrow-left text-[8px]"></i>
-                            {lang === 'ar' ? `Ø§Ù„ØªØ¨Ø¯ÙŠÙ„ Ø¥Ù„Ù‰ Ù†Ø³Ø®Ø© ${label.ar}` : `Switch to ${label.en} version`}
+                            {lang === 'ar' ? `التبديل إلى نسخة ${label.ar}` : `Switch to ${label.en} version`}
                           </button>
                         );
                       })()}
@@ -8695,7 +8346,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                         <div key={idx} className="shrink-0" style={{ width: currentAspectRatio === '9:16' ? '120px' : '160px' }}>
                           <div onClick={() => setLightboxIndex(idx)} className={`relative rounded-xl overflow-hidden border bg-slate-900 group cursor-pointer ${currentAspectRatio === '9:16' ? 'aspect-[9/16]' : currentAspectRatio === '4:3' ? 'aspect-[4/3]' : 'aspect-square'} ${slide.status === 'done' ? 'border-emerald-500/30' : 'border-slate-800/60'}`}>
                             {slide.status === 'done' && slide.imageUrl && isRenderableImageUrl(slide.imageUrl) ? (
-                              <><img src={slide.imageUrl} className="w-full h-full object-cover cursor-grab active:cursor-grabbing" draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/uri-list', slide.imageUrl!); e.dataTransfer.setData('text/plain', slide.imageUrl!); e.dataTransfer.setData('text/html', `<img src="${slide.imageUrl}" />`); }} /><div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100 pointer-events-none"><div className="flex gap-1 pointer-events-auto" onClick={(e) => e.stopPropagation()}><button onClick={() => { pushMockup(slide.imageUrl!, currentAspectRatio); setBuildPlan(slide.buildPlan); setStudioTweak(''); setEditTarget({ source: 'carousel', index: idx, imageUrl: slide.imageUrl!, label: `Slide ${slide.index}` }); showToast(`Editing Slide ${slide.index} â€” changes will update this slide`, 'info'); }} className="px-2 py-1 bg-violet-600 text-white rounded text-[7px] font-bold" title="Edit this slide"><i className="fa-solid fa-pen-to-square"></i></button><button onClick={async () => { const url = await applyTrialWatermark(slide.imageUrl!); await downloadImage(url, `slide_${slide.index}.png`); }} className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold"><i className="fa-solid fa-download"></i></button><button onClick={() => handleCarouselSlideRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[7px] font-bold"><i className="fa-solid fa-rotate-right"></i></button>{metaConnection?.connected && (<button onClick={async () => { setMetaPushing(true); showToast('Pushing slide to Meta...', 'info'); try { const result = await metaService.pushCreative(slide.imageUrl!, `${inputs?.productName || 'Ad'}_carousel_slide_${slide.index}`, buildDeploymentMeta({ mode: 'carousel', ratio: currentAspectRatio })); if (result.success) showToast(result.message || 'Slide pushed!', 'success'); else showToast(result.message || 'Push failed', 'error'); } catch { showToast('Push to Meta failed', 'error'); } setMetaPushing(false); }} className="px-2 py-1 bg-blue-500/90 text-white rounded text-[7px] font-bold"><i className="fa-brands fa-meta"></i></button>)}<button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(slide.imageUrl!, currentAspectRatio, '', '', slide.buildPlan); }} className="px-2 py-1 bg-amber-500/90 text-white rounded text-[7px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button></div></div></>
+                              <><img src={slide.imageUrl} className="w-full h-full object-cover cursor-grab active:cursor-grabbing" draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/uri-list', slide.imageUrl!); e.dataTransfer.setData('text/plain', slide.imageUrl!); e.dataTransfer.setData('text/html', `<img src="${slide.imageUrl}" />`); }} /><div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100 pointer-events-none"><div className="flex gap-1 pointer-events-auto" onClick={(e) => e.stopPropagation()}><button onClick={() => { pushMockup(slide.imageUrl!, currentAspectRatio); setBuildPlan(slide.buildPlan); setStudioTweak(''); setEditTarget({ source: 'carousel', index: idx, imageUrl: slide.imageUrl!, label: `Slide ${slide.index}` }); showToast(`Editing Slide ${slide.index} — changes will update this slide`, 'info'); }} className="px-2 py-1 bg-violet-600 text-white rounded text-[7px] font-bold" title="Edit this slide"><i className="fa-solid fa-pen-to-square"></i></button><button onClick={async () => { const url = await applyTrialWatermark(slide.imageUrl!); await downloadImage(url, `slide_${slide.index}.png`); }} className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold"><i className="fa-solid fa-download"></i></button><button onClick={() => handleCarouselSlideRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[7px] font-bold"><i className="fa-solid fa-rotate-right"></i></button>{metaConnection?.connected && (<button onClick={async () => { setMetaPushing(true); showToast('Pushing slide to Meta...', 'info'); try { const result = await metaService.pushCreative(slide.imageUrl!, `${inputs?.productName || 'Ad'}_carousel_slide_${slide.index}`, buildDeploymentMeta({ mode: 'carousel', ratio: currentAspectRatio })); if (result.success) showToast(result.message || 'Slide pushed!', 'success'); else showToast(result.message || 'Push failed', 'error'); } catch { showToast('Push to Meta failed', 'error'); } setMetaPushing(false); }} className="px-2 py-1 bg-blue-500/90 text-white rounded text-[7px] font-bold"><i className="fa-brands fa-meta"></i></button>)}<button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(slide.imageUrl!, currentAspectRatio, '', '', slide.buildPlan); }} className="px-2 py-1 bg-amber-500/90 text-white rounded text-[7px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button></div></div></>
                             ) : slide.status === 'rendering' ? (
                               <div className="w-full h-full flex flex-col items-center justify-center gap-1"><div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"></div><span className="text-[7px] text-blue-400 font-bold">Slide {slide.index}</span></div>
                             ) : (slide.status === 'error' || (slide.status === 'done' && !isRenderableImageUrl(slide.imageUrl))) ? (
@@ -8738,7 +8389,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                     )}
                   </div>
 
-                  /* â•â•â• SINGLE IMAGE â€” fills available space â•â•â• */
+                  /* ═══ SINGLE IMAGE — fills available space ═══ */
                 ) : (
                   <div className={`relative group rounded-2xl overflow-hidden shadow-xl mx-auto w-full transition-all duration-500 mockup-container ${displayRatio === '9:16' ? 'aspect-[9/16] max-w-[340px]' : displayRatio === '16:9' ? 'aspect-video' : displayRatio === '4:3' ? 'aspect-[4/3] max-w-[600px]' : displayRatio === '3:4' ? 'aspect-[3/4] max-w-[450px]' : 'aspect-square max-w-[560px]'}`}>
                     {currentMockup ? (
@@ -8834,7 +8485,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                   </div>
                 )}
 
-                {/* â”€â”€â”€ RENDER FEEDBACK â”€â”€â”€â”€â”€ */}
+                {/* ─── RENDER FEEDBACK ───── */}
                 {currentMockup && (
                   <div className="mt-3">
                     <FeedbackButtons
@@ -8845,11 +8496,11 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                   </div>
                 )}
 
-                {/* â•â•â• A/B GALLERY â€” in main canvas area, full width, clickable â•â•â• */}
+                {/* ═══ A/B GALLERY — in main canvas area, full width, clickable ═══ */}
                 {abVariations.length > 0 && (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">A/B Variations â€” {abVariations.filter(v => v.status === 'done').length}/3</span>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">A/B Variations — {abVariations.filter(v => v.status === 'done').length}/3</span>
                       {abRendering && <span className="text-[9px] text-amber-400 animate-pulse font-bold">Rendering...</span>}
                     </div>
                     <div className="grid grid-cols-3 gap-3">
@@ -8862,7 +8513,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                               <img src={v.url} className="w-full h-full object-cover" />
                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2.5 opacity-0 group-hover:opacity-100">
                                 <div className="flex gap-1.5">
-                                  <button onClick={(e) => { e.stopPropagation(); pushMockup(v.url!, currentAspectRatio, v.storageUrl); setStudioTweak(''); setEditTarget({ source: 'ab', index: idx, imageUrl: v.url!, label: `A/B V${idx + 1}` }); showToast(`Editing V${idx + 1} â€” changes will update this variation`, 'info'); }} className="px-2.5 py-1.5 bg-violet-600 text-white rounded-lg text-[8px] font-bold" title="Edit"><i className="fa-solid fa-pen-to-square"></i></button>
+                                  <button onClick={(e) => { e.stopPropagation(); pushMockup(v.url!, currentAspectRatio, v.storageUrl); setStudioTweak(''); setEditTarget({ source: 'ab', index: idx, imageUrl: v.url!, label: `A/B V${idx + 1}` }); showToast(`Editing V${idx + 1} — changes will update this variation`, 'info'); }} className="px-2.5 py-1.5 bg-violet-600 text-white rounded-lg text-[8px] font-bold" title="Edit"><i className="fa-solid fa-pen-to-square"></i></button>
                                   <button onClick={async (e) => { e.stopPropagation(); const url = await applyTrialWatermark(v.url!); await downloadImage(url, `AB_V${idx + 1}.png`); }} className="px-2.5 py-1.5 bg-white/90 text-slate-900 rounded-lg text-[8px] font-bold"><i className="fa-solid fa-download"></i></button>
                                   <button onClick={(e) => { e.stopPropagation(); handleRetryAB(idx); }} className="px-2.5 py-1.5 bg-blue-600 text-white rounded-lg text-[8px] font-bold"><i className="fa-solid fa-rotate"></i></button>
                                   <button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(v.url!, currentAspectRatio); }} className="px-2.5 py-1.5 bg-amber-500/90 text-white rounded-lg text-[8px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button>
@@ -8887,22 +8538,22 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                   </div>
                 )}
 
-                {/* Back to batch â€” restores the grid snapshot taken when a gallery thumbnail
+                {/* Back to batch — restores the grid snapshot taken when a gallery thumbnail
                     was clicked in batch mode (which dropped the canvas to single view). */}
                 {batchSnapshot.length > 0 && batchResults.length === 0 && (
                   <button
                     onClick={() => { setBatchResults(batchSnapshot); setBatchSnapshot([]); }}
                     className="mt-3 text-[11px] font-bold text-slate-400 hover:text-slate-200 transition-colors">
-                    â† Back to batch results
+                    ← Back to batch results
                   </button>
                 )}
 
-                {/* â•â•â• ISSUE 2 â€” UNIFIED ALL-VERSIONS GALLERY (Option A) â•â•â•
+                {/* ═══ ISSUE 2 — UNIFIED ALL-VERSIONS GALLERY (Option A) ═══
                     Aggregates every render in the session (single history, batch results,
                     carousel slides, pre-resize snapshot), groups thumbnails by ratio, and
                     lets the user click any one to make it the active single view via the
                     existing pushMockup() mechanism. Collapsible, collapsed by default.
-                    Hidden in carousel mode â€” the carousel has its own slide viewer. */}
+                    Hidden in carousel mode — the carousel has its own slide viewer. */}
                 {carouselSlides.length === 0 && (() => {
                   type GalleryItem = { url: string; ratio: AspectRatio; label: string; key: string; source: 'history' | 'batch' | 'prev'; sourceIndex: number };
                   const items: GalleryItem[] = [];
@@ -8918,7 +8569,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                   (batchResults || []).forEach((b, i) => {
                     if (b.status === 'done' && b.url) items.push({
                       url: b.url, ratio: b.ratio as AspectRatio,
-                      label: `H${b.hookKey}Â·C${b.conceptIndex}`, key: `b${i}`, source: 'batch', sourceIndex: i,
+                      label: `H${b.hookKey}·C${b.conceptIndex}`, key: `b${i}`, source: 'batch', sourceIndex: i,
                     });
                   });
                   // Pre-resize snapshot (single-image one-level undo)
@@ -8949,7 +8600,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                     g.items.push(it);
                   });
 
-                  // No overflow-hidden on the wrapper below â€” the per-card 3-dot dropdown
+                  // No overflow-hidden on the wrapper below — the per-card 3-dot dropdown
                   // must extend past the container edge without being clipped.
                   return (
                     <div className="mt-4 bg-slate-900/40 border border-slate-800/40 rounded-2xl">
@@ -8967,14 +8618,14 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                           {groups.map(g => (
                             <div key={g.ratio} className="space-y-1.5">
                               <div className="text-[8px] font-bold text-slate-500 uppercase tracking-wider">
-                                {RATIO_NAMES[g.ratio] || g.ratio} <span className="opacity-50">({g.ratio}) Â· {g.items.length}</span>
+                                {RATIO_NAMES[g.ratio] || g.ratio} <span className="opacity-50">({g.ratio}) · {g.items.length}</span>
                               </div>
                               <div className="grid grid-cols-4 gap-2">
                                 {g.items.map(it => (
                                   <div
                                     key={it.key}
                                     className={`relative rounded-lg border border-slate-800/60 hover:border-blue-500 hover:ring-2 hover:ring-blue-500/20 transition-all bg-slate-900 group ${aspectCls(it.ratio)}`}>
-                                    {/* Thumbnail â€” click promotes this version to the active view.
+                                    {/* Thumbnail — click promotes this version to the active view.
                                         In batch mode the canvas renders the batch grid (filtered by
                                         currentAspectRatio), not mockupHistory, so pushMockup has no
                                         visible effect. If the clicked image is one of the batch tiles,
@@ -8990,14 +8641,14 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                         }
                                         pushMockup(it.url, it.ratio);
                                       }}
-                                      title={`${it.ratio} Â· ${it.label}`}
+                                      title={`${it.ratio} · ${it.label}`}
                                       className="absolute inset-0 w-full h-full rounded-lg overflow-hidden">
                                       <img src={it.url} alt={it.label} loading="lazy" className="w-full h-full object-cover" />
                                       <div className="absolute bottom-0 inset-x-0 px-1 py-0.5 bg-black/65 text-white text-[6px] font-bold truncate text-center">
-                                        {it.ratio} Â· {it.label}
+                                        {it.ratio} · {it.label}
                                       </div>
                                     </button>
-                                    {/* Expand icon â€” opens the full-size lightbox without touching
+                                    {/* Expand icon — opens the full-size lightbox without touching
                                         batch grid or history state. */}
                                     <button
                                       onClick={() => setGalleryLightbox({ url: it.url, ratio: it.ratio })}
@@ -9005,7 +8656,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                       className="absolute top-1 left-1 z-20 w-7 h-7 rounded-md bg-black/70 hover:bg-black/90 text-white text-[11px] flex items-center justify-center transition-opacity opacity-0 group-hover:opacity-100">
                                       <i className="fa-solid fa-expand"></i>
                                     </button>
-                                    {/* 3-dot options menu â€” Download always; Delete only for sources
+                                    {/* 3-dot options menu — Download always; Delete only for sources
                                         we can remove from (history / batch). data-version-menu keeps
                                         the document mousedown closer from firing on inside clicks. */}
                                     <div className="absolute top-1 right-1 z-20" data-version-menu>
@@ -9059,7 +8710,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                   );
                 })()}
 
-                {/* â•â•â• GALLERY LIGHTBOX â€” full-size preview, non-destructive â•â•â• */}
+                {/* ═══ GALLERY LIGHTBOX — full-size preview, non-destructive ═══ */}
                 {galleryLightbox && (
                   <div
                     className="fixed inset-0 z-[100] bg-black/80 flex flex-col items-center justify-center gap-4 p-6"
@@ -9090,7 +8741,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                 )}
               </div>
 
-              {/* â•â•â•â•â•â•â• RIGHT: SIDEBAR â•â•â•â•â•â•â• */}
+              {/* ═══════ RIGHT: SIDEBAR ═══════ */}
               <div className="w-full xl:w-[280px] xl:shrink-0 space-y-3 xl:sticky xl:top-16 xl:self-start">
 
                 {/* Magic Edit */}
@@ -9124,7 +8775,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                     </div>
                   )}
 
-                  {/* Edit target indicator â€” shows which design is being edited */}
+                  {/* Edit target indicator — shows which design is being edited */}
                   {editTarget && (
                     <div className="flex items-center justify-between bg-violet-600/10 border border-violet-500/20 rounded-lg px-3 py-2">
                       <div className="flex items-center gap-2">
@@ -9166,12 +8817,12 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                   )}
                 </div>
 
-                {/* Reflow Rescaling â€” 3 ratio buttons, PERMANENTLY visible (no picker
-                    toggle, no trigger button). Shown the moment a viewable render exists â€”
+                {/* Reflow Rescaling — 3 ratio buttons, PERMANENTLY visible (no picker
+                    toggle, no trigger button). Shown the moment a viewable render exists —
                     either a single render (currentMockup) OR a rendered carousel (which never
                     sets currentMockup but has done slides to resize). */}
                 {(currentMockup || carouselSlides.length > 0 || batchResults.some(r => r.status === 'done')) && (() => {
-                  // UI restriction: Square / Portrait / Story only â€” module-level UI_RATIOS,
+                  // UI restriction: Square / Portrait / Story only — module-level UI_RATIOS,
                   // shared with the Step 3 size selector. Backend supports the full 6 ratios;
                   // restore others by extending UI_RATIOS at the top of this file.
                   const reflowLabels: Record<string, string> = {
@@ -9185,10 +8836,10 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                     '9:16': 'fa-solid fa-mobile',
                   };
                   // Display name (Square/Portrait/Story) without the "(1:1)" suffix the
-                  // i18n label carries â€” the ratio renders on its own line beneath it.
+                  // i18n label carries — the ratio renders on its own line beneath it.
                   const nameFor = (r: string) => (reflowLabels[r] || r).replace(/\s*\(.*\)\s*/, '').trim();
                   // Null-guarded counts. Both arrays are always initialized to [], but
-                  // guard defensively â€” the scope math previously crashed reflow.
+                  // guard defensively — the scope math previously crashed reflow.
                   const slides = carouselSlides ?? [];
                   const batches = batchResults ?? [];
                   const isCarouselScope = slides.length > 0 && slides.some(s => s.status === 'done');
@@ -9203,7 +8854,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                   // In batch mode the displayed image is a batch tile, so the "Current"
                   // badge tracks the focused tile's ratio (activeBatchRatio), not the
                   // single-render displayRatio.
-                  // For carousel, use currentAspectRatio directly â€” displayRatio reads from
+                  // For carousel, use currentAspectRatio directly — displayRatio reads from
                   // mockupHistory (which the carousel reflow never updates) and goes stale.
                   const currentRatioForBadge =
                     carouselSlides.length > 0 ? currentAspectRatio :
@@ -9213,7 +8864,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                   <div className="bg-slate-900/50 rounded-2xl border border-slate-800/40 p-4 space-y-3">
                     <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center"><i className="fa-solid fa-left-right mr-2 text-blue-500"></i>{t('studio.reflow')}</h4>
 
-                    {/* 3 buttons in a single equal-width row â€” always rendered */}
+                    {/* 3 buttons in a single equal-width row — always rendered */}
                     <div className="flex gap-2">
                       {UI_RATIOS.map(value => {
                         const isCurrent = value === currentRatioForBadge;
@@ -9252,7 +8903,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                       })}
                     </div>
 
-                    {/* Resize action â€” always visible beneath the ratio row. Solid filled primary
+                    {/* Resize action — always visible beneath the ratio row. Solid filled primary
                         when a non-current ratio is selected; dimmed/disabled when the selection
                         equals the current ratio. In batch mode it shows TWO buttons (Resize All /
                         Resize Selected); single/carousel show one. */}
@@ -9260,7 +8911,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                       const effectiveTarget = (reflowTarget || currentRatioForBadge) as AspectRatio;
                       const atCurrent = !reflowTarget || reflowTarget === currentRatioForBadge;
                       const targetName = nameFor(effectiveTarget);
-                      // Shared commit routine â€” `indices` restricts a batch resize to a subset.
+                      // Shared commit routine — `indices` restricts a batch resize to a subset.
                       const runReflow = async (indices?: number[]) => {
                         if (committing || atCurrent || !reflowTarget) return;
                         setReflowStep('committing');
@@ -9299,8 +8950,8 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                               className={atCurrent ? dimCls : `${baseBtn} bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-lg active:scale-[0.98] hover:from-blue-500 hover:to-cyan-500 disabled:opacity-50`}>
                               <i className={`fa-solid ${committing ? 'fa-spinner fa-spin' : atCurrent ? 'fa-check' : 'fa-up-down'} text-[8px]`}></i>
                               {atCurrent
-                                ? (lang === 'ar' ? `Ø§Ù„Ø­Ø¬Ù… Ø§Ù„Ø­Ø§Ù„ÙŠ (${targetName})` : `Already ${targetName}`)
-                                : (lang === 'ar' ? `ØªØºÙŠÙŠØ± Ø­Ø¬Ù… Ø§Ù„ÙƒÙ„ â† ${targetName}` : `Resize All â†’ ${targetName}`)}
+                                ? (lang === 'ar' ? `الحجم الحالي (${targetName})` : `Already ${targetName}`)
+                                : (lang === 'ar' ? `تغيير حجم الكل ← ${targetName}` : `Resize All → ${targetName}`)}
                             </button>
                             <button
                               onClick={() => runReflow([...selectedBatchIndices])}
@@ -9308,19 +8959,19 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                               className={(atCurrent || selectedCount === 0) ? dimCls : `${baseBtn} bg-blue-600 text-white shadow-lg active:scale-[0.98] hover:bg-blue-500 disabled:opacity-50`}>
                               <i className="fa-solid fa-check-double text-[8px]"></i>
                               {lang === 'ar'
-                                ? `ØªØºÙŠÙŠØ± Ø§Ù„Ù…Ø­Ø¯Ø¯ â† ${targetName} (${selectedCount} Ã— ${CREDIT_COSTS.reflowImage})`
-                                : `Resize Selected â†’ ${targetName} (${selectedCount} Ã— ${CREDIT_COSTS.reflowImage} credits)`}
+                                ? `تغيير المحدد ← ${targetName} (${selectedCount} × ${CREDIT_COSTS.reflowImage})`
+                                : `Resize Selected → ${targetName} (${selectedCount} × ${CREDIT_COSTS.reflowImage} credits)`}
                             </button>
                           </div>
                         );
                       }
 
-                      // Single / carousel â€” one dynamic button.
+                      // Single / carousel — one dynamic button.
                       const verb = isCarouselScope
-                        ? (lang === 'ar' ? 'ØªØºÙŠÙŠØ± Ø­Ø¬Ù… Ø§Ù„ÙƒÙ„ Ø¥Ù„Ù‰' : 'Resize All to')
-                        : (lang === 'ar' ? 'ØªØºÙŠÙŠØ± Ø§Ù„Ø­Ø¬Ù… Ø¥Ù„Ù‰' : 'Resize to');
+                        ? (lang === 'ar' ? 'تغيير حجم الكل إلى' : 'Resize All to')
+                        : (lang === 'ar' ? 'تغيير الحجم إلى' : 'Resize to');
                       const label = atCurrent
-                        ? (lang === 'ar' ? `Ø§Ù„Ø­Ø¬Ù… Ø§Ù„Ø­Ø§Ù„ÙŠ (${targetName})` : `Already ${targetName}`)
+                        ? (lang === 'ar' ? `الحجم الحالي (${targetName})` : `Already ${targetName}`)
                         : `${verb} ${targetName}`;
                       return (
                         <button
@@ -9333,24 +8984,24 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                       );
                     })()}
 
-                    {/* ISSUE 3 â€” single-image "switch back to previous size" toggle. Mirrors the
+                    {/* ISSUE 3 — single-image "switch back to previous size" toggle. Mirrors the
                         carousel version: swaps the displayed mockup + ratio with the pre-resize
                         snapshot so the user can flip between sizes both ways. Single mode only. */}
                     {!isCarouselScope && !isBatchScope && currentMockup && previousSingleMockup && previousSingleMockup.ratio !== displayRatio && (() => {
                       const ratioName: Record<string, { en: string; ar: string }> = {
-                        '1:1': { en: 'Square', ar: 'Ù…Ø±Ø¨Ø¹' },
-                        '4:5': { en: 'Portrait', ar: 'Ø¹Ù…ÙˆØ¯ÙŠ' },
-                        '3:4': { en: 'Portrait', ar: 'Ø¹Ù…ÙˆØ¯ÙŠ' },
-                        '9:16': { en: 'Story', ar: 'Ø³ØªÙˆØ±ÙŠ' },
-                        '4:3': { en: 'Wide', ar: 'Ø¹Ø±ÙŠØ¶' },
-                        '16:9': { en: 'Landscape', ar: 'Ø£ÙÙ‚ÙŠ' },
+                        '1:1': { en: 'Square', ar: 'مربع' },
+                        '4:5': { en: 'Portrait', ar: 'عمودي' },
+                        '3:4': { en: 'Portrait', ar: 'عمودي' },
+                        '9:16': { en: 'Story', ar: 'ستوري' },
+                        '4:3': { en: 'Wide', ar: 'عريض' },
+                        '16:9': { en: 'Landscape', ar: 'أفقي' },
                       };
                       const label = ratioName[previousSingleMockup.ratio] || { en: previousSingleMockup.ratio, ar: previousSingleMockup.ratio };
                       return (
                         <button
                           disabled={committing || isLoading}
                           onClick={() => {
-                            // Swap, don't clear â€” keep the toggle available both ways. Append the
+                            // Swap, don't clear — keep the toggle available both ways. Append the
                             // snapshot as a new history entry (preserving its raw source for any
                             // later reflow), point the cursor at it, and stash the current as the
                             // new "previous".
@@ -9366,7 +9017,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                           }}
                           className="w-full mt-1 py-2 rounded-xl text-[9px] font-bold text-blue-300 bg-blue-600/15 border border-blue-500/30 hover:bg-blue-600/25 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50">
                           <i className="fa-solid fa-arrow-right-arrow-left text-[8px]"></i>
-                          {lang === 'ar' ? `Ø§Ù„ØªØ¨Ø¯ÙŠÙ„ Ø¥Ù„Ù‰ Ù†Ø³Ø®Ø© ${label.ar}` : `Switch to ${label.en} version`}
+                          {lang === 'ar' ? `التبديل إلى نسخة ${label.ar}` : `Switch to ${label.en} version`}
                         </button>
                       );
                     })()}
@@ -9374,7 +9025,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                   );
                 })()}
 
-                {/* Script â€” bottom */}
+                {/* Script — bottom */}
                 {hasAnyImage && (
                   batchHookGroups.length > 0 ? (
                     <button onClick={() => handleBatchCaptions()}
@@ -9400,7 +9051,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
           return (
             <div className="flex flex-col lg:flex-row gap-16 animate-in fade-in duration-1000 max-w-[1200px] mx-auto relative">
               <button onClick={handleBack} className={`absolute -top-16 ${lang === 'ar' ? 'right-0' : 'left-0'} bg-slate-900/60 px-5 py-2.5 rounded-xl text-[10px] font-semibold text-slate-500 hover:text-white transition-all shadow-xl flex items-center ${lang === 'ar' ? 'flex-row-reverse gap-2' : 'space-x-2'}`}>
-                <i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'}`}></i><span>{lang === 'ar' ? 'Ø±Ø¬ÙˆØ¹' : 'Back'}</span>
+                <i className={`fa-solid ${lang === 'ar' ? 'fa-arrow-right' : 'fa-arrow-left'}`}></i><span>{lang === 'ar' ? 'رجوع' : 'Back'}</span>
               </button>
 
               {/* --- LEFT SIDE: SCRIPT & CONTROLS --- */}
@@ -9453,7 +9104,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                   </div>
                   <div className="mt-4 pt-4 border-t border-slate-800 flex justify-between text-[10px] text-slate-500">
                     <span>Word Count: {wordCount} words</span>
-                    <span>{wordCount < 100 ? 'âš ï¸ Short' : wordCount > 160 ? 'âš ï¸ Long' : 'âœ“ Good length'}</span>
+                    <span>{wordCount < 100 ? '⚠️ Short' : wordCount > 160 ? '⚠️ Long' : '✓ Good length'}</span>
                   </div>
                   {/* Caption Feedback */}
                   {captionText && captionGenerationId && (
@@ -9495,7 +9146,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                 <div className="grid grid-cols-2 gap-3">
                   <button onClick={() => {
                     const textToCopy = batchCaptions.length > 1
-                      ? batchCaptions.map(bc => `â•â•â• HOOK ${bc.hookKey} â•â•â•\n${bc.captionText}`).join('\n\n')
+                      ? batchCaptions.map(bc => `═══ HOOK ${bc.hookKey} ═══\n${bc.captionText}`).join('\n\n')
                       : captionText;
                     navigator.clipboard.writeText(textToCopy);
                     showToast(batchCaptions.length > 1 ? `${batchCaptions.length} scripts copied!` : "Copied to Clipboard", "success");
@@ -9505,7 +9156,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                   <button
                     onClick={() => {
                       const textToDownload = batchCaptions.length > 1
-                        ? batchCaptions.map(bc => `â•â•â• HOOK ${bc.hookKey} â•â•â•\n${bc.captionText}`).join('\n\n')
+                        ? batchCaptions.map(bc => `═══ HOOK ${bc.hookKey} ═══\n${bc.captionText}`).join('\n\n')
                         : captionText;
                       const blob = new Blob([textToDownload], { type: 'text/plain;charset=utf-8' });
                       const url = URL.createObjectURL(blob);
@@ -9527,7 +9178,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                   </button>
                 </div>
 
-                {/* CREATIVE PACKS â€” Full export with images + copy paired */}
+                {/* CREATIVE PACKS — Full export with images + copy paired */}
                 {batchResults.some(r => r.status === 'done') && (batchCaptions.length > 0 || captionText) && (
                   <button
                     onClick={async () => {
@@ -9589,7 +9240,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
 
                           // Detailed README
                           const readme = [
-                            `Creative Pack â€” Hook ${hookKey}`,
+                            `Creative Pack — Hook ${hookKey}`,
                             '='.repeat(50),
                             `Product: ${inputs?.productName || 'Ad'}`,
                             `Headline: ${hookHeadline}`,
@@ -9599,21 +9250,21 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                             adTone ? `Ad Tone: ${adTone}` : '',
                             '',
                             `Images (${images.length}):`,
-                            ...imageFiles.map(f => `  â€¢ ${f}`),
+                            ...imageFiles.map(f => `  • ${f}`),
                             '',
                             'PLACEMENT GUIDE:',
-                            '  Square (1:1)    â†’ Feed, Marketplace, Search Results',
-                            '  Portrait (4:5)  â†’ Feed (mobile optimized)',
-                            '  Story (9:16)    â†’ Stories, Reels, TikTok',
-                            '  Landscape (16:9) â†’ In-stream video, YouTube',
+                            '  Square (1:1)    → Feed, Marketplace, Search Results',
+                            '  Portrait (4:5)  → Feed (mobile optimized)',
+                            '  Story (9:16)    → Stories, Reels, TikTok',
+                            '  Landscape (16:9) → In-stream video, YouTube',
                             '',
                             'HOW TO USE IN META ADS MANAGER:',
-                            '1. Create a new campaign â†’ choose your objective',
+                            '1. Create a new campaign → choose your objective',
                             '2. At the Ad level, upload images from this folder',
                             '3. Paste ad_copy.txt as your Primary Text',
                             '4. Set each image size to its matching placement',
                             '',
-                            caption ? `AD COPY:\n${'-'.repeat(50)}\n${caption}` : 'âš ï¸ No copy in this pack.',
+                            caption ? `AD COPY:\n${'-'.repeat(50)}\n${caption}` : '⚠️ No copy in this pack.',
                           ].filter(Boolean).join('\n');
                           folder.file('README.txt', readme);
                         }
@@ -9662,7 +9313,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                          {hookImages.length > 0 ? `Hook ${activeKey} â€” ${hookImages.length} images` : `All images â€” ${allDoneImages.length}`}
+                          {hookImages.length > 0 ? `Hook ${activeKey} — ${hookImages.length} images` : `All images — ${allDoneImages.length}`}
                         </span>
                         <span className="text-[8px] text-slate-600">Paired with this copy</span>
                       </div>
@@ -9705,7 +9356,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
             </div>
           );
         })()}
-        {/* â•â•â• FAVORITES PANELS (one mounted per phase; isOpen gates visibility) â•â•â• */}
+        {/* ═══ FAVORITES PANELS (one mounted per phase; isOpen gates visibility) ═══ */}
         <FavoritesPanel
           phase="hooks"
           isOpen={openFavoritesPhase === 'hooks'}
@@ -9726,7 +9377,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
             }
             // Rewind downstream: a loaded hook is a new branch. Strand any
             // concepts / renders / captions from the prior flow so the user
-            // can't carry mismatched Step 3â€“5 state forward.
+            // can't carry mismatched Step 3–5 state forward.
             setConceptsText('');
             setSelectedConcept('');
             setBuildPlan('');
@@ -9807,7 +9458,248 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
         />
       </main>
 
-      {/* â•â•â• FAVORITE UPDATE/KEEP-BOTH PROMPT (T015-T018) â•â•â• */}
+      {/* ═══ MENU SIDEBAR (Phase 26 Batch 6 Revision 5) ═══
+          Plain flex sibling of <main>. Width animates 0 ↔ 280px.
+          - Desktop (md+): flex layout, sidebar sits inline with main.
+          - Mobile (<md): hidden here; a separate fixed overlay below handles
+            mobile presentation (no room for a 280px column on phones). */}
+      <aside
+        aria-label={t('history.menu_title')}
+        aria-hidden={!showMenuDrawer}
+        className={`hidden md:flex flex-col shrink-0 bg-slate-950 border-s border-white/[0.06] overflow-y-auto overflow-x-hidden transition-all duration-200 ease-out ${
+          showMenuDrawer ? 'w-[280px]' : 'w-0 border-s-0'
+        }`}
+      >
+        <div className="w-[280px] flex flex-col min-h-full">
+          {/* Header — email + plan + collapse */}
+          <div className="sticky top-0 z-[1] flex items-start justify-between gap-2 px-5 py-4 border-b border-white/[0.04] bg-slate-950">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold text-white truncate">{user?.email}</p>
+              <p className="text-[9px] text-blue-400 font-bold uppercase mt-0.5 tracking-wider">
+                {PLANS[userPlan]?.name || 'Free'} {t('header.plan')}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowMenuDrawer(false)}
+              aria-label={t('common.close')}
+              className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-white/[0.04] transition-colors"
+            >
+              <i className="fa-solid fa-xmark text-sm"></i>
+            </button>
+          </div>
+
+          {/* Quick actions */}
+          <button
+            onClick={() => { if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); } setShowMenuDrawer(false); }}
+            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+            role="menuitem"
+          >
+            <i className="fa-solid fa-plus text-slate-500 w-5 text-center"></i> {t('history.newProject')}
+          </button>
+          <button
+            onClick={async () => {
+              setShowMenuDrawer(false);
+              setShowFavorites(true);
+              setFavoritesLoading(true);
+              try {
+                const uid = user?.uid;
+                if (!uid) return;
+                try {
+                  const fSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), where('feedback.savedToFavorites', '==', true), orderBy('timestamp', 'desc'), limit(50)));
+                  setFavoritesData(fSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+                } catch (indexErr) {
+                  console.warn('Favorites index query failed, using fallback:', indexErr);
+                  try {
+                    const fallbackSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), orderBy('timestamp', 'desc'), limit(200)));
+                    const allGens = fallbackSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                    setFavoritesData(allGens.filter((g: any) => g.feedback?.savedToFavorites === true));
+                  } catch (fallbackErr) {
+                    console.error('Fallback favorites query also failed:', fallbackErr);
+                    setFavoritesData([]);
+                  }
+                }
+              } catch (e) { console.warn('Failed to load favorites:', e); }
+              finally { setFavoritesLoading(false); }
+            }}
+            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+            role="menuitem"
+          >
+            <i className="fa-solid fa-bookmark text-slate-500 w-5 text-center"></i> {t('topbar.menu_bookmarks')}
+          </button>
+          <button
+            onClick={() => { setShowSettingsModal(true); setSettingsEditingName(false); setSettingsEditingEmail(false); setShowMenuDrawer(false); }}
+            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+            role="menuitem"
+          >
+            <i className="fa-solid fa-gear text-slate-500 w-5 text-center"></i> {t('topbar.menu_settings')}
+          </button>
+
+          <div className="border-t border-white/[0.04]"></div>
+
+          {/* Appearance / locale */}
+          <button
+            onClick={() => { toggleTheme(); }}
+            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+            role="menuitem"
+          >
+            <i className={`fa-solid ${isDarkMode ? 'fa-sun' : 'fa-moon'} text-slate-500 w-5 text-center`}></i>
+            {isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
+          </button>
+          <button
+            onClick={() => { setLang(lang === 'en' ? 'ar' : 'en'); }}
+            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+            role="menuitem"
+          >
+            <i className="fa-solid fa-language text-slate-500 w-5 text-center"></i>
+            {t('topbar.menu_language')} ({t('lang.switch_short')})
+          </button>
+          {!milestones.watchVideo && (
+            <button
+              onClick={() => { setShowVideoPopup(true); setShowMenuDrawer(false); }}
+              className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+              role="menuitem"
+            >
+              <i className="fa-solid fa-play text-amber-500 w-5 text-center"></i> {t('topbar.menu_tutorial')}
+            </button>
+          )}
+          {phase === 'input' && (
+            <button
+              onClick={() => { setShowWalkthrough(true); setShowMenuDrawer(false); }}
+              className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+              role="menuitem"
+            >
+              <i className="fa-solid fa-circle-question text-slate-500 w-5 text-center"></i> {t('topbar.menu_tour')}
+            </button>
+          )}
+
+          <div className="border-t border-white/[0.04]"></div>
+
+          {/* Plan / logout */}
+          <button
+            onClick={() => { handleManageBilling(); setShowMenuDrawer(false); }}
+            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+            role="menuitem"
+          >
+            <i className="fa-solid fa-credit-card text-slate-500 w-5 text-center"></i> {t('header.manage_billing')}
+          </button>
+          <button
+            onClick={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }}
+            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+            role="menuitem"
+          >
+            <i className="fa-solid fa-arrow-up text-slate-500 w-5 text-center"></i> {t('header.upgrade')}
+          </button>
+
+          <div className="border-t border-white/[0.04]"></div>
+
+          <button
+            onClick={() => { handleLogout(); }}
+            className="w-full px-5 py-3 text-start text-[12px] text-red-500/70 hover:bg-red-500/5 hover:text-red-400 transition-all flex items-center gap-3"
+            role="menuitem"
+          >
+            <i className="fa-solid fa-right-from-bracket w-5 text-center"></i> {t('header.logout')}
+          </button>
+        </div>
+      </aside>
+
+      {/* Mobile overlay variant — same menu, position:fixed because there's
+          no room for a 280px column on a phone. Only renders when open and
+          we're below the md breakpoint. */}
+      {showMenuDrawer && (
+        <aside
+          aria-label={t('history.menu_title')}
+          className="md:hidden fixed inset-0 z-[55] flex flex-col bg-slate-950 overflow-y-auto animate-in slide-in-from-end duration-200"
+          dir={lang === 'ar' ? 'rtl' : 'ltr'}
+        >
+          {/* Backdrop on top of page content; click dismisses */}
+          <button
+            type="button"
+            aria-label={t('common.close')}
+            onClick={() => setShowMenuDrawer(false)}
+            className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+          />
+          {/* Panel: anchored to the start edge in RTL (right), end edge in LTR (right) */}
+          <div className="relative mt-auto w-[80vw] max-w-sm ml-auto h-full bg-slate-950 border-s border-white/[0.06] flex flex-col">
+            <div className="sticky top-0 z-[1] flex items-start justify-between gap-2 px-5 py-4 border-b border-white/[0.04] bg-slate-950">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold text-white truncate">{user?.email}</p>
+                <p className="text-[9px] text-blue-400 font-bold uppercase mt-0.5 tracking-wider">
+                  {PLANS[userPlan]?.name || 'Free'} {t('header.plan')}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowMenuDrawer(false)}
+                aria-label={t('common.close')}
+                className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-white/[0.04] transition-colors"
+              >
+                <i className="fa-solid fa-xmark text-sm"></i>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              <button
+                onClick={() => { if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); } setShowMenuDrawer(false); }}
+                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                role="menuitem"
+              >
+                <i className="fa-solid fa-plus text-slate-500 w-5 text-center"></i> {t('history.newProject')}
+              </button>
+              <button
+                onClick={() => { setShowSettingsModal(true); setSettingsEditingName(false); setSettingsEditingEmail(false); setShowMenuDrawer(false); }}
+                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                role="menuitem"
+              >
+                <i className="fa-solid fa-gear text-slate-500 w-5 text-center"></i> {t('topbar.menu_settings')}
+              </button>
+              <div className="border-t border-white/[0.04]"></div>
+              <button
+                onClick={() => { toggleTheme(); }}
+                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                role="menuitem"
+              >
+                <i className={`fa-solid ${isDarkMode ? 'fa-sun' : 'fa-moon'} text-slate-500 w-5 text-center`}></i>
+                {isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
+              </button>
+              <button
+                onClick={() => { setLang(lang === 'en' ? 'ar' : 'en'); }}
+                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                role="menuitem"
+              >
+                <i className="fa-solid fa-language text-slate-500 w-5 text-center"></i>
+                {t('topbar.menu_language')} ({t('lang.switch_short')})
+              </button>
+              <div className="border-t border-white/[0.04]"></div>
+              <button
+                onClick={() => { handleManageBilling(); setShowMenuDrawer(false); }}
+                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                role="menuitem"
+              >
+                <i className="fa-solid fa-credit-card text-slate-500 w-5 text-center"></i> {t('header.manage_billing')}
+              </button>
+              <button
+                onClick={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }}
+                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
+                role="menuitem"
+              >
+                <i className="fa-solid fa-arrow-up text-slate-500 w-5 text-center"></i> {t('header.upgrade')}
+              </button>
+              <div className="border-t border-white/[0.04]"></div>
+              <button
+                onClick={() => { handleLogout(); }}
+                className="w-full px-5 py-3 text-start text-[12px] text-red-500/70 hover:bg-red-500/5 hover:text-red-400 transition-all flex items-center gap-3"
+                role="menuitem"
+              >
+                <i className="fa-solid fa-right-from-bracket w-5 text-center"></i> {t('header.logout')}
+              </button>
+            </div>
+          </div>
+        </aside>
+      )}
+
+      </div>
+
+      {/* ═══ FAVORITE UPDATE/KEEP-BOTH PROMPT (T015-T018) ═══ */}
       {favUpdatePrompt && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { setFavUpdatePrompt(null); setLoadedFavoriteId(null); }} />
@@ -9891,31 +9783,31 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
         </div>
       )}
 
-      {/* â•â•â• CAROUSEL SLIDE LIGHTBOX â•â•â• */}
+      {/* ═══ CAROUSEL SLIDE LIGHTBOX ═══ */}
       {lightboxIndex !== null && carouselSlides[lightboxIndex] && (() => {
         const slide = carouselSlides[lightboxIndex];
         const isRtl = lang === 'ar';
-        // RTL-aware: the visual â† button advances (next) in Arabic, goes back (prev) in English.
+        // RTL-aware: the visual ← button advances (next) in Arabic, goes back (prev) in English.
         const onLeftArrow = isRtl ? lightboxNext : lightboxPrev;
         const onRightArrow = isRtl ? lightboxPrev : lightboxNext;
         const multi = carouselSlides.length > 1;
         return (
           <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={() => setLightboxIndex(null)} dir={isRtl ? 'rtl' : 'ltr'}>
             {/* Close */}
-            <button onClick={(e) => { e.stopPropagation(); setLightboxIndex(null); }} aria-label={isRtl ? 'Ø¥ØºÙ„Ø§Ù‚' : 'Close'}
+            <button onClick={(e) => { e.stopPropagation(); setLightboxIndex(null); }} aria-label={isRtl ? 'إغلاق' : 'Close'}
               className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-xl z-10 transition-colors">
               <i className="fa-solid fa-xmark"></i>
             </button>
             {/* Left arrow */}
             {multi && (
-              <button onClick={(e) => { e.stopPropagation(); onLeftArrow(); }} aria-label={isRtl ? 'Ø§Ù„ØªØ§Ù„ÙŠ' : 'Previous'}
+              <button onClick={(e) => { e.stopPropagation(); onLeftArrow(); }} aria-label={isRtl ? 'التالي' : 'Previous'}
                 className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-2xl z-10 transition-colors">
                 <i className="fa-solid fa-chevron-left"></i>
               </button>
             )}
             {/* Right arrow */}
             {multi && (
-              <button onClick={(e) => { e.stopPropagation(); onRightArrow(); }} aria-label={isRtl ? 'Ø§Ù„Ø³Ø§Ø¨Ù‚' : 'Next'}
+              <button onClick={(e) => { e.stopPropagation(); onRightArrow(); }} aria-label={isRtl ? 'السابق' : 'Next'}
                 className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-2xl z-10 transition-colors">
                 <i className="fa-solid fa-chevron-right"></i>
               </button>
@@ -9927,7 +9819,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
               ) : (
                 <div className="flex flex-col items-center justify-center gap-3 bg-slate-900 border border-slate-700 rounded-2xl px-20 py-28">
                   <i className="fa-solid fa-triangle-exclamation text-red-400 text-4xl"></i>
-                  <span className="text-slate-300 text-sm font-bold">{isRtl ? 'ÙØ´Ù„ Ø§Ù„Ø¥Ù†Ø´Ø§Ø¡' : 'Generation failed'}</span>
+                  <span className="text-slate-300 text-sm font-bold">{isRtl ? 'فشل الإنشاء' : 'Generation failed'}</span>
                 </div>
               )}
             </div>
@@ -9939,8 +9831,8 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
         );
       })()}
 
-      {/* â•â•â• UPGRADE / TOP-UP MODAL â•â•â• */}
-      {/* â•â•â• CAROUSEL COPY PREVIEW MODAL â•â•â• */}
+      {/* ═══ UPGRADE / TOP-UP MODAL ═══ */}
+      {/* ═══ CAROUSEL COPY PREVIEW MODAL ═══ */}
       {showCarouselPreview && carouselCopies.length > 0 && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
@@ -9948,7 +9840,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
             <div className="p-8 space-y-6">
               <div className="text-center space-y-2">
                 <h3 className="text-3xl font-black text-white italic uppercase tracking-tight">Carousel Copy Preview</h3>
-                <p className="text-sm text-slate-400">{carouselCopies.length} slides â€” edit text below, then render all</p>
+                <p className="text-sm text-slate-400">{carouselCopies.length} slides — edit text below, then render all</p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -9983,7 +9875,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                           dir="auto"
                         />
                       </div>
-                      {/* CTA & Benefit â€” only on the LAST slide */}
+                      {/* CTA & Benefit — only on the LAST slide */}
                       {idx === carouselCopies.length - 1 && (
                         <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-700/50">
                           <div>
@@ -10063,13 +9955,13 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
       )}
 
 
-      {/* â•â•â• BILLING MODAL (in-app subscription management) â•â•â• */}
+      {/* ═══ BILLING MODAL (in-app subscription management) ═══ */}
       {showBillingModal && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={() => { setShowBillingModal(false); setShowCancelFlow(false); setCancelStep(1); }}>
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
           <div className="relative bg-slate-950 border border-slate-800 rounded-3xl shadow-2xl shadow-black/80 max-w-xl w-full mx-4 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
 
-            {/* â”€â”€â”€ CANCELLATION FLOW (overlays billing modal) â”€â”€â”€ */}
+            {/* ─── CANCELLATION FLOW (overlays billing modal) ─── */}
             {showCancelFlow ? (
               <div className="p-8 space-y-6">
                 {/* Step indicator */}
@@ -10118,7 +10010,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                         <i className="fa-solid fa-user text-blue-400"></i>
                       </div>
                       <div className="space-y-2">
-                        <p className="text-[11px] font-bold text-white">Eslam â€” Founder, Pro Ads AI</p>
+                        <p className="text-[11px] font-bold text-white">Eslam — Founder, Pro Ads AI</p>
                         <div className="bg-slate-800/60 rounded-xl rounded-tl-sm p-4">
                           <p className="text-sm text-slate-300 leading-relaxed">
                             I personally review every cancellation. Tell me what's not working and I'll make it right.
@@ -10129,7 +10021,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                     </div>
                     <div className="bg-amber-500/5 border border-amber-500/20 rounded-2xl p-6 space-y-3">
                       <div className="text-3xl font-black text-amber-400">25% OFF</div>
-                      <p className="text-sm text-slate-300"><span className="text-amber-400 font-bold">Forever</span> â€” for as long as you're subscribed</p>
+                      <p className="text-sm text-slate-300"><span className="text-amber-400 font-bold">Forever</span> — for as long as you're subscribed</p>
                     </div>
                     <div className="flex gap-3">
                       <button onClick={() => handleRetentionDiscount('retention_25_forever')} disabled={cancelLoading}
@@ -10201,7 +10093,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                 )}
               </div>
             ) : (
-              /* â”€â”€â”€ MAIN BILLING MODAL â”€â”€â”€ */
+              /* ─── MAIN BILLING MODAL ─── */
               <>
                 {/* Header with tabs */}
                 <div className="sticky top-0 bg-slate-950/95 backdrop-blur-xl border-b border-slate-800 rounded-t-3xl z-10">
@@ -10222,7 +10114,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                 </div>
 
                 <div className="p-8 space-y-6">
-                  {/* â”€â”€â”€ TAB: MANAGE â”€â”€â”€ */}
+                  {/* ─── TAB: MANAGE ─── */}
                   {billingTab === 'manage' && (
                     <div className="space-y-5">
                       {/* Current plan card */}
@@ -10245,7 +10137,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                           <div className="bg-slate-950/40 rounded-xl p-3">
                             <p className="text-[9px] text-slate-500 font-bold">{billingData?.cancelAtPeriodEnd ? 'Access Until' : 'Renews'}</p>
                             <p className="text-sm font-bold text-white mt-0.5">
-                              {billingData?.currentPeriodEnd ? new Date(billingData.currentPeriodEnd * 1000).toLocaleDateString() : 'â€”'}
+                              {billingData?.currentPeriodEnd ? new Date(billingData.currentPeriodEnd * 1000).toLocaleDateString() : '—'}
                             </p>
                           </div>
                         </div>
@@ -10254,7 +10146,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                           <div className="flex items-center gap-2 bg-slate-950/40 rounded-xl p-3">
                             <i className="fa-solid fa-credit-card text-slate-600 text-[11px]"></i>
                             <span className="text-[11px] text-slate-300 capitalize">{billingData.paymentMethod.brand}</span>
-                            <span className="text-[11px] text-slate-500">â€¢â€¢â€¢â€¢{billingData.paymentMethod.last4}</span>
+                            <span className="text-[11px] text-slate-500">••••{billingData.paymentMethod.last4}</span>
                             <span className="text-[11px] text-slate-600 ml-auto">exp {billingData.paymentMethod.expMonth}/{billingData.paymentMethod.expYear}</span>
                           </div>
                         )}
@@ -10310,7 +10202,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                     </div>
                   )}
 
-                  {/* â”€â”€â”€ TAB: UPGRADE / CHANGE PLAN â”€â”€â”€ */}
+                  {/* ─── TAB: UPGRADE / CHANGE PLAN ─── */}
                   {billingTab === 'upgrade' && (
                     <div className="space-y-5">
                       <p className="text-[11px] text-slate-400 text-center">Changes take effect immediately with prorated billing.</p>
@@ -10326,7 +10218,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                                   <span className="text-sm font-black text-white">{plan.name}</span>
                                   {isCurrent && <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-[8px] font-bold rounded-full uppercase">Current</span>}
                                 </div>
-                                <p className="text-[10px] text-slate-500 mt-1">{getApproxAdsPerMonth(plan)} Ads / month <span className="text-slate-600">({plan.monthlyCredits?.toLocaleString() || 'â€”'} credits)</span></p>
+                                <p className="text-[10px] text-slate-500 mt-1">{getApproxAdsPerMonth(plan)} Ads / month <span className="text-slate-600">({plan.monthlyCredits?.toLocaleString() || '—'} credits)</span></p>
                               </div>
                               {!isCurrent && (
                                 <button onClick={() => {
@@ -10347,7 +10239,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                     </div>
                   )}
 
-                  {/* â”€â”€â”€ TAB: PAYMENT â”€â”€â”€ */}
+                  {/* ─── TAB: PAYMENT ─── */}
                   {billingTab === 'payment' && (
                     <div className="space-y-5">
                       {billingData?.paymentMethod ? (
@@ -10358,7 +10250,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                               <i className={`fa-brands ${billingData.paymentMethod.brand === 'visa' ? 'fa-cc-visa' : billingData.paymentMethod.brand === 'mastercard' ? 'fa-cc-mastercard' : 'fa-cc-stripe'} text-lg text-slate-400`}></i>
                             </div>
                             <div>
-                              <p className="text-sm font-bold text-white capitalize">{billingData.paymentMethod.brand} â€¢â€¢â€¢â€¢{billingData.paymentMethod.last4}</p>
+                              <p className="text-sm font-bold text-white capitalize">{billingData.paymentMethod.brand} ••••{billingData.paymentMethod.last4}</p>
                               <p className="text-[10px] text-slate-500">Expires {billingData.paymentMethod.expMonth}/{billingData.paymentMethod.expYear}</p>
                             </div>
                           </div>
@@ -10384,7 +10276,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
         </div>
       )}
 
-      {/* â•â•â• COPY FIDELITY WARNING BANNER â•â•â• */}
+      {/* ═══ COPY FIDELITY WARNING BANNER ═══ */}
       {copyFidelityWarning && (
         <div className="fixed inset-0 z-[250] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
@@ -10411,7 +10303,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
         </div>
       )}
 
-      {/* â•â•â• REFLOW FALLBACK NOTICE â•â•â• */}
+      {/* ═══ REFLOW FALLBACK NOTICE ═══ */}
       {reflowFallbackNotice && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[150] max-w-md w-full mx-4">
           <div className="bg-slate-900 border border-amber-500/30 rounded-2xl shadow-2xl px-5 py-4 flex items-center gap-3">
@@ -10426,7 +10318,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
         </div>
       )}
 
-      {/* â•â•â• REMOVED FROM TEAM OVERLAY â•â•â• */}
+      {/* ═══ REMOVED FROM TEAM OVERLAY ═══ */}
       {removedFromTeam && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm"></div>
@@ -10443,7 +10335,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
         </div>
       )}
 
-      {/* â•â•â• UPGRADE MODAL (inlined) â•â•â• */}
+      {/* ═══ UPGRADE MODAL (inlined) ═══ */}
       {showUpgradeModal && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={() => setShowUpgradeModal(false)}>
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
@@ -10514,7 +10406,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                 <p className="text-[8px] text-slate-600 text-center mt-2"><i className="fa-solid fa-lock mr-1"></i>{t('billing.secureCheckoutByStripe')}</p>
               </div>
 
-              {/* Upgrade Plan â€” only shown when triggered from Upgrade menu or feature gates */}
+              {/* Upgrade Plan — only shown when triggered from Upgrade menu or feature gates */}
               {upgradeReason && userPlan !== 'scale' && (
                 <div>
                   <div className="flex items-center justify-between mb-4">
@@ -10570,7 +10462,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                 </div>
               )}
 
-              {/* Compare All Features â€” only shown when triggered from Upgrade menu or feature gates */}
+              {/* Compare All Features — only shown when triggered from Upgrade menu or feature gates */}
               {upgradeReason && (
                 <Suspense fallback={null}>
                   <PricingTableLazy />
@@ -10579,7 +10471,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
 
               {/* Current Plan + Manage Subscription */}
               <div className="text-center text-[10px] text-slate-600 border-t border-slate-800 pt-4 space-y-2">
-                <div>Current plan: <span className="text-blue-400 font-bold">{PLANS[userPlan]?.name}</span> Â· Credits remaining: <span className="text-amber-400 font-bold">{userCredits}</span></div>
+                <div>Current plan: <span className="text-blue-400 font-bold">{PLANS[userPlan]?.name}</span> · Credits remaining: <span className="text-amber-400 font-bold">{userCredits}</span></div>
                 <button onClick={() => { setShowUpgradeModal(false); handleManageBilling(); }} className="text-[10px] text-slate-500 hover:text-blue-400 underline underline-offset-2 transition-all">
                   <i className="fa-solid fa-credit-card mr-1"></i>Manage Subscription & Billing
                 </button>
@@ -10901,7 +10793,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
       )}
 
 
-      {/* WORKSPACE SETTINGS MODAL (Multi-Brand â€” Scaling only) */}
+      {/* WORKSPACE SETTINGS MODAL (Multi-Brand — Scaling only) */}
       {showWorkspaceModal && (
         <WorkspaceSettingsModal
           workspace={editingWorkspace}
@@ -10968,7 +10860,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
         />
       </Suspense>
 
-      {/* â•â•â• FAVORITES PANEL â•â•â• */}
+      {/* ═══ FAVORITES PANEL ═══ */}
       {showFavorites && (() => {
         const favHooks = favoritesData.filter((f: any) => f.output?.phase === 'hooks');
         const favBlueprints = favoritesData.filter((f: any) => f.output?.phase === 'concepts');
@@ -10983,7 +10875,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
         ];
         const filtered = favTab === 'hooks' ? favHooks : favTab === 'blueprints' ? favBlueprints : favTab === 'designs' ? favDesigns : favTab === 'captions' ? favCaptions : favoritesData;
 
-        // â”€â”€â”€ THEME TOKENS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ─── THEME TOKENS ─────────────────────────────────────────────
         const dk = isDarkMode;
         const modalShell = dk ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200 shadow-2xl';
         const modalHeaderBorder = dk ? 'border-slate-800/60' : 'border-slate-200';
@@ -11032,7 +10924,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
             if (f.input.language) restoredInputs.adLanguage = f.input.language;
             if (f.input.adType) restoredInputs.adMode = f.input.adType as AdMode;
             if (f.input.campaignType) restoredInputs.campaignType = f.input.campaignType;
-            // Retargeting fields â€” always restore deterministically (clear stale state)
+            // Retargeting fields — always restore deterministically (clear stale state)
             restoredInputs.retargetingObjection = f.input.retargetingObjection ?? (f.input.retargetingObjections?.[0]) ?? undefined;
             restoredInputs.retargetingObjections = f.input.retargetingObjections ?? (f.input.retargetingObjection ? [f.input.retargetingObjection] : []);
             restoredInputs.customObjection = f.input.customObjection ?? '';
@@ -11177,7 +11069,7 @@ Each new hook must feel FRESH and UNIQUE â€” like a different copywriter wr
                             </div>
                           )}
 
-                          {/* â”€â”€â”€ ACTION BUTTONS â”€â”€â”€ */}
+                          {/* ─── ACTION BUTTONS ─── */}
                           <div className={`flex gap-2 mt-3 pt-3 border-t ${cardDivider}`}>
                             <button onClick={() => handleOpenFavorite(f)}
                               className={`flex-1 py-2 rounded-lg ${actionPrimary} text-[9px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5`}>
