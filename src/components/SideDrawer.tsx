@@ -57,6 +57,11 @@ const SideDrawer: React.FC<SideDrawerProps> = ({
   const panelRef = useRef<HTMLElement | null>(null);
   const closeBtnRef = useRef<HTMLButtonElement | null>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  // Keep the latest onClose in a ref so the focus effect doesn't re-run on
+  // every parent re-render (which would churn the keydown listener and steal
+  // focus while the panel is animating in).
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open || !backdrop) return;
@@ -75,7 +80,7 @@ const SideDrawer: React.FC<SideDrawerProps> = ({
     // Basic focus trap: keep Tab cycling inside the panel.
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== 'Tab') return;
@@ -107,7 +112,7 @@ const SideDrawer: React.FC<SideDrawerProps> = ({
         prev.focus();
       }
     };
-  }, [open, backdrop, onClose]);
+  }, [open, backdrop]);
 
   // Translate the panel off-screen when closed. `translate-x-0` is the
   // visible state, `start-0` / `end-0` anchors the drawer to the chosen
@@ -147,6 +152,10 @@ const SideDrawer: React.FC<SideDrawerProps> = ({
       )}
       <aside
         ref={panelRef}
+        // `inert` on a closed dialog removes every descendant from the tab
+        // order and hides them from AT, complementing the outer `aria-hidden`
+        // we set on the wrapper. Modern browsers all support `inert` natively.
+        {...(!open ? { inert: '' as unknown as boolean } : {})}
         className={`absolute top-0 bottom-0 ${side === 'start' ? 'start-0' : 'end-0'} ${anchorClass} w-[80vw] sm:w-[85vw] md:w-[280px] max-w-md bg-slate-950 ${borderClass} border-slate-800 shadow-2xl shadow-black/60 flex flex-col transition-transform duration-200 ease-out
           ${open ? 'translate-x-0 pointer-events-auto' : closedTranslate}
           ${sideMargin}
