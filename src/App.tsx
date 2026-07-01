@@ -6481,7 +6481,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         </div>
       </div>
 
-      <nav className="border-b border-white/[0.06] bg-slate-950 sticky top-0 z-[60]">
+      <nav className={`border-b border-white/[0.06] bg-slate-950 sticky top-0 z-[60] transition-[margin] duration-200 ease-out md:${showMenuDrawer ? 'me-[280px]' : ''} md:${showHistoryPanel ? 'ms-[280px]' : ''}`}>
         <div className="max-w-[1400px] mx-auto px-6 md:px-10 h-16 flex items-center justify-between">
           {/* â”€â”€ LEFT (Context): Logo + Workspace â”€â”€ */}
           <div className="flex items-center gap-2.5">
@@ -6701,7 +6701,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
 
       {/* Main Content Render Logic */}
-      <main className="flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative w-full">
+      <main className={`flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative w-full transition-[margin] duration-200 ease-out md:${showMenuDrawer ? 'me-[280px]' : ''} md:${showHistoryPanel ? 'ms-[280px]' : ''}`}>
         {isLoading && (
           <div className="fixed inset-0 bg-slate-950/98 z-[100] flex flex-col items-center justify-center text-center">
             <div className="relative w-32 h-32 mb-12">
