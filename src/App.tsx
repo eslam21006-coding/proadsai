@@ -1003,8 +1003,8 @@ interface HistorySidebarProps {
   effectiveUid: string | null;
   canUseWorkspaces: boolean;
   activeWorkspaceId: string | null;
-  filteredProjects: any[];
-  projects: any[];
+  filteredProjects: SavedProject[];
+  projects: SavedProject[];
   onSelectHistory: (item: HistoryItem) => void;
 }
 
@@ -1029,13 +1029,12 @@ const HistorySidebar: React.FC<HistorySidebarProps> = ({
         expanded ? 'w-[260px]' : 'w-[48px]'
       }`}
       aria-label={t('history.open_panel')}
-      aria-hidden={false}
     >
       {expanded ? (
         <>
           {/* Expanded header — title + collapse chevron */}
-          <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200">
-            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200" data-sidebar-header>
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider" data-sidebar-text>
               {t('history.open_panel')}
             </span>
             <button
@@ -1043,13 +1042,14 @@ const HistorySidebar: React.FC<HistorySidebarProps> = ({
               onClick={onCollapse}
               aria-label={t('history.close_panel')}
               className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+              data-sidebar-icon
             >
               {/* LTR collapses to the left (panel sits on the right side
                   of the screen); RTL flips automatically via `dir`. */}
               <i className="fa-solid fa-chevron-left text-xs"></i>
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto" data-sidebar-content>
             <GenerationHistory
               uid={effectiveUid}
               workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
@@ -1063,18 +1063,19 @@ const HistorySidebar: React.FC<HistorySidebarProps> = ({
         /* Collapsed — three small icons stacked vertically. The clock icon
            expands; the other two are decorative placeholders for the
            search / filter controls GenerationHistory exposes when open. */
-        <div className="flex flex-col items-center py-3 gap-3">
+        <div className="flex flex-col items-center py-3 gap-3" data-sidebar-collapsed>
           <button
             type="button"
             onClick={onExpand}
             title={t('history.open_panel')}
             aria-label={t('history.open_panel')}
             className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-slate-100 transition-colors"
+            data-sidebar-icon
           >
             <i className="fa-solid fa-clock-rotate-left text-sm"></i>
           </button>
-          <i className="fa-solid fa-magnifying-glass text-slate-300 text-xs" aria-hidden="true"></i>
-          <i className="fa-solid fa-filter text-slate-300 text-xs" aria-hidden="true"></i>
+          <i className="fa-solid fa-magnifying-glass text-slate-300 text-xs" aria-hidden="true" data-sidebar-icon></i>
+          <i className="fa-solid fa-filter text-slate-300 text-xs" aria-hidden="true" data-sidebar-icon></i>
         </div>
       )}
     </aside>
@@ -1088,7 +1089,7 @@ interface MenuSidebarProps {
   userEmail: string | undefined;
   userPlanName: string;
   isDarkMode: boolean;
-  milestones: any;
+  milestones: Milestones;
   phase: string;
   lang: string;
   onNewProject: () => void;
@@ -1132,21 +1133,21 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
         expanded ? 'w-[220px]' : 'w-[48px]'
       }`}
       aria-label={t('history.menu_title')}
-      aria-hidden={false}
     >
       {expanded ? (
-        <div className="w-[220px] flex flex-col h-full">
+        <div className="w-[220px] flex flex-col h-full" data-sidebar-content>
           {/* Expanded header — account info + collapse */}
-          <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-200">
+          <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-200" data-sidebar-header>
             <div className="min-w-0">
-              <p className="text-[11px] font-medium text-slate-700 truncate">{userEmail}</p>
-              <p className="text-[10px] font-semibold text-blue-600 uppercase">{userPlanName} {t('header.plan')}</p>
+              <p className="text-[11px] font-medium text-slate-700 truncate" data-sidebar-text>{userEmail}</p>
+              <p className="text-[10px] font-semibold text-blue-600 uppercase" data-sidebar-text>{userPlanName} {t('header.plan')}</p>
             </div>
             <button
               type="button"
               onClick={onCollapse}
               aria-label={t('common.close')}
               data-tour="sidebar-menu"
+              data-sidebar-icon
               className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
             >
               {/* Collapses to the right in LTR (panel sits on the right edge);
@@ -1158,7 +1159,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
             <MenuItem icon="fa-plus" label={t('history.newProject')} onClick={onNewProject} />
             <MenuItem icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={onSavedRenders} />
             <MenuItem icon="fa-gear" label={t('topbar.menu_settings')} onClick={onSettings} />
-            <div className="border-t border-slate-100 my-1 mx-3" />
+            <div className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider />
             <MenuItem
               icon={isDarkMode ? 'fa-sun' : 'fa-moon'}
               label={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
@@ -1175,10 +1176,10 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
             {phase === 'input' && (
               <MenuItem icon="fa-circle-question" label={t('topbar.menu_tour')} onClick={onStartTour} />
             )}
-            <div className="border-t border-slate-100 my-1 mx-3" />
+            <div className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider />
             <MenuItem icon="fa-credit-card" label={t('header.manage_billing')} onClick={onManageBilling} />
             <MenuItem icon="fa-arrow-up" label={t('header.upgrade')} onClick={onUpgrade} />
-            <div className="border-t border-slate-100 my-1 mx-3" />
+            <div className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider />
             <MenuItem
               icon="fa-right-from-bracket"
               label={t('header.logout')}
@@ -1190,12 +1191,13 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
       ) : (
         /* Collapsed — every menu action is reachable directly from the icon
            strip. The bottom chevron is a one-click expand shortcut. */
-        <div className="flex flex-col items-center py-3 gap-1 w-[48px]">
+        <div className="flex flex-col items-center py-3 gap-1 w-[48px]" data-sidebar-collapsed>
           <button
             type="button"
             onClick={onNewProject}
             title={t('history.newProject')}
             aria-label={t('history.newProject')}
+            data-sidebar-icon
             className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 transition-colors"
           >
             <i className="fa-solid fa-plus text-sm"></i>
@@ -1205,6 +1207,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
             onClick={onSavedRenders}
             title={t('topbar.menu_bookmarks')}
             aria-label={t('topbar.menu_bookmarks')}
+            data-sidebar-icon
             className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
           >
             <i className="fa-solid fa-bookmark text-sm"></i>
@@ -1214,16 +1217,18 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
             onClick={onSettings}
             title={t('topbar.menu_settings')}
             aria-label={t('topbar.menu_settings')}
+            data-sidebar-icon
             className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
           >
             <i className="fa-solid fa-gear text-sm"></i>
           </button>
-          <div className="border-t border-slate-100 w-6 my-1" />
+          <div className="border-t border-slate-100 w-6 my-1" data-sidebar-divider />
           <button
             type="button"
             onClick={onToggleTheme}
             title={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
             aria-label={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
+            data-sidebar-icon
             className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
           >
             <i className={`fa-solid ${isDarkMode ? 'fa-sun' : 'fa-moon'} text-sm`}></i>
@@ -1233,16 +1238,18 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
             onClick={onToggleLanguage}
             title={t('topbar.menu_language')}
             aria-label={t('topbar.menu_language')}
+            data-sidebar-icon
             className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
           >
             <i className="fa-solid fa-language text-sm"></i>
           </button>
-          <div className="border-t border-slate-100 w-6 my-1" />
+          <div className="border-t border-slate-100 w-6 my-1" data-sidebar-divider />
           <button
             type="button"
             onClick={onManageBilling}
             title={t('header.manage_billing')}
             aria-label={t('header.manage_billing')}
+            data-sidebar-icon
             className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
           >
             <i className="fa-solid fa-credit-card text-sm"></i>
@@ -1251,9 +1258,10 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
             <button
               type="button"
               onClick={onExpand}
-              title="Expand menu"
-              aria-label="Expand menu"
+              title={t('topbar.menu_expand')}
+              aria-label={t('topbar.menu_expand')}
               data-tour="sidebar-menu"
+              data-sidebar-icon
               className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-300 hover:text-slate-600 hover:bg-slate-100 transition-colors"
             >
               {/* Expands toward the right (where the panel lives) in LTR. */}
@@ -1280,11 +1288,12 @@ const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onClick, className }) 
   <button
     type="button"
     onClick={onClick}
+    data-sidebar-menu-item
     className={`w-full flex items-center gap-3 px-3 py-2 text-[13px] text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors rounded-md mx-1 ${className ?? ''}`}
     style={{ width: 'calc(100% - 8px)' }}
     role="menuitem"
   >
-    <i className={`fa-solid ${icon} w-4 text-center text-slate-400`}></i>
+    <i className={`fa-solid ${icon} w-4 text-center text-slate-400`} data-sidebar-icon></i>
     <span className="truncate">{label}</span>
   </button>
 );
@@ -1998,6 +2007,34 @@ const App: React.FC = () => {
 // 220/260px panels. Neither is position:fixed on desktop.
 const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+
+  // Single source of truth for opening the favorites sheet. Both the
+  // desktop MenuSidebar and the mobile-overlay menu funnel through this
+  // so the query / fallback / error handling cannot drift.
+  const loadFavorites = useCallback(async () => {
+    setShowMenuDrawer(false);
+    setShowFavorites(true);
+    setFavoritesLoading(true);
+    try {
+      const uid = user?.uid;
+      if (!uid) return;
+      try {
+        const fSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), where('feedback.savedToFavorites', '==', true), orderBy('timestamp', 'desc'), limit(50)));
+        setFavoritesData(fSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } catch (indexErr) {
+        console.warn('Favorites index query failed, using fallback:', indexErr);
+        try {
+          const fallbackSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), orderBy('timestamp', 'desc'), limit(200)));
+          const allGens = fallbackSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+          setFavoritesData(allGens.filter((g: any) => g.feedback?.savedToFavorites === true));
+        } catch (fallbackErr) {
+          console.error('Fallback favorites query also failed:', fallbackErr);
+          setFavoritesData([]);
+        }
+      }
+    } catch (e) { console.warn('Failed to load favorites:', e); }
+    finally { setFavoritesLoading(false); }
+  }, [user?.uid]);
 
   // ─── MANDATORY BILLING AUTO-DISMISS ──────────────────────────────────
   useEffect(() => {
@@ -9733,30 +9770,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); }
           setShowMenuDrawer(false);
         }}
-        onSavedRenders={async () => {
-          setShowMenuDrawer(false);
-          setShowFavorites(true);
-          setFavoritesLoading(true);
-          try {
-            const uid = user?.uid;
-            if (!uid) return;
-            try {
-              const fSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), where('feedback.savedToFavorites', '==', true), orderBy('timestamp', 'desc'), limit(50)));
-              setFavoritesData(fSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-            } catch (indexErr) {
-              console.warn('Favorites index query failed, using fallback:', indexErr);
-              try {
-                const fallbackSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), orderBy('timestamp', 'desc'), limit(200)));
-                const allGens = fallbackSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-                setFavoritesData(allGens.filter((g: any) => g.feedback?.savedToFavorites === true));
-              } catch (fallbackErr) {
-                console.error('Fallback favorites query also failed:', fallbackErr);
-                setFavoritesData([]);
-              }
-            }
-          } catch (e) { console.warn('Failed to load favorites:', e); }
-          finally { setFavoritesLoading(false); }
-        }}
+        onSavedRenders={loadFavorites}
         onSettings={() => { setShowSettingsModal(true); setSettingsEditingName(false); setSettingsEditingEmail(false); setShowMenuDrawer(false); }}
         onToggleTheme={() => { toggleTheme(); }}
         onToggleLanguage={() => { setLang(lang === 'en' ? 'ar' : 'en'); }}
@@ -9777,27 +9791,28 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           (the close handlers clear their sibling). No backdrop-blur —
           the briefs explicitly forbid it. */}
       {showHistoryPanel && (
-        <div className="md:hidden fixed inset-0 z-[55] flex">
+        <div className="md:hidden fixed inset-0 z-[70] flex">
           {/* Fullscreen History sheet — anchored to the start edge. */}
           <aside
             className="sidebar-panel w-[85vw] max-w-[320px] bg-white flex flex-col shadow-lg"
             dir={lang === 'ar' ? 'rtl' : 'ltr'}
             aria-label={t('history.open_panel')}
           >
-            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200">
-              <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200" data-sidebar-header>
+              <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider" data-sidebar-text>
                 {t('history.open_panel')}
               </span>
               <button
                 type="button"
                 onClick={() => setShowHistoryPanel(false)}
                 aria-label={t('history.close_panel')}
+                data-sidebar-icon
                 className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
               >
                 <i className="fa-solid fa-xmark text-sm"></i>
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto" data-sidebar-content>
               <GenerationHistory
                 uid={effectiveUid}
                 workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
@@ -9817,7 +9832,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
       )}
 
       {showMenuDrawer && (
-        <div className="md:hidden fixed inset-0 z-[55] flex flex-row-reverse">
+        <div className="md:hidden fixed inset-0 z-[70] flex flex-row-reverse">
           {/* Fullscreen Menu sheet — anchored to the end edge in LTR via
               `flex-row-reverse` so the click-to-dismiss backdrop fills the
               rest of the screen on the left side of the panel. */}
@@ -9826,10 +9841,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
             dir={lang === 'ar' ? 'rtl' : 'ltr'}
             aria-label={t('history.menu_title')}
           >
-            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200" data-sidebar-header>
               <div className="min-w-0">
-                <p className="text-[11px] font-medium text-slate-700 truncate">{user?.email}</p>
-                <p className="text-[10px] font-semibold text-blue-600 uppercase">
+                <p className="text-[11px] font-medium text-slate-700 truncate" data-sidebar-text>{user?.email}</p>
+                <p className="text-[10px] font-semibold text-blue-600 uppercase" data-sidebar-text>
                   {PLANS[userPlan]?.name || 'Free'} {t('header.plan')}
                 </p>
               </div>
@@ -9837,6 +9852,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 type="button"
                 onClick={() => setShowMenuDrawer(false)}
                 aria-label={t('common.close')}
+                data-sidebar-icon
                 className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
               >
                 <i className="fa-solid fa-xmark text-sm"></i>
@@ -9847,37 +9863,14 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); }
                 setShowMenuDrawer(false);
               }} />
-              <MenuItem icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={async () => {
-                setShowMenuDrawer(false);
-                setShowFavorites(true);
-                setFavoritesLoading(true);
-                try {
-                  const uid = user?.uid;
-                  if (!uid) return;
-                  try {
-                    const fSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), where('feedback.savedToFavorites', '==', true), orderBy('timestamp', 'desc'), limit(50)));
-                    setFavoritesData(fSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-                  } catch (indexErr) {
-                    console.warn('Favorites index query failed, using fallback:', indexErr);
-                    try {
-                      const fallbackSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), orderBy('timestamp', 'desc'), limit(200)));
-                      const allGens = fallbackSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-                      setFavoritesData(allGens.filter((g: any) => g.feedback?.savedToFavorites === true));
-                    } catch (fallbackErr) {
-                      console.error('Fallback favorites query also failed:', fallbackErr);
-                      setFavoritesData([]);
-                    }
-                  }
-                } catch (e) { console.warn('Failed to load favorites:', e); }
-                finally { setFavoritesLoading(false); }
-              }} />
+              <MenuItem icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={loadFavorites} />
               <MenuItem icon="fa-gear" label={t('topbar.menu_settings')} onClick={() => {
                 setShowSettingsModal(true);
                 setSettingsEditingName(false);
                 setSettingsEditingEmail(false);
                 setShowMenuDrawer(false);
               }} />
-              <div className="border-t border-slate-100 my-1 mx-3" />
+              <div className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider />
               <MenuItem
                 icon={isDarkMode ? 'fa-sun' : 'fa-moon'}
                 label={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
@@ -9894,10 +9887,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
               {phase === 'input' && (
                 <MenuItem icon="fa-circle-question" label={t('topbar.menu_tour')} onClick={() => { setShowWalkthrough(true); setShowMenuDrawer(false); }} />
               )}
-              <div className="border-t border-slate-100 my-1 mx-3" />
+              <div className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider />
               <MenuItem icon="fa-credit-card" label={t('header.manage_billing')} onClick={() => { handleManageBilling(); setShowMenuDrawer(false); }} />
               <MenuItem icon="fa-arrow-up" label={t('header.upgrade')} onClick={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }} />
-              <div className="border-t border-slate-100 my-1 mx-3" />
+              <div className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider />
               <MenuItem
                 icon="fa-right-from-bracket"
                 label={t('header.logout')}

@@ -1,4 +1,4 @@
-﻿@tailwind base;
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -1464,6 +1464,8 @@ html.light-mode [data-light-ctx="ranking-panel"] {
    `bg-white` / `border-slate-200` as the light base; the rules below
    override for dark mode (the default — html has no `light-mode` class).
    No backdrop-filter / backdrop-blur anywhere in these surfaces.
+   Selectors below use stable `data-sidebar-*` hooks (set in JSX) so the
+   rules survive Tailwind-class refactors of the child markup.
    ════════════════════════════════════════════════════════════════════════ */
 
 /* Dark-mode chrome for the panels themselves. */
@@ -1472,54 +1474,51 @@ html:not(.light-mode) .sidebar-panel {
     border-color: rgba(51, 65, 85, 0.5);
 }
 
-/* Text + icon colors in dark mode. */
-html:not(.light-mode) .sidebar-panel .text-slate-600,
-html:not(.light-mode) .sidebar-panel .text-slate-500,
-html:not(.light-mode) .sidebar-panel .text-slate-400 {
-    color: #cbd5e1;
-}
-html:not(.light-mode) .sidebar-panel .text-slate-700,
-html:not(.light-mode) .sidebar-panel .text-slate-300,
-html:not(.light-mode) .sidebar-panel .text-slate-200 {
+/* Header text in dark mode (title, email, plan). */
+html:not(.light-mode) .sidebar-panel [data-sidebar-text] {
     color: #e2e8f0;
 }
+
+/* Icon buttons (header collapse, collapsed strip, menu expand chevron). */
+html:not(.light-mode) .sidebar-panel [data-sidebar-icon] {
+    color: #cbd5e1;
+}
+html:not(.light-mode) .sidebar-panel [data-sidebar-icon]:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    color: #f1f5f9;
+}
+
+/* Menu items (text + icon + hover) in dark mode. */
+html:not(.light-mode) .sidebar-panel [data-sidebar-menu-item] {
+    color: #cbd5e1;
+}
+html:not(.light-mode) .sidebar-panel [data-sidebar-menu-item]:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+    color: #f1f5f9;
+}
+html:not(.light-mode) .sidebar-panel [data-sidebar-menu-item] [data-sidebar-icon] {
+    color: #94a3b8;
+}
+
+/* Accent colors in dark mode — blue plan pill, red logout row, etc. */
 html:not(.light-mode) .sidebar-panel .text-blue-600,
 html:not(.light-mode) .sidebar-panel .text-blue-400 {
     color: #60a5fa;
 }
-html:not(.light-mode) .sidebar-panel .text-red-500 {
+html:not(.light-mode) .sidebar-panel [data-sidebar-menu-item].text-red-500 {
     color: #f87171;
 }
-html:not(.light-mode) .sidebar-panel .text-red-600 {
-    color: #ef4444;
-}
-html:not(.light-mode) .sidebar-panel .text-amber-500 {
-    color: #fbbf24;
-}
-
-/* Hover state for icon buttons and menu items. */
-html:not(.light-mode) .sidebar-panel .hover\:bg-slate-100:hover {
-    background-color: rgba(255, 255, 255, 0.05);
-    color: #f1f5f9;
-}
-html:not(.light-mode) .sidebar-panel .hover\:bg-slate-50:hover {
-    background-color: rgba(255, 255, 255, 0.04);
-    color: #f1f5f9;
-}
-html:not(.light-mode) .sidebar-panel .hover\:text-slate-700:hover,
-html:not(.light-mode) .sidebar-panel .hover\:text-slate-900:hover,
-html:not(.light-mode) .sidebar-panel .hover\:text-slate-600:hover {
-    color: #f1f5f9;
-}
-html:not(.light-mode) .sidebar-panel .hover\:text-blue-600:hover {
-    color: #93c5fd;
-}
-html:not(.light-mode) .sidebar-panel .hover\:text-red-600:hover {
+html:not(.light-mode) .sidebar-panel [data-sidebar-menu-item].text-red-500:hover {
     color: #fca5a5;
+    background-color: rgba(239, 68, 68, 0.08);
 }
 
-/* Dividers and borders inside dark panels. */
-html:not(.light-mode) .sidebar-panel .border-slate-200,
-html:not(.light-mode) .sidebar-panel .border-slate-100 {
+/* Dividers and header borders. */
+html:not(.light-mode) .sidebar-panel [data-sidebar-divider],
+html:not(.light-mode) .sidebar-panel [data-sidebar-header] {
     border-color: rgba(51, 65, 85, 0.5);
 }
+
+/* Light-mode baseline — the sidebars use bg-white + slate borders in JSX
+   so no overrides are required. The hook attributes are no-ops in light
+   mode (the inline Tailwind classes already provide the correct colors). */

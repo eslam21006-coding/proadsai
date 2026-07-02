@@ -143,6 +143,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'topbar.menu_dark': 'Switch to dark mode',
         'topbar.menu_light': 'Switch to light mode',
         'topbar.menu_language': 'Switch language',
+        'topbar.menu_expand': 'Expand menu',
 
         // ── InputForm ──
         'form.progress': 'Brief progress',
@@ -938,6 +939,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'topbar.menu_dark': 'التبديل للوضع الداكن',
         'topbar.menu_light': 'التبديل للوضع الفاتح',
         'topbar.menu_language': 'تبديل اللغة',
+        'topbar.menu_expand': 'توسيع القائمة',
 
         // ── InputForm ──
         'form.progress': 'تقدم البيانات',
