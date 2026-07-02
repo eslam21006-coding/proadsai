@@ -1156,35 +1156,25 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
             </button>
           </div>
           <div className="flex-1 overflow-y-auto py-1">
-            <MenuItem icon="fa-plus" label={t('history.newProject')} onClick={onNewProject} />
-            <MenuItem icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={onSavedRenders} />
-            <MenuItem icon="fa-gear" label={t('topbar.menu_settings')} onClick={onSettings} />
-            <div className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider />
-            <MenuItem
-              icon={isDarkMode ? 'fa-sun' : 'fa-moon'}
-              label={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
-              onClick={onToggleTheme}
-            />
-            <MenuItem
-              icon="fa-language"
-              label={`${t('topbar.menu_language')} (${lang === 'ar' ? 'EN' : 'AR'})`}
-              onClick={onToggleLanguage}
-            />
-            {!milestones?.watchVideo && (
-              <MenuItem icon="fa-play" label={t('topbar.menu_tutorial')} onClick={onStartTutorial} />
-            )}
-            {phase === 'input' && (
-              <MenuItem icon="fa-circle-question" label={t('topbar.menu_tour')} onClick={onStartTour} />
-            )}
-            <div className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider />
-            <MenuItem icon="fa-credit-card" label={t('header.manage_billing')} onClick={onManageBilling} />
-            <MenuItem icon="fa-arrow-up" label={t('header.upgrade')} onClick={onUpgrade} />
-            <div className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider />
-            <MenuItem
-              icon="fa-right-from-bracket"
-              label={t('header.logout')}
-              onClick={onLogout}
-              className="text-red-500 hover:text-red-600"
+            {/* Single source of truth for the menu item list — shared with
+                the mobile overlay so labels and ordering never drift. */}
+            <MenuItems
+              t={t}
+              isDarkMode={isDarkMode}
+              lang={lang}
+              milestones={milestones}
+              phase={phase}
+              onNewProject={onNewProject}
+              onSavedRenders={onSavedRenders}
+              onSettings={onSettings}
+              onToggleTheme={onToggleTheme}
+              onToggleLanguage={onToggleLanguage}
+              onStartTutorial={onStartTutorial}
+              onStartTour={onStartTour}
+              onManageBilling={onManageBilling}
+              onUpgrade={onUpgrade}
+              onLogout={onLogout}
+              onCloseMenu={onCollapse}
             />
           </div>
         </div>
@@ -1289,14 +1279,64 @@ const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onClick, className }) 
     type="button"
     onClick={onClick}
     data-sidebar-menu-item
-    className={`w-full flex items-center gap-3 px-3 py-2 text-[13px] text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors rounded-md mx-1 ${className ?? ''}`}
-    style={{ width: 'calc(100% - 8px)' }}
+    className={`flex items-center gap-3 px-3 py-2 text-[13px] text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors rounded-md mx-1 w-[calc(100%-0.5rem)] ${className ?? ''}`}
     role="menuitem"
   >
     <i className={`fa-solid ${icon} w-4 text-center text-slate-400`} data-sidebar-icon></i>
     <span className="truncate">{label}</span>
   </button>
 );
+
+interface MenuItemsProps {
+  t: (k: string) => string;
+  isDarkMode: boolean;
+  lang: string;
+  milestones: Milestones;
+  phase: string;
+  /** Bundle of callbacks MenuSidebar already receives. The mobile overlay
+      passes equivalent wrappers (which also call setShowMenuDrawer(false)). */
+  onNewProject: () => void;
+  onSavedRenders: () => void;
+  onSettings: () => void;
+  onToggleTheme: () => void;
+  onToggleLanguage: () => void;
+  onStartTutorial: () => void;
+  onStartTour: () => void;
+  onManageBilling: () => void;
+  onUpgrade: () => void;
+  onLogout: () => void;
+  /** Closes the menu (either desktop sidebar or mobile overlay). */
+  onCloseMenu: () => void;
+}
+
+/**
+ * Shared list of menu items rendered by both the desktop MenuSidebar and
+ * the mobile overlay. Building the list here (not inline in each call
+ * site) keeps labels, icons, and conditional entries in lockstep.
+ */
+const MenuItems: React.FC<MenuItemsProps> = (props) => {
+  const { t, isDarkMode, lang, milestones, phase, onCloseMenu } = props;
+  const items: Array<{ key: string; el: React.ReactNode }> = [
+    { key: 'new', el: <MenuItem key="new" icon="fa-plus" label={t('history.newProject')} onClick={props.onNewProject} /> },
+    { key: 'bookmarks', el: <MenuItem key="bookmarks" icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={props.onSavedRenders} /> },
+    { key: 'settings', el: <MenuItem key="settings" icon="fa-gear" label={t('topbar.menu_settings')} onClick={props.onSettings} /> },
+    { key: 'divider1', el: <div key="divider1" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> },
+    { key: 'theme', el: <MenuItem key="theme" icon={isDarkMode ? 'fa-sun' : 'fa-moon'} label={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')} onClick={props.onToggleTheme} /> },
+    { key: 'lang', el: <MenuItem key="lang" icon="fa-language" label={`${t('topbar.menu_language')} (${lang === 'ar' ? 'EN' : 'AR'})`} onClick={props.onToggleLanguage} /> },
+  ];
+  if (!milestones?.watchVideo) {
+    items.push({ key: 'tutorial', el: <MenuItem key="tutorial" icon="fa-play" label={t('topbar.menu_tutorial')} onClick={props.onStartTutorial} /> });
+  }
+  if (phase === 'input') {
+    items.push({ key: 'tour', el: <MenuItem key="tour" icon="fa-circle-question" label={t('topbar.menu_tour')} onClick={props.onStartTour} /> });
+  }
+  items.push({ key: 'divider2', el: <div key="divider2" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> });
+  items.push({ key: 'billing', el: <MenuItem key="billing" icon="fa-credit-card" label={t('header.manage_billing')} onClick={props.onManageBilling} /> });
+  items.push({ key: 'upgrade', el: <MenuItem key="upgrade" icon="fa-arrow-up" label={t('header.upgrade')} onClick={props.onUpgrade} /> });
+  items.push({ key: 'divider3', el: <div key="divider3" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> });
+  items.push({ key: 'logout', el: <MenuItem key="logout" icon="fa-right-from-bracket" label={t('header.logout')} onClick={props.onLogout} className="text-red-500 hover:text-red-600" /> });
+  return <>{items.map(i => i.el)}</>;
+};
 
 const App: React.FC = () => {
   // --- i18n ---
@@ -9859,43 +9899,34 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
               </button>
             </div>
             <div className="flex-1 overflow-y-auto py-1">
-              <MenuItem icon="fa-plus" label={t('history.newProject')} onClick={() => {
-                if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); }
-                setShowMenuDrawer(false);
-              }} />
-              <MenuItem icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={loadFavorites} />
-              <MenuItem icon="fa-gear" label={t('topbar.menu_settings')} onClick={() => {
-                setShowSettingsModal(true);
-                setSettingsEditingName(false);
-                setSettingsEditingEmail(false);
-                setShowMenuDrawer(false);
-              }} />
-              <div className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider />
-              <MenuItem
-                icon={isDarkMode ? 'fa-sun' : 'fa-moon'}
-                label={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
-                onClick={() => { toggleTheme(); }}
-              />
-              <MenuItem
-                icon="fa-language"
-                label={`${t('topbar.menu_language')} (${lang === 'ar' ? 'EN' : 'AR'})`}
-                onClick={() => { setLang(lang === 'en' ? 'ar' : 'en'); }}
-              />
-              {!milestones.watchVideo && (
-                <MenuItem icon="fa-play" label={t('topbar.menu_tutorial')} onClick={() => { setShowVideoPopup(true); setShowMenuDrawer(false); }} />
-              )}
-              {phase === 'input' && (
-                <MenuItem icon="fa-circle-question" label={t('topbar.menu_tour')} onClick={() => { setShowWalkthrough(true); setShowMenuDrawer(false); }} />
-              )}
-              <div className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider />
-              <MenuItem icon="fa-credit-card" label={t('header.manage_billing')} onClick={() => { handleManageBilling(); setShowMenuDrawer(false); }} />
-              <MenuItem icon="fa-arrow-up" label={t('header.upgrade')} onClick={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }} />
-              <div className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider />
-              <MenuItem
-                icon="fa-right-from-bracket"
-                label={t('header.logout')}
-                onClick={() => { handleLogout(); }}
-                className="text-red-500 hover:text-red-600"
+              {/* Same shared menu list as the desktop MenuSidebar; the
+                  only difference is that the "new project" entry shows a
+                  confirm prompt before wiping the current project. */}
+              <MenuItems
+                t={t}
+                isDarkMode={isDarkMode}
+                lang={lang}
+                milestones={milestones}
+                phase={phase}
+                onNewProject={() => {
+                  if (window.confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); }
+                  setShowMenuDrawer(false);
+                }}
+                onSavedRenders={loadFavorites}
+                onSettings={() => {
+                  setShowSettingsModal(true);
+                  setSettingsEditingName(false);
+                  setSettingsEditingEmail(false);
+                  setShowMenuDrawer(false);
+                }}
+                onToggleTheme={toggleTheme}
+                onToggleLanguage={() => { setLang(lang === 'en' ? 'ar' : 'en'); }}
+                onStartTutorial={() => { setShowVideoPopup(true); setShowMenuDrawer(false); }}
+                onStartTour={() => { setShowWalkthrough(true); setShowMenuDrawer(false); }}
+                onManageBilling={() => { handleManageBilling(); setShowMenuDrawer(false); }}
+                onUpgrade={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }}
+                onLogout={handleLogout}
+                onCloseMenu={() => setShowMenuDrawer(false)}
               />
             </div>
           </aside>
