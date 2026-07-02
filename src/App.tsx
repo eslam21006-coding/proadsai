@@ -16,9 +16,9 @@ import { useAppStore } from './store';
 import FeedbackButtons from './components/FeedbackButtons';
 import FavoritesPanel from './components/FavoritesPanel';
 import GenerationHistory from './components/GenerationHistory';
+import type { HistoryItem } from './hooks/useGenerationHistory';
 import DeleteProjectDialog from './components/SavedProjectsPanel/DeleteProjectDialog';
 import SaveStatusIndicator from './components/SavedProjectsPanel/SaveStatusIndicator';
-import SideDrawer from './components/SideDrawer';
 import { useFavorites } from './hooks/useFavorites';
 import type { GenerationRecord } from './services/feedbackService';
 
@@ -990,6 +990,305 @@ const normalizeFieldLabels = (text: string): string => {
   return result;
 };
 
+// ─── CLAUDE-STYLE COLLAPSIBLE SIDEBARS (Phase 26 Batch 6 FINAL v2) ───
+// Both sidebars are persistent flex siblings of <main>. Collapsed = 48px
+// icon strip; expanded = 220/260px panel. Defined as stand-alone helpers
+// (rather than inlined inside the giant App function) so each owns its
+// own rendering, hook usage, and styles.
+
+interface HistorySidebarProps {
+  expanded: boolean;
+  onExpand: () => void;
+  onCollapse: () => void;
+  effectiveUid: string | null;
+  canUseWorkspaces: boolean;
+  activeWorkspaceId: string | null;
+  filteredProjects: any[];
+  projects: any[];
+  onSelectHistory: (item: HistoryItem) => void;
+}
+
+const HistorySidebar: React.FC<HistorySidebarProps> = ({
+  expanded,
+  onExpand,
+  onCollapse,
+  effectiveUid,
+  canUseWorkspaces,
+  activeWorkspaceId,
+  filteredProjects,
+  projects,
+  onSelectHistory,
+}) => {
+  const { t } = useT();
+  // When expanded, prefer the workspace-scoped filteredProjects (matches
+  // the same fallback pattern used elsewhere by handleHistorySelect).
+  const savedProjects = filteredProjects.length > 0 ? filteredProjects : projects;
+  return (
+    <aside
+      className={`hidden md:flex flex-col shrink-0 sidebar-panel bg-white border-e border-slate-200 overflow-hidden transition-all duration-200 ease-out ${
+        expanded ? 'w-[260px]' : 'w-[48px]'
+      }`}
+      aria-label={t('history.open_panel')}
+      aria-hidden={false}
+    >
+      {expanded ? (
+        <>
+          {/* Expanded header — title + collapse chevron */}
+          <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200">
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
+              {t('history.open_panel')}
+            </span>
+            <button
+              type="button"
+              onClick={onCollapse}
+              aria-label={t('history.close_panel')}
+              className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            >
+              {/* LTR collapses to the left (panel sits on the right side
+                  of the screen); RTL flips automatically via `dir`. */}
+              <i className="fa-solid fa-chevron-left text-xs"></i>
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <GenerationHistory
+              uid={effectiveUid}
+              workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+              savedProjects={savedProjects}
+              onSelectHistory={(item) => { onSelectHistory(item); }}
+              compact
+            />
+          </div>
+        </>
+      ) : (
+        /* Collapsed — three small icons stacked vertically. The clock icon
+           expands; the other two are decorative placeholders for the
+           search / filter controls GenerationHistory exposes when open. */
+        <div className="flex flex-col items-center py-3 gap-3">
+          <button
+            type="button"
+            onClick={onExpand}
+            title={t('history.open_panel')}
+            aria-label={t('history.open_panel')}
+            className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-slate-100 transition-colors"
+          >
+            <i className="fa-solid fa-clock-rotate-left text-sm"></i>
+          </button>
+          <i className="fa-solid fa-magnifying-glass text-slate-300 text-xs" aria-hidden="true"></i>
+          <i className="fa-solid fa-filter text-slate-300 text-xs" aria-hidden="true"></i>
+        </div>
+      )}
+    </aside>
+  );
+};
+
+interface MenuSidebarProps {
+  expanded: boolean;
+  onExpand: () => void;
+  onCollapse: () => void;
+  userEmail: string | undefined;
+  userPlanName: string;
+  isDarkMode: boolean;
+  milestones: any;
+  phase: string;
+  lang: string;
+  onNewProject: () => void;
+  onSavedRenders: () => void;
+  onSettings: () => void;
+  onToggleTheme: () => void;
+  onToggleLanguage: () => void;
+  onStartTutorial: () => void;
+  onStartTour: () => void;
+  onManageBilling: () => void;
+  onUpgrade: () => void;
+  onLogout: () => void;
+}
+
+const MenuSidebar: React.FC<MenuSidebarProps> = ({
+  expanded,
+  onExpand,
+  onCollapse,
+  userEmail,
+  userPlanName,
+  isDarkMode,
+  milestones,
+  phase,
+  lang,
+  onNewProject,
+  onSavedRenders,
+  onSettings,
+  onToggleTheme,
+  onToggleLanguage,
+  onStartTutorial,
+  onStartTour,
+  onManageBilling,
+  onUpgrade,
+  onLogout,
+}) => {
+  const { t } = useT();
+
+  return (
+    <aside
+      className={`hidden md:flex flex-col shrink-0 sidebar-panel bg-white border-s border-slate-200 overflow-hidden transition-all duration-200 ease-out ${
+        expanded ? 'w-[220px]' : 'w-[48px]'
+      }`}
+      aria-label={t('history.menu_title')}
+      aria-hidden={false}
+    >
+      {expanded ? (
+        <div className="w-[220px] flex flex-col h-full">
+          {/* Expanded header — account info + collapse */}
+          <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-200">
+            <div className="min-w-0">
+              <p className="text-[11px] font-medium text-slate-700 truncate">{userEmail}</p>
+              <p className="text-[10px] font-semibold text-blue-600 uppercase">{userPlanName} {t('header.plan')}</p>
+            </div>
+            <button
+              type="button"
+              onClick={onCollapse}
+              aria-label={t('common.close')}
+              data-tour="sidebar-menu"
+              className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            >
+              {/* Collapses to the right in LTR (panel sits on the right edge);
+                  RTL flips automatically via `dir` on <html>. */}
+              <i className="fa-solid fa-chevron-right text-xs"></i>
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto py-1">
+            <MenuItem icon="fa-plus" label={t('history.newProject')} onClick={onNewProject} />
+            <MenuItem icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={onSavedRenders} />
+            <MenuItem icon="fa-gear" label={t('topbar.menu_settings')} onClick={onSettings} />
+            <div className="border-t border-slate-100 my-1 mx-3" />
+            <MenuItem
+              icon={isDarkMode ? 'fa-sun' : 'fa-moon'}
+              label={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
+              onClick={onToggleTheme}
+            />
+            <MenuItem
+              icon="fa-language"
+              label={`${t('topbar.menu_language')} (${lang === 'ar' ? 'EN' : 'AR'})`}
+              onClick={onToggleLanguage}
+            />
+            {!milestones?.watchVideo && (
+              <MenuItem icon="fa-play" label={t('topbar.menu_tutorial')} onClick={onStartTutorial} />
+            )}
+            {phase === 'input' && (
+              <MenuItem icon="fa-circle-question" label={t('topbar.menu_tour')} onClick={onStartTour} />
+            )}
+            <div className="border-t border-slate-100 my-1 mx-3" />
+            <MenuItem icon="fa-credit-card" label={t('header.manage_billing')} onClick={onManageBilling} />
+            <MenuItem icon="fa-arrow-up" label={t('header.upgrade')} onClick={onUpgrade} />
+            <div className="border-t border-slate-100 my-1 mx-3" />
+            <MenuItem
+              icon="fa-right-from-bracket"
+              label={t('header.logout')}
+              onClick={onLogout}
+              className="text-red-500 hover:text-red-600"
+            />
+          </div>
+        </div>
+      ) : (
+        /* Collapsed — every menu action is reachable directly from the icon
+           strip. The bottom chevron is a one-click expand shortcut. */
+        <div className="flex flex-col items-center py-3 gap-1 w-[48px]">
+          <button
+            type="button"
+            onClick={onNewProject}
+            title={t('history.newProject')}
+            aria-label={t('history.newProject')}
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 transition-colors"
+          >
+            <i className="fa-solid fa-plus text-sm"></i>
+          </button>
+          <button
+            type="button"
+            onClick={onSavedRenders}
+            title={t('topbar.menu_bookmarks')}
+            aria-label={t('topbar.menu_bookmarks')}
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
+          >
+            <i className="fa-solid fa-bookmark text-sm"></i>
+          </button>
+          <button
+            type="button"
+            onClick={onSettings}
+            title={t('topbar.menu_settings')}
+            aria-label={t('topbar.menu_settings')}
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
+          >
+            <i className="fa-solid fa-gear text-sm"></i>
+          </button>
+          <div className="border-t border-slate-100 w-6 my-1" />
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            title={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
+            aria-label={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
+          >
+            <i className={`fa-solid ${isDarkMode ? 'fa-sun' : 'fa-moon'} text-sm`}></i>
+          </button>
+          <button
+            type="button"
+            onClick={onToggleLanguage}
+            title={t('topbar.menu_language')}
+            aria-label={t('topbar.menu_language')}
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
+          >
+            <i className="fa-solid fa-language text-sm"></i>
+          </button>
+          <div className="border-t border-slate-100 w-6 my-1" />
+          <button
+            type="button"
+            onClick={onManageBilling}
+            title={t('header.manage_billing')}
+            aria-label={t('header.manage_billing')}
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
+          >
+            <i className="fa-solid fa-credit-card text-sm"></i>
+          </button>
+          <div className="mt-auto pb-3">
+            <button
+              type="button"
+              onClick={onExpand}
+              title="Expand menu"
+              aria-label="Expand menu"
+              data-tour="sidebar-menu"
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-300 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+            >
+              {/* Expands toward the right (where the panel lives) in LTR. */}
+              <i className="fa-solid fa-chevron-left text-xs"></i>
+            </button>
+          </div>
+        </div>
+      )}
+    </aside>
+  );
+};
+
+interface MenuItemProps {
+  icon: string;
+  label: string;
+  onClick: () => void;
+  className?: string;
+}
+
+// Single menu item row — icon + label, full-width pill inside the
+// expanded panel. Mirrors the visual rhythm of the rest of the app:
+// slate text on white, hover lifts to slate-50 with darker text.
+const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onClick, className }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={`w-full flex items-center gap-3 px-3 py-2 text-[13px] text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors rounded-md mx-1 ${className ?? ''}`}
+    style={{ width: 'calc(100% - 8px)' }}
+    role="menuitem"
+  >
+    <i className={`fa-solid ${icon} w-4 text-center text-slate-400`}></i>
+    <span className="truncate">{label}</span>
+  </button>
+);
+
 const App: React.FC = () => {
   // --- i18n ---
   const { t, lang, setLang } = useT();
@@ -1693,18 +1992,12 @@ const App: React.FC = () => {
   const [favUpdatePrompt, setFavUpdatePrompt] = useState<FavUpdatePrompt | null>(null);
   const [loadedRenderRecord, setLoadedRenderRecord] = useState<GenerationRecord | null>(null);
   const [upgradeReason, setUpgradeReason] = useState('');
-  // Phase 26 Batch 6 Revision 5 — menu sidebar is a flex sibling of <main>,
-// so its open state is owned here. Default-open on desktop (md+) where the
-// 280px column comfortably sits next to the brief form; default-closed on
-// mobile where a fixed overlay is used instead.
-const [showMenuDrawer, setShowMenuDrawer] = useState(() =>
-  typeof window !== 'undefined' && window.innerWidth >= 768,
-);
-  // Phase 26 Batch 6 — History side panel state.
+  // Phase 26 Batch 6 FINAL v2 — Claude-style collapsible sidebars.
+// Both History (left) and Menu (right) live as permanent flex siblings of
+// <main>. Their collapsed state is a 48px icon strip; expanded they become
+// 220/260px panels. Neither is position:fixed on desktop.
+const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
-  // Live count badge value lifted from <GenerationHistory onTotalCountChange>.
-  // Starts at 0; updated as the panel loads.
-  const [historyTotalCount, setHistoryTotalCount] = useState(0);
 
   // ─── MANDATORY BILLING AUTO-DISMISS ──────────────────────────────────
   useEffect(() => {
@@ -1783,7 +2076,6 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(() =>
   const [cancelLoading, setCancelLoading] = useState(false);
   const [editingHook, setEditingHook] = useState<string | null>(null);
   const [editHookData, setEditHookData] = useState<{ hookText: string; subhead: string; cta: string; benefit: string; storyArc?: string }>({ hookText: '', subhead: '', cta: '', benefit: '' });
-  // (Removed: accountMenuRef — SideDrawer handles its own outside-click + Escape close.)
 
   // ─── GHL CHECKOUT URLS (external marketing funnel) ───
   const GHL_URLS: Record<string, string> = {
@@ -2631,9 +2923,6 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(() =>
     if (!user) return;
     metaService.getConnection().then(conn => setMetaConnection(conn)).catch(() => { });
   }, [user]);
-
-  // SideDrawer handles its own outside-click + Escape-key close behavior, so
-  // no per-component click-outside effect is needed here.
 
   // FIX 3: when the user switches to a DIFFERENT hook in single mode, drop stale concepts so
   // Step 3 can't show a previous session's blueprints — forcing a fresh regenerate for the new
@@ -6327,10 +6616,20 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               <span className="text-[11px] font-bold text-amber-400">{userCredits}</span>
               <span className="text-[9px] text-slate-500 hidden sm:inline">{PLANS[userPlan]?.name}</span>
             </button>
+            {/* Mobile-only sidebar toggles.
+                Desktop uses the always-visible 48px collapsed-aside strips
+                that flank <main>; nothing to toggle from the nav itself. */}
             <button
-              data-tour="sidebar-menu"
-              onClick={() => setShowMenuDrawer(!showMenuDrawer)}
-              className="w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-white transition-colors"
+              onClick={() => { setShowHistoryPanel(v => !v); setShowMenuDrawer(false); }}
+              className="md:hidden w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-white transition-colors"
+              aria-label={t('history.open_panel')}
+              aria-expanded={showHistoryPanel}
+            >
+              <i className="fa-solid fa-clock-rotate-left text-xs"></i>
+            </button>
+            <button
+              onClick={() => { setShowMenuDrawer(v => !v); setShowHistoryPanel(false); }}
+              className="md:hidden w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-white transition-colors"
               aria-label={t('topbar.menu_more')}
               aria-expanded={showMenuDrawer}
             >
@@ -6344,13 +6643,27 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
 
 
-      {/* Main + Sidebar flex container.
-           - Top nav above this row stays full width (no margin shift).
-           - main is flex-1 so it fills whatever space the sidebar doesn't claim.
-           - aside is a plain flex sibling that animates its own width.
-           - The History side panel (SideDrawer below) is still a slide-in
-             overlay; only the menu lives here as a flex column. */}
+      {/* Claude-style three-column row.
+           ┌──────────┬────────────────────────────┬──────────┐
+           │ History  │ <main> shrinks / grows →  │ Menu     │
+           │ 48|260px │                            │ 48|220px │
+           └──────────┴────────────────────────────┴──────────┘
+           Both asides are persistent flex siblings on desktop.
+           They share `transition-all duration-200 ease-out` and only
+           animate their own width — never fixed. Mobile (`md:hidden`
+           overlays below) replaces both with fullscreen sheets. */}
       <div className="flex flex-1 overflow-hidden min-h-0">
+      <HistorySidebar
+        expanded={showHistoryPanel}
+        onExpand={() => setShowHistoryPanel(true)}
+        onCollapse={() => setShowHistoryPanel(false)}
+        effectiveUid={effectiveUid}
+        canUseWorkspaces={canUseWorkspaces}
+        activeWorkspaceId={activeWorkspaceId}
+        filteredProjects={filteredProjects}
+        projects={projects}
+        onSelectHistory={handleHistorySelect}
+      />
       {/* Main Content Render Logic */}
       <main className="flex-1 min-w-0 overflow-y-auto max-w-[1400px] w-full mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative">
         {isLoading && (
@@ -6363,79 +6676,27 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           </div>
         )}
 
-{/* ═══ HISTORY TRIGGER + SIDE PANEL (Phase 26 Batch 6 revision) ═══
-                Phase 26 Batch 5: the flat saved-projects list was removed.
-                Batch 6 Revision: the inline history grid is GONE — the
-                Brief form is now the main content, and History lives in a
-                left-side drawer that opens from a "History (N)" trigger
-                button beside the "+ New Project" button. Saved projects are
-                still loaded into state (used by handleHistorySelect + the
-                projectLimitReached banner) but the user only sees them
-                inside the panel. */}
-        {phase === 'input' && (
-          <div className="max-w-5xl mx-auto mb-6 animate-in fade-in duration-700">
-            <div className="flex items-center justify-between mb-4 px-1 gap-2 flex-wrap">
-              <button
-                onClick={() => setShowHistoryPanel(true)}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-700 bg-slate-900/40 text-slate-200 text-[11px] font-semibold hover:border-blue-500 hover:text-blue-300 hover:bg-blue-500/10 transition-all"
-                aria-label={t('history.open_panel')}
-              >
-                <i className="fa-solid fa-clock-rotate-left text-[10px]"></i>
-                <span>{t('history.open_panel_with_count').replace("{n}", String(historyTotalCount))}</span>
-              </button>
-              <button
-                onClick={() => { if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); } }}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-700 bg-slate-900/40 text-slate-200 text-[11px] font-semibold hover:border-blue-500 hover:text-blue-300 hover:bg-blue-500/10 transition-all"
-              >
-                <i className="fa-solid fa-plus text-[9px]"></i>
-                {t('history.newProject')}
+{/* Project-limit banner is the only thing left from the old trigger row;
+    the History and "New Project" triggers now live in their respective
+    sidebars / collapsed-icon strips. */}
+        {phase === 'input' && projectLimitReached && (() => {
+          const cap = getSavedProjectLimit(userPlan);
+          const capLabel = Number.isFinite(cap) ? String(cap) : 'plan';
+          return (
+            <div className={`max-w-5xl mx-auto mb-4 flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3 ${lang === 'ar' ? 'flex-row-reverse text-right' : ''}`} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+              <i className="fa-solid fa-circle-info text-amber-400 mt-0.5"></i>
+              <p className="flex-1 text-[11px] leading-relaxed text-amber-200/90 font-medium">
+                {lang === 'ar'
+                  ? `وصلت إلى حد ${capLabel} مشاريع. احذف مشاريع قديمة لحفظ مشاريع جديدة.`
+                  : `You've reached your ${capLabel}-project limit. Delete old projects to save new ones.`}
+              </p>
+              <button onClick={() => setProjectLimitReached(false)} aria-label={lang === 'ar' ? 'إغلاق' : 'Dismiss'}
+                className="text-amber-400/60 hover:text-amber-300 transition-colors shrink-0">
+                <i className="fa-solid fa-xmark"></i>
               </button>
             </div>
-            {projectLimitReached && (() => {
-              const cap = getSavedProjectLimit(userPlan);
-              const capLabel = Number.isFinite(cap) ? String(cap) : 'plan';
-              return (
-                <div className={`flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3 mb-4 ${lang === 'ar' ? 'flex-row-reverse text-right' : ''}`} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-                  <i className="fa-solid fa-circle-info text-amber-400 mt-0.5"></i>
-                  <p className="flex-1 text-[11px] leading-relaxed text-amber-200/90 font-medium">
-                    {lang === 'ar'
-                      ? `وصلت إلى حد ${capLabel} مشاريع. احذف مشاريع قديمة لحفظ مشاريع جديدة.`
-                      : `You've reached your ${capLabel}-project limit. Delete old projects to save new ones.`}
-                  </p>
-                  <button onClick={() => setProjectLimitReached(false)} aria-label={lang === 'ar' ? 'إغلاق' : 'Dismiss'}
-                    className="text-amber-400/60 hover:text-amber-300 transition-colors shrink-0">
-                    <i className="fa-solid fa-xmark"></i>
-                  </button>
-                </div>
-              );
-            })()}
-          </div>
-        )}
-
-        {/* History side panel — renders GenerationHistory inside a left-edge
-            drawer. Slides in from the left in LTR, right in RTL (handled by
-            the SideDrawer's `side="start"` anchor, which uses Tailwind
-            `start-0`/`end-0`). When a card is clicked the panel also closes
-            so the user lands on the matching project without an extra step. */}
-        {phase === 'input' && (
-          <SideDrawer
-            open={showHistoryPanel}
-            onClose={() => setShowHistoryPanel(false)}
-            side="start"
-            title={t('history.title')}
-            closeLabel={t('history.close_panel')}
-            backdrop={false}
-          >
-            <GenerationHistory
-              uid={effectiveUid}
-              workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
-              savedProjects={filteredProjects}
-              onSelectHistory={(item) => { handleHistorySelect(item); setShowHistoryPanel(false); }}
-              compact
-              onTotalCountChange={setHistoryTotalCount}
-            />
-          </SideDrawer>
-        )}
+          );
+        })()}
 
         {/* Quick-Start Templates — always available on input phase */}
         {phase === 'input' && (
@@ -9458,173 +9719,117 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         />
       </main>
 
-      {/* ═══ MENU SIDEBAR (Phase 26 Batch 6 Revision 5) ═══
-          Plain flex sibling of <main>. Width animates 0 ↔ 280px.
-          - Desktop (md+): flex layout, sidebar sits inline with main.
-          - Mobile (<md): hidden here; a separate fixed overlay below handles
-            mobile presentation (no room for a 280px column on phones). */}
-      <aside
-        aria-label={t('history.menu_title')}
-        aria-hidden={!showMenuDrawer}
-        className={`hidden md:flex flex-col shrink-0 bg-slate-950 border-s border-white/[0.06] overflow-y-auto overflow-x-hidden transition-all duration-200 ease-out ${
-          showMenuDrawer ? 'w-[280px]' : 'w-0 border-s-0'
-        }`}
-      >
-        <div className="w-[280px] flex flex-col min-h-full">
-          {/* Header — email + plan + collapse */}
-          <div className="sticky top-0 z-[1] flex items-start justify-between gap-2 px-5 py-4 border-b border-white/[0.04] bg-slate-950">
-            <div className="min-w-0">
-              <p className="text-[11px] font-semibold text-white truncate">{user?.email}</p>
-              <p className="text-[9px] text-blue-400 font-bold uppercase mt-0.5 tracking-wider">
-                {PLANS[userPlan]?.name || 'Free'} {t('header.plan')}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowMenuDrawer(false)}
-              aria-label={t('common.close')}
-              className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-white/[0.04] transition-colors"
-            >
-              <i className="fa-solid fa-xmark text-sm"></i>
-            </button>
-          </div>
-
-          {/* Quick actions */}
-          <button
-            onClick={() => { if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); } setShowMenuDrawer(false); }}
-            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-            role="menuitem"
-          >
-            <i className="fa-solid fa-plus text-slate-500 w-5 text-center"></i> {t('history.newProject')}
-          </button>
-          <button
-            onClick={async () => {
-              setShowMenuDrawer(false);
-              setShowFavorites(true);
-              setFavoritesLoading(true);
+      <MenuSidebar
+        expanded={showMenuDrawer}
+        onExpand={() => setShowMenuDrawer(true)}
+        onCollapse={() => setShowMenuDrawer(false)}
+        userEmail={user?.email ?? undefined}
+        userPlanName={PLANS[userPlan]?.name || 'Free'}
+        isDarkMode={isDarkMode}
+        milestones={milestones}
+        phase={phase}
+        lang={lang}
+        onNewProject={() => {
+          if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); }
+          setShowMenuDrawer(false);
+        }}
+        onSavedRenders={async () => {
+          setShowMenuDrawer(false);
+          setShowFavorites(true);
+          setFavoritesLoading(true);
+          try {
+            const uid = user?.uid;
+            if (!uid) return;
+            try {
+              const fSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), where('feedback.savedToFavorites', '==', true), orderBy('timestamp', 'desc'), limit(50)));
+              setFavoritesData(fSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+            } catch (indexErr) {
+              console.warn('Favorites index query failed, using fallback:', indexErr);
               try {
-                const uid = user?.uid;
-                if (!uid) return;
-                try {
-                  const fSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), where('feedback.savedToFavorites', '==', true), orderBy('timestamp', 'desc'), limit(50)));
-                  setFavoritesData(fSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-                } catch (indexErr) {
-                  console.warn('Favorites index query failed, using fallback:', indexErr);
-                  try {
-                    const fallbackSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), orderBy('timestamp', 'desc'), limit(200)));
-                    const allGens = fallbackSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-                    setFavoritesData(allGens.filter((g: any) => g.feedback?.savedToFavorites === true));
-                  } catch (fallbackErr) {
-                    console.error('Fallback favorites query also failed:', fallbackErr);
-                    setFavoritesData([]);
-                  }
-                }
-              } catch (e) { console.warn('Failed to load favorites:', e); }
-              finally { setFavoritesLoading(false); }
-            }}
-            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-            role="menuitem"
-          >
-            <i className="fa-solid fa-bookmark text-slate-500 w-5 text-center"></i> {t('topbar.menu_bookmarks')}
-          </button>
-          <button
-            onClick={() => { setShowSettingsModal(true); setSettingsEditingName(false); setSettingsEditingEmail(false); setShowMenuDrawer(false); }}
-            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-            role="menuitem"
-          >
-            <i className="fa-solid fa-gear text-slate-500 w-5 text-center"></i> {t('topbar.menu_settings')}
-          </button>
+                const fallbackSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), orderBy('timestamp', 'desc'), limit(200)));
+                const allGens = fallbackSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                setFavoritesData(allGens.filter((g: any) => g.feedback?.savedToFavorites === true));
+              } catch (fallbackErr) {
+                console.error('Fallback favorites query also failed:', fallbackErr);
+                setFavoritesData([]);
+              }
+            }
+          } catch (e) { console.warn('Failed to load favorites:', e); }
+          finally { setFavoritesLoading(false); }
+        }}
+        onSettings={() => { setShowSettingsModal(true); setSettingsEditingName(false); setSettingsEditingEmail(false); setShowMenuDrawer(false); }}
+        onToggleTheme={() => { toggleTheme(); }}
+        onToggleLanguage={() => { setLang(lang === 'en' ? 'ar' : 'en'); }}
+        onStartTutorial={() => { setShowVideoPopup(true); setShowMenuDrawer(false); }}
+        onStartTour={() => { setShowWalkthrough(true); setShowMenuDrawer(false); }}
+        onManageBilling={() => { handleManageBilling(); setShowMenuDrawer(false); }}
+        onUpgrade={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }}
+        onLogout={() => { handleLogout(); }}
+      />
 
-          <div className="border-t border-white/[0.04]"></div>
+      </div>
 
-          {/* Appearance / locale */}
-          <button
-            onClick={() => { toggleTheme(); }}
-            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-            role="menuitem"
+      {/* ─── MOBILE OVERLAYS (< md) ───
+          Both sidebars are hidden on mobile (`hidden md:flex` on the
+          asides above). The top-nav hamburger + clock buttons toggle
+          these position:fixed fullscreen sheets; opening one always
+          closes the other so only one overlay is on screen at a time
+          (the close handlers clear their sibling). No backdrop-blur —
+          the briefs explicitly forbid it. */}
+      {showHistoryPanel && (
+        <div className="md:hidden fixed inset-0 z-[55] flex">
+          {/* Fullscreen History sheet — anchored to the start edge. */}
+          <aside
+            className="sidebar-panel w-[85vw] max-w-[320px] bg-white flex flex-col shadow-lg"
+            dir={lang === 'ar' ? 'rtl' : 'ltr'}
+            aria-label={t('history.open_panel')}
           >
-            <i className={`fa-solid ${isDarkMode ? 'fa-sun' : 'fa-moon'} text-slate-500 w-5 text-center`}></i>
-            {isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
-          </button>
-          <button
-            onClick={() => { setLang(lang === 'en' ? 'ar' : 'en'); }}
-            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-            role="menuitem"
-          >
-            <i className="fa-solid fa-language text-slate-500 w-5 text-center"></i>
-            {t('topbar.menu_language')} ({t('lang.switch_short')})
-          </button>
-          {!milestones.watchVideo && (
-            <button
-              onClick={() => { setShowVideoPopup(true); setShowMenuDrawer(false); }}
-              className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-              role="menuitem"
-            >
-              <i className="fa-solid fa-play text-amber-500 w-5 text-center"></i> {t('topbar.menu_tutorial')}
-            </button>
-          )}
-          {phase === 'input' && (
-            <button
-              onClick={() => { setShowWalkthrough(true); setShowMenuDrawer(false); }}
-              className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-              role="menuitem"
-            >
-              <i className="fa-solid fa-circle-question text-slate-500 w-5 text-center"></i> {t('topbar.menu_tour')}
-            </button>
-          )}
-
-          <div className="border-t border-white/[0.04]"></div>
-
-          {/* Plan / logout */}
-          <button
-            onClick={() => { handleManageBilling(); setShowMenuDrawer(false); }}
-            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-            role="menuitem"
-          >
-            <i className="fa-solid fa-credit-card text-slate-500 w-5 text-center"></i> {t('header.manage_billing')}
-          </button>
-          <button
-            onClick={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }}
-            className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-            role="menuitem"
-          >
-            <i className="fa-solid fa-arrow-up text-slate-500 w-5 text-center"></i> {t('header.upgrade')}
-          </button>
-
-          <div className="border-t border-white/[0.04]"></div>
-
-          <button
-            onClick={() => { handleLogout(); }}
-            className="w-full px-5 py-3 text-start text-[12px] text-red-500/70 hover:bg-red-500/5 hover:text-red-400 transition-all flex items-center gap-3"
-            role="menuitem"
-          >
-            <i className="fa-solid fa-right-from-bracket w-5 text-center"></i> {t('header.logout')}
-          </button>
-        </div>
-      </aside>
-
-      {/* Mobile overlay variant — same menu, position:fixed because there's
-          no room for a 280px column on a phone. Only renders when open and
-          we're below the md breakpoint. */}
-      {showMenuDrawer && (
-        <aside
-          aria-label={t('history.menu_title')}
-          className="md:hidden fixed inset-0 z-[55] flex flex-col bg-slate-950 overflow-y-auto animate-in slide-in-from-end duration-200"
-          dir={lang === 'ar' ? 'rtl' : 'ltr'}
-        >
-          {/* Backdrop on top of page content; click dismisses */}
+            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200">
+              <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                {t('history.open_panel')}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowHistoryPanel(false)}
+                aria-label={t('history.close_panel')}
+                className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+              >
+                <i className="fa-solid fa-xmark text-sm"></i>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              <GenerationHistory
+                uid={effectiveUid}
+                workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+                savedProjects={filteredProjects.length > 0 ? filteredProjects : projects}
+                onSelectHistory={(item) => { handleHistorySelect(item); }}
+                compact
+              />
+            </div>
+          </aside>
           <button
             type="button"
-            aria-label={t('common.close')}
-            onClick={() => setShowMenuDrawer(false)}
-            className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            aria-label={t('history.close_panel')}
+            onClick={() => setShowHistoryPanel(false)}
+            className="flex-1 bg-black/30"
           />
-          {/* Panel: anchored to the start edge in RTL (right), end edge in LTR (right) */}
-          <div className="relative mt-auto w-[80vw] max-w-sm ml-auto h-full bg-slate-950 border-s border-white/[0.06] flex flex-col">
-            <div className="sticky top-0 z-[1] flex items-start justify-between gap-2 px-5 py-4 border-b border-white/[0.04] bg-slate-950">
+        </div>
+      )}
+
+      {showMenuDrawer && (
+        <div className="md:hidden fixed inset-0 z-[55] flex flex-row-reverse">
+          {/* Fullscreen Menu sheet — anchored to the end edge in LTR via
+              `flex-row-reverse` so the click-to-dismiss backdrop fills the
+              rest of the screen on the left side of the panel. */}
+          <aside
+            className="sidebar-panel w-[85vw] max-w-[280px] bg-white flex flex-col shadow-lg"
+            dir={lang === 'ar' ? 'rtl' : 'ltr'}
+            aria-label={t('history.menu_title')}
+          >
+            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200">
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold text-white truncate">{user?.email}</p>
-                <p className="text-[9px] text-blue-400 font-bold uppercase mt-0.5 tracking-wider">
+                <p className="text-[11px] font-medium text-slate-700 truncate">{user?.email}</p>
+                <p className="text-[10px] font-semibold text-blue-600 uppercase">
                   {PLANS[userPlan]?.name || 'Free'} {t('header.plan')}
                 </p>
               </div>
@@ -9632,72 +9837,83 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 type="button"
                 onClick={() => setShowMenuDrawer(false)}
                 aria-label={t('common.close')}
-                className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-white/[0.04] transition-colors"
+                className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
               >
                 <i className="fa-solid fa-xmark text-sm"></i>
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto">
-              <button
-                onClick={() => { if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); } setShowMenuDrawer(false); }}
-                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-                role="menuitem"
-              >
-                <i className="fa-solid fa-plus text-slate-500 w-5 text-center"></i> {t('history.newProject')}
-              </button>
-              <button
-                onClick={() => { setShowSettingsModal(true); setSettingsEditingName(false); setSettingsEditingEmail(false); setShowMenuDrawer(false); }}
-                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-                role="menuitem"
-              >
-                <i className="fa-solid fa-gear text-slate-500 w-5 text-center"></i> {t('topbar.menu_settings')}
-              </button>
-              <div className="border-t border-white/[0.04]"></div>
-              <button
+            <div className="flex-1 overflow-y-auto py-1">
+              <MenuItem icon="fa-plus" label={t('history.newProject')} onClick={() => {
+                if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); }
+                setShowMenuDrawer(false);
+              }} />
+              <MenuItem icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={async () => {
+                setShowMenuDrawer(false);
+                setShowFavorites(true);
+                setFavoritesLoading(true);
+                try {
+                  const uid = user?.uid;
+                  if (!uid) return;
+                  try {
+                    const fSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), where('feedback.savedToFavorites', '==', true), orderBy('timestamp', 'desc'), limit(50)));
+                    setFavoritesData(fSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+                  } catch (indexErr) {
+                    console.warn('Favorites index query failed, using fallback:', indexErr);
+                    try {
+                      const fallbackSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), orderBy('timestamp', 'desc'), limit(200)));
+                      const allGens = fallbackSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                      setFavoritesData(allGens.filter((g: any) => g.feedback?.savedToFavorites === true));
+                    } catch (fallbackErr) {
+                      console.error('Fallback favorites query also failed:', fallbackErr);
+                      setFavoritesData([]);
+                    }
+                  }
+                } catch (e) { console.warn('Failed to load favorites:', e); }
+                finally { setFavoritesLoading(false); }
+              }} />
+              <MenuItem icon="fa-gear" label={t('topbar.menu_settings')} onClick={() => {
+                setShowSettingsModal(true);
+                setSettingsEditingName(false);
+                setSettingsEditingEmail(false);
+                setShowMenuDrawer(false);
+              }} />
+              <div className="border-t border-slate-100 my-1 mx-3" />
+              <MenuItem
+                icon={isDarkMode ? 'fa-sun' : 'fa-moon'}
+                label={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
                 onClick={() => { toggleTheme(); }}
-                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-                role="menuitem"
-              >
-                <i className={`fa-solid ${isDarkMode ? 'fa-sun' : 'fa-moon'} text-slate-500 w-5 text-center`}></i>
-                {isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
-              </button>
-              <button
+              />
+              <MenuItem
+                icon="fa-language"
+                label={`${t('topbar.menu_language')} (${lang === 'ar' ? 'EN' : 'AR'})`}
                 onClick={() => { setLang(lang === 'en' ? 'ar' : 'en'); }}
-                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-                role="menuitem"
-              >
-                <i className="fa-solid fa-language text-slate-500 w-5 text-center"></i>
-                {t('topbar.menu_language')} ({t('lang.switch_short')})
-              </button>
-              <div className="border-t border-white/[0.04]"></div>
-              <button
-                onClick={() => { handleManageBilling(); setShowMenuDrawer(false); }}
-                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-                role="menuitem"
-              >
-                <i className="fa-solid fa-credit-card text-slate-500 w-5 text-center"></i> {t('header.manage_billing')}
-              </button>
-              <button
-                onClick={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }}
-                className="w-full px-5 py-3 text-start text-[12px] text-slate-300 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3"
-                role="menuitem"
-              >
-                <i className="fa-solid fa-arrow-up text-slate-500 w-5 text-center"></i> {t('header.upgrade')}
-              </button>
-              <div className="border-t border-white/[0.04]"></div>
-              <button
+              />
+              {!milestones.watchVideo && (
+                <MenuItem icon="fa-play" label={t('topbar.menu_tutorial')} onClick={() => { setShowVideoPopup(true); setShowMenuDrawer(false); }} />
+              )}
+              {phase === 'input' && (
+                <MenuItem icon="fa-circle-question" label={t('topbar.menu_tour')} onClick={() => { setShowWalkthrough(true); setShowMenuDrawer(false); }} />
+              )}
+              <div className="border-t border-slate-100 my-1 mx-3" />
+              <MenuItem icon="fa-credit-card" label={t('header.manage_billing')} onClick={() => { handleManageBilling(); setShowMenuDrawer(false); }} />
+              <MenuItem icon="fa-arrow-up" label={t('header.upgrade')} onClick={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }} />
+              <div className="border-t border-slate-100 my-1 mx-3" />
+              <MenuItem
+                icon="fa-right-from-bracket"
+                label={t('header.logout')}
                 onClick={() => { handleLogout(); }}
-                className="w-full px-5 py-3 text-start text-[12px] text-red-500/70 hover:bg-red-500/5 hover:text-red-400 transition-all flex items-center gap-3"
-                role="menuitem"
-              >
-                <i className="fa-solid fa-right-from-bracket w-5 text-center"></i> {t('header.logout')}
-              </button>
+                className="text-red-500 hover:text-red-600"
+              />
             </div>
-          </div>
-        </aside>
+          </aside>
+          <button
+            type="button"
+            aria-label={t('common.close')}
+            onClick={() => setShowMenuDrawer(false)}
+            className="flex-1 bg-black/30"
+          />
+        </div>
       )}
-
-      </div>
 
       {/* ═══ FAVORITE UPDATE/KEEP-BOTH PROMPT (T015-T018) ═══ */}
       {favUpdatePrompt && (

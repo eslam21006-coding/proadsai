@@ -1456,3 +1456,70 @@ html.light-mode [data-light-ctx="ranking-panel"] {
     border-color: #e2e8f0;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   PHASE 26 BATCH 6 FINAL v2 — Claude-style collapsible sidebars
+   Two asides that flank <main>. Both are always rendered; they animate
+   between a 48px icon strip and a 220/260px panel. Tailwind classes use
+   `bg-white` / `border-slate-200` as the light base; the rules below
+   override for dark mode (the default — html has no `light-mode` class).
+   No backdrop-filter / backdrop-blur anywhere in these surfaces.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Dark-mode chrome for the panels themselves. */
+html:not(.light-mode) .sidebar-panel {
+    background-color: #0f172a;
+    border-color: rgba(51, 65, 85, 0.5);
+}
+
+/* Text + icon colors in dark mode. */
+html:not(.light-mode) .sidebar-panel .text-slate-600,
+html:not(.light-mode) .sidebar-panel .text-slate-500,
+html:not(.light-mode) .sidebar-panel .text-slate-400 {
+    color: #cbd5e1;
+}
+html:not(.light-mode) .sidebar-panel .text-slate-700,
+html:not(.light-mode) .sidebar-panel .text-slate-300,
+html:not(.light-mode) .sidebar-panel .text-slate-200 {
+    color: #e2e8f0;
+}
+html:not(.light-mode) .sidebar-panel .text-blue-600,
+html:not(.light-mode) .sidebar-panel .text-blue-400 {
+    color: #60a5fa;
+}
+html:not(.light-mode) .sidebar-panel .text-red-500 {
+    color: #f87171;
+}
+html:not(.light-mode) .sidebar-panel .text-red-600 {
+    color: #ef4444;
+}
+html:not(.light-mode) .sidebar-panel .text-amber-500 {
+    color: #fbbf24;
+}
+
+/* Hover state for icon buttons and menu items. */
+html:not(.light-mode) .sidebar-panel .hover\:bg-slate-100:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    color: #f1f5f9;
+}
+html:not(.light-mode) .sidebar-panel .hover\:bg-slate-50:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+    color: #f1f5f9;
+}
+html:not(.light-mode) .sidebar-panel .hover\:text-slate-700:hover,
+html:not(.light-mode) .sidebar-panel .hover\:text-slate-900:hover,
+html:not(.light-mode) .sidebar-panel .hover\:text-slate-600:hover {
+    color: #f1f5f9;
+}
+html:not(.light-mode) .sidebar-panel .hover\:text-blue-600:hover {
+    color: #93c5fd;
+}
+html:not(.light-mode) .sidebar-panel .hover\:text-red-600:hover {
+    color: #fca5a5;
+}
+
+/* Dividers and borders inside dark panels. */
+html:not(.light-mode) .sidebar-panel .border-slate-200,
+html:not(.light-mode) .sidebar-panel .border-slate-100 {
+    border-color: rgba(51, 65, 85, 0.5);
+}
