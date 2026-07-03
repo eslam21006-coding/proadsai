@@ -16,10 +16,7 @@
     --text-secondary: #94a3b8;
     --text-muted: #64748b;
     --text-faint: #475569;
-    --border-subtle: rgba(51, 65, 85, 0.4);
     --border-strong: rgba(71, 85, 105, 0.6);
-    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.25);
-    --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.35);
     --blue-surface-strong: rgba(59, 130, 246, 0.2);
     --blue-surface-medium: rgba(59, 130, 246, 0.12);
     --blue-surface-soft: rgba(59, 130, 246, 0.08);
@@ -47,6 +44,28 @@
     --scrollbar-track: #020617;
     --scrollbar-thumb: #1e293b;
     --scrollbar-thumb-hover: #334155;
+
+    /* Premium "quiet luxury" design tokens (Phase 26 Batch 6 Revision 2).
+       Dark defaults here; the html.light-mode block below overrides them
+       for the premium light theme. */
+    --surface-app: #020617;
+    --surface-card: #0f172a;
+    --surface-hover: rgba(255, 255, 255, 0.04);
+    --surface-active: rgba(255, 255, 255, 0.08);
+    --text-primary-light: #f1f5f9;
+    --text-secondary-light: #94a3b8;
+    --text-tertiary-light: #64748b;
+    --text-inverse: #ffffff;
+    --border-subtle: rgba(51, 65, 85, 0.4);
+    --border-strong-light: rgba(71, 85, 105, 0.6);
+    --border-focus: #3b82f6;
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06);
+    --shadow-elevated: 0 4px 6px rgba(0, 0, 0, 0.04), 0 2px 4px rgba(0, 0, 0, 0.06);
+    --shadow-dropdown: 0 10px 15px rgba(0, 0, 0, 0.06), 0 4px 6px rgba(0, 0, 0, 0.04);
+    --accent-primary: #3b82f6;
+    --accent-primary-hover: #2563eb;
+    --accent-success: #10b981;
+    --accent-warning: #f59e0b;
 }
 
 html.light-mode {
@@ -60,10 +79,7 @@ html.light-mode {
     --text-secondary: #374151;
     --text-muted: #52525b;
     --text-faint: #71717a;
-    --border-subtle: #c0c7d4;
     --border-strong: #a3acbb;
-    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
-    --shadow-elevated: 0 4px 14px rgba(0, 0, 0, 0.10), 0 2px 4px rgba(0, 0, 0, 0.06);
     /* Blue scale — STRONG for light mode */
     --blue-surface-strong: #bfdbfe;
     --blue-surface-medium: #dbeafe;
@@ -93,6 +109,26 @@ html.light-mode {
     --scrollbar-track: #e8ebf0;
     --scrollbar-thumb: #b4bcc9;
     --scrollbar-thumb-hover: #94a3b8;
+
+    /* Premium "quiet luxury" overrides (Phase 26 Batch 6 Revision 2). */
+    --surface-app: #F1F5F9;
+    --surface-card: #FFFFFF;
+    --surface-hover: #F8FAFC;
+    --surface-active: #F1F5F9;
+    --text-primary-light: #0F172A;
+    --text-secondary-light: #64748B;
+    --text-tertiary-light: #94A3B8;
+    --text-inverse: #FFFFFF;
+    --border-subtle: #E2E8F0;
+    --border-strong-light: #CBD5E1;
+    --border-focus: #3B82F6;
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06);
+    --shadow-elevated: 0 4px 6px rgba(0, 0, 0, 0.04), 0 2px 4px rgba(0, 0, 0, 0.06);
+    --shadow-dropdown: 0 10px 15px rgba(0, 0, 0, 0.06), 0 4px 6px rgba(0, 0, 0, 0.04);
+    --accent-primary: #3B82F6;
+    --accent-primary-hover: #2563EB;
+    --accent-success: #10B981;
+    --accent-warning: #F59E0B;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -799,6 +835,151 @@ html.light-mode button[class*="border-dashed"][class*="border-slate"]:hover {
 
 /* Modal backdrop is handled in JSX via isDarkMode — no CSS override needed */
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   PHASE 26 BATCH 6 REVISION 2 — PREMIUM LIGHT MODE
+   Targeted overrides for the new SideDrawer + Brief-page trigger buttons
+   (and the History side panel's compact card). Studio / render views are
+   untouched. The existing index.css rules above already retarget the dark
+   surfaces (bg-slate-900/950/800, text-white, text-slate-100..500, etc.)
+   but the new components were styled with bg-slate-950 + border-white/X for
+   the drawer chrome and with bg-slate-900/40 for the account section header.
+   These rules bring those into the premium light palette.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Side drawer chrome — drawer panel + sticky header + close button */
+html.light-mode aside[role="dialog"],
+html.light-mode .light-panel {
+    background-color: #FFFFFF !important;
+    color: #0F172A !important;
+    border-color: #E2E8F0 !important;
+    box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08), 0 4px 6px rgba(15, 23, 42, 0.04) !important;
+}
+html.light-mode aside[role="dialog"] > div:first-child,
+html.light-mode aside[role="dialog"] header {
+    background-color: #FFFFFF !important;
+    border-color: #E2E8F0 !important;
+    color: #0F172A !important;
+}
+html.light-mode aside[role="dialog"] h2 {
+    color: #0F172A !important;
+}
+html.light-mode aside[role="dialog"] button:not([data-sidedrawer-close]) {
+    color: #0F172A !important;
+}
+
+/* Side drawer menu items — text + hover + dividers */
+html.light-mode aside[role="dialog"] [role="menuitem"] {
+    color: #334155 !important;
+}
+html.light-mode aside[role="dialog"] [role="menuitem"]:hover {
+    background-color: #F1F5F9 !important;
+    color: #0F172A !important;
+}
+html.light-mode aside[role="dialog"] [role="menuitem"]:hover i {
+    color: #3B82F6 !important;
+}
+html.light-mode aside[role="dialog"] .border-t {
+    border-color: #E2E8F0 !important;
+}
+html.light-mode aside[role="dialog"] .border-b {
+    border-color: #E2E8F0 !important;
+}
+html.light-mode aside[role="dialog"] .bg-slate-900\/40 {
+    background-color: #F8FAFC !important;
+}
+html.light-mode aside[role="dialog"] .text-slate-400,
+html.light-mode aside[role="dialog"] .text-slate-500,
+html.light-mode aside[role="dialog"] .text-slate-300 {
+    color: #64748B !important;
+}
+html.light-mode aside[role="dialog"] .text-blue-400 {
+    color: #2563EB !important;
+}
+html.light-mode aside[role="dialog"] .text-amber-500 {
+    color: #B45309 !important;
+}
+html.light-mode aside[role="dialog"] .text-red-500\/70 {
+    color: #B91C1C !important;
+}
+html.light-mode aside[role="dialog"] .hover\:bg-white\/\[0\.04\]:hover {
+    background-color: #F1F5F9 !important;
+    color: #0F172A !important;
+}
+html.light-mode aside[role="dialog"] .hover\:bg-red-500\/5:hover {
+    background-color: #FEE2E2 !important;
+    color: #B91C1C !important;
+}
+
+/* Top nav bar */
+html.light-mode nav[class*="sticky"][class*="top-0"] {
+    background-color: #FFFFFF !important;
+
+    border-bottom-color: #E2E8F0 !important;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04) !important;
+}
+html.light-mode nav [class*="bg-white/[0.04]"] {
+    background-color: #F1F5F9 !important;
+}
+html.light-mode nav .text-slate-500 {
+    color: #64748B !important;
+}
+html.light-mode nav .text-amber-400 {
+    color: #B45309 !important;
+}
+html.light-mode nav .text-white {
+    color: #0F172A !important;
+}
+html.light-mode nav .border-white\/\[0\.06\] {
+    border-color: #E2E8F0 !important;
+}
+
+/* Brief-page trigger buttons (History, + New Project) */
+html.light-mode .bg-slate-900\/40,
+html.light-mode [class*="bg-slate-900/40"] {
+    background-color: #FFFFFF !important;
+}
+html.light-mode [class*="border-slate-700"] {
+    border-color: #CBD5E1 !important;
+}
+html.light-mode button[class*="border-slate-700"]:not([class*="border-blue"]) {
+    color: #334155 !important;
+    background-color: #FFFFFF !important;
+    border-color: #CBD5E1 !important;
+}
+html.light-mode button[class*="border-slate-700"]:not([class*="border-blue"]):hover {
+    border-color: #3B82F6 !important;
+    color: #2563EB !important;
+    background-color: #EFF6FF !important;
+}
+html.light-mode .text-slate-200 {
+    color: #334155 !important;
+}
+html.light-mode .text-blue-300 {
+    color: #2563EB !important;
+}
+html.light-mode .hover\:text-blue-300:hover {
+    color: #2563EB !important;
+}
+html.light-mode .hover\:border-blue-500:hover {
+    border-color: #3B82F6 !important;
+}
+html.light-mode .hover\:bg-blue-500\/10:hover {
+    background-color: #EFF6FF !important;
+}
+
+/* Project-limit banner */
+html.light-mode .bg-amber-500\/10 {
+    background-color: #FEF3C7 !important;
+    border-color: #FCD34D !important;
+}
+html.light-mode .text-amber-200\/90 {
+    color: #92400E !important;
+}
+html.light-mode .text-amber-400\/60 {
+    color: #B45309 !important;
+}
+
+
 /* Slate-950 modal shells → white */
 html.light-mode .fixed[class*="z-[200]"]>div[class*="bg-slate-950"],
 html.light-mode .fixed[class*="z-[200]"]>div[class*="bg-slate-900"] {
@@ -1275,3 +1456,75 @@ html.light-mode [data-light-ctx="ranking-panel"] {
     border-color: #e2e8f0;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   PHASE 26 BATCH 6 FINAL v2 — Claude-style collapsible sidebars
+   Two asides that flank <main>. Both are always rendered; they animate
+   between a 48px icon strip and a 220/260px panel. Tailwind classes use
+   `bg-white` / `border-slate-200` as the light base; the rules below
+   override for dark mode (the default — html has no `light-mode` class).
+   No backdrop-filter / backdrop-blur anywhere in these surfaces.
+   Selectors below use stable `data-sidebar-*` hooks (set in JSX) so the
+   rules survive Tailwind-class refactors of the child markup.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Dark-mode chrome for the panels themselves. */
+html:not(.light-mode) .sidebar-panel {
+    background-color: #0f172a;
+    border-color: rgba(51, 65, 85, 0.5);
+}
+
+/* Header text in dark mode (title, email, plan). */
+html:not(.light-mode) .sidebar-panel [data-sidebar-text] {
+    color: #e2e8f0;
+}
+
+/* Icon buttons (header collapse, collapsed strip, menu expand chevron). */
+html:not(.light-mode) .sidebar-panel [data-sidebar-icon] {
+    color: #cbd5e1;
+}
+html:not(.light-mode) .sidebar-panel [data-sidebar-icon]:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    color: #f1f5f9;
+}
+
+/* Menu items (text + icon + hover) in dark mode. */
+html:not(.light-mode) .sidebar-panel [data-sidebar-menu-item] {
+    color: #cbd5e1;
+}
+html:not(.light-mode) .sidebar-panel [data-sidebar-menu-item]:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+    color: #f1f5f9;
+}
+html:not(.light-mode) .sidebar-panel [data-sidebar-menu-item] [data-sidebar-icon] {
+    color: #94a3b8;
+}
+
+/* Accent colors in dark mode — blue plan pill, red logout row, etc. */
+html:not(.light-mode) .sidebar-panel .text-blue-600,
+html:not(.light-mode) .sidebar-panel .text-blue-400 {
+    color: #60a5fa;
+}
+html:not(.light-mode) .sidebar-panel [data-sidebar-menu-item].text-red-500 {
+    color: #f87171;
+}
+html:not(.light-mode) .sidebar-panel [data-sidebar-menu-item].text-red-500:hover {
+    color: #fca5a5;
+    background-color: rgba(239, 68, 68, 0.08);
+}
+
+/* Dividers and header borders. */
+html:not(.light-mode) .sidebar-panel [data-sidebar-divider],
+html:not(.light-mode) .sidebar-panel [data-sidebar-header] {
+    border-color: rgba(51, 65, 85, 0.5);
+}
+
+/* RTL: flip collapse/expand chevrons so they point inward */
+html[dir="rtl"] .sidebar-panel [data-sidebar-icon] > .fa-chevron-left,
+html[dir="rtl"] .sidebar-panel [data-sidebar-icon] > .fa-chevron-right {
+    transform: scaleX(-1);
+}
+
+/* Light-mode baseline — the sidebars use bg-white + slate borders in JSX
+   so no overrides are required. The hook attributes are no-ops in light
+   mode (the inline Tailwind classes already provide the correct colors). */

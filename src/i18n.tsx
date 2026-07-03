@@ -130,6 +130,20 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'header.privacy': 'Privacy Policy',
         'header.logout': 'Log Out',
         'header.free_trial': 'Free Trial',
+        'header.manage_billing': 'Manage Billing',
+        'common.close': 'Close',
+
+        // ── Top-bar more menu (Batch 6) ──
+        'topbar.more': 'More',
+        'topbar.menu_more': 'Open menu',
+        'topbar.menu_bookmarks': 'Saved Renders',
+        'topbar.menu_settings': 'Settings',
+        'topbar.menu_tour': 'Guided Tour',
+        'topbar.menu_tutorial': 'Tutorial (+2 credits)',
+        'topbar.menu_dark': 'Switch to dark mode',
+        'topbar.menu_light': 'Switch to light mode',
+        'topbar.menu_language': 'Switch language',
+        'topbar.menu_expand': 'Expand menu',
 
         // ── InputForm ──
         'form.progress': 'Brief progress',
@@ -715,6 +729,18 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'fidelity.ctaName': 'CTA Button',
         'fidelity.benefitText': 'Benefit Text',
 
+        // ── Phase 26 — Saved-Projects / History tab + card click routing ──
+        'projects.tab.projects': 'Projects',
+        'projects.tab.history': 'History',
+        'projects.empty_projects': 'No saved projects yet. Create your first ad and it will appear here.',
+        'history.card.project_missing': "This generation's project is no longer available",
+        'history.newProject': 'New Project',
+        'history.newProjectConfirm': 'Start a new project?',
+        'history.open_panel': 'History',
+        'history.open_panel_with_count': 'History ({n})',
+        'history.close_panel': 'Close history panel',
+        'history.menu_title': 'Menu',
+
         // ── Workspace ──
         'workspace.switch_guard.title': 'Switch workspace?',
         'workspace.switch_guard.body': 'Switching workspace will start a new project. Save current work?',
@@ -900,6 +926,20 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'header.privacy': 'سياسة الخصوصية',
         'header.logout': 'تسجيل الخروج',
         'header.free_trial': 'تجربة مجانية',
+        'header.manage_billing': 'إدارة الفواتير',
+        'common.close': 'إغلاق',
+
+        // ── Top-bar more menu (Batch 6) ──
+        'topbar.more': 'المزيد',
+        'topbar.menu_more': 'فتح القائمة',
+        'topbar.menu_bookmarks': 'العروض المحفوظة',
+        'topbar.menu_settings': 'الإعدادات',
+        'topbar.menu_tour': 'جولة إرشادية',
+        'topbar.menu_tutorial': 'شرح (+٢ رصيد)',
+        'topbar.menu_dark': 'التبديل للوضع الداكن',
+        'topbar.menu_light': 'التبديل للوضع الفاتح',
+        'topbar.menu_language': 'تبديل اللغة',
+        'topbar.menu_expand': 'توسيع القائمة',
 
         // ── InputForm ──
         'form.progress': 'تقدم البيانات',
@@ -1481,6 +1521,18 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'fidelity.retry_empty_refunded': 'فشل إنشاء المخطط. تم استرداد الرصيد.',
         'fidelity.technicalPrompt': 'موجّه التصميم',
         'fidelity.hookText': 'العنوان الرئيسي',
+
+        // ── Phase 26 — Saved-Projects / History tab + card click routing ──
+        'projects.tab.projects': 'المشاريع',
+        'projects.tab.history': 'السجل',
+        'projects.empty_projects': 'لا توجد مشاريع محفوظة بعد. أنشئ أول إعلان لك ليظهر هنا.',
+        'history.card.project_missing': 'مشروع هذا الإعلان لم يعد متاحًا.',
+        'history.newProject': 'مشروع جديد',
+        'history.newProjectConfirm': 'بدء مشروع جديد؟',
+        'history.open_panel': 'السجل',
+        'history.open_panel_with_count': 'السجل ({n})',
+        'history.close_panel': 'إغلاق لوحة السجل',
+        'history.menu_title': 'القائمة',
         'fidelity.subheadText': 'العنوان الفرعي',
         'fidelity.ctaName': 'زر الإجراء',
         'fidelity.benefitText': 'نص الفائدة',

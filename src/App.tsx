@@ -15,7 +15,8 @@ import { buildInlineEditedBlock } from './utils/inlineHookEdit';
 import { useAppStore } from './store';
 import FeedbackButtons from './components/FeedbackButtons';
 import FavoritesPanel from './components/FavoritesPanel';
-import SavedProjectsPanel from './components/SavedProjectsPanel/SavedProjectsPanel';
+import GenerationHistory from './components/GenerationHistory';
+import type { HistoryItem } from './hooks/useGenerationHistory';
 import DeleteProjectDialog from './components/SavedProjectsPanel/DeleteProjectDialog';
 import SaveStatusIndicator from './components/SavedProjectsPanel/SaveStatusIndicator';
 import { useFavorites } from './hooks/useFavorites';
@@ -944,57 +945,6 @@ const VideoPopup: React.FC<{ onComplete: () => void; onClose: () => void }> = ({
   );
 };
 
-const EarnCreditsPanel: React.FC<{ milestones: Milestones; onWatchVideo: () => void }> = ({ milestones, onWatchVideo }) => {
-  const steps = [
-    { key: 'watchVideo' as const, icon: 'fa-play', label: 'Watch quick start video', reward: 2, action: onWatchVideo },
-    { key: 'hooksGenerated' as const, icon: 'fa-bolt', label: 'Generate your first hooks', reward: 2 },
-    { key: 'conceptsGenerated' as const, icon: 'fa-palette', label: 'Generate visual concepts', reward: 2 },
-    { key: 'designGenerated' as const, icon: 'fa-image', label: 'Render your first ad', reward: 2 },
-    { key: 'copyGenerated' as const, icon: 'fa-file-lines', label: 'Generate ad caption', reward: 2 },
-    { key: 'allComplete' as const, icon: 'fa-trophy', label: 'Complete all steps', reward: 40 },
-  ];
-  const completedCount = steps.filter(s => milestones[s.key]).length;
-  const totalEarned = steps.filter(s => milestones[s.key]).reduce((sum, s) => sum + s.reward, 0);
-
-  if (milestones.allComplete) return null; // Hide once fully completed
-
-  return (
-    <div className="mx-4 mb-4 bg-gradient-to-b from-amber-500/5 to-transparent border border-amber-500/10 rounded-2xl p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-amber-500/15 flex items-center justify-center">
-            <i className="fa-solid fa-gift text-amber-400 text-xs"></i>
-          </div>
-          <div>
-            <p className="text-[10px] font-bold text-white">Earn 50 credits</p>
-            <p className="text-[9px] text-slate-500">{completedCount}/{steps.length} steps · {totalEarned} earned</p>
-          </div>
-        </div>
-      </div>
-      {/* Progress bar */}
-      <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-        <div className="h-full bg-gradient-to-r from-amber-500 to-amber-400 rounded-full transition-all duration-700" style={{ width: `${(completedCount / steps.length) * 100}%` }}></div>
-      </div>
-      {/* Steps */}
-      <div className="space-y-1.5">
-        {steps.map(s => (
-          <div key={s.key}
-            onClick={!milestones[s.key] && s.action ? s.action : undefined}
-            className={`flex items-center gap-2.5 py-1.5 px-2 rounded-lg transition-all ${milestones[s.key] ? 'opacity-50' : s.action ? 'hover:bg-white/[0.04] cursor-pointer' : ''}`}>
-            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] ${milestones[s.key] ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-600'}`}>
-              {milestones[s.key] ? <i className="fa-solid fa-check"></i> : <i className={`fa-solid ${s.icon}`}></i>}
-            </div>
-            <span className={`text-[10px] flex-1 ${milestones[s.key] ? 'text-slate-500 line-through' : 'text-slate-300'}`}>{s.label}</span>
-            <span className={`text-[9px] font-bold ${milestones[s.key] ? 'text-emerald-500' : 'text-amber-400'}`}>
-              {milestones[s.key] ? '✓' : `+${s.reward}`}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
 // ═══ LEGACY MODE SANITIZER (shared across all project/draft loading paths) ═══
 const VALID_MODE_IDS = new Set(Object.keys(CREATIVE_MODE_CATALOG));
 function sanitizeProjectModes(inputs: any): any {
@@ -1038,6 +988,354 @@ const normalizeFieldLabels = (text: string): string => {
     result = result.replace(pattern, english);
   }
   return result;
+};
+
+// ─── CLAUDE-STYLE COLLAPSIBLE SIDEBARS (Phase 26 Batch 6 FINAL v2) ───
+// Both sidebars are persistent flex siblings of <main>. Collapsed = 48px
+// icon strip; expanded = 220/260px panel. Defined as stand-alone helpers
+// (rather than inlined inside the giant App function) so each owns its
+// own rendering, hook usage, and styles.
+
+interface HistorySidebarProps {
+  expanded: boolean;
+  onExpand: () => void;
+  onCollapse: () => void;
+  effectiveUid: string | null;
+  canUseWorkspaces: boolean;
+  activeWorkspaceId: string | null;
+  filteredProjects: SavedProject[];
+  projects: SavedProject[];
+  onSelectHistory: (item: HistoryItem) => void;
+}
+
+const HistorySidebar: React.FC<HistorySidebarProps> = ({
+  expanded,
+  onExpand,
+  onCollapse,
+  effectiveUid,
+  canUseWorkspaces,
+  activeWorkspaceId,
+  filteredProjects,
+  projects,
+  onSelectHistory,
+}) => {
+  const { t } = useT();
+  // When expanded, prefer the workspace-scoped filteredProjects (matches
+  // the same fallback pattern used elsewhere by handleHistorySelect).
+  const savedProjects = filteredProjects.length > 0 ? filteredProjects : projects;
+  return (
+    <aside
+      className={`hidden md:flex flex-col shrink-0 sidebar-panel bg-white border-e border-slate-200 overflow-hidden transition-all duration-200 ease-out ${
+        expanded ? 'w-[260px]' : 'w-[48px]'
+      }`}
+      aria-label={t('history.open_panel')}
+    >
+      {expanded ? (
+        <>
+          {/* Expanded header — title + collapse chevron */}
+          <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200" data-sidebar-header>
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider" data-sidebar-text>
+              {t('history.open_panel')}
+            </span>
+            <button
+              type="button"
+              onClick={onCollapse}
+              aria-label={t('history.close_panel')}
+              className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+              data-sidebar-icon
+            >
+              {/* LTR collapses to the left (panel sits on the right side
+                  of the screen); RTL flips automatically via `dir`. */}
+              <i className="fa-solid fa-chevron-left text-xs"></i>
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto" data-sidebar-content>
+            <GenerationHistory
+              uid={effectiveUid}
+              workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+              savedProjects={savedProjects}
+              onSelectHistory={(item) => { onSelectHistory(item); }}
+              compact
+            />
+          </div>
+        </>
+      ) : (
+        /* Collapsed — three small icons stacked vertically. The clock icon
+           expands; the other two are decorative placeholders for the
+           search / filter controls GenerationHistory exposes when open. */
+        <div className="flex flex-col items-center py-3 gap-3" data-sidebar-collapsed>
+          <button
+            type="button"
+            onClick={onExpand}
+            title={t('history.open_panel')}
+            aria-label={t('history.open_panel')}
+            className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-slate-100 transition-colors"
+            data-sidebar-icon
+          >
+            <i className="fa-solid fa-clock-rotate-left text-sm"></i>
+          </button>
+          <i className="fa-solid fa-magnifying-glass text-slate-300 text-xs" aria-hidden="true" data-sidebar-icon></i>
+          <i className="fa-solid fa-filter text-slate-300 text-xs" aria-hidden="true" data-sidebar-icon></i>
+        </div>
+      )}
+    </aside>
+  );
+};
+
+interface MenuSidebarProps {
+  expanded: boolean;
+  onExpand: () => void;
+  onCollapse: () => void;
+  userEmail: string | undefined;
+  userPlanName: string;
+  isDarkMode: boolean;
+  milestones: Milestones;
+  phase: string;
+  lang: string;
+  onNewProject: () => void;
+  onSavedRenders: () => void;
+  onSettings: () => void;
+  onToggleTheme: () => void;
+  onToggleLanguage: () => void;
+  onStartTutorial: () => void;
+  onStartTour: () => void;
+  onManageBilling: () => void;
+  onUpgrade: () => void;
+  onLogout: () => void;
+}
+
+const MenuSidebar: React.FC<MenuSidebarProps> = ({
+  expanded,
+  onExpand,
+  onCollapse,
+  userEmail,
+  userPlanName,
+  isDarkMode,
+  milestones,
+  phase,
+  lang,
+  onNewProject,
+  onSavedRenders,
+  onSettings,
+  onToggleTheme,
+  onToggleLanguage,
+  onStartTutorial,
+  onStartTour,
+  onManageBilling,
+  onUpgrade,
+  onLogout,
+}) => {
+  const { t } = useT();
+
+  return (
+    <aside
+      className={`hidden md:flex flex-col shrink-0 sidebar-panel bg-white border-s border-slate-200 overflow-hidden transition-all duration-200 ease-out ${
+        expanded ? 'w-[220px]' : 'w-[48px]'
+      }`}
+      aria-label={t('history.menu_title')}
+    >
+      {expanded ? (
+        <div className="w-[220px] flex flex-col h-full" data-sidebar-content>
+          {/* Expanded header — account info + collapse */}
+          <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-200" data-sidebar-header>
+            <div className="min-w-0">
+              <p className="text-[11px] font-medium text-slate-700 truncate" data-sidebar-text>{userEmail}</p>
+              <p className="text-[10px] font-semibold text-blue-600 uppercase" data-sidebar-text>{userPlanName} {t('header.plan')}</p>
+            </div>
+            <button
+              type="button"
+              onClick={onCollapse}
+              aria-label={t('common.close')}
+              data-tour="sidebar-menu"
+              data-sidebar-icon
+              className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            >
+              {/* Collapses to the right in LTR (panel sits on the right edge);
+                  RTL flips automatically via `dir` on <html>. */}
+              <i className="fa-solid fa-chevron-right text-xs"></i>
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto py-1">
+            {/* Single source of truth for the menu item list — shared with
+                the mobile overlay so labels and ordering never drift. */}
+            <MenuItems
+              t={t}
+              isDarkMode={isDarkMode}
+              lang={lang}
+              milestones={milestones}
+              phase={phase}
+              onNewProject={onNewProject}
+              onSavedRenders={onSavedRenders}
+              onSettings={onSettings}
+              onToggleTheme={onToggleTheme}
+              onToggleLanguage={onToggleLanguage}
+              onStartTutorial={onStartTutorial}
+              onStartTour={onStartTour}
+              onManageBilling={onManageBilling}
+              onUpgrade={onUpgrade}
+              onLogout={onLogout}
+              onCloseMenu={onCollapse}
+            />
+          </div>
+        </div>
+      ) : (
+        /* Collapsed — every menu action is reachable directly from the icon
+           strip. The bottom chevron is a one-click expand shortcut. */
+        <div className="flex flex-col items-center py-3 gap-1 w-[48px]" data-sidebar-collapsed>
+          <button
+            type="button"
+            onClick={onNewProject}
+            title={t('history.newProject')}
+            aria-label={t('history.newProject')}
+            data-sidebar-icon
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 transition-colors"
+          >
+            <i className="fa-solid fa-plus text-sm"></i>
+          </button>
+          <button
+            type="button"
+            onClick={onSavedRenders}
+            title={t('topbar.menu_bookmarks')}
+            aria-label={t('topbar.menu_bookmarks')}
+            data-sidebar-icon
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
+          >
+            <i className="fa-solid fa-bookmark text-sm"></i>
+          </button>
+          <button
+            type="button"
+            onClick={onSettings}
+            title={t('topbar.menu_settings')}
+            aria-label={t('topbar.menu_settings')}
+            data-sidebar-icon
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
+          >
+            <i className="fa-solid fa-gear text-sm"></i>
+          </button>
+          <div className="border-t border-slate-100 w-6 my-1" data-sidebar-divider />
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            title={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
+            aria-label={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')}
+            data-sidebar-icon
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
+          >
+            <i className={`fa-solid ${isDarkMode ? 'fa-sun' : 'fa-moon'} text-sm`}></i>
+          </button>
+          <button
+            type="button"
+            onClick={onToggleLanguage}
+            title={t('topbar.menu_language')}
+            aria-label={t('topbar.menu_language')}
+            data-sidebar-icon
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
+          >
+            <i className="fa-solid fa-language text-sm"></i>
+          </button>
+          <div className="border-t border-slate-100 w-6 my-1" data-sidebar-divider />
+          <button
+            type="button"
+            onClick={onManageBilling}
+            title={t('header.manage_billing')}
+            aria-label={t('header.manage_billing')}
+            data-sidebar-icon
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
+          >
+            <i className="fa-solid fa-credit-card text-sm"></i>
+          </button>
+          <div className="mt-auto pb-3">
+            <button
+              type="button"
+              onClick={onExpand}
+              title={t('topbar.menu_expand')}
+              aria-label={t('topbar.menu_expand')}
+              data-tour="sidebar-menu"
+              data-sidebar-icon
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-300 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+            >
+              {/* Expands toward the right (where the panel lives) in LTR. */}
+              <i className="fa-solid fa-chevron-left text-xs"></i>
+            </button>
+          </div>
+        </div>
+      )}
+    </aside>
+  );
+};
+
+interface MenuItemProps {
+  icon: string;
+  label: string;
+  onClick: () => void;
+  className?: string;
+}
+
+// Single menu item row — icon + label, full-width pill inside the
+// expanded panel. Mirrors the visual rhythm of the rest of the app:
+// slate text on white, hover lifts to slate-50 with darker text.
+const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onClick, className }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    data-sidebar-menu-item
+    className={`flex items-center gap-3 px-3 py-2 text-[13px] text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors rounded-md mx-1 w-[calc(100%-0.5rem)] ${className ?? ''}`}
+    role="menuitem"
+  >
+    <i className={`fa-solid ${icon} w-4 text-center text-slate-400`} data-sidebar-icon></i>
+    <span className="truncate">{label}</span>
+  </button>
+);
+
+interface MenuItemsProps {
+  t: (k: string) => string;
+  isDarkMode: boolean;
+  lang: string;
+  milestones: Milestones;
+  phase: string;
+  /** Bundle of callbacks MenuSidebar already receives. The mobile overlay
+      passes equivalent wrappers (which also call setShowMenuDrawer(false)). */
+  onNewProject: () => void;
+  onSavedRenders: () => void;
+  onSettings: () => void;
+  onToggleTheme: () => void;
+  onToggleLanguage: () => void;
+  onStartTutorial: () => void;
+  onStartTour: () => void;
+  onManageBilling: () => void;
+  onUpgrade: () => void;
+  onLogout: () => void;
+  /** Closes the menu (either desktop sidebar or mobile overlay). */
+  onCloseMenu: () => void;
+}
+
+/**
+ * Shared list of menu items rendered by both the desktop MenuSidebar and
+ * the mobile overlay. Building the list here (not inline in each call
+ * site) keeps labels, icons, and conditional entries in lockstep.
+ */
+const MenuItems: React.FC<MenuItemsProps> = (props) => {
+  const { t, isDarkMode, lang, milestones, phase, onCloseMenu } = props;
+  const items: Array<{ key: string; el: React.ReactNode }> = [
+    { key: 'new', el: <MenuItem key="new" icon="fa-plus" label={t('history.newProject')} onClick={props.onNewProject} /> },
+    { key: 'bookmarks', el: <MenuItem key="bookmarks" icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={props.onSavedRenders} /> },
+    { key: 'settings', el: <MenuItem key="settings" icon="fa-gear" label={t('topbar.menu_settings')} onClick={props.onSettings} /> },
+    { key: 'divider1', el: <div key="divider1" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> },
+    { key: 'theme', el: <MenuItem key="theme" icon={isDarkMode ? 'fa-sun' : 'fa-moon'} label={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')} onClick={props.onToggleTheme} /> },
+    { key: 'lang', el: <MenuItem key="lang" icon="fa-language" label={`${t('topbar.menu_language')} (${lang === 'ar' ? 'EN' : 'AR'})`} onClick={props.onToggleLanguage} /> },
+  ];
+  if (!milestones?.watchVideo) {
+    items.push({ key: 'tutorial', el: <MenuItem key="tutorial" icon="fa-play" label={t('topbar.menu_tutorial')} onClick={props.onStartTutorial} /> });
+  }
+  if (phase === 'input') {
+    items.push({ key: 'tour', el: <MenuItem key="tour" icon="fa-circle-question" label={t('topbar.menu_tour')} onClick={props.onStartTour} /> });
+  }
+  items.push({ key: 'divider2', el: <div key="divider2" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> });
+  items.push({ key: 'billing', el: <MenuItem key="billing" icon="fa-credit-card" label={t('header.manage_billing')} onClick={props.onManageBilling} /> });
+  items.push({ key: 'upgrade', el: <MenuItem key="upgrade" icon="fa-arrow-up" label={t('header.upgrade')} onClick={props.onUpgrade} /> });
+  items.push({ key: 'divider3', el: <div key="divider3" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> });
+  items.push({ key: 'logout', el: <MenuItem key="logout" icon="fa-right-from-bracket" label={t('header.logout')} onClick={props.onLogout} className="text-red-500 hover:text-red-600" /> });
+  return <>{items.map(i => i.el)}</>;
 };
 
 const App: React.FC = () => {
@@ -1133,7 +1431,6 @@ const App: React.FC = () => {
   };
   // --- STATE ---
   const [view, setView] = useState<'app' | 'privacy'>('app');
-  const [showSidebar, setShowSidebar] = useState(false);
   // --- THEME ---
   const [isDarkMode, setIsDarkMode] = useState(() => {
     const saved = localStorage.getItem('proads-theme');
@@ -1744,7 +2041,40 @@ const App: React.FC = () => {
   const [favUpdatePrompt, setFavUpdatePrompt] = useState<FavUpdatePrompt | null>(null);
   const [loadedRenderRecord, setLoadedRenderRecord] = useState<GenerationRecord | null>(null);
   const [upgradeReason, setUpgradeReason] = useState('');
-  const [showAccountMenu, setShowAccountMenu] = useState(false);
+  // Phase 26 Batch 6 FINAL v2 — Claude-style collapsible sidebars.
+// Both History (left) and Menu (right) live as permanent flex siblings of
+// <main>. Their collapsed state is a 48px icon strip; expanded they become
+// 220/260px panels. Neither is position:fixed on desktop.
+const [showMenuDrawer, setShowMenuDrawer] = useState(false);
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+
+  // Single source of truth for opening the favorites sheet. Both the
+  // desktop MenuSidebar and the mobile-overlay menu funnel through this
+  // so the query / fallback / error handling cannot drift.
+  const loadFavorites = useCallback(async () => {
+    setShowMenuDrawer(false);
+    setShowFavorites(true);
+    setFavoritesLoading(true);
+    try {
+      const uid = user?.uid;
+      if (!uid) return;
+      try {
+        const fSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), where('feedback.savedToFavorites', '==', true), orderBy('timestamp', 'desc'), limit(50)));
+        setFavoritesData(fSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } catch (indexErr) {
+        console.warn('Favorites index query failed, using fallback:', indexErr);
+        try {
+          const fallbackSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), orderBy('timestamp', 'desc'), limit(200)));
+          const allGens = fallbackSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+          setFavoritesData(allGens.filter((g: any) => g.feedback?.savedToFavorites === true));
+        } catch (fallbackErr) {
+          console.error('Fallback favorites query also failed:', fallbackErr);
+          setFavoritesData([]);
+        }
+      }
+    } catch (e) { console.warn('Failed to load favorites:', e); }
+    finally { setFavoritesLoading(false); }
+  }, [user?.uid]);
 
   // ─── MANDATORY BILLING AUTO-DISMISS ──────────────────────────────────
   useEffect(() => {
@@ -1823,7 +2153,6 @@ const App: React.FC = () => {
   const [cancelLoading, setCancelLoading] = useState(false);
   const [editingHook, setEditingHook] = useState<string | null>(null);
   const [editHookData, setEditHookData] = useState<{ hookText: string; subhead: string; cta: string; benefit: string; storyArc?: string }>({ hookText: '', subhead: '', cta: '', benefit: '' });
-  const accountMenuRef = useRef<HTMLDivElement>(null);
 
   // ─── GHL CHECKOUT URLS (external marketing funnel) ───
   const GHL_URLS: Record<string, string> = {
@@ -2671,17 +3000,6 @@ const App: React.FC = () => {
     if (!user) return;
     metaService.getConnection().then(conn => setMetaConnection(conn)).catch(() => { });
   }, [user]);
-
-  // Close account dropdown on outside click
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (accountMenuRef.current && !accountMenuRef.current.contains(e.target as Node)) {
-        setShowAccountMenu(false);
-      }
-    };
-    if (showAccountMenu) document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showAccountMenu]);
 
   // FIX 3: when the user switches to a DIFFERENT hook in single mode, drop stale concepts so
   // Step 3 can't show a previous session's blueprints — forcing a fresh regenerate for the new
@@ -3572,8 +3890,48 @@ const App: React.FC = () => {
     } else {
       setPhase(p.phase || highestPhaseWithData);
     }
-    setShowSidebar(false);
     showToast(`Loaded "${p.name}"`, 'success');
+  };
+
+  // Phase 26 — wire history card click → saved project.
+  // History items now carry a `source` discriminator:
+  //   - 'project'  → the item IS a saved project; load it directly via id.
+  //   - 'generation' → join by imageUrl to find the matching saved project
+  //     (mockupHistory doesn't carry a generationId). The joined project is
+  //     loaded at the matching mockup index so the user lands on the same
+  //     render they clicked.
+  //
+  // Intentionally a plain function (not `useCallback`): the surrounding
+  // component already has auth/billing early returns above this point, so
+  // a hook here would break React's hook ordering across renders.
+  const handleHistorySelect = (item: import('./hooks/useGenerationHistory').HistoryItem) => {
+    if (item.source === 'project' && item.projectId) {
+      const project = (filteredProjects.length > 0 ? filteredProjects : projects)
+        .find((p) => p.id === item.projectId);
+      if (project) {
+        loadProject(project);
+      } else {
+        showToast(t('history.card.project_missing'), 'info');
+      }
+      return;
+    }
+    // Generation source — find the project by matching imageUrl.
+    const targetUrl = item.thumbnailUrl;
+    const candidates = filteredProjects.length > 0 ? filteredProjects : projects;
+    const match = candidates.find((p) =>
+      p.mockupHistory?.some((m) => m.url && targetUrl && m.url === targetUrl)
+    );
+    if (match && targetUrl) {
+      const mockupIdx = match.mockupHistory.findIndex(
+        (m) => m.url && m.url === targetUrl
+      );
+      loadProject(match, 'render_studio');
+      if (mockupIdx >= 0) {
+        setHistoryIndex(mockupIdx);
+      }
+    } else {
+      showToast(t('history.card.project_missing'), 'info');
+    }
   };
 
   // Non-interactive reset (no window.confirm prompt). Called by the
@@ -3614,7 +3972,6 @@ const App: React.FC = () => {
     setReflowScope('single');
     setReflowFallbackNotice(null);
     setHighestUnlockedPhase(0);
-    setShowSidebar(false);
     localStorage.removeItem('adInputsDraft');
   };
 
@@ -6233,7 +6590,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   if (view === 'privacy') return <PrivacyPolicy onBack={() => setView('app')} />;
 
   return (
-    <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className={`min-h-screen bg-slate-950 text-slate-200 overflow-x-hidden flex flex-col transition-all duration-500 ${lang === 'ar' ? 'font-arabic' : ''}`} style={{ paddingLeft: showSidebar && lang !== 'ar' ? '320px' : '0', paddingRight: showSidebar && lang === 'ar' ? '320px' : '0' }}>
+    <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className={`min-h-screen bg-slate-950 text-slate-200 overflow-x-hidden flex flex-col ${lang === 'ar' ? 'font-arabic' : ''}`}>
       <ToastNotification toast={toast} onClose={() => setToast(null)} />
       {/* VIDEO POPUP — first-time tutorial */}
       {showVideoPopup && <VideoPopup onComplete={handleVideoComplete} onClose={handleVideoSkip} />}
@@ -6255,209 +6612,22 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         />
       )}
 
-      {/* SIDEBAR DRAWER */}
-      <div className={`fixed top-0 ${lang === 'ar' ? 'right-0 border-l' : 'left-0 border-r'} h-full w-80 bg-slate-900 border-slate-800 z-[70] transform transition-transform duration-300 ${showSidebar ? 'translate-x-0' : lang === 'ar' ? 'translate-x-full' : '-translate-x-full'} flex flex-col`}>
-        <div className="p-6 border-b border-slate-800 flex justify-between items-center">
-          <span className="text-xs font-black uppercase tracking-widest text-slate-400">Menu</span>
-          <button onClick={() => setShowSidebar(false)} className="text-slate-500 hover:text-white"><i className="fa-solid fa-xmark"></i></button>
-        </div>
-
-        {/* New Project */}
-        <div className="p-4">
-          <button onClick={createNewProject} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg">
-            <i className="fa-solid fa-plus"></i><span>{t('sidebar.new')}</span>
-          </button>
-        </div>
-
-        {/* Earn Credits */}
-        <EarnCreditsPanel milestones={milestones} onWatchVideo={() => { setShowSidebar(false); setShowVideoPopup(true); }} />
-
-        {/* Navigation */}
-        <div className="px-4 flex-1 overflow-y-auto custom-scrollbar">
-          {/* Watch Demo — always accessible */}
-          <button onClick={() => { setShowSidebar(false); setShowVideoPopup(true); }} className="w-full flex items-center gap-3 px-4 py-3 mb-3 rounded-xl text-left bg-gradient-to-r from-blue-600/10 to-purple-600/10 border border-blue-500/15 hover:border-blue-500/30 transition-all group">
-            <span className="w-9 h-9 rounded-lg bg-blue-500/15 flex items-center justify-center"><i className="fa-solid fa-play text-blue-400 text-sm"></i></span>
-            <div className="flex-1">
-              <p className="text-[11px] font-bold text-white group-hover:text-blue-400 transition-colors">Watch Demo</p>
-              <p className="text-[8px] text-slate-500">Learn how to create ads in minutes</p>
-            </div>
-            {!milestones.watchVideo && <span className="text-[7px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">+2 <i className="fa-solid fa-coins text-[6px]"></i></span>}
-          </button>
-
-          <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-3">Account</p>
-          <div className="space-y-1">
-            <button onClick={() => { setShowSidebar(false); handleManageBilling(); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
-              <span className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center"><i className="fa-solid fa-credit-card text-emerald-400 text-xs"></i></span>
-              <div>
-                <p className="text-[11px] font-bold text-white group-hover:text-emerald-400 transition-colors">Manage Billing</p>
-                <p className="text-[8px] text-slate-500">{userPlan.charAt(0).toUpperCase() + userPlan.slice(1)} Plan &middot; <i className="fa-solid fa-coins text-[7px] text-amber-500"></i> {userCredits}</p>
-              </div>
-            </button>
-            <button onClick={() => { setShowSidebar(false); setShowSettingsModal(true); setSettingsEditingName(false); setSettingsEditingEmail(false); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
-              <span className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center"><i className="fa-solid fa-gear text-amber-400 text-xs"></i></span>
-              <div>
-                <p className="text-[11px] font-bold text-white group-hover:text-amber-400 transition-colors">Settings</p>
-                <p className="text-[8px] text-slate-500">Email, password, preferences</p>
-              </div>
-            </button>
-            {!teamOwnerUid && <button onClick={() => { setShowSidebar(false); setShowTeamModal(true); loadTeamMembers(); loadTeamInvites(); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
-              <span className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center"><i className="fa-solid fa-user-plus text-emerald-400 text-xs"></i></span>
-              <div>
-                <p className="text-[11px] font-bold text-white group-hover:text-emerald-400 transition-colors">Team</p>
-                <p className="text-[8px] text-slate-500">Invite &amp; manage members</p>
-              </div>
-            </button>}
-            {/* ─── META ADS CONNECTION ───── */}
-            {metaConnection?.connected ? (
-              <div className="w-full px-4 py-3 rounded-xl bg-blue-500/5 border border-blue-500/10">
-                <div className="flex items-center gap-3">
-                  <span className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center"><i className="fa-brands fa-meta text-blue-400 text-xs"></i></span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[11px] font-bold text-blue-400">Meta Ads Connected</p>
-                    <p className="text-[8px] text-slate-500 truncate">{metaConnection.adAccounts?.find((a: any) => a.id === metaConnection.selectedAccountId)?.name || 'Select an account'}</p>
-                  </div>
-                </div>
-                {/* Account Picker */}
-                {metaConnection.adAccounts?.length > 1 && (
-                  <select
-                    value={metaConnection.selectedAccountId || ''}
-                    onChange={async (e) => {
-                      const accountId = e.target.value;
-                      await metaService.selectAccount(accountId);
-                      setMetaConnection(prev => prev ? { ...prev, selectedAccountId: accountId } : prev);
-                      showToast(`Switched to ${metaConnection.adAccounts?.find((a: any) => a.id === accountId)?.name || accountId}`, 'success');
-                    }}
-                    className="w-full mt-2 bg-slate-900 border border-slate-700/50 rounded-lg px-3 py-2 text-[10px] text-slate-300 outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    {metaConnection.adAccounts.map((acc: any) => (
-                      <option key={acc.id} value={acc.id}>{acc.name} ({acc.currency})</option>
-                    ))}
-                  </select>
-                )}
-                <div className="flex gap-2 mt-2.5">
-                  <button
-                    onClick={async () => {
-                      if (!metaConnection.selectedAccountId) {
-                        showToast('Select an ad account first.', 'error');
-                        return;
-                      }
-                      setMetaSyncing(true);
-                      showToast('Syncing ad performance...', 'info');
-                      const result = await metaService.syncPerformance(canUseWorkspaces ? activeWorkspaceId : null);
-                      setMetaSyncing(false);
-                      if (result.success) showToast(`Synced ${result.adsSynced} ads!`, 'success');
-                      else showToast('Sync failed. Try again.', 'error');
-                    }}
-                    disabled={metaSyncing}
-                    className="flex-1 py-1.5 rounded-lg bg-blue-600/10 text-blue-400 text-[8px] font-bold hover:bg-blue-600/20 transition-all disabled:opacity-50"
-                  >
-                    <i className={`fa-solid ${metaSyncing ? 'fa-spinner fa-spin' : 'fa-arrows-rotate'} mr-1`}></i>
-                    {metaSyncing ? 'Syncing...' : 'Sync Now'}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      if (confirm('Disconnect Meta Ads? This will remove all synced performance data.')) {
-                        await metaService.disconnect();
-                        setMetaConnection({ connected: false, adAccounts: [], selectedAccountId: null, connectedAt: null, lastSyncAt: null, status: '', tokenExpiring: false });
-                        showToast('Meta Ads disconnected.', 'info');
-                      }
-                    }}
-                    className="px-2.5 py-1.5 rounded-lg bg-slate-800/60 text-slate-500 text-[8px] font-bold hover:text-red-400 hover:bg-red-500/10 transition-all"
-                  >
-                    <i className="fa-solid fa-link-slash"></i>
-                  </button>
-                </div>
-                {metaConnection.tokenExpiring && (
-                  <p className="text-[8px] text-amber-400 mt-2"><i className="fa-solid fa-triangle-exclamation mr-1"></i>Token expiring soon — reconnect to refresh</p>
-                )}
-              </div>
-            ) : (
-              <button
-                onClick={async () => {
-                  if (!user) return;
-                  showToast('Connecting to Meta Ads...', 'info');
-                  const connected = await metaService.startOAuthFlow(user.uid);
-                  if (connected) {
-                    const conn = await metaService.getConnection();
-                    setMetaConnection(conn);
-                    showToast(`Meta Ads connected! ${conn.adAccounts?.length || 0} account(s) found.`, 'success');
-                  }
-                }}
-                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left hover:bg-blue-500/5 border border-transparent hover:border-blue-500/20 transition-all group"
-              >
-                <span className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center"><i className="fa-brands fa-meta text-blue-400 text-xs"></i></span>
-                <div>
-                  <p className="text-[11px] font-bold text-white group-hover:text-blue-400 transition-colors">Connect Meta Ads</p>
-                  <p className="text-[8px] text-slate-500">Track real ad performance</p>
-                </div>
-              </button>
-            )}
-          </div>
-
-          {/* ─── PERFORMANCE DASHBOARD ───── */}
-          <div className="mt-4 px-0">
-            <button onClick={() => { if (getFeatureLevel(userPlan, 'performanceDashboard') === 'none') { setUpgradeReason(`Performance Dashboard requires ${requiredPlanFor('performanceDashboard')} plan`); setShowUpgradeModal(true); return; } setShowSidebar(false); setShowDashboard(true); }} className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left bg-gradient-to-r from-blue-600/10 to-purple-600/10 border border-blue-500/15 hover:border-blue-500/30 transition-all group">
-              <span className="w-9 h-9 rounded-lg bg-blue-500/15 flex items-center justify-center"><i className="fa-solid fa-chart-pie text-blue-400 text-sm"></i></span>
-              <div className="flex-1">
-                <p className="text-[11px] font-bold text-white group-hover:text-blue-400 transition-colors">{t('dashboard.title')}</p>
-                <p className="text-[8px] text-slate-500">{t('dashboard.subtitle')}</p>
-              </div>
-              <i className="fa-solid fa-arrow-right text-[9px] text-slate-600 group-hover:text-blue-400 transition-all group-hover:translate-x-0.5"></i>
-            </button>
-          </div>
-
-          <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-3 mt-6">Support</p>
-          <div className="space-y-1">
-            <button onClick={() => { setShowSidebar(false); if ((window as any).Tawk_API?.maximize) (window as any).Tawk_API.maximize(); else window.open('https://tawk.to/chat/YOUR_TAWK_ID', '_blank'); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
-              <span className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center"><i className="fa-solid fa-headset text-amber-400 text-xs"></i></span>
-              <div>
-                <p className="text-[11px] font-bold text-white group-hover:text-amber-400 transition-colors">Help & Support</p>
-                <p className="text-[8px] text-slate-500">Chat with our team</p>
-              </div>
-            </button>
-            <button onClick={() => { setShowSidebar(false); setShowChangelogModal(true); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left hover:bg-slate-800/60 transition-all group">
-              <span className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center"><i className="fa-solid fa-sparkles text-amber-400 text-xs"></i></span>
-              <div>
-                <p className="text-[11px] font-bold text-white group-hover:text-amber-400 transition-colors">What's New</p>
-                <p className="text-[8px] text-slate-500">Latest features &amp; updates</p>
-              </div>
-            </button>
-            <button onClick={() => showToast('Referral program launching soon! You\'ll earn free credits for every friend you invite.', 'info')} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left hover:bg-slate-800/60 transition-all group relative">
-              <span className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center"><i className="fa-solid fa-gift text-amber-400 text-xs"></i></span>
-              <div>
-                <p className="text-[11px] font-bold text-white group-hover:text-amber-400 transition-colors">Refer a Friend</p>
-                <p className="text-[8px] text-slate-500">Earn free credits</p>
-              </div>
-              <span className="absolute top-2 right-3 text-[7px] font-black uppercase px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400">Soon</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="p-4 border-t border-slate-800">
-          <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left hover:bg-red-500/10 transition-all group">
-            <i className="fa-solid fa-right-from-bracket text-slate-600 group-hover:text-red-400 text-xs"></i>
-            <span className="text-[10px] font-bold text-slate-500 group-hover:text-red-400 transition-colors">Sign Out</span>
-          </button>
-        </div>
-      </div>
-
-      <nav className="border-b border-white/[0.06] bg-slate-950/90 backdrop-blur-2xl sticky top-0 z-[60]">
+      <nav className="border-b border-white/[0.06] bg-slate-950 sticky top-0 z-[60]">
         <div className="max-w-[1400px] mx-auto px-6 md:px-10 h-16 flex items-center justify-between">
-          {/* ── LEFT: Menu + Logo + New ── */}
+          {/* ── LEFT (Context): Logo + Workspace ── */}
           <div className="flex items-center gap-2.5">
-            <button data-tour="sidebar-menu" onClick={() => setShowSidebar(!showSidebar)} className="w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-white transition-colors">
-              <i className="fa-solid fa-bars text-xs"></i>
-            </button>
-            <div className="cursor-pointer" onClick={() => window.location.reload()}>
+            <div
+              className="cursor-pointer"
+              onClick={() => window.location.reload()}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.reload(); } }}
+              aria-label="Pro Ads AI"
+              role="button"
+              tabIndex={0}
+            >
               <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center hover:scale-105 transition-transform shadow-lg shadow-blue-600/20">
                 <i className="fa-solid fa-wand-magic-sparkles text-white text-sm"></i>
               </div>
             </div>
-            <button onClick={() => { if (confirm('Start a new project?')) { resetToBlankProject(); } }}
-              className="hidden sm:flex h-9 px-3.5 rounded-lg bg-white/[0.04] text-slate-500 text-[10px] font-semibold hover:text-white transition-colors items-center gap-1.5">
-              <i className="fa-solid fa-plus text-[8px]"></i> {t('sidebar.new')}
-            </button>
             {canUseWorkspaces && workspaces.length > 0 && (
               <WorkspaceSwitcher
                 workspaces={workspaces}
@@ -6468,10 +6638,11 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 hasInProgressWork={isLoading || !!tovText || !!conceptsText || !!buildPlan || mockupHistory.length > 0 || carouselSlides.length > 0 || batchResults.length > 0}
               />
             )}
+            <SaveStatusIndicator state={autoSaveState} onRetry={autoSaveRetry} />
           </div>
 
-          {/* ── CENTER: Stepper (inline) ── */}
-          <div className="hidden md:flex items-center gap-1" data-tour="stepper">
+          {/* ── CENTER (Workflow): Step tabs — visual focus of the bar ── */}
+          <div className="hidden md:flex items-center gap-1.5" data-tour="stepper">
             {steps.map((s, idx) => {
               const active = phase === s.id;
               const completed = steps.findIndex(f => f.id === phase) > idx;
@@ -6479,12 +6650,12 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
               const canClick = unlocked && !active;
               return (
                 <React.Fragment key={s.id}>
-                  {idx > 0 && <div className={`w-8 h-px mx-0.5 transition-colors duration-500 ${completed ? 'bg-blue-500/50' : 'bg-white/[0.06]'}`}></div>}
+                  {idx > 0 && <div className={`w-8 h-px mx-1 transition-colors duration-500 ${completed ? 'bg-blue-500/60' : 'bg-white/[0.06]'}`}></div>}
                   <button
                     onClick={() => canClick && navigateToStep(s.id, idx)}
                     disabled={!canClick}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all ${active
-                      ? 'bg-blue-600/15 text-blue-400'
+                    className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-[12px] font-semibold transition-all ${active
+                      ? 'bg-blue-600/15 text-blue-300 ring-1 ring-blue-500/30'
                       : completed
                         ? 'text-slate-400 hover:text-blue-400 hover:bg-white/[0.04]'
                         : unlocked
@@ -6511,103 +6682,69 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             <span className="text-[10px] text-slate-600">{steps.findIndex(s => s.id === phase) + 1}/{steps.length}</span>
           </div>
 
-          {/* ── RIGHT: Credits + Actions ── */}
+          {/* ── RIGHT (Tools): Credits + single More dropdown ── */}
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 h-9 px-3 rounded-lg bg-white/[0.04]" data-tour="credits">
-              <button onClick={() => { if (getFeatureLevel(userPlan, 'performanceDashboard') === 'none') { setUpgradeReason(`Performance Dashboard requires ${requiredPlanFor('performanceDashboard')} plan`); setShowUpgradeModal(true); return; } setShowDashboard(true); }} className="w-8 h-8 rounded-lg bg-slate-900/60 flex items-center justify-center text-slate-500 hover:text-blue-400 transition-all" title="Performance Dashboard">
-                <i className="fa-solid fa-chart-line text-[10px]"></i>
-              </button>
-              <button onClick={async () => {
-                setShowFavorites(true);
-                setFavoritesLoading(true);
-                try {
-                  const uid = user?.uid;
-                  if (!uid) return;
-                  try {
-                    // Primary query: uses composite index (userId + feedback.savedToFavorites + timestamp)
-                    const fSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), where('feedback.savedToFavorites', '==', true), orderBy('timestamp', 'desc'), limit(50)));
-                    setFavoritesData(fSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-                  } catch (indexErr) {
-                    // Fallback: if composite index not deployed, use simpler query + client filter
-                    console.warn('Favorites index query failed, using fallback:', indexErr);
-                    try {
-                      const fallbackSnap = await getDocs(query(collection(db, 'generations'), where('userId', '==', uid), orderBy('timestamp', 'desc'), limit(200)));
-                      const allGens = fallbackSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-                      const favorites = allGens.filter((g: any) => g.feedback?.savedToFavorites === true);
-                      setFavoritesData(favorites);
-                    } catch (fallbackErr) {
-                      console.error('Fallback favorites query also failed:', fallbackErr);
-                      setFavoritesData([]);
-                    }
-                  }
-                } catch (e) { console.warn('Failed to load favorites:', e); }
-                finally { setFavoritesLoading(false); }
-              }} className="w-8 h-8 rounded-lg bg-slate-900/60 flex items-center justify-center text-slate-500 hover:text-amber-400 transition-all" title="Favorites">
-                <i className="fa-solid fa-bookmark text-[10px]"></i>
-              </button>
-              <i className="fa-solid fa-coins text-amber-500 text-[10px]"></i>
-              <span className="text-[11px] font-bold text-amber-400">{userCredits}</span>
-              <span className="text-[9px] text-slate-600 hidden sm:inline">{PLANS[userPlan]?.name}</span>
-            </div>
             <button onClick={() => { setUpgradeReason(''); setShowUpgradeModal(true); }}
-              className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500 hover:bg-amber-500/20 transition-colors">
-              <i className="fa-solid fa-plus text-[9px]"></i>
+              className="flex items-center gap-1.5 h-9 px-3 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] transition-colors"
+              data-tour="credits"
+              title={t('header.get_credits')}
+            >
+              <i className="fa-solid fa-coins text-amber-500 text-[11px]"></i>
+              <span className="text-[11px] font-bold text-amber-400">{userCredits}</span>
+              <span className="text-[9px] text-slate-500 hidden sm:inline">{PLANS[userPlan]?.name}</span>
             </button>
-            {!milestones.watchVideo && (
-              <button onClick={() => setShowVideoPopup(true)} title="Watch tutorial (+2 credits)"
-                className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-400 hover:bg-amber-500/20 transition-colors relative">
-                <i className="fa-solid fa-play text-[9px]"></i>
-                <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-amber-500 rounded-full text-[7px] font-bold text-black flex items-center justify-center">+2</span>
-              </button>
-            )}
-            {phase === 'input' && (
-              <button onClick={() => setShowWalkthrough(true)} title="Guided tour"
-                className="w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-blue-400 transition-colors">
-                <i className="fa-solid fa-circle-question text-xs"></i>
-              </button>
-            )}
-            <button onClick={toggleTheme}
-              className="w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-amber-400 transition-colors"
-              title={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}>
-              <i className={`fa-solid ${isDarkMode ? 'fa-sun' : 'fa-moon'} text-[11px]`}></i>
+            {/* Mobile-only sidebar toggles.
+                Desktop uses the always-visible 48px collapsed-aside strips
+                that flank <main>; nothing to toggle from the nav itself. */}
+            <button
+              onClick={() => { setShowHistoryPanel(v => !v); setShowMenuDrawer(false); }}
+              className="md:hidden w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-white transition-colors"
+              aria-label={t('history.open_panel')}
+              aria-expanded={showHistoryPanel}
+            >
+              <i className="fa-solid fa-clock-rotate-left text-xs"></i>
             </button>
-            <button onClick={() => setLang(lang === 'en' ? 'ar' : 'en')}
-              className="w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-[10px] font-bold text-slate-500 hover:text-white transition-colors">
-              {t('lang.switch_short')}
+            <button
+              onClick={() => { setShowMenuDrawer(v => !v); setShowHistoryPanel(false); }}
+              className="md:hidden w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-white transition-colors"
+              aria-label={t('topbar.menu_more')}
+              aria-expanded={showMenuDrawer}
+            >
+              <i className="fa-solid fa-bars text-xs"></i>
             </button>
-            <div className="relative" ref={accountMenuRef}>
-              <button onClick={() => setShowAccountMenu(!showAccountMenu)}
-                className="w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center text-slate-500 hover:text-white transition-colors">
-                <i className="fa-solid fa-user text-[10px]"></i>
-              </button>
-              {showAccountMenu && (
-                <div className="absolute right-0 top-full mt-2 w-52 bg-slate-900 border border-slate-800/80 rounded-xl shadow-2xl shadow-black/60 overflow-hidden z-[100]">
-                  <div className="px-4 py-3 border-b border-white/[0.04]">
-                    <p className="text-[10px] text-slate-400 truncate">{user?.email}</p>
-                    <p className="text-[9px] text-blue-400 font-bold uppercase mt-1">{PLANS[userPlan]?.name || 'Free'} {t('header.plan')}</p>
-                  </div>
-                  <button onClick={() => { handleManageBilling(); setShowAccountMenu(false); }} className="w-full px-4 py-2.5 text-left text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3">
-                    <i className="fa-solid fa-credit-card text-slate-600 w-4"></i> Manage Billing
-                  </button>
-                  <button onClick={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowAccountMenu(false); }} className="w-full px-4 py-2.5 text-left text-[10px] text-slate-400 hover:bg-white/[0.04] hover:text-white transition-all flex items-center gap-3">
-                    <i className="fa-solid fa-arrow-up text-slate-600 w-4"></i> {t('header.upgrade')}
-                  </button>
-                  <div className="border-t border-white/[0.04]"></div>
-                  <button onClick={() => { handleLogout(); setShowAccountMenu(false); }} className="w-full px-4 py-2.5 text-left text-[10px] text-red-500/70 hover:bg-red-500/5 hover:text-red-400 transition-all flex items-center gap-3">
-                    <i className="fa-solid fa-right-from-bracket w-4"></i> {t('header.logout')}
-                  </button>
-                </div>
-            )}
-            <SaveStatusIndicator state={autoSaveState} onRetry={autoSaveRetry} />
-          </div>
+
           </div>
         </div>
       </nav>
 
+
+
+
+      {/* Claude-style three-column row.
+           ┌──────────┬────────────────────────────┬──────────┐
+           │ History  │ <main> shrinks / grows →  │ Menu     │
+           │ 48|260px │                            │ 48|220px │
+           └──────────┴────────────────────────────┴──────────┘
+           Both asides are persistent flex siblings on desktop.
+           They share `transition-all duration-200 ease-out` and only
+           animate their own width — never fixed. Mobile (`md:hidden`
+           overlays below) replaces both with fullscreen sheets. */}
+      <div className="flex flex-1 overflow-hidden min-h-0">
+      <HistorySidebar
+        expanded={showHistoryPanel}
+        onExpand={() => setShowHistoryPanel(true)}
+        onCollapse={() => setShowHistoryPanel(false)}
+        effectiveUid={effectiveUid}
+        canUseWorkspaces={canUseWorkspaces}
+        activeWorkspaceId={activeWorkspaceId}
+        filteredProjects={filteredProjects}
+        projects={projects}
+        onSelectHistory={handleHistorySelect}
+      />
       {/* Main Content Render Logic */}
-      <main className="flex-1 max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative w-full">
+      <main className="flex-1 min-w-0 overflow-y-auto max-w-[1400px] w-full mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16 relative">
         {isLoading && (
-          <div className="fixed inset-0 bg-slate-950/98 backdrop-blur-[40px] z-[100] flex flex-col items-center justify-center text-center">
+          <div className="fixed inset-0 bg-slate-950/98 z-[100] flex flex-col items-center justify-center text-center">
             <div className="relative w-32 h-32 mb-12">
               <div className="absolute inset-0 border-8 border-blue-500 border-t-transparent rounded-full animate-spin shadow-[0_0_40px_rgba(37,99,235,0.2)]"></div>
             </div>
@@ -6616,37 +6753,27 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           </div>
         )}
 
-        {/* ═══ PROJECT GALLERY (shown on input phase) ═══ */}
-        {phase === 'input' && projects.length > 1 && (
-          <div className="max-w-5xl mx-auto mb-10 animate-in fade-in duration-700">
-            {projectLimitReached && (() => {
-              const cap = getSavedProjectLimit(userPlan);
-              const capLabel = Number.isFinite(cap) ? String(cap) : 'plan';
-              return (
-                <div className={`flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3 mb-4 ${lang === 'ar' ? 'flex-row-reverse text-right' : ''}`} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-                  <i className="fa-solid fa-circle-info text-amber-400 mt-0.5"></i>
-                  <p className="flex-1 text-[11px] leading-relaxed text-amber-200/90 font-medium">
-                    {lang === 'ar'
-                      ? `وصلت إلى حد ${capLabel} مشاريع. احذف مشاريع قديمة لحفظ مشاريع جديدة.`
-                      : `You've reached your ${capLabel}-project limit. Delete old projects to save new ones.`}
-                  </p>
-                  <button onClick={() => setProjectLimitReached(false)} aria-label={lang === 'ar' ? 'إغلاق' : 'Dismiss'}
-                    className="text-amber-400/60 hover:text-amber-300 transition-colors shrink-0">
-                    <i className="fa-solid fa-xmark"></i>
-                  </button>
-                </div>
-              );
-            })()}
-            <SavedProjectsPanel
-              projects={projects}
-              workspaces={workspaces.map(w => ({ id: w.id, name: w.name }))}
-              metaConnected={metaConnection?.connected ?? false}
-              onLoad={loadProject}
-              onDelete={deleteProject}
-              onBulkDelete={confirmBulkDelete}
-            />
-          </div>
-        )}
+{/* Project-limit banner is the only thing left from the old trigger row;
+    the History and "New Project" triggers now live in their respective
+    sidebars / collapsed-icon strips. */}
+        {phase === 'input' && projectLimitReached && (() => {
+          const cap = getSavedProjectLimit(userPlan);
+          const capLabel = Number.isFinite(cap) ? String(cap) : 'plan';
+          return (
+            <div className={`max-w-5xl mx-auto mb-4 flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3 ${lang === 'ar' ? 'flex-row-reverse text-right' : ''}`} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+              <i className="fa-solid fa-circle-info text-amber-400 mt-0.5"></i>
+              <p className="flex-1 text-[11px] leading-relaxed text-amber-200/90 font-medium">
+                {lang === 'ar'
+                  ? `وصلت إلى حد ${capLabel} مشاريع. احذف مشاريع قديمة لحفظ مشاريع جديدة.`
+                  : `You've reached your ${capLabel}-project limit. Delete old projects to save new ones.`}
+              </p>
+              <button onClick={() => setProjectLimitReached(false)} aria-label={lang === 'ar' ? 'إغلاق' : 'Dismiss'}
+                className="text-amber-400/60 hover:text-amber-300 transition-colors shrink-0">
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+          );
+        })()}
 
         {/* Quick-Start Templates — always available on input phase */}
         {phase === 'input' && (
@@ -9668,6 +9795,149 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           }}
         />
       </main>
+
+      <MenuSidebar
+        expanded={showMenuDrawer}
+        onExpand={() => setShowMenuDrawer(true)}
+        onCollapse={() => setShowMenuDrawer(false)}
+        userEmail={user?.email ?? undefined}
+        userPlanName={PLANS[userPlan]?.name || 'Free'}
+        isDarkMode={isDarkMode}
+        milestones={milestones}
+        phase={phase}
+        lang={lang}
+        onNewProject={() => {
+          if (confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); }
+          setShowMenuDrawer(false);
+        }}
+        onSavedRenders={loadFavorites}
+        onSettings={() => { setShowSettingsModal(true); setSettingsEditingName(false); setSettingsEditingEmail(false); setShowMenuDrawer(false); }}
+        onToggleTheme={() => { toggleTheme(); }}
+        onToggleLanguage={() => { setLang(lang === 'en' ? 'ar' : 'en'); }}
+        onStartTutorial={() => { setShowVideoPopup(true); setShowMenuDrawer(false); }}
+        onStartTour={() => { setShowWalkthrough(true); setShowMenuDrawer(false); }}
+        onManageBilling={() => { handleManageBilling(); setShowMenuDrawer(false); }}
+        onUpgrade={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }}
+        onLogout={() => { handleLogout(); }}
+      />
+
+      </div>
+
+      {/* ─── MOBILE OVERLAYS (< md) ───
+          Both sidebars are hidden on mobile (`hidden md:flex` on the
+          asides above). The top-nav hamburger + clock buttons toggle
+          these position:fixed fullscreen sheets; opening one always
+          closes the other so only one overlay is on screen at a time
+          (the close handlers clear their sibling). No backdrop-blur —
+          the briefs explicitly forbid it. */}
+      {showHistoryPanel && (
+        <div className="md:hidden fixed inset-0 z-[70] flex">
+          {/* Fullscreen History sheet — anchored to the start edge. */}
+          <aside
+            className="sidebar-panel w-[85vw] max-w-[320px] bg-white flex flex-col shadow-lg"
+            dir={lang === 'ar' ? 'rtl' : 'ltr'}
+            aria-label={t('history.open_panel')}
+          >
+            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200" data-sidebar-header>
+              <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider" data-sidebar-text>
+                {t('history.open_panel')}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowHistoryPanel(false)}
+                aria-label={t('history.close_panel')}
+                data-sidebar-icon
+                className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+              >
+                <i className="fa-solid fa-xmark text-sm"></i>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto" data-sidebar-content>
+              <GenerationHistory
+                uid={effectiveUid}
+                workspaceId={canUseWorkspaces ? activeWorkspaceId : null}
+                savedProjects={filteredProjects.length > 0 ? filteredProjects : projects}
+                onSelectHistory={(item) => { handleHistorySelect(item); }}
+                compact
+              />
+            </div>
+          </aside>
+          <button
+            type="button"
+            aria-label={t('history.close_panel')}
+            onClick={() => setShowHistoryPanel(false)}
+            className="flex-1 bg-black/30"
+          />
+        </div>
+      )}
+
+      {showMenuDrawer && (
+        <div className="md:hidden fixed inset-0 z-[70] flex flex-row-reverse">
+          {/* Fullscreen Menu sheet — anchored to the end edge in LTR via
+              `flex-row-reverse` so the click-to-dismiss backdrop fills the
+              rest of the screen on the left side of the panel. */}
+          <aside
+            className="sidebar-panel w-[85vw] max-w-[280px] bg-white flex flex-col shadow-lg"
+            dir={lang === 'ar' ? 'rtl' : 'ltr'}
+            aria-label={t('history.menu_title')}
+          >
+            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200" data-sidebar-header>
+              <div className="min-w-0">
+                <p className="text-[11px] font-medium text-slate-700 truncate" data-sidebar-text>{user?.email}</p>
+                <p className="text-[10px] font-semibold text-blue-600 uppercase" data-sidebar-text>
+                  {PLANS[userPlan]?.name || 'Free'} {t('header.plan')}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowMenuDrawer(false)}
+                aria-label={t('common.close')}
+                data-sidebar-icon
+                className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+              >
+                <i className="fa-solid fa-xmark text-sm"></i>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto py-1">
+              {/* Same shared menu list as the desktop MenuSidebar; the
+                  only difference is that the "new project" entry shows a
+                  confirm prompt before wiping the current project. */}
+              <MenuItems
+                t={t}
+                isDarkMode={isDarkMode}
+                lang={lang}
+                milestones={milestones}
+                phase={phase}
+                onNewProject={() => {
+                  if (window.confirm(t('history.newProjectConfirm'))) { resetToBlankProject(); }
+                  setShowMenuDrawer(false);
+                }}
+                onSavedRenders={loadFavorites}
+                onSettings={() => {
+                  setShowSettingsModal(true);
+                  setSettingsEditingName(false);
+                  setSettingsEditingEmail(false);
+                  setShowMenuDrawer(false);
+                }}
+                onToggleTheme={toggleTheme}
+                onToggleLanguage={() => { setLang(lang === 'en' ? 'ar' : 'en'); }}
+                onStartTutorial={() => { setShowVideoPopup(true); setShowMenuDrawer(false); }}
+                onStartTour={() => { setShowWalkthrough(true); setShowMenuDrawer(false); }}
+                onManageBilling={() => { handleManageBilling(); setShowMenuDrawer(false); }}
+                onUpgrade={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }}
+                onLogout={handleLogout}
+                onCloseMenu={() => setShowMenuDrawer(false)}
+              />
+            </div>
+          </aside>
+          <button
+            type="button"
+            aria-label={t('common.close')}
+            onClick={() => setShowMenuDrawer(false)}
+            className="flex-1 bg-black/30"
+          />
+        </div>
+      )}
 
       {/* ═══ FAVORITE UPDATE/KEEP-BOTH PROMPT (T015-T018) ═══ */}
       {favUpdatePrompt && (
