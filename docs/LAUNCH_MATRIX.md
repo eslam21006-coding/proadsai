@@ -3,7 +3,7 @@
 
 > **Authority**: This file overrides all older behavior assumptions, the Compatibility Matrix v2, and the ChatGPT master plan for launch scope.
 > Where this file and any other document disagree, this file wins.
-Last updated: v11 — v10 + Hotfix Image Persistence complete (2026-06-29). Fixes primary render images broken across browsers: static import for storageUpload, Storage URL passed to pushMockup and batch results so mockupHistory survives project save/reload.
+Last updated: v12 — v11 + Phase 26 Generation History complete (2026-07-02). Claude-style three-column layout with collapsible History sidebar (left) and Menu sidebar (right). Light mode default for new users.
 
 ---
 
@@ -120,6 +120,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | Phase 27 — Universe-Aware Copy | `specs/963-universe-aware-copy` | ✅ DONE 2026-06-26 (PR #48). Fantasy universes get one mandatory subtle metaphor per hook; realistic/minimal stay literal. Decision module `universeCopyMap.ts`, injected at copy prompt (generateTOV) + visual element at `buildFinalImagePrompt()`. Suppressed for reference ads, text-only, carousel slides 2+. Additive `universeAwareCopy?` trace. 237 unit assertions. |
 | Phase 20 — Concept Director (Option A) | specs/964-concept-director | ✅ DONE 2026-06-28 (PR #49). Core Concept Director module + Variance Validator + pipeline integration. Feature flag conceptDirectorEnabled (default false) + Remote Config kill switch. Fail-open to Visual Architect V5.0. Backend-only (frontend plumbing for trace pass-through only). Deferred: 20.A (Selection Reviewer), 20.E (Brief Coherence banner), 20.F (Variance Mode toggle), 20.D.7 (creative memory wiring). |
 | Hotfix — Image Persistence | — | ✅ DONE 2026-06-29 (PR #51). Root cause: (1) dynamic import of storageUpload.js failed silently in serverGenerateFinalAd, (2) frontend wrote 'pending_upload' sentinel to Firestore when storageUrl was null, (3) pushMockup received base64 instead of Storage URL so mockupHistory[].url was stripped to 'stored_externally' on project save. Fix: static import for saveBase64ToStorage, removed 'pending_upload' fallback, pushMockup now accepts and prefers Storage URL, batch results store storageUrl. All render paths (single, batch, carousel, edit, A/B) now persist durable Storage URLs. |
+| Phase 26 — Generation History & Filters | — | ✅ DONE 2026-07-02 (PR #52). Three-column flex layout: History sidebar (left, 48px collapsed / 260px expanded) + Main content (center, flex-1) + Menu sidebar (right, 48px collapsed / 220px expanded). Both sidebars always rendered as flex siblings — icon strip when collapsed, full panel when expanded. useGenerationHistory hook merges Firestore generations + saved projects with client-side AND/OR filtering (hook angle, universe, art direction, status, search). Firestore composite indexes deployed. Premium light mode design system. SideDrawer.tsx deleted. Light mode is default for new users. |
 
 ### ⏳ TODO — Critical (build first)
 
@@ -1071,7 +1072,7 @@ Phase 20 — Concept Director + Brief Coherence Check (requires Phase 5 + HOTFIX
 
 Phase 21 — Stripe Migration (CRITICAL — replaces Phase 8, no production users yet, do BEFORE launch)
 
-Phase 26 — Generation History & Filters (independent — no pipeline dependency)
+Phase 26 — Generation History & Filters (independent — no pipeline dependency) — DONE (PR #52, 2026-07-02)
 
 Phase 27 — Universe-Aware Copy (independent — requires Phase 5 pipeline) — done
 
@@ -1166,7 +1167,7 @@ Phase 23  requires Phase 22 + Phase 5 (quality rules + scoring must exist; fidel
 Phase 025 — OpenAI Swap (complete).
           Unblocks: Phase 17 (reflow done), Phase 22, Phase 23
 
-Phase 26  (no dependency — frontend-only, start any time)
+Phase 26  (no dependency — frontend-only, start any time) — DONE 2026-07-02
 Phase 27  requires Phase 5 (pipeline — copy generation changes) — done
 Phase 28  requires Phase 5 (pipeline — prompt engineering for expression matching)
 ```
@@ -2385,9 +2386,14 @@ Same checklist as the old Phase 8.E.6 — recreate products in Live mode, genera
 
 ---
 
-## Phase 26 — Generation History & Filters
+## Phase 26 — Generation History & Filters ✅ DONE (2026-07-02)
 **Requires:** Nothing (frontend-only).
 **Blocks:** Nothing.
+
+**Shipped (PR #52, 2026-07-02):** Claude-style three-column dashboard layout. History sidebar (left) shows all past generations with search, status filters (All/Drafts/Rendered/Published), and hook angle/universe/art direction dropdowns. Menu sidebar (right) provides account info, navigation, settings, dark/light toggle, and billing. Both sidebars collapse to 48px icon strips and expand on click. useGenerationHistory hook merges Firestore generations collection with saved projects for retroactive coverage. Client-side AND/OR filtering. Firestore composite indexes for userId + output.phase + timestamp and workspaceId + output.phase + timestamp. Premium light mode design system applied. SideDrawer.tsx deleted. Light mode default for new users.
+
+**New files:** `src/hooks/useGenerationHistory.ts`, `src/components/GenerationHistory.tsx`, `src/i18n/generationHistory.ts`
+**Deleted files:** `src/components/SideDrawer.tsx`
 
 **Scope:** Replace the long projects list in Step 1 with a dedicated history tab. Users can browse all past generations and filter by hook, universe, and art direction using AND/OR logic. Filters are combinable (e.g., "pain hook AND mythic_epic universe" or "any hook OR luxury_magazine art direction"). Each history entry links to its full generation result.
 
