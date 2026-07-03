@@ -1432,9 +1432,11 @@ const App: React.FC = () => {
   // --- STATE ---
   const [view, setView] = useState<'app' | 'privacy'>('app');
   // --- THEME ---
+  // Default to LIGHT mode for new users; only honor an explicit 'dark' choice from localStorage.
+  // Anything else (null = never set, or 'light') → light mode.
   const [isDarkMode, setIsDarkMode] = useState(() => {
     const saved = localStorage.getItem('proads-theme');
-    return saved !== 'light';
+    return saved === 'dark';
   });
   const toggleTheme = () => {
     setIsDarkMode(prev => {
@@ -1449,9 +1451,14 @@ const App: React.FC = () => {
       return next;
     });
   };
-  // Apply theme on mount
+  // Apply theme on first render (side effect inside useState initializer — runs synchronously
+  // before paint to avoid a dark→light flash for new users).
   useState(() => {
-    if (!isDarkMode) document.documentElement.classList.add('light-mode');
+    if (isDarkMode) {
+      document.documentElement.classList.remove('light-mode');
+    } else {
+      document.documentElement.classList.add('light-mode');
+    }
   });
   const [projects, setProjects] = useState<SavedProject[]>([]);
   // Non-blocking project-limit warning. Set when a new project is saved at/over the plan cap
