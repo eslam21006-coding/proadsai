@@ -1519,6 +1519,12 @@ html:not(.light-mode) .sidebar-panel [data-sidebar-header] {
     border-color: rgba(51, 65, 85, 0.5);
 }
 
+/* RTL: flip collapse/expand chevrons so they point inward */
+html[dir="rtl"] .sidebar-panel [data-sidebar-icon] > .fa-chevron-left,
+html[dir="rtl"] .sidebar-panel [data-sidebar-icon] > .fa-chevron-right {
+    transform: scaleX(-1);
+}
+
 /* Light-mode baseline — the sidebars use bg-white + slate borders in JSX
    so no overrides are required. The hook attributes are no-ops in light
    mode (the inline Tailwind classes already provide the correct colors). */
