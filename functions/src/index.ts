@@ -50,6 +50,8 @@ import {
 import { validateBatchVariance } from "./varianceValidator.js";
 import { getConceptDirectorKillSwitch, getConceptDirectorEnabled } from "./conceptDirectorConfig.js";
 import type { ConceptDirectorTraceEntry } from "./types.js";
+// Phase 14 — RAG + Meta Reporting Feedback Loop (Layer 1 callables).
+export { saveFunnelSettings, getFunnelSettings, dismissAdvisory } from "./funnelSettings.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
