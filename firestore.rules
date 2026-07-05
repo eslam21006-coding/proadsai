@@ -71,13 +71,17 @@ service cloud.firestore {
         match /adAccounts/{accountId} {
           allow read, write: if isWorkspaceMember(userId, workspaceId);
           // Sub-paths:
-          //   settings/current                    (Layer 1 — Funnel Settings, user-writable)
+          //   settings/current                    (Layer 1 — Funnel Settings, user-writable, single-doc contract)
           //   syncSnapshots/{snapshotId}          (Layer 2 — server-writable)
           //   adPerformance/{adId}                (Layer 2 — server-writable)
           //   baselines/{docId}                   (Layer 4 — server-writable)
           //   hookPerformance/{angleKey}          (Layer 4b — server-writable)
           //   visualPerformance/{patternKey}      (Layer 4b — server-writable)
-          match /settings/{settingsDocId} {
+          // The funnel-settings subtree is a single document at
+          // `settings/current` — the contract is fixed at that literal
+          // path. A wildcard here would let a user write any sibling doc
+          // (e.g. `settings/private_metadata`), bypassing the callable.
+          match /settings/current {
             allow read, write: if isWorkspaceMember(userId, workspaceId);
           }
           match /syncSnapshots/{snapshotId} {
