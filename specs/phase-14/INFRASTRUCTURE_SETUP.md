@@ -70,10 +70,14 @@ firebase functions:queues:create metaSyncQueue `
     --project=proadsai-saas
 
 # (Alternative via gcloud if `firebase functions:queues:create` is unavailable:)
-# gcloud tasks queues create metaSyncQueue `
-#     --location=europe-west1 `
-#     --max-concurrent-dispatches=5 `
-#     --project=proadsai-saas
+# NOTE: gcloud's --max-attempts requires the "app engine" component; if it
+# is unavailable on the operator's workstation, run the Firebase CLI command
+# above instead. The flags below mirror the firebase CLI command's behavior.
+gcloud tasks queues create metaSyncQueue `
+    --location=europe-west1 `
+    --max-concurrent-dispatches=5 `
+    --max-attempts=3 `
+    --project=proadsai-saas
 ```
 
 **Configuration notes**:

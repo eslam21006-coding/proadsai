@@ -100,6 +100,47 @@ function asFunnelType(v: unknown): FunnelInputs["funnelType"] {
     throw new Error(`saveFunnelSettings: funnelType must be one of paid_event|paid_product|free_webinar|lead_magnet_call; got ${v}`);
 }
 
+/**
+ * Required-field validator per funnel type (contract §funnelSettings.md —
+ * "missing/invalid numeric ⇒ invalid-argument"). Caller has already coerced
+ * `funnelType`; we check the per-type required inputs against the raw
+ * request payload (BEFORE coercion defaults them to 0). Number fields
+ * typed `number | null` are accepted when set; `undefined`, `null`, or
+ * missing-from-request all throw. We use this before coercion so the
+ * zero-default doesn't silently swallow a missing field.
+ */
+function assertRequiredFieldPresent(
+    funnelType: FunnelInputs["funnelType"],
+    fieldName: string,
+    value: unknown,
+): void {
+    const isMissing = (v: unknown) => v === undefined || v === null;
+    switch (funnelType) {
+        case "paid_event":
+        case "paid_product":
+            if (fieldName === "aov" || fieldName === "roasTarget") {
+                if (isMissing(value)) {
+                    throw new Error(`${fieldName} is required for ${funnelType}`);
+                }
+            }
+            return;
+        case "free_webinar":
+            if (fieldName === "offerPrice" || fieldName === "attendanceRate" || fieldName === "buyRateFromAttendees") {
+                if (isMissing(value)) {
+                    throw new Error(`${fieldName} is required for free_webinar`);
+                }
+            }
+            return;
+        case "lead_magnet_call":
+            if (fieldName === "offerPrice" || fieldName === "leadToCloseRate") {
+                if (isMissing(value)) {
+                    throw new Error(`${fieldName} is required for lead_magnet_call`);
+                }
+            }
+            return;
+    }
+}
+
 function buildFunnelInputsFromDoc(d: Record<string, unknown>): FunnelInputs {
     const funnelType = asFunnelType(d.funnelType);
     switch (funnelType) {
@@ -129,6 +170,45 @@ function buildFunnelInputsFromDoc(d: Record<string, unknown>): FunnelInputs {
                 offerPrice: asNumberOrNull(d.offerPrice) ?? 0,
                 leadToCloseRate: asNumberOrNull(d.leadToCloseRate) ?? 0,
             };
+    }
+}
+
+/**
+ * Build a typed `FunnelInputs` from the SAVE request payload (NOT from a
+ * stored doc — that's `buildFunnelInputsFromDoc`). Coerces / forces HTO=0
+ * when hasHto=false. Pre-condition: callers MUST have validated required
+ * inputs via `assertRequiredFieldPresent` BEFORE calling this — the
+ * coercion here defaults missing fields to 0 and would otherwise swallow
+ * the missing-field error.
+ */
+function buildFunnelInputs(req: SaveFunnelSettingsRequest): FunnelInputs {
+    const funnelType = asFunnelType(req.funnelType);
+    switch (funnelType) {
+        case "paid_event":
+        case "paid_product": {
+            const hasHto = req.hasHto === true;
+            return {
+                funnelType,
+                aov: asNumberOrNull(req.aov) ?? 0,
+                hasHto,
+                htoPrice: hasHto ? (asNumberOrNull(req.htoPrice) ?? 0) : 0,
+                htoConversionRate: hasHto ? (asNumberOrNull(req.htoConversionRate) ?? 0) : 0,
+                roasTarget: asRoas(req.roasTarget),
+            } satisfies PaidFunnelInputs;
+        }
+        case "free_webinar":
+            return {
+                funnelType,
+                offerPrice: asNumberOrNull(req.offerPrice) ?? 0,
+                attendanceRate: asNumberOrNull(req.attendanceRate) ?? 0,
+                buyRateFromAttendees: asNumberOrNull(req.buyRateFromAttendees) ?? 0,
+            } satisfies FreeWebinarInputs;
+        case "lead_magnet_call":
+            return {
+                funnelType,
+                offerPrice: asNumberOrNull(req.offerPrice) ?? 0,
+                leadToCloseRate: asNumberOrNull(req.leadToCloseRate) ?? 0,
+            } satisfies LeadMagnetCallInputs;
     }
 }
 
@@ -175,40 +255,27 @@ export const saveFunnelSettings = onCall(
             throw new HttpsError("permission-denied", "accountId does not match the workspace's connected Meta account.");
         }
 
-        // Build the typed FunnelInputs — coerces + forces HTO=0 when hasHto=false.
-        const inputs: FunnelInputs = (() => {
-            const funnelType = asFunnelType(req.funnelType);
-            switch (funnelType) {
-                case "paid_event":
-                case "paid_product": {
-                    const hasHto = req.hasHto === true;
-                    return {
-                        funnelType,
-                        aov: asNumberOrNull(req.aov) ?? 0,
-                        hasHto,
-                        htoPrice: hasHto ? (asNumberOrNull(req.htoPrice) ?? 0) : 0,
-                        htoConversionRate: hasHto ? (asNumberOrNull(req.htoConversionRate) ?? 0) : 0,
-                        roasTarget: asRoas(req.roasTarget),
-                    } satisfies PaidFunnelInputs;
-                }
-                case "free_webinar":
-                    return {
-                        funnelType,
-                        offerPrice: asNumberOrNull(req.offerPrice) ?? 0,
-                        attendanceRate: asNumberOrNull(req.attendanceRate) ?? 0,
-                        buyRateFromAttendees: asNumberOrNull(req.buyRateFromAttendees) ?? 0,
-                    } satisfies FreeWebinarInputs;
-                case "lead_magnet_call":
-                    return {
-                        funnelType,
-                        offerPrice: asNumberOrNull(req.offerPrice) ?? 0,
-                        leadToCloseRate: asNumberOrNull(req.leadToCloseRate) ?? 0,
-                    } satisfies LeadMagnetCallInputs;
-            }
-        })();
-
-        // Validate per-funnel-type required inputs (rethrows → invalid-argument).
+        // Build the typed FunnelInputs from the coerced request. Wrapped in a
+        // single try/catch so every failure surface as `invalid-argument`
+        // per the contract — required-input validation, type coercion, and
+        // derivation errors all share one error path.
+        // Required-field validation + derivation, all wrapped so every
+        // failure surfaces as `invalid-argument` per the contract.
+        let inputs: FunnelInputs;
         try {
+            // Required-input validation BEFORE coercion (coercion defaults to
+            // 0 and would silently swallow a missing field). Only funnel-
+            // type-relevant fields are required; irrelevant fields are
+            // ignored.
+            assertRequiredFieldPresent(req.funnelType, "aov", req.aov);
+            assertRequiredFieldPresent(req.funnelType, "offerPrice", req.offerPrice);
+            assertRequiredFieldPresent(req.funnelType, "attendanceRate", req.attendanceRate);
+            assertRequiredFieldPresent(req.funnelType, "buyRateFromAttendees", req.buyRateFromAttendees);
+            assertRequiredFieldPresent(req.funnelType, "leadToCloseRate", req.leadToCloseRate);
+            assertRequiredFieldPresent(req.funnelType, "roasTarget", req.roasTarget);
+
+            inputs = buildFunnelInputs(req);
+            // Sanity-check the coerced inputs against the derivation engine.
             deriveAll(inputs, req.clientNowMs);
             computeAdvisories(inputs);
         } catch (e: unknown) {
@@ -216,7 +283,7 @@ export const saveFunnelSettings = onCall(
             throw new HttpsError("invalid-argument", msg);
         }
 
-        // Recompute derived + advisories server-side.
+        // Recompute derived + advisories server-side (post-validation).
         const derived = deriveAll(inputs, req.clientNowMs);
         const advisories = computeAdvisories(inputs);
 

@@ -263,7 +263,7 @@ interface MetaConnection {
 | `adPerformance` (collection) | `evaluatedAt DESC` | recent-verdicts feed (dashboard §F) + winners recency order |
 | `adPerformance` (collection) | `campaignObjective ASC`, `verdict ASC`, `evaluatedAt DESC` | S1 winners scoped to conversion objective (`pastWinningAds`) |
 | `adPerformance` (collection) | `matchType ASC` (null) | unmatched-ads list (dashboard §E) |
-| `settings`/`adAccounts` (collection group) | `reviewDueAt ASC` | monthly-review sweep (FR-006) |
+| `settings` (collection group) | `reviewDueAt ASC` | monthly-review sweep (FR-006) |
 | `metaConnection` (collection group) | `metaConnected ASC` | dispatcher enumerates connected accounts at 3am |
 | `imageFingerprints` (collection) | doc-id read by `hash` | match lookup (no composite needed) |
 

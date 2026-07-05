@@ -62,10 +62,14 @@ test("classifyGeoTierFromList — first matched tier wins, falls through on no-m
     assert.equal(classifyGeoTierFromList(null), "tier3_egypt_na");
 });
 
-test("extractCountryFromTargeting — reads code, then name, then region name", () => {
+test("extractCountryFromTargeting — reads code, then name, then region name, then cities[].name/country", () => {
     assert.equal(extractCountryFromTargeting({ geo_locations: { countries: [{ code: "AE" }] } }), "AE");
     assert.equal(extractCountryFromTargeting({ geo_locations: { countries: [{ name: "Saudi Arabia" }] } }), "Saudi Arabia");
     assert.equal(extractCountryFromTargeting({ geo_locations: { regions: [{ name: "California" }] } }), "California");
+    // cities[].name fallback (the docstring branch CodeRabbit flagged was missing).
+    assert.equal(extractCountryFromTargeting({ geo_locations: { cities: [{ name: "Riyadh", country: "SA" }] } }), "Riyadh");
+    // cities[].country fallback when no .name.
+    assert.equal(extractCountryFromTargeting({ geo_locations: { cities: [{ country: "AE" }] } }), "AE");
     assert.equal(extractCountryFromTargeting({ geo_locations: { countries: [] } }), null);
     assert.equal(extractCountryFromTargeting({}), null);
     assert.equal(extractCountryFromTargeting(null), null);

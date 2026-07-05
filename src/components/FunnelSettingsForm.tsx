@@ -17,17 +17,19 @@
 //   - "احجز مكالمة" CTA opens https://eslamsalah.com/team-discovery-call in
 //     a new tab.
 //
-// ARABIC COPY: all user-visible strings are English/Fusha, no forbidden
-// terms (SC-11 lint passes via scripts/sc11Guard.mjs).
+// ARABIC COPY: all user-visible strings route through the i18n layer via
+// `useT()` (per the coding guidelines — never hardcode UI text). The
+// SC-11 lint guard scans string literals + JSX text for forbidden terms.
 //
 // DATA: `useFunnelSettings(workspaceId, accountId)` hook loads + saves.
 // The hook reads from + writes to `saveFunnelSettings` / `getFunnelSettings`
 // / `dismissAdvisory` callables (Phase 14 backend).
 // ═══════════════════════════════════════════════════════════
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { functions } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
+import { useT } from '../i18n';
 
 // ─── Types (mirror functions/src/funnelSettings.ts contract) ─
 
@@ -85,6 +87,19 @@ export interface FunnelSettingsFormProps {
 
 const TEAM_DISCOVERY_URL = 'https://eslamsalah.com/team-discovery-call';
 
+// ─── numOrNull helper ─────────────────────────────────────────
+//
+// `Number(x) || null` is wrong because `0` is falsy and would be coerced
+// to `null`. The backend's `asNumberOrNull` (functions/src/funnelSettings.ts)
+// uses `Number.isFinite(n)` to preserve a real `0`. This frontend helper
+// mirrors that — preserves a 0 input as the number 0, returns null for
+// empty/missing/NaN.
+function numOrNull(v: string): number | null {
+    if (v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+}
+
 // ─── Hook: load + save + dismiss ─────────────────────────────
 
 interface UseFunnelSettingsReturn {
@@ -92,7 +107,7 @@ interface UseFunnelSettingsReturn {
     error: string | null;
     settings: FunnelSettingsDoc | null;
     reviewDue: boolean;
-    save: (req: Omit<SaveFunnelSettingsRequest, 'clientNowMs'> & { clientNowMs?: number }) => Promise<void>;
+    save: (req: Omit<SaveFunnelSettingsRequest, 'clientNowMs'> & { clientNowMs?: number }) => Promise<FunnelSettingsDoc>;
     dismiss: (key: 'noHto' | 'lowValue', dismissed: boolean) => Promise<void>;
 }
 
@@ -151,12 +166,13 @@ function useFunnelSettings(workspaceId: string | null, accountId: string | null)
         return () => { cancelled = true; };
     }, [workspaceId, accountId]);
 
-    const save = async (req: Omit<SaveFunnelSettingsRequest, 'clientNowMs'> & { clientNowMs?: number }): Promise<void> => {
+    const save = async (req: Omit<SaveFunnelSettingsRequest, 'clientNowMs'> & { clientNowMs?: number }): Promise<FunnelSettingsDoc> => {
         setLoading(true);
         setError(null);
+        const clientNowMs = req.clientNowMs ?? Date.now();
         try {
             const fn = httpsCallable(functions, 'saveFunnelSettings');
-            const res = await fn({ ...req, clientNowMs: req.clientNowMs ?? Date.now() });
+            const res = await fn({ ...req, clientNowMs });
             const data = res.data as SaveFunnelSettingsResponse;
             // Optimistic merge — server is authoritative but we don't get the
             // full doc back. Construct a minimal doc so the form can re-render.
@@ -175,11 +191,12 @@ function useFunnelSettings(workspaceId: string | null, accountId: string | null)
                 derived: data.derived,
                 advisories: data.advisories,
                 advisoriesDismissed: settings?.advisoriesDismissed ?? { noHto: false, lowValue: false },
-                lastReviewedAt: req.clientNowMs ?? Date.now(),
+                lastReviewedAt: clientNowMs,
                 reviewDueAt: data.reviewDueAt,
             };
             setSettings(next);
             setReviewDue(false); // a fresh review just happened
+            return next;  // CodeRabbit audit: callers (onSaved) need the persisted doc, not a stale closure.
         } catch (e: unknown) {
             const msg = (e as { message?: string })?.message ?? 'Failed to save funnel settings.';
             setError(msg);
@@ -235,6 +252,13 @@ export default function FunnelSettingsForm({
     const txMuted = dk ? 'text-slate-400' : 'text-slate-500';
     const cardBg = dk ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200';
 
+    const { lang } = useT();
+    // Local bilingual helper mirroring PerformanceDashboard.tsx — runs
+    // through `lang` from the i18n provider so this component participates
+    // in the same RTL/Fusha policy as the rest of the UI. Avoids inflating
+    // the 1665-line central dictionary for a single component.
+    const L = (en: string, ar: string) => lang === 'ar' ? ar : en;
+
     const { loading, error, settings, reviewDue, save, dismiss } = useFunnelSettings(workspaceId, accountId);
 
     // Form state
@@ -249,9 +273,14 @@ export default function FunnelSettingsForm({
     const [buyRateFromAttendees, setBuyRateFromAttendees] = useState<string>('');
     const [leadToCloseRate, setLeadToCloseRate] = useState<string>('');
 
-    // Hydrate form from loaded settings
+    // Track the last-hydrated accountId so the hydration effect only runs
+    // once per account (avoids the setState-in-effect cascading-render issue
+    // when `settings` is re-fetched after a save — CodeRabbit audit).
+    const hydratedForRef = useRef<string | null>(null);
     useEffect(() => {
         if (!settings) return;
+        if (hydratedForRef.current === settings.accountId) return;
+        hydratedForRef.current = settings.accountId;
         setFunnelType(settings.funnelType);
         setAov(settings.aov != null ? String(settings.aov) : '');
         setHasHto(!!settings.hasHto);
@@ -285,29 +314,37 @@ export default function FunnelSettingsForm({
     if (loading && !settings) {
         return (
             <div className={`p-6 rounded-lg border ${cardBg}`}>
-                <p className={txMuted}>جاري التحميل…</p>
+                <p className={txMuted}>{L('Loading…', 'جاري التحميل…')}</p>
             </div>
         );
     }
 
     async function handleSave() {
         if (!workspaceId || !accountId) return;
+        const aovN = funnelType === 'paid_event' || funnelType === 'paid_product' ? numOrNull(aov) : null;
+        const offerN = funnelType === 'free_webinar' || funnelType === 'lead_magnet_call' ? numOrNull(offerPrice) : null;
+        const attendanceN = funnelType === 'free_webinar' ? numOrNull(attendanceRate) : null;
+        const buyN = funnelType === 'free_webinar' ? numOrNull(buyRateFromAttendees) : null;
+        const leadN = funnelType === 'lead_magnet_call' ? numOrNull(leadToCloseRate) : null;
         const req = {
             workspaceId,
             accountId,
             funnelType,
-            aov: funnelType === 'paid_event' || funnelType === 'paid_product' ? Number(aov) || null : null,
+            aov: aovN,
             hasHto,
-            htoPrice: Number(htoPrice) || 0,
-            htoConversionRate: Number(htoConversionRate) || 0,
+            htoPrice: numOrNull(htoPrice) ?? 0,
+            htoConversionRate: numOrNull(htoConversionRate) ?? 0,
             roasTarget,
-            offerPrice: funnelType === 'free_webinar' || funnelType === 'lead_magnet_call' ? Number(offerPrice) || null : null,
-            attendanceRate: funnelType === 'free_webinar' ? Number(attendanceRate) || null : null,
-            buyRateFromAttendees: funnelType === 'free_webinar' ? Number(buyRateFromAttendees) || null : null,
-            leadToCloseRate: funnelType === 'lead_magnet_call' ? Number(leadToCloseRate) || null : null,
+            offerPrice: offerN,
+            attendanceRate: attendanceN,
+            buyRateFromAttendees: buyN,
+            leadToCloseRate: leadN,
         };
-        await save(req);
-        if (settings && onSaved) onSaved(settings);
+        // Save returns the persisted doc (avoiding the stale-settings
+        // closure trap where `onSaved` would receive the pre-save snapshot,
+        // or be skipped entirely on the very first save — CodeRabbit audit).
+        const saved = await save(req);
+        if (saved) onSaved?.(saved);
     }
 
     const paidDerived = settings?.derived.paid;
@@ -318,10 +355,10 @@ export default function FunnelSettingsForm({
             {/* Header */}
             <div>
                 <h2 className={`text-xl font-semibold ${txPrimary}`}>
-                    إعدادات مسار المبيعات
+                    {L('Funnel Settings', 'إعدادات مسار المبيعات')}
                 </h2>
                 <p className={`text-sm ${txMuted}`}>
-                    مساحة العمل: {workspaceName ?? workspaceId}
+                    {L('Workspace:', 'مساحة العمل:')} {workspaceName ?? workspaceId}
                 </p>
             </div>
 
@@ -330,18 +367,18 @@ export default function FunnelSettingsForm({
                 <div className={`p-4 rounded-lg border-2 border-amber-500 ${dk ? 'bg-amber-950/40' : 'bg-amber-50'}`}>
                     <div className="flex items-start justify-between">
                         <div>
-                            <h3 className={`font-semibold ${txPrimary}`}>ملاحظة مهمة عن مسار المبيعات الخاص بك</h3>
+                            <h3 className={`font-semibold ${txPrimary}`}>{L('Important note about your funnel', 'ملاحظة مهمة عن مسار المبيعات الخاص بك')}</h3>
                             <p className={`mt-1 text-sm ${txSecondary}`}>
-                                لا يوجد لديك عرض ترويجي عالي القيمة (HTO) في إعداداتك. هذا يحد من قدرة المسار على استيعاب تكاليف الإعلانات الأعلى التي تحتاجها للوصول إلى عملاء يدفعون مبالغ كبيرة.
+                                {L('You don\u2019t have a high-ticket upsell configured. This limits the funnel\u2019s ability to absorb the higher ad spend needed to reach customers who pay large amounts.', 'لا يوجد لديك عرض ترويجي عالي القيمة (HTO) في إعداداتك. هذا يحد من قدرة المسار على استيعاب تكاليف الإعلانات الأعلى التي تحتاجها للوصول إلى عملاء يدفعون مبالغ كبيرة.')}
                             </p>
                         </div>
                         <button
                             type="button"
-                            aria-label="إخفاء التنبيه"
+                            aria-label={L('Hide notification', 'إخفاء التنبيه')}
                             className={`text-xs px-2 py-1 rounded ${txMuted} hover:opacity-100`}
                             onClick={() => dismiss('noHto', true)}
                         >
-                            إخفاء
+                            {L('Hide', 'إخفاء')}
                         </button>
                     </div>
                     <a
@@ -350,7 +387,7 @@ export default function FunnelSettingsForm({
                         rel="noopener noreferrer"
                         className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded bg-amber-600 text-white font-semibold hover:bg-amber-700"
                     >
-                        احجز مكالمة
+                        {L('Book a call', 'احجز مكالمة')}
                     </a>
                 </div>
             )}
@@ -358,18 +395,18 @@ export default function FunnelSettingsForm({
                 <div className={`p-4 rounded-lg border-2 border-amber-500 ${dk ? 'bg-amber-950/40' : 'bg-amber-50'}`}>
                     <div className="flex items-start justify-between">
                         <div>
-                            <h3 className={`font-semibold ${txPrimary}`}>ملاحظة مهمة عن مسار المبيعات الخاص بك</h3>
+                            <h3 className={`font-semibold ${txPrimary}`}>{L('Important note about your funnel', 'ملاحظة مهمة عن مسار المبيعات الخاص بك')}</h3>
                             <p className={`mt-1 text-sm ${txSecondary}`}>
-                                قيمة العرض منخفضة جداً (أقل من 9 دولار). هذا يجعل من الصعب جداً تشغيل إعلانات مدفوعة بشكل مربح — تكلفة الاكتساب ستكون قريبة جداً من قيمة البيع.
+                                {L('Your offer value is very low (under $9). This makes it very hard to run paid ads profitably — the acquisition cost will be very close to the sale value.', 'قيمة العرض منخفضة جداً (أقل من 9 دولار). هذا يجعل من الصعب جداً تشغيل إعلانات مدفوعة بشكل مربح — تكلفة الاكتساب ستكون قريبة جداً من قيمة البيع.')}
                             </p>
                         </div>
                         <button
                             type="button"
-                            aria-label="إخفاء التنبيه"
+                            aria-label={L('Hide notification', 'إخفاء التنبيه')}
                             className={`text-xs px-2 py-1 rounded ${txMuted} hover:opacity-100`}
                             onClick={() => dismiss('lowValue', true)}
                         >
-                            إخفاء
+                            {L('Hide', 'إخفاء')}
                         </button>
                     </div>
                     <a
@@ -378,21 +415,21 @@ export default function FunnelSettingsForm({
                         rel="noopener noreferrer"
                         className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded bg-amber-600 text-white font-semibold hover:bg-amber-700"
                     >
-                        احجز مكالمة
+                        {L('Book a call', 'احجز مكالمة')}
                     </a>
                 </div>
             )}
 
             {/* Funnel-type dropdown */}
             <div>
-                <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>نوع المسار</label>
+                <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>{L('Funnel type', 'نوع المسار')}</label>
                 <select
                     className={`w-full p-2 rounded border ${dk ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
                     value={funnelType}
                     onChange={(e) => setFunnelType(e.target.value as FunnelType)}
                 >
                     {(Object.keys(FUNNEL_LABELS) as FunnelType[]).map((ft) => (
-                        <option key={ft} value={ft}>{FUNNEL_LABELS[ft].ar}</option>
+                        <option key={ft} value={ft}>{lang === 'ar' ? FUNNEL_LABELS[ft].ar : FUNNEL_LABELS[ft].en}</option>
                     ))}
                 </select>
             </div>
@@ -400,22 +437,22 @@ export default function FunnelSettingsForm({
             {/* Conditional fields per funnel-type */}
             {(funnelType === 'paid_event' || funnelType === 'paid_product') && (
                 <div className="space-y-3">
-                    <NumberField label="قيمة الطلب (دولار)" value={aov} onChange={setAov} isDarkMode={dk} />
+                    <NumberField label={L('Average order value ($)', 'قيمة الطلب (دولار)')} value={aov} onChange={setAov} isDarkMode={dk} />
                     <div>
-                        <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>هل لديك عرض ترويجي عالي القيمة؟</label>
+                        <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>{L('Do you have a high-ticket upsell?', 'هل لديك عرض ترويجي عالي القيمة؟')}</label>
                         <div className="flex gap-2">
-                            <button type="button" onClick={() => setHasHto(true)} className={`px-3 py-2 rounded ${hasHto ? 'bg-indigo-600 text-white' : dk ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700'}`}>نعم</button>
-                            <button type="button" onClick={() => setHasHto(false)} className={`px-3 py-2 rounded ${!hasHto ? 'bg-indigo-600 text-white' : dk ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700'}`}>لا</button>
+                            <button type="button" onClick={() => setHasHto(true)} className={`px-3 py-2 rounded ${hasHto ? 'bg-indigo-600 text-white' : dk ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700'}`}>{L('Yes', 'نعم')}</button>
+                            <button type="button" onClick={() => setHasHto(false)} className={`px-3 py-2 rounded ${!hasHto ? 'bg-indigo-600 text-white' : dk ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700'}`}>{L('No', 'لا')}</button>
                         </div>
                     </div>
                     {hasHto && (
                         <>
-                            <NumberField label="سعر العرض الترويجي (دولار)" value={htoPrice} onChange={setHtoPrice} isDarkMode={dk} />
-                            <NumberField label="نسبة تحويل العرض الترويجي (%)" value={htoConversionRate} onChange={setHtoConversionRate} isDarkMode={dk} />
+                            <NumberField label={L('Upsell price ($)', 'سعر العرض الترويجي (دولار)')} value={htoPrice} onChange={setHtoPrice} isDarkMode={dk} />
+                            <NumberField label={L('Upsell conversion rate (%)', 'نسبة تحويل العرض الترويجي (%)')} value={htoConversionRate} onChange={setHtoConversionRate} isDarkMode={dk} />
                         </>
                     )}
                     <div>
-                        <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>هدف العائد على الإنفاق الإعلاني</label>
+                        <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>{L('Target ROAS', 'هدف العائد على الإنفاق الإعلاني')}</label>
                         <div className="space-y-2">
                             {ROAS_OPTIONS.map((opt) => (
                                 <button
@@ -424,7 +461,9 @@ export default function FunnelSettingsForm({
                                     onClick={() => setRoasTarget(opt.value)}
                                     className={`block w-full text-right p-3 rounded border ${roasTarget === opt.value ? 'border-indigo-500 bg-indigo-900/40' : dk ? 'border-slate-700 bg-slate-800' : 'border-slate-300 bg-slate-50'}`}
                                 >
-                                    <div className={`font-semibold ${txPrimary}`}>{opt.label}</div>
+                                    <div className={`font-semibold ${txPrimary}`}>{lang === 'ar' ? opt.label : opt.value + ' — ' + (
+                                        opt.value === 1.0 ? 'Break-even' : opt.value === 0.65 ? 'Invest a bit' : 'Invest more'
+                                    )}</div>
                                     <div className={`text-sm ${txMuted}`}>{opt.sub}</div>
                                 </button>
                             ))}
@@ -435,16 +474,16 @@ export default function FunnelSettingsForm({
 
             {funnelType === 'free_webinar' && (
                 <div className="space-y-3">
-                    <NumberField label="سعر العرض النهائي (دولار)" value={offerPrice} onChange={setOfferPrice} isDarkMode={dk} />
-                    <NumberField label="نسبة الحضور من المسجلين (%)" value={attendanceRate} onChange={setAttendanceRate} isDarkMode={dk} />
-                    <NumberField label="نسبة الشراء من الحضور (%)" value={buyRateFromAttendees} onChange={setBuyRateFromAttendees} isDarkMode={dk} />
+                    <NumberField label={L('Final offer price ($)', 'سعر العرض النهائي (دولار)')} value={offerPrice} onChange={setOfferPrice} isDarkMode={dk} />
+                    <NumberField label={L('Attendance rate (%)', 'نسبة الحضور من المسجلين (%)')} value={attendanceRate} onChange={setAttendanceRate} isDarkMode={dk} />
+                    <NumberField label={L('Purchase rate from attendees (%)', 'نسبة الشراء من الحضور (%)')} value={buyRateFromAttendees} onChange={setBuyRateFromAttendees} isDarkMode={dk} />
                 </div>
             )}
 
             {funnelType === 'lead_magnet_call' && (
                 <div className="space-y-3">
-                    <NumberField label="سعر العرض النهائي (دولار)" value={offerPrice} onChange={setOfferPrice} isDarkMode={dk} />
-                    <NumberField label="نسبة الإغلاق على المكالمة (%)" value={leadToCloseRate} onChange={setLeadToCloseRate} isDarkMode={dk} />
+                    <NumberField label={L('Final offer price ($)', 'سعر العرض النهائي (دولار)')} value={offerPrice} onChange={setOfferPrice} isDarkMode={dk} />
+                    <NumberField label={L('Close rate on call (%)', 'نسبة الإغلاق على المكالمة (%)')} value={leadToCloseRate} onChange={setLeadToCloseRate} isDarkMode={dk} />
                 </div>
             )}
 
@@ -456,23 +495,23 @@ export default function FunnelSettingsForm({
                 disabled={loading}
                 className="w-full px-4 py-3 rounded bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50"
             >
-                {loading ? 'جاري الحفظ…' : 'حفظ الإعدادات'}
+                {loading ? L('Saving…', 'جاري الحفظ…') : L('Save settings', 'حفظ الإعدادات')}
             </button>
 
             {/* Results card */}
             {paidDerived && (
                 <div className={`p-4 rounded-lg border ${cardBg}`}>
-                    <h3 className={`font-semibold mb-2 ${txPrimary}`}>النتائج</h3>
+                    <h3 className={`font-semibold mb-2 ${txPrimary}`}>{L('Results', 'النتائج')}</h3>
                     <div className="grid grid-cols-2 gap-2 text-sm">
-                        <div><span className={txMuted}>التكلفة المستهدفة الأولية:</span> <span className={txPrimary}>${paidDerived.rawTargetCpa.toFixed(2)}</span></div>
-                        <div><span className={txMuted}>قيمة المشتري الكاملة:</span> <span className={txPrimary}>${paidDerived.fullBuyerValue.toFixed(2)}</span></div>
-                        <div><span className={txMuted}>السقف الأقصى:</span> <span className={txPrimary}>${paidDerived.maxCpa.toFixed(2)}</span></div>
-                        <div><span className={txMuted}>التكلفة المستهدفة النهائية:</span> <span className={txPrimary}>${paidDerived.effectiveTargetCpa.toFixed(2)}</span></div>
+                        <div><span className={txMuted}>{L('Raw target cost:', 'التكلفة المستهدفة الأولية:')}</span> <span className={txPrimary}>${paidDerived.rawTargetCpa.toFixed(2)}</span></div>
+                        <div><span className={txMuted}>{L('Full buyer value:', 'قيمة المشتري الكاملة:')}</span> <span className={txPrimary}>${paidDerived.fullBuyerValue.toFixed(2)}</span></div>
+                        <div><span className={txMuted}>{L('Cost ceiling:', 'السقف الأقصى:')}</span> <span className={txPrimary}>${paidDerived.maxCpa.toFixed(2)}</span></div>
+                        <div><span className={txMuted}>{L('Effective target cost:', 'التكلفة المستهدفة النهائية:')}</span> <span className={txPrimary}>${paidDerived.effectiveTargetCpa.toFixed(2)}</span></div>
                     </div>
                     {paidDerived.capApplied && (
                         <div className={`mt-3 p-3 rounded border-2 border-yellow-500 ${dk ? 'bg-yellow-950/40' : 'bg-yellow-50'}`}>
                             <p className={`text-sm ${txPrimary}`}>
-                                تم تطبيق السقف: التكلفة المستهدفة الأولية ${paidDerived.rawTargetCpa.toFixed(2)} تم تخفيضها إلى ${paidDerived.maxCpa.toFixed(2)}.
+                                {L('Cap applied: raw target was', 'تم تطبيق السقف: التكلفة المستهدفة الأولية')} ${paidDerived.rawTargetCpa.toFixed(2)} {L('capped to', 'تم تخفيضها إلى')} ${paidDerived.maxCpa.toFixed(2)}.
                             </p>
                         </div>
                     )}
@@ -481,11 +520,11 @@ export default function FunnelSettingsForm({
 
             {freeDerived && (
                 <div className={`p-4 rounded-lg border ${cardBg}`}>
-                    <h3 className={`font-semibold mb-2 ${txPrimary}`}>النتائج</h3>
+                    <h3 className={`font-semibold mb-2 ${txPrimary}`}>{L('Results', 'النتائج')}</h3>
                     <div className="grid grid-cols-2 gap-2 text-sm">
-                        <div><span className={txMuted}>قيمة العميل المحتمل:</span> <span className={txPrimary}>${freeDerived.leadValue.toFixed(2)}</span></div>
-                        <div><span className={txMuted}>سقف التكلفة للعميل المحتمل:</span> <span className={txPrimary}>${freeDerived.economicCeilingCpl.toFixed(2)}</span></div>
-                        <div><span className={txMuted}>التكلفة المستهدفة للعميل المحتمل:</span> <span className={txPrimary}>${freeDerived.effectiveTargetCpl.toFixed(2)}</span></div>
+                        <div><span className={txMuted}>{L('Lead value:', 'قيمة العميل المحتمل:')}</span> <span className={txPrimary}>${freeDerived.leadValue.toFixed(2)}</span></div>
+                        <div><span className={txMuted}>{L('CPL ceiling:', 'سقف التكلفة للعميل المحتمل:')}</span> <span className={txPrimary}>${freeDerived.economicCeilingCpl.toFixed(2)}</span></div>
+                        <div><span className={txMuted}>{L('Effective target CPL:', 'التكلفة المستهدفة للعميل المحتمل:')}</span> <span className={txPrimary}>${freeDerived.effectiveTargetCpl.toFixed(2)}</span></div>
                     </div>
                 </div>
             )}
@@ -493,7 +532,7 @@ export default function FunnelSettingsForm({
             {/* Monthly-review prompt (dismissible, non-blocking) */}
             {reviewDue && (
                 <div className={`p-3 rounded border ${cardBg} flex items-center justify-between`}>
-                    <p className={`text-sm ${txSecondary}`}>مراجعة شهرية مستحقة — تأكد من تحديث القيم إذا تغيرت أسعار العرض.</p>
+                    <p className={`text-sm ${txSecondary}`}>{L('Monthly review due — confirm your values are still accurate.', 'مراجعة شهرية مستحقة — تأكد من تحديث القيم إذا تغيرت أسعار العرض.')}</p>
                 </div>
             )}
         </div>

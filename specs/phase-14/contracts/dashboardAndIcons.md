@@ -27,7 +27,7 @@
 ### Server rules
 - Ranked sections (`strongestAngles`/`strongestVisuals`) use **conversion** data only; `other`-objective ads appear only in `otherObjectiveAds` + `recentVerdicts` (§5.6.4). If the account runs only conversion campaigns, `otherObjectiveAds` is omitted.
 - Sorted by win count descending. Empty/limited-data states return "no data yet"-style plain Arabic (Edge Cases 1–3).
-- `canSyncNow=false` within 1h of last sync (cooldown). `needs_reauth` surfaces `اتصالك بميتا انتهى — وصّل تاني`.
+- `canSyncNow=false` within 1h of last sync (cooldown). `needs_reauth` surfaces the Fusha message `انتهت صلاحية الاتصال بميتا — يرجى إعادة الربط` (Professional Fusha — not colloquial).
 
 ---
 

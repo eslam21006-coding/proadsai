@@ -303,11 +303,13 @@ dashboard, hook-angle icons, and RAG injection. They are not in this batch.
 - **`canonicalAngle.ts` invariant check at module load** — throws on
   drift between `gazeMap.ts` and `expressionMap.ts` alias maps. Cheap
   cost (3-iteration Set compare) catches silent desyncs at startup.
-- **Missing-field defaulting to 0 in funnel coercion** (rather than
-  throwing `invalid-argument`) — the contract test was rewritten to
-  assert the actual server behavior. Negative inputs still throw
-  (always-an-error), but missing fields silently default so the user
-  can complete the form without errors they don't understand.
+- **Required-field validation BEFORE coercion** — the original
+  implementation coerced missing funnel fields to 0 silently. After the
+  CodeRabbit review, the callable now validates required fields per
+  funnel-type up-front (`assertRequiredFieldPresent`) and rejects
+  `null`/`undefined` with `invalid-argument` — matching the contract's
+  "missing/invalid numeric ⇒ invalid-argument" clause. Numeric 0 is
+  still a valid value (not rejected); only missing is.
 - **`cpaEconomics` round2 helper** — every `*Cpa` / `*Cpl` /
   `fullBuyerValue` value is rounded to 2 decimal places (USD cents)
   inside the derivation. This avoids downstream float-equality issues

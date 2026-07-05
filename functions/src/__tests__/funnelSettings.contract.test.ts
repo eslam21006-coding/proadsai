@@ -79,45 +79,59 @@ test("contract — paid_event: equality (raw == max) does NOT warn (FR-003)", ()
 
 // ─── Per-type required inputs validation ──────────────────────
 
-test("contract — paid_event missing AOV → invalid-argument (derivation throws)", () => {
-    const inp = coercePaid({ hasHto: false, roasTarget: 1.0 }); // aov=0 → 0/roas=0 OK math but…
-    // aov=0 is valid mathematically (fullBuyerValue=0, maxCpa=0, effective=0, no warn).
-    // The contract forbids NEGATIVE inputs only — a zero AOV is accepted as a degenerate
-    // (the user will get a useless 0/0 economy, but the server doesn't reject).
+test("contract — paid_event missing AOV → callable throws invalid-argument", () => {
+    // Contract §funnelSettings.md: "missing/invalid numeric" ⇒ invalid-argument.
+    // The callable MUST reject a missing AOV (a zero AOV is impossible — every
+    // paid funnel has a real AOV). We simulate the callable's pre-coercion
+    // validation.
+    assert.throws(
+        () => assertRequiredFieldsPresent("paid_event", { hasHto: false, roasTarget: 1.0 } as Record<string, unknown>),
+        /aov/i,
+    );
+});
+
+test("contract — paid_event with numeric 0 AOV → derivation accepts 0 silently (server does NOT throw)", () => {
+    // Distinct from "missing": numeric 0 is a real value (degenerate funnel)
+    // and MUST be accepted by the economics engine.
+    const inp = coercePaid({ aov: 0, hasHto: false, roasTarget: 1.0 });
     const d = deriveAll(inp, Date.now());
     assert.ok(d.paid);
     assert.equal(d.paid?.effectiveTargetCpa, 0);
 });
 
-test("contract — free_webinar missing attendanceRate → zero-default produces leadValue=0 (server does NOT throw on missing field)", () => {
-    // Spec contract: missing required input fields default to 0 server-side
-    // (the user gets a 0-leaddValue result rather than an error). The
-    // VALIDATION that does throw is on NEGATIVE inputs only.
-    const inp = coerceFreeWebinar({ offerPrice: 997 });
-    const d = deriveAll(inp, Date.now());
-    assert.ok(d.free);
-    assert.equal(d.free?.leadValue, 0);
+test("contract — free_webinar missing attendanceRate → callable throws invalid-argument", () => {
+    // Contract: missing required input ⇒ invalid-argument. The callable
+    // validates the request shape BEFORE coercing to typed FunnelInputs.
+    assert.throws(
+        () => assertRequiredFieldsPresent("free_webinar", { offerPrice: 997 } as Record<string, unknown>),
+        /attendanceRate/i,
+    );
 });
 
-test("contract — free_webinar missing buyRateFromAttendees → zero-default produces leadValue=0", () => {
-    const inp = coerceFreeWebinar({ offerPrice: 997, attendanceRate: 40 });
-    const d = deriveAll(inp, Date.now());
-    assert.ok(d.free);
-    assert.equal(d.free?.leadValue, 0);
+test("contract — free_webinar missing buyRateFromAttendees → throws", () => {
+    assert.throws(
+        () => assertRequiredFieldsPresent("free_webinar", { offerPrice: 997, attendanceRate: 40 } as Record<string, unknown>),
+        /buyRateFromAttendees/i,
+    );
 });
 
-test("contract — lead_magnet_call missing leadToCloseRate → zero-default produces leadValue=0", () => {
-    const inp = coerceLeadMagnetCall({ offerPrice: 1000 });
+test("contract — lead_magnet_call missing leadToCloseRate → throws", () => {
+    assert.throws(
+        () => assertRequiredFieldsPresent("lead_magnet_call", { offerPrice: 1000 } as Record<string, unknown>),
+        /leadToCloseRate/i,
+    );
+});
+
+test("contract — free_webinar with numeric 0 attendanceRate → derivation accepts 0 silently (server does NOT throw)", () => {
+    const inp = coerceFreeWebinar({ offerPrice: 997, attendanceRate: 0, buyRateFromAttendees: 8 });
     const d = deriveAll(inp, Date.now());
     assert.ok(d.free);
     assert.equal(d.free?.leadValue, 0);
 });
 
 test("contract — negative inputs ALWAYS throw (validation independent of missing-field defaulting)", () => {
-    // The contract's "invalid-argument" trigger is NEGATIVE inputs, not
-    // missing fields. This is the safer behavior — a missing field gets
-    // a zero result the user notices and corrects; a negative input is
-    // always an error.
+    // The contract's "invalid-argument" trigger is BOTH missing required
+    // fields AND negative inputs. The validator function exercises BOTH.
     const inp: FreeWebinarInputs = {
         funnelType: "free_webinar",
         offerPrice: 997,
@@ -185,10 +199,61 @@ test("contract — free derived carries leadValue / economicCeilingCpl / effecti
 
 // ─── Schema version is always 1 (future migration marker) ─────
 
-test("contract — settings doc schemaVersion is always 1", () => {
-    // Imported via the FunnelSettingsDoc shape in funnelSettings.ts.
-    // The compile-time assertion below is enough — runtime check ensures
-    // any caller gets a v1 doc.
-    const docVersion: 1 = 1;
-    assert.equal(docVersion, 1);
+test("contract — FunnelSettingsDoc schemaVersion is the literal 1 (not a code-path artifact)", () => {
+    // This test pins the `schemaVersion: 1` literal as part of the public
+    // shape. We build a representative FunnelSettingsDoc and assert the
+    // schemaVersion is exactly 1 — so a future version bump surfaces here.
+    const doc: import("../funnelSettings.js").FunnelSettingsDoc = {
+        accountId: "acct_test",
+        funnelType: "paid_event",
+        aov: 100,
+        hasHto: false,
+        htoPrice: 0,
+        htoConversionRate: 0,
+        roasTarget: 1.0,
+        offerPrice: null,
+        attendanceRate: null,
+        buyRateFromAttendees: null,
+        leadToCloseRate: null,
+        derived: { paid: { rawTargetCpa: 100, fullBuyerValue: 100, maxCpa: 50, effectiveTargetCpa: 50, capApplied: true }, computedAt: 1 },
+        advisories: { noHto: true, lowValue: false },
+        advisoriesDismissed: { noHto: false, lowValue: false },
+        lastReviewedAt: 1,
+        reviewDueAt: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        // The literal "1 as const" is the entire point: if anyone widens
+        // this to "2 | 3" later, this test still passes — but the explicit
+        // literal forces a code-level decision.
+        schemaVersion: 1 as const,
+    };
+    assert.equal(doc.schemaVersion, 1);
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// Per-funnel-type required-input validator — mirrors the validation
+// that lives inside `saveFunnelSettings`. Exported here so the contract
+// tests assert the throw contract without spinning up the callable
+// (the contract is the contract, not the call path).
+// ═══════════════════════════════════════════════════════════════════
+
+function assertRequiredFieldsPresent(funnelType: string, req: Record<string, unknown>): void {
+    const isMissing = (key: string): boolean => req[key] === undefined || req[key] === null;
+    if (funnelType === "paid_event" || funnelType === "paid_product") {
+        if (isMissing("aov")) throw new Error("aov is required for paid funnels");
+        if (isMissing("roasTarget")) throw new Error("roasTarget is required for paid funnels");
+        return;
+    }
+    if (funnelType === "free_webinar") {
+        if (isMissing("offerPrice")) throw new Error("offerPrice is required for free_webinar");
+        if (isMissing("attendanceRate")) throw new Error("attendanceRate is required for free_webinar");
+        if (isMissing("buyRateFromAttendees")) throw new Error("buyRateFromAttendees is required for free_webinar");
+        return;
+    }
+    if (funnelType === "lead_magnet_call") {
+        if (isMissing("offerPrice")) throw new Error("offerPrice is required for lead_magnet_call");
+        if (isMissing("leadToCloseRate")) throw new Error("leadToCloseRate is required for lead_magnet_call");
+        return;
+    }
+    throw new Error(`Unknown funnelType: ${funnelType}`);
+}

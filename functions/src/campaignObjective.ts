@@ -66,7 +66,7 @@ export const CONVERSION_OBJECTIVES: ReadonlySet<string> = new Set<string>([
  */
 export function classifyCampaignObjective(objective: unknown): CampaignObjectiveResult {
     if (typeof objective !== "string") {
-        return { bucket: "other", raw: typeof objective === "string" ? objective : "" };
+        return { bucket: "other", raw: "" };
     }
     const norm = objective.toLowerCase().trim();
     if (norm === "") return { bucket: "other", raw: objective };

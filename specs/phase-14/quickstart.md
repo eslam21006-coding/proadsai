@@ -29,7 +29,13 @@ npm install ; cd functions ; npm install ; cd ..
 5. Reload → all values + derived targets persist (per workspace-account). After 30 days a dismissible Arabic review prompt appears.
 
 ```powershell
-cd functions ; npm test -- cpaEconomics ; cd ..
+# The functions/package.json `test` script runs the full suite; per-module
+# npm-targets (`npm test -- cpaEconomics`) are NOT supported because the
+# script chains `node file.js` calls rather than forwarding args. To run a
+# specific Phase-14 module, use the dedicated Phase-14 test scripts:
+cd functions ; npm run test:phase14:cpaEconomics ; cd ..
+# Or run the full Phase-14 suite (5 modules, 79 tests):
+cd functions ; npm run test:phase14 ; cd ..
 ```
 
 ## 2. Layer 2 — Daily sync (US2)
@@ -45,7 +51,7 @@ cd functions ; npm test -- cpaEconomics ; cd ..
 1. Generate an image → confirm `imageFingerprint` on the generation doc + an `imageFingerprints/{hash}` index entry (client-written after `addDoc`).
 2. Upload that image unedited to Meta → sync → **auto-match** (`auto_hash`); metadata (hook angle, visual pattern, layout, art direction, universe, modes) is exposed.
 3. Upload an unrelated image → appears **unmatched**; link it via the dashboard picker (same-workspace generations only); manual link persists and locks.
-4. Run `backfillImageFingerprints` → pre-Phase-14 generations gain fingerprints and auto-match; re-run → idempotent (skips fingerprinted).
+4. Run `backfillImageFingerprints` → pre-Phase-14 generations gain `imageFingerprint` + an `imageFingerprints/{hash}` index entry; re-run is idempotent (skips already-fingerprinted generations). The actual auto-match against Meta ads happens on the **next sync** (the backfill itself only seeds fingerprints, it does not run the matcher).
 5. Delete a matched generation → its ad reverts to unmatched for display; aggregates unchanged (Edge Case 16).
 
 ## 4. Layer 4 / 4b — Verdicts & learning (US4 / US5)

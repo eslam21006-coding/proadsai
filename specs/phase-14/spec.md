@@ -317,8 +317,8 @@ Both cards can appear simultaneously (AOV < $9 AND no HTO). The system still cal
 
 ### Layer 2 — Daily Sync from Meta (Section 3)
 
-**3.1 — Scheduled sync** runs daily at **3am UTC** (also on-demand via "Sync Now"). To stay within Cloud Function execution limits and scale with the user base, a lightweight **dispatcher** (`metaDailySync`) enqueues **one task per connected account** (`metaConnected: true`) onto a queue (Cloud Tasks / Pub/Sub); a **per-account worker** processes each account independently, with retries, a concurrency cap, and per-account failure isolation (one account's failure never blocks others). For each account the worker performs:
-1. **Token check** — read the account's **encrypted long-lived Meta user token** (captured during the OAuth flow and stored server-side, encrypted at rest — e.g. Secret Manager or an owner-restricted Firestore doc — since no user session is present at 3am); validate and refresh it before expiry (reusing/extending `metaService.ts` token logic). If refresh fails, mark the account for re-auth (FR-009).
+**3.1 — Scheduled sync** runs daily at **3am UTC** (also on-demand via "Sync Now"). To stay within Cloud Function execution limits and scale with the user base, a lightweight **dispatcher** (`metaDailySync`) enqueues **one Cloud Task per connected account** (`metaConnected: true`) onto the `metaSyncQueue` Cloud Tasks queue (chosen per Phase 14 research §B — Pub/Sub was considered and rejected: weaker per-message retry/concurrency ergonomics); a **per-account worker** (`metaSyncAccountWorker` `onTaskDispatched`) processes each account independently, with retries (`maxAttempts: 3`), a concurrency cap (`maxConcurrentDispatches: 5`), and per-account failure isolation (one account's failure never blocks others). For each account the worker performs:
+1. **Token check** — read the account's **encrypted long-lived Meta user token** stored server-side at `users/{uid}/workspaces/{wid}/private/metaConnection`, **KMS-envelope-encrypted** (chosen per Phase 14 research §C — Google Secret Manager was considered and rejected for per-workspace-account scaling reasons, and plaintext in Firestore is forbidden by security policy); decrypt server-side (no user session is present at 3am), validate, and refresh the long-lived token proactively before expiry (reusing/extending `metaService.ts` token logic). If refresh fails, mark the account for re-auth (`needsReauth: true`, FR-009) — **never** delete performance data.
 2. **Fetch hierarchy** — Campaigns `GET /act_{adAccountId}/campaigns?fields=id,name,status,daily_budget,lifetime_budget`; Ad sets `GET /{campaignId}/adsets?fields=id,name,status,daily_budget,targeting`; Ads `GET /{adSetId}/ads?fields=id,name,status,creative`.
 3. **Fetch performance** (Insights) across three windows (Qarar §A3.5): 3-day rolling `time_range={'since':'<today-2>','until':'<today>'}`; today only `date_preset=today`; last 7 days daily `date_preset=last_7d, time_increment=1`. Fields on every insights call: `impressions,reach,frequency,clicks,inline_link_clicks,ctr,inline_link_click_ctr,spend,cpm,cpc,actions,action_values,cost_per_action_type,date_start,date_stop`.
 4. **Account baselines** (once per sync): 90-day متوسط Link CTR (`level=ad&date_preset=last_90d`, averaged across ads); 14-day متوسط CPM (`date_preset=last_14d`); 30-day متوسط CPA/CPL (`date_preset=last_30d`).
@@ -577,7 +577,7 @@ users/{uid}/workspaces/{workspaceId}/adAccounts/{accountId}/visualPerformance/{p
 ### Functional Requirements — cross-cutting
 
 - **FR-023** All settings, performance records, aggregates, verdicts, fingerprints, and winners are scoped **per WORKSPACE and per ad account**. Data from one workspace is never mixed with data from another workspace, even when both belong to the same user.
-- **FR-024** All Arabic UI copy uses **"متوسط"**, never "ميديان".
+- **FR-024** All Arabic UI copy uses the Fusha term **"المعدل"** (or appropriate Fusha phrasing) when an "average" concept must be displayed — NEVER "متوسط" (which is the internal-only technical term per SC-11) and NEVER "ميديان" (which is the forbidden English transliteration). This aligns FR-024 with SC-11 + FR-019 + §7.3 + §8.6 and removes the prior wording conflict.
 - **FR-025** No regression: users without a Meta connection or below data thresholds see exactly the same generation behavior as before Phase 14.
 - **FR-026** The 1:1 workspace↔ad-account mapping MUST be enforced at connect time by **blocking both conflict directions**: (a) if the workspace already has a connected ad account, the connect action is blocked until the user disconnects the existing one (disconnect follows Edge Case 15 — token deleted, synced data retained); (b) if the chosen ad account is already connected to any other workspace (same user), the connect action is blocked. Each blocked attempt surfaces a plain-Arabic error naming the specific conflict; no silent replacement and no override path exists.
 
@@ -593,7 +593,7 @@ users/{uid}/workspaces/{workspaceId}/adAccounts/{accountId}/visualPerformance/{p
     hasHto: boolean,
     htoPrice: number,            // 0 if hasHto=false
     htoConversionRate: number,   // 0 if hasHto=false (stored as percentage, e.g. 3 for 3%)
-    roasTarget: number,          // 1.0, 0.65, 0.5, or custom
+    roasTarget: 1.0 | 0.65 | 0.5,  // strict 3-option enum — no custom value (FR-001, contract §funnelSettings.md)
 
     // Free webinar/challenge only
     offerPrice: number | null,
@@ -653,7 +653,7 @@ users/{uid}/workspaces/{workspaceId}/adAccounts/{accountId}/visualPerformance/{p
 - Single injection point for prompt blocks: additive blocks go through `buildFinalImagePrompt`.
 - Image generation uses OpenAI gpt-image-2; copy/hooks/concepts use Gemini.
 - The perceptual-hashing library must work in Node.js Cloud Functions.
-- All Arabic UI copy uses "متوسط" (not "ميديان").
+- All Arabic UI copy uses the Fusha term "المعدل" when an "average" concept must be displayed (per FR-024 + SC-11); never "متوسط" (internal-only) and never "ميديان" (English transliteration).
 - All user-facing text in the app is in English or simple Fusha Arabic. No Egyptian dialect (e.g. use 'الخاص بك' not 'بتاعك', use 'ما هو' not 'إيه', use 'لكي' not 'علشان'). Technical terms (CTR, CPA, CPM, ROAS) never appear in user-facing text. The ROAS dropdown uses plain Arabic labels ('أريد استرجاع التكلفة' instead of 'ROAS 1.0').
 - PowerShell syntax for all terminal commands (semicolons, not `&&`).
 - Merges happen via GitHub UI only.
