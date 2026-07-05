@@ -15,7 +15,7 @@ import {
     type LeadMagnetCallInputs,
     LOW_VALUE_THRESHOLD,
 } from "../cpaEconomics.js";
-import { REVIEW_CADENCE_MS } from "../funnelSettings.js";
+import { REVIEW_CADENCE_MS, assertRequiredFieldPresent } from "../funnelSettings.js";
 
 // ─── Pure request shape → funnel-input mapping ────────────────
 // The contract requires that saveFunnelSettings coerces the request into
@@ -231,29 +231,23 @@ test("contract — FunnelSettingsDoc schemaVersion is the literal 1 (not a code-
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// Per-funnel-type required-input validator — mirrors the validation
-// that lives inside `saveFunnelSettings`. Exported here so the contract
-// tests assert the throw contract without spinning up the callable
-// (the contract is the contract, not the call path).
+// Per-funnel-type required-input validator — wraps the production
+// `assertRequiredFieldPresent` (exported from `funnelSettings.ts`) so
+// the contract test exercises the same rules/messages as the callable
+// (CodeRabbit audit 3524686397). We do NOT mirror the rules here — the
+// helper in funnelSettings.ts is the single source of truth.
 // ═══════════════════════════════════════════════════════════════════
 
-function assertRequiredFieldsPresent(funnelType: string, req: Record<string, unknown>): void {
-    const isMissing = (key: string): boolean => req[key] === undefined || req[key] === null;
-    if (funnelType === "paid_event" || funnelType === "paid_product") {
-        if (isMissing("aov")) throw new Error("aov is required for paid funnels");
-        if (isMissing("roasTarget")) throw new Error("roasTarget is required for paid funnels");
-        return;
+function assertRequiredFieldsPresent(funnelType: "paid_event" | "paid_product" | "free_webinar" | "lead_magnet_call", req: Record<string, unknown>): void {
+    const FIELD_MAP: Record<string, string[]> = {
+        paid_event: ["aov", "roasTarget"],
+        paid_product: ["aov", "roasTarget"],
+        free_webinar: ["offerPrice", "attendanceRate", "buyRateFromAttendees"],
+        lead_magnet_call: ["offerPrice", "leadToCloseRate"],
+    };
+    const fields = FIELD_MAP[funnelType];
+    if (!fields) throw new Error(`Unknown funnelType: ${funnelType}`);
+    for (const field of fields) {
+        assertRequiredFieldPresent(funnelType, field, req[field]);
     }
-    if (funnelType === "free_webinar") {
-        if (isMissing("offerPrice")) throw new Error("offerPrice is required for free_webinar");
-        if (isMissing("attendanceRate")) throw new Error("attendanceRate is required for free_webinar");
-        if (isMissing("buyRateFromAttendees")) throw new Error("buyRateFromAttendees is required for free_webinar");
-        return;
-    }
-    if (funnelType === "lead_magnet_call") {
-        if (isMissing("offerPrice")) throw new Error("offerPrice is required for lead_magnet_call");
-        if (isMissing("leadToCloseRate")) throw new Error("leadToCloseRate is required for lead_magnet_call");
-        return;
-    }
-    throw new Error(`Unknown funnelType: ${funnelType}`);
 }

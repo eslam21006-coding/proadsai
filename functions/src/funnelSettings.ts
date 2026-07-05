@@ -108,8 +108,13 @@ function asFunnelType(v: unknown): FunnelInputs["funnelType"] {
  * typed `number | null` are accepted when set; `undefined`, `null`, or
  * missing-from-request all throw. We use this before coercion so the
  * zero-default doesn't silently swallow a missing field.
+ *
+ * Exported so the Layer 1 contract test
+ * (`functions/src/__tests__/funnelSettings.contract.test.ts`) can import
+ * the same validator instead of mirroring the rules — keeps production
+ * and tests in lockstep (CodeRabbit audit 3524686397).
  */
-function assertRequiredFieldPresent(
+export function assertRequiredFieldPresent(
     funnelType: FunnelInputs["funnelType"],
     fieldName: string,
     value: unknown,

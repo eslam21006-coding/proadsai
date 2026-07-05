@@ -107,14 +107,42 @@ function lineColFor(src, index) {
 
 function extractStringLiterals(src) {
     const out = [];
-    // Single/double-quoted strings: match balanced escapes.
-    const quotedRe = /(['"`])((?:\\.|(?!\1).)*?)\1/g;
+    // PASS 1: single-line strings. Body uses `.` (no newlines) so each
+    // string is bounded to its source line — this preserves correct
+    // detection for the thousands of single-line literals in App.tsx,
+    // including `feedbackService.ts`'s `3% CTR` templates which would
+    // otherwise be swallowed by a multi-line match starting at an
+    // earlier unterminated backtick on the previous line.
+    const singleLineRe = /(['"`])((?:\\.|(?!\1).)*?)\1/g;
     let m;
-    while ((m = quotedRe.exec(src)) !== null) {
-        // Only true string literals — skip template-only delimiters that
-        // don't have `${...}` (those get picked up here too, which is fine;
-        // they're user-facing if written as bare backtick strings).
+    while ((m = singleLineRe.exec(src)) !== null) {
         if (m[2] && m[2].length > 0) out.push({ index: m.index, text: m[2] });
+    }
+    // PASS 2: multi-line backtick template literals only. Body uses
+    // `[\s\S]` so backtick strings that span lines (Gemini prompts,
+    // multi-line ad copy, etc.) are extracted. We restrict the opening
+    // and closing to backticks so we don't double-count single-quoted
+    // or double-quoted strings. Trade-off: a template with a nested
+    // backtick inside `${...}` may swallow across to the next matching
+    // backtick — this is a known limitation of regex-based extraction
+    // and is gated by the SC11_ALLOWLIST escape hatch (CodeRabbit
+    // audit 3524686400).
+    const multiLineRe = /(`)((?:\\.|(?!\1)[\s\S])*?)\1/g;
+    while ((m = multiLineRe.exec(src)) !== null) {
+        if (!m[2] || m[2].length === 0) continue;
+        // Only include matches that actually span newlines — single-line
+        // backticks were already captured by pass 1 and would otherwise
+        // be reported twice.
+        if (!m[2].includes("\n")) continue;
+        // Skip if this exact match (same start index) was already captured
+        // by pass 1; pass 1 would have matched it as a single-line string
+        // since `.` does not span newlines but the body here is the same
+        // single-line span the lazy quantifier finds first.
+        const alreadyCovered = out.some(
+            (s) => s.index === m.index || (s.index <= m.index && s.index + s.text.length + 2 >= m.index + m[2].length + 2 && s.text === m[2]),
+        );
+        if (alreadyCovered) continue;
+        out.push({ index: m.index, text: m[2] });
     }
     return out;
 }
