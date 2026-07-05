@@ -31,12 +31,19 @@ export interface CampaignObjectiveResult {
 
 /**
  * Canonical Meta campaign-objective names that drive the
- * 'conversion' bucket. These are the objectives Meta documents as
- * "outcome-oriented" — sales, leads, app installs, etc.
+ * 'conversion' bucket. The approved list per spec §5.6 is intentionally
+ * closed and lowercase. Only the seven objectives explicitly approved by
+ * the project are recognized as conversion-oriented:
  *
- * The list is intentionally closed and lowercase. A new Meta objective
- * added by Meta must be reviewed + explicitly added here before it feeds
- * learning (research §F: "fail-safe unknown → other").
+ *   - Direct sales / revenue: OUTCOME_SALES, SALES, CONVERSIONS,
+ *     PRODUCT_CATALOG_SALES
+ *   - Lead generation (any form): OUTCOME_LEADS, LEAD_GENERATION, LEADS
+ *
+ * Anything else — including `MESSAGES` (engagement), `APP_INSTALLS` /
+ * `APP_EVENTS` (legacy app-tracking, not part of SC-12), and
+ * `OFFSITE_CONVERSIONS` (deprecated catalog path) — resolves to `other`
+ * so it cannot pollute conversion learning, RAG, or `pastWinningAds`
+ * (research §F: "fail-safe unknown → other").
  */
 export const CONVERSION_OBJECTIVES: ReadonlySet<string> = new Set<string>([
     // Direct sales / revenue
@@ -48,13 +55,6 @@ export const CONVERSION_OBJECTIVES: ReadonlySet<string> = new Set<string>([
     "outcome_leads",
     "lead_generation",
     "leads",
-    // App events
-    "app_installs",
-    "app_events",
-    // Offsite conversions (catalog / website)
-    "offsite_conversions",
-    // Mixed conversion-likes (kept narrow on purpose)
-    "messages",
 ]);
 
 /**

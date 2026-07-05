@@ -27,14 +27,20 @@ test("classifyCampaignObjective — outcome_leads / lead_generation → conversi
     assert.equal(classifyCampaignObjective("Leads").bucket, "conversion");
 });
 
-test("classifyCampaignObjective — app events → conversion", () => {
-    assert.equal(classifyCampaignObjective("APP_INSTALLS").bucket, "conversion");
-    assert.equal(classifyCampaignObjective("app_events").bucket, "conversion");
-});
-
-test("classifyCampaignObjective — messages / offsite_conversions → conversion", () => {
-    assert.equal(classifyCampaignObjective("MESSAGES").bucket, "conversion");
-    assert.equal(classifyCampaignObjective("offsite_conversions").bucket, "conversion");
+test("classifyCampaignObjective — apps / messages / offsite → other (not in approved set)", () => {
+    // SC-12: only the seven approved outcomes (OUTCOME_SALES, SALES,
+    // CONVERSIONS, PRODUCT_CATALOG_SALES, OUTCOME_LEADS,
+    // LEAD_GENERATION, LEADS) feed the conversion bucket. APP_INSTALLS,
+    // APP_EVENTS, MESSAGES (engagement), and OFFSITE_CONVERSIONS
+    // (deprecated catalog path) are explicitly non-conversion so they
+    // cannot pollute learning / RAG / pastWinningAds.
+    assert.equal(classifyCampaignObjective("APP_INSTALLS").bucket, "other");
+    assert.equal(classifyCampaignObjective("APP_EVENTS").bucket, "other");
+    assert.equal(classifyCampaignObjective("app_events").bucket, "other");
+    assert.equal(classifyCampaignObjective("MESSAGES").bucket, "other");
+    assert.equal(classifyCampaignObjective("messages").bucket, "other");
+    assert.equal(classifyCampaignObjective("OFFSITE_CONVERSIONS").bucket, "other");
+    assert.equal(classifyCampaignObjective("offsite_conversions").bucket, "other");
 });
 
 // ─── Other bucket (non-conversion Meta objectives) ────────────
@@ -51,6 +57,20 @@ test("classifyCampaignObjective — awareness / reach / engagement → other", (
         "TRAFFIC",
         "STORE_VISITS",
         "LEAD_FORM_VIEWS",
+    ]) {
+        assert.equal(classifyCampaignObjective(obj).bucket, "other", `expected 'other' for ${obj}`);
+    }
+});
+
+test("classifyCampaignObjective — failed-SPEC objectives (MESSAGES / APP_* / OFFSITE_*) → other", () => {
+    // SC-12: these were removed from the conversion set per spec — they
+    // previously fed the conversion bucket and must now bucket to 'other'
+    // so the verdict path K3/K4-only and learning/RAG protection holds.
+    for (const obj of [
+        "MESSAGES",
+        "APP_INSTALLS",
+        "APP_EVENTS",
+        "OFFSITE_CONVERSIONS",
     ]) {
         assert.equal(classifyCampaignObjective(obj).bucket, "other", `expected 'other' for ${obj}`);
     }

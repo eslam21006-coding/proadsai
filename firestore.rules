@@ -60,8 +60,8 @@ service cloud.firestore {
       // ═══════════════════════════════════════════════════════════
 
       // Workspaces subcollection (declared again above with broader read
-      // access). We re-declare the membership predicate here so the
-      // adAccounts subtree can reuse it via inline `exists()`.
+      // access). The Phase 14 adAccounts subtree below reuses
+      // `isWorkspaceMember` defined further down.
       // Phase 14 adAccounts subtree (Layer 1+: Funnel Settings, sync
       // snapshots, ad performance + verdicts, baselines, hook + visual
       // aggregates).
@@ -71,13 +71,13 @@ service cloud.firestore {
         match /adAccounts/{accountId} {
           allow read, write: if isWorkspaceMember(userId, workspaceId);
           // Sub-paths:
-          //   settings                            (Layer 1 — Funnel Settings, user-writable)
+          //   settings/current                    (Layer 1 — Funnel Settings, user-writable)
           //   syncSnapshots/{snapshotId}          (Layer 2 — server-writable)
           //   adPerformance/{adId}                (Layer 2 — server-writable)
-          //   baselines                           (Layer 4 — server-writable)
+          //   baselines/{docId}                   (Layer 4 — server-writable)
           //   hookPerformance/{angleKey}          (Layer 4b — server-writable)
           //   visualPerformance/{patternKey}      (Layer 4b — server-writable)
-          match /settings {
+          match /settings/{settingsDocId} {
             allow read, write: if isWorkspaceMember(userId, workspaceId);
           }
           match /syncSnapshots/{snapshotId} {
@@ -117,18 +117,6 @@ service cloud.firestore {
           allow read, write: if false;
         }
       }
-    }
-
-    // Helper function: returns true when `callerUid` is either the owner
-    // `userId` or a team member of `userId` AND the workspace exists
-    // (workspace existence check is best-effort — a missing workspace doc
-    // is allowed for the owner to bootstrap the first write).
-    function isWorkspaceMember(userId, workspaceId) {
-      return request.auth != null
-          && (request.auth.uid == userId
-              || (exists(/databases/$(database)/documents/users/$(request.auth.uid))
-                  && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isTeamMember == true
-                  && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamOwnerUid == userId));
 
       // Team subcollection — only the owner can read their team list
       // Writes are handled by Cloud Functions (createTeamMember / removeTeamMember)
@@ -136,6 +124,17 @@ service cloud.firestore {
         allow read: if request.auth != null && request.auth.uid == userId;
         allow write: if false;
       }
+    }
+
+    // Helper function: returns true when the caller is the owner `userId`
+    // or a team member of `userId`. Validates against the caller's own
+    // `users/{request.auth.uid}` doc (no workspace-doc lookup).
+    function isWorkspaceMember(userId, workspaceId) {
+      return request.auth != null
+          && (request.auth.uid == userId
+              || (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+                  && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isTeamMember == true
+                  && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamOwnerUid == userId));
     }
 
     // Principle Vault — AI learning system. Cloud Functions write, user reads.

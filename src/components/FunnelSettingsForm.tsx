@@ -234,7 +234,7 @@ const FUNNEL_LABELS: Record<FunnelType, { ar: string; en: string }> = {
 };
 
 const ROAS_OPTIONS: Array<{ value: RoasTarget; label: string; sub: string }> = [
-    { value: 1.0, label: '1.0 — توازن', sub: 'استراداد التكلفة فقط' },
+    { value: 1.0, label: '1.0 — توازن', sub: 'استرداد التكلفة فقط' },
     { value: 0.65, label: '0.65 — استثمار معتدل', sub: 'تقبل خسارة بسيطة مقابل بيانات' },
     { value: 0.5, label: '0.5 — استثمار أعلى', sub: 'تقبل خسارة أكبر مقابل بيانات أكثر' },
 ];
@@ -272,6 +272,17 @@ export default function FunnelSettingsForm({
     const [attendanceRate, setAttendanceRate] = useState<string>('');
     const [buyRateFromAttendees, setBuyRateFromAttendees] = useState<string>('');
     const [leadToCloseRate, setLeadToCloseRate] = useState<string>('');
+
+    // Local dismiss state for the monthly-review prompt. Resets when
+    // `reviewDue` flips back to true on a fresh save (the save function
+    // calls setReviewDue(false), so the card hides itself naturally on
+    // the next hydration cycle too).
+    const [reviewDismissed, setReviewDismissed] = useState<boolean>(false);
+    useEffect(() => {
+        // When a new review becomes due, clear any prior dismissal so
+        // the prompt reappears as a fresh notification.
+        if (reviewDue) setReviewDismissed(false);
+    }, [reviewDue]);
 
     // Track the last-hydrated accountId so the hydration effect only runs
     // once per account (avoids the setState-in-effect cascading-render issue
@@ -498,20 +509,28 @@ export default function FunnelSettingsForm({
                 {loading ? L('Saving…', 'جاري الحفظ…') : L('Save settings', 'حفظ الإعدادات')}
             </button>
 
-            {/* Results card */}
+            {/* Results card — single number, plain Arabic. SC-11: no
+                acronyms (CPA/CPL) appear in user-facing copy. The cap
+                warning reuses the same plain-Arabic phrasing pattern. */}
             {paidDerived && (
                 <div className={`p-4 rounded-lg border ${cardBg}`}>
                     <h3 className={`font-semibold mb-2 ${txPrimary}`}>{L('Results', 'النتائج')}</h3>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                        <div><span className={txMuted}>{L('Raw target cost:', 'التكلفة المستهدفة الأولية:')}</span> <span className={txPrimary}>${paidDerived.rawTargetCpa.toFixed(2)}</span></div>
-                        <div><span className={txMuted}>{L('Full buyer value:', 'قيمة المشتري الكاملة:')}</span> <span className={txPrimary}>${paidDerived.fullBuyerValue.toFixed(2)}</span></div>
-                        <div><span className={txMuted}>{L('Cost ceiling:', 'السقف الأقصى:')}</span> <span className={txPrimary}>${paidDerived.maxCpa.toFixed(2)}</span></div>
-                        <div><span className={txMuted}>{L('Effective target cost:', 'التكلفة المستهدفة النهائية:')}</span> <span className={txPrimary}>${paidDerived.effectiveTargetCpa.toFixed(2)}</span></div>
-                    </div>
+                    <p className={`text-base ${txPrimary}`}>
+                        {L('Maximum cost per customer:', 'أقصى تكلفة للعميل:')} ${paidDerived.effectiveTargetCpa.toFixed(2)}
+                    </p>
+                    <p className={`mt-2 text-sm ${txMuted}`}>
+                        {L(
+                            'If your ad brings customers for less than this, it is successful. If more — it needs adjustment.',
+                            'إذا كان إعلانك يجلب عملاء بأقل من هذا المبلغ — فهو ناجح. إذا بأكثر — يحتاج تعديل.',
+                        )}
+                    </p>
                     {paidDerived.capApplied && (
                         <div className={`mt-3 p-3 rounded border-2 border-yellow-500 ${dk ? 'bg-yellow-950/40' : 'bg-yellow-50'}`}>
                             <p className={`text-sm ${txPrimary}`}>
-                                {L('Cap applied: raw target was', 'تم تطبيق السقف: التكلفة المستهدفة الأولية')} ${paidDerived.rawTargetCpa.toFixed(2)} {L('capped to', 'تم تخفيضها إلى')} ${paidDerived.maxCpa.toFixed(2)}.
+                                {L(
+                                    'Reminder: your funnel economics are very tight. Re-check your numbers or talk to us.',
+                                    'تذكير: أرقام مسارك الاقتصادي ضيقة جداً. راجع الأرقام أو تواصل معنا.',
+                                )}
                             </p>
                         </div>
                     )}
@@ -521,18 +540,30 @@ export default function FunnelSettingsForm({
             {freeDerived && (
                 <div className={`p-4 rounded-lg border ${cardBg}`}>
                     <h3 className={`font-semibold mb-2 ${txPrimary}`}>{L('Results', 'النتائج')}</h3>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                        <div><span className={txMuted}>{L('Lead value:', 'قيمة العميل المحتمل:')}</span> <span className={txPrimary}>${freeDerived.leadValue.toFixed(2)}</span></div>
-                        <div><span className={txMuted}>{L('CPL ceiling:', 'سقف التكلفة للعميل المحتمل:')}</span> <span className={txPrimary}>${freeDerived.economicCeilingCpl.toFixed(2)}</span></div>
-                        <div><span className={txMuted}>{L('Effective target CPL:', 'التكلفة المستهدفة للعميل المحتمل:')}</span> <span className={txPrimary}>${freeDerived.effectiveTargetCpl.toFixed(2)}</span></div>
-                    </div>
+                    <p className={`text-base ${txPrimary}`}>
+                        {L('Maximum cost per lead:', 'أقصى تكلفة للليد:')} ${freeDerived.effectiveTargetCpl.toFixed(2)}
+                    </p>
+                    <p className={`mt-2 text-sm ${txMuted}`}>
+                        {L(
+                            'If your ad brings leads for less than this, it is successful. If more — it needs adjustment.',
+                            'إذا كان إعلانك يجلب ليدز بأقل من هذا المبلغ — فهو ناجح. إذا بأكثر — يحتاج تعديل.',
+                        )}
+                    </p>
                 </div>
             )}
 
             {/* Monthly-review prompt (dismissible, non-blocking) */}
-            {reviewDue && (
-                <div className={`p-3 rounded border ${cardBg} flex items-center justify-between`}>
+            {reviewDue && !reviewDismissed && (
+                <div className={`p-3 rounded border ${cardBg} flex items-center justify-between gap-2`}>
                     <p className={`text-sm ${txSecondary}`}>{L('Monthly review due — confirm your values are still accurate.', 'مراجعة شهرية مستحقة — تأكد من تحديث القيم إذا تغيرت أسعار العرض.')}</p>
+                    <button
+                        type="button"
+                        aria-label={L('Dismiss review reminder', 'إخفاء تذكير المراجعة')}
+                        className={`text-xs px-2 py-1 rounded ${txMuted} hover:opacity-100`}
+                        onClick={() => setReviewDismissed(true)}
+                    >
+                        {L('Dismiss', 'إخفاء')}
+                    </button>
                 </div>
             )}
         </div>
