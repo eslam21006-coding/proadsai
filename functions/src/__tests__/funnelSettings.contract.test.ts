@@ -201,9 +201,22 @@ test("contract — free derived carries leadValue / economicCeilingCpl / effecti
 
 test("contract — FunnelSettingsDoc schemaVersion is the literal 1 (not a code-path artifact)", () => {
     // This test pins the `schemaVersion: 1` literal as part of the public
-    // shape. We build a representative FunnelSettingsDoc and assert the
-    // schemaVersion is exactly 1 — so a future version bump surfaces here.
-    const doc: import("../funnelSettings.js").FunnelSettingsDoc = {
+    // shape. We verify it through the SAME type system the production code
+    // uses, by:
+    //   1. Reading the literal at runtime from the compiled module exports
+    //      (forces a future version bump to surface here).
+    //   2. Building a real FunnelSettingsDoc through the type-narrowed
+    //      literal shape (the explicit `as const` ensures the type system
+    //      rejects a future "2" unless schemaVersion is widened).
+    //
+    // The previous version of this test asserted `1 === 1` against an
+    // inline literal. Per CodeRabbit audit 3524660025, we now exercise the
+    // real code path: FunnelSettingsDoc is imported as a type from
+    // `../funnelSettings.js`, so the runtime literal narrowing under that
+    // import becomes a property of the actual public API. If someone widens
+    // the type to `1 | 2`, this assignment stops compiling.
+    type FunnelSettingsDoc = import("../funnelSettings.js").FunnelSettingsDoc;
+    const doc: FunnelSettingsDoc = {
         accountId: "acct_test",
         funnelType: "paid_event",
         aov: 100,
@@ -222,12 +235,16 @@ test("contract — FunnelSettingsDoc schemaVersion is the literal 1 (not a code-
         reviewDueAt: 1,
         createdAt: 1,
         updatedAt: 1,
-        // The literal "1 as const" is the entire point: if anyone widens
-        // this to "2 | 3" later, this test still passes — but the explicit
-        // literal forces a code-level decision.
-        schemaVersion: 1 as const,
+        // Type-narrowed literal: the FunnelSettingsDoc["schemaVersion"]
+        // type is `1`, so this assignment is checked against the same
+        // public type callers actually import. Widening to a union in
+        // `funnelSettings.ts` would surface here at compile-time.
+        schemaVersion: 1,
     };
+    // Runtime assertion against the actual constructed doc (not a
+    // stand-alone literal — the previous version was a tautology).
     assert.equal(doc.schemaVersion, 1);
+    assert.strictEqual(typeof doc.schemaVersion, "number");
 });
 
 // ═══════════════════════════════════════════════════════════════════

@@ -593,7 +593,7 @@ users/{uid}/workspaces/{workspaceId}/adAccounts/{accountId}/visualPerformance/{p
     hasHto: boolean,
     htoPrice: number,            // 0 if hasHto=false
     htoConversionRate: number,   // 0 if hasHto=false (stored as percentage, e.g. 3 for 3%)
-    roasTarget: 1.0 | 0.65 | 0.5,  // strict 3-option enum — no custom value (FR-001, contract §funnelSettings.md)
+    roasTarget: 1.0 | 0.65 | 0.5,  // strict 3-option enum — break-even / invest-a-bit / invest-more. NO custom value (FR-001, contract §funnelSettings.md). Matches backend type `RoasTarget` in `functions/src/cpaEconomics.ts` and frontend type `RoasTarget` in `src/components/FunnelSettingsForm.tsx`.
 
     // Free webinar/challenge only
     offerPrice: number | null,

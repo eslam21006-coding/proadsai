@@ -127,10 +127,15 @@ service cloud.firestore {
     }
 
     // Helper function: returns true when the caller is the owner `userId`
-    // or a team member of `userId`. Validates against the caller's own
-    // `users/{request.auth.uid}` doc (no workspace-doc lookup).
+    // or a team member of `userId` AND the workspace exists and is not
+    // soft-deleted (`deletedAt == null`). Without this check, any
+    // well-formed call to a subcollection rule (e.g. `adAccounts/{id}`)
+    // would pass with an arbitrary `workspaceId` — defeating the
+    // coarse-grained per-workspace allowlist below.
     function isWorkspaceMember(userId, workspaceId) {
       return request.auth != null
+          && exists(/databases/$(database)/documents/users/$(userId)/workspaces/$(workspaceId))
+          && get(/databases/$(database)/documents/users/$(userId)/workspaces/$(workspaceId)).data.deletedAt == null
           && (request.auth.uid == userId
               || (exists(/databases/$(database)/documents/users/$(request.auth.uid))
                   && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isTeamMember == true

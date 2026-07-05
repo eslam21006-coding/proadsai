@@ -278,11 +278,14 @@ export default function FunnelSettingsForm({
     // calls setReviewDue(false), so the card hides itself naturally on
     // the next hydration cycle too).
     const [reviewDismissed, setReviewDismissed] = useState<boolean>(false);
-    useEffect(() => {
-        // When a new review becomes due, clear any prior dismissal so
-        // the prompt reappears as a fresh notification.
+    // Adjust state during render (React's "adjusting state when a prop
+    // changes" pattern) instead of an effect — avoids the
+    // `setState-in-effect` lint error and the extra synchronous render.
+    const [prevReviewDue, setPrevReviewDue] = useState(reviewDue);
+    if (reviewDue !== prevReviewDue) {
+        setPrevReviewDue(reviewDue);
         if (reviewDue) setReviewDismissed(false);
-    }, [reviewDue]);
+    }
 
     // Track the last-hydrated accountId so the hydration effect only runs
     // once per account (avoids the setState-in-effect cascading-render issue
