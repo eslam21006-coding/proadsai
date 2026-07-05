@@ -122,26 +122,16 @@ function extractStringLiterals(src) {
     // `[\s\S]` so backtick strings that span lines (Gemini prompts,
     // multi-line ad copy, etc.) are extracted. We restrict the opening
     // and closing to backticks so we don't double-count single-quoted
-    // or double-quoted strings. Trade-off: a template with a nested
-    // backtick inside `${...}` may swallow across to the next matching
-    // backtick — this is a known limitation of regex-based extraction
-    // and is gated by the SC11_ALLOWLIST escape hatch (CodeRabbit
-    // audit 3524686400).
+    // or double-quoted strings, and the `includes("\n")` filter below
+    // ensures we only keep true multi-line matches (single-line backticks
+    // were already captured by pass 1 and have no newlines). Trade-off:
+    // a template with a nested backtick inside `${...}` may swallow
+    // across to the next matching backtick — this is a known limitation
+    // of regex-based extraction and is gated by the SC11_ALLOWLIST
+    // escape hatch (CodeRabbit audit 3524686400).
     const multiLineRe = /(`)((?:\\.|(?!\1)[\s\S])*?)\1/g;
     while ((m = multiLineRe.exec(src)) !== null) {
-        if (!m[2] || m[2].length === 0) continue;
-        // Only include matches that actually span newlines — single-line
-        // backticks were already captured by pass 1 and would otherwise
-        // be reported twice.
-        if (!m[2].includes("\n")) continue;
-        // Skip if this exact match (same start index) was already captured
-        // by pass 1; pass 1 would have matched it as a single-line string
-        // since `.` does not span newlines but the body here is the same
-        // single-line span the lazy quantifier finds first.
-        const alreadyCovered = out.some(
-            (s) => s.index === m.index || (s.index <= m.index && s.index + s.text.length + 2 >= m.index + m[2].length + 2 && s.text === m[2]),
-        );
-        if (alreadyCovered) continue;
+        if (!m[2] || !m[2].includes("\n")) continue;
         out.push({ index: m.index, text: m[2] });
     }
     return out;
