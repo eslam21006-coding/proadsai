@@ -196,6 +196,37 @@ test("paid CPA: NaN htoConversionRate throws", () => {
     assert.throws(() => deriveTargetCpa(inp), /htoConversionRate/);
 });
 
+test("paid CPA: htoConversionRate > 100 throws (percentage range cap)", () => {
+    const inp: PaidFunnelInputs = {
+        funnelType: "paid_event",
+        aov: 100,
+        hasHto: true,
+        htoPrice: 100,
+        htoConversionRate: 150,
+        roasTarget: 1.0,
+    };
+    assert.throws(() => deriveTargetCpa(inp), /between 0 and 100/);
+});
+
+test("free_webinar: attendanceRate > 100 throws (percentage range cap)", () => {
+    const inp: FreeWebinarInputs = {
+        funnelType: "free_webinar",
+        offerPrice: 100,
+        attendanceRate: 250,
+        buyRateFromAttendees: 10,
+    };
+    assert.throws(() => deriveTargetCplFreeWebinar(inp), /between 0 and 100/);
+});
+
+test("lead_magnet_call: leadToCloseRate > 100 throws (percentage range cap)", () => {
+    const inp: LeadMagnetCallInputs = {
+        funnelType: "lead_magnet_call",
+        offerPrice: 100,
+        leadToCloseRate: 120,
+    };
+    assert.throws(() => deriveTargetCplLeadMagnetCall(inp), /between 0 and 100/);
+});
+
 // ─── deriveAll dispatch ──────────────────────────────────────
 
 test("deriveAll — paid_event dispatches to deriveTargetCpa", () => {

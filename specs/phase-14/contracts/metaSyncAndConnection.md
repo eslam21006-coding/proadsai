@@ -34,7 +34,13 @@ Captures the long-lived Meta user token, binds one ad account to the workspace.
 
 `onSchedule('0 3 * * *', { timeZone: 'UTC', region: 'europe-west1' })`.
 
-- Query all `metaConnection` docs (collection group) with `metaConnected == true`.
+- Query the `private` **collection group** (the path is
+  `users/{uid}/workspaces/{workspaceId}/private/metaConnection`, so
+  `private` is the shared collection ID and `metaConnection` is a
+  document ID inside it) with `metaConnected == true`. A collection-group
+  query operates on collections that share a collection ID — not on
+  document IDs — so the query must be `db.collectionGroup('private')
+  .where('metaConnected','==',true)`.
 - **Enqueue one Cloud Task per account** onto `metaSyncAccountWorker`. No per-account work in the dispatcher (stays within CF limits; scales with user base).
 
 ## `metaSyncAccountWorker` (`onTaskDispatched`)

@@ -43,7 +43,13 @@ getRAGContext({
   pastWinningAds: Array<{
     hookAngle: string; hookText: string;             // the text on the image
     layoutTemplate: string; creativeModes: string[]; artDirection: string; universe: string;
-    linkCtr: number; cpa: number; cpm: number;       // internal metrics for the Concept Director
+    linkCtr: number; cpm: number;
+    // Cost-per-acquisition the winner was scored on. `cpa` for paid
+    // funnels, `cpl` for free funnels (free_webinar / lead_magnet_call).
+    // Exactly one of these is set per winner — chosen by the funnel type
+    // in the verdict record. The Concept Director uses whichever is set
+    // as the value-metric; downstream contracts MUST handle both.
+    cpa?: number; cpl?: number;
   }>;  // [] when none
 }
 ```

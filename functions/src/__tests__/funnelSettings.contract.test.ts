@@ -99,6 +99,33 @@ test("contract — paid_event with numeric 0 AOV → derivation accepts 0 silent
     assert.equal(d.paid?.effectiveTargetCpa, 0);
 });
 
+test("contract — paid_event with hasHto=true but missing htoPrice → throws", () => {
+    // Previously a missing htoPrice silently defaulted to 0 and the CPA
+    // cap was computed as if there were no HTO at all — a silent
+    // economics error. The required-field validator MUST reject.
+    assert.throws(
+        () => assertRequiredFieldsPresent("paid_event", {
+            aov: 43,
+            hasHto: true,
+            htoConversionRate: 3,
+            roasTarget: 1.0,
+        } as unknown as Record<string, unknown>),
+        /htoPrice/i,
+    );
+});
+
+test("contract — paid_event with hasHto=true but missing htoConversionRate → throws", () => {
+    assert.throws(
+        () => assertRequiredFieldsPresent("paid_event", {
+            aov: 43,
+            hasHto: true,
+            htoPrice: 3500,
+            roasTarget: 1.0,
+        } as unknown as Record<string, unknown>),
+        /htoConversionRate/i,
+    );
+});
+
 test("contract — free_webinar missing attendanceRate → callable throws invalid-argument", () => {
     // Contract: missing required input ⇒ invalid-argument. The callable
     // validates the request shape BEFORE coercing to typed FunnelInputs.
@@ -266,5 +293,10 @@ function assertRequiredFieldsPresent(funnelType: "paid_event" | "paid_product" |
     if (!fields) throw new Error(`Unknown funnelType: ${funnelType}`);
     for (const field of fields) {
         assertRequiredFieldPresent(funnelType, field, req[field]);
+    }
+    // Mirror the callables: when hasHto=true, both HTO fields are required.
+    if ((funnelType === "paid_event" || funnelType === "paid_product") && req.hasHto === true) {
+        assertRequiredFieldPresent(funnelType, "htoPrice", req.htoPrice);
+        assertRequiredFieldPresent(funnelType, "htoConversionRate", req.htoConversionRate);
     }
 }

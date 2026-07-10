@@ -9,17 +9,22 @@
 
 Evaluates creative-level rules in **exact order, first-match-wins** (spec §5.2), objective-gated by §5.6.
 
-**Unified target (spec §5.2)**: every `effectiveTargetCPA` reference below is a single `effectiveTarget` variable = `effectiveTargetCPA` for paid funnels or `effectiveTargetCPL` for free funnels (free webinar/challenge, lead magnet → call), read from the funnel settings. For free funnels the engine evaluates **cost-per-lead** in the data gate, CB1/CB2, and S1; rules/thresholds/multipliers are identical — only the target value and cost metric change.
+**Unified target (spec §5.2)**: every rule below uses a single `effectiveTarget` variable = `effectiveTargetCPA` for paid funnels or `effectiveTargetCPL` for free funnels (free webinar/challenge, lead magnet → call), read from the funnel settings. For free funnels the engine evaluates **cost-per-lead** in the data gate, CB1/CB2, and S1; rules/thresholds/multipliers are identical — only the target value and cost metric change.
 
 ### Order
-1. **Data gates** — CTR judgment needs ≥ 2,000–3,000 impressions OR spend ≥ 1× effectiveTargetCPA; exception: Link CTR < 0.5% callable at 1,500 impressions; ad ≥ 48h old; always 3-day rolling (except circuit breaker). Fail → `⏳` with an Arabic reason naming what's missing.
-2. **Circuit breaker** (today only; bypasses gates; **conversion only**) — CB1 spend ≥ 1.5× effectiveTargetCPA & 0 conv → `🟡`; CB2 ≥ 2.5× & 0 conv → `🔴`.
+1. **Data gates** — CTR judgment needs ≥ 2,000–3,000 impressions OR spend ≥ 1× effectiveTarget; exception: Link CTR < 0.5% callable at 1,500 impressions; ad ≥ 48h old; always 3-day rolling (except circuit breaker). Fail → `⏳` with an Arabic reason naming what's missing.
+2. **Circuit breaker** (today only; bypasses gates; **conversion only**) — first-match-wins, higher threshold first so the lower-threshold rule can still fire: **CB2 spend ≥ 2.5× effectiveTarget & 0 conv → `🔴`**; then **CB1 spend ≥ 1.5× effectiveTarget & 0 conv → `🟡`**. (CB2 must be tested before CB1 — otherwise CB1's `≥ 1.5×` swallows every CB2 case at `≥ 2.5×`.)
 3. **Kill** — K3 Link CTR < 0.5% after 1,500–3,000 imp → `🔴` `الهوك ميت — محدش بيوقف`; K4 day-1 peak then ≥ 50% drop by day 3 → `🔴` `كريتف فلاش — اتحرق في يوم`; K5 starved-ad matrix (`conversion` only) → leave / `🔴` / `🛟 رابح مخنوق — انقله لـ ad set جديد`.
 4. **Fatigue** (`conversion` only) — Link CTR ↓ ≥ 25–30% from 3-day peak & CPM stable → `🟡` `إنهاك إبداعي — جدّد الكريتف`; CPM rising vs account متوسط → `🟡` `الخوارزمية بتعاقب الكريتف ده`.
-5. **Continue/Scale** — S1 CPA ≤ effectiveTargetCPA (3-day) + Link CTR > account متوسط → `🟢` `رابح — مؤهل للترقية` (`conversion` only); else if gates met → `🟡 شغال — راقب`.
+5. **Continue/Scale** — S1 cost-per-acquisition (CPA for paid, CPL for free) ≤ effectiveTarget (3-day) + Link CTR > account متوسط → `🟢` `رابح — مؤهل للترقية` (`conversion` only); else if gates met → `🟡 شغال — راقب`.
 
 ### Objective gating (§5.6.1) — `campaignObjective` from `campaignObjective.ts`
-`conversion` = OUTCOME_SALES/CONVERSIONS/LEAD_GENERATION/OUTCOME_LEADS → **full engine + learning + RAG + winners**. **`other`** (all else incl. unknown, fail-safe) → **only K3 + K4 fire**; CB1/CB2/K1/K2/K5/K6/K7/fatigue/S1 disabled; never a winner; never learned from. Guarantees SC-12 (no kill on awareness/reach/engagement).
+`conversion` = any of the seven conversion objectives recognized by `functions/src/campaignObjective.ts` (`CONVERSION_OBJECTIVES` set):
+
+- `outcome_sales`, `sales`, `conversions`, `product_catalog_sales` (direct sales / revenue)
+- `outcome_leads`, `lead_generation`, `leads` (lead generation, any form)
+
+→ **full engine + learning + RAG + winners**. **`other`** (all else incl. unknown, fail-safe) → **only K3 + K4 fire**; CB1/CB2/K1/K2/K5/K6/K7/fatigue/S1 disabled; never a winner; never learned from. Guarantees SC-12 (no kill on awareness/reach/engagement).
 
 ### Diagnosis ladder (§5.4) — for every 🔴/🟡
 Run CPM → Link CTR → CTR-All vs Link CTR → LP View Rate → Page CVR → Post-conversion; stop at first broken level; output a one-line Arabic `diagnosisAr`.

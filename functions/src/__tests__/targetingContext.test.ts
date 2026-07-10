@@ -62,14 +62,18 @@ test("classifyGeoTierFromList — first matched tier wins, falls through on no-m
     assert.equal(classifyGeoTierFromList(null), "tier3_egypt_na");
 });
 
-test("extractCountryFromTargeting — reads code, then name, then region name, then cities[].name/country", () => {
+test("extractCountryFromTargeting — reads code, then name, then region name, then cities[].country/name", () => {
     assert.equal(extractCountryFromTargeting({ geo_locations: { countries: [{ code: "AE" }] } }), "AE");
     assert.equal(extractCountryFromTargeting({ geo_locations: { countries: [{ name: "Saudi Arabia" }] } }), "Saudi Arabia");
     assert.equal(extractCountryFromTargeting({ geo_locations: { regions: [{ name: "California" }] } }), "California");
-    // cities[].name fallback (the docstring branch CodeRabbit flagged was missing).
-    assert.equal(extractCountryFromTargeting({ geo_locations: { cities: [{ name: "Riyadh", country: "SA" }] } }), "Riyadh");
+    // cities[].country wins over cities[].name — country is the authoritative
+    // tiering signal; a city name like "Riyadh" is not a country and would
+    // mis-tier as the tier3 fall-through.
+    assert.equal(extractCountryFromTargeting({ geo_locations: { cities: [{ name: "Riyadh", country: "SA" }] } }), "SA");
     // cities[].country fallback when no .name.
     assert.equal(extractCountryFromTargeting({ geo_locations: { cities: [{ country: "AE" }] } }), "AE");
+    // cities[].name fallback when no .country (last-resort signal).
+    assert.equal(extractCountryFromTargeting({ geo_locations: { cities: [{ name: "Riyadh" }] } }), "Riyadh");
     assert.equal(extractCountryFromTargeting({ geo_locations: { countries: [] } }), null);
     assert.equal(extractCountryFromTargeting({}), null);
     assert.equal(extractCountryFromTargeting(null), null);

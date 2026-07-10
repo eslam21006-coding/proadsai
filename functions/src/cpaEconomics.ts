@@ -296,11 +296,18 @@ function assertFiniteNonNegative(name: string, value: unknown): void {
     }
 }
 
+function assertPercentage(name: string, value: unknown): void {
+    assertFiniteNonNegative(name, value);
+    if ((value as number) > 100) {
+        throw new Error(`cpaEconomics: ${name} must be between 0 and 100; got ${value}`);
+    }
+}
+
 function assertPaidInput(input: PaidFunnelInputs): void {
     assertFiniteNonNegative("aov", input.aov);
     if (input.hasHto) {
         assertFiniteNonNegative("htoPrice", input.htoPrice);
-        assertFiniteNonNegative("htoConversionRate", input.htoConversionRate);
+        assertPercentage("htoConversionRate", input.htoConversionRate);
     }
     if (!ALL_ROAS_TARGETS.includes(input.roasTarget)) {
         throw new Error(
@@ -312,11 +319,11 @@ function assertPaidInput(input: PaidFunnelInputs): void {
 
 function assertFreeWebinarInput(input: FreeWebinarInputs): void {
     assertFiniteNonNegative("offerPrice", input.offerPrice);
-    assertFiniteNonNegative("attendanceRate", input.attendanceRate);
-    assertFiniteNonNegative("buyRateFromAttendees", input.buyRateFromAttendees);
+    assertPercentage("attendanceRate", input.attendanceRate);
+    assertPercentage("buyRateFromAttendees", input.buyRateFromAttendees);
 }
 
 function assertLeadMagnetCallInput(input: LeadMagnetCallInputs): void {
     assertFiniteNonNegative("offerPrice", input.offerPrice);
-    assertFiniteNonNegative("leadToCloseRate", input.leadToCloseRate);
+    assertPercentage("leadToCloseRate", input.leadToCloseRate);
 }

@@ -3170,7 +3170,12 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       return metaConnection?.selectedAccountId ?? metaConnection?.adAccounts?.[0]?.id ?? null;
     }
     const ws = workspaces.find(w => w.id === activeWorkspaceId && !w.deletedAt);
-    return ws?.metaAdAccountId ?? metaConnection?.selectedAccountId ?? metaConnection?.adAccounts?.[0]?.id ?? null;
+    // On workspace plans, only the explicitly linked account counts.
+    // Falling back to the global connection here would let the
+    // funnel-settings probe/auto-open gate (and any save) target an
+    // account the active workspace was never linked to, bypassing
+    // FR-026's 1:1 workspace-to-account contract.
+    return ws?.metaAdAccountId ?? null;
   }, [canUseWorkspaces, workspaces, activeWorkspaceId, metaConnection]);
 
   // Phase 14 batch 01 — UI wiring. FunnelSettingsForm requires both a

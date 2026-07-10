@@ -15,17 +15,17 @@
 #
 # Allowlist format: one path per line (no glob — exact paths only). The
 # allowed paths are matched against the value returned by `path.relative`
-# between the repository root and each scanned file, so use forward- or
-# backward-slashes consistently with your checkout. This file uses
-# backslashes to match the Windows repo display convention.
+# between the repository root and each scanned file. The guard normalizes
+# both sides to forward slashes (`/`) before comparison, so this file
+# uses forward slashes and works identically on Windows and POSIX runners.
 
-src\App.tsx
-src\components\InputForm.tsx
-src\components\PerformanceDashboard.tsx
-src\components\PricingTable.tsx
-src\constants.ts
-src\i18n.tsx
-src\modeFieldSchema.ts
-src\planconfig.ts
-src\services\feedbackService.ts
-src\universeDatabase.ts
+src/App.tsx
+src/components/InputForm.tsx
+src/components/PerformanceDashboard.tsx
+src/components/PricingTable.tsx
+src/constants.ts
+src/i18n.tsx
+src/modeFieldSchema.ts
+src/planconfig.ts
+src/services/feedbackService.ts
+src/universeDatabase.ts

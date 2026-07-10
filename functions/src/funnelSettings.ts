@@ -123,7 +123,12 @@ export function assertRequiredFieldPresent(
     switch (funnelType) {
         case "paid_event":
         case "paid_product":
-            if (fieldName === "aov" || fieldName === "roasTarget") {
+            if (
+                fieldName === "aov"
+                || fieldName === "roasTarget"
+                || fieldName === "htoPrice"
+                || fieldName === "htoConversionRate"
+            ) {
                 if (isMissing(value)) {
                     throw new Error(`${fieldName} is required for ${funnelType}`);
                 }
@@ -273,11 +278,18 @@ export const saveFunnelSettings = onCall(
             // type-relevant fields are required; irrelevant fields are
             // ignored.
             assertRequiredFieldPresent(req.funnelType, "aov", req.aov);
+            assertRequiredFieldPresent(req.funnelType, "roasTarget", req.roasTarget);
+            // When the user opts into HTO, BOTH HTO fields are required —
+            // buildFunnelInputs would otherwise default them to 0 and the
+            // server would silently treat the ad as having no HTO at all.
+            if (req.hasHto === true) {
+                assertRequiredFieldPresent(req.funnelType, "htoPrice", req.htoPrice);
+                assertRequiredFieldPresent(req.funnelType, "htoConversionRate", req.htoConversionRate);
+            }
             assertRequiredFieldPresent(req.funnelType, "offerPrice", req.offerPrice);
             assertRequiredFieldPresent(req.funnelType, "attendanceRate", req.attendanceRate);
             assertRequiredFieldPresent(req.funnelType, "buyRateFromAttendees", req.buyRateFromAttendees);
             assertRequiredFieldPresent(req.funnelType, "leadToCloseRate", req.leadToCloseRate);
-            assertRequiredFieldPresent(req.funnelType, "roasTarget", req.roasTarget);
 
             inputs = buildFunnelInputs(req);
             // Sanity-check the coerced inputs against the derivation engine.
@@ -292,42 +304,46 @@ export const saveFunnelSettings = onCall(
         const derived = deriveAll(inputs, req.clientNowMs);
         const advisories = computeAdvisories(inputs);
 
-        // Persist (additive — preserve existing advisoriesDismissed if present).
+        // Persist atomically so a concurrent `dismissAdvisory` write cannot
+        // be clobbered by our read-then-overwrite. We snapshot the existing
+        // doc inside the transaction and preserve `advisoriesDismissed` +
+        // `createdAt` from that snapshot.
         const settingsRef = getDb()
             .collection("users").doc(callerUid)
             .collection("workspaces").doc(req.workspaceId)
             .collection("adAccounts").doc(req.accountId)
             .collection("settings").doc("current");
 
-        const existing = await settingsRef.get();
-        const prevDismissed = (existing.get("advisoriesDismissed") || {}) as { noHto?: boolean; lowValue?: boolean };
-
-        const next: FunnelSettingsDoc = {
-            accountId: req.accountId,
-            funnelType: inputs.funnelType,
-            aov: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product" ? inputs.aov : null,
-            hasHto: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product" ? inputs.hasHto : false,
-            htoPrice: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product" ? inputs.htoPrice : 0,
-            htoConversionRate: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product" ? inputs.htoConversionRate : 0,
-            roasTarget: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product" ? inputs.roasTarget : 1.0,
-            offerPrice: inputs.funnelType === "free_webinar" || inputs.funnelType === "lead_magnet_call" ? inputs.offerPrice : null,
-            attendanceRate: inputs.funnelType === "free_webinar" ? inputs.attendanceRate : null,
-            buyRateFromAttendees: inputs.funnelType === "free_webinar" ? inputs.buyRateFromAttendees : null,
-            leadToCloseRate: inputs.funnelType === "lead_magnet_call" ? inputs.leadToCloseRate : null,
-            derived,
-            advisories,
-            advisoriesDismissed: {
-                noHto: prevDismissed.noHto === true,
-                lowValue: prevDismissed.lowValue === true,
-            },
-            lastReviewedAt: req.clientNowMs,
-            reviewDueAt: req.clientNowMs + REVIEW_CADENCE_MS,
-            createdAt: existing.get("createdAt") || req.clientNowMs,
-            updatedAt: req.clientNowMs,
-            schemaVersion: 1,
-        };
-
-        await settingsRef.set(next, { merge: false });
+        const next: FunnelSettingsDoc = await getDb().runTransaction(async (tx) => {
+            const snap = await tx.get(settingsRef);
+            const prevDismissed = (snap.get("advisoriesDismissed") || {}) as { noHto?: boolean; lowValue?: boolean };
+            const doc: FunnelSettingsDoc = {
+                accountId: req.accountId,
+                funnelType: inputs.funnelType,
+                aov: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product" ? inputs.aov : null,
+                hasHto: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product" ? inputs.hasHto : false,
+                htoPrice: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product" ? inputs.htoPrice : 0,
+                htoConversionRate: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product" ? inputs.htoConversionRate : 0,
+                roasTarget: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product" ? inputs.roasTarget : 1.0,
+                offerPrice: inputs.funnelType === "free_webinar" || inputs.funnelType === "lead_magnet_call" ? inputs.offerPrice : null,
+                attendanceRate: inputs.funnelType === "free_webinar" ? inputs.attendanceRate : null,
+                buyRateFromAttendees: inputs.funnelType === "free_webinar" ? inputs.buyRateFromAttendees : null,
+                leadToCloseRate: inputs.funnelType === "lead_magnet_call" ? inputs.leadToCloseRate : null,
+                derived,
+                advisories,
+                advisoriesDismissed: {
+                    noHto: prevDismissed.noHto === true,
+                    lowValue: prevDismissed.lowValue === true,
+                },
+                lastReviewedAt: req.clientNowMs,
+                reviewDueAt: req.clientNowMs + REVIEW_CADENCE_MS,
+                createdAt: snap.get("createdAt") || req.clientNowMs,
+                updatedAt: req.clientNowMs,
+                schemaVersion: 1,
+            };
+            tx.set(settingsRef, doc, { merge: false });
+            return doc;
+        });
 
         // Build the optional warning object per contract.
         const warning = derived.paid?.capApplied

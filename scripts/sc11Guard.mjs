@@ -53,16 +53,21 @@ const SRC_DIR = join(ROOT, "src");
 function loadAllowlist() {
     const set = new Set();
     const file = join(ROOT, "scripts", ".sc11-allowlist");
+    // Normalize to forward slashes so the same allowlist works on Windows
+    // (where repo display uses `\`) and POSIX runners (where path.relative
+    // always returns `/`). Without this, the allowlist silently fails on
+    // CI runners and pre-existing violations re-fire.
+    const norm = (p) => p.replace(/\\/g, "/");
     if (existsSync(file)) {
         for (const line of readFileSync(file, "utf8").split("\n")) {
             const t = line.trim();
-            if (t && !t.startsWith("#")) set.add(t);
+            if (t && !t.startsWith("#")) set.add(norm(t));
         }
     }
     if (process.env.SC11_ALLOWLIST) {
         for (const p of process.env.SC11_ALLOWLIST.split(",")) {
             const t = p.trim();
-            if (t) set.add(t);
+            if (t) set.add(norm(t));
         }
     }
     return set;
@@ -128,56 +133,115 @@ function lineColFor(src, index) {
 
 function buildSourceZones(src) {
     const len = src.length;
-    // For each character, an integer bitmask: 1=COMMENT_LINE, 2=COMMENT_BLOCK, 4=ATTRIBUTE
+    // Per-character bitmask written into `mask`: 1=COMMENT_LINE, 2=COMMENT_BLOCK, 4=ATTRIBUTE
     const mask = new Uint8Array(len);
+    // Per-character string-bitmask (`stringMask`) — preserved from the
+    // previous design but unused by the matcher; kept for debug visibility.
+    const stringMask = new Uint8Array(len);
+    // State bits for the scanning loop. We separate string-tracking bits
+    // from JSX-tag bits so they never collide:
+    //   1=SINGLE_QUOTE, 2=DOUBLE_QUOTE, 4=BACKTICK (string tracking)
+    //   8=LINE_COMMENT, 16=BLOCK_COMMENT (comment tracking)
+    //   32=IN_JSX_TAG (attribute zone — disjoint from the above)
     let m = 0;
     let i = 0;
     while (i < len) {
         const ch = src[i];
         const next = src[i + 1];
-        if ((m & 4) === 0 && (m & 2) === 0 && ch === "/" && next === "/") {
-            m |= 1;
+        // ─── Inside an existing string literal — track only the matching
+        // closing quote, treating any `//`/`/*`/`<` as literal chars.
+        if (m & 1) {
+            stringMask[i] |= 1;
+            if (ch === "\\" && i + 1 < len) {
+                stringMask[i + 1] |= 1;
+                i += 2;
+                continue;
+            }
+            if (ch === "'") { m &= ~1; }
+            i++;
+            continue;
+        }
+        if (m & 2) {
+            stringMask[i] |= 2;
+            if (ch === "\\" && i + 1 < len) {
+                stringMask[i + 1] |= 2;
+                i += 2;
+                continue;
+            }
+            if (ch === "\"") { m &= ~2; }
+            i++;
+            continue;
+        }
+        if (m & 4) {
+            stringMask[i] |= 4;
+            if (ch === "\\" && i + 1 < len) {
+                stringMask[i + 1] |= 4;
+                i += 2;
+                continue;
+            }
+            if (ch === "`") { m &= ~4; i++; continue; }
+            if (ch === "$" && next === "{") {
+                stringMask[i] |= 4;
+                stringMask[i + 1] |= 4;
+                i += 2;
+                let depth = 1;
+                while (i < len && depth > 0) {
+                    const cc = src[i];
+                    if (cc === "{") depth++;
+                    else if (cc === "}") depth--;
+                    if (depth === 0) break;
+                    i++;
+                }
+                if (i < len) i++;
+                continue;
+            }
+            i++;
+            continue;
+        }
+        // ─── Outside any string — recognize comment markers.
+        if ((m & 16) === 0 && (m & 32) === 0 && ch === "/" && next === "/") {
+            m |= 8;
             i += 2;
-            // continue to EOL
             while (i < len && src[i] !== "\n") {
                 mask[i] |= 1;
                 i++;
             }
-            mask[i] |= 1; // mark newline too
+            mask[i] |= 1;
+            m &= ~8;
             continue;
         }
-        if ((m & 4) === 0 && ch === "/" && next === "*") {
-            const start = i;
-            m |= 2;
+        if ((m & 8) === 0 && (m & 32) === 0 && ch === "/" && next === "*") {
+            m |= 16;
             i += 2;
             while (i < len - 1 && !(src[i] === "*" && src[i + 1] === "/")) {
                 mask[i] |= 2;
                 i++;
             }
             if (i < len - 1) {
-                mask[i] |= 2;     // *
-                mask[i + 1] |= 2; // /
+                mask[i] |= 2;
+                mask[i + 1] |= 2;
                 i += 2;
             } else {
                 mask[i] |= 2;
                 i++;
             }
-            m &= ~2;
+            m &= ~16;
             continue;
         }
-        // Track JSX attribute zones.
-        if ((m & 4) === 0 && ch === "<" && (next === "/" || /[A-Za-z_]/.test(next || ""))) {
-            // Start of a tag. Walk until matching `>` or end-of-file,
-            // marking everything inside as ATTRIBUTE (4).
-            const tagStart = i;
-            m |= 4;
+        // ─── Outside any string — recognize string-literal openings.
+        if ((m & 32) === 0 && ch === "'") { m |= 1; stringMask[i] |= 1; i++; continue; }
+        if ((m & 32) === 0 && ch === "\"") { m |= 2; stringMask[i] |= 2; i++; continue; }
+        if ((m & 32) === 0 && ch === "`") { m |= 4; stringMask[i] |= 4; i++; continue; }
+        // Track JSX attribute zones — `<Tag`, `</Tag`, or fragment `<>`.
+        // Set bit 32 (IN_JSX_TAG), mark all attribute chars with mask bit 4,
+        // and reset the bit on the closing `>` so strings/comments after the
+        // tag are tracked normally.
+        if (ch === "<" && (next === "/" || next === ">" || /[A-Za-z_]/.test(next || ""))) {
+            m |= 32;
             i++;
-            // Skip until `>`, but be careful with quoted attribute values
-            // which may legitimately contain `{` and other JSX expressions.
             while (i < len && src[i] !== ">") {
                 const c = src[i];
                 if (c === "\"" || c === "'") {
-                    // skip the entire quoted value
                     const q = c;
                     mask[i] |= 4;
                     i++;
@@ -192,8 +256,6 @@ function buildSourceZones(src) {
                     continue;
                 }
                 if (c === "{") {
-                    // Brace expression — content inside is JS code and NOT
-                    // a JSX attribute. Skip the matching `}`.
                     mask[i] |= 4;
                     i++;
                     let depth = 1;
@@ -210,31 +272,26 @@ function buildSourceZones(src) {
                 i++;
             }
             if (i < len) {
-                // The `>` itself is part of the tag zone.
                 mask[i] |= 4;
                 i++;
             }
-            m &= ~4;
+            m &= ~32;
             continue;
         }
         i++;
     }
-    // For each line number, compute the union mask of any non-user-facing
-    // zone touched by that line. lineMask[n] is the OR of all mask[i] for
-    // any i on line n.
-    const lineMask = [];
-    let line = 1;
-    for (let k = 0; k < len; k++) {
-        if (!lineMask[line]) lineMask[line] = 0;
-        lineMask[line] |= mask[k];
-        if (src[k] === "\n") line++;
-    }
-    return { mask, lineMask };
+    return { mask, stringMask };
 }
 
-function isInNonUserFacingZone(lineMask, line) {
-    const v = lineMask[line] || 0;
-    return (v & 1) !== 0 || (v & 2) !== 0 || (v & 4) !== 0;
+function isInNonUserFacingZone(mask, absIdx, matchLen) {
+    // Per-character check over the exact match span. Reject only if
+    // ANY matched character lives inside a comment or JSX-attribute zone
+    // — a single exempt span no longer suppresses a whole source line.
+    for (let k = 0; k < matchLen; k++) {
+        const v = mask[absIdx + k] || 0;
+        if ((v & 1) !== 0 || (v & 2) !== 0 || (v & 4) !== 0) return true;
+    }
+    return false;
 }
 
 function extractStringLiterals(src) {
@@ -256,51 +313,109 @@ function extractJsxTextNodes(src) {
     const out = [];
     let i = 0;
     const len = src.length;
-    let inJsx = false;
     let jsxTextStart = -1;
-    while (i < len) {
-        const ch = src[i];
-        const next = src[i + 1];
-        if (!inJsx) {
-            if (ch === "<" && (next === "/" || /[A-Za-z]/.test(next || ""))) {
-                inJsx = true;
-                jsxTextStart = -1;
-            }
-            i++;
-            continue;
+
+    // Maximum length (chars) of a JSX text-node span we'll emit. Real
+    // user-facing JSX text is rarely longer than this; spans beyond it
+    // almost always contain TypeScript code that's not user-visible
+    // (e.g. a function body between two unrelated tags). Without this
+    // cap the heuristic can capture multi-KB code chunks as "text".
+    const MAX_JSX_TEXT_SPAN = 200;
+    // Common code keywords that would not appear in user-facing JSX
+    // text. If the cleaned text contains any of these, the span is
+    // TypeScript code (an accidental capture between JSX regions),
+    // not a JSX text node — discard it.
+    const CODE_KEYWORDS = /(?:const |let |var |function |return |=>|;\s*$|^\s*;|\.map\(|\.filter\(|\.join\()/m;
+
+    // Strip every `{ ... }` brace expression from a JSX text node, leaving
+    // the surrounding user-facing copy intact. Returns the cleaned text and
+    // the original `index` so callers can still locate the source char.
+    function emitJsxTextNode(start, end) {
+        const spanLen = end - start;
+        if (spanLen > MAX_JSX_TEXT_SPAN) return; // discard oversized spans
+        const raw = src.slice(start, end);
+        // Iteratively strip `{...}` braces — handle up to 2 levels of
+        // nesting so `{a ? "x" : "y"}` survives and `{name}` is dropped.
+        let cleaned = raw;
+        for (let pass = 0; pass < 2; pass++) {
+            cleaned = cleaned.replace(/\{[^{}]*\}/g, "");
         }
-        if (ch === ">") {
-            inJsx = false;
-            if (jsxTextStart !== -1) {
-                const text = src.slice(jsxTextStart, i).trim();
-                if (text.length > 0 && !text.startsWith("{") && !text.endsWith("}")) {
-                    out.push({ index: jsxTextStart, text });
-                }
-                jsxTextStart = -1;
+        cleaned = cleaned.trim();
+        if (cleaned.length === 0) return;
+        if (CODE_KEYWORDS.test(cleaned)) return; // discard code-like content
+        out.push({ index: start, text: cleaned });
+    }
+
+    // Recognize any opening JSX token: <Tag, </Tag, or fragment <>.
+    // Heuristic: a true JSX tag is `<Identifier>` where Identifier is
+    // followed by whitespace, `>`, `/`, or end-of-file. A TypeScript
+    // generic like `<T,` or `<T>(` is NOT a JSX opening — without this
+    // distinction, the walker would treat every generic parameter as a
+    // JSX tag and capture all the TS code between two generics as one
+    // giant JSX text node. We walk the full identifier (letters/digits/
+    // underscores/dots — the latter for `Foo.Bar` member-component names)
+    // before checking the terminator.
+    function isJsxOpenAt(idx) {
+        if (src[idx] !== "<") return false;
+        const nx = src[idx + 1];
+        if (nx === "/" || nx === ">") return true;
+        if (!/[A-Za-z_]/.test(nx || "")) return false;
+        let k = idx + 2;
+        while (k < len && /[A-Za-z0-9_.]/.test(src[k] || "")) k++;
+        const after = src[k];
+        return after === undefined
+            || after === " "
+            || after === "\t"
+            || after === "\n"
+            || after === "\r"
+            || after === ">"
+            || after === "/";
+    }
+
+    while (i < len) {
+        if (isJsxOpenAt(i)) {
+            // Close any pending text-node span at the `<` boundary.
+            if (jsxTextStart !== -1 && jsxTextStart < i) {
+                emitJsxTextNode(jsxTextStart, i);
             }
+            jsxTextStart = -1;
+            // Walk past the tag's opening `<...>` so we don't capture
+            // attribute strings as text.
             i++;
-            if (i < len && src[i] !== "<") {
+            while (i < len && src[i] !== ">") {
+                const c = src[i];
+                if (c === "\"" || c === "'") {
+                    const q = c;
+                    i++;
+                    while (i < len && src[i] !== q) i++;
+                    if (i < len) i++;
+                    continue;
+                }
+                if (c === "{") {
+                    let bd = 1;
+                    i++;
+                    while (i < len && bd > 0) {
+                        const cc = src[i];
+                        if (cc === "{") bd++;
+                        else if (cc === "}") bd--;
+                        i++;
+                    }
+                    continue;
+                }
+                i++;
+            }
+            if (i < len) i++; // consume `>`
+            // After the tag's closing `>`, the next non-`<` char starts
+            // a new text-node span.
+            if (i < len && !isJsxOpenAt(i)) {
                 jsxTextStart = i;
             }
-            continue;
-        }
-        if (ch === "<") {
-            if (jsxTextStart !== -1) {
-                const text = src.slice(jsxTextStart, i).trim();
-                if (text.length > 0 && !text.startsWith("{") && !text.endsWith("}")) {
-                    out.push({ index: jsxTextStart, text });
-                }
-                jsxTextStart = -1;
-            }
-            inJsx = true;
-            i++;
             continue;
         }
         i++;
     }
     if (jsxTextStart !== -1 && jsxTextStart < len) {
-        const text = src.slice(jsxTextStart).trim();
-        if (text.length > 0) out.push({ index: jsxTextStart, text });
+        emitJsxTextNode(jsxTextStart, len);
     }
     return out;
 }
@@ -321,7 +436,7 @@ function main() {
     const hits = [];
 
     for (const file of files) {
-        const rel = relative(ROOT, file);
+        const rel = relative(ROOT, file).replace(/\\/g, "/");
         if (ALLOWLIST.has(rel)) continue;
         let src;
         try { src = readFileSync(file, "utf8"); }
@@ -334,8 +449,9 @@ function main() {
                 let m;
                 while ((m = p.re.exec(s.text)) !== null) {
                     const absIdx = s.index + m.index;
+                    const matchLen = m[0].length;
+                    if (isInNonUserFacingZone(zones.mask, absIdx, matchLen)) continue;
                     const { line, col } = lineColFor(src, absIdx);
-                    if (isInNonUserFacingZone(zones.lineMask, line)) continue;
                     const lineStart = src.lastIndexOf("\n", absIdx - 1) + 1;
                     const lineEndRaw = src.indexOf("\n", absIdx);
                     const lineEnd = lineEndRaw === -1 ? src.length : lineEndRaw;

@@ -83,7 +83,9 @@ export function classifyGeoTierFromList(countries: ReadonlyArray<string> | null 
  * Checks, in order:
  *   1. `targeting.geo_locations.countries[0].code` then `.name`
  *   2. `targeting.geo_locations.regions[0].name`
- *   3. `targeting.geo_locations.cities[0].name` then `.country`
+ *   3. `targeting.geo_locations.cities[0].country` then `.name`
+ *      (country wins — a city name like "Dubai" is not a country and
+ *       would mis-tier as the tier3 fall-through)
  * Returns null if nothing readable is present.
  */
 export function extractCountryFromTargeting(targeting: unknown): string | null {
@@ -110,11 +112,14 @@ export function extractCountryFromTargeting(targeting: unknown): string | null {
     if (geo && Array.isArray(geo.cities) && geo.cities.length > 0) {
         const first = geo.cities[0] as Record<string, unknown> | string;
         if (typeof first === "string") return first;
-        if (first && typeof first === "object" && "name" in first && typeof first.name === "string") {
-            return first.name;
-        }
+        // Country is the authoritative signal for tiering — `name` (e.g.
+        // "Dubai") is not a country and would misclassify Gulf cities as
+        // tier3 fall-through. Check `country` before `name`.
         if (first && typeof first === "object" && "country" in first && typeof first.country === "string") {
             return first.country;
+        }
+        if (first && typeof first === "object" && "name" in first && typeof first.name === "string") {
+            return first.name;
         }
     }
     return null;
