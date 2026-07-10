@@ -134,7 +134,7 @@ The Phase 14 funnelsettings.contract test (17 tests, including 4 newly added by 
 
 ✅ **PASS.**
 
-```
+```text
 sc11-guard: PASS — 74 files scanned, 0 forbidden terms.
   (10 file(s) skipped via scripts/.sc11-allowlist)
 ```
@@ -156,7 +156,7 @@ CodeRabbit run `ed52e7e3-f24e-4c79-a348-d0c7b1192931` posted **4 actionable comm
 | Nitpick | `src/App.tsx:3095-3112` | "Redundant second `getConnection()` call after refresh — have `refreshMetaConnection` return the connection and reuse it." | Refactored `refreshMetaConnection` to return `Promise<MetaConnection \| null>` (the refreshed connection). `handleConnectMeta` now consumes the returned connection directly instead of issuing a second `getConnection()` round-trip. |
 | Nitpick | `src/App.tsx:3112` | "`showToast` in `useCallback` deps defeats the memoization — wrap `showToast` in `useCallback`." | Wrapped `showToast` in `useCallback(..., [])` since it only depends on `setToast` (which is a stable setter). |
 | Spec doc | `batch-01-audit-fixes.md:224-227` | "Fenced code block lacks a language identifier (MD040)." | Changed the opening fence from ```` ``` ```` to ```` ```text ````. |
-| Spec doc | `ui-investigation.md:350-354` | "Escape the raw pipe operators in the Markdown table's Issue 3 expression." | Changed `(a.workspaceId || defaultWsId)` to `(a.workspaceId \|\| defaultWsId)` inside inline code so the table's five-column structure is preserved. |
+| Spec doc | `ui-investigation.md:350-354` | "Escape the raw pipe operators in the Markdown table's Issue 3 expression." | Changed the Issue 3 expression to use HTML-escaped pipe characters inside inline code so the table remains valid. |
 
 ### 7.2 Round 2 — fix commit (`1d84dc0`)
 
