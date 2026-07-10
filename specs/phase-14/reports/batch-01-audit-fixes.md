@@ -221,7 +221,7 @@ No known regressions. The `FirebaseAppError: app/no-app` warning printed by `cop
 
 ✅ **PASS.**
 
-```
+```text
 sc11-guard: PASS — 74 files scanned, 0 forbidden terms.
   (10 file(s) skipped via scripts/.sc11-allowlist)
 ```

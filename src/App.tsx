@@ -1337,8 +1337,10 @@ interface MenuItemsProps {
   onDisconnectMeta: () => void;
   onSyncMeta: () => void;
   onOpenFunnelSettings: () => void;
-  /** True when the user has connected Meta and the active workspace has a
-      linked ad account — only then do we expose the Funnel Settings entry. */
+  /** True when Meta is connected AND the active workspace has a linked
+      Meta ad account. Both are required by FunnelSettingsForm (the form
+      is per-workspace-account, not per-user). Only then do we expose
+      the Funnel Settings entry. */
   funnelSettingsAvailable: boolean;
 }
 
@@ -1348,7 +1350,7 @@ interface MenuItemsProps {
  * site) keeps labels, icons, and conditional entries in lockstep.
  */
 const MenuItems: React.FC<MenuItemsProps> = (props) => {
-  const { t, isDarkMode, lang, milestones, phase, onCloseMenu, metaConnection, metaSyncing, funnelSettingsAvailable } = props;
+  const { t, isDarkMode, lang, milestones, phase, metaConnection, metaSyncing, funnelSettingsAvailable } = props;
   const items: Array<{ key: string; el: React.ReactNode }> = [
     { key: 'new', el: <MenuItem key="new" icon="fa-plus" label={t('history.newProject')} onClick={props.onNewProject} /> },
     { key: 'bookmarks', el: <MenuItem key="bookmarks" icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={props.onSavedRenders} /> },
@@ -2078,7 +2080,10 @@ const App: React.FC = () => {
   const [highestUnlockedPhase, setHighestUnlockedPhase] = useState<number>(0);
 
   const [toast, setToast] = useState<Toast | null>(null);
-  const showToast = (message: string, type: Toast['type'] = 'info') => setToast({ message, type });
+  const showToast = useCallback(
+    (message: string, type: Toast['type'] = 'info') => setToast({ message, type }),
+    [],
+  );
 
 
   const [userCredits, setUserCredits] = useState<number>(0);
@@ -3081,12 +3086,16 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
 
   // Phase 14 batch 01 — UI wiring. Refresh helper used after the OAuth
   // popup closes (and on demand) so the menu reflects the latest state.
-  const refreshMetaConnection = useCallback(async () => {
+  // Returns the fetched connection so callers can use the already-loaded
+  // value instead of issuing a second `getConnection` round-trip.
+  const refreshMetaConnection = useCallback(async (): Promise<MetaConnection | null> => {
     try {
       const conn = await metaService.getConnection();
       setMetaConnection(conn);
+      return conn;
     } catch {
       // Swallow — connection state will simply stay stale until next refresh.
+      return null;
     }
   }, []);
 
@@ -3097,8 +3106,7 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     showToast(lang === 'ar' ? 'جاري الربط بحساب ميتا…' : 'Connecting to Meta Ads…', 'info');
     const connected = await metaService.startOAuthFlow(user.uid);
     if (connected) {
-      await refreshMetaConnection();
-      const conn = await metaService.getConnection().catch(() => null);
+      const conn = await refreshMetaConnection();
       const acctCount = conn?.adAccounts?.length ?? 0;
       showToast(
         lang === 'ar'
@@ -3147,6 +3155,13 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     }
   }, [canUseWorkspaces, activeWorkspaceId, lang, showToast, refreshMetaConnection]);
 
+  // Phase 14 batch 01 — UI wiring. The active workspace (non-deleted),
+  // or null when the user is on a non-Scale plan / no workspace is set.
+  const activeWorkspace = useMemo<Workspace | null>(
+    () => workspaces.find(w => w.id === activeWorkspaceId && !w.deletedAt) ?? null,
+    [workspaces, activeWorkspaceId],
+  );
+
   // Phase 14 batch 01 — UI wiring. The active workspace's Meta ad-account
   // id. Used as the `accountId` prop for the FunnelSettingsForm and to
   // drive the first-run gate.
@@ -3158,12 +3173,18 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     return ws?.metaAdAccountId ?? metaConnection?.selectedAccountId ?? metaConnection?.adAccounts?.[0]?.id ?? null;
   }, [canUseWorkspaces, workspaces, activeWorkspaceId, metaConnection]);
 
-  // Phase 14 batch 01 — UI wiring. The active workspace (non-deleted),
-  // or null when the user is on a non-Scale plan / no workspace is set.
-  const activeWorkspace = useMemo<Workspace | null>(
-    () => workspaces.find(w => w.id === activeWorkspaceId && !w.deletedAt) ?? null,
-    [workspaces, activeWorkspaceId],
-  );
+  // Phase 14 batch 01 — UI wiring. FunnelSettingsForm requires both a
+  // workspace and a Meta ad account. On the non-workspace plans there is
+  // no per-workspace link — falling back to "Meta connected" is the
+  // right gate there. On workspace plans, require the active workspace
+  // to have its own `metaAdAccountId` set; otherwise the form would
+  // silently save against the global account and bypass FR-026's
+  // 1:1-workspace-to-account contract.
+  const funnelSettingsAvailable = useMemo<boolean>(() => {
+    if (!metaConnection?.connected) return false;
+    if (!canUseWorkspaces) return true;
+    return Boolean(activeWorkspace?.metaAdAccountId);
+  }, [metaConnection?.connected, canUseWorkspaces, activeWorkspace?.metaAdAccountId]);
 
   // Phase 14 batch 01 — UI wiring. Probe the active workspace-account's
   // funnel-settings doc whenever the workspace / account changes. The
@@ -10048,7 +10069,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         onDisconnectMeta={() => { setShowMenuDrawer(false); void handleDisconnectMeta(); }}
         onSyncMeta={() => { setShowMenuDrawer(false); void handleSyncMeta(); }}
         onOpenFunnelSettings={() => { setShowMenuDrawer(false); openFunnelSettings(false); }}
-        funnelSettingsAvailable={Boolean(metaConnection?.connected && activeMetaAccountId)}
+                funnelSettingsAvailable={funnelSettingsAvailable}
       />
 
       </div>
@@ -10163,7 +10184,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 onDisconnectMeta={() => { setShowMenuDrawer(false); void handleDisconnectMeta(); }}
                 onSyncMeta={() => { setShowMenuDrawer(false); void handleSyncMeta(); }}
                 onOpenFunnelSettings={() => { setShowMenuDrawer(false); openFunnelSettings(false); }}
-                funnelSettingsAvailable={Boolean(metaConnection?.connected && activeMetaAccountId)}
+        funnelSettingsAvailable={funnelSettingsAvailable}
               />
             </div>
           </aside>
