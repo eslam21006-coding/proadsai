@@ -144,6 +144,13 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'topbar.menu_light': 'Switch to light mode',
         'topbar.menu_language': 'Switch language',
         'topbar.menu_expand': 'Expand menu',
+        'topbar.menu_meta_connect': 'Connect Meta Ads',
+        'topbar.menu_meta_connected': 'Meta Ads Connected',
+        'topbar.menu_meta_disconnect': 'Disconnect',
+        'topbar.menu_meta_sync': 'Sync Now',
+        'topbar.menu_funnel_settings': 'Funnel Settings',
+        'topbar.funnel_first_run_title': 'Set up your funnel',
+        'topbar.funnel_first_run_body': 'Complete your funnel settings to start analyzing your ads.',
 
         // ── InputForm ──
         'form.progress': 'Brief progress',
@@ -940,6 +947,13 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'topbar.menu_light': 'التبديل للوضع الفاتح',
         'topbar.menu_language': 'تبديل اللغة',
         'topbar.menu_expand': 'توسيع القائمة',
+        'topbar.menu_meta_connect': 'ربط حساب ميتا',
+        'topbar.menu_meta_connected': 'حساب ميتا مربوط',
+        'topbar.menu_meta_disconnect': 'فك الربط',
+        'topbar.menu_meta_sync': 'مزامنة الآن',
+        'topbar.menu_funnel_settings': 'إعدادات مسار المبيعات',
+        'topbar.funnel_first_run_title': 'أكمل إعداد مسار المبيعات',
+        'topbar.funnel_first_run_body': 'أكمل إعدادات مسار المبيعات لبدء تحليل إعلاناتك.',
 
         // ── InputForm ──
         'form.progress': 'تقدم البيانات',

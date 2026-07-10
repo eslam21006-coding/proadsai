@@ -68,6 +68,7 @@ const BillingPage = React.lazy(() => import('./pages/Billing'));
 // re-imported here if the preview is reintroduced.
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import WorkspaceSettingsModal from './components/WorkspaceSettingsModal';
+import FunnelSettingsForm from './components/FunnelSettingsForm';
 import { ForgotPasswordDialog } from './components/auth/ForgotPasswordDialog';
 import { VerifyEmailScreen } from './components/auth/VerifyEmailScreen';
 import { MandatoryBillingModal } from './components/billing/MandatoryBillingModal';
@@ -1102,6 +1103,14 @@ interface MenuSidebarProps {
   onManageBilling: () => void;
   onUpgrade: () => void;
   onLogout: () => void;
+  // Phase 14 batch 01 — UI wiring. Forwarded into MenuItems.
+  metaConnection: MetaConnection | null;
+  metaSyncing: boolean;
+  onConnectMeta: () => void;
+  onDisconnectMeta: () => void;
+  onSyncMeta: () => void;
+  onOpenFunnelSettings: () => void;
+  funnelSettingsAvailable: boolean;
 }
 
 const MenuSidebar: React.FC<MenuSidebarProps> = ({
@@ -1124,6 +1133,13 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
   onManageBilling,
   onUpgrade,
   onLogout,
+  metaConnection,
+  metaSyncing,
+  onConnectMeta,
+  onDisconnectMeta,
+  onSyncMeta,
+  onOpenFunnelSettings,
+  funnelSettingsAvailable,
 }) => {
   const { t } = useT();
 
@@ -1175,6 +1191,13 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
               onUpgrade={onUpgrade}
               onLogout={onLogout}
               onCloseMenu={onCollapse}
+              metaConnection={metaConnection}
+              metaSyncing={metaSyncing}
+              onConnectMeta={onConnectMeta}
+              onDisconnectMeta={onDisconnectMeta}
+              onSyncMeta={onSyncMeta}
+              onOpenFunnelSettings={onOpenFunnelSettings}
+              funnelSettingsAvailable={funnelSettingsAvailable}
             />
           </div>
         </div>
@@ -1307,6 +1330,16 @@ interface MenuItemsProps {
   onLogout: () => void;
   /** Closes the menu (either desktop sidebar or mobile overlay). */
   onCloseMenu: () => void;
+  // Phase 14 batch 01 — UI wiring. Meta connection + Funnel Settings entries.
+  metaConnection: MetaConnection | null;
+  metaSyncing: boolean;
+  onConnectMeta: () => void;
+  onDisconnectMeta: () => void;
+  onSyncMeta: () => void;
+  onOpenFunnelSettings: () => void;
+  /** True when the user has connected Meta and the active workspace has a
+      linked ad account — only then do we expose the Funnel Settings entry. */
+  funnelSettingsAvailable: boolean;
 }
 
 /**
@@ -1315,11 +1348,33 @@ interface MenuItemsProps {
  * site) keeps labels, icons, and conditional entries in lockstep.
  */
 const MenuItems: React.FC<MenuItemsProps> = (props) => {
-  const { t, isDarkMode, lang, milestones, phase, onCloseMenu } = props;
+  const { t, isDarkMode, lang, milestones, phase, onCloseMenu, metaConnection, metaSyncing, funnelSettingsAvailable } = props;
   const items: Array<{ key: string; el: React.ReactNode }> = [
     { key: 'new', el: <MenuItem key="new" icon="fa-plus" label={t('history.newProject')} onClick={props.onNewProject} /> },
     { key: 'bookmarks', el: <MenuItem key="bookmarks" icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={props.onSavedRenders} /> },
     { key: 'settings', el: <MenuItem key="settings" icon="fa-gear" label={t('topbar.menu_settings')} onClick={props.onSettings} /> },
+    // Phase 14 batch 01 — UI wiring. Meta connection entry. The label flips
+    // between "Connect Meta Ads" (no connection) and "Meta Ads Connected"
+    // (already connected) per the spec. The handler also closes the menu
+    // drawer so the OAuth popup isn't obscured.
+    {
+      key: 'meta',
+      el: (
+        <MenuItem
+          key="meta"
+          icon="fa-brands fa-meta"
+          label={metaConnection?.connected ? t('topbar.menu_meta_connected') : t('topbar.menu_meta_connect')}
+          onClick={metaConnection?.connected ? props.onSyncMeta : props.onConnectMeta}
+        />
+      ),
+    },
+    // Phase 14 batch 01 — UI wiring. Funnel Settings entry. Only visible
+    // when the user has connected Meta and the active workspace has a
+    // linked ad account (the form requires both).
+    ...(funnelSettingsAvailable ? [{
+      key: 'funnel',
+      el: <MenuItem key="funnel" icon="fa-sliders" label={t('topbar.menu_funnel_settings')} onClick={props.onOpenFunnelSettings} />,
+    }] : []),
     { key: 'divider1', el: <div key="divider1" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> },
     { key: 'theme', el: <MenuItem key="theme" icon={isDarkMode ? 'fa-sun' : 'fa-moon'} label={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')} onClick={props.onToggleTheme} /> },
     { key: 'lang', el: <MenuItem key="lang" icon="fa-language" label={`${t('topbar.menu_language')} (${lang === 'ar' ? 'EN' : 'AR'})`} onClick={props.onToggleLanguage} /> },
@@ -1331,6 +1386,13 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
     items.push({ key: 'tour', el: <MenuItem key="tour" icon="fa-circle-question" label={t('topbar.menu_tour')} onClick={props.onStartTour} /> });
   }
   items.push({ key: 'divider2', el: <div key="divider2" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> });
+  // Phase 14 batch 01 — UI wiring. Disconnect entry appears beneath the
+  // Meta label once a connection is established. Sync is offered as a
+  // sibling action so the user can refresh data without leaving the menu.
+  if (metaConnection?.connected) {
+    items.push({ key: 'meta-sync', el: <MenuItem key="meta-sync" icon="fa-arrows-rotate" label={metaSyncing ? '…' : t('topbar.menu_meta_sync')} onClick={props.onSyncMeta} /> });
+    items.push({ key: 'meta-disconnect', el: <MenuItem key="meta-disconnect" icon="fa-link-slash" label={t('topbar.menu_meta_disconnect')} onClick={props.onDisconnectMeta} className="text-red-500 hover:text-red-600" /> });
+  }
   items.push({ key: 'billing', el: <MenuItem key="billing" icon="fa-credit-card" label={t('header.manage_billing')} onClick={props.onManageBilling} /> });
   items.push({ key: 'upgrade', el: <MenuItem key="upgrade" icon="fa-arrow-up" label={t('header.upgrade')} onClick={props.onUpgrade} /> });
   items.push({ key: 'divider3', el: <div key="divider3" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> });
@@ -2995,6 +3057,15 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   const [metaConnection, setMetaConnection] = useState<MetaConnection | null>(null);
   const [metaSyncing, setMetaSyncing] = useState(false);
   const [metaPushing, setMetaPushing] = useState(false);
+  // Phase 14 batch 01 — UI wiring. Modal that mounts the FunnelSettingsForm
+  // when the user opens it from the menu (manual edit) or as a first-run gate
+  // (auto-trigger when Meta is connected but no settings/current doc exists).
+  const [showFunnelSettingsModal, setShowFunnelSettingsModal] = useState(false);
+  const [funnelSettingsFirstRun, setFunnelSettingsFirstRun] = useState(false);
+  // Mirrors whether getFunnelSettings returned a doc yet for the active
+  // workspace-account. Drives the first-run auto-gate (no settings → open
+  // the form as a blocking first-run screen).
+  const [funnelSettingsHasDoc, setFunnelSettingsHasDoc] = useState<boolean | null>(null);
   // ─── MULTI-SIZE SELECTION (Step 3 → Step 4) ─────────────────────
   const [selectedSizes, setSelectedSizes] = useState<Set<AspectRatio>>(new Set(['1:1'] as AspectRatio[]));
   const [singleSelectedConcepts, setSingleSelectedConcepts] = useState<Set<number>>(new Set());
@@ -3007,6 +3078,151 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     if (!user) return;
     metaService.getConnection().then(conn => setMetaConnection(conn)).catch(() => { });
   }, [user]);
+
+  // Phase 14 batch 01 — UI wiring. Refresh helper used after the OAuth
+  // popup closes (and on demand) so the menu reflects the latest state.
+  const refreshMetaConnection = useCallback(async () => {
+    try {
+      const conn = await metaService.getConnection();
+      setMetaConnection(conn);
+    } catch {
+      // Swallow — connection state will simply stay stale until next refresh.
+    }
+  }, []);
+
+  // Phase 14 batch 01 — UI wiring. Opens the Meta OAuth popup, then
+  // refreshes the connection state on success.
+  const handleConnectMeta = useCallback(async () => {
+    if (!user) return;
+    showToast(lang === 'ar' ? 'جاري الربط بحساب ميتا…' : 'Connecting to Meta Ads…', 'info');
+    const connected = await metaService.startOAuthFlow(user.uid);
+    if (connected) {
+      await refreshMetaConnection();
+      const conn = await metaService.getConnection().catch(() => null);
+      const acctCount = conn?.adAccounts?.length ?? 0;
+      showToast(
+        lang === 'ar'
+          ? `تم ربط حساب ميتا! (${acctCount} حساب إعلانات متاح)`
+          : `Meta Ads connected! (${acctCount} ad account(s) found)`,
+        'success',
+      );
+    } else {
+      showToast(lang === 'ar' ? 'تعذّر إكمال الربط' : 'Could not complete the connection', 'error');
+    }
+  }, [user, lang, refreshMetaConnection, showToast]);
+
+  // Phase 14 batch 01 — UI wiring. Disconnects the current Meta session and
+  // clears local state. The account-level data (perf, baselines, etc.) is
+  // retained server-side per the lifecycle contract.
+  const handleDisconnectMeta = useCallback(async () => {
+    if (!window.confirm(lang === 'ar'
+      ? 'هل تريد فك الربط مع ميتا؟ سيتم حذف بيانات الاتصال فقط.'
+      : 'Disconnect Meta Ads? This removes the connection only.')) return;
+    try {
+      await metaService.disconnect();
+      setMetaConnection({ connected: false, adAccounts: [], selectedAccountId: null, connectedAt: null, lastSyncAt: null, status: '', tokenExpiring: false });
+      showToast(lang === 'ar' ? 'تم فك الربط' : 'Disconnected', 'info');
+    } catch {
+      showToast(lang === 'ar' ? 'تعذّر فك الربط' : 'Could not disconnect', 'error');
+    }
+  }, [lang, showToast]);
+
+  // Phase 14 batch 01 — UI wiring. Triggers a Meta performance sync for the
+  // currently active workspace.
+  const handleSyncMeta = useCallback(async () => {
+    setMetaSyncing(true);
+    showToast(lang === 'ar' ? 'جاري مزامنة الإعلانات…' : 'Syncing ad performance…', 'info');
+    try {
+      const result = await metaService.syncPerformance(canUseWorkspaces ? activeWorkspaceId : null);
+      if (result.success) {
+        showToast(lang === 'ar' ? `تمت مزامنة ${result.adsSynced} إعلان` : `Synced ${result.adsSynced} ads`, 'success');
+        await refreshMetaConnection();
+      } else {
+        showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
+      }
+    } catch {
+      showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
+    } finally {
+      setMetaSyncing(false);
+    }
+  }, [canUseWorkspaces, activeWorkspaceId, lang, showToast, refreshMetaConnection]);
+
+  // Phase 14 batch 01 — UI wiring. The active workspace's Meta ad-account
+  // id. Used as the `accountId` prop for the FunnelSettingsForm and to
+  // drive the first-run gate.
+  const activeMetaAccountId = useMemo<string | null>(() => {
+    if (!canUseWorkspaces) {
+      return metaConnection?.selectedAccountId ?? metaConnection?.adAccounts?.[0]?.id ?? null;
+    }
+    const ws = workspaces.find(w => w.id === activeWorkspaceId && !w.deletedAt);
+    return ws?.metaAdAccountId ?? metaConnection?.selectedAccountId ?? metaConnection?.adAccounts?.[0]?.id ?? null;
+  }, [canUseWorkspaces, workspaces, activeWorkspaceId, metaConnection]);
+
+  // Phase 14 batch 01 — UI wiring. The active workspace (non-deleted),
+  // or null when the user is on a non-Scale plan / no workspace is set.
+  const activeWorkspace = useMemo<Workspace | null>(
+    () => workspaces.find(w => w.id === activeWorkspaceId && !w.deletedAt) ?? null,
+    [workspaces, activeWorkspaceId],
+  );
+
+  // Phase 14 batch 01 — UI wiring. Probe the active workspace-account's
+  // funnel-settings doc whenever the workspace / account changes. The
+  // result drives the first-run auto-gate: if the user has connected
+  // Meta but hasn't filled in funnel settings yet, we open the form
+  // automatically as a blocking first-run screen.
+  useEffect(() => {
+    let cancelled = false;
+    async function probe() {
+      if (!metaConnection?.connected || !activeWorkspaceId || !activeMetaAccountId) {
+        if (!cancelled) setFunnelSettingsHasDoc(null);
+        return;
+      }
+      try {
+        const { httpsCallable } = await import('firebase/functions');
+        const { functions } = await import('./firebase');
+        const fn = httpsCallable(functions, 'getFunnelSettings');
+        const res = await fn({ workspaceId: activeWorkspaceId, accountId: activeMetaAccountId });
+        const data = res.data as { ok: true; settings: { id: string } | null; reviewDue: boolean };
+        if (cancelled) return;
+        setFunnelSettingsHasDoc(!!data?.settings);
+      } catch {
+        if (!cancelled) setFunnelSettingsHasDoc(null);
+      }
+    }
+    probe();
+    return () => { cancelled = true; };
+  }, [metaConnection?.connected, activeWorkspaceId, activeMetaAccountId]);
+
+  // Phase 14 batch 01 — UI wiring. Open the funnel-settings form. When
+  // `firstRun` is true, the form is non-dismissible until saved (per the
+  // spec §2.1: "the required Funnel Settings form appears before any
+  // performance data").
+  const openFunnelSettings = useCallback((firstRun: boolean) => {
+    setFunnelSettingsFirstRun(firstRun);
+    setShowFunnelSettingsModal(true);
+  }, []);
+
+  const closeFunnelSettings = useCallback(() => {
+    setShowFunnelSettingsModal(false);
+    setFunnelSettingsFirstRun(false);
+  }, []);
+
+  // Phase 14 batch 01 — UI wiring. First-run auto-gate. When the user has
+  // connected Meta, the active workspace has a linked ad account, and the
+  // probe resolved to "no settings/current doc yet", open the funnel form
+  // automatically as a blocking first-run screen. The modal is dismissed
+  // only on save (handled inside the render via funnelSettingsFirstRun).
+  useEffect(() => {
+    if (
+      metaConnection?.connected &&
+      activeWorkspaceId &&
+      activeMetaAccountId &&
+      funnelSettingsHasDoc === false &&
+      !showFunnelSettingsModal
+    ) {
+      openFunnelSettings(true);
+    }
+  }, [metaConnection?.connected, activeWorkspaceId, activeMetaAccountId, funnelSettingsHasDoc, showFunnelSettingsModal, openFunnelSettings]);
 
   // FIX 3: when the user switches to a DIFFERENT hook in single mode, drop stale concepts so
   // Step 3 can't show a previous session's blueprints — forcing a fresh regenerate for the new
@@ -9826,6 +10042,13 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         onManageBilling={() => { handleManageBilling(); setShowMenuDrawer(false); }}
         onUpgrade={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }}
         onLogout={() => { handleLogout(); }}
+        metaConnection={metaConnection}
+        metaSyncing={metaSyncing}
+        onConnectMeta={() => { setShowMenuDrawer(false); void handleConnectMeta(); }}
+        onDisconnectMeta={() => { setShowMenuDrawer(false); void handleDisconnectMeta(); }}
+        onSyncMeta={() => { setShowMenuDrawer(false); void handleSyncMeta(); }}
+        onOpenFunnelSettings={() => { setShowMenuDrawer(false); openFunnelSettings(false); }}
+        funnelSettingsAvailable={Boolean(metaConnection?.connected && activeMetaAccountId)}
       />
 
       </div>
@@ -9934,6 +10157,13 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 onUpgrade={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }}
                 onLogout={handleLogout}
                 onCloseMenu={() => setShowMenuDrawer(false)}
+                metaConnection={metaConnection}
+                metaSyncing={metaSyncing}
+                onConnectMeta={() => { setShowMenuDrawer(false); void handleConnectMeta(); }}
+                onDisconnectMeta={() => { setShowMenuDrawer(false); void handleDisconnectMeta(); }}
+                onSyncMeta={() => { setShowMenuDrawer(false); void handleSyncMeta(); }}
+                onOpenFunnelSettings={() => { setShowMenuDrawer(false); openFunnelSettings(false); }}
+                funnelSettingsAvailable={Boolean(metaConnection?.connected && activeMetaAccountId)}
               />
             </div>
           </aside>
@@ -11034,6 +11264,67 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   ))}
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ FUNNEL SETTINGS MODAL (Phase 14 Layer 1 / US1) ═══
+          Mounts the FunnelSettingsForm for the active workspace-account. The
+          modal is triggered either manually from the menu entry, or
+          automatically as a blocking first-run gate (when the workspace is
+          linked to a Meta ad account but the user has never saved funnel
+          settings yet). The form is fully self-contained — it loads its own
+          state, handles its own saving, and surfaces the dismissible
+          monthly-review prompt internally. */}
+      {showFunnelSettingsModal && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+          onClick={funnelSettingsFirstRun ? undefined : closeFunnelSettings}
+        >
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <div
+            className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-2xl w-full shadow-2xl max-h-[90vh] flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="bg-gradient-to-b from-indigo-900/20 to-transparent p-6 pb-4 border-b border-slate-800">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-black text-white">
+                    {t('topbar.menu_funnel_settings')}
+                  </h2>
+                  {funnelSettingsFirstRun && (
+                    <p className="mt-1 text-[10px] text-slate-400">
+                      <i className="fa-solid fa-circle-info text-indigo-400 mr-1" />
+                      {t('topbar.funnel_first_run_body')}
+                    </p>
+                  )}
+                </div>
+                {!funnelSettingsFirstRun && (
+                  <button
+                    type="button"
+                    onClick={closeFunnelSettings}
+                    aria-label={t('common.close')}
+                    className="text-slate-500 hover:text-white transition-all"
+                  >
+                    <i className="fa-solid fa-xmark text-lg" aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+              <FunnelSettingsForm
+                workspaceId={activeWorkspaceId}
+                accountId={activeMetaAccountId}
+                workspaceName={activeWorkspace?.name}
+                isDarkMode={isDarkMode}
+                onSaved={() => {
+                  // On save: drop the first-run flag and the form is free
+                  // to be dismissed on the next attempt.
+                  setFunnelSettingsHasDoc(true);
+                  if (funnelSettingsFirstRun) closeFunnelSettings();
+                }}
+              />
             </div>
           </div>
         </div>
