@@ -14,7 +14,7 @@
 // link) — keeping this component free of network/IO concerns.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import React, { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useT } from "../i18n";
 
 export interface MetaAccountPickerItem {
@@ -47,11 +47,26 @@ export default function MetaAccountPickerModal({
   const { t } = useT();
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  // Refs for the live values so the open-keyed effect can read them
+  // without re-binding every time the parent re-renders. Without this,
+  // the focus effect tears down on every `selecting`/`onClose` flip and
+  // restores focus behind the still-open overlay.
+  const selectingRef = useRef(selecting);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    selectingRef.current = selecting;
+  }, [selecting]);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   // Esc-to-close while idle + focus trap (Tab / Shift+Tab cycles within
-  // the dialog) + restore focus on close. Without the trap, focus would
-  // fall through to elements behind the dimmed backdrop, which is the
-  // standard a11y bug CodeRabbit flagged.
+  // the dialog) + restore focus on close. Depends ONLY on `open` so the
+  // trap survives `selecting`/`onClose` flips during the modal's lifetime.
+  // While selecting, every control is disabled — if Tab lands on an
+  // empty focusable set we redirect focus to the dialog itself, which is
+  // marked `tabIndex={-1}` on the JSX so it can receive focus but stays
+  // out of the normal tab order on the next round.
   useEffect(() => {
     if (!open) return;
 
@@ -76,25 +91,28 @@ export default function MetaAccountPickerModal({
 
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') {
-        if (!selecting) onClose();
+        if (!selectingRef.current) onCloseRef.current();
         return;
       }
       if (e.key !== 'Tab') return;
       const items = focusableElements();
-      if (items.length === 0) {
+      const active = document.activeElement as HTMLElement | null;
+      if (items.length === 0 || !dialog?.contains(active)) {
+        // Fallback: keep focus inside the dialog while it's open even if
+        // every interactive control is disabled during a save round-trip.
         e.preventDefault();
+        dialog?.focus();
         return;
       }
       const first = items[0];
       const last = items[items.length - 1];
-      const active = document.activeElement as HTMLElement | null;
       if (e.shiftKey) {
-        if (active === first || !dialog?.contains(active)) {
+        if (active === first) {
           e.preventDefault();
           last.focus();
         }
       } else {
-        if (active === last || !dialog?.contains(active)) {
+        if (active === last) {
           e.preventDefault();
           first.focus();
         }
@@ -108,7 +126,7 @@ export default function MetaAccountPickerModal({
       previouslyFocusedRef.current?.focus?.();
       previouslyFocusedRef.current = null;
     };
-  }, [open, selecting, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -123,7 +141,8 @@ export default function MetaAccountPickerModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="meta-account-picker-title"
-        className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden"
+        tabIndex={-1}
+        className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden focus:outline-none"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -181,7 +200,15 @@ export default function MetaAccountPickerModal({
                           onClose();
                           return;
                         }
-                        void onSelect(acc.id);
+                        // `onSelect` is allowed to return a Promise (the
+                        // parent awaits the workspace link + toast). Swallow
+                        // any rejection here so it doesn't bubble as an
+                        // unhandled async error in the console — the parent
+                        // already surfaces failures via its own toast/error
+                        // state machine.
+                        Promise.resolve(onSelect(acc.id)).catch((err) => {
+                          console.warn('Failed to select Meta account:', err);
+                        });
                       }}
                       className={`w-full text-start px-4 py-3 rounded-xl border transition-all flex items-center gap-3 disabled:opacity-60 disabled:cursor-not-allowed ${
                         isCurrent

@@ -60,7 +60,7 @@ The component is **IO-free** — it owns no network calls. The parent (`App.tsx`
 
 ### 2.3 `src/i18n.tsx` — new keys (EN + AR)
 
-```
+```text
 topbar.menu_meta_change_account  Change Account              تغيير الحساب
 meta.picker_title                Choose your ad account      اختر حساب الإعلانات
 meta.picker_subtitle             Select which Meta ad…       اختر حساب ميتا…
