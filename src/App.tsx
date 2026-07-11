@@ -68,8 +68,8 @@ const BillingPage = React.lazy(() => import('./pages/Billing'));
 // re-imported here if the preview is reintroduced.
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import WorkspaceSettingsModal from './components/WorkspaceSettingsModal';
-import FunnelSettingsForm from './components/FunnelSettingsForm';
-import MetaAccountPickerModal from './components/MetaAccountPickerModal';
+const FunnelSettingsForm = React.lazy(() => import('./components/FunnelSettingsForm'));
+const MetaAccountPickerModal = React.lazy(() => import('./components/MetaAccountPickerModal'));
 import { ForgotPasswordDialog } from './components/auth/ForgotPasswordDialog';
 import { VerifyEmailScreen } from './components/auth/VerifyEmailScreen';
 import { MandatoryBillingModal } from './components/billing/MandatoryBillingModal';
@@ -3160,7 +3160,7 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
         'success',
       );
       setShowMetaAccountPicker(false);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.warn('Meta account selection failed:', e);
       const failureMessage = lang === 'ar'
         ? 'تعذّر حفظ الحساب المختار. حاول مرة أخرى.'
@@ -3218,9 +3218,7 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
         setMetaAccountPickerError(null);
         setShowMetaAccountPicker(true);
         showToast(
-          lang === 'ar'
-            ? `تم ربط حساب ميتا! اختر حساب الإعلانات (${acctCount} متاح)`
-            : `Meta Ads connected! Pick an ad account (${acctCount} available).`,
+          t('meta.connect_pick_toast').replace('{count}', String(acctCount)),
           'success',
         );
       } else {
@@ -3234,7 +3232,7 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     } else {
       showToast(lang === 'ar' ? 'تعذّر إكمال الربط' : 'Could not complete the connection', 'error');
     }
-  }, [user, lang, refreshMetaConnection, showToast, handleMetaAccountSelect]);
+  }, [user, lang, t, refreshMetaConnection, showToast, handleMetaAccountSelect]);
 
   // Phase 14 batch 01 — UI wiring. Disconnects the current Meta session and
   // clears local state. The account-level data (perf, baselines, etc.) is
@@ -11423,6 +11421,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           state, handles its own saving, and surfaces the dismissible
           monthly-review prompt internally. */}
       {showFunnelSettingsModal && (
+        <Suspense fallback={null}>
         <div
           className="fixed inset-0 z-[200] flex items-center justify-center p-4"
           onClick={funnelSettingsFirstRun ? undefined : closeFunnelSettings}
@@ -11473,6 +11472,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
             </div>
           </div>
         </div>
+        </Suspense>
       )}
 
 
@@ -11496,15 +11496,17 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           workspace→account link required by FR-026; without it,
           FunnelSettingsForm cannot open and the daily sync cannot
           target the active workspace. */}
-      <MetaAccountPickerModal
-        open={showMetaAccountPicker}
-        accounts={(metaConnection?.adAccounts ?? []).map((a) => ({ id: a.id, name: a.name }))}
-        currentSelectedId={metaConnection?.selectedAccountId ?? null}
-        selecting={metaAccountPickerSelecting}
-        errorMessage={metaAccountPickerError}
-        onSelect={(accountId) => { void handleMetaAccountSelect(accountId); }}
-        onClose={closeMetaAccountPicker}
-      />
+      <Suspense fallback={null}>
+        <MetaAccountPickerModal
+          open={showMetaAccountPicker}
+          accounts={(metaConnection?.adAccounts ?? []).map((a) => ({ id: a.id, name: a.name }))}
+          currentSelectedId={metaConnection?.selectedAccountId ?? null}
+          selecting={metaAccountPickerSelecting}
+          errorMessage={metaAccountPickerError}
+          onSelect={(accountId) => { void handleMetaAccountSelect(accountId); }}
+          onClose={closeMetaAccountPicker}
+        />
+      </Suspense>
 
       {/* CHANGELOG / WHAT'S NEW MODAL */}
       {showChangelogModal && (
