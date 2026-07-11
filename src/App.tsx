@@ -3155,16 +3155,11 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       // menu (and any other UI watching metaConnection) reflects the
       // change without an extra round-trip.
       setMetaConnection(prev => prev ? { ...prev, selectedAccountId: accountId } : prev);
-      showToast(
-        lang === 'ar' ? 'تم اختيار حساب الإعلانات.' : 'Ad account selected.',
-        'success',
-      );
+      showToast(t('meta.account_selected_toast'), 'success');
       setShowMetaAccountPicker(false);
     } catch (e: unknown) {
       console.warn('Meta account selection failed:', e);
-      const failureMessage = lang === 'ar'
-        ? 'تعذّر حفظ الحساب المختار. حاول مرة أخرى.'
-        : 'Could not save the selected account. Please try again.';
+      const failureMessage = t('meta.account_save_failed');
       // In skipPicker mode (single-account auto-pick from the OAuth flow)
       // the modal is never visible, so the inline error would never be
       // shown — surface it as a toast instead so the user still gets
@@ -3177,7 +3172,7 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     } finally {
       if (!options.skipPicker) setMetaAccountPickerSelecting(false);
     }
-  }, [metaConnection, canUseWorkspaces, activeWorkspaceId, lang, showToast]);
+  }, [metaConnection, canUseWorkspaces, activeWorkspaceId, t, showToast]);
 
   // Phase 14 batch 01 — Account picker. Open on demand from the
   // "Change Account" menu entry. No-ops when Meta isn't connected or

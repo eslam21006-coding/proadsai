@@ -78,14 +78,14 @@ All Arabic is plain Fusha — no Egyptian dialect, no technical terms (no "مت�
 
 | Step | Command | Result |
 |---|---|---|
-| 1. Functions build | `cd functions && npm run build` | PASS (`tsc` + asset copy, no errors) |
+| 1. Functions build | `cd functions ; npm run build` | PASS (`tsc` + asset copy, no errors) |
 | 2. Frontend build | `npm run build` (root) | PASS (`tsc -b && vite build`, 118 modules transformed, 24.31s) |
 | 3. Tests | `npm test` (root → `vitest run`) | PASS (26/26 tests across 2 files, 10.69s) |
 | 4. SC-11 guard | `node scripts/sc11Guard.mjs` | PASS (75 files scanned, 0 forbidden terms) |
 | 5. New-file lint | `npx eslint src/components/MetaAccountPickerModal.tsx` | PASS (clean) |
-| 6. Commit + push | `git add -A; git commit -m "fix: restore Meta ad account picker after OAuth connection"; git push` | PASS (`ea8f008` on `phase-14-rag-meta`) |
+| 6. Commit + push | `git add -A ; git commit -m "fix: restore Meta ad account picker after OAuth connection" ; git push` | PASS (`ea8f008` on `phase-14-rag-meta`) |
 
-The 970 pre-existing lint errors throughout the codebase (mostly `no-explicit-any` on legacy Firestore payloads and a few `no-unused-vars` in shared helpers) are **unrelated to this change** — `npx eslint src/components/MetaAccountPickerModal.tsx` returns zero errors, and no new errors were introduced in the touched lines of `src/App.tsx` or `src/i18n.tsx`.
+The 970 pre-existing lint errors throughout the codebase (mostly `no-explicit-any` on legacy Firestore payloads and a few `no-unused-vars` in shared helpers) are **unrelated to this change** — `npx eslint src/components/MetaAccountPickerModal.tsx` returns zero errors. The same lint command was not run against `src/App.tsx` or `src/i18n.tsx`; a manual scan of the touched lines in those files confirmed no new errors introduced, but any remaining pre-existing errors in those files (caught by the broader `npm run lint` run earlier in Phase 14) are out of scope.
 
 ---
 

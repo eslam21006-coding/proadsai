@@ -266,7 +266,7 @@ export default function MetaAccountPickerModal({
             disabled={selecting}
             className="h-9 px-4 rounded-xl bg-white/[0.04] text-slate-300 text-[10px] font-bold hover:bg-white/[0.08] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {t('meta.picker_cancelling')}
+            {t('meta.picker_cancel')}
           </button>
         </div>
       </div>
