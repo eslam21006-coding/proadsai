@@ -69,6 +69,7 @@ const BillingPage = React.lazy(() => import('./pages/Billing'));
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import WorkspaceSettingsModal from './components/WorkspaceSettingsModal';
 import FunnelSettingsForm from './components/FunnelSettingsForm';
+import MetaAccountPickerModal from './components/MetaAccountPickerModal';
 import { ForgotPasswordDialog } from './components/auth/ForgotPasswordDialog';
 import { VerifyEmailScreen } from './components/auth/VerifyEmailScreen';
 import { MandatoryBillingModal } from './components/billing/MandatoryBillingModal';
@@ -1109,6 +1110,7 @@ interface MenuSidebarProps {
   onConnectMeta: () => void;
   onDisconnectMeta: () => void;
   onSyncMeta: () => void;
+  onChangeMetaAccount: () => void;
   onOpenFunnelSettings: () => void;
   funnelSettingsAvailable: boolean;
 }
@@ -1138,6 +1140,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
   onConnectMeta,
   onDisconnectMeta,
   onSyncMeta,
+  onChangeMetaAccount,
   onOpenFunnelSettings,
   funnelSettingsAvailable,
 }) => {
@@ -1196,6 +1199,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
               onConnectMeta={onConnectMeta}
               onDisconnectMeta={onDisconnectMeta}
               onSyncMeta={onSyncMeta}
+              onChangeMetaAccount={onChangeMetaAccount}
               onOpenFunnelSettings={onOpenFunnelSettings}
               funnelSettingsAvailable={funnelSettingsAvailable}
             />
@@ -1336,6 +1340,7 @@ interface MenuItemsProps {
   onConnectMeta: () => void;
   onDisconnectMeta: () => void;
   onSyncMeta: () => void;
+  onChangeMetaAccount: () => void;
   onOpenFunnelSettings: () => void;
   /** True when Meta is connected AND the active workspace has a linked
       Meta ad account. Both are required by FunnelSettingsForm (the form
@@ -1391,8 +1396,11 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
   // Phase 14 batch 01 — UI wiring. Disconnect entry appears beneath the
   // Meta label once a connection is established. Sync is offered as a
   // sibling action so the user can refresh data without leaving the menu.
+  // "Change Account" re-opens the account picker for users with multiple
+  // ad accounts (or anyone who wants to switch workspace links).
   if (metaConnection?.connected) {
     items.push({ key: 'meta-sync', el: <MenuItem key="meta-sync" icon="fa-arrows-rotate" label={metaSyncing ? '…' : t('topbar.menu_meta_sync')} onClick={props.onSyncMeta} /> });
+    items.push({ key: 'meta-change-account', el: <MenuItem key="meta-change-account" icon="fa-rotate" label={t('topbar.menu_meta_change_account')} onClick={props.onChangeMetaAccount} /> });
     items.push({ key: 'meta-disconnect', el: <MenuItem key="meta-disconnect" icon="fa-link-slash" label={t('topbar.menu_meta_disconnect')} onClick={props.onDisconnectMeta} className="text-red-500 hover:text-red-600" /> });
   }
   items.push({ key: 'billing', el: <MenuItem key="billing" icon="fa-credit-card" label={t('header.manage_billing')} onClick={props.onManageBilling} /> });
@@ -3062,6 +3070,13 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   const [metaConnection, setMetaConnection] = useState<MetaConnection | null>(null);
   const [metaSyncing, setMetaSyncing] = useState(false);
   const [metaPushing, setMetaPushing] = useState(false);
+  // Phase 14 batch 01 — Account picker. Auto-opens after the OAuth flow
+  // when the user has 2+ ad accounts; can also be opened on demand from
+  // the "Change Account" menu entry. `selecting` disables the cards
+  // while a save round-trip is in flight.
+  const [showMetaAccountPicker, setShowMetaAccountPicker] = useState(false);
+  const [metaAccountPickerSelecting, setMetaAccountPickerSelecting] = useState(false);
+  const [metaAccountPickerError, setMetaAccountPickerError] = useState<string | null>(null);
   // Phase 14 batch 01 — UI wiring. Modal that mounts the FunnelSettingsForm
   // when the user opens it from the menu (manual edit) or as a first-run gate
   // (auto-trigger when Meta is connected but no settings/current doc exists).
@@ -3099,6 +3114,81 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     }
   }, []);
 
+  // Phase 14 batch 01 — Account picker. Persists the user's chosen ad
+  // account to both the global connection (`metaSelectAccount`) and, on
+  // workspace plans, the active workspace document (`linkMetaAccount…`).
+  // When `skipPicker` is true, the modal is not opened (used by the
+  // single-account fast path inside `handleConnectMeta`). Defined before
+  // `handleConnectMeta` because that callback captures this one — and
+  // putting a TDZ reference in a `useCallback` deps array would throw
+  // at first render.
+  const handleMetaAccountSelect = useCallback(async (
+    accountId: string,
+    options: { skipPicker?: boolean } = {},
+  ) => {
+    const account = metaConnection?.adAccounts?.find(a => a.id === accountId)
+      ?? null;
+    if (!options.skipPicker) setMetaAccountPickerSelecting(true);
+    setMetaAccountPickerError(null);
+    try {
+      const ok = await metaService.selectAccount(accountId);
+      if (!ok) {
+        throw new Error(lang === 'ar' ? 'تعذّر حفظ اختيار الحساب.' : 'Could not save the account selection.');
+      }
+      if (canUseWorkspaces && activeWorkspaceId) {
+        const { workspaceService } = await import('./services/workspaceService');
+        await workspaceService.linkMetaAccountToWorkspace({
+          workspaceId: activeWorkspaceId,
+          metaAdAccountId: accountId,
+          metaAdAccountName: account?.name || accountId,
+        });
+        // Mirror the server write in the local workspace cache so the
+        // funnel-settings gate and any active-workspace UI see the new
+        // link without waiting for a Firestore round-trip.
+        setWorkspacesLocal(prev => prev.map(w =>
+          w.id === activeWorkspaceId
+            ? { ...w, metaAdAccountId: accountId, metaAdAccountName: account?.name || accountId }
+            : w,
+        ));
+      }
+      // Update the global connection's selectedAccountId locally so the
+      // menu (and any other UI watching metaConnection) reflects the
+      // change without an extra round-trip.
+      setMetaConnection(prev => prev ? { ...prev, selectedAccountId: accountId } : prev);
+      showToast(
+        lang === 'ar' ? 'تم اختيار حساب الإعلانات.' : 'Ad account selected.',
+        'success',
+      );
+      setShowMetaAccountPicker(false);
+    } catch (e: any) {
+      console.warn('Meta account selection failed:', e);
+      setMetaAccountPickerError(
+        lang === 'ar'
+          ? 'تعذّر حفظ الحساب المختار. حاول مرة أخرى.'
+          : 'Could not save the selected account. Please try again.',
+      );
+    } finally {
+      if (!options.skipPicker) setMetaAccountPickerSelecting(false);
+    }
+  }, [metaConnection, canUseWorkspaces, activeWorkspaceId, lang, showToast]);
+
+  // Phase 14 batch 01 — Account picker. Open on demand from the
+  // "Change Account" menu entry. No-ops when Meta isn't connected or
+  // has zero accounts (the menu only shows the entry when connected,
+  // but this is a defensive check).
+  const openMetaAccountPicker = useCallback(() => {
+    if (!metaConnection?.connected) return;
+    if ((metaConnection.adAccounts ?? []).length === 0) return;
+    setMetaAccountPickerError(null);
+    setShowMetaAccountPicker(true);
+  }, [metaConnection]);
+
+  const closeMetaAccountPicker = useCallback(() => {
+    if (metaAccountPickerSelecting) return;
+    setShowMetaAccountPicker(false);
+    setMetaAccountPickerError(null);
+  }, [metaAccountPickerSelecting]);
+
   // Phase 14 batch 01 — UI wiring. Opens the Meta OAuth popup, then
   // refreshes the connection state on success.
   const handleConnectMeta = useCallback(async () => {
@@ -3107,17 +3197,37 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     const connected = await metaService.startOAuthFlow(user.uid);
     if (connected) {
       const conn = await refreshMetaConnection();
-      const acctCount = conn?.adAccounts?.length ?? 0;
-      showToast(
-        lang === 'ar'
-          ? `تم ربط حساب ميتا! (${acctCount} حساب إعلانات متاح)`
-          : `Meta Ads connected! (${acctCount} ad account(s) found)`,
-        'success',
-      );
+      const accounts = conn?.adAccounts ?? [];
+      const acctCount = accounts.length;
+      if (acctCount === 1) {
+        // Single-account fast path: auto-pick and persist. Avoids a
+        // pointless "choose the only option" modal that the spec calls
+        // out as wasted clicks.
+        const only = accounts[0];
+        await handleMetaAccountSelect(only.id, { skipPicker: true });
+      } else if (acctCount >= 2) {
+        // Multi-account: surface the picker so the user explicitly
+        // establishes the 1:1 workspace→account link required by FR-026.
+        setMetaAccountPickerError(null);
+        setShowMetaAccountPicker(true);
+        showToast(
+          lang === 'ar'
+            ? `تم ربط حساب ميتا! اختر حساب الإعلانات (${acctCount} متاح)`
+            : `Meta Ads connected! Pick an ad account (${acctCount} available).`,
+          'success',
+        );
+      } else {
+        // Degenerate — Meta returned 0 accounts. Just announce the
+        // connection and let the user retry Sync or check Meta Business.
+        showToast(
+          lang === 'ar' ? 'تم ربط حساب ميتا!' : 'Meta Ads connected!',
+          'success',
+        );
+      }
     } else {
       showToast(lang === 'ar' ? 'تعذّر إكمال الربط' : 'Could not complete the connection', 'error');
     }
-  }, [user, lang, refreshMetaConnection, showToast]);
+  }, [user, lang, refreshMetaConnection, showToast, handleMetaAccountSelect]);
 
   // Phase 14 batch 01 — UI wiring. Disconnects the current Meta session and
   // clears local state. The account-level data (perf, baselines, etc.) is
@@ -10073,6 +10183,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         onConnectMeta={() => { setShowMenuDrawer(false); void handleConnectMeta(); }}
         onDisconnectMeta={() => { setShowMenuDrawer(false); void handleDisconnectMeta(); }}
         onSyncMeta={() => { setShowMenuDrawer(false); void handleSyncMeta(); }}
+        onChangeMetaAccount={() => { setShowMenuDrawer(false); openMetaAccountPicker(); }}
         onOpenFunnelSettings={() => { setShowMenuDrawer(false); openFunnelSettings(false); }}
                 funnelSettingsAvailable={funnelSettingsAvailable}
       />
@@ -10188,6 +10299,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 onConnectMeta={() => { setShowMenuDrawer(false); void handleConnectMeta(); }}
                 onDisconnectMeta={() => { setShowMenuDrawer(false); void handleDisconnectMeta(); }}
                 onSyncMeta={() => { setShowMenuDrawer(false); void handleSyncMeta(); }}
+                onChangeMetaAccount={() => { setShowMenuDrawer(false); openMetaAccountPicker(); }}
                 onOpenFunnelSettings={() => { setShowMenuDrawer(false); openFunnelSettings(false); }}
         funnelSettingsAvailable={funnelSettingsAvailable}
               />
@@ -11368,6 +11480,24 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           metaAdAccounts={metaConnection?.adAccounts?.map((a: any) => ({ id: a.id, name: a.name })) || []}
         />
       )}
+
+      {/* ═══ META AD ACCOUNT PICKER (Phase 14 batch 01 — fix) ═══
+          Mounts after a successful Meta OAuth flow when the user has
+          2+ ad accounts (1-account case auto-selects in
+          `handleConnectMeta`), and on demand via the menu's
+          "Change Account" entry. Establishes the 1:1
+          workspace→account link required by FR-026; without it,
+          FunnelSettingsForm cannot open and the daily sync cannot
+          target the active workspace. */}
+      <MetaAccountPickerModal
+        open={showMetaAccountPicker}
+        accounts={(metaConnection?.adAccounts ?? []).map((a: any) => ({ id: a.id, name: a.name }))}
+        currentSelectedId={metaConnection?.selectedAccountId ?? null}
+        selecting={metaAccountPickerSelecting}
+        errorMessage={metaAccountPickerError}
+        onSelect={(accountId) => { void handleMetaAccountSelect(accountId); }}
+        onClose={closeMetaAccountPicker}
+      />
 
       {/* CHANGELOG / WHAT'S NEW MODAL */}
       {showChangelogModal && (
