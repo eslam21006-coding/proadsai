@@ -19,7 +19,7 @@ After `batch-01-ui-fixes.md`, clicking the menu's Meta entry successfully:
 But the user with **multiple ad accounts** had no UI to:
 
 - Pick which account the workspace should be linked to.
-- Persist that selection to `users/{uid}/workspaces/{wsId}.metaAdAccountId` (the field `linkMetaAccountToWorkspace` writes and `activeMetaAccountId` reads).
+- Persist that selection to the `metaAdAccountId` field at `users/{uid}/workspaces/{wsId}` — the field `workspaceService.linkMetaAccountToWorkspace` writes. `activeMetaAccountId` (in `App.tsx`) is the *derived/read* value that mirrors this server-side field for the active workspace.
 - Change the selection later without disconnecting and re-connecting.
 
 Without this, `activeMetaAccountId` is `null` → `funnelSettingsAvailable` is `false` → the FunnelSettingsForm menu entry is hidden → the user is stuck with no way to open the funnel-settings form even though they've already connected Meta. Same blocker applies to the daily sync on workspace plans.
@@ -44,7 +44,7 @@ The component is **IO-free** — it owns no network calls. The parent (`App.tsx`
 | Symbol | Purpose |
 |---|---|
 | `showMetaAccountPicker` / `metaAccountPickerSelecting` / `metaAccountPickerError` | Modal visibility + in-flight + inline error state. |
-| `handleMetaAccountSelect(accountId, { skipPicker })` | Persists the choice: `metaService.selectAccount` (global connection) → `workspaceService.linkMetaAccountToWorkspace` (workspace link, only on workspace plans) → mirror the workspace update in `setWorkspacesLocal` → mirror the connection's `selectedAccountId` → close the picker. `skipPicker: true` is used by the single-account fast path so it can call this from `handleConnectMeta` without re-opening the modal. |
+| `handleMetaAccountSelect(accountId, { skipPicker })` | Persists the choice: `metaService.selectAccount` (global connection) → `workspaceService.linkMetaAccountToWorkspace` (workspace link, only on workspace plans) → mirror the workspace update in `setWorkspacesLocal` → mirror the connection's `selectedAccountId` → close the picker. `skipPicker: true` is used by the single-account fast path so it can call this from `handleConnectMeta` without re-opening the modal. **Note:** these two server-side writes are not transactional — if `linkMetaAccountToWorkspace` fails after `selectAccount` succeeds the global selection and workspace link can diverge. The `setWorkspacesLocal` mirror is the recovery point: a future re-sync (or a disconnect/reconnect) re-establishes consistency. |
 | `openMetaAccountPicker` | Defensive no-op if Meta isn't connected or has zero accounts. |
 | `closeMetaAccountPicker` | No-op while a save is in flight (prevents racing the in-flight write). |
 
