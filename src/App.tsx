@@ -3162,11 +3162,18 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       setShowMetaAccountPicker(false);
     } catch (e: any) {
       console.warn('Meta account selection failed:', e);
-      setMetaAccountPickerError(
-        lang === 'ar'
-          ? 'تعذّر حفظ الحساب المختار. حاول مرة أخرى.'
-          : 'Could not save the selected account. Please try again.',
-      );
+      const failureMessage = lang === 'ar'
+        ? 'تعذّر حفظ الحساب المختار. حاول مرة أخرى.'
+        : 'Could not save the selected account. Please try again.';
+      // In skipPicker mode (single-account auto-pick from the OAuth flow)
+      // the modal is never visible, so the inline error would never be
+      // shown — surface it as a toast instead so the user still gets
+      // feedback when the auto-select fails.
+      if (options.skipPicker) {
+        showToast(failureMessage, 'error');
+      } else {
+        setMetaAccountPickerError(failureMessage);
+      }
     } finally {
       if (!options.skipPicker) setMetaAccountPickerSelecting(false);
     }
@@ -11491,7 +11498,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           target the active workspace. */}
       <MetaAccountPickerModal
         open={showMetaAccountPicker}
-        accounts={(metaConnection?.adAccounts ?? []).map((a: any) => ({ id: a.id, name: a.name }))}
+        accounts={(metaConnection?.adAccounts ?? []).map((a) => ({ id: a.id, name: a.name }))}
         currentSelectedId={metaConnection?.selectedAccountId ?? null}
         selecting={metaAccountPickerSelecting}
         errorMessage={metaAccountPickerError}

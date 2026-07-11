@@ -1,0 +1,126 @@
+# Phase 14 — Batch 01 Account Picker Fix Report
+
+**Date:** 2026-07-11
+**Branch:** `phase-14-rag-meta`
+**PR:** [#53](https://github.com/eslam21006-coding/proadsai/pull/53)
+**Commit:** `ea8f008` — `fix: restore Meta ad account picker after OAuth connection`
+**Scope:** Restore the post-OAuth Meta ad-account picker that Phase 26 (`9c28960`, 2026-07-03) deleted along with the old sidebar. Closes the remaining gap from `specs/phase-14/reports/batch-01-ui-fixes.md` §1 (Meta UI restoration) — the connection works, but the 1:1 workspace→account link (FR-026) is never established, so the FunnelSettingsForm cannot open and the daily sync has no target.
+
+---
+
+## 1. What was missing
+
+After `batch-01-ui-fixes.md`, clicking the menu's Meta entry successfully:
+
+1. Opens the OAuth popup (`metaService.startOAuthFlow`).
+2. Persists the connection server-side (`getMetaConnection` returns `connected: true` with the user's ad-account list).
+3. Shows a success toast naming the account count.
+
+But the user with **multiple ad accounts** had no UI to:
+
+- Pick which account the workspace should be linked to.
+- Persist that selection to `users/{uid}/workspaces/{wsId}.metaAdAccountId` (the field `linkMetaAccountToWorkspace` writes and `activeMetaAccountId` reads).
+- Change the selection later without disconnecting and re-connecting.
+
+Without this, `activeMetaAccountId` is `null` → `funnelSettingsAvailable` is `false` → the FunnelSettingsForm menu entry is hidden → the user is stuck with no way to open the funnel-settings form even though they've already connected Meta. Same blocker applies to the daily sync on workspace plans.
+
+---
+
+## 2. What was added
+
+### 2.1 `src/components/MetaAccountPickerModal.tsx` (new)
+
+Lightweight modal — same z-index, backdrop, and Tailwind palette as the existing `FunnelSettingsModal` and `WorkspaceSettingsModal` so it slots into the established visual language. Renders:
+
+- **Header:** blue-gradient banner with a `fa-brands fa-meta` glyph, the picker title (`اختر حساب الإعلانات` / `Choose your ad account`), a one-line subtitle, and a close button. Esc-to-close while idle.
+- **Body:** a vertical list of clickable cards. Each card shows the account name (bold), the numeric account ID (small grey, `dir="ltr"` so the digits never get RTL-flipped), a `fa-circle-check` + "Currently selected" badge if the card represents the current selection, and a "Select" pill otherwise. Cards disable while a save is in flight.
+- **Empty state:** falls back to the existing `workspace.settings.meta_connect_prompt` copy (defensive — should be unreachable from the auto flow).
+- **Footer:** a single Cancel button (`إلغاء`) that mirrors the close button.
+
+The component is **IO-free** — it owns no network calls. The parent (`App.tsx`) decides what to persist, so the modal can be reused later (e.g. inside the WorkspaceSettingsModal).
+
+### 2.2 `src/App.tsx` — three new callbacks + state
+
+| Symbol | Purpose |
+|---|---|
+| `showMetaAccountPicker` / `metaAccountPickerSelecting` / `metaAccountPickerError` | Modal visibility + in-flight + inline error state. |
+| `handleMetaAccountSelect(accountId, { skipPicker })` | Persists the choice: `metaService.selectAccount` (global connection) → `workspaceService.linkMetaAccountToWorkspace` (workspace link, only on workspace plans) → mirror the workspace update in `setWorkspacesLocal` → mirror the connection's `selectedAccountId` → close the picker. `skipPicker: true` is used by the single-account fast path so it can call this from `handleConnectMeta` without re-opening the modal. |
+| `openMetaAccountPicker` | Defensive no-op if Meta isn't connected or has zero accounts. |
+| `closeMetaAccountPicker` | No-op while a save is in flight (prevents racing the in-flight write). |
+
+**`handleConnectMeta` was rewritten** to branch on `accounts.length`:
+
+- `0` → toast "Connected" (degenerate — Meta returned no accounts).
+- `1` → auto-call `handleMetaAccountSelect` with `skipPicker: true`. No modal, no wasted click. This is the common path for single-business users.
+- `≥ 2` → open the picker + toast "Pick an ad account (N available)".
+
+**`MenuSidebarProps` + `MenuItemsProps`** get a new `onChangeMetaAccount: () => void` prop, threaded through both call sites (desktop sidebar around `src/App.tsx:10186` and mobile drawer around `src/App.tsx:10302`).
+
+**`MenuItems` (the shared list)** gets a new entry — `fa-rotate` + `topbar.menu_meta_change_account` — pushed between `meta-sync` and `meta-disconnect` inside the `metaConnection?.connected` branch. So the sub-menu order is now: Sync Now → Change Account → Disconnect.
+
+### 2.3 `src/i18n.tsx` — new keys (EN + AR)
+
+```
+topbar.menu_meta_change_account  Change Account              تغيير الحساب
+meta.picker_title                Choose your ad account      اختر حساب الإعلانات
+meta.picker_subtitle             Select which Meta ad…       اختر حساب ميتا…
+meta.picker_current              Currently selected          الحساب المحدد حاليا
+meta.picker_select               Select                      اختيار
+meta.picker_cancelling           Cancel                      إلغاء
+meta.account_selected_toast      Ad account selected.        تم اختيار حساب الإعلانات.
+```
+
+All Arabic is plain Fusha — no Egyptian dialect, no technical terms (no "متوسط", no acronyms).
+
+---
+
+## 3. Gate sequence — pass status
+
+| Step | Command | Result |
+|---|---|---|
+| 1. Functions build | `cd functions && npm run build` | PASS (`tsc` + asset copy, no errors) |
+| 2. Frontend build | `npm run build` (root) | PASS (`tsc -b && vite build`, 118 modules transformed, 24.31s) |
+| 3. Tests | `npm test` (root → `vitest run`) | PASS (26/26 tests across 2 files, 10.69s) |
+| 4. SC-11 guard | `node scripts/sc11Guard.mjs` | PASS (75 files scanned, 0 forbidden terms) |
+| 5. New-file lint | `npx eslint src/components/MetaAccountPickerModal.tsx` | PASS (clean) |
+| 6. Commit + push | `git add -A; git commit -m "fix: restore Meta ad account picker after OAuth connection"; git push` | PASS (`ea8f008` on `phase-14-rag-meta`) |
+
+The 970 pre-existing lint errors throughout the codebase (mostly `no-explicit-any` on legacy Firestore payloads and a few `no-unused-vars` in shared helpers) are **unrelated to this change** — `npx eslint src/components/MetaAccountPickerModal.tsx` returns zero errors, and no new errors were introduced in the touched lines of `src/App.tsx` or `src/i18n.tsx`.
+
+---
+
+## 4. Files touched
+
+| File | Lines | Change |
+|---|---|---|
+| `src/components/MetaAccountPickerModal.tsx` | +198 (new) | The picker modal. |
+| `src/App.tsx` | +140 / -8 | Import, state, three callbacks, MenuSidebar/MenuItems prop threading, MenuItems entry, JSX modal mount. |
+| `src/i18n.tsx` | +14 | 7 new keys × 2 languages. |
+
+Net: 3 files changed, 342 insertions, 8 deletions.
+
+---
+
+## 5. Behavioral matrix — covers the full task spec
+
+| Scenario | Expected | Implemented |
+|---|---|---|
+| 1 account → connect | Auto-select, no modal, success toast | ✓ (branch in `handleConnectMeta`, calls `handleMetaAccountSelect` with `skipPicker: true`) |
+| 2+ accounts → connect | Modal opens, user picks, persisted to workspace doc | ✓ (modal auto-opens; `handleMetaAccountSelect` writes both `metaSelectAccount` and `linkMetaAccountToWorkspace`; `setWorkspacesLocal` mirrors the write so `activeMetaAccountId` flips immediately) |
+| Already connected → "Change Account" | Modal re-opens, current selection pre-checked | ✓ (`openMetaAccountPicker` is a no-op only when not connected; current selection is highlighted with the `meta.picker_current` badge) |
+| Selection persisted to workspace | `users/{uid}/workspaces/{wsId}.metaAdAccountId` written via `linkMetaAccountToWorkspace` | ✓ (server-side write happens via the existing callable; client mirrors in `setWorkspacesLocal`) |
+| FunnelSettingsForm can open after pick | `funnelSettingsAvailable` flips to `true` once `activeWorkspace?.metaAdAccountId` is set | ✓ (the `setWorkspacesLocal` write triggers a re-render → the existing `useMemo` recomputes `activeMetaAccountId` → `funnelSettingsAvailable` flips → MenuItems shows the entry) |
+| Daily sync can target workspace | `metaSyncPerformance(workspaceId)` is already keyed on `activeWorkspaceId` — it always could | ✓ (no change needed; the gate was always the workspace→account link, which this fix establishes) |
+| Arabic label for "Change Account" | `تغيير الحساب` | ✓ (`topbar.menu_meta_change_account` AR) |
+| Arabic label for picker title | `اختر حساب الإعلانات` | ✓ (`meta.picker_title` AR) |
+| All copy is plain Fusha, no jargon | required | ✓ (no Egyptian dialect, no acronyms, no technical terms) |
+
+---
+
+## 6. Notes for CodeRabbit review
+
+- **IO orchestration lives in `App.tsx`, not the modal** — keeps the component reusable and matches the codebase pattern (`handleCreateWorkspace` similarly bridges `workspaceService` + `setWorkspacesLocal`).
+- **TDZ-safe callback order** — `handleMetaAccountSelect` is declared **before** `handleConnectMeta` so the latter can list it in its `useCallback` deps array without throwing on first render. A code comment on the former calls this out so a future re-order doesn't regress it.
+- **Skip-picker fast path** — `handleMetaAccountSelect` accepts `{ skipPicker?: boolean }` so the single-account auto-select in `handleConnectMeta` can reuse the same persistence path without opening then immediately closing the modal.
+- **Re-selecting the current account** — clicking the highlighted card in the modal closes the picker instead of firing a redundant write (no-op write is harmless but a wasted round-trip on flaky networks).
+- **No dynamic-import regression** — `await import('./services/workspaceService')` was already used five other times in `App.tsx` (lines 2290, 2310, 2330, 5090, 6750). The pre-existing Vite warning about `workspaceService` being both dynamic and statically imported is unchanged.

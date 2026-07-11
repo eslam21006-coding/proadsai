@@ -14,7 +14,7 @@
 // link) — keeping this component free of network/IO concerns.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { useT } from "../i18n";
 
 export interface MetaAccountPickerItem {
@@ -45,15 +45,69 @@ export default function MetaAccountPickerModal({
   onClose,
 }: MetaAccountPickerModalProps) {
   const { t } = useT();
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
-  // Close on Escape — standard modal affordance, only while not selecting.
+  // Esc-to-close while idle + focus trap (Tab / Shift+Tab cycles within
+  // the dialog) + restore focus on close. Without the trap, focus would
+  // fall through to elements behind the dimmed backdrop, which is the
+  // standard a11y bug CodeRabbit flagged.
   useEffect(() => {
-    if (!open || selecting) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+    if (!open) return;
+
+    // Remember what had focus so we can restore it on close.
+    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
+
+    // Move focus into the dialog (the first focusable inside it).
+    const dialog = dialogRef.current;
+    const firstFocusable = dialog?.querySelector<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    firstFocusable?.focus();
+
+    function focusableElements(): HTMLElement[] {
+      if (!dialog) return [];
+      return Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
     }
+
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        if (!selecting) onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const items = focusableElements();
+      if (items.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey) {
+        if (active === first || !dialog?.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (active === last || !dialog?.contains(active)) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    }
+
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      // Restore focus to the element that opened the picker.
+      previouslyFocusedRef.current?.focus?.();
+      previouslyFocusedRef.current = null;
+    };
   }, [open, selecting, onClose]);
 
   if (!open) return null;
@@ -62,12 +116,13 @@ export default function MetaAccountPickerModal({
     <div
       className="fixed inset-0 z-[210] flex items-center justify-center p-4"
       onClick={selecting ? undefined : onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="meta-account-picker-title"
     >
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="meta-account-picker-title"
         className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
@@ -79,7 +134,7 @@ export default function MetaAccountPickerModal({
                 id="meta-account-picker-title"
                 className="text-lg font-black text-white"
               >
-                <i className="fa-brands fa-meta text-blue-400 mr-2" />
+                <i className="fa-brands fa-meta text-blue-400 me-2" />
                 {t('meta.picker_title')}
               </h2>
               <p className="mt-1 text-[10px] text-slate-400">
@@ -105,15 +160,18 @@ export default function MetaAccountPickerModal({
               {t('workspace.settings.meta_connect_prompt')}
             </p>
           ) : (
-            <ul className="space-y-2" role="listbox" aria-label={t('meta.picker_title')}>
+            // Plain button group — NOT a listbox. These are ordinary tab
+            // stops (the user just clicks one), so the implicit listbox
+            // keyboard model (`role="listbox"` + `role="option"` +
+            // `aria-selected`) would falsely advertise roving-focus +
+            // arrow-key navigation that this component doesn't implement.
+            <ul className="space-y-2" aria-label={t('meta.picker_title')}>
               {accounts.map(acc => {
                 const isCurrent = acc.id === currentSelectedId;
                 return (
                   <li key={acc.id}>
                     <button
                       type="button"
-                      role="option"
-                      aria-selected={isCurrent}
                       disabled={selecting}
                       onClick={() => {
                         if (isCurrent) {
