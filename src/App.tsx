@@ -3131,9 +3131,10 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     if (!options.skipPicker) setMetaAccountPickerSelecting(true);
     setMetaAccountPickerError(null);
     try {
+      const saveFailedMessage = t('meta.account_save_failed_throw');
       const ok = await metaService.selectAccount(accountId);
       if (!ok) {
-        throw new Error(lang === 'ar' ? 'تعذّر حفظ اختيار الحساب.' : 'Could not save the account selection.');
+        throw new Error(saveFailedMessage);
       }
       if (canUseWorkspaces && activeWorkspaceId) {
         const { workspaceService } = await import('./services/workspaceService');

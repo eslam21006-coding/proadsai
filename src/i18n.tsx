@@ -158,6 +158,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'meta.account_selected_toast': 'Ad account selected.',
         'meta.connect_pick_toast': 'Meta Ads connected! Pick an ad account ({count} available).',
         'meta.account_save_failed': 'Could not save the selected account. Please try again.',
+        'meta.account_save_failed_throw': 'Could not save the account selection.',
         'topbar.funnel_first_run_title': 'Set up your funnel',
         'topbar.funnel_first_run_body': 'Complete your funnel settings to start analyzing your ads.',
 
@@ -970,6 +971,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'meta.account_selected_toast': 'تم اختيار حساب الإعلانات.',
         'meta.connect_pick_toast': 'تم ربط حساب ميتا! اختر حساب الإعلانات ({count} متاح).',
         'meta.account_save_failed': 'تعذّر حفظ الحساب المختار. حاول مرة أخرى.',
+        'meta.account_save_failed_throw': 'تعذّر حفظ اختيار الحساب.',
         'topbar.funnel_first_run_title': 'أكمل إعداد مسار المبيعات',
         'topbar.funnel_first_run_body': 'أكمل إعدادات مسار المبيعات لبدء تحليل إعلاناتك.',
 
