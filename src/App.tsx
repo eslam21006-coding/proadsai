@@ -1380,6 +1380,15 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
     // name as a small muted sub-label so the user can see which account is
     // active without opening the picker. Falls back to the account id when
     // the name is missing.
+    // Phase 14 batch 01-funnel-fixes — When connected, render the sub-actions
+    // (Sync Now / Change Account / Disconnect) immediately under the main
+    // entry, separated by their own divider. They were previously scattered
+    // across `divider1` and `divider2` which made the Meta block hard to
+    // scan; the spec calls for a tight Meta sub-menu instead. The sub-items
+    // are only rendered here (in MenuItems → expanded sidebar) — the
+    // collapsed icon strip below renders its own hand-picked shortcuts and
+    // never exposes these sub-actions, so the expanded-vs-collapsed split
+    // the spec requires is preserved automatically.
     {
       key: 'meta',
       el: (() => {
@@ -1402,6 +1411,15 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
         );
       })(),
     },
+    // Meta sub-actions — only when Meta is connected. Drawn as a tight
+    // 3-item block immediately under the main Meta entry, per the
+    // batch-01-funnel-fixes spec.
+    ...(metaConnection?.connected ? [
+      { key: 'meta-divider', el: <div key="meta-divider" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> },
+      { key: 'meta-sync', el: <MenuItem key="meta-sync" icon="fa-arrows-rotate" label={metaSyncing ? '…' : t('topbar.menu_meta_sync')} onClick={props.onSyncMeta} /> },
+      { key: 'meta-change-account', el: <MenuItem key="meta-change-account" icon="fa-repeat" label={t('topbar.menu_meta_change_account')} onClick={props.onChangeMetaAccount} /> },
+      { key: 'meta-disconnect', el: <MenuItem key="meta-disconnect" icon="fa-link-slash" label={t('topbar.menu_meta_disconnect')} onClick={props.onDisconnectMeta} className="text-red-500 hover:text-red-600" /> },
+    ] : []),
     // Phase 14 batch 01 — UI wiring. Funnel Settings entry. Only visible
     // when the user has connected Meta and the active workspace has a
     // linked ad account (the form requires both).
@@ -1420,16 +1438,6 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
     items.push({ key: 'tour', el: <MenuItem key="tour" icon="fa-circle-question" label={t('topbar.menu_tour')} onClick={props.onStartTour} /> });
   }
   items.push({ key: 'divider2', el: <div key="divider2" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> });
-  // Phase 14 batch 01 — UI wiring. Disconnect entry appears beneath the
-  // Meta label once a connection is established. Sync is offered as a
-  // sibling action so the user can refresh data without leaving the menu.
-  // "Change Account" re-opens the account picker for users with multiple
-  // ad accounts (or anyone who wants to switch workspace links).
-  if (metaConnection?.connected) {
-    items.push({ key: 'meta-sync', el: <MenuItem key="meta-sync" icon="fa-arrows-rotate" label={metaSyncing ? '…' : t('topbar.menu_meta_sync')} onClick={props.onSyncMeta} /> });
-    items.push({ key: 'meta-change-account', el: <MenuItem key="meta-change-account" icon="fa-rotate" label={t('topbar.menu_meta_change_account')} onClick={props.onChangeMetaAccount} /> });
-    items.push({ key: 'meta-disconnect', el: <MenuItem key="meta-disconnect" icon="fa-link-slash" label={t('topbar.menu_meta_disconnect')} onClick={props.onDisconnectMeta} className="text-red-500 hover:text-red-600" /> });
-  }
   items.push({ key: 'billing', el: <MenuItem key="billing" icon="fa-credit-card" label={t('header.manage_billing')} onClick={props.onManageBilling} /> });
   items.push({ key: 'upgrade', el: <MenuItem key="upgrade" icon="fa-arrow-up" label={t('header.upgrade')} onClick={props.onUpgrade} /> });
   items.push({ key: 'divider3', el: <div key="divider3" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> });
@@ -3109,6 +3117,13 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   // (auto-trigger when Meta is connected but no settings/current doc exists).
   const [showFunnelSettingsModal, setShowFunnelSettingsModal] = useState(false);
   const [funnelSettingsFirstRun, setFunnelSettingsFirstRun] = useState(false);
+  // Phase 14 batch 01-funnel-fixes — Latches true when the user dismisses
+  // the first-run gate (×, backdrop click, or Escape). The auto-gate effect
+  // below honors this latch so the modal does NOT re-open in the same
+  // session after a deliberate dismiss — only on a fresh app load. Reset
+  // to false on a successful save (so the next first-run for a new
+  // workspace still surfaces) and on a logout/login cycle.
+  const [funnelFirstRunDismissed, setFunnelFirstRunDismissed] = useState(false);
   // Mirrors whether getFunnelSettings returned a doc yet for the active
   // workspace-account. Drives the first-run auto-gate (no settings → open
   // the form as a blocking first-run screen).
@@ -3358,9 +3373,10 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   }, [metaConnection?.connected, activeWorkspaceId, activeMetaAccountId]);
 
   // Phase 14 batch 01 — UI wiring. Open the funnel-settings form. When
-  // `firstRun` is true, the form is non-dismissible until saved (per the
-  // spec §2.1: "the required Funnel Settings form appears before any
-  // performance data").
+  // `firstRun` is true the form is suggested via a reminder banner, but
+  // (per batch-01-funnel-fixes) the user is NEVER trapped — the close
+  // button, backdrop click, and Escape key all dismiss the modal even on
+  // the first run.
   const openFunnelSettings = useCallback((firstRun: boolean) => {
     setFunnelSettingsFirstRun(firstRun);
     setShowFunnelSettingsModal(true);
@@ -3371,22 +3387,60 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     setFunnelSettingsFirstRun(false);
   }, []);
 
+  // Phase 14 batch 01-funnel-fixes — Dismiss handler for the first-run
+  // gate. Closes the modal, latches the dismiss so the auto-gate effect
+  // doesn't re-open it later in the same session, and shows a gentle
+  // reminder toast. The toast only fires when the user actually dismisses
+  // the first-run screen WITHOUT saving — saves are handled inside the
+  // modal's `onSaved` callback (which closes the modal + sets the
+  // `funnelSettingsHasDoc` flag, naturally skipping the reminder).
+  const dismissFunnelFirstRun = useCallback(() => {
+    if (!funnelSettingsFirstRun) {
+      closeFunnelSettings();
+      return;
+    }
+    setFunnelFirstRunDismissed(true);
+    closeFunnelSettings();
+    showToast(
+      lang === 'ar'
+        ? 'يمكنك إكمال إعدادات مسار المبيعات لاحقاً من القائمة'
+        : 'You can complete your funnel settings later from the menu',
+      'info',
+    );
+  }, [funnelSettingsFirstRun, closeFunnelSettings, lang, showToast]);
+
+  // Phase 14 batch 01-funnel-fixes — Escape closes the funnel-settings
+  // modal (same handler as the close button / backdrop click). Only binds
+  // while the modal is mounted so it doesn't fight with other Escape-bound
+  // dialogs (the meta-account picker, the workspace-settings modal, etc.).
+  useEffect(() => {
+    if (!showFunnelSettingsModal) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') dismissFunnelFirstRun();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showFunnelSettingsModal, dismissFunnelFirstRun]);
+
   // Phase 14 batch 01 — UI wiring. First-run auto-gate. When the user has
   // connected Meta, the active workspace has a linked ad account, and the
   // probe resolved to "no settings/current doc yet", open the funnel form
-  // automatically as a blocking first-run screen. The modal is dismissed
-  // only on save (handled inside the render via funnelSettingsFirstRun).
+  // automatically as a suggested first-run screen. The `funnelFirstRunDismissed`
+  // latch prevents the auto-gate from re-opening the modal in the same
+  // session after a deliberate dismiss — it only fires again on a fresh
+  // app load (the latch is in-memory state, so a page reload clears it).
   useEffect(() => {
     if (
       metaConnection?.connected &&
       activeWorkspaceId &&
       activeMetaAccountId &&
       funnelSettingsHasDoc === false &&
-      !showFunnelSettingsModal
+      !showFunnelSettingsModal &&
+      !funnelFirstRunDismissed
     ) {
       openFunnelSettings(true);
     }
-  }, [metaConnection?.connected, activeWorkspaceId, activeMetaAccountId, funnelSettingsHasDoc, showFunnelSettingsModal, openFunnelSettings]);
+  }, [metaConnection?.connected, activeWorkspaceId, activeMetaAccountId, funnelSettingsHasDoc, showFunnelSettingsModal, funnelFirstRunDismissed, openFunnelSettings]);
 
   // FIX 3: when the user switches to a DIFFERENT hook in single mode, drop stale concepts so
   // Step 3 can't show a previous session's blueprints — forcing a fresh regenerate for the new
@@ -11438,26 +11492,39 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
       {/* ═══ FUNNEL SETTINGS MODAL (Phase 14 Layer 1 / US1) ═══
           Mounts the FunnelSettingsForm for the active workspace-account. The
           modal is triggered either manually from the menu entry, or
-          automatically as a blocking first-run gate (when the workspace is
-          linked to a Meta ad account but the user has never saved funnel
+          automatically as a suggested first-run screen (when the workspace
+          is linked to a Meta ad account but the user has never saved funnel
           settings yet). The form is fully self-contained — it loads its own
           state, handles its own saving, and surfaces the dismissible
-          monthly-review prompt internally. */}
+          monthly-review prompt internally.
+
+          Phase 14 batch 01-funnel-fixes — The first-run variant is NEVER a
+          hard block. The close button is always rendered, the backdrop
+          click always closes the modal, and Escape also dismisses. Closing
+          during the first run (without saving) latches a
+          `funnelFirstRunDismissed` flag (in `dismissFunnelFirstRun`) so the
+          auto-gate doesn't re-pop the modal in the same session; a
+          localized toast reminds the user they can complete it later from
+          the menu. The latch resets on a successful save (so a new
+          workspace's first-run still surfaces) and on the next app load. */}
       {showFunnelSettingsModal && (
         <Suspense fallback={null}>
         <div
           className="fixed inset-0 z-[200] flex items-center justify-center p-4"
-          onClick={funnelSettingsFirstRun ? undefined : closeFunnelSettings}
+          onClick={dismissFunnelFirstRun}
         >
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
           <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="funnel-settings-modal-title"
             className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-2xl w-full shadow-2xl max-h-[90vh] flex flex-col"
             onClick={e => e.stopPropagation()}
           >
             <div className="bg-gradient-to-b from-indigo-900/20 to-transparent p-6 pb-4 border-b border-slate-800">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-black text-white">
+                  <h2 id="funnel-settings-modal-title" className="text-lg font-black text-white">
                     {t('topbar.menu_funnel_settings')}
                   </h2>
                   {funnelSettingsFirstRun && (
@@ -11467,16 +11534,14 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     </p>
                   )}
                 </div>
-                {!funnelSettingsFirstRun && (
-                  <button
-                    type="button"
-                    onClick={closeFunnelSettings}
-                    aria-label={t('common.close')}
-                    className="text-slate-500 hover:text-white transition-all"
-                  >
-                    <i className="fa-solid fa-xmark text-lg" aria-hidden="true" />
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={dismissFunnelFirstRun}
+                  aria-label={t('common.close')}
+                  className="text-slate-500 hover:text-white transition-all"
+                >
+                  <i className="fa-solid fa-xmark text-lg" aria-hidden="true" />
+                </button>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
@@ -11485,10 +11550,12 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 accountId={activeMetaAccountId}
                 workspaceName={activeWorkspace?.name}
                 isDarkMode={isDarkMode}
+                availableWorkspaces={workspaces
+                  .filter(w => !w.deletedAt && !!w.metaAdAccountId)
+                  .map(w => ({ id: w.id, name: w.name, metaAdAccountId: w.metaAdAccountId ?? null, metaAdAccountName: w.metaAdAccountName ?? null }))}
                 onSaved={() => {
-                  // On save: drop the first-run flag and the form is free
-                  // to be dismissed on the next attempt.
                   setFunnelSettingsHasDoc(true);
+                  setFunnelFirstRunDismissed(false);
                   if (funnelSettingsFirstRun) closeFunnelSettings();
                 }}
               />

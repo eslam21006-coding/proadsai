@@ -5,6 +5,12 @@
 //
 // BEHAVIOR (spec §2.1–§2.6):
 //   - Workspace-name header.
+//   - Phase 14 batch 01-funnel-fixes — In-form workspace selector (only
+//     when the user has >1 Meta-connected workspace). The dropdown is
+//     rendered first so it visually anchors the rest of the form to the
+//     chosen workspace-account; switching workspaces re-fetches the
+//     settings for the new pair via the existing `useFunnelSettings`
+//     hook (the hook is keyed on workspaceId + accountId).
 //   - Field 1 = funnel-type dropdown (4 closed values).
 //   - Conditional fields per funnel-type (paid: AOV/Has-HTO→price+rate/
 //     ROAS; free_webinar: offerPrice/attendance/buyRate; lead_magnet_call:
@@ -77,10 +83,25 @@ export interface FunnelSettingsDoc {
 }
 
 export interface FunnelSettingsFormProps {
+    /** Initial workspace id (the currently-active workspace). Becomes the
+     * form's pre-selected value in the workspace dropdown; the user can
+     * switch to a different workspace from inside the form. */
     workspaceId: string | null;
+    /** Initial Meta account id (paired with `workspaceId`). Re-derived
+     * internally whenever the user picks a different workspace. */
     accountId: string | null;
+    /** Display name for `workspaceId`. Used as the default label inside the
+     * form header. */
     workspaceName?: string;
     isDarkMode?: boolean;
+    /** Workspaces that have a linked Meta ad account. Used to populate the
+     * in-form workspace selector (Issue 4). When the list has more than
+     * one entry, the selector renders as a dropdown. When the list has
+     * exactly one entry, the selector is omitted and the workspace name
+     * is shown as static text — there's no UI noise for single-workspace
+     * users. When the list is empty the form returns the "no workspace"
+     * guard from before. */
+    availableWorkspaces?: Array<{ id: string; name: string; metaAdAccountId?: string | null; metaAdAccountName?: string | null }>;
     /** Called after a successful save — parent may close the form or refresh data. */
     onSaved?: (settings: FunnelSettingsDoc) => void;
 }
@@ -244,6 +265,7 @@ export default function FunnelSettingsForm({
     accountId,
     workspaceName,
     isDarkMode = true,
+    availableWorkspaces,
     onSaved,
 }: FunnelSettingsFormProps) {
     const dk = isDarkMode;
@@ -251,6 +273,7 @@ export default function FunnelSettingsForm({
     const txSecondary = dk ? 'text-slate-300' : 'text-slate-700';
     const txMuted = dk ? 'text-slate-400' : 'text-slate-500';
     const cardBg = dk ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200';
+    const selectBg = dk ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900';
 
     const { lang } = useT();
     // Local bilingual helper mirroring PerformanceDashboard.tsx — runs
@@ -259,7 +282,50 @@ export default function FunnelSettingsForm({
     // the 1665-line central dictionary for a single component.
     const L = (en: string, ar: string) => lang === 'ar' ? ar : en;
 
-    const { loading, error, settings, reviewDue, save, dismiss } = useFunnelSettings(workspaceId, accountId);
+    // ─── Workspace selector (Issue 4) ─────────────────────────
+    // The parent passes the initial workspace/account via props (the
+    // currently-active workspace). Internally we own the "currently
+    // displayed workspace" state so the user can switch from inside the
+    // form. When the user picks a different workspace:
+    //   1. We update `selectedWorkspaceId` and re-derive
+    //      `selectedAccountId` from the workspace's linked Meta account.
+    //   2. The `useFunnelSettings` hook (keyed on those values) re-fetches
+    //      `settings/current` for the new workspace-account.
+    //   3. The `hydratedForRef` guard in the existing hydration effect
+    //      (below) resets so the new account's settings populate the
+    //      form fields.
+    //
+    // The dropdown is only rendered when there's >1 Meta-connected
+    // workspace — single-workspace users see the workspace name as a
+    // static line in the header instead (no UI noise).
+    const initialWsId = workspaceId ?? '';
+    const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(initialWsId);
+    // Re-derive selectedAccountId from the currently selected workspace.
+    // We default to the parent-supplied `accountId` when the selected
+    // workspace matches the initial one (so the very first render is
+    // synchronous), and look up the new account id from
+    // `availableWorkspaces` when the user picks a different workspace.
+    const selectedWorkspace = availableWorkspaces?.find(w => w.id === selectedWorkspaceId);
+    const selectedAccountId = selectedWorkspaceId === initialWsId
+        ? (accountId ?? selectedWorkspace?.metaAdAccountId ?? null)
+        : (selectedWorkspace?.metaAdAccountId ?? null);
+
+    // When the parent's `workspaceId` prop changes (active workspace
+    // switched in the workspace switcher above the form), reset the
+    // in-form selection to track it. Done in render (the
+    // "adjusting state when a prop changes" pattern) instead of an effect.
+    const [prevParentWsId, setPrevParentWsId] = useState(initialWsId);
+    if (initialWsId !== prevParentWsId) {
+        setPrevParentWsId(initialWsId);
+        setSelectedWorkspaceId(initialWsId);
+    }
+
+    const showWorkspaceSelector = !!availableWorkspaces && availableWorkspaces.length > 1;
+    const singleWorkspaceName = !showWorkspaceSelector
+        ? (selectedWorkspace?.name ?? workspaceName ?? workspaceId ?? '')
+        : '';
+
+    const { loading, error, settings, reviewDue, save, dismiss } = useFunnelSettings(selectedWorkspaceId || null, selectedAccountId);
 
     // Form state
     const [funnelType, setFunnelType] = useState<FunnelType>('paid_event');
@@ -317,7 +383,7 @@ export default function FunnelSettingsForm({
         };
     }, [settings]);
 
-    if (!workspaceId || !accountId) {
+    if (!selectedWorkspaceId || !selectedAccountId) {
         return (
             <div className={`p-6 rounded-lg border ${cardBg}`}>
                 <p className={txMuted}>يرجى اختيار مساحة عمل وحساب ميتا أولاً.</p>
@@ -334,15 +400,15 @@ export default function FunnelSettingsForm({
     }
 
     async function handleSave() {
-        if (!workspaceId || !accountId) return;
+        if (!selectedWorkspaceId || !selectedAccountId) return;
         const aovN = funnelType === 'paid_event' || funnelType === 'paid_product' ? numOrNull(aov) : null;
         const offerN = funnelType === 'free_webinar' || funnelType === 'lead_magnet_call' ? numOrNull(offerPrice) : null;
         const attendanceN = funnelType === 'free_webinar' ? numOrNull(attendanceRate) : null;
         const buyN = funnelType === 'free_webinar' ? numOrNull(buyRateFromAttendees) : null;
         const leadN = funnelType === 'lead_magnet_call' ? numOrNull(leadToCloseRate) : null;
         const req = {
-            workspaceId,
-            accountId,
+            workspaceId: selectedWorkspaceId,
+            accountId: selectedAccountId,
             funnelType,
             aov: aovN,
             hasHto,
@@ -363,6 +429,11 @@ export default function FunnelSettingsForm({
 
     const paidDerived = settings?.derived.paid;
     const freeDerived = settings?.derived.free;
+    // Resolve the workspace/account names for the header. The workspace
+    // name comes from `availableWorkspaces` when the user picked one; if
+    // the parent's `workspaceName` is supplied (single-workspace case),
+    // fall back to that.
+    const headerWorkspaceName = selectedWorkspace?.name ?? workspaceName ?? workspaceId ?? '';
 
     return (
         <div className="space-y-4">
@@ -372,9 +443,43 @@ export default function FunnelSettingsForm({
                     {L('Funnel Settings', 'إعدادات مسار المبيعات')}
                 </h2>
                 <p className={`text-sm ${txMuted}`}>
-                    {L('Workspace:', 'مساحة العمل:')} {workspaceName ?? workspaceId}
+                    {L('Workspace:', 'مساحة العمل:')} {headerWorkspaceName}
                 </p>
             </div>
+
+            {/* Workspace selector (Issue 4) — only when the user has more
+                than one workspace with a linked Meta ad account. Single-
+                workspace users see the workspace name as static text in
+                the header above and skip this block entirely. The selector
+                is rendered first so it visually anchors the rest of the
+                form to the chosen workspace-account. */}
+            {showWorkspaceSelector && availableWorkspaces && (
+                <div>
+                    <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>
+                        {L('Select Workspace', 'اختر مساحة العمل')}
+                    </label>
+                    <select
+                        aria-label={L('Select Workspace', 'اختر مساحة العمل')}
+                        className={`w-full p-2 rounded border ${selectBg}`}
+                        value={selectedWorkspaceId}
+                        onChange={(e) => setSelectedWorkspaceId(e.target.value)}
+                    >
+                        {availableWorkspaces.map(ws => (
+                            <option key={ws.id} value={ws.id}>
+                                {ws.name}{ws.metaAdAccountName ? ` — ${ws.metaAdAccountName}` : ''}
+                            </option>
+                        ))}
+                    </select>
+                    {/* Show the linked Meta account name as a muted sub-line
+                        below the dropdown so the user always sees which ad
+                        account this workspace's settings will save against. */}
+                    {selectedWorkspace?.metaAdAccountName && (
+                        <p className={`mt-1 text-[10px] ${txMuted}`}>
+                            {L('Linked Meta account:', 'حساب ميتا المربوط:')} {selectedWorkspace.metaAdAccountName}
+                        </p>
+                    )}
+                </div>
+            )}
 
             {/* Advisory Cards (spec §2.6 — above results, non-blocking) */}
             {advisoryVisible.noHto && (

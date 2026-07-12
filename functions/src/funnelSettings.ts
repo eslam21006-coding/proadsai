@@ -15,9 +15,18 @@
 // 30 days`. `getFunnelSettings` returns `reviewDue: now >= reviewDueAt`
 // so the frontend can show the dismissible monthly-review prompt.
 //
-// 1:1 enforcement (FR-026) — the workspace's `metaConnection.accountId`
-// must match the request's `accountId`. We look up the connection
+// 1:1 enforcement (FR-026) — the workspace's `metaAdAccountId`
+// must match the request's `accountId`. We look up the link
 // server-side (never trust client claim).
+//
+// Phase 14 batch 01-funnel-fixes — `loadMetaConnectionAccountId` previously
+// read `users/{uid}/workspaces/{workspaceId}/private/metaConnection` (a
+// separate subdoc that was never written). The actual link lives on the
+// workspace document itself — `linkMetaAccountToWorkspace` writes
+// `metaAdAccountId` directly via `wsSnap.ref.update({...})`. The mismatch
+// caused every save to throw `permission-denied: "No Meta account
+// connected for this workspace."` even after a successful link. The
+// helper now reads from the workspace doc, matching the writer.
 // ═══════════════════════════════════════════════════════════
 
 import * as admin from "firebase-admin";
@@ -70,15 +79,21 @@ async function loadMetaConnectionAccountId(
     uid: string,
     workspaceId: string,
 ): Promise<string | null> {
+    // Read from the workspace document itself — that's where
+    // `linkMetaAccountToWorkspace` writes the link via
+    // `wsSnap.ref.update({ metaAdAccountId, ... })`. The previous
+    // implementation read a separate `private/metaConnection` subdoc that
+    // was never written by the linker, so every save failed with
+    // "No Meta account connected for this workspace."
     const snap = await getDb()
         .collection("users").doc(uid)
         .collection("workspaces").doc(workspaceId)
-        .collection("private").doc("metaConnection")
         .get();
     if (!snap.exists) return null;
     const data = snap.data() || {};
-    if (data.metaConnected !== true) return null;
-    return typeof data.accountId === "string" ? data.accountId : null;
+    return typeof data.metaAdAccountId === "string" && data.metaAdAccountId.length > 0
+        ? data.metaAdAccountId
+        : null;
 }
 
 function asNumberOrNull(v: unknown): number | null {
