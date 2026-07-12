@@ -441,36 +441,6 @@
       ]
     },
     {
-      "collectionGroup": "settings",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "reviewDueAt",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "metaConnection",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "metaConnected",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "adPerformance",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "evaluatedAt",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
       "collectionGroup": "adPerformance",
       "queryScope": "COLLECTION",
       "fields": [
@@ -485,16 +455,6 @@
         {
           "fieldPath": "evaluatedAt",
           "order": "DESCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "adPerformance",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "matchType",
-          "order": "ASCENDING"
         }
       ]
     }
