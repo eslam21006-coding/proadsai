@@ -29,6 +29,13 @@ export interface MetaAccountPickerModalProps {
   selecting: boolean;
   errorMessage?: string | null;
   isDarkMode?: boolean;
+  /**
+   * Optional override for the dialog title. When provided (e.g. after a
+   * workspace switch to one that has no linked ad account) the caller can
+   * surface the workspace name in the title. Falls back to the localized
+   * `meta.picker_title` when null/undefined.
+   */
+  titleOverride?: string | null;
   onSelect: (accountId: string) => void | Promise<void>;
   onClose: () => void;
 }
@@ -40,6 +47,7 @@ export default function MetaAccountPickerModal({
   selecting,
   errorMessage,
   isDarkMode = true,
+  titleOverride,
   onSelect,
   onClose,
 }: MetaAccountPickerModalProps) {
@@ -135,7 +143,7 @@ export default function MetaAccountPickerModal({
             <div className="min-w-0">
               <h2 id="meta-account-picker-title" className={`text-lg font-black ${dk ? 'text-white' : 'text-slate-900'}`}>
                 <i className="fa-brands fa-meta text-blue-500 me-2" />
-                {t('meta.picker_title')}
+                {titleOverride ?? t('meta.picker_title')}
               </h2>
               <p className={`mt-1 text-[10px] ${subtitleText}`}>{t('meta.picker_subtitle')}</p>
             </div>
