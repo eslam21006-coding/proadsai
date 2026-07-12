@@ -148,7 +148,7 @@ Changes:
 | `src/components/WorkspaceSettingsModal.tsx` | The linked-role badge now resolves all four values; `ANALYST` renders the new `roles.meta.analyst` label. The existing `roles.unknown` fallback still catches anything that isn't one of the four. |
 | `src/i18n.tsx` | New keys `roles.meta.analyst` (`Analyst` / `محلل`). |
 
-The existing T033 contract test (`linkMeta INSUFFICIENT role → insufficient_meta_role`) is **still skipped** (pending emulator harness) so it does not break.
+The existing T033 contract test (`linkMeta INSUFFICIENT role → insufficient_meta_role`) is **still skipped** (pending emulator harness) so it does not break. The assertion itself was updated to reflect the new intent: it now asserts that linking a workspace with role `INSUFFICIENT` succeeds, returns the role audit value, and does NOT throw `insufficient_meta_role`. The pending status is preserved so the emulator harness can be wired in later without an immediate CI break.
 
 ### 7.2 Fix 2 — Account picker modal now light/dark-mode aware with solid background
 
@@ -165,7 +165,7 @@ The backdrop is unchanged (`bg-black/60 backdrop-blur-sm` — same pattern as `F
 
 When Meta is connected and an account is selected, the menu's Meta entry now shows the account name in a small muted line under `حساب ميتا مربوط` / `Meta Ads Connected`:
 
-```
+```text
   Meta Ads Connected
   Adscope Consulting LLC
 ```

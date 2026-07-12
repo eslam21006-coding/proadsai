@@ -321,9 +321,6 @@ export default function FunnelSettingsForm({
     }
 
     const showWorkspaceSelector = !!availableWorkspaces && availableWorkspaces.length > 1;
-    const singleWorkspaceName = !showWorkspaceSelector
-        ? (selectedWorkspace?.name ?? workspaceName ?? workspaceId ?? '')
-        : '';
 
     const { loading, error, settings, reviewDue, save, dismiss } = useFunnelSettings(selectedWorkspaceId || null, selectedAccountId);
 

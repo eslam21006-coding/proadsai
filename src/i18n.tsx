@@ -818,6 +818,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'roles.meta.admin': 'Meta Admin',
         'roles.meta.advertiser': 'Advertiser',
         'roles.meta.analyst': 'Analyst',
+        'roles.meta.insufficient': 'No role on this ad account',
         'roles.unknown': 'Unknown role',
     },
 
@@ -1634,6 +1635,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'roles.meta.admin': 'مسؤول Meta',
         'roles.meta.advertiser': 'معلِن',
         'roles.meta.analyst': 'محلل',
+        'roles.meta.insufficient': 'لا يوجد دور على هذا الحساب',
         'roles.unknown': 'دور غير معروف',
     },
 };

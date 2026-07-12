@@ -58,7 +58,7 @@ export async function probeMetaRole(
     if (roles.includes("ADVERTISE") || roles.includes("ADVERTISER")) {
       return "ADVERTISER";
     }
-    if (roles.includes("ANALYZE") || roles.includes("ANALYST") || roles.includes("VIEW")) {
+    if (roles.includes("ANALYZE") || roles.includes("ANALYST")) {
       return "ANALYST";
     }
     return "INSUFFICIENT";

@@ -21,7 +21,7 @@ The Meta sub-actions were previously split across two dividers — `divider1` (a
 
 ### New menu order (when Meta is connected, expanded sidebar)
 
-```
+```text
 [+] New project
 [📑] Saved
 [⚙] Settings

@@ -277,7 +277,9 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
                           ? t('roles.meta.advertiser')
                           : linkedMeta.role === 'ANALYST'
                             ? t('roles.meta.analyst')
-                            : (linkedMeta.role ?? t('roles.unknown'))}
+                            : linkedMeta.role === 'INSUFFICIENT'
+                              ? t('roles.meta.insufficient')
+                              : (linkedMeta.role ?? t('roles.unknown'))}
                     </p>
                   </div>
                   <button

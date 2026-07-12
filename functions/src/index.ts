@@ -3344,6 +3344,26 @@ export const metaSyncPerformance = onCall({
     const uid = request.auth.uid;
     const workspaceId = request.data?.workspaceId || null;
 
+    // Phase 14 (workspace-account fix) — When the sync is invoked for a
+    // specific workspace, surface a clear non-retryable error if the
+    // linked ad account was probed at link time with role "INSUFFICIENT".
+    // Without this, the daily sync would silently retry forever against an
+    // account whose token cannot read insights, wasting the workspace's
+    // daily allowance and emitting no actionable feedback.
+    if (workspaceId) {
+        const wsRef = admin.firestore().doc(`users/${uid}/workspaces/${workspaceId}`);
+        const wsSnap = await wsRef.get();
+        if (wsSnap.exists) {
+            const wsData = wsSnap.data();
+            if (wsData?.metaRoleAtLinkTime === "INSUFFICIENT") {
+                throw new HttpsError(
+                    "permission-denied",
+                    "This workspace is linked to a Meta ad account your token can't read. Ask a workspace admin to re-link the account.",
+                );
+            }
+        }
+    }
+
     const connDoc = await admin.firestore().collection("metaConnections").doc(uid).get();
     if (!connDoc.exists) throw new HttpsError("not-found", "No Meta connection found.");
 

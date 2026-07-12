@@ -217,7 +217,7 @@ async function main() {
     skip("T017: deleteWorkspace default → default_workspace_undeletable");
     skip("T018: deleteWorkspace + restoreWorkspace round-trip");
     skip("T032: linkMeta not connected → meta_account_not_connected");
-    skip("T033: linkMeta INSUFFICIENT role → insufficient_meta_role");
+    skip("T033: linkMeta INSUFFICIENT role → succeeds + metaRoleAtLinkTime=INSUFFICIENT (audit only; gate removed in batch-01-account-picker-fix)");
     skip("T034: linkMeta ADVERTISER → ok, fields written");
     skip("T035: unlinkMeta → fields cleared");
     skip("T042: generation missing activeWorkspaceId → active_workspace_required");
