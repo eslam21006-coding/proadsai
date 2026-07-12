@@ -6405,10 +6405,13 @@ export const linkMetaAccountToWorkspace = onCall({
         throw new HttpsError("failed-precondition", "This Meta ad account is not in your connected accounts.");
     }
 
+    // Phase 14 only READS ad performance data — never publishes. Any role
+    // (ADMIN / ADVERTISER / ANALYST / INSUFFICIENT) is acceptable for
+    // linking the workspace to the ad account. The publishing flow
+    // (`metaPushCreative` / `metaPushCreativePack`) keeps its own Meta
+    // API error handling, which will reject write attempts at request
+    // time with a permission error from Meta itself.
     const role = await probeMetaRole(accessToken, metaAdAccountId);
-    if (role === "INSUFFICIENT") {
-        throw new HttpsError("failed-precondition", "Your Meta role on this ad account doesn't allow publishing. Request Advertiser access in Meta Business Manager to link it.");
-    }
 
     await wsSnap.ref.update({
         metaAdAccountId,

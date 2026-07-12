@@ -412,7 +412,7 @@ export interface Workspace {
   isDefault: boolean;
   metaAdAccountId?: string;
   metaAdAccountName?: string;
-  metaRoleAtLinkTime?: 'ADMIN' | 'ADVERTISER';
+  metaRoleAtLinkTime?: 'ADMIN' | 'ADVERTISER' | 'ANALYST' | 'INSUFFICIENT';
   deletedAt?: number | null;
   pendingReassign?: boolean;
   pendingRestore?: boolean;

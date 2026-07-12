@@ -815,6 +815,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.switcher.default_name': 'Default Workspace',
         'roles.meta.admin': 'Meta Admin',
         'roles.meta.advertiser': 'Advertiser',
+        'roles.meta.analyst': 'Analyst',
         'roles.unknown': 'Unknown role',
     },
 
@@ -1628,6 +1629,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.switcher.default_name': 'مساحة العمل الافتراضية',
         'roles.meta.admin': 'مسؤول Meta',
         'roles.meta.advertiser': 'معلِن',
+        'roles.meta.analyst': 'محلل',
         'roles.unknown': 'دور غير معروف',
     },
 };

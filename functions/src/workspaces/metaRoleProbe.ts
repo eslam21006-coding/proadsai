@@ -2,7 +2,7 @@
 
 import * as functions from "firebase-functions";
 
-type MetaRole = "ADMIN" | "ADVERTISER" | "INSUFFICIENT";
+type MetaRole = "ADMIN" | "ADVERTISER" | "ANALYST" | "INSUFFICIENT";
 
 const META_API_VERSION = "v22.0";
 const PROBE_TIMEOUT_MS = 5000;
@@ -57,6 +57,9 @@ export async function probeMetaRole(
     }
     if (roles.includes("ADVERTISE") || roles.includes("ADVERTISER")) {
       return "ADVERTISER";
+    }
+    if (roles.includes("ANALYZE") || roles.includes("ANALYST") || roles.includes("VIEW")) {
+      return "ANALYST";
     }
     return "INSUFFICIENT";
   } catch (err: any) {

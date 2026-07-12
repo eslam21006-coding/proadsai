@@ -1296,12 +1296,19 @@ interface MenuItemProps {
   label: string;
   onClick: () => void;
   className?: string;
+  /**
+   * Optional second line below the main label — used by the Meta entry
+   * to surface the currently linked ad-account name under "Meta Ads
+   * Connected". Kept narrow + muted so the visual hierarchy stays with
+   * the main label.
+   */
+  subLabel?: string | null;
 }
 
 // Single menu item row — icon + label, full-width pill inside the
 // expanded panel. Mirrors the visual rhythm of the rest of the app:
 // slate text on white, hover lifts to slate-50 with darker text.
-const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onClick, className }) => (
+const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onClick, className, subLabel }) => (
   <button
     type="button"
     onClick={onClick}
@@ -1310,7 +1317,12 @@ const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onClick, className }) 
     role="menuitem"
   >
     <i className={`fa-solid ${icon} w-4 text-center text-slate-400`} data-sidebar-icon></i>
-    <span className="truncate">{label}</span>
+    <span className="flex-1 min-w-0 text-start">
+      <span className="block truncate">{label}</span>
+      {subLabel ? (
+        <span className="block truncate text-[10px] text-slate-400 font-normal" data-sidebar-sublabel>{subLabel}</span>
+      ) : null}
+    </span>
   </button>
 );
 
@@ -1364,16 +1376,31 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
     // between "Connect Meta Ads" (no connection) and "Meta Ads Connected"
     // (already connected) per the spec. The handler also closes the menu
     // drawer so the OAuth popup isn't obscured.
+    // Phase 14 batch 01 (fix) — When connected, show the selected ad-account
+    // name as a small muted sub-label so the user can see which account is
+    // active without opening the picker. Falls back to the account id when
+    // the name is missing.
     {
       key: 'meta',
-      el: (
-        <MenuItem
-          key="meta"
-          icon="fa-brands fa-meta"
-          label={metaConnection?.connected ? t('topbar.menu_meta_connected') : t('topbar.menu_meta_connect')}
-          onClick={metaConnection?.connected ? props.onSyncMeta : props.onConnectMeta}
-        />
-      ),
+      el: (() => {
+        const isConnected = !!metaConnection?.connected;
+        const selectedId = metaConnection?.selectedAccountId ?? null;
+        const selectedAccount = isConnected
+          ? metaConnection?.adAccounts?.find((a) => a.id === selectedId)
+          : undefined;
+        const subLabel = isConnected
+          ? (selectedAccount?.name || selectedId || '')
+          : '';
+        return (
+          <MenuItem
+            key="meta"
+            icon="fa-brands fa-meta"
+            label={isConnected ? t('topbar.menu_meta_connected') : t('topbar.menu_meta_connect')}
+            subLabel={subLabel || null}
+            onClick={isConnected ? props.onSyncMeta : props.onConnectMeta}
+          />
+        );
+      })(),
     },
     // Phase 14 batch 01 — UI wiring. Funnel Settings entry. Only visible
     // when the user has connected Meta and the active workspace has a
@@ -11499,6 +11526,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           currentSelectedId={metaConnection?.selectedAccountId ?? null}
           selecting={metaAccountPickerSelecting}
           errorMessage={metaAccountPickerError}
+          isDarkMode={isDarkMode}
           onSelect={(accountId) => { void handleMetaAccountSelect(accountId); }}
           onClose={closeMetaAccountPicker}
         />

@@ -25,12 +25,10 @@ export interface MetaAccountPickerItem {
 export interface MetaAccountPickerModalProps {
   open: boolean;
   accounts: MetaAccountPickerItem[];
-  /** Currently selected accountId (from the global connection, NOT the workspace). */
   currentSelectedId: string | null;
-  /** Set true while a select is in flight to disable the cards. */
   selecting: boolean;
-  /** Optional inline error string to surface (parent passes localized text). */
   errorMessage?: string | null;
+  isDarkMode?: boolean;
   onSelect: (accountId: string) => void | Promise<void>;
   onClose: () => void;
 }
@@ -41,39 +39,21 @@ export default function MetaAccountPickerModal({
   currentSelectedId,
   selecting,
   errorMessage,
+  isDarkMode = true,
   onSelect,
   onClose,
 }: MetaAccountPickerModalProps) {
   const { t } = useT();
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
-  // Refs for the live values so the open-keyed effect can read them
-  // without re-binding every time the parent re-renders. Without this,
-  // the focus effect tears down on every `selecting`/`onClose` flip and
-  // restores focus behind the still-open overlay.
   const selectingRef = useRef(selecting);
   const onCloseRef = useRef(onClose);
-  useEffect(() => {
-    selectingRef.current = selecting;
-  }, [selecting]);
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
+  useEffect(() => { selectingRef.current = selecting; }, [selecting]);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
 
-  // Esc-to-close while idle + focus trap (Tab / Shift+Tab cycles within
-  // the dialog) + restore focus on close. Depends ONLY on `open` so the
-  // trap survives `selecting`/`onClose` flips during the modal's lifetime.
-  // While selecting, every control is disabled — if Tab lands on an
-  // empty focusable set we redirect focus to the dialog itself, which is
-  // marked `tabIndex={-1}` on the JSX so it can receive focus but stays
-  // out of the normal tab order on the next round.
   useEffect(() => {
     if (!open) return;
-
-    // Remember what had focus so we can restore it on close.
     previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
-
-    // Move focus into the dialog (the first focusable inside it).
     const dialog = dialogRef.current;
     const firstFocusable = dialog?.querySelector<HTMLElement>(
       'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
@@ -98,8 +78,6 @@ export default function MetaAccountPickerModal({
       const items = focusableElements();
       const active = document.activeElement as HTMLElement | null;
       if (items.length === 0 || !dialog?.contains(active)) {
-        // Fallback: keep focus inside the dialog while it's open even if
-        // every interactive control is disabled during a save round-trip.
         e.preventDefault();
         dialog?.focus();
         return;
@@ -107,22 +85,15 @@ export default function MetaAccountPickerModal({
       const first = items[0];
       const last = items[items.length - 1];
       if (e.shiftKey) {
-        if (active === first) {
-          e.preventDefault();
-          last.focus();
-        }
+        if (active === first) { e.preventDefault(); last.focus(); }
       } else {
-        if (active === last) {
-          e.preventDefault();
-          first.focus();
-        }
+        if (active === last) { e.preventDefault(); first.focus(); }
       }
     }
 
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('keydown', onKey);
-      // Restore focus to the element that opened the picker.
       previouslyFocusedRef.current?.focus?.();
       previouslyFocusedRef.current = null;
     };
@@ -130,60 +101,54 @@ export default function MetaAccountPickerModal({
 
   if (!open) return null;
 
+  const dk = isDarkMode;
+  const shell = dk ? 'bg-slate-950 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900 shadow-2xl';
+  const headerGradient = dk ? 'bg-gradient-to-b from-blue-900/20 to-transparent border-slate-800' : 'bg-gradient-to-b from-blue-50 to-transparent border-slate-200';
+  const subtitleText = dk ? 'text-slate-400' : 'text-slate-500';
+  const closeBtn = dk ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-900';
+  const cardBase = dk ? 'border-slate-800 bg-slate-900/40 hover:border-blue-500/30 hover:bg-slate-900/70' : 'border-slate-200 bg-white hover:border-blue-400 hover:bg-blue-50/60';
+  const cardActive = dk ? 'border-blue-500/60 bg-blue-500/15' : 'border-blue-500 bg-blue-50';
+  const cardIcon = dk ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500';
+  const cardIconActive = dk ? 'bg-blue-500/20 text-blue-300' : 'bg-blue-100 text-blue-700';
+  const cardTitle = dk ? 'text-white' : 'text-slate-900';
+  const cardIdText = dk ? 'text-slate-500' : 'text-slate-400';
+  const cardPill = dk ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700';
+  const cardActivePill = dk ? 'text-blue-300' : 'text-blue-700';
+  const footerBorder = dk ? 'border-slate-800' : 'border-slate-200';
+  const footerBtn = dk ? 'bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]' : 'bg-slate-100 text-slate-700 hover:bg-slate-200';
+  const bodyEmpty = dk ? 'text-slate-400' : 'text-slate-500';
+
   return (
-    <div
-      className="fixed inset-0 z-[210] flex items-center justify-center p-4"
-      onClick={selecting ? undefined : onClose}
-    >
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+    <div className="fixed inset-0 z-[210] flex items-center justify-center p-4" onClick={selecting ? undefined : onClose}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" aria-hidden="true" />
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="meta-account-picker-title"
         tabIndex={-1}
-        className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden focus:outline-none"
+        className={`relative ${shell} border rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden focus:outline-none`}
         onClick={e => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="bg-gradient-to-b from-blue-900/20 to-transparent p-6 pb-4 border-b border-slate-800">
+        <div className={`${headerGradient} p-6 pb-4 border-b`}>
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <h2
-                id="meta-account-picker-title"
-                className="text-lg font-black text-white"
-              >
-                <i className="fa-brands fa-meta text-blue-400 me-2" />
+              <h2 id="meta-account-picker-title" className={`text-lg font-black ${dk ? 'text-white' : 'text-slate-900'}`}>
+                <i className="fa-brands fa-meta text-blue-500 me-2" />
                 {t('meta.picker_title')}
               </h2>
-              <p className="mt-1 text-[10px] text-slate-400">
-                {t('meta.picker_subtitle')}
-              </p>
+              <p className={`mt-1 text-[10px] ${subtitleText}`}>{t('meta.picker_subtitle')}</p>
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={selecting}
-              aria-label={t('common.close')}
-              className="shrink-0 text-slate-500 hover:text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-            >
+            <button type="button" onClick={onClose} disabled={selecting} aria-label={t('common.close')} className={`shrink-0 ${closeBtn} transition-all disabled:opacity-40 disabled:cursor-not-allowed`}>
               <i className="fa-solid fa-xmark text-lg" aria-hidden="true" />
             </button>
           </div>
         </div>
 
-        {/* Body */}
         <div className="p-6 space-y-3 max-h-[60vh] overflow-y-auto custom-scrollbar">
           {accounts.length === 0 ? (
-            <p className="text-[11px] text-slate-400 text-center py-8">
-              {t('workspace.settings.meta_connect_prompt')}
-            </p>
+            <p className={`text-[11px] ${bodyEmpty} text-center py-8`}>{t('workspace.settings.meta_connect_prompt')}</p>
           ) : (
-            // Plain button group — NOT a listbox. These are ordinary tab
-            // stops (the user just clicks one), so the implicit listbox
-            // keyboard model (`role="listbox"` + `role="option"` +
-            // `aria-selected`) would falsely advertise roving-focus +
-            // arrow-key navigation that this component doesn't implement.
             <ul className="space-y-2" aria-label={t('meta.picker_title')}>
               {accounts.map(acc => {
                 const isCurrent = acc.id === currentSelectedId;
@@ -194,52 +159,36 @@ export default function MetaAccountPickerModal({
                       disabled={selecting}
                       onClick={() => {
                         if (isCurrent) {
-                          // Re-selecting the current account is a no-op —
-                          // but still dismiss the picker so the user isn't
-                          // stranded in the modal.
                           onClose();
                           return;
                         }
-                        // `onSelect` is allowed to return a Promise (the
-                        // parent awaits the workspace link + toast). Swallow
-                        // any rejection here so it doesn't bubble as an
-                        // unhandled async error in the console — the parent
-                        // already surfaces failures via its own toast/error
-                        // state machine.
                         Promise.resolve(onSelect(acc.id)).catch((err) => {
                           console.warn('Failed to select Meta account:', err);
                         });
                       }}
                       className={`w-full text-start px-4 py-3 rounded-xl border transition-all flex items-center gap-3 disabled:opacity-60 disabled:cursor-not-allowed ${
-                        isCurrent
-                          ? 'border-blue-500/40 bg-blue-500/10'
-                          : 'border-slate-800 bg-slate-900/40 hover:border-blue-500/30 hover:bg-slate-900/70'
+                        isCurrent ? cardActive : cardBase
                       }`}
+                      aria-pressed={isCurrent}
                     >
-                      <span
-                        className={`shrink-0 w-9 h-9 rounded-lg flex items-center justify-center ${
-                          isCurrent ? 'bg-blue-500/20 text-blue-300' : 'bg-slate-800 text-slate-400'
-                        }`}
-                      >
-                        <i className="fa-solid fa-rectangle-ad text-sm" aria-hidden="true" />
+                      <span className={`shrink-0 w-9 h-9 rounded-lg flex items-center justify-center ${isCurrent ? cardIconActive : cardIcon}`}>
+                        {isCurrent ? (
+                          <i className="fa-solid fa-circle-check text-sm" aria-hidden="true" />
+                        ) : (
+                          <i className="fa-solid fa-rectangle-ad text-sm" aria-hidden="true" />
+                        )}
                       </span>
                       <span className="flex-1 min-w-0">
-                        <span className="block text-[12px] font-bold text-white truncate">
-                          {acc.name || acc.id}
-                        </span>
-                        <span className="block text-[9px] text-slate-500 font-mono truncate" dir="ltr">
-                          {acc.id}
-                        </span>
+                        <span className={`block text-[12px] font-bold ${cardTitle} truncate`}>{acc.name || acc.id}</span>
+                        <span className={`block text-[9px] ${cardIdText} font-mono truncate`} dir="ltr">{acc.id}</span>
                       </span>
                       {isCurrent ? (
-                        <span className="shrink-0 flex items-center gap-1 text-[9px] font-bold text-blue-300">
+                        <span className={`shrink-0 flex items-center gap-1 text-[9px] font-bold ${cardActivePill}`}>
                           <i className="fa-solid fa-circle-check text-xs" aria-hidden="true" />
                           {t('meta.picker_current')}
                         </span>
                       ) : (
-                        <span className="shrink-0 px-2 py-1 rounded-md bg-slate-800 text-slate-300 text-[9px] font-bold">
-                          {t('meta.picker_select')}
-                        </span>
+                        <span className={`shrink-0 px-2 py-1 rounded-md ${cardPill} text-[9px] font-bold`}>{t('meta.picker_select')}</span>
                       )}
                     </button>
                   </li>
@@ -249,22 +198,18 @@ export default function MetaAccountPickerModal({
           )}
 
           {errorMessage && (
-            <div
-              role="alert"
-              className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-[10px]"
-            >
+            <div role="alert" className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-[10px]">
               {errorMessage}
             </div>
           )}
         </div>
 
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-800 flex items-center justify-end gap-2">
+        <div className={`px-6 py-4 border-t ${footerBorder} flex items-center justify-end gap-2`}>
           <button
             type="button"
             onClick={onClose}
             disabled={selecting}
-            className="h-9 px-4 rounded-xl bg-white/[0.04] text-slate-300 text-[10px] font-bold hover:bg-white/[0.08] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className={`h-9 px-4 rounded-xl ${footerBtn} text-[10px] font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed`}
           >
             {t('meta.picker_cancel')}
           </button>
