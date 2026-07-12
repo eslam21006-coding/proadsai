@@ -959,7 +959,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'topbar.menu_language': 'تبديل اللغة',
         'topbar.menu_expand': 'توسيع القائمة',
         'topbar.menu_meta_connect': 'ربط حساب ميتا',
-        'topbar.menu_meta_connected': 'حساب ميتا مربوط',
+        'topbar.menu_meta_connected': 'حساب ميتا متصل',
         'topbar.menu_meta_disconnect': 'فك الربط',
         'topbar.menu_meta_sync': 'مزامنة الآن',
         'topbar.menu_meta_change_account': 'تغيير الحساب',
