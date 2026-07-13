@@ -101,6 +101,8 @@ interface ImageFingerprintDoc {
     createdAt: number;
 }
 
+export type { ImageFingerprintDoc };
+
 interface AdDoc {
     adId: string;
     adName?: string;

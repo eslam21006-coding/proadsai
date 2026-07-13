@@ -57,6 +57,10 @@ export { connectMetaAccount, disconnectMetaAccount } from "./metaConnection.js";
 export { triggerMetaSync } from "./metaSync/trigger.js";
 export { metaDailySync } from "./metaSync/dispatcher.js";
 export { metaSyncAccountWorker } from "./metaSync/worker.js";
+// Phase 14 — Layer 3 (image matching callables + delete cascade).
+export { linkUnmatchedAd } from "./linkUnmatchedAd.js";
+export { backfillImageFingerprints } from "./backfillImageFingerprints.js";
+export { onGenerationDeleted } from "./generationDeleteCascade.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
@@ -4794,7 +4798,23 @@ export const serverGenerateFinalAd = onCall({
             } catch (uploadErr) {
                 console.warn("serverGenerateFinalAd: server-side render upload failed (non-blocking):", uploadErr);
             }
-            return { success: true, imageBase64: result.image, storageUrl, errorCode: null, costEstimate: generators.getCostEstimate(), resolutionTrace: trace };
+            // Phase 14 — Layer 3 (FR-014): compute the perceptual hash AFTER
+            // the image is uploaded so the hash survives JPEG re-upload
+            // compression. The CLIENT writes the hash + index entry (no
+            // server-side `genId` write — Technical Constraint).
+            // Hash computation failure is non-blocking: a missing hash means
+            // this generation can only be matched via the manual linking UI.
+            let imageFingerprint: string | null = null;
+            try {
+                const { computeHash } = await import("./perceptualHash.js");
+                const dataUrlPrefix = result.image.indexOf(",");
+                const b64 = dataUrlPrefix >= 0 ? result.image.slice(dataUrlPrefix + 1) : result.image;
+                const buf = Buffer.from(b64, "base64");
+                imageFingerprint = await computeHash(buf);
+            } catch (hashErr) {
+                console.warn("serverGenerateFinalAd: perceptual hash failed (non-blocking):", hashErr);
+            }
+            return { success: true, imageBase64: result.image, storageUrl, imageFingerprint, errorCode: null, costEstimate: generators.getCostEstimate(), resolutionTrace: trace };
         } else {
             return {
                 success: false,

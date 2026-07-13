@@ -440,7 +440,7 @@ Use this information to better understand the brand's positioning, tone, and tar
     // (legacy / pre-Phase-20 / new flag-off) — the backend just
     // skips the merge.
     conceptDirectorTrace?: ConceptDirectorTraceEntry | null,
-  ): Promise<{ image: string | null; storageUrl?: string | null; errorCode?: string; debug?: any; resolutionTrace?: any }> {
+  ): Promise<{ image: string | null; storageUrl?: string | null; imageFingerprint?: string | null; errorCode?: string; debug?: any; resolutionTrace?: any }> {
     const inputsWithPhotos = { ...inputs } as any;
     inputsWithPhotos.personalPhotos = (inputs.personalPhotos || []).slice(0, 5);
     inputsWithPhotos.brandLogos = (inputs.brandLogos || []).slice(0, 5);
@@ -473,6 +473,10 @@ Use this information to better understand the brand's positioning, tone, and tar
       // Storage URL persisted server-side (admin SDK). The frontend stores THIS in the
       // generations doc instead of the base64, and reflow uses it as the source image.
       storageUrl: (typeof data.storageUrl === 'string' && data.storageUrl) ? data.storageUrl : null,
+      // Phase 14 — Layer 3 (FR-014): perceptual hash returned by the server
+      // so the client can write it onto the generation doc + index entry
+      // (server can't write by genId — Technical Constraint).
+      imageFingerprint: (typeof data.imageFingerprint === 'string' && data.imageFingerprint) ? data.imageFingerprint : null,
       errorCode: data.errorCode || (raw && !image ? 'invalid_image_format' : undefined),
       debug: data.debug || null,
       resolutionTrace: data.resolutionTrace || null,
