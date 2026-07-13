@@ -1,0 +1,732 @@
+// functions/src/metaSync/shared.ts — Phase 14 Layer 2 shared sync logic
+// ═══════════════════════════════════════════════════════════
+// The "run one account sync" body that the dispatcher, the worker, and the
+// manual trigger all call. Lives in its own file so the Cloud Functions
+// deployment unit is small (no shared state in a module-global) and the
+// contract test (T020) can import the same function the callable exports.
+//
+// STEPS (spec §3.1):
+//   1. Load encrypted token, decrypt.
+//   2. Validate / refresh (FR-009 — on refresh failure mark needsReauth, stop).
+//   3. Fetch hierarchy (campaigns → ad sets → ads).
+//   4. Fetch per-ad insights (3 windows).
+//   5. Compute account baselines.
+//   6. Compute spend_share_pct per ad.
+//   7. Classify targeting context (geo + audience).
+//   8. Classify campaign objective.
+//   9. Image matching (T033 — workspace-scoped).
+//  10. Persist adPerformance / baselines / syncSnapshot; prune to last 7.
+//  11. Update lastMetaSyncAt + lastSyncStatus.
+//  12. Patch the connection doc with the new timestamps.
+//
+// IDEMPOTENCY (FR-011): every write is keyed by deterministic doc id
+// (adId, snapshotId). Re-running with the same data produces the same
+// result. The snapshot id is the sync attempt's monotonic timestamp.
+//
+// PARTIAL FAILURE (FR-010): if some ads fail, store what succeeded; last
+// good aggregates remain intact. We collect errors per-ad and surface them
+// on the snapshot doc as `status: 'partial'`.
+// ═══════════════════════════════════════════════════════════
+
+import { getDb } from "../firestoreClient.js";
+import {
+    fetchCampaigns,
+    fetchAdSets,
+    fetchAds,
+    fetchAdCreativeImage,
+    fetchAdInsights,
+    fetchAccountBaselines,
+    downloadCreativeImage,
+    extractImageUrl,
+    type MetaCampaign,
+    type MetaAdSet,
+    type MetaAd,
+    type InsightsTimeWindows,
+} from "../metaGraph.js";
+import {
+    classifyTargeting,
+    type GeoTier,
+    type AudienceType,
+} from "../targetingContext.js";
+import {
+    classifyCampaignObjective,
+    type CampaignObjectiveBucket,
+} from "../campaignObjective.js";
+import {
+    computeHash,
+    decideMatch,
+    hammingDistance,
+    type MatchCandidate,
+} from "../perceptualHash.js";
+import {
+    loadStoredConnection,
+    patchStoredConnection,
+    type StoredConnection,
+} from "../metaConnection.js";
+import {
+    decryptLegacyToken,
+} from "./legacyToken.js";
+
+// ─── Public types ─────────────────────────────────────────────
+
+export interface SyncParams {
+    userId: string;
+    workspaceId: string;
+    accountId: string;
+    trigger: "scheduled" | "manual";
+    nowMs: number;
+}
+
+export interface SyncResult {
+    ok: boolean;
+    status: "ok" | "partial" | "failed";
+    counts: {
+        campaigns: number;
+        adSets: number;
+        ads: number;
+        matched: number;
+        unmatched: number;
+        ambiguous: number;
+    };
+    errors: string[];
+    needsReauth: boolean;
+    lastMetaSyncAt: number;
+}
+
+// ─── Internal types ────────────────────────────────────────────
+
+interface ImageFingerprintDoc {
+    hash: string;
+    generationId: string;
+    createdAt: number;
+}
+
+interface AdDoc {
+    adId: string;
+    adName?: string;
+    thumbnailUrl?: string;
+    generationId: string | null;
+    matchType: "auto_hash" | "manual" | null;
+    matchDistance: number | null;
+    metadataAvailable: boolean;
+    geoTier: GeoTier;
+    audienceType: AudienceType;
+    campaignObjective: CampaignObjectiveBucket;
+    campaignObjectiveRaw: string;
+    spend3d: number;
+    spendToday: number;
+    impressions3d: number;
+    cpa3d: number | null;
+    ctrLink: number;
+    ctrAll: number;
+    conversions3d: number;
+    frequency3d: number;
+    spendSharePct: number;
+    ageDays: number;
+    cpm3d: number;
+    peak1dCtr: number;
+    creativeId: string | null;
+    imageHash: string | null;
+    evaluatedAt: number;
+    schemaVersion: 1;
+}
+
+const SYNC_SNAPSHOT_RETENTION = 7;
+
+// ─── Pure helpers (exported for tests) ────────────────────────
+
+/**
+ * Sum 3-day spend across all ads in an ad set.
+ */
+export function sumSpend3d(perAdInsights: Map<string, InsightsTimeWindows>): Map<string, number> {
+    const out = new Map<string, number>();
+    for (const [adId, windows] of perAdInsights) {
+        const spend3d = windows.threeDayRolling.reduce(
+            (acc, r) => acc + parseNum(r.spend),
+            0,
+        );
+        out.set(adId, spend3d);
+    }
+    return out;
+}
+
+/**
+ * spend_share_pct = ad.spend3d / adset.spend3d * 100 (returns 0 when adset sum is 0).
+ */
+export function computeSpendSharePct(adId: string, adSetId: string, perAdSet: Map<string, Map<string, number>>): number {
+    const adSpend = perAdSet.get(adSetId)?.get(adId) ?? 0;
+    const adSetSum = Array.from(perAdSet.get(adSetId)?.values() ?? []).reduce((a, b) => a + b, 0);
+    if (adSetSum <= 0) return 0;
+    return (adSpend / adSetSum) * 100;
+}
+
+/**
+ * Aggregate the 3-day window into the metrics shape the rest of the pipeline
+ * uses. Pure — no I/O — so the contract test (T020) can verify the shape.
+ */
+export function aggregateAdMetrics(windows: InsightsTimeWindows): {
+    spend3d: number;
+    spendToday: number;
+    impressions3d: number;
+    cpa3d: number | null;
+    ctrLink: number;
+    ctrAll: number;
+    conversions3d: number;
+    frequency3d: number;
+    cpm3d: number;
+    peak1dCtr: number;
+} {
+    const threeDayRows = windows.threeDayRolling.map((r) => ({ ...r }));
+    const spend3d = sumField(threeDayRows, "spend");
+    const spendToday = sumField(windows.today.map((r) => ({ ...r })), "spend");
+    const impressions3d = sumField(threeDayRows, "impressions");
+    const clicks3d = sumField(threeDayRows, "clicks");
+    const inlineLinkClicks3d = sumField(threeDayRows, "inline_link_clicks");
+    const ctr3d = sumField(threeDayRows, "ctr"); // already avg per row
+    const cpm3d = sumField(threeDayRows, "cpm");
+    const frequency3d = sumField(threeDayRows, "frequency");
+    const conversions3d = countConversionActions(threeDayRows);
+
+    // CTR rates — average across the 3-day rows (Meta returns one row per ad
+    // when time_range is supplied without time_increment, so this is just
+    // the single row).
+    const ctrLink = inlineLinkClicks3d > 0 && impressions3d > 0
+        ? (inlineLinkClicks3d / impressions3d) * 100
+        : (ctr3d / Math.max(1, windows.threeDayRolling.length));
+
+    const ctrAll = clicks3d > 0 && impressions3d > 0
+        ? (clicks3d / impressions3d) * 100
+        : 0;
+
+    const cpa3d = conversions3d > 0 ? spend3d / conversions3d : null;
+
+    const peak1dCtr = windows.last7DaysDaily.length > 0
+        ? Math.max(...windows.last7DaysDaily.map((r) => {
+            const ctr = parseNum(r.inline_link_click_ctr);
+            return ctr > 0 ? ctr : parseNum(r.ctr);
+        }))
+        : 0;
+
+    return {
+        spend3d,
+        spendToday,
+        impressions3d,
+        cpa3d,
+        ctrLink,
+        ctrAll,
+        conversions3d,
+        frequency3d,
+        cpm3d: cpm3d / Math.max(1, windows.threeDayRolling.length),
+        peak1dCtr,
+    };
+}
+
+function sumField(rows: ReadonlyArray<Record<string, unknown>>, field: string): number {
+    let acc = 0;
+    for (const row of rows) {
+        acc += parseNum(row[field]);
+    }
+    return acc;
+}
+
+function parseNum(v: unknown): number {
+    if (typeof v === "number") return v;
+    if (typeof v === "string") {
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? n : 0;
+    }
+    return 0;
+}
+
+const RESULT_ACTION_TYPES: ReadonlySet<string> = new Set<string>([
+    "purchase",
+    "omni_purchase",
+    "offsite_conversion.fb_pixel_purchase",
+    "lead",
+    "omni_complete_registration",
+    "complete_registration",
+]);
+
+function countConversionActions(rows: ReadonlyArray<Record<string, unknown>>): number {
+    let total = 0;
+    for (const row of rows) {
+        const actions = row.actions;
+        if (!Array.isArray(actions)) continue;
+        for (const a of actions) {
+            if (!a || typeof a !== "object") continue;
+            const actionType = (a as { action_type?: string }).action_type;
+            if (typeof actionType !== "string") continue;
+            if (RESULT_ACTION_TYPES.has(actionType.toLowerCase())) {
+                total += parseNum((a as { value?: string | number }).value);
+            }
+        }
+    }
+    return total;
+}
+
+// ─── Image matching (workspace-scoped, FR-023) ────────────────
+
+/**
+ * Read the workspace's fingerprint index. Returns a map of hash → entry.
+ * Cross-workspace search is FORBIDDEN — this only reads the workspace's own
+ * subcollection (spec §4.2, Edge Case 13, FR-023).
+ */
+export async function loadWorkspaceFingerprints(uid: string, workspaceId: string): Promise<Map<string, ImageFingerprintDoc>> {
+    const out = new Map<string, ImageFingerprintDoc>();
+    const snap = await getDb()
+        .collection("users").doc(uid)
+        .collection("workspaces").doc(workspaceId)
+        .collection("imageFingerprints")
+        .get();
+    for (const doc of snap.docs) {
+        const data = doc.data() as Partial<ImageFingerprintDoc>;
+        if (typeof data.hash === "string" && typeof data.generationId === "string") {
+            out.set(data.hash, {
+                hash: data.hash,
+                generationId: data.generationId,
+                createdAt: typeof data.createdAt === "number" ? data.createdAt : 0,
+            });
+        }
+    }
+    return out;
+}
+
+/**
+ * Match a single ad's creative image against the workspace's fingerprint
+ * index. Implements spec §4.2:
+ *   - distance <= threshold → auto_match
+ *   - top two candidates within ambiguity margin → ambiguous (unmatched)
+ *   - exact tie → most recent wins
+ *   - manual link present → never overridden (handled at the caller level)
+ */
+export async function matchAdCreative(
+    creativeImageHash: string,
+    fingerprintIndex: Map<string, ImageFingerprintDoc>,
+    maxDistance: number,
+): Promise<{
+    generationId: string | null;
+    matchType: "auto_hash" | null;
+    matchDistance: number | null;
+    ambiguous: boolean;
+}> {
+    if (fingerprintIndex.size === 0) {
+        return { generationId: null, matchType: null, matchDistance: null, ambiguous: false };
+    }
+    const candidates: MatchCandidate[] = [];
+    for (const entry of fingerprintIndex.values()) {
+        const dist = hammingDistance(creativeImageHash, entry.hash);
+        candidates.push({
+            hash: entry.hash,
+            distance: dist,
+            createdAt: entry.createdAt,
+            generationId: entry.generationId,
+        });
+    }
+    const decision = decideMatch(candidates, maxDistance);
+    if (decision.reason === "auto_match" && decision.candidate) {
+        return {
+            generationId: decision.candidate.generationId,
+            matchType: "auto_hash",
+            matchDistance: decision.candidate.distance,
+            ambiguous: false,
+        };
+    }
+    if (decision.reason === "ambiguous") {
+        return { generationId: null, matchType: null, matchDistance: null, ambiguous: true };
+    }
+    return { generationId: null, matchType: null, matchDistance: null, ambiguous: false };
+}
+
+// ─── Snapshot pruning (spec §3.4) ────────────────────────────
+
+/**
+ * Keep only the most recent `SYNC_SNAPSHOT_RETENTION` snapshots. Called
+ * after a successful snapshot write. Deletes are non-blocking — Firestore
+ * rate limits won't fail the sync.
+ */
+export async function pruneSnapshots(uid: string, workspaceId: string, accountId: string): Promise<void> {
+    const ref = getDb()
+        .collection("users").doc(uid)
+        .collection("workspaces").doc(workspaceId)
+        .collection("adAccounts").doc(accountId)
+        .collection("syncSnapshots");
+    const snap = await ref.orderBy("syncedAt", "desc").get();
+    if (snap.size <= SYNC_SNAPSHOT_RETENTION) return;
+    const stale = snap.docs.slice(SYNC_SNAPSHOT_RETENTION);
+    if (stale.length === 0) return;
+    const batch = getDb().batch();
+    for (const doc of stale) batch.delete(doc.ref);
+    await batch.commit().catch((e: unknown) => {
+        console.warn(`pruneSnapshots: batch delete failed (non-blocking): ${(e as Error).message}`);
+    });
+}
+
+// ─── Main sync body ───────────────────────────────────────────
+
+export async function runSyncForAccount(params: SyncParams): Promise<SyncResult> {
+    const { userId, workspaceId, accountId, trigger, nowMs } = params;
+    const errors: string[] = [];
+    let needsReauth = false;
+
+    // 1. Load + decrypt the token.
+    const conn = await loadStoredConnection(userId, workspaceId);
+    if (!conn) {
+        return {
+            ok: false,
+            status: "failed",
+            counts: emptyCounts(),
+            errors: ["No Meta connection found for this workspace."],
+            needsReauth: false,
+            lastMetaSyncAt: nowMs,
+        };
+    }
+    if (conn.accountId !== accountId) {
+        return {
+            ok: false,
+            status: "failed",
+            counts: emptyCounts(),
+            errors: ["Workspace connection accountId mismatch."],
+            needsReauth: conn.needsReauth,
+            lastMetaSyncAt: nowMs,
+        };
+    }
+
+    let accessToken: string;
+    try {
+        accessToken = await resolveAccessToken(conn);
+    } catch (e: unknown) {
+        const msg = (e as Error).message;
+        // FR-009: token failure → mark needsReauth, do not delete data.
+        await patchStoredConnection(userId, workspaceId, {
+            needsReauth: true,
+            lastSyncStatus: "failed",
+            lastMetaSyncAt: nowMs,
+        });
+        return {
+            ok: false,
+            status: "failed",
+            counts: emptyCounts(),
+            errors: [`Token resolution failed: ${msg}`],
+            needsReauth: true,
+            lastMetaSyncAt: nowMs,
+        };
+    }
+
+    // 2. Fetch hierarchy.
+    let campaigns: MetaCampaign[] = [];
+    let adSets: MetaAdSet[] = [];
+    let ads: MetaAd[] = [];
+    try {
+        campaigns = await fetchCampaigns(accessToken, accountId);
+    } catch (e: unknown) {
+        errors.push(`fetchCampaigns failed: ${(e as Error).message}`);
+    }
+    try {
+        const adSetLists = await Promise.all(campaigns.map((c) => fetchAdSets(accessToken, c.id)));
+        adSets = adSetLists.flat();
+    } catch (e: unknown) {
+        errors.push(`fetchAdSets failed: ${(e as Error).message}`);
+    }
+    try {
+        const adLists = await Promise.all(adSets.map((s) => fetchAds(accessToken, s.id)));
+        ads = adLists.flat();
+    } catch (e: unknown) {
+        errors.push(`fetchAds failed: ${(e as Error).message}`);
+    }
+
+    // 3. Fetch insights + 4. baselines (parallel).
+    const adInsightsMap = new Map<string, InsightsTimeWindows>();
+    let baselines: Awaited<ReturnType<typeof fetchAccountBaselines>> | null = null;
+    try {
+        const insightsEntries = await Promise.allSettled(
+            ads.map(async (ad) => [ad.id, await fetchAdInsights(accessToken, ad.id)] as const),
+        );
+        for (const result of insightsEntries) {
+            if (result.status === "fulfilled") {
+                adInsightsMap.set(result.value[0], result.value[1]);
+            } else {
+                errors.push(`fetchAdInsights failed: ${(result.reason as Error).message}`);
+            }
+        }
+    } catch (e: unknown) {
+        errors.push(`fetchAdInsights batch failed: ${(e as Error).message}`);
+    }
+    try {
+        baselines = await fetchAccountBaselines(accessToken, accountId);
+    } catch (e: unknown) {
+        errors.push(`fetchAccountBaselines failed: ${(e as Error).message}`);
+    }
+
+    // 5. spend_share_pct per ad within its ad set.
+    const adSetIndex = new Map<string, MetaAdSet>();
+    for (const s of adSets) adSetIndex.set(s.id, s);
+    const adIndex = new Map<string, MetaAd>();
+    for (const a of ads) adIndex.set(a.id, a);
+
+    const adSetTotals = new Map<string, number>();
+    for (const ad of ads) {
+        const windows = adInsightsMap.get(ad.id);
+        if (!windows) continue;
+        const spend3d = windows.threeDayRolling.reduce((acc, r) => acc + parseNum(r.spend), 0);
+        adSetTotals.set(ad.adset_id || "", (adSetTotals.get(ad.adset_id || "") || 0) + spend3d);
+    }
+    const perAdSetSpend = new Map<string, Map<string, number>>();
+    for (const ad of ads) {
+        const windows = adInsightsMap.get(ad.id);
+        if (!windows) continue;
+        const spend3d = windows.threeDayRolling.reduce((acc, r) => acc + parseNum(r.spend), 0);
+        const setId = ad.adset_id || "";
+        if (!perAdSetSpend.has(setId)) perAdSetSpend.set(setId, new Map());
+        perAdSetSpend.get(setId)!.set(ad.id, spend3d);
+    }
+
+    // 6+7. Targeting + campaign objective classification (per ad).
+    const adSetById = new Map<string, MetaAdSet>();
+    for (const s of adSets) adSetById.set(s.id, s);
+    const campaignById = new Map<string, MetaCampaign>();
+    for (const c of campaigns) campaignById.set(c.id, c);
+
+    // 8. Image matching — load workspace fingerprint index, then for each ad
+    //    that has a creative image URL, download + hash + match.
+    const fingerprintIndex = await loadWorkspaceFingerprints(userId, workspaceId);
+    const adMatchResults = new Map<string, {
+        generationId: string | null;
+        matchType: "auto_hash" | null;
+        matchDistance: number | null;
+        ambiguous: boolean;
+        imageHash: string | null;
+    }>();
+    await Promise.allSettled(ads.map(async (ad) => {
+        const result: { generationId: string | null; matchType: "auto_hash" | null; matchDistance: number | null; ambiguous: boolean; imageHash: string | null } = {
+            generationId: null,
+            matchType: null,
+            matchDistance: null,
+            ambiguous: false,
+            imageHash: null,
+        };
+        try {
+            let imageUrl: string | null = null;
+            let creativeId: string | null = null;
+            if (ad.creative && typeof ad.creative === "object") {
+                imageUrl = extractImageUrl(ad.creative);
+                creativeId = ad.creative.id || null;
+            } else if (typeof ad.creative === "string") {
+                creativeId = ad.creative;
+                const meta = await fetchAdCreativeImage(accessToken, ad.creative);
+                if (meta) imageUrl = meta.image_url || meta.thumbnail_url || null;
+            }
+            if (imageUrl) {
+                try {
+                    const buf = await downloadCreativeImage(imageUrl);
+                    const hash = await computeHash(buf);
+                    result.imageHash = hash;
+                    const match = await matchAdCreative(hash, fingerprintIndex, 10);
+                    result.generationId = match.generationId;
+                    result.matchType = match.matchType;
+                    result.matchDistance = match.matchDistance;
+                    result.ambiguous = match.ambiguous;
+                } catch (dlErr: unknown) {
+                    errors.push(`imageDownload failed for ${ad.id}: ${(dlErr as Error).message}`);
+                }
+            }
+        } catch (e: unknown) {
+            errors.push(`imageMatch failed for ${ad.id}: ${(e as Error).message}`);
+        }
+        adMatchResults.set(ad.id, result);
+    }));
+
+    // 9. Build per-ad docs and persist (skip ads that already have a link —
+    //    either manual or auto_hash from a previous sync; FR / §4.3 lock).
+    let matchedCount = 0;
+    let unmatchedCount = 0;
+    let ambiguousCount = 0;
+
+    const adAccountRef = getDb()
+        .collection("users").doc(userId)
+        .collection("workspaces").doc(workspaceId)
+        .collection("adAccounts").doc(accountId);
+
+    // Batch all writes — Firestore batch max 500 ops; chunk if needed.
+    const writes: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown> }> = [];
+
+    for (const ad of ads) {
+        const windows = adInsightsMap.get(ad.id);
+        if (!windows) continue;
+        const metrics = aggregateAdMetrics(windows);
+        const adSet = adSetById.get(ad.adset_id || "") || null;
+        const ctx = adSet ? classifyTargeting(adSet.targeting) : { geoTier: "tier3_egypt_na" as GeoTier, audienceType: "broad" as AudienceType };
+        const campaign = adSet ? campaignById.get(adSet.campaign_id || "") : null;
+        const objective = classifyCampaignObjective(campaign?.objective);
+        const match = adMatchResults.get(ad.id);
+
+        // Precedence: a manual or prior auto link locks this ad. We only
+        // fetch the existing doc to check for an existing matchType —
+        // cheaper than re-fetching the full doc.
+        const existingSnap = await adAccountRef
+            .collection("adPerformance").doc(ad.id)
+            .get()
+            .catch(() => null);
+        const existingData = existingSnap?.data() as Partial<AdDoc> | undefined;
+        const existingMatchType = existingData?.matchType;
+
+        let generationId: string | null = match?.generationId ?? null;
+        let matchType: "auto_hash" | "manual" | null = match?.matchType ?? null;
+        let matchDistance: number | null = match?.matchDistance ?? null;
+
+        if (existingMatchType === "manual" || existingMatchType === "auto_hash") {
+            // Lock — keep the prior link (FR / §4.3).
+            generationId = (existingData?.generationId as string | null) ?? generationId;
+            matchType = existingMatchType;
+            matchDistance = (existingData?.matchDistance as number | null) ?? matchDistance;
+        }
+
+        if (matchType === "auto_hash" && generationId) matchedCount++;
+        else if (match?.ambiguous) ambiguousCount++;
+        else unmatchedCount++;
+
+        const ageDays = computeAgeDays(ad, windows);
+
+        const adDoc: AdDoc = {
+            adId: ad.id,
+            adName: ad.name,
+            thumbnailUrl: extractImageUrl(ad.creative) || undefined,
+            generationId,
+            matchType,
+            matchDistance,
+            metadataAvailable: generationId !== null, // false after a delete cascade (Batch 02c)
+            geoTier: ctx.geoTier,
+            audienceType: ctx.audienceType,
+            campaignObjective: objective.bucket,
+            campaignObjectiveRaw: objective.raw,
+            spend3d: metrics.spend3d,
+            spendToday: metrics.spendToday,
+            impressions3d: metrics.impressions3d,
+            cpa3d: metrics.cpa3d,
+            ctrLink: metrics.ctrLink,
+            ctrAll: metrics.ctrAll,
+            conversions3d: metrics.conversions3d,
+            frequency3d: metrics.frequency3d,
+            spendSharePct: computeSpendSharePct(ad.id, ad.adset_id || "", perAdSetSpend),
+            ageDays,
+            cpm3d: metrics.cpm3d,
+            peak1dCtr: metrics.peak1dCtr,
+            creativeId: typeof ad.creative === "object" && ad.creative ? ad.creative.id || null : null,
+            imageHash: match?.imageHash ?? null,
+            evaluatedAt: nowMs,
+            schemaVersion: 1,
+        };
+        writes.push({
+            ref: adAccountRef.collection("adPerformance").doc(ad.id),
+            data: adDoc as unknown as Record<string, unknown>,
+        });
+    }
+
+    // Persist baselines + snapshot.
+    if (baselines) {
+        writes.push({
+            ref: adAccountRef.collection("baselines").doc("current"),
+            data: { ...baselines, computedAt: nowMs },
+        });
+    }
+
+    const snapshotId = `snap_${nowMs}_${trigger}`;
+    writes.push({
+        ref: adAccountRef.collection("syncSnapshots").doc(snapshotId),
+        data: {
+            snapshotId,
+            syncedAt: nowMs,
+            trigger,
+            status: errors.length > 0 ? "partial" : "ok",
+            raw: {
+                campaigns: campaigns.length,
+                adSets: adSets.length,
+                ads: ads.length,
+            },
+            counts: {
+                campaigns: campaigns.length,
+                adSets: adSets.length,
+                ads: ads.length,
+                matched: matchedCount,
+                unmatched: unmatchedCount,
+                ambiguous: ambiguousCount,
+            },
+            errors: errors.length > 0 ? errors.slice(0, 50) : undefined,
+        },
+    });
+
+    // Commit in chunks of 450.
+    for (let i = 0; i < writes.length; i += 450) {
+        const chunk = writes.slice(i, i + 450);
+        const batch = getDb().batch();
+        for (const w of chunk) batch.set(w.ref, w.data);
+        await batch.commit().catch((e: unknown) => {
+            errors.push(`batch commit failed: ${(e as Error).message}`);
+        });
+    }
+
+    // 11. Prune to last 7 snapshots.
+    try {
+        await pruneSnapshots(userId, workspaceId, accountId);
+    } catch (e: unknown) {
+        errors.push(`pruneSnapshots failed: ${(e as Error).message}`);
+    }
+
+    // 12. Update lastMetaSyncAt + lastSyncStatus on the connection doc.
+    const status: "ok" | "partial" | "failed" = errors.length > 0
+        ? (matchedCount + unmatchedCount > 0 ? "partial" : "failed")
+        : "ok";
+    try {
+        await patchStoredConnection(userId, workspaceId, {
+            lastMetaSyncAt: nowMs,
+            lastSyncStatus: status,
+            needsReauth,
+        });
+    } catch (e: unknown) {
+        errors.push(`patch connection failed: ${(e as Error).message}`);
+    }
+
+    return {
+        ok: status !== "failed",
+        status,
+        counts: {
+            campaigns: campaigns.length,
+            adSets: adSets.length,
+            ads: ads.length,
+            matched: matchedCount,
+            unmatched: unmatchedCount,
+            ambiguous: ambiguousCount,
+        },
+        errors,
+        needsReauth,
+        lastMetaSyncAt: nowMs,
+    };
+}
+
+// ─── Token resolution ─────────────────────────────────────────
+
+async function resolveAccessToken(conn: StoredConnection): Promise<string> {
+    if (conn.encryptedToken) {
+        // KMS-encrypted envelope.
+        const { decrypt } = await import("../tokenCrypto.js");
+        return await decrypt(conn.encryptedToken);
+    }
+    if (conn.legacyToken) {
+        // Legacy AES-256-GCM string from the user-level metaConnections doc.
+        return await decryptLegacyToken(conn.legacyToken);
+    }
+    throw new Error("No encrypted token stored for this workspace.");
+}
+
+function computeAgeDays(_ad: MetaAd, _windows: InsightsTimeWindows): number {
+    // Use the date_stop of the latest row as the "ad last seen" anchor.
+    // For now we just compute "days since the most recent row's date_stop".
+    const lastRow = _windows.last7DaysDaily[_windows.last7DaysDaily.length - 1];
+    if (!lastRow || typeof lastRow.date_stop !== "string") return 0;
+    const stop = Date.parse(lastRow.date_stop);
+    if (!Number.isFinite(stop)) return 0;
+    return Math.max(0, Math.floor((Date.now() - stop) / 86_400_000));
+}
+
+function emptyCounts(): SyncResult["counts"] {
+    return { campaigns: 0, adSets: 0, ads: 0, matched: 0, unmatched: 0, ambiguous: 0 };
+}
