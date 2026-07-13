@@ -31,12 +31,18 @@ interface DispatchedAccount {
  * Implementation note: `private` is the shared collection ID across the
  * `users/{uid}/workspaces/{wid}/private/` subcollection. The doc ID inside
  * it is `metaConnection`. We use a `collectionGroup('private')` query.
+ *
+ * Pagination: if the result hits `MAX_DISPATCH_PER_RUN`, we log a warning.
+ * At the scale we expect for v1 this is well under the cap; the cap is a
+ * safety net rather than a hard limit. A future iteration can persist a
+ * cursor between invocations if the cap is ever approached.
  */
 async function listConnectedAccounts(): Promise<DispatchedAccount[]> {
     const out: DispatchedAccount[] = [];
     const snap = await getDb()
         .collectionGroup("private")
         .where("metaConnected", "==", true)
+        .orderBy("__name__")
         .limit(MAX_DISPATCH_PER_RUN)
         .get();
     for (const doc of snap.docs) {
@@ -48,6 +54,12 @@ async function listConnectedAccounts(): Promise<DispatchedAccount[]> {
         const uid = segments[1];
         const workspaceId = segments[3];
         out.push({ userId: uid, workspaceId, accountId: data.accountId });
+    }
+    if (out.length >= MAX_DISPATCH_PER_RUN) {
+        console.warn(
+            `[metaDailySync] dispatch capped at ${MAX_DISPATCH_PER_RUN} accounts ` +
+            `— overflow will be picked up on the next run.`,
+        );
     }
     return out;
 }

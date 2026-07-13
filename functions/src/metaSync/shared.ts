@@ -424,16 +424,35 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         errors.push(`fetchCampaigns failed: ${(e as Error).message}`);
     }
     try {
-        const adSetLists = await Promise.all(campaigns.map((c) => fetchAdSets(accessToken, c.id)));
-        adSets = adSetLists.flat();
+        // allSettled preserves partial success — one failed campaign's
+        // ad sets don't discard the others (FR-010).
+        const adSetResults = await Promise.allSettled(
+            campaigns.map((c) => fetchAdSets(accessToken, c.id)),
+        );
+        for (const r of adSetResults) {
+            if (r.status === "fulfilled") {
+                adSets.push(...r.value);
+            } else {
+                errors.push(`fetchAdSets failed: ${(r.reason as Error).message}`);
+            }
+        }
     } catch (e: unknown) {
-        errors.push(`fetchAdSets failed: ${(e as Error).message}`);
+        errors.push(`fetchAdSets batch failed: ${(e as Error).message}`);
     }
     try {
-        const adLists = await Promise.all(adSets.map((s) => fetchAds(accessToken, s.id)));
-        ads = adLists.flat();
+        // allSettled: one failed ad set's ads don't poison the rest.
+        const adResults = await Promise.allSettled(
+            adSets.map((s) => fetchAds(accessToken, s.id)),
+        );
+        for (const r of adResults) {
+            if (r.status === "fulfilled") {
+                ads.push(...r.value);
+            } else {
+                errors.push(`fetchAds failed: ${(r.reason as Error).message}`);
+            }
+        }
     } catch (e: unknown) {
-        errors.push(`fetchAds failed: ${(e as Error).message}`);
+        errors.push(`fetchAds batch failed: ${(e as Error).message}`);
     }
 
     // 3. Fetch insights + 4. baselines (parallel).
@@ -551,6 +570,19 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // Batch all writes — Firestore batch max 500 ops; chunk if needed.
     const writes: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown> }> = [];
 
+    // Batch-load existing adPerformance docs to avoid N+1 reads.
+    // We fetch the entire collection (bounded by the worker's account
+    // scope) — keyed by adId so the loop can read matchType in O(1).
+    const existingByAdId = new Map<string, Partial<AdDoc>>();
+    try {
+        const existingSnap = await adAccountRef.collection("adPerformance").get();
+        for (const d of existingSnap.docs) {
+            existingByAdId.set(d.id, d.data() as Partial<AdDoc>);
+        }
+    } catch (e: unknown) {
+        errors.push(`load existing adPerformance failed: ${(e as Error).message}`);
+    }
+
     for (const ad of ads) {
         const windows = adInsightsMap.get(ad.id);
         if (!windows) continue;
@@ -561,14 +593,8 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         const objective = classifyCampaignObjective(campaign?.objective);
         const match = adMatchResults.get(ad.id);
 
-        // Precedence: a manual or prior auto link locks this ad. We only
-        // fetch the existing doc to check for an existing matchType —
-        // cheaper than re-fetching the full doc.
-        const existingSnap = await adAccountRef
-            .collection("adPerformance").doc(ad.id)
-            .get()
-            .catch(() => null);
-        const existingData = existingSnap?.data() as Partial<AdDoc> | undefined;
+        // Precedence: a manual or prior auto link locks this ad (FR §4.3).
+        const existingData = existingByAdId.get(ad.id);
         const existingMatchType = existingData?.matchType;
 
         let generationId: string | null = match?.generationId ?? null;
@@ -582,7 +608,10 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             matchDistance = (existingData?.matchDistance as number | null) ?? matchDistance;
         }
 
-        if (matchType === "auto_hash" && generationId) matchedCount++;
+        // Counted as "matched" if the ad carries ANY valid link (auto_hash
+        // or manual with a generationId). Ambiguous auto matches and ads
+        // with no generationId stay in the unmatched / ambiguous buckets.
+        if (generationId && (matchType === "auto_hash" || matchType === "manual")) matchedCount++;
         else if (match?.ambiguous) ambiguousCount++;
         else unmatchedCount++;
 

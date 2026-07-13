@@ -440,7 +440,7 @@ Use this information to better understand the brand's positioning, tone, and tar
     // (legacy / pre-Phase-20 / new flag-off) — the backend just
     // skips the merge.
     conceptDirectorTrace?: ConceptDirectorTraceEntry | null,
-  ): Promise<{ image: string | null; storageUrl?: string | null; imageFingerprint?: string | null; errorCode?: string; debug?: any; resolutionTrace?: any }> {
+  ): Promise<{ image: string | null; storageUrl?: string | null; imageFingerprint?: string | null; errorCode?: string; debug?: unknown; resolutionTrace?: unknown }> {
     const inputsWithPhotos = { ...inputs } as any;
     inputsWithPhotos.personalPhotos = (inputs.personalPhotos || []).slice(0, 5);
     inputsWithPhotos.brandLogos = (inputs.brandLogos || []).slice(0, 5);

@@ -5456,9 +5456,13 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             // the generation doc + the workspace-scoped index collection so
             // the daily Meta sync can match this creative. Non-blocking —
             // missing the write means manual-link-only for this generation.
+            // Generation docs live at the TOP-LEVEL `generations` collection
+            // (written by feedbackService.saveGeneration), NOT inside the
+            // workspace. The fingerprint INDEX is workspace-scoped so cross-
+            // workspace fingerprint search stays impossible.
             if (savedGenId && mockupResult.imageFingerprint && canUseWorkspaces && activeWorkspaceId) {
               try {
-                const generationRef = doc(db, `users/${user.uid}/workspaces/${activeWorkspaceId}/generations`, savedGenId);
+                const generationRef = doc(db, 'generations', savedGenId);
                 const indexRef = doc(db, `users/${user.uid}/workspaces/${activeWorkspaceId}/imageFingerprints`, mockupResult.imageFingerprint);
                 await Promise.all([
                   updateDoc(generationRef, {

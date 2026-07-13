@@ -166,12 +166,23 @@ function pickImageUrl(data: Record<string, unknown>): string | null {
 }
 
 async function downloadFromUrl(url: string): Promise<Buffer> {
-    // Storage URLs (https://storage.googleapis.com/...) — use Admin SDK
-    // because we have admin privileges and we want to bypass CORS / signed
-    // URL expiration. For other URLs, fall back to fetch().
+    // Storage URLs (https://storage.googleapis.com/<bucket>/<object>) — use
+    // Admin SDK because we have admin privileges and we want to bypass CORS
+    // / signed URL expiration. The bucket name is the first path segment,
+    // not the default bucket — projects may store renders in a non-default
+    // bucket. For other URLs, fall back to fetch().
     if (url.startsWith("https://storage.googleapis.com/")) {
-        const objectPath = url.replace("https://storage.googleapis.com/", "");
-        const bucket = getStorage().bucket();
+        const stripped = url.replace("https://storage.googleapis.com/", "");
+        const slashIdx = stripped.indexOf("/");
+        if (slashIdx < 0) {
+            throw new Error("downloadFromUrl: malformed Storage URL (no object path)");
+        }
+        const bucketName = stripped.slice(0, slashIdx);
+        const objectPath = stripped.slice(slashIdx + 1);
+        if (objectPath.length === 0) {
+            throw new Error("downloadFromUrl: empty object path");
+        }
+        const bucket = getStorage().bucket(bucketName);
         const file = bucket.file(objectPath);
         const [contents] = await file.download();
         return contents;

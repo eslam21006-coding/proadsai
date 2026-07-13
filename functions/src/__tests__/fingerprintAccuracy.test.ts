@@ -36,7 +36,7 @@ interface CreativeEntry {
 
 async function generateCorpus(): Promise<CreativeEntry[]> {
     const entries: CreativeEntry[] = [];
-    const palettes: Array<{ bg: { r: number; g: number; b: number }; fg: { r: number; g: number; b: number } }> = [
+    const palettes: Array<{ bg: { r: number; g: number; b: number; alpha?: number }; fg: { r: number; g: number; b: number; alpha?: number } }> = [
         { bg: { r: 240, g: 235, b: 220 }, fg: { r: 30, g: 30, b: 30 } },
         { bg: { r: 18, g: 28, b: 56 }, fg: { r: 245, g: 245, b: 240 } },
         { bg: { r: 230, g: 230, b: 240 }, fg: { r: 200, g: 30, b: 70 } },
@@ -53,20 +53,28 @@ async function generateCorpus(): Promise<CreativeEntry[]> {
         const overlayTop = ((i * 113) % 400);
         const overlayW = 80 + (i % 60);
         const overlayH = 80 + (i % 60);
+        // Every other image exercises a 4-channel (RGBA) overlay so the
+        // corpus covers both opaque and transparent creative inputs —
+        // Meta may store PNGs with alpha after edits.
+        const useAlpha = i % 2 === 0;
+        const overlayChannels = useAlpha ? 4 : 3;
+        const overlayAlpha = useAlpha ? 0.5 + ((i % 5) * 0.1) : 1;
+        const bgChannels = useAlpha ? 4 : 3;
+        const bgAlpha = useAlpha ? 0.9 : 1;
         const overlay = await sharp({
             create: {
                 width: overlayW,
                 height: overlayH,
-                channels: 3,
-                background: palette.fg,
+                channels: overlayChannels,
+                background: { ...palette.fg, alpha: overlayAlpha },
             },
         }).png().toBuffer();
         const buf = await sharp({
             create: {
                 width: 512,
                 height: 512,
-                channels: 3,
-                background: palette.bg,
+                channels: bgChannels,
+                background: { ...palette.bg, alpha: bgAlpha },
             },
         })
             .composite([{ input: overlay, left: overlayLeft, top: overlayTop }])

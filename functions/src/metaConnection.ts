@@ -178,7 +178,7 @@ export const connectMetaAccount = onCall(
         const accountName = req.accountName ?? wsLink.accountName ?? "";
         const now = Date.now();
         const privateRef = privateConnectionRef(uid, req.workspaceId);
-        await privateRef.set({
+        const privatePayload = {
             metaConnected: true,
             accountId: req.accountId,
             accountName,
@@ -192,15 +192,20 @@ export const connectMetaAccount = onCall(
             lastSyncStatus: null,
             createdAt: now,
             updatedAt: now,
-        }, { merge: true });
-
-        // Also update the workspace doc with the link (mirrors the
-        // existing `linkMetaAccountToWorkspace` write so funnel settings
-        // and other readers see the link).
-        await wsSnap.ref.update({
+        };
+        const workspacePayload = {
             metaAdAccountId: req.accountId,
             metaAdAccountName: accountName,
-        });
+        };
+
+        // Atomic commit: a single WriteBatch ensures the private connection
+        // doc and the workspace link land together — a half-applied state
+        // would leave the 1:1 scan in `findWorkspaceLinkedToAccount`
+        // reporting inconsistent results.
+        const batch = getDb().batch();
+        batch.set(privateRef, privatePayload, { merge: true });
+        batch.update(wsSnap.ref, workspacePayload);
+        await batch.commit();
 
         return {
             ok: true as const,
@@ -231,9 +236,12 @@ export const disconnectMetaAccount = onCall(
         // Delete the token and mark disconnected, but RETAIN performance
         // data and aggregates (Edge Case 15). The adPerformance /
         // syncSnapshots / aggregates subcollections stay untouched.
+        // Clear BOTH legacy (AES) and KMS envelope token fields so a stale
+        // loadStoredConnection call cannot hydrate a token post-disconnect.
         await privateRef.set({
             metaConnected: false,
             legacyToken: null,
+            encryptedToken: null,
             needsReauth: false,
             updatedAt: now,
         }, { merge: true });

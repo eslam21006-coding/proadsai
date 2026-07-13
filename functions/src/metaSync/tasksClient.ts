@@ -61,7 +61,7 @@ export function getTasksClient(): TasksClientFacade {
         async enqueueTask(req: { parent: string; task: unknown }): Promise<unknown> {
             const client = await ensureClient();
             // The v2 client expects `task` to match its CreateTaskRequest type.
-            return await client.createTask(req as unknown as Parameters<typeof client.createTask>[0] ?? (req as unknown as Parameters<typeof client.createTask>[0]));
+            return await client.createTask(req as unknown as Parameters<typeof client.createTask>[0]);
         },
         serviceAccountEmail(): string {
             if (_serviceAccountEmail) return _serviceAccountEmail;

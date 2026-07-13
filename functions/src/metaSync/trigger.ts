@@ -36,15 +36,8 @@ export const triggerMetaSync = onCall(
             throw new HttpsError("failed-precondition", "No Meta account connected for this workspace.");
         }
 
-        // 1-hour cooldown — measured against lastMetaSyncAt on the
-        // connection doc (which the sync body updates on success).
-        if (typeof conn.tokenExpiresAt !== "number") {
-            // tokenExpiresAt absent is fine for the cooldown check; we look
-            // at the separate `lastMetaSyncAt` field. Re-fetch the doc to
-            // get the most recent value (loadStoredConnection doesn't
-            // surface it).
-        }
-
+        // 1-hour cooldown — measured against lastMetaSyncAt on the connection
+        // doc (loadStoredConnection doesn't surface it, so re-fetch below).
         const lastSyncAt = await readLastSyncAt(uid, req.workspaceId);
         if (typeof lastSyncAt === "number") {
             const elapsed = Date.now() - lastSyncAt;
