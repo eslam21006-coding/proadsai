@@ -50,6 +50,8 @@ import {
 import { validateBatchVariance } from "./varianceValidator.js";
 import { getConceptDirectorKillSwitch, getConceptDirectorEnabled } from "./conceptDirectorConfig.js";
 import type { ConceptDirectorTraceEntry } from "./types.js";
+// Phase 14 — RAG + Meta Reporting Feedback Loop (Layer 1 callables).
+export { saveFunnelSettings, getFunnelSettings, dismissAdvisory } from "./funnelSettings.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
@@ -3342,6 +3344,34 @@ export const metaSyncPerformance = onCall({
     const uid = request.auth.uid;
     const workspaceId = request.data?.workspaceId || null;
 
+    // Phase 14 (workspace-account fix) — When the sync is invoked for a
+    // specific workspace, surface a clear non-retryable error if the
+    // linked ad account was probed at link time with role "INSUFFICIENT".
+    // Without this, the daily sync would silently retry forever against an
+    // account whose token cannot read insights, wasting the workspace's
+    // daily allowance and emitting no actionable feedback. The workspace
+    // lookup is wrapped so a transient Firestore failure propagates as
+    // HttpsError("internal", ...) rather than escaping as a raw exception.
+    if (workspaceId) {
+        try {
+            const wsRef = admin.firestore().doc(`users/${uid}/workspaces/${workspaceId}`);
+            const wsSnap = await wsRef.get();
+            if (wsSnap.exists) {
+                const wsData = wsSnap.data();
+                if (wsData?.metaRoleAtLinkTime === "INSUFFICIENT") {
+                    throw new HttpsError(
+                        "permission-denied",
+                        "This workspace is linked to a Meta ad account your token can't read. Ask a workspace admin to re-link the account.",
+                    );
+                }
+            }
+        } catch (err: unknown) {
+            if (err instanceof HttpsError) throw err;
+            console.error("Workspace lookup failed during sync:", err);
+            throw new HttpsError("internal", "Could not load workspace for sync.");
+        }
+    }
+
     const connDoc = await admin.firestore().collection("metaConnections").doc(uid).get();
     if (!connDoc.exists) throw new HttpsError("not-found", "No Meta connection found.");
 
@@ -6403,10 +6433,13 @@ export const linkMetaAccountToWorkspace = onCall({
         throw new HttpsError("failed-precondition", "This Meta ad account is not in your connected accounts.");
     }
 
+    // Phase 14 only READS ad performance data — never publishes. Any role
+    // (ADMIN / ADVERTISER / ANALYST / INSUFFICIENT) is acceptable for
+    // linking the workspace to the ad account. The publishing flow
+    // (`metaPushCreative` / `metaPushCreativePack`) keeps its own Meta
+    // API error handling, which will reject write attempts at request
+    // time with a permission error from Meta itself.
     const role = await probeMetaRole(accessToken, metaAdAccountId);
-    if (role === "INSUFFICIENT") {
-        throw new HttpsError("failed-precondition", "Your Meta role on this ad account doesn't allow publishing. Request Advertiser access in Meta Business Manager to link it.");
-    }
 
     await wsSnap.ref.update({
         metaAdAccountId,

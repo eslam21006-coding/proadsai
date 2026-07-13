@@ -1,0 +1,31 @@
+# SC-11 allowlist — pre-existing files with known violations.
+# Each line is a repo-relative path. Lines starting with `#` are comments.
+#
+# These files contain pre-existing violations (English copy like "CTR" /
+# "CPA" / percentages in user-facing strings). They predate the SC-11
+# guard and are tracked for cleanup in a separate batch (NOT in scope of
+# the Phase 14 batch 01 audit fixes).
+#
+# Phase 14 batch 01 audit fixes do NOT add new violations. FunnelSettingsForm,
+# SC-11 guard, cpaEconomics.ts, campaignObjective.ts, and the Phase 14
+# callables all pass the SC-11 scan with zero hits. The guard's zone-aware
+# extractor skips lines inside className, style, and SVG attributes
+# (e.g. `width="100%"`) and inside `//` / `/* */` comments so legitimate
+# CSS / comment examples don't trigger false positives.
+#
+# Allowlist format: one path per line (no glob — exact paths only). The
+# allowed paths are matched against the value returned by `path.relative`
+# between the repository root and each scanned file. The guard normalizes
+# both sides to forward slashes (`/`) before comparison, so this file
+# uses forward slashes and works identically on Windows and POSIX runners.
+
+src/App.tsx
+src/components/InputForm.tsx
+src/components/PerformanceDashboard.tsx
+src/components/PricingTable.tsx
+src/constants.ts
+src/i18n.tsx
+src/modeFieldSchema.ts
+src/planconfig.ts
+src/services/feedbackService.ts
+src/universeDatabase.ts

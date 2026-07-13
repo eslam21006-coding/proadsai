@@ -439,6 +439,24 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "adPerformance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "campaignObjective",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "verdict",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "evaluatedAt",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []

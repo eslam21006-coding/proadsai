@@ -68,6 +68,8 @@ const BillingPage = React.lazy(() => import('./pages/Billing'));
 // re-imported here if the preview is reintroduced.
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import WorkspaceSettingsModal from './components/WorkspaceSettingsModal';
+const FunnelSettingsForm = React.lazy(() => import('./components/FunnelSettingsForm'));
+const MetaAccountPickerModal = React.lazy(() => import('./components/MetaAccountPickerModal'));
 import { ForgotPasswordDialog } from './components/auth/ForgotPasswordDialog';
 import { VerifyEmailScreen } from './components/auth/VerifyEmailScreen';
 import { MandatoryBillingModal } from './components/billing/MandatoryBillingModal';
@@ -1102,6 +1104,17 @@ interface MenuSidebarProps {
   onManageBilling: () => void;
   onUpgrade: () => void;
   onLogout: () => void;
+  // Phase 14 batch 01 — UI wiring. Forwarded into MenuItems.
+  metaConnection: MetaConnection | null;
+  metaSyncing: boolean;
+  onConnectMeta: () => void;
+  onDisconnectMeta: () => void;
+  onSyncMeta: () => void;
+  onChangeMetaAccount: () => void;
+  onSelectMetaAccountForWorkspace: () => void;
+  onOpenFunnelSettings: () => void;
+  funnelSettingsAvailable: boolean;
+  activeWorkspaceNeedsMetaAccount: boolean;
 }
 
 const MenuSidebar: React.FC<MenuSidebarProps> = ({
@@ -1124,6 +1137,16 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
   onManageBilling,
   onUpgrade,
   onLogout,
+  metaConnection,
+  metaSyncing,
+  onConnectMeta,
+  onDisconnectMeta,
+  onSyncMeta,
+  onChangeMetaAccount,
+  onSelectMetaAccountForWorkspace,
+  onOpenFunnelSettings,
+  funnelSettingsAvailable,
+  activeWorkspaceNeedsMetaAccount,
 }) => {
   const { t } = useT();
 
@@ -1175,6 +1198,16 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
               onUpgrade={onUpgrade}
               onLogout={onLogout}
               onCloseMenu={onCollapse}
+              metaConnection={metaConnection}
+              metaSyncing={metaSyncing}
+              onConnectMeta={onConnectMeta}
+              onDisconnectMeta={onDisconnectMeta}
+              onSyncMeta={onSyncMeta}
+              onChangeMetaAccount={onChangeMetaAccount}
+              onSelectMetaAccountForWorkspace={onSelectMetaAccountForWorkspace}
+              onOpenFunnelSettings={onOpenFunnelSettings}
+              funnelSettingsAvailable={funnelSettingsAvailable}
+              activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
             />
           </div>
         </div>
@@ -1269,12 +1302,19 @@ interface MenuItemProps {
   label: string;
   onClick: () => void;
   className?: string;
+  /**
+   * Optional second line below the main label — used by the Meta entry
+   * to surface the currently linked ad-account name under "Meta Ads
+   * Connected". Kept narrow + muted so the visual hierarchy stays with
+   * the main label.
+   */
+  subLabel?: string | null;
 }
 
 // Single menu item row — icon + label, full-width pill inside the
 // expanded panel. Mirrors the visual rhythm of the rest of the app:
 // slate text on white, hover lifts to slate-50 with darker text.
-const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onClick, className }) => (
+const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onClick, className, subLabel }) => (
   <button
     type="button"
     onClick={onClick}
@@ -1283,7 +1323,12 @@ const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onClick, className }) 
     role="menuitem"
   >
     <i className={`fa-solid ${icon} w-4 text-center text-slate-400`} data-sidebar-icon></i>
-    <span className="truncate">{label}</span>
+    <span className="flex-1 min-w-0 text-start">
+      <span className="block truncate">{label}</span>
+      {subLabel ? (
+        <span className="block truncate text-[10px] text-slate-400 font-normal" data-sidebar-sublabel>{subLabel}</span>
+      ) : null}
+    </span>
   </button>
 );
 
@@ -1307,6 +1352,30 @@ interface MenuItemsProps {
   onLogout: () => void;
   /** Closes the menu (either desktop sidebar or mobile overlay). */
   onCloseMenu: () => void;
+  // Phase 14 batch 01 — UI wiring. Meta connection + Funnel Settings entries.
+  metaConnection: MetaConnection | null;
+  metaSyncing: boolean;
+  onConnectMeta: () => void;
+  onDisconnectMeta: () => void;
+  onSyncMeta: () => void;
+  onChangeMetaAccount: () => void;
+  /** Open the Meta account picker to establish the 1:1 link between this
+      workspace and a Meta ad account (FR-026). */
+  onSelectMetaAccountForWorkspace: () => void;
+  onOpenFunnelSettings: () => void;
+  /** True when Meta is connected AND the active workspace has a linked
+      Meta ad account. Both are required by FunnelSettingsForm (the form
+      is per-workspace-account, not per-user). Only then do we expose
+      the Funnel Settings entry. */
+  funnelSettingsAvailable: boolean;
+  /**
+   * True when the active workspace belongs to a workspace plan AND its
+   * `metaAdAccountId` is missing. Drives the highlighted "Select ad
+   * account for this workspace" prompt under the Meta entry so the user
+   * has an explicit path to link an account (was previously a silent
+   * dead-end where the Funnel Settings entry just disappeared).
+   */
+  activeWorkspaceNeedsMetaAccount: boolean;
 }
 
 /**
@@ -1315,11 +1384,105 @@ interface MenuItemsProps {
  * site) keeps labels, icons, and conditional entries in lockstep.
  */
 const MenuItems: React.FC<MenuItemsProps> = (props) => {
-  const { t, isDarkMode, lang, milestones, phase, onCloseMenu } = props;
+  const { t, isDarkMode, lang, milestones, phase, metaConnection, metaSyncing, funnelSettingsAvailable, activeWorkspaceNeedsMetaAccount } = props;
   const items: Array<{ key: string; el: React.ReactNode }> = [
     { key: 'new', el: <MenuItem key="new" icon="fa-plus" label={t('history.newProject')} onClick={props.onNewProject} /> },
     { key: 'bookmarks', el: <MenuItem key="bookmarks" icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={props.onSavedRenders} /> },
     { key: 'settings', el: <MenuItem key="settings" icon="fa-gear" label={t('topbar.menu_settings')} onClick={props.onSettings} /> },
+    // Phase 14 batch 01 — UI wiring. Meta connection entry. The label flips
+    // between "Connect Meta Ads" (no connection) and "Meta Ads Connected"
+    // (already connected) per the spec. The handler also closes the menu
+    // drawer so the OAuth popup isn't obscured.
+    // Phase 14 batch 01 (fix) — When connected, show the selected ad-account
+    // name as a small muted sub-label so the user can see which account is
+    // active without opening the picker. Falls back to the account id when
+    // the name is missing.
+    // Phase 14 batch 01-funnel-fixes — When connected, render the sub-actions
+    // (Sync Now / Change Account / Disconnect) immediately under the main
+    // entry, separated by their own divider. They were previously scattered
+    // across `divider1` and `divider2` which made the Meta block hard to
+    // scan; the spec calls for a tight Meta sub-menu instead. The sub-items
+    // are only rendered here (in MenuItems → expanded sidebar) — the
+    // collapsed icon strip below renders its own hand-picked shortcuts and
+    // never exposes these sub-actions, so the expanded-vs-collapsed split
+    // the spec requires is preserved automatically.
+    // Phase 14 batch 01 (workspace-account fix) — When Meta is connected
+    // but the active workspace lacks a `metaAdAccountId`, the sub-actions
+    // (Sync / Change / Funnel) are hidden and a highlighted
+    // "Select ad account for this workspace" prompt is shown instead. The
+    // user is no longer trapped — they have an explicit path to link the
+    // account without leaving the menu.
+    {
+      key: 'meta',
+      el: (() => {
+        const isConnected = !!metaConnection?.connected;
+        const selectedId = metaConnection?.selectedAccountId ?? null;
+        const selectedAccount = isConnected
+          ? metaConnection?.adAccounts?.find((a) => a.id === selectedId)
+          : undefined;
+        // Sub-label only when connected AND the active workspace already
+        // has a linked account. While the workspace is unlinked we don't
+        // show a misleading "current account" line — the highlighted
+        // prompt below already explains the situation.
+        const subLabel = isConnected && !activeWorkspaceNeedsMetaAccount
+          ? (selectedAccount?.name || selectedId || '')
+          : '';
+        return (
+          <MenuItem
+            key="meta"
+            icon="fa-brands fa-meta"
+            label={isConnected ? t('topbar.menu_meta_connected') : t('topbar.menu_meta_connect')}
+            subLabel={subLabel || null}
+            onClick={isConnected ? props.onSyncMeta : props.onConnectMeta}
+          />
+        );
+      })(),
+    },
+    // Meta sub-actions — only when Meta is connected. Drawn as a tight
+    // 3-item block immediately under the main Meta entry, per the
+    // batch-01-funnel-fixes spec.
+    // Phase 14 batch 01 (workspace-account fix) — when the active
+    // workspace is unlinked we still keep the disconnect option (severing
+    // the user-level session is workspace-independent) but drop Sync /
+    // Change / Funnel — those would target an account the workspace was
+    // never linked to and silently violate FR-026's 1:1 contract.
+    ...(metaConnection?.connected ? [
+      { key: 'meta-divider', el: <div key="meta-divider" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> },
+      ...(activeWorkspaceNeedsMetaAccount ? [
+        {
+          key: 'meta-pick-for-workspace',
+          el: (
+            <button
+              key="meta-pick-for-workspace"
+              type="button"
+              onClick={props.onSelectMetaAccountForWorkspace}
+              data-sidebar-menu-item
+              role="menuitem"
+              className="flex items-center gap-3 px-3 py-2 text-[13px] text-blue-500 hover:text-blue-600 hover:bg-blue-50 transition-colors rounded-md mx-1 w-[calc(100%-0.5rem)] font-semibold"
+            >
+              <i className="fa-solid fa-plus-circle w-4 text-center" data-sidebar-icon></i>
+              <span className="flex-1 min-w-0 text-start">
+                <span className="block truncate">{t('topbar.menu_meta_select_for_workspace')}</span>
+              </span>
+            </button>
+          ),
+        },
+      ] : [
+        { key: 'meta-sync', el: <MenuItem key="meta-sync" icon="fa-arrows-rotate" label={metaSyncing ? '…' : t('topbar.menu_meta_sync')} onClick={props.onSyncMeta} /> },
+        { key: 'meta-change-account', el: <MenuItem key="meta-change-account" icon="fa-repeat" label={t('topbar.menu_meta_change_account')} onClick={props.onChangeMetaAccount} /> },
+      ]),
+      { key: 'meta-disconnect', el: <MenuItem key="meta-disconnect" icon="fa-link-slash" label={t('topbar.menu_meta_disconnect')} onClick={props.onDisconnectMeta} className="text-red-500 hover:text-red-600" /> },
+    ] : []),
+    // Phase 14 batch 01 — UI wiring. Funnel Settings entry. Only visible
+    // when the user has connected Meta and the active workspace has a
+    // linked ad account (the form requires both). The
+    // `activeWorkspaceNeedsMetaAccount` guard here is technically redundant
+    // with `funnelSettingsAvailable` (they share the same predicate) but
+    // is kept explicit so the intent is clear without re-deriving the gate.
+    ...(funnelSettingsAvailable ? [{
+      key: 'funnel',
+      el: <MenuItem key="funnel" icon="fa-sliders" label={t('topbar.menu_funnel_settings')} onClick={props.onOpenFunnelSettings} />,
+    }] : []),
     { key: 'divider1', el: <div key="divider1" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> },
     { key: 'theme', el: <MenuItem key="theme" icon={isDarkMode ? 'fa-sun' : 'fa-moon'} label={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')} onClick={props.onToggleTheme} /> },
     { key: 'lang', el: <MenuItem key="lang" icon="fa-language" label={`${t('topbar.menu_language')} (${lang === 'ar' ? 'EN' : 'AR'})`} onClick={props.onToggleLanguage} /> },
@@ -2016,7 +2179,10 @@ const App: React.FC = () => {
   const [highestUnlockedPhase, setHighestUnlockedPhase] = useState<number>(0);
 
   const [toast, setToast] = useState<Toast | null>(null);
-  const showToast = (message: string, type: Toast['type'] = 'info') => setToast({ message, type });
+  const showToast = useCallback(
+    (message: string, type: Toast['type'] = 'info') => setToast({ message, type }),
+    [],
+  );
 
 
   const [userCredits, setUserCredits] = useState<number>(0);
@@ -2995,6 +3161,37 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   const [metaConnection, setMetaConnection] = useState<MetaConnection | null>(null);
   const [metaSyncing, setMetaSyncing] = useState(false);
   const [metaPushing, setMetaPushing] = useState(false);
+  // Phase 14 batch 01 — Account picker. Auto-opens after the OAuth flow
+  // when the user has 2+ ad accounts; can also be opened on demand from
+  // the "Change Account" menu entry. `selecting` disables the cards
+  // while a save round-trip is in flight.
+  const [showMetaAccountPicker, setShowMetaAccountPicker] = useState(false);
+  const [metaAccountPickerSelecting, setMetaAccountPickerSelecting] = useState(false);
+  const [metaAccountPickerError, setMetaAccountPickerError] = useState<string | null>(null);
+  // Phase 14 batch 01 (workspace-account fix) — When the picker opens in
+  // response to a workspace switch to an unlinked workspace, the title
+  // includes the workspace name ("Choose ad account for Coffee Roastery")
+  // so the user knows exactly which workspace they're linking to. Null
+  // means "fall back to the default `meta.picker_title`". Reset on every
+  // explicit close so a stale workspace name can't bleed into the next
+  // unrelated open (e.g. from the OAuth multi-account fast path).
+  const [metaAccountPickerTitle, setMetaAccountPickerTitle] = useState<string | null>(null);
+  // Phase 14 batch 01 — UI wiring. Modal that mounts the FunnelSettingsForm
+  // when the user opens it from the menu (manual edit) or as a first-run gate
+  // (auto-trigger when Meta is connected but no settings/current doc exists).
+  const [showFunnelSettingsModal, setShowFunnelSettingsModal] = useState(false);
+  const [funnelSettingsFirstRun, setFunnelSettingsFirstRun] = useState(false);
+  // Phase 14 batch 01-funnel-fixes — Latches true when the user dismisses
+  // the first-run gate (×, backdrop click, or Escape). The auto-gate effect
+  // below honors this latch so the modal does NOT re-open in the same
+  // session after a deliberate dismiss — only on a fresh app load. Reset
+  // to false on a successful save (so the next first-run for a new
+  // workspace still surfaces) and on a logout/login cycle.
+  const [funnelFirstRunDismissed, setFunnelFirstRunDismissed] = useState(false);
+  // Mirrors whether getFunnelSettings returned a doc yet for the active
+  // workspace-account. Drives the first-run auto-gate (no settings → open
+  // the form as a blocking first-run screen).
+  const [funnelSettingsHasDoc, setFunnelSettingsHasDoc] = useState<boolean | null>(null);
   // ─── MULTI-SIZE SELECTION (Step 3 → Step 4) ─────────────────────
   const [selectedSizes, setSelectedSizes] = useState<Set<AspectRatio>>(new Set(['1:1'] as AspectRatio[]));
   const [singleSelectedConcepts, setSingleSelectedConcepts] = useState<Set<number>>(new Set());
@@ -3007,6 +3204,393 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     if (!user) return;
     metaService.getConnection().then(conn => setMetaConnection(conn)).catch(() => { });
   }, [user]);
+
+  // Phase 14 batch 01 — UI wiring. Refresh helper used after the OAuth
+  // popup closes (and on demand) so the menu reflects the latest state.
+  // Returns the fetched connection so callers can use the already-loaded
+  // value instead of issuing a second `getConnection` round-trip.
+  const refreshMetaConnection = useCallback(async (): Promise<MetaConnection | null> => {
+    try {
+      const conn = await metaService.getConnection();
+      setMetaConnection(conn);
+      return conn;
+    } catch {
+      // Swallow — connection state will simply stay stale until next refresh.
+      return null;
+    }
+  }, []);
+
+  // Phase 14 batch 01 — Account picker. Persists the user's chosen ad
+  // account to both the global connection (`metaSelectAccount`) and, on
+  // workspace plans, the active workspace document (`linkMetaAccount…`).
+  // When `skipPicker` is true, the modal is not opened (used by the
+  // single-account fast path inside `handleConnectMeta`). Defined before
+  // `handleConnectMeta` because that callback captures this one — and
+  // putting a TDZ reference in a `useCallback` deps array would throw
+  // at first render.
+  const handleMetaAccountSelect = useCallback(async (
+    accountId: string,
+    options: { skipPicker?: boolean } = {},
+  ) => {
+    const account = metaConnection?.adAccounts?.find(a => a.id === accountId)
+      ?? null;
+    if (!options.skipPicker) setMetaAccountPickerSelecting(true);
+    setMetaAccountPickerError(null);
+    try {
+      const saveFailedMessage = t('meta.account_save_failed_throw');
+      const ok = await metaService.selectAccount(accountId);
+      if (!ok) {
+        throw new Error(saveFailedMessage);
+      }
+      if (canUseWorkspaces && activeWorkspaceId) {
+        const { workspaceService } = await import('./services/workspaceService');
+        await workspaceService.linkMetaAccountToWorkspace({
+          workspaceId: activeWorkspaceId,
+          metaAdAccountId: accountId,
+          metaAdAccountName: account?.name || accountId,
+        });
+        // Mirror the server write in the local workspace cache so the
+        // funnel-settings gate and any active-workspace UI see the new
+        // link without waiting for a Firestore round-trip.
+        setWorkspacesLocal(prev => prev.map(w =>
+          w.id === activeWorkspaceId
+            ? { ...w, metaAdAccountId: accountId, metaAdAccountName: account?.name || accountId }
+            : w,
+        ));
+      }
+      // Update the global connection's selectedAccountId locally so the
+      // menu (and any other UI watching metaConnection) reflects the
+      // change without an extra round-trip.
+      setMetaConnection(prev => prev ? { ...prev, selectedAccountId: accountId } : prev);
+      showToast(t('meta.account_selected_toast'), 'success');
+      setShowMetaAccountPicker(false);
+    } catch (e: unknown) {
+      console.warn('Meta account selection failed:', e);
+      const failureMessage = t('meta.account_save_failed');
+      // In skipPicker mode (single-account auto-pick from the OAuth flow)
+      // the modal is never visible, so the inline error would never be
+      // shown — surface it as a toast instead so the user still gets
+      // feedback when the auto-select fails.
+      if (options.skipPicker) {
+        showToast(failureMessage, 'error');
+      } else {
+        setMetaAccountPickerError(failureMessage);
+      }
+    } finally {
+      if (!options.skipPicker) setMetaAccountPickerSelecting(false);
+    }
+  }, [metaConnection, canUseWorkspaces, activeWorkspaceId, t, showToast]);
+
+  // Phase 14 batch 01 — Account picker. Open on demand from the
+  // "Change Account" menu entry. No-ops when Meta isn't connected or
+  // has zero accounts (the menu only shows the entry when connected,
+  // but this is a defensive check).
+  //
+  // Phase 14 batch 01 (workspace-account fix) — Pass
+  // `{ workspaceName }` when the picker is being opened specifically to
+  // establish the 1:1 workspace→account link. The dialog title then
+  // reads "Choose ad account for {workspaceName}" / "اختر حساب
+  // الإعلانات لـ {workspaceName}" — gives the user unambiguous context
+  // and avoids the old behaviour where the workspace they were linking
+  // to was nowhere on screen.
+  const openMetaAccountPicker = useCallback((opts?: { workspaceName?: string | null }) => {
+    if (!metaConnection?.connected) return;
+    if ((metaConnection.adAccounts ?? []).length === 0) return;
+    setMetaAccountPickerError(null);
+    setMetaAccountPickerTitle(
+      opts?.workspaceName
+        ? t('meta.picker_title_with_workspace').replace('{name}', opts.workspaceName)
+        : null,
+    );
+    setShowMetaAccountPicker(true);
+  }, [metaConnection, t]);
+
+  const closeMetaAccountPicker = useCallback(() => {
+    if (metaAccountPickerSelecting) return;
+    setShowMetaAccountPicker(false);
+    setMetaAccountPickerError(null);
+    // Phase 14 batch 01 (workspace-account fix) — Always reset the title
+    // override on close so a stale workspace name from a previous open
+    // can't bleed into an unrelated open (e.g. the OAuth multi-account
+    // fast path that runs after a fresh connect).
+    setMetaAccountPickerTitle(null);
+  }, [metaAccountPickerSelecting]);
+
+  // Phase 14 batch 01 — UI wiring. Opens the Meta OAuth popup, then
+  // refreshes the connection state on success.
+  const handleConnectMeta = useCallback(async () => {
+    if (!user) return;
+    showToast(lang === 'ar' ? 'جاري الربط بحساب ميتا…' : 'Connecting to Meta Ads…', 'info');
+    const connected = await metaService.startOAuthFlow(user.uid);
+    if (connected) {
+      const conn = await refreshMetaConnection();
+      const accounts = conn?.adAccounts ?? [];
+      const acctCount = accounts.length;
+      if (acctCount === 1) {
+        // Single-account fast path: auto-pick and persist. Avoids a
+        // pointless "choose the only option" modal that the spec calls
+        // out as wasted clicks.
+        const only = accounts[0];
+        await handleMetaAccountSelect(only.id, { skipPicker: true });
+      } else if (acctCount >= 2) {
+        // Multi-account: surface the picker so the user explicitly
+        // establishes the 1:1 workspace→account link required by FR-026.
+        setMetaAccountPickerError(null);
+        setShowMetaAccountPicker(true);
+        showToast(
+          t('meta.connect_pick_toast').replace('{count}', String(acctCount)),
+          'success',
+        );
+      } else {
+        // Degenerate — Meta returned 0 accounts. Just announce the
+        // connection and let the user retry Sync or check Meta Business.
+        showToast(
+          lang === 'ar' ? 'تم ربط حساب ميتا!' : 'Meta Ads connected!',
+          'success',
+        );
+      }
+    } else {
+      showToast(lang === 'ar' ? 'تعذّر إكمال الربط' : 'Could not complete the connection', 'error');
+    }
+  }, [user, lang, t, refreshMetaConnection, showToast, handleMetaAccountSelect]);
+
+  // Phase 14 batch 01 — UI wiring. Disconnects the current Meta session and
+  // clears local state. The account-level data (perf, baselines, etc.) is
+  // retained server-side per the lifecycle contract.
+  const handleDisconnectMeta = useCallback(async () => {
+    if (!window.confirm(lang === 'ar'
+      ? 'هل تريد فك الربط مع ميتا؟ سيتم حذف بيانات الاتصال فقط.'
+      : 'Disconnect Meta Ads? This removes the connection only.')) return;
+    try {
+      await metaService.disconnect();
+      setMetaConnection({ connected: false, adAccounts: [], selectedAccountId: null, connectedAt: null, lastSyncAt: null, status: '', tokenExpiring: false });
+      showToast(lang === 'ar' ? 'تم فك الربط' : 'Disconnected', 'info');
+    } catch {
+      showToast(lang === 'ar' ? 'تعذّر فك الربط' : 'Could not disconnect', 'error');
+    }
+  }, [lang, showToast]);
+
+  // Phase 14 batch 01 — UI wiring. Triggers a Meta performance sync for the
+  // currently active workspace.
+  const handleSyncMeta = useCallback(async () => {
+    setMetaSyncing(true);
+    showToast(lang === 'ar' ? 'جاري مزامنة الإعلانات…' : 'Syncing ad performance…', 'info');
+    try {
+      const result = await metaService.syncPerformance(canUseWorkspaces ? activeWorkspaceId : null);
+      if (result.success) {
+        showToast(lang === 'ar' ? `تمت مزامنة ${result.adsSynced} إعلان` : `Synced ${result.adsSynced} ads`, 'success');
+        await refreshMetaConnection();
+      } else {
+        showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
+      }
+    } catch {
+      showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
+    } finally {
+      setMetaSyncing(false);
+    }
+  }, [canUseWorkspaces, activeWorkspaceId, lang, showToast, refreshMetaConnection]);
+
+  // Phase 14 batch 01 — UI wiring. The active workspace (non-deleted),
+  // or null when the user is on a non-Scale plan / no workspace is set.
+  const activeWorkspace = useMemo<Workspace | null>(
+    () => workspaces.find(w => w.id === activeWorkspaceId && !w.deletedAt) ?? null,
+    [workspaces, activeWorkspaceId],
+  );
+
+  // Phase 14 batch 01 — UI wiring. The active workspace's Meta ad-account
+  // id. Used as the `accountId` prop for the FunnelSettingsForm and to
+  // drive the first-run gate.
+  const activeMetaAccountId = useMemo<string | null>(() => {
+    if (!canUseWorkspaces) {
+      return metaConnection?.selectedAccountId ?? metaConnection?.adAccounts?.[0]?.id ?? null;
+    }
+    const ws = workspaces.find(w => w.id === activeWorkspaceId && !w.deletedAt);
+    // On workspace plans, only the explicitly linked account counts.
+    // Falling back to the global connection here would let the
+    // funnel-settings probe/auto-open gate (and any save) target an
+    // account the active workspace was never linked to, bypassing
+    // FR-026's 1:1 workspace-to-account contract.
+    return ws?.metaAdAccountId ?? null;
+  }, [canUseWorkspaces, workspaces, activeWorkspaceId, metaConnection]);
+
+  // Phase 14 batch 01 — UI wiring. FunnelSettingsForm requires both a
+  // workspace and a Meta ad account. On the non-workspace plans there is
+  // no per-workspace link — falling back to "Meta connected" is the
+  // right gate there. On workspace plans, require the active workspace
+  // to have its own `metaAdAccountId` set; otherwise the form would
+  // silently save against the global account and bypass FR-026's
+  // 1:1-workspace-to-account contract.
+  const funnelSettingsAvailable = useMemo<boolean>(() => {
+    if (!metaConnection?.connected) return false;
+    if (!canUseWorkspaces) return true;
+    return Boolean(activeWorkspace?.metaAdAccountId);
+  }, [metaConnection?.connected, canUseWorkspaces, activeWorkspace?.metaAdAccountId]);
+
+  // Phase 14 batch 01 (workspace-account fix) — Companion gate for the
+  // new menu prompt. True when Meta is connected at user level but the
+  // active workspace on a workspace plan is missing its `metaAdAccountId`.
+  // Used to:
+  //   1. Substitute the "Select ad account for this workspace" entry in
+  //      MenuItems instead of Sync/Change/Funnel (see comments there).
+  //   2. Trigger the auto-open picker effect when the user switches into
+  //      such a workspace.
+  // Derives from `funnelSettingsAvailable` (which encodes "connected AND
+  // account linked") so the two gates can never disagree.
+  const activeWorkspaceNeedsMetaAccount = useMemo<boolean>(
+    () => metaConnection?.connected === true
+      && canUseWorkspaces === true
+      && !funnelSettingsAvailable,
+    [metaConnection?.connected, canUseWorkspaces, funnelSettingsAvailable],
+  );
+
+  // Phase 14 batch 01 (workspace-account fix) — Open the picker with the
+  // active workspace's name in the title. Used by the "Select ad account
+  // for this workspace" menu entry (the highlighted prompt that replaces
+  // Sync/Change/Funnel while the workspace is unlinked) so the user is
+  // never in doubt about which workspace they're linking to.
+  const openMetaAccountPickerForActiveWorkspace = useCallback(() => {
+    if (!activeWorkspace) return;
+    openMetaAccountPicker({ workspaceName: activeWorkspace.name });
+  }, [openMetaAccountPicker, activeWorkspace]);
+
+  // Phase 14 batch 01 (workspace-account fix) — Auto-open the picker when
+  // the user SWITCHES to a workspace that doesn't have an ad account
+  // linked yet. Conditions (each is required):
+  //   1. Meta is connected at the user level.
+  //   2. The plan supports multi-brand workspaces (workspace plans).
+  //   3. The active workspace is fully resolved (id present + not deleted).
+  //   4. The active workspace has no `metaAdAccountId` set.
+  //   5. There is at least one ad account available to pick — otherwise
+  //      we'd open a "make sure Meta is connected" empty-state modal
+  //      that the user has already dismissed.
+  //   6. The picker isn't already mid-selection (avoids stealing focus
+  //      mid-save) and isn't already open (avoids stacking duplicate
+  //      opens when one debounced effect overlaps another).
+  // The auto-open is closeable (not forced) — the user can dismiss it
+  // and continue using the app, and the prompt remains visible in the
+  // menu so the next opportunity to link is always one tap away.
+  useEffect(() => {
+    if (!metaConnection?.connected) return;
+    if (!canUseWorkspaces) return;
+    if (!activeWorkspace) return;
+    if (activeWorkspace.metaAdAccountId) return;
+    if ((metaConnection.adAccounts ?? []).length === 0) return;
+    if (showMetaAccountPicker) return;
+    if (metaAccountPickerSelecting) return;
+    openMetaAccountPickerForActiveWorkspace();
+  }, [
+    metaConnection?.connected,
+    canUseWorkspaces,
+    activeWorkspace,
+    activeWorkspace?.id,
+    activeWorkspace?.metaAdAccountId,
+    showMetaAccountPicker,
+    metaAccountPickerSelecting,
+    openMetaAccountPickerForActiveWorkspace,
+    // Including the count as a dep is intentional — when the account
+    // list loads asynchronously after connection, we want to re-evaluate
+    // once it becomes non-empty rather than requiring another workspace
+    // switch.
+    metaConnection?.adAccounts?.length,
+  ]);
+
+  // Phase 14 batch 01 — UI wiring. Probe the active workspace-account's
+  // funnel-settings doc whenever the workspace / account changes. The
+  // result drives the first-run auto-gate: if the user has connected
+  // Meta but hasn't filled in funnel settings yet, we open the form
+  // automatically as a blocking first-run screen.
+  useEffect(() => {
+    let cancelled = false;
+    async function probe() {
+      if (!metaConnection?.connected || !activeWorkspaceId || !activeMetaAccountId) {
+        if (!cancelled) setFunnelSettingsHasDoc(null);
+        return;
+      }
+      try {
+        const { httpsCallable } = await import('firebase/functions');
+        const { functions } = await import('./firebase');
+        const fn = httpsCallable(functions, 'getFunnelSettings');
+        const res = await fn({ workspaceId: activeWorkspaceId, accountId: activeMetaAccountId });
+        const data = res.data as { ok: true; settings: { id: string } | null; reviewDue: boolean };
+        if (cancelled) return;
+        setFunnelSettingsHasDoc(!!data?.settings);
+      } catch {
+        if (!cancelled) setFunnelSettingsHasDoc(null);
+      }
+    }
+    probe();
+    return () => { cancelled = true; };
+  }, [metaConnection?.connected, activeWorkspaceId, activeMetaAccountId]);
+
+  // Phase 14 batch 01 — UI wiring. Open the funnel-settings form. When
+  // `firstRun` is true the form is suggested via a reminder banner, but
+  // (per batch-01-funnel-fixes) the user is NEVER trapped — the close
+  // button, backdrop click, and Escape key all dismiss the modal even on
+  // the first run.
+  const openFunnelSettings = useCallback((firstRun: boolean) => {
+    setFunnelSettingsFirstRun(firstRun);
+    setShowFunnelSettingsModal(true);
+  }, []);
+
+  const closeFunnelSettings = useCallback(() => {
+    setShowFunnelSettingsModal(false);
+    setFunnelSettingsFirstRun(false);
+  }, []);
+
+  // Phase 14 batch 01-funnel-fixes — Dismiss handler for the first-run
+  // gate. Closes the modal, latches the dismiss so the auto-gate effect
+  // doesn't re-open it later in the same session, and shows a gentle
+  // reminder toast. The toast only fires when the user actually dismisses
+  // the first-run screen WITHOUT saving — saves are handled inside the
+  // modal's `onSaved` callback (which closes the modal + sets the
+  // `funnelSettingsHasDoc` flag, naturally skipping the reminder).
+  const dismissFunnelFirstRun = useCallback(() => {
+    if (!funnelSettingsFirstRun) {
+      closeFunnelSettings();
+      return;
+    }
+    setFunnelFirstRunDismissed(true);
+    closeFunnelSettings();
+    showToast(
+      lang === 'ar'
+        ? 'يمكنك إكمال إعدادات مسار المبيعات لاحقاً من القائمة'
+        : 'You can complete your funnel settings later from the menu',
+      'info',
+    );
+  }, [funnelSettingsFirstRun, closeFunnelSettings, lang, showToast]);
+
+  // Phase 14 batch 01-funnel-fixes — Escape closes the funnel-settings
+  // modal (same handler as the close button / backdrop click). Only binds
+  // while the modal is mounted so it doesn't fight with other Escape-bound
+  // dialogs (the meta-account picker, the workspace-settings modal, etc.).
+  useEffect(() => {
+    if (!showFunnelSettingsModal) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') dismissFunnelFirstRun();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showFunnelSettingsModal, dismissFunnelFirstRun]);
+
+  // Phase 14 batch 01 — UI wiring. First-run auto-gate. When the user has
+  // connected Meta, the active workspace has a linked ad account, and the
+  // probe resolved to "no settings/current doc yet", open the funnel form
+  // automatically as a suggested first-run screen. The `funnelFirstRunDismissed`
+  // latch prevents the auto-gate from re-opening the modal in the same
+  // session after a deliberate dismiss — it only fires again on a fresh
+  // app load (the latch is in-memory state, so a page reload clears it).
+  useEffect(() => {
+    if (
+      metaConnection?.connected &&
+      activeWorkspaceId &&
+      activeMetaAccountId &&
+      funnelSettingsHasDoc === false &&
+      !showFunnelSettingsModal &&
+      !funnelFirstRunDismissed
+    ) {
+      openFunnelSettings(true);
+    }
+  }, [metaConnection?.connected, activeWorkspaceId, activeMetaAccountId, funnelSettingsHasDoc, showFunnelSettingsModal, funnelFirstRunDismissed, openFunnelSettings]);
 
   // FIX 3: when the user switches to a DIFFERENT hook in single mode, drop stale concepts so
   // Step 3 can't show a previous session's blueprints — forcing a fresh regenerate for the new
@@ -9826,6 +10410,16 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         onManageBilling={() => { handleManageBilling(); setShowMenuDrawer(false); }}
         onUpgrade={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }}
         onLogout={() => { handleLogout(); }}
+        metaConnection={metaConnection}
+        metaSyncing={metaSyncing}
+        onConnectMeta={() => { setShowMenuDrawer(false); void handleConnectMeta(); }}
+        onDisconnectMeta={() => { setShowMenuDrawer(false); void handleDisconnectMeta(); }}
+        onSyncMeta={() => { setShowMenuDrawer(false); void handleSyncMeta(); }}
+        onChangeMetaAccount={() => { setShowMenuDrawer(false); openMetaAccountPicker(); }}
+        onSelectMetaAccountForWorkspace={() => { setShowMenuDrawer(false); openMetaAccountPickerForActiveWorkspace(); }}
+        onOpenFunnelSettings={() => { setShowMenuDrawer(false); openFunnelSettings(false); }}
+                funnelSettingsAvailable={funnelSettingsAvailable}
+                activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
       />
 
       </div>
@@ -9934,6 +10528,16 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 onUpgrade={() => { setUpgradeReason('browse_plans'); setShowUpgradeModal(true); setShowMenuDrawer(false); }}
                 onLogout={handleLogout}
                 onCloseMenu={() => setShowMenuDrawer(false)}
+                metaConnection={metaConnection}
+                metaSyncing={metaSyncing}
+                onConnectMeta={() => { setShowMenuDrawer(false); void handleConnectMeta(); }}
+                onDisconnectMeta={() => { setShowMenuDrawer(false); void handleDisconnectMeta(); }}
+                onSyncMeta={() => { setShowMenuDrawer(false); void handleSyncMeta(); }}
+                onChangeMetaAccount={() => { setShowMenuDrawer(false); openMetaAccountPicker(); }}
+                onSelectMetaAccountForWorkspace={() => { setShowMenuDrawer(false); openMetaAccountPickerForActiveWorkspace(); }}
+                onOpenFunnelSettings={() => { setShowMenuDrawer(false); openFunnelSettings(false); }}
+        funnelSettingsAvailable={funnelSettingsAvailable}
+        activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
               />
             </div>
           </aside>
@@ -11039,6 +11643,82 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         </div>
       )}
 
+      {/* ═══ FUNNEL SETTINGS MODAL (Phase 14 Layer 1 / US1) ═══
+          Mounts the FunnelSettingsForm for the active workspace-account. The
+          modal is triggered either manually from the menu entry, or
+          automatically as a suggested first-run screen (when the workspace
+          is linked to a Meta ad account but the user has never saved funnel
+          settings yet). The form is fully self-contained — it loads its own
+          state, handles its own saving, and surfaces the dismissible
+          monthly-review prompt internally.
+
+          Phase 14 batch 01-funnel-fixes — The first-run variant is NEVER a
+          hard block. The close button is always rendered, the backdrop
+          click always closes the modal, and Escape also dismisses. Closing
+          during the first run (without saving) latches a
+          `funnelFirstRunDismissed` flag (in `dismissFunnelFirstRun`) so the
+          auto-gate doesn't re-pop the modal in the same session; a
+          localized toast reminds the user they can complete it later from
+          the menu. The latch resets on a successful save (so a new
+          workspace's first-run still surfaces) and on the next app load. */}
+      {showFunnelSettingsModal && (
+        <Suspense fallback={null}>
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+          onClick={dismissFunnelFirstRun}
+        >
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="funnel-settings-modal-title"
+            className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-2xl w-full shadow-2xl max-h-[90vh] flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="bg-gradient-to-b from-indigo-900/20 to-transparent p-6 pb-4 border-b border-slate-800">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 id="funnel-settings-modal-title" className="text-lg font-black text-white">
+                    {t('topbar.menu_funnel_settings')}
+                  </h2>
+                  {funnelSettingsFirstRun && (
+                    <p className="mt-1 text-[10px] text-slate-400">
+                      <i className="fa-solid fa-circle-info text-indigo-400 mr-1" />
+                      {t('topbar.funnel_first_run_body')}
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={dismissFunnelFirstRun}
+                  aria-label={t('common.close')}
+                  className="text-slate-500 hover:text-white transition-all"
+                >
+                  <i className="fa-solid fa-xmark text-lg" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+              <FunnelSettingsForm
+                workspaceId={activeWorkspaceId}
+                accountId={activeMetaAccountId}
+                workspaceName={activeWorkspace?.name}
+                isDarkMode={isDarkMode}
+                availableWorkspaces={workspaces
+                  .filter(w => !w.deletedAt && !!w.metaAdAccountId)
+                  .map(w => ({ id: w.id, name: w.name, metaAdAccountId: w.metaAdAccountId ?? null, metaAdAccountName: w.metaAdAccountName ?? null }))}
+                onSaved={() => {
+                  setFunnelSettingsHasDoc(true);
+                  setFunnelFirstRunDismissed(false);
+                  if (funnelSettingsFirstRun) closeFunnelSettings();
+                }}
+              />
+            </div>
+          </div>
+        </div>
+        </Suspense>
+      )}
+
 
       {/* WORKSPACE SETTINGS MODAL (Multi-Brand — Scaling only) */}
       {showWorkspaceModal && (
@@ -11051,6 +11731,28 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           metaAdAccounts={metaConnection?.adAccounts?.map((a: any) => ({ id: a.id, name: a.name })) || []}
         />
       )}
+
+      {/* ═══ META AD ACCOUNT PICKER (Phase 14 batch 01 — fix) ═══
+          Mounts after a successful Meta OAuth flow when the user has
+          2+ ad accounts (1-account case auto-selects in
+          `handleConnectMeta`), and on demand via the menu's
+          "Change Account" entry. Establishes the 1:1
+          workspace→account link required by FR-026; without it,
+          FunnelSettingsForm cannot open and the daily sync cannot
+          target the active workspace. */}
+      <Suspense fallback={null}>
+        <MetaAccountPickerModal
+          open={showMetaAccountPicker}
+          accounts={(metaConnection?.adAccounts ?? []).map((a) => ({ id: a.id, name: a.name }))}
+          currentSelectedId={metaConnection?.selectedAccountId ?? null}
+          selecting={metaAccountPickerSelecting}
+          errorMessage={metaAccountPickerError}
+          isDarkMode={isDarkMode}
+          titleOverride={metaAccountPickerTitle}
+          onSelect={(accountId) => { void handleMetaAccountSelect(accountId); }}
+          onClose={closeMetaAccountPicker}
+        />
+      </Suspense>
 
       {/* CHANGELOG / WHAT'S NEW MODAL */}
       {showChangelogModal && (
