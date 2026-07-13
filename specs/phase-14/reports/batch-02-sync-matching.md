@@ -195,7 +195,57 @@ dispatcher is the spec-compliant replacement. The legacy function was
 
 ## CodeRabbit Loop
 
-Status: pending first review.
+**Status: ✅ all comments resolved.**
+
+CodeRabbit posted 5 actionable + 7 nitpick comments on the initial commit.
+All 12 were addressed in commit `f8ec60b`:
+
+### Actionable comments fixed
+
+1. **`backfillImageFingerprints.ts`** — `downloadFromUrl` now parses the
+   bucket name from `storage.googleapis.com/<bucket>/<object>` URLs and uses
+   `getStorage().bucket(bucketName)` instead of the default bucket.
+2. **`metaConnection.ts`** — `disconnectMetaAccount` now also clears
+   `encryptedToken` alongside `legacyToken`, so a stale `loadStoredConnection`
+   call cannot hydrate a token post-disconnect.
+3. **`metaSync/shared.ts`** — manually linked ads with a valid
+   `generationId` are now counted as `matched` (alongside auto_hash).
+4. **`metaSync/shared.ts`** — `fetchAdSets` / `fetchAds` blocks replaced
+   with `Promise.allSettled` so one failed campaign/ad set doesn't discard
+   the others (FR-010).
+5. **`src/App.tsx`** — fingerprint write now targets the top-level
+   `generations/{genId}` doc (matches `feedbackService.saveGeneration`'s
+   write path), not the workspace-nested path. The fingerprint INDEX
+   remains workspace-scoped (`imageFingerprints/{hash}`).
+
+### Nitpick comments fixed
+
+6. **`fingerprintAccuracy.test.ts`** — corpus now exercises 4-channel
+   (RGBA) images with semi-transparent overlays.
+7. **`metaConnection.ts`** — `connectMetaAccount` now uses a single
+   `WriteBatch` so the private connection doc and the workspace link
+   land together (atomic).
+8. **`metaSync/dispatcher.ts`** — added warning when the result count
+   hits `MAX_DISPATCH_PER_RUN`. Pagination across runs is documented as
+   a future iteration when the cap is approached.
+9. **`metaSync/shared.ts`** — existing adPerformance docs are now
+   batch-loaded up-front into an in-memory map (eliminates the N+1 read
+   pattern in the ad loop).
+10. **`metaSync/tasksClient.ts`** — removed redundant `??` fallback in
+    `enqueueTask`.
+11. **`metaSync/trigger.ts`** — removed dead no-op `if` block; explanatory
+    comment preserved above `readLastSyncAt`.
+12. **`src/services/geminiService.ts`** — replaced `debug?: any` and
+    `resolutionTrace?: any` with `unknown` on the touched line.
+
+### Verification after fixes
+
+- `npm run build` (functions/): ✅ clean
+- `npm test` (functions/, full suite): ✅ all 11 suites report `fail 0`
+- `npm run build` (root, frontend): ✅ clean
+- `node scripts/sc11Guard.mjs`: ✅ 0 forbidden terms
+- CI (`build-and-test` workflow): ✅ pass
+- CodeRabbit follow-up review: ✅ all 5 review threads `isResolved: true`
 
 ---
 
