@@ -2,7 +2,15 @@
 
 import * as functions from "firebase-functions";
 
-type MetaRole = "ADMIN" | "ADVERTISER" | "ANALYST" | "INSUFFICIENT";
+// MetaRole — the audit value persisted to `workspaces/{id}.metaRoleAtLinkTime`.
+//
+// "INSUFFICIENT" is reserved for a confirmed-role result: Meta responded
+// successfully, the user is on the account, but no MANAGE/ADVERTISE/ANALYZE
+// task or permission was granted. Probe-time failures (HTTP errors,
+// malformed responses, timeouts) return "UNAVAILABLE" instead, so the
+// downstream sync gate never blocks a workspace because of a transient
+// Meta outage or a malformed response.
+type MetaRole = "ADMIN" | "ADVERTISER" | "ANALYST" | "INSUFFICIENT" | "UNAVAILABLE";
 
 const META_API_VERSION = "v22.0";
 const PROBE_TIMEOUT_MS = 5000;
@@ -24,28 +32,28 @@ export async function probeMetaRole(
     const meResp = await fetch(meUrl, { signal });
     if (!meResp.ok) {
       functions.logger.warn(`⚠️ Meta /me error: ${meResp.status}`);
-      return "INSUFFICIENT";
+      return "UNAVAILABLE";
     }
-    const meBody = (await meResp.json()) as { id?: string };
+    const meBody = await meResp.json() as { id?: string };
     const currentUserId = meBody.id;
     if (!currentUserId) {
       functions.logger.warn(`⚠️ Meta /me returned no id`);
-      return "INSUFFICIENT";
+      return "UNAVAILABLE";
     }
 
     const url = `https://graph.facebook.com/${META_API_VERSION}/act_${id}/assigned_users?fields=id,tasks,permissions&access_token=${userAccessToken}`;
     const resp = await fetch(url, { signal });
     if (!resp.ok) {
       functions.logger.warn(`⚠️ Meta API error for ${adAccountId}: ${resp.status}`);
-      return "INSUFFICIENT";
+      return "UNAVAILABLE";
     }
-    const body = (await resp.json()) as { data?: AssignedUser[] };
+    const body = await resp.json() as { data?: AssignedUser[] };
     const assignedUsers = body.data;
     if (!Array.isArray(assignedUsers)) {
       functions.logger.warn(
         `⚠️ Meta assigned_users missing for ${adAccountId}`
       );
-      return "INSUFFICIENT";
+      return "UNAVAILABLE";
     }
     const myEntry = assignedUsers.find((u) => u.id === currentUserId);
     const roles = [
@@ -61,18 +69,18 @@ export async function probeMetaRole(
     if (roles.includes("ANALYZE") || roles.includes("ANALYST")) {
       return "ANALYST";
     }
+    // Meta responded successfully and we found the user but they have no
+    // qualifying task/permission on this ad account — this is the
+    // genuine "INSUFFICIENT" case the sync gate is meant to block on.
     return "INSUFFICIENT";
   } catch (err: any) {
     if (err?.name === "AbortError" || err?.name === "TimeoutError" || signal.aborted) {
       functions.logger.warn(
         `⚠️ Meta role probe timed out for ${adAccountId}`
       );
-      return "INSUFFICIENT";
+      return "UNAVAILABLE";
     }
     functions.logger.error("🔥 Meta role probe failed:", err);
-    throw new functions.https.HttpsError(
-      "unavailable",
-      "Could not verify Meta role right now. Please try again."
-    );
+    return "UNAVAILABLE";
   }
 }

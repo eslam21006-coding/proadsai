@@ -33,7 +33,7 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
   const [linkedMeta, setLinkedMeta] = useState<{
     id?: string;
     name?: string;
-    role?: 'ADMIN' | 'ADVERTISER' | 'ANALYST' | 'INSUFFICIENT';
+    role?: 'ADMIN' | 'ADVERTISER' | 'ANALYST' | 'INSUFFICIENT' | 'UNAVAILABLE';
   }>({
     id: workspace?.metaAdAccountId,
     name: workspace?.metaAdAccountName,
@@ -140,6 +140,7 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
         | 'ADVERTISER'
         | 'ANALYST'
         | 'INSUFFICIENT'
+        | 'UNAVAILABLE'
         | undefined;
       setLinkedMeta({
         id: selectedMetaAccount,
@@ -279,7 +280,9 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
                             ? t('roles.meta.analyst')
                             : linkedMeta.role === 'INSUFFICIENT'
                               ? t('roles.meta.insufficient')
-                              : (linkedMeta.role ?? t('roles.unknown'))}
+                              : linkedMeta.role === 'UNAVAILABLE'
+                                ? t('roles.meta.unavailable')
+                                : (linkedMeta.role ?? t('roles.unknown'))}
                     </p>
                   </div>
                   <button

@@ -3349,18 +3349,26 @@ export const metaSyncPerformance = onCall({
     // linked ad account was probed at link time with role "INSUFFICIENT".
     // Without this, the daily sync would silently retry forever against an
     // account whose token cannot read insights, wasting the workspace's
-    // daily allowance and emitting no actionable feedback.
+    // daily allowance and emitting no actionable feedback. The workspace
+    // lookup is wrapped so a transient Firestore failure propagates as
+    // HttpsError("internal", ...) rather than escaping as a raw exception.
     if (workspaceId) {
-        const wsRef = admin.firestore().doc(`users/${uid}/workspaces/${workspaceId}`);
-        const wsSnap = await wsRef.get();
-        if (wsSnap.exists) {
-            const wsData = wsSnap.data();
-            if (wsData?.metaRoleAtLinkTime === "INSUFFICIENT") {
-                throw new HttpsError(
-                    "permission-denied",
-                    "This workspace is linked to a Meta ad account your token can't read. Ask a workspace admin to re-link the account.",
-                );
+        try {
+            const wsRef = admin.firestore().doc(`users/${uid}/workspaces/${workspaceId}`);
+            const wsSnap = await wsRef.get();
+            if (wsSnap.exists) {
+                const wsData = wsSnap.data();
+                if (wsData?.metaRoleAtLinkTime === "INSUFFICIENT") {
+                    throw new HttpsError(
+                        "permission-denied",
+                        "This workspace is linked to a Meta ad account your token can't read. Ask a workspace admin to re-link the account.",
+                    );
+                }
             }
+        } catch (err: unknown) {
+            if (err instanceof HttpsError) throw err;
+            console.error("Workspace lookup failed during sync:", err);
+            throw new HttpsError("internal", "Could not load workspace for sync.");
         }
     }
 
