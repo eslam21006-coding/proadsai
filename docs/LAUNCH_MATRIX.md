@@ -134,7 +134,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | Item | Why major |
 |---|---|
 | **Phase 11 — Magic Edit** | Re-spec'd to use Gemini's edit endpoint after HOTFIX-G. User-facing feature: lasso → edit → text re-composite. Pro+ gated. |
-| **Phase 14 — RAG + Meta Reporting** | Feeds Phase 20 Concept Director when wired (20.D.7 deferred). Currently pastWinningAds defaults to empty array. Daily Meta Insights sync + RAG context injection into prompts. **Blocked until Phase 21 ships** (user data shape may shift). **Priority after Phase 22 and Phase 23.** |
+| **Phase 14 — RAG + Meta Reporting** | **Batch 01 MERGED (PR #53)** — Funnel Settings + Classifiers + SC-11 Guard. Batches 02-07 in progress. Feeds Phase 20 Concept Director when wired (20.D.7 deferred). Currently pastWinningAds defaults to empty array. Daily Meta Insights sync + RAG context injection into prompts. **Blocked until Phase 21 ships** (user data shape may shift). **Priority after Phase 22 and Phase 23.** |
 | **Phase 18 — Multi-Hero Support** | Up to 5 distinct people per ad. Required for webinar / mini-course / co-host / summit / speaker-grid use cases. |
 
 ### ⏳ TODO — Minor
@@ -2488,3 +2488,17 @@ Same checklist as the old Phase 8.E.6 — recreate products in Live mode, genera
 ---
 
 *Source: `creativeResolver.ts` · `generators.ts` · `entitlements.ts` · `artDirectionConfig.ts` · `retargetingObjections.ts` · `constants.ts` · `types.ts` · `index.ts` · `MagicSelector.tsx` · `WorkspaceSwitcher.tsx` · `creativeMemory.ts` · `rankingEngine.ts` · `metaService.ts` · `billingState.ts` · `textCompositing.ts` · `layoutContract.ts` · `logoComposite.ts` · `reflowOutpaint.ts` · `selectionReviewer.ts` · `conceptDirector.ts` · `varianceValidator.ts` · terminal session decisions · product owner decisions v4 · codebase audit April 11, 2026*
+
+---
+
+## Known Pre-Existing Issues (logged 2026-07-13)
+
+| ID | Issue | Root Cause | Priority | Fix When |
+|---|---|---|---|---|
+| ISSUE-A | Avatar bleed across workspaces | `buildAvatarPayload` in `InputForm.tsx:595` never writes `workspaceId`. All avatars land without workspace scoping. | Medium | Hotfix-I (parallel with Batch 02) |
+| ISSUE-B | Workspace deletion fails: "Default workspace not found" | `createWorkspace` always sets `isDefault: false`. Legacy users without a default workspace can never delete any workspace. Orphaned workspaces accumulate data silently. | High | Hotfix-I (parallel with Batch 02) |
+| ISSUE-C | Team management UI missing from sidebar | Phase 26 deleted the Team button from the old sidebar. `setShowTeamModal(true)` has zero call sites. Team modal and backend callables still exist — only the trigger is missing. | Medium | Before next release |
+| ISSUE-D | Team member cannot see correct workspaces | `WorkspaceSwitcher` is not passed `isTeamMember` or `workspaceAccess`. No callable exists to load a team member's workspace access array. Team members see all workspaces instead of their assigned ones. | High | Before Phase 14 Batch 04 (dashboard) |
+| ISSUE-E | Ad account "connected" shows on all workspaces | NOT A BUG. OAuth is user-level (connected once), account selection is workspace-level (per workspace). Current behavior is correct. | None | No fix needed — document for support |
+
+Investigation report: `specs/phase-14/reports/pre-existing-issues-investigation.md`
