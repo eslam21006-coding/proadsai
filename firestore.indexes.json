@@ -478,7 +478,7 @@
     },
     {
       "collectionGroup": "private",
-      "queryScope": "COLLECTION",
+      "queryScope": "COLLECTION_GROUP",
       "fields": [
         {
           "fieldPath": "metaConnected",
