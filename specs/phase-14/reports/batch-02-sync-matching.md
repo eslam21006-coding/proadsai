@@ -39,6 +39,30 @@ critical, two were medium/small — see the "Fix" column for severity):
 
 ---
 
+## Re-Audit Fixes (2026-07-14, follow-up)
+
+A second-pass Claude re-audit found 2 small remaining items, plus 2 LOW
+items. All 5 were addressed in commit `0287e20` (and a follow-up doc
+commit `3fba694` for the report wording fixes):
+
+| # | Item | Fix |
+|---|---|---|
+| **R1** (BLOCKING) | `backfillImageFingerprints` ordered by `createdAt`, but generation docs carry the field as `timestamp` (Firestore Timestamp). Firestore silently excluded every doc missing the sort field — backfill returned zero results. | `.orderBy("timestamp", "desc")` + the index entry's `createdAt` now reads the actual `timestamp.toMillis()` (falls back to `Date.now()` only when the field is genuinely missing). This makes the decideMatch "most recent generation wins" tie-break work correctly on backfilled data. |
+| **R2** (DOCS) | The "Architectural Notes → Why a new `private/metaConnection` doc?" paragraph still claimed `connectMetaAccount` "re-encrypts it via KMS" — stale after audit fix #7 deferred KMS. | Rewrote the paragraph to say it copies the legacy AES-encrypted token under `legacyToken`; KMS is deferred (see Deferred Items §D1). |
+| **R3** (BONUS) | Two queries were missing composite indexes and would have thrown at runtime: (a) `generations` collection filtered by `workspaceId` + `userId` ordered by `timestamp desc` (the backfill query), and (b) the dispatcher's `collectionGroup('private')` query. | Added both indexes to `firestore.indexes.json` (with the exact field orderings Firestore needs). |
+| **LOW 1** | `index.ts:89` declared its own `defineSecret("META_APP_SECRET")` while `secrets.ts` also declared one — duplicate `defineSecret` calls for the same secret. | `index.ts` now `import { metaAppSecret } from "./secrets.js"` so the Phase 14 sync modules and the rest of the codebase share a single instance. |
+| **LOW 2** | Dead empty `if (keepMetadataUnavailable) { }` block in `shared.ts` — only a comment, no body. | Removed; replaced with a one-line comment documenting the flag's consumption at the `metadataAvailable` write below. |
+
+### Verification after re-audit fixes
+
+- `npm run build` (functions/): ✅ clean
+- `npm test` (functions/, full suite): ✅ all 11 suites report `fail 0` (no regressions)
+- `node scripts/sc11Guard.mjs`: ✅ 0 forbidden terms
+- CI (`build-and-test` workflow): ✅ pass
+- CodeRabbit follow-up review: ✅ completed; 2 new minor doc nits addressed; all 7 review threads `isResolved: true`
+
+---
+
 ## Summary
 
 Implements Layer 2 (Daily Sync) + Layer 3 (Image Matching) of the RAG + Meta
