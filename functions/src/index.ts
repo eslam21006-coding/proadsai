@@ -86,7 +86,11 @@ const ghlWebhookSecret = defineSecret("GHL_WEBHOOK_SECRET");
 const stripeSecretKey = defineSecret("STRIPE_SECRET_KEY");
 const metaAppId = defineSecret("META_APP_ID");
 const ghlTeamInviteUrl = defineSecret("GHL_TEAM_INVITE_WEBHOOK_URL");
-const metaAppSecret = defineSecret("META_APP_SECRET");
+// META_APP_SECRET is declared once in `secrets.ts` so the Phase 14 sync
+// modules (worker / trigger / dispatcher) and `index.ts` share a single
+// `defineSecret` instance. Importing instead of redeclaring keeps the
+// runtime `metaAppSecret.value()` path consistent across the codebase.
+import { metaAppSecret } from "./secrets.js";
 const openaiApiKey = defineSecret("OPENAI_API_KEY");
 const falApiKey = defineSecret("FAL_API_KEY");
 

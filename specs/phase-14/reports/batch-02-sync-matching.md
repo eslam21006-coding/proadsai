@@ -192,10 +192,11 @@ satisfied).
 The existing `metaConnections/{uid}` collection holds the user-level Meta
 OAuth token (encrypted with AES-256-GCM). Phase 14 requires per-workspace
 tokens so the 1:1 mapping can be enforced and the dispatcher can iterate
-connected accounts. `connectMetaAccount` reads the legacy token, re-encrypts
-it via KMS (via `tokenCrypto.ts`), and writes the envelope to the
-workspace-scoped `private/metaConnection` doc. The legacy path remains
-intact for the push-creative flow.
+connected accounts. `connectMetaAccount` reads the legacy AES-encrypted
+token from `metaConnections/{uid}` and copies it into the workspace-scoped
+`private/metaConnection` doc under the `legacyToken` field. KMS envelope
+encryption is prepared (`tokenCrypto.ts` + 15 tests) but deferred — see
+Deferred Items §D1.
 
 ### Why a Cloud Tasks fan-out?
 

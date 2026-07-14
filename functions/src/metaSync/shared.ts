@@ -659,11 +659,10 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             : null;
         const keepMetadataUnavailable = existingData?.metadataAvailable === false
             && existingDeletedGenerationId !== null;
-        if (keepMetadataUnavailable) {
-            // Don't flip the flag back to true. We still emit a fresh
-            // performance record but the dashboard will see it as
-            // "unmatched" because the deletedGenerationId is preserved.
-        }
+        // The `keepMetadataUnavailable` flag is consumed by the
+        // `metadataAvailable` write below — when true, the sync preserves
+        // the cascade mark instead of flipping back to true. No separate
+        // branch needed here.
 
         // Counted as "matched" if the ad carries ANY valid link (auto_hash
         // or manual with a generationId). Ambiguous auto matches and ads

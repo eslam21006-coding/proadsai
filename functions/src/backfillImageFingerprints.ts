@@ -72,11 +72,18 @@ export const backfillImageFingerprints = onCall(
         // scope and respect FR-023.
         const workspaceIds = await collectWorkspaceIds(uid, targetWorkspaceId);
         outer: for (const workspaceId of workspaceIds) {
+            // Re-audit (2026-07-14): generation docs carry a Firestore
+            // Timestamp at `timestamp` (set by feedbackService.saveGeneration
+            // via `Timestamp.now()`). They have NO `createdAt` field. With
+            // the wrong field name, Firestore silently excludes every doc
+            // missing the sort field — the backfill returned zero results.
+            // The composite index needed is documented in
+            // firestore.indexes.json (Phase 14 entry).
             const generationsRef = getDb()
                 .collection("generations")
                 .where("workspaceId", "==", workspaceId)
                 .where("userId", "==", uid)
-                .orderBy("createdAt", "desc")
+                .orderBy("timestamp", "desc")
                 .limit(100);
             // Firestore paginates 100 at a time by default. For backfill we
             // only need to scan up to maxItems across ALL workspaces, so we
@@ -115,6 +122,16 @@ export const backfillImageFingerprints = onCall(
                             .collection("users").doc(uid)
                             .collection("workspaces").doc(workspaceId)
                             .collection("imageFingerprints").doc(hash);
+                        // Re-audit (2026-07-14): use the generation's actual
+                        // `timestamp` field (Firestore Timestamp) so the
+                        // decideMatch "most recent generation wins" tie-break
+                        // works correctly on backfilled data. We only fall
+                        // back to `Date.now()` when the field is genuinely
+                        // missing (e.g. legacy pre-Firestore-Timestamp docs).
+                        const ts = data.timestamp;
+                        const createdAtMs = ts && typeof (ts as { toMillis?: () => number }).toMillis === "function"
+                            ? (ts as { toMillis: () => number }).toMillis()
+                            : Date.now();
                         const writes: Array<Promise<unknown>> = [
                             genDoc.ref.set({
                                 imageFingerprint: hash,
@@ -125,9 +142,7 @@ export const backfillImageFingerprints = onCall(
                             hash,
                             hashAlgo: "dhash64",
                             generationId: genDoc.id,
-                            createdAt: typeof data.createdAt === "number"
-                                ? data.createdAt
-                                : Date.now(),
+                            createdAt: createdAtMs,
                         }, { merge: true }));
                         await Promise.all(writes);
                         result.processed++;
