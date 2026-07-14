@@ -3,7 +3,38 @@
 **Feature branch**: `phase-14-rag-meta`
 **PR**: #54
 **Tasks**: T019-T038 (Phase 2a/2b/2c)
-**Date**: 2026-07-13
+**Date**: 2026-07-13 (initial) · updated 2026-07-14 (audit fixes)
+
+---
+
+## Audit Fixes Applied (2026-07-14)
+
+A Claude audit of the initial PR (#54) found 7 critical bugs in the
+**wiring** between the pure modules and the actual Meta/Firestore paths.
+The pure modules themselves (perceptualHash, metaGraph, tokenCrypto) were
+solid. All 8 issues below were addressed in commit `f444aae`:
+
+| # | Issue | Fix |
+|---|---|---|
+| **1** | Worker / trigger / dispatcher threw `META_APP_SECRET not configured` on every sync (no `secrets: [metaAppSecret]` declaration) | New `functions/src/secrets.ts` module; worker, trigger, and dispatcher all declare `secrets: [metaAppSecret]` |
+| **2** | `linkUnmatchedAd`, `backfillImageFingerprints`, and `generationDeleteCascade` read from the **workspace-nested** `users/{uid}/workspaces/{wid}/generations/{id}` path — but generations live at the **top-level** `generations/{id}` collection. Manual linking always threw `not-found`; backfill processed zero generations; the delete trigger never fired | All three now use the top-level path. `linkUnmatchedAd` verifies the generation's `userId` + `workspaceId` fields (FR-023). `backfillImageFingerprints` queries top-level `generations` filtered by `workspaceId == workspaceId` AND `userId == uid`. `generationDeleteCascade` listens on `generations/{generationId}` and reads `userId`/`workspaceId` from `event.data` |
+| **3** | Meta's ad fields didn't include `adset_id`, ad set fields didn't include `campaign_id` — every ad got classified as `tier3_egypt_na` / `broad` / objective `other` (kills all learning) | `metaGraph.ts` adds `adset_id` and `campaign_id` to its field strings. `shared.ts` ALSO stamps the parent IDs at fetch time (defense in depth — the loop already knows the parent). |
+| **4** | Bare `creative` field returned only `{ id: "..." }` — no image URL. The `typeof ad.creative === "string"` branch never fired because Meta returns an object. Every ad skipped image matching | `metaGraph.ts` requests `creative{id,image_url,thumbnail_url}` (field expansion). `shared.ts` reads `creative.image_url` / `creative.thumbnail_url` directly, falls back to `fetchAdCreativeImage` only if both are missing. `extractImageUrl` is no longer used in the ad-loop path. |
+| **5A** | Sync recomputed `metadataAvailable: generationId !== null` and silently un-did the delete-cascade's `metadataAvailable: false` | `shared.ts` checks `existingData.metadataAvailable === false && existingData.deletedGenerationId` is set; when cascade-marked, keep `metadataAvailable: false` across the sync. |
+| **5B** | `batch.set(ref, data)` (no `merge: true`) wiped the cascade fields (`deletedGenerationId`, `deletedGenerationAt`, `matchedManuallyAt`) on every sync | `batch.set(ref, data, { merge: true })` preserves fields the sync doesn't explicitly write. |
+| **6** | `connectMetaAccount` only checked FR-026 direction (b) (account already on another workspace). It did NOT check direction (a) — workspace already linked to a DIFFERENT account. A user could silently replace workspace W's account A with B | `connectMetaAccount` now checks direction (a) FIRST: if `workspace.metaAdAccountId` exists AND differs from the requested `accountId`, throws plain-Arabic `هذه المساحة مرتبطة بحساب إعلاني آخر. افصله أولاً قبل ربط حساب جديد.` |
+| **7** | `tokenCrypto.ts` is built and tested but NOT wired into the connect/sync flow. The report incorrectly claimed "KMS-encrypted token storage" | `metaConnection.ts` removes the dead `kmsEncrypt` import; `reencryptAndStoreToken` now throws with a clear "KMS adoption deferred" message. The connection flow copies the existing **legacy AES-encrypted token** (under `legacyToken`); the worker decrypts it via `metaSync/legacyToken.ts`. The tokenCrypto module + its 15 unit tests stay in the codebase, ready to wire up later. See "Deferred Items" below. |
+| **8** | The legacy `metaDailySync` was deleted, but it was feeding the existing `PerformanceDashboard` (src/components/PerformanceDashboard.tsx), `creativeMemory.updateMemoryPerformance`, and the `principleVault`. The new sync writes to workspace-scoped paths that nothing reads yet (the new dashboard comes in Batch 04) | The legacy function was restored as `metaLegacySync` and **runs at 4am UTC** (1 hour after the new dispatcher's 3am run, so they don't collide). It writes to the user-level `adPerformance` collection that the existing dashboard + creative memory + vault read. Marked **TEMPORARY** in a comment — remove after Batch 04 ships. The new `metaDailySync` dispatcher keeps its 3am UTC schedule. |
+
+### Verification after audit fixes
+
+- `npm run build` (functions/): ✅ clean
+- `npm test` (functions/, full suite): ✅ all 11 suites report `fail 0` (no regressions)
+- `node scripts/sc11Guard.mjs`: ✅ 0 forbidden terms
+- `npm run build` (root, frontend): ✅ clean
+- CI (`build-and-test` workflow): ✅ pass
+- CodeRabbit follow-up review on the fix commit: ✅ completed with no new comments
+- All 5 review threads `isResolved: true`
 
 ---
 
@@ -21,8 +52,10 @@ and Batch 05 (dashboard / RAG) will consume.
   worker (`metaSyncAccountWorker`), and `triggerMetaSync` callable with a
   1-hour cooldown.
 - **Meta connection**: `connectMetaAccount` / `disconnectMetaAccount`
-  callables with 1:1 workspace↔account enforcement and KMS-encrypted token
-  storage at `users/{uid}/workspaces/{wid}/private/metaConnection`.
+  callables with 1:1 workspace↔account enforcement (both directions)
+  and **legacy AES-encrypted** token storage at
+  `users/{uid}/workspaces/{wid}/private/metaConnection`. KMS envelope
+  encryption is prepared but **deferred** — see Deferred Items.
 - **Image matching write path**: `serverGenerateFinalAd` computes and returns
   the perceptual hash; the client writes the hash to the generation doc and
   the workspace-scoped `imageFingerprints/{hash}` index.
@@ -265,20 +298,59 @@ testing — this PR is **not merged** by the agent.
 
 ---
 
+## Deferred Items
+
+The following are explicitly **out of scope** for this batch. They are
+listed here so the next batches (and the audit trail) know what was
+intentionally deferred vs what was missed.
+
+### D1 — KMS envelope encryption (audit fix #7)
+
+`tokenCrypto.ts` is built, tested (15 round-trip tests), and ready to
+wire in. The current connection flow copies the **legacy AES-encrypted
+token** under `legacyToken`; the worker decrypts it via
+`metaSync/legacyToken.ts`. KMS adoption requires:
+
+1. Provisioning the KMS key ring + key (see
+   `specs/phase-14/INFRASTRUCTURE_SETUP.md` §T001).
+2. Updating the existing `metaOAuthCallback` to call
+   `tokenCrypto.encrypt()` instead of the in-index.ts AES helper.
+3. Re-pointing the worker to read `encryptedToken` (KMS envelope) as
+   the primary source; `legacyToken` becomes a fallback for un-migrated
+   accounts.
+
+Until then, the legacy AES path is the source of truth and
+`reencryptAndStoreToken` is a deliberate no-op (it throws to surface
+any accidental call).
+
+### D2 — Remove `metaLegacySync` after Batch 04 ships (audit fix #8)
+
+`metaLegacySync` runs at 4am UTC and feeds the existing
+`PerformanceDashboard`, `creativeMemory.updateMemoryPerformance`, and
+`principleVault`. The new spec-compliant dispatcher (`metaDailySync`,
+3am UTC) writes to workspace-scoped paths that the new dashboard will
+read. **Remove `metaLegacySync` after Batch 04 replaces the dashboard.**
+Until then, both run daily — they write to disjoint paths so there's
+no collision.
+
+### D3 — Proactive token refresh (FR-009)
+
+`tokenExpiresAt` is recorded on the connection doc, but the worker
+doesn't yet proactively exchange a near-expiry token for a fresh
+long-lived one via `GET /oauth/access_token?grant_type=fb_exchange_token`.
+Implemented as a follow-up once KMS adoption is in place (the refresh
+path needs to write back the re-encrypted token).
+
+---
+
 ## Open Questions
 
-1. **KMS envelope adoption**: `connectMetaAccount` currently writes the
-   legacy AES ciphertext under `legacyToken`. When the OAuth callback is
-   updated to call `tokenCrypto.encrypt()` directly, the worker switches
-   to reading `encryptedToken` (KMS envelope) and `legacyToken` becomes
-   unused. Out of scope for Batch 02.
-
-2. **Cross-workspace fingerprint sharing**: The current model strictly
+1. **Cross-workspace fingerprint sharing**: The current model strictly
    forbids it. If multi-client team workflows (Edge Case 13) ever need
    shared creative libraries, the architecture already supports a
    `userId:workspaceId` fingerprint index key change.
 
-3. **Cloud Tasks retry budget**: maxAttempts=3 may be too low for a 3am
+2. **Cloud Tasks retry budget**: maxAttempts=3 may be too low for a 3am
    global sync with a 5-dispatch concurrency cap. Tune after observing
    production behavior.
 
