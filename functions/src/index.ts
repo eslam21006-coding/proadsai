@@ -5566,13 +5566,229 @@ export const metaPushCreativePack = onCall({
     }
 });
 
-// ─── 6. DAILY AUTO-SYNC (Scheduled) ─────────────────────────────────────
-// The legacy metaDailySync scheduled function was removed in Phase 14
-// Batch 02. It wrote to the user-level `adPerformance` collection, did
-// not scope by workspace, did not fan out via Cloud Tasks, and did not
-// classify campaign objective or apply the Qarar verdict engine. The
-// Phase 14 dispatcher (`functions/src/metaSync/dispatcher.ts` → re-exported
-// above as `metaDailySync`) is the spec-compliant replacement.
+// ─── 6. LEGACY META SYNC (TEMPORARY) ───────────────────────────────────
+// TEMPORARY: feeds the existing PerformanceDashboard and creativeMemory
+// until Phase 14 Batch 04 replaces them. The new spec-compliant dispatcher
+// (`metaDailySync`, runs at 3am UTC) writes to the workspace-scoped
+// `adPerformance` collection and is what the new dashboard will read.
+// This legacy function runs at 4am UTC to avoid colliding with the new
+// dispatcher, and it writes to the USER-LEVEL `adPerformance` collection
+// that PerformanceDashboard + creativeMemory.updateMemoryPerformance
+// + principleVault all read today. REMOVE after Batch 04 ships.
+export const metaLegacySync = onSchedule({
+    region: "europe-west1",
+    schedule: "0 4 * * *", // 4 AM UTC — 1h after the new dispatcher
+    secrets: [metaAppSecret],
+    timeoutSeconds: 300,
+    memory: "512MiB",
+}, async () => {
+    console.log("🔄 [metaLegacySync] starting legacy daily Meta performance sync...");
+
+    const connections = await admin.firestore().collection("metaConnections")
+        .where("status", "==", "active")
+        .get();
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const connDoc of connections.docs) {
+        const conn = connDoc.data();
+        const uid = conn.userId;
+
+        // Skip expired tokens
+        if (conn.expiresAt < Date.now()) {
+            console.warn(`⚠️ Token expired for user ${uid}`);
+            await connDoc.ref.update({ status: "token_expired" });
+            errorCount++;
+            continue;
+        }
+
+        try {
+            const token = decryptToken(conn.encryptedToken, metaAppSecret.value());
+            // Sync ALL active ad accounts, not just the selected one
+            const activeAccounts: { id: string }[] = (conn.adAccounts || [])
+                .filter((a: any) => a.status === 1 || a.account_status === 1);
+            if (activeAccounts.length === 0 && conn.selectedAccountId) {
+                activeAccounts.push({ id: conn.selectedAccountId });
+            }
+            if (activeAccounts.length === 0) continue;
+
+            const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+            const until = new Date().toISOString().split("T")[0];
+
+            // Collect all ads across accounts for creative memory / vault analysis
+            let allAdsForMemory: any[] = [];
+
+            for (const account of activeAccounts) {
+                const accountId = account.id;
+
+            const response = await fetch(
+                `https://graph.facebook.com/v22.0/${accountId}/insights?` +
+                `fields=ad_name,ad_id,impressions,clicks,spend,ctr,cpc,actions,purchase_roas&` +
+                `time_range={"since":"${since}","until":"${until}"}&` +
+                `level=ad&limit=50&access_token=${token}`
+            );
+            const data = await response.json() as any;
+
+            if (data.error) {
+                console.error(`❌ [metaLegacySync] failed for ${uid} account ${accountId}:`, data.error.message);
+                continue;
+            }
+
+            // Look up workspaceId from deployment records for each ad
+            const deploySnap = await admin.firestore().collection("creativeDeployments")
+                .where("userId", "==", uid)
+                .where("adAccountId", "==", accountId)
+                .select("metaAdId", "adName", "workspaceId")
+                .limit(200).get();
+            const deployWsMap = new Map<string, string | null>();
+            for (const d of deploySnap.docs) {
+                const dd = d.data();
+                if (dd.metaAdId) deployWsMap.set(dd.metaAdId, dd.workspaceId || null);
+                if (dd.adName) deployWsMap.set(`name:${dd.adName}`, dd.workspaceId || null);
+            }
+
+            const batch = admin.firestore().batch();
+            for (const ad of (data.data || [])) {
+                const roas = (ad.purchase_roas || []).length > 0 ? parseFloat(ad.purchase_roas[0].value) : null;
+                const adWsId = deployWsMap.get(ad.ad_id) ?? deployWsMap.get(`name:${ad.ad_name}`) ?? null;
+                batch.set(admin.firestore().collection("adPerformance").doc(`${uid}_${ad.ad_id}`), {
+                    userId: uid, adAccountId: accountId, workspaceId: adWsId, adId: ad.ad_id, adName: ad.ad_name || "",
+                    impressions: parseInt(ad.impressions || "0"),
+                    clicks: parseInt(ad.clicks || "0"),
+                    spend: parseFloat(ad.spend || "0"),
+                    ctr: parseFloat(ad.ctr || "0"),
+                    roas,
+                    syncedAt: admin.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+            }
+            await batch.commit();
+            allAdsForMemory.push(...(data.data || []));
+
+            } // end for-each account
+
+            await connDoc.ref.update({ lastSyncAt: admin.firestore.FieldValue.serverTimestamp() });
+            successCount++;
+
+            // ═══ CREATIVE MEMORY: Update memory with performance + rebuild indexes ═══
+            const allDeploymentsSnap = await admin.firestore().collection("creativeDeployments")
+                .where("userId", "==", uid).select("metaAdId", "adName", "workspaceId").limit(500).get();
+            const adWsLookup = new Map<string, string | null>();
+            for (const d of allDeploymentsSnap.docs) {
+                const dd = d.data();
+                if (dd.metaAdId) adWsLookup.set(dd.metaAdId, dd.workspaceId || null);
+                if (dd.adName) adWsLookup.set(`name:${dd.adName}`, dd.workspaceId || null);
+            }
+            try {
+                const { updateMemoryPerformance, rebuildPatternIndexes } = await import("./creativeMemory.js");
+                for (const ad of allAdsForMemory) {
+                    const roas = (ad.purchase_roas || []).length > 0 ? parseFloat(ad.purchase_roas[0].value) : 0;
+                    const actions = ad.actions || [];
+                    const conversions = actions.find((a: any) => a.action_type === 'offsite_conversion.fb_pixel_purchase')?.value || 0;
+                    const impressions = parseInt(ad.impressions || "0");
+                    const cvr = impressions > 0 ? (parseInt(conversions) / impressions) * 100 : 0;
+                    const adWs = adWsLookup.get(ad.ad_id) ?? adWsLookup.get(`name:${ad.ad_name}`) ?? null;
+
+                    await updateMemoryPerformance(uid, ad.ad_name || '', {
+                        ctr: parseFloat(ad.ctr || "0"),
+                        cvr,
+                        roas,
+                        cpc: parseFloat(ad.cpc || "0"),
+                        spend: parseFloat(ad.spend || "0"),
+                        impressions,
+                        clicks: parseInt(ad.clicks || "0"),
+                    }, adWs);
+                }
+                await rebuildPatternIndexes(uid);
+
+                // ═══ WINNING PRINCIPLES VAULT: Extract from Meta performance winners/losers ═══
+                try {
+                    const { extractPrinciples: vaultExtract, extractAntiPrinciples: vaultAntiExtract, consolidateVault: vaultConsolidate } = await import("./principleVault.js");
+                    const vaultCallGemini = createGeminiCaller(geminiApiKey.value());
+                    const ads = allAdsForMemory;
+
+                    const ctrs = ads.map((a: any) => parseFloat(a.ctr || "0")).filter((c: number) => c > 0).sort((a: number, b: number) => a - b);
+                    const topQuartileCtr = ctrs.length > 0 ? ctrs[Math.floor(ctrs.length * 0.75)] : 999;
+                    const bottomQuartileCtr = ctrs.length > 0 ? ctrs[Math.floor(ctrs.length * 0.25)] : 0;
+
+                    const creativeAggregates = new Map<string, {
+                        totalImpressions: number; totalClicks: number; totalSpend: number;
+                        totalPurchases: number; totalRevenue: number; adsetCount: number;
+                        genId: string;
+                    }>();
+
+                    for (const ad of ads) {
+                        const adSpend = parseFloat(ad.spend || "0");
+                        const adClicks = parseInt(ad.clicks || "0");
+                        const adImpressions = parseInt(ad.impressions || "0");
+                        const adRoas = (ad.purchase_roas || []).length > 0 ? parseFloat(ad.purchase_roas[0].value) : 0;
+                        const adConversions = parseInt(((ad.actions || []).find((a: any) => a.action_type === 'offsite_conversion.fb_pixel_purchase')?.value || "0"));
+
+                        const deploySnap = await admin.firestore().collection('creativeDeployments')
+                            .where('userId', '==', uid)
+                            .where('adName', '==', ad.ad_name || '')
+                            .limit(1).get();
+                        const deployData = deploySnap.empty ? null : deploySnap.docs[0].data();
+                        const genId = deployData?.generationId;
+                        if (!genId) continue;
+
+                        const creativeKey = deployData?.imageHash || genId;
+                        const existing = creativeAggregates.get(creativeKey) || {
+                            totalImpressions: 0, totalClicks: 0, totalSpend: 0,
+                            totalPurchases: 0, totalRevenue: 0, adsetCount: 0, genId
+                        };
+                        existing.totalImpressions += adImpressions;
+                        existing.totalClicks += adClicks;
+                        existing.totalSpend += adSpend;
+                        existing.totalPurchases += adConversions;
+                        existing.adsetCount += 1;
+                        creativeAggregates.set(creativeKey, existing);
+                    }
+
+                    const topPerformerIds: string[] = [];
+                    const bottomPerformerIds: string[] = [];
+
+                    for (const [, agg] of creativeAggregates) {
+                        const aggCtr = agg.totalImpressions > 0 ? (agg.totalClicks / agg.totalImpressions) * 100 : 0;
+                        const aggRoas = agg.totalSpend > 0 ? (agg.totalRevenue / agg.totalSpend) : 0;
+
+                        if (aggRoas > 1.5 || (aggCtr > topQuartileCtr && agg.totalImpressions > 1000)) {
+                            topPerformerIds.push(agg.genId);
+                        }
+                        if ((agg.totalSpend > 20 && agg.totalPurchases === 0) || (agg.totalImpressions >= 500 && agg.totalClicks === 0)) {
+                            bottomPerformerIds.push(agg.genId);
+                        } else if (aggRoas < 0.5 && aggRoas > 0 || (aggCtr < bottomQuartileCtr && agg.totalImpressions > 1000)) {
+                            bottomPerformerIds.push(agg.genId);
+                        }
+                    }
+
+                    if (topPerformerIds.length >= 2) {
+                        await vaultExtract(uid, topPerformerIds, 'metaPerformance', vaultCallGemini);
+                    }
+                    if (bottomPerformerIds.length >= 2) {
+                        await vaultAntiExtract(uid, bottomPerformerIds, 'metaSpentNoResult', vaultCallGemini);
+                    }
+                    if (topPerformerIds.length >= 2 || bottomPerformerIds.length >= 2) {
+                        await vaultConsolidate(uid);
+                    }
+                } catch (vaultErr) {
+                    console.warn(`⚠️ [metaLegacySync] vault extraction failed (non-critical):`, vaultErr);
+                }
+            } catch (memErr) {
+                console.warn(`⚠️ [metaLegacySync] memory update failed (non-critical):`, memErr);
+            }
+
+        } catch (err: any) {
+            console.error(`❌ [metaLegacySync] error for ${uid}:`, err.message);
+            errorCount++;
+        }
+
+        // Rate limit: wait 2s between users
+        await new Promise(r => setTimeout(r, 2000));
+    }
+
+    console.log(`✅ [metaLegacySync] complete: ${successCount} success, ${errorCount} errors`);
+});
 
 // ─── 7. TOKEN REFRESH (Scheduled - every 45 days) ───────────────────────
 export const metaRefreshTokens = onSchedule({

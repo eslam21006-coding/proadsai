@@ -14,6 +14,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { runSyncForAccount, type SyncResult } from "./shared.js";
 import { loadStoredConnection } from "../metaConnection.js";
 import { SYNC_DISPATCH_REGION } from "./dispatcher.js";
+import { metaAppSecret } from "../secrets.js";
 
 const COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 
@@ -22,7 +23,17 @@ interface TriggerMetaSyncRequest {
 }
 
 export const triggerMetaSync = onCall(
-    { region: SYNC_DISPATCH_REGION, cors: true, timeoutSeconds: 540, memory: "2GiB" },
+    {
+        region: SYNC_DISPATCH_REGION,
+        cors: true,
+        timeoutSeconds: 540,
+        memory: "2GiB",
+        // CRITICAL (Claude audit): the manual trigger decrypts the legacy
+        // AES-GCM token via `decryptLegacyToken`. The secret MUST be
+        // declared here or runtime decryption throws and the user sees a
+        // false "reconnect Meta" prompt.
+        secrets: [metaAppSecret],
+    },
     async (request) => {
         if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
         const uid = request.auth.uid;

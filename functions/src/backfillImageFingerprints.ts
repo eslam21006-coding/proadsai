@@ -63,27 +63,27 @@ export const backfillImageFingerprints = onCall(
             errors: 0,
         };
 
-        // Walk the user's generations in pages. We use a simple in-memory
-        // page loop — backfill is one-time per user (callable invokes are
-        // bounded by maxItems per call).
-        const workspacesSnap = await getDb()
-            .collection("users").doc(uid)
-            .collection("workspaces")
-            .get();
-
-        outer: for (const wsDoc of workspacesSnap.docs) {
-            if (targetWorkspaceId && wsDoc.id !== targetWorkspaceId) continue;
-            const wsData = wsDoc.data() || {};
-            if (typeof wsData.workspaceId === "string" && wsData.workspaceId !== wsDoc.id) continue;
-            void wsData;
-
-            const generationsRef = wsDoc.ref.collection("generations");
+        // Walk the user's generations in pages. Generation docs live at
+        // the TOP-LEVEL `generations` collection (written by
+        // `feedbackService.saveGeneration` via `addDoc`), NOT under
+        // `users/{uid}/workspaces/{wid}/generations/...`. The original
+        // (wrong) path always returned an empty walk and processed zero
+        // generations. We filter by `workspaceId` to keep the per-workspace
+        // scope and respect FR-023.
+        const workspaceIds = await collectWorkspaceIds(uid, targetWorkspaceId);
+        outer: for (const workspaceId of workspaceIds) {
+            const generationsRef = getDb()
+                .collection("generations")
+                .where("workspaceId", "==", workspaceId)
+                .where("userId", "==", uid)
+                .orderBy("createdAt", "desc")
+                .limit(100);
             // Firestore paginates 100 at a time by default. For backfill we
             // only need to scan up to maxItems across ALL workspaces, so we
             // use a coarse cursor + in-memory filter on `imageFingerprint`.
             let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
             while (true) {
-                let q = generationsRef.orderBy("createdAt", "desc").limit(100);
+                let q = generationsRef;
                 if (cursor) q = q.startAfter(cursor);
                 const page = await q.get();
                 if (page.empty) break;
@@ -96,10 +96,6 @@ export const backfillImageFingerprints = onCall(
                     const data = genDoc.data() as Record<string, unknown>;
                     if (typeof data.imageFingerprint === "string" && data.imageFingerprint.length > 0) {
                         result.skippedAlreadyFingerprinted++;
-                        continue;
-                    }
-                    if (typeof data.workspaceId !== "string" || data.workspaceId.length === 0) {
-                        result.skippedNoWorkspace++;
                         continue;
                     }
 
@@ -115,28 +111,24 @@ export const backfillImageFingerprints = onCall(
                         const buffer = await downloadFromUrl(imageUrl);
                         const hash = await computeHash(buffer);
                         // Write to the generation doc + the workspace index.
-                        const indexRef = genDoc.ref.parent.parent
-                            ? getDb()
-                                .collection("users").doc(uid)
-                                .collection("workspaces").doc(wsDoc.id)
-                                .collection("imageFingerprints").doc(hash)
-                            : null;
+                        const indexRef = getDb()
+                            .collection("users").doc(uid)
+                            .collection("workspaces").doc(workspaceId)
+                            .collection("imageFingerprints").doc(hash);
                         const writes: Array<Promise<unknown>> = [
                             genDoc.ref.set({
                                 imageFingerprint: hash,
                                 imageFingerprintAlgo: "dhash64",
                             }, { merge: true }),
                         ];
-                        if (indexRef) {
-                            writes.push(indexRef.set({
-                                hash,
-                                hashAlgo: "dhash64",
-                                generationId: genDoc.id,
-                                createdAt: typeof data.createdAt === "number"
-                                    ? data.createdAt
-                                    : Date.now(),
-                            }, { merge: true }));
-                        }
+                        writes.push(indexRef.set({
+                            hash,
+                            hashAlgo: "dhash64",
+                            generationId: genDoc.id,
+                            createdAt: typeof data.createdAt === "number"
+                                ? data.createdAt
+                                : Date.now(),
+                        }, { merge: true }));
                         await Promise.all(writes);
                         result.processed++;
                     } catch (e: unknown) {
@@ -163,6 +155,22 @@ function pickImageUrl(data: Record<string, unknown>): string | null {
         if (typeof c === "string" && c.length > 0) return c;
     }
     return null;
+}
+
+/**
+ * Enumerate the workspace ids to backfill. If a target is supplied we use
+ * it directly; otherwise we walk the user's workspaces and dedupe. The
+ * list is bounded — a user has at most a small number of workspaces.
+ */
+async function collectWorkspaceIds(uid: string, target: string | null): Promise<string[]> {
+    if (target) return [target];
+    const snap = await getDb()
+        .collection("users").doc(uid)
+        .collection("workspaces")
+        .get();
+    const ids = new Set<string>();
+    for (const ws of snap.docs) ids.add(ws.id);
+    return Array.from(ids);
 }
 
 async function downloadFromUrl(url: string): Promise<Buffer> {

@@ -14,6 +14,7 @@
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { getTasksClient } from "./tasksClient.js";
 import { getDb } from "../firestoreClient.js";
+import { metaAppSecret } from "../secrets.js";
 
 export const META_SYNC_QUEUE = "metaSyncQueue";
 export const WORKER_PATH = "metaSyncAccountWorker";
@@ -71,6 +72,11 @@ export const metaDailySync = onSchedule(
         region: SYNC_DISPATCH_REGION,
         timeoutSeconds: 540, // 9 minutes — well within the 1h daily window
         memory: "1GiB",
+        // Defensive (Claude audit): the dispatcher only enqueues tasks
+        // (no token decryption), but binding the secret here is a safety
+        // net — if a future enhancement does a proactive token refresh
+        // from the dispatcher, the secret is already wired.
+        secrets: [metaAppSecret],
     },
     async () => {
         const accounts = await listConnectedAccounts();

@@ -52,8 +52,13 @@ export const INSIGHTS_FIELDS: ReadonlyArray<string> = [
 ];
 
 export const HIERARCHY_CAMPAIGN_FIELDS = "id,name,status,objective,daily_budget,lifetime_budget";
-export const HIERARCHY_ADSET_FIELDS = "id,name,status,daily_budget,targeting";
-export const HIERARCHY_AD_FIELDS = "id,name,status,creative";
+export const HIERARCHY_ADSET_FIELDS = "id,name,status,daily_budget,targeting,campaign_id";
+// FIX 4 (Claude audit): request the creative's image_url + thumbnail_url
+// via field expansion. Without this Meta returns only `{ id: "..." }` and
+// the worker's image-matching step would skip the ad (no URL to download).
+// Also include adset_id so the parent join works without our own stamping
+// (we still stamp defensively in shared.ts as a belt-and-braces measure).
+export const HIERARCHY_AD_FIELDS = "id,name,status,adset_id,creative{id,image_url,thumbnail_url}";
 
 export const MAX_INSIGHTS_RETRIES = 4;
 export const INITIAL_BACKOFF_MS = 500;

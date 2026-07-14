@@ -18,6 +18,7 @@
 import { onTaskDispatched } from "firebase-functions/v2/tasks";
 import { runSyncForAccount, type SyncResult } from "./shared.js";
 import { SYNC_DISPATCH_REGION } from "./dispatcher.js";
+import { metaAppSecret } from "../secrets.js";
 
 interface SyncTaskPayload {
     userId: string;
@@ -40,6 +41,13 @@ export const metaSyncAccountWorker = onTaskDispatched(
         region: SYNC_DISPATCH_REGION,
         timeoutSeconds: 540,
         memory: "2GiB",
+        // CRITICAL (Claude audit): the worker decrypts the legacy AES-GCM
+        // Meta token via `decryptLegacyToken`, which reads META_APP_SECRET
+        // from the runtime env. Cloud Functions only injects secrets that
+        // are declared in the function options — without this, every sync
+        // throws "META_APP_SECRET not configured" and the UI shows a false
+        // "reconnect Meta" prompt.
+        secrets: [metaAppSecret],
     },
     async (req) => {
         const payload = req.data as SyncTaskPayload;

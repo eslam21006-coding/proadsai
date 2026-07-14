@@ -39,27 +39,34 @@ export const linkUnmatchedAd = onCall(
             throw new HttpsError("invalid-argument", "adId and generationId are required.");
         }
 
-        // Verify the generation exists in this workspace (cross-workspace link → reject).
-        const generationRef = getDb()
-            .collection("users").doc(uid)
-            .collection("workspaces").doc(req.workspaceId)
-            .collection("generations").doc(req.generationId);
+        // Verify the generation exists. Generation docs live at the TOP-LEVEL
+        // `generations/{genId}` collection (written by `feedbackService.saveGeneration`
+        // via `addDoc(collection(db, 'generations'), ...)`), NOT inside the
+        // workspace subcollection. The original (wrong) read path always
+        // returned "not found" and broke manual linking.
+        const generationRef = getDb().collection("generations").doc(req.generationId);
         const genSnap = await generationRef.get();
         if (!genSnap.exists) {
             throw new HttpsError(
                 "not-found",
-                "This generation does not belong to the selected workspace.",
+                "This generation does not exist.",
             );
         }
-        // Defensive cross-workspace check — the generation's workspaceId
-        // must match the request's workspaceId. The doc path already
-        // matches (so the read would have succeeded only if the path is
-        // correct), but the in-doc field is the canonical source of truth.
+        // FR-023: the generation's `workspaceId` field must match the
+        // request's workspaceId. Without this check, a user could link an ad
+        // to a generation from a different workspace — bypassing the
+        // workspace-scoped fingerprint index that drives auto-match.
         const genData = genSnap.data() || {};
         if (typeof genData.workspaceId === "string" && genData.workspaceId !== req.workspaceId) {
             throw new HttpsError(
                 "permission-denied",
                 "This generation belongs to a different workspace.",
+            );
+        }
+        if (typeof genData.userId === "string" && genData.userId !== uid) {
+            throw new HttpsError(
+                "permission-denied",
+                "This generation does not belong to the current user.",
             );
         }
 

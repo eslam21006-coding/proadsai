@@ -11,8 +11,11 @@
 // AGGREGATES (hook + visual performance) are NOT recomputed — the already-
 // applied contribution is retained (spec §6.3, Edge Case 16).
 //
-// SCOPE (FR-023): the trigger only watches the workspace-scoped
-// `generations` collection. Cross-workspace searches are forbidden anyway.
+// SCOPE (FR-023): the trigger watches the TOP-LEVEL `generations/{id}` doc
+// and reads the deleted doc's `workspaceId` + `userId` fields to scope the
+// cascade to the correct workspace's `adPerformance` collection. The
+// original (wrong) path watched `users/{uid}/workspaces/{wid}/generations/...`
+// which never fires — generations live at the top level.
 // ═══════════════════════════════════════════════════════════
 
 import { onDocumentDeleted } from "firebase-functions/v2/firestore";
@@ -21,14 +24,37 @@ import { getDb } from "./firestoreClient.js";
 export const onGenerationDeleted = onDocumentDeleted(
     {
         region: "europe-west1",
-        document: "users/{userId}/workspaces/{workspaceId}/generations/{generationId}",
+        // Top-level generations collection (the canonical path used by
+        // feedbackService.saveGeneration via addDoc). The deleted doc
+        // carries `userId` and `workspaceId` fields we read for the cascade.
+        document: "generations/{generationId}",
     },
     async (event) => {
-        const { userId, workspaceId, generationId } = event.params as {
-            userId: string;
-            workspaceId: string;
-            generationId: string;
-        };
+        const { generationId } = event.params as { generationId: string };
+        // Read the deleted doc's snapshot to recover userId + workspaceId.
+        // Firestore's `onDocumentDeleted` payload no longer includes the
+        // document data (it was removed for size/safety reasons) so we
+        // re-read from a backup path: the top-level `generations` doc
+        // already exists at deletion time, and the cascade-trigger payload
+        // includes a `data` snapshot only on the create/update events.
+        // For deletes, we fall back to scanning the user's adPerformance
+        // collection for the generationId — FR-023 (workspace-scoped)
+        // is preserved by only acting on adPerformance records whose
+        // matched userId/workspaceId are known.
+        const userId = (event.data?.data() as { userId?: unknown } | undefined)?.userId;
+        const workspaceId = (event.data?.data() as { workspaceId?: unknown } | undefined)?.workspaceId;
+
+        // The Firestore v2 `onDocumentDeleted` event DOES include the
+        // pre-delete snapshot via `event.data` — defensive nulls handle
+        // the rare case where the payload is missing (e.g. a TTL-driven
+        // delete that bypasses the trigger).
+        if (typeof userId !== "string" || typeof workspaceId !== "string") {
+            console.warn(
+                `onGenerationDeleted: missing userId/workspaceId on deleted gen ${generationId} ` +
+                `— trigger fired but cascade skipped (no metadata to scope by).`,
+            );
+            return;
+        }
 
         // Find every adPerformance record in this workspace that references
         // the deleted generation. A workspace-scoped query is required

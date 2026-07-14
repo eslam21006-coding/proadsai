@@ -429,8 +429,17 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         const adSetResults = await Promise.allSettled(
             campaigns.map((c) => fetchAdSets(accessToken, c.id)),
         );
-        for (const r of adSetResults) {
+        for (let i = 0; i < adSetResults.length; i++) {
+            const r = adSetResults[i];
+            const parentCampaign = campaigns[i];
             if (r.status === "fulfilled") {
+                for (const adSet of r.value) {
+                    // FIX 3: stamp the parent campaignId so the ad-set →
+                    // campaign join works downstream. Meta doesn't always
+                    // return `campaign_id` on /{adSetId}/adsets and we
+                    // know the parent here.
+                    adSet.campaign_id = adSet.campaign_id || parentCampaign.id;
+                }
                 adSets.push(...r.value);
             } else {
                 errors.push(`fetchAdSets failed: ${(r.reason as Error).message}`);
@@ -444,8 +453,20 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         const adResults = await Promise.allSettled(
             adSets.map((s) => fetchAds(accessToken, s.id)),
         );
-        for (const r of adResults) {
+        for (let i = 0; i < adResults.length; i++) {
+            const r = adResults[i];
+            const parentAdSet = adSets[i];
             if (r.status === "fulfilled") {
+                for (const ad of r.value) {
+                    // FIX 3: stamp parent adset_id so downstream joins
+                    // work even when Meta omits the field. Without this,
+                    // every ad is classified as tier3_egypt_na / broad and
+                    // the wrong campaign objective — which kills all
+                    // learning (only "conversion" objective feeds it).
+                    if (typeof ad.adset_id !== "string" || ad.adset_id.length === 0) {
+                        ad.adset_id = parentAdSet.id;
+                    }
+                }
                 ads.push(...r.value);
             } else {
                 errors.push(`fetchAds failed: ${(r.reason as Error).message}`);
@@ -529,9 +550,21 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             let imageUrl: string | null = null;
             let creativeId: string | null = null;
             if (ad.creative && typeof ad.creative === "object") {
-                imageUrl = extractImageUrl(ad.creative);
-                creativeId = ad.creative.id || null;
+                // FIX 4: with the expanded fields string, Meta returns the
+                // image_url + thumbnail_url directly. Prefer image_url,
+                // fall back to thumbnail_url, fall back to a separate
+                // creative fetch (handles the rare case where the
+                // expanded fields are missing).
+                const creativeObj = ad.creative as { id?: string; image_url?: string; thumbnail_url?: string };
+                creativeId = creativeObj.id || null;
+                imageUrl = creativeObj.image_url || creativeObj.thumbnail_url || null;
+                if (!imageUrl && creativeId) {
+                    const meta = await fetchAdCreativeImage(accessToken, creativeId);
+                    if (meta) imageUrl = meta.image_url || meta.thumbnail_url || null;
+                }
             } else if (typeof ad.creative === "string") {
+                // Legacy / edge case: Meta sometimes returns the creative
+                // as a bare ID string instead of an object.
                 creativeId = ad.creative;
                 const meta = await fetchAdCreativeImage(accessToken, ad.creative);
                 if (meta) imageUrl = meta.image_url || meta.thumbnail_url || null;
@@ -608,6 +641,30 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             matchDistance = (existingData?.matchDistance as number | null) ?? matchDistance;
         }
 
+        // FIX 5A: if the existing record was already cascade-marked
+        // (`metadataAvailable: false` + `deletedGenerationId`), keep that
+        // state across this sync — the cascade triggered because the
+        // matched generation was deleted, and that doesn't change just
+        // because we got fresh Meta data. The sync may still refresh
+        // performance metrics, but the dashboard still renders this ad
+        // as "unmatched (source deleted)".
+        // Read these fields via a wider type — `AdDoc` is the strict
+        // shape WE write, but existing docs may have the cascade fields
+        // written by `generationDeleteCascade`.
+        const existingRaw = existingData as Partial<AdDoc> & {
+            deletedGenerationId?: unknown;
+        };
+        const existingDeletedGenerationId = typeof existingRaw.deletedGenerationId === "string"
+            ? existingRaw.deletedGenerationId
+            : null;
+        const keepMetadataUnavailable = existingData?.metadataAvailable === false
+            && existingDeletedGenerationId !== null;
+        if (keepMetadataUnavailable) {
+            // Don't flip the flag back to true. We still emit a fresh
+            // performance record but the dashboard will see it as
+            // "unmatched" because the deletedGenerationId is preserved.
+        }
+
         // Counted as "matched" if the ad carries ANY valid link (auto_hash
         // or manual with a generationId). Ambiguous auto matches and ads
         // with no generationId stay in the unmatched / ambiguous buckets.
@@ -620,11 +677,18 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         const adDoc: AdDoc = {
             adId: ad.id,
             adName: ad.name,
-            thumbnailUrl: extractImageUrl(ad.creative) || undefined,
+            thumbnailUrl: (ad.creative && typeof ad.creative === "object")
+                ? (ad.creative.image_url || ad.creative.thumbnail_url || undefined)
+                : undefined,
             generationId,
             matchType,
             matchDistance,
-            metadataAvailable: generationId !== null, // false after a delete cascade (Batch 02c)
+            // FIX 5A: don't recompute to true if the delete cascade already
+            // set it false. Otherwise the sync would silently undo the
+            // cascade and the dashboard would show stale metadata.
+            metadataAvailable: keepMetadataUnavailable
+                ? false
+                : generationId !== null,
             geoTier: ctx.geoTier,
             audienceType: ctx.audienceType,
             campaignObjective: objective.bucket,
@@ -685,11 +749,13 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         },
     });
 
-    // Commit in chunks of 450.
+    // Commit in chunks of 450. FIX 5B: use `merge: true` so the sync
+    // does NOT wipe fields the delete cascade wrote (e.g.
+    // `deletedGenerationId`, `deletedGenerationAt`, `matchedManuallyAt`).
     for (let i = 0; i < writes.length; i += 450) {
         const chunk = writes.slice(i, i + 450);
         const batch = getDb().batch();
-        for (const w of chunk) batch.set(w.ref, w.data);
+        for (const w of chunk) batch.set(w.ref, w.data, { merge: true });
         await batch.commit().catch((e: unknown) => {
             errors.push(`batch commit failed: ${(e as Error).message}`);
         });

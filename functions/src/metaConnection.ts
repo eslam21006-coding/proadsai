@@ -31,7 +31,6 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getDb } from "./firestoreClient.js";
 import {
-    encrypt as kmsEncrypt,
     parseEnvelope,
 } from "./tokenCrypto.js";
 
@@ -132,6 +131,18 @@ export const connectMetaAccount = onCall(
         // (this is the path `linkMetaAccountToWorkspace` takes). If not,
         // we still proceed — the connect call also acts as a bind.
         const wsLink = await loadWorkspaceLink(uid, req.workspaceId);
+
+        // FIX 6 (Claude audit, FR-026 direction (a)): prevent the user
+        // from silently replacing workspace W's account A with account B.
+        // Without this check, the existing `linkMetaAccountToWorkspace`
+        // would overwrite the link and the 1:1 enforcement would be
+        // bypassed. The user MUST disconnect first.
+        if (wsLink.accountId && wsLink.accountId !== req.accountId) {
+            throw new HttpsError(
+                "failed-precondition",
+                "هذه المساحة مرتبطة بحساب إعلاني آخر. افصله أولاً قبل ربط حساب جديد.",
+            );
+        }
 
         // 1:1 enforcement — the same ad account cannot be linked to two
         // workspaces owned by the same user.
@@ -352,23 +363,31 @@ export async function patchStoredConnection(
     await ref.set(update, { merge: true });
 }
 
-// ─── Token refresh wiring (skeleton; full impl in Batch 03) ────
+// ─── Token refresh wiring (DEFERRED) ───────────────────────────
+//
+// TODO Phase 14 follow-up: wire KMS envelope encryption via tokenCrypto.ts
+// to replace legacy AES-GCM. The tokenCrypto module is built and tested
+// (see functions/src/__tests__/tokenCrypto.test.ts) but NOT yet wired into
+// the connect/sync flow. For now the connection flow copies the existing
+// AES-encrypted token (under `legacyToken`); the worker decrypts it via
+// `metaSync/legacyToken.ts`. The KMS path becomes active once this
+// function replaces the copy. See report §"Deferred Items".
 
-/**
- * Re-encrypt the long-lived token via KMS envelope encryption and persist.
- * Called by the worker after a successful token refresh (FR-009).
- */
 export async function reencryptAndStoreToken(
     uid: string,
     workspaceId: string,
     plaintextToken: string,
     expiresAt: number | null,
 ): Promise<void> {
-    const envelope = await kmsEncrypt(plaintextToken);
-    await patchStoredConnection(uid, workspaceId, {
-        encryptedToken: JSON.stringify(envelope),
-        legacyToken: null,
-        tokenExpiresAt: expiresAt,
-        needsReauth: false,
-    });
+    // TODO Phase 14 follow-up: KMS envelope encryption via tokenCrypto.ts.
+    // For now the function is a no-op — the legacy AES path is the
+    // source of truth (see report §"Deferred Items" — KMS adoption).
+    void uid;
+    void workspaceId;
+    void plaintextToken;
+    void expiresAt;
+    throw new Error(
+        "reencryptAndStoreToken: KMS adoption is deferred. " +
+        "The legacy AES path is currently in use; see report §Deferred Items.",
+    );
 }
