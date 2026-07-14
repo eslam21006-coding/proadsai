@@ -9,10 +9,11 @@
 
 ## Audit Fixes Applied (2026-07-14)
 
-A Claude audit of the initial PR (#54) found 7 critical bugs in the
+A Claude audit of the initial PR (#54) found 8 wiring issues in the
 **wiring** between the pure modules and the actual Meta/Firestore paths.
 The pure modules themselves (perceptualHash, metaGraph, tokenCrypto) were
-solid. All 8 issues below were addressed in commit `f444aae`:
+solid. All 8 issues below were addressed in commit `f444aae` (six were
+critical, two were medium/small — see the "Fix" column for severity):
 
 | # | Issue | Fix |
 |---|---|---|
@@ -326,13 +327,23 @@ any accidental call).
 
 ### D2 — Remove `metaLegacySync` after Batch 04 ships (audit fix #8)
 
-`metaLegacySync` runs at 4am UTC and feeds the existing
-`PerformanceDashboard`, `creativeMemory.updateMemoryPerformance`, and
-`principleVault`. The new spec-compliant dispatcher (`metaDailySync`,
-3am UTC) writes to workspace-scoped paths that the new dashboard will
-read. **Remove `metaLegacySync` after Batch 04 replaces the dashboard.**
-Until then, both run daily — they write to disjoint paths so there's
-no collision.
+`metaLegacySync` runs at 4am UTC. No other module invokes it directly
+(it was a top-level `onSchedule` export, not a callable), but its
+**writes are consumed** by:
+- `PerformanceDashboard` (src/components/PerformanceDashboard.tsx) —
+  reads the user-level `adPerformance/{uid}_{adId}` collection
+- `creativeMemory.updateMemoryPerformance` + `rebuildPatternIndexes` —
+  consume the same payload to update the user's creative memory
+- `principleVault.extractPrinciples` / `extractAntiPrinciples` —
+  aggregate winners + losers across the user's ads
+
+The new spec-compliant dispatcher (`metaDailySync`, 3am UTC) writes
+to workspace-scoped paths that the new dashboard will read. **Remove
+`metaLegacySync` only after Batch 04 replaces the dashboard** — until
+then, both run daily and write to disjoint paths so there's no
+collision. The fact that no module directly invokes
+`metaLegacySync` is what makes it safe to remove once the dashboard
+has migrated.
 
 ### D3 — Proactive token refresh (FR-009)
 
