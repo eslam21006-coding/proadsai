@@ -1,0 +1,219 @@
+// functions/src/backfillImageFingerprints.ts — Phase 14 Layer 3 backfill migration
+// ═══════════════════════════════════════════════════════════
+// One-time callable that walks existing generations, computes their perceptual
+// hash from the stored Storage image, and writes both:
+//   - `imageFingerprint` + `imageFingerprintAlgo` on the generation doc
+//   - The workspace-scoped `imageFingerprints/{hash}` index entry
+//
+// IDEMPOTENT — skips generations that already carry an `imageFingerprint`.
+//
+// SCOPE (FR-023, Edge Case 13):
+//   - Only generations with a `workspaceId` are processed.
+//   - Unassigned legacy generations are skipped and can only be matched
+//     manually via the dashboard.
+//
+// MISSING SOURCE — generations whose Storage image is gone are skipped.
+// They remain manually-linkable (Batch 04 picker shows them).
+// ═══════════════════════════════════════════════════════════
+
+import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { getStorage } from "firebase-admin/storage";
+import { getDb } from "./firestoreClient.js";
+import { computeHash } from "./perceptualHash.js";
+import { SYNC_DISPATCH_REGION } from "./metaSync/dispatcher.js";
+
+interface BackfillRequest {
+    /** Optional — limit to one workspace. Useful for incremental / per-user runs. */
+    workspaceId?: string;
+    /** Optional — cap on how many generations to process in this invocation. */
+    maxItems?: number;
+}
+
+interface BackfillResult {
+    ok: true;
+    scanned: number;
+    skippedAlreadyFingerprinted: number;
+    skippedNoWorkspace: number;
+    skippedMissingImage: number;
+    processed: number;
+    errors: number;
+}
+
+const DEFAULT_BATCH_SIZE = 50;
+const MAX_BATCH_SIZE = 200;
+
+export const backfillImageFingerprints = onCall(
+    { region: SYNC_DISPATCH_REGION, cors: true, timeoutSeconds: 540, memory: "2GiB" },
+    async (request) => {
+        if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+        const uid = request.auth.uid;
+        const req = (request.data || {}) as BackfillRequest;
+        const maxItems = Math.min(typeof req.maxItems === "number" && req.maxItems > 0 ? req.maxItems : DEFAULT_BATCH_SIZE, MAX_BATCH_SIZE);
+        const targetWorkspaceId = typeof req.workspaceId === "string" && req.workspaceId.length > 0
+            ? req.workspaceId
+            : null;
+
+        const result: BackfillResult = {
+            ok: true,
+            scanned: 0,
+            skippedAlreadyFingerprinted: 0,
+            skippedNoWorkspace: 0,
+            skippedMissingImage: 0,
+            processed: 0,
+            errors: 0,
+        };
+
+        // Walk the user's generations in pages. Generation docs live at
+        // the TOP-LEVEL `generations` collection (written by
+        // `feedbackService.saveGeneration` via `addDoc`), NOT under
+        // `users/{uid}/workspaces/{wid}/generations/...`. The original
+        // (wrong) path always returned an empty walk and processed zero
+        // generations. We filter by `workspaceId` to keep the per-workspace
+        // scope and respect FR-023.
+        const workspaceIds = await collectWorkspaceIds(uid, targetWorkspaceId);
+        outer: for (const workspaceId of workspaceIds) {
+            // Re-audit (2026-07-14): generation docs carry a Firestore
+            // Timestamp at `timestamp` (set by feedbackService.saveGeneration
+            // via `Timestamp.now()`). They have NO `createdAt` field. With
+            // the wrong field name, Firestore silently excludes every doc
+            // missing the sort field — the backfill returned zero results.
+            // The composite index needed is documented in
+            // firestore.indexes.json (Phase 14 entry).
+            const generationsRef = getDb()
+                .collection("generations")
+                .where("workspaceId", "==", workspaceId)
+                .where("userId", "==", uid)
+                .orderBy("timestamp", "desc")
+                .limit(100);
+            // Firestore paginates 100 at a time by default. For backfill we
+            // only need to scan up to maxItems across ALL workspaces, so we
+            // use a coarse cursor + in-memory filter on `imageFingerprint`.
+            let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+            while (true) {
+                let q = generationsRef;
+                if (cursor) q = q.startAfter(cursor);
+                const page = await q.get();
+                if (page.empty) break;
+                cursor = page.docs[page.docs.length - 1];
+
+                for (const genDoc of page.docs) {
+                    result.scanned++;
+                    if (result.scanned > maxItems) break outer;
+
+                    const data = genDoc.data() as Record<string, unknown>;
+                    if (typeof data.imageFingerprint === "string" && data.imageFingerprint.length > 0) {
+                        result.skippedAlreadyFingerprinted++;
+                        continue;
+                    }
+
+                    // Locate the source image. The Storage URL is persisted on
+                    // `imageUrl` (or `output.imageUrl` for newer shapes).
+                    const imageUrl = pickImageUrl(data);
+                    if (!imageUrl) {
+                        result.skippedMissingImage++;
+                        continue;
+                    }
+
+                    try {
+                        const buffer = await downloadFromUrl(imageUrl);
+                        const hash = await computeHash(buffer);
+                        // Write to the generation doc + the workspace index.
+                        const indexRef = getDb()
+                            .collection("users").doc(uid)
+                            .collection("workspaces").doc(workspaceId)
+                            .collection("imageFingerprints").doc(hash);
+                        // Re-audit (2026-07-14): use the generation's actual
+                        // `timestamp` field (Firestore Timestamp) so the
+                        // decideMatch "most recent generation wins" tie-break
+                        // works correctly on backfilled data. We only fall
+                        // back to `Date.now()` when the field is genuinely
+                        // missing (e.g. legacy pre-Firestore-Timestamp docs).
+                        const ts = data.timestamp;
+                        const createdAtMs = ts && typeof (ts as { toMillis?: () => number }).toMillis === "function"
+                            ? (ts as { toMillis: () => number }).toMillis()
+                            : Date.now();
+                        const writes: Array<Promise<unknown>> = [
+                            genDoc.ref.set({
+                                imageFingerprint: hash,
+                                imageFingerprintAlgo: "dhash64",
+                            }, { merge: true }),
+                        ];
+                        writes.push(indexRef.set({
+                            hash,
+                            hashAlgo: "dhash64",
+                            generationId: genDoc.id,
+                            createdAt: createdAtMs,
+                        }, { merge: true }));
+                        await Promise.all(writes);
+                        result.processed++;
+                    } catch (e: unknown) {
+                        result.errors++;
+                        console.warn(`backfillImageFingerprints: ${genDoc.id} failed: ${(e as Error).message}`);
+                    }
+                }
+            }
+        }
+
+        return result;
+    },
+);
+
+function pickImageUrl(data: Record<string, unknown>): string | null {
+    const candidates = [
+        data.imageUrl,
+        (data.output as { imageUrl?: string } | undefined)?.imageUrl,
+        (data.output as { storageUrl?: string } | undefined)?.storageUrl,
+        data.storageUrl,
+        (data.deploymentMeta as { storageUrl?: string } | undefined)?.storageUrl,
+    ];
+    for (const c of candidates) {
+        if (typeof c === "string" && c.length > 0) return c;
+    }
+    return null;
+}
+
+/**
+ * Enumerate the workspace ids to backfill. If a target is supplied we use
+ * it directly; otherwise we walk the user's workspaces and dedupe. The
+ * list is bounded — a user has at most a small number of workspaces.
+ */
+async function collectWorkspaceIds(uid: string, target: string | null): Promise<string[]> {
+    if (target) return [target];
+    const snap = await getDb()
+        .collection("users").doc(uid)
+        .collection("workspaces")
+        .get();
+    const ids = new Set<string>();
+    for (const ws of snap.docs) ids.add(ws.id);
+    return Array.from(ids);
+}
+
+async function downloadFromUrl(url: string): Promise<Buffer> {
+    // Storage URLs (https://storage.googleapis.com/<bucket>/<object>) — use
+    // Admin SDK because we have admin privileges and we want to bypass CORS
+    // / signed URL expiration. The bucket name is the first path segment,
+    // not the default bucket — projects may store renders in a non-default
+    // bucket. For other URLs, fall back to fetch().
+    if (url.startsWith("https://storage.googleapis.com/")) {
+        const stripped = url.replace("https://storage.googleapis.com/", "");
+        const slashIdx = stripped.indexOf("/");
+        if (slashIdx < 0) {
+            throw new Error("downloadFromUrl: malformed Storage URL (no object path)");
+        }
+        const bucketName = stripped.slice(0, slashIdx);
+        const objectPath = stripped.slice(slashIdx + 1);
+        if (objectPath.length === 0) {
+            throw new Error("downloadFromUrl: empty object path");
+        }
+        const bucket = getStorage().bucket(bucketName);
+        const file = bucket.file(objectPath);
+        const [contents] = await file.download();
+        return contents;
+    }
+    const resp = await fetch(url);
+    if (!resp.ok) {
+        throw new Error(`download failed: ${resp.status}`);
+    }
+    const arr = await resp.arrayBuffer();
+    return Buffer.from(arr);
+}

@@ -52,6 +52,15 @@ import { getConceptDirectorKillSwitch, getConceptDirectorEnabled } from "./conce
 import type { ConceptDirectorTraceEntry } from "./types.js";
 // Phase 14 — RAG + Meta Reporting Feedback Loop (Layer 1 callables).
 export { saveFunnelSettings, getFunnelSettings, dismissAdvisory } from "./funnelSettings.js";
+// Phase 14 — Layer 2 (Meta connection + sync).
+export { connectMetaAccount, disconnectMetaAccount } from "./metaConnection.js";
+export { triggerMetaSync } from "./metaSync/trigger.js";
+export { metaDailySync } from "./metaSync/dispatcher.js";
+export { metaSyncAccountWorker } from "./metaSync/worker.js";
+// Phase 14 — Layer 3 (image matching callables + delete cascade).
+export { linkUnmatchedAd } from "./linkUnmatchedAd.js";
+export { backfillImageFingerprints } from "./backfillImageFingerprints.js";
+export { onGenerationDeleted } from "./generationDeleteCascade.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. INITIALIZE APP (THE FIX IS HERE)
@@ -77,7 +86,11 @@ const ghlWebhookSecret = defineSecret("GHL_WEBHOOK_SECRET");
 const stripeSecretKey = defineSecret("STRIPE_SECRET_KEY");
 const metaAppId = defineSecret("META_APP_ID");
 const ghlTeamInviteUrl = defineSecret("GHL_TEAM_INVITE_WEBHOOK_URL");
-const metaAppSecret = defineSecret("META_APP_SECRET");
+// META_APP_SECRET is declared once in `secrets.ts` so the Phase 14 sync
+// modules (worker / trigger / dispatcher) and `index.ts` share a single
+// `defineSecret` instance. Importing instead of redeclaring keeps the
+// runtime `metaAppSecret.value()` path consistent across the codebase.
+import { metaAppSecret } from "./secrets.js";
 const openaiApiKey = defineSecret("OPENAI_API_KEY");
 const falApiKey = defineSecret("FAL_API_KEY");
 
@@ -4789,7 +4802,23 @@ export const serverGenerateFinalAd = onCall({
             } catch (uploadErr) {
                 console.warn("serverGenerateFinalAd: server-side render upload failed (non-blocking):", uploadErr);
             }
-            return { success: true, imageBase64: result.image, storageUrl, errorCode: null, costEstimate: generators.getCostEstimate(), resolutionTrace: trace };
+            // Phase 14 — Layer 3 (FR-014): compute the perceptual hash AFTER
+            // the image is uploaded so the hash survives JPEG re-upload
+            // compression. The CLIENT writes the hash + index entry (no
+            // server-side `genId` write — Technical Constraint).
+            // Hash computation failure is non-blocking: a missing hash means
+            // this generation can only be matched via the manual linking UI.
+            let imageFingerprint: string | null = null;
+            try {
+                const { computeHash } = await import("./perceptualHash.js");
+                const dataUrlPrefix = result.image.indexOf(",");
+                const b64 = dataUrlPrefix >= 0 ? result.image.slice(dataUrlPrefix + 1) : result.image;
+                const buf = Buffer.from(b64, "base64");
+                imageFingerprint = await computeHash(buf);
+            } catch (hashErr) {
+                console.warn("serverGenerateFinalAd: perceptual hash failed (non-blocking):", hashErr);
+            }
+            return { success: true, imageBase64: result.image, storageUrl, imageFingerprint, errorCode: null, costEstimate: generators.getCostEstimate(), resolutionTrace: trace };
         } else {
             return {
                 success: false,
@@ -5541,15 +5570,23 @@ export const metaPushCreativePack = onCall({
     }
 });
 
-// ─── 6. DAILY AUTO-SYNC (Scheduled) ─────────────────────────────────────
-export const metaDailySync = onSchedule({
+// ─── 6. LEGACY META SYNC (TEMPORARY) ───────────────────────────────────
+// TEMPORARY: feeds the existing PerformanceDashboard and creativeMemory
+// until Phase 14 Batch 04 replaces them. The new spec-compliant dispatcher
+// (`metaDailySync`, runs at 3am UTC) writes to the workspace-scoped
+// `adPerformance` collection and is what the new dashboard will read.
+// This legacy function runs at 4am UTC to avoid colliding with the new
+// dispatcher, and it writes to the USER-LEVEL `adPerformance` collection
+// that PerformanceDashboard + creativeMemory.updateMemoryPerformance
+// + principleVault all read today. REMOVE after Batch 04 ships.
+export const metaLegacySync = onSchedule({
     region: "europe-west1",
-    schedule: "0 3 * * *", // 3 AM UTC daily
+    schedule: "0 4 * * *", // 4 AM UTC — 1h after the new dispatcher
     secrets: [metaAppSecret],
     timeoutSeconds: 300,
     memory: "512MiB",
 }, async () => {
-    console.log("🔄 Starting daily Meta performance sync...");
+    console.log("🔄 [metaLegacySync] starting legacy daily Meta performance sync...");
 
     const connections = await admin.firestore().collection("metaConnections")
         .where("status", "==", "active")
@@ -5598,7 +5635,7 @@ export const metaDailySync = onSchedule({
             const data = await response.json() as any;
 
             if (data.error) {
-                console.error(`❌ Sync failed for ${uid} account ${accountId}:`, data.error.message);
+                console.error(`❌ [metaLegacySync] failed for ${uid} account ${accountId}:`, data.error.message);
                 continue;
             }
 
@@ -5638,7 +5675,6 @@ export const metaDailySync = onSchedule({
             successCount++;
 
             // ═══ CREATIVE MEMORY: Update memory with performance + rebuild indexes ═══
-            // Build a workspace lookup from all deployment records for this user
             const allDeploymentsSnap = await admin.firestore().collection("creativeDeployments")
                 .where("userId", "==", uid).select("metaAdId", "adName", "workspaceId").limit(500).get();
             const adWsLookup = new Map<string, string | null>();
@@ -5667,7 +5703,6 @@ export const metaDailySync = onSchedule({
                         clicks: parseInt(ad.clicks || "0"),
                     }, adWs);
                 }
-                // Rebuild pattern indexes with fresh data
                 await rebuildPatternIndexes(uid);
 
                 // ═══ WINNING PRINCIPLES VAULT: Extract from Meta performance winners/losers ═══
@@ -5676,13 +5711,10 @@ export const metaDailySync = onSchedule({
                     const vaultCallGemini = createGeminiCaller(geminiApiKey.value());
                     const ads = allAdsForMemory;
 
-                    // Compute CTR quartile for this user's ads
                     const ctrs = ads.map((a: any) => parseFloat(a.ctr || "0")).filter((c: number) => c > 0).sort((a: number, b: number) => a - b);
                     const topQuartileCtr = ctrs.length > 0 ? ctrs[Math.floor(ctrs.length * 0.75)] : 999;
                     const bottomQuartileCtr = ctrs.length > 0 ? ctrs[Math.floor(ctrs.length * 0.25)] : 0;
 
-                    // ── Step 1: Aggregate at creative level before judging ──
-                    // Same creative in different adsets/campaigns should be judged on TOTAL performance
                     const creativeAggregates = new Map<string, {
                         totalImpressions: number; totalClicks: number; totalSpend: number;
                         totalPurchases: number; totalRevenue: number; adsetCount: number;
@@ -5695,9 +5727,7 @@ export const metaDailySync = onSchedule({
                         const adImpressions = parseInt(ad.impressions || "0");
                         const adRoas = (ad.purchase_roas || []).length > 0 ? parseFloat(ad.purchase_roas[0].value) : 0;
                         const adConversions = parseInt(((ad.actions || []).find((a: any) => a.action_type === 'offsite_conversion.fb_pixel_purchase')?.value || "0"));
-                        const adRevenue = adRoas * adSpend;
 
-                        // Find matching generation in creativeDeployments
                         const deploySnap = await admin.firestore().collection('creativeDeployments')
                             .where('userId', '==', uid)
                             .where('adName', '==', ad.ad_name || '')
@@ -5706,7 +5736,6 @@ export const metaDailySync = onSchedule({
                         const genId = deployData?.generationId;
                         if (!genId) continue;
 
-                        // Use imageHash for grouping (same creative across adsets), fallback to genId
                         const creativeKey = deployData?.imageHash || genId;
                         const existing = creativeAggregates.get(creativeKey) || {
                             totalImpressions: 0, totalClicks: 0, totalSpend: 0,
@@ -5716,24 +5745,20 @@ export const metaDailySync = onSchedule({
                         existing.totalClicks += adClicks;
                         existing.totalSpend += adSpend;
                         existing.totalPurchases += adConversions;
-                        existing.totalRevenue += adRevenue;
                         existing.adsetCount += 1;
                         creativeAggregates.set(creativeKey, existing);
                     }
 
-                    // ── Step 2: Judge winners/losers on AGGREGATE metrics ──
                     const topPerformerIds: string[] = [];
                     const bottomPerformerIds: string[] = [];
 
                     for (const [, agg] of creativeAggregates) {
                         const aggCtr = agg.totalImpressions > 0 ? (agg.totalClicks / agg.totalImpressions) * 100 : 0;
-                        const aggRoas = agg.totalSpend > 0 ? agg.totalRevenue / agg.totalSpend : 0;
+                        const aggRoas = agg.totalSpend > 0 ? (agg.totalRevenue / agg.totalSpend) : 0;
 
-                        // Winners: ROAS > 1.5 OR CTR in top quartile (need 1000+ impressions for CTR-based judging)
                         if (aggRoas > 1.5 || (aggCtr > topQuartileCtr && agg.totalImpressions > 1000)) {
                             topPerformerIds.push(agg.genId);
                         }
-                        // Losers: spend > $20 with zero conversions, OR 500+ impressions with 0 clicks, OR ROAS < 0.5 / CTR bottom quartile
                         if ((agg.totalSpend > 20 && agg.totalPurchases === 0) || (agg.totalImpressions >= 500 && agg.totalClicks === 0)) {
                             bottomPerformerIds.push(agg.genId);
                         } else if (aggRoas < 0.5 && aggRoas > 0 || (aggCtr < bottomQuartileCtr && agg.totalImpressions > 1000)) {
@@ -5751,14 +5776,14 @@ export const metaDailySync = onSchedule({
                         await vaultConsolidate(uid);
                     }
                 } catch (vaultErr) {
-                    console.warn(`⚠️ Vault extraction failed for ${uid} (non-blocking):`, vaultErr);
+                    console.warn(`⚠️ [metaLegacySync] vault extraction failed (non-critical):`, vaultErr);
                 }
             } catch (memErr) {
-                console.warn(`⚠️ Memory update failed for ${uid} (non-blocking):`, memErr);
+                console.warn(`⚠️ [metaLegacySync] memory update failed (non-critical):`, memErr);
             }
 
         } catch (err: any) {
-            console.error(`❌ Sync error for ${uid}:`, err.message);
+            console.error(`❌ [metaLegacySync] error for ${uid}:`, err.message);
             errorCount++;
         }
 
@@ -5766,7 +5791,7 @@ export const metaDailySync = onSchedule({
         await new Promise(r => setTimeout(r, 2000));
     }
 
-    console.log(`✅ Daily sync complete: ${successCount} success, ${errorCount} errors`);
+    console.log(`✅ [metaLegacySync] complete: ${successCount} success, ${errorCount} errors`);
 });
 
 // ─── 7. TOKEN REFRESH (Scheduled - every 45 days) ───────────────────────

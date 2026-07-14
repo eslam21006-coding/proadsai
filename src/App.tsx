@@ -5452,6 +5452,34 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             if (loadedFavoriteId && savedGenId) {
               setFavUpdatePrompt({ phase: 'render', newGenId: savedGenId });
             }
+            // Phase 14 — Layer 3 (FR-014/015): write the perceptual hash to
+            // the generation doc + the workspace-scoped index collection so
+            // the daily Meta sync can match this creative. Non-blocking —
+            // missing the write means manual-link-only for this generation.
+            // Generation docs live at the TOP-LEVEL `generations` collection
+            // (written by feedbackService.saveGeneration), NOT inside the
+            // workspace. The fingerprint INDEX is workspace-scoped so cross-
+            // workspace fingerprint search stays impossible.
+            if (savedGenId && mockupResult.imageFingerprint && canUseWorkspaces && activeWorkspaceId) {
+              try {
+                const generationRef = doc(db, 'generations', savedGenId);
+                const indexRef = doc(db, `users/${user.uid}/workspaces/${activeWorkspaceId}/imageFingerprints`, mockupResult.imageFingerprint);
+                await Promise.all([
+                  updateDoc(generationRef, {
+                    imageFingerprint: mockupResult.imageFingerprint,
+                    imageFingerprintAlgo: 'dhash64',
+                  }),
+                  setDoc(indexRef, {
+                    hash: mockupResult.imageFingerprint,
+                    hashAlgo: 'dhash64',
+                    generationId: savedGenId,
+                    createdAt: Date.now(),
+                  }, { merge: true }),
+                ]);
+              } catch (fpErr) {
+                console.warn('Non-blocking: failed to write image fingerprint:', fpErr);
+              }
+            }
           } catch (saveErr) {
             console.error('Non-blocking: failed to save render generation record:', saveErr);
           }
