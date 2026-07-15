@@ -157,7 +157,37 @@ Per the Qarar rulebook (spec §5.2 + §5.6):
 
 ## CodeRabbit Loop
 
-Status: pending review (PR #55).
+**Two review rounds. All 15 threads resolved.**
+
+### Round 1 (commit `d4da22c`) — 11 comments
+
+| # | Severity | Issue | Fix |
+|---|---|---|---|
+| 1 | MAJOR | Idempotency — both reducers seeded from `existing` and incremented every supplied ad again, inflating sample sizes | Changed to OVERWRITE semantics; the result is computed entirely from `ads`; `existing` only provides a structural template. Added a new test that passes the first result back as `existing` and asserts the second result is identical. |
+| 2 | MAJOR | Real ad-set rollups for K5 — `adSetCpa3d` was computed and discarded | Per-ad-set 3-day spend + conversions summed; `adSetHittingTarget` derived (≤ target → true) and passed to `evaluateVerdict`. K5_weak can now fire. |
+| 3 | MAJOR | Fabricated baselines — passing `{1.0, 1.0, 1.0, 1.0}` could trigger S1 or fatigue on garbage | Engine now accepts `baselines: null` and returns ⏳ with reason "بيانات الأداء التاريخية غير متوفرة". Worker passes `null` when baseline fetch fails. Added regression test. |
+| 4 | MAJOR | `extractModes` fallback unreachable — empty array is truthy so `\|\|` never fell through | Changed to `inputModes.length > 0 ? inputModes : extractModes(ci.selectedModes)`. |
+| 5 | MAJOR | Aggregate read failures swallowed — `.catch(() => null)` would cause aggregators to overwrite historical data with zeros | Removed the `.catch()` — let errors propagate to the outer try/catch which records the failure and skips aggregate writes. |
+| 6 | MINOR | S1 winner got a non-null diagnosis (contradictory 🟢 + failure message) | `diagnosisAr: null` for S1. The diagnosis ladder is for failure explanations only. |
+| 7-11 | MINOR | Report doc nits (PR # reference, default icon, positional wording, fenced code language, test command in clean shell) | All applied. |
+
+### Round 2 (commit `e0523b3`) — 4 NEW comments + 1 residual
+
+| # | Severity | Issue | Fix |
+|---|---|---|---|
+| 12 | MAJOR | Don't zero historical learning on partial syncs | Reducers now output ONLY entries for keys the current sync contributed to. Angles in `existing` but not in this call's input are simply NOT in the output map; the worker only writes the keys it sees, so the Firestore docs for the other keys are preserved untouched. |
+| 13 | MINOR | 2-space indentation (project standard) | Skipped: matching local file style (4-space) is the safer local fix. Project standard documented; future PR can reformat the whole file. |
+| 14 | MAJOR | Exclude non-conversion from learning sampleSize | `sampleSize = conversionCount` (NOT `otherCount`). Spec §6.2: only the byObjective.conversion bucket feeds learning. A non-conversion ad no longer inflates the icon-gate count. |
+| 15 | MINOR | `Date.now()` not deterministic | Both reducers accept an optional `syncAt` parameter. Worker passes a single value so the same input produces an identical `lastUpdated`. |
+| 3-residual | MAJOR | (Same as #3 — CodeRabbit hadn't seen the fix in the new commit) | Same fix verified; thread manually marked resolved. |
+
+---
+
+## Final Status
+
+All 15 CodeRabbit review threads resolved across two review rounds. PR #55 is **ready for merge** pending Claude audit + localhost testing per the batch workflow.
+
+---
 
 ---
 
