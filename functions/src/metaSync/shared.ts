@@ -66,6 +66,20 @@ import {
 import {
     decryptLegacyToken,
 } from "./legacyToken.js";
+import {
+    evaluateVerdict,
+    type AdPerformanceForVerdict,
+    type FunnelSettingsForVerdict,
+} from "../qararEngine.js";
+import { getEffectiveTarget } from "../cpaEconomics.js";
+import {
+    updateHookAggregates,
+    updateVisualAggregates,
+    computePatternKey,
+    type AdForLearning,
+    type HookPerformanceAggregate,
+    type VisualPerformanceAggregate,
+} from "../learningAggregates.js";
 
 // ─── Public types ─────────────────────────────────────────────
 
@@ -129,6 +143,11 @@ interface AdDoc {
     peak1dCtr: number;
     creativeId: string | null;
     imageHash: string | null;
+    // Phase 14 — Layer 4 (Qarar verdict) — set by T041.
+    verdict: "🟢" | "🟡" | "🔴" | "🛟" | "⏳";
+    ruleCode: string;
+    reasonAr: string;
+    diagnosisAr: string | null;
     evaluatedAt: number;
     schemaVersion: 1;
 }
@@ -499,6 +518,36 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         errors.push(`fetchAccountBaselines failed: ${(e as Error).message}`);
     }
 
+    // Phase 14 — Layer 4 (T041): load the per-account funnel settings once
+    // per sync. The Qarar verdict engine reads `effectiveTarget` from these
+    // (effectiveTargetCPA for paid funnels, effectiveTargetCPL for free). If
+    // the settings doc is missing or has no derived targets, the engine
+    // returns ⏳ with reason "إعدادات مسار المبيعات غير مكتملة".
+    let funnelSettings: FunnelSettingsForVerdict | null = null;
+    try {
+        const settingsRef = getDb()
+            .collection("users").doc(userId)
+            .collection("workspaces").doc(workspaceId)
+            .collection("adAccounts").doc(accountId)
+            .collection("settings").doc("current");
+        const settingsSnap = await settingsRef.get();
+        if (settingsSnap.exists) {
+            const data = settingsSnap.data() as { derived?: unknown };
+            if (data && typeof data.derived === "object" && data.derived !== null) {
+                funnelSettings = { derived: data.derived as FunnelSettingsForVerdict["derived"] };
+            }
+        }
+    } catch (e: unknown) {
+        errors.push(`load funnel settings failed: ${(e as Error).message}`);
+    }
+
+    // Phase 14 — Layer 4b (T044, wired in a later step): batch-load
+    // matched-generation metadata for all matched ads so the learning
+    // aggregates have what they need. The map is keyed by generationId.
+    const matchedGenIds = new Set<string>();
+    // (Populated in the ad loop below; we just need the set up here.)
+    void matchedGenIds;
+
     // 5. spend_share_pct per ad within its ad set.
     const adSetIndex = new Map<string, MetaAdSet>();
     for (const s of adSets) adSetIndex.set(s.id, s);
@@ -513,13 +562,25 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         adSetTotals.set(ad.adset_id || "", (adSetTotals.get(ad.adset_id || "") || 0) + spend3d);
     }
     const perAdSetSpend = new Map<string, Map<string, number>>();
+    // Phase 14 — Layer 4 (K5): per-ad-set total conversions (3-day
+    // rolling). Used to compute the ad-set CPA and derive
+    // `adSetHittingTarget` for the K5 starved-ad matrix. Without this
+    // rollup, K5_weak can never fire in production.
+    const perAdSetConversions = new Map<string, number>();
     for (const ad of ads) {
         const windows = adInsightsMap.get(ad.id);
         if (!windows) continue;
         const spend3d = windows.threeDayRolling.reduce((acc, r) => acc + parseNum(r.spend), 0);
+        const conversions3d = windows.threeDayRolling.reduce(
+            (acc, r) => acc + (r.actions || [])
+                .filter((a) => /^(purchase|omni_purchase|offsite_conversion\.fb_pixel_purchase|lead|omni_complete_registration|complete_registration)$/i.test(a.action_type))
+                .reduce((a2, a) => a2 + parseNum(a.value), 0),
+            0,
+        );
         const setId = ad.adset_id || "";
         if (!perAdSetSpend.has(setId)) perAdSetSpend.set(setId, new Map());
         perAdSetSpend.get(setId)!.set(ad.id, spend3d);
+        perAdSetConversions.set(setId, (perAdSetConversions.get(setId) || 0) + conversions3d);
     }
 
     // 6+7. Targeting + campaign objective classification (per ad).
@@ -616,6 +677,13 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         errors.push(`load existing adPerformance failed: ${(e as Error).message}`);
     }
 
+    // Phase 14 — Layer 4b (T044): collect inputs for the two-component
+    // learning aggregates as the ad loop runs. We only include matched
+    // conversion ads (the rest are excluded by `isEligibleForLearning`
+    // in the aggregator). The accumulator lives in the function scope so
+    // it doesn't grow between syncs.
+    const learnedAds: AdForLearning[] = [];
+
     for (const ad of ads) {
         const windows = adInsightsMap.get(ad.id);
         if (!windows) continue;
@@ -671,7 +739,79 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         else if (match?.ambiguous) ambiguousCount++;
         else unmatchedCount++;
 
+        // Phase 14 — Layer 4b (T044 setup): collect matched generation ids
+        // so the learning aggregates step (after this loop) can load their
+        // generation docs in a single batch.
+        if (generationId && (matchType === "auto_hash" || matchType === "manual")) {
+            matchedGenIds.add(generationId);
+        }
+
         const ageDays = computeAgeDays(ad, windows);
+
+        // Phase 14 — Layer 4 (T041): compute the Qarar verdict for this
+        // ad. The engine reads from the per-ad metrics + account baselines;
+        // settings come from the funnel doc loaded once above.
+        const verdictForEngine: AdPerformanceForVerdict = {
+            impressions3d: metrics.impressions3d,
+            spend3d: metrics.spend3d,
+            spendToday: metrics.spendToday,
+            ctrLink: metrics.ctrLink,
+            ctrAll: metrics.ctrAll,
+            cpm3d: metrics.cpm3d,
+            cpa3d: metrics.cpa3d,
+            conversions3d: metrics.conversions3d,
+            spendSharePct: computeSpendSharePct(ad.id, ad.adset_id || "", perAdSetSpend),
+            peak1dCtr: metrics.peak1dCtr,
+            ageDays,
+        };
+        // Per-ad ad-set state. K5's "ad set losing" branch needs a flag from
+        // the parent ad-set. We compute the ad-set CPA from the
+        // 3-day rollup and compare to the target.
+        const setId = ad.adset_id || "";
+        const adSetSpend3d = adSetTotals.get(setId) || 0;
+        const adSetConv3d = perAdSetConversions.get(setId) || 0;
+        // Effective target (effectiveTargetCPA for paid / effectiveTargetCPL
+        // for free). The qarar engine uses the same value for CB and S1.
+        const target = funnelSettings
+            ? getEffectiveTarget(funnelSettings.derived) ?? Infinity
+            : Infinity;
+        // adSetCpa: undefined if no conversions (the engine treats this as
+        // "no data" and falls through to leave-it per the K5 matrix).
+        const adSetCpa3d = adSetConv3d > 0 ? adSetSpend3d / adSetConv3d : undefined;
+        // adSetHittingTarget: true when the ad-set is at-or-under target
+        // (engine matrix: hit-target → leave it; missing-target → 🔴 weak).
+        // undefined when CPA is missing (engine falls through to leave-it).
+        const adSetHittingTarget = adSetCpa3d === undefined
+            ? undefined
+            : adSetCpa3d <= target;
+        const baselinesForEngine = baselines
+            ? {
+                linkCtr90d: baselines.linkCtr90d,
+                cpm14d: baselines.cpm14d,
+                cpaCpl30d: baselines.cpaCpl30d,
+                cpc30d: baselines.cpc30d,
+            }
+            : null;
+        let verdictResult;
+        try {
+            verdictResult = evaluateVerdict(
+                verdictForEngine,
+                funnelSettings,
+                objective.raw,
+                baselinesForEngine,
+                { adSetHittingTarget },
+            );
+        } catch (e: unknown) {
+            // Defensive: a buggy verdict should never break the sync.
+            errors.push(`verdict failed for ${ad.id}: ${(e as Error).message}`);
+            verdictResult = {
+                verdict: "⏳" as const,
+                ruleCode: "data_gate",
+                reasonAr: "لا توجد بيانات كافية بعد",
+                diagnosisAr: null,
+                evaluatedAt: nowMs,
+            };
+        }
 
         const adDoc: AdDoc = {
             adId: ad.id,
@@ -706,13 +846,139 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             peak1dCtr: metrics.peak1dCtr,
             creativeId: typeof ad.creative === "object" && ad.creative ? ad.creative.id || null : null,
             imageHash: match?.imageHash ?? null,
-            evaluatedAt: nowMs,
+            // Phase 14 — Layer 4 (Qarar verdict)
+            verdict: verdictResult.verdict,
+            ruleCode: verdictResult.ruleCode,
+            reasonAr: verdictResult.reasonAr,
+            diagnosisAr: verdictResult.diagnosisAr,
+            evaluatedAt: verdictResult.evaluatedAt,
             schemaVersion: 1,
         };
         writes.push({
             ref: adAccountRef.collection("adPerformance").doc(ad.id),
             data: adDoc as unknown as Record<string, unknown>,
         });
+
+        // Phase 14 — Layer 4b (T044): snapshot the ad for the learning
+        // aggregator. The matched-generation fields (hookAngle, layout,
+        // modes, art direction, universe) are filled in below by the
+        // batch generation read; we emit a placeholder for now and patch
+        // the entries once we have the data. This keeps the loop single-
+        // pass for performance.
+        if (generationId && (matchType === "auto_hash" || matchType === "manual")) {
+            // metadataAvailable on the AdDoc is the same flag the learning
+            // engine uses to skip deleted-generation ads.
+            const adIsAvailable = keepMetadataUnavailable
+                ? false
+                : generationId !== null;
+            learnedAds.push({
+                adId: ad.id,
+                generationId,
+                matchType,
+                metadataAvailable: adIsAvailable,
+                campaignObjective: objective.bucket,
+                geoTier: ctx.geoTier,
+                audienceType: ctx.audienceType,
+                ctrLink: metrics.ctrLink,
+                cpm3d: metrics.cpm3d,
+                conversions3d: metrics.conversions3d,
+                verdict: verdictResult.verdict,
+                hookAngle: null,           // patched below
+                layoutTemplate: null,      // patched below
+                creativeModes: [],         // patched below
+                artDirection: null,        // patched below
+                universe: null,             // patched below
+            });
+        }
+    }
+
+    // Phase 14 — Layer 4b (T044): compute the two-component learning
+    // aggregates. Skipped entirely if no matched conversion ads were
+    // collected (e.g. fresh account, or every ad failed image matching).
+    if (learnedAds.length > 0) {
+        try {
+            // 1. Batch-load matched generation docs. A single
+            //    collectionGroup 'getAll' would be more efficient but
+            //    Firestore limits to 10 per getAll batch — using
+            //    `in` queries is bounded to 30 per query. We use a
+            //    chunked loop.
+            const genMap = await batchLoadGenerations(learnedAds.map((a) => a.generationId).filter((g): g is string => !!g));
+            // 2. Patch learnedAds with the per-generation metadata
+            //    (hookAngle, layoutTemplate, creativeModes, artDirection,
+            //    universe).
+            for (const entry of learnedAds) {
+                if (!entry.generationId) continue;
+                const gen = genMap.get(entry.generationId);
+                if (!gen) continue;
+                // The generation doc shape is the union of (a) the
+                // `input` and (b) `creativeIdentity` blocks (see
+                // feedbackService.saveGeneration). We read the most
+                // specific field first, fall back to a sibling if absent.
+                const input = (gen.input || {}) as Record<string, unknown>;
+                const ci = (gen.creativeIdentity || {}) as Record<string, unknown>;
+                entry.hookAngle =
+                    pickString(input.coldHookAngle)
+                    || pickString(input.hookAngle)
+                    || pickString(ci.hookAngle);
+                entry.layoutTemplate =
+                    pickString(ci.contractTemplateId)
+                    || pickString(gen.contractTemplateId);
+                // Modes: prefer the primary input field; fall back to the
+                // `creativeIdentity.selectedModes` field for legacy
+                // generation docs that don't carry offerCreativeMode.
+                // The `||` check above was wrong because `extractModes`
+                // always returns an array, and `[]` is truthy — so the
+                // fallback was never reached. Use a length check.
+                const inputModes = extractModes(input.offerCreativeMode);
+                entry.creativeModes = inputModes.length > 0
+                    ? inputModes
+                    : extractModes(ci.selectedModes);
+                entry.artDirection =
+                    pickString(input.visualSubStyle)
+                    || pickString(ci.visualSubStyle);
+                entry.universe =
+                    pickString(input.preferredUniverse)
+                    || pickString(ci.universeId);
+            }
+            // 3. Load existing aggregates. CRITICAL: any read error here
+            //    must PROPAGATE (not be caught) — silently returning [] would
+            //    cause the aggregator to compute stats from a wrong baseline,
+            //    and the Firestore write would overwrite historical data
+            //    with garbage. The outer try/catch records the failure and
+            //    skips the aggregate writes, preserving the existing docs.
+            const [existingHookDocs, existingVisualDocs] = await Promise.all([
+                adAccountRef.collection("hookPerformance").get(),
+                adAccountRef.collection("visualPerformance").get(),
+            ]);
+            const existingHook: HookPerformanceAggregate[] = existingHookDocs.docs.map((d) => d.data() as HookPerformanceAggregate);
+            const existingVisual: VisualPerformanceAggregate[] = existingVisualDocs.docs.map((d) => d.data() as VisualPerformanceAggregate);
+            // 4. Compute the new aggregates (OVERWRITE semantics — see
+            //    learningAggregates.ts for the contract).
+            const newHook = updateHookAggregates(learnedAds, existingHook);
+            const newVisual = updateVisualAggregates(learnedAds, existingVisual);
+            // 5. Write back. Use set with merge=true so concurrent updates
+            //    to other dimensions don't clobber.
+            for (const [angleKey, agg] of newHook) {
+                writes.push({
+                    ref: adAccountRef.collection("hookPerformance").doc(angleKey),
+                    data: agg as unknown as Record<string, unknown>,
+                });
+            }
+            for (const [patternKey, agg] of newVisual) {
+                if (!patternKey) continue;
+                writes.push({
+                    ref: adAccountRef.collection("visualPerformance").doc(patternKey),
+                    data: agg as unknown as Record<string, unknown>,
+                });
+            }
+        } catch (e: unknown) {
+            // Never break the sync because of a learning-aggregate glitch.
+            // This catch handles: (a) generation-load failures, (b) the
+            // hook/visual get() above throwing. In both cases we skip the
+            // aggregate writes — the existing Firestore docs are left
+            // untouched.
+            errors.push(`learning aggregate update failed: ${(e as Error).message}`);
+        }
     }
 
     // Persist baselines + snapshot.
@@ -825,4 +1091,65 @@ function computeAgeDays(_ad: MetaAd, _windows: InsightsTimeWindows): number {
 
 function emptyCounts(): SyncResult["counts"] {
     return { campaigns: 0, adSets: 0, ads: 0, matched: 0, unmatched: 0, ambiguous: 0 };
+}
+
+// --- Learning aggregate helpers (T044) -------------------------
+
+/**
+ * Batch-load generation docs by id. Uses the top-level generations/{id}
+ * collection (the canonical location � feedbackService.saveGeneration
+ * writes there). in queries support up to 30 values per query; we
+ * chunk accordingly.
+ */
+async function batchLoadGenerations(generationIds: string[]): Promise<Map<string, Record<string, unknown>>> {
+    const out = new Map<string, Record<string, unknown>>();
+    if (generationIds.length === 0) return out;
+    const unique = Array.from(new Set(generationIds));
+    const db = getDb();
+    const chunks: string[][] = [];
+    for (let i = 0; i < unique.length; i += 30) {
+        chunks.push(unique.slice(i, i + 30));
+    }
+    for (const chunk of chunks) {
+        try {
+            const snap = await db.collection("generations").where("__name__", "in", chunk).get();
+            for (const d of snap.docs) {
+                out.set(d.id, d.data() as Record<string, unknown>);
+            }
+        } catch (e: unknown) {
+            // where __name__ in may not be supported in every Firestore
+            // version; fall back to per-id reads.
+            for (const id of chunk) {
+                try {
+                    const doc = await db.collection("generations").doc(id).get();
+                    if (doc.exists) out.set(id, doc.data() as Record<string, unknown>);
+                } catch {
+                    // ignore � missing gen docs are fine, the learning
+                    // aggregator just won't see them.
+                }
+            }
+        }
+    }
+    return out;
+}
+
+function pickString(v: unknown): string | null {
+    if (typeof v === "string" && v.length > 0) return v;
+    return null;
+}
+
+/**
+ * The generation doc carries offerCreativeMode as an array of strings
+ * (the multi-select field). For older docs it may also live on
+ * creativeIdentity.selectedModes. Some entries may be a single string
+ * (legacy). Normalize to string[].
+ */
+function extractModes(v: unknown): string[] {
+    if (Array.isArray(v)) {
+        return v.filter((x): x is string => typeof x === "string" && x.length > 0);
+    }
+    if (typeof v === "string" && v.length > 0) return [v];
+    // creativeIdentity.selectedModes is a parallel field � caller-side
+    // helper, not used here.
+    return [];
 }
