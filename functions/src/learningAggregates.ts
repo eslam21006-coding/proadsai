@@ -321,8 +321,6 @@ function emptyHookAggregateFor(angleKey: string): HookPerformanceAggregate {
 
 // ─── Visual pattern aggregate ────────────────────────────────
 
-// ─── Visual pattern aggregate ────────────────────────────────
-
 /**
  * Build / update the per-patternKey visual aggregates from the worker's
  * ad loop. OVERWRITE semantics — same contract as
@@ -461,30 +459,6 @@ function emptyVisualAggregateFor(patternKey: string): VisualPerformanceAggregate
             lookalike: { avgCpm: 0, avgCtr: 0, count: 0 },
             retargeting: { avgCpm: 0, avgCtr: 0, count: 0 },
             advantage_plus: { avgCpm: 0, avgCtr: 0, count: 0 },
-        },
-    };
-}
-
-function cloneVisualAggregate(agg: VisualPerformanceAggregate): VisualPerformanceAggregate {
-    return {
-        patternKey: agg.patternKey,
-        sampleSize: agg.sampleSize,
-        lastUpdated: agg.lastUpdated,
-        byObjective: {
-            conversion: { ...agg.byObjective.conversion },
-            other: { ...agg.byObjective.other },
-        },
-        byGeoTier: {
-            tier1_gulf: { ...agg.byGeoTier.tier1_gulf },
-            tier2_diaspora: { ...agg.byGeoTier.tier2_diaspora },
-            tier3_egypt_na: { ...agg.byGeoTier.tier3_egypt_na },
-        },
-        byAudienceType: {
-            broad: { ...agg.byAudienceType.broad },
-            interest: { ...agg.byAudienceType.interest },
-            lookalike: { ...agg.byAudienceType.lookalike },
-            retargeting: { ...agg.byAudienceType.retargeting },
-            advantage_plus: { ...agg.byAudienceType.advantage_plus },
         },
     };
 }

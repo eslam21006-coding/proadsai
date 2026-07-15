@@ -1,7 +1,7 @@
 # Phase 14 — Batch 03 Report
 
 **Feature branch**: `phase-14-rag-meta`
-**PR**: #54
+**PR**: #55
 **Tasks**: T039-T045 (Layer 4 + Layer 4b)
 **Date**: 2026-07-13 (initial) · updated 2026-07-14 (final fixes)
 
@@ -193,20 +193,9 @@ All 15 CodeRabbit review threads resolved across two review rounds. PR #55 is **
 
 ## Open Questions
 
-1. **Per-ad ad-set state for K5** — the engine takes `adSetHittingTarget`
-   as an optional flag. The worker currently leaves it undefined, so K5
-   always falls through to the "leave it" branch when the ad has any
-   conversions. A follow-up should compute per-ad-set CPA from the
-   3-day rollup and pass `adSetHittingTarget: false` when the ad-set
-   is at-or-above target CPA.
+Open Questions #1 and #2 were resolved during CodeRabbit review — see CodeRabbit fixes #2 and #3 above.
 
-2. **Account baseline fall-back** — when the Meta baseline fetch fails
-   entirely, the worker passes a placeholder (1.0 for each metric) so
-   the engine still runs. This means S1 won't fire without account
-   context — a reasonable fail-safe. We could instead pass `null` and
-   have the engine return ⏳ with a distinct reason.
-
-3. **Performance overhead** — the per-ad learning snapshot + per-pattern
+1. **Performance overhead** — the per-ad learning snapshot + per-pattern
    aggregate read adds ~1 extra Firestore round-trip per account
    (the batch generation read). On accounts with 200+ matched ads,
    the batch read returns up to 30 docs per query. The total sync time

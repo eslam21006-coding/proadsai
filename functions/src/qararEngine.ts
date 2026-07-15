@@ -337,11 +337,14 @@ export function evaluateVerdict(
             const efficient = aboveAccountAverage(ad.ctrLink, baselines.linkCtr90d)
                 || (ad.conversions3d > 0 && cpa3dMatchesTarget(ad, target));
             if (efficient) {
+                // K5_rescue is a POSITIVE outcome — the ad is efficient and
+                // just needs its own ad set. Like S1, a success verdict must
+                // NOT carry a failure diagnosis (the ladder explains failures).
                 return {
                     verdict: "🛟",
                     ruleCode: "K5_rescue",
                     reasonAr: REASON_K5_RESCUE,
-                    diagnosisAr: diagnose(ad, baselines),
+                    diagnosisAr: null,
                     evaluatedAt: now,
                 };
             }
