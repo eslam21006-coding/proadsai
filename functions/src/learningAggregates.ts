@@ -171,6 +171,12 @@ function djb2Hash(s: string): string {
  * NOT merge with it — so re-running this function on the same input
  * produces an identical result (passed-back-as-existing is a no-op).
  *
+ * `syncAt` is the synchronization timestamp (epoch ms). The worker
+ * passes a single value for the whole sync so all aggregates carry
+ * the same `lastUpdated`. This makes the function deterministic for
+ * the same input — previously `Date.now()` was called per call and
+ * the result drifted between calls.
+ *
  * This is the CRITICAL invariant: the same ad, processed in two
  * successive syncs, must NOT be double-counted. The worker is
  * responsible for not including the same ad in two sync windows; the
@@ -180,6 +186,7 @@ function djb2Hash(s: string): string {
 export function updateHookAggregates(
     ads: ReadonlyArray<AdForLearning>,
     existing: ReadonlyArray<HookPerformanceAggregate>,
+    syncAt: number = Date.now(),
 ): Map<string, HookPerformanceAggregate> {
     // Build a per-angle accumulator. Local to this call — does not
     // merge with `existing`. After processing, we materialize the
@@ -223,44 +230,46 @@ export function updateHookAggregates(
         acc.set(angleKey, a);
     }
 
-    // Materialize the final aggregate shape. We union the angles we
-    // just computed with the angles that exist in `existing` (so the
-    // output preserves any angle the worker already has a doc for —
-    // we just refresh its stats). Angles present in `existing` but
-    // NOT in this call's input still appear in the output with
-    // sampleSize=0 (the Firestore doc will then be overwritten with
-    // zeros — same behavior as before, but no double-counting).
+    // Materialize the final aggregate shape. CRITICAL: only output
+    // entries for angles that the current sync actually contributed
+    // to. Do NOT union with `existing` — that would zero-out
+    // historical data on partial syncs (the spec's invariant:
+    // "Aggregates are NOT recomputed on delete", but the same
+    // principle applies to partial-sync writes). Angles present in
+    // `existing` but not in this call's input are simply NOT in the
+    // output map; the worker only writes entries it sees, so the
+    // Firestore docs for the other angles are preserved untouched.
     const out = new Map<string, HookPerformanceAggregate>();
-    const allKeys = new Set<string>();
-    for (const a of acc) allKeys.add(a[0]);
-    for (const e of existing) allKeys.add(e.angleKey);
-    for (const angleKey of allKeys) {
-        const a = acc.get(angleKey);
+    for (const [angleKey, a] of acc) {
         const agg: HookPerformanceAggregate = emptyHookAggregateFor(angleKey);
-        if (a) {
-            agg.sampleSize = a.conversionCount + a.otherCount;
-            agg.lastUpdated = Date.now();
-            if (a.conversionCount > 0) {
-                agg.byObjective.conversion.count = a.conversionCount;
-                agg.byObjective.conversion.avgLinkCtr = round2(a.conversionLinkCtrSum / a.conversionCount);
-                agg.byObjective.conversion.bestVerdictCount = a.conversionBestCount;
-                agg.byObjective.conversion.worstVerdictCount = a.conversionWorstCount;
+        // sampleSize counts conversion ads only (spec §6.2: "byObjective
+        // .conversion is the ONLY bucket that feeds learning"). The
+        // byObjective.other bucket is display-only and is NOT added
+        // to sampleSize — a count of 10 "other" ads with 0 conversion
+        // ads would otherwise suggest the angle has 10 samples when
+        // it has zero learning-relevant data.
+        agg.sampleSize = a.conversionCount;
+        agg.lastUpdated = syncAt;
+        if (a.conversionCount > 0) {
+            agg.byObjective.conversion.count = a.conversionCount;
+            agg.byObjective.conversion.avgLinkCtr = round2(a.conversionLinkCtrSum / a.conversionCount);
+            agg.byObjective.conversion.bestVerdictCount = a.conversionBestCount;
+            agg.byObjective.conversion.worstVerdictCount = a.conversionWorstCount;
+        }
+        if (a.otherCount > 0) {
+            agg.byObjective.other.count = a.otherCount;
+            agg.byObjective.other.avgLinkCtr = round2(a.otherLinkCtrSum / a.otherCount);
+        }
+        for (const t of ["tier1_gulf", "tier2_diaspora", "tier3_egypt_na"] as const) {
+            if (a.geoCounts[t] > 0) {
+                agg.byGeoTier[t].count = a.geoCounts[t];
+                agg.byGeoTier[t].avgCtr = round2(a.geoCtrSum[t] / a.geoCounts[t]);
             }
-            if (a.otherCount > 0) {
-                agg.byObjective.other.count = a.otherCount;
-                agg.byObjective.other.avgLinkCtr = round2(a.otherLinkCtrSum / a.otherCount);
-            }
-            for (const t of ["tier1_gulf", "tier2_diaspora", "tier3_egypt_na"] as const) {
-                if (a.geoCounts[t] > 0) {
-                    agg.byGeoTier[t].count = a.geoCounts[t];
-                    agg.byGeoTier[t].avgCtr = round2(a.geoCtrSum[t] / a.geoCounts[t]);
-                }
-            }
-            for (const au of ["broad", "interest", "lookalike", "retargeting", "advantage_plus"] as const) {
-                if (a.audCounts[au] > 0) {
-                    agg.byAudienceType[au].count = a.audCounts[au];
-                    agg.byAudienceType[au].avgCtr = round2(a.audCtrSum[au] / a.audCounts[au]);
-                }
+        }
+        for (const au of ["broad", "interest", "lookalike", "retargeting", "advantage_plus"] as const) {
+            if (a.audCounts[au] > 0) {
+                agg.byAudienceType[au].count = a.audCounts[au];
+                agg.byAudienceType[au].avgCtr = round2(a.audCtrSum[au] / a.audCounts[au]);
             }
         }
         out.set(angleKey, agg);
@@ -319,10 +328,14 @@ function emptyHookAggregateFor(angleKey: string): HookPerformanceAggregate {
  * ad loop. OVERWRITE semantics — same contract as
  * `updateHookAggregates`. The result is computed entirely from `ads`;
  * the worker OVERWRITES the Firestore doc with the returned value.
+ *
+ * `syncAt` is the synchronization timestamp (epoch ms). See
+ * `updateHookAggregates` for the determinism rationale.
  */
 export function updateVisualAggregates(
     ads: ReadonlyArray<AdForLearning>,
     existing: ReadonlyArray<VisualPerformanceAggregate>,
+    syncAt: number = Date.now(),
 ): Map<string, VisualPerformanceAggregate> {
     // Local per-patternKey accumulator.
     const acc = new Map<string, VisualAccumulator>();
@@ -369,43 +382,42 @@ export function updateVisualAggregates(
         acc.set(patternKey, a);
     }
 
-    // Materialize. Union with existing keys so the output preserves
-    // any pattern already on disk (the Firestore write will overwrite
-    // it, so missing data here is fine — we just want the doc id).
+    // Materialize. CRITICAL: only output entries for patternKeys that
+    // the current sync actually contributed to. Do NOT union with
+    // `existing` — that would zero-out historical data on partial
+    // syncs. Patterns present in `existing` but not in this call's
+    // input are simply NOT in the output map; the worker only writes
+    // entries it sees, so the Firestore docs for the other patterns
+    // are preserved untouched.
     const out = new Map<string, VisualPerformanceAggregate>();
-    const allKeys = new Set<string>();
-    for (const a of acc) allKeys.add(a[0]);
-    for (const e of existing) allKeys.add(e.patternKey);
-    for (const patternKey of allKeys) {
+    for (const [patternKey, a] of acc) {
         if (!patternKey) continue;
-        const a = acc.get(patternKey);
         const agg: VisualPerformanceAggregate = emptyVisualAggregateFor(patternKey);
-        if (a) {
-            agg.sampleSize = a.conversionCount + a.otherCount;
-            agg.lastUpdated = Date.now();
-            if (a.conversionCount > 0) {
-                agg.byObjective.conversion.count = a.conversionCount;
-                agg.byObjective.conversion.avgCpm = round2(a.conversionCpmSum / a.conversionCount);
-                agg.byObjective.conversion.avgLinkCtr = round2(a.conversionLinkCtrSum / a.conversionCount);
-                agg.byObjective.conversion.bestVerdictCount = a.conversionBestCount;
-                agg.byObjective.conversion.worstVerdictCount = a.conversionWorstCount;
+        // sampleSize counts conversion ads only (spec §6.2).
+        agg.sampleSize = a.conversionCount;
+        agg.lastUpdated = syncAt;
+        if (a.conversionCount > 0) {
+            agg.byObjective.conversion.count = a.conversionCount;
+            agg.byObjective.conversion.avgCpm = round2(a.conversionCpmSum / a.conversionCount);
+            agg.byObjective.conversion.avgLinkCtr = round2(a.conversionLinkCtrSum / a.conversionCount);
+            agg.byObjective.conversion.bestVerdictCount = a.conversionBestCount;
+            agg.byObjective.conversion.worstVerdictCount = a.conversionWorstCount;
+        }
+        if (a.otherCount > 0) {
+            agg.byObjective.other.count = a.otherCount;
+        }
+        for (const t of ["tier1_gulf", "tier2_diaspora", "tier3_egypt_na"] as const) {
+            if (a.geoCounts[t] > 0) {
+                agg.byGeoTier[t].count = a.geoCounts[t];
+                agg.byGeoTier[t].avgCpm = round2(a.geoCpmSum[t] / a.geoCounts[t]);
+                agg.byGeoTier[t].avgCtr = round2(a.geoCtrSum[t] / a.geoCounts[t]);
             }
-            if (a.otherCount > 0) {
-                agg.byObjective.other.count = a.otherCount;
-            }
-            for (const t of ["tier1_gulf", "tier2_diaspora", "tier3_egypt_na"] as const) {
-                if (a.geoCounts[t] > 0) {
-                    agg.byGeoTier[t].count = a.geoCounts[t];
-                    agg.byGeoTier[t].avgCpm = round2(a.geoCpmSum[t] / a.geoCounts[t]);
-                    agg.byGeoTier[t].avgCtr = round2(a.geoCtrSum[t] / a.geoCounts[t]);
-                }
-            }
-            for (const au of ["broad", "interest", "lookalike", "retargeting", "advantage_plus"] as const) {
-                if (a.audCounts[au] > 0) {
-                    agg.byAudienceType[au].count = a.audCounts[au];
-                    agg.byAudienceType[au].avgCpm = round2(a.audCpmSum[au] / a.audCounts[au]);
-                    agg.byAudienceType[au].avgCtr = round2(a.audCtrSum[au] / a.audCounts[au]);
-                }
+        }
+        for (const au of ["broad", "interest", "lookalike", "retargeting", "advantage_plus"] as const) {
+            if (a.audCounts[au] > 0) {
+                agg.byAudienceType[au].count = a.audCounts[au];
+                agg.byAudienceType[au].avgCpm = round2(a.audCpmSum[au] / a.audCounts[au]);
+                agg.byAudienceType[au].avgCtr = round2(a.audCtrSum[au] / a.audCounts[au]);
             }
         }
         out.set(patternKey, agg);

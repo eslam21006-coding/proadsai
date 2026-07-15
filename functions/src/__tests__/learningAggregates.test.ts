@@ -158,15 +158,26 @@ test("hook aggregate: only conversion campaigns feed learning — 'other' counte
         makeAd({ adId: "a1", ctrLink: 1.0, hookAngle: "urgency", campaignObjective: "conversion" }),
         makeAd({ adId: "a2", ctrLink: 2.0, hookAngle: "urgency", campaignObjective: "other" }),
     ];
-    const result = updateHookAggregates(ads, [emptyHookAggregate()]);
+    const result = updateHookAggregates(ads, []);
     const urgency = result.get("urgency");
     assert.ok(urgency);
     // conversion bucket: only the conversion ad
     assert.equal(urgency.byObjective.conversion.count, 1);
     assert.equal(urgency.byObjective.conversion.avgLinkCtr, 1.0);
-    // other bucket: only the other ad (display-only)
+    // 'other' bucket: only the other ad (display-only)
     assert.equal(urgency.byObjective.other.count, 1);
     assert.equal(urgency.byObjective.other.avgLinkCtr, 2.0);
+    // sampleSize is conversion-only (NOT otherCount) — spec §6.2 says
+    // only the conversion bucket feeds learning. A non-conversion ad
+    // does NOT inflate the sample size used for the icon gate (≥3).
+    assert.equal(urgency.sampleSize, 1, "sampleSize must count only conversion ads, not 'other'");
+    // byGeoTier / byAudienceType: only the conversion ad counts.
+    // The 'other' ad (geo=tier1_gulf) is NOT counted because
+    // byGeoTier tracks learning-relevant context, not display.
+    assert.equal(urgency.byGeoTier.tier1_gulf.count, 1);
+    assert.equal(urgency.byGeoTier.tier1_gulf.avgCtr, 1.0);
+    assert.equal(urgency.byAudienceType.broad.count, 1);
+    assert.equal(urgency.byAudienceType.broad.avgCtr, 1.0);
 });
 
 test("hook aggregate: unmatched ad (matchType=null) → excluded", () => {

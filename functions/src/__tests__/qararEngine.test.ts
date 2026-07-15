@@ -578,6 +578,24 @@ test("funnel settings with no derived targets: returns ⏳", () => {
     assert.equal(r.verdict, "⏳");
 });
 
+test("null baselines: returns ⏳ with 'بيانات الأداء التاريخية غير متوفرة' (no fake 1.0 fallback)", () => {
+    // CodeRabbit fix: when baseline loading fails the engine MUST NOT
+    // evaluate against fabricated 1.0 placeholders — those would let
+    // S1 (CPA ≤ 1.0 ≪ target) or fatigue (CPM > 1.0) fire on garbage.
+    // The engine returns ⏳ with a distinct reason.
+    const ad = makeAd({
+        impressions3d: 3000,
+        ctrLink: 0.25, // would normally trigger K3
+        cpa3d: null,
+        conversions3d: 0,
+        ageDays: 3,
+    });
+    const r = evaluateVerdict(ad, makePaidFunnel(50), "conversion", null);
+    assert.equal(r.verdict, "⏳");
+    assert.equal(r.ruleCode, "data_gate");
+    assert.match(r.reasonAr, /(تاريخية|متوفرة)/);
+});
+
 // ─── Fusha + simple language invariant ───────────────────────
 
 test("all reasonAr strings contain only simple Fusha (no Egyptian dialect)", () => {
