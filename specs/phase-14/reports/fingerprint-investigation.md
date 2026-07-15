@@ -57,7 +57,7 @@ try {
 return { success: true, imageBase64: result.image, storageUrl, imageFingerprint, errorCode: null, costEstimate: generators.getCostEstimate(), resolutionTrace: trace };
 ```
 
-`imageFingerprint` is the 3rd positional field in the returned object.
+`imageFingerprint` is returned as a named property in the returned object.
 
 ### 1c. Is the hash computation AFTER the image is uploaded to Storage? — **YES**
 
@@ -226,7 +226,7 @@ end-to-end from the server response to the client.
 
 ### Search results
 
-```
+```text
 lib\index.js:4481:            let imageFingerprint = null;
 lib\index.js:4483:                const { computeHash } = await import("./perceptualHash.js");
 lib\index.js:4487:                imageFingerprint = await computeHash(buf);
@@ -361,7 +361,7 @@ if (!mockupResult.imageFingerprint) {
 ## Verification Plan (after fix applied)
 
 1. **Build**: `cd functions && npm run build`
-2. **Test**: `npm test` (all 11+ suites must pass)
+2. **Test**: `cd functions && npm test` (all 11+ suites must pass)
 3. **SC-11**: `node scripts/sc11Guard.mjs` (0 forbidden terms)
 4. **Manual smoke test** (out of scope for this audit; needs a
    deployed function with a real account):

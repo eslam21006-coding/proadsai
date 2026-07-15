@@ -150,14 +150,14 @@ Per the Qarar rulebook (spec §5.2 + §5.6):
 | fatigue_ctr | CTR dropped ≥ 25% with CPM stable | 🟡 | conversion only |
 | fatigue_cpm | CPM > 1.2× account avg | 🟡 | conversion only |
 | S1 | CPA ≤ target + CTR > account avg (3-day rolling) | 🟢 | conversion only |
-| default_continue | gates met, no rule fired | 🏃 "يعمل — راقب الأداء" | All |
+| default_continue | gates met, no rule fired | 🟡 "يعمل — راقب الأداء" | All |
 | data_gate (funnel missing) | no funnel settings doc | ⏳ "إعدادات مسار المبيعات غير مكتملة" | All |
 
 ---
 
 ## CodeRabbit Loop
 
-Status: pending review (PR #54).
+Status: pending review (PR #55).
 
 ---
 

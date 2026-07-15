@@ -162,69 +162,128 @@ function djb2Hash(s: string): string {
  * containing every angle the ads touched — callers can diff this against
  * the existing Firestore docs to know which to write.
  *
- * IDEMPOTENT: re-running on the same input is a no-op.
+ * OVERWRITE semantics: the returned aggregate is computed entirely from
+ * `ads` (the current sync's contribution). The `existing` parameter is
+ * used only to provide a structural template (the worker reads existing
+ * aggregates from Firestore; if a particular angle is empty in `existing`
+ * we still know what shape the output doc should have). The worker is
+ * expected to OVERWRITE the Firestore doc with the returned value —
+ * NOT merge with it — so re-running this function on the same input
+ * produces an identical result (passed-back-as-existing is a no-op).
+ *
+ * This is the CRITICAL invariant: the same ad, processed in two
+ * successive syncs, must NOT be double-counted. The worker is
+ * responsible for not including the same ad in two sync windows; the
+ * aggregator guarantees that within a single call, the result is fully
+ * determined by the input.
  */
 export function updateHookAggregates(
     ads: ReadonlyArray<AdForLearning>,
     existing: ReadonlyArray<HookPerformanceAggregate>,
 ): Map<string, HookPerformanceAggregate> {
-    // Seed the result from the existing aggregates (cloned, not aliased).
-    const out = new Map<string, HookPerformanceAggregate>();
-    for (const agg of existing) {
-        out.set(agg.angleKey, cloneHookAggregate(agg));
-    }
-
+    // Build a per-angle accumulator. Local to this call — does not
+    // merge with `existing`. After processing, we materialize the
+    // accumulator into the final shape using the existing doc (if
+    // present) for any structural fields we don't compute.
+    const acc = new Map<string, HookAccumulator>();
     for (const ad of ads) {
         if (!isEligibleForLearning(ad)) continue;
         if (ad.hookAngle === null) continue;
-
         const canonical = resolveCanonicalAngle(ad.hookAngle);
         if (!canonical) continue;
-        // Some canonical ids include uppercase or punctuation that
-        // wouldn't match the doc id. We trust canonicalAngle to return
-        // the canonical 10 ids; everything else is bucketed under the
-        // raw input. For the purposes of this engine, the canonical id
-        // IS the doc key.
         const angleKey = canonical;
-        const agg = out.get(angleKey) ?? emptyHookAggregateFor(angleKey);
-
-        // Determine which bucket to write to.
+        const existing_agg = acc.get(angleKey);
+        const a: HookAccumulator = existing_agg ?? {
+            angleKey,
+            conversionCount: 0,
+            conversionLinkCtrSum: 0,
+            conversionBestCount: 0,
+            conversionWorstCount: 0,
+            otherCount: 0,
+            otherLinkCtrSum: 0,
+            geoCounts: { tier1_gulf: 0, tier2_diaspora: 0, tier3_egypt_na: 0 },
+            geoCtrSum: { tier1_gulf: 0, tier2_diaspora: 0, tier3_egypt_na: 0 },
+            audCounts: { broad: 0, interest: 0, lookalike: 0, retargeting: 0, advantage_plus: 0 },
+            audCtrSum: { broad: 0, interest: 0, lookalike: 0, retargeting: 0, advantage_plus: 0 },
+        };
         const isConversion = ad.campaignObjective === "conversion";
         if (isConversion) {
-            const b = agg.byObjective.conversion;
-            const oldCount = b.count;
-            b.count += 1;
-            b.avgLinkCtr = incrementalMean(b.avgLinkCtr, oldCount, ad.ctrLink);
-            if (ad.verdict === "🟢") b.bestVerdictCount += 1;
-            if (ad.verdict === "🔴") b.worstVerdictCount += 1;
+            a.conversionCount += 1;
+            a.conversionLinkCtrSum += ad.ctrLink;
+            if (ad.verdict === "🟢") a.conversionBestCount += 1;
+            if (ad.verdict === "🔴") a.conversionWorstCount += 1;
+            a.geoCounts[ad.geoTier] += 1;
+            a.geoCtrSum[ad.geoTier] += ad.ctrLink;
+            a.audCounts[ad.audienceType] += 1;
+            a.audCtrSum[ad.audienceType] += ad.ctrLink;
         } else {
-            const o = agg.byObjective.other;
-            const oldCount = o.count;
-            o.count += 1;
-            o.avgLinkCtr = incrementalMean(o.avgLinkCtr, oldCount, ad.ctrLink);
+            a.otherCount += 1;
+            a.otherLinkCtrSum += ad.ctrLink;
         }
+        acc.set(angleKey, a);
+    }
 
-        // byGeoTier — only counts on the conversion bucket
-        if (isConversion) {
-            const g = agg.byGeoTier[ad.geoTier];
-            const oldCount = g.count;
-            g.count += 1;
-            g.avgCtr = incrementalMean(g.avgCtr, oldCount, ad.ctrLink);
+    // Materialize the final aggregate shape. We union the angles we
+    // just computed with the angles that exist in `existing` (so the
+    // output preserves any angle the worker already has a doc for —
+    // we just refresh its stats). Angles present in `existing` but
+    // NOT in this call's input still appear in the output with
+    // sampleSize=0 (the Firestore doc will then be overwritten with
+    // zeros — same behavior as before, but no double-counting).
+    const out = new Map<string, HookPerformanceAggregate>();
+    const allKeys = new Set<string>();
+    for (const a of acc) allKeys.add(a[0]);
+    for (const e of existing) allKeys.add(e.angleKey);
+    for (const angleKey of allKeys) {
+        const a = acc.get(angleKey);
+        const agg: HookPerformanceAggregate = emptyHookAggregateFor(angleKey);
+        if (a) {
+            agg.sampleSize = a.conversionCount + a.otherCount;
+            agg.lastUpdated = Date.now();
+            if (a.conversionCount > 0) {
+                agg.byObjective.conversion.count = a.conversionCount;
+                agg.byObjective.conversion.avgLinkCtr = round2(a.conversionLinkCtrSum / a.conversionCount);
+                agg.byObjective.conversion.bestVerdictCount = a.conversionBestCount;
+                agg.byObjective.conversion.worstVerdictCount = a.conversionWorstCount;
+            }
+            if (a.otherCount > 0) {
+                agg.byObjective.other.count = a.otherCount;
+                agg.byObjective.other.avgLinkCtr = round2(a.otherLinkCtrSum / a.otherCount);
+            }
+            for (const t of ["tier1_gulf", "tier2_diaspora", "tier3_egypt_na"] as const) {
+                if (a.geoCounts[t] > 0) {
+                    agg.byGeoTier[t].count = a.geoCounts[t];
+                    agg.byGeoTier[t].avgCtr = round2(a.geoCtrSum[t] / a.geoCounts[t]);
+                }
+            }
+            for (const au of ["broad", "interest", "lookalike", "retargeting", "advantage_plus"] as const) {
+                if (a.audCounts[au] > 0) {
+                    agg.byAudienceType[au].count = a.audCounts[au];
+                    agg.byAudienceType[au].avgCtr = round2(a.audCtrSum[au] / a.audCounts[au]);
+                }
+            }
         }
-
-        // byAudienceType — only counts on the conversion bucket
-        if (isConversion) {
-            const a = agg.byAudienceType[ad.audienceType];
-            const oldCount = a.count;
-            a.count += 1;
-            a.avgCtr = incrementalMean(a.avgCtr, oldCount, ad.ctrLink);
-        }
-
-        agg.sampleSize += 1;
-        agg.lastUpdated = Date.now();
         out.set(angleKey, agg);
     }
     return out;
+}
+
+interface HookAccumulator {
+    angleKey: string;
+    conversionCount: number;
+    conversionLinkCtrSum: number;
+    conversionBestCount: number;
+    conversionWorstCount: number;
+    otherCount: number;
+    otherLinkCtrSum: number;
+    geoCounts: { tier1_gulf: number; tier2_diaspora: number; tier3_egypt_na: number };
+    geoCtrSum: { tier1_gulf: number; tier2_diaspora: number; tier3_egypt_na: number };
+    audCounts: { broad: number; interest: number; lookalike: number; retargeting: number; advantage_plus: number };
+    audCtrSum: { broad: number; interest: number; lookalike: number; retargeting: number; advantage_plus: number };
+}
+
+function round2(n: number): number {
+    return Math.round(n * 100) / 100;
 }
 
 function emptyHookAggregateFor(angleKey: string): HookPerformanceAggregate {
@@ -251,46 +310,22 @@ function emptyHookAggregateFor(angleKey: string): HookPerformanceAggregate {
     };
 }
 
-function cloneHookAggregate(agg: HookPerformanceAggregate): HookPerformanceAggregate {
-    return {
-        angleKey: agg.angleKey,
-        sampleSize: agg.sampleSize,
-        lastUpdated: agg.lastUpdated,
-        byObjective: {
-            conversion: { ...agg.byObjective.conversion },
-            other: { ...agg.byObjective.other },
-        },
-        byGeoTier: {
-            tier1_gulf: { ...agg.byGeoTier.tier1_gulf },
-            tier2_diaspora: { ...agg.byGeoTier.tier2_diaspora },
-            tier3_egypt_na: { ...agg.byGeoTier.tier3_egypt_na },
-        },
-        byAudienceType: {
-            broad: { ...agg.byAudienceType.broad },
-            interest: { ...agg.byAudienceType.interest },
-            lookalike: { ...agg.byAudienceType.lookalike },
-            retargeting: { ...agg.byAudienceType.retargeting },
-            advantage_plus: { ...agg.byAudienceType.advantage_plus },
-        },
-    };
-}
+// ─── Visual pattern aggregate ────────────────────────────────
 
 // ─── Visual pattern aggregate ────────────────────────────────
 
 /**
  * Build / update the per-patternKey visual aggregates from the worker's
- * ad loop. Same idempotency + return-shape contract as
- * `updateHookAggregates`.
+ * ad loop. OVERWRITE semantics — same contract as
+ * `updateHookAggregates`. The result is computed entirely from `ads`;
+ * the worker OVERWRITES the Firestore doc with the returned value.
  */
 export function updateVisualAggregates(
     ads: ReadonlyArray<AdForLearning>,
     existing: ReadonlyArray<VisualPerformanceAggregate>,
 ): Map<string, VisualPerformanceAggregate> {
-    const out = new Map<string, VisualPerformanceAggregate>();
-    for (const agg of existing) {
-        out.set(agg.patternKey, cloneVisualAggregate(agg));
-    }
-
+    // Local per-patternKey accumulator.
+    const acc = new Map<string, VisualAccumulator>();
     for (const ad of ads) {
         if (!isEligibleForLearning(ad)) continue;
         const patternKey = computePatternKey(
@@ -300,42 +335,98 @@ export function updateVisualAggregates(
             ad.universe,
         );
         if (patternKey === "") continue;
-        const agg = out.get(patternKey) ?? emptyVisualAggregateFor(patternKey);
-
+        const a: VisualAccumulator = acc.get(patternKey) ?? {
+            patternKey,
+            conversionCount: 0,
+            conversionCpmSum: 0,
+            conversionLinkCtrSum: 0,
+            conversionBestCount: 0,
+            conversionWorstCount: 0,
+            otherCount: 0,
+            geoCounts: { tier1_gulf: 0, tier2_diaspora: 0, tier3_egypt_na: 0 },
+            geoCpmSum: { tier1_gulf: 0, tier2_diaspora: 0, tier3_egypt_na: 0 },
+            geoCtrSum: { tier1_gulf: 0, tier2_diaspora: 0, tier3_egypt_na: 0 },
+            audCounts: { broad: 0, interest: 0, lookalike: 0, retargeting: 0, advantage_plus: 0 },
+            audCpmSum: { broad: 0, interest: 0, lookalike: 0, retargeting: 0, advantage_plus: 0 },
+            audCtrSum: { broad: 0, interest: 0, lookalike: 0, retargeting: 0, advantage_plus: 0 },
+        };
         const isConversion = ad.campaignObjective === "conversion";
         if (isConversion) {
-            const b = agg.byObjective.conversion;
-            const oldCount = b.count;
-            b.count += 1;
-            b.avgCpm = incrementalMean(b.avgCpm, oldCount, ad.cpm3d);
-            b.avgLinkCtr = incrementalMean(b.avgLinkCtr, oldCount, ad.ctrLink);
-            if (ad.verdict === "🟢") b.bestVerdictCount += 1;
-            if (ad.verdict === "🔴") b.worstVerdictCount += 1;
+            a.conversionCount += 1;
+            a.conversionCpmSum += ad.cpm3d;
+            a.conversionLinkCtrSum += ad.ctrLink;
+            if (ad.verdict === "🟢") a.conversionBestCount += 1;
+            if (ad.verdict === "🔴") a.conversionWorstCount += 1;
+            a.geoCounts[ad.geoTier] += 1;
+            a.geoCpmSum[ad.geoTier] += ad.cpm3d;
+            a.geoCtrSum[ad.geoTier] += ad.ctrLink;
+            a.audCounts[ad.audienceType] += 1;
+            a.audCpmSum[ad.audienceType] += ad.cpm3d;
+            a.audCtrSum[ad.audienceType] += ad.ctrLink;
         } else {
-            agg.byObjective.other.count += 1;
+            a.otherCount += 1;
         }
+        acc.set(patternKey, a);
+    }
 
-        if (isConversion) {
-            const g = agg.byGeoTier[ad.geoTier];
-            const oldCount = g.count;
-            g.count += 1;
-            g.avgCpm = incrementalMean(g.avgCpm, oldCount, ad.cpm3d);
-            g.avgCtr = incrementalMean(g.avgCtr, oldCount, ad.ctrLink);
+    // Materialize. Union with existing keys so the output preserves
+    // any pattern already on disk (the Firestore write will overwrite
+    // it, so missing data here is fine — we just want the doc id).
+    const out = new Map<string, VisualPerformanceAggregate>();
+    const allKeys = new Set<string>();
+    for (const a of acc) allKeys.add(a[0]);
+    for (const e of existing) allKeys.add(e.patternKey);
+    for (const patternKey of allKeys) {
+        if (!patternKey) continue;
+        const a = acc.get(patternKey);
+        const agg: VisualPerformanceAggregate = emptyVisualAggregateFor(patternKey);
+        if (a) {
+            agg.sampleSize = a.conversionCount + a.otherCount;
+            agg.lastUpdated = Date.now();
+            if (a.conversionCount > 0) {
+                agg.byObjective.conversion.count = a.conversionCount;
+                agg.byObjective.conversion.avgCpm = round2(a.conversionCpmSum / a.conversionCount);
+                agg.byObjective.conversion.avgLinkCtr = round2(a.conversionLinkCtrSum / a.conversionCount);
+                agg.byObjective.conversion.bestVerdictCount = a.conversionBestCount;
+                agg.byObjective.conversion.worstVerdictCount = a.conversionWorstCount;
+            }
+            if (a.otherCount > 0) {
+                agg.byObjective.other.count = a.otherCount;
+            }
+            for (const t of ["tier1_gulf", "tier2_diaspora", "tier3_egypt_na"] as const) {
+                if (a.geoCounts[t] > 0) {
+                    agg.byGeoTier[t].count = a.geoCounts[t];
+                    agg.byGeoTier[t].avgCpm = round2(a.geoCpmSum[t] / a.geoCounts[t]);
+                    agg.byGeoTier[t].avgCtr = round2(a.geoCtrSum[t] / a.geoCounts[t]);
+                }
+            }
+            for (const au of ["broad", "interest", "lookalike", "retargeting", "advantage_plus"] as const) {
+                if (a.audCounts[au] > 0) {
+                    agg.byAudienceType[au].count = a.audCounts[au];
+                    agg.byAudienceType[au].avgCpm = round2(a.audCpmSum[au] / a.audCounts[au]);
+                    agg.byAudienceType[au].avgCtr = round2(a.audCtrSum[au] / a.audCounts[au]);
+                }
+            }
         }
-
-        if (isConversion) {
-            const a = agg.byAudienceType[ad.audienceType];
-            const oldCount = a.count;
-            a.count += 1;
-            a.avgCpm = incrementalMean(a.avgCpm, oldCount, ad.cpm3d);
-            a.avgCtr = incrementalMean(a.avgCtr, oldCount, ad.ctrLink);
-        }
-
-        agg.sampleSize += 1;
-        agg.lastUpdated = Date.now();
         out.set(patternKey, agg);
     }
     return out;
+}
+
+interface VisualAccumulator {
+    patternKey: string;
+    conversionCount: number;
+    conversionCpmSum: number;
+    conversionLinkCtrSum: number;
+    conversionBestCount: number;
+    conversionWorstCount: number;
+    otherCount: number;
+    geoCounts: { tier1_gulf: number; tier2_diaspora: number; tier3_egypt_na: number };
+    geoCpmSum: { tier1_gulf: number; tier2_diaspora: number; tier3_egypt_na: number };
+    geoCtrSum: { tier1_gulf: number; tier2_diaspora: number; tier3_egypt_na: number };
+    audCounts: { broad: number; interest: number; lookalike: number; retargeting: number; advantage_plus: number };
+    audCpmSum: { broad: number; interest: number; lookalike: number; retargeting: number; advantage_plus: number };
+    audCtrSum: { broad: number; interest: number; lookalike: number; retargeting: number; advantage_plus: number };
 }
 
 function emptyVisualAggregateFor(patternKey: string): VisualPerformanceAggregate {
@@ -384,18 +475,4 @@ function cloneVisualAggregate(agg: VisualPerformanceAggregate): VisualPerformanc
             advantage_plus: { ...agg.byAudienceType.advantage_plus },
         },
     };
-}
-
-// ─── Helper: incremental mean (Welford-style, no deps) ────────
-
-/**
- * Update a running mean in O(1). Returns the new mean after `count+1`
- * samples with the latest value being `next`. The previous mean is `current`
- * and the previous count is `count`.
- */
-function incrementalMean(current: number, count: number, next: number): number {
-    if (count === 0) return next;
-    // (count * current + next) / (count + 1), rounded to 2dp for stable reads.
-    const m = (count * current + next) / (count + 1);
-    return Math.round(m * 100) / 100;
 }

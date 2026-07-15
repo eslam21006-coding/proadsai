@@ -71,6 +71,7 @@ import {
     type AdPerformanceForVerdict,
     type FunnelSettingsForVerdict,
 } from "../qararEngine.js";
+import { getEffectiveTarget } from "../cpaEconomics.js";
 import {
     updateHookAggregates,
     updateVisualAggregates,
@@ -561,13 +562,25 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         adSetTotals.set(ad.adset_id || "", (adSetTotals.get(ad.adset_id || "") || 0) + spend3d);
     }
     const perAdSetSpend = new Map<string, Map<string, number>>();
+    // Phase 14 — Layer 4 (K5): per-ad-set total conversions (3-day
+    // rolling). Used to compute the ad-set CPA and derive
+    // `adSetHittingTarget` for the K5 starved-ad matrix. Without this
+    // rollup, K5_weak can never fire in production.
+    const perAdSetConversions = new Map<string, number>();
     for (const ad of ads) {
         const windows = adInsightsMap.get(ad.id);
         if (!windows) continue;
         const spend3d = windows.threeDayRolling.reduce((acc, r) => acc + parseNum(r.spend), 0);
+        const conversions3d = windows.threeDayRolling.reduce(
+            (acc, r) => acc + (r.actions || [])
+                .filter((a) => /^(purchase|omni_purchase|offsite_conversion\.fb_pixel_purchase|lead|omni_complete_registration|complete_registration)$/i.test(a.action_type))
+                .reduce((a2, a) => a2 + parseNum(a.value), 0),
+            0,
+        );
         const setId = ad.adset_id || "";
         if (!perAdSetSpend.has(setId)) perAdSetSpend.set(setId, new Map());
         perAdSetSpend.get(setId)!.set(ad.id, spend3d);
+        perAdSetConversions.set(setId, (perAdSetConversions.get(setId) || 0) + conversions3d);
     }
 
     // 6+7. Targeting + campaign objective classification (per ad).
@@ -752,15 +765,25 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             ageDays,
         };
         // Per-ad ad-set state. K5's "ad set losing" branch needs a flag from
-        // the parent ad-set. We compute a coarse per-ad-set CPA here from
-        // the 3-day insights and compare to the target. If the ad set is
-        // at-or-under target we mark it as "hitting target" so K5 takes
-        // the "leave it" branch.
-        const adSetSpend3d = perAdSetSpend.get(ad.adset_id || "");
-        const adSetCpa3d = (adSetSpend3d && metrics.conversions3d > 0)
-            ? adSetSpend3d.get(ad.id) || 0
-            : 0;
-        void adSetCpa3d; // (placeholder — full ad-set rollup is a follow-up)
+        // the parent ad-set. We compute the ad-set CPA from the
+        // 3-day rollup and compare to the target.
+        const setId = ad.adset_id || "";
+        const adSetSpend3d = adSetTotals.get(setId) || 0;
+        const adSetConv3d = perAdSetConversions.get(setId) || 0;
+        // Effective target (effectiveTargetCPA for paid / effectiveTargetCPL
+        // for free). The qarar engine uses the same value for CB and S1.
+        const target = funnelSettings
+            ? getEffectiveTarget(funnelSettings.derived) ?? Infinity
+            : Infinity;
+        // adSetCpa: undefined if no conversions (the engine treats this as
+        // "no data" and falls through to leave-it per the K5 matrix).
+        const adSetCpa3d = adSetConv3d > 0 ? adSetSpend3d / adSetConv3d : undefined;
+        // adSetHittingTarget: true when the ad-set is at-or-under target
+        // (engine matrix: hit-target → leave it; missing-target → 🔴 weak).
+        // undefined when CPA is missing (engine falls through to leave-it).
+        const adSetHittingTarget = adSetCpa3d === undefined
+            ? undefined
+            : adSetCpa3d <= target;
         const baselinesForEngine = baselines
             ? {
                 linkCtr90d: baselines.linkCtr90d,
@@ -768,7 +791,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                 cpaCpl30d: baselines.cpaCpl30d,
                 cpc30d: baselines.cpc30d,
             }
-            : { linkCtr90d: 1.0, cpm14d: 1.0, cpaCpl30d: 1.0, cpc30d: 1.0 };
+            : null;
         let verdictResult;
         try {
             verdictResult = evaluateVerdict(
@@ -776,10 +799,7 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                 funnelSettings,
                 objective.raw,
                 baselinesForEngine,
-                // K5 ad-set-state: we don't have the ad-set rollup here so
-                // we leave it undefined. The engine's K5 matrix falls
-                // through to the next rule when undefined (same as
-                // "ad set hitting target → leave it").
+                { adSetHittingTarget },
             );
         } catch (e: unknown) {
             // Defensive: a buggy verdict should never break the sync.
@@ -903,9 +923,16 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                 entry.layoutTemplate =
                     pickString(ci.contractTemplateId)
                     || pickString(gen.contractTemplateId);
-                entry.creativeModes =
-                    extractModes(input.offerCreativeMode)
-                    || extractModes(ci.selectedModes);
+                // Modes: prefer the primary input field; fall back to the
+                // `creativeIdentity.selectedModes` field for legacy
+                // generation docs that don't carry offerCreativeMode.
+                // The `||` check above was wrong because `extractModes`
+                // always returns an array, and `[]` is truthy — so the
+                // fallback was never reached. Use a length check.
+                const inputModes = extractModes(input.offerCreativeMode);
+                entry.creativeModes = inputModes.length > 0
+                    ? inputModes
+                    : extractModes(ci.selectedModes);
                 entry.artDirection =
                     pickString(input.visualSubStyle)
                     || pickString(ci.visualSubStyle);
@@ -913,12 +940,20 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
                     pickString(input.preferredUniverse)
                     || pickString(ci.universeId);
             }
-            // 3. Load existing aggregates (one batch per collection).
-            const existingHookDocs = await adAccountRef.collection("hookPerformance").get().catch(() => null);
-            const existingVisualDocs = await adAccountRef.collection("visualPerformance").get().catch(() => null);
-            const existingHook: HookPerformanceAggregate[] = (existingHookDocs?.docs || []).map((d) => d.data() as HookPerformanceAggregate);
-            const existingVisual: VisualPerformanceAggregate[] = (existingVisualDocs?.docs || []).map((d) => d.data() as VisualPerformanceAggregate);
-            // 4. Compute the new aggregates.
+            // 3. Load existing aggregates. CRITICAL: any read error here
+            //    must PROPAGATE (not be caught) — silently returning [] would
+            //    cause the aggregator to compute stats from a wrong baseline,
+            //    and the Firestore write would overwrite historical data
+            //    with garbage. The outer try/catch records the failure and
+            //    skips the aggregate writes, preserving the existing docs.
+            const [existingHookDocs, existingVisualDocs] = await Promise.all([
+                adAccountRef.collection("hookPerformance").get(),
+                adAccountRef.collection("visualPerformance").get(),
+            ]);
+            const existingHook: HookPerformanceAggregate[] = existingHookDocs.docs.map((d) => d.data() as HookPerformanceAggregate);
+            const existingVisual: VisualPerformanceAggregate[] = existingVisualDocs.docs.map((d) => d.data() as VisualPerformanceAggregate);
+            // 4. Compute the new aggregates (OVERWRITE semantics — see
+            //    learningAggregates.ts for the contract).
             const newHook = updateHookAggregates(learnedAds, existingHook);
             const newVisual = updateVisualAggregates(learnedAds, existingVisual);
             // 5. Write back. Use set with merge=true so concurrent updates
@@ -938,6 +973,10 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             }
         } catch (e: unknown) {
             // Never break the sync because of a learning-aggregate glitch.
+            // This catch handles: (a) generation-load failures, (b) the
+            // hook/visual get() above throwing. In both cases we skip the
+            // aggregate writes — the existing Firestore docs are left
+            // untouched.
             errors.push(`learning aggregate update failed: ${(e as Error).message}`);
         }
     }

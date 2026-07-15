@@ -340,9 +340,9 @@ test("output: every aggregate has the schema-version-shaped buckets", () => {
     }
 });
 
-// ─── Idempotency: running the same data twice gives the same result ─
+// ─── Idempotency: passing the result back as existing is a no-op ────
 
-test("idempotency: running updateHookAggregates twice on the same data is stable", () => {
+test("idempotency: running updateHookAggregates twice on the same data is stable (empty existing)", () => {
     const ads: AdForLearning[] = [
         makeAd({ adId: "a1", ctrLink: 2.0, verdict: "🟢" }),
         makeAd({ adId: "a2", ctrLink: 3.0, verdict: "🟡" }),
@@ -353,4 +353,58 @@ test("idempotency: running updateHookAggregates twice on the same data is stable
         Array.from(r1.values()).map((a) => ({ ...a })),
         Array.from(r2.values()).map((a) => ({ ...a })),
     );
+});
+
+test("idempotency: passing the FIRST result back as 'existing' produces no change", () => {
+    // The CRITICAL invariant: if the same input is processed twice — even
+    // when the second call passes the first call's result as "existing" —
+    // the function must produce an identical result. This is what makes
+    // the aggregator safe to call on every sync without double-counting.
+    const ads: AdForLearning[] = [
+        makeAd({ adId: "a1", ctrLink: 2.0, verdict: "🟢" }),
+        makeAd({ adId: "a2", ctrLink: 3.0, verdict: "🟡" }),
+        makeAd({ adId: "a3", ctrLink: 4.0, verdict: "🛟" }),
+    ];
+    const r1 = updateHookAggregates(ads, [emptyHookAggregate()]);
+    const r1Array = Array.from(r1.values());
+    // Now pass r1's output back as the "existing" param.
+    const r2 = updateHookAggregates(ads, r1Array);
+    const r2Array = Array.from(r2.values());
+    // Same number of angles.
+    assert.equal(r2Array.length, r1Array.length);
+    // Same angleKeys.
+    assert.deepEqual(
+        r1Array.map((a) => a.angleKey).sort(),
+        r2Array.map((a) => a.angleKey).sort(),
+    );
+    // Same counts and means (no double-counting).
+    for (let i = 0; i < r1Array.length; i++) {
+        assert.equal(r2Array[i].sampleSize, r1Array[i].sampleSize, `sampleSize for ${r1Array[i].angleKey}`);
+        assert.equal(r2Array[i].byObjective.conversion.count, r1Array[i].byObjective.conversion.count, `conv count for ${r1Array[i].angleKey}`);
+        assert.equal(r2Array[i].byObjective.conversion.avgLinkCtr, r1Array[i].byObjective.conversion.avgLinkCtr, `avgLinkCtr for ${r1Array[i].angleKey}`);
+    }
+});
+
+test("idempotency: updateVisualAggregates also passes the 'result back' test", () => {
+    const ads: AdForLearning[] = [
+        makeAd({ adId: "v1", cpm3d: 10, ctrLink: 2.0, verdict: "🟢",
+            layoutTemplate: "hero", creativeModes: ["standard_hero"],
+            artDirection: "dark", universe: "uae" }),
+        makeAd({ adId: "v2", cpm3d: 14, ctrLink: 3.0, verdict: "🟡",
+            layoutTemplate: "hero", creativeModes: ["standard_hero"],
+            artDirection: "dark", universe: "uae" }),
+    ];
+    const r1 = updateVisualAggregates(ads, [emptyVisualAggregate()]);
+    const r1Array = Array.from(r1.values());
+    // Find the engine-computed entry (not the placeholder pattern key).
+    const r1Computed = r1Array.find((a) => a.patternKey.length > 0);
+    assert.ok(r1Computed, "engine should produce a non-empty pattern key");
+    // Pass the WHOLE r1 back as existing.
+    const r2 = updateVisualAggregates(ads, r1Array);
+    const r2Computed = Array.from(r2.values()).find((a) => a.patternKey === r1Computed.patternKey);
+    assert.ok(r2Computed);
+    assert.equal(r2Computed.sampleSize, r1Computed.sampleSize);
+    assert.equal(r2Computed.byObjective.conversion.count, r1Computed.byObjective.conversion.count);
+    assert.equal(r2Computed.byObjective.conversion.avgCpm, r1Computed.byObjective.conversion.avgCpm);
+    assert.equal(r2Computed.byObjective.conversion.avgLinkCtr, r1Computed.byObjective.conversion.avgLinkCtr);
 });

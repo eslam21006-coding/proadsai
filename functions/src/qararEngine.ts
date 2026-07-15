@@ -128,6 +128,7 @@ export interface VerdictOptions {
 
 const REASON_DATA_GATE_FRIENDLY = "لا توجد بيانات كافية بعد";
 const REASON_DATA_GATE_FUNNEL_MISSING = "إعدادات مسار المبيعات غير مكتملة";
+const REASON_DATA_GATE_BASELINES_MISSING = "بيانات الأداء التاريخية غير متوفرة";
 const REASON_CB2 = "إنفاق مرتفع جداً بدون تحويلات — أوقف";
 const REASON_CB1 = "إنفاق مرتفع بدون تحويلات — راقب";
 const REASON_K3 = "الهوك ضعيف — لا أحد يتوقف";
@@ -203,12 +204,17 @@ export function diagnose(
  * the rulebook. STOPS at the first rule that fires. Returns a verdict
  * with the firing rule's code, Arabic reason, and (for 🔴 / 🟡) a
  * one-line diagnosis from the ladder.
+ *
+ * `baselines` may be null when the account baseline fetch failed. In
+ * that case the engine returns ⏳ with reason "بيانات الأداء التاريخية
+ * غير متوفرة" — fabricating fake baselines (e.g. 1.0) would let S1
+ * or fatigue fire on garbage data. Better to data-gate.
  */
 export function evaluateVerdict(
     ad: AdPerformanceForVerdict,
     settings: FunnelSettingsForVerdict | null,
     campaignObjective: string | null | undefined,
-    baselines: { linkCtr90d: number; cpm14d: number; cpaCpl30d: number; cpc30d: number },
+    baselines: { linkCtr90d: number; cpm14d: number; cpaCpl30d: number; cpc30d: number } | null,
     options: VerdictOptions = {},
 ): VerdictResult {
     const now = Date.now();
@@ -224,6 +230,20 @@ export function evaluateVerdict(
             evaluatedAt: now,
         };
     }
+
+    // Account baselines missing → ⏳ with a distinct reason. We
+    // deliberately do NOT fabricate 1.0 placeholders: those would let
+    // S1 (CPA ≤ 1.0 ≪ target) or fatigue (CPM > 1.0) fire on garbage.
+    if (!baselines) {
+        return {
+            verdict: "⏳",
+            ruleCode: "data_gate",
+            reasonAr: REASON_DATA_GATE_BASELINES_MISSING,
+            diagnosisAr: null,
+            evaluatedAt: now,
+        };
+    }
+
     const target = getEffectiveTarget(settings.derived) as number;
 
     // ─── Step 1: Data gates ────────────────────────────────────
@@ -379,11 +399,14 @@ export function evaluateVerdict(
             cpa3dMatchesTarget(ad, target)
             && aboveAccountAverage(ad.ctrLink, baselines.linkCtr90d)
         ) {
+            // S1 is a SUCCESS verdict — the diagnosis ladder is for
+            // failure explanations only. Attaching a non-null diagnosis
+            // (e.g. "CTR mismatch") to a 🟢 is contradictory.
             return {
                 verdict: "🟢",
                 ruleCode: "S1",
                 reasonAr: REASON_S1,
-                diagnosisAr: diagnose(ad, baselines),
+                diagnosisAr: null,
                 evaluatedAt: now,
             };
         }
