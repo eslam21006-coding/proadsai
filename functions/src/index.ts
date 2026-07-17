@@ -57,6 +57,8 @@ export { connectMetaAccount, disconnectMetaAccount } from "./metaConnection.js";
 export { triggerMetaSync } from "./metaSync/trigger.js";
 export { metaDailySync } from "./metaSync/dispatcher.js";
 export { metaSyncAccountWorker } from "./metaSync/worker.js";
+// Phase 14 — Layer 5 (What's Working dashboard) + Layer 6 (Hook-angle icons).
+export { getWhatsWorkingDashboard, getHookAnglePerformance } from "./whatsWorkingDashboard.js";
 // Phase 14 — Layer 3 (image matching callables + delete cascade).
 export { linkUnmatchedAd } from "./linkUnmatchedAd.js";
 export { backfillImageFingerprints } from "./backfillImageFingerprints.js";
