@@ -70,11 +70,20 @@ import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import WorkspaceSettingsModal from './components/WorkspaceSettingsModal';
 const FunnelSettingsForm = React.lazy(() => import('./components/FunnelSettingsForm'));
 const MetaAccountPickerModal = React.lazy(() => import('./components/MetaAccountPickerModal'));
+const WhatsWorkingDashboard = React.lazy(() => import('./components/WhatsWorkingDashboard'));
 import { ForgotPasswordDialog } from './components/auth/ForgotPasswordDialog';
 import { VerifyEmailScreen } from './components/auth/VerifyEmailScreen';
 import { MandatoryBillingModal } from './components/billing/MandatoryBillingModal';
 import { TrialExpiredBanner } from './components/billing/TrialExpiredBanner';
 import { LowCreditsWarning } from './components/billing/LowCreditsWarning';
+import { useHookAngleIcons } from './hooks/useHookAngleIcons';
+import { HookAngleIcon } from './components/HookAngleIcon';
+import { LinkAdPickerModal } from './components/LinkAdPickerModal';
+
+interface UnmatchedAdForPicker {
+    adId: string;
+    adName: string;
+}
 
 // --- LOGIN COMPONENT (Email-only with Login / Create Account tabs) ---
 const LoginScreen = ({ onEmailLogin, onCreateAccount, onForgotPassword, isSubmitting, authError, initialEmail, initialTab, onTabChange, onClearAuthError }: {
@@ -1113,6 +1122,7 @@ interface MenuSidebarProps {
   onChangeMetaAccount: () => void;
   onSelectMetaAccountForWorkspace: () => void;
   onOpenFunnelSettings: () => void;
+  onOpenWhatsWorking: () => void;
   funnelSettingsAvailable: boolean;
   activeWorkspaceNeedsMetaAccount: boolean;
 }
@@ -1145,6 +1155,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
   onChangeMetaAccount,
   onSelectMetaAccountForWorkspace,
   onOpenFunnelSettings,
+  onOpenWhatsWorking,
   funnelSettingsAvailable,
   activeWorkspaceNeedsMetaAccount,
 }) => {
@@ -1206,6 +1217,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
               onChangeMetaAccount={onChangeMetaAccount}
               onSelectMetaAccountForWorkspace={onSelectMetaAccountForWorkspace}
               onOpenFunnelSettings={onOpenFunnelSettings}
+              onOpenWhatsWorking={onOpenWhatsWorking}
               funnelSettingsAvailable={funnelSettingsAvailable}
               activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
             />
@@ -1363,6 +1375,7 @@ interface MenuItemsProps {
       workspace and a Meta ad account (FR-026). */
   onSelectMetaAccountForWorkspace: () => void;
   onOpenFunnelSettings: () => void;
+  onOpenWhatsWorking: () => void;
   /** True when Meta is connected AND the active workspace has a linked
       Meta ad account. Both are required by FunnelSettingsForm (the form
       is per-workspace-account, not per-user). Only then do we expose
@@ -1482,6 +1495,13 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
     ...(funnelSettingsAvailable ? [{
       key: 'funnel',
       el: <MenuItem key="funnel" icon="fa-sliders" label={t('topbar.menu_funnel_settings')} onClick={props.onOpenFunnelSettings} />,
+    }] : []),
+    // Phase 14 batch 04 — What's Working dashboard entry. Same gate as
+    // funnel settings: requires Meta connection + linked ad account +
+    // saved funnel settings.
+    ...(funnelSettingsAvailable ? [{
+      key: 'whats-working',
+      el: <MenuItem key="whats-working" icon="fa-chart-line" label={t('whats_working.menu_label')} onClick={props.onOpenWhatsWorking} />,
     }] : []),
     { key: 'divider1', el: <div key="divider1" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> },
     { key: 'theme', el: <MenuItem key="theme" icon={isDarkMode ? 'fa-sun' : 'fa-moon'} label={isDarkMode ? t('topbar.menu_light') : t('topbar.menu_dark')} onClick={props.onToggleTheme} /> },
@@ -3181,6 +3201,13 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   // (auto-trigger when Meta is connected but no settings/current doc exists).
   const [showFunnelSettingsModal, setShowFunnelSettingsModal] = useState(false);
   const [funnelSettingsFirstRun, setFunnelSettingsFirstRun] = useState(false);
+  // Phase 14 batch 04 — What's Working dashboard modal state.
+  const [showWhatsWorking, setShowWhatsWorking] = useState(false);
+  // Manual linking picker state — when the user clicks "Link" on an
+  // unmatched ad in the dashboard's Section E, we open the picker with
+  // the selected ad. The picker shows recent generations from this
+  // workspace only (FR-023).
+  const [linkPickerAd, setLinkPickerAd] = useState<UnmatchedAdForPicker | null>(null);
   // Phase 14 batch 01-funnel-fixes — Latches true when the user dismisses
   // the first-run gate (×, backdrop click, or Escape). The auto-gate effect
   // below honors this latch so the modal does NOT re-open in the same
@@ -3591,6 +3618,16 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       openFunnelSettings(true);
     }
   }, [metaConnection?.connected, activeWorkspaceId, activeMetaAccountId, funnelSettingsHasDoc, showFunnelSettingsModal, funnelFirstRunDismissed, openFunnelSettings]);
+
+  // Phase 14 batch 04 — Layer 6. Hook-angle performance icons (🔥/✅/⚠️)
+  // — fetched once per (workspace, account). Only fires when the user has
+  // a connected Meta ad account for the active workspace; otherwise the
+  // hook returns null and the icons simply don't render.
+  const hookAngleIconsResult = useHookAngleIcons(
+    metaConnection?.connected ? activeWorkspaceId : null,
+    metaConnection?.connected ? activeMetaAccountId : null,
+  );
+  const hookAngleIcons = hookAngleIconsResult.icons;
 
   // FIX 3: when the user switches to a DIFFERENT hook in single mode, drop stale concepts so
   // Step 3 can't show a previous session's blueprints — forcing a fresh regenerate for the new
@@ -7443,7 +7480,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           </div>
         )}
 
-        {phase === 'input' && <Suspense fallback={<div className="px-6 py-10 text-center text-sm text-slate-400">Loading workspace...</div>}><InputForm key={currentProjectId} onSubmit={handleStartDesign} onSaveDraft={handleSaveDraft} showToast={showToast} initialValues={inputs} userPlan={userPlan} avatars={avatars} onSaveAvatar={handleSaveAvatar} onUpdateAvatar={handleUpdateAvatar} onDeleteAvatar={handleDeleteAvatar} competitorData={competitorData} competitorLoading={competitorLoading} onRefreshResearch={(formData) => runCompetitorResearch(formData, true)} activeWorkspace={workspaces.find(w => w.id === activeWorkspaceId && !w.deletedAt)} /></Suspense>}
+        {phase === 'input' && <Suspense fallback={<div className="px-6 py-10 text-center text-sm text-slate-400">Loading workspace...</div>}><InputForm key={currentProjectId} onSubmit={handleStartDesign} onSaveDraft={handleSaveDraft} showToast={showToast} initialValues={inputs} userPlan={userPlan} avatars={avatars} onSaveAvatar={handleSaveAvatar} onUpdateAvatar={handleUpdateAvatar} onDeleteAvatar={handleDeleteAvatar} competitorData={competitorData} competitorLoading={competitorLoading} onRefreshResearch={(formData) => runCompetitorResearch(formData, true)} activeWorkspace={workspaces.find(w => w.id === activeWorkspaceId && !w.deletedAt)} hookAngleIcons={hookAngleIcons} /></Suspense>}
 
         {phase === 'tov_review' && (
           <div className="space-y-16 animate-in fade-in slide-in-from-bottom-12 duration-1000 max-w-5xl mx-auto relative">
@@ -8366,7 +8403,12 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                           <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase ${group.isBatch ? 'bg-emerald-600/20 text-emerald-400' : 'bg-blue-600/20 text-blue-400'}`}>
                             {group.isBatch ? `Hook ${group.hookKey}` : t('hooks.selected')}
                           </span>
-                          {inputs?.coldHookAngle && <span className="px-2 py-0.5 rounded text-[8px] font-bold bg-violet-600/15 text-violet-400">{inputs.coldHookAngle.replace(/_/g, ' ')}</span>}
+                          {inputs?.coldHookAngle && (
+                            <span className="px-2 py-0.5 rounded text-[8px] font-bold bg-violet-600/15 text-violet-400 flex items-center gap-1">
+                              {inputs.coldHookAngle.replace(/_/g, ' ')}
+                              <HookAngleIcon state={hookAngleIcons?.[inputs.coldHookAngle] ?? null} />
+                            </span>
+                          )}
                           {inputs?.hookType && <span className="px-2 py-0.5 rounded text-[8px] font-bold bg-amber-600/15 text-amber-400">{inputs.hookType.replace(/_/g, ' ')}</span>}
                           {inputs?.adTone && <span className="px-2 py-0.5 rounded text-[8px] font-bold bg-emerald-600/15 text-emerald-400">{inputs.adTone.replace(/_/g, ' ')}</span>}
                         </div>
@@ -10446,8 +10488,9 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         onChangeMetaAccount={() => { setShowMenuDrawer(false); openMetaAccountPicker(); }}
         onSelectMetaAccountForWorkspace={() => { setShowMenuDrawer(false); openMetaAccountPickerForActiveWorkspace(); }}
         onOpenFunnelSettings={() => { setShowMenuDrawer(false); openFunnelSettings(false); }}
-                funnelSettingsAvailable={funnelSettingsAvailable}
-                activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
+        onOpenWhatsWorking={() => { setShowMenuDrawer(false); setShowWhatsWorking(true); }}
+        funnelSettingsAvailable={funnelSettingsAvailable}
+        activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
       />
 
       </div>
@@ -10564,6 +10607,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 onChangeMetaAccount={() => { setShowMenuDrawer(false); openMetaAccountPicker(); }}
                 onSelectMetaAccountForWorkspace={() => { setShowMenuDrawer(false); openMetaAccountPickerForActiveWorkspace(); }}
                 onOpenFunnelSettings={() => { setShowMenuDrawer(false); openFunnelSettings(false); }}
+                onOpenWhatsWorking={() => { setShowMenuDrawer(false); setShowWhatsWorking(true); }}
         funnelSettingsAvailable={funnelSettingsAvailable}
         activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
               />
@@ -11745,6 +11789,77 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           </div>
         </div>
         </Suspense>
+      )}
+
+      {/* WHAT'S WORKING DASHBOARD (Phase 14 Batch 04 — Layer 5) */}
+      {showWhatsWorking && activeWorkspaceId && activeMetaAccountId && (
+        <Suspense fallback={null}>
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+            onClick={() => setShowWhatsWorking(false)}
+          >
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="whats-working-modal-title"
+              className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-5xl w-full shadow-2xl max-h-[90vh] flex flex-col"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="bg-gradient-to-b from-emerald-900/20 to-transparent p-6 pb-4 border-b border-slate-800 shrink-0">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 id="whats-working-modal-title" className="text-lg font-black text-white">
+                      <i className="fa-solid fa-chart-line text-emerald-400 mr-2" />
+                      {t('whats_working.title')}
+                    </h2>
+                    <div className="mt-1 text-[10px] text-slate-400">{t('whats_working.subtitle')}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowWhatsWorking(false)}
+                    aria-label={t('common.close')}
+                    className="text-slate-500 hover:text-white transition-all"
+                  >
+                    <i className="fa-solid fa-xmark text-lg" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                <WhatsWorkingDashboard
+                  workspaceId={activeWorkspaceId}
+                  accountId={activeMetaAccountId}
+                  onSyncNow={async () => { await handleSyncMeta(); }}
+                  onReconnect={() => openMetaAccountPicker()}
+                  onConnect={() => openMetaAccountPicker()}
+                  onLinkAd={(ad) => {
+                    // Open the manual linking picker with the selected ad.
+                    // The picker is workspace-scoped (FR-023) and calls
+                    // linkUnmatchedAd (Batch 02) on selection.
+                    setLinkPickerAd({ adId: ad.adId, adName: ad.adName });
+                  }}
+                  onClose={() => setShowWhatsWorking(false)}
+                />
+              </div>
+            </div>
+          </div>
+        </Suspense>
+      )}
+
+      {/* MANUAL LINKING PICKER (Phase 14 Batch 04 — Layer 5 Section E).
+          Opened when the user clicks "Link" on an unmatched ad in the
+          What's Working dashboard. The picker shows recent generations
+          from THIS workspace only (FR-023) and calls linkUnmatchedAd
+          (Batch 02) when the user picks one. */}
+      {linkPickerAd && activeWorkspaceId && (
+        <LinkAdPickerModal
+          open={true}
+          workspaceId={activeWorkspaceId}
+          adId={linkPickerAd.adId}
+          adName={linkPickerAd.adName}
+          onClose={() => setLinkPickerAd(null)}
+          onLinked={() => setLinkPickerAd(null)}
+        />
       )}
 
 
