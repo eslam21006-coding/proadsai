@@ -19,7 +19,25 @@ export interface UseHookAngleIconsResult {
     bestAngles: Array<{ angleKey: string; nameAr: string }>;
 }
 
-const CACHE = new Map<string, UseHookAngleIconsResult["icons"]>();
+// Cache stores the full payload (icons + bestAngles). On hit,
+// both fields are restored so consumers that depend on bestAngles
+// (e.g. the ⚠️ tooltip suggestion list) do not see an empty array.
+// Note: the cache is never invalidated on its own — a follow-up
+// call to `invalidateHookAngleIconsCache()` is required after a Meta
+// sync (or any action that changes the underlying aggregates).
+interface CachedHookAnglePayload {
+    icons: UseHookAngleIconsResult["icons"];
+    bestAngles: UseHookAngleIconsResult["bestAngles"];
+}
+const CACHE = new Map<string, CachedHookAnglePayload>();
+
+/**
+ * Drop every cached entry. Call after handleSyncMeta so the next
+ * dashboard mount fetches fresh icons instead of serving stale data.
+ */
+export function invalidateHookAngleIconsCache(): void {
+    CACHE.clear();
+}
 
 export function useHookAngleIcons(
     workspaceId: string | null,
@@ -40,7 +58,12 @@ export function useHookAngleIcons(
         const cacheKey = `${workspaceId}::${accountId}`;
         const cached = CACHE.get(cacheKey);
         if (cached) {
-            setState({ icons: cached, loading: false, error: null, bestAngles: [] });
+            setState({
+                icons: cached.icons,
+                loading: false,
+                error: null,
+                bestAngles: cached.bestAngles,
+            });
             return;
         }
         let cancelled = false;
@@ -53,13 +76,17 @@ export function useHookAngleIcons(
                     icons: Record<string, HookAngleIconEntry>;
                     bestAngles: Array<{ angleKey: string; nameAr: string }>;
                 };
-                CACHE.set(cacheKey, data.icons);
+                const payload: CachedHookAnglePayload = {
+                    icons: data.icons,
+                    bestAngles: data.bestAngles ?? [],
+                };
+                CACHE.set(cacheKey, payload);
                 if (!cancelled) {
                     setState({
-                        icons: data.icons,
+                        icons: payload.icons,
                         loading: false,
                         error: null,
-                        bestAngles: data.bestAngles ?? [],
+                        bestAngles: payload.bestAngles,
                     });
                 }
             } catch (e) {

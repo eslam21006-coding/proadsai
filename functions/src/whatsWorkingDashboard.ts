@@ -190,7 +190,7 @@ function computeIconFromAvgs(
     if (sampleSize < dataGate) return null;
     if (accountAvgLinkCtr <= 0) return null;
     const ratio = angleAvgLinkCtr / accountAvgLinkCtr;
-    if (ratio < HOOK_ICON_WEAK_THRESHOLD) return "⚠️";
+    if (ratio <= HOOK_ICON_WEAK_THRESHOLD) return "⚠️";
     if (ratio < 1.0) return "✅";
     return "🔥";
 }
@@ -239,7 +239,12 @@ async function assertWorkspaceAccess(
     }
     const wsData = wsDoc.data() || {};
     const linked = wsData.metaAdAccountId;
-    if (linked && linked !== accountId) {
+    // FR-026 (reverse direction): when the workspace is unlinked
+    // (typeof linked !== "string"), the caller is supplying an accountId
+    // we have no business touching — reject before reading any of that
+    // account's subtree. When the workspace IS linked but to a different
+    // account, also reject. Only proceed on an exact match.
+    if (typeof linked !== "string" || linked !== accountId) {
         throw new HttpsError("failed-precondition", "Workspace is linked to a different Meta account.");
     }
 }
@@ -264,8 +269,8 @@ export const getWhatsWorkingDashboard = onCall(
 
         // ─── Sync status (Section A) ────────────────────────
         const [privateConnSnap, baselinesSnap] = await Promise.all([
-            db.collection(`${wsPath}/private/metaConnection`).doc("metaConnection").get().catch(() => null),
-            db.collection(`${adAccountPath}/baselines`).doc("current").get().catch(() => null),
+            db.doc(`${wsPath}/private/metaConnection/metaConnection`).get().catch((e: unknown) => { console.warn("🔥 [whatsWorkingDashboard] private connection read failed:", e); throw new HttpsError("internal", "Failed to read Meta connection state."); }),
+            db.collection(`${adAccountPath}/baselines`).doc("current").get().catch((e: unknown) => { console.warn("🔥 [whatsWorkingDashboard] baselines read failed:", e); throw new HttpsError("internal", "Failed to read account baselines."); }),
         ]);
         const connData = privateConnSnap?.data() || {};
         const connected = connData.metaConnected === true;
@@ -321,15 +326,16 @@ export const getWhatsWorkingDashboard = onCall(
             else if (a.verdict === "🔴") verdicts.red++;
             else if (a.verdict === "🟡" || a.verdict === "🛟") verdicts.yellow++;
         }
-        // Currency — fall back to USD when the baselines doc didn't carry one.
-        const currency = (baselinesSnap?.data() as { cpaCpl30d?: number } | null)?.cpaCpl30d
-            ? "USD" // We don't store the account currency explicitly; the
-                  // // performance-baselines endpoint returns CPA / CPC only,
-                  // // both numeric — the dashboard keeps the currency
-                  // // label static per the platform default.
-            : "USD";
+        // Currency — when not explicitly known we OMIT the currency
+        // code from the label rather than mislabel non-USD accounts.
+        // The Meta account's currency is not surfaced through the current
+        // baselines/adPerformance paths; if a future change wires it
+        // through, surface it here.
+        const currency: string | null = null;
         const summary: Summary = {
-            spend3dLabel: makeSpendLabel(currency, totalSpend3d, "ar"),
+            spend3dLabel: currency
+                ? makeSpendLabel(currency, totalSpend3d, "ar")
+                : `${Math.round(totalSpend3d * 100) / 100} (آخر 3 أيام)`,
             matchedAds,
             totalAds: allAds.length,
             green: verdicts.green,
@@ -387,16 +393,15 @@ export const getWhatsWorkingDashboard = onCall(
             .map((r) => {
                 const c = r.byObjective.conversion;
                 const icon = computeIconFromAvgs(c.count, c.avgLinkCtr, accountAvgLinkCtr, HOOK_ICON_DATA_GATE);
-                // The 🔥 is reserved for the single top angle; other angles
-                // can only get ✅ or ⚠️ (or null for insufficient data).
-                let displayIcon: "🔥" | "✅" | "⚠️" = "⚠️";
-                if (icon === "🔥") {
-                    displayIcon = r.angleKey === hookHotAngle ? "🔥" : "✅";
-                } else if (icon === "✅") {
-                    displayIcon = "✅";
-                } else {
-                    displayIcon = "⚠️";
-                }
+                // CR (Batch 04 review): skip rows where the data gate (≥3
+                // conversion ads OR missing account avg) returns null.
+                // Treating those as ⚠️ would mislead users — new accounts
+                // would look "weak" instead of "no data yet".
+                if (icon === null) return null;
+                // The 🔥 is reserved for the single top angle; other
+                // angles can only get ✅ or ⚠️.
+                const displayIcon: "🔥" | "✅" | "⚠️" =
+                    icon === "🔥" ? (r.angleKey === hookHotAngle ? "🔥" : "✅") : icon;
                 return {
                     angleKey: r.angleKey,
                     nameAr: HOOK_ANGLE_DISPLAY_EN[r.angleKey] || r.angleKey,
@@ -404,7 +409,7 @@ export const getWhatsWorkingDashboard = onCall(
                     countAr: makeCountAr(c.count, c.bestVerdictCount, "ar"),
                 };
             })
-            .filter((r) => r.icon !== null) // safety: should never be null since conversion.count > 0
+            .filter((r): r is StrongestAngle => r !== null)
             .sort((a, b) => {
                 // Sort: 🔥 first, then by bestVerdictCount (proxy via totalAds)
                 const order = (icon: StrongestAngle["icon"]): number => {
@@ -448,7 +453,7 @@ export const getWhatsWorkingDashboard = onCall(
             const genDocs = await db.collection("generations")
                 .where("__name__", "in", matchedGenIds.slice(0, 30))
                 .get()
-                .catch(() => null);
+                .catch((e: unknown) => { console.warn("🔥 [whatsWorkingDashboard] generations read failed:", e); throw new HttpsError("internal", "Failed to read generations."); });
             type GenShape = {
                 input?: {
                     offerCreativeMode?: unknown;
@@ -494,6 +499,19 @@ export const getWhatsWorkingDashboard = onCall(
             }
         }
         const strongestVisuals: StrongestVisual[] = [];
+        // CR (Batch 04 review): collect all eligible visual rows FIRST
+        // and compute the single global hot key from the complete set, so
+        // every visual whose ratio reaches 1.0 doesn't independently
+        // become 🔥 (which would happen when pickHotAngle sees one row
+        // at a time).
+        const visualEligibleRows = visualAggs
+            .filter((v) => v.byObjective?.conversion?.count > 0)
+            .map((v) => ({
+                angleKey: v.patternKey,
+                avgLinkCtr: v.byObjective.conversion.avgLinkCtr,
+                sampleSize: v.byObjective.conversion.count,
+            }));
+        const visualHotKey = pickHotAngle(visualEligibleRows);
         for (const v of visualAggs) {
             const c = v.byObjective?.conversion;
             if (!c || c.count === 0) continue;
@@ -503,15 +521,12 @@ export const getWhatsWorkingDashboard = onCall(
                 accountAvgLinkCtr,
                 VISUAL_ICON_DATA_GATE,
             );
-            // 🔥 reserved for the single top visual (by avgLinkCtr).
-            const visualHotKey = pickHotAngle([{
-                angleKey: v.patternKey,
-                avgLinkCtr: c.avgLinkCtr,
-                sampleSize: c.count,
-            }]);
-            const displayIcon: "🔥" | "✅" | "⚠️" = icon === "🔥"
-                ? (v.patternKey === visualHotKey ? "🔥" : "✅")
-                : (icon === "✅" ? "✅" : "⚠️");
+            // Skip rows that didn't pass the data gate (same rationale
+            // as the angles list above — null must NOT collapse to ⚠️).
+            if (icon === null) continue;
+            // 🔥 reserved for the single top visual across all visuals.
+            const displayIcon: "🔥" | "✅" | "⚠️" =
+                icon === "🔥" ? (v.patternKey === visualHotKey ? "🔥" : "✅") : icon;
             strongestVisuals.push({
                 patternKey: v.patternKey,
                 descriptionAr: patternDescriptionMap.get(v.patternKey) || "—",
@@ -616,7 +631,7 @@ export const getHookAnglePerformance = onCall(
 
         const [hookAggsSnap, baselinesSnap] = await Promise.all([
             db.collection(`${adAccountPath}/hookPerformance`).get().catch(() => null),
-            db.collection(`${adAccountPath}/baselines`).doc("current").get().catch(() => null),
+            db.collection(`${adAccountPath}/baselines`).doc("current").get().catch((e: unknown) => { console.warn("🔥 [whatsWorkingDashboard] baselines read failed:", e); throw new HttpsError("internal", "Failed to read account baselines."); }),
         ]);
 
         // Account-wide average — needed for the icon thresholds.

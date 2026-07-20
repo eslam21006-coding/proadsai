@@ -21,9 +21,22 @@ interface HookAngleIconProps {
 export function HookAngleIcon({ state, className }: HookAngleIconProps): React.ReactElement | null {
     const { t } = useT();
     if (!state || !state.icon) return null;
+    // The backend returns already-final Fusha text for tooltipAr (static
+    // AR_S_* constants for the 🔥/✅ cases, and a dynamic string with
+    // the best-2 angle names interpolated for the ⚠️ case). Calling t()
+    // on a literal AR_S_* value is a no-op (it's not an i18n key), so we
+    // only go through t() for the static-fallback path. The runtime
+    // tooltip (which the backend built using AR_S_* interpolation)
+    // is used as-is.
     const tooltipAr = state.tooltipAr
-        ? t(tooltipArKey(state.icon, state.tooltipAr))
-        : t(fallbackKey(state.icon));
+        ? (state.tooltipAr.includes(".")
+            ? t(state.tooltipAr) // treat as key (fallback path)
+            : state.tooltipAr)   // already final Arabic text
+        : (state.icon === "🔥"
+            ? t("hook_icon.tooltip.strongest")
+            : state.icon === "✅"
+                ? t("hook_icon.tooltip.good")
+                : t("hook_icon.tooltip.weak"));
     return (
         <span
             className={`inline-flex items-center text-[10px] ${className || ""}`}
@@ -33,20 +46,4 @@ export function HookAngleIcon({ state, className }: HookAngleIconProps): React.R
             <span aria-hidden="true">{state.icon}</span>
         </span>
     );
-}
-
-// Local i18n bridge: the backend passes a key from the i18n dictionary
-// (e.g. "hook_icon.tooltip.strongest") OR a runtime-substituted string.
-// We pass-through to useT which understands both kinds.
-function tooltipArKey(icon: "🔥" | "✅" | "⚠️", raw: string): string {
-    // If the raw is already a translation key, return as-is. Otherwise
-    // fall back to the icon's static label.
-    if (raw.includes(".")) return raw;
-    return fallbackKey(icon);
-}
-
-function fallbackKey(icon: "🔥" | "✅" | "⚠️"): string {
-    if (icon === "🔥") return "hook_icon.tooltip.strongest";
-    if (icon === "✅") return "hook_icon.tooltip.good";
-    return "hook_icon.tooltip.weak";
 }

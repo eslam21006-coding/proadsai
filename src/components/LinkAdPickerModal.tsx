@@ -22,6 +22,7 @@ interface GenerationSummary {
 interface LinkAdPickerModalProps {
     open: boolean;
     workspaceId: string;
+    accountId: string;
     adId: string;
     adName: string;
     onClose: () => void;
@@ -43,13 +44,16 @@ export function LinkAdPickerModal(props: LinkAdPickerModalProps): React.ReactEle
         (async () => {
             try {
                 // FR-023: only the active workspace's generations.
-                // The query filters by workspaceId AND non-null
-                // imageFingerprint (so we know we have a renderable
-                // image to display in the picker).
+                // The query filters by workspaceId AND a non-null
+                // imageFingerprint (so we know we have a renderable image).
+                // Firestore requires the first orderBy field to match the
+                // inequality-filter field, so order first by imageFingerprint,
+                // then by createdAt desc.
                 const q = query(
                     collection(db, "generations"),
                     where("workspaceId", "==", props.workspaceId),
                     where("imageFingerprint", "!=", null),
+                    orderBy("imageFingerprint", "desc"),
                     orderBy("createdAt", "desc"),
                     limit(30),
                 );
@@ -97,7 +101,7 @@ export function LinkAdPickerModal(props: LinkAdPickerModalProps): React.ReactEle
             const fn = httpsCallable(functions, "linkUnmatchedAd");
             await fn({
                 workspaceId: props.workspaceId,
-                accountId: "",
+                accountId: props.accountId,
                 adId: props.adId,
                 generationId,
             });

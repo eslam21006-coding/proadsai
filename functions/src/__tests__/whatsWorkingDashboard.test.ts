@@ -39,7 +39,7 @@ function computeIconFromContract(
     if (sampleSize < ICON_GATE) return null;
     if (accountAvgLinkCtr <= 0) return null;
     const ratio = angleAvgLinkCtr / accountAvgLinkCtr;
-    if (ratio < WEAK_THRESHOLD) return "⚠️";
+    if (ratio <= WEAK_THRESHOLD) return "⚠️";
     if (ratio < 1.0) return "✅";
     return "🔥";
 }
@@ -66,6 +66,10 @@ test("icon computation: above 75% of avg but below 100% → ✅", () => {
 
 test("icon computation: at or below 75% of account avg → ⚠️", () => {
     assert.equal(computeIconFromContract(5, 0.74, 1.0), "⚠️");
+    // CRITICAL boundary case: ratio === 0.75 (the documented threshold)
+    // must classify as ⚠️ — not ✅. The implementation uses `<=` not `<`.
+    assert.equal(computeIconFromContract(5, 0.75, 1.0), "⚠️"); // 0.75 boundary — inclusive
+
     assert.equal(computeIconFromContract(5, 0.5, 1.0), "⚠️");
     assert.equal(computeIconFromContract(5, 0.1, 1.0), "⚠️");
 });

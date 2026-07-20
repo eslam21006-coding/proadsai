@@ -11792,7 +11792,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
       )}
 
       {/* WHAT'S WORKING DASHBOARD (Phase 14 Batch 04 — Layer 5) */}
-      {showWhatsWorking && activeWorkspaceId && activeMetaAccountId && (
+      {showWhatsWorking && canUseWorkspaces && activeWorkspaceId && activeMetaAccountId && (
         <Suspense fallback={null}>
           <div
             className="fixed inset-0 z-[200] flex items-center justify-center p-4"
@@ -11830,8 +11830,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   workspaceId={activeWorkspaceId}
                   accountId={activeMetaAccountId}
                   onSyncNow={async () => { await handleSyncMeta(); }}
-                  onReconnect={() => openMetaAccountPicker()}
-                  onConnect={() => openMetaAccountPicker()}
+                  onReconnect={() => { void handleConnectMeta(); }}
+                  onConnect={() => { void handleConnectMeta(); }}
                   onLinkAd={(ad) => {
                     // Open the manual linking picker with the selected ad.
                     // The picker is workspace-scoped (FR-023) and calls
@@ -11851,10 +11851,11 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           What's Working dashboard. The picker shows recent generations
           from THIS workspace only (FR-023) and calls linkUnmatchedAd
           (Batch 02) when the user picks one. */}
-      {linkPickerAd && activeWorkspaceId && (
+      {linkPickerAd && canUseWorkspaces && activeWorkspaceId && activeMetaAccountId && (
         <LinkAdPickerModal
           open={true}
           workspaceId={activeWorkspaceId}
+          accountId={activeMetaAccountId}
           adId={linkPickerAd.adId}
           adName={linkPickerAd.adName}
           onClose={() => setLinkPickerAd(null)}
