@@ -76,7 +76,7 @@ import { VerifyEmailScreen } from './components/auth/VerifyEmailScreen';
 import { MandatoryBillingModal } from './components/billing/MandatoryBillingModal';
 import { TrialExpiredBanner } from './components/billing/TrialExpiredBanner';
 import { LowCreditsWarning } from './components/billing/LowCreditsWarning';
-import { useHookAngleIcons } from './hooks/useHookAngleIcons';
+import { useHookAngleIcons, invalidateHookAngleIconsCache } from './hooks/useHookAngleIcons';
 import { HookAngleIcon } from './components/HookAngleIcon';
 import { LinkAdPickerModal } from './components/LinkAdPickerModal';
 
@@ -3407,6 +3407,10 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       if (result.success) {
         showToast(lang === 'ar' ? `تمت مزامنة ${result.adsSynced} إعلان` : `Synced ${result.adsSynced} ads`, 'success');
         await refreshMetaConnection();
+        await refreshMetaConnection();
+        // Phase 14 batch 04 — invalidate the hook-angle cache so
+        // the next dashboard mount re-fetches fresh icons + bestAngles.
+        invalidateHookAngleIconsCache();
       } else {
         showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
       }

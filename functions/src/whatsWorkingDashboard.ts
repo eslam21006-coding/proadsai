@@ -57,6 +57,21 @@ const HOOK_ANGLE_DISPLAY_EN: Record<string, string> = {
     future_based: "Future",
 };
 
+// Arabic display labels for the ⚠️ tooltip's "جرّب [X] أو [Y]" suggestions
+// (FR-019 / SC-11: user-facing Fusha, no English acronyms).
+const HOOK_ANGLE_DISPLAY_AR: Record<string, string> = {
+    emotional: "العاطفة",
+    logic: "المنطق",
+    urgency: "الاستعجال",
+    scarcity: "الندرة",
+    pain: "الألم",
+    curiosity: "الفضول",
+    statistics: "الإحصائيات",
+    social_proof: "الدليل الاجتماعي",
+    logical_authority: "السلطة",
+    future_based: "المستقبل",
+};
+
 // ─── Tunable thresholds (icon logic) ─────────────────────────
 
 const HOOK_ICON_DATA_GATE = 3;            // min conversion ads to show an icon
@@ -147,7 +162,7 @@ interface HookAnglePerformanceResponse {
 // ─── Helpers (pure) ──────────────────────────────────────────
 
 /** Plain-Fusha count text for the strongest-angles list. */
-function makeCountAr(used: number, winners: number, lang: "en" | "ar"): string {
+export function makeCountAr(used: number, winners: number, lang: "en" | "ar"): string {
     if (lang === "ar") {
         if (winners === 0) return `استخدمتها ${used} مرات`;
         return `استخدمتها ${used} مرات، ${winners} منها ناجحة`;
@@ -158,16 +173,16 @@ function makeCountAr(used: number, winners: number, lang: "en" | "ar"): string {
 }
 
 /** Plain-Fusha dollar label for the summary strip. */
-function makeSpendLabel(currency: string, amount: number, lang: "en" | "ar"): string {
+export function makeSpendLabel(currency: string, amount: number, lang: "en" | "ar"): string {
     const rounded = Math.round(amount * 100) / 100;
     if (lang === "ar") return `${rounded} ${currency} (آخر 3 أيام)`;
     return `${currency} ${rounded} (last 3 days)`;
 }
 
 /** Plain-Fusha pattern description (no internal IDs exposed). */
-function makePatternDescriptionAr(layoutTemplate: string | undefined, modes: string[] | undefined, artDirection: string | undefined, universe: string | undefined): string {
+export function makePatternDescriptionAr(layoutTemplate: string | undefined, modes: string[] | undefined, artDirection: string | undefined, universe: string | undefined): string {
     const layout = layoutTemplate
-        ? layoutTemplate.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+        ? layoutTemplate.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) // (EN-only path; the only AR-typed fields below use HOOK_ANGLE_DISPLAY_AR)
         : "";
     const mode = modes && modes.length > 0
         ? modes[0].replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
@@ -181,7 +196,7 @@ function makePatternDescriptionAr(layoutTemplate: string | undefined, modes: str
  * Inputs are the conversion-bucket averages only (other bucket is
  * display-only and never feeds the icon).
  */
-function computeIconFromAvgs(
+export function computeIconFromAvgs(
     sampleSize: number,
     angleAvgLinkCtr: number,
     accountAvgLinkCtr: number,
@@ -200,7 +215,7 @@ function computeIconFromAvgs(
  * tooltip "جرّب [best] أو [second best]".
  * Returns an array sorted descending by avgLinkCtr, length 0..2.
  */
-function pickBestTwoAngles(
+export function pickBestTwoAngles(
     rows: Array<{ angleKey: string; avgLinkCtr: number; sampleSize: number }>,
 ): Array<{ angleKey: string; avgLinkCtr: number; sampleSize: number }> {
     return rows
@@ -214,7 +229,7 @@ function pickBestTwoAngles(
  * caller. The 🔥 is awarded to the single highest-avgCTR angle that
  * also passes the data gate.
  */
-function pickHotAngle(
+export function pickHotAngle(
     rows: Array<{ angleKey: string; avgLinkCtr: number; sampleSize: number }>,
 ): string | null {
     const eligible = rows
@@ -700,21 +715,19 @@ export const getHookAnglePerformance = onCall(
             } else if (displayIcon === "✅") {
                 tooltipAr = AR_S_TOOLTIP_GOOD;
             } else if (displayIcon === "⚠️") {
-                // ⚠️ tooltip must include the top 2 angles — "try X or Y".
-                // Fall back to "—" when there's nothing else ranked.
+                // ⚠️ tooltip recommends the top 2 OTHER angles (FR-019).
+                // Use the Arabic display labels and avoid duplicating the
+                // first suggestion — join them with "أو" once.
                 const top = bestTwo.filter((b) => b.angleKey !== angleKey);
-                const fallbackAr = top.length === 0
-                    ? ""
-                    : " " + AR_S_TOOLTIP_WEAK_SEPARATOR + " " +
-                        top.slice(0, 2).map((b) =>
-                            HOOK_ANGLE_DISPLAY_EN[b.angleKey] || b.angleKey,
-                        ).join(" " + AR_S_TOOLTIP_WEAK_SEPARATOR + " ");
-                const head = top.length > 0
-                    ? " " + top[0].angleKey.replace(/_/g, " ")
-                    : "";
-                tooltipAr = top.length > 0
-                    ? AR_S_TOOLTIP_WEAK_PREFIX + head + fallbackAr
-                    : AR_S_TOOLTIP_WEAK_PREFIX + ".";
+                if (top.length === 0) {
+                    tooltipAr = AR_S_TOOLTIP_WEAK_PREFIX + ".";
+                } else {
+                    const suggestions = top
+                        .slice(0, 2)
+                        .map((b) => HOOK_ANGLE_DISPLAY_AR[b.angleKey] || b.angleKey)
+                        .join(" " + AR_S_TOOLTIP_WEAK_SEPARATOR + " ");
+                    tooltipAr = AR_S_TOOLTIP_WEAK_PREFIX + " " + suggestions + ".";
+                }
             }
             icons[angleKey] = { icon: displayIcon, tooltipAr };
         }

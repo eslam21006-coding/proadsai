@@ -20,6 +20,9 @@ import {
     AR_S_TOOLTIP_GOOD,
     AR_S_TOOLTIP_WEAK_PREFIX,
     AR_S_NO_DATA_YET,
+    computeIconFromAvgs,
+    pickHotAngle,
+    pickBestTwoAngles,
 } from "../whatsWorkingDashboard.js";
 
 // ─── Icon thresholds (mirror the values in the module) ─────────
@@ -31,47 +34,34 @@ const WEAK_THRESHOLD = 0.75;
 // We don't import the private helper directly — we re-test the public
 // behaviour via the icon math the dashboard emits.
 
-function computeIconFromContract(
-    sampleSize: number,
-    angleAvgLinkCtr: number,
-    accountAvgLinkCtr: number,
-): "🔥" | "✅" | "⚠️" | null {
-    if (sampleSize < ICON_GATE) return null;
-    if (accountAvgLinkCtr <= 0) return null;
-    const ratio = angleAvgLinkCtr / accountAvgLinkCtr;
-    if (ratio <= WEAK_THRESHOLD) return "⚠️";
-    if (ratio < 1.0) return "✅";
-    return "🔥";
-}
-
 // ─── Icon computation ────────────────────────────────────────────
 
 test("icon computation: below data gate → null", () => {
-    assert.equal(computeIconFromContract(0, 2.0, 1.5), null);
-    assert.equal(computeIconFromContract(2, 2.0, 1.5), null);
-    assert.equal(computeIconFromContract(3, 2.0, 0), null); // account avg = 0
+    assert.equal(computeIconFromAvgs(0, 2.0, 1.5, ICON_GATE), null);
+    assert.equal(computeIconFromAvgs(2, 2.0, 1.5, ICON_GATE), null);
+    assert.equal(computeIconFromAvgs(3, 2.0, 0, ICON_GATE), null); // account avg = 0
 });
 
 test("icon computation: top angle → 🔥", () => {
-    assert.equal(computeIconFromContract(5, 3.0, 1.5), "🔥"); // 2x
-    assert.equal(computeIconFromContract(10, 1.6, 1.5), "🔥"); // just over 1x
+    assert.equal(computeIconFromAvgs(5, 3.0, 1.5, ICON_GATE), "🔥"); // 2x
+    assert.equal(computeIconFromAvgs(10, 1.6, 1.5, ICON_GATE), "🔥"); // just over 1x
 });
 
 test("icon computation: above 75% of avg but below 100% → ✅", () => {
-    assert.equal(computeIconFromContract(5, 1.0, 1.5), "⚠️"); // 0.67 ratio < 0.75 → ⚠️
-    assert.equal(computeIconFromContract(5, 0.76, 1.0), "✅"); // 0.76 ratio ≥ 0.75, < 1.0
-    assert.equal(computeIconFromContract(5, 0.99, 1.0), "✅"); // 0.99 ratio
-    assert.equal(computeIconFromContract(5, 1.0, 1.0), "🔥"); // ratio == 1.0 → 🔥
+    assert.equal(computeIconFromAvgs(5, 1.0, 1.5, ICON_GATE), "⚠️"); // 0.67 ratio < 0.75 → ⚠️
+    assert.equal(computeIconFromAvgs(5, 0.76, 1.0, ICON_GATE), "✅"); // 0.76 ratio ≥ 0.75, < 1.0
+    assert.equal(computeIconFromAvgs(5, 0.99, 1.0, ICON_GATE), "✅"); // 0.99 ratio
+    assert.equal(computeIconFromAvgs(5, 1.0, 1.0, ICON_GATE), "🔥"); // ratio == 1.0 → 🔥
 });
 
 test("icon computation: at or below 75% of account avg → ⚠️", () => {
-    assert.equal(computeIconFromContract(5, 0.74, 1.0), "⚠️");
+    assert.equal(computeIconFromAvgs(5, 0.74, 1.0, ICON_GATE), "⚠️");
     // CRITICAL boundary case: ratio === 0.75 (the documented threshold)
     // must classify as ⚠️ — not ✅. The implementation uses `<=` not `<`.
-    assert.equal(computeIconFromContract(5, 0.75, 1.0), "⚠️"); // 0.75 boundary — inclusive
+    assert.equal(computeIconFromAvgs(5, 0.75, 1.0, ICON_GATE), "⚠️"); // 0.75 boundary — inclusive
 
-    assert.equal(computeIconFromContract(5, 0.5, 1.0), "⚠️");
-    assert.equal(computeIconFromContract(5, 0.1, 1.0), "⚠️");
+    assert.equal(computeIconFromAvgs(5, 0.5, 1.0, ICON_GATE), "⚠️");
+    assert.equal(computeIconFromAvgs(5, 0.1, 1.0, ICON_GATE), "⚠️");
 });
 
 // ─── Tooltip text: plain Fusha, no technical terms ──────────────
