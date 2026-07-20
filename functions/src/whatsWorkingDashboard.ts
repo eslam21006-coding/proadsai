@@ -417,23 +417,39 @@ export const getWhatsWorkingDashboard = onCall(
                 // angles can only get ✅ or ⚠️.
                 const displayIcon: "🔥" | "✅" | "⚠️" =
                     icon === "🔥" ? (r.angleKey === hookHotAngle ? "🔥" : "✅") : icon;
+                // Pair the public output with the raw sort keys (bestVerdictCount
+                // and count) so the sort can use them — the public output shape
+                // stays free of internal sort fields.
                 return {
-                    angleKey: r.angleKey,
-                    nameAr: HOOK_ANGLE_DISPLAY_EN[r.angleKey] || r.angleKey,
-                    icon: displayIcon,
-                    countAr: makeCountAr(c.count, c.bestVerdictCount, "ar"),
+                    out: {
+                        angleKey: r.angleKey,
+                        nameAr: HOOK_ANGLE_DISPLAY_AR[r.angleKey] || HOOK_ANGLE_DISPLAY_EN[r.angleKey] || r.angleKey,
+                        icon: displayIcon,
+                        countAr: makeCountAr(c.count, c.bestVerdictCount, "ar"),
+                    },
+                    _w: c.bestVerdictCount,
+                    _n: c.count,
                 };
             })
-            .filter((r): r is StrongestAngle => r !== null)
+            // Drop rows that failed the data gate (returned null) so
+            // the sort callbacks below never see null elements.
+            .filter((w): w is { out: StrongestAngle; _w: number; _n: number } => w !== null)
             .sort((a, b) => {
-                // Sort: 🔥 first, then by bestVerdictCount (proxy via totalAds)
-                const order = (icon: StrongestAngle["icon"]): number => {
+                // Primary sort: 🔥 > ✅ > ⚠️ tier.
+                const order = (icon: "🔥" | "✅" | "⚠️"): number => {
                     if (icon === "🔥") return 0;
                     if (icon === "✅") return 1;
                     return 2;
                 };
-                return order(a.icon) - order(b.icon);
-            });
+                const tierDiff = order(a.out.icon) - order(b.out.icon);
+                if (tierDiff !== 0) return tierDiff;
+                // Secondary sort within the same tier: bestVerdictCount
+                // desc, then count desc as a tie-breaker. So two ✅ angles
+                // with different winner counts rank correctly.
+                if (a._w !== b._w) return b._w - a._w;
+                return b._n - a._n;
+            })
+            .map((w) => w.out);
 
         // Section D — Strongest visuals
         type VisualAggShape = {
@@ -444,6 +460,14 @@ export const getWhatsWorkingDashboard = onCall(
                 other: { count: number };
             };
         };
+        type VisualStrongestVisualRow = {
+            patternKey: string;
+            descriptionAr: string;
+            icon: "🔥" | "✅" | "⚠️";
+            countAr: string;
+        };
+        type VisualTuple = { out: VisualStrongestVisualRow; _w: number; _n: number };
+
         const visualAggs = (visualAggsSnap?.docs || []).map((d) => d.data() as VisualAggShape);
         // To produce human-readable descriptionAr, we need the
         // original layoutTemplate/modes/artDirection/universe. The
@@ -527,6 +551,14 @@ export const getWhatsWorkingDashboard = onCall(
                 sampleSize: v.byObjective.conversion.count,
             }));
         const visualHotKey = pickHotAngle(visualEligibleRows);
+        // Pair the public output with the raw sort keys (bestVerdictCount
+        // and count) so the sort can use them — the public output shape
+        // stays free of internal sort fields.
+        const visualRows: Array<{
+            out: VisualStrongestVisualRow;
+            _w: number;
+            _n: number;
+        }> = [];
         for (const v of visualAggs) {
             const c = v.byObjective?.conversion;
             if (!c || c.count === 0) continue;
@@ -542,21 +574,33 @@ export const getWhatsWorkingDashboard = onCall(
             // 🔥 reserved for the single top visual across all visuals.
             const displayIcon: "🔥" | "✅" | "⚠️" =
                 icon === "🔥" ? (v.patternKey === visualHotKey ? "🔥" : "✅") : icon;
-            strongestVisuals.push({
-                patternKey: v.patternKey,
-                descriptionAr: patternDescriptionMap.get(v.patternKey) || "—",
-                icon: displayIcon,
-                countAr: makeCountAr(c.count, c.bestVerdictCount, "ar"),
+            visualRows.push({
+                out: {
+                    patternKey: v.patternKey,
+                    descriptionAr: patternDescriptionMap.get(v.patternKey) || "—",
+                    icon: displayIcon,
+                    countAr: makeCountAr(c.count, c.bestVerdictCount, "ar"),
+                },
+                _w: c.bestVerdictCount,
+                _n: c.count,
             });
         }
-        strongestVisuals.sort((a, b) => {
-            const order = (icon: StrongestVisual["icon"]): number => {
-                if (icon === "🔥") return 0;
-                if (icon === "✅") return 1;
-                return 2;
-            };
-            return order(a.icon) - order(b.icon);
-        });
+        strongestVisuals.push(
+            ...visualRows
+                .sort((a, b) => {
+                    const order = (icon: "🔥" | "✅" | "⚠️"): number => {
+                        if (icon === "🔥") return 0;
+                        if (icon === "✅") return 1;
+                        return 2;
+                    };
+                    const tierDiff = order(a.out.icon) - order(b.out.icon);
+                    if (tierDiff !== 0) return tierDiff;
+                    // Secondary sort: bestVerdictCount desc, then count desc.
+                    if (a._w !== b._w) return b._w - a._w;
+                    return b._n - a._n;
+                })
+                .map((w) => w.out),
+        );
 
         // Section E — Unmatched ads (limit 20, most recent first)
         const unmatchedAds: UnmatchedAd[] = allAds
@@ -739,7 +783,7 @@ export const getHookAnglePerformance = onCall(
 
         const bestAngles = bestTwo.map((b) => ({
             angleKey: b.angleKey,
-            nameAr: HOOK_ANGLE_DISPLAY_EN[b.angleKey] || b.angleKey,
+            nameAr: HOOK_ANGLE_DISPLAY_AR[b.angleKey] || HOOK_ANGLE_DISPLAY_EN[b.angleKey] || b.angleKey,
         }));
 
         // Cross-check spec wording vs English equivalents to make sure

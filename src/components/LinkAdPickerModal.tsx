@@ -54,19 +54,25 @@ export function LinkAdPickerModal(props: LinkAdPickerModalProps): React.ReactEle
                     where("workspaceId", "==", props.workspaceId),
                     where("imageFingerprint", "!=", null),
                     orderBy("imageFingerprint", "desc"),
-                    orderBy("createdAt", "desc"),
+                    orderBy("timestamp", "desc"),
                     limit(30),
                 );
                 const snap = await getDocs(q);
                 if (cancelled) return;
                 const items: GenerationSummary[] = snap.docs.map((d) => {
                     const data = d.data();
+                    // Generation docs use Firestore Timestamp on the 'timestamp' field
+                    // (see feedbackService.saveGeneration: timestamp: Timestamp.now()).
+                    // Fall back to a millisecond epoch if the field is already
+                    // a number on older docs.
                     const createdAt =
-                        typeof data.createdAt === "number"
-                            ? data.createdAt
-                            : typeof data.timestamp?.toMillis === "function"
-                                ? data.timestamp.toMillis()
-                                : Date.now();
+                        typeof data.timestamp?.toMillis === "function"
+                            ? data.timestamp.toMillis()
+                            : typeof data.timestamp === "number"
+                                ? data.timestamp
+                                : typeof data.createdAt === "number"
+                                    ? data.createdAt
+                                    : Date.now();
                     const hookAngleRaw = (data.input && typeof data.input.coldHookAngle === "string")
                         ? data.input.coldHookAngle
                         : (typeof data.hookAngle === "string" ? data.hookAngle : null);
