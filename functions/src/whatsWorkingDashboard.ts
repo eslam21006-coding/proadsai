@@ -716,14 +716,19 @@ export const getHookAnglePerformance = onCall(
                 tooltipAr = AR_S_TOOLTIP_GOOD;
             } else if (displayIcon === "⚠️") {
                 // ⚠️ tooltip recommends the top 2 OTHER angles (FR-019).
-                // Use the Arabic display labels and avoid duplicating the
-                // first suggestion — join them with "أو" once.
-                const top = bestTwo.filter((b) => b.angleKey !== angleKey);
+                // Pull from all eligibleRows (sorted desc by avgLinkCtr)
+                // so a third eligible angle can fill the second slot when
+                // the current angle is itself in bestTwo. Use the Arabic
+                // display labels and avoid duplicating the first suggestion
+                // — join them with "أو" once.
+                const top = eligibleRows
+                    .filter((row) => row.angleKey !== angleKey)
+                    .sort((a, b) => b.avgLinkCtr - a.avgLinkCtr)
+                    .slice(0, 2);
                 if (top.length === 0) {
                     tooltipAr = AR_S_TOOLTIP_WEAK_PREFIX + ".";
                 } else {
                     const suggestions = top
-                        .slice(0, 2)
                         .map((b) => HOOK_ANGLE_DISPLAY_AR[b.angleKey] || b.angleKey)
                         .join(" " + AR_S_TOOLTIP_WEAK_SEPARATOR + " ");
                     tooltipAr = AR_S_TOOLTIP_WEAK_PREFIX + " " + suggestions + ".";
