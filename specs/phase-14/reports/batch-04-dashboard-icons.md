@@ -173,5 +173,7 @@ new users aren't misled by meaningless indicators.
 - [x] SC-12 (no kill on awareness/reach/engagement) — N/A for this batch
 - [x] Frontend build clean
 - [x] CI `build-and-test` workflow passes
-- [x] CodeRabbit review pending (will be added in a follow-up commit
-  after the review pass completes)
+- [x] CodeRabbit review: 17 threads resolved across 4 rounds (all
+  comments addressed; some manually resolved after the bot's stale state
+  didn't refresh). PR #55 ready for merge pending Claude audit +
+  localhost testing.
