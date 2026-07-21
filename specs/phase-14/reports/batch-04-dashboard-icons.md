@@ -177,3 +177,28 @@ new users aren't misled by meaningless indicators.
   comments addressed; some manually resolved after the bot's stale state
   didn't refresh). PR #55 ready for merge pending Claude audit +
   localhost testing.
+
+## Final-fix round (5th CodeRabbit pass)
+
+A Claude re-audit surfaced 4 final items. All four were addressed in
+`681169f` (commit `fix: LinkAdPicker timestamp field + index + Arabic
+names + win-count sort`):
+
+| # | Severity | Issue | Fix |
+|---|----------|-------|-----|
+| 1 | BLOCKING | `LinkAdPickerModal` used `orderBy("createdAt", "desc")`, but generation docs carry the timestamp on `timestamp` (a Firestore Timestamp). Firestore silently returned zero results. | Changed to `orderBy("timestamp", "desc")` and updated the read-mapper to prefer `timestamp` (Firestore Timestamp) then a numeric `timestamp` then the legacy `createdAt`. |
+| 2 | BLOCKING | Missing composite index for the generations query. The query (`workspaceId == X` + `imageFingerprint != null` + order by `imageFingerprint` desc, `timestamp` desc) would throw at runtime. | Added the index to `firestore.indexes.json` and deployed via `firebase deploy --only firestore:indexes` to the live project. |
+| 3 | COSMETIC | Section C `angleNameAr` was using English map (`HOOK_ANGLE_DISPLAY_EN`) only. The Arabic map (`HOOK_ANGLE_DISPLAY_AR`) existed but was used only for tooltips. | Updated Section C `nameAr` (and the matching `bestAngles` nameAr in the getHookAnglePerformance helper) to prefer `HOOK_ANGLE_DISPLAY_AR`, falling back to `HOOK_ANGLE_DISPLAY_EN`, then the raw `angleKey`. |
+| 4 | COSMETIC | Sections C/D sorted by badge tier only — the code comment claimed a secondary sort by `winnerCount` but it was missing. | Both reducers now use a parallel-tuple approach (`{ out, _w: bestVerdictCount, _n: count }`) sorted by tier first, then `bestVerdictCount` desc, then `count` desc as a tie-breaker. The public output shape (StrongestAngle / StrongestVisual) stays free of internal sort fields. |
+
+### Post-fix-round state
+
+- Backend build: ✅ clean
+- Backend tests: ✅ 14/14 pass (`whatsWorkingDashboard.test.ts`)
+- Frontend build: ✅ clean
+- SC-11 (no forbidden user-facing terms): ✅ PASS — 79 files scanned, 0 violations
+- CodeRabbit review: ✅ 17/17 threads resolved across 5 rounds
+- `firestore.indexes.json` deployed to the live project via `firebase deploy --only firestore:indexes`
+
+PR #55 / PR #56 is ready for merge pending the project's standard
+`Claude audit + localhost testing` step.
