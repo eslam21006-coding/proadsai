@@ -335,13 +335,25 @@ export async function matchAdCreative(
     }
     const candidates: MatchCandidate[] = [];
     for (const entry of fingerprintIndex.values()) {
-        const dist = hammingDistance(creativeImageHash, entry.hash);
+        // NULL SAFETY: `hammingDistance` THROWS on a malformed or
+        // wrong-length hash. Without this guard one legacy/truncated
+        // fingerprint entry aborts matching for EVERY ad in the account,
+        // not just its own comparison. Skip the bad entry instead.
+        let dist: number;
+        try {
+            dist = hammingDistance(creativeImageHash, entry.hash);
+        } catch {
+            continue;
+        }
         candidates.push({
             hash: entry.hash,
             distance: dist,
             createdAt: entry.createdAt,
             generationId: entry.generationId,
         });
+    }
+    if (candidates.length === 0) {
+        return { generationId: null, matchType: null, matchDistance: null, ambiguous: false };
     }
     const decision = decideMatch(candidates, maxDistance);
     if (decision.reason === "auto_match" && decision.candidate) {
@@ -719,7 +731,13 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         // Read these fields via a wider type — `AdDoc` is the strict
         // shape WE write, but existing docs may have the cascade fields
         // written by `generationDeleteCascade`.
-        const existingRaw = existingData as Partial<AdDoc> & {
+        // NULL SAFETY: `existingByAdId.get()` returns undefined on a
+        // first-ever sync (no adPerformance docs exist yet). The cast alone
+        // does NOT make the value safe — it only silences the compiler — so
+        // the `.deletedGenerationId` read below crashed with
+        // "Cannot read properties of undefined". Default to {} so every
+        // field read degrades to undefined instead of throwing.
+        const existingRaw = (existingData ?? {}) as Partial<AdDoc> & {
             deletedGenerationId?: unknown;
         };
         const existingDeletedGenerationId = typeof existingRaw.deletedGenerationId === "string"

@@ -32,6 +32,23 @@
 export const META_GRAPH_BASE = "https://graph.facebook.com/v22.0";
 export const META_API_VERSION = "v22.0";
 
+/**
+ * Normalize an ad-account id to the `act_<digits>` form the Graph API expects.
+ *
+ * Ad account ids reach us from `/me/adaccounts?fields=id`, whose `id` is
+ * ALREADY prefixed (`act_995888422231015`) — that value is what the picker
+ * sends and what `connectMetaAccount` stores. Blindly prepending `act_` here
+ * produced `act_act_995888422231015`, which Graph rejects, so every account
+ * scoped call in this module silently failed.
+ *
+ * Idempotent on purpose: it accepts both the prefixed form and a bare numeric
+ * id, so legacy documents written before the prefix was stored keep working.
+ */
+export function toActId(adAccountId: string): string {
+    const id = (adAccountId || "").trim();
+    return id.startsWith("act_") ? id : `act_${id}`;
+}
+
 // Insights fields used in every call (spec §3.1.3).
 export const INSIGHTS_FIELDS: ReadonlyArray<string> = [
     "impressions",
@@ -270,7 +287,7 @@ interface CreativeResponse { id: string; image_url?: string; thumbnail_url?: str
 
 export async function fetchCampaigns(accessToken: string, adAccountId: string): Promise<MetaCampaign[]> {
     const resp = await graphGet<CampaignsResponse>(
-        `/act_${adAccountId}/campaigns`,
+        `/${toActId(adAccountId)}/campaigns`,
         { fields: HIERARCHY_CAMPAIGN_FIELDS },
         accessToken,
     );
@@ -410,7 +427,7 @@ async function fetchAccountLevelMetric(
     field: string,
 ): Promise<number> {
     const resp = await graphGet<{ data: Array<Record<string, string>> }>(
-        `/act_${adAccountId}/insights`,
+        `/${toActId(adAccountId)}/insights`,
         {
             fields: field,
             date_preset: datePreset,
@@ -435,7 +452,7 @@ async function fetchAccountLevelCpaCpl(
     datePreset: string,
 ): Promise<number> {
     const resp = await graphGet<{ data: Array<{ spend?: string; actions?: Array<{ action_type: string; value: string }> }> }>(
-        `/act_${adAccountId}/insights`,
+        `/${toActId(adAccountId)}/insights`,
         {
             fields: "spend,actions",
             date_preset: datePreset,
