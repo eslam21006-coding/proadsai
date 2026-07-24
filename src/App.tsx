@@ -3276,6 +3276,18 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
           metaAdAccountId: accountId,
           metaAdAccountName: account?.name || accountId,
         });
+        // Phase 14 batch 04 (dashboard-connection-fix) — Also write the
+        // workspace-private `metaConnection.metaConnected = true` doc that
+        // the "What's Working" dashboard reads. Non-blocking: if this fails
+        // the sidebar still reflects "Meta Ads Connected" via the
+        // user-level doc; the dashboard will just show "not connected"
+        // until the next successful call. Matches the spec rule
+        // "Convert hard validation blocks into warnings".
+        await metaService.connectAccountToWorkspace({
+          workspaceId: activeWorkspaceId,
+          accountId,
+          accountName: account?.name || accountId,
+        });
         // Mirror the server write in the local workspace cache so the
         // funnel-settings gate and any active-workspace UI see the new
         // link without waiting for a Firestore round-trip.

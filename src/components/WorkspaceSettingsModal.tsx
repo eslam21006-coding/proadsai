@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import type { Workspace } from '../types';
 import { workspaceService } from '../services/workspaceService';
+import { metaService } from '../services/metaService';
 import type { UserPlan } from '../planconfig';
 import { useT } from '../i18n';
 
@@ -134,6 +135,17 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
         workspaceId: workspace.id,
         metaAdAccountId: selectedMetaAccount,
         metaAdAccountName: account?.name || selectedMetaAccount,
+      });
+      // Phase 14 batch 04 (dashboard-connection-fix) — Mirror the link in
+      // the workspace-private `private/metaConnection.metaConnected = true`
+      // doc that the "What's Working" dashboard reads. Non-blocking — the
+      // workspace link itself is the source of truth for the UI here; if
+      // the private doc write fails the dashboard will just show "not
+      // connected" until the next successful call.
+      await metaService.connectAccountToWorkspace({
+        workspaceId: workspace.id,
+        accountId: selectedMetaAccount,
+        accountName: account?.name || selectedMetaAccount,
       });
       const role = (result.data?.metaRoleAtLinkTime ?? undefined) as
         | 'ADMIN'

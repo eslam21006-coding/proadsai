@@ -93,6 +93,34 @@ class MetaService {
         }
     }
 
+    // Phase 14 batch 04 (dashboard-connection-fix) — Mirror the
+    // `connectMetaAccount` server callable so callers can wire the
+    // workspace-private connection doc after `linkMetaAccountToWorkspace`
+    // succeeds. The dashboard reads
+    // `users/{uid}/workspaces/{workspaceId}/private/metaConnection.metaConnected`
+    // to render its Sync Status section; without this call, the doc is
+    // never created by the sidebar's connect flow and the dashboard
+    // permanently reports "Meta account not connected yet".
+    // Returns false on failure — callers treat this as non-blocking.
+    async connectAccountToWorkspace(req: {
+        workspaceId: string;
+        accountId: string;
+        accountName?: string;
+    }): Promise<boolean> {
+        try {
+            const fn = httpsCallable(functions, 'connectMetaAccount');
+            await fn({
+                workspaceId: req.workspaceId,
+                accountId: req.accountId,
+                accountName: req.accountName ?? '',
+            });
+            return true;
+        } catch (err) {
+            console.warn('Failed to write workspace-private meta connection doc (non-blocking):', err);
+            return false;
+        }
+    }
+
     async syncPerformance(workspaceId?: string | null): Promise<{ success: boolean; adsSynced: number }> {
         try {
             const fn = httpsCallable(functions, 'metaSyncPerformance');
