@@ -284,7 +284,7 @@ export const getWhatsWorkingDashboard = onCall(
 
         // ─── Sync status (Section A) ────────────────────────
         const [privateConnSnap, baselinesSnap] = await Promise.all([
-            db.doc(`${wsPath}/private/metaConnection/metaConnection`).get().catch((e: unknown) => { console.warn("🔥 [whatsWorkingDashboard] private connection read failed:", e); throw new HttpsError("internal", "Failed to read Meta connection state."); }),
+            db.doc(`${wsPath}/private/metaConnection`).get().catch((e: unknown) => { console.warn("🔥 [whatsWorkingDashboard] private connection read failed:", e); throw new HttpsError("internal", "Failed to read Meta connection state."); }),
             db.collection(`${adAccountPath}/baselines`).doc("current").get().catch((e: unknown) => { console.warn("🔥 [whatsWorkingDashboard] baselines read failed:", e); throw new HttpsError("internal", "Failed to read account baselines."); }),
         ]);
         const connData = privateConnSnap?.data() || {};
