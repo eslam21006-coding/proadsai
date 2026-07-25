@@ -1481,7 +1481,7 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
           ),
         },
       ] : [
-        { key: 'meta-sync', el: <MenuItem key="meta-sync" icon="fa-arrows-rotate" label={metaSyncing ? '…' : t('topbar.menu_meta_sync')} onClick={props.onSyncMeta} /> },
+        { key: 'meta-sync', el: <MenuItem key="meta-sync" icon={metaSyncing ? 'fa-arrows-rotate fa-spin' : 'fa-arrows-rotate'} label={t('topbar.menu_meta_sync')} onClick={props.onSyncMeta} /> },
         { key: 'meta-change-account', el: <MenuItem key="meta-change-account" icon="fa-repeat" label={t('topbar.menu_meta_change_account')} onClick={props.onChangeMetaAccount} /> },
       ]),
       { key: 'meta-disconnect', el: <MenuItem key="meta-disconnect" icon="fa-link-slash" label={t('topbar.menu_meta_disconnect')} onClick={props.onDisconnectMeta} className="text-red-500 hover:text-red-600" /> },

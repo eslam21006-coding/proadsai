@@ -1014,7 +1014,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'topbar.menu_meta_connect': 'ربط حساب ميتا',
         'topbar.menu_meta_connected': 'حساب ميتا متصل',
         'topbar.menu_meta_disconnect': 'فك الربط',
-        'topbar.menu_meta_sync': 'مزامنة الآن',
+        'topbar.menu_meta_sync': 'قم بالمزامنة',
         'topbar.menu_meta_change_account': 'تغيير الحساب',
         'topbar.menu_meta_select_for_workspace': 'اختر حساب إعلاني لهذه المساحة',
         'topbar.menu_funnel_settings': 'إعدادات مسار المبيعات',
