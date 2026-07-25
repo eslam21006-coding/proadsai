@@ -134,20 +134,24 @@ export function LinkAdPickerModal(props: LinkAdPickerModalProps): React.ReactEle
     }
 
     return (
+        // The opaque dark overlay lives on the fixed full-screen div itself
+        // (z above the What's Working dashboard at z-[200]) so no page or
+        // dashboard content shows through. The panel below is a solid card.
         <div
-            className="fixed inset-0 z-[300] flex items-center justify-center p-4"
+            className="fixed inset-0 z-[300] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
             onClick={props.onClose}
         >
-            {/* FIX 6 (dashboard-polish): opaque dark backdrop (matches the
-                MetaAccountPickerModal pattern) so page content behind is not
-                visible through the modal. The panel below is a solid
-                bg-slate-950 card. */}
-            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+            {/* Solid dark panel — this modal is opened from inside the
+                always-dark What's Working dashboard, and its content
+                (white headings, slate borders, blue gradient) is built for
+                a dark surface. The app manages theme via explicit classes,
+                not Tailwind's `dark:` variant, so we keep the panel solid
+                dark rather than a theme-conditional white. */}
             <div
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="link-ad-picker-title"
-                className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-2xl w-full shadow-2xl max-h-[90vh] flex flex-col"
+                className="relative bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full shadow-2xl max-h-[90vh] flex flex-col"
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="bg-gradient-to-b from-blue-900/20 to-transparent p-6 pb-4 border-b border-slate-800 shrink-0">
@@ -183,7 +187,7 @@ export function LinkAdPickerModal(props: LinkAdPickerModalProps): React.ReactEle
                         </div>
                     ) : generations.length === 0 ? (
                         <div className="text-slate-500 text-sm italic text-center py-10">
-                            {t("whats_working.unmatched.empty")}
+                            {t("whats_working.link_picker.empty")}
                         </div>
                     ) : (
                         <div className="grid grid-cols-3 gap-3">

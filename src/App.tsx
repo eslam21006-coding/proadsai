@@ -11845,17 +11845,37 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 <WhatsWorkingDashboard
                   workspaceId={activeWorkspaceId}
                   accountId={activeMetaAccountId}
-                  // FIX 1 (Phase 14 batch 04 dashboard-polish) — Route the
-                  // dashboard's "Sync Now" through the SAME handler as the
-                  // sidebar's "Sync Now" (`handleSyncMeta` →
-                  // `metaService.syncPerformance` → `metaSyncPerformance`),
-                  // which syncs reliably. The workspace-scoped
-                  // `triggerMetaSync` path was silently failing. handleSyncMeta
-                  // owns its own toasts, `metaSyncing` state, connection
-                  // refresh, and hook-angle cache invalidation; the dashboard
-                  // component re-fetches its own data once this resolves.
+                  // Phase 14 batch 04 — Route the dashboard's "Sync Now"
+                  // through the workspace-scoped `triggerMetaSync` callable,
+                  // which writes the workspace-scoped paths the dashboard
+                  // reads. The bugs that were making it fail (act_ double
+                  // prefix, first-sync null-safety crash) are fixed and
+                  // deployed. The sidebar keeps its own `handleSyncMeta`
+                  // (metaSyncPerformance) path — different, user-level paths.
                   onSyncNow={async () => {
-                    await handleSyncMeta();
+                    if (!activeWorkspaceId) return;
+                    setMetaSyncing(true);
+                    showToast(lang === 'ar' ? 'جاري مزامنة الإعلانات…' : 'Syncing ad performance…', 'info');
+                    try {
+                      const result = await metaService.triggerWorkspaceSync(activeWorkspaceId);
+                      if (result.ok) {
+                        const count = result.counts?.ads ?? 0;
+                        showToast(lang === 'ar' ? `تمت مزامنة ${count} إعلان` : `Synced ${count} ads`, 'success');
+                        invalidateHookAngleIconsCache();
+                      } else if (result.needsReauth) {
+                        showToast(lang === 'ar' ? 'يرجى إعادة الاتصال بميتا' : 'Please reconnect Meta', 'error');
+                      } else {
+                        showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
+                      }
+                    } catch (err: any) {
+                      if (err?.code === 'functions/resource-exhausted' || err?.code === 'resource-exhausted') {
+                        showToast(lang === 'ar' ? 'المزامنة في فترة انتظار — حاول لاحقاً' : 'Sync on cooldown — try again later', 'info');
+                      } else {
+                        showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
+                      }
+                    } finally {
+                      setMetaSyncing(false);
+                    }
                   }}
                   onReconnect={() => { void handleConnectMeta(); }}
                   onConnect={() => { void handleConnectMeta(); }}
