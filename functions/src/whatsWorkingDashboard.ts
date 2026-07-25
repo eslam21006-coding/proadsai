@@ -538,20 +538,35 @@ export const getWhatsWorkingDashboard = onCall(
                     selectedModes?: unknown;
                 };
             };
-            // Firestore's `in` operator caps at 30 values. Chunk the matched
-            // generation ids into groups of 30 so accounts with more than 30
-            // distinct matched generations still resolve real pattern
-            // descriptions instead of silently falling back to the generic
-            // "—" label for everything past the first 30.
-            const genDocSnaps: Array<FirebaseFirestore.QueryDocumentSnapshot> = [];
-            for (let gi = 0; gi < matchedGenIds.length; gi += 30) {
-                const genChunk = matchedGenIds.slice(gi, gi + 30);
-                const genDocs = await db.collection("generations")
-                    .where("__name__", "in", genChunk)
-                    .get()
-                    .catch((e: unknown) => { console.warn("🔥 [whatsWorkingDashboard] generations read failed:", e); throw new HttpsError("internal", "Failed to read generations."); });
-                genDocSnaps.push(...(genDocs?.docs || []));
+            // Firestore's `in` operator caps at 30 values, so we chunk. Two
+            // guards keep the callable's read budget bounded on large
+            // accounts (otherwise an unbounded serial fan-out could exhaust
+            // the request budget and fail the whole dashboard):
+            //   1. Cap the number of generations we resolve descriptions for.
+            //      `strongestVisuals` only renders a short list, so a bounded
+            //      sample is plenty; anything past the cap falls back to the
+            //      generic "—" label (logged below, not silently dropped).
+            //   2. Fetch the (now ≤ MAX/30) chunks in parallel rather than
+            //      serially — inherently bounded concurrency.
+            const MAX_PATTERN_DESC_GENS = 150; // 5 chunks of 30
+            const idsToResolve = matchedGenIds.slice(0, MAX_PATTERN_DESC_GENS);
+            if (matchedGenIds.length > MAX_PATTERN_DESC_GENS) {
+                console.warn(`⚠️ [whatsWorkingDashboard] ${matchedGenIds.length} matched generations; resolving pattern descriptions for the first ${MAX_PATTERN_DESC_GENS} (rest fall back to "—").`);
             }
+            const genChunks: string[][] = [];
+            for (let gi = 0; gi < idsToResolve.length; gi += 30) {
+                genChunks.push(idsToResolve.slice(gi, gi + 30));
+            }
+            const chunkSnaps = await Promise.all(
+                genChunks.map((chunk) =>
+                    db.collection("generations")
+                        .where("__name__", "in", chunk)
+                        .get()
+                        .catch((e: unknown) => { console.warn("🔥 [whatsWorkingDashboard] generations read failed:", e); throw new HttpsError("internal", "Failed to read generations."); }),
+                ),
+            );
+            const genDocSnaps: Array<FirebaseFirestore.QueryDocumentSnapshot> = [];
+            for (const snap of chunkSnaps) genDocSnaps.push(...(snap?.docs || []));
             for (const d of genDocSnaps) {
                 const gen = d.data() as GenShape;
                 // Build the same hash the worker uses (single source of

@@ -200,7 +200,7 @@ In other words: **the dashboard is reading the right doc, the writer for that do
 
 **Verdict: the fix did NOT introduce the bug — it is the right fix and it now matches the writer.**
 
-- **Before:** dashboard read `users/{uid}/workspaces/{workspaceId}/private/metaConnection/metaConnection` — that is "a doc named `metaConnection` inside a doc named `metaConnection`". In Firestore, a `.doc()` path ending in a segment is always treated as a single document reference; the second `metaConnection` would have been parsed as a subcollection name (and there is no such subcollection, so `.get()` would throw or return nothing).
+- **Before:** dashboard read `users/{uid}/workspaces/{workspaceId}/private/metaConnection/metaConnection` — that is **seven** path segments. Firestore document references must have an **even** number of segments (collection/doc/collection/doc…); an odd-segment path resolves to a *collection*, not a document. So `db.doc(...)` on this path fails **immediately** with a deterministic validation error ("Document references must have an even number of segments") — before any network read. It never reaches Firestore and never "returns nothing"; the call throws synchronously.
 - **After:** dashboard reads `users/{uid}/workspaces/{workspaceId}/private/metaConnection` — this is **exactly** the doc path that `connectMetaAccount` (`metaConnection.ts:39-44`) and `disconnectMetaAccount` (`metaConnection.ts:245`) write to, and exactly the doc that `loadStoredConnection` reads (`metaConnection.ts:302-303`).
 - The fix is also consistent with the in-file header comment (`metaConnection.ts:6-15`) and with `metaSync/dispatcher.ts:52` which lists "Doc path: `users/{uid}/workspaces/{wid}/private/metaConnection`".
 
