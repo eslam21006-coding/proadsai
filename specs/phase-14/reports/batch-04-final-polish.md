@@ -81,3 +81,32 @@ Frontend-only change — no backend build/deploy. No test file touched.
 - **Not machine-verifiable here (needs a human glance at `localhost:5174`):** the final rendered
   look of the modal. If it still reads as washed-out, the remaining lever is backdrop opacity
   (`/80` → `/90`), since the panel itself is provably opaque. Trivially reversible on this branch.
+
+---
+
+## Addendum — sidebar sync now stamps the workspace `lastMetaSyncAt`
+
+**Commit:** (this batch) · **File:** `functions/src/index.ts` (`metaSyncPerformance`) · **Deployed:** `functions:metaSyncPerformance`
+
+**Problem.** The sidebar "Sync Now" (`handleSyncMeta` → `metaSyncPerformance`) only stamped the
+**user-level** `metaConnections/{uid}.lastSyncAt`. The What's Working dashboard reads
+`lastMetaSyncAt` **only** from the workspace-scoped `users/{uid}/workspaces/{wid}/private/
+metaConnection` doc, so a sidebar sync left the dashboard's "last synced" stale.
+
+**Why not client-side.** The originally-proposed fix wrote that doc from `App.tsx`. It can't work:
+`firestore.rules` makes the `private/**` subtree **server-only** (`allow read, write: if false`),
+so a client `updateDoc` is rejected — and wrapped in a non-blocking catch it would fail silently.
+
+**Fix.** `metaSyncPerformance` (Admin SDK, bypasses the rule) now also stamps the workspace-private
+doc's `lastMetaSyncAt` after a successful sync, as an epoch-ms **number** (matching
+`runSyncForAccount`'s write and the dashboard's `typeof === "number"` read). Best-effort /
+non-blocking. `handleSyncMeta` itself is unchanged.
+
+**Behavioral note (cooldown).** The dashboard derives its Sync-Now cooldown from this same
+`lastMetaSyncAt` (`lastMetaSyncAt + 1h > now → cooldown`). So after a sidebar sync the dashboard's
+"last synced" now reads "just now" **and** its button correctly enters cooldown — the two are now
+**consistent** (which was the reported contradiction). If the button should instead stay *enabled*
+after a sidebar sync (cooldown tied only to `triggerMetaSync`), that needs a small follow-up:
+split the cooldown onto a separate field only `triggerMetaSync` writes, and have the dashboard read
+that field for `canSyncNow` while still reading `lastMetaSyncAt` for the displayed time. Not done
+here (would change dashboard behavior beyond the requested "only ADD" scope).

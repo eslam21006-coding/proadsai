@@ -3538,10 +3538,33 @@ export const metaSyncPerformance = onCall({
 
         } // end for-each account
 
-        // Update last sync time
+        // Update last sync time (user-level connection doc).
         await admin.firestore().collection("metaConnections").doc(uid).update({
             lastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
         });
+
+        // Phase 14 (dashboard-consistency): also stamp the workspace-private
+        // connection doc so the What's Working dashboard — which reads
+        // lastMetaSyncAt ONLY from users/{uid}/workspaces/{wid}/private/
+        // metaConnection — reflects a sidebar sync too, not just a
+        // triggerMetaSync run.
+        //
+        // Done here (Admin SDK) rather than client-side because the
+        // `private/**` subtree is server-only in firestore.rules
+        // (deny-all), so a client write would be rejected. Written as an
+        // epoch-ms NUMBER (not serverTimestamp) to match what
+        // runSyncForAccount writes and the dashboard's `typeof === "number"`
+        // read. Best-effort / non-blocking — a stamp failure must never
+        // fail the sync the user already completed.
+        if (workspaceId) {
+            try {
+                await admin.firestore()
+                    .doc(`users/${uid}/workspaces/${workspaceId}/private/metaConnection`)
+                    .set({ lastMetaSyncAt: Date.now() }, { merge: true });
+            } catch (err: unknown) {
+                console.warn("Non-blocking: failed to stamp workspace lastMetaSyncAt:", err);
+            }
+        }
 
         console.log(`📊 Synced ${totalSyncCount} ads across ${activeAccounts.length} accounts for user ${uid}`);
         return { success: true, adsSynced: totalSyncCount };
