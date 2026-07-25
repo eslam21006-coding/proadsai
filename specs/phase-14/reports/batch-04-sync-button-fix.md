@@ -169,7 +169,7 @@ All six toasts are inlined literals at the new `onSyncNow` site (not pulled from
 
 ## 5. Test status
 
-`npm test` (full contract + phase-14 suite, 30+ test files): **✅ PASS**
+`cd functions && npm test` (full contract + phase-14 suite, 30+ test files): **✅ PASS**
 
 Tail of output:
 

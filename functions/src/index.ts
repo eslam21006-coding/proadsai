@@ -3562,7 +3562,7 @@ export const metaSyncPerformance = onCall({
                     .doc(`users/${uid}/workspaces/${workspaceId}/private/metaConnection`)
                     .set({ lastMetaSyncAt: Date.now() }, { merge: true });
             } catch (err: unknown) {
-                console.warn("Non-blocking: failed to stamp workspace lastMetaSyncAt:", err);
+                console.warn("⚠️ Non-blocking: failed to stamp workspace lastMetaSyncAt:", err);
             }
         }
 
@@ -6517,6 +6517,21 @@ export const unlinkMetaAccountFromWorkspace = onCall({
         metaAdAccountName: admin.firestore.FieldValue.delete(),
         metaRoleAtLinkTime: admin.firestore.FieldValue.delete(),
     });
+
+    // Keep the What's Working dashboard mirror symmetric with the link.
+    // The dashboard reads connection state from the workspace-private
+    // `metaConnection.metaConnected` flag (set true when the account is
+    // linked via connectMetaAccount), so clear it here too — otherwise an
+    // unlinked workspace keeps reporting "connected". Same callable owns
+    // both writes. Best-effort: a mirror failure must not fail the unlink
+    // (the workspace-doc link is the source of truth). Tokens/perf data are
+    // intentionally retained — full teardown is `disconnectMetaAccount`'s job.
+    await admin.firestore()
+        .doc(`users/${uid}/workspaces/${workspaceId}/private/metaConnection`)
+        .set({ metaConnected: false, updatedAt: Date.now() }, { merge: true })
+        .catch((err: unknown) => {
+            console.warn("⚠️ Non-blocking: failed to clear workspace metaConnection mirror on unlink:", err);
+        });
 
     return { ok: true };
 });

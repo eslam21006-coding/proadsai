@@ -527,10 +527,6 @@ export const getWhatsWorkingDashboard = onCall(
                 .filter((g): g is string => typeof g === "string"),
         ));
         if (matchedGenIds.length > 0) {
-            const genDocs = await db.collection("generations")
-                .where("__name__", "in", matchedGenIds.slice(0, 30))
-                .get()
-                .catch((e: unknown) => { console.warn("🔥 [whatsWorkingDashboard] generations read failed:", e); throw new HttpsError("internal", "Failed to read generations."); });
             type GenShape = {
                 input?: {
                     offerCreativeMode?: unknown;
@@ -542,7 +538,21 @@ export const getWhatsWorkingDashboard = onCall(
                     selectedModes?: unknown;
                 };
             };
-            for (const d of (genDocs?.docs || [])) {
+            // Firestore's `in` operator caps at 30 values. Chunk the matched
+            // generation ids into groups of 30 so accounts with more than 30
+            // distinct matched generations still resolve real pattern
+            // descriptions instead of silently falling back to the generic
+            // "—" label for everything past the first 30.
+            const genDocSnaps: Array<FirebaseFirestore.QueryDocumentSnapshot> = [];
+            for (let gi = 0; gi < matchedGenIds.length; gi += 30) {
+                const genChunk = matchedGenIds.slice(gi, gi + 30);
+                const genDocs = await db.collection("generations")
+                    .where("__name__", "in", genChunk)
+                    .get()
+                    .catch((e: unknown) => { console.warn("🔥 [whatsWorkingDashboard] generations read failed:", e); throw new HttpsError("internal", "Failed to read generations."); });
+                genDocSnaps.push(...(genDocs?.docs || []));
+            }
+            for (const d of genDocSnaps) {
                 const gen = d.data() as GenShape;
                 // Build the same hash the worker uses (single source of
                 // truth is essential — we re-implement the formula here

@@ -157,7 +157,7 @@ Net effect: both the client-side and server-side sync rate limits are armed agai
 | Gate | Result |
 |---|---|
 | `npm run build` (functions) | **PASS** — clean `tsc`, no errors. |
-| `npm test` (functions) | **PASS** — 31 suites, 0 failures, 0 `not ok`. Verified across two full runs. |
+| `cd functions && npm test` | **PASS** — 31 suites, 0 failures, 0 `not ok`. Verified across two full runs. |
 | `npm run build` (frontend) | **PASS** — built in ~11s. |
 | `firebase deploy --only functions` | **PASS** — all functions updated in `europe-west1` (+ `purgeExpiredWorkspaces` in `us-central1`), including `metaSyncAccountWorker` and `metaDailySync` so the scheduled 3am sync carries the fixes. |
 

@@ -39,6 +39,7 @@ export function HookAngleIcon({ state, className }: HookAngleIconProps): React.R
                 : t("hook_icon.tooltip.weak"));
     return (
         <span
+            role="img"
             className={`inline-flex items-center text-[10px] ${className || ""}`}
             title={tooltipAr}
             aria-label={tooltipAr}
