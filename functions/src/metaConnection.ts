@@ -338,6 +338,7 @@ export async function patchStoredConnection(
         needsReauth: boolean;
         lastMetaSyncAt: number;
         lastSyncStatus: "ok" | "partial" | "failed";
+        currency: string | null;
     }>,
 ): Promise<void> {
     const ref = privateConnectionRef(uid, workspaceId);
@@ -359,6 +360,9 @@ export async function patchStoredConnection(
     }
     if (Object.prototype.hasOwnProperty.call(patch, "lastSyncStatus")) {
         update.lastSyncStatus = patch.lastSyncStatus;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "currency")) {
+        update.currency = patch.currency;
     }
     await ref.set(update, { merge: true });
 }

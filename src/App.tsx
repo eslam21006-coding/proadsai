@@ -11845,53 +11845,17 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 <WhatsWorkingDashboard
                   workspaceId={activeWorkspaceId}
                   accountId={activeMetaAccountId}
-                  // Phase 14 batch 04 (sync-button-fix) — Route the
-                  // dashboard's "Sync Now" through the workspace-scoped
-                  // `triggerMetaSync` callable so the sync actually
-                  // runs against the workspace-scoped paths the
-                  // dashboard reads. The previous wiring went through
-                  // `handleSyncMeta` → `metaSyncPerformance` (Batch 01
-                  // user-level, no cooldown, multi-account fan-out) —
-                  // that callable does not touch the workspace-private
-                  // `private/metaConnection` doc that this dashboard's
-                  // Sync Status bar greys the button for, so a
-                  // successful call there would never be reflected in
-                  // the dashboard's `canSyncNow` / `lastMetaSyncAt`
-                  // state. The sidebar's "Sync Now" still uses
-                  // `handleSyncMeta` and the legacy `metaSyncPerformance`
-                  // — that path feeds the PerformanceDashboard and is
-                  // intentionally untouched (per the fix spec).
+                  // FIX 1 (Phase 14 batch 04 dashboard-polish) — Route the
+                  // dashboard's "Sync Now" through the SAME handler as the
+                  // sidebar's "Sync Now" (`handleSyncMeta` →
+                  // `metaService.syncPerformance` → `metaSyncPerformance`),
+                  // which syncs reliably. The workspace-scoped
+                  // `triggerMetaSync` path was silently failing. handleSyncMeta
+                  // owns its own toasts, `metaSyncing` state, connection
+                  // refresh, and hook-angle cache invalidation; the dashboard
+                  // component re-fetches its own data once this resolves.
                   onSyncNow={async () => {
-                    if (!activeWorkspaceId) return;
-                    setMetaSyncing(true);
-                    showToast(lang === 'ar' ? 'جاري مزامنة الإعلانات…' : 'Syncing ad performance…', 'info');
-                    try {
-                      const result = await metaService.triggerWorkspaceSync(activeWorkspaceId);
-                      if (result.ok) {
-                        const count = result.counts?.ads ?? 0;
-                        showToast(lang === 'ar' ? `تمت مزامنة ${count} إعلان` : `Synced ${count} ads`, 'success');
-                        // Phase 14 batch 04 — invalidate the hook-angle
-                        // cache so the next dashboard mount re-fetches
-                        // fresh icons + bestAngles after a successful
-                        // sync.
-                        invalidateHookAngleIconsCache();
-                      } else if (result.needsReauth) {
-                        showToast(lang === 'ar' ? 'يرجى إعادة الاتصال بميتا' : 'Please reconnect Meta', 'error');
-                      } else {
-                        // Soft failure — most commonly a cooldown
-                        // (`resource-exhausted`). Surface a friendly
-                        // hint instead of a hard error.
-                        showToast(lang === 'ar' ? 'المزامنة في فترة انتظار — حاول لاحقاً' : 'Sync on cooldown — try again later', 'info');
-                      }
-                    } catch (err: any) {
-                      if (err?.code === 'functions/resource-exhausted' || err?.code === 'resource-exhausted') {
-                        showToast(lang === 'ar' ? 'المزامنة في فترة انتظار — حاول لاحقاً' : 'Sync on cooldown — try again later', 'info');
-                      } else {
-                        showToast(lang === 'ar' ? 'فشلت المزامنة' : 'Sync failed', 'error');
-                      }
-                    } finally {
-                      setMetaSyncing(false);
-                    }
+                    await handleSyncMeta();
                   }}
                   onReconnect={() => { void handleConnectMeta(); }}
                   onConnect={() => { void handleConnectMeta(); }}

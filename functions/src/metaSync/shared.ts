@@ -36,6 +36,7 @@ import {
     fetchAdCreativeImage,
     fetchAdInsights,
     fetchAccountBaselines,
+    fetchAdAccountCurrency,
     downloadCreativeImage,
     extractImageUrl,
     type MetaCampaign,
@@ -130,6 +131,14 @@ interface AdDoc {
     campaignObjective: CampaignObjectiveBucket;
     campaignObjectiveRaw: string;
     spend3d: number;
+    // FIX 2 (dashboard-polish): 7 complete days of spend (Meta `last_7d`
+    // preset — excludes today's partial day). Display-only; the Qarar
+    // verdict engine still runs on the 3-day rolling window.
+    spend7d: number;
+    // FIX 4 (dashboard-polish): image vs video creative. Video ads can
+    // never match a Pro Ads AI generation, so the dashboard excludes them
+    // from the "Ads That Need Linking" list.
+    creativeType: "image" | "video" | "unknown";
     spendToday: number;
     impressions3d: number;
     cpa3d: number | null;
@@ -182,11 +191,32 @@ export function computeSpendSharePct(adId: string, adSetId: string, perAdSet: Ma
 }
 
 /**
+ * FIX 4 (dashboard-polish): classify a creative as image / video / unknown
+ * from the fields we now request (`object_type`, `video_id`). A `video_id`
+ * or `object_type === "VIDEO"` is a definite video; a still-image object
+ * type or the presence of an image/thumbnail URL is treated as an image.
+ * Everything else stays "unknown" so legacy/edge-case ads are NOT hidden
+ * from the linking list.
+ */
+export function deriveCreativeType(creative: MetaAd["creative"]): "image" | "video" | "unknown" {
+    if (!creative || typeof creative === "string") return "unknown";
+    const objectType = typeof creative.object_type === "string" ? creative.object_type.toUpperCase() : "";
+    if (objectType === "VIDEO" || (typeof creative.video_id === "string" && creative.video_id.length > 0)) {
+        return "video";
+    }
+    if (objectType === "PHOTO" || objectType === "SHARE" || creative.image_url || creative.thumbnail_url) {
+        return "image";
+    }
+    return "unknown";
+}
+
+/**
  * Aggregate the 3-day window into the metrics shape the rest of the pipeline
  * uses. Pure — no I/O — so the contract test (T020) can verify the shape.
  */
 export function aggregateAdMetrics(windows: InsightsTimeWindows): {
     spend3d: number;
+    spend7d: number;
     spendToday: number;
     impressions3d: number;
     cpa3d: number | null;
@@ -199,6 +229,10 @@ export function aggregateAdMetrics(windows: InsightsTimeWindows): {
 } {
     const threeDayRows = windows.threeDayRolling.map((r) => ({ ...r }));
     const spend3d = sumField(threeDayRows, "spend");
+    // FIX 2 (dashboard-polish): sum spend across the 7 complete days of
+    // the `last_7d` daily window (Meta excludes today from that preset, so
+    // this is already "last 7 days, complete days only").
+    const spend7d = sumField(windows.last7DaysDaily.map((r) => ({ ...r })), "spend");
     const spendToday = sumField(windows.today.map((r) => ({ ...r })), "spend");
     const impressions3d = sumField(threeDayRows, "impressions");
     const clicks3d = sumField(threeDayRows, "clicks");
@@ -230,6 +264,7 @@ export function aggregateAdMetrics(windows: InsightsTimeWindows): {
 
     return {
         spend3d,
+        spend7d,
         spendToday,
         impressions3d,
         cpa3d,
@@ -510,6 +545,11 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // 3. Fetch insights + 4. baselines (parallel).
     const adInsightsMap = new Map<string, InsightsTimeWindows>();
     let baselines: Awaited<ReturnType<typeof fetchAccountBaselines>> | null = null;
+    // FIX 3 (dashboard-polish): the ad account's own currency code, so the
+    // dashboard can label spend in AED/SAR/EGP/USD rather than a bare
+    // number. Best-effort — a failure here must never break the sync, and
+    // we only overwrite the stored code when we actually got one.
+    let accountCurrency: string | null = null;
     try {
         const insightsEntries = await Promise.allSettled(
             ads.map(async (ad) => [ad.id, await fetchAdInsights(accessToken, ad.id)] as const),
@@ -528,6 +568,11 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
         baselines = await fetchAccountBaselines(accessToken, accountId);
     } catch (e: unknown) {
         errors.push(`fetchAccountBaselines failed: ${(e as Error).message}`);
+    }
+    try {
+        accountCurrency = await fetchAdAccountCurrency(accessToken, accountId);
+    } catch (e: unknown) {
+        errors.push(`fetchAdAccountCurrency failed: ${(e as Error).message}`);
     }
 
     // Phase 14 — Layer 4 (T041): load the per-account funnel settings once
@@ -851,6 +896,8 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             campaignObjective: objective.bucket,
             campaignObjectiveRaw: objective.raw,
             spend3d: metrics.spend3d,
+            spend7d: metrics.spend7d,
+            creativeType: deriveCreativeType(ad.creative),
             spendToday: metrics.spendToday,
             impressions3d: metrics.impressions3d,
             cpa3d: metrics.cpa3d,
@@ -1060,6 +1107,10 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             lastMetaSyncAt: nowMs,
             lastSyncStatus: status,
             needsReauth,
+            // FIX 3 (dashboard-polish): persist the account currency so the
+            // dashboard can label spend. Only pass it when we actually
+            // fetched one, so a transient failure never clears a good value.
+            ...(accountCurrency ? { currency: accountCurrency } : {}),
         });
     } catch (e: unknown) {
         errors.push(`patch connection failed: ${(e as Error).message}`);

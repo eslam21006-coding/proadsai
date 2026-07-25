@@ -22,7 +22,11 @@ interface SyncStatus {
 }
 
 interface Summary {
-    spend3dLabel: string;
+    // FIX 2 (dashboard-polish): spend now covers the last 7 days (display
+    // only — verdicts still use the internal 3-day window).
+    spend7dLabel: string;
+    totalSpend7d?: number;
+    currency?: string;
     matchedAds: number;
     totalAds: number;
     green: number;
@@ -190,7 +194,7 @@ function SummaryStrip({ summary }: { summary: Summary }): React.ReactElement {
             <SummaryCard
                 icon="fa-coins"
                 label={t("whats_working.summary.spend_label")}
-                value={summary.spend3dLabel}
+                value={summary.spend7dLabel}
             />
             <SummaryCard
                 icon="fa-bullseye"
@@ -434,7 +438,10 @@ export function WhatsWorkingDashboard(props: WhatsWorkingDashboardProps): React.
         <div className="space-y-6">
             <SyncStatusBar
                 status={data.syncStatus}
-                onSync={() => { void props.onSyncNow(); }}
+                // FIX 1 (dashboard-polish): after the sync finishes, re-fetch
+                // the dashboard so freshly-synced data (last-synced time,
+                // verdicts, spend) appears without a manual reload.
+                onSync={() => { void (async () => { await props.onSyncNow(); await fetchData(); })(); }}
                 onReconnect={props.onReconnect}
                 onConnect={props.onConnect}
             />

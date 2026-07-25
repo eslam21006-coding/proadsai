@@ -95,7 +95,15 @@ interface SyncStatus {
 }
 
 interface Summary {
-    spend3dLabel: string;
+    // FIX 2 (dashboard-polish): user-facing spend now covers the last 7
+    // complete days (Meta's default preset) instead of 3, so users can
+    // reconcile it against Ads Manager. The Qarar verdict engine still
+    // runs on the internal 3-day rolling window — this is display-only.
+    spend7dLabel: string;
+    // FIX 3 (dashboard-polish): raw amount + ISO currency code so the
+    // client can re-format if needed. `spend7dLabel` is already formatted.
+    totalSpend7d: number;
+    currency: string;
     matchedAds: number;
     totalAds: number;
     green: number;
@@ -177,6 +185,28 @@ export function makeSpendLabel(currency: string, amount: number, lang: "en" | "a
     const rounded = Math.round(amount * 100) / 100;
     if (lang === "ar") return `${rounded} ${currency} (آخر 3 أيام)`;
     return `${currency} ${rounded} (last 3 days)`;
+}
+
+/**
+ * FIX 3 (dashboard-polish): format a money amount in the account's
+ * currency. USD gets a leading `$`; every other ISO code is written as a
+ * trailing code (e.g. `1,835.90 AED`). Thousands separators + 2 decimals.
+ */
+export function formatMoney(currency: string, amount: number): string {
+    const withCommas = (Math.round(amount * 100) / 100).toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
+    return currency === "USD" ? `$${withCommas}` : `${withCommas} ${currency}`;
+}
+
+/**
+ * FIX 2 + FIX 3 (dashboard-polish): plain-Fusha 7-day spend label for the
+ * summary strip, in the account's own currency. No technical terms.
+ */
+export function makeSpend7dLabel(currency: string, amount: number, lang: "en" | "ar"): string {
+    const money = formatMoney(currency, amount);
+    return lang === "ar" ? `${money} (آخر 7 أيام)` : `${money} (last 7 days)`;
 }
 
 /** Plain-Fusha pattern description (no internal IDs exposed). */
@@ -325,6 +355,8 @@ export const getWhatsWorkingDashboard = onCall(
             campaignObjective?: string;
             verdict?: string;
             spend3d?: number;
+            spend7d?: number;
+            creativeType?: string;
             evaluatedAt?: number;
             ruleCode?: string;
             reasonAr?: string;
@@ -334,23 +366,29 @@ export const getWhatsWorkingDashboard = onCall(
         // Section B — Summary
         const conversionAds = allAds.filter((a) => a.campaignObjective === "conversion");
         const matchedAds = allAds.filter((a) => a.matchType === "auto_hash" || a.matchType === "manual").length;
-        const totalSpend3d = allAds.reduce((s, a) => s + (a.spend3d || 0), 0);
+        // FIX 2 (dashboard-polish): user-facing spend is the last 7 complete
+        // days now (Meta's default preset). `spend7d` is written per-ad by
+        // the sync worker; older docs without it fall back to spend3d so the
+        // strip never blanks out on stale data.
+        const totalSpend7d = allAds.reduce((s, a) => s + (typeof a.spend7d === "number" ? a.spend7d : (a.spend3d || 0)), 0);
         const verdicts = { green: 0, yellow: 0, red: 0 };
         for (const a of conversionAds) {
             if (a.verdict === "🟢") verdicts.green++;
             else if (a.verdict === "🔴") verdicts.red++;
             else if (a.verdict === "🟡" || a.verdict === "🛟") verdicts.yellow++;
         }
-        // Currency — when not explicitly known we OMIT the currency
-        // code from the label rather than mislabel non-USD accounts.
-        // The Meta account's currency is not surfaced through the current
-        // baselines/adPerformance paths; if a future change wires it
-        // through, surface it here.
-        const currency: string | null = null;
+        // FIX 3 (dashboard-polish): the ad account's currency is persisted on
+        // the workspace-private connection doc by the sync worker. Default
+        // to "USD" for accounts synced before this field existed.
+        // TODO: also capture the currency during the Meta connect flow so
+        // it's known before the first sync completes.
+        const currency: string = typeof connData.currency === "string" && connData.currency
+            ? connData.currency
+            : "USD";
         const summary: Summary = {
-            spend3dLabel: currency
-                ? makeSpendLabel(currency, totalSpend3d, "ar")
-                : `${Math.round(totalSpend3d * 100) / 100} (آخر 3 أيام)`,
+            spend7dLabel: makeSpend7dLabel(currency, totalSpend7d, "ar"),
+            totalSpend7d: Math.round(totalSpend7d * 100) / 100,
+            currency,
             matchedAds,
             totalAds: allAds.length,
             green: verdicts.green,
@@ -602,9 +640,15 @@ export const getWhatsWorkingDashboard = onCall(
                 .map((w) => w.out),
         );
 
-        // Section E — Unmatched ads (limit 20, most recent first)
+        // Section E — Unmatched ads (limit 20, most recent first).
+        // FIX 4 (dashboard-polish): Pro Ads AI only generates images, so a
+        // video ad can never match a generation — exclude videos from the
+        // linking list. Legacy docs without `creativeType` (or "unknown")
+        // are kept so we don't hide linkable image ads on older data. Video
+        // ads still appear in Recent Verdicts and the summary counts.
         const unmatchedAds: UnmatchedAd[] = allAds
             .filter((a) => a.matchType === null)
+            .filter((a) => a.creativeType !== "video")
             .sort((a, b) => {
                 const ta = typeof a.evaluatedAt === "number" ? a.evaluatedAt : 0;
                 const tb = typeof b.evaluatedAt === "number" ? b.evaluatedAt : 0;

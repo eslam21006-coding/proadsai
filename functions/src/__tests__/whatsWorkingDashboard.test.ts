@@ -207,9 +207,22 @@ test("count strings: include {used} placeholder for the runtime value", () => {
     assert.ok(!ar(5, 2).includes("%"));
 });
 
-test("spend label: includes currency + 'last 3 days' phrasing", () => {
-    const ar = (cur: string, amt: number): string => `${Math.round(amt * 100) / 100} ${cur} (آخر 3 أيام)`;
-    assert.equal(ar("USD", 124.567), "124.57 USD (آخر 3 أيام)");
+test("spend label: 7-day phrasing, currency-aware formatting (USD prefix, others suffix)", () => {
+    // Mirrors makeSpend7dLabel/formatMoney in whatsWorkingDashboard.ts.
+    const money = (cur: string, amt: number): string => {
+        const withCommas = (Math.round(amt * 100) / 100).toLocaleString("en-US", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        });
+        return cur === "USD" ? `$${withCommas}` : `${withCommas} ${cur}`;
+    };
+    const ar = (cur: string, amt: number): string => `${money(cur, amt)} (آخر 7 أيام)`;
+    assert.equal(ar("USD", 1835.9), "$1,835.90 (آخر 7 أيام)");
+    assert.equal(ar("AED", 1835.9), "1,835.90 AED (آخر 7 أيام)");
+    // 7 days, not 3.
+    assert.ok(ar("USD", 0).includes("آخر 7 أيام"));
+    assert.ok(!ar("USD", 0).includes("آخر 3 أيام"));
+    // No technical terms.
     assert.ok(!ar("USD", 0).includes("CTR"));
     assert.ok(!ar("USD", 0).includes("%"));
 });

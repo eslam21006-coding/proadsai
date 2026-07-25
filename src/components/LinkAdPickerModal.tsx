@@ -8,6 +8,7 @@
 import React, { useEffect, useState } from "react";
 import { collection, getDocs, limit, orderBy, query, where } from "firebase/firestore";
 import { db } from "../firebase";
+import { auth } from "../firebase";
 import { functions } from "../firebase";
 import { httpsCallable } from "firebase/functions";
 import { useT } from "../i18n";
@@ -43,14 +44,26 @@ export function LinkAdPickerModal(props: LinkAdPickerModalProps): React.ReactEle
         setError(null);
         (async () => {
             try {
+                // FIX 5 (dashboard-polish): the `generations` security rule
+                // only allows reads where `userId == request.auth.uid`.
+                // Firestore rejects a query it can't prove satisfies that
+                // rule, so the query MUST constrain userId — without it the
+                // client got "Missing or insufficient permissions". (The
+                // rule itself was already correct; the query was the gap.)
+                const uid = auth.currentUser?.uid;
+                if (!uid) {
+                    setGenerations([]);
+                    return;
+                }
                 // FR-023: only the active workspace's generations.
-                // The query filters by workspaceId AND a non-null
+                // The query filters by userId AND workspaceId AND a non-null
                 // imageFingerprint (so we know we have a renderable image).
                 // Firestore requires the first orderBy field to match the
                 // inequality-filter field, so order first by imageFingerprint,
-                // then by createdAt desc.
+                // then by timestamp desc.
                 const q = query(
                     collection(db, "generations"),
+                    where("userId", "==", uid),
                     where("workspaceId", "==", props.workspaceId),
                     where("imageFingerprint", "!=", null),
                     orderBy("imageFingerprint", "desc"),
@@ -125,7 +138,11 @@ export function LinkAdPickerModal(props: LinkAdPickerModalProps): React.ReactEle
             className="fixed inset-0 z-[300] flex items-center justify-center p-4"
             onClick={props.onClose}
         >
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            {/* FIX 6 (dashboard-polish): opaque dark backdrop (matches the
+                MetaAccountPickerModal pattern) so page content behind is not
+                visible through the modal. The panel below is a solid
+                bg-slate-950 card. */}
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
             <div
                 role="dialog"
                 aria-modal="true"
