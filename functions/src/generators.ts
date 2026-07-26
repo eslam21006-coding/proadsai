@@ -49,6 +49,8 @@ import type { FailureClass, CostEstimate, LogoPlacement, ClaimFlagEntry, CopyFie
 import { resolveBrandColors, type ResolveBrandColorsInput } from "./brandColorResolver.js";
 import { buildCarouselBrandConsistencyBlock, buildBatchBrandConsistencyBlock } from "./brandPromptBlocks.js";
 import { buildConceptEnrichmentBlock, type ConceptBrief, type ConceptDirectorFallback } from "./conceptDirector.js";
+import { loadRAGContextForWorkspace, buildHookPerformanceBlock, buildVisualPerformanceBlock, buildCaptionPerformanceBlock } from "./ragContext.js";
+import type { WinningAd } from "./getTopWinners.js";
 import { checkBrandColorCompliance } from "./brandColorCompliance.js";
 import { GenerationError } from "./types.js";
 import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL, OPENAI_SIZE_BY_ASPECT } from "./modelConfig.js";
@@ -96,6 +98,40 @@ function extractConceptArchitectures(
         if (typeof arch === "string" && (arch as string) !== "") out.add(arch);
     }
     return out.size > 0 ? out : HEADLINE_WHITELIST;
+}
+
+// ─── Past-winning-ads block (Phase 14 Layer 7b) ─────────────────────────────
+// A small, purely-functional builder for the prompt section that lists
+// the user's 5 most-recent S1 winners. The Director uses these for
+// *variety* (each new concept must differ on at least one of
+// metaphor / layout / headline from the existing winners) and for
+// *pattern grounding* (what made them work for THIS account).
+//
+// Returns "" when the input is empty so the caller can append
+// nothing — keeping the prompt byte-identical to the pre-Batch-05
+// build when there are no winners (default `[]` pastWinningAds
+// passthrough).
+//
+// Format: each winner on its own line, no metric values, no jargon.
+// The model gets hook angle + a short hook-text glimpse + the
+// layout+art-direction tag, which is enough for it to deliberately
+// produce a different sibling while staying inside the same world.
+
+function buildPastWinnersBlock(winners: ReadonlyArray<WinningAd>): string {
+    if (!winners || winners.length === 0) return "";
+    const lines: string[] = [
+        "The user's top-performing creatives in this account are listed below. Use them as a VARIETY reference — each new concept you write should DELIBERATELY differ on at least one of metaphor, layout, or headline architecture so the set of 3 concepts stays fresh. Do not copy any of these.",
+    ];
+    for (let i = 0; i < winners.length; i++) {
+        const w = winners[i];
+        const parts: string[] = [];
+        if (w.hookAngle) parts.push(`hook: ${w.hookAngle}`);
+        if (w.hookText) parts.push(`text: "${w.hookText}"`);
+        if (w.layoutTemplate) parts.push(`layout: ${w.layoutTemplate}`);
+        if (w.artDirection) parts.push(`art: ${w.artDirection}`);
+        lines.push(`${i + 1}. ${parts.join(" | ")}`);
+    }
+    return lines.join("\n");
 }
 
 // ─── Safe remote-image fetch ────────────────────────────────────────────────
@@ -2266,7 +2302,9 @@ RETURN NOTHING ELSE. NO OTHER HOOKS.`;
         // ─── PERSONALIZATION INJECTION (Data Flywheel) ─────────────────────
         let personalizationContext = '';
         let _step2RankingGuidance: RankingGuidance | null = null;
+        let _step2RAGBlock = '';
         const _userId = (inputs as any)._userId;
+        const _workspaceId = (inputs as any)._workspaceId || (inputs as any).activeWorkspaceId;
         if (_userId && mode === 'initial') {
             try {
                 personalizationContext = await buildPersonalizationContext(
@@ -2289,6 +2327,23 @@ RETURN NOTHING ELSE. NO OTHER HOOKS.`;
                 if (memoryPatterns) personalizationContext += '\n' + memoryPatterns;
             } catch (e) {
                 console.warn('Personalization fetch failed (non-blocking):', e);
+            }
+            // ═══ PHASE 14 LAYER 7a — RAG (Performance Context) ═══
+            // Append the user's hook-angle history to the prompt once the
+            // account has 10+ matched conversion ads. Fail-open: if the
+            // workspace isn't connected, the loader throws, or the user's
+            // confirmed hook angle is missing, the block is empty.
+            if (_workspaceId) {
+                try {
+                    const { ragContext } = await loadRAGContextForWorkspace(
+                        _userId,
+                        _workspaceId,
+                        inputs.coldHookAngle || undefined,
+                    );
+                    _step2RAGBlock = buildHookPerformanceBlock(ragContext);
+                } catch (e) {
+                    console.warn("⚠️ RAG hook injection failed (non-blocking):", e);
+                }
             }
             // ═══ RANKING GUIDANCE (Ticket 3 — soft bias from Ticket 2) ═══
             try {
@@ -2896,6 +2951,11 @@ HOOKS B, C, D — CREATIVE EXPLORATION:
 These 3 hooks must BREAK AWAY from past patterns. Explore NEW angles, structures, word choices, and emotional triggers that are DIFFERENT from what has worked before. Surprise the user with fresh perspectives. The vault principles above apply ONLY to Hook A.
 ═══════════════════════════════════════════════════════════════════════════════
 ` : ''}
+${_step2RAGBlock ? `
+═══════════════════════════════════════════════════════════════════════════════
+${_step2RAGBlock}
+═══════════════════════════════════════════════════════════════════════════════
+` : ''}
 ${_step2RankingGuidance?.promptBlock || ''}
 ${inputs.competitorContext ? `
 ═══════════════════════════════════════════════════════════════════════════════
@@ -3103,7 +3163,7 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
 // This step is just "Scene Description". 2.5 Flash is perfectly capable and faster.
 // This saves your Gemini 3 Quota/Limits.
 
-export async function generateConcepts(approvedTov: string, inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', _previousOutput?: string, _globalRefinement?: string, editFeedback?: string, editIndex?: string, conceptDirectorBriefs?: ReadonlyArray<ConceptBrief | ConceptDirectorFallback>): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
+export async function generateConcepts(approvedTov: string, inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', _previousOutput?: string, _globalRefinement?: string, editFeedback?: string, editIndex?: string, conceptDirectorBriefs?: ReadonlyArray<ConceptBrief | ConceptDirectorFallback>, pastWinningAds?: ReadonlyArray<unknown>): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
     // FIX 2: strip media payload (presence preserved) — concepts only branch on logo/asset COUNT.
     inputs = stripMediaFromInputs(inputs);
     let _conceptsRankingLinkage: RankingLinkage | null = null;
@@ -4416,6 +4476,18 @@ Selected modes: [${modes.join(' + ')}]
                 finalPrompt += '\n\n' + _cdBlock;
             }
         }
+        // ═══ PHASE 14 LAYER 7b — Past-Winning-Ads (Concept Director context) ═══
+        // Append a short, non-blocking list of the user's 5 most recent
+        // S1 winners so the model can see what worked and choose
+        // concepts that are DIFFERENT in metaphor / layout / headline.
+        // When `pastWinningAds` is empty (default), no block is added
+        // and the prompt is byte-identical to the pre-Batch-05 build.
+        if (pastWinningAds && pastWinningAds.length > 0 && mode === 'initial') {
+            const _winnersBlock = buildPastWinnersBlock(pastWinningAds as ReadonlyArray<WinningAd>);
+            if (_winnersBlock) {
+                finalPrompt += '\n\n' + _winnersBlock;
+            }
+        }
 
         // Using Lite model with Retry logic + content-level retry for empty responses
         let conceptResult = '';
@@ -4619,6 +4691,26 @@ export async function generateBuildPlan(conceptRaw: string, selectedTov: string,
         .replace(/\*\*/g, "")
         .trim()
         .slice(0, 6000);
+
+    // ═══ PHASE 14 LAYER 7a — RAG (Visual Performance Context) ═══
+    // Append the user's visual-pattern history to the build-plan prompt
+    // once the account has 10+ matched conversion ads. Fail-open —
+    // disconnected / failed read → empty block, prompt unchanged.
+    let _bpRAGBlock = "";
+    const _bpUserId = (inputs as any)._userId;
+    const _bpWorkspaceId = (inputs as any)._workspaceId || (inputs as any).activeWorkspaceId;
+    if (_bpUserId && _bpWorkspaceId) {
+        try {
+            const { ragContext } = await loadRAGContextForWorkspace(
+                _bpUserId,
+                _bpWorkspaceId,
+                inputs.coldHookAngle || undefined,
+            );
+            _bpRAGBlock = buildVisualPerformanceBlock(ragContext);
+        } catch (e) {
+            console.warn("⚠️ RAG build-plan injection failed (non-blocking):", e);
+        }
+    }
 
     const prompt = `
   [BUILDER V6.0 — STRUCTURED BUILD PLAN]
@@ -4886,7 +4978,9 @@ ${malformedJson.slice(0, 24000)}`
         return parseStructuredPlanWithRepair(response.text || '{}');
     };
 
-    let machinePlan = await requestStructuredPlan(prompt);
+    let machinePlan = await requestStructuredPlan(
+        _bpRAGBlock ? `${prompt}\n\n${_bpRAGBlock}` : prompt,
+    );
     let structuredValidation = validateStructuredBuildPlan(machinePlan, buildPlanContract, ownershipMap);
 
     if (!structuredValidation.contractCheck.passed) {
@@ -4970,7 +5064,9 @@ ${JSON.stringify(machinePlan)}`;
         }
         if (attempt < MAX_COPY_FIDELITY_ATTEMPTS) {
             console.warn(`⚠️ Copy fidelity ${fidelityResult.passed ? 'passed' : 'failed (fields: ' + fidelityResult.failedFields.join(', ') + ')'}, contract ${contractOk ? 'passed' : 'failed'} (attempt ${attempt}/${MAX_COPY_FIDELITY_ATTEMPTS}) — rebuilding plan...`);
-            machinePlan = await requestStructuredPlan(prompt);
+            machinePlan = await requestStructuredPlan(
+                _bpRAGBlock ? `${prompt}\n\n${_bpRAGBlock}` : prompt,
+            );
             if (!machinePlan.blueprint || machinePlan.blueprint.length < 80) {
                 if (bestMachinePlan.blueprint && bestMachinePlan.blueprint.length >= 80) {
                     console.warn('⚠️ Copy fidelity retry produced empty/short blueprint — falling back to bestMachinePlan');
@@ -8949,13 +9045,32 @@ export async function generateCaption(mockupUrl: string, inputs: AdInputs, visua
         // ═══ PERSONALIZATION for Step 5 caption (non-blocking) ═══
         let _captionPersonalization = '';
         let _step5RankingGuidance: RankingGuidance | null = null;
+        let _step5RAGBlock = '';
         const _captionUserId = (inputs as any)._userId;
+        const _captionWorkspaceId = (inputs as any)._workspaceId || (inputs as any).activeWorkspaceId;
         if (_captionUserId) {
             try {
                 _captionPersonalization = await buildPersonalizationContext(
                     _captionUserId, 'hooks', inputs.targetAudience
                 );
             } catch { /* non-blocking */ }
+            // ═══ PHASE 14 LAYER 7a — RAG (Caption Performance Context) ═══
+            // Light-touch single-sentence hint. Even though copy learning is
+            // excluded from v1, the RAG context still carries a qualitative
+            // signal about which hook-angle family resonates with the user's
+            // audience. Fail-open.
+            if (_captionWorkspaceId) {
+                try {
+                    const { ragContext } = await loadRAGContextForWorkspace(
+                        _captionUserId,
+                        _captionWorkspaceId,
+                        inputs.coldHookAngle || undefined,
+                    );
+                    _step5RAGBlock = buildCaptionPerformanceBlock(ragContext);
+                } catch (e) {
+                    console.warn("⚠️ RAG caption injection failed (non-blocking):", e);
+                }
+            }
             // ═══ RANKING GUIDANCE (Ticket 3 — soft bias from Ticket 2) ═══
             try {
                 _step5RankingGuidance = await buildRankingGuidance(inputs, 'caption');
@@ -9283,6 +9398,7 @@ Position the offer as clearly superior without naming competitors directly. Use 
         let captionPromptFull = _captionPersonalization
             ? prompt + '\n' + _captionPersonalization
             : prompt;
+        if (_step5RAGBlock) captionPromptFull += '\n' + _step5RAGBlock;
         if (_step5RankingGuidance?.promptBlock) captionPromptFull += '\n' + _step5RankingGuidance.promptBlock;
 
         let result = '';

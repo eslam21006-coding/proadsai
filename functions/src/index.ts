@@ -49,6 +49,7 @@ import {
 } from "./conceptDirector.js";
 import { validateBatchVariance } from "./varianceValidator.js";
 import { getConceptDirectorKillSwitch, getConceptDirectorEnabled } from "./conceptDirectorConfig.js";
+import { loadTopWinners, type WinningAd } from "./getTopWinners.js";
 import type { ConceptDirectorTraceEntry } from "./types.js";
 // Phase 14 — RAG + Meta Reporting Feedback Loop (Layer 1 callables).
 export { saveFunnelSettings, getFunnelSettings, dismissAdvisory } from "./funnelSettings.js";
@@ -4244,6 +4245,34 @@ export const serverGenerateConcepts = onCall({
     // ═══ ENTITLEMENT: Check retargeting gate on concept generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
 
+    // ═══ PHASE 14 LAYER 7b — TOP WINNERS (pastWinningAds) ═══
+    // Load the 5 most-recent S1 winners for the active workspace + ad
+    // account, so the Phase 20 Concept Director can use them as a
+    // reference for variety. Fail-open: any read failure → empty array
+    // (no regression; the Director handles an empty list gracefully).
+    let _topWinners: ReadonlyArray<WinningAd> = [];
+    try {
+        const _wsId = (inputs as any)?.workspaceId || activeWorkspaceId;
+        if (_wsId) {
+            // Resolve the connected ad account (may be null on disconnect).
+            const _wsSnap = await admin.firestore()
+                .doc(`users/${request.auth.uid}/workspaces/${_wsId}`)
+                .get();
+            const _accountId = _wsSnap.exists
+                ? ((_wsSnap.data() || {}).metaAdAccountId as string | undefined)
+                : null;
+            if (typeof _accountId === "string" && _accountId.length > 0) {
+                _topWinners = await loadTopWinners(
+                    request.auth.uid,
+                    _wsId,
+                    _accountId,
+                );
+            }
+        }
+    } catch (e) {
+        console.warn("⚠️ serverGenerateConcepts: top-winners load failed (non-blocking):", e);
+    }
+
     // ═══ PHASE 20 — CONCEPT DIRECTOR GATE (Contract C1 / C2 / FR-021-024) ═══
     // The decision is computed ONCE and held for the whole generation
     // so a mid-flight flag flip cannot produce a half-enriched result.
@@ -4367,7 +4396,7 @@ export const serverGenerateConcepts = onCall({
                         siblingConcepts: _directorResults.slice(),
                         varianceMode: "balanced",
                         avoidTokens: {},
-                        pastWinningAds: [],
+                        pastWinningAds: _topWinners,
                     };
                     // A failure for one concept must NOT abort the loop
                     // (Contract C3.3 / FR-010). directConcept returns a
@@ -4435,7 +4464,7 @@ export const serverGenerateConcepts = onCall({
                             siblingConcepts: _directorResults.filter((_, j) => j !== idx),
                             varianceMode: "balanced",
                             avoidTokens: avoid,
-                            pastWinningAds: [],
+                            pastWinningAds: _topWinners,
                         };
                         const retryResult = await directConcept(retryInput, _directorCallModel, 15000);
                         _directorResults[idx] = retryResult;
@@ -4481,7 +4510,7 @@ export const serverGenerateConcepts = onCall({
     }
 
     try {
-        const result = await generators.generateConcepts(approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, _cdBriefs);
+        const result = await generators.generateConcepts(approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, _cdBriefs, _topWinners);
         // ── Cultural compliance: scan the concept/blueprint text returned to the client.
         // The prompt and final-copy pipelines are already scanned in generators.ts, but
         // the raw concept text shown in the client's concept cards was not — so haram
