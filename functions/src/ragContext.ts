@@ -54,71 +54,71 @@
 // ═══════════════════════════════════════════════════════════
 
 import type {
-    HookPerformanceAggregate,
-    VisualPerformanceAggregate,
+  HookPerformanceAggregate,
+  VisualPerformanceAggregate,
 } from "./learningAggregates.js";
 import { getDb } from "./firestoreClient.js";
 
 // ─── Public types ─────────────────────────────────────────────
 
 export interface RAGContextInput {
-    userId: string;
-    workspaceId: string;
-    accountId: string;
-    hookAngle?: string;
-    /** Pattern description overrides keyed by patternKey — lets the
+  userId: string;
+  workspaceId: string;
+  accountId: string;
+  hookAngle?: string;
+  /** Pattern description overrides keyed by patternKey — lets the
      *  caller surface a human-readable label like "Heritage + Bold +
      *  Dubai" instead of the raw hash. Optional. */
-    visualPatternDescriptions?: Record<string, string>;
-    /** 90-day account average Link CTR (decimal percentage, e.g.
+  visualPatternDescriptions?: Record<string, string>;
+  /** 90-day account average Link CTR (decimal percentage, e.g.
      *  1.0 = 1.0%). The 75% threshold for the 🔥/⚠️ split and the
      *  avoid rule is derived from this value. */
-    accountAvgLinkCtr: number;
-    hookAggs: ReadonlyArray<HookPerformanceAggregate>;
-    visualAggs: ReadonlyArray<VisualPerformanceAggregate>;
+  accountAvgLinkCtr: number;
+  hookAggs: ReadonlyArray<HookPerformanceAggregate>;
+  visualAggs: ReadonlyArray<VisualPerformanceAggregate>;
 }
 
 export interface RAGContext {
-    insufficient: boolean;
-    sampleSize: number;
-    hookInsights: {
-        topPerformers: Array<{
-            angleKey: string;
-            angleName: string;
-            avgLinkCtr: number;
-            winCount: number;
-        }>;
-        avoid: Array<{
-            angleKey: string;
-            angleName: string;
-            avgLinkCtr: number;
-            loseCount: number;
-        }>;
-        selectedAngleRank?: "top" | "good" | "weak" | "unknown";
-    };
-    visualInsights: {
-        topPerformers: Array<{
-            patternKey: string;
-            description: string;
-            avgLinkCtr: number;
-            winCount: number;
-        }>;
-        avoid: Array<{
-            patternKey: string;
-            description: string;
-            avgLinkCtr: number;
-            loseCount: number;
-        }>;
-    };
-    /** Pre-formatted hook prompt block (natural-language summary
+  insufficient: boolean;
+  sampleSize: number;
+  hookInsights: {
+    topPerformers: Array<{
+      angleKey: string;
+      angleName: string;
+      avgLinkCtr: number;
+      winCount: number;
+    }>;
+    avoid: Array<{
+      angleKey: string;
+      angleName: string;
+      avgLinkCtr: number;
+      loseCount: number;
+    }>;
+    selectedAngleRank?: "top" | "good" | "weak" | "unknown";
+  };
+  visualInsights: {
+    topPerformers: Array<{
+      patternKey: string;
+      description: string;
+      avgLinkCtr: number;
+      winCount: number;
+    }>;
+    avoid: Array<{
+      patternKey: string;
+      description: string;
+      avgLinkCtr: number;
+      loseCount: number;
+    }>;
+  };
+  /** Pre-formatted hook prompt block (natural-language summary
      *  of the user's hook-angle history). */
-    hookBlock: string;
-    /** Pre-formatted visual/build-plan prompt block. */
-    visualBlock: string;
-    /** Pre-formatted caption prompt block (single sentence). */
-    captionBlock: string;
-    /** Combined narrative block — kept for legacy / general uses. */
-    promptBlock: string;
+  hookBlock: string;
+  /** Pre-formatted visual/build-plan prompt block. */
+  visualBlock: string;
+  /** Pre-formatted caption prompt block (single sentence). */
+  captionBlock: string;
+  /** Combined narrative block — kept for legacy / general uses. */
+  promptBlock: string;
 }
 
 // ─── Constants ────────────────────────────────────────────────
@@ -132,33 +132,33 @@ const AVOID_THRESHOLD_RATIO = 0.75; // ≤ 75% of account average triggers "avoi
 // ─── Pure helpers ─────────────────────────────────────────────
 
 interface RankedHook {
-    angleKey: string;
-    avgLinkCtr: number;
-    winCount: number;
-    loseCount: number;
-    sampleSize: number;
+  angleKey: string;
+  avgLinkCtr: number;
+  winCount: number;
+  loseCount: number;
+  sampleSize: number;
 }
 
 interface RankedVisual {
-    patternKey: string;
-    avgLinkCtr: number;
-    sampleSize: number;
-    winCount: number;
-    loseCount: number;
+  patternKey: string;
+  avgLinkCtr: number;
+  sampleSize: number;
+  winCount: number;
+  loseCount: number;
 }
 
 function rankHooks(
-    hookAggs: ReadonlyArray<HookPerformanceAggregate>,
+  hookAggs: ReadonlyArray<HookPerformanceAggregate>,
 ): RankedHook[] {
-    return hookAggs
-        .filter((a) => a.byObjective.conversion.count > 0)
-        .map((a) => ({
-            angleKey: a.angleKey,
-            avgLinkCtr: a.byObjective.conversion.avgLinkCtr,
-            winCount: a.byObjective.conversion.bestVerdictCount,
-            loseCount: a.byObjective.conversion.worstVerdictCount,
-            sampleSize: a.byObjective.conversion.count,
-        }));
+  return hookAggs
+    .filter((a) => a.byObjective.conversion.count > 0)
+    .map((a) => ({
+      angleKey: a.angleKey,
+      avgLinkCtr: a.byObjective.conversion.avgLinkCtr,
+      winCount: a.byObjective.conversion.bestVerdictCount,
+      loseCount: a.byObjective.conversion.worstVerdictCount,
+      sampleSize: a.byObjective.conversion.count,
+    }));
 }
 
 /**
@@ -168,91 +168,91 @@ function rankHooks(
  * without duplicating the slice logic.
  */
 function sortSlice<T>(items: ReadonlyArray<T>, n: number, cmp: (a: T, b: T) => number): T[] {
-    return [...items].sort(cmp).slice(0, n);
+  return [...items].sort(cmp).slice(0, n);
 }
 
 function rankSelectedAngle(
-    selectedAngle: string | undefined,
-    ranked: ReadonlyArray<RankedHook>,
-    accountAvgLinkCtr: number,
+  selectedAngle: string | undefined,
+  ranked: ReadonlyArray<RankedHook>,
+  accountAvgLinkCtr: number,
 ): "top" | "good" | "weak" | "unknown" | undefined {
-    if (!selectedAngle) return undefined;
-    const found = ranked.find((r) => r.angleKey === selectedAngle);
-    if (!found) return "unknown";
-    if (ranked.length > 0 && ranked[0].angleKey === selectedAngle) return "top";
-    // "weak" requires BOTH below-threshold avgLinkCtr AND the data gate
-    // (>= 3 ads) — same gate as the avoid-list so the rank label and
-    // the structured avoid insight cannot disagree about whether a
-    // given angle underperforms.
-    const threshold = accountAvgLinkCtr * AVOID_THRESHOLD_RATIO;
-    if (found.sampleSize >= AVOID_MIN_ADS && found.avgLinkCtr < threshold) return "weak";
-    return "good";
+  if (!selectedAngle) return undefined;
+  const found = ranked.find((r) => r.angleKey === selectedAngle);
+  if (!found) return "unknown";
+  if (ranked.length > 0 && ranked[0].angleKey === selectedAngle) return "top";
+  // "weak" requires BOTH below-threshold avgLinkCtr AND the data gate
+  // (>= 3 ads) — same gate as the avoid-list so the rank label and
+  // the structured avoid insight cannot disagree about whether a
+  // given angle underperforms.
+  const threshold = accountAvgLinkCtr * AVOID_THRESHOLD_RATIO;
+  if (found.sampleSize >= AVOID_MIN_ADS && found.avgLinkCtr < threshold) return "weak";
+  return "good";
 }
 
 // ─── Block builders ───────────────────────────────────────────
 
 function pluralize(n: number, singular: string, plural: string): string {
-    return n === 1 ? singular : plural;
+  return n === 1 ? singular : plural;
 }
 
 function buildHookBlockText(
-    ranked: ReadonlyArray<RankedHook>,
-    avoid: ReadonlyArray<RankedHook>,
-    sampleSize: number,
+  ranked: ReadonlyArray<RankedHook>,
+  avoid: ReadonlyArray<RankedHook>,
+  sampleSize: number,
 ): string {
-    const top = ranked.slice(0, TOP_PERFORMER_COUNT);
-    if (top.length === 0) return "";
-    const topNames = top.map((r) => r.angleKey);
-    const strongest = topNames[0];
-    const secondary = topNames.slice(1).join(", ");
-    const topPhrase = top.length === 1
-        ? strongest
-        : `${strongest}${secondary ? ` (followed by ${secondary})` : ""}`;
-    const avoidPhrase = avoid.length > 0
-        ? ` Avoid ${avoid.map((r) => r.angleKey).join(", ")} which consistently underperform in this account.`
-        : "";
-    return (
-        `Based on this user's own ad account data (${sampleSize} matched ${pluralize(sampleSize, "creative", "creatives")}): ` +
-        `Their top-performing hook angles are ${topPhrase}.` +
-        avoidPhrase +
-        " Use this to inform — but not rigidly copy — what you generate. The user's history suggests patterns, not rules."
-    );
+  const top = ranked.slice(0, TOP_PERFORMER_COUNT);
+  if (top.length === 0) return "";
+  const topNames = top.map((r) => r.angleKey);
+  const strongest = topNames[0];
+  const secondary = topNames.slice(1).join(", ");
+  const topPhrase = top.length === 1
+    ? strongest
+    : `${strongest}${secondary ? ` (followed by ${secondary})` : ""}`;
+  const avoidPhrase = avoid.length > 0
+    ? ` Avoid ${avoid.map((r) => r.angleKey).join(", ")} which consistently underperform in this account.`
+    : "";
+  return (
+    `Based on this user's own ad account data (${sampleSize} matched ${pluralize(sampleSize, "creative", "creatives")}): ` +
+    `Their top-performing hook angles are ${topPhrase}.` +
+    avoidPhrase +
+    " Use this to inform — but not rigidly copy — what you generate. The user's history suggests patterns, not rules."
+  );
 }
 
 function buildVisualBlockText(
-    visualRanked: ReadonlyArray<RankedVisual>,
-    visualPatternDescriptions: Record<string, string> | undefined,
-    accountAvgLinkCtr: number,
+  visualRanked: ReadonlyArray<RankedVisual>,
+  visualPatternDescriptions: Record<string, string> | undefined,
+  accountAvgLinkCtr: number,
 ): string {
-    if (visualRanked.length === 0) return "";
-    const top = sortSlice(visualRanked, TOP_PERFORMER_COUNT, (a, b) => b.avgLinkCtr - a.avgLinkCtr);
-    const threshold = accountAvgLinkCtr * AVOID_THRESHOLD_RATIO;
-    const avoid = sortSlice(
-        visualRanked.filter((v) => v.sampleSize >= AVOID_MIN_ADS && v.avgLinkCtr <= threshold),
-        AVOID_COUNT,
-        (a, b) => a.avgLinkCtr - b.avgLinkCtr,
-    );
-    const fmt = (v: RankedVisual): string => visualPatternDescriptions?.[v.patternKey] ?? v.patternKey;
-    const topJoined = top.map(fmt).join(", ");
-    const avoidJoined = avoid.map(fmt).join(", ");
-    const topPhrase = top.length === 1 ? fmt(top[0]) : topJoined;
-    let s = `This user's best-performing visual compositions are ${topPhrase}. Lean toward these patterns while maintaining creative variety.`;
-    if (avoidJoined) {
-        s += ` Avoid ${avoidJoined} which underperform in this account.`;
-    }
-    return s;
+  if (visualRanked.length === 0) return "";
+  const top = sortSlice(visualRanked, TOP_PERFORMER_COUNT, (a, b) => b.avgLinkCtr - a.avgLinkCtr);
+  const threshold = accountAvgLinkCtr * AVOID_THRESHOLD_RATIO;
+  const avoid = sortSlice(
+    visualRanked.filter((v) => v.sampleSize >= AVOID_MIN_ADS && v.avgLinkCtr <= threshold),
+    AVOID_COUNT,
+    (a, b) => a.avgLinkCtr - b.avgLinkCtr,
+  );
+  const fmt = (v: RankedVisual): string => visualPatternDescriptions?.[v.patternKey] ?? v.patternKey;
+  const topJoined = top.map(fmt).join(", ");
+  const avoidJoined = avoid.map(fmt).join(", ");
+  const topPhrase = top.length === 1 ? fmt(top[0]) : topJoined;
+  let s = `This user's best-performing visual compositions are ${topPhrase}. Lean toward these patterns while maintaining creative variety.`;
+  if (avoidJoined) {
+    s += ` Avoid ${avoidJoined} which underperform in this account.`;
+  }
+  return s;
 }
 
 function buildCaptionBlockText(
-    ranked: ReadonlyArray<RankedHook>,
-    selectedAngle: string | undefined,
+  ranked: ReadonlyArray<RankedHook>,
+  selectedAngle: string | undefined,
 ): string {
-    if (ranked.length === 0) return "";
-    const top = ranked[0];
-    const targetAngle = selectedAngle && ranked.find((r) => r.angleKey === selectedAngle)
-        ? selectedAngle
-        : top.angleKey;
-    return `This user's ads perform best with ${targetAngle} approaches — keep the caption tone aligned with what resonates with their audience.`;
+  if (ranked.length === 0) return "";
+  const top = ranked[0];
+  const targetAngle = selectedAngle && ranked.find((r) => r.angleKey === selectedAngle)
+    ? selectedAngle
+    : top.angleKey;
+  return `This user's ads perform best with ${targetAngle} approaches — keep the caption tone aligned with what resonates with their audience.`;
 }
 
 // ─── Public entry point ────────────────────────────────────────
@@ -269,126 +269,126 @@ function buildCaptionBlockText(
  * (fail-open, byte-identical to the pre-RAG prompt).
  */
 export function buildRAGContext(input: RAGContextInput): RAGContext {
-    const {
-        hookAggs,
-        visualAggs,
-        hookAngle,
-        visualPatternDescriptions,
-        accountAvgLinkCtr,
-    } = input;
+  const {
+    hookAggs,
+    visualAggs,
+    hookAngle,
+    visualPatternDescriptions,
+    accountAvgLinkCtr,
+  } = input;
 
-    // sampleSize = MAX of (hook-conversion-count, visual-conversion-count).
-    // The two bucket counts derive from the same underlying matched-
-    // creative set — a single conversion campaign creative contributes
-    // to BOTH the hook aggregate (for its hook angle) and the visual
-    // aggregate (for its pattern). Summing them would double-count
-    // and let the 10+ gate trip earlier than the spec intends. The
-    // MAX of the two is the conservative count of distinct creatives
-    // the user has produced.
-    const hookConversionCount = hookAggs.reduce(
-        (sum, a) => sum + (a.byObjective.conversion.count || 0),
-        0,
-    );
-    const visualConversionCount = visualAggs.reduce(
-        (sum, a) => sum + (a.byObjective.conversion.count || 0),
-        0,
-    );
-    const sampleSize = Math.max(hookConversionCount, visualConversionCount);
+  // sampleSize = MAX of (hook-conversion-count, visual-conversion-count).
+  // The two bucket counts derive from the same underlying matched-
+  // creative set — a single conversion campaign creative contributes
+  // to BOTH the hook aggregate (for its hook angle) and the visual
+  // aggregate (for its pattern). Summing them would double-count
+  // and let the 10+ gate trip earlier than the spec intends. The
+  // MAX of the two is the conservative count of distinct creatives
+  // the user has produced.
+  const hookConversionCount = hookAggs.reduce(
+    (sum, a) => sum + (a.byObjective.conversion.count || 0),
+    0,
+  );
+  const visualConversionCount = visualAggs.reduce(
+    (sum, a) => sum + (a.byObjective.conversion.count || 0),
+    0,
+  );
+  const sampleSize = Math.max(hookConversionCount, visualConversionCount);
 
-    const ranked = rankHooks(hookAggs).sort((a, b) => b.avgLinkCtr - a.avgLinkCtr);
-    const threshold = accountAvgLinkCtr * AVOID_THRESHOLD_RATIO;
-    const avoidRanked = sortSlice(
-        ranked.filter((r) => r.sampleSize >= AVOID_MIN_ADS && r.avgLinkCtr <= threshold),
-        AVOID_COUNT,
-        (a, b) => a.avgLinkCtr - b.avgLinkCtr,
-    );
+  const ranked = rankHooks(hookAggs).sort((a, b) => b.avgLinkCtr - a.avgLinkCtr);
+  const threshold = accountAvgLinkCtr * AVOID_THRESHOLD_RATIO;
+  const avoidRanked = sortSlice(
+    ranked.filter((r) => r.sampleSize >= AVOID_MIN_ADS && r.avgLinkCtr <= threshold),
+    AVOID_COUNT,
+    (a, b) => a.avgLinkCtr - b.avgLinkCtr,
+  );
 
-    const selectedAngleRank = rankSelectedAngle(hookAngle, ranked, accountAvgLinkCtr);
+  const selectedAngleRank = rankSelectedAngle(hookAngle, ranked, accountAvgLinkCtr);
 
-    const insufficient = sampleSize < RAG_MIN_SAMPLE_SIZE;
+  const insufficient = sampleSize < RAG_MIN_SAMPLE_SIZE;
 
-    // When insufficient, the prompt blocks are empty so the prompts stay
-    // byte-identical to the pre-RAG build. The structured insights are
-    // always computed (so callers can still surface "no data yet" UI),
-    // but the test invariant is that empty prompts go together with empty
-    // insight arrays when the gate is closed. The dashboard / icon gating
-    // surface its own `insufficient` flag rather than reaching in here.
-    const topPerformers = insufficient ? [] : sortSlice(ranked, TOP_PERFORMER_COUNT, (a, b) => b.avgLinkCtr - a.avgLinkCtr).map((r) => ({
-        angleKey: r.angleKey,
-        angleName: r.angleKey,
-        avgLinkCtr: r.avgLinkCtr,
-        winCount: r.winCount,
+  // When insufficient, the prompt blocks are empty so the prompts stay
+  // byte-identical to the pre-RAG build. The structured insights are
+  // always computed (so callers can still surface "no data yet" UI),
+  // but the test invariant is that empty prompts go together with empty
+  // insight arrays when the gate is closed. The dashboard / icon gating
+  // surface its own `insufficient` flag rather than reaching in here.
+  const topPerformers = insufficient ? [] : sortSlice(ranked, TOP_PERFORMER_COUNT, (a, b) => b.avgLinkCtr - a.avgLinkCtr).map((r) => ({
+    angleKey: r.angleKey,
+    angleName: r.angleKey,
+    avgLinkCtr: r.avgLinkCtr,
+    winCount: r.winCount,
+  }));
+
+  const avoid = insufficient ? [] : avoidRanked.map((r) => ({
+    angleKey: r.angleKey,
+    angleName: r.angleKey,
+    avgLinkCtr: r.avgLinkCtr,
+    loseCount: r.loseCount,
+  }));
+
+  // Visual mirror — compute the ranking ONCE and pass it to the
+  // block builder so the structured insights and the prompt block
+  // can never disagree about which patterns are top / avoid.
+  const visualRanked: RankedVisual[] = visualAggs
+    .filter((v) => v.byObjective.conversion.count > 0)
+    .map((v) => ({
+      patternKey: v.patternKey,
+      avgLinkCtr: v.byObjective.conversion.avgLinkCtr,
+      sampleSize: v.byObjective.conversion.count,
+      winCount: v.byObjective.conversion.bestVerdictCount,
+      loseCount: v.byObjective.conversion.worstVerdictCount,
     }));
+  const visualTop = insufficient ? [] : sortSlice(visualRanked, TOP_PERFORMER_COUNT, (a, b) => b.avgLinkCtr - a.avgLinkCtr);
+  const visualAvoid = insufficient ? [] : sortSlice(
+    visualRanked.filter((v) => v.sampleSize >= AVOID_MIN_ADS && v.avgLinkCtr <= threshold),
+    AVOID_COUNT,
+    (a, b) => a.avgLinkCtr - b.avgLinkCtr,
+  );
+  const descFor = (key: string): string => visualPatternDescriptions?.[key] ?? key;
 
-    const avoid = insufficient ? [] : avoidRanked.map((r) => ({
-        angleKey: r.angleKey,
-        angleName: r.angleKey,
-        avgLinkCtr: r.avgLinkCtr,
-        loseCount: r.loseCount,
-    }));
+  const hookBlock = insufficient ? "" : buildHookBlockText(ranked, avoidRanked, sampleSize);
+  const visualBlock = insufficient ? "" : buildVisualBlockText(
+    visualRanked,
+    visualPatternDescriptions,
+    accountAvgLinkCtr,
+  );
+  const captionBlock = insufficient ? "" : buildCaptionBlockText(ranked, hookAngle);
+  const promptBlock = (() => {
+    if (insufficient) return "";
+    const parts: string[] = [];
+    if (hookBlock) parts.push(hookBlock);
+    if (visualBlock) parts.push(visualBlock);
+    return parts.join(" ");
+  })();
 
-    // Visual mirror — compute the ranking ONCE and pass it to the
-    // block builder so the structured insights and the prompt block
-    // can never disagree about which patterns are top / avoid.
-    const visualRanked: RankedVisual[] = visualAggs
-        .filter((v) => v.byObjective.conversion.count > 0)
-        .map((v) => ({
-            patternKey: v.patternKey,
-            avgLinkCtr: v.byObjective.conversion.avgLinkCtr,
-            sampleSize: v.byObjective.conversion.count,
-            winCount: v.byObjective.conversion.bestVerdictCount,
-            loseCount: v.byObjective.conversion.worstVerdictCount,
-        }));
-    const visualTop = insufficient ? [] : sortSlice(visualRanked, TOP_PERFORMER_COUNT, (a, b) => b.avgLinkCtr - a.avgLinkCtr);
-    const visualAvoid = insufficient ? [] : sortSlice(
-        visualRanked.filter((v) => v.sampleSize >= AVOID_MIN_ADS && v.avgLinkCtr <= threshold),
-        AVOID_COUNT,
-        (a, b) => a.avgLinkCtr - b.avgLinkCtr,
-    );
-    const descFor = (key: string): string => visualPatternDescriptions?.[key] ?? key;
-
-    const hookBlock = insufficient ? "" : buildHookBlockText(ranked, avoidRanked, sampleSize);
-    const visualBlock = insufficient ? "" : buildVisualBlockText(
-        visualRanked,
-        visualPatternDescriptions,
-        accountAvgLinkCtr,
-    );
-    const captionBlock = insufficient ? "" : buildCaptionBlockText(ranked, hookAngle);
-    const promptBlock = (() => {
-        if (insufficient) return "";
-        const parts: string[] = [];
-        if (hookBlock) parts.push(hookBlock);
-        if (visualBlock) parts.push(visualBlock);
-        return parts.join(" ");
-    })();
-
-    return {
-        insufficient,
-        sampleSize,
-        hookInsights: {
-            topPerformers,
-            avoid,
-            selectedAngleRank,
-        },
-        visualInsights: {
-            topPerformers: visualTop.map((v) => ({
-                patternKey: v.patternKey,
-                description: descFor(v.patternKey),
-                avgLinkCtr: v.avgLinkCtr,
-                winCount: v.winCount,
-            })),
-            avoid: visualAvoid.map((v) => ({
-                patternKey: v.patternKey,
-                description: descFor(v.patternKey),
-                avgLinkCtr: v.avgLinkCtr,
-                loseCount: v.loseCount,
-            })),
-        },
-        hookBlock,
-        visualBlock,
-        captionBlock,
-        promptBlock,
-    };
+  return {
+    insufficient,
+    sampleSize,
+    hookInsights: {
+      topPerformers,
+      avoid,
+      selectedAngleRank,
+    },
+    visualInsights: {
+      topPerformers: visualTop.map((v) => ({
+        patternKey: v.patternKey,
+        description: descFor(v.patternKey),
+        avgLinkCtr: v.avgLinkCtr,
+        winCount: v.winCount,
+      })),
+      avoid: visualAvoid.map((v) => ({
+        patternKey: v.patternKey,
+        description: descFor(v.patternKey),
+        avgLinkCtr: v.avgLinkCtr,
+        loseCount: v.loseCount,
+      })),
+    },
+    hookBlock,
+    visualBlock,
+    captionBlock,
+    promptBlock,
+  };
 }
 
 // ─── Firestore loader (used by the gen call sites) ────────────
@@ -400,14 +400,14 @@ export function buildRAGContext(input: RAGContextInput): RAGContext {
  * added. Frozen at module load to prevent accidental mutation.
  */
 const EMPTY_RAG_CONTEXT: Readonly<RAGContext> = Object.freeze({
-    insufficient: true,
-    sampleSize: 0,
-    hookInsights: Object.freeze({ topPerformers: [], avoid: [] }),
-    visualInsights: Object.freeze({ topPerformers: [], avoid: [] }),
-    hookBlock: "",
-    visualBlock: "",
-    captionBlock: "",
-    promptBlock: "",
+  insufficient: true,
+  sampleSize: 0,
+  hookInsights: Object.freeze({ topPerformers: [], avoid: [] }),
+  visualInsights: Object.freeze({ topPerformers: [], avoid: [] }),
+  hookBlock: "",
+  visualBlock: "",
+  captionBlock: "",
+  promptBlock: "",
 });
 
 /**
@@ -421,35 +421,35 @@ const EMPTY_RAG_CONTEXT: Readonly<RAGContext> = Object.freeze({
  * exactly one place.
  */
 export async function resolveConnectedAdAccountId(
-    userId: string,
-    workspaceId: string,
+  userId: string,
+  workspaceId: string,
 ): Promise<{ accountId: string; accountAvgLinkCtr: number } | null> {
+  try {
+    const db = getDb();
+    const wsSnap = await db
+      .doc(`users/${userId}/workspaces/${workspaceId}`)
+      .get();
+    if (!wsSnap.exists) return null;
+    const wsData = wsSnap.data() || {};
+    const accountId = typeof wsData.metaAdAccountId === "string" && wsData.metaAdAccountId.length > 0
+      ? wsData.metaAdAccountId
+      : null;
+    if (!accountId) return null;
+    let accountAvgLinkCtr = 0;
     try {
-        const db = getDb();
-        const wsSnap = await db
-            .doc(`users/${userId}/workspaces/${workspaceId}`)
-            .get();
-        if (!wsSnap.exists) return null;
-        const wsData = wsSnap.data() || {};
-        const accountId = typeof wsData.metaAdAccountId === "string" && wsData.metaAdAccountId.length > 0
-            ? wsData.metaAdAccountId
-            : null;
-        if (!accountId) return null;
-        let accountAvgLinkCtr = 0;
-        try {
-            const baselinesSnap = await db
-                .doc(`users/${userId}/workspaces/${workspaceId}/adAccounts/${accountId}/baselines`)
-                .get();
-            const b = baselinesSnap?.data() || {};
-            const v = b.linkCtr90d;
-            if (typeof v === "number" && Number.isFinite(v) && v > 0) accountAvgLinkCtr = v;
-        } catch {
-            // Non-blocking — fall back to 0 (no comparison threshold).
-        }
-        return { accountId, accountAvgLinkCtr };
+      const baselinesSnap = await db
+        .doc(`users/${userId}/workspaces/${workspaceId}/adAccounts/${accountId}/baselines`)
+        .get();
+      const b = baselinesSnap?.data() || {};
+      const v = b.linkCtr90d;
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) accountAvgLinkCtr = v;
     } catch {
-        return null;
+      // Non-blocking — fall back to 0 (no comparison threshold).
     }
+    return { accountId, accountAvgLinkCtr };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -462,31 +462,31 @@ export async function resolveConnectedAdAccountId(
  * Non-throwing — the caller relies on fail-open behavior.
  */
 export async function getRAGContext(input: RAGContextInput): Promise<RAGContext> {
-    try {
-        const db = getDb();
-        const wsPath = `users/${input.userId}/workspaces/${input.workspaceId}/adAccounts/${input.accountId}`;
-        const [hookSnap, visualSnap, baselinesSnap] = await Promise.all([
-            db.collection(`${wsPath}/hookPerformance`).get().catch(() => null),
-            db.collection(`${wsPath}/visualPerformance`).get().catch(() => null),
-            db.doc(`${wsPath}/baselines`).get().catch(() => null),
-        ]);
-        const hookAggs: HookPerformanceAggregate[] = hookSnap
-            ? hookSnap.docs.map((d) => d.data() as HookPerformanceAggregate)
-            : [];
-        const visualAggs: VisualPerformanceAggregate[] = visualSnap
-            ? visualSnap.docs.map((d) => d.data() as VisualPerformanceAggregate)
-            : [];
-        const avg = (baselinesSnap?.data()?.linkCtr90d as number | undefined) ?? input.accountAvgLinkCtr;
-        return buildRAGContext({
-            ...input,
-            hookAggs,
-            visualAggs,
-            accountAvgLinkCtr: typeof avg === "number" && Number.isFinite(avg) ? avg : input.accountAvgLinkCtr,
-        });
-    } catch (e) {
-        console.warn("⚠️ getRAGContext failed (non-blocking, returning insufficient):", e);
-        return EMPTY_RAG_CONTEXT;
-    }
+  try {
+    const db = getDb();
+    const wsPath = `users/${input.userId}/workspaces/${input.workspaceId}/adAccounts/${input.accountId}`;
+    const [hookSnap, visualSnap, baselinesSnap] = await Promise.all([
+      db.collection(`${wsPath}/hookPerformance`).get().catch(() => null),
+      db.collection(`${wsPath}/visualPerformance`).get().catch(() => null),
+      db.doc(`${wsPath}/baselines`).get().catch(() => null),
+    ]);
+    const hookAggs: HookPerformanceAggregate[] = hookSnap
+      ? hookSnap.docs.map((d) => d.data() as HookPerformanceAggregate)
+      : [];
+    const visualAggs: VisualPerformanceAggregate[] = visualSnap
+      ? visualSnap.docs.map((d) => d.data() as VisualPerformanceAggregate)
+      : [];
+    const avg = (baselinesSnap?.data()?.linkCtr90d as number | undefined) ?? input.accountAvgLinkCtr;
+    return buildRAGContext({
+      ...input,
+      hookAggs,
+      visualAggs,
+      accountAvgLinkCtr: typeof avg === "number" && Number.isFinite(avg) ? avg : input.accountAvgLinkCtr,
+    });
+  } catch (e) {
+    console.warn("⚠️ getRAGContext failed (non-blocking, returning insufficient):", e);
+    return EMPTY_RAG_CONTEXT;
+  }
 }
 
 /**
@@ -497,31 +497,31 @@ export async function getRAGContext(input: RAGContextInput): Promise<RAGContext>
  * Non-throwing.
  */
 export async function loadRAGContextForWorkspace(
-    userId: string,
-    workspaceId: string,
-    hookAngle?: string,
+  userId: string,
+  workspaceId: string,
+  hookAngle?: string,
 ): Promise<{ ragContext: RAGContext; accountId: string | null }> {
-    const empty: { ragContext: RAGContext; accountId: string | null } = {
-        accountId: null,
-        ragContext: EMPTY_RAG_CONTEXT,
-    };
-    try {
-        const conn = await resolveConnectedAdAccountId(userId, workspaceId);
-        if (!conn) return empty;
-        const ragContext = await getRAGContext({
-            userId,
-            workspaceId,
-            accountId: conn.accountId,
-            hookAngle,
-            accountAvgLinkCtr: conn.accountAvgLinkCtr,
-            hookAggs: [],
-            visualAggs: [],
-        });
-        return { ragContext, accountId: conn.accountId };
-    } catch (e) {
-        console.warn("⚠️ loadRAGContextForWorkspace failed (non-blocking):", e);
-        return empty;
-    }
+  const empty: { ragContext: RAGContext; accountId: string | null } = {
+    accountId: null,
+    ragContext: EMPTY_RAG_CONTEXT,
+  };
+  try {
+    const conn = await resolveConnectedAdAccountId(userId, workspaceId);
+    if (!conn) return empty;
+    const ragContext = await getRAGContext({
+      userId,
+      workspaceId,
+      accountId: conn.accountId,
+      hookAngle,
+      accountAvgLinkCtr: conn.accountAvgLinkCtr,
+      hookAggs: [],
+      visualAggs: [],
+    });
+    return { ragContext, accountId: conn.accountId };
+  } catch (e) {
+    console.warn("⚠️ loadRAGContextForWorkspace failed (non-blocking):", e);
+    return empty;
+  }
 }
 
 // ─── Wrapped PER-INJECTION POINT helper ───────────────────────
@@ -539,8 +539,8 @@ export async function loadRAGContextForWorkspace(
  * verbatim-copy risk.
  */
 export function buildPerformanceContextBlock(ragContext: RAGContext): string {
-    if (ragContext.insufficient || !ragContext.promptBlock) return "";
-    return `PERFORMANCE CONTEXT:\nUse this to inform — but not rigidly copy — what you generate. The user's history suggests patterns, not rules.\n${ragContext.promptBlock}`;
+  if (ragContext.insufficient || !ragContext.promptBlock) return "";
+  return `PERFORMANCE CONTEXT:\nUse this to inform — but not rigidly copy — what you generate. The user's history suggests patterns, not rules.\n${ragContext.promptBlock}`;
 }
 
 /**
@@ -549,8 +549,8 @@ export function buildPerformanceContextBlock(ragContext: RAGContext): string {
  * prompt site. Bracket-free per the Gemini literal-copy rule.
  */
 export function buildHookPerformanceBlock(ragContext: RAGContext): string {
-    if (ragContext.insufficient || !ragContext.hookBlock) return "";
-    return `PERFORMANCE CONTEXT:\nUse this to inform — but not rigidly copy — the hooks you generate. The user's history suggests patterns, not rules.\n${ragContext.hookBlock}`;
+  if (ragContext.insufficient || !ragContext.hookBlock) return "";
+  return `PERFORMANCE CONTEXT:\nUse this to inform — but not rigidly copy — the hooks you generate. The user's history suggests patterns, not rules.\n${ragContext.hookBlock}`;
 }
 
 /**
@@ -558,8 +558,8 @@ export function buildHookPerformanceBlock(ragContext: RAGContext): string {
  * Bracket-free per the Gemini literal-copy rule.
  */
 export function buildVisualPerformanceBlock(ragContext: RAGContext): string {
-    if (ragContext.insufficient || !ragContext.visualBlock) return "";
-    return `PERFORMANCE CONTEXT:\nThis user's best-performing visual compositions are reflected in the patterns above. Lean toward them while maintaining creative variety.\n${ragContext.visualBlock}`;
+  if (ragContext.insufficient || !ragContext.visualBlock) return "";
+  return `PERFORMANCE CONTEXT:\nThis user's best-performing visual compositions are reflected in the patterns above. Lean toward them while maintaining creative variety.\n${ragContext.visualBlock}`;
 }
 
 /**
@@ -568,6 +568,6 @@ export function buildVisualPerformanceBlock(ragContext: RAGContext): string {
  * Bracket-free per the Gemini literal-copy rule.
  */
 export function buildCaptionPerformanceBlock(ragContext: RAGContext): string {
-    if (ragContext.insufficient || !ragContext.captionBlock) return "";
-    return `PERFORMANCE CONTEXT:\n${ragContext.captionBlock}`;
+  if (ragContext.insufficient || !ragContext.captionBlock) return "";
+  return `PERFORMANCE CONTEXT:\n${ragContext.captionBlock}`;
 }
