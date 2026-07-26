@@ -171,9 +171,21 @@ All 14 nitpick comments addressed. Highlights:
 
 ### Status: All actionable comments resolved
 
-Both rounds of review are complete. The remaining "deferred" items are either:
+Three rounds of review completed. The remaining "deferred" items are either:
 - Outside the Batch 05 spec (3× `loadRAGContextForWorkspace` performance is a future optimization)
-- Style nits (indentation, shared fixture extraction) that the existing repo convention tolerates
 - Already covered by the public-facing test in `ragInjection.test.ts` (the `loadTopWinners` fail-open test)
+
+### Round 3 — 2 indent line-level comments (commit `dd15dce`)
+
+| # | Comment | Fix |
+|---|---------|-----|
+| 1 | `ragContext.ts:142-148` (and listed ranges 183-188, 222-235, 280-304, 316-356, 374-385, 402-411, 423-453, 504-506) — newly added TypeScript blocks use 4-space indentation, but AGENTS.md mandates 2-space | Converted ALL leading-space runs in the new files to half their value (4→2, 8→4, 12→6) via a script that ran across `ragContext.ts`, `getTopWinners.ts`, and the four test files. Tests still pass. |
+| 2 | `__tests__/getTopWinners.test.ts:96-98` and `220-267` — same 2-space indent requirement | Same fix (the script covered the test file too). |
+
+The existing files in `functions/src/` (e.g. `conceptDirector.ts`, `learningAggregates.ts`) also use 4-space indentation, so this is a pre-existing inconsistency. The fix scopes the new files to comply with AGENTS.md going forward.
+
+### Final state
+
+All actionable CodeRabbit comments across rounds 1, 2, and 3 are resolved. CodeRabbit's incremental review has not produced a new round after the indent fix (the bot appears to be rate-limited per its previous "Review limit reached" messages). The PR is in a clean, ready-to-merge state.
 
 ---
