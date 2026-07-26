@@ -14,7 +14,7 @@
   ok: true;
   syncStatus: { lastMetaSyncAt: number|null; nextScheduledSyncAt: number|null;
                 connection: 'connected'|'disconnected'|'needs_reauth'; canSyncNow: boolean; cooldownEndsAt: number|null };
-  summary: { spend3dLabel: string; matchedAds: number; totalAds: number; green: number; yellow: number; red: number }; // counts only, no CTR/CPA
+  summary: { spend7dLabel: string; totalSpend7d: number; currency: string; matchedAds: number; totalAds: number; green: number; yellow: number; red: number }; // spend = last 7 complete days (display); verdicts still 3-day. counts only, no CTR/CPA
   strongestAngles: Array<{ angleKey: string; nameAr: string; icon: '🔥'|'✅'|'⚠️'; countAr: string; // "استخدمتها 6 مرات، 4 منها ناجحة"
                            subLinesAr?: string[] }>;  // e.g. "أقوى في الخليج" — plain Arabic, no %
   strongestVisuals: Array<{ patternKey: string; descriptionAr: string; icon: '🔥'|'✅'|'⚠️'; countAr: string }>;

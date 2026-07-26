@@ -93,6 +93,34 @@ class MetaService {
         }
     }
 
+    // Phase 14 batch 04 (dashboard-connection-fix) — Mirror the
+    // `connectMetaAccount` server callable so callers can wire the
+    // workspace-private connection doc after `linkMetaAccountToWorkspace`
+    // succeeds. The dashboard reads
+    // `users/{uid}/workspaces/{workspaceId}/private/metaConnection.metaConnected`
+    // to render its Sync Status section; without this call, the doc is
+    // never created by the sidebar's connect flow and the dashboard
+    // permanently reports "Meta account not connected yet".
+    // Returns false on failure — callers treat this as non-blocking.
+    async connectAccountToWorkspace(req: {
+        workspaceId: string;
+        accountId: string;
+        accountName?: string;
+    }): Promise<boolean> {
+        try {
+            const fn = httpsCallable(functions, 'connectMetaAccount');
+            await fn({
+                workspaceId: req.workspaceId,
+                accountId: req.accountId,
+                accountName: req.accountName ?? '',
+            });
+            return true;
+        } catch (err) {
+            console.warn('Failed to write workspace-private meta connection doc (non-blocking):', err);
+            return false;
+        }
+    }
+
     async syncPerformance(workspaceId?: string | null): Promise<{ success: boolean; adsSynced: number }> {
         try {
             const fn = httpsCallable(functions, 'metaSyncPerformance');
@@ -101,6 +129,62 @@ class MetaService {
         } catch (err) {
             console.error('Failed to sync performance:', err);
             return { success: false, adsSynced: 0 };
+        }
+    }
+
+    // Phase 14 batch 04 (sync-button-fix) — Workspace-scoped "Sync Now"
+    // for the "What's Working" dashboard. The legacy `syncPerformance`
+    // method (above) routes through `metaSyncPerformance`, the Batch 01
+    // user-level callable that reads from `metaConnections/{uid}` and
+    // syncs every active account on the connection — it does NOT
+    // exercise the workspace-scoped sync pipeline or respect the
+    // dashboard's 1-hour cooldown. The dashboard's Sync Status bar greys
+    // the button based on `canSyncNow` (computed from the
+    // workspace-private `private/metaConnection.metaConnected` doc), so
+    // the only correct server-side counterpart is the workspace-scoped
+    // `triggerMetaSync` (Batch 02). The sidebar's "Sync Now" continues
+    // to use `syncPerformance` / `metaSyncPerformance` — that path feeds
+    // the legacy PerformanceDashboard and is intentionally untouched.
+    async triggerWorkspaceSync(workspaceId: string): Promise<{
+        ok: boolean;
+        lastMetaSyncAt: number | null;
+        counts?: {
+            campaigns?: number;
+            adSets?: number;
+            ads?: number;
+            matched?: number;
+            unmatched?: number;
+            ambiguous?: number;
+        };
+        needsReauth?: boolean;
+    }> {
+        try {
+            const fn = httpsCallable(functions, 'triggerMetaSync');
+            const result = await fn({ workspaceId });
+            return result.data as {
+                ok: boolean;
+                lastMetaSyncAt: number | null;
+                counts?: {
+                    campaigns?: number;
+                    adSets?: number;
+                    ads?: number;
+                    matched?: number;
+                    unmatched?: number;
+                    ambiguous?: number;
+                };
+                needsReauth?: boolean;
+            };
+        } catch (err: any) {
+            console.warn('triggerMetaSync failed:', err);
+            // Cooldown is a `resource-exhausted` HttpsError. Surface it
+            // as a soft failure so the caller can show a friendly toast
+            // (the dashboard's button is already greyed, but the user
+            // may click anyway). Other errors propagate so the caller
+            // can show the generic "Sync failed" toast.
+            if (err?.code === 'functions/resource-exhausted' || err?.code === 'resource-exhausted') {
+                return { ok: false, lastMetaSyncAt: null };
+            }
+            throw err;
         }
     }
 

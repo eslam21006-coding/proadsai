@@ -3,6 +3,7 @@ import { useState, useRef } from 'react';
 import type { AdInputs, AdMode, AspectRatio, RetargetingAngle, RetargetingObjectionId, UniverseMode, AudienceAvatar, CompetitorResearch, ColdHookAngle, HookType, AdTone, CopywritingStrategy, Workspace } from '../types';
 import { OFFER_TYPES, OFFER_CATEGORY_MAP, OFFER_CREATIVE_MODES, CREATIVE_MODE_CONFLICTS, HOOK_ANGLE_MODE_CONFLICTS, ASPECT_RATIOS, RETARGETING_OBJECTIONS, AD_LANGUAGES, FIELD_EXAMPLES, COLD_HOOK_ANGLES, HOOK_TYPES, AD_TONES, COPYWRITING_STRATEGIES, CREATIVE_TABS } from '../constants';
 import { REALISTIC_UNIVERSES as DB_REALISTIC, FANTASY_UNIVERSES as DB_FANTASY, isArabic } from '../universeDatabase';
+import { HookAngleIcon } from './HookAngleIcon';
 import { isStrongPair, getBlockedModes, CREATIVE_MODE_CATALOG, type CreativeTab, getBlockedModesForSubStyle, getBlockedSubStylesForModes, validateLaunchSurface, resolveValueStackSlideCount, resolveTestimonialSlideCount } from '../creativeResolver';
 import { ART_DIRECTION_GROUPS, getAvailableCards, getCardById, isSubStyleInFamily, type ArtDirectionCard } from '../artDirectionConfig';
 import { getActiveSections, validateModeFields, type ModeFieldSection, isOfferModeAvailable } from '../modeFieldSchema';
@@ -51,6 +52,10 @@ interface Props {
   onRankingsLoaded?: (rankings: RankingResultCompact | null) => void;
   isTeamViewer?: boolean;
   activeWorkspace?: Workspace | null;
+  /** Phase 14 batch 04 — Layer 6. Per-angle icon + tooltip state, fetched
+   * by the parent and passed down. NO numbers / percentages in the
+   * tooltip text (FR-019, SC-11). */
+  hookAngleIcons?: Record<string, { icon: "🔥" | "✅" | "⚠️" | null; tooltipAr: string | null }> | null;
 }
 
 // --- AUTOMATIC COMPRESSION UTILITY ---
@@ -316,7 +321,7 @@ const UniverseDropdown: React.FC<{
   );
 };
 
-const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialValues, userPlan, avatars, onSaveAvatar, onUpdateAvatar, onDeleteAvatar, competitorData, competitorLoading, onRefreshResearch, onRankingsLoaded, isTeamViewer, activeWorkspace }) => {
+const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialValues, userPlan, avatars, onSaveAvatar, onUpdateAvatar, onDeleteAvatar, competitorData, competitorLoading, onRefreshResearch, onRankingsLoaded, isTeamViewer, activeWorkspace, hookAngleIcons }) => {
   const { t, lang: appLang } = useT();
   const getInitialInputs = (): AdInputs => {
     if (initialValues) return initialValues;
@@ -1423,7 +1428,10 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
                     <button key={angle.id} type="button"
                       onClick={() => { setInputs(prev => ({ ...prev, coldHookAngle: prev.coldHookAngle === angle.id ? undefined : angle.id as ColdHookAngle })); }}
                       className={`px-3 py-2.5 rounded-lg text-left transition-all relative ${inputs.coldHookAngle === angle.id ? 'bg-blue-600/15 border border-blue-500/30 text-blue-400' : 'bg-slate-950/40 border border-slate-800/40 text-slate-500 hover:text-slate-300'}`}>
-                      <div className="text-[10px] font-bold">{appLang === "ar" ? angle.labelAr : angle.labelEn}</div>
+                      <div className="flex items-center gap-1.5">
+                        <div className="text-[10px] font-bold">{appLang === "ar" ? angle.labelAr : angle.labelEn}</div>
+                        <HookAngleIcon state={hookAngleIcons?.[angle.id] ?? null} />
+                      </div>
                       <div className="text-[8px] opacity-60 mt-0.5 line-clamp-1">{angle.description}</div>
                     </button>
                   ))}

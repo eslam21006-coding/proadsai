@@ -32,6 +32,23 @@
 export const META_GRAPH_BASE = "https://graph.facebook.com/v22.0";
 export const META_API_VERSION = "v22.0";
 
+/**
+ * Normalize an ad-account id to the `act_<digits>` form the Graph API expects.
+ *
+ * Ad account ids reach us from `/me/adaccounts?fields=id`, whose `id` is
+ * ALREADY prefixed (`act_995888422231015`) — that value is what the picker
+ * sends and what `connectMetaAccount` stores. Blindly prepending `act_` here
+ * produced `act_act_995888422231015`, which Graph rejects, so every account
+ * scoped call in this module silently failed.
+ *
+ * Idempotent on purpose: it accepts both the prefixed form and a bare numeric
+ * id, so legacy documents written before the prefix was stored keep working.
+ */
+export function toActId(adAccountId: string): string {
+    const id = (adAccountId || "").trim();
+    return id.startsWith("act_") ? id : `act_${id}`;
+}
+
 // Insights fields used in every call (spec §3.1.3).
 export const INSIGHTS_FIELDS: ReadonlyArray<string> = [
     "impressions",
@@ -58,7 +75,12 @@ export const HIERARCHY_ADSET_FIELDS = "id,name,status,daily_budget,targeting,cam
 // the worker's image-matching step would skip the ad (no URL to download).
 // Also include adset_id so the parent join works without our own stamping
 // (we still stamp defensively in shared.ts as a belt-and-braces measure).
-export const HIERARCHY_AD_FIELDS = "id,name,status,adset_id,creative{id,image_url,thumbnail_url}";
+// FIX 4 (Phase 14 batch 04 dashboard-polish): also request `object_type`
+// and `video_id` on the creative so the sync can tell image ads from
+// video ads. Pro Ads AI only generates images, so video ads can never
+// match a generation — the dashboard uses `creativeType` to exclude them
+// from the "Ads That Need Linking" list.
+export const HIERARCHY_AD_FIELDS = "id,name,status,adset_id,creative{id,image_url,thumbnail_url,object_type,video_id}";
 
 export const MAX_INSIGHTS_RETRIES = 4;
 export const INITIAL_BACKOFF_MS = 500;
@@ -121,7 +143,7 @@ export interface MetaAd {
     id: string;
     name?: string;
     status?: string;
-    creative?: { id?: string; image_url?: string; thumbnail_url?: string } | string;
+    creative?: { id?: string; image_url?: string; thumbnail_url?: string; object_type?: string; video_id?: string } | string;
     adset_id?: string;
 }
 
@@ -270,7 +292,7 @@ interface CreativeResponse { id: string; image_url?: string; thumbnail_url?: str
 
 export async function fetchCampaigns(accessToken: string, adAccountId: string): Promise<MetaCampaign[]> {
     const resp = await graphGet<CampaignsResponse>(
-        `/act_${adAccountId}/campaigns`,
+        `/${toActId(adAccountId)}/campaigns`,
         { fields: HIERARCHY_CAMPAIGN_FIELDS },
         accessToken,
     );
@@ -303,6 +325,22 @@ export async function fetchAdCreativeImage(accessToken: string, creativeId: stri
         accessToken,
     );
     return resp;
+}
+
+/**
+ * FIX 3 (Phase 14 batch 04 dashboard-polish): fetch the ad account's
+ * ISO currency code (e.g. "USD", "AED", "SAR", "EGP") so the dashboard
+ * can label the spend figure in the account's own currency. One cheap
+ * GET on the account node; callers should treat this as best-effort
+ * (return value may be null when Meta omits the field or the call fails).
+ */
+export async function fetchAdAccountCurrency(accessToken: string, adAccountId: string): Promise<string | null> {
+    const resp = await graphGet<{ currency?: string }>(
+        `/${toActId(adAccountId)}`,
+        { fields: "currency" },
+        accessToken,
+    );
+    return typeof resp.currency === "string" && resp.currency.length > 0 ? resp.currency : null;
 }
 
 // ─── Insights fetches (spec §3.1.3) ────────────────────────────
@@ -410,7 +448,7 @@ async function fetchAccountLevelMetric(
     field: string,
 ): Promise<number> {
     const resp = await graphGet<{ data: Array<Record<string, string>> }>(
-        `/act_${adAccountId}/insights`,
+        `/${toActId(adAccountId)}/insights`,
         {
             fields: field,
             date_preset: datePreset,
@@ -435,7 +473,7 @@ async function fetchAccountLevelCpaCpl(
     datePreset: string,
 ): Promise<number> {
     const resp = await graphGet<{ data: Array<{ spend?: string; actions?: Array<{ action_type: string; value: string }> }> }>(
-        `/act_${adAccountId}/insights`,
+        `/${toActId(adAccountId)}/insights`,
         {
             fields: "spend,actions",
             date_preset: datePreset,

@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import type { Workspace } from '../types';
 import { workspaceService } from '../services/workspaceService';
+import { metaService } from '../services/metaService';
 import type { UserPlan } from '../planconfig';
 import { useT } from '../i18n';
 
@@ -135,6 +136,23 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
         metaAdAccountId: selectedMetaAccount,
         metaAdAccountName: account?.name || selectedMetaAccount,
       });
+      // Phase 14 batch 04 (dashboard-connection-fix) — Mirror the link in
+      // the workspace-private `private/metaConnection.metaConnected = true`
+      // doc that the "What's Working" dashboard reads. EXPLICITLY best-effort:
+      // `connectAccountToWorkspace` catches its own errors and returns false
+      // (never throws), so a mirror failure can NOT mask the successful link
+      // above — `setLinkedMeta` still runs and the UI reflects the link. If
+      // the mirror failed, the dashboard shows "not connected" only until the
+      // next successful sync/connect. The unlink path clears this mirror
+      // symmetrically (server-side in unlinkMetaAccountFromWorkspace).
+      const mirrored = await metaService.connectAccountToWorkspace({
+        workspaceId: workspace.id,
+        accountId: selectedMetaAccount,
+        accountName: account?.name || selectedMetaAccount,
+      });
+      if (!mirrored) {
+        console.warn('Workspace Meta connection mirror write failed (non-blocking); dashboard connection state may lag until the next successful sync.');
+      }
       const role = (result.data?.metaRoleAtLinkTime ?? undefined) as
         | 'ADMIN'
         | 'ADVERTISER'

@@ -57,6 +57,8 @@ export { connectMetaAccount, disconnectMetaAccount } from "./metaConnection.js";
 export { triggerMetaSync } from "./metaSync/trigger.js";
 export { metaDailySync } from "./metaSync/dispatcher.js";
 export { metaSyncAccountWorker } from "./metaSync/worker.js";
+// Phase 14 — Layer 5 (What's Working dashboard) + Layer 6 (Hook-angle icons).
+export { getWhatsWorkingDashboard, getHookAnglePerformance } from "./whatsWorkingDashboard.js";
 // Phase 14 — Layer 3 (image matching callables + delete cascade).
 export { linkUnmatchedAd } from "./linkUnmatchedAd.js";
 export { backfillImageFingerprints } from "./backfillImageFingerprints.js";
@@ -3536,10 +3538,33 @@ export const metaSyncPerformance = onCall({
 
         } // end for-each account
 
-        // Update last sync time
+        // Update last sync time (user-level connection doc).
         await admin.firestore().collection("metaConnections").doc(uid).update({
             lastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
         });
+
+        // Phase 14 (dashboard-consistency): also stamp the workspace-private
+        // connection doc so the What's Working dashboard — which reads
+        // lastMetaSyncAt ONLY from users/{uid}/workspaces/{wid}/private/
+        // metaConnection — reflects a sidebar sync too, not just a
+        // triggerMetaSync run.
+        //
+        // Done here (Admin SDK) rather than client-side because the
+        // `private/**` subtree is server-only in firestore.rules
+        // (deny-all), so a client write would be rejected. Written as an
+        // epoch-ms NUMBER (not serverTimestamp) to match what
+        // runSyncForAccount writes and the dashboard's `typeof === "number"`
+        // read. Best-effort / non-blocking — a stamp failure must never
+        // fail the sync the user already completed.
+        if (workspaceId) {
+            try {
+                await admin.firestore()
+                    .doc(`users/${uid}/workspaces/${workspaceId}/private/metaConnection`)
+                    .set({ lastMetaSyncAt: Date.now() }, { merge: true });
+            } catch (err: unknown) {
+                console.warn("⚠️ Non-blocking: failed to stamp workspace lastMetaSyncAt:", err);
+            }
+        }
 
         console.log(`📊 Synced ${totalSyncCount} ads across ${activeAccounts.length} accounts for user ${uid}`);
         return { success: true, adsSynced: totalSyncCount };
@@ -6492,6 +6517,21 @@ export const unlinkMetaAccountFromWorkspace = onCall({
         metaAdAccountName: admin.firestore.FieldValue.delete(),
         metaRoleAtLinkTime: admin.firestore.FieldValue.delete(),
     });
+
+    // Keep the What's Working dashboard mirror symmetric with the link.
+    // The dashboard reads connection state from the workspace-private
+    // `metaConnection.metaConnected` flag (set true when the account is
+    // linked via connectMetaAccount), so clear it here too — otherwise an
+    // unlinked workspace keeps reporting "connected". Same callable owns
+    // both writes. Best-effort: a mirror failure must not fail the unlink
+    // (the workspace-doc link is the source of truth). Tokens/perf data are
+    // intentionally retained — full teardown is `disconnectMetaAccount`'s job.
+    await admin.firestore()
+        .doc(`users/${uid}/workspaces/${workspaceId}/private/metaConnection`)
+        .set({ metaConnected: false, updatedAt: Date.now() }, { merge: true })
+        .catch((err: unknown) => {
+            console.warn("⚠️ Non-blocking: failed to clear workspace metaConnection mirror on unlink:", err);
+        });
 
     return { ok: true };
 });

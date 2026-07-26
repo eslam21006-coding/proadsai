@@ -94,6 +94,21 @@ test("aggregateAdMetrics — peak1dCtr from 7-day daily breakdown", () => {
     assert.equal(m.peak1dCtr, 3.5);
 });
 
+test("aggregateAdMetrics — spend7d sums the last_7d daily window (display-only)", () => {
+    const w = makeWindows({
+        last7DaysDaily: [
+            { date_start: "2026-07-01", spend: "10" },
+            { date_start: "2026-07-02", spend: "12.5" },
+            { date_start: "2026-07-03", spend: "7.5" },
+        ],
+    });
+    const m = aggregateAdMetrics(w);
+    // spend7d comes from last7DaysDaily, independent of the 3-day window.
+    assert.equal(m.spend7d, 30);
+    // The verdict engine's 3-day window is untouched by the 7-day sum.
+    assert.equal(m.spend3d, 30); // makeWindows default threeDayRolling
+});
+
 // ─── spend_share_pct ──────────────────────────────────────────
 
 test("sumSpend3d — sums spend across the 3-day window per ad", () => {
