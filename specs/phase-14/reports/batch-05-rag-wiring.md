@@ -196,4 +196,28 @@ All actionable CodeRabbit comments across rounds 1, 2, 3, and 4 are resolved. Th
 
 `serverGenerateConcepts` was already reading `activeWorkspaceId` correctly (line 4255) and did not need a fix.
 
+### Round 5 — 3 nitpick + 1 outside-diff comment (commit `20bc212`)
+
+| # | Comment | Fix |
+|---|---------|-----|
+| 1 | `batch-05-rag-wiring.md:129-131` — "Two review rounds completed" is stale; the file documents 4 rounds | Updated the line to "Four review rounds completed" |
+| 2 | `batch-05-rag-wiring.md:191-195` — literal `\|\|` in the markdown table is parsed as additional table delimiters (MD056 column-count error) | Rephrased the cell to avoid the `\|\|` — uses `"(with fallback to ...)"` instead |
+| 3 | `index.ts:52-53` — "Rebuild Functions before deployment" | Informational; deployment reminder recorded in the deploy checklist below |
+| 4 | `index.ts:4255-4283` — fail-open catch path should emit a structured warning (not the raw error) so permission/schema/Firestore regressions are observable | Replaced the single `console.warn(..., e)` with a structured `console.warn("...", JSON.stringify({operation, userId, workspaceIdPresent, accountIdResolved, errorName, errorCode, errorMessage}))` — no ad content or winner payload ever logged |
+
+CodeRabbit confirmed all addressed in commit `20bc212` (`✅ Addressed in commit 20bc212`).
+
+### Deployment Checklist (from CodeRabbit round 5)
+
+CodeRabbit's round-5 comment #3 reminded us that `functions/src/index.ts` was modified. Before deploying, the standard Functions build + deploy sequence is required (per AGENTS.md rule 1):
+
+```powershell
+Remove-Item -Recurse -Force functions/lib
+cd functions
+npm run build
+firebase deploy --only functions
+```
+
+`npm test` is the gate for every PR — the `contractFixtures.test: PASS` line at the end of the test run is the canonical "all tests pass" marker.
+
 ---
