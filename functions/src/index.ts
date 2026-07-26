@@ -4278,7 +4278,21 @@ export const serverGenerateConcepts = onCall({
             }
         }
     } catch (e) {
-        console.warn("⚠️ serverGenerateConcepts: top-winners load failed (non-blocking):", e);
+        // Fail-open: any load failure → empty winners list. Log a
+        // structured warning so Firestore / permission / schema
+        // regressions are distinguishable from "no winners yet" in
+        // observability. The error message is included, but the
+        // winners payload is never logged (privacy boundary).
+        const err = e as { code?: string; name?: string; message?: string };
+        console.warn("⚠️ serverGenerateConcepts: top-winners load failed", JSON.stringify({
+            operation: "loadTopWinners",
+            userId: request.auth.uid,
+            workspaceIdPresent: Boolean((inputs as any)?.workspaceId || activeWorkspaceId),
+            accountIdResolved: _topWinners !== undefined,
+            errorName: err.name ?? null,
+            errorCode: err.code ?? null,
+            errorMessage: err.message ?? null,
+        }));
     }
 
     // ═══ PHASE 20 — CONCEPT DIRECTOR GATE (Contract C1 / C2 / FR-021-024) ═══

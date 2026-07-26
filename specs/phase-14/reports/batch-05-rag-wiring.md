@@ -128,7 +128,7 @@ None. All scope items in the Batch 05 brief are implemented and verified.
 
 ## 14. CodeRabbit Review
 
-PR #57 is open at https://github.com/eslam21006-coding/proadsai/pull/57. Two review rounds completed.
+PR #57 is open at https://github.com/eslam21006-coding/proadsai/pull/57. Four review rounds completed.
 
 ### Round 1 — 14 nitpick comments (commit `8923faf`)
 
@@ -192,7 +192,7 @@ All actionable CodeRabbit comments across rounds 1, 2, 3, and 4 are resolved. Th
 
 | # | Comment | Fix |
 |---|---------|-----|
-| 1 | `generators.ts:2319-2361` — `activeWorkspaceId` is dropped at `index.ts` boundary for `generateTOV` / `generateBuildPlan` / `generateCaption`, so the RAG blocks stay on the fail-open path. The frontend sends `activeWorkspaceId` at the request's top level (not inside `inputs`), and the generators only read `(inputs as any)._workspaceId || (inputs as any).activeWorkspaceId`. | Updated `index.ts` to copy `activeWorkspaceId` into `inputs._workspaceId` and `inputs.activeWorkspaceId` (in-place, request-scoped) inside each of `serverGenerateTOV`, `serverGenerateBuildPlan`, and `serverGenerateCaption` before calling the generator. The RAG blocks can now resolve the workspace id and load the connected Meta account's RAG context. |
+| 1 | `generators.ts:2319-2361` — `activeWorkspaceId` is dropped at `index.ts` boundary for `generateTOV` / `generateBuildPlan` / `generateCaption`, so the RAG blocks stay on the fail-open path. The frontend sends `activeWorkspaceId` at the request's top level (not inside `inputs`), and the generators only read `(inputs as any)._workspaceId` (with fallback to `(inputs as any).activeWorkspaceId`). | Updated `index.ts` to copy `activeWorkspaceId` into `inputs._workspaceId` and `inputs.activeWorkspaceId` (in-place, request-scoped) inside each of `serverGenerateTOV`, `serverGenerateBuildPlan`, and `serverGenerateCaption` before calling the generator. The RAG blocks can now resolve the workspace id and load the connected Meta account's RAG context. |
 
 `serverGenerateConcepts` was already reading `activeWorkspaceId` correctly (line 4255) and did not need a fix.
 
