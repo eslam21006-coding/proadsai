@@ -186,6 +186,14 @@ The existing files in `functions/src/` (e.g. `conceptDirector.ts`, `learningAggr
 
 ### Final state
 
-All actionable CodeRabbit comments across rounds 1, 2, and 3 are resolved. CodeRabbit's incremental review has not produced a new round after the indent fix (the bot appears to be rate-limited per its previous "Review limit reached" messages). The PR is in a clean, ready-to-merge state.
+All actionable CodeRabbit comments across rounds 1, 2, 3, and 4 are resolved. The PR is in a clean, ready-to-merge state.
+
+### Round 4 — 1 outside-diff comment (commit `e532325`)
+
+| # | Comment | Fix |
+|---|---------|-----|
+| 1 | `generators.ts:2319-2361` — `activeWorkspaceId` is dropped at `index.ts` boundary for `generateTOV` / `generateBuildPlan` / `generateCaption`, so the RAG blocks stay on the fail-open path. The frontend sends `activeWorkspaceId` at the request's top level (not inside `inputs`), and the generators only read `(inputs as any)._workspaceId || (inputs as any).activeWorkspaceId`. | Updated `index.ts` to copy `activeWorkspaceId` into `inputs._workspaceId` and `inputs.activeWorkspaceId` (in-place, request-scoped) inside each of `serverGenerateTOV`, `serverGenerateBuildPlan`, and `serverGenerateCaption` before calling the generator. The RAG blocks can now resolve the workspace id and load the connected Meta account's RAG context. |
+
+`serverGenerateConcepts` was already reading `activeWorkspaceId` correctly (line 4255) and did not need a fix.
 
 ---
