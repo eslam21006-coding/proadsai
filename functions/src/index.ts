@@ -4211,7 +4211,18 @@ export const serverGenerateTOV = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, editIntent, rewriteScope, semanticLock, activeWorkspaceId } = request.data;
-    void activeWorkspaceId;
+    // Phase 14 Layer 7a — thread the active workspace id into the
+    // `inputs` object so the RAG block in `generateTOV` can resolve
+    // the connected Meta account. The frontend sends
+    // `activeWorkspaceId` at the request's top level (not inside
+    // `inputs`); the RAG loader reads `(inputs as any)._workspaceId ||
+    // (inputs as any).activeWorkspaceId`. `inputs` is the
+    // per-request deserialization payload, so the in-place mutation
+    // is request-scoped and never shared.
+    if (activeWorkspaceId && inputs && typeof inputs === "object") {
+        (inputs as Record<string, unknown>)._workspaceId = activeWorkspaceId;
+        (inputs as Record<string, unknown>).activeWorkspaceId = activeWorkspaceId;
+    }
     await enforceModeFormatGate(inputs);
     // ═══ ENTITLEMENT: Check retargeting gate on hook generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
@@ -4607,7 +4618,14 @@ export const serverGenerateBuildPlan = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride, activeWorkspaceId } = request.data;
-    void activeWorkspaceId;
+    // Phase 14 Layer 7a — thread the active workspace id into
+    // `inputs` so the RAG block in `generateBuildPlan` can resolve the
+    // connected Meta account (see serverGenerateTOV for the full
+    // rationale).
+    if (activeWorkspaceId && inputs && typeof inputs === "object") {
+        (inputs as Record<string, unknown>)._workspaceId = activeWorkspaceId;
+        (inputs as Record<string, unknown>).activeWorkspaceId = activeWorkspaceId;
+    }
     await enforceModeFormatGate(inputs);
     // ═══ ENTITLEMENT ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
@@ -5211,7 +5229,14 @@ export const serverGenerateCaption = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan, activeWorkspaceId } = request.data;
-    void activeWorkspaceId;
+    // Phase 14 Layer 7a — thread the active workspace id into
+    // `inputs` so the RAG block in `generateCaption` can resolve the
+    // connected Meta account (see serverGenerateTOV for the full
+    // rationale).
+    if (activeWorkspaceId && inputs && typeof inputs === "object") {
+        (inputs as Record<string, unknown>)._workspaceId = activeWorkspaceId;
+        (inputs as Record<string, unknown>).activeWorkspaceId = activeWorkspaceId;
+    }
     await enforceModeFormatGate(inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
