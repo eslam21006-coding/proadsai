@@ -527,39 +527,47 @@ export async function loadRAGContextForWorkspace(
 // ─── Wrapped PER-INJECTION POINT helper ───────────────────────
 
 /**
- * Build the final "PERFORMANCE_CONTEXT" block the prompt builders
+ * Build the final PERFORMANCE CONTEXT block the prompt builders
  * append into the system prompt. Returns "" when RAG is insufficient
  * so the caller can append nothing (no empty placeholder, no
- * PERFORMANCE_CONTEXT wrapper).
+ * PERFORMANCE CONTEXT wrapper).
+ *
+ * IMPORTANT: no `[]` or `{}` characters anywhere in the block —
+ * brackets are a known Gemini literal-copy hazard (see AGENTS.md
+ * rule GEMINI_BRACKET_RULE). The plain-declarative heading
+ * "PERFORMANCE CONTEXT:" carries the same semantic without the
+ * verbatim-copy risk.
  */
 export function buildPerformanceContextBlock(ragContext: RAGContext): string {
     if (ragContext.insufficient || !ragContext.promptBlock) return "";
-    return `[PERFORMANCE_CONTEXT]\nUse this to inform — but not rigidly copy — what you generate. The user's history suggests patterns, not rules.\n${ragContext.promptBlock}\n[/PERFORMANCE_CONTEXT]`;
+    return `PERFORMANCE CONTEXT:\nUse this to inform — but not rigidly copy — what you generate. The user's history suggests patterns, not rules.\n${ragContext.promptBlock}`;
 }
 
 /**
  * Hook-only injection block. Lighter than the combined
  * `buildPerformanceContextBlock` — used at the hook-generation
- * prompt site.
+ * prompt site. Bracket-free per the Gemini literal-copy rule.
  */
 export function buildHookPerformanceBlock(ragContext: RAGContext): string {
     if (ragContext.insufficient || !ragContext.hookBlock) return "";
-    return `[PERFORMANCE_CONTEXT]\nUse this to inform — but not rigidly copy — the hooks you generate. The user's history suggests patterns, not rules.\n${ragContext.hookBlock}\n[/PERFORMANCE_CONTEXT]`;
+    return `PERFORMANCE CONTEXT:\nUse this to inform — but not rigidly copy — the hooks you generate. The user's history suggests patterns, not rules.\n${ragContext.hookBlock}`;
 }
 
 /**
  * Visual-only injection block. Used at the build-plan prompt site.
+ * Bracket-free per the Gemini literal-copy rule.
  */
 export function buildVisualPerformanceBlock(ragContext: RAGContext): string {
     if (ragContext.insufficient || !ragContext.visualBlock) return "";
-    return `[PERFORMANCE_CONTEXT]\nThis user's best-performing visual compositions are reflected in the patterns above. Lean toward them while maintaining creative variety.\n${ragContext.visualBlock}\n[/PERFORMANCE_CONTEXT]`;
+    return `PERFORMANCE CONTEXT:\nThis user's best-performing visual compositions are reflected in the patterns above. Lean toward them while maintaining creative variety.\n${ragContext.visualBlock}`;
 }
 
 /**
  * Caption-only injection block. Single-sentence light touch (spec §9)
  * — kept minimal because copy learning is excluded from v1.
+ * Bracket-free per the Gemini literal-copy rule.
  */
 export function buildCaptionPerformanceBlock(ragContext: RAGContext): string {
     if (ragContext.insufficient || !ragContext.captionBlock) return "";
-    return `[PERFORMANCE_CONTEXT]\n${ragContext.captionBlock}\n[/PERFORMANCE_CONTEXT]`;
+    return `PERFORMANCE CONTEXT:\n${ragContext.captionBlock}`;
 }

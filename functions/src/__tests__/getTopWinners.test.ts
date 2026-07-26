@@ -93,9 +93,9 @@ test("getTopWinners: 7 S1 winners → returns top 5 sorted by evaluatedAt desc",
 
 test("getTopWinners: 3 S1 winners → returns all 3", () => {
     const cands: AdPerformanceWinnerCandidate[] = [
-        makeCand({ adId: "a1", evaluatedAt: 1_000_000 }),
-        makeCand({ adId: "a2", evaluatedAt: 2_000_000 }),
-        makeCand({ adId: "a3", evaluatedAt: 3_000_000 }),
+        makeCand({ adId: "a1", generationId: "gen-1", evaluatedAt: 1_000_000 }),
+        makeCand({ adId: "a2", generationId: "gen-2", evaluatedAt: 2_000_000 }),
+        makeCand({ adId: "a3", generationId: "gen-3", evaluatedAt: 3_000_000 }),
     ];
     const out = filterTopWinners(cands, (id) => {
         const c = cands.find((x) => x.generationId === id);
@@ -217,13 +217,51 @@ test("getTopWinners: hydration fetch returns null → winner dropped", () => {
 
 test("getTopWinners: respects maxResults cap (custom cap)", () => {
     const cands: AdPerformanceWinnerCandidate[] = [
-        makeCand({ adId: "a1", evaluatedAt: 5_000_000 }),
-        makeCand({ adId: "a2", evaluatedAt: 4_000_000 }),
-        makeCand({ adId: "a3", evaluatedAt: 3_000_000 }),
+        makeCand({ adId: "a1", generationId: "gen-1", evaluatedAt: 5_000_000 }),
+        makeCand({ adId: "a2", generationId: "gen-2", evaluatedAt: 4_000_000 }),
+        makeCand({ adId: "a3", generationId: "gen-3", evaluatedAt: 3_000_000 }),
     ];
     const out = filterTopWinners(cands, (id) => {
         const c = cands.find((x) => x.generationId === id);
         return makeGeneration({ generationId: id, evaluatedAt: c?.evaluatedAt ?? 0 });
     }, 2);
     assert.equal(out.length, 2);
+});
+
+test("getTopWinners: dedup by generationId — same creative in 2 ad sets yields 1 winner", () => {
+    // Spec §6.3: the same creative in multiple ad sets creates
+    // separate ad docs but is judged by its best result. The
+    // filter must NOT emit the same generation twice.
+    const cands: AdPerformanceWinnerCandidate[] = [
+        makeCand({ adId: "a1", generationId: "gen-dup", evaluatedAt: 5_000_000 }),
+        makeCand({ adId: "a2", generationId: "gen-dup", evaluatedAt: 3_000_000 }),
+        makeCand({ adId: "a3", generationId: "gen-unique", evaluatedAt: 4_000_000 }),
+    ];
+    const out = filterTopWinners(cands, (id) => makeGeneration({ generationId: id }));
+    assert.equal(out.length, 2);
+    // The unique generation is present, the duplicate is collapsed
+    const ids = out.map((w) => w.generationId).sort();
+    assert.deepEqual(ids, ["gen-dup", "gen-unique"]);
+});
+
+test("getTopWinners: dedup allows a later candidate to fill the slot when the earlier one's hydration is null", () => {
+    // Spec §6.3 + Edge Case 16: when a candidate's generation is
+    // deleted (hydration returns null), the dedup set is NOT polluted
+    // — a later candidate with the same generationId can still be
+    // picked up if it comes through the eligibility filter.
+    const cands: AdPerformanceWinnerCandidate[] = [
+        makeCand({ adId: "a1", generationId: "gen-x", evaluatedAt: 5_000_000 }),
+        makeCand({ adId: "a2", generationId: "gen-x", evaluatedAt: 3_000_000 }),
+    ];
+    let firstCallSeen = false;
+    const out = filterTopWinners(cands, (id) => {
+        if (!firstCallSeen) {
+            firstCallSeen = true;
+            return null; // first hydration call returns null
+        }
+        return makeGeneration({ generationId: id });
+    });
+    // First call null → slot not consumed; second call succeeds.
+    assert.equal(out.length, 1);
+    assert.equal(out[0].generationId, "gen-x");
 });

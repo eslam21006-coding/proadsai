@@ -84,10 +84,20 @@ export function filterTopWinners(
     // Sort by evaluatedAt descending — freshest wins first.
     eligible.sort((a, b) => b.evaluatedAt - a.evaluatedAt);
     const out: WinningAd[] = [];
+    // Dedupe by generationId: the same matched creative often appears
+    // as two ad docs (one per ad-set context — see spec §6.3). Without
+    // dedup those would consume multiple variety-reference slots with
+    // identical content. A generationId is only "seen" after its
+    // hydrated WinningAd is actually pushed, so a null hydration (a
+    // deleted source generation) does not consume a slot.
+    const seen = new Set<string>();
     for (const c of eligible) {
         if (out.length >= maxResults) break;
-        const win = hydrate(c.generationId as string);
+        const genId = c.generationId as string;
+        if (seen.has(genId)) continue;
+        const win = hydrate(genId);
         if (!win) continue; // deleted source generation → drop
+        seen.add(genId);
         out.push(win);
     }
     return out;
@@ -189,7 +199,7 @@ export async function loadTopWinners(
                 return hydrationCache.get(generationId) ?? null;
             }
             try {
-                const genSnap = await db.doc(`users/${userId}/generations/${generationId}`).get();
+                const genSnap = await db.collection("generations").doc(generationId).get();
                 if (!genSnap.exists) {
                     hydrationCache.set(generationId, null);
                     return null;

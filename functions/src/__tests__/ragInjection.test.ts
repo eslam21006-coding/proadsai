@@ -4,8 +4,10 @@
 // surfaces of the RAG context. The pure helpers are exercised in
 // `ragContext.test.ts`; this file verifies:
 //
-//   1. The block builders emit the PERFORMANCE_CONTEXT wrapper when
+//   1. The block builders emit the PERFORMANCE CONTEXT heading when
 //      the RAG context is sufficient, and emit "" when insufficient.
+//      No `[]` / `{}` characters are used in the block — see
+//      AGENTS.md GEMINI_BRACKET_RULE.
 //   2. The block builders never expose CTR/CPA/CPM numbers in any
 //      mode (the AI sees pattern names, not metrics).
 //   3. The three patch points in `generators.ts` are wired in
@@ -109,19 +111,20 @@ function makeRAGContext(overrides: Partial<RAGContext> = {}): RAGContext {
     };
 }
 
-test("RAG injection: insufficient → PERFORMANCE_CONTEXT block is empty", () => {
+test("RAG injection: insufficient → PERFORMANCE CONTEXT block is empty", () => {
     const empty = makeRAGContext({ insufficient: true, hookBlock: "", visualBlock: "", captionBlock: "", promptBlock: "" });
     assert.equal(buildHookPerformanceBlock(empty), "");
     assert.equal(buildVisualPerformanceBlock(empty), "");
     assert.equal(buildCaptionPerformanceBlock(empty), "");
 });
 
-test("RAG injection: sufficient → PERFORMANCE_CONTEXT block appears with WRAPPER", () => {
+test("RAG injection: sufficient → PERFORMANCE CONTEXT block appears (bracket-free heading)", () => {
     const ok = makeRAGContext();
     const hookBlock = buildHookPerformanceBlock(ok);
     assert.notEqual(hookBlock, "");
-    assert.ok(hookBlock.startsWith("[PERFORMANCE_CONTEXT]"));
-    assert.ok(hookBlock.endsWith("[/PERFORMANCE_CONTEXT]"));
+    assert.ok(hookBlock.startsWith("PERFORMANCE CONTEXT:"));
+    // No `[]` or `{}` anywhere in the block — Gemini literal-copy rule.
+    assert.ok(!/[\[\]{}]/.test(hookBlock), "block must be bracket-free (Gemini literal-copy rule)");
     // The internal block carries the user's hook names
     assert.ok(hookBlock.includes("urgency"));
     assert.ok(hookBlock.includes("authority"));
@@ -148,11 +151,11 @@ test("RAG injection: visual block references patterns (not metric numbers)", () 
 test("RAG injection: caption block is a single sentence (light touch)", () => {
     const ok = makeRAGContext();
     const block = buildCaptionPerformanceBlock(ok);
-    // Strip the [PERFORMANCE_CONTEXT] wrappers before counting sentences so
-    // the wrapping fences don't confuse the sentence-split heuristic.
+    // Strip the "PERFORMANCE CONTEXT:" heading before counting sentences
+    // so the heading doesn't confuse the sentence-split heuristic.
     const inner = block
-        .replace(/^\[PERFORMANCE_CONTEXT\]\s*/, "")
-        .replace(/\s*\[\/PERFORMANCE_CONTEXT\]$/, "");
+        .replace(/^PERFORMANCE CONTEXT:\s*/, "")
+        .trim();
     const sentenceCount = inner.split(/[.!?]\s/).filter((s) => s.trim().length > 0).length;
     assert.equal(sentenceCount, 1, "caption block must be a single sentence");
 });
