@@ -62,11 +62,16 @@ export const MAX_TOP_WINNERS = 5;
  * the caller) and a hydration function that returns the `WinningAd`
  * for a given `generationId` (or `null` if the source generation is
  * missing / deleted). Non-throwing.
+ *
+ * Parameter order: required `candidates` + `hydrate` first so the
+ * default `maxResults` stays reachable for callers that omit it
+ * (audit fix: a required parameter must not follow a default-valued
+ * parameter).
  */
 export function filterTopWinners(
     candidates: ReadonlyArray<AdPerformanceWinnerCandidate>,
-    maxResults: number = MAX_TOP_WINNERS,
     hydrate: (generationId: string) => WinningAd | null,
+    maxResults: number = MAX_TOP_WINNERS,
 ): WinningAd[] {
     const eligible = candidates.filter((c) => {
         if (c.verdict !== "🟢") return false;
@@ -153,12 +158,23 @@ export async function loadTopWinners(
         const candidates: AdPerformanceWinnerCandidate[] = [];
         for (const doc of snap.docs) {
             const d = doc.data() as Record<string, unknown>;
+            // Strict conversion mapping: only the explicit "conversion"
+            // string maps to the conversion bucket. Anything else
+            // (including the legacy "other" string, missing values,
+            // and any unknown future objective) is bucketed as "other"
+            // so it can never be mis-classified as a winner. The
+            // Firestore `where("campaignObjective", "==", "conversion")`
+            // filter above already excludes non-conversion ads, so
+            // the cases this fallback handles are defensive (corrupt
+            // docs, legacy rows).
+            const campaignObjective: "conversion" | "other" =
+                d.campaignObjective === "conversion" ? "conversion" : "other";
             candidates.push({
                 adId: doc.id,
                 generationId: typeof d.generationId === "string" ? d.generationId : null,
                 matchType: d.matchType === "auto_hash" || d.matchType === "manual" ? d.matchType : null,
                 metadataAvailable: d.metadataAvailable === true,
-                campaignObjective: d.campaignObjective === "other" ? "other" : "conversion",
+                campaignObjective,
                 verdict: d.verdict === "🟢" || d.verdict === "🟡" || d.verdict === "🔴" || d.verdict === "🛟" || d.verdict === "⏳" ? d.verdict : "⏳",
                 evaluatedAt: typeof d.evaluatedAt === "number" ? d.evaluatedAt : 0,
                 linkCtr: typeof d.ctrLink === "number" ? d.ctrLink : 0,
@@ -198,7 +214,7 @@ export async function loadTopWinners(
             new Set(candidates.map((c) => c.generationId).filter((id): id is string => typeof id === "string")),
         );
         await Promise.all(distinctGenIds.map((id) => hydrateAsync(id)));
-        return filterTopWinners(candidates, maxResults, (id) => hydrationCache.get(id) ?? null);
+        return filterTopWinners(candidates, (id) => hydrationCache.get(id) ?? null, maxResults);
     } catch (e) {
         console.warn("⚠️ loadTopWinners failed (non-blocking, returning []):", e);
         return [];

@@ -70,7 +70,7 @@ test("phase 20 wiring: 5 S1 winners → pastWinningAds has 5 entries sorted by e
         makeCand({ adId: "a4", generationId: "gen-4", evaluatedAt: 4_000_000 }),
         makeCand({ adId: "a5", generationId: "gen-5", evaluatedAt: 5_000_000 }),
     ];
-    const out = filterTopWinners(cands, 5, (id) => {
+    const out = filterTopWinners(cands, (id) => {
         const c = cands.find((x) => x.generationId === id);
         return makeWinner({ generationId: id, evaluatedAt: c?.evaluatedAt ?? 0 });
     });
@@ -80,7 +80,7 @@ test("phase 20 wiring: 5 S1 winners → pastWinningAds has 5 entries sorted by e
 });
 
 test("phase 20 wiring: 0 winners → pastWinningAds is empty array (no regression)", () => {
-    const out = filterTopWinners([], 5, () => makeWinner());
+    const out = filterTopWinners([], () => makeWinner(), 5);
     assert.equal(out.length, 0);
     assert.deepEqual(out, []);
 });
@@ -109,7 +109,7 @@ test("phase 20 wiring: each WinningAd carries the right fields from the generati
     const cands: AdPerformanceWinnerCandidate[] = [
         makeCand({ adId: "a1", generationId: "gen-1", evaluatedAt: 5_000_000, linkCtr: 2.5, cpa3d: 12 }),
     ];
-    const out = filterTopWinners(cands, 5, () => makeWinner({
+    const out = filterTopWinners(cands, () => makeWinner({
         generationId: "gen-1",
         hookAngle: "urgency",
         hookText: "Limited time",
@@ -180,15 +180,45 @@ test("phase 20 wiring: generators.ts appends a past-winners block to the concept
         "generators.ts gates the winners block on pastWinningAds.length > 0");
 });
 
-// ─── buildPastWinnersBlock: behavior (via source-scan + re-implementation) ─
+// ─── buildPastWinnersBlock: behavior (via direct behavioral test) ─
 
-test("phase 20 wiring: buildPastWinnersBlock emits a non-empty block for >= 1 winner", () => {
-    const src = readFileSync(join(__dirname, "..", "..", "src", "generators.ts"), "utf8");
-    // The function returns "" when input is empty (regression-safe)
-    const emptyCheck = /if\s*\(\s*!winners\s*\|\|\s*winners\.length\s*===\s*0\s*\)\s*return\s*""/;
-    assert.ok(emptyCheck.test(src), "buildPastWinnersBlock returns '' for empty winners");
-    // The non-empty path includes hook angle + hook text + layout
-    assert.ok(/w\.hookAngle/.test(src), "buildPastWinnersBlock includes hookAngle");
-    assert.ok(/w\.hookText/.test(src), "buildPastWinnersBlock includes hookText");
-    assert.ok(/w\.layoutTemplate/.test(src), "buildPastWinnersBlock includes layoutTemplate");
+// Import the (now-exported) builder from generators.ts so the
+// behavior test asserts on the actual implementation, not a
+// source-text regex that would silently break on a refactor.
+import { buildPastWinnersBlock } from "../generators.js";
+
+test("phase 20 wiring: buildPastWinnersBlock returns '' for empty winners (regression-safe)", () => {
+    assert.equal(buildPastWinnersBlock([]), "");
+});
+
+test("phase 20 wiring: buildPastWinnersBlock emits a non-empty block with the hook + layout for >= 1 winner", () => {
+    const block = buildPastWinnersBlock([
+        makeWinner({
+            generationId: "gen-1",
+            hookAngle: "urgency",
+            hookText: "Stop scrolling",
+            layoutTemplate: "hero_value_stack",
+            artDirection: "dark_cinematic",
+        }),
+    ]);
+    assert.notEqual(block, "");
+    // Field content assertions (not source-text regexes).
+    assert.ok(block.includes("urgency"), "block names the hook angle");
+    assert.ok(block.includes("Stop scrolling"), "block includes the hook text");
+    assert.ok(block.includes("hero_value_stack"), "block includes the layout template");
+});
+
+test("phase 20 wiring: buildPastWinnersBlock normalizes hookText (single line, capped at 80 chars)", () => {
+    const longHook = "X".repeat(200);
+    const block = buildPastWinnersBlock([
+        makeWinner({
+            generationId: "gen-1",
+            hookAngle: "urgency",
+            hookText: longHook,
+        }),
+    ]);
+    // The hook text inside the wrapped quotes should be at most 80 chars.
+    const match = block.match(/"([^"]*)"/);
+    assert.ok(match, "block contains a quoted hook text segment");
+    assert.ok(match[1].length <= 80, `hook text segment must be ≤ 80 chars, got ${match[1].length}`);
 });

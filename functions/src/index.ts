@@ -50,6 +50,7 @@ import {
 import { validateBatchVariance } from "./varianceValidator.js";
 import { getConceptDirectorKillSwitch, getConceptDirectorEnabled } from "./conceptDirectorConfig.js";
 import { loadTopWinners, type WinningAd } from "./getTopWinners.js";
+import { resolveConnectedAdAccountId } from "./ragContext.js";
 import type { ConceptDirectorTraceEntry } from "./types.js";
 // Phase 14 — RAG + Meta Reporting Feedback Loop (Layer 1 callables).
 export { saveFunnelSettings, getFunnelSettings, dismissAdvisory } from "./funnelSettings.js";
@@ -4240,7 +4241,6 @@ export const serverGenerateConcepts = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, activeWorkspaceId } = request.data;
-    void activeWorkspaceId;
     await enforceModeFormatGate(inputs);
     // ═══ ENTITLEMENT: Check retargeting gate on concept generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
@@ -4254,18 +4254,15 @@ export const serverGenerateConcepts = onCall({
     try {
         const _wsId = (inputs as any)?.workspaceId || activeWorkspaceId;
         if (_wsId) {
-            // Resolve the connected ad account (may be null on disconnect).
-            const _wsSnap = await admin.firestore()
-                .doc(`users/${request.auth.uid}/workspaces/${_wsId}`)
-                .get();
-            const _accountId = _wsSnap.exists
-                ? ((_wsSnap.data() || {}).metaAdAccountId as string | undefined)
-                : null;
-            if (typeof _accountId === "string" && _accountId.length > 0) {
+            // Reuse the canonical account-resolution helper from
+            // ragContext.ts so the workspace→accountId contract lives
+            // in one place (FR-026).
+            const conn = await resolveConnectedAdAccountId(request.auth.uid, _wsId);
+            if (conn) {
                 _topWinners = await loadTopWinners(
                     request.auth.uid,
                     _wsId,
-                    _accountId,
+                    conn.accountId,
                 );
             }
         }

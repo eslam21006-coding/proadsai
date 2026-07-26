@@ -117,7 +117,9 @@ function extractConceptArchitectures(
 // layout+art-direction tag, which is enough for it to deliberately
 // produce a different sibling while staying inside the same world.
 
-function buildPastWinnersBlock(winners: ReadonlyArray<WinningAd>): string {
+const PAST_WINNERS_HOOK_TEXT_MAX = 80;
+
+export function buildPastWinnersBlock(winners: ReadonlyArray<WinningAd>): string {
     if (!winners || winners.length === 0) return "";
     const lines: string[] = [
         "The user's top-performing creatives in this account are listed below. Use them as a VARIETY reference — each new concept you write should DELIBERATELY differ on at least one of metaphor, layout, or headline architecture so the set of 3 concepts stays fresh. Do not copy any of these.",
@@ -126,7 +128,19 @@ function buildPastWinnersBlock(winners: ReadonlyArray<WinningAd>): string {
         const w = winners[i];
         const parts: string[] = [];
         if (w.hookAngle) parts.push(`hook: ${w.hookAngle}`);
-        if (w.hookText) parts.push(`text: "${w.hookText}"`);
+        if (w.hookText) {
+            // Normalize to a single line and cap the length so an
+            // unusually long stored hookText cannot break the
+            // numbered-list layout. Whitespace is collapsed; embedded
+            // quote characters are kept (the wrapping quotes are
+            // added by the template, so a stray `"` in the text would
+            // not be ambiguous).
+            const normalized = w.hookText
+                .replace(/\s+/g, " ")
+                .trim()
+                .slice(0, PAST_WINNERS_HOOK_TEXT_MAX);
+            parts.push(`text: "${normalized}"`);
+        }
         if (w.layoutTemplate) parts.push(`layout: ${w.layoutTemplate}`);
         if (w.artDirection) parts.push(`art: ${w.artDirection}`);
         lines.push(`${i + 1}. ${parts.join(" | ")}`);
@@ -3163,7 +3177,7 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
 // This step is just "Scene Description". 2.5 Flash is perfectly capable and faster.
 // This saves your Gemini 3 Quota/Limits.
 
-export async function generateConcepts(approvedTov: string, inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', _previousOutput?: string, _globalRefinement?: string, editFeedback?: string, editIndex?: string, conceptDirectorBriefs?: ReadonlyArray<ConceptBrief | ConceptDirectorFallback>, pastWinningAds?: ReadonlyArray<unknown>): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
+export async function generateConcepts(approvedTov: string, inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', _previousOutput?: string, _globalRefinement?: string, editFeedback?: string, editIndex?: string, conceptDirectorBriefs?: ReadonlyArray<ConceptBrief | ConceptDirectorFallback>, pastWinningAds?: ReadonlyArray<WinningAd>): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
     // FIX 2: strip media payload (presence preserved) — concepts only branch on logo/asset COUNT.
     inputs = stripMediaFromInputs(inputs);
     let _conceptsRankingLinkage: RankingLinkage | null = null;
@@ -4978,13 +4992,18 @@ ${malformedJson.slice(0, 24000)}`
         return parseStructuredPlanWithRepair(response.text || '{}');
     };
 
-    let machinePlan = await requestStructuredPlan(
-        _bpRAGBlock ? `${prompt}\n\n${_bpRAGBlock}` : prompt,
-    );
+    // Single composed prompt constant — used by the initial call,
+    // the contract-repair retry, and the copy-fidelity retry so the
+    // RAG block is preserved across every path. Re-declaring the
+    // ternary inline in each retry risks silently dropping the block
+    // on a future refactor (audit fix).
+    const promptWithRag = _bpRAGBlock ? `${prompt}\n\n${_bpRAGBlock}` : prompt;
+
+    let machinePlan = await requestStructuredPlan(promptWithRag);
     let structuredValidation = validateStructuredBuildPlan(machinePlan, buildPlanContract, ownershipMap);
 
     if (!structuredValidation.contractCheck.passed) {
-        const repairPrompt = `${prompt}
+        const repairPrompt = `${promptWithRag}
 
 STRUCTURED VALIDATION FAILED.
 You MUST repair the JSON so the layout contract is fully satisfied.
@@ -5064,9 +5083,7 @@ ${JSON.stringify(machinePlan)}`;
         }
         if (attempt < MAX_COPY_FIDELITY_ATTEMPTS) {
             console.warn(`⚠️ Copy fidelity ${fidelityResult.passed ? 'passed' : 'failed (fields: ' + fidelityResult.failedFields.join(', ') + ')'}, contract ${contractOk ? 'passed' : 'failed'} (attempt ${attempt}/${MAX_COPY_FIDELITY_ATTEMPTS}) — rebuilding plan...`);
-            machinePlan = await requestStructuredPlan(
-                _bpRAGBlock ? `${prompt}\n\n${_bpRAGBlock}` : prompt,
-            );
+            machinePlan = await requestStructuredPlan(promptWithRag);
             if (!machinePlan.blueprint || machinePlan.blueprint.length < 80) {
                 if (bestMachinePlan.blueprint && bestMachinePlan.blueprint.length >= 80) {
                     console.warn('⚠️ Copy fidelity retry produced empty/short blueprint — falling back to bestMachinePlan');

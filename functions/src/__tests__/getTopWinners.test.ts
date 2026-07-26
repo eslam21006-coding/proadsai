@@ -73,7 +73,7 @@ test("getTopWinners: 7 S1 winners → returns top 5 sorted by evaluatedAt desc",
     // in the candidates list to retrieve the evaluatedAt. The sort key
     // is the candidate's evaluatedAt — the hydrated WinningAd's
     // evaluatedAt should mirror it.
-    const out = filterTopWinners(cands, 5, (generationId) => {
+    const out = filterTopWinners(cands, (generationId) => {
         const cand = cands.find((c) => c.generationId === generationId);
         return makeGeneration({ generationId, evaluatedAt: cand?.evaluatedAt ?? 0 });
     });
@@ -97,7 +97,7 @@ test("getTopWinners: 3 S1 winners → returns all 3", () => {
         makeCand({ adId: "a2", evaluatedAt: 2_000_000 }),
         makeCand({ adId: "a3", evaluatedAt: 3_000_000 }),
     ];
-    const out = filterTopWinners(cands, 5, (id) => {
+    const out = filterTopWinners(cands, (id) => {
         const c = cands.find((x) => x.generationId === id);
         return makeGeneration({ generationId: id, evaluatedAt: c?.evaluatedAt ?? 0 });
     });
@@ -105,7 +105,7 @@ test("getTopWinners: 3 S1 winners → returns all 3", () => {
 });
 
 test("getTopWinners: 0 S1 winners → returns empty array", () => {
-    const out = filterTopWinners([], 5, () => makeGeneration());
+    const out = filterTopWinners([], () => makeGeneration(), 5);
     assert.equal(out.length, 0);
     assert.deepEqual(out, []);
 });
@@ -114,52 +114,55 @@ test("getTopWinners: 0 S1 winners → returns empty array", () => {
 
 test("getTopWinners: S1 winner with metadataAvailable=false (deleted generation) → excluded", () => {
     const cands: AdPerformanceWinnerCandidate[] = [
-        makeCand({ adId: "a1", evaluatedAt: 5_000_000, metadataAvailable: false }),
-        makeCand({ adId: "a2", evaluatedAt: 3_000_000, metadataAvailable: true }),
+        makeCand({ adId: "a1", generationId: "gen-excluded", evaluatedAt: 5_000_000, metadataAvailable: false }),
+        makeCand({ adId: "a2", generationId: "gen-kept", evaluatedAt: 3_000_000, metadataAvailable: true }),
     ];
-    const out = filterTopWinners(cands, 5, () => makeGeneration());
+    const out = filterTopWinners(cands, (id) => makeGeneration({ generationId: id }));
     assert.equal(out.length, 1);
-    assert.equal(out[0].generationId, "gen-1");
+    assert.equal(out[0].generationId, "gen-kept");
 });
 
 test("getTopWinners: S1 winner with non-conversion campaignObjective → excluded", () => {
     const cands: AdPerformanceWinnerCandidate[] = [
-        makeCand({ adId: "a1", evaluatedAt: 5_000_000, campaignObjective: "other" }),
-        makeCand({ adId: "a2", evaluatedAt: 3_000_000, campaignObjective: "conversion" }),
+        makeCand({ adId: "a1", generationId: "gen-excluded", evaluatedAt: 5_000_000, campaignObjective: "other" }),
+        makeCand({ adId: "a2", generationId: "gen-kept", evaluatedAt: 3_000_000, campaignObjective: "conversion" }),
     ];
-    const out = filterTopWinners(cands, 5, () => makeGeneration());
+    const out = filterTopWinners(cands, (id) => makeGeneration({ generationId: id }));
     assert.equal(out.length, 1);
+    assert.equal(out[0].generationId, "gen-kept");
 });
 
 test("getTopWinners: S1 winner with matchType=null (unmatched) → excluded", () => {
     const cands: AdPerformanceWinnerCandidate[] = [
-        makeCand({ adId: "a1", evaluatedAt: 5_000_000, matchType: null }),
-        makeCand({ adId: "a2", evaluatedAt: 3_000_000, matchType: "manual" }),
+        makeCand({ adId: "a1", generationId: "gen-excluded", evaluatedAt: 5_000_000, matchType: null }),
+        makeCand({ adId: "a2", generationId: "gen-kept", evaluatedAt: 3_000_000, matchType: "manual" }),
     ];
-    const out = filterTopWinners(cands, 5, () => makeGeneration());
+    const out = filterTopWinners(cands, (id) => makeGeneration({ generationId: id }));
     assert.equal(out.length, 1);
+    assert.equal(out[0].generationId, "gen-kept");
 });
 
 test("getTopWinners: S1 winner with verdict !== 🟢 → excluded (K3/CB/S2 not eligible)", () => {
     const cands: AdPerformanceWinnerCandidate[] = [
-        makeCand({ adId: "a1", evaluatedAt: 5_000_000, verdict: "🔴" }),
-        makeCand({ adId: "a2", evaluatedAt: 3_000_000, verdict: "🟡" }),
-        makeCand({ adId: "a3", evaluatedAt: 1_000_000, verdict: "🛟" }),
-        makeCand({ adId: "a4", evaluatedAt: 6_000_000, verdict: "⏳" }),
-        makeCand({ adId: "a5", evaluatedAt: 4_000_000, verdict: "🟢" }),
+        makeCand({ adId: "a1", generationId: "gen-r", evaluatedAt: 5_000_000, verdict: "🔴" }),
+        makeCand({ adId: "a2", generationId: "gen-y", evaluatedAt: 3_000_000, verdict: "🟡" }),
+        makeCand({ adId: "a3", generationId: "gen-l", evaluatedAt: 1_000_000, verdict: "🛟" }),
+        makeCand({ adId: "a4", generationId: "gen-t", evaluatedAt: 6_000_000, verdict: "⏳" }),
+        makeCand({ adId: "a5", generationId: "gen-g", evaluatedAt: 4_000_000, verdict: "🟢" }),
     ];
-    const out = filterTopWinners(cands, 5, () => makeGeneration());
+    const out = filterTopWinners(cands, (id) => makeGeneration({ generationId: id }));
     assert.equal(out.length, 1);
-    assert.equal(out[0].generationId, "gen-1");
+    assert.equal(out[0].generationId, "gen-g");
 });
 
 test("getTopWinners: S1 winner with no generationId → excluded", () => {
     const cands: AdPerformanceWinnerCandidate[] = [
-        makeCand({ adId: "a1", evaluatedAt: 5_000_000, generationId: null }),
-        makeCand({ adId: "a2", evaluatedAt: 3_000_000 }),
+        makeCand({ adId: "a1", generationId: null, evaluatedAt: 5_000_000 }),
+        makeCand({ adId: "a2", generationId: "gen-kept", evaluatedAt: 3_000_000 }),
     ];
-    const out = filterTopWinners(cands, 5, () => makeGeneration());
+    const out = filterTopWinners(cands, (id) => makeGeneration({ generationId: id }));
     assert.equal(out.length, 1);
+    assert.equal(out[0].generationId, "gen-kept");
 });
 
 // ─── Generation hydration ───────────────────────────────────
@@ -168,7 +171,7 @@ test("getTopWinners: returned WinningAd has all required fields populated from t
     const cands: AdPerformanceWinnerCandidate[] = [
         makeCand({ adId: "a1", evaluatedAt: 5_000_000, linkCtr: 2.5, cpa3d: 10 }),
     ];
-    const out = filterTopWinners(cands, 5, () => makeGeneration({
+    const out = filterTopWinners(cands, () => makeGeneration({
         generationId: "gen-1",
         hookAngle: "urgency",
         hookText: "Don't miss this",
@@ -202,7 +205,7 @@ test("getTopWinners: hydration fetch returns null → winner dropped", () => {
         makeCand({ adId: "a1", evaluatedAt: 5_000_000, generationId: "gen-1" }),
         makeCand({ adId: "a2", evaluatedAt: 3_000_000, generationId: "gen-2" }),
     ];
-    const out = filterTopWinners(cands, 5, (genId) => {
+    const out = filterTopWinners(cands, (genId) => {
         if (genId === "gen-1") return null;
         return makeGeneration({ generationId: genId });
     });
@@ -218,9 +221,9 @@ test("getTopWinners: respects maxResults cap (custom cap)", () => {
         makeCand({ adId: "a2", evaluatedAt: 4_000_000 }),
         makeCand({ adId: "a3", evaluatedAt: 3_000_000 }),
     ];
-    const out = filterTopWinners(cands, 2, (id) => {
+    const out = filterTopWinners(cands, (id) => {
         const c = cands.find((x) => x.generationId === id);
         return makeGeneration({ generationId: id, evaluatedAt: c?.evaluatedAt ?? 0 });
-    });
+    }, 2);
     assert.equal(out.length, 2);
 });

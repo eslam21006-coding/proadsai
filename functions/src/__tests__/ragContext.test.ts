@@ -278,9 +278,9 @@ test("RAG: empty visualAggs → visualInsights empty, still works", () => {
     assert.notEqual(result.promptBlock, "");
 });
 
-// ─── Hook-visual-specific block builders ──────────────────────
+// ─── Hook-visual-specific RAG context fields ─────────────────
 
-test("RAG: buildHookPerformanceBlock emits a hook-only summary text", () => {
+test("RAG: ragContext.hookBlock emits a hook-only summary text", () => {
     const hookAggs = [
         makeHookAgg({ angleKey: "urgency", sampleSize: 5, byObjective: { conversion: { avgLinkCtr: 2.0, count: 5, bestVerdictCount: 0, worstVerdictCount: 0 }, other: { avgLinkCtr: 0, count: 0 } } }),
         makeHookAgg({ angleKey: "statistics", sampleSize: 5, byObjective: { conversion: { avgLinkCtr: 1.0, count: 5, bestVerdictCount: 0, worstVerdictCount: 0 }, other: { avgLinkCtr: 0, count: 0 } } }),
@@ -295,7 +295,7 @@ test("RAG: buildHookPerformanceBlock emits a hook-only summary text", () => {
     assert.ok(!hookBlock.includes("CTR") && !hookBlock.includes("CPA"));
 });
 
-test("RAG: buildVisualPerformanceBlock emits a visual-only summary text", () => {
+test("RAG: ragContext.visualBlock emits a visual-only summary text and names the top pattern", () => {
     const visualAggs = [
         makeVisualAgg({ patternKey: "p1", sampleSize: 5, byObjective: { conversion: { avgCpm: 10, avgLinkCtr: 2.0, count: 5, bestVerdictCount: 0, worstVerdictCount: 0 }, other: { count: 0 } } }),
         makeVisualAgg({ patternKey: "p2", sampleSize: 5, byObjective: { conversion: { avgCpm: 10, avgLinkCtr: 1.0, count: 5, bestVerdictCount: 0, worstVerdictCount: 0 }, other: { count: 0 } } }),
@@ -308,9 +308,14 @@ test("RAG: buildVisualPerformanceBlock emits a visual-only summary text", () => 
     );
     const visualBlock = result.visualBlock;
     assert.notEqual(visualBlock, "");
+    // Strengthen: assert the top pattern is named and the metric
+    // terms are not present.
+    assert.ok(visualBlock.includes("p1"), "visualBlock should name the top pattern 'p1'");
+    assert.ok(!/\bCTR\b/i.test(visualBlock), "visualBlock must not contain 'CTR'");
+    assert.ok(!/\bCPM\b/i.test(visualBlock), "visualBlock must not contain 'CPM'");
 });
 
-test("RAG: buildCaptionPerformanceBlock emits a single-sentence light-touch caption", () => {
+test("RAG: ragContext.captionBlock emits a single-sentence light-touch caption", () => {
     const hookAggs = [
         makeHookAgg({ angleKey: "urgency", sampleSize: 10, byObjective: { conversion: { avgLinkCtr: 2.0, count: 10, bestVerdictCount: 0, worstVerdictCount: 0 }, other: { avgLinkCtr: 0, count: 0 } } }),
     ];

@@ -7,10 +7,15 @@
 // owns the transformation rules.
 //
 // Activation gate (spec §9 — RAG injection):
-//   - sampleSize (sum of conversion counts across hook aggregates)
-//     must be >= 10. Below the gate → insufficient: true,
-//     promptBlock: '' (empty). Generation proceeds byte-for-byte
-//     identical to before (fail-open at the prompt-injection boundary).
+//   - sampleSize uses the MAXIMUM of hook-conversion-count and
+//     visual-conversion-count (not the sum — the same creative
+//     contributes to both bucket counts so summing would double-
+//     count and let the gate trip earlier than intended). The
+//     "10+ matched conversion ads" gate fires when EITHER source
+//     alone reports 10+ conversion-matched creatives.
+//   - Below the gate → insufficient: true, promptBlock: '' (empty).
+//     Generation proceeds byte-for-byte identical to before (fail-open
+//     at the prompt-injection boundary).
 //
 // Top performers (hookInsights.topPerformers):
 //   - top 3 angles by conversion avgLinkCtr (descending).
@@ -23,7 +28,10 @@
 // Visual mirror (visualInsights.topPerformers / avoid): same shape
 // but keyed on patternKey; the description is a short label like
 // "Heritage + Bold + Dubai" the caller can supply when reading the
-// pattern doc (default is the patternKey itself).
+// pattern doc (default is the patternKey itself). The `avoid` mirror
+// now surfaces each pattern's `worstVerdictCount` (the same field
+// the hook avoid already exposes) so the model can see "this
+// pattern is KILLING it — N 🔴 verdicts" not just an empty count.
 //
 // selectedAngleRank (informational for downstream surfaces):
 //   - 'top'     = the selected angle is the #1 by conversion avgLinkCtr
@@ -49,6 +57,7 @@ import type {
     HookPerformanceAggregate,
     VisualPerformanceAggregate,
 } from "./learningAggregates.js";
+import { getDb } from "./firestoreClient.js";
 
 // ─── Public types ─────────────────────────────────────────────
 
@@ -130,6 +139,14 @@ interface RankedHook {
     sampleSize: number;
 }
 
+interface RankedVisual {
+    patternKey: string;
+    avgLinkCtr: number;
+    sampleSize: number;
+    winCount: number;
+    loseCount: number;
+}
+
 function rankHooks(
     hookAggs: ReadonlyArray<HookPerformanceAggregate>,
 ): RankedHook[] {
@@ -144,11 +161,13 @@ function rankHooks(
         }));
 }
 
-function topN<T>(items: ReadonlyArray<T>, n: number, cmp: (a: T, b: T) => number): T[] {
-    return [...items].sort(cmp).slice(0, n);
-}
-
-function bottomN<T>(items: ReadonlyArray<T>, n: number, cmp: (a: T, b: T) => number): T[] {
+/**
+ * Take the first `n` items from a sorted copy of the input. The
+ * comparator fully controls the direction (descending for top-N,
+ * ascending for bottom-N) so a single helper covers both use sites
+ * without duplicating the slice logic.
+ */
+function sortSlice<T>(items: ReadonlyArray<T>, n: number, cmp: (a: T, b: T) => number): T[] {
     return [...items].sort(cmp).slice(0, n);
 }
 
@@ -161,8 +180,12 @@ function rankSelectedAngle(
     const found = ranked.find((r) => r.angleKey === selectedAngle);
     if (!found) return "unknown";
     if (ranked.length > 0 && ranked[0].angleKey === selectedAngle) return "top";
+    // "weak" requires BOTH below-threshold avgLinkCtr AND the data gate
+    // (>= 3 ads) — same gate as the avoid-list so the rank label and
+    // the structured avoid insight cannot disagree about whether a
+    // given angle underperforms.
     const threshold = accountAvgLinkCtr * AVOID_THRESHOLD_RATIO;
-    if (found.avgLinkCtr < threshold) return "weak";
+    if (found.sampleSize >= AVOID_MIN_ADS && found.avgLinkCtr < threshold) return "weak";
     return "good";
 }
 
@@ -197,27 +220,19 @@ function buildHookBlockText(
 }
 
 function buildVisualBlockText(
-    visualAggs: ReadonlyArray<VisualPerformanceAggregate>,
+    visualRanked: ReadonlyArray<RankedVisual>,
     visualPatternDescriptions: Record<string, string> | undefined,
     accountAvgLinkCtr: number,
 ): string {
-    const ranked = visualAggs
-        .filter((v) => v.byObjective.conversion.count > 0)
-        .map((v) => ({
-            patternKey: v.patternKey,
-            avgLinkCtr: v.byObjective.conversion.avgLinkCtr,
-            sampleSize: v.byObjective.conversion.count,
-            winCount: v.byObjective.conversion.bestVerdictCount,
-        }));
-    if (ranked.length === 0) return "";
-    const top = topN(ranked, TOP_PERFORMER_COUNT, (a, b) => b.avgLinkCtr - a.avgLinkCtr);
+    if (visualRanked.length === 0) return "";
+    const top = sortSlice(visualRanked, TOP_PERFORMER_COUNT, (a, b) => b.avgLinkCtr - a.avgLinkCtr);
     const threshold = accountAvgLinkCtr * AVOID_THRESHOLD_RATIO;
-    const avoid = bottomN(
-        ranked.filter((v) => v.sampleSize >= AVOID_MIN_ADS && v.avgLinkCtr <= threshold),
+    const avoid = sortSlice(
+        visualRanked.filter((v) => v.sampleSize >= AVOID_MIN_ADS && v.avgLinkCtr <= threshold),
         AVOID_COUNT,
         (a, b) => a.avgLinkCtr - b.avgLinkCtr,
     );
-    const fmt = (v: typeof top[0]): string => visualPatternDescriptions?.[v.patternKey] ?? v.patternKey;
+    const fmt = (v: RankedVisual): string => visualPatternDescriptions?.[v.patternKey] ?? v.patternKey;
     const topJoined = top.map(fmt).join(", ");
     const avoidJoined = avoid.map(fmt).join(", ");
     const topPhrase = top.length === 1 ? fmt(top[0]) : topJoined;
@@ -262,11 +277,14 @@ export function buildRAGContext(input: RAGContextInput): RAGContext {
         accountAvgLinkCtr,
     } = input;
 
-    // sampleSize = sum of conversion counts across hook + visual agg docs.
-    // The "10+ matched conversion ads" gate is the total eligible for
-    // learning, not just hook counts. Either source alone can clear the
-    // gate when the other has zero data (e.g. account has only matched
-    // creatives with patterns but no canonical angle).
+    // sampleSize = MAX of (hook-conversion-count, visual-conversion-count).
+    // The two bucket counts derive from the same underlying matched-
+    // creative set — a single conversion campaign creative contributes
+    // to BOTH the hook aggregate (for its hook angle) and the visual
+    // aggregate (for its pattern). Summing them would double-count
+    // and let the 10+ gate trip earlier than the spec intends. The
+    // MAX of the two is the conservative count of distinct creatives
+    // the user has produced.
     const hookConversionCount = hookAggs.reduce(
         (sum, a) => sum + (a.byObjective.conversion.count || 0),
         0,
@@ -275,14 +293,15 @@ export function buildRAGContext(input: RAGContextInput): RAGContext {
         (sum, a) => sum + (a.byObjective.conversion.count || 0),
         0,
     );
-    const sampleSize = hookConversionCount + visualConversionCount;
+    const sampleSize = Math.max(hookConversionCount, visualConversionCount);
 
     const ranked = rankHooks(hookAggs).sort((a, b) => b.avgLinkCtr - a.avgLinkCtr);
     const threshold = accountAvgLinkCtr * AVOID_THRESHOLD_RATIO;
-    const avoidRanked = ranked
-        .filter((r) => r.sampleSize >= AVOID_MIN_ADS && r.avgLinkCtr <= threshold)
-        .sort((a, b) => a.avgLinkCtr - b.avgLinkCtr)
-        .slice(0, AVOID_COUNT);
+    const avoidRanked = sortSlice(
+        ranked.filter((r) => r.sampleSize >= AVOID_MIN_ADS && r.avgLinkCtr <= threshold),
+        AVOID_COUNT,
+        (a, b) => a.avgLinkCtr - b.avgLinkCtr,
+    );
 
     const selectedAngleRank = rankSelectedAngle(hookAngle, ranked, accountAvgLinkCtr);
 
@@ -294,7 +313,7 @@ export function buildRAGContext(input: RAGContextInput): RAGContext {
     // but the test invariant is that empty prompts go together with empty
     // insight arrays when the gate is closed. The dashboard / icon gating
     // surface its own `insufficient` flag rather than reaching in here.
-    const topPerformers = insufficient ? [] : ranked.slice(0, TOP_PERFORMER_COUNT).map((r) => ({
+    const topPerformers = insufficient ? [] : sortSlice(ranked, TOP_PERFORMER_COUNT, (a, b) => b.avgLinkCtr - a.avgLinkCtr).map((r) => ({
         angleKey: r.angleKey,
         angleName: r.angleKey,
         avgLinkCtr: r.avgLinkCtr,
@@ -308,27 +327,29 @@ export function buildRAGContext(input: RAGContextInput): RAGContext {
         loseCount: r.loseCount,
     }));
 
-    // Visual mirror
-    const visualRanked = visualAggs
+    // Visual mirror — compute the ranking ONCE and pass it to the
+    // block builder so the structured insights and the prompt block
+    // can never disagree about which patterns are top / avoid.
+    const visualRanked: RankedVisual[] = visualAggs
         .filter((v) => v.byObjective.conversion.count > 0)
         .map((v) => ({
             patternKey: v.patternKey,
             avgLinkCtr: v.byObjective.conversion.avgLinkCtr,
             sampleSize: v.byObjective.conversion.count,
             winCount: v.byObjective.conversion.bestVerdictCount,
+            loseCount: v.byObjective.conversion.worstVerdictCount,
         }));
-    const visualTop = insufficient ? [] : [...visualRanked]
-        .sort((a, b) => b.avgLinkCtr - a.avgLinkCtr)
-        .slice(0, TOP_PERFORMER_COUNT);
-    const visualAvoid = insufficient ? [] : visualRanked
-        .filter((v) => v.sampleSize >= AVOID_MIN_ADS && v.avgLinkCtr <= accountAvgLinkCtr * AVOID_THRESHOLD_RATIO)
-        .sort((a, b) => a.avgLinkCtr - b.avgLinkCtr)
-        .slice(0, AVOID_COUNT);
+    const visualTop = insufficient ? [] : sortSlice(visualRanked, TOP_PERFORMER_COUNT, (a, b) => b.avgLinkCtr - a.avgLinkCtr);
+    const visualAvoid = insufficient ? [] : sortSlice(
+        visualRanked.filter((v) => v.sampleSize >= AVOID_MIN_ADS && v.avgLinkCtr <= threshold),
+        AVOID_COUNT,
+        (a, b) => a.avgLinkCtr - b.avgLinkCtr,
+    );
     const descFor = (key: string): string => visualPatternDescriptions?.[key] ?? key;
 
     const hookBlock = insufficient ? "" : buildHookBlockText(ranked, avoidRanked, sampleSize);
     const visualBlock = insufficient ? "" : buildVisualBlockText(
-        visualAggs,
+        visualRanked,
         visualPatternDescriptions,
         accountAvgLinkCtr,
     );
@@ -360,7 +381,7 @@ export function buildRAGContext(input: RAGContextInput): RAGContext {
                 patternKey: v.patternKey,
                 description: descFor(v.patternKey),
                 avgLinkCtr: v.avgLinkCtr,
-                loseCount: 0,
+                loseCount: v.loseCount,
             })),
         },
         hookBlock,
@@ -372,14 +393,34 @@ export function buildRAGContext(input: RAGContextInput): RAGContext {
 
 // ─── Firestore loader (used by the gen call sites) ────────────
 
-import { getDb } from "./firestoreClient.js";
+/**
+ * The canonical empty RAG context. Shared between the catch blocks
+ * of `getRAGContext` and `loadRAGContextForWorkspace` so the two
+ * fail-open paths cannot drift if a new `RAGContext` field is
+ * added. Frozen at module load to prevent accidental mutation.
+ */
+const EMPTY_RAG_CONTEXT: Readonly<RAGContext> = Object.freeze({
+    insufficient: true,
+    sampleSize: 0,
+    hookInsights: Object.freeze({ topPerformers: [], avoid: [] }),
+    visualInsights: Object.freeze({ topPerformers: [], avoid: [] }),
+    hookBlock: "",
+    visualBlock: "",
+    captionBlock: "",
+    promptBlock: "",
+});
 
 /**
  * Resolve the connected Meta ad account for a workspace. Returns
  * `null` when the workspace has no Meta connection or any read fails
  * (fail-open). FR-026: the workspace has at most one connected account.
+ *
+ * Exported so the Phase 20 `serverGenerateConcepts` orchestrator can
+ * share the exact same connection-resolution contract — a future
+ * change to how the connected account is stored has to be made in
+ * exactly one place.
  */
-async function resolveConnectedAdAccountId(
+export async function resolveConnectedAdAccountId(
     userId: string,
     workspaceId: string,
 ): Promise<{ accountId: string; accountAvgLinkCtr: number } | null> {
@@ -444,16 +485,7 @@ export async function getRAGContext(input: RAGContextInput): Promise<RAGContext>
         });
     } catch (e) {
         console.warn("⚠️ getRAGContext failed (non-blocking, returning insufficient):", e);
-        return {
-            insufficient: true,
-            sampleSize: 0,
-            hookInsights: { topPerformers: [], avoid: [] },
-            visualInsights: { topPerformers: [], avoid: [] },
-            hookBlock: "",
-            visualBlock: "",
-            captionBlock: "",
-            promptBlock: "",
-        };
+        return EMPTY_RAG_CONTEXT;
     }
 }
 
@@ -469,18 +501,9 @@ export async function loadRAGContextForWorkspace(
     workspaceId: string,
     hookAngle?: string,
 ): Promise<{ ragContext: RAGContext; accountId: string | null }> {
-    const empty = {
-        accountId: null as string | null,
-        ragContext: {
-            insufficient: true,
-            sampleSize: 0,
-            hookInsights: { topPerformers: [], avoid: [] } as RAGContext["hookInsights"],
-            visualInsights: { topPerformers: [], avoid: [] } as RAGContext["visualInsights"],
-            hookBlock: "",
-            visualBlock: "",
-            captionBlock: "",
-            promptBlock: "",
-        } as RAGContext,
+    const empty: { ragContext: RAGContext; accountId: string | null } = {
+        accountId: null,
+        ragContext: EMPTY_RAG_CONTEXT,
     };
     try {
         const conn = await resolveConnectedAdAccountId(userId, workspaceId);

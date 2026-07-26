@@ -238,21 +238,29 @@ test("RAG injection: source scan — RAG is APPENDED, not replacing existing per
 
 // ─── Fail-open: getRAGContext returns insufficient on bad aggregate input ───
 
-test("RAG injection: getRAGContext is fail-open — malformed/invalid inputs → insufficient", async () => {
-    // Pass invalid aggregate shapes — the pure builder must still return a
-    // well-formed RAGContext (insufficient: true) without throwing.
+test("RAG injection: getRAGContext is fail-open — sampleSize below gate → insufficient blocks", () => {
+    // Pass populated aggregates that are just below the 10+ gate.
+    // The builder must still return a well-formed RAGContext
+    // (insufficient: true) and every prompt-block builder must emit
+    // an empty string — the NaN threshold on the comparator doesn't
+    // crash the build, and the gate is what gates the output.
+    const hookAggs: ReadonlyArray<HookPerformanceAggregate> = [
+        makeHookAgg(),
+    ];
+    const visualAggs: ReadonlyArray<VisualPerformanceAggregate> = [
+        makeVisualAgg(),
+    ];
     const ctx = buildRAGContext({
         userId: "u1", workspaceId: "w1", accountId: "a1",
-        // Cast to ReadonlyArray to satisfy the type — this is intentional
-        // for the fail-open test.
-        hookAggs: [] as ReadonlyArray<HookPerformanceAggregate>,
-        visualAggs: [] as ReadonlyArray<VisualPerformanceAggregate>,
-        // NaN threshold — should still be safe (no division by zero crash)
+        hookAggs,
+        visualAggs,
+        // NaN threshold — the build must not crash on NaN; the gate
+        // is the only thing that controls whether a block is emitted.
         accountAvgLinkCtr: NaN,
     });
     assert.equal(ctx.insufficient, true);
     assert.equal(ctx.promptBlock, "");
-    // All blocks are empty when insufficient
+    // All block builders must produce "" when RAG is insufficient.
     assert.equal(buildHookPerformanceBlock(ctx), "");
     assert.equal(buildVisualPerformanceBlock(ctx), "");
     assert.equal(buildCaptionPerformanceBlock(ctx), "");
