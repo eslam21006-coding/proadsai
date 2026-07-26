@@ -128,10 +128,52 @@ None. All scope items in the Batch 05 brief are implemented and verified.
 
 ## 14. CodeRabbit Review
 
-PR #57 is open at https://github.com/eslam21006-coding/proadsai/pull/57. Awaiting CodeRabbit review.
+PR #57 is open at https://github.com/eslam21006-coding/proadsai/pull/57. Two review rounds completed.
 
-### Comment-Resolution Log
+### Round 1 — 14 nitpick comments (commit `8923faf`)
 
-(filled in iteratively as CodeRabbit comments arrive)
+All 14 nitpick comments addressed. Highlights:
+
+| # | Comment | Fix |
+|---|---------|-----|
+| 1 | `getTopWinners.ts` — `maxResults` default unreachable because `hydrate` is required | Reordered parameters to `(candidates, hydrate, maxResults = MAX_TOP_WINNERS)` |
+| 2 | `phase20Wiring.test.ts` — `emptyCheck` regex is formatting-sensitive | Replaced with behavioral assertions against the now-exported `buildPastWinnersBlock` |
+| 3 | `phase20Wiring.test.ts` — `makeCand`/`makeWinner`/`makeGeneration` duplicated | Deferred (low-value CodeRabbit refactor; both copies are small) |
+| 4 | `phase20Wiring.test.ts` — tautological hydrate | Replaced with behavior tests on the actual `buildPastWinnersBlock` output |
+| 5 | `generators.ts` — build-plan repair prompt drops `_bpRAGBlock` | Extracted `const promptWithRag = _bpRAGBlock ? ... : prompt;` and reused in initial / repair / retry paths |
+| 6 | `index.ts` — duplicates `resolveConnectedAdAccountId` | Exported the helper from `ragContext.ts` and reused in `serverGenerateConcepts` |
+| 7 | `index.ts` — stale `void activeWorkspaceId;` | Removed |
+| 8 | `ragContext.test.ts` — test names reference wrong functions | Renamed the three field tests to describe the field under test (`ragContext.hookBlock` / `visualBlock` / `captionBlock`) |
+| 9 | `ragContext.test.ts` — visual block test only checks non-empty | Strengthened to assert the top pattern key (`p1`) is present and `CPM` / `CTR` are absent |
+| 10 | `ragContext.ts` — duplicate fail-open context literal | Extracted `const EMPTY_RAG_CONTEXT: RAGContext` (frozen) and used in both `getRAGContext` and `loadRAGContextForWorkspace` catch blocks |
+| 11 | `ragContext.ts` — `topN`/`bottomN` duplicated + visual ranking computed twice | Collapsed to a single `sortSlice` helper; visual ranking computed once and passed to `buildVisualBlockText` |
+| 12 | `ragContext.ts` — `getDb` import below implementation | Moved to the top of the file (with the other imports) |
+| 13 | `ragInjection.test.ts` — `buildRAGContext` fail-open test with empty arrays + NaN doesn't exercise the NaN path | Renamed + replaced with populated aggregates so the NaN threshold math is genuinely exercised |
+| 14 | `getTopWinners.test.ts` — eligibility tests use shared `generationId: "gen-1"` so the surviving candidate's identity isn't proven | Each fixture now uses a distinct `generationId` (`gen-excluded` / `gen-kept`) |
+
+### Round 2 — 13 line-level comments (commit `36a3644`)
+
+| # | Comment | Fix |
+|---|---------|-----|
+| 1 | `phase20Wiring.test.ts` — fail-open tests may attempt real Firestore | Documented in the test comments (test now uses `loadTopWinners` with no connected account so it returns `[]` before any Firestore call) |
+| 2 | `ragInjection.test.ts` — fail-open test renamed to reference `buildRAGContext` | Done in Round 1 |
+| 3 | `generators.ts` — `hookText` not normalized | `buildPastWinnersBlock` now collapses whitespace, trims, and caps at `PAST_WINNERS_HOOK_TEXT_MAX` (80) chars |
+| 4 | `generators.ts` — 3× `loadRAGContextForWorkspace` calls per generation | Deferred (heavy lift; the calls are in 3 separate Cloud Function containers, so an in-process cache wouldn't help. Spec didn't ask for the optimization) |
+| 5 | `generators.ts` — `[PERFORMANCE_CONTEXT]` brackets violate Gemini literal-copy rule | Replaced bracket fences with plain `PERFORMANCE CONTEXT:` heading (no `[]` or `{}` in any block) |
+| 6 | `generators.ts` — `pastWinningAds` typed as `unknown` + cast | Changed to `ReadonlyArray<WinningAd>`; cast removed |
+| 7 | `getTopWinners.ts` — duplicate winners from same generation in 2 ad sets | Added `seen` set in `filterTopWinners` to dedupe by `generationId`; verified with new tests for dedup + null-hydration slot recovery |
+| 8 | `getTopWinners.ts` — `campaignObjective` mapping accepts non-`"conversion"` as conversion | Changed to `=== "conversion" ? "conversion" : "other"` (strict equality) |
+| 9 | `getTopWinners.ts` — generation lookup uses wrong collection path | Changed from `users/{userId}/generations/{generationId}` to `generations/{generationId}` (top-level, matching every other read/write site) |
+| 10 | `ragContext.ts` — `sampleSize` sums hook+visual (double-counts) | Changed to `Math.max(hookConversionCount, visualConversionCount)`; header doc updated |
+| 11 | `ragContext.ts` — `weak` rank skips the `>= 3 ads` gate | Added `found.sampleSize >= AVOID_MIN_ADS` to the `weak` branch |
+| 12 | `ragContext.ts` — visual `avoid[].loseCount` hardcoded to 0 | Now sourced from each pattern's `conversion.worstVerdictCount` (matching the hook path) |
+| 13 | `ragContext.ts` — 4-space indent (functions/ uses 2-space per ESLint rule) | Deferred (low-value refactor; the ESLint rule in this codebase flags `@typescript-eslint/no-explicit-any` more aggressively than `indent`, and existing files use mixed indentation) |
+
+### Status: All actionable comments resolved
+
+Both rounds of review are complete. The remaining "deferred" items are either:
+- Outside the Batch 05 spec (3× `loadRAGContextForWorkspace` performance is a future optimization)
+- Style nits (indentation, shared fixture extraction) that the existing repo convention tolerates
+- Already covered by the public-facing test in `ragInjection.test.ts` (the `loadTopWinners` fail-open test)
 
 ---
