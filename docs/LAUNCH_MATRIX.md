@@ -134,7 +134,7 @@ These phases were marked Done against the old Paddle-backed billingState. They l
 | Item | Why major |
 |---|---|
 | **Phase 11 — Magic Edit** | Re-spec'd to use Gemini's edit endpoint after HOTFIX-G. User-facing feature: lasso → edit → text re-composite. Pro+ gated. |
-| **Phase 14 — RAG + Meta Reporting** | **Batch 01 MERGED (PR #53)** — Funnel Settings + Classifiers + SC-11 Guard. Batches 02-07 in progress. Feeds Phase 20 Concept Director when wired (20.D.7 deferred). Currently pastWinningAds defaults to empty array. Daily Meta Insights sync + RAG context injection into prompts. **Blocked until Phase 21 ships** (user data shape may shift). **Priority after Phase 22 and Phase 23.** |
+| **Phase 14 — RAG + Meta Reporting** | **COMPLETE** — All 7 layers shipped (PRs #53-#57). Funnel Settings, Daily Meta Sync, Image Fingerprint Matching, Qarar Verdict Engine, Two-Component Learning, What's Working Dashboard, RAG Injection + Phase 20 Wiring. Activation requires per-client workspace workflow adoption by the team. |
 | **Phase 18 — Multi-Hero Support** | Up to 5 distinct people per ad. Required for webinar / mini-course / co-host / summit / speaker-grid use cases. |
 
 ### ⏳ TODO — Minor
