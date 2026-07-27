@@ -49,6 +49,8 @@ import {
 } from "./conceptDirector.js";
 import { validateBatchVariance } from "./varianceValidator.js";
 import { getConceptDirectorKillSwitch, getConceptDirectorEnabled } from "./conceptDirectorConfig.js";
+import { loadTopWinners, type WinningAd } from "./getTopWinners.js";
+import { resolveConnectedAdAccountId } from "./ragContext.js";
 import type { ConceptDirectorTraceEntry } from "./types.js";
 // Phase 14 — RAG + Meta Reporting Feedback Loop (Layer 1 callables).
 export { saveFunnelSettings, getFunnelSettings, dismissAdvisory } from "./funnelSettings.js";
@@ -4209,7 +4211,18 @@ export const serverGenerateTOV = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, editIntent, rewriteScope, semanticLock, activeWorkspaceId } = request.data;
-    void activeWorkspaceId;
+    // Phase 14 Layer 7a — thread the active workspace id into the
+    // `inputs` object so the RAG block in `generateTOV` can resolve
+    // the connected Meta account. The frontend sends
+    // `activeWorkspaceId` at the request's top level (not inside
+    // `inputs`); the RAG loader reads `(inputs as any)._workspaceId ||
+    // (inputs as any).activeWorkspaceId`. `inputs` is the
+    // per-request deserialization payload, so the in-place mutation
+    // is request-scoped and never shared.
+    if (activeWorkspaceId && inputs && typeof inputs === "object") {
+        (inputs as Record<string, unknown>)._workspaceId = activeWorkspaceId;
+        (inputs as Record<string, unknown>).activeWorkspaceId = activeWorkspaceId;
+    }
     await enforceModeFormatGate(inputs);
     // ═══ ENTITLEMENT: Check retargeting gate on hook generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
@@ -4239,10 +4252,48 @@ export const serverGenerateConcepts = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, activeWorkspaceId } = request.data;
-    void activeWorkspaceId;
     await enforceModeFormatGate(inputs);
     // ═══ ENTITLEMENT: Check retargeting gate on concept generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
+
+    // ═══ PHASE 14 LAYER 7b — TOP WINNERS (pastWinningAds) ═══
+    // Load the 5 most-recent S1 winners for the active workspace + ad
+    // account, so the Phase 20 Concept Director can use them as a
+    // reference for variety. Fail-open: any read failure → empty array
+    // (no regression; the Director handles an empty list gracefully).
+    let _topWinners: ReadonlyArray<WinningAd> = [];
+    try {
+        const _wsId = (inputs as any)?.workspaceId || activeWorkspaceId;
+        if (_wsId) {
+            // Reuse the canonical account-resolution helper from
+            // ragContext.ts so the workspace→accountId contract lives
+            // in one place (FR-026).
+            const conn = await resolveConnectedAdAccountId(request.auth.uid, _wsId);
+            if (conn) {
+                _topWinners = await loadTopWinners(
+                    request.auth.uid,
+                    _wsId,
+                    conn.accountId,
+                );
+            }
+        }
+    } catch (e) {
+        // Fail-open: any load failure → empty winners list. Log a
+        // structured warning so Firestore / permission / schema
+        // regressions are distinguishable from "no winners yet" in
+        // observability. The error message is included, but the
+        // winners payload is never logged (privacy boundary).
+        const err = e as { code?: string; name?: string; message?: string };
+        console.warn("⚠️ serverGenerateConcepts: top-winners load failed", JSON.stringify({
+            operation: "loadTopWinners",
+            userId: request.auth.uid,
+            workspaceIdPresent: Boolean((inputs as any)?.workspaceId || activeWorkspaceId),
+            accountIdResolved: _topWinners !== undefined,
+            errorName: err.name ?? null,
+            errorCode: err.code ?? null,
+            errorMessage: err.message ?? null,
+        }));
+    }
 
     // ═══ PHASE 20 — CONCEPT DIRECTOR GATE (Contract C1 / C2 / FR-021-024) ═══
     // The decision is computed ONCE and held for the whole generation
@@ -4367,7 +4418,7 @@ export const serverGenerateConcepts = onCall({
                         siblingConcepts: _directorResults.slice(),
                         varianceMode: "balanced",
                         avoidTokens: {},
-                        pastWinningAds: [],
+                        pastWinningAds: _topWinners,
                     };
                     // A failure for one concept must NOT abort the loop
                     // (Contract C3.3 / FR-010). directConcept returns a
@@ -4435,7 +4486,7 @@ export const serverGenerateConcepts = onCall({
                             siblingConcepts: _directorResults.filter((_, j) => j !== idx),
                             varianceMode: "balanced",
                             avoidTokens: avoid,
-                            pastWinningAds: [],
+                            pastWinningAds: _topWinners,
                         };
                         const retryResult = await directConcept(retryInput, _directorCallModel, 15000);
                         _directorResults[idx] = retryResult;
@@ -4481,7 +4532,7 @@ export const serverGenerateConcepts = onCall({
     }
 
     try {
-        const result = await generators.generateConcepts(approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, _cdBriefs);
+        const result = await generators.generateConcepts(approvedTov, inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, _cdBriefs, _topWinners);
         // ── Cultural compliance: scan the concept/blueprint text returned to the client.
         // The prompt and final-copy pipelines are already scanned in generators.ts, but
         // the raw concept text shown in the client's concept cards was not — so haram
@@ -4581,7 +4632,14 @@ export const serverGenerateBuildPlan = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { conceptRaw, selectedTov, inputs, resolvedUniverse, currentAspectRatio, textOverride, activeWorkspaceId } = request.data;
-    void activeWorkspaceId;
+    // Phase 14 Layer 7a — thread the active workspace id into
+    // `inputs` so the RAG block in `generateBuildPlan` can resolve the
+    // connected Meta account (see serverGenerateTOV for the full
+    // rationale).
+    if (activeWorkspaceId && inputs && typeof inputs === "object") {
+        (inputs as Record<string, unknown>)._workspaceId = activeWorkspaceId;
+        (inputs as Record<string, unknown>).activeWorkspaceId = activeWorkspaceId;
+    }
     await enforceModeFormatGate(inputs);
     // ═══ ENTITLEMENT ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
@@ -5185,7 +5243,14 @@ export const serverGenerateCaption = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
     const { mockupUrl, inputs, visualMetaphor, approvedTov, refinement, carouselContext, buildPlan, activeWorkspaceId } = request.data;
-    void activeWorkspaceId;
+    // Phase 14 Layer 7a — thread the active workspace id into
+    // `inputs` so the RAG block in `generateCaption` can resolve the
+    // connected Meta account (see serverGenerateTOV for the full
+    // rationale).
+    if (activeWorkspaceId && inputs && typeof inputs === "object") {
+        (inputs as Record<string, unknown>)._workspaceId = activeWorkspaceId;
+        (inputs as Record<string, unknown>).activeWorkspaceId = activeWorkspaceId;
+    }
     await enforceModeFormatGate(inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     try {
