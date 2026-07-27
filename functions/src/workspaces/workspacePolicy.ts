@@ -113,6 +113,40 @@ export async function resolveDefaultWorkspaceId(
   return snap.docs[0].id;
 }
 
+// ISSUE-D T018: assertNotTeamMember is called as the FIRST statement of
+// every workspace mutation callable (createWorkspace, updateWorkspace,
+// deleteWorkspace, restoreWorkspace) — see T019. It throws
+// permission-denied with a stable reason code on the FIRST
+// database-touching statement of the request, so a team member can
+// never reach a "workspace not found" outcome that misreports a
+// permission problem as a missing workspace (FR-011), and never
+// reaches createWorkspaceWithLimit with their own uid (FR-012, SC-005).
+//
+// The check is intentionally identical for editors and viewers: under
+// the ISSUE-D product decision no role may add, remove, or alter a
+// workspace, regardless of role. The deferred role-based editing
+// capability will revisit this gate.
+export async function assertNotTeamMember(
+  callerUid: string,
+  action: "create" | "update" | "delete" | "restore",
+  context: { ownerUid?: string | null; workspaceId?: string | null } = {},
+): Promise<void> {
+  const callerDoc = await admin.firestore().collection("users").doc(callerUid).get();
+  const callerData = callerDoc.data();
+  if (callerData?.isTeamMember === true) {
+    // Stable, queryable log line. Shape is the FR-023 contract:
+    //   issue-d ▸ workspace action refused — action=<…> caller=<…> owner=<…|unknown> workspace=<id|n/a> reason=team_member
+    console.warn(
+      `issue-d ▸ workspace action refused — action=${action} caller=${callerUid} owner=${context.ownerUid ?? "unknown"} workspace=${context.workspaceId ?? "n/a"} reason=team_member`
+    );
+    throw new HttpsError(
+      "permission-denied",
+      "Only the account owner can add, change, or remove workspaces.",
+      { reason: "team_member" },
+    );
+  }
+}
+
 export async function resolveCallerScope(callerUid: string): Promise<{
   ownerUid: string;
   allowedWorkspaceIds: string[] | "ALL";
@@ -132,8 +166,20 @@ export async function resolveCallerScope(callerUid: string): Promise<{
         .get();
       if (!memberSnap.empty) {
         const memberData = memberSnap.docs[0].data();
-        const allowedWs: string[] = memberData.workspaceAccess ?? [];
-        return { ownerUid, allowedWorkspaceIds: allowedWs };
+        // ISSUE-D FR-004 / FR-004a / FR-004b: a verified team member gets
+        // account-wide access to every workspace under the owner. The stored
+        // per-member `workspaceAccess` array is deliberately NOT consulted
+        // for visibility decisions. The stored data is retained unread
+        // (FR-021) so a future restriction feature can adopt it without a
+        // migration. A non-empty stored array IS logged as an explicit
+        // override trace so the silence is never invisible (Constitution VII).
+        const storedAccess: unknown[] = memberData.workspaceAccess ?? [];
+        if (Array.isArray(storedAccess) && storedAccess.length > 0) {
+          console.warn(
+            `issue-d ▸ workspaceAccess ignored (all-access policy) — caller=${callerUid} owner=${ownerUid} stored=${storedAccess.length} granted=ALL`
+          );
+        }
+        return { ownerUid, allowedWorkspaceIds: "ALL" };
       }
       return { ownerUid, allowedWorkspaceIds: [] };
     }

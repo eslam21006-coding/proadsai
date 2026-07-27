@@ -18,7 +18,7 @@ import {
 } from "./entitlements.js";
 import { validateSelector } from "./selectorLimits.js";
 import { writeBillingState } from "./billing/billingState.js";
-import { assertOwner, assertWorkspaceActive, createWorkspaceWithLimit, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
+import { assertOwner, assertWorkspaceActive, assertNotTeamMember, createWorkspaceWithLimit, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
 import { enforceProjectQuota } from "./savedProjects/projectQuota.js";
 import { deriveStatus } from "./savedProjects/projectStatus.js";
 import { isArabic, scanAndReplace } from "./culturalCompliance.js";
@@ -6317,6 +6317,12 @@ export const createWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
+    // ISSUE-D T019: refuse team members BEFORE any payload validation or
+    // write. The shared helper (workspacePolicy.assertNotTeamMember) is
+    // the single point of the guard and the single point of the refusal
+    // log line. Without this, createWorkspace would succeed for a member
+    // and silently create a workspace under their own account (SC-005).
+    await assertNotTeamMember(uid, "create");
     if (!request.data || typeof request.data !== "object") {
         throw new HttpsError("invalid-argument", "Request payload is required.", { reason: "invalid_payload" });
     }
@@ -6373,6 +6379,11 @@ export const updateWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
+    // ISSUE-D T019: refuse team members before any payload validation,
+    // workspace lookup, or write. workspaceId is unknown at this point
+    // because the payload is not yet trusted; the log uses n/a. The
+    // reason is permission, not "workspace not found".
+    await assertNotTeamMember(uid, "update");
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
@@ -6434,6 +6445,14 @@ export const deleteWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
+    // ISSUE-D T019: refuse team members first. The user's own doc may
+    // carry a teamOwnerUid, but the workspace being deleted belongs to
+    // the team owner — under ISSUE-D the call resolves the workspace
+    // under `users/{callerUid}/workspaces` (a member's own collection)
+    // and fails as not-found. With the guard, the response is
+    // permission-denied from the FIRST statement, so the symptom that
+    // makes this bug hard to diagnose is gone.
+    await assertNotTeamMember(uid, "delete");
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
@@ -6480,6 +6499,10 @@ export const restoreWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
+    // ISSUE-D T019: same guard as deleteWorkspace. restoreWorkspace is
+    // not reachable from a team member's UI but takes the guard for
+    // consistency at negligible cost — research.md D4 noted it.
+    await assertNotTeamMember(uid, "restore");
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
@@ -6727,16 +6750,16 @@ export const getWorkspaceGenerations = onCall({
     if (uid !== ownerUid) {
         // Team docs are auto-IDed; member doc stores the teammate's auth uid as `uid`
         // (see createTeamInvite accept path — txn.set({ uid: callerUid, ... })).
+        // ISSUE-D FR-004 / FR-004a: once a member doc under the owner is found,
+        // the caller's reach is the full account — the stored per-workspace
+        // allowlist is NOT consulted here. The membership check is the
+        // boundary; the workspace allowlist is intentionally ignored.
         const memberQuery = await admin.firestore()
             .collection(`users/${ownerUid}/team`)
             .where("uid", "==", uid)
             .limit(1)
             .get();
         if (memberQuery.empty) {
-            throw new HttpsError("permission-denied", "You don't have access to this workspace.");
-        }
-        const memberData = memberQuery.docs[0].data();
-        if (!(memberData.workspaceAccess ?? []).includes(workspaceId)) {
             throw new HttpsError("permission-denied", "You don't have access to this workspace.");
         }
     }

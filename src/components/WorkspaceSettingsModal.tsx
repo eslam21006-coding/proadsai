@@ -13,13 +13,19 @@ interface WorkspaceSettingsModalProps {
   onClose: () => void;
   plan?: UserPlan;
   metaAdAccounts?: { id: string; name: string }[];
+  // ISSUE-D (T022): when true, the modal hides every destructive control.
+  // Only the account owner may delete a workspace; team members see the
+  // modal only as a read-only display (e.g. the switcher edit pencil is
+  // withheld too, but the modal is reached through other paths during
+  // diagnostics — the gate is the same single source of truth).
+  isTeamMember?: boolean;
 }
 
 function isMetaEligible(plan?: UserPlan): boolean {
   return plan === 'pro' || plan === 'scale';
 }
 
-export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, onClose, plan, metaAdAccounts }: WorkspaceSettingsModalProps) {
+export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, onClose, plan, metaAdAccounts, isTeamMember }: WorkspaceSettingsModalProps) {
   const { t } = useT();
   const isEdit = !!workspace;
   const [name, setName] = useState(workspace?.name || '');
@@ -356,7 +362,7 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
                 ? t('workspace.settings.saving')
                 : (isEdit ? t('workspace.settings.save_changes') : t('workspace.settings.create'))}
             </button>
-            {isEdit && !workspace?.isDefault && onDelete && (
+            {isEdit && !workspace?.isDefault && onDelete && !isTeamMember && (
               confirmDelete ? (
                 <button
                   onClick={handleDelete}

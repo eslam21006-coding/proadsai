@@ -821,6 +821,30 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.error.limit_reached': "You've reached the 10-workspace limit on the Scale plan.",
         'workspace.error.insufficient_meta_role': "Your Meta role on this ad account doesn't allow publishing. Request Advertiser access in Meta Business Manager to link it.",
         'workspace.error.no_access': 'No workspace access — ask your team owner to grant you access.',
+        // ISSUE-D T015: replace the retired "ask your team owner" string
+        // with two distinct states. The old key is left defined (an
+        // audit cross-reference, not a user-facing path) and the new
+        // keys carry the live copy in both locales.
+        'workspace.error.no_workspaces': 'This account has no workspace yet. The account owner can create one from the workspace menu.',
+        'workspace.error.no_workspaces_short': 'No workspace yet',
+        'workspace.error.load_failed': 'We could not load the workspace list right now. Check your connection and try again.',
+        'workspace.error.load_failed_short': 'Could not load',
+        'workspace.error.retry': 'Try again',
+        // ISSUE-D T024 / T019: refusal copy for the server-side guards
+        // (create / update / delete / restore). Plain, no technical terms.
+        'workspace.refused.owner_only': 'Only the account owner can add, change, or remove workspaces.',
+        // ISSUE-D T027: a workspace the member was using has been removed
+        // by the owner. Plain notice + the destination's name.
+        'workspace.removed_notice': 'The workspace you were using is no longer available. You have been moved to {name}.',
+        // ISSUE-D T016: plain-language loading state surfaced while the
+        // write-gate holds back Generate / save project / save audience
+        // profile during the membership resolution window (FR-007a).
+        'workspace.write_gate.loading': 'Just a moment — finishing workspace setup before you continue.',
+        // ISSUE-D T028: the removed-from-team overlay. The body and
+        // continue button were hardcoded English (Constitution V defect
+        // fixed). Both keys exist in en + ar.
+        'team.removed_body': 'You have been removed from the team. You are now operating under your own account.',
+        'team.continue_button': 'Continue',
         'workspace.error.default_undeletable': "The default workspace can't be deleted.",
         // Access audit panel
         'workspace.access_history.button': 'View access history',
@@ -1690,6 +1714,17 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.error.limit_reached': 'وصلت إلى الحد الأقصى 10 مساحات عمل على خطة Scale.',
         'workspace.error.insufficient_meta_role': 'دورك على حساب إعلانات Meta هذا لا يسمح بالنشر. اطلب صلاحية Advertiser من Meta Business Manager لربطه.',
         'workspace.error.no_access': 'لا توجد صلاحية وصول إلى مساحات عمل — اطلب من مالك الفريق منحك الصلاحية.',
+        // ISSUE-D T015 (Arabic parallel of the English block above).
+        'workspace.error.no_workspaces': 'لا توجد مساحة عمل لهذا الحساب بعد. يستطيع مالك الحساب إنشاء واحدة من قائمة مساحات العمل.',
+        'workspace.error.no_workspaces_short': 'لا توجد مساحة عمل',
+        'workspace.error.load_failed': 'تعذّر تحميل قائمة مساحات العمل الآن. تحقّق من الاتصال وحاول مرة أخرى.',
+        'workspace.error.load_failed_short': 'تعذّر التحميل',
+        'workspace.error.retry': 'حاول مرة أخرى',
+        'workspace.refused.owner_only': 'مالك الحساب فقط هو الذي يستطيع إضافة مساحات عمل أو تغييرها أو إزالتها.',
+        'workspace.removed_notice': 'لم تعد مساحة العمل التي كنت تستخدمها متاحة. تم نقلك إلى {name}.',
+        'workspace.write_gate.loading': 'لحظة من فضلك — جارٍ إكمال تجهيز مساحة العمل قبل أن تتابع.',
+        'team.removed_body': 'تمت إزالتك من الفريق. أنت الآن تعمل ضمن حسابك الخاص.',
+        'team.continue_button': 'متابعة',
         'workspace.error.default_undeletable': 'لا يمكن حذف مساحة العمل الافتراضية.',
         // Access audit panel
         'workspace.access_history.button': 'عرض سجل الوصول',

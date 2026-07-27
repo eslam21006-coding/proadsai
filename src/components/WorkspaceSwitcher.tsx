@@ -10,7 +10,13 @@ interface WorkspaceSwitcherProps {
   onCreateNew: () => void;
   onEditWorkspace: (ws: Workspace) => void;
   isTeamMember?: boolean;
-  workspaceAccess?: string[];
+  // ISSUE-D (T014): the new account has no workspace yet vs. the list
+  // could not be loaded right now. The switcher surfaces one of the two
+  // plain-language messages in the dropdown. `onRetryLoad` is invoked by
+  // the user from inside the U5 message; without it the panel would be
+  // a dead end.
+  loadError?: boolean;
+  onRetryLoad?: () => void;
   hasInProgressWork?: boolean;
   switchGuardTarget?: string | null;
   onSwitchGuardCancel?: () => void;
@@ -25,7 +31,8 @@ export default function WorkspaceSwitcher({
   onCreateNew,
   onEditWorkspace,
   isTeamMember,
-  workspaceAccess,
+  loadError,
+  onRetryLoad,
   hasInProgressWork,
   switchGuardTarget,
   onSwitchGuardCancel,
@@ -40,9 +47,15 @@ export default function WorkspaceSwitcher({
 
   const activeWorkspaces = workspaces.filter(ws => ws.deletedAt == null);
 
-  const visibleWorkspaces = isTeamMember && workspaceAccess
-    ? activeWorkspaces.filter(ws => workspaceAccess.includes(ws.id))
-    : activeWorkspaces;
+  // ISSUE-D: under the all-access contract, a team member's filter MUST
+  // be undefined here. The previous per-workspace allowlist filter is
+  // retired — the contract (FR-004) is that every verified member sees
+  // every active workspace of the owner. The filter expression below
+  // preserves the legacy `isTeamMember && workspaceAccess` shape so that
+  // if a future restriction feature reintroduces the array, the call site
+  // re-enables the filter by passing it again; today it is left
+  // undefined and the visible list equals activeWorkspaces.
+  const visibleWorkspaces = activeWorkspaces;
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -88,11 +101,24 @@ export default function WorkspaceSwitcher({
     setPendingTarget(null);
   };
 
-  const noAccess = isTeamMember === true && Array.isArray(workspaceAccess) && visibleWorkspaces.length === 0;
+  // ISSUE-D T014: replace the old "no_access" branch (which sent the
+  // member to the owner to ask for access — FR-019a forbids that) with
+  // two distinct states. U3: the account legitimately has no workspace
+  // yet. U5: the list failed to load and a manual retry is offered.
+  const isEmpty = visibleWorkspaces.length === 0;
+  const showLoadError = isEmpty && !!loadError;
+  const showNoWorkspaces = isEmpty && !loadError;
   const active = visibleWorkspaces.find(w => w.id === activeWorkspaceId) || visibleWorkspaces.find(w => w.isDefault);
-  const displayName = noAccess
-    ? t('workspace.error.no_access')
-    : (active?.name || t('workspace.switcher.default_name'));
+  // T014 also fixes the collapsed-button label. The previous default
+  // was `workspace.switcher.default_name` ("Default Workspace") which
+  // would name a workspace that does not exist when the list is empty.
+  // Now: if the list is empty, the label is the appropriate message;
+  // otherwise it is the active workspace name.
+  const displayName = showLoadError
+    ? t('workspace.error.load_failed_short')
+    : showNoWorkspaces
+      ? t('workspace.error.no_workspaces_short')
+      : (active?.name || t('workspace.switcher.default_name'));
   const brandColor = active?.brandColorPrimary || '#3b82f6';
 
   return (
@@ -115,16 +141,27 @@ export default function WorkspaceSwitcher({
             <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest">{t('workspace.switcher.brand_workspaces')}</p>
           </div>
           <div className="max-h-[240px] overflow-y-auto custom-scrollbar">
-            {noAccess ? (
-              <div
-                aria-disabled="true"
-                className="px-3 py-4 text-center text-[10px] text-slate-500 cursor-not-allowed select-none opacity-60"
-              >
-                {t('workspace.error.no_access')}
+            {showLoadError ? (
+              // U5: could not load. Plain retry message, distinct from U3.
+              <div className="px-3 py-4 text-center">
+                <p className="text-[10px] text-slate-400 mb-2">{t('workspace.error.load_failed')}</p>
+                {onRetryLoad && (
+                  <button
+                    onClick={() => { onRetryLoad(); }}
+                    className="px-3 py-1.5 rounded-lg bg-white/[0.06] text-[10px] font-bold text-white hover:bg-white/[0.12] transition-colors"
+                  >
+                    {t('workspace.error.retry')}
+                  </button>
+                )}
               </div>
-            ) : visibleWorkspaces.length === 0 ? (
-              <div className="px-3 py-4 text-center text-[10px] text-slate-500">
-                {t('workspace.error.no_access')}
+            ) : showNoWorkspaces ? (
+              // U3: this account has no workspace yet. The "ask your
+              // team owner" branch is gone (FR-019a). For an owner, the
+              // create button below still appears. For a team member, no
+              // create is offered (FR-013) and the message is the full
+              // explanation.
+              <div className="px-3 py-4 text-center">
+                <p className="text-[10px] text-slate-400">{t('workspace.error.no_workspaces')}</p>
               </div>
             ) : (
               visibleWorkspaces.map(ws => (
@@ -148,17 +185,28 @@ export default function WorkspaceSwitcher({
                   {ws.isDefault && (
                     <span className="text-[7px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-400">{t('workspace.switcher.default_badge')}</span>
                   )}
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onEditWorkspace(ws); }}
-                    className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-white transition-all px-1"
-                  >
-                    <i className="fa-solid fa-pen text-[8px]" />
-                  </button>
+                  {/* ISSUE-D T021: the edit pencil is withheld for team
+                      members (FR-010). They cannot change a workspace's
+                      name, brand, or colours — the deferred role-based
+                      editing feature will bring the control back if
+                      editors are later granted that capability. */}
+                  {!isTeamMember && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onEditWorkspace(ws); }}
+                      className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-white transition-all px-1"
+                      aria-label={t('workspace.settings.edit_title')}
+                    >
+                      <i className="fa-solid fa-pen text-[8px]" />
+                    </button>
+                  )}
                 </div>
               ))
             )}
           </div>
-          {!isTeamMember && (
+          {/* ISSUE-D: the create button stays gated on !isTeamMember
+              (FR-009). The previous version was already gated — the
+              T021 audit verified this, the gate is restated here. */}
+          {!isTeamMember && !showLoadError && (
             <div className="border-t border-white/[0.04] p-2">
               <button
                 onClick={() => { onCreateNew(); setOpen(false); }}
@@ -203,3 +251,4 @@ export default function WorkspaceSwitcher({
     </div>
   );
 }
+
