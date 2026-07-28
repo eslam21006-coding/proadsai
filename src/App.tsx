@@ -2574,11 +2574,18 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
             // is still attributed to the source's last known id and the
             // toast has already told the user. The user can save or copy the
             // work deliberately; we do not silently discard it.
-            showToast(t('workspace.removed_notice').replace('{name}', '—'), 'info');
+            // Round-11 (CodeRabbit re-review): use the dedicated no-target
+            // i18n key (Arabic-first) instead of substituting '—' into the
+            // destination-specific message — the previous copy would read
+            // "You have been moved to —." which is misleading.
+            showToast(t('workspace.removed_notice_no_target'), 'info');
           } else {
             // No fallback and no in-flight work — safe to clear.
             setActiveWorkspaceIdLocal(null);
-            showToast(t('workspace.removed_notice').replace('{name}', '—'), 'info');
+            // Round-11 (CodeRabbit re-review): use the dedicated
+            // no-target i18n key (Arabic-first) instead of substituting
+            // '—' into the destination-specific message.
+            showToast(t('workspace.removed_notice_no_target'), 'info');
           }
         }
         setWorkspacesLocal(wsList);

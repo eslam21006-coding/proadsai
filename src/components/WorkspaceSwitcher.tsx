@@ -50,6 +50,16 @@ export default function WorkspaceSwitcher({
   // workspace out from under an in-progress save.
   const [guardSaving, setGuardSaving] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  // Round-11 (CodeRabbit re-review): focus target for the guard dialog.
+  // The wrapper isn't focusable (it's a plain <div>), so the
+  // onKeyDown handler bound to the wrapper only fires when focus is
+  // already inside it. For the externally-triggered path
+  // (switchGuardTarget effect opens the guard from outside, no prior
+  // focus inside) Escape was unreachable and the backdrop click
+  // was the only dismissal. The useEffect below moves focus into
+  // the dialog on open and binds Escape at the document level while
+  // the guard is active.
+  const guardDialogRef = useRef<HTMLDivElement>(null);
 
   // Round-2 #3/#6 + Audit F1 + Round-6 #4: react to externally-triggered
   // switches too. When App.tsx sets `pendingWorkspaceSwitch` after the
@@ -62,11 +72,16 @@ export default function WorkspaceSwitcher({
   // only then does the parent's `setActiveWorkspaceIdLocal(pendingTarget)`
   // path in handleGuardSave fire (round 5).
   //
-  // The trigger is the transition of `switchGuardTarget` from null to
-  // non-null. The previous version guarded `switchGuardTarget !==
-  // activeWorkspaceIdRef.current` and could never pass — the parent never
-  // advances activeWorkspaceId before setting pendingWorkspaceSwitch,
-  // so the comparison would be a value against itself.
+  // Round-7 (CodeRabbit re-review): the upstream `forceFlush` now returns
+  // an explicit `{ ok, error }` so the parent can also throw on the
+  // no-throw failure path (doSave was previously catching internally and
+  // resolving normally). Our catch still handles both shapes.
+  //
+  // Round-11: also moves focus into the dialog on open and binds Escape
+  // at the document level while the guard is active. The wrapper is a
+  // plain <div> so the original onKeyDown only fired when focus was
+  // already inside it — for the externally-triggered path (no prior
+  // focus inside the dialog) Escape was unreachable.
   React.useEffect(() => {
     if (switchGuardTarget) {
       setPendingTarget(switchGuardTarget);
@@ -78,6 +93,23 @@ export default function WorkspaceSwitcher({
       setPendingTarget(null);
     }
   }, [switchGuardTarget]);
+
+  // Round-11: focus the dialog on open and bind Escape at the document
+  // level while the guard is active. The wrapper is a plain <div>
+  // (not focusable by default); tabIndex={-1} on the inner panel lets
+  // .focus() land inside without entering the tab order. The
+  // document-level keydown handler runs regardless of where focus is.
+  React.useEffect(() => {
+    if (!guardOpen) return;
+    guardDialogRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !guardSaving) handleGuardCancel();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [guardOpen, guardSaving]);
 
   const activeWorkspaces = workspaces.filter(ws => ws.deletedAt == null);
 
@@ -297,19 +329,23 @@ export default function WorkspaceSwitcher({
         // click). Other dialogs in this codebase (the funnel-settings
         // modal) already set role="dialog" aria-modal="true", so the
         // guard now matches the rest of the modal vocabulary.
+        //
+        // Round-11: the wrapper's onKeyDown was removed (the wrapper
+        // isn't focusable, so the handler only fired when focus was
+        // already inside — a footgun for the externally-triggered path).
+        // Escape is now bound at the document level by the useEffect
+        // above, and the inner panel takes a ref + tabIndex={-1} so
+        // focus lands inside when the guard opens.
         <div
           role="dialog"
           aria-modal="true"
           aria-labelledby="workspace-switch-guard-title"
           className="fixed inset-0 z-[300] flex items-center justify-center"
-          onKeyDown={(e) => {
-            if (e.key === 'Escape' && !guardSaving) handleGuardCancel();
-          }}
         >
           {/* Backdrop click is inert while a save is in flight — dismissing the
               dialog mid-flush would switch the workspace out from under it. */}
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={guardSaving ? undefined : handleGuardCancel} />
-          <div className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-sm w-full mx-4 p-6 shadow-2xl">
+          <div ref={guardDialogRef} tabIndex={-1} className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-sm w-full mx-4 p-6 shadow-2xl outline-none">
             <h3 id="workspace-switch-guard-title" className="text-lg font-bold text-white mb-2">{t('workspace.switch_guard.title')}</h3>
             <p className="text-sm text-slate-400 mb-6">{t('workspace.switch_guard.body')}</p>
             <div className="flex gap-3">

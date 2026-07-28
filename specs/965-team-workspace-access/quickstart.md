@@ -40,10 +40,17 @@ function Run-Step {
 # AGENTS.md rule #1 (FIREBASE LIB SYNC): `lib/` is compiled output and does NOT
 # auto-update. Wipe it before every build or the suite can run against — and the
 # deploy can ship — emitted JS from source files that no longer exist.
-# Not wrapped in Run-Step: Remove-Item is a cmdlet, not a native command, so the
-# `$?` check would misfire when `lib` is simply absent. Test-Path handles that.
+# Round-11 (CodeRabbit re-review): fail-closed cleanup. `$ErrorActionPreference = "Stop"`
+# surfaces Remove-Item errors as terminating exceptions; the post-removal
+# Test-Path re-check aborts before any build step if the directory still exists.
+# Not wrapped in Run-Step: Remove-Item is a cmdlet, not a native command, so
+# the `$?` check would misfire when `lib` is simply absent.
+$ErrorActionPreference = "Stop"
 if (Test-Path 'D:\proads-worktrees\fix-issue-d\functions\lib') {
-    Remove-Item -Recurse -Force 'D:\proads-worktrees\fix-issue-d\functions\lib'
+    Remove-Item -Recurse -Force 'D:\proads-worktrees\fix-issue-d\functions\lib' -ErrorAction Stop
+}
+if (Test-Path 'D:\proads-worktrees\fix-issue-d\functions\lib') {
+    throw "Failed to remove functions/lib; refusing to build stale output."
 }
 Run-Step { Set-Location -LiteralPath 'D:\proads-worktrees\fix-issue-d\functions'; npm run build }
 Run-Step { Set-Location -LiteralPath 'D:\proads-worktrees\fix-issue-d\functions'; npm test }

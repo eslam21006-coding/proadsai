@@ -85,30 +85,23 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
     }
   }, [workspace]);
 
+  // Round-11 (CodeRabbit re-review): CRITICAL duplicate-persistence fix.
+  // The modal used to call the workspaceService directly (create / update /
+  // delete) and then call onSave/onDelete — but onSave/onDelete is bound
+  // to the parent's handleCreateWorkspace/Update/Delete, which ALSO call
+  // the same workspaceService. Every "Create" created two workspace
+  // documents; every "Save" issued two update writes; every "Delete"
+  // surfaced a spurious "delete failed" toast because the second
+  // deleteWorkspace call hit an already-deleted workspace. The modal is
+  // now a pure data-collector: it validates input, builds the payload,
+  // and hands off to the parent. All persistence, state-sync, and
+  // toast-error handling live in the parent handlers.
   const handleSubmit = async () => {
     if (!name.trim() || !brandName.trim()) return;
     setSaving(true);
     setUiError(null);
     try {
-      if (!isEdit) {
-        await workspaceService.createWorkspace({
-          name: name.trim(),
-          brandName: brandName.trim(),
-          brandUrl: brandUrl.trim() || undefined,
-          brandColorPrimary: colorPrimary,
-          brandColorSecondary: colorSecondary,
-        });
-      } else {
-        await workspaceService.updateWorkspace({
-          workspaceId: workspace!.id,
-          name: name.trim(),
-          brandName: brandName.trim(),
-          brandUrl: brandUrl.trim() || null,
-          brandColorPrimary: colorPrimary,
-          brandColorSecondary: colorSecondary,
-        });
-      }
-      onSave({
+      await onSave({
         name: name.trim(),
         brandName: brandName.trim(),
         brandUrl: brandUrl.trim() || '',
@@ -130,8 +123,7 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
     setSaving(true);
     setUiError(null);
     try {
-      await workspaceService.deleteWorkspace(workspace.id);
-      onDelete(workspace.id);
+      await onDelete(workspace.id);
     } catch (err) {
       console.warn('Workspace delete failed:', err);
       setUiError(t('workspace.settings.delete_failed'));

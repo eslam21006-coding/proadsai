@@ -12,7 +12,7 @@ introduced to fix the resolution race.
 
 | Field | Type | Used for |
 |---|---|---|
-| `isTeamMember` | `boolean` | Determines whether the person acts as a team member. Sole trigger for every withheld control and every server guard. |
+| `isTeamMember` | `boolean` | Triggers withheld workspace controls and mutation refusal. Owner-scoped read access additionally requires `teamOwnerUid` and a matching membership document. |
 | `teamOwnerUid` | `string \| null` | The account whose workspaces are shown. Resolves `effectiveUid`. |
 | `teamRole` | `'editor' \| 'viewer'` | Read into `App.tsx` state; **not consulted for workspace behaviour in this feature** — no role may add, remove, or alter a workspace. Reserved for the deferred editing capability. |
 | `plan` | `string` | Owner's plan, copied to the member at `App.tsx:1745`, drives `canUseWorkspaces`. |

@@ -844,6 +844,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         // ISSUE-D T027: a workspace the member was using has been removed
         // by the owner. Plain notice + the destination's name.
         'workspace.removed_notice': 'The workspace you were using is no longer available. You have been moved to {name}.',
+        'workspace.removed_notice_no_target': 'The workspace you were using is no longer available.',
         // ISSUE-D T016: plain-language loading state surfaced while the
         // write-gate holds back Generate / save project / save audience
         // profile during the membership resolution window (FR-007a).
@@ -1734,6 +1735,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.error.retry': 'حاول مرة أخرى',
         'workspace.refused.owner_only': 'مالك الحساب فقط هو الذي يستطيع إضافة مساحات عمل أو تغييرها أو إزالتها.',
         'workspace.removed_notice': 'لم تعد مساحة العمل التي كنت تستخدمها متاحة. تم نقلك إلى {name}.',
+        'workspace.removed_notice_no_target': 'لم تعد مساحة العمل التي كنت تستخدمها متاحة.',
         'workspace.write_gate.loading': 'لحظة من فضلك — جارٍ إكمال تجهيز مساحة العمل قبل أن تتابع.',
         'team.removed_body': 'تمت إزالتك من الفريق. أنت الآن تعمل ضمن حسابك الخاص.',
         'team.continue_button': 'متابعة',

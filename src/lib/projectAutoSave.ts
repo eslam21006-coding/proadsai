@@ -79,17 +79,15 @@ export async function forceFlush(): Promise<FlushResult> {
   if (ceilingTimer) { clearTimeout(ceilingTimer); ceilingTimer = null; }
   firstChangeAt = null;
   if (!pendingData) return { ok: true };
-  await doSave(pendingData);
-  if (state.phase === "transient-error" || state.phase === "persistent-failure") {
-    // Round-7 (CodeRabbit re-review): the prior round-5 fix in App.tsx
-    // re-threw on the await, but the underlying `doSave` was still
-    // catching and resolving normally — so a save failure never
-    // actually surfaced. We now return an explicit failure here so
-    // the switch-guard can keep the dialog open and the user can
-    // see that the persistence did not land.
-    return { ok: false, error: state };
-  }
-  return { ok: true };
+  // Round-11 (CodeRabbit re-review): doSave now returns an explicit
+  // FlushResult for every path (success, saveFn throw, stale-snapshot
+  // catch, no saveFn). The previous code only updated the in-memory
+  // `state` and returned void; forceFlush's reliance on `state.phase`
+  // could miss the stale-snapshot catch branch (which set phase to
+  // 'saving' after a saveFn throw), letting the workspace switch-guard
+  // silently report success on a real save failure. doSave's return
+  // value is now the source of truth.
+  return await doSave(pendingData);
 }
 
 async function flush(): Promise<void> {
@@ -100,7 +98,7 @@ async function flush(): Promise<void> {
   await doSave(pendingData);
 }
 
-async function doSave(data: any) {
+async function doSave(data: any): Promise<FlushResult> {
   const snapshotId = currentInMemoryId;
   pendingSnapshotId = snapshotId;
   state = { phase: "saving" };
@@ -109,16 +107,21 @@ async function doSave(data: any) {
   if (!saveFn) {
     state = { phase: "idle" };
     notify();
-    return;
+    return { ok: true };
   }
 
   try {
     await saveFn(data);
     consecutiveFailures = 0;
     if (currentInMemoryId !== snapshotId) {
+      // Round-11: this branch is reached after saveFn RESOLVED but a
+      // newer edit superseded our snapshot. The earlier saveFn call
+      // already ran on the wire; treat it as a successful save (the
+      // user has newer state to worry about, the queued snapshot is
+      // stale). The next debounce will save the newer state.
       state = { phase: "saving" };
       notify();
-      return;
+      return { ok: true };
     }
     state = { phase: "saved", clearAt: Date.now() + 2000 };
     notify();
@@ -128,14 +131,20 @@ async function doSave(data: any) {
         notify();
       }
     }, 2100);
+    return { ok: true };
   } catch (err: any) {
     consecutiveFailures++;
     const errMsg = err?.message || String(err);
 
     if (currentInMemoryId !== snapshotId) {
+      // Round-11: this branch is reached after saveFn THREW. Even
+      // though a newer edit has superseded the snapshot, the prior
+      // saveFn DID throw — the persisted state is not what was in
+      // memory. Surface the failure to the caller (the workspace
+      // switch-guard relies on this to keep the dialog open).
       state = { phase: "saving" };
       notify();
-      return;
+      return { ok: false, error: err };
     }
 
     if (consecutiveFailures >= PERSISTENT_THRESHOLD) {
@@ -144,6 +153,7 @@ async function doSave(data: any) {
       state = { phase: "transient-error", consecutiveFailures: consecutiveFailures as 1 | 2 };
     }
     notify();
+    return { ok: false, error: err };
   }
 }
 
