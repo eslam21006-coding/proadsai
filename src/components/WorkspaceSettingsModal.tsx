@@ -49,14 +49,14 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
 
   const isScale = plan === 'scale';
   // Round-9 (CodeRabbit re-review): the Meta link/unlink block is a
-// destructive workspace-level action (it retargets the workspace's
-// Meta ad-account pointer). Team members must not be able to invoke
-// it. The server-side assertNotTeamMember guard installed in
-// linkMetaAccountToWorkspace / unlinkMetaAccountFromWorkspace
-// refuses those calls, but the UI must not present the surface at
-// all — otherwise a team member who hits Link still sees a misleading
-// "Failed to link Meta account" toast instead of a hidden control.
-const showMetaSection = isEdit && isMetaEligible(plan) && !isTeamMember;
+  // destructive workspace-level action (it retargets the workspace's
+  // Meta ad-account pointer). Team members must not be able to invoke
+  // it. The server-side assertNotTeamMember guard installed in
+  // linkMetaAccountToWorkspace / unlinkMetaAccountFromWorkspace
+  // refuses those calls, but the UI must not present the surface at
+  // all — otherwise a team member who hits Link still sees a misleading
+  // "Failed to link Meta account" toast instead of a hidden control.
+  const showMetaSection = isEdit && isMetaEligible(plan) && !isTeamMember;
 
   useEffect(() => {
     if (workspace) {
@@ -233,7 +233,8 @@ const showMetaSection = isEdit && isMetaEligible(plan) && !isTeamMember;
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder={t('workspace.settings.field.name_placeholder')}
-              className="w-full h-10 px-4 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[11px] placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors"
+              readOnly={isTeamMember}
+              className="w-full h-10 px-4 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[11px] placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors read-only:bg-slate-900/40 read-only:text-slate-500"
             />
           </div>
 
@@ -244,7 +245,8 @@ const showMetaSection = isEdit && isMetaEligible(plan) && !isTeamMember;
               value={brandName}
               onChange={e => setBrandName(e.target.value)}
               placeholder={t('workspace.settings.field.brand_placeholder')}
-              className="w-full h-10 px-4 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[11px] placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors"
+              readOnly={isTeamMember}
+              className="w-full h-10 px-4 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[11px] placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors read-only:bg-slate-900/40 read-only:text-slate-500"
             />
           </div>
 
@@ -255,7 +257,8 @@ const showMetaSection = isEdit && isMetaEligible(plan) && !isTeamMember;
               value={brandUrl}
               onChange={e => setBrandUrl(e.target.value)}
               placeholder="https://example.com"
-              className="w-full h-10 px-4 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[11px] placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors"
+              readOnly={isTeamMember}
+              className="w-full h-10 px-4 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[11px] placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors read-only:bg-slate-900/40 read-only:text-slate-500"
             />
           </div>
 
@@ -267,13 +270,15 @@ const showMetaSection = isEdit && isMetaEligible(plan) && !isTeamMember;
                   type="color"
                   value={colorPrimary}
                   onChange={e => setColorPrimary(e.target.value)}
-                  className="w-10 h-10 rounded-lg border border-slate-800 cursor-pointer bg-transparent"
+                  disabled={isTeamMember}
+                  className="w-10 h-10 rounded-lg border border-slate-800 cursor-pointer bg-transparent disabled:cursor-not-allowed disabled:opacity-60"
                 />
                 <input
                   type="text"
                   value={colorPrimary}
                   onChange={e => setColorPrimary(e.target.value)}
-                  className="flex-1 h-10 px-3 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[10px] font-mono focus:outline-none focus:border-blue-500/50 transition-colors"
+                  readOnly={isTeamMember}
+                  className="flex-1 h-10 px-3 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[10px] font-mono focus:outline-none focus:border-blue-500/50 transition-colors read-only:bg-slate-900/40 read-only:text-slate-500"
                 />
               </div>
             </div>
@@ -284,13 +289,15 @@ const showMetaSection = isEdit && isMetaEligible(plan) && !isTeamMember;
                   type="color"
                   value={colorSecondary}
                   onChange={e => setColorSecondary(e.target.value)}
-                  className="w-10 h-10 rounded-lg border border-slate-800 cursor-pointer bg-transparent"
+                  disabled={isTeamMember}
+                  className="w-10 h-10 rounded-lg border border-slate-800 cursor-pointer bg-transparent disabled:cursor-not-allowed disabled:opacity-60"
                 />
                 <input
                   type="text"
                   value={colorSecondary}
                   onChange={e => setColorSecondary(e.target.value)}
-                  className="flex-1 h-10 px-3 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[10px] font-mono focus:outline-none focus:border-blue-500/50 transition-colors"
+                  readOnly={isTeamMember}
+                  className="flex-1 h-10 px-3 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[10px] font-mono focus:outline-none focus:border-blue-500/50 transition-colors read-only:bg-slate-900/40 read-only:text-slate-500"
                 />
               </div>
             </div>

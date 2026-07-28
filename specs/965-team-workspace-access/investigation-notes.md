@@ -144,6 +144,15 @@ Together this means **one `europe-west1` functions deploy** (with `lib/` rebuilt
 AGENTS.md critical rule) plus a `firebase deploy --only hosting` for the Vite build. No Firestore
 rules change and no schema migration is required by any story.
 
+**Deployment must never use stale compiled output.** Before entering the `functions/`
+directory the operator must wipe the existing `lib/` directory with
+`Remove-Item -Recurse -Force functions/lib` (PowerShell) or `rm -rf functions/lib`
+(Bash). Only then run `cd functions; npm run build` followed by
+`firebase deploy --only functions`. A stale `lib/` ships compiled output that
+does not match the current branch source; a selective `--only functions:<list>`
+can silently omit another changed callable. Both are explicitly forbidden by
+AGENTS.md rule #1.
+
 The team-screen matrix removal (FR-020) is frontend-only: `src/pages/Team.tsx:460-500` plus the
 toggle handler at `:244-250` and the callable binding at `:15`. The
 `setTeamMemberWorkspaceAccess` callable itself stays deployed and untouched — FR-021 requires the

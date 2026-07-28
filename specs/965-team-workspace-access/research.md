@@ -153,13 +153,13 @@ rejected. Change to `effectiveUid`.
 this codebase (`phase13 ▸ getUserProjects …` at `getUserProjects.ts:61`, `resolveCallerScope: degraded
 …` at `workspacePolicy.ts:150`). Format:
 
-```
+```text
 issue-d ▸ workspace action refused — action=<create|update|delete|restore> caller=<uid> owner=<uid|unknown> workspace=<id|n/a> reason=team_member
 ```
 
 Plus the Constitution VII override trace:
 
-```
+```text
 issue-d ▸ workspaceAccess ignored (all-access policy) — caller=<uid> owner=<uid> stored=<n> granted=ALL
 ```
 

@@ -2476,15 +2476,19 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   // query or gating inputs change.
   const activeWorkspaceIdRef = React.useRef<string | null>(null);
   activeWorkspaceIdRef.current = activeWorkspaceId;
+  // Round-10 (CodeRabbit re-review): single source of truth for the
+  // "is the user in the middle of something we must not lose" predicate.
+  // The previous code duplicated the same six-term expression inline
+  // here AND in the WorkspaceSwitcher hasInProgressWork prop below; the
+  // two paths could drift when a new work flag was added. The actual
+  // useMemo lives after the variable declarations below (the flags it
+  // reads are declared further down in the component). Here we only
+  // keep the ref-sync effect (no deps; the closure evaluates the
+  // current values after every render) and let the useMemo below be
+  // the single source of truth.
   const hasInProgressWorkRef = React.useRef(false);
-  // The flags are read in a single effect (not in a render-phase
-  // ref-mutation) so we never re-render the app on every keystroke
-  // and we keep the snapshot callback's view of "in-progress work"
-  // synchronised with the live state.
   React.useEffect(() => {
-    hasInProgressWorkRef.current =
-      isLoading || !!tovText || !!conceptsText || !!buildPlan ||
-      mockupHistory.length > 0 || carouselSlides.length > 0 || batchResults.length > 0;
+    hasInProgressWorkRef.current = hasInProgressWork;
   });
 
   // Round-2 #13: a dedicated retry trigger so the workspace-load effect
@@ -2678,9 +2682,12 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       setEditingWorkspace(null);
       showToast(`Workspace "${data.name}" created`, 'success');
     } catch (e: any) {
-      // Round-6 #2 + Round-8: use the shared helper so the refusal
-      // copy is only shown for actual team-member refusals.
-      showToast(isTeamMemberRefusal(e) ? t('workspace.refused.owner_only') : `Failed to create workspace: ${e?.message}`, 'error');
+      // Round-6 #2 + Round-8 + Round-10: use the shared helper so the refusal
+      // copy is only shown for actual team-member refusals. The non-refusal
+      // fallback now uses the existing translated `workspace.settings.save_failed`
+      // key (Arabic-first, respects current language / RTL) rather than
+      // interpolating the raw `e?.message` which leaks English SDK text.
+      showToast(isTeamMemberRefusal(e) ? t('workspace.refused.owner_only') : t('workspace.settings.save_failed'), 'error');
     }
   };
 
@@ -2695,7 +2702,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       setEditingWorkspace(null);
       showToast(`Workspace "${data.name}" updated`, 'success');
     } catch (e: any) {
-      showToast(isTeamMemberRefusal(e) ? t('workspace.refused.owner_only') : `Failed to update workspace: ${e?.message}`, 'error');
+      showToast(isTeamMemberRefusal(e) ? t('workspace.refused.owner_only') : t('workspace.settings.save_failed'), 'error');
     }
   };
 
@@ -2715,7 +2722,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       setEditingWorkspace(null);
       showToast('Workspace deleted', 'success');
     } catch (e: any) {
-      showToast(isTeamMemberRefusal(e) ? t('workspace.refused.owner_only') : `Failed to delete workspace: ${e?.message}`, 'error');
+      showToast(isTeamMemberRefusal(e) ? t('workspace.refused.owner_only') : t('workspace.settings.delete_failed'), 'error');
     }
   };
 
@@ -3173,6 +3180,33 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
   const [carouselSlides, setCarouselSlides] = useState<CarouselSlide[]>([]);
   const [carouselCopies, setCarouselCopies] = useState<CarouselSlideCopy[]>([]);
   const [showCarouselPreview, setShowCarouselPreview] = useState(false);
+  // Round-10 (CodeRabbit re-review): single source of truth for the
+  // in-progress-work predicate. Lives here (after every flag is
+  // declared) so the closure can read the live values; the ref-sync
+  // effect above mirrors the same value into hasInProgressWorkRef
+  // for the snapshot callback. The previous code duplicated the same
+  // six-term expression inline here AND in the WorkspaceSwitcher
+  // hasInProgressWork prop; both paths now read the same memoized
+  // value so they cannot drift when a new work flag is added.
+  const hasInProgressWork = React.useMemo(
+    () =>
+      isLoading ||
+      !!tovText ||
+      !!conceptsText ||
+      !!buildPlan ||
+      mockupHistory.length > 0 ||
+      carouselSlides.length > 0 ||
+      batchResults.length > 0,
+    [
+      isLoading,
+      tovText,
+      conceptsText,
+      buildPlan,
+      mockupHistory.length,
+      carouselSlides.length,
+      batchResults.length,
+    ]
+  );
   // One-level undo for carousel resize: snapshot of the slides (and their ratio) taken right
   // before a carousel_all reflow. Lets the user restore the pre-resize version.
   const [previousCarouselSlides, setPreviousCarouselSlides] = useState<CarouselSlide[] | null>(null);
@@ -7618,7 +7652,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   setWorkspaceLoadError(false);
                   setWorkspaceLoadRetryTrigger(t => t + 1);
                 }}
-                hasInProgressWork={isLoading || !!tovText || !!conceptsText || !!buildPlan || mockupHistory.length > 0 || carouselSlides.length > 0 || batchResults.length > 0}
+                hasInProgressWork={hasInProgressWork}
                 switchGuardTarget={pendingWorkspaceSwitch?.toId ?? null}
                 onSwitchGuardSave={async () => {
                   // CodeRabbit round 4 (Critical, fix in re-review): "Save &
