@@ -6549,6 +6549,15 @@ export const linkMetaAccountToWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
+    // Round-9 (CodeRabbit re-review): team-member guard. Linking a Meta
+    // ad account to a workspace retargets the workspace's ad-account
+    // pointer, which is a destructive workspace-level action. A team
+    // member's own account could have a workspace (e.g. if they were
+    // once an owner) and the per-callable workspaceId lookup under
+    // `users/{uid}/workspaces/{workspaceId}` would succeed for that
+    // own-account workspace — but the same call would have no business
+    // running for a team member. Refuse first, before any side effects.
+    await assertNotTeamMember(uid, "update");
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
     const metaAdAccountId = requireNonEmptyString(data.metaAdAccountId, "metaAdAccountId");
@@ -6594,6 +6603,10 @@ export const unlinkMetaAccountFromWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
+    // Round-9 (CodeRabbit re-review): team-member guard. Unlinking is
+    // the mirror of linking — both retarget the workspace's Meta
+    // ad-account pointer. Refuse first before any side effects.
+    await assertNotTeamMember(uid, "update");
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 

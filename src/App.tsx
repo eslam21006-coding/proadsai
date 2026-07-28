@@ -4096,7 +4096,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
           console.warn("phase13 ▸ thumbnail upload failed (non-blocking):", err);
         });
     }
-  }, []);
+  }, [t, showToast]);
 
   const { saveStatus: autoSaveState, queue: autoSaveQueue, retryNow: autoSaveRetry } =
     useProjectAutoSave(saveCurrentProject);

@@ -290,12 +290,27 @@ export default function WorkspaceSwitcher({
       )}
 
       {guardOpen && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center">
+        // Round-9 (CodeRabbit re-review): dialog semantics + Escape key.
+        // role="dialog" + aria-modal="true" so screen readers announce
+        // the modal; aria-labelledby points at the title; Escape cancels
+        // (and is inert while a save is in flight — same as the backdrop
+        // click). Other dialogs in this codebase (the funnel-settings
+        // modal) already set role="dialog" aria-modal="true", so the
+        // guard now matches the rest of the modal vocabulary.
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="workspace-switch-guard-title"
+          className="fixed inset-0 z-[300] flex items-center justify-center"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && !guardSaving) handleGuardCancel();
+          }}
+        >
           {/* Backdrop click is inert while a save is in flight — dismissing the
               dialog mid-flush would switch the workspace out from under it. */}
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={guardSaving ? undefined : handleGuardCancel} />
           <div className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-sm w-full mx-4 p-6 shadow-2xl">
-            <h3 className="text-lg font-bold text-white mb-2">{t('workspace.switch_guard.title')}</h3>
+            <h3 id="workspace-switch-guard-title" className="text-lg font-bold text-white mb-2">{t('workspace.switch_guard.title')}</h3>
             <p className="text-sm text-slate-400 mb-6">{t('workspace.switch_guard.body')}</p>
             <div className="flex gap-3">
               <button

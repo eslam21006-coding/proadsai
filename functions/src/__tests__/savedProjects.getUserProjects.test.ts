@@ -5,7 +5,10 @@
 // see research.md D1 and spec.md Clarifications 2026-07-27 — because
 // the product decision is that any verified team member sees every
 // workspace of the owner, with the per-member `workspaceAccess` array
-// left unread (FR-021).
+// retained unchanged and NOT used for authorization decisions (FR-021):
+// it is read by `resolveCallerScope` (functions/src/workspaces/workspacePolicy.ts)
+// solely to emit the FR-004b override trace, never to filter the
+// caller's effective scope.
 
 import { strict as assert } from "node:assert";
 

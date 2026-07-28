@@ -28,7 +28,7 @@
 | ID | Title | Why deferred |
 |---|---|---|
 | T033 | Execute the 30-row verification matrix | Manual exercise against `npm run dev` with two test accounts (Owner + Member-E, Member-V). Live sign-in + workspace flow cannot be tested from the build agent. Per `quickstart.md`, the matrix is to be run by the operator once the dev server is up. |
-| T035 | Deploy changed callables to `europe-west1` | Project gate order: **deploy happens after merge via GitHub UI**. The command is recorded in `quickstart.md` and the AGENTS.md critical rule for redeploying (`Remove-Item -Recurse -Force functions/lib` then `cd functions && npm run build`) is followed by `firebase deploy --only functions:getUserProjects,functions:getWorkspaceGenerations,functions:createWorkspace,functions:updateWorkspace,functions:deleteWorkspace,functions:restoreWorkspace`. |
+| T035 | Deploy changed callables to `europe-west1` | Project gate order: **deploy happens after merge via GitHub UI**. The command is recorded in `quickstart.md` and the AGENTS.md critical rule for redeploying (`Remove-Item -Recurse -Force functions/lib` then `cd functions && npm run build`) is followed by `firebase deploy --only functions`. |
 | T036 | Production-test rows 1–3, 3a, 9–10, 19, and 28–29 | Requires T035. Rows 28–29 specifically check the FR-023 / FR-004b log lines (`issue-d ▸ workspace action refused …` and `issue-d ▸ workspaceAccess ignored …`) are emitted to Cloud Logging with the expected shape — this is only verifiable against the deployed build. |
 
 ## Final local-build gate
@@ -45,5 +45,5 @@
 2. **Open the PR** — `tasks.md` notes are the source of truth for the reviewer.
 3. **CodeRabbit + Claude audit** — the CLAUDE-AUDIT scope is the full diff and the three batch reports (`batch-1-report.md`, `batch-2-report.md`, this file).
 4. **Merge via GitHub UI** (operator-driven per the project gate order).
-5. **Post-merge redeploy** (T035): `cd functions; Remove-Item -Recurse -Force lib; npm run build; firebase deploy --only functions:getUserProjects,functions:getWorkspaceGenerations,functions:createWorkspace,functions:updateWorkspace,functions:deleteWorkspace,functions:restoreWorkspace`.
+5. **Post-merge redeploy** (T035): `cd functions; Remove-Item -Recurse -Force lib; npm run build; firebase deploy --only functions`.
 6. **Production test** (T036): execute rows 1–3, 3a, 9–10, 19, 28–29 of `specs/965-team-workspace-access/quickstart.md` against the deployed build. Rows 28–29 confirm the refusal and override log lines appear in Cloud Logging with the expected shape — the format is unverifiable before deploy and SC-011 depends on it being queryable in production.

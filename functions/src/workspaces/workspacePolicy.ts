@@ -287,18 +287,34 @@ export async function resolveCallerScope(callerUid: string): Promise<{
         }
         return { ownerUid, allowedWorkspaceIds: "ALL" };
       }
-      return { ownerUid, allowedWorkspaceIds: [] };
+      // Round-9 (CodeRabbit re-review): the previous code returned
+      // `{ ownerUid, allowedWorkspaceIds: [] }` here, which the consumer-side
+      // check (`!allowedWorkspaceIds.includes(workspaceId)`) silently
+      // translated to "permission-denied: Workspace access denied" — a
+      // fact that was easy to miss in code review. Contract row A5 says
+      // "isTeamMember=true but no member doc under the owner → deny |
+      // permission-denied", and the test mirror A5 asserts
+      // `reasonCode: 'permission-denied'`. Throw explicitly here so the
+      // contract is observable at the source rather than implicit in the
+      // consumer's empty-array short-circuit.
+      throw new HttpsError(
+        "permission-denied",
+        "Team membership is not established for this account.",
+        { reason: "membership_unproven" }
+      );
     }
 
     const wsSnap = await admin.firestore().collection(`users/${callerUid}/workspaces`).get();
     const wsIds = wsSnap.docs.filter((d) => d.data().deletedAt == null).map((d) => d.id);
     return { ownerUid: callerUid, allowedWorkspaceIds: wsIds.length > 0 ? wsIds : "ALL" };
   } catch (err) {
-    // A Firestore read failure here must NOT bubble up as an unhandled error and
-    // crash the calling callable (getUserProjects / saveProject) with a 500. The
-    // common case is a regular (non-team) user, for whom the safe, no-data-leak
-    // default is to scope to their own account: ownerUid = callerUid grants access
-    // only to the caller's own documents, never another user's.
+    // A Firestore read failure here must NOT bubble up as an unhandled
+    // 500. The common case is a regular (non-team) user, for whom the
+    // safe, no-data-leak default is to scope to their own account.
+    // Round-9: re-throw HttpsError so an explicit "membership unproven"
+    // or similar call-side error propagates correctly; only generic
+    // read failures degrade to self-scope.
+    if (err instanceof HttpsError) throw err;
     console.warn(
       `⚠️ resolveCallerScope: degraded to self-scope for ${callerUid} after read failure:`,
       (err as { message?: string })?.message ?? err,

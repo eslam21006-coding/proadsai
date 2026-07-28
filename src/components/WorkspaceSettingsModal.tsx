@@ -48,7 +48,15 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
   });
 
   const isScale = plan === 'scale';
-  const showMetaSection = isEdit && isMetaEligible(plan);
+  // Round-9 (CodeRabbit re-review): the Meta link/unlink block is a
+// destructive workspace-level action (it retargets the workspace's
+// Meta ad-account pointer). Team members must not be able to invoke
+// it. The server-side assertNotTeamMember guard installed in
+// linkMetaAccountToWorkspace / unlinkMetaAccountFromWorkspace
+// refuses those calls, but the UI must not present the surface at
+// all — otherwise a team member who hits Link still sees a misleading
+// "Failed to link Meta account" toast instead of a hidden control.
+const showMetaSection = isEdit && isMetaEligible(plan) && !isTeamMember;
 
   useEffect(() => {
     if (workspace) {

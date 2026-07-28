@@ -48,7 +48,8 @@ service cloud.firestore {
       //                             grants nothing; the four mutation callables refuse
       //                             team members outright via `assertNotTeamMember`
       //   3. the frontend switcher — withholds create / edit / delete controls
-      // Soft-deleted workspaces are hidden from reads.
+      // Soft-deleted workspaces are hidden from team-member reads; owners
+      // retain direct access below.
       // The Phase 14 adAccounts subtree is declared in a separate match
       // block further down (re-uses `isWorkspaceMember` helper).
       match /workspaces/{workspaceId} {
