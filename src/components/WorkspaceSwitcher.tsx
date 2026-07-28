@@ -138,6 +138,11 @@ export default function WorkspaceSwitcher({
   // keeps the guard open, leaves `pendingTarget` set so the switcher
   // reopens with the same target on the next render, and surfaces the
   // parent's already-shown toast. The user picks Save again or Cancel.
+  //
+  // Round-7 (CodeRabbit re-review): the upstream `forceFlush` now returns
+  // an explicit `{ ok, error }` so the parent can also throw on the
+  // no-throw failure path (doSave was previously catching internally and
+  // resolving normally). Our catch still handles both shapes.
   const handleGuardSave = async () => {
     if (!pendingTarget) return;
     setGuardSaving(true);

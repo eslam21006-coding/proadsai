@@ -67,15 +67,32 @@ export function queue(data: any) {
   scheduleSave();
 }
 
-export async function forceFlush() {
+// Public flush result so callers (notably the workspace switch-guard
+// "Save & Switch" path) can distinguish a confirmed successful save
+// from one that the in-memory `state` recorded as transient-error /
+// persistent-failure. The auto-save debounce/ceiling `flush()` callers
+// don't care about the result — the observable `state` is enough for them.
+export type FlushResult = { ok: true } | { ok: false; error: unknown };
+
+export async function forceFlush(): Promise<FlushResult> {
   if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
   if (ceilingTimer) { clearTimeout(ceilingTimer); ceilingTimer = null; }
   firstChangeAt = null;
-  if (!pendingData) return;
+  if (!pendingData) return { ok: true };
   await doSave(pendingData);
+  if (state.phase === "transient-error" || state.phase === "persistent-failure") {
+    // Round-7 (CodeRabbit re-review): the prior round-5 fix in App.tsx
+    // re-threw on the await, but the underlying `doSave` was still
+    // catching and resolving normally — so a save failure never
+    // actually surfaced. We now return an explicit failure here so
+    // the switch-guard can keep the dialog open and the user can
+    // see that the persistence did not land.
+    return { ok: false, error: state };
+  }
+  return { ok: true };
 }
 
-async function flush() {
+async function flush(): Promise<void> {
   if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
   if (ceilingTimer) { clearTimeout(ceilingTimer); ceilingTimer = null; }
   firstChangeAt = null;

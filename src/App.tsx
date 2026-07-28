@@ -2558,7 +2558,21 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
               // Nothing in flight — nothing to attribute. Move immediately.
               setActiveWorkspaceIdLocal(defId);
             }
+          } else if (hasInProgressWorkRef.current) {
+            // Round-7 (CodeRabbit re-review): no fallback workspace AND
+            // unsaved work. Clearing `activeWorkspaceId` to null here would
+            // let the auto-save effect drop the queued snapshot's workspaceId
+            // (it derives resolvedWorkspaceId from activeWorkspaceId) and
+            // either lose the work or write it without a workspaceId. Keep
+            // `activeWorkspaceId` pointed at the source — the snapshot has
+            // confirmed the source is gone, so this is a "no-workspace"
+            // state from the caller's perspective, but the in-flight project
+            // is still attributed to the source's last known id and the
+            // toast has already told the user. The user can save or copy the
+            // work deliberately; we do not silently discard it.
+            showToast(t('workspace.removed_notice').replace('{name}', '—'), 'info');
           } else {
+            // No fallback and no in-flight work — safe to clear.
             setActiveWorkspaceIdLocal(null);
             showToast(t('workspace.removed_notice').replace('{name}', '—'), 'info');
           }
@@ -7614,21 +7628,23 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   // the correct workspaceId and the flush lands in the right
                   // place. FR-017, quickstart row 18.
                   //
-                  // Round-5 (CodeRabbit re-review): if the flush throws, we
-                  // surface the failure rather than swallowing it. The
-                  // WorkspaceSwitcher's handleGuardSave awaits this handler
-                  // and only proceeds to onSwitch when the promise resolves
-                  // without rejection — so a save failure leaves the member
-                  // on the source workspace with their work in local IndexedDB,
-                  // and the guard stays open until they pick Save again or
-                  // Cancel. Returning early here keeps the pending state so
-                  // the switcher does not see a resolved promise and proceed.
-                  try {
-                    await autoSaveForceFlush();
-                  } catch (e) {
-                    console.warn('issue-d ▸ force-flush before workspace switch failed:', e);
+                  // Round-5 (CodeRabbit re-review): if the flush fails, we
+                  // surface the failure rather than swallowing it.
+                  // Round-7 (CodeRabbit re-review): round 5 used try/catch
+                  // but the underlying `doSave` was still catching errors
+                  // internally, so the promise always resolved. The
+                  // `forceFlush` API now returns an explicit `{ ok, error }`
+                  // (see src/lib/projectAutoSave.ts) so we can branch on a
+                  // confirmed success vs an observed failure. On failure we
+                  // throw so WorkspaceSwitcher.handleGuardSave keeps the
+                  // dialog open and the source workspace stays active.
+                  const result = await autoSaveForceFlush();
+                  if (!result.ok) {
+                    console.warn('issue-d ▸ force-flush before workspace switch failed:', result.error);
                     showToast(t('workspace.save_before_switch_failed'), 'error');
-                    throw e;
+                    throw result.error instanceof Error
+                      ? result.error
+                      : new Error('forceFlush failed (non-throw save failure)');
                   }
                 }}
                 onSwitchGuardDiscard={() => setPendingWorkspaceSwitch(null)}
