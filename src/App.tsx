@@ -1106,6 +1106,10 @@ interface MenuSidebarProps {
   onNewProject: () => void;
   onSavedRenders: () => void;
   onSettings: () => void;
+  // ISSUE-C: the Phase 26 sidebar rewrite dropped the Team trigger.
+  // The Team modal + backend callables are still wired — this only
+  // restores the sidebar surface.
+  onTeam: () => void;
   onToggleTheme: () => void;
   onToggleLanguage: () => void;
   onStartTutorial: () => void;
@@ -1140,6 +1144,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
   onNewProject,
   onSavedRenders,
   onSettings,
+  onTeam,
   onToggleTheme,
   onToggleLanguage,
   onStartTutorial,
@@ -1201,6 +1206,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
               onNewProject={onNewProject}
               onSavedRenders={onSavedRenders}
               onSettings={onSettings}
+              onTeam={onTeam}
               onToggleTheme={onToggleTheme}
               onToggleLanguage={onToggleLanguage}
               onStartTutorial={onStartTutorial}
@@ -1355,6 +1361,9 @@ interface MenuItemsProps {
   onNewProject: () => void;
   onSavedRenders: () => void;
   onSettings: () => void;
+  // ISSUE-C: the Team management surface (invite / role / remove). Phase 26
+  // dropped the trigger; the modal and backend are still in place.
+  onTeam: () => void;
   onToggleTheme: () => void;
   onToggleLanguage: () => void;
   onStartTutorial: () => void;
@@ -1402,6 +1411,12 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
     { key: 'new', el: <MenuItem key="new" icon="fa-plus" label={t('history.newProject')} onClick={props.onNewProject} /> },
     { key: 'bookmarks', el: <MenuItem key="bookmarks" icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={props.onSavedRenders} /> },
     { key: 'settings', el: <MenuItem key="settings" icon="fa-gear" label={t('topbar.menu_settings')} onClick={props.onSettings} /> },
+    // ISSUE-C: Team management entry. Placed after Settings and before the
+    // Meta connection block so the account/team context sits with the other
+    // workspace-control surfaces. Both the desktop sidebar and the mobile
+    // overlay render the shared MenuItems list — adding the entry here
+    // exposes it everywhere.
+    { key: 'team', el: <MenuItem key="team" icon="fa-users" label={t('topbar.menu_team')} onClick={props.onTeam} /> },
     // Phase 14 batch 01 — UI wiring. Meta connection entry. The label flips
     // between "Connect Meta Ads" (no connection) and "Meta Ads Connected"
     // (already connected) per the spec. The handler also closes the menu
@@ -10781,6 +10796,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         }}
         onSavedRenders={loadFavorites}
         onSettings={() => { setShowSettingsModal(true); setSettingsEditingName(false); setSettingsEditingEmail(false); setShowMenuDrawer(false); }}
+        onTeam={() => { setShowTeamModal(true); setShowMenuDrawer(false); }}
         onToggleTheme={() => { toggleTheme(); }}
         onToggleLanguage={() => { setLang(lang === 'en' ? 'ar' : 'en'); }}
         onStartTutorial={() => { setShowVideoPopup(true); setShowMenuDrawer(false); }}
@@ -10899,6 +10915,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   setSettingsEditingEmail(false);
                   setShowMenuDrawer(false);
                 }}
+                onTeam={() => { setShowTeamModal(true); setShowMenuDrawer(false); }}
                 onToggleTheme={toggleTheme}
                 onToggleLanguage={() => { setLang(lang === 'en' ? 'ar' : 'en'); }}
                 onStartTutorial={() => { setShowVideoPopup(true); setShowMenuDrawer(false); }}
