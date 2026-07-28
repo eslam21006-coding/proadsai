@@ -1,5 +1,17 @@
 # Batch 3 Report — T031, T032, T034 (and the post-merge gate notes for T033, T035, T036)
 
+> ⚠️ **ARCHIVED — do not follow the commands in this file.**
+> Superseded by `tasks.md` T035 and the "Build and test" section of `quickstart.md`.
+>
+> In particular, the deploy commands below use a selective
+> `firebase deploy --only functions:<name>,<name>` list and omit the `functions/lib` wipe. That
+> contradicts **`AGENTS.md` rule #1 (FIREBASE LIB SYNC)**, which requires
+> `Remove-Item -Recurse -Force functions/lib` → `cd functions; npm run build` →
+> `firebase deploy --only functions`. A selective list can silently omit another changed callable,
+> and a stale `lib/` deploys compiled output that does not match the branch.
+>
+> This file is retained for history only. The authoritative sequence lives in `tasks.md` T035.
+
 **Branch**: `965-team-workspace-access` (worktree `D:\proads-worktrees\fix-issue-d`)
 **Date**: 2026-07-27
 

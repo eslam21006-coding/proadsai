@@ -21,7 +21,9 @@ interface WorkspaceSwitcherProps {
   switchGuardTarget?: string | null;
   onSwitchGuardCancel?: () => void;
   onSwitchGuardDiscard?: (targetId: string) => void;
-  onSwitchGuardSave?: (targetId: string) => void;
+  // May be async: the parent flushes the pending auto-save before the switch
+  // is allowed to proceed, and `handleGuardSave` awaits it.
+  onSwitchGuardSave?: (targetId: string) => void | Promise<void>;
 }
 
 export default function WorkspaceSwitcher({
@@ -43,6 +45,10 @@ export default function WorkspaceSwitcher({
   const [open, setOpen] = useState(false);
   const [guardOpen, setGuardOpen] = useState(false);
   const [pendingTarget, setPendingTarget] = useState<string | null>(null);
+  // True while the parent's save-before-switch flush is in flight. The guard
+  // buttons are disabled for the duration so a second click cannot switch the
+  // workspace out from under an in-progress save.
+  const [guardSaving, setGuardSaving] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   // Round-2 #3/#6: react to externally-triggered switches too. When App.tsx
@@ -118,9 +124,20 @@ export default function WorkspaceSwitcher({
     setOpen(false);
   };
 
-  const handleGuardSave = () => {
+  // CodeRabbit round 4 (Critical): `onSwitchGuardSave` persists the in-flight
+  // project, and it MUST complete before `onSwitch` advances the active
+  // workspace. The auto-save snapshot is tagged from the active workspace id,
+  // so switching first attributes the member's work to the destination
+  // workspace instead of the one they were working in. Awaiting the handler is
+  // what keeps "Save & Switch" honest — it saves, then switches.
+  const handleGuardSave = async () => {
     if (pendingTarget) {
-      onSwitchGuardSave?.(pendingTarget);
+      setGuardSaving(true);
+      try {
+        await onSwitchGuardSave?.(pendingTarget);
+      } finally {
+        setGuardSaving(false);
+      }
       if (pendingTarget !== activeWorkspaceId) onSwitch(pendingTarget);
     }
     setGuardOpen(false);
@@ -254,26 +271,31 @@ export default function WorkspaceSwitcher({
 
       {guardOpen && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleGuardCancel} />
+          {/* Backdrop click is inert while a save is in flight — dismissing the
+              dialog mid-flush would switch the workspace out from under it. */}
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={guardSaving ? undefined : handleGuardCancel} />
           <div className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-sm w-full mx-4 p-6 shadow-2xl">
             <h3 className="text-lg font-bold text-white mb-2">{t('workspace.switch_guard.title')}</h3>
             <p className="text-sm text-slate-400 mb-6">{t('workspace.switch_guard.body')}</p>
             <div className="flex gap-3">
               <button
                 onClick={handleGuardSave}
-                className="flex-1 h-10 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-500 transition-colors"
+                disabled={guardSaving}
+                className="flex-1 h-10 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                {t('workspace.switch_guard.save')}
+                {guardSaving ? t('workspace.switch_guard.saving') : t('workspace.switch_guard.save')}
               </button>
               <button
                 onClick={handleGuardDiscard}
-                className="flex-1 h-10 rounded-xl bg-white/[0.06] text-slate-300 text-xs font-bold hover:bg-white/[0.1] transition-colors"
+                disabled={guardSaving}
+                className="flex-1 h-10 rounded-xl bg-white/[0.06] text-slate-300 text-xs font-bold hover:bg-white/[0.1] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {t('workspace.switch_guard.discard')}
               </button>
               <button
                 onClick={handleGuardCancel}
-                className="flex-1 h-10 rounded-xl bg-white/[0.04] text-slate-500 text-xs font-bold hover:text-white transition-colors"
+                disabled={guardSaving}
+                className="flex-1 h-10 rounded-xl bg-white/[0.04] text-slate-500 text-xs font-bold hover:text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {t('workspace.switch_guard.cancel')}
               </button>

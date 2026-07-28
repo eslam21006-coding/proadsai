@@ -2527,14 +2527,21 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
           const def = wsList.find(w => w.isDefault) || wsList[0];
           const defId = def?.id ?? null;
           if (defId) {
-            setActiveWorkspaceIdLocal(defId);
             showToast(t('workspace.removed_notice').replace('{name}', def.name), 'info');
             if (hasInProgressWorkRef.current) {
-              // Hand the guard to WorkspaceSwitcher. It opens on the
-              // transition of this value from null to non-null — it must
-              // NOT compare the target against the active workspace id,
-              // which has already advanced to `defId` on this same render.
+              // CodeRabbit round 4 (Critical): do NOT advance
+              // `activeWorkspaceId` yet. The auto-save effect derives
+              // `resolvedWorkspaceId` from it and lists it as a dependency
+              // (see the effect below), so switching here would re-queue the
+              // in-flight project tagged with the FALLBACK workspace — the
+              // member's work would be saved under a workspace they never
+              // worked in. Holding on the source workspace keeps the queued
+              // snapshot correctly attributed; the guard performs the switch
+              // once the member has chosen, after the flush has completed.
               setPendingWorkspaceSwitch({ fromId: currentActive, toId: defId });
+            } else {
+              // Nothing in flight — nothing to attribute. Move immediately.
+              setActiveWorkspaceIdLocal(defId);
             }
           } else {
             setActiveWorkspaceIdLocal(null);
@@ -7556,17 +7563,41 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 }}
                 hasInProgressWork={isLoading || !!tovText || !!conceptsText || !!buildPlan || mockupHistory.length > 0 || carouselSlides.length > 0 || batchResults.length > 0}
                 switchGuardTarget={pendingWorkspaceSwitch?.toId ?? null}
-                onSwitchGuardSave={() => setPendingWorkspaceSwitch(null)}
+                onSwitchGuardSave={async () => {
+                  // CodeRabbit round 4 (Critical): "Save & Switch" must
+                  // actually persist BEFORE the switch happens. Previously
+                  // this only cleared the pending state, so the work was left
+                  // to the 3 s auto-save debounce — which fires *after*
+                  // `activeWorkspaceId` has advanced and therefore re-tags the
+                  // project with the destination workspace. The member's work
+                  // ended up attributed to a workspace they never worked in.
+                  //
+                  // `activeWorkspaceId` is still the SOURCE workspace at this
+                  // point (the snapshot handler no longer advances it while a
+                  // guard is pending, and WorkspaceSwitcher awaits this handler
+                  // before calling onSwitch), so the queued snapshot carries
+                  // the correct workspaceId and the flush lands in the right
+                  // place. FR-017, quickstart row 18.
+                  try {
+                    await autoSaveForceFlush();
+                  } catch (e) {
+                    // Do not silently swallow: the member chose Save, and a
+                    // failed save is exactly the outcome the guard exists to
+                    // prevent. The work stays in local IndexedDB, so it is not
+                    // lost — but say so rather than switching as if it saved.
+                    console.warn('issue-d ▸ force-flush before workspace switch failed:', e);
+                    showToast(t('workspace.save_before_switch_failed'), 'error');
+                  }
+                  setPendingWorkspaceSwitch(null);
+                }}
                 onSwitchGuardDiscard={() => setPendingWorkspaceSwitch(null)}
                 onSwitchGuardCancel={() => {
-                  // Roll back: re-select the original workspace. Falls back
-                  // to the default if the original id is no longer in the list.
-                  if (pendingWorkspaceSwitch) {
-                    const fallback = workspaces.find(w => w.id === pendingWorkspaceSwitch.fromId)
-                      ?? workspaces.find(w => w.isDefault)
-                      ?? workspaces[0];
-                    if (fallback) setActiveWorkspaceIdLocal(fallback.id);
-                  }
+                  // Cancel leaves the member on the source workspace. Under the
+                  // deleted-workspace path that workspace is gone from the list,
+                  // but staying is the least destructive choice: the work is
+                  // still in memory and still attributed to where it was made,
+                  // so the member can save or copy it out deliberately. The
+                  // removal toast has already told them what happened.
                   setPendingWorkspaceSwitch(null);
                 }}
               />

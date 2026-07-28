@@ -93,15 +93,41 @@ if (hasInProgressWorkRef.current) {
 throughout, so the effect never re-runs after mount and cannot close a manually-opened dialog.
 `handleSwitch` still drives it through `hasInProgressWork` exactly as before.
 
-### Still outstanding — not a regression, now newly reachable
+### Sub-point — RESOLVED in CodeRabbit round 4
 
-`onSwitchGuardSave` (`App.tsx:7558`) is `() => setPendingWorkspaceSwitch(null)`. It performs **no
-explicit save**, while the button reads *"Save & Switch"* / *"احفظ وبدّل"*. On `main` this prop was
-not passed at all and the path relied on the auto-save queue, so this is not something this change
-broke — but the dialog is now reachable for the first time, which makes it worth proving rather
-than assuming. **Add to quickstart row 18**: confirm the auto-save has flushed before the switch
-completes, or wire an explicit save. Flagged, not fixed, because it is a behavioural question about
-the auto-save contract rather than a defect in this diff.
+This section previously flagged `onSwitchGuardSave` as "performs no explicit save" and deferred it
+as a behavioural question. **That understated it.** CodeRabbit's round-4 review traced the actual
+consequence, and it is a data-integrity defect rather than a missing convenience:
+
+The auto-save effect (`App.tsx:4043-4119`) derives `resolvedWorkspaceId` from `activeWorkspaceId`
+(`:4075`) and lists `activeWorkspaceId` in its dependency array (`:4119`). The snapshot handler
+advanced `activeWorkspaceId` to the fallback **before** the dialog was shown, so the effect re-ran
+and re-queued the in-flight project tagged with the *fallback* workspace. The 3-second debounce then
+persisted the member's work under a workspace they had never worked in — silently mis-attributed,
+not merely delayed.
+
+**Fixed** — the switch is now deferred until the member chooses:
+
+- The snapshot handler no longer advances `activeWorkspaceId` while work is in flight; it only sets
+  `pendingWorkspaceSwitch`. The queued snapshot therefore keeps the source workspace id.
+- `onSwitchGuardSave` awaits `autoSaveForceFlush()` and surfaces
+  `workspace.save_before_switch_failed` on failure instead of switching as though it had saved.
+- `WorkspaceSwitcher.handleGuardSave` is `async` and awaits the parent handler before calling
+  `onSwitch`, so the flush completes first. The guard buttons and the backdrop are disabled for the
+  duration (`guardSaving`) so a second click cannot switch out from under an in-flight save.
+- Cancel now leaves the member on the source workspace rather than force-selecting a fallback — the
+  work stays attributed to where it was made and the member can act on it deliberately.
+
+This also corrects the **user-initiated** switch path, which had the same ordering flaw on `main`:
+"Save & Switch" changed the workspace first and let the debounce persist afterwards, under the
+destination workspace.
+
+**Still open, deliberately out of scope**: "Discard & Switch" does not clear the pending auto-save
+queue, so discarded work can still be persisted by a later debounce under the destination workspace.
+This is pre-existing `main` behaviour on the user-initiated path, it is not what FR-017 asks for
+(FR-017 requires a *warning* before discarding, which is present), and fixing it means deciding what
+"discard" should mean for the in-memory generation state — a product question, not a defect in this
+diff. Recorded here so it is not mistaken for an oversight.
 
 ---
 

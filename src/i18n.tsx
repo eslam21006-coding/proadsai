@@ -815,6 +815,10 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.switch_guard.title': 'Switch workspace?',
         'workspace.switch_guard.body': 'Switching workspace will start a new project. Save current work?',
         'workspace.switch_guard.save': 'Save & Switch',
+        // ISSUE-D CodeRabbit round 4: shown while the save-before-switch
+        // flush is in flight, and if that flush fails.
+        'workspace.switch_guard.saving': 'Saving…',
+        'workspace.save_before_switch_failed': 'We could not finish saving your work. It is still here on this device — try saving again before you continue.',
         'workspace.switch_guard.discard': 'Discard & Switch',
         'workspace.switch_guard.cancel': 'Cancel',
         'workspace.error.scale_required': 'Creating more than one workspace requires the Scale plan.',
@@ -1711,6 +1715,9 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.switch_guard.title': 'تبديل مساحة العمل؟',
         'workspace.switch_guard.body': 'تبديل مساحة العمل سيبدأ مشروعًا جديدًا. احفظ عملك الحالي؟',
         'workspace.switch_guard.save': 'احفظ وبدّل',
+        // ISSUE-D CodeRabbit round 4 (Arabic parallel).
+        'workspace.switch_guard.saving': 'جارٍ الحفظ…',
+        'workspace.save_before_switch_failed': 'تعذّر إكمال حفظ عملك. ما زال موجودًا على هذا الجهاز — حاول الحفظ مرة أخرى قبل أن تتابع.',
         'workspace.switch_guard.discard': 'تجاهل وبدّل',
         'workspace.switch_guard.cancel': 'إلغاء',
         'workspace.error.scale_required': 'إنشاء أكثر من مساحة عمل يتطلّب خطة Scale.',
