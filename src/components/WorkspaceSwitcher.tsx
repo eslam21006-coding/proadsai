@@ -130,16 +130,33 @@ export default function WorkspaceSwitcher({
   // so switching first attributes the member's work to the destination
   // workspace instead of the one they were working in. Awaiting the handler is
   // what keeps "Save & Switch" honest — it saves, then switches.
+  //
+  // Round-5 (CodeRabbit re-review): if the parent's save handler rejects,
+  // we must NOT proceed to onSwitch — otherwise the work would be silently
+  // mis-attributed (the source workspace is still active but the failure
+  // means the queued snapshot never landed). Catching the rejection here
+  // keeps the guard open, leaves `pendingTarget` set so the switcher
+  // reopens with the same target on the next render, and surfaces the
+  // parent's already-shown toast. The user picks Save again or Cancel.
   const handleGuardSave = async () => {
-    if (pendingTarget) {
-      setGuardSaving(true);
-      try {
-        await onSwitchGuardSave?.(pendingTarget);
-      } finally {
-        setGuardSaving(false);
-      }
-      if (pendingTarget !== activeWorkspaceId) onSwitch(pendingTarget);
+    if (!pendingTarget) return;
+    setGuardSaving(true);
+    let saveOk = true;
+    try {
+      await onSwitchGuardSave?.(pendingTarget);
+    } catch {
+      saveOk = false;
+    } finally {
+      setGuardSaving(false);
     }
+    if (!saveOk) {
+      // Keep the dialog open so the member can Save again (after fixing
+      // any local IndexedDB / network issue) or Cancel. The parent has
+      // already cleared pendingWorkspaceSwitch? No — the parent's catch
+      // re-throws before the clear, so pendingWorkspaceSwitch stays set.
+      return;
+    }
+    if (pendingTarget !== activeWorkspaceId) onSwitch(pendingTarget);
     setGuardOpen(false);
     setPendingTarget(null);
     setOpen(false);

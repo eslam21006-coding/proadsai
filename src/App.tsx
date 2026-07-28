@@ -7579,13 +7579,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 hasInProgressWork={isLoading || !!tovText || !!conceptsText || !!buildPlan || mockupHistory.length > 0 || carouselSlides.length > 0 || batchResults.length > 0}
                 switchGuardTarget={pendingWorkspaceSwitch?.toId ?? null}
                 onSwitchGuardSave={async () => {
-                  // CodeRabbit round 4 (Critical): "Save & Switch" must
-                  // actually persist BEFORE the switch happens. Previously
-                  // this only cleared the pending state, so the work was left
-                  // to the 3 s auto-save debounce — which fires *after*
-                  // `activeWorkspaceId` has advanced and therefore re-tags the
-                  // project with the destination workspace. The member's work
-                  // ended up attributed to a workspace they never worked in.
+                  // CodeRabbit round 4 (Critical, fix in re-review): "Save &
+                  // Switch" must actually persist BEFORE the switch happens.
+                  // Previously this only cleared the pending state, so the
+                  // work was left to the 3 s auto-save debounce — which fires
+                  // *after* `activeWorkspaceId` has advanced and therefore
+                  // re-tags the project with the destination workspace. The
+                  // member's work ended up attributed to a workspace they
+                  // never worked in.
                   //
                   // `activeWorkspaceId` is still the SOURCE workspace at this
                   // point (the snapshot handler no longer advances it while a
@@ -7593,26 +7594,37 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   // before calling onSwitch), so the queued snapshot carries
                   // the correct workspaceId and the flush lands in the right
                   // place. FR-017, quickstart row 18.
+                  //
+                  // Round-5 (CodeRabbit re-review): if the flush throws, we
+                  // surface the failure rather than swallowing it. The
+                  // WorkspaceSwitcher's handleGuardSave awaits this handler
+                  // and only proceeds to onSwitch when the promise resolves
+                  // without rejection — so a save failure leaves the member
+                  // on the source workspace with their work in local IndexedDB,
+                  // and the guard stays open until they pick Save again or
+                  // Cancel. Returning early here keeps the pending state so
+                  // the switcher does not see a resolved promise and proceed.
                   try {
                     await autoSaveForceFlush();
                   } catch (e) {
-                    // Do not silently swallow: the member chose Save, and a
-                    // failed save is exactly the outcome the guard exists to
-                    // prevent. The work stays in local IndexedDB, so it is not
-                    // lost — but say so rather than switching as if it saved.
                     console.warn('issue-d ▸ force-flush before workspace switch failed:', e);
                     showToast(t('workspace.save_before_switch_failed'), 'error');
+                    throw e;
                   }
-                  setPendingWorkspaceSwitch(null);
                 }}
                 onSwitchGuardDiscard={() => setPendingWorkspaceSwitch(null)}
                 onSwitchGuardCancel={() => {
-                  // Cancel leaves the member on the source workspace. Under the
-                  // deleted-workspace path that workspace is gone from the list,
-                  // but staying is the least destructive choice: the work is
-                  // still in memory and still attributed to where it was made,
-                  // so the member can save or copy it out deliberately. The
-                  // removal toast has already told them what happened.
+                  // Cancel on the active-workspace-deletion guard (the
+                  // pendingWorkspaceSwitch path) leaves the member on the
+                  // SOURCE workspace — the snapshot handler has not advanced
+                  // activeWorkspaceId (it only set pendingWorkspaceSwitch),
+                  // so "cancel" simply clears the pending state and the
+                  // member stays where they were. Note this is different from
+                  // the workspace-list-effect (App.tsx around the empty-list
+                  // branch) which auto-selects a default; that path runs only
+                  // when the snapshot itself reports the source workspace
+                  // gone, not on a Cancel button press. The removal toast has
+                  // already told them what happened.
                   setPendingWorkspaceSwitch(null);
                 }}
               />

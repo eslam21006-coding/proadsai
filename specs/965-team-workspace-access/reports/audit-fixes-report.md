@@ -115,8 +115,13 @@ not merely delayed.
 - `WorkspaceSwitcher.handleGuardSave` is `async` and awaits the parent handler before calling
   `onSwitch`, so the flush completes first. The guard buttons and the backdrop are disabled for the
   duration (`guardSaving`) so a second click cannot switch out from under an in-flight save.
-- Cancel now leaves the member on the source workspace rather than force-selecting a fallback — the
-  work stays attributed to where it was made and the member can act on it deliberately.
+- Cancel (on the active-workspace-deletion guard dialog) now leaves the member on the source workspace
+  rather than force-selecting a fallback — the work stays attributed to where it was made and the member
+  can act on it deliberately. This is the Cancel button on the user-facing guard dialog surfaced by
+  `pendingWorkspaceSwitch`; it is distinct from the cancellation path inside the workspace-list
+  snapshot effect, which auto-selects a default when the source workspace is no longer in the list (the
+  effect branch runs only because the snapshot itself reports the source gone — not in response to the
+  Cancel button press).
 
 This also corrects the **user-initiated** switch path, which had the same ordering flaw on `main`:
 "Save & Switch" changed the workspace first and let the debounce persist afterwards, under the
