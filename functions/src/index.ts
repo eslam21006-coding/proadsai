@@ -6756,33 +6756,54 @@ export const getWorkspaceGenerations = onCall({
         // delete the membership doc) cannot grant reads from another account.
         // This enforces A6 (a verified member of O may not read a workspace
         // under P).
-        const callerSnap = await admin.firestore().collection("users").doc(uid).get();
-        const callerData = callerSnap.data();
-        if (
-            callerData?.isTeamMember !== true ||
-            callerData.teamOwnerUid !== ownerUid
-        ) {
-            throw new HttpsError("permission-denied", "You don't have access to this workspace.");
-        }
+        //
+        // Round-6 #1: wrap the auth reads in try/catch. An explicit access
+        // decision still throws HttpsError("permission-denied", ...); an
+        // unexpected Admin SDK read failure (network, IAM, malformed doc)
+        // is rethrown as HttpsError("internal", ...) so raw SDK errors do
+        // not leak to the client.
+        let callerData: admin.firestore.DocumentData | undefined;
+        let memberData: admin.firestore.DocumentData | undefined;
+        try {
+            const callerSnap = await admin.firestore().collection("users").doc(uid).get();
+            callerData = callerSnap.data();
+            if (
+                callerData?.isTeamMember !== true ||
+                callerData.teamOwnerUid !== ownerUid
+            ) {
+                throw new HttpsError("permission-denied", "You don't have access to this workspace.");
+            }
 
-        // Team docs are auto-IDed; member doc stores the teammate's auth uid as `uid`
-        // (see createTeamInvite accept path — txn.set({ uid: callerUid, ... })).
-        // ISSUE-D FR-004 / FR-004a: once a member doc under the owner is found,
-        // the caller's reach is the full account — the stored per-workspace
-        // allowlist is NOT consulted here. The membership check is the
-        // boundary; the workspace allowlist is intentionally ignored. The
-        // FR-004b override trace is still emitted when the stored list is
-        // non-empty so the operating team can audit ignored allowlists.
-        const memberQuery = await admin.firestore()
-            .collection(`users/${ownerUid}/team`)
-            .where("uid", "==", uid)
-            .limit(1)
-            .get();
-        if (memberQuery.empty) {
-            throw new HttpsError("permission-denied", "You don't have access to this workspace.");
+            // Team docs are auto-IDed; member doc stores the teammate's auth uid as `uid`
+            // (see createTeamInvite accept path — txn.set({ uid: callerUid, ... })).
+            // ISSUE-D FR-004 / FR-004a: once a member doc under the owner is found,
+            // the caller's reach is the full account — the stored per-workspace
+            // allowlist is NOT consulted here. The membership check is the
+            // boundary; the workspace allowlist is intentionally ignored. The
+            // FR-004b override trace is still emitted when the stored list is
+            // non-empty so the operating team can audit ignored allowlists.
+            const memberQuery = await admin.firestore()
+                .collection(`users/${ownerUid}/team`)
+                .where("uid", "==", uid)
+                .limit(1)
+                .get();
+            if (memberQuery.empty) {
+                throw new HttpsError("permission-denied", "You don't have access to this workspace.");
+            }
+            memberData = memberQuery.docs[0].data();
+        } catch (err) {
+            if (err instanceof HttpsError) throw err;
+            console.error(
+                `❌ issue-d ▸ getWorkspaceGenerations auth read failed — caller=${uid} owner=${ownerUid}:`,
+                err
+            );
+            throw new HttpsError(
+                "internal",
+                "Failed to verify workspace access. Please retry.",
+                { reason: "auth_read_failed" }
+            );
         }
-        const memberData = memberQuery.docs[0].data();
-        const storedAccess: unknown[] = memberData.workspaceAccess ?? [];
+        const storedAccess: unknown[] = memberData?.workspaceAccess ?? [];
         if (Array.isArray(storedAccess) && storedAccess.length > 0) {
             console.warn(
                 `⚠️ issue-d ▸ workspaceAccess ignored (all-access policy) — caller=${uid} owner=${ownerUid} stored=${storedAccess.length} granted=ALL path=getWorkspaceGenerations`

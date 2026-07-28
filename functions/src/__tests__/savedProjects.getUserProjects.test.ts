@@ -7,7 +7,7 @@
 // workspace of the owner, with the per-member `workspaceAccess` array
 // left unread (FR-021).
 
-import assert from "node:assert/strict";
+import { strict as assert } from "node:assert";
 
 interface CallerScope {
   ownerUid: string;

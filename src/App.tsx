@@ -2620,7 +2620,10 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       }
     );
     return unsubscribe;
-  }, [user, effectiveUid, teamResolution, canUseWorkspaces, teamOwnerUid, workspaceLoadRetryTrigger]);
+  // Round-6 #6: `t` is included in the deps so a language change recreates
+  // the listener and the toasts (workspace.removed_notice, workspace.error.load_failed)
+  // use the current translation rather than the one captured at subscribe time.
+  }, [user, effectiveUid, teamResolution, canUseWorkspaces, teamOwnerUid, workspaceLoadRetryTrigger, t]);
 
   const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) => {
     const uid = effectiveUidRef.current;
@@ -2638,7 +2641,17 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       setEditingWorkspace(null);
       showToast(`Workspace "${data.name}" created`, 'success');
     } catch (e: any) {
-      showToast(`Failed to create workspace: ${e?.message}`, 'error');
+      // Round-6 #2: route the team-member refusal (the only way these
+      // callables fail under normal use — the server's assertNotTeamMember
+      // guard) through the existing translated key. Raw SDK error codes
+      // like `permission-denied / functions/v2/https` carry `e.details`
+      // with `reason: 'team_member'`; we also accept the bare message
+      // for legacy callers. Anything else falls back to the raw message
+      // so unexpected failures still surface something useful.
+      const isRefusal = e?.code === 'functions/permission-denied' ||
+        (e?.details && typeof e.details === 'object' && 'reason' in e.details && (e.details as { reason?: string }).reason === 'team_member') ||
+        (typeof e?.message === 'string' && /team member|permission/i.test(e.message));
+      showToast(isRefusal ? t('workspace.refused.owner_only') : `Failed to create workspace: ${e?.message}`, 'error');
     }
   };
 
@@ -2653,7 +2666,10 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       setEditingWorkspace(null);
       showToast(`Workspace "${data.name}" updated`, 'success');
     } catch (e: any) {
-      showToast(`Failed to update workspace: ${e?.message}`, 'error');
+      const isRefusal = e?.code === 'functions/permission-denied' ||
+        (e?.details && typeof e.details === 'object' && 'reason' in e.details && (e.details as { reason?: string }).reason === 'team_member') ||
+        (typeof e?.message === 'string' && /team member|permission/i.test(e.message));
+      showToast(isRefusal ? t('workspace.refused.owner_only') : `Failed to update workspace: ${e?.message}`, 'error');
     }
   };
 
@@ -2673,7 +2689,10 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       setEditingWorkspace(null);
       showToast('Workspace deleted', 'success');
     } catch (e: any) {
-      showToast(`Failed to delete workspace: ${e?.message}`, 'error');
+      const isRefusal = e?.code === 'functions/permission-denied' ||
+        (e?.details && typeof e.details === 'object' && 'reason' in e.details && (e.details as { reason?: string }).reason === 'team_member') ||
+        (typeof e?.message === 'string' && /team member|permission/i.test(e.message));
+      showToast(isRefusal ? t('workspace.refused.owner_only') : `Failed to delete workspace: ${e?.message}`, 'error');
     }
   };
 

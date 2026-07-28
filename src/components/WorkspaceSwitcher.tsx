@@ -51,22 +51,22 @@ export default function WorkspaceSwitcher({
   const [guardSaving, setGuardSaving] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Round-2 #3/#6: react to externally-triggered switches too. When App.tsx
-  // sets `pendingWorkspaceSwitch` after the owner deletes the active
-  // workspace during in-progress work, the parent has already performed
-  // the actual switch — we just need to open the existing guard dialog
-  // so the member sees the save/discard confirmation.
-  //
-  // Audit F1: this effect previously opened only when
-  // `switchGuardTarget !== activeWorkspaceIdRef.current`. That guard could
-  // never pass. The parent sets the target to the SAME id it just made
-  // active, React batches both updates into one render, and the ref was
-  // assigned during that render — so the comparison was always a value
-  // against itself and the dialog was unreachable dead code.
+  // Round-2 #3/#6 + Audit F1 + Round-6 #4: react to externally-triggered
+  // switches too. When App.tsx sets `pendingWorkspaceSwitch` after the
+  // owner deletes the active workspace during in-progress work, the
+  // parent has NOT performed the actual switch — it deliberately keeps
+  // `activeWorkspaceId` on the source workspace so the queued auto-save
+  // snapshot stays attributed to the source (round 4). Our job is to
+  // open the existing guard dialog so the member sees the save/discard
+  // confirmation; the Save handler awaits `autoSaveForceFlush()` and
+  // only then does the parent's `setActiveWorkspaceIdLocal(pendingTarget)`
+  // path in handleGuardSave fire (round 5).
   //
   // The trigger is the transition of `switchGuardTarget` from null to
-  // non-null. There is nothing to compare it to: the parent only sets it
-  // when it has already decided the guard is warranted.
+  // non-null. The previous version guarded `switchGuardTarget !==
+  // activeWorkspaceIdRef.current` and could never pass — the parent never
+  // advances activeWorkspaceId before setting pendingWorkspaceSwitch,
+  // so the comparison would be a value against itself.
   React.useEffect(() => {
     if (switchGuardTarget) {
       setPendingTarget(switchGuardTarget);
