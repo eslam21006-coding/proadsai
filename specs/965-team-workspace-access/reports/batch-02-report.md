@@ -23,7 +23,7 @@ The audit confirmed the following lines are present in the working tree. No new 
 
 | File | What was verified |
 |---|---|
-| `functions/src/workspaces/workspacePolicy.ts` | `assertNotTeamMember` reads the caller's user doc, throws `permission-denied` with `reason: 'team_member'`, and emits the FR-023 log line in the exact format `issue-d ▸ workspace action refused — action=<…> caller=<…> owner=<…|unknown> workspace=<id|n/a> reason=team_member` |
+| `functions/src/workspaces/workspacePolicy.ts` | `assertNotTeamMember` reads the caller's user doc, throws `permission-denied` with `reason: 'team_member'`, and emits the FR-023 log line in the exact format `issue-d ▸ workspace action refused — action=<…> caller=<…> owner=<uid-or-unknown> workspace=<id-or-n/a> reason=team_member` |
 | `functions/src/index.ts` | All four callables call `await assertNotTeamMember(uid, "<action>")` as the **first** statement after the `if (!request.auth) throw unauthenticated` line — the guard runs before any payload validation, workspace lookup, or write |
 | `src/pages/Team.tsx` | The `fnSetTeamMemberWorkspaceAccess` import, `workspaces` list state, `wsAccessLoading` state, `handleWorkspaceAccessToggle` handler, the workspace-listing effect, and the matrix UI are all removed. The `setTeamMemberWorkspaceAccess` callable stays deployed (FR-021) — `workspacePurge.ts` still calls it for delete/restore |
 | `src/App.tsx` (workspace effect) | `onSnapshot(wsQuery, success, err)` returns the unsubscribe so the listener is torn down on every dep change. The snapshot callback: (1) detects the active workspace gone and switches to the account's default; (2) only auto-creates a workspace when `teamOwnerUid` is null (the owner); (3) sets `workspaceLoadError` on hard failure |

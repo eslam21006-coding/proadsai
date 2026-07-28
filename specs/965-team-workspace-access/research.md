@@ -154,7 +154,7 @@ this codebase (`phase13 ▸ getUserProjects …` at `getUserProjects.ts:61`, `re
 …` at `workspacePolicy.ts:150`). Format:
 
 ```
-issue-d ▸ workspace action refused — action=<create|update|delete> caller=<uid> owner=<uid|unknown> workspace=<id|n/a> reason=team_member
+issue-d ▸ workspace action refused — action=<create|update|delete|restore> caller=<uid> owner=<uid|unknown> workspace=<id|n/a> reason=team_member
 ```
 
 Plus the Constitution VII override trace:

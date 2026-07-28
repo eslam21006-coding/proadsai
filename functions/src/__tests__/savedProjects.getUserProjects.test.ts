@@ -37,7 +37,7 @@ function simulateGetUserProjectsAccessCheck(
 // for visibility (FR-004 / FR-004a). The empty / partial cases that the
 // previous contract used as denials now both resolve to "ALL".
 function resolveScopeForMember(_storedWorkspaceAccess: string[] | undefined): CallerScope {
-    return { ownerUid: "owner1", allowedWorkspaceIds: "ALL" };
+  return { ownerUid: "owner1", allowedWorkspaceIds: "ALL" };
 }
 
 function run() {

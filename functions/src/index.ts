@@ -6753,7 +6753,9 @@ export const getWorkspaceGenerations = onCall({
         // ISSUE-D FR-004 / FR-004a: once a member doc under the owner is found,
         // the caller's reach is the full account — the stored per-workspace
         // allowlist is NOT consulted here. The membership check is the
-        // boundary; the workspace allowlist is intentionally ignored.
+        // boundary; the workspace allowlist is intentionally ignored. The
+        // FR-004b override trace is still emitted when the stored list is
+        // non-empty so the operating team can audit ignored allowlists.
         const memberQuery = await admin.firestore()
             .collection(`users/${ownerUid}/team`)
             .where("uid", "==", uid)
@@ -6761,6 +6763,13 @@ export const getWorkspaceGenerations = onCall({
             .get();
         if (memberQuery.empty) {
             throw new HttpsError("permission-denied", "You don't have access to this workspace.");
+        }
+        const memberData = memberQuery.docs[0].data();
+        const storedAccess: unknown[] = memberData.workspaceAccess ?? [];
+        if (Array.isArray(storedAccess) && storedAccess.length > 0) {
+            console.warn(
+                `⚠️ issue-d ▸ workspaceAccess ignored (all-access policy) — caller=${uid} owner=${ownerUid} stored=${storedAccess.length} granted=ALL path=getWorkspaceGenerations`
+            );
         }
     }
 

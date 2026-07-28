@@ -64,7 +64,7 @@ between them, and finds each one populated with that account's work.
 the owner's active workspaces are listed, the deleted one is absent, switching re-scopes saved projects
 and audience profiles, and each workspace contains the owner's projects and generated ads.
 
-**⚠️ Server tasks T006–T010 must be deployed before the frontend tasks can be verified** — the old server
+**⚠️ Server tasks T006–T008 must be deployed before the frontend tasks can be verified** — the old server
 returns nothing for a member regardless of how correct the frontend is.
 
 ### Server — access truth (contracts/workspace-access.md)
@@ -160,14 +160,14 @@ workspaces clear, no further updates arrive, and the removal overlay appears in 
 
 ### Critical ordering constraint (Constitution XI)
 
-**T006–T010 must deploy before US1's frontend is verifiable in production.** The server narrows a
+**T006–T008 must deploy before US1's frontend is verifiable in production.** T009 (test contract inversion) and T010 (decision-table cases) are local-only test changes and need not deploy. The server narrows a member's reach to a stored per-member list that is empty for every new member, so a correct frontend against the old server still shows empty workspaces. Do not interpret an empty picker during frontend work as a frontend defect until the server half is deployed.
 member's reach to a stored per-member list that is empty for every new member, so a correct frontend
 against the old server still shows empty workspaces. Do not interpret an empty picker during frontend
 work as a frontend defect until the server half is deployed.
 
 ### Within each story
 
-- Server access truth before frontend consumption (US1: T006–T010 → T011–T017)
+- Server access truth before frontend consumption (US1: T006–T008 → T011–T017)
 - Guard helper before its call sites (US2: T018 → T019)
 - Fetch before listener conversion (T011 → T025)
 - `teamResolution` before anything that reads it (T003 → T004 → T005 → everything else)

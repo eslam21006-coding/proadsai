@@ -129,10 +129,20 @@ is the genuine empty-list branch and will still fire — that one needs the FR-0
 
 ## Deployment surface
 
-Frontend-only changes cover US1, US3, and the UI half of US2. Only US2's honest-refusal requirements
-(FR-011, FR-012) and the refusal logging (FR-023) touch Cloud Functions, which means one
-`europe-west1` functions deploy. No Firestore rules change and no schema migration is required by
-any story.
+The server-side access truth (US1, T006–T008) and the mutation refusals (US2, T018–T019) both touch
+Cloud Functions. US1 changes `resolveCallerScope` (`functions/src/workspaces/workspacePolicy.ts`) to
+grant `"ALL"` workspace scope to verified members, removes the per-workspace narrowing from
+`getWorkspaceGenerations` (`functions/src/index.ts:6739`), and adds the FR-004b override trace.
+US2 adds `assertNotTeamMember` in the same policy file and installs it as the first statement of
+`createWorkspace`, `updateWorkspace`, `deleteWorkspace`, and `restoreWorkspace` in
+`functions/src/index.ts`. FR-023 refusal logging is also server-side.
+
+US3 (live list + revocation + active-workspace deletion) and the UI half of US2 (withheld controls,
+U3/U5 empty/error states, switch-guard dialog, removed-from-team overlay) are frontend-only.
+
+Together this means **one `europe-west1` functions deploy** (with `lib/` rebuilt first per the
+AGENTS.md critical rule) plus a `firebase deploy --only hosting` for the Vite build. No Firestore
+rules change and no schema migration is required by any story.
 
 The team-screen matrix removal (FR-020) is frontend-only: `src/pages/Team.tsx:460-500` plus the
 toggle handler at `:244-250` and the callable binding at `:15`. The

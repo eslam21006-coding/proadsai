@@ -1988,9 +1988,13 @@ const App: React.FC = () => {
           wasTeamMemberRef.current = false;
           // ISSUE-D T026: clear the workspace list and tear down the
           // listener — FR-016 mandates the member's view close at once
-          // and no further updates reach them. The effect that owns the
-          // live snapshot depends on `effectiveUid`; setting it back to
-          // the member's own uid causes the listener to detach.
+          // and no further updates reach them. Clearing teamOwnerUid
+          // immediately (not via the modal's Continue button) means
+          // effectiveUid reverts to user.uid on the next render, the
+          // workspace effect detaches, and the new-member-flow is
+          // ready without a stale owner pointer leaking into renders.
+          setTeamOwnerUid(null);
+          setTeamRole(null);
           setWorkspacesLocal([]);
           setActiveWorkspaceIdLocal(null);
           setWorkspaceLoadError(false);
@@ -2447,11 +2451,16 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   // both the account link has resolved AND a workspace is selected for
   // plans that have workspaces. FR-007a.
   const workspaceReady = teamResolution === 'resolved' && (!canUseWorkspaces || activeWorkspaceId != null);
-  // ISSUE-D T027: a ref the live snapshot callback can read synchronously
-  // to decide whether to open the switch-guard. Declared at the top of
-  // the component so it is stable across renders, and updated by an
-  // effect that watches every work flag. The ref keeps the snapshot
-  // callback's deps unchanged so it does not churn on every keystroke.
+  // ISSUE-D T027: refs the live snapshot callback reads synchronously
+  // (active workspace id + in-progress work). Declared at the top of the
+  // component so they are stable across renders, and updated by an effect
+  // that watches every work flag. Keeping these reads inside the
+  // snapshot callback (rather than as effect deps) is what stops the
+  // `onSnapshot` listener from tearing down + re-subscribing on every
+  // manual workspace switch — the listener only rebuilds when its
+  // query or gating inputs change.
+  const activeWorkspaceIdRef = React.useRef<string | null>(null);
+  activeWorkspaceIdRef.current = activeWorkspaceId;
   const hasInProgressWorkRef = React.useRef(false);
   // The flags are read in a single effect (not in a render-phase
   // ref-mutation) so we never re-render the app on every keystroke
@@ -2472,7 +2481,11 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     // itself (the original defect). The effect also installs a live
     // `onSnapshot` listener and returns the unsubscribe so it tears
     // down whenever `effectiveUid` or `teamResolution` changes — that
-    // is the FR-016 / US3 closure.
+    // is the FR-016 / US3 closure. `activeWorkspaceId` is intentionally
+    // NOT in the dep array: the listener persists across manual
+    // workspace switches; the snapshot callback reads the current id
+    // through `activeWorkspaceIdRef` so the active-workspace-removal
+    // handling still sees the latest value.
     const uid = effectiveUid;
     if (!user || !uid || !canUseWorkspaces || teamResolution !== 'resolved') {
       return;
@@ -2489,7 +2502,8 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
         // workspace gone, move the member to the account's default
         // workspace (silent move if no in-progress work, switch-guard
         // dialog if there is) and surface a plain notice.
-        if (activeWorkspaceId && !wsList.find(w => w.id === activeWorkspaceId)) {
+        const currentActive = activeWorkspaceIdRef.current;
+        if (currentActive && !wsList.find(w => w.id === currentActive)) {
           const def = wsList.find(w => w.isDefault) || wsList[0];
           const defId = def?.id ?? null;
           if (defId) {
@@ -2498,7 +2512,7 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
               // Defer the switch-guard to a one-shot effect that sees
               // the new activeWorkspaceId; the body simply notes the
               // cause and the target.
-              setPendingWorkspaceSwitch({ fromId: activeWorkspaceId, toId: defId });
+              setPendingWorkspaceSwitch({ fromId: currentActive, toId: defId });
             } else {
               showToast(t('workspace.removed_notice').replace('{name}', def.name), 'info');
             }
@@ -2521,10 +2535,12 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
           };
           // FR-124: route the default-workspace bootstrap through the createWorkspace callable
           // (server-side plan/cap enforcement) instead of a direct client-side addDoc.
+          // The callable's return type is `{ workspaceId: string }` — see
+          // src/services/workspaceService.ts — so no `any` cast is needed.
           import('./services/workspaceService').then(({ workspaceService }) => {
             workspaceService.createWorkspace({ name: defaultWs.name, brandName: defaultWs.brandName })
-              .then(result => {
-                const workspaceId = (result.data as any)?.workspaceId;
+              .then((result: { data: { workspaceId: string } }) => {
+                const workspaceId = result.data?.workspaceId;
                 if (workspaceId) {
                   const created = { id: workspaceId, ...defaultWs } as Workspace;
                   setWorkspacesLocal([created]);
@@ -2549,7 +2565,7 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       }
     );
     return unsubscribe;
-  }, [user, effectiveUid, teamResolution, canUseWorkspaces, teamOwnerUid, activeWorkspaceId]);
+  }, [user, effectiveUid, teamResolution, canUseWorkspaces, teamOwnerUid]);
 
   const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) => {
     const uid = effectiveUidRef.current;
@@ -7499,6 +7515,20 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 loadError={workspaceLoadError}
                 onRetryLoad={() => { setWorkspaceLoadError(false); }}
                 hasInProgressWork={isLoading || !!tovText || !!conceptsText || !!buildPlan || mockupHistory.length > 0 || carouselSlides.length > 0 || batchResults.length > 0}
+                switchGuardTarget={pendingWorkspaceSwitch?.toId ?? null}
+                onSwitchGuardSave={() => setPendingWorkspaceSwitch(null)}
+                onSwitchGuardDiscard={() => setPendingWorkspaceSwitch(null)}
+                onSwitchGuardCancel={() => {
+                  // Roll back: re-select the original workspace. Falls back
+                  // to the default if the original id is no longer in the list.
+                  if (pendingWorkspaceSwitch) {
+                    const fallback = workspaces.find(w => w.id === pendingWorkspaceSwitch.fromId)
+                      ?? workspaces.find(w => w.isDefault)
+                      ?? workspaces[0];
+                    if (fallback) setActiveWorkspaceIdLocal(fallback.id);
+                  }
+                  setPendingWorkspaceSwitch(null);
+                }}
               />
             )}
             <SaveStatusIndicator state={autoSaveState} onRetry={autoSaveRetry} />

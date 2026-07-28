@@ -128,7 +128,7 @@ When the account owner adds a workspace for a new client, everyone already signe
 **Owner-facing team screen**
 
 - **FR-020**: The system MUST NOT offer the account owner any per-member, per-workspace grant or revoke control, because such a control would have no effect on what the member can see and would misrepresent the account's actual access position.
-- **FR-021**: The system MUST leave each member's stored per-workspace access data intact and unread, so that a future restriction capability can adopt it without a data migration.
+- **FR-021**: The system MUST leave each member's stored per-workspace access data intact and not use it for authorization decisions, so that a future restriction capability can adopt it without a data migration. The data may be read for required trace or observability behavior (FR-004b override trace).
 - **FR-022**: The system MUST leave the rest of the team screen — inviting, listing, role assignment, and removal — working exactly as it does today.
 
 **Observability**
@@ -149,7 +149,7 @@ Deferred to a follow-up specification, per the 2026-07-27 clarification:
 - **Team member**: A person invited onto an owner's account. Works inside the owner's workspaces, consumes the owner's allowance, and holds one role. Has no workspaces of their own while acting as a member.
 - **Role**: Either *editor* or *viewer*. Roles exist on the account today and continue to govern behaviour elsewhere in the product, but they have no bearing on workspace behaviour in this feature — no role may add, remove, or alter a workspace. The distinction becomes meaningful for workspaces only when the deferred editing capability ships.
 - **Workspace**: One client or brand context. Carries a display name, brand name, brand website, brand colours, a default marker, and an optional advertising-account link. Owns the saved projects, audience profiles, generated ads, and performance data scoped beneath it.
-- **Per-workspace access list**: A previously-designed per-member allowlist of workspaces. Superseded by the all-workspaces decision (FR-004): it no longer governs what a member can see, and the control for managing it is withdrawn from the team screen (FR-020). The stored data itself is retained, unread, for a future restriction capability (FR-021).
+- **Per-workspace access list**: A previously-designed per-member allowlist of workspaces. Superseded by the all-workspaces decision (FR-004): it no longer governs what a member can see, and the control for managing it is withdrawn from the team screen (FR-020). The stored data itself is retained (FR-021) so a future restriction capability can adopt it without a migration; it is read only for the FR-004b override trace, never for authorization.
 
 ## Success Criteria *(mandatory)*
 

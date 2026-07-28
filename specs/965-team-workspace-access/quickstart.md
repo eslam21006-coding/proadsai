@@ -27,8 +27,20 @@ All commands are PowerShell (`;` not `&&`). Functions deploy to `europe-west1`.
 ## Build and test
 
 ```powershell
-cd D:\proads-worktrees\fix-issue-d\functions; npm run build; npm test
-cd D:\proads-worktrees\fix-issue-d; npm run build; npm run lint
+# Fail fast: any native command with a nonzero exit code stops the chain.
+# Each command chain pipes to `if (!$?) { throw "step failed" }`; PowerShell's
+# `$?` reflects the success of the previous native command.
+
+function Run-Step {
+    param([scriptblock]$Cmd)
+    & $Cmd
+    if (!$?) { throw "Build/test step failed: $Cmd" }
+}
+
+Run-Step { Set-Location -LiteralPath 'D:\proads-worktrees\fix-issue-d\functions'; npm run build }
+Run-Step { Set-Location -LiteralPath 'D:\proads-worktrees\fix-issue-d\functions'; npm test }
+Run-Step { Set-Location -LiteralPath 'D:\proads-worktrees\fix-issue-d'; npm run build }
+Run-Step { Set-Location -LiteralPath 'D:\proads-worktrees\fix-issue-d'; npm run lint }
 ```
 
 Phase A must be deployed before the frontend checks mean anything:
@@ -95,17 +107,17 @@ firebase deploy --only functions:getUserProjects,functions:getWorkspaceGeneratio
 
 ### Logging — FR-023, SC-011
 
-| # | Action | Required |
-|---|---|---|
-| 28 | After steps 9–11, query Cloud Logging for `issue-d ▸ workspace action refused` | one line per refusal, each naming action, caller, and account |
-| 29 | Give a member a non-empty `workspaceAccess`, then load a workspace outside it | `issue-d ▸ workspaceAccess ignored (all-access policy)` emitted; access still granted |
+| # | Action | Required | Covers |
+|---|---|---|---|
+| 28 | After steps 9–11, query Cloud Logging for `issue-d ▸ workspace action refused` | one line per refusal, each naming action, caller, and account | FR-023 |
+| 29 | Give a member a non-empty `workspaceAccess`, then load a workspace outside it | `issue-d ▸ workspaceAccess ignored (all-access policy)` emitted; access still granted | FR-004b |
 | 30 | Confirm the owner sees no new security or audit surface | nothing added to the team screen | FR-024 |
 
 ## Gate order
 
 Per project convention, no step may be skipped:
 
-```
+```text
 implement → build → test → commit → push → PR → CodeRabbit → Claude audit
 → npm run dev test → merge via GitHub UI → deploy → production test
 ```
