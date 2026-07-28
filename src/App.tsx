@@ -2639,7 +2639,30 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   // use the current translation rather than the one captured at subscribe time.
   }, [user, effectiveUid, teamResolution, canUseWorkspaces, teamOwnerUid, workspaceLoadRetryTrigger, t]);
 
-  const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) => {
+  // Round-8 (CodeRabbit re-review): extract a single isTeamMemberRefusal(e) helper.
+// The previous inline triple in each handler matched any error message
+// containing "permission" (e.g. Firestore "Missing or insufficient
+// permissions", quota errors that mention permissions) and would
+// misclassify unrelated failures as the team-member refusal. The
+// `code` and `details.reason === 'team_member'` are the reliable
+// signals from assertNotTeamMember in workspacePolicy.ts.
+const isTeamMemberRefusal = (e: unknown): boolean => {
+  if (typeof e !== 'object' || e === null) return false;
+  const err = e as { code?: string; details?: unknown; message?: string };
+  if (err.code === 'functions/permission-denied') {
+    if (err.details && typeof err.details === 'object') {
+      const reason = (err.details as { reason?: string }).reason;
+      if (reason === 'team_member') return true;
+    }
+  }
+  // Narrow legacy fallback: only the exact server phrase, not a broad regex.
+  if (typeof err.message === 'string' && err.message.includes('Only the account owner can add, change, or remove workspaces.')) {
+    return true;
+  }
+  return false;
+};
+
+const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) => {
     const uid = effectiveUidRef.current;
     if (!uid) return;
     try {
@@ -2655,17 +2678,9 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       setEditingWorkspace(null);
       showToast(`Workspace "${data.name}" created`, 'success');
     } catch (e: any) {
-      // Round-6 #2: route the team-member refusal (the only way these
-      // callables fail under normal use — the server's assertNotTeamMember
-      // guard) through the existing translated key. Raw SDK error codes
-      // like `permission-denied / functions/v2/https` carry `e.details`
-      // with `reason: 'team_member'`; we also accept the bare message
-      // for legacy callers. Anything else falls back to the raw message
-      // so unexpected failures still surface something useful.
-      const isRefusal = e?.code === 'functions/permission-denied' ||
-        (e?.details && typeof e.details === 'object' && 'reason' in e.details && (e.details as { reason?: string }).reason === 'team_member') ||
-        (typeof e?.message === 'string' && /team member|permission/i.test(e.message));
-      showToast(isRefusal ? t('workspace.refused.owner_only') : `Failed to create workspace: ${e?.message}`, 'error');
+      // Round-6 #2 + Round-8: use the shared helper so the refusal
+      // copy is only shown for actual team-member refusals.
+      showToast(isTeamMemberRefusal(e) ? t('workspace.refused.owner_only') : `Failed to create workspace: ${e?.message}`, 'error');
     }
   };
 
@@ -2680,10 +2695,7 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       setEditingWorkspace(null);
       showToast(`Workspace "${data.name}" updated`, 'success');
     } catch (e: any) {
-      const isRefusal = e?.code === 'functions/permission-denied' ||
-        (e?.details && typeof e.details === 'object' && 'reason' in e.details && (e.details as { reason?: string }).reason === 'team_member') ||
-        (typeof e?.message === 'string' && /team member|permission/i.test(e.message));
-      showToast(isRefusal ? t('workspace.refused.owner_only') : `Failed to update workspace: ${e?.message}`, 'error');
+      showToast(isTeamMemberRefusal(e) ? t('workspace.refused.owner_only') : `Failed to update workspace: ${e?.message}`, 'error');
     }
   };
 
@@ -2703,10 +2715,7 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       setEditingWorkspace(null);
       showToast('Workspace deleted', 'success');
     } catch (e: any) {
-      const isRefusal = e?.code === 'functions/permission-denied' ||
-        (e?.details && typeof e.details === 'object' && 'reason' in e.details && (e.details as { reason?: string }).reason === 'team_member') ||
-        (typeof e?.message === 'string' && /team member|permission/i.test(e.message));
-      showToast(isRefusal ? t('workspace.refused.owner_only') : `Failed to delete workspace: ${e?.message}`, 'error');
+      showToast(isTeamMemberRefusal(e) ? t('workspace.refused.owner_only') : `Failed to delete workspace: ${e?.message}`, 'error');
     }
   };
 
@@ -7642,10 +7651,22 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   if (!result.ok) {
                     console.warn('issue-d ▸ force-flush before workspace switch failed:', result.error);
                     showToast(t('workspace.save_before_switch_failed'), 'error');
+                    // Round-8 (CodeRabbit re-review): the throw path must
+                    // NOT clear pendingWorkspaceSwitch — the
+                    // WorkspaceSwitcher handleGuardSave catch branch
+                    // returns early on rejection, keeping the source
+                    // workspace active and the dialog open. Only the
+                    // success path clears the pending state.
                     throw result.error instanceof Error
                       ? result.error
                       : new Error('forceFlush failed (non-throw save failure)');
                   }
+                  // Success — clear the pending state so the parent's
+                  // effect (which observes the resulting
+                  // setActiveWorkspaceIdLocal(pendingTarget.toId) in
+                  // WorkspaceSwitcher) sees a clean queue. The dialog
+                  // itself is closed by handleGuardSave after onSwitch.
+                  setPendingWorkspaceSwitch(null);
                 }}
                 onSwitchGuardDiscard={() => setPendingWorkspaceSwitch(null)}
                 onSwitchGuardCancel={() => {

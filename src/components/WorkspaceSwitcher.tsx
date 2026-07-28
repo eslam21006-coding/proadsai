@@ -81,14 +81,12 @@ export default function WorkspaceSwitcher({
 
   const activeWorkspaces = workspaces.filter(ws => ws.deletedAt == null);
 
-  // ISSUE-D: under the all-access contract, a team member's filter MUST
-  // be undefined here. The previous per-workspace allowlist filter is
-  // retired — the contract (FR-004) is that every verified member sees
-  // every active workspace of the owner. The filter expression below
-  // preserves the legacy `isTeamMember && workspaceAccess` shape so that
-  // if a future restriction feature reintroduces the array, the call site
-  // re-enables the filter by passing it again; today it is left
-  // undefined and the visible list equals activeWorkspaces.
+  // ISSUE-D: under the all-access contract (FR-004), a verified team
+  // member sees every active workspace of the owner. The previous
+  // per-workspace allowlist filter is retired; the visible list equals
+  // the active list. (If a future restriction feature reintroduces
+  // per-member filtering, the call site in App.tsx will pass
+  // `workspaceAccess` again and this component will need to accept it.)
   const visibleWorkspaces = activeWorkspaces;
 
   useEffect(() => {

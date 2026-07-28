@@ -36,6 +36,11 @@ type WorkspaceAction = "create" | "update" | "delete" | "restore";
 interface AccessResult {
   allowed: boolean;
   reasonCode?: "unauthenticated" | "permission-denied" | "failed-precondition" | "not-found";
+  // Round-8 (CodeRabbit re-review): the FR-023 contract surfaces
+  // reason === 'team_member' on the HttpsError details so the client
+  // can distinguish a team-member refusal from a generic
+  // permission-denied. The test mirror carries the same field.
+  refusalReason?: "team_member" | null;
   scope?: CallerScope;
   overrideTraceEmitted?: boolean;
 }
@@ -85,6 +90,7 @@ function assertNotTeamMember(caller: CallerProfile, action: WorkspaceAction): Ac
     return {
       allowed: false,
       reasonCode: "permission-denied",
+      refusalReason: "team_member",
       // Trace shape matches the live log line (FR-023 / SC-011).
     };
   }
@@ -217,6 +223,10 @@ function run(): void {
     const r = assertNotTeamMember(caller, action);
     assert.equal(r.allowed, false, `M${action === "create" ? 2 : action === "update" ? 3 : action === "delete" ? 4 : 5}: team member ${action} refused`);
     assert.equal(r.reasonCode, "permission-denied", `M${action}: refusal is permission-denied, not not-found`);
+    // Round-8: verify the structured refusalReason so the live
+    // HttpsError({ reason: 'team_member' }) and the client's
+    // isTeamMemberRefusal() helper share the same observable signal.
+    assert.equal(r.refusalReason, "team_member", `M${action}: refusalReason is 'team_member' for the client-side i18n switch`);
   }
 
   // M2 specifically — a team member MUST NOT create a workspace that lands

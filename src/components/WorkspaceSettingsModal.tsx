@@ -355,7 +355,14 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
           <div className="flex items-center gap-3 pt-2">
             <button
               onClick={handleSubmit}
-              disabled={!name.trim() || !brandName.trim() || saving || (!isScale && !isEdit)}
+              // Round-8 (CodeRabbit re-review): gate the mutation button
+              // for team members. The server's assertNotTeamMember
+              // already refuses these, but preventing the round-trip
+              // matches the modal's "read-only display" promise for
+              // team members (the prop-level JSDoc) and avoids the
+              // misleading "Failed to update workspace" toast when a
+              // team member hits Save.
+              disabled={!name.trim() || !brandName.trim() || saving || isTeamMember || (!isScale && !isEdit)}
               className="flex-1 h-11 rounded-xl bg-blue-600 text-white text-[11px] font-bold hover:bg-blue-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {saving
