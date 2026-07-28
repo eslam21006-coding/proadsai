@@ -76,7 +76,7 @@ no corresponding member doc grants nothing.
 
 ### `teamResolution` lifecycle
 
-```
+```text
 sign-in begins            → 'pending'   (workspace/avatar effects idle; writes withheld)
 auth handler completes    → 'resolved'  (member: effectiveUid = teamOwnerUid; owner: = own uid)
 sign-out / user change    → 'pending'

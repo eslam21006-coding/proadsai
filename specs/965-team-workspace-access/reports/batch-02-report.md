@@ -4,6 +4,18 @@
 **Date**: 2026-07-27
 **Scope**: US2 (server refusal guards) + US3 (live list + revocation + active-workspace deletion) + Team.tsx matrix removal.
 
+> **Canonical status**: this file is the canonical Batch 02 record. The earlier duplicates
+> `batch-1-report.md` / `batch-2-report.md` / `batch-3-report.md` were byte-identical copies of the
+> `ARCHIVE-batch-*.md` files and have been **deleted** — they contradicted this report on the gate
+> state and were unusable as release evidence. The `ARCHIVE-batch-*.md` files are retained for
+> history only and must not be read as current status.
+>
+> **Gate state, reconciled (2026-07-28)**: the deferral recorded below is now closed. The full
+> `cd functions; npm test` suite was executed during the Claude audit and again after the audit
+> fixes — **green both times**, along with the functions build, the frontend build, and the wording
+> guard. See `claude-audit-batches-01-02.md` and `audit-fixes-report.md` for the recorded output.
+> T030 remains open only as the formal Batch 03 gate re-run.
+
 > **Note on prior runs**: the code changes for this batch were already in the worktree from a previous run. The audit below confirms every change is in place; the only edits made in this batch were to documentation (this report + the batch-01 verification file).
 
 ## Tasks completed in this batch

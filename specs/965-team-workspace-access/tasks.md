@@ -33,7 +33,7 @@ All commands are PowerShell (`;` not `&&`). Functions deploy to `europe-west1`.
 
 **Purpose**: Baseline evidence and test scaffolding
 
-- [ ] T001 Capture pre-change baseline required by Constitution IX — run `cd D:\proads-worktrees\fix-issue-d\functions; npm run build; npm test` then `cd D:\proads-worktrees\fix-issue-d; npm run build; npm run lint`, and record the output in `specs/965-team-workspace-access/quickstart.md` under a new "Baseline (before)" heading
+- [ ] T001 Capture pre-change baseline required by Constitution IX — run the `Run-Step` fail-fast wrapper from `specs/965-team-workspace-access/quickstart.md` over the four gate commands (functions build, functions test, frontend build, frontend lint) and record the output under the "Baseline (before)" heading. **Do not chain the commands with bare `;`** — PowerShell continues past a failed native command, so a later step would mask a failed build and the baseline would record a green gate that never happened
 - [ ] T002 [P] Create empty test suite `functions/src/__tests__/teamWorkspaceAccess.test.ts` with the standard header comment and a `run()` stub, and register it in the `test` script of `functions/package.json`
 
 ---
@@ -137,12 +137,12 @@ workspaces clear, no further updates arrive, and the removal overlay appears in 
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T030 Run the full gate green — `cd D:\proads-worktrees\fix-issue-d\functions; npm run build; npm test` then `cd D:\proads-worktrees\fix-issue-d; npm run build; npm run lint`
+- [ ] T030 Run the full gate green using the `Run-Step` fail-fast wrapper in `specs/965-team-workspace-access/quickstart.md` — functions build, functions test, frontend build, frontend lint. Bare `;` chaining is not acceptable here: "full gate green" cannot be claimed from a chain where a failing step is masked by the next one
 - [ ] T031 [P] Verify locale parity for SC-008 — every key added or changed in `src/i18n.tsx` exists in both the `en` block and the `ar` block, and no new user-facing string contains technical vocabulary
 - [ ] T032 [P] Run the project's user-facing wording guard against the changed files to confirm 0 forbidden technical terms (SC-008)
 - [ ] T033 Execute the full 30-row verification matrix in `specs/965-team-workspace-access/quickstart.md` and record before/after evidence for each defect (Constitution IX)
 - [ ] T034 [P] Update the ISSUE-D row in `docs/LAUNCH_MATRIX.md:2501` to resolved, citing this branch, and note that role-based workspace editing was split to a follow-up spec
-- [ ] T035 Deploy the changed callables to `europe-west1` — `firebase deploy --only functions:getUserProjects,functions:getWorkspaceGenerations,functions:createWorkspace,functions:updateWorkspace,functions:deleteWorkspace,functions:restoreWorkspace`
+- [ ] T035 Deploy the functions to `europe-west1` following **`AGENTS.md` rule #1 (FIREBASE LIB SYNC)** verbatim — `Remove-Item -Recurse -Force functions/lib`, then `cd functions; npm run build`, then `firebase deploy --only functions`. Do **not** substitute a selective `--only functions:a,b,c` list and do **not** skip the `lib` wipe: `lib/` is compiled output that does not auto-update, and a stale or partially-rebuilt `lib` deploys code that does not match this branch
 - [ ] T036 Production-test rows 1–3, 3a, 9–10, 19, and 28–29 of the quickstart matrix against the deployed build. Rows 28–29 confirm the refusal and override log lines appear in Cloud Logging with the expected shape — the format is unverifiable before deploy, and SC-011 depends on it being queryable in production
 
 ---
@@ -161,9 +161,6 @@ workspaces clear, no further updates arrive, and the removal overlay appears in 
 ### Critical ordering constraint (Constitution XI)
 
 **T006–T008 must deploy before US1's frontend is verifiable in production.** T009 (test contract inversion) and T010 (decision-table cases) are local-only test changes and need not deploy. The server narrows a member's reach to a stored per-member list that is empty for every new member, so a correct frontend against the old server still shows empty workspaces. Do not interpret an empty picker during frontend work as a frontend defect until the server half is deployed.
-member's reach to a stored per-member list that is empty for every new member, so a correct frontend
-against the old server still shows empty workspaces. Do not interpret an empty picker during frontend
-work as a frontend defect until the server half is deployed.
 
 ### Within each story
 

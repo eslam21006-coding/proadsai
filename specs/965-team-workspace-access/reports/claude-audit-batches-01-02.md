@@ -201,7 +201,7 @@ The "move to default" half works. The save/discard guard half is unreachable, an
 
 ### ✅ Check 14 — every new key exists in both `en` and `ar` — **PASS**
 
-11 new keys, all present in both blocks. **No missing keys.**
+10 new keys, all present in both blocks. **No missing keys.**
 
 | Key | `en` | `ar` |
 |---|---|---|
@@ -228,7 +228,7 @@ The strings describe outcomes in ordinary language: *"This account has no worksp
 
 ### ✅ Check 16 — Arabic is simple Fusha — **PASS**
 
-All 11 Arabic strings are Modern Standard Arabic with no dialect. Verb forms are correct MSA imperatives/verbal nouns (`حاول مرة أخرى`, `تحقّق من الاتصال`, `جارٍ إكمال تجهيز`). Diacritics used sparingly and correctly (`تعذّر`, `جارٍ`). No Egyptian/Gulf colloquialisms. No untranslated English terms in the new strings.
+All 10 Arabic strings are Modern Standard Arabic with no dialect. Verb forms are correct MSA imperatives/verbal nouns (`حاول مرة أخرى`, `تحقّق من الاتصال`, `جارٍ إكمال تجهيز`). Diacritics used sparingly and correctly (`تعذّر`, `جارٍ`). No Egyptian/Gulf colloquialisms. No untranslated English terms in the new strings.
 
 > Note: the pre-existing `workspace.error.limit_reached` retains the English word "Scale" (plan name) in the Arabic string. Pre-existing, outside this diff, and a proper-noun plan name — not flagged.
 

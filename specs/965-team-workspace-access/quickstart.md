@@ -37,16 +37,28 @@ function Run-Step {
     if (!$?) { throw "Build/test step failed: $Cmd" }
 }
 
+# AGENTS.md rule #1 (FIREBASE LIB SYNC): `lib/` is compiled output and does NOT
+# auto-update. Wipe it before every build or the suite can run against — and the
+# deploy can ship — emitted JS from source files that no longer exist.
+# Not wrapped in Run-Step: Remove-Item is a cmdlet, not a native command, so the
+# `$?` check would misfire when `lib` is simply absent. Test-Path handles that.
+if (Test-Path 'D:\proads-worktrees\fix-issue-d\functions\lib') {
+    Remove-Item -Recurse -Force 'D:\proads-worktrees\fix-issue-d\functions\lib'
+}
 Run-Step { Set-Location -LiteralPath 'D:\proads-worktrees\fix-issue-d\functions'; npm run build }
 Run-Step { Set-Location -LiteralPath 'D:\proads-worktrees\fix-issue-d\functions'; npm test }
 Run-Step { Set-Location -LiteralPath 'D:\proads-worktrees\fix-issue-d'; npm run build }
 Run-Step { Set-Location -LiteralPath 'D:\proads-worktrees\fix-issue-d'; npm run lint }
 ```
 
-Phase A must be deployed before the frontend checks mean anything:
+Phase A must be deployed before the frontend checks mean anything. Follow
+**`AGENTS.md` rule #1** exactly — wipe `lib`, rebuild, then deploy **all** functions.
+A selective `--only functions:a,b,c` list is not used in this repository:
 
 ```powershell
-firebase deploy --only functions:getUserProjects,functions:getWorkspaceGenerations,functions:createWorkspace,functions:updateWorkspace,functions:deleteWorkspace,functions:restoreWorkspace
+Remove-Item -Recurse -Force functions/lib
+cd functions; npm run build
+firebase deploy --only functions
 ```
 
 ## Verification matrix

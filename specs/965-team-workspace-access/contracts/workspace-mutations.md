@@ -52,7 +52,7 @@ Message wording, provided it is plain, in both languages, and free of technical 
 
 ## Logging (FR-023, FR-024)
 
-```
+```text
 issue-d ▸ workspace action refused — action=<create|update|delete|restore> caller=<uid> owner=<uid|unknown> workspace=<id|n/a> reason=team_member
 ```
 
