@@ -2514,21 +2514,27 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
           .filter(ws => ws.deletedAt == null);
         // ISSUE-D T027: when the live snapshot reports the active
         // workspace gone, move the member to the account's default
-        // workspace (silent move if no in-progress work, switch-guard
-        // dialog if there is) and surface a plain notice.
+        // workspace and ALWAYS tell them plainly that it happened.
+        // When there is unsaved work in progress we additionally raise
+        // the save/discard guard (AS-3.3, FR-017).
+        //
+        // Audit F1: the notice used to live only in the no-work branch,
+        // so the member who most needed telling — the one with unsaved
+        // work — was moved silently. The toast now fires on every path;
+        // the guard is an addition to it, not an alternative.
         const currentActive = activeWorkspaceIdRef.current;
         if (currentActive && !wsList.find(w => w.id === currentActive)) {
           const def = wsList.find(w => w.isDefault) || wsList[0];
           const defId = def?.id ?? null;
           if (defId) {
             setActiveWorkspaceIdLocal(defId);
+            showToast(t('workspace.removed_notice').replace('{name}', def.name), 'info');
             if (hasInProgressWorkRef.current) {
-              // Defer the switch-guard to a one-shot effect that sees
-              // the new activeWorkspaceId; the body simply notes the
-              // cause and the target.
+              // Hand the guard to WorkspaceSwitcher. It opens on the
+              // transition of this value from null to non-null — it must
+              // NOT compare the target against the active workspace id,
+              // which has already advanced to `defId` on this same render.
               setPendingWorkspaceSwitch({ fromId: currentActive, toId: defId });
-            } else {
-              showToast(t('workspace.removed_notice').replace('{name}', def.name), 'info');
             }
           } else {
             setActiveWorkspaceIdLocal(null);

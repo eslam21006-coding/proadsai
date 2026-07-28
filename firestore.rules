@@ -33,9 +33,22 @@ service cloud.firestore {
 
       // Workspaces subcollection (Multi-Brand — Scale only) — owner + team members.
       // Coarse-grained: team members of the owner can read any active workspace under that owner.
-      // Fine-grained per-member `workspaceAccess` filtering is enforced by the server callables
-      // (`getWorkspaceGenerations`, `setTeamMemberWorkspaceAccess`) and by the frontend switcher —
-      // three-layer defense per plan.md#Phase 1 R7. Soft-deleted workspaces are hidden from reads.
+      //
+      // ISSUE-D (spec 965) removed per-member `workspaceAccess` narrowing. A verified
+      // team member now reaches EVERY active workspace of their owner (FR-004); the
+      // stored per-member array is retained but never consulted for authorization
+      // (FR-021) — it is read only to emit the FR-004b override trace. Do not look
+      // for allowlist enforcement downstream: there is none.
+      //
+      // The three-layer defense is now:
+      //   1. these rules          — membership + owner match + not soft-deleted
+      //   2. server callables     — `getWorkspaceGenerations` re-checks the caller's
+      //                             CURRENT `teamOwnerUid` against the workspace owner,
+      //                             so a stale membership doc under another account
+      //                             grants nothing; the four mutation callables refuse
+      //                             team members outright via `assertNotTeamMember`
+      //   3. the frontend switcher — withholds create / edit / delete controls
+      // Soft-deleted workspaces are hidden from reads.
       // The Phase 14 adAccounts subtree is declared in a separate match
       // block further down (re-uses `isWorkspaceMember` helper).
       match /workspaces/{workspaceId} {

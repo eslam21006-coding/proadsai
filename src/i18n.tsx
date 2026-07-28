@@ -820,11 +820,14 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.error.scale_required': 'Creating more than one workspace requires the Scale plan.',
         'workspace.error.limit_reached': "You've reached the 10-workspace limit on the Scale plan.",
         'workspace.error.insufficient_meta_role': "Your Meta role on this ad account doesn't allow publishing. Request Advertiser access in Meta Business Manager to link it.",
-        'workspace.error.no_access': 'No workspace access — ask your team owner to grant you access.',
-        // ISSUE-D T015: replace the retired "ask your team owner" string
-        // with two distinct states. The old key is left defined (an
-        // audit cross-reference, not a user-facing path) and the new
-        // keys carry the live copy in both locales.
+        // ISSUE-D T015 / audit F2: `workspace.error.no_access` ("ask your
+        // team owner to grant you access") is DELETED, not merely
+        // unreferenced. Under FR-004 access is automatic and the owner has
+        // no control to grant with, so the string described a step that
+        // does not exist. FR-019a requires it be withdrawn. It is replaced
+        // by two distinct states, both in `en` and `ar`:
+        //   • no_workspaces — the account legitimately has none yet (U3)
+        //   • load_failed   — the list could not be loaded, retry (U5)
         'workspace.error.no_workspaces': 'This account has no workspace yet. The account owner can create one from the workspace menu.',
         'workspace.error.no_workspaces_short': 'No workspace yet',
         'workspace.error.load_failed': 'We could not load the workspace list right now. Check your connection and try again.',
@@ -1713,8 +1716,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.error.scale_required': 'إنشاء أكثر من مساحة عمل يتطلّب خطة Scale.',
         'workspace.error.limit_reached': 'وصلت إلى الحد الأقصى 10 مساحات عمل على خطة Scale.',
         'workspace.error.insufficient_meta_role': 'دورك على حساب إعلانات Meta هذا لا يسمح بالنشر. اطلب صلاحية Advertiser من Meta Business Manager لربطه.',
-        'workspace.error.no_access': 'لا توجد صلاحية وصول إلى مساحات عمل — اطلب من مالك الفريق منحك الصلاحية.',
-        // ISSUE-D T015 (Arabic parallel of the English block above).
+        // ISSUE-D T015 / audit F2 (Arabic parallel of the English block
+        // above): `workspace.error.no_access` deleted per FR-019a.
         'workspace.error.no_workspaces': 'لا توجد مساحة عمل لهذا الحساب بعد. يستطيع مالك الحساب إنشاء واحدة من قائمة مساحات العمل.',
         'workspace.error.no_workspaces_short': 'لا توجد مساحة عمل',
         'workspace.error.load_failed': 'تعذّر تحميل قائمة مساحات العمل الآن. تحقّق من الاتصال وحاول مرة أخرى.',

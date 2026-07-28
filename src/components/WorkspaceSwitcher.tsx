@@ -49,23 +49,29 @@ export default function WorkspaceSwitcher({
   // sets `pendingWorkspaceSwitch` after the owner deletes the active
   // workspace during in-progress work, the parent has already performed
   // the actual switch — we just need to open the existing guard dialog
-  // so the member sees the save/discard confirmation. The deps exclude
-  // `activeWorkspaceId` deliberately: by the time the parent's effect
-  // fired, activeWorkspaceId had already advanced to the new default,
-  // so reading it here would short-circuit the guard before it opens.
+  // so the member sees the save/discard confirmation.
+  //
+  // Audit F1: this effect previously opened only when
+  // `switchGuardTarget !== activeWorkspaceIdRef.current`. That guard could
+  // never pass. The parent sets the target to the SAME id it just made
+  // active, React batches both updates into one render, and the ref was
+  // assigned during that render — so the comparison was always a value
+  // against itself and the dialog was unreachable dead code.
+  //
+  // The trigger is the transition of `switchGuardTarget` from null to
+  // non-null. There is nothing to compare it to: the parent only sets it
+  // when it has already decided the guard is warranted.
   React.useEffect(() => {
-    if (switchGuardTarget && switchGuardTarget !== activeWorkspaceIdRef.current) {
+    if (switchGuardTarget) {
       setPendingTarget(switchGuardTarget);
       setGuardOpen(true);
-    } else if (!switchGuardTarget) {
+    } else {
       // Parent cleared the guard state — close the dialog if it was
       // showing an externally-triggered prompt.
       setGuardOpen(false);
       setPendingTarget(null);
     }
   }, [switchGuardTarget]);
-  const activeWorkspaceIdRef = React.useRef<string | null>(null);
-  activeWorkspaceIdRef.current = activeWorkspaceId;
 
   const activeWorkspaces = workspaces.filter(ws => ws.deletedAt == null);
 
