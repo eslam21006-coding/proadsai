@@ -45,6 +45,28 @@ export default function WorkspaceSwitcher({
   const [pendingTarget, setPendingTarget] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
+  // Round-2 #3/#6: react to externally-triggered switches too. When App.tsx
+  // sets `pendingWorkspaceSwitch` after the owner deletes the active
+  // workspace during in-progress work, the parent has already performed
+  // the actual switch — we just need to open the existing guard dialog
+  // so the member sees the save/discard confirmation. The deps exclude
+  // `activeWorkspaceId` deliberately: by the time the parent's effect
+  // fired, activeWorkspaceId had already advanced to the new default,
+  // so reading it here would short-circuit the guard before it opens.
+  React.useEffect(() => {
+    if (switchGuardTarget && switchGuardTarget !== activeWorkspaceIdRef.current) {
+      setPendingTarget(switchGuardTarget);
+      setGuardOpen(true);
+    } else if (!switchGuardTarget) {
+      // Parent cleared the guard state — close the dialog if it was
+      // showing an externally-triggered prompt.
+      setGuardOpen(false);
+      setPendingTarget(null);
+    }
+  }, [switchGuardTarget]);
+  const activeWorkspaceIdRef = React.useRef<string | null>(null);
+  activeWorkspaceIdRef.current = activeWorkspaceId;
+
   const activeWorkspaces = workspaces.filter(ws => ws.deletedAt == null);
 
   // ISSUE-D: under the all-access contract, a team member's filter MUST
@@ -78,7 +100,12 @@ export default function WorkspaceSwitcher({
   const handleGuardDiscard = () => {
     if (pendingTarget) {
       onSwitchGuardDiscard?.(pendingTarget);
-      onSwitch(pendingTarget);
+      // Round-2 #3/#6: in the externally-triggered path (parent already
+      // called onSwitch while opening this dialog), pendingTarget IS
+      // the current active id and a second onSwitch is a no-op. Skip
+      // the call when the parent has already moved the active pointer
+      // — that keeps this idempotent across both trigger paths.
+      if (pendingTarget !== activeWorkspaceId) onSwitch(pendingTarget);
     }
     setGuardOpen(false);
     setPendingTarget(null);
@@ -88,7 +115,7 @@ export default function WorkspaceSwitcher({
   const handleGuardSave = () => {
     if (pendingTarget) {
       onSwitchGuardSave?.(pendingTarget);
-      onSwitch(pendingTarget);
+      if (pendingTarget !== activeWorkspaceId) onSwitch(pendingTarget);
     }
     setGuardOpen(false);
     setPendingTarget(null);

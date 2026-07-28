@@ -92,7 +92,7 @@ function assertNotTeamMember(caller: CallerProfile, action: WorkspaceAction): Ac
 }
 
 function run(): void {
-  console.log("issue-d ▸ team workspace access decision tables");
+  console.log("✅ issue-d ▸ team workspace access decision tables");
 
   // ─── ACCESS CONTRACT — A1..A9 ───────────────────────────────────────
 

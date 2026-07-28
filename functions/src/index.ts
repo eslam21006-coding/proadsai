@@ -6748,6 +6748,23 @@ export const getWorkspaceGenerations = onCall({
     assertWorkspaceActive(wsDoc);
 
     if (uid !== ownerUid) {
+        // ISSUES-D Round-2 #1: Bind generation access to the caller's CURRENT
+        // teamOwnerUid. A member doc under the workspace's owner is not
+        // enough on its own — the caller's own user doc must say they are a
+        // team member of THIS owner. A stale or second membership document
+        // (e.g. an owner who added the user, then removed them, but did not
+        // delete the membership doc) cannot grant reads from another account.
+        // This enforces A6 (a verified member of O may not read a workspace
+        // under P).
+        const callerSnap = await admin.firestore().collection("users").doc(uid).get();
+        const callerData = callerSnap.data();
+        if (
+            callerData?.isTeamMember !== true ||
+            callerData.teamOwnerUid !== ownerUid
+        ) {
+            throw new HttpsError("permission-denied", "You don't have access to this workspace.");
+        }
+
         // Team docs are auto-IDed; member doc stores the teammate's auth uid as `uid`
         // (see createTeamInvite accept path — txn.set({ uid: callerUid, ... })).
         // ISSUE-D FR-004 / FR-004a: once a member doc under the owner is found,

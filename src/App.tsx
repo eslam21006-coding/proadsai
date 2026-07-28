@@ -2472,6 +2472,19 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       mockupHistory.length > 0 || carouselSlides.length > 0 || batchResults.length > 0;
   });
 
+  // Round-2 #13: a dedicated retry trigger so the workspace-load effect
+  // can be recreated by the WorkspaceSwitcher's `onRetryLoad` button after
+  // a hard error (FR-019). Bumping the trigger causes the effect to
+  // detach its current onSnapshot and re-subscribe.
+  const [workspaceLoadRetryTrigger, setWorkspaceLoadRetryTrigger] = useState(0);
+  // Round-2 #14: in-flight ref guard for the default-workspace bootstrap.
+  // Without it, two concurrent snapshot callbacks (e.g. when the retry
+  // trigger fires while the first bootstrap is still in flight) can each
+  // issue their own `createWorkspace` callable, producing a duplicate
+  // workspace before the first one resolves. Set before the call,
+  // cleared on both success and failure.
+  const bootstrapInFlightRef = React.useRef(false);
+
   useEffect(() => {
     // ISSUE-D T004 / T025: depend on the state value `effectiveUid` (not
     // the ref) so the effect re-runs when the async teamOwnerUid
@@ -2485,7 +2498,8 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     // NOT in the dep array: the listener persists across manual
     // workspace switches; the snapshot callback reads the current id
     // through `activeWorkspaceIdRef` so the active-workspace-removal
-    // handling still sees the latest value.
+    // handling still sees the latest value. `workspaceLoadRetryTrigger`
+    // is included so the retry button can re-run the effect on demand.
     const uid = effectiveUid;
     if (!user || !uid || !canUseWorkspaces || teamResolution !== 'resolved') {
       return;
@@ -2528,7 +2542,8 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
         // and the createWorkspace call still runs through the server,
         // which now refuses team members (T019). The team member's empty
         // state is the U3 message (T014) and never produces a write.
-        if (wsList.length === 0 && !teamOwnerUid) {
+        if (wsList.length === 0 && !teamOwnerUid && !bootstrapInFlightRef.current) {
+          bootstrapInFlightRef.current = true;
           const defaultWs: Omit<Workspace, 'id'> = {
             name: 'Default Workspace', brandName: user?.displayName || 'My Brand',
             createdAt: Date.now(), isDefault: true,
@@ -2551,21 +2566,33 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
                 // The bootstrap is non-critical; the U3 message will be
                 // shown by the switcher. Log for diagnosis.
                 console.warn('default workspace bootstrap failed:', err);
+              })
+              .finally(() => {
+                bootstrapInFlightRef.current = false;
               });
           });
-        } else if (wsList.length > 0 && !activeWorkspaceId) {
+        } else if (wsList.length > 0 && !activeWorkspaceIdRef.current) {
+          // Round-2 #4: read through the ref, not the stale closure
+          // variable. `activeWorkspaceId` is intentionally excluded
+          // from the dep array, so a plain read would always see the
+          // initial value and silently revert every manual workspace
+          // switch back to the default on any subsequent workspaces
+          // collection write (brand-color edit, Meta link, etc.).
           const def = wsList.find(w => w.isDefault) || wsList[0];
-          setActiveWorkspaceIdLocal(def.id);
+          if (def) setActiveWorkspaceIdLocal(def.id);
         }
       },
       (err) => {
         console.error('Failed to load workspaces:', err);
         setWorkspaceLoadError(true);
-        showToast('Failed to load workspaces — check console', 'error');
+        // Round-2 #5: route the user-visible error through `useT()` and
+        // reuse the existing FR-019 load-failed key so the message is
+        // Arabic-first and respects the selected language / RTL.
+        showToast(t('workspace.error.load_failed'), 'error');
       }
     );
     return unsubscribe;
-  }, [user, effectiveUid, teamResolution, canUseWorkspaces, teamOwnerUid]);
+  }, [user, effectiveUid, teamResolution, canUseWorkspaces, teamOwnerUid, workspaceLoadRetryTrigger]);
 
   const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) => {
     const uid = effectiveUidRef.current;
@@ -7513,7 +7540,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 onEditWorkspace={(ws) => { setEditingWorkspace(ws); setShowWorkspaceModal(true); }}
                 isTeamMember={teamResolution === 'resolved' && teamOwnerUid != null}
                 loadError={workspaceLoadError}
-                onRetryLoad={() => { setWorkspaceLoadError(false); }}
+                onRetryLoad={() => {
+                  // Round-2 #13: bumping the retry trigger recreates the
+                  // onSnapshot listener. We clear the error first so the
+                  // U5 message disappears as soon as the user asks for a
+                  // retry, before the new listener's first callback fires.
+                  setWorkspaceLoadError(false);
+                  setWorkspaceLoadRetryTrigger(t => t + 1);
+                }}
                 hasInProgressWork={isLoading || !!tovText || !!conceptsText || !!buildPlan || mockupHistory.length > 0 || carouselSlides.length > 0 || batchResults.length > 0}
                 switchGuardTarget={pendingWorkspaceSwitch?.toId ?? null}
                 onSwitchGuardSave={() => setPendingWorkspaceSwitch(null)}

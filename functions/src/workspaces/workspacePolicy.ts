@@ -272,13 +272,13 @@ export async function resolveCallerScope(callerUid: string): Promise<{
         .get();
       if (!memberSnap.empty) {
         const memberData = memberSnap.docs[0].data();
-        // ISSUE-D FR-004 / FR-004a / FR-004b: a verified team member gets
-        // account-wide access to every workspace under the owner. The stored
-        // per-member `workspaceAccess` array is deliberately NOT consulted
-        // for visibility decisions. The stored data is retained unread
-        // (FR-021) so a future restriction feature can adopt it without a
-        // migration. A non-empty stored array IS logged as an explicit
-        // override trace so the silence is never invisible (Constitution VII).
+        // ISSUE-D FR-004 / FR-004a / FR-004b (Round-2 #9 wording): a verified
+        // team member gets account-wide access to every workspace under the
+        // owner. The stored per-member `workspaceAccess` array is retained
+        // unchanged (FR-021) and is NOT used for authorization decisions; it
+        // is read here only to emit the FR-004b override trace when non-empty,
+        // so the operating team can audit ignored allowlists. A future
+        // restriction feature can adopt the stored array without a migration.
         const storedAccess: unknown[] = memberData.workspaceAccess ?? [];
         if (Array.isArray(storedAccess) && storedAccess.length > 0) {
           console.warn(
