@@ -43,6 +43,7 @@ interface AccessResult {
   refusalReason?: "team_member" | null;
   scope?: CallerScope;
   overrideTraceEmitted?: boolean;
+  readDegraded?: boolean;
 }
 
 // Mirror of resolveCallerScope (functions/src/workspaces/workspacePolicy.ts).
@@ -51,8 +52,15 @@ interface AccessResult {
 // per-member array was non-empty (FR-004b).
 function resolveCallerScope(caller: CallerProfile, readOk = true): AccessResult {
   if (!readOk) {
-    // Self-scope: never another account on read failure (A8).
-    return { allowed: true, reasonCode: undefined, scope: { ownerUid: caller.uid, allowedWorkspaceIds: "ALL" } };
+    // Self-scope: never another account on read failure (A8). `readDegraded`
+    // marks this as a fallback rather than an answer — without it the shape is
+    // identical to a genuine self-scope and call sites convert a transient
+    // fault into an authorization verdict (A8b) or a wrong write target (S5).
+    return {
+      allowed: true, reasonCode: undefined,
+      scope: { ownerUid: caller.uid, allowedWorkspaceIds: "ALL" },
+      readDegraded: true,
+    };
   }
   if (caller.isTeamMember && caller.teamOwnerUid) {
     const ownerUid = caller.teamOwnerUid;
@@ -330,6 +338,64 @@ function run(): void {
     assert.equal(r.allowed, false, "S4: a self-asserted member with no member doc is refused");
     assert.equal(r.reasonCode, "permission-denied", "S4: refusal is a permission matter");
     assert.notEqual(r.scope?.ownerUid, "victim", "S4: the claimed owner's account is never resolved as the save target");
+  }
+
+  // A8b — the CALL SITE's handling of a degraded scope. A8 above only proves
+  // `resolveCallerScope` degrades safely in isolation; it says nothing about
+  // what the consumer then does with it. Because the degrade RETURNS rather
+  // than throwing, a call site that compares `scope.ownerUid` sees
+  // `callerUid !== workspaceOwner` and reports `cross_owner` — telling the
+  // client "you don't have access" for what is really a transient fault, with
+  // no indication it is retryable. The `readDegraded` flag must be checked
+  // BEFORE the owner comparison.
+  {
+    const caller: CallerProfile = {
+      uid: "m1", isTeamMember: true, teamOwnerUid: "owner1",
+      memberDoc: { found: true, workspaceAccess: [] },
+    };
+    const r = resolveCallerScope(caller, /* readOk */ false);
+    assert.equal(r.readDegraded, true, "A8b: a degraded scope is flagged as a fallback, not an answer");
+
+    // Mirror of the getWorkspaceGenerations call site, in the required order.
+    const workspaceOwner = "owner1";
+    const classify = (scope: AccessResult): string => {
+      if (scope.readDegraded) return "auth_read_failed";
+      if (scope.scope?.ownerUid !== workspaceOwner) return "cross_owner";
+      return "allowed";
+    };
+    assert.equal(
+      classify(r), "auth_read_failed",
+      "A8b: a read failure is reported as retryable internal, never as cross_owner",
+    );
+
+    // And the flag must not swallow a genuine mismatch.
+    const outsider: CallerProfile = {
+      uid: "m2", isTeamMember: true, teamOwnerUid: "owner2",
+      memberDoc: { found: true, workspaceAccess: [] },
+    };
+    assert.equal(
+      classify(resolveCallerScope(outsider)), "cross_owner",
+      "A8b: a resolved owner mismatch is still cross_owner",
+    );
+  }
+
+  // S5 — saveProject must refuse a degraded scope outright. Accepting the
+  // fallback would resolve the save target to the CALLER's own account, so a
+  // team member's project would be written under their own uid and counted
+  // against their own empty quota — reintroducing the mis-attribution the
+  // owner-path resolution exists to prevent, on every transient hiccup.
+  {
+    const caller: CallerProfile = {
+      uid: "m1", isTeamMember: true, teamOwnerUid: "owner1",
+      memberDoc: { found: true, workspaceAccess: [] },
+    };
+    const degraded = resolveCallerScope(caller, /* readOk */ false);
+    const saveTarget = degraded.readDegraded ? null : degraded.scope?.ownerUid;
+    assert.equal(saveTarget, null, "S5: a degraded scope yields no save target — the write is refused");
+    assert.notEqual(
+      saveTarget, caller.uid,
+      "S5: the member's own account is never silently used as the save target",
+    );
   }
 
   console.log("  ✅ All team workspace access decision tables passed");

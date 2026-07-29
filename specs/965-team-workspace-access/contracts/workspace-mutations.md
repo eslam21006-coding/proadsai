@@ -29,8 +29,8 @@ The guard runs **first**, before payload validation, workspace lookup, or any wr
 ## Required visible output
 
 A plain-language message in the caller's language (FR-018, both `ar` and `en`) stating that only the
-account owner may add, change, or remove workspaces. Never a message that implies the workspace does
-not exist.
+account owner may add, change, or remove workspaces, or manage the connected advertising accounts.
+Never a message that implies the workspace does not exist.
 
 ## Blocked behaviours
 
@@ -56,7 +56,7 @@ Message wording, provided it is plain, in both languages, and free of technical 
 ## Logging (FR-023, FR-024)
 
 ```text
-issue-d ▸ workspace action refused — action=<create|update|delete|restore> caller=<uid> owner=<uid|unknown> workspace=<id|n/a> reason=team_member
+issue-d ▸ workspace action refused — action=<create|update|delete|restore|link_meta|unlink_meta> caller=<uid> owner=<uid|unknown> workspace=<id|n/a> reason=team_member
 ```
 
 Diagnostic only. No owner-visible audit entry is written (FR-024).

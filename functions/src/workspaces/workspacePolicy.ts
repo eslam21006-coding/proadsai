@@ -195,7 +195,12 @@ export async function resolveDefaultWorkspaceId(
  */
 export async function assertNotTeamMember(
   callerUid: string,
-  action: "create" | "update" | "delete" | "restore",
+  // `link_meta` / `unlink_meta` are distinct actions, not "update". Both Meta
+  // callables previously logged `action=update`, so a refused ad-account link
+  // was indistinguishable in Cloud Logging from a refused workspace-detail
+  // edit — SC-011 asks which action was attempted, and "update" did not answer
+  // it for two of the six guarded callables.
+  action: "create" | "update" | "delete" | "restore" | "link_meta" | "unlink_meta",
 ): Promise<void> {
   // Read the caller's user doc inside a try/catch so a Firestore read
   // failure surfaces as a structured `internal` error rather than an
@@ -259,6 +264,22 @@ export async function resolveCallerScope(callerUid: string): Promise<{
   ownerUid: string;
   allowedWorkspaceIds: string[] | "ALL";
   storedWorkspaceAccess: string[];
+  /**
+   * True when the returned scope is a FALLBACK produced by the read-failure
+   * catch below, not a resolved answer. The fallback is `ownerUid = callerUid`,
+   * which is indistinguishable from a genuine self-scope — so a caller that
+   * cannot tell the two apart will misreport a transient Firestore failure as
+   * an authorization outcome. Call sites that make a decision on `ownerUid`
+   * MUST check this first:
+   *   - `getWorkspaceGenerations` would otherwise deny a non-owner with
+   *     `cross_owner` ("you don't have access") instead of a retryable
+   *     `internal`.
+   *   - `saveProject` would otherwise write a team member's project under
+   *     their OWN account — the exact mis-attribution the owner-path fix
+   *     removed.
+   * Absent/false on every resolved path.
+   */
+  readDegraded?: boolean;
 }> {
   try {
     // Check if caller is a team member via their user doc
@@ -322,7 +343,12 @@ export async function resolveCallerScope(callerUid: string): Promise<{
       `⚠️ resolveCallerScope: degraded to self-scope for ${callerUid} after read failure:`,
       (err as { message?: string })?.message ?? err,
     );
-    return { ownerUid: callerUid, allowedWorkspaceIds: "ALL", storedWorkspaceAccess: [] };
+    // `readDegraded: true` marks this as a fallback, not an answer. Without it
+    // the shape is identical to a genuine self-scope and every call site that
+    // decides on `ownerUid` silently converts a transient read failure into an
+    // authorization verdict. Callers that don't inspect it keep the previous
+    // safe no-data-leak behaviour unchanged.
+    return { ownerUid: callerUid, allowedWorkspaceIds: "ALL", storedWorkspaceAccess: [], readDegraded: true };
   }
 }
 

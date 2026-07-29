@@ -2564,8 +2564,14 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
           const def = wsList.find(w => w.isDefault) || wsList[0];
           const defId = def?.id ?? null;
           if (defId) {
-            showToast(t('workspace.removed_notice').replace('{name}', def.name), 'info');
             if (hasInProgressWorkRef.current) {
+              // The move is DEFERRED to the guard dialog here, and Cancel
+              // leaves the member on the source workspace — so the
+              // "you have been moved to {name}" wording would be a lie the
+              // moment they cancel. Use the neutral "no longer available"
+              // notice, which stays true on every branch. The moved-to
+              // message belongs to the path that actually moves.
+              showToast(t('workspace.removed_notice_no_target'), 'info');
               // CodeRabbit round 4 (Critical): do NOT advance
               // `activeWorkspaceId` yet. The auto-save effect derives
               // `resolvedWorkspaceId` from it and lists it as a dependency
@@ -2577,8 +2583,10 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
               // once the member has chosen, after the flush has completed.
               setPendingWorkspaceSwitch({ fromId: currentActive, toId: defId });
             } else {
-              // Nothing in flight — nothing to attribute. Move immediately.
+              // Nothing in flight — nothing to attribute. Move immediately,
+              // and only here is "you have been moved to {name}" actually true.
               setActiveWorkspaceIdLocal(defId);
+              showToast(t('workspace.removed_notice').replace('{name}', def.name), 'info');
             }
           } else if (hasInProgressWorkRef.current) {
             // Round-7 (CodeRabbit re-review): no fallback workspace AND
@@ -4092,10 +4100,19 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     // resolution window is not on the live path — but a manual save
     // from outside the gate is, and the gate defends both. SC-012.
     if (!workspaceReadyRef.current) {
-      // Surface once per fire; the project is left in local IndexedDB so
-      // nothing is lost — the next allowed save will pick it up.
+      // The old code returned here BEFORE `saveProjectToDB`, so the comment's
+      // promise that "the project is left in local IndexedDB" was false —
+      // nothing was written anywhere. Worse, returning normally let
+      // `projectAutoSave.doSave` record a successful save: the indicator read
+      // "Saved" and `forceFlush()` resolved `{ ok: true }`, so the workspace
+      // switch-guard's "Save & Switch" would proceed on work that had never
+      // been persisted.
+      //
+      // Write the durable local copy first so the promise is real, then reject
+      // so the auto-save state machine retries rather than reporting success.
+      await saveProjectToDB(project);
       showToast(t('workspace.write_gate.loading'), 'info');
-      return;
+      throw new Error('workspace write gate closed — save deferred until the workspace is ready');
     }
 
     await saveProjectToDB(project);
@@ -7727,7 +7744,25 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   // itself is closed by handleGuardSave after onSwitch.
                   setPendingWorkspaceSwitch(null);
                 }}
-                onSwitchGuardDiscard={() => setPendingWorkspaceSwitch(null)}
+                onSwitchGuardDiscard={() => {
+                  // Discard previously cleared only the pending state. The
+                  // in-memory project (tovText, mockupHistory, buildPlan, …)
+                  // survived, so once the switcher called onSwitch the auto-save
+                  // effect re-queued that same work with `resolvedWorkspaceId`
+                  // now derived from the DESTINATION workspace — the mirror
+                  // image of the mis-attribution the Save path was hardened
+                  // against, and the opposite of what "Discard" means.
+                  //
+                  // `resetToBlankProject()` clears every field that effect reads
+                  // and assigns a fresh project id, so the next queued snapshot
+                  // is a blank new project rather than the discarded one. That
+                  // also makes the dialog's own copy true for the first time —
+                  // "Switching workspace will start a new project" /
+                  // "تبديل مساحة العمل سيبدأ مشروعًا جديدًا" — which until now
+                  // promised a reset that never happened.
+                  resetToBlankProject();
+                  setPendingWorkspaceSwitch(null);
+                }}
                 onSwitchGuardCancel={() => {
                   // Cancel on the active-workspace-deletion guard (the
                   // pendingWorkspaceSwitch path) leaves the member on the

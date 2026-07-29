@@ -6557,7 +6557,7 @@ export const linkMetaAccountToWorkspace = onCall({
     // `users/{uid}/workspaces/{workspaceId}` would succeed for that
     // own-account workspace — but the same call would have no business
     // running for a team member. Refuse first, before any side effects.
-    await assertNotTeamMember(uid, "update");
+    await assertNotTeamMember(uid, "link_meta");
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
     const metaAdAccountId = requireNonEmptyString(data.metaAdAccountId, "metaAdAccountId");
@@ -6606,7 +6606,7 @@ export const unlinkMetaAccountFromWorkspace = onCall({
     // Round-9 (CodeRabbit re-review): team-member guard. Unlinking is
     // the mirror of linking — both retarget the workspace's Meta
     // ad-account pointer. Refuse first before any side effects.
-    await assertNotTeamMember(uid, "update");
+    await assertNotTeamMember(uid, "unlink_meta");
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
@@ -6778,6 +6778,22 @@ export const getWorkspaceGenerations = onCall({
         let scope: Awaited<ReturnType<typeof resolveCallerScope>>;
         try {
             scope = await resolveCallerScope(uid);
+            // `resolveCallerScope` degrades a non-HttpsError read failure to a
+            // self-scope by RETURNING (not throwing), so the catch below never
+            // sees it — the failure would arrive here as
+            // `scope.ownerUid (= uid) !== ownerUid` and be reported as
+            // `cross_owner` ("you don't have access"). That is a misdiagnosis of
+            // a transient fault as a permission verdict, and it is not
+            // retryable from the client's point of view. Check the degrade flag
+            // BEFORE the owner comparison so only a genuine resolved mismatch
+            // yields `cross_owner`.
+            if (scope.readDegraded) {
+                throw new HttpsError(
+                    "internal",
+                    "Failed to verify workspace access. Please retry.",
+                    { reason: "auth_read_failed" }
+                );
+            }
             if (scope.ownerUid !== ownerUid) {
                 throw new HttpsError(
                     "permission-denied",
@@ -7005,7 +7021,22 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
     // Resolved outside the transaction on purpose: the race the transaction
     // guards is a concurrent plan downgrade, and the plan read below stays
     // inside it. Account membership is not the contended value.
-    const { ownerUid } = await resolveCallerScope(uid);
+    const callerScope = await resolveCallerScope(uid);
+    // A degraded scope is a fallback (`ownerUid = callerUid`), not an answer.
+    // Accepting it here would write a team member's project under their OWN
+    // account and count it against their own empty quota — reintroducing, on
+    // every transient Firestore hiccup, exactly the mis-attribution this
+    // owner-path resolution exists to prevent. Fail loudly and retryably
+    // instead; the client keeps its local IndexedDB copy either way.
+    if (callerScope.readDegraded) {
+        console.error(`❌ issue-d ▸ saveProject account resolution degraded — caller=${uid} project=${project.id}`);
+        throw new HttpsError(
+            "internal",
+            "Could not confirm which account this project belongs to. Please try again.",
+            { reason: "auth_read_failed" }
+        );
+    }
+    const ownerUid = callerScope.ownerUid;
 
     // Quota check, plan resolution, status latch read, and project write must
     // all happen inside ONE transaction (FR-006/FR-007/SC-005, Constitution

@@ -42,11 +42,15 @@ service cloud.firestore {
       //
       // The three-layer defense is now:
       //   1. these rules          — membership + owner match + not soft-deleted
-      //   2. server callables     — `getWorkspaceGenerations` re-checks the caller's
-      //                             CURRENT `teamOwnerUid` against the workspace owner,
-      //                             so a stale membership doc under another account
-      //                             grants nothing; the four mutation callables refuse
-      //                             team members outright via `assertNotTeamMember`
+      //   2. server callables     — `getWorkspaceGenerations` resolves the caller's
+      //                             account via `resolveCallerScope` and compares it
+      //                             against the workspace owner, so a stale membership
+      //                             doc under another account grants nothing; all six
+      //                             guarded mutation callables refuse team members
+      //                             outright via `assertNotTeamMember` —
+      //                             createWorkspace, updateWorkspace, deleteWorkspace,
+      //                             restoreWorkspace, linkMetaAccountToWorkspace,
+      //                             unlinkMetaAccountFromWorkspace
       //   3. the frontend switcher — withholds create / edit / delete controls
       // Soft-deleted workspaces are hidden from team-member reads; owners
       // retain direct access below.
