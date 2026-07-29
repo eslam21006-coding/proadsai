@@ -116,14 +116,23 @@ async function doSave(data: SavedProject): Promise<FlushResult> {
     await saveFn(data);
     consecutiveFailures = 0;
     if (currentInMemoryId !== snapshotId) {
-      // Round-11: this branch is reached after saveFn RESOLVED but a
-      // newer edit superseded our snapshot. The earlier saveFn call
-      // already ran on the wire; treat it as a successful save (the
-      // user has newer state to worry about, the queued snapshot is
-      // stale). The next debounce will save the newer state.
+      // Round-15 (CodeRabbit re-review): a newer queue() call superseded
+      // our snapshot. The saveFn call we just awaited did persist this
+      // snapshot, but pendingData has since been replaced by a newer
+      // edit that has NOT been persisted. For the auto-save path the
+      // next debounce will pick up the newer state; for forceFlush
+      // (called explicitly by the workspace switch-guard "Save &
+      // Switch" path) we must NOT report success here — the user's
+      // intent is "I want a definitive answer about ALL pending work"
+      // and the answer must include the newer queued edit. Report a
+      // distinct 'superseded' failure so the switch-guard keeps the
+      // dialog open and the user can retry after the next debounce
+      // lands. The auto-save's flush() ignores the return value, so
+      // changing the stale-snapshot return here does not affect the
+      // debounce/ceiling flow.
       state = { phase: "saving" };
       notify();
-      return { ok: true };
+      return { ok: false, error: "superseded" };
     }
     state = { phase: "saved", clearAt: Date.now() + 2000 };
     notify();
