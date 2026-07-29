@@ -2550,7 +2550,16 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     if (!user || !uid || !canUseWorkspaces || teamResolution !== 'resolved') {
       return;
     }
-    setWorkspaceLoadError(false);
+    // Round-16 (CodeRabbit re-review): do NOT setWorkspaceLoadError(false)
+    // here. The synchronous set-state in the effect body triggered
+    // `react-hooks/set-state-in-effect` (an extra render pass on every
+    // re-subscribe) and was redundant: the retry handler at line 7723
+    // already clears the flag before bumping workspaceLoadRetryTrigger,
+    // and a successful re-subscribe is itself the recovery path —
+    // the error flag is only meaningful when the snapshot's error
+    // callback fires. Move the clear into the snapshot's success
+    // callback below, guarded so it runs only when the flag is
+    // currently true.
     const wsRef = collection(db, 'users', uid, 'workspaces');
     // Round-13 (operator bug): include where('deletedAt', '==', null) in
     // the Firestore query. The previous post-fetch `.filter(ws => ws.deletedAt
@@ -2576,6 +2585,13 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     const unsubscribe = onSnapshot(
       wsQuery,
       (snap) => {
+        // Round-16 (CodeRabbit re-review): the recovery clear for
+        // workspaceLoadError. The synchronous set-state in the effect
+        // body was removed; instead we clear the flag here on the first
+        // successful snapshot after a prior failure, guarded so it
+        // only fires when the flag is currently true (avoids the
+        // cascading-render noise the effect-body version caused).
+        setWorkspaceLoadError(prev => (prev ? false : prev));
         const wsList = snap.docs.map(d => ({ id: d.id, ...d.data() } as Workspace))
           .filter(ws => ws.deletedAt == null);
         // ISSUE-D T027: when the live snapshot reports the active

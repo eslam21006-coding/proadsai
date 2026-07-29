@@ -56,7 +56,7 @@ access list" approach was abandoned.
 |---|---|---|
 | Account owner | `ownerUid = self`, ids of own active workspaces, or `"ALL"` when none | unchanged |
 | Verified team member | `memberData.workspaceAccess ?? []` — **`[]` for every new member** | `"ALL"` |
-| `isTeamMember` set but no member doc under the owner | `[]` | `[]` — unchanged; membership unproven, access denied |
+| `isTeamMember` set but no member doc under the owner | `[]` | throws `permission-denied` (`reason: "membership_unproven"`); membership unproven, access denied |
 | Firestore read failure | `"ALL"` scoped to self (`ownerUid = callerUid`) | unchanged |
 
 The third row is the security boundary and is deliberately untouched: a stale `isTeamMember` flag with

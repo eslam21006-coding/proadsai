@@ -209,16 +209,6 @@ export default function WorkspaceSwitcher({
     setOpen(false);
   };
 
-  // Round-12 (CodeRabbit re-review): hoist handleGuardCancel above the
-  // Escape-key useEffect and memoize it so the document-level keydown
-  // listener captures the current cancellation logic. The previous
-  // declaration lived after the effect, so the listener held the
-  // stale closure from the render in which the guard opened — a later
-  // onSwitchGuardCancel prop identity change would not be picked up.
-  // (Round-12: the actual handler declaration now lives further up,
-  // hoisted above the Escape-key useEffect so the document listener
-  // captures the current cancellation logic.)
-
   // ISSUE-D T014: replace the old "no_access" branch (which sent the
   // member to the owner to ask for access — FR-019a forbids that) with
   // two distinct states. U3: the account legitimately has no workspace

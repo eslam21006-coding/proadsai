@@ -7,10 +7,22 @@ service cloud.firestore {
                   && (request.auth.uid == userId
                       || (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isTeamMember == true
                           && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamOwnerUid == userId));
+      // Round-16 (CodeRabbit re-review - CRITICAL): freeze isTeamMember
+      // and teamOwnerUid on self-update. Without these constraints, a
+      // signed-in user can self-assign isTeamMember=true and
+      // teamOwnerUid=<victim>, then satisfy every downstream team-member
+      // read rule (this rule, the avatars/projects/workspaces subcollections,
+      // the FR-023 server-side guards) by pointing at a user who never
+      // invited them. Both fields are server-managed: isTeamMember is set
+      // by the workspace owner via a Cloud Function, teamOwnerUid is
+      // set the same way. Only credits and plan are user-modifiable in
+      // the existing rule; the team-membership fields are now locked.
       allow update: if request.auth != null
                     && request.auth.uid == userId
                     && request.resource.data.credits <= resource.data.credits
-                    && request.resource.data.plan == resource.data.plan;
+                    && request.resource.data.plan == resource.data.plan
+                    && request.resource.data.isTeamMember == resource.data.isTeamMember
+                    && request.resource.data.teamOwnerUid == resource.data.teamOwnerUid;
       allow create: if request.auth != null && request.auth.uid == userId;
 
       // Avatars subcollection — owner + team members
