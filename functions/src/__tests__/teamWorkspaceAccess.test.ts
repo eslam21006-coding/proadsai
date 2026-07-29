@@ -263,6 +263,75 @@ function run(): void {
     assert.equal(allowed, false, "M7: unauthenticated mutations are refused");
   }
 
+  // ─── SAVED-PROJECT SCOPE — S1..S4 ──────────────────────────────────────
+  // saveProject (functions/src/index.ts) resolves the ACCOUNT that owns the
+  // project, then uses that uid for the document path, the plan read, the
+  // quota count, and the over-cap eviction. Mirrors the production
+  // `const { ownerUid } = await resolveCallerScope(uid)` line.
+
+  // S1 — Owner saving their own project. ownerUid === callerUid, so every
+  // path is unchanged from before ISSUE-D (SC-007: owners cost nothing).
+  {
+    const caller: CallerProfile = {
+      uid: "owner1", isTeamMember: false, teamOwnerUid: null,
+      memberDoc: { found: false },
+    };
+    const r = resolveCallerScope(caller);
+    assert.equal(r.allowed, true, "S1: owner save is allowed");
+    assert.equal(r.scope?.ownerUid, "owner1", "S1: project path resolves to the owner's own account");
+  }
+
+  // S2 — Verified team member. The project must land under the OWNER's
+  // collection, not the member's own — getUserProjects reads
+  // `users/{ownerUid}/projects`, so writing to `users/{callerUid}/projects`
+  // would save a project the member could never read back.
+  {
+    const caller: CallerProfile = {
+      uid: "m1", isTeamMember: true, teamOwnerUid: "owner1",
+      memberDoc: { found: true, workspaceAccess: [] },
+    };
+    const r = resolveCallerScope(caller);
+    assert.equal(r.allowed, true, "S2: verified member save is allowed");
+    assert.equal(
+      r.scope?.ownerUid, "owner1",
+      "S2: a member's project is written under the OWNER's account, matching the read path",
+    );
+    assert.notEqual(r.scope?.ownerUid, caller.uid, "S2: never the member's own uid");
+  }
+
+  // S3 — Plan resolution follows the same uid. A team member's own user doc
+  // carries plan 'none'; reading the plan from the caller would quota-check
+  // them against the free tier regardless of the owner's plan (FR-015).
+  {
+    const memberOwnPlan = "none";      // what users/{memberUid}.plan holds
+    const ownerPlan = "scale";         // what users/{ownerUid}.plan holds
+    const caller: CallerProfile = {
+      uid: "m1", isTeamMember: true, teamOwnerUid: "owner1",
+      memberDoc: { found: true, workspaceAccess: [] },
+    };
+    const r = resolveCallerScope(caller);
+    const planSourceUid = r.scope?.ownerUid;
+    const resolvedPlan = planSourceUid === "owner1" ? ownerPlan : memberOwnPlan;
+    assert.equal(resolvedPlan, "scale", "S3: the plan is read from the OWNER's doc, not the member's 'none'");
+  }
+
+  // S4 — Self-asserted membership with no member doc. `firestore.rules`
+  // permits a client to update its own user doc apart from `credits` and
+  // `plan`, so `isTeamMember` / `teamOwnerUid` are attacker-controlled.
+  // Resolving the save path from those fields alone would let any user
+  // write projects into a stranger's account and evict that stranger's
+  // oldest project once over cap. The member-doc proof is what stops it.
+  {
+    const caller: CallerProfile = {
+      uid: "attacker", isTeamMember: true, teamOwnerUid: "victim",
+      memberDoc: { found: false },
+    };
+    const r = resolveCallerScope(caller);
+    assert.equal(r.allowed, false, "S4: a self-asserted member with no member doc is refused");
+    assert.equal(r.reasonCode, "permission-denied", "S4: refusal is a permission matter");
+    assert.notEqual(r.scope?.ownerUid, "victim", "S4: the claimed owner's account is never resolved as the save target");
+  }
+
   console.log("  ✅ All team workspace access decision tables passed");
 }
 

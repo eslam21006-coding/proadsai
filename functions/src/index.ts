@@ -6979,6 +6979,34 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
     // block; this only changes over-limit handling (auto-save evicts the oldest draft).
     const saveSource: "autosave" | "manual" = data.source === "manual" ? "manual" : "autosave";
 
+    // ISSUE-D: a team member's saved projects belong to the ACCOUNT, not to the
+    // member's own uid. Two bugs sat here:
+    //
+    //   1. The project was written to `users/{callerUid}/projects` while
+    //      `getUserProjects` reads `users/{ownerUid}/projects` — so a member
+    //      could save a project and never see it again. Same asymmetry for the
+    //      quota count, the over-cap eviction, and `workspacePurge`.
+    //   2. The plan was resolved from the CALLER's user doc. A team member's own
+    //      doc carries `plan: 'none'`, so the member was quota-checked against
+    //      the free tier regardless of the owner's plan (FR-015: capabilities
+    //      come from the owner's plan, never the member's).
+    //
+    // `resolveCallerScope` is the single source of truth for this mapping
+    // (round 12 consolidated every authorization path onto it). Using it here
+    // rather than reading `userData.teamOwnerUid` directly is deliberate and
+    // load-bearing: it PROVES membership by requiring a member document under
+    // the claimed owner and throws `permission-denied / membership_unproven`
+    // otherwise. `firestore.rules` lets a client update its own user doc freely
+    // apart from `credits` and `plan`, so `isTeamMember` / `teamOwnerUid` are
+    // self-asserted and MUST NOT be trusted on their own — trusting them would
+    // let any user write projects into a stranger's account and evict that
+    // stranger's oldest project once over cap.
+    //
+    // Resolved outside the transaction on purpose: the race the transaction
+    // guards is a concurrent plan downgrade, and the plan read below stays
+    // inside it. Account membership is not the contended value.
+    const { ownerUid } = await resolveCallerScope(uid);
+
     // Quota check, plan resolution, status latch read, and project write must
     // all happen inside ONE transaction (FR-006/FR-007/SC-005, Constitution
     // principle XI). Otherwise two parallel saves at cap-1 can both pass the
@@ -6994,29 +7022,38 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
     // unchanged so the client still sees their specific reason codes.
     try {
     const result = await admin.firestore().runTransaction(async (txn) => {
-        const projectRef = admin.firestore().doc(`users/${uid}/projects/${project.id}`);
-        const userRef = admin.firestore().doc(`users/${uid}`);
+        // Both paths are the OWNER's. For an ordinary owner `ownerUid === uid`,
+        // so this is byte-for-byte the previous behaviour.
+        const projectRef = admin.firestore().doc(`users/${ownerUid}/projects/${project.id}`);
+        const ownerRef = admin.firestore().doc(`users/${ownerUid}`);
 
         // All reads first (Firestore txn requirement). Existing project doc
-        // gives us isNew + the prev status for the latch; user doc gives us
-        // the canonical plan.
+        // gives us isNew + the prev status for the latch; the OWNER's user doc
+        // gives us the canonical plan — a team member's own doc carries
+        // plan 'none' and would quota-check them against the free tier.
         const existingSnap = await txn.get(projectRef);
-        const userSnap = await txn.get(userRef);
+        const ownerSnap = await txn.get(ownerRef);
 
         const isNew = !existingSnap.exists;
         const prevStatus = (existingSnap.data() as { status?: "draft" | "rendered" | "published" } | undefined)?.status;
 
         // Resolve canonically: prefer billingState.plan; fall back to legacy
-        // users.{uid}.plan; map "creator"→"pro" / "scaling"→"scale" (matches
+        // users.{ownerUid}.plan; map "creator"→"pro" / "scaling"→"scale" (matches
         // billingState.ts:84-90); narrow to one of "none"|"starter"|"pro"|"scale".
-        const userData = userSnap.data() ?? {};
-        let rawPlan: string = userData.billingState?.plan ?? userData.plan ?? "none";
+        // Read inside the transaction so a concurrent downgrade cannot slip
+        // between the plan read and the write.
+        const ownerData = ownerSnap.data() ?? {};
+        let rawPlan: string = ownerData.billingState?.plan ?? ownerData.plan ?? "none";
         if (rawPlan === "creator") rawPlan = "pro";
         else if (rawPlan === "scaling") rawPlan = "scale";
         const plan: "none" | "starter" | "pro" | "scale" =
             rawPlan === "starter" || rawPlan === "pro" || rawPlan === "scale" ? rawPlan : "none";
 
-        const quota = await enforceProjectQuota(txn, uid, plan, isNew, saveSource);
+        // Quota is the ACCOUNT's allowance, counted over the owner's project
+        // collection — a team member consumes the owner's allowance (spec Key
+        // Entities), and counting the member's own empty collection would let
+        // every member save without limit.
+        const quota = await enforceProjectQuota(txn, ownerUid, plan, isNew, saveSource);
 
         // Server-side latch is authoritative — never trust the client-supplied
         // project.status (it may be stale and would otherwise allow demotion).
@@ -7030,7 +7067,11 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
             ...project,
             id: project.id,
             status: newStatus,
-            userId: uid,
+            // The owning ACCOUNT, matching the collection this doc lives in.
+            // The client already sets this to the effective (owner) uid; the
+            // server previously overwrote it with the caller's uid, so a team
+            // member's project claimed the wrong owner.
+            userId: ownerUid,
             updatedAt: Date.now(),
         };
         if (cleanProject.batchResults && cleanProject.batchResults.length > 0) {
@@ -7100,7 +7141,7 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
         const docBytes = Buffer.byteLength(JSON.stringify(persistedProject), "utf8");
         if (docBytes > 900_000) {
             console.warn(
-                `saveProject: persisted doc for uid=${uid} project=${project.id} is ${docBytes} bytes ` +
+                `saveProject: persisted doc for owner=${ownerUid} caller=${uid} project=${project.id} is ${docBytes} bytes ` +
                 `after stripping — approaching Firestore's 1 MiB limit.`,
             );
         }
@@ -7109,8 +7150,11 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
         // project count stays within the limit without ever blocking the save. Guard against
         // evicting the project currently being written.
         if (quota.evictId && quota.evictId !== project.id) {
-            txn.delete(admin.firestore().doc(`users/${uid}/projects/${quota.evictId}`));
-            console.info(`phase13 ▸ quota-evict uid=${uid} evicted=${quota.evictId} for=${project.id}`);
+            // Evict from the OWNER's collection — the same one the quota was
+            // counted over. Deleting under the caller's uid would delete
+            // nothing for a team member while still reporting an eviction.
+            txn.delete(admin.firestore().doc(`users/${ownerUid}/projects/${quota.evictId}`));
+            console.info(`phase13 ▸ quota-evict owner=${ownerUid} caller=${uid} evicted=${quota.evictId} for=${project.id}`);
         }
 
         txn.set(projectRef, persistedProject, { merge: true });
