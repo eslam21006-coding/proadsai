@@ -2543,7 +2543,27 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
     }
     setWorkspaceLoadError(false);
     const wsRef = collection(db, 'users', uid, 'workspaces');
-    const wsQuery = query(wsRef, orderBy('createdAt', 'desc'));
+    // Round-13 (operator bug): include where('deletedAt', '==', null) in
+    // the Firestore query. The previous post-fetch `.filter(ws => ws.deletedAt
+    // == null)` did the right thing for the owner (Firestore rules allow
+    // the owner to read every doc and the filter drops the soft-deleted
+    // ones client-side) but for a team member the security rules require
+    // the deletedAt predicate to be PART of the query — a query without it
+    // hits a rule that checks `resource.data.deletedAt == null` on each
+    // candidate doc, but the query itself can be rejected when the
+    // security rule's `match` filter does not include the same predicate
+    // the requesting user is constrained by. The earlier code worked
+    // because the post-fetch filter applied after the snapshot returned;
+    // the team-member rules in firestore.rules:43-48 require the query
+    // to carry the predicate explicitly. Apply for ALL users (not just
+    // team members) so the same query shape works for both: the rule
+    // doesn't penalize the owner, and the predicate correctly excludes
+    // soft-deleted workspaces from the list either way.
+    const wsQuery = query(
+      wsRef,
+      where('deletedAt', '==', null),
+      orderBy('createdAt', 'desc')
+    );
     const unsubscribe = onSnapshot(
       wsQuery,
       (snap) => {
