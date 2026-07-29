@@ -1995,6 +1995,15 @@ const App: React.FC = () => {
         const data = snap.data();
         if (data.isTeamMember && data.teamOwnerUid) {
           wasTeamMemberRef.current = true;
+          // Round-14 (CodeRabbit re-review): refresh teamOwnerUid and
+          // teamRole from the current snapshot. The previous code never
+          // updated these after the initial auth-handler resolve, so a
+          // live re-pointing (membership moved to a different owner
+          // while the session is open) kept effectiveUid reading the
+          // previous owner's subtree until a manual reload. Sync the
+          // state every snapshot.
+          setTeamOwnerUid(data.teamOwnerUid);
+          setTeamRole(data.teamRole || 'viewer');
           // Team member: listen to owner doc for credits/plan/billing
           const ownerRef = doc(db, 'users', data.teamOwnerUid);
           getDoc(ownerRef).then(ownerSnap => {

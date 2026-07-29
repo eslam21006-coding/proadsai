@@ -101,10 +101,18 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
   // now a pure data-collector: it validates input, builds the payload,
   // and hands off to the parent. All persistence, state-sync, and
   // toast-error handling live in the parent handlers.
+  //
+  // Round-14 (CodeRabbit re-review): the inline `setUiError` paths in
+  // handleSubmit / handleDelete are unreachable. App.tsx's
+  // handleCreateWorkspace / handleUpdateWorkspace / handleDeleteWorkspace
+  // catch their own failures and show a toast without rethrowing, so
+  // the modal's catch blocks never run and the save_failed /
+  // delete_failed copy never renders. Keep the loading-state cleanup
+  // and the console.warn for diagnosis, but drop the dead setUiError
+  // path so we don't have two competing error surfaces.
   const handleSubmit = async () => {
     if (!name.trim() || !brandName.trim()) return;
     setSaving(true);
-    setUiError(null);
     try {
       await onSave({
         name: name.trim(),
@@ -116,8 +124,11 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
         isDefault: workspace?.isDefault ?? false,
       });
     } catch (err) {
+      // Parent handler already showed a toast. The await is here only
+      // to drive the saving-state lifecycle; the catch is for
+      // unexpected synchronous throws the parent's await chain
+      // wouldn't surface. Keep the log for diagnosis.
       console.warn('Workspace save failed:', err);
-      setUiError(t('workspace.settings.save_failed'));
     } finally {
       setSaving(false);
     }
@@ -126,12 +137,10 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
   const handleDelete = async () => {
     if (!workspace || !onDelete) return;
     setSaving(true);
-    setUiError(null);
     try {
       await onDelete(workspace.id);
     } catch (err) {
       console.warn('Workspace delete failed:', err);
-      setUiError(t('workspace.settings.delete_failed'));
     } finally {
       setSaving(false);
     }

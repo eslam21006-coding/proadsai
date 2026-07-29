@@ -1,5 +1,7 @@
 // src/lib/projectAutoSave.ts — debounce + ceiling auto-save scheduler (no React deps)
 
+import type { SavedProject } from "../types";
+
 export type AutoSaveState =
   | { phase: "idle" }
   | { phase: "saving" }
@@ -22,9 +24,9 @@ let pendingSnapshotId = 0;
 let currentInMemoryId = 0;
 let consecutiveFailures = 0;
 
-type SaveFn = (data: any) => Promise<void>;
+type SaveFn = (data: SavedProject) => Promise<void>;
 let saveFn: SaveFn | null = null;
-let pendingData: any = null;
+let pendingData: SavedProject | null = null;
 
 function notify() {
   listeners.forEach((fn) => fn(state));
@@ -61,7 +63,7 @@ function scheduleSave() {
   }
 }
 
-export function queue(data: any) {
+export function queue(data: SavedProject) {
   currentInMemoryId++;
   pendingData = data;
   scheduleSave();
@@ -98,7 +100,7 @@ async function flush(): Promise<void> {
   await doSave(pendingData);
 }
 
-async function doSave(data: any): Promise<FlushResult> {
+async function doSave(data: SavedProject): Promise<FlushResult> {
   const snapshotId = currentInMemoryId;
   pendingSnapshotId = snapshotId;
   state = { phase: "saving" };

@@ -31,7 +31,13 @@ interface CallerProfile {
   memberDoc: MemberDocProof; // present iff isTeamMember === true
 }
 
-type WorkspaceAction = "create" | "update" | "delete" | "restore";
+// Round-14 (CodeRabbit re-review): include "link_meta" and "unlink_meta"
+// alongside the four workspace-mutation actions. workspace-mutations.md
+// documents M5b and M5c for these calls, and functions/src/index.ts gates
+// both on assertNotTeamMember — but the M2..M5 decision-table loop only
+// iterated over the original four. Extending the union and the loop makes
+// the test mirror match the production behavior end-to-end.
+type WorkspaceAction = "create" | "update" | "delete" | "restore" | "link_meta" | "unlink_meta";
 
 interface AccessResult {
   allowed: boolean;
@@ -213,8 +219,8 @@ function run(): void {
 
   // ─── MUTATION CONTRACT — M1..M7 ─────────────────────────────────────
 
-  // M1 — Owner create/update/delete/restore → allow (SC-007).
-  for (const action of ["create", "update", "delete", "restore"] as const) {
+  // M1 — Owner create/update/delete/restore/link_meta/unlink_meta → allow (SC-007).
+  for (const action of ["create", "update", "delete", "restore", "link_meta", "unlink_meta"] as const) {
     const caller: CallerProfile = {
       uid: "owner1", isTeamMember: false, teamOwnerUid: null, memberDoc: { found: false },
     };
@@ -223,7 +229,8 @@ function run(): void {
   }
 
   // M2..M5 — isTeamMember=true → refuse every mutation with reason=team_member.
-  for (const action of ["create", "update", "delete", "restore"] as const) {
+  // Round-14: extended to cover link_meta (M5b) and unlink_meta (M5c).
+  for (const action of ["create", "update", "delete", "restore", "link_meta", "unlink_meta"] as const) {
     const caller: CallerProfile = {
       uid: "m1", isTeamMember: true, teamOwnerUid: "owner1",
       memberDoc: { found: true, workspaceAccess: [] },

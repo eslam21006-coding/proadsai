@@ -52,6 +52,12 @@ const db = getFirestore();
 // query at the document limit; 500 is below the 1k cap and balances
 // memory vs. round-trip cost. The choice does not affect correctness.
 const PAGE_SIZE = 500;
+// Hard ceiling on the number of pages the loop will iterate. The
+// expected count is 1-2 for any reasonable workspaces installation;
+// 100k pages at PAGE_SIZE=500 is 50M docs, well above any realistic
+// fleet. If the loop ever hits this, an operator must inspect before
+// re-running.
+const PAGE_COUNT_CEILING = 100000;
 // Firestore's max commit size is 500 ops.
 const MAX_BATCH = 500;
 
@@ -159,6 +165,22 @@ async function backfill(): Promise<BackfillReport> {
     if (pageSnap.size < PAGE_SIZE) {
       break;
     }
+    // Round-14 (CodeRabbit re-review): hard cap on page count as a
+    // belt-and-suspenders guard. With PATH_FILTER_CEILING in place the
+    // short-page break above already terminates the loop, but a future
+    // refactor that removes that branch (e.g. moving to a fully
+    // cursor-driven model) would re-introduce a risk of infinite
+    // looping if the cursor ever repeats. PAGE_COUNT_CEILING caps the
+    // total pages at 100k (50M docs at PAGE_SIZE=500) which is well
+    // above any reasonable workspaces count; if the loop ever hits
+    // this ceiling we stop and let the operator inspect.
+    if (report.pagesProcessed >= PAGE_COUNT_CEILING) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `backfill: hit PAGE_COUNT_CEILING (${PAGE_COUNT_CEILING}); stopping. Inspect before re-running.`
+      );
+      break;
+    }
     cursor = pageSnap.docs[pageSnap.docs.length - 1];
   }
 
@@ -207,10 +229,17 @@ function logReport(report: BackfillReport): void {
   console.log("");
 }
 
+// Round-14 (CodeRabbit re-review): exit with a non-zero status when
+// the run completed but any commit batch failed. The exit code makes
+// it easy to spot a partial backfill from a CI shell or operator
+// terminal — `echo $?` after a run tells the operator whether to
+// re-run. The catch path remains the existing "exception during the
+// run itself" case.
 backfill()
   .then((report) => {
     logReport(report);
-    process.exit(0);
+    const hasErrors = report.errors.length > 0;
+    process.exit(hasErrors ? 2 : 0);
   })
   .catch((err: unknown) => {
     // eslint-disable-next-line no-console
