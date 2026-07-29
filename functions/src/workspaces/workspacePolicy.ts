@@ -250,12 +250,15 @@ export async function assertNotTeamMember(
  * own.
  *
  * @param callerUid - The auth uid of the caller.
- * @returns The caller's effective owner uid and the set of workspace
- *   ids they may read on that account.
+ * @returns The caller's effective owner uid, the set of workspace
+ *   ids they may read on that account, and the stored per-member
+ *   `workspaceAccess` array (so callers can emit the FR-004b
+ *   override trace when the stored list is non-empty).
  */
 export async function resolveCallerScope(callerUid: string): Promise<{
   ownerUid: string;
   allowedWorkspaceIds: string[] | "ALL";
+  storedWorkspaceAccess: string[];
 }> {
   try {
     // Check if caller is a team member via their user doc
@@ -285,7 +288,7 @@ export async function resolveCallerScope(callerUid: string): Promise<{
             `⚠️ issue-d ▸ workspaceAccess ignored (all-access policy) — caller=${callerUid} owner=${ownerUid} stored=${storedAccess.length} granted=ALL`
           );
         }
-        return { ownerUid, allowedWorkspaceIds: "ALL" };
+        return { ownerUid, allowedWorkspaceIds: "ALL", storedWorkspaceAccess: storedAccess as string[] };
       }
       // Round-9 (CodeRabbit re-review): the previous code returned
       // `{ ownerUid, allowedWorkspaceIds: [] }` here, which the consumer-side
@@ -306,7 +309,7 @@ export async function resolveCallerScope(callerUid: string): Promise<{
 
     const wsSnap = await admin.firestore().collection(`users/${callerUid}/workspaces`).get();
     const wsIds = wsSnap.docs.filter((d) => d.data().deletedAt == null).map((d) => d.id);
-    return { ownerUid: callerUid, allowedWorkspaceIds: wsIds.length > 0 ? wsIds : "ALL" };
+    return { ownerUid: callerUid, allowedWorkspaceIds: wsIds.length > 0 ? wsIds : "ALL", storedWorkspaceAccess: [] };
   } catch (err) {
     // A Firestore read failure here must NOT bubble up as an unhandled
     // 500. The common case is a regular (non-team) user, for whom the
@@ -319,7 +322,7 @@ export async function resolveCallerScope(callerUid: string): Promise<{
       `⚠️ resolveCallerScope: degraded to self-scope for ${callerUid} after read failure:`,
       (err as { message?: string })?.message ?? err,
     );
-    return { ownerUid: callerUid, allowedWorkspaceIds: "ALL" };
+    return { ownerUid: callerUid, allowedWorkspaceIds: "ALL", storedWorkspaceAccess: [] };
   }
 }
 

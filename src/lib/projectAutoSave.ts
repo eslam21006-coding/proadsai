@@ -132,9 +132,9 @@ async function doSave(data: any): Promise<FlushResult> {
       }
     }, 2100);
     return { ok: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     consecutiveFailures++;
-    const errMsg = err?.message || String(err);
+    const errMsg = err instanceof Error ? err.message : String(err);
 
     if (currentInMemoryId !== snapshotId) {
       // Round-11: this branch is reached after saveFn THREW. Even

@@ -8,8 +8,13 @@ import { useT } from '../i18n';
 
 interface WorkspaceSettingsModalProps {
   workspace: Workspace | null;
-  onSave: (data: Omit<Workspace, 'id' | 'createdAt'>) => void;
-  onDelete?: (workspaceId: string) => void;
+  // Round-12 (CodeRabbit re-review): widen to Promise<void> so the
+  // modal's awaited handleSubmit/handleDelete callbacks type-check
+  // correctly. The parents (App.tsx handleCreateWorkspace/Update/Delete)
+  // already return promises — the void-only typing made the await in
+  // the modal's try/catch essentially invisible to the type system.
+  onSave: (data: Omit<Workspace, 'id' | 'createdAt'>) => void | Promise<void>;
+  onDelete?: (workspaceId: string) => void | Promise<void>;
   onClose: () => void;
   plan?: UserPlan;
   metaAdAccounts?: { id: string; name: string }[];

@@ -18,7 +18,7 @@ import {
 } from "./entitlements.js";
 import { validateSelector } from "./selectorLimits.js";
 import { writeBillingState } from "./billing/billingState.js";
-import { assertOwner, assertWorkspaceActive, assertNotTeamMember, createWorkspaceWithLimit, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
+import { assertOwner, assertWorkspaceActive, assertNotTeamMember, createWorkspaceWithLimit, resolveCallerScope, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
 import { enforceProjectQuota } from "./savedProjects/projectQuota.js";
 import { deriveStatus } from "./savedProjects/projectStatus.js";
 import { isArabic, scanAndReplace } from "./culturalCompliance.js";
@@ -6761,49 +6761,30 @@ export const getWorkspaceGenerations = onCall({
     assertWorkspaceActive(wsDoc);
 
     if (uid !== ownerUid) {
-        // ISSUES-D Round-2 #1: Bind generation access to the caller's CURRENT
-        // teamOwnerUid. A member doc under the workspace's owner is not
-        // enough on its own — the caller's own user doc must say they are a
-        // team member of THIS owner. A stale or second membership document
-        // (e.g. an owner who added the user, then removed them, but did not
-        // delete the membership doc) cannot grant reads from another account.
-        // This enforces A6 (a verified member of O may not read a workspace
-        // under P).
-        //
-        // Round-6 #1: wrap the auth reads in try/catch. An explicit access
-        // decision still throws HttpsError("permission-denied", ...); an
-        // unexpected Admin SDK read failure (network, IAM, malformed doc)
-        // is rethrown as HttpsError("internal", ...) so raw SDK errors do
-        // not leak to the client.
-        let callerData: admin.firestore.DocumentData | undefined;
-        let memberData: admin.firestore.DocumentData | undefined;
+        // Round-12 (CodeRabbit re-review): the previous code re-implemented
+        // the same caller-doc + team-subcollection membership proof that
+        // resolveCallerScope already centralises — but with a stricter
+        // `isTeamMember !== true` check here vs the truthy check in the
+        // policy helper, so the two authorization paths had already drifted
+        // in equality semantics. Call resolveCallerScope(uid) (the policy
+        // helper is now the single source of truth) and compare its
+        // resolved ownerUid against the workspace owner; a mismatch is a
+        // cross-owner read (A6) and is denied. The catch retains the
+        // callable's own `internal` error conversion for unexpected
+        // authorization-read failures — resolveCallerScope's outer
+        // try/catch degrades non-HttpsError failures to self-scope, which
+        // would not surface the failure to the client. We preserve the
+        // hardened behaviour here on purpose.
+        let scope: Awaited<ReturnType<typeof resolveCallerScope>>;
         try {
-            const callerSnap = await admin.firestore().collection("users").doc(uid).get();
-            callerData = callerSnap.data();
-            if (
-                callerData?.isTeamMember !== true ||
-                callerData.teamOwnerUid !== ownerUid
-            ) {
-                throw new HttpsError("permission-denied", "You don't have access to this workspace.");
+            scope = await resolveCallerScope(uid);
+            if (scope.ownerUid !== ownerUid) {
+                throw new HttpsError(
+                    "permission-denied",
+                    "You don't have access to this workspace.",
+                    { reason: "cross_owner" }
+                );
             }
-
-            // Team docs are auto-IDed; member doc stores the teammate's auth uid as `uid`
-            // (see createTeamInvite accept path — txn.set({ uid: callerUid, ... })).
-            // ISSUE-D FR-004 / FR-004a: once a member doc under the owner is found,
-            // the caller's reach is the full account — the stored per-workspace
-            // allowlist is NOT consulted here. The membership check is the
-            // boundary; the workspace allowlist is intentionally ignored. The
-            // FR-004b override trace is still emitted when the stored list is
-            // non-empty so the operating team can audit ignored allowlists.
-            const memberQuery = await admin.firestore()
-                .collection(`users/${ownerUid}/team`)
-                .where("uid", "==", uid)
-                .limit(1)
-                .get();
-            if (memberQuery.empty) {
-                throw new HttpsError("permission-denied", "You don't have access to this workspace.");
-            }
-            memberData = memberQuery.docs[0].data();
         } catch (err) {
             if (err instanceof HttpsError) throw err;
             console.error(
@@ -6816,10 +6797,13 @@ export const getWorkspaceGenerations = onCall({
                 { reason: "auth_read_failed" }
             );
         }
-        const storedAccess: unknown[] = memberData?.workspaceAccess ?? [];
-        if (Array.isArray(storedAccess) && storedAccess.length > 0) {
+        // FR-004b: emit the override trace when the stored per-member
+        // workspaceAccess list is non-empty. resolveCallerScope carries
+        // the list through the return payload so the trace fires here
+        // without a separate Firestore read.
+        if (Array.isArray(scope.storedWorkspaceAccess) && scope.storedWorkspaceAccess.length > 0) {
             console.warn(
-                `⚠️ issue-d ▸ workspaceAccess ignored (all-access policy) — caller=${uid} owner=${ownerUid} stored=${storedAccess.length} granted=ALL path=getWorkspaceGenerations`
+                `⚠️ issue-d ▸ workspaceAccess ignored (all-access policy) — caller=${uid} owner=${ownerUid} stored=${scope.storedWorkspaceAccess.length} granted=ALL path=getWorkspaceGenerations`
             );
         }
     }

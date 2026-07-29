@@ -1890,21 +1890,39 @@ const App: React.FC = () => {
                 setTeamRole(membership.role || 'viewer');
                 const ownerRef = doc(db, 'users', membership.ownerUid);
                 const ownerSnap = await getDoc(ownerRef);
+                // Round-12 (CodeRabbit re-review): always resolve the
+                // gate when the membership claim lands, even if the
+                // owner's user doc is missing or unreadable. The
+                // previous gating sat inside `if (ownerSnap.exists())`,
+                // so a missing owner doc stranded the member in
+                // 'pending' forever — no workspace subscription, no
+                // write-gate release, and no path to recovery short of
+                // a manual reload. Mirror the existing-user path:
+                // fall back to zero credits / 'none' plan when the
+                // owner doc is absent, and resolve the gate regardless.
                 if (ownerSnap.exists()) {
                   const owData = ownerSnap.data();
-                  setUser(currentUser);
                   setUserCredits(owData.credits ?? 0);
                   const effPlan = (owData.plan ?? 'none');
                   setUserPlan(effPlan as UserPlan);
                   setIsTrialUser(owData.isTrial === true);
                   setStripeCustomerId(owData.stripeCustomerId ?? null);
                   setBillingStatus(owData.billingStatus || 'active');
-                  setOnboardingComplete(false);
-                  // ISSUE-D T003: account link resolved for a newly-claimed
-                  // team member — they are now the right user to show the
-                  // owner's workspaces for.
-                  setTeamResolution('resolved');
+                } else {
+                  setUserCredits(0);
+                  setUserPlan('none');
+                  setIsTrialUser(false);
+                  setStripeCustomerId(null);
+                  setBillingStatus('cancelled');
                 }
+                setOnboardingComplete(false);
+                setUser(currentUser);
+                // ISSUE-D T003: account link resolved for a newly-claimed
+                // team member — they are now the right user to show the
+                // owner's workspaces for. Resolved unconditionally so the
+                // write-gate (workspaceReady) advances regardless of owner
+                // doc availability.
+                setTeamResolution('resolved');
               }
             }
 

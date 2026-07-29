@@ -55,11 +55,23 @@ export default function WorkspaceSwitcher({
   // onKeyDown handler bound to the wrapper only fires when focus is
   // already inside it. For the externally-triggered path
   // (switchGuardTarget effect opens the guard from outside, no prior
-  // focus inside) Escape was unreachable and the backdrop click
-  // was the only dismissal. The useEffect below moves focus into
-  // the dialog on open and binds Escape at the document level while
-  // the guard is active.
+  // focus inside) Escape was unreachable and the backdrop click was
+  // the only dismissal. The useEffect below moves focus into the
+  // dialog on open and binds Escape at the document level while the
+  // guard is active.
   const guardDialogRef = useRef<HTMLDivElement>(null);
+  // Round-12 (CodeRabbit re-review): hoist handleGuardCancel above the
+  // Escape-key useEffect so the document-level keydown listener captures
+  // the current cancellation logic. The previous declaration lived
+  // after the effect, so the listener held the stale closure from the
+  // render in which the guard opened — a later onSwitchGuardCancel
+  // prop identity change would not be picked up. useCallback
+  // memoizes the handler so the effect's dependency array is stable.
+  const handleGuardCancel = React.useCallback(() => {
+    onSwitchGuardCancel?.();
+    setGuardOpen(false);
+    setPendingTarget(null);
+  }, [onSwitchGuardCancel]);
 
   // Round-2 #3/#6 + Audit F1 + Round-6 #4: react to externally-triggered
   // switches too. When App.tsx sets `pendingWorkspaceSwitch` after the
@@ -109,7 +121,7 @@ export default function WorkspaceSwitcher({
     return () => {
       document.removeEventListener("keydown", onKey);
     };
-  }, [guardOpen, guardSaving]);
+  }, [guardOpen, guardSaving, handleGuardCancel]);
 
   const activeWorkspaces = workspaces.filter(ws => ws.deletedAt == null);
 
@@ -197,11 +209,15 @@ export default function WorkspaceSwitcher({
     setOpen(false);
   };
 
-  const handleGuardCancel = () => {
-    onSwitchGuardCancel?.();
-    setGuardOpen(false);
-    setPendingTarget(null);
-  };
+  // Round-12 (CodeRabbit re-review): hoist handleGuardCancel above the
+  // Escape-key useEffect and memoize it so the document-level keydown
+  // listener captures the current cancellation logic. The previous
+  // declaration lived after the effect, so the listener held the
+  // stale closure from the render in which the guard opened — a later
+  // onSwitchGuardCancel prop identity change would not be picked up.
+  // (Round-12: the actual handler declaration now lives further up,
+  // hoisted above the Escape-key useEffect so the document listener
+  // captures the current cancellation logic.)
 
   // ISSUE-D T014: replace the old "no_access" branch (which sent the
   // member to the owner to ask for access — FR-019a forbids that) with
