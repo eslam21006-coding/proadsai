@@ -23,7 +23,22 @@ service cloud.firestore {
                     && request.resource.data.plan == resource.data.plan
                     && request.resource.data.isTeamMember == resource.data.isTeamMember
                     && request.resource.data.teamOwnerUid == resource.data.teamOwnerUid;
-      allow create: if request.auth != null && request.auth.uid == userId;
+      // Round-17 (CodeRabbit re-review): the prior allow create rule only
+      // verified that the writer is the authed uid. The isTeamMember /
+      // teamOwnerUid update lock from Round-16 prevents the user from
+      // ESCALATING those fields post-create, but a user could still CREATE
+      // the doc with isTeamMember=true and teamOwnerUid=<victim> on day
+      // one. The create rule must require the new doc to start with the
+      // unaffiliated defaults — isTeamMember=false and teamOwnerUid
+      // absent/null. Both fields are server-managed (set by the workspace
+      // owner via a Cloud Function); the client should never be able to
+      // mint either. Together with the Round-16 update lock this closes
+      // both the create-time and update-time self-elevation paths.
+      allow create: if request.auth != null
+                    && request.auth.uid == userId
+                    && request.resource.data.isTeamMember == false
+                    && (request.resource.data.teamOwnerUid == null
+                        || !('teamOwnerUid' in request.resource.data));
 
       // Avatars subcollection — owner + team members
       match /avatars/{avatarId} {
