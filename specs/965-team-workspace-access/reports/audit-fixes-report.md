@@ -5,7 +5,7 @@
 **Input**: `specs/965-team-workspace-access/reports/claude-audit-batches-01-02.md`
 **Scope**: F1 (HIGH functional defect) + F2, F3, F4 (cleanups)
 
-**Status**: F1, F2, F4 fixed. F3 investigated and deliberately left in place per instruction. All gates green.
+**Status**: F1, F2, F4 fixed. F3 investigated and deliberately left in place per instruction. All local build and test gates green.
 
 ---
 

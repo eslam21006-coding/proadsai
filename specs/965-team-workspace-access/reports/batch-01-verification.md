@@ -60,16 +60,14 @@ export const getWorkspaceGenerations = onCall({
 ## Verify 2 — T006 "ALL" handled by every consumer of `resolveCallerScope`
 
 **File**: `functions/src/workspaces/workspacePolicy.ts:150-202`
-**Verdict**: ✅ **Safe.** Every consumer of the scope shape correctly handles `"ALL"` before calling `.includes()` or `.length`. The only production consumer is `getUserProjects.ts`; `getWorkspaceGenerations` does its own per-callable membership check (verified in Verify 1 above) and does not consume `allowedWorkspaceIds`.
-
-### Production consumer inventory
-
-`grep "resolveCallerScope" functions/src/**/*.ts` returns 16 matches. Filtering for the only callable consumers in production code:
+**Verdict**: ✅ **Safe (historical).** This audit was written before the Round-12 refactor; the conclusion is still correct (every consumer that reads `allowedWorkspaceIds` handles `"ALL"` before calling `.includes()` or `.length`), but the consumer inventory below is now stale. The production consumers of `resolveCallerScope` are:
 
 | Consumer | File | Reads `allowedWorkspaceIds`? | Handles `"ALL"`? |
 |---|---|---|---|
 | `getUserProjects` | `functions/src/savedProjects/getUserProjects.ts:39` | Yes | ✅ Yes — both call sites guard with `!== "ALL"` before `.includes()` / `.length` |
-| `getWorkspaceGenerations` | `functions/src/index.ts:6731` | No (does its own member-doc check — see Verify 1) | N/A |
+| `getWorkspaceGenerations` | `functions/src/index.ts:6731` (Round-12 refactor) | Yes — uses `scope.ownerUid === ownerUid` (no `allowedWorkspaceIds` direct read) | ✅ Indirectly — verifies the caller is a member of the workspace's owner |
+
+> **Round-20 (CodeRabbit re-review)**: Mark this verification as historical — the consumer inventory was written before `getWorkspaceGenerations` was updated to call `resolveCallerScope` (Round 12). The conclusion that every consumer correctly handles the result is still true (the new caller-doc branch in `getWorkspaceGenerations` is consistent with `assertNotTeamMember`'s strict `=== true` semantics). Preserve the safety conclusion; treat the inventory table as historical and do not use it for current release gating.
 
 ### `getUserProjects.ts` (verbatim, lines 39–66)
 

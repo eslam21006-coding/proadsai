@@ -105,8 +105,15 @@ export default function WorkspaceSwitcher({
   // (not focusable by default); tabIndex={-1} on the inner panel lets
   // .focus() land inside without entering the tab order. The
   // document-level keydown handler runs regardless of where focus is.
+  //
+  // Round-20 (CodeRabbit re-review): key off guardIsOpen (which fires for
+  // both the internal pendingTarget path and the externally-triggered
+  // switchGuardTarget path) rather than guardOpen alone. Without this
+  // change the externally-triggered path — where the parent sets
+  // switchGuardTarget but never updates guardOpen until Save/Discard run
+  // — would never receive focus or an Escape listener.
   useEffect(() => {
-    if (!guardOpen) return;
+    if (!guardIsOpen) return;
     guardDialogRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !guardSaving) handleGuardCancel();
@@ -115,7 +122,7 @@ export default function WorkspaceSwitcher({
     return () => {
       document.removeEventListener("keydown", onKey);
     };
-  }, [guardOpen, guardSaving, handleGuardCancel]);
+  }, [guardIsOpen, guardSaving, handleGuardCancel]);
 
   const activeWorkspaces = workspaces.filter(ws => ws.deletedAt == null);
 

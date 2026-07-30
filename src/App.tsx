@@ -2719,7 +2719,7 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   // Round-6 #6: `t` is included in the deps so a language change recreates
   // the listener and the toasts (workspace.removed_notice, workspace.error.load_failed)
   // use the current translation rather than the one captured at subscribe time.
-  }, [user, effectiveUid, teamResolution, canUseWorkspaces, teamOwnerUid, workspaceLoadRetryTrigger, t]);
+  }, [user, effectiveUid, teamResolution, canUseWorkspaces, teamOwnerUid, workspaceLoadRetryTrigger, t, showToast]);
 
   // Round-8 (CodeRabbit re-review): extract a single isTeamMemberRefusal(e) helper.
 // The previous inline triple in each handler matched any error message

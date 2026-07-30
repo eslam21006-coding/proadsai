@@ -46,15 +46,10 @@ the actionable scope, and were left for a future batch.
 The latest CodeRabbit review's prompt-for-all block also lists these, but
 they are documentation/process items outside the actionable 1+4 fix scope:
 
-- `docs/LAUNCH_MATRIX.md:2501` — ISSUE-D description wording update.
-- `specs/965-team-workspace-access/contracts/workspace-mutations.md:29-39` — Refusal messaging + log action enum for all six callables.
 - `specs/965-team-workspace-access/data-model.md:31-35` — Firestore line-refs update.
 - `specs/965-team-workspace-access/investigation-notes.md:51-60, 147-151` — Firestore line-refs + deployment-instructions build sequence.
 - `specs/965-team-workspace-access/plan.md:102-103` — Phase B callable list including linkMeta/unlinkMeta.
 - `specs/965-team-workspace-access/quickstart.md:65-69` — Second cleanup/build/deploy sequence reuse.
-- `specs/965-team-workspace-access/reports/audit-fixes-report.md:8` — Status line clarification.
-- `specs/965-team-workspace-access/reports/claude-audit-batches-01-02.md:9` — Verdict supersede statement.
-- `specs/965-team-workspace-access/reports/claude-audit-batches-01-02.md:88-94` — Fenced block language identifier.
 - `specs/965-team-workspace-access/spec.md:5-6` — Header/scope clarity around deferred role-based editing.
 - `src/App.tsx:7712` — `onSwitchGuardDiscard` autosave-clearing.
 
@@ -62,7 +57,7 @@ Happy to address any of these on request.
 
 ## Commit
 
-```
+```text
 ec967f8 fix(issue-d): CodeRabbit round 12 - team-member stranded fix + dedup + lint
 ```
 

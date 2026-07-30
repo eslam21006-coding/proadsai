@@ -8,6 +8,8 @@
 
 **Verdict**: **APPROVED WITH CONDITIONS** — 1 HIGH functional defect must be fixed before merge. All security checks pass.
 
+> **Round-20 (CodeRabbit re-review)**: This report is historical — the F1 HIGH defect it flagged has since been fixed by audit-fixes-report.md and subsequent rounds. **Superseded by**: `audit-fixes-report.md` and the rounds that followed. This report no longer represents current release status; do not use it as a gate.
+
 ---
 
 ## Verdict summary
@@ -85,7 +87,7 @@ No consumer was missed.
 
 `git diff main...HEAD -- firestore.rules` returns **empty**. The coarse-grained team-member read rule is byte-identical and still requires all three conditions:
 
-```
+```text
 allow read: if request.auth != null
    && exists(/databases/$(database)/documents/users/$(request.auth.uid))
    && get(...).data.isTeamMember == true
