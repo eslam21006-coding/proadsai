@@ -88,27 +88,24 @@ export default function WorkspaceSwitcher({
   // The external path always takes precedence while it is set; the
   // manual path is preserved when no external target is active.
   const effectiveGuardTarget = switchGuardTarget ?? pendingTarget;
+  // Round-19 (CodeRabbit re-review): the externally-triggered branch is
+  // closed by the explicit `guardOpen = guardOpen || !!switchGuardTarget`
+  // plus the Save / Discard handlers setting `guardOpen` to false when
+  // they fire. The previous `React.useEffect` block at this site was an
+  // external-target cleanup attempt that was unreachable — both Save
+  // and Discard were keying off `pendingTarget`, so they never fired
+  // for the externally-triggered path, and `guardOpen` stayed true. The
+  // Save/Discard handlers now use `effectiveGuardTarget` and reset
+  // `guardOpen` to false themselves, so the leftover effect is dead
+  // code. Removed.
   const guardIsOpen = guardOpen || !!switchGuardTarget;
-  // Keep `guardOpen` in sync with the external target via a derived
-  // computation above; we no longer write to it from this effect.
-  // When the parent clears `switchGuardTarget`, fall back to the
-  // manual `pendingTarget` (which may also be null after a save/
-  // discard handler clears it).
-  React.useEffect(() => {
-    if (!switchGuardTarget && pendingTarget === null && guardOpen) {
-      // Parent cleared the external target AND no manual selection
-      // remains — close the dialog if it was showing an
-      // externally-triggered prompt.
-      setGuardOpen(false);
-    }
-  }, [switchGuardTarget, pendingTarget, guardOpen]);
 
   // Round-11: focus the dialog on open and bind Escape at the document
   // level while the guard is active. The wrapper is a plain <div>
   // (not focusable by default); tabIndex={-1} on the inner panel lets
   // .focus() land inside without entering the tab order. The
   // document-level keydown handler runs regardless of where focus is.
-  React.useEffect(() => {
+  useEffect(() => {
     if (!guardOpen) return;
     guardDialogRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
@@ -148,15 +145,24 @@ export default function WorkspaceSwitcher({
     setOpen(false);
   };
 
+  // Round-19 (CodeRabbit re-review): both handlers must key off the
+  // effective guard target, not pendingTarget. The externally-triggered
+  // path (owner-deleted-workspace) only ever sets `switchGuardTarget`,
+  // leaving `pendingTarget` null. The previous handlers read `pendingTarget`
+  // and short-circuited on the externally-triggered path — Save / Discard
+  // silently no-op'd while the dialog stayed open. Using
+  // `effectiveGuardTarget` (switchGuardTarget ?? pendingTarget) is the
+  // single source of truth for both trigger paths.
   const handleGuardDiscard = () => {
-    if (pendingTarget) {
-      onSwitchGuardDiscard?.(pendingTarget);
+    const target = effectiveGuardTarget;
+    if (target) {
+      onSwitchGuardDiscard?.(target);
       // Round-2 #3/#6: in the externally-triggered path (parent already
-      // called onSwitch while opening this dialog), pendingTarget IS
-      // the current active id and a second onSwitch is a no-op. Skip
-      // the call when the parent has already moved the active pointer
-      // — that keeps this idempotent across both trigger paths.
-      if (pendingTarget !== activeWorkspaceId) onSwitch(pendingTarget);
+      // called onSwitch while opening this dialog), target IS the current
+      // active id and a second onSwitch is a no-op. Skip the call when
+      // the parent has already moved the active pointer — that keeps this
+      // idempotent across both trigger paths.
+      if (target !== activeWorkspaceId) onSwitch(target);
     }
     setGuardOpen(false);
     setPendingTarget(null);
@@ -182,12 +188,17 @@ export default function WorkspaceSwitcher({
   // an explicit `{ ok, error }` so the parent can also throw on the
   // no-throw failure path (doSave was previously catching internally and
   // resolving normally). Our catch still handles both shapes.
+  //
+  // Round-19: use effectiveGuardTarget (not pendingTarget) so the
+  // externally-triggered path is wired up correctly. See note on
+  // handleGuardDiscard.
   const handleGuardSave = async () => {
-    if (!pendingTarget) return;
+    const target = effectiveGuardTarget;
+    if (!target) return;
     setGuardSaving(true);
     let saveOk = true;
     try {
-      await onSwitchGuardSave?.(pendingTarget);
+      await onSwitchGuardSave?.(target);
     } catch {
       saveOk = false;
     } finally {
@@ -200,7 +211,7 @@ export default function WorkspaceSwitcher({
       // re-throws before the clear, so pendingWorkspaceSwitch stays set.
       return;
     }
-    if (pendingTarget !== activeWorkspaceId) onSwitch(pendingTarget);
+    if (target !== activeWorkspaceId) onSwitch(target);
     setGuardOpen(false);
     setPendingTarget(null);
     setOpen(false);
