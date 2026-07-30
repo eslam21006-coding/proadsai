@@ -7171,8 +7171,12 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
         // in logs instead of surfacing as an opaque write rejection.
         const docBytes = Buffer.byteLength(JSON.stringify(persistedProject), "utf8");
         if (docBytes > 900_000) {
+            // Round-18 (CodeRabbit re-review): prefix the message with
+            // ⚠️ to satisfy the repository-wide convention (other
+            // console.warn calls in this file use the same leading emoji)
+            // and to make the message filterable as a class.
             console.warn(
-                `saveProject: persisted doc for owner=${ownerUid} caller=${uid} project=${project.id} is ${docBytes} bytes ` +
+                `⚠️ saveProject: persisted doc for owner=${ownerUid} caller=${uid} project=${project.id} is ${docBytes} bytes ` +
                 `after stripping — approaching Firestore's 1 MiB limit.`,
             );
         }

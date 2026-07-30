@@ -73,38 +73,35 @@ export default function WorkspaceSwitcher({
     setPendingTarget(null);
   }, [onSwitchGuardCancel]);
 
-  // Round-2 #3/#6 + Audit F1 + Round-6 #4: react to externally-triggered
-  // switches too. When App.tsx sets `pendingWorkspaceSwitch` after the
-  // owner deletes the active workspace during in-progress work, the
-  // parent has NOT performed the actual switch — it deliberately keeps
-  // `activeWorkspaceId` on the source workspace so the queued auto-save
-  // snapshot stays attributed to the source (round 4). Our job is to
-  // open the existing guard dialog so the member sees the save/discard
-  // confirmation; the Save handler awaits `autoSaveForceFlush()` and
-  // only then does the parent's `setActiveWorkspaceIdLocal(pendingTarget)`
-  // path in handleGuardSave fire (round 5).
-  //
-  // Round-7 (CodeRabbit re-review): the upstream `forceFlush` now returns
-  // an explicit `{ ok, error }` so the parent can also throw on the
-  // no-throw failure path (doSave was previously catching internally and
-  // resolving normally). Our catch still handles both shapes.
-  //
-  // Round-11: also moves focus into the dialog on open and binds Escape
-  // at the document level while the guard is active. The wrapper is a
-  // plain <div> so the original onKeyDown only fired when focus was
-  // already inside it — for the externally-triggered path (no prior
-  // focus inside the dialog) Escape was unreachable.
+  // Round-18 (CodeRabbit re-review): the previous code mirrored
+  // `switchGuardTarget` (the externally-triggered target) into
+  // `pendingTarget` (the manual-switch target) via a useEffect, which
+  // had two problems:
+  //   1. The synchronous setState in the effect triggered
+  //      `react-hooks/set-state-in-effect` (an extra render pass on every
+  //      externally-triggered guard open).
+  //   2. The mirror overwrote an in-flight *manual* guard's
+  //      `pendingTarget` if the parent raised a forced switch at the same
+  //      time — the user's manual selection would silently be lost.
+  // The fix is to keep `pendingTarget` for the manual path only, and
+  // derive the effective target as `switchGuardTarget ?? pendingTarget`.
+  // The external path always takes precedence while it is set; the
+  // manual path is preserved when no external target is active.
+  const effectiveGuardTarget = switchGuardTarget ?? pendingTarget;
+  const guardIsOpen = guardOpen || !!switchGuardTarget;
+  // Keep `guardOpen` in sync with the external target via a derived
+  // computation above; we no longer write to it from this effect.
+  // When the parent clears `switchGuardTarget`, fall back to the
+  // manual `pendingTarget` (which may also be null after a save/
+  // discard handler clears it).
   React.useEffect(() => {
-    if (switchGuardTarget) {
-      setPendingTarget(switchGuardTarget);
-      setGuardOpen(true);
-    } else {
-      // Parent cleared the guard state — close the dialog if it was
-      // showing an externally-triggered prompt.
+    if (!switchGuardTarget && pendingTarget === null && guardOpen) {
+      // Parent cleared the external target AND no manual selection
+      // remains — close the dialog if it was showing an
+      // externally-triggered prompt.
       setGuardOpen(false);
-      setPendingTarget(null);
     }
-  }, [switchGuardTarget]);
+  }, [switchGuardTarget, pendingTarget, guardOpen]);
 
   // Round-11: focus the dialog on open and bind Escape at the document
   // level while the guard is active. The wrapper is a plain <div>
@@ -327,7 +324,7 @@ export default function WorkspaceSwitcher({
         </div>
       )}
 
-      {guardOpen && (
+      {guardIsOpen && effectiveGuardTarget && (
         // Round-9 (CodeRabbit re-review): dialog semantics + Escape key.
         // role="dialog" + aria-modal="true" so screen readers announce
         // the modal; aria-labelledby points at the title; Escape cancels

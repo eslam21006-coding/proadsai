@@ -286,7 +286,16 @@ export async function resolveCallerScope(callerUid: string): Promise<{
     const callerDoc = await admin.firestore().collection("users").doc(callerUid).get();
     const callerData = callerDoc.data();
 
-    if (callerData?.isTeamMember && callerData?.teamOwnerUid) {
+    // Round-18 (CodeRabbit re-review): strict boolean check. The previous
+    // truthy check `callerData?.isTeamMember` would treat truthy
+    // non-boolean values (e.g. "true" string, 1) as team-member. The
+    // membership proof below already validates that a member doc
+    // exists under the teamOwnerUid, so the flag here only gates the
+    // FIRST stage of the lookup; the second stage (member doc) is the
+    // real boundary. Align with assertNotTeamMember's strict === true
+    // semantics so the two authorization paths agree on what counts as
+    // a team member.
+    if (callerData?.isTeamMember === true && callerData?.teamOwnerUid) {
       const ownerUid = callerData.teamOwnerUid;
       // Find the member doc in the owner's team subcollection
       const memberSnap = await admin.firestore()
