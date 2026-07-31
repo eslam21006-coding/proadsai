@@ -18,7 +18,7 @@ import {
 } from "./entitlements.js";
 import { validateSelector } from "./selectorLimits.js";
 import { writeBillingState } from "./billing/billingState.js";
-import { assertOwner, assertWorkspaceActive, createWorkspaceWithLimit, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
+import { assertOwner, assertWorkspaceActive, assertNotTeamMember, createWorkspaceWithLimit, resolveCallerScope, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
 import { enforceProjectQuota } from "./savedProjects/projectQuota.js";
 import { deriveStatus } from "./savedProjects/projectStatus.js";
 import { isArabic, scanAndReplace } from "./culturalCompliance.js";
@@ -6317,6 +6317,12 @@ export const createWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
+    // ISSUE-D T019: refuse team members BEFORE any payload validation or
+    // write. The shared helper (workspacePolicy.assertNotTeamMember) is
+    // the single point of the guard and the single point of the refusal
+    // log line. Without this, createWorkspace would succeed for a member
+    // and silently create a workspace under their own account (SC-005).
+    await assertNotTeamMember(uid, "create");
     if (!request.data || typeof request.data !== "object") {
         throw new HttpsError("invalid-argument", "Request payload is required.", { reason: "invalid_payload" });
     }
@@ -6373,6 +6379,11 @@ export const updateWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
+    // ISSUE-D T019: refuse team members before any payload validation,
+    // workspace lookup, or write. workspaceId is unknown at this point
+    // because the payload is not yet trusted; the log uses n/a. The
+    // reason is permission, not "workspace not found".
+    await assertNotTeamMember(uid, "update");
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
@@ -6434,6 +6445,14 @@ export const deleteWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
+    // ISSUE-D T019: refuse team members first. The user's own doc may
+    // carry a teamOwnerUid, but the workspace being deleted belongs to
+    // the team owner — under ISSUE-D the call resolves the workspace
+    // under `users/{callerUid}/workspaces` (a member's own collection)
+    // and fails as not-found. With the guard, the response is
+    // permission-denied from the FIRST statement, so the symptom that
+    // makes this bug hard to diagnose is gone.
+    await assertNotTeamMember(uid, "delete");
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
@@ -6480,6 +6499,10 @@ export const restoreWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
+    // ISSUE-D T019: same guard as deleteWorkspace. restoreWorkspace is
+    // not reachable from a team member's UI but takes the guard for
+    // consistency at negligible cost — research.md D4 noted it.
+    await assertNotTeamMember(uid, "restore");
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
@@ -6526,6 +6549,15 @@ export const linkMetaAccountToWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
+    // Round-9 (CodeRabbit re-review): team-member guard. Linking a Meta
+    // ad account to a workspace retargets the workspace's ad-account
+    // pointer, which is a destructive workspace-level action. A team
+    // member's own account could have a workspace (e.g. if they were
+    // once an owner) and the per-callable workspaceId lookup under
+    // `users/{uid}/workspaces/{workspaceId}` would succeed for that
+    // own-account workspace — but the same call would have no business
+    // running for a team member. Refuse first, before any side effects.
+    await assertNotTeamMember(uid, "link_meta");
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
     const metaAdAccountId = requireNonEmptyString(data.metaAdAccountId, "metaAdAccountId");
@@ -6571,6 +6603,10 @@ export const unlinkMetaAccountFromWorkspace = onCall({
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
     const uid = request.auth.uid;
+    // Round-9 (CodeRabbit re-review): team-member guard. Unlinking is
+    // the mirror of linking — both retarget the workspace's Meta
+    // ad-account pointer. Refuse first before any side effects.
+    await assertNotTeamMember(uid, "unlink_meta");
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
@@ -6725,19 +6761,66 @@ export const getWorkspaceGenerations = onCall({
     assertWorkspaceActive(wsDoc);
 
     if (uid !== ownerUid) {
-        // Team docs are auto-IDed; member doc stores the teammate's auth uid as `uid`
-        // (see createTeamInvite accept path — txn.set({ uid: callerUid, ... })).
-        const memberQuery = await admin.firestore()
-            .collection(`users/${ownerUid}/team`)
-            .where("uid", "==", uid)
-            .limit(1)
-            .get();
-        if (memberQuery.empty) {
-            throw new HttpsError("permission-denied", "You don't have access to this workspace.");
+        // Round-12 (CodeRabbit re-review): the previous code re-implemented
+        // the same caller-doc + team-subcollection membership proof that
+        // resolveCallerScope already centralises — but with a stricter
+        // `isTeamMember !== true` check here vs the truthy check in the
+        // policy helper, so the two authorization paths had already drifted
+        // in equality semantics. Call resolveCallerScope(uid) (the policy
+        // helper is now the single source of truth) and compare its
+        // resolved ownerUid against the workspace owner; a mismatch is a
+        // cross-owner read (A6) and is denied. The catch retains the
+        // callable's own `internal` error conversion for unexpected
+        // authorization-read failures — resolveCallerScope's outer
+        // try/catch degrades non-HttpsError failures to self-scope, which
+        // would not surface the failure to the client. We preserve the
+        // hardened behaviour here on purpose.
+        let scope: Awaited<ReturnType<typeof resolveCallerScope>>;
+        try {
+            scope = await resolveCallerScope(uid);
+            // `resolveCallerScope` degrades a non-HttpsError read failure to a
+            // self-scope by RETURNING (not throwing), so the catch below never
+            // sees it — the failure would arrive here as
+            // `scope.ownerUid (= uid) !== ownerUid` and be reported as
+            // `cross_owner` ("you don't have access"). That is a misdiagnosis of
+            // a transient fault as a permission verdict, and it is not
+            // retryable from the client's point of view. Check the degrade flag
+            // BEFORE the owner comparison so only a genuine resolved mismatch
+            // yields `cross_owner`.
+            if (scope.readDegraded) {
+                throw new HttpsError(
+                    "internal",
+                    "Failed to verify workspace access. Please retry.",
+                    { reason: "auth_read_failed" }
+                );
+            }
+            if (scope.ownerUid !== ownerUid) {
+                throw new HttpsError(
+                    "permission-denied",
+                    "You don't have access to this workspace.",
+                    { reason: "cross_owner" }
+                );
+            }
+        } catch (err) {
+            if (err instanceof HttpsError) throw err;
+            console.error(
+                `❌ issue-d ▸ getWorkspaceGenerations auth read failed — caller=${uid} owner=${ownerUid}:`,
+                err
+            );
+            throw new HttpsError(
+                "internal",
+                "Failed to verify workspace access. Please retry.",
+                { reason: "auth_read_failed" }
+            );
         }
-        const memberData = memberQuery.docs[0].data();
-        if (!(memberData.workspaceAccess ?? []).includes(workspaceId)) {
-            throw new HttpsError("permission-denied", "You don't have access to this workspace.");
+        // FR-004b: emit the override trace when the stored per-member
+        // workspaceAccess list is non-empty. resolveCallerScope carries
+        // the list through the return payload so the trace fires here
+        // without a separate Firestore read.
+        if (Array.isArray(scope.storedWorkspaceAccess) && scope.storedWorkspaceAccess.length > 0) {
+            console.warn(
+                `⚠️ issue-d ▸ workspaceAccess ignored (all-access policy) — caller=${uid} owner=${ownerUid} stored=${scope.storedWorkspaceAccess.length} granted=ALL path=getWorkspaceGenerations`
+            );
         }
     }
 
@@ -6912,6 +6995,49 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
     // block; this only changes over-limit handling (auto-save evicts the oldest draft).
     const saveSource: "autosave" | "manual" = data.source === "manual" ? "manual" : "autosave";
 
+    // ISSUE-D: a team member's saved projects belong to the ACCOUNT, not to the
+    // member's own uid. Two bugs sat here:
+    //
+    //   1. The project was written to `users/{callerUid}/projects` while
+    //      `getUserProjects` reads `users/{ownerUid}/projects` — so a member
+    //      could save a project and never see it again. Same asymmetry for the
+    //      quota count, the over-cap eviction, and `workspacePurge`.
+    //   2. The plan was resolved from the CALLER's user doc. A team member's own
+    //      doc carries `plan: 'none'`, so the member was quota-checked against
+    //      the free tier regardless of the owner's plan (FR-015: capabilities
+    //      come from the owner's plan, never the member's).
+    //
+    // `resolveCallerScope` is the single source of truth for this mapping
+    // (round 12 consolidated every authorization path onto it). Using it here
+    // rather than reading `userData.teamOwnerUid` directly is deliberate and
+    // load-bearing: it PROVES membership by requiring a member document under
+    // the claimed owner and throws `permission-denied / membership_unproven`
+    // otherwise. `firestore.rules` lets a client update its own user doc freely
+    // apart from `credits` and `plan`, so `isTeamMember` / `teamOwnerUid` are
+    // self-asserted and MUST NOT be trusted on their own — trusting them would
+    // let any user write projects into a stranger's account and evict that
+    // stranger's oldest project once over cap.
+    //
+    // Resolved outside the transaction on purpose: the race the transaction
+    // guards is a concurrent plan downgrade, and the plan read below stays
+    // inside it. Account membership is not the contended value.
+    const callerScope = await resolveCallerScope(uid);
+    // A degraded scope is a fallback (`ownerUid = callerUid`), not an answer.
+    // Accepting it here would write a team member's project under their OWN
+    // account and count it against their own empty quota — reintroducing, on
+    // every transient Firestore hiccup, exactly the mis-attribution this
+    // owner-path resolution exists to prevent. Fail loudly and retryably
+    // instead; the client keeps its local IndexedDB copy either way.
+    if (callerScope.readDegraded) {
+        console.error(`❌ issue-d ▸ saveProject account resolution degraded — caller=${uid} project=${project.id}`);
+        throw new HttpsError(
+            "internal",
+            "Could not confirm which account this project belongs to. Please try again.",
+            { reason: "auth_read_failed" }
+        );
+    }
+    const ownerUid = callerScope.ownerUid;
+
     // Quota check, plan resolution, status latch read, and project write must
     // all happen inside ONE transaction (FR-006/FR-007/SC-005, Constitution
     // principle XI). Otherwise two parallel saves at cap-1 can both pass the
@@ -6927,29 +7053,38 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
     // unchanged so the client still sees their specific reason codes.
     try {
     const result = await admin.firestore().runTransaction(async (txn) => {
-        const projectRef = admin.firestore().doc(`users/${uid}/projects/${project.id}`);
-        const userRef = admin.firestore().doc(`users/${uid}`);
+        // Both paths are the OWNER's. For an ordinary owner `ownerUid === uid`,
+        // so this is byte-for-byte the previous behaviour.
+        const projectRef = admin.firestore().doc(`users/${ownerUid}/projects/${project.id}`);
+        const ownerRef = admin.firestore().doc(`users/${ownerUid}`);
 
         // All reads first (Firestore txn requirement). Existing project doc
-        // gives us isNew + the prev status for the latch; user doc gives us
-        // the canonical plan.
+        // gives us isNew + the prev status for the latch; the OWNER's user doc
+        // gives us the canonical plan — a team member's own doc carries
+        // plan 'none' and would quota-check them against the free tier.
         const existingSnap = await txn.get(projectRef);
-        const userSnap = await txn.get(userRef);
+        const ownerSnap = await txn.get(ownerRef);
 
         const isNew = !existingSnap.exists;
         const prevStatus = (existingSnap.data() as { status?: "draft" | "rendered" | "published" } | undefined)?.status;
 
         // Resolve canonically: prefer billingState.plan; fall back to legacy
-        // users.{uid}.plan; map "creator"→"pro" / "scaling"→"scale" (matches
+        // users.{ownerUid}.plan; map "creator"→"pro" / "scaling"→"scale" (matches
         // billingState.ts:84-90); narrow to one of "none"|"starter"|"pro"|"scale".
-        const userData = userSnap.data() ?? {};
-        let rawPlan: string = userData.billingState?.plan ?? userData.plan ?? "none";
+        // Read inside the transaction so a concurrent downgrade cannot slip
+        // between the plan read and the write.
+        const ownerData = ownerSnap.data() ?? {};
+        let rawPlan: string = ownerData.billingState?.plan ?? ownerData.plan ?? "none";
         if (rawPlan === "creator") rawPlan = "pro";
         else if (rawPlan === "scaling") rawPlan = "scale";
         const plan: "none" | "starter" | "pro" | "scale" =
             rawPlan === "starter" || rawPlan === "pro" || rawPlan === "scale" ? rawPlan : "none";
 
-        const quota = await enforceProjectQuota(txn, uid, plan, isNew, saveSource);
+        // Quota is the ACCOUNT's allowance, counted over the owner's project
+        // collection — a team member consumes the owner's allowance (spec Key
+        // Entities), and counting the member's own empty collection would let
+        // every member save without limit.
+        const quota = await enforceProjectQuota(txn, ownerUid, plan, isNew, saveSource);
 
         // Server-side latch is authoritative — never trust the client-supplied
         // project.status (it may be stale and would otherwise allow demotion).
@@ -6963,7 +7098,11 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
             ...project,
             id: project.id,
             status: newStatus,
-            userId: uid,
+            // The owning ACCOUNT, matching the collection this doc lives in.
+            // The client already sets this to the effective (owner) uid; the
+            // server previously overwrote it with the caller's uid, so a team
+            // member's project claimed the wrong owner.
+            userId: ownerUid,
             updatedAt: Date.now(),
         };
         if (cleanProject.batchResults && cleanProject.batchResults.length > 0) {
@@ -7032,8 +7171,12 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
         // in logs instead of surfacing as an opaque write rejection.
         const docBytes = Buffer.byteLength(JSON.stringify(persistedProject), "utf8");
         if (docBytes > 900_000) {
+            // Round-18 (CodeRabbit re-review): prefix the message with
+            // ⚠️ to satisfy the repository-wide convention (other
+            // console.warn calls in this file use the same leading emoji)
+            // and to make the message filterable as a class.
             console.warn(
-                `saveProject: persisted doc for uid=${uid} project=${project.id} is ${docBytes} bytes ` +
+                `⚠️ saveProject: persisted doc for owner=${ownerUid} caller=${uid} project=${project.id} is ${docBytes} bytes ` +
                 `after stripping — approaching Firestore's 1 MiB limit.`,
             );
         }
@@ -7042,8 +7185,11 @@ export const saveProject = onCall({ region: "europe-west1" }, async (request: Ca
         // project count stays within the limit without ever blocking the save. Guard against
         // evicting the project currently being written.
         if (quota.evictId && quota.evictId !== project.id) {
-            txn.delete(admin.firestore().doc(`users/${uid}/projects/${quota.evictId}`));
-            console.info(`phase13 ▸ quota-evict uid=${uid} evicted=${quota.evictId} for=${project.id}`);
+            // Evict from the OWNER's collection — the same one the quota was
+            // counted over. Deleting under the caller's uid would delete
+            // nothing for a team member while still reporting an eviction.
+            txn.delete(admin.firestore().doc(`users/${ownerUid}/projects/${quota.evictId}`));
+            console.info(`phase13 ▸ quota-evict owner=${ownerUid} caller=${uid} evicted=${quota.evictId} for=${project.id}`);
         }
 
         txn.set(projectRef, persistedProject, { merge: true });

@@ -1106,6 +1106,10 @@ interface MenuSidebarProps {
   onNewProject: () => void;
   onSavedRenders: () => void;
   onSettings: () => void;
+  // ISSUE-C: the Phase 26 sidebar rewrite dropped the Team trigger.
+  // The Team modal + backend callables are still wired — this only
+  // restores the sidebar surface.
+  onTeam: () => void;
   onToggleTheme: () => void;
   onToggleLanguage: () => void;
   onStartTutorial: () => void;
@@ -1140,6 +1144,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
   onNewProject,
   onSavedRenders,
   onSettings,
+  onTeam,
   onToggleTheme,
   onToggleLanguage,
   onStartTutorial,
@@ -1201,6 +1206,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
               onNewProject={onNewProject}
               onSavedRenders={onSavedRenders}
               onSettings={onSettings}
+              onTeam={onTeam}
               onToggleTheme={onToggleTheme}
               onToggleLanguage={onToggleLanguage}
               onStartTutorial={onStartTutorial}
@@ -1355,6 +1361,9 @@ interface MenuItemsProps {
   onNewProject: () => void;
   onSavedRenders: () => void;
   onSettings: () => void;
+  // ISSUE-C: the Team management surface (invite / role / remove). Phase 26
+  // dropped the trigger; the modal and backend are still in place.
+  onTeam: () => void;
   onToggleTheme: () => void;
   onToggleLanguage: () => void;
   onStartTutorial: () => void;
@@ -1402,6 +1411,12 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
     { key: 'new', el: <MenuItem key="new" icon="fa-plus" label={t('history.newProject')} onClick={props.onNewProject} /> },
     { key: 'bookmarks', el: <MenuItem key="bookmarks" icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={props.onSavedRenders} /> },
     { key: 'settings', el: <MenuItem key="settings" icon="fa-gear" label={t('topbar.menu_settings')} onClick={props.onSettings} /> },
+    // ISSUE-C: Team management entry. Placed after Settings and before the
+    // Meta connection block so the account/team context sits with the other
+    // workspace-control surfaces. Both the desktop sidebar and the mobile
+    // overlay render the shared MenuItems list — adding the entry here
+    // exposes it everywhere.
+    { key: 'team', el: <MenuItem key="team" icon="fa-users" label={t('topbar.menu_team')} onClick={props.onTeam} /> },
     // Phase 14 batch 01 — UI wiring. Meta connection entry. The label flips
     // between "Connect Meta Ads" (no connection) and "Meta Ads Connected"
     // (already connected) per the spec. The handler also closes the menu
@@ -1667,6 +1682,16 @@ const App: React.FC = () => {
   const [cancelledAt, setCancelledAt] = useState<string | null>(null);
   const [milestones, setMilestones] = useState<Milestones>(EMPTY_MILESTONES);
   const [showVideoPopup, setShowVideoPopup] = useState(false);
+  // ISSUE-D T003 (moved up from the late state block): the team-resolution
+  // flag is read by the real-time credit/plan listener and the avatars
+  // effect — both of which now live above the state-declaration block and
+  // need these declared first. Members toggle removedFromTeam on removal
+  // (T026); non-team users stay false.
+  const [teamOwnerUid, setTeamOwnerUid] = useState<string | null>(null);
+  const [teamRole, setTeamRole] = useState<string | null>(null);
+  const [removedFromTeam, setRemovedFromTeam] = useState(false);
+  const [teamResolution, setTeamResolution] = useState<'pending' | 'resolved'>('pending');
+  const [workspaceLoadError, setWorkspaceLoadError] = useState(false);
 
   // 1. Check for topup return
   useEffect(() => {
@@ -1753,6 +1778,8 @@ const App: React.FC = () => {
               setIsTrialUser(false);
               setBillingStatus('cancelled');
             }
+            // ISSUE-D T003: account link resolved for a team member.
+            setTeamResolution('resolved');
           } else {
             setUserCredits(userData.credits ?? 0);
             const effectivePlan = (userData.plan ?? 'none');
@@ -1760,6 +1787,9 @@ const App: React.FC = () => {
             setIsTrialUser(userData.isTrial === true);
             setStripeCustomerId(userData.stripeCustomerId ?? null);
             setBillingStatus(userData.billingStatus || 'active');
+            // ISSUE-D T003: account link resolved for a non-team user —
+            // must also be 'resolved' or the write gate would hang forever.
+            setTeamResolution('resolved');
           }
           // Check if account was cancelled
           const cAt = userSnap.data().cancelledAt;
@@ -1827,9 +1857,13 @@ const App: React.FC = () => {
               setUserPlan(initialPlan);
               setIsTrialUser(pendingIsTrial);
               if (pending.stripeCustomerId) setStripeCustomerId(pending.stripeCustomerId);
-              setOnboardingComplete(false);
-              // Welcome toast fires automatically via the createdAt-within-60s effect (FR-024b)
-            }
+                setOnboardingComplete(false);
+                // Welcome toast fires automatically via the createdAt-within-60s effect (FR-024b)
+                // ISSUE-D T003: account link resolved for a freshly-onboarded
+                // paid user (pending_plans → user doc). Without this the
+                // workspace write-gate would block the first session.
+                setTeamResolution('resolved');
+              }
           }
 
           if (!hasPendingPlan) {
@@ -1856,17 +1890,39 @@ const App: React.FC = () => {
                 setTeamRole(membership.role || 'viewer');
                 const ownerRef = doc(db, 'users', membership.ownerUid);
                 const ownerSnap = await getDoc(ownerRef);
+                // Round-12 (CodeRabbit re-review): always resolve the
+                // gate when the membership claim lands, even if the
+                // owner's user doc is missing or unreadable. The
+                // previous gating sat inside `if (ownerSnap.exists())`,
+                // so a missing owner doc stranded the member in
+                // 'pending' forever — no workspace subscription, no
+                // write-gate release, and no path to recovery short of
+                // a manual reload. Mirror the existing-user path:
+                // fall back to zero credits / 'none' plan when the
+                // owner doc is absent, and resolve the gate regardless.
                 if (ownerSnap.exists()) {
                   const owData = ownerSnap.data();
-                  setUser(currentUser);
                   setUserCredits(owData.credits ?? 0);
                   const effPlan = (owData.plan ?? 'none');
                   setUserPlan(effPlan as UserPlan);
                   setIsTrialUser(owData.isTrial === true);
                   setStripeCustomerId(owData.stripeCustomerId ?? null);
                   setBillingStatus(owData.billingStatus || 'active');
-                  setOnboardingComplete(false);
+                } else {
+                  setUserCredits(0);
+                  setUserPlan('none');
+                  setIsTrialUser(false);
+                  setStripeCustomerId(null);
+                  setBillingStatus('cancelled');
                 }
+                setOnboardingComplete(false);
+                setUser(currentUser);
+                // ISSUE-D T003: account link resolved for a newly-claimed
+                // team member — they are now the right user to show the
+                // owner's workspaces for. Resolved unconditionally so the
+                // write-gate (workspaceReady) advances regardless of owner
+                // doc availability.
+                setTeamResolution('resolved');
               }
             }
 
@@ -1888,6 +1944,10 @@ const App: React.FC = () => {
               setBillingStatus('active');
               setOnboardingComplete(false);
               setShowMandatoryBilling(true);
+              // ISSUE-D T003: a brand-new free user has no membership and
+              // no owner — but the write-gate still needs 'resolved' so
+              // mandatory-billing-only flows are not blocked.
+              setTeamResolution('resolved');
             }
           }
         }
@@ -1897,6 +1957,14 @@ const App: React.FC = () => {
         setUserPlan('none');
         setOnboardingComplete(null);
         setShowMandatoryBilling(false);
+        // ISSUE-D T003: reset on sign-out so the next sign-in's membership
+        // resolution re-runs from 'pending'. A non-empty teamOwnerUid / role
+        // would also leave the next session displaying the prior member's
+        // workspaces while the new account link is still resolving.
+        setTeamResolution('pending');
+        setTeamOwnerUid(null);
+        setTeamRole(null);
+        setWorkspaceLoadError(false);
         // Allow the project auto-restore to run again for the next sign-in.
         hasRestoredRef.current = false;
       }
@@ -1927,6 +1995,15 @@ const App: React.FC = () => {
         const data = snap.data();
         if (data.isTeamMember && data.teamOwnerUid) {
           wasTeamMemberRef.current = true;
+          // Round-14 (CodeRabbit re-review): refresh teamOwnerUid and
+          // teamRole from the current snapshot. The previous code never
+          // updated these after the initial auth-handler resolve, so a
+          // live re-pointing (membership moved to a different owner
+          // while the session is open) kept effectiveUid reading the
+          // previous owner's subtree until a manual reload. Sync the
+          // state every snapshot.
+          setTeamOwnerUid(data.teamOwnerUid);
+          setTeamRole(data.teamRole || 'viewer');
           // Team member: listen to owner doc for credits/plan/billing
           const ownerRef = doc(db, 'users', data.teamOwnerUid);
           getDoc(ownerRef).then(ownerSnap => {
@@ -1940,11 +2017,29 @@ const App: React.FC = () => {
               setBillingStatus('cancelled');
             }
           }).catch(() => { /* non-blocking */ });
+          // ISSUE-D T003: the live user-doc listener confirms team
+          // membership on every subsequent sign-in. Without this the
+          // initial resolve in the auth handler is the only signal and
+          // a team-membership flip (rare but live) would not flip the
+          // write gate.
+          setTeamResolution('resolved');
           return;
         }
         if (wasTeamMemberRef.current && !data.isTeamMember) {
           setRemovedFromTeam(true);
           wasTeamMemberRef.current = false;
+          // ISSUE-D T026: clear the workspace list and tear down the
+          // listener — FR-016 mandates the member's view close at once
+          // and no further updates reach them. Clearing teamOwnerUid
+          // immediately (not via the modal's Continue button) means
+          // effectiveUid reverts to user.uid on the next render, the
+          // workspace effect detaches, and the new-member-flow is
+          // ready without a stale owner pointer leaking into renders.
+          setTeamOwnerUid(null);
+          setTeamRole(null);
+          setWorkspacesLocal([]);
+          setActiveWorkspaceIdLocal(null);
+          setWorkspaceLoadError(false);
         }
         setUserCredits(data.credits ?? 0);
         const effectivePlan = ((data.plan ?? 'none') as UserPlan);
@@ -1952,16 +2047,25 @@ const App: React.FC = () => {
         setIsTrialUser(data.isTrial === true);
         setStripeCustomerId(data.stripeCustomerId ?? null);
         setBillingStatus(data.billingStatus || 'active');
+        // ISSUE-D T003: non-team path on the live listener — also
+        // resolves the gate.
+        setTeamResolution('resolved');
       }
     });
     return () => unsubSnap();
   }, [user]);
 
   // ─── AUDIENCE AVATARS ──────────────────────────────────────────────────
-  // Fetch avatars from Firestore (uses effectiveUidRef so team members see owner's avatars)
+  // Fetch avatars from Firestore (uses effectiveUidRef so team members see
+  // owner's avatars). The dep array previously listed `effectiveUidRef.current`
+  // (a ref read) which is the same latent bug as the workspace effect had:
+  // a ref mutation does not schedule a render so the effect never re-ran
+  // when teamOwnerUid resolved. The state-based deps (effectiveUid via the
+  // ref's host, teamResolution) below are the ones that gate the re-run;
+  // the ref is the synchronous read inside the body (D2, T004).
   useEffect(() => {
     const uid = effectiveUidRef.current;
-    if (!user || !uid) { setAvatars([]); return; }
+    if (!user || !uid || teamResolution !== 'resolved') { setAvatars([]); return; }
     const fetchAvatars = async () => {
       try {
         const avatarsRef = collection(db, 'users', uid, 'avatars');
@@ -1974,11 +2078,21 @@ const App: React.FC = () => {
       }
     };
     fetchAvatars();
-  }, [user, effectiveUidRef.current]);
+  }, [user, teamOwnerUid, teamResolution]);
 
   const handleSaveAvatar = async (avatar: Omit<AudienceAvatar, 'id' | 'createdAt'>) => {
     const uid = effectiveUidRef.current;
     if (!user || !uid) return;
+    // ISSUE-D T016: hold back the avatar save while the write-gate is
+    // closed. The same gate that protects the workspace write path also
+    // protects the audience-profile path — a team member's save during
+    // the resolution window would otherwise land in the member's own
+    // account (same wrong-account shape as the image-fingerprint write
+    // T017 fixed).
+    if (!workspaceReady) {
+      showToast(t('workspace.write_gate.loading'), 'info');
+      return;
+    }
     // Enforce plan limit (allow overwrites but block new saves)
     const maxAvatars = getAudienceAvatarLimit(userPlan);
     if (avatars.length >= maxAvatars) {
@@ -2210,11 +2324,16 @@ const App: React.FC = () => {
   const [isTrialUser, setIsTrialUser] = useState(false);
   const [hasVaultData, setHasVaultData] = useState(false);
   const [billingStatus, setBillingStatus] = useState<'trialing' | 'active' | 'past_due' | 'cancelling' | 'cancelled' | 'none'>('active');
-  const [teamOwnerUid, setTeamOwnerUid] = useState<string | null>(null);
-  const [teamRole, setTeamRole] = useState<string | null>(null);
-  const [removedFromTeam, setRemovedFromTeam] = useState(false);
+  // NOTE: teamOwnerUid, teamRole, removedFromTeam, teamResolution, and
+  // workspaceLoadError are declared earlier (just below the auth-related
+  // state) so the real-time credit/plan listener and the avatars effect
+  // can read them at the right phase. Duplicate declarations removed.
   const isTeamViewer = teamRole === 'viewer';
-  // For team members, use the owner's UID for all avatar/project Firestore operations
+  // ISSUE-D (T004): the workspace + avatar effects now depend on the state
+  // value `effectiveUid` below (not the ref) so they re-run when the async
+  // membership resolution completes. The ref is kept only as a synchronous
+  // read helper for imperative paths (handleSaveAvatar, the wrong-account
+  // write fixed at T017, etc.) — those do not need to re-render.
   const effectiveUid = teamOwnerUid || user?.uid || null;
   effectiveUidRef.current = effectiveUid;
   const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
@@ -2362,49 +2481,270 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   const [activeWorkspaceId, setActiveWorkspaceIdLocal] = useState<string | null>(null);
   const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
   const [editingWorkspace, setEditingWorkspace] = useState<Workspace | null>(null);
+  // ISSUE-D T027: the live snapshot can report the active workspace gone
+  // (owner deleted it). When there is in-progress work we defer to a
+  // one-shot effect that surfaces the switch-guard dialog with the
+  // account's default as the target. The dialog itself lives inside
+  // WorkspaceSwitcher; this state carries the cause.
+  const [pendingWorkspaceSwitch, setPendingWorkspaceSwitch] = useState<{ fromId: string; toId: string } | null>(null);
   const canUseWorkspaces = canUse(userPlan, 'multiBrandWorkspaces');
+  // ISSUE-D T005: derived write-gate. The launch surface holds back every
+  // workspace write (Generate, save project, save audience profile) until
+  // both the account link has resolved AND a workspace is selected for
+  // plans that have workspaces. FR-007a.
+  const workspaceReady = teamResolution === 'resolved' && (!canUseWorkspaces || activeWorkspaceId != null);
+  // ISSUE-D T027: refs the live snapshot callback reads synchronously
+  // (active workspace id + in-progress work). Declared at the top of the
+  // component so they are stable across renders, and updated by an effect
+  // that watches every work flag. Keeping these reads inside the
+  // snapshot callback (rather than as effect deps) is what stops the
+  // `onSnapshot` listener from tearing down + re-subscribing on every
+  // manual workspace switch — the listener only rebuilds when its
+  // query or gating inputs change.
+  const activeWorkspaceIdRef = React.useRef<string | null>(null);
+  activeWorkspaceIdRef.current = activeWorkspaceId;
+  // Round-10 (CodeRabbit re-review): single source of truth for the
+  // "is the user in the middle of something we must not lose" predicate.
+  // The previous code duplicated the same six-term expression inline
+  // here AND in the WorkspaceSwitcher hasInProgressWork prop below; the
+  // two paths could drift when a new work flag was added. The actual
+  // useMemo lives after the variable declarations below (the flags it
+  // reads are declared further down in the component). Here we only
+  // keep the ref-sync effect (no deps; the closure evaluates the
+  // current values after every render) and let the useMemo below be
+  // the single source of truth.
+  const hasInProgressWorkRef = React.useRef(false);
+  React.useEffect(() => {
+    hasInProgressWorkRef.current = hasInProgressWork;
+  });
+
+  // Round-2 #13: a dedicated retry trigger so the workspace-load effect
+  // can be recreated by the WorkspaceSwitcher's `onRetryLoad` button after
+  // a hard error (FR-019). Bumping the trigger causes the effect to
+  // detach its current onSnapshot and re-subscribe.
+  const [workspaceLoadRetryTrigger, setWorkspaceLoadRetryTrigger] = useState(0);
+  // Round-2 #14: in-flight ref guard for the default-workspace bootstrap.
+  // Without it, two concurrent snapshot callbacks (e.g. when the retry
+  // trigger fires while the first bootstrap is still in flight) can each
+  // issue their own `createWorkspace` callable, producing a duplicate
+  // workspace before the first one resolves. Set before the call,
+  // cleared on both success and failure.
+  const bootstrapInFlightRef = React.useRef(false);
 
   useEffect(() => {
-    const uid = effectiveUidRef.current;
-    if (!user || !uid || !canUseWorkspaces) { setWorkspacesLocal([]); return; }
-    const fetchWorkspaces = async () => {
-      try {
-        const wsRef = collection(db, 'users', uid, 'workspaces');
-        const q = query(wsRef, orderBy('createdAt', 'desc'));
-        const snap = await getDocs(q);
+    // ISSUE-D T004 / T025: depend on the state value `effectiveUid` (not
+    // the ref) so the effect re-runs when the async teamOwnerUid
+    // resolution completes. The `teamResolution` dep makes the effect
+    // idle while membership is still being decided — without it the
+    // first run fires against the member's own uid and never corrects
+    // itself (the original defect). The effect also installs a live
+    // `onSnapshot` listener and returns the unsubscribe so it tears
+    // down whenever `effectiveUid` or `teamResolution` changes — that
+    // is the FR-016 / US3 closure. `activeWorkspaceId` is intentionally
+    // NOT in the dep array: the listener persists across manual
+    // workspace switches; the snapshot callback reads the current id
+    // through `activeWorkspaceIdRef` so the active-workspace-removal
+    // handling still sees the latest value. `workspaceLoadRetryTrigger`
+    // is included so the retry button can re-run the effect on demand.
+    const uid = effectiveUid;
+    if (!user || !uid || !canUseWorkspaces || teamResolution !== 'resolved') {
+      return;
+    }
+    // Round-16 (CodeRabbit re-review): do NOT setWorkspaceLoadError(false)
+    // here. The synchronous set-state in the effect body triggered
+    // `react-hooks/set-state-in-effect` (an extra render pass on every
+    // re-subscribe) and was redundant: the retry handler at line 7723
+    // already clears the flag before bumping workspaceLoadRetryTrigger,
+    // and a successful re-subscribe is itself the recovery path —
+    // the error flag is only meaningful when the snapshot's error
+    // callback fires. Move the clear into the snapshot's success
+    // callback below, guarded so it runs only when the flag is
+    // currently true.
+    const wsRef = collection(db, 'users', uid, 'workspaces');
+    // Round-13 (operator bug): include where('deletedAt', '==', null) in
+    // the Firestore query. The previous post-fetch `.filter(ws => ws.deletedAt
+    // == null)` did the right thing for the owner (Firestore rules allow
+    // the owner to read every doc and the filter drops the soft-deleted
+    // ones client-side) but for a team member the security rules require
+    // the deletedAt predicate to be PART of the query — a query without it
+    // hits a rule that checks `resource.data.deletedAt == null` on each
+    // candidate doc, but the query itself can be rejected when the
+    // security rule's `match` filter does not include the same predicate
+    // the requesting user is constrained by. The earlier code worked
+    // because the post-fetch filter applied after the snapshot returned;
+    // the team-member rules in firestore.rules:43-48 require the query
+    // to carry the predicate explicitly. Apply for ALL users (not just
+    // team members) so the same query shape works for both: the rule
+    // doesn't penalize the owner, and the predicate correctly excludes
+    // soft-deleted workspaces from the list either way.
+    const wsQuery = query(
+      wsRef,
+      where('deletedAt', '==', null),
+      orderBy('createdAt', 'desc')
+    );
+    const unsubscribe = onSnapshot(
+      wsQuery,
+      (snap) => {
+        // Round-16 (CodeRabbit re-review): the recovery clear for
+        // workspaceLoadError. The synchronous set-state in the effect
+        // body was removed; instead we clear the flag here on the first
+        // successful snapshot after a prior failure, guarded so it
+        // only fires when the flag is currently true (avoids the
+        // cascading-render noise the effect-body version caused).
+        setWorkspaceLoadError(prev => (prev ? false : prev));
         const wsList = snap.docs.map(d => ({ id: d.id, ...d.data() } as Workspace))
           .filter(ws => ws.deletedAt == null);
-        if (wsList.length === 0) {
+        // ISSUE-D T027: when the live snapshot reports the active
+        // workspace gone, move the member to the account's default
+        // workspace and ALWAYS tell them plainly that it happened.
+        // When there is unsaved work in progress we additionally raise
+        // the save/discard guard (AS-3.3, FR-017).
+        //
+        // Audit F1: the notice used to live only in the no-work branch,
+        // so the member who most needed telling — the one with unsaved
+        // work — was moved silently. The toast now fires on every path;
+        // the guard is an addition to it, not an alternative.
+        const currentActive = activeWorkspaceIdRef.current;
+        if (currentActive && !wsList.find(w => w.id === currentActive)) {
+          const def = wsList.find(w => w.isDefault) || wsList[0];
+          const defId = def?.id ?? null;
+          if (defId) {
+            if (hasInProgressWorkRef.current) {
+              // The move is DEFERRED to the guard dialog here, and Cancel
+              // leaves the member on the source workspace — so the
+              // "you have been moved to {name}" wording would be a lie the
+              // moment they cancel. Use the neutral "no longer available"
+              // notice, which stays true on every branch. The moved-to
+              // message belongs to the path that actually moves.
+              showToast(t('workspace.removed_notice_no_target'), 'info');
+              // CodeRabbit round 4 (Critical): do NOT advance
+              // `activeWorkspaceId` yet. The auto-save effect derives
+              // `resolvedWorkspaceId` from it and lists it as a dependency
+              // (see the effect below), so switching here would re-queue the
+              // in-flight project tagged with the FALLBACK workspace — the
+              // member's work would be saved under a workspace they never
+              // worked in. Holding on the source workspace keeps the queued
+              // snapshot correctly attributed; the guard performs the switch
+              // once the member has chosen, after the flush has completed.
+              setPendingWorkspaceSwitch({ fromId: currentActive, toId: defId });
+            } else {
+              // Nothing in flight — nothing to attribute. Move immediately,
+              // and only here is "you have been moved to {name}" actually true.
+              setActiveWorkspaceIdLocal(defId);
+              showToast(t('workspace.removed_notice').replace('{name}', def.name), 'info');
+            }
+          } else if (hasInProgressWorkRef.current) {
+            // Round-7 (CodeRabbit re-review): no fallback workspace AND
+            // unsaved work. Clearing `activeWorkspaceId` to null here would
+            // let the auto-save effect drop the queued snapshot's workspaceId
+            // (it derives resolvedWorkspaceId from activeWorkspaceId) and
+            // either lose the work or write it without a workspaceId. Keep
+            // `activeWorkspaceId` pointed at the source — the snapshot has
+            // confirmed the source is gone, so this is a "no-workspace"
+            // state from the caller's perspective, but the in-flight project
+            // is still attributed to the source's last known id and the
+            // toast has already told the user. The user can save or copy the
+            // work deliberately; we do not silently discard it.
+            // Round-11 (CodeRabbit re-review): use the dedicated no-target
+            // i18n key (Arabic-first) instead of substituting '—' into the
+            // destination-specific message — the previous copy would read
+            // "You have been moved to —." which is misleading.
+            showToast(t('workspace.removed_notice_no_target'), 'info');
+          } else {
+            // No fallback and no in-flight work — safe to clear.
+            setActiveWorkspaceIdLocal(null);
+            // Round-11 (CodeRabbit re-review): use the dedicated
+            // no-target i18n key (Arabic-first) instead of substituting
+            // '—' into the destination-specific message.
+            showToast(t('workspace.removed_notice_no_target'), 'info');
+          }
+        }
+        setWorkspacesLocal(wsList);
+        // ISSUE-D T012: do NOT auto-create a workspace on a team member's
+        // behalf when the list is empty. The owner's own bootstrap path
+        // remains intact — owners reach this branch with the same `[]`
+        // and the createWorkspace call still runs through the server,
+        // which now refuses team members (T019). The team member's empty
+        // state is the U3 message (T014) and never produces a write.
+        if (wsList.length === 0 && !teamOwnerUid && !bootstrapInFlightRef.current) {
+          bootstrapInFlightRef.current = true;
           const defaultWs: Omit<Workspace, 'id'> = {
             name: 'Default Workspace', brandName: user?.displayName || 'My Brand',
             createdAt: Date.now(), isDefault: true,
           };
           // FR-124: route the default-workspace bootstrap through the createWorkspace callable
           // (server-side plan/cap enforcement) instead of a direct client-side addDoc.
-          const { workspaceService } = await import('./services/workspaceService');
-          const result = await workspaceService.createWorkspace({ name: defaultWs.name, brandName: defaultWs.brandName });
-          const workspaceId = (result.data as any)?.workspaceId;
-          if (workspaceId) {
-            const created = { id: workspaceId, ...defaultWs } as Workspace;
-            setWorkspacesLocal([created]);
-            setActiveWorkspaceIdLocal(created.id);
-          }
-        } else {
-          setWorkspacesLocal(wsList);
-          if (!activeWorkspaceId) {
-            const def = wsList.find(w => w.isDefault) || wsList[0];
-            setActiveWorkspaceIdLocal(def.id);
-          }
+          // The callable's return type is `{ workspaceId: string }` — see
+          // src/services/workspaceService.ts — so no `any` cast is needed.
+          import('./services/workspaceService').then(({ workspaceService }) => {
+            workspaceService.createWorkspace({ name: defaultWs.name, brandName: defaultWs.brandName })
+              .then((result: { data: { workspaceId: string } }) => {
+                const workspaceId = result.data?.workspaceId;
+                if (workspaceId) {
+                  const created = { id: workspaceId, ...defaultWs } as Workspace;
+                  setWorkspacesLocal([created]);
+                  setActiveWorkspaceIdLocal(created.id);
+                }
+              })
+              .catch(err => {
+                // The bootstrap is non-critical; the U3 message will be
+                // shown by the switcher. Log for diagnosis.
+                console.warn('default workspace bootstrap failed:', err);
+              })
+              .finally(() => {
+                bootstrapInFlightRef.current = false;
+              });
+          });
+        } else if (wsList.length > 0 && !activeWorkspaceIdRef.current) {
+          // Round-2 #4: read through the ref, not the stale closure
+          // variable. `activeWorkspaceId` is intentionally excluded
+          // from the dep array, so a plain read would always see the
+          // initial value and silently revert every manual workspace
+          // switch back to the default on any subsequent workspaces
+          // collection write (brand-color edit, Meta link, etc.).
+          const def = wsList.find(w => w.isDefault) || wsList[0];
+          if (def) setActiveWorkspaceIdLocal(def.id);
         }
-      } catch (e: any) {
-        console.error('Failed to load workspaces:', e);
-        showToast('Failed to load workspaces — check console', 'error');
+      },
+      (err) => {
+        console.error('Failed to load workspaces:', err);
+        setWorkspaceLoadError(true);
+        // Round-2 #5: route the user-visible error through `useT()` and
+        // reuse the existing FR-019 load-failed key so the message is
+        // Arabic-first and respects the selected language / RTL.
+        showToast(t('workspace.error.load_failed'), 'error');
       }
-    };
-    fetchWorkspaces();
-  }, [user, effectiveUidRef.current, canUseWorkspaces]);
+    );
+    return unsubscribe;
+  // Round-6 #6: `t` is included in the deps so a language change recreates
+  // the listener and the toasts (workspace.removed_notice, workspace.error.load_failed)
+  // use the current translation rather than the one captured at subscribe time.
+  }, [user, effectiveUid, teamResolution, canUseWorkspaces, teamOwnerUid, workspaceLoadRetryTrigger, t, showToast]);
 
-  const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) => {
+  // Round-8 (CodeRabbit re-review): extract a single isTeamMemberRefusal(e) helper.
+// The previous inline triple in each handler matched any error message
+// containing "permission" (e.g. Firestore "Missing or insufficient
+// permissions", quota errors that mention permissions) and would
+// misclassify unrelated failures as the team-member refusal. The
+// `code` and `details.reason === 'team_member'` are the reliable
+// signals from assertNotTeamMember in workspacePolicy.ts.
+const isTeamMemberRefusal = (e: unknown): boolean => {
+  if (typeof e !== 'object' || e === null) return false;
+  const err = e as { code?: string; details?: unknown; message?: string };
+  if (err.code === 'functions/permission-denied') {
+    if (err.details && typeof err.details === 'object') {
+      const reason = (err.details as { reason?: string }).reason;
+      if (reason === 'team_member') return true;
+    }
+  }
+  // Narrow legacy fallback: only the exact server phrase, not a broad regex.
+  if (typeof err.message === 'string' && err.message.includes('Only the account owner can add, change, or remove workspaces.')) {
+    return true;
+  }
+  return false;
+};
+
+const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) => {
     const uid = effectiveUidRef.current;
     if (!uid) return;
     try {
@@ -2420,7 +2760,12 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       setEditingWorkspace(null);
       showToast(`Workspace "${data.name}" created`, 'success');
     } catch (e: any) {
-      showToast(`Failed to create workspace: ${e?.message}`, 'error');
+      // Round-6 #2 + Round-8 + Round-10: use the shared helper so the refusal
+      // copy is only shown for actual team-member refusals. The non-refusal
+      // fallback now uses the existing translated `workspace.settings.save_failed`
+      // key (Arabic-first, respects current language / RTL) rather than
+      // interpolating the raw `e?.message` which leaks English SDK text.
+      showToast(isTeamMemberRefusal(e) ? t('workspace.refused.owner_only') : t('workspace.settings.save_failed'), 'error');
     }
   };
 
@@ -2435,7 +2780,7 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       setEditingWorkspace(null);
       showToast(`Workspace "${data.name}" updated`, 'success');
     } catch (e: any) {
-      showToast(`Failed to update workspace: ${e?.message}`, 'error');
+      showToast(isTeamMemberRefusal(e) ? t('workspace.refused.owner_only') : t('workspace.settings.save_failed'), 'error');
     }
   };
 
@@ -2455,7 +2800,7 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
       setEditingWorkspace(null);
       showToast('Workspace deleted', 'success');
     } catch (e: any) {
-      showToast(`Failed to delete workspace: ${e?.message}`, 'error');
+      showToast(isTeamMemberRefusal(e) ? t('workspace.refused.owner_only') : t('workspace.settings.delete_failed'), 'error');
     }
   };
 
@@ -2913,6 +3258,33 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   const [carouselSlides, setCarouselSlides] = useState<CarouselSlide[]>([]);
   const [carouselCopies, setCarouselCopies] = useState<CarouselSlideCopy[]>([]);
   const [showCarouselPreview, setShowCarouselPreview] = useState(false);
+  // Round-10 (CodeRabbit re-review): single source of truth for the
+  // in-progress-work predicate. Lives here (after every flag is
+  // declared) so the closure can read the live values; the ref-sync
+  // effect above mirrors the same value into hasInProgressWorkRef
+  // for the snapshot callback. The previous code duplicated the same
+  // six-term expression inline here AND in the WorkspaceSwitcher
+  // hasInProgressWork prop; both paths now read the same memoized
+  // value so they cannot drift when a new work flag is added.
+  const hasInProgressWork = React.useMemo(
+    () =>
+      isLoading ||
+      !!tovText ||
+      !!conceptsText ||
+      !!buildPlan ||
+      mockupHistory.length > 0 ||
+      carouselSlides.length > 0 ||
+      batchResults.length > 0,
+    [
+      isLoading,
+      tovText,
+      conceptsText,
+      buildPlan,
+      mockupHistory.length,
+      carouselSlides.length,
+      batchResults.length,
+    ]
+  );
   // One-level undo for carousel resize: snapshot of the slides (and their ratio) taken right
   // before a carousel_all reflow. Lets the user restore the pre-resize version.
   const [previousCarouselSlides, setPreviousCarouselSlides] = useState<CarouselSlide[] | null>(null);
@@ -3757,9 +4129,36 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   // the auto-save state machine — the 3-strike banner is for transport failures
   // (offline, auth expired), not for product-level rejections that the user has
   // already been told about.
+  // ISSUE-D T016: the write-gate is a state value, but the project save
+  // is captured by useProjectAutoSave through a ref (hooks/useProjectAutoSave.ts).
+  // A closure capture would lock to the first-render value. Mirror the
+  // value into a ref so the gate is read live on every fire.
+  const workspaceReadyRef = React.useRef(workspaceReady);
+  workspaceReadyRef.current = workspaceReady;
+
   const saveCurrentProject = useCallback(async (project: SavedProject) => {
     const uid = effectiveUidRef.current;
     if (!uid) return;
+    // ISSUE-D T016: hold back the project save while the write-gate is
+    // closed. The auto-save queue (3 s debounce) only fires after the
+    // user has reached a usable workspace, so a project save during the
+    // resolution window is not on the live path — but a manual save
+    // from outside the gate is, and the gate defends both. SC-012.
+    if (!workspaceReadyRef.current) {
+      // The old code returned here BEFORE `saveProjectToDB`, so the comment's
+      // promise that "the project is left in local IndexedDB" was false —
+      // nothing was written anywhere. Worse, returning normally let
+      // `projectAutoSave.doSave` record a successful save: the indicator read
+      // "Saved" and `forceFlush()` resolved `{ ok: true }`, so the workspace
+      // switch-guard's "Save & Switch" would proceed on work that had never
+      // been persisted.
+      //
+      // Write the durable local copy first so the promise is real, then reject
+      // so the auto-save state machine retries rather than reporting success.
+      await saveProjectToDB(project);
+      showToast(t('workspace.write_gate.loading'), 'info');
+      throw new Error('workspace write gate closed — save deferred until the workspace is ready');
+    }
 
     await saveProjectToDB(project);
 
@@ -3818,7 +4217,7 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
           console.warn("phase13 ▸ thumbnail upload failed (non-blocking):", err);
         });
     }
-  }, []);
+  }, [t, showToast]);
 
   const { saveStatus: autoSaveState, queue: autoSaveQueue, retryNow: autoSaveRetry } =
     useProjectAutoSave(saveCurrentProject);
@@ -5197,6 +5596,14 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
 
   const handleApproveTov = async (variationText: string) => {
     if (!inputs) return;
+    // ISSUE-D T016: hold back the generate path while the account link
+    // is still resolving (or no workspace is selected on a workspaces
+    // plan). SC-012 requires 0 generated ads written into a wrong
+    // workspace; the write-gate is the single point that defends it.
+    if (!workspaceReady) {
+      showToast(t('workspace.write_gate.loading'), 'info');
+      return;
+    }
     setSelectedTov(variationText);
 
     // ─── CAROUSEL MODE: Generate detailed slide copies from the chosen angle ─────
@@ -5516,7 +5923,16 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
             if (savedGenId && mockupResult.imageFingerprint && canUseWorkspaces && activeWorkspaceId) {
               try {
                 const generationRef = doc(db, 'generations', savedGenId);
-                const indexRef = doc(db, `users/${user.uid}/workspaces/${activeWorkspaceId}/imageFingerprints`, mockupResult.imageFingerprint);
+                // ISSUE-D T017: the index path was built from `user.uid`
+                // (the signed-in member) but `activeWorkspaceId` belongs
+                // to the owner. That hybrid path can never satisfy the
+                // `isWorkspaceMember` security rule and is silently
+                // dropped — a member's fingerprint index is never
+                // written. Now the path is built from the same uid that
+                // the rest of the workspace subtree reads (effectiveUid).
+                // Owner behaviour is unchanged (effectiveUid === user.uid).
+                const workspaceOwnerUid = effectiveUid || user.uid;
+                const indexRef = doc(db, `users/${workspaceOwnerUid}/workspaces/${activeWorkspaceId}/imageFingerprints`, mockupResult.imageFingerprint);
                 await Promise.all([
                   updateDoc(generationRef, {
                     imageFingerprint: mockupResult.imageFingerprint,
@@ -7300,14 +7716,112 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 <i className="fa-solid fa-wand-magic-sparkles text-white text-sm"></i>
               </div>
             </div>
-            {canUseWorkspaces && workspaces.length > 0 && (
+            {/* ISSUE-D T013 / T014: the render guard now permits the
+                switcher to mount whenever the account link is resolved,
+                even if the list is empty — otherwise the U3 / U5 messages
+                inside the switcher are dead code. The empty-state copy
+                lives in the switcher; the launcher only gates the mount
+                on the resolution being settled. */}
+            {canUseWorkspaces && teamResolution === 'resolved' && (
               <WorkspaceSwitcher
                 workspaces={workspaces}
                 activeWorkspaceId={activeWorkspaceId}
                 onSwitch={setActiveWorkspaceIdLocal}
                 onCreateNew={() => { setEditingWorkspace(null); setShowWorkspaceModal(true); }}
                 onEditWorkspace={(ws) => { setEditingWorkspace(ws); setShowWorkspaceModal(true); }}
-                hasInProgressWork={isLoading || !!tovText || !!conceptsText || !!buildPlan || mockupHistory.length > 0 || carouselSlides.length > 0 || batchResults.length > 0}
+                isTeamMember={teamResolution === 'resolved' && teamOwnerUid != null}
+                loadError={workspaceLoadError}
+                onRetryLoad={() => {
+                  // Round-2 #13: bumping the retry trigger recreates the
+                  // onSnapshot listener. We clear the error first so the
+                  // U5 message disappears as soon as the user asks for a
+                  // retry, before the new listener's first callback fires.
+                  setWorkspaceLoadError(false);
+                  setWorkspaceLoadRetryTrigger(t => t + 1);
+                }}
+                hasInProgressWork={hasInProgressWork}
+                switchGuardTarget={pendingWorkspaceSwitch?.toId ?? null}
+                onSwitchGuardSave={async () => {
+                  // CodeRabbit round 4 (Critical, fix in re-review): "Save &
+                  // Switch" must actually persist BEFORE the switch happens.
+                  // Previously this only cleared the pending state, so the
+                  // work was left to the 3 s auto-save debounce — which fires
+                  // *after* `activeWorkspaceId` has advanced and therefore
+                  // re-tags the project with the destination workspace. The
+                  // member's work ended up attributed to a workspace they
+                  // never worked in.
+                  //
+                  // `activeWorkspaceId` is still the SOURCE workspace at this
+                  // point (the snapshot handler no longer advances it while a
+                  // guard is pending, and WorkspaceSwitcher awaits this handler
+                  // before calling onSwitch), so the queued snapshot carries
+                  // the correct workspaceId and the flush lands in the right
+                  // place. FR-017, quickstart row 18.
+                  //
+                  // Round-5 (CodeRabbit re-review): if the flush fails, we
+                  // surface the failure rather than swallowing it.
+                  // Round-7 (CodeRabbit re-review): round 5 used try/catch
+                  // but the underlying `doSave` was still catching errors
+                  // internally, so the promise always resolved. The
+                  // `forceFlush` API now returns an explicit `{ ok, error }`
+                  // (see src/lib/projectAutoSave.ts) so we can branch on a
+                  // confirmed success vs an observed failure. On failure we
+                  // throw so WorkspaceSwitcher.handleGuardSave keeps the
+                  // dialog open and the source workspace stays active.
+                  const result = await autoSaveForceFlush();
+                  if (!result.ok) {
+                    console.warn('issue-d ▸ force-flush before workspace switch failed:', result.error);
+                    showToast(t('workspace.save_before_switch_failed'), 'error');
+                    // Round-8 (CodeRabbit re-review): the throw path must
+                    // NOT clear pendingWorkspaceSwitch — the
+                    // WorkspaceSwitcher handleGuardSave catch branch
+                    // returns early on rejection, keeping the source
+                    // workspace active and the dialog open. Only the
+                    // success path clears the pending state.
+                    throw result.error instanceof Error
+                      ? result.error
+                      : new Error('forceFlush failed (non-throw save failure)');
+                  }
+                  // Success — clear the pending state so the parent's
+                  // effect (which observes the resulting
+                  // setActiveWorkspaceIdLocal(pendingTarget.toId) in
+                  // WorkspaceSwitcher) sees a clean queue. The dialog
+                  // itself is closed by handleGuardSave after onSwitch.
+                  setPendingWorkspaceSwitch(null);
+                }}
+                onSwitchGuardDiscard={() => {
+                  // Discard previously cleared only the pending state. The
+                  // in-memory project (tovText, mockupHistory, buildPlan, …)
+                  // survived, so once the switcher called onSwitch the auto-save
+                  // effect re-queued that same work with `resolvedWorkspaceId`
+                  // now derived from the DESTINATION workspace — the mirror
+                  // image of the mis-attribution the Save path was hardened
+                  // against, and the opposite of what "Discard" means.
+                  //
+                  // `resetToBlankProject()` clears every field that effect reads
+                  // and assigns a fresh project id, so the next queued snapshot
+                  // is a blank new project rather than the discarded one. That
+                  // also makes the dialog's own copy true for the first time —
+                  // "Switching workspace will start a new project" /
+                  // "تبديل مساحة العمل سيبدأ مشروعًا جديدًا" — which until now
+                  // promised a reset that never happened.
+                  resetToBlankProject();
+                  setPendingWorkspaceSwitch(null);
+                }}
+                onSwitchGuardCancel={() => {
+                  // Cancel on the active-workspace-deletion guard (the
+                  // pendingWorkspaceSwitch path) leaves the member on the
+                  // SOURCE workspace — the snapshot handler has not advanced
+                  // activeWorkspaceId (it only set pendingWorkspaceSwitch),
+                  // so "cancel" simply clears the pending state and the
+                  // member stays where they were. Note this is different from
+                  // the workspace-list-effect (App.tsx around the empty-list
+                  // branch) which auto-selects a default; that path runs only
+                  // when the snapshot itself reports the source workspace
+                  // gone, not on a Cancel button press. The removal toast has
+                  // already told them what happened.
+                  setPendingWorkspaceSwitch(null);
+                }}
               />
             )}
             <SaveStatusIndicator state={autoSaveState} onRetry={autoSaveRetry} />
@@ -10489,6 +11003,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         }}
         onSavedRenders={loadFavorites}
         onSettings={() => { setShowSettingsModal(true); setSettingsEditingName(false); setSettingsEditingEmail(false); setShowMenuDrawer(false); }}
+        onTeam={() => { setShowTeamModal(true); setShowMenuDrawer(false); }}
         onToggleTheme={() => { toggleTheme(); }}
         onToggleLanguage={() => { setLang(lang === 'en' ? 'ar' : 'en'); }}
         onStartTutorial={() => { setShowVideoPopup(true); setShowMenuDrawer(false); }}
@@ -10607,6 +11122,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   setSettingsEditingEmail(false);
                   setShowMenuDrawer(false);
                 }}
+                onTeam={() => { setShowTeamModal(true); setShowMenuDrawer(false); }}
                 onToggleTheme={toggleTheme}
                 onToggleLanguage={() => { setLang(lang === 'en' ? 'ar' : 'en'); }}
                 onStartTutorial={() => { setShowVideoPopup(true); setShowMenuDrawer(false); }}
@@ -11266,9 +11782,12 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
               <i className="fa-solid fa-user-xmark text-red-400 text-2xl"></i>
             </div>
             <h2 className="text-lg font-black text-white mb-2">{t('team.removed_message')}</h2>
-            <p className="text-xs text-slate-400 mb-6">You have been removed from the team. You are now operating under your own account.</p>
+            {/* ISSUE-D T028: body and Continue button were hardcoded
+                English. Constitution V / FR-018 / FR-016a require both
+                locales; the keys live in src/i18n.tsx. */}
+            <p className="text-xs text-slate-400 mb-6">{t('team.removed_body')}</p>
             <button onClick={() => { setRemovedFromTeam(false); setTeamOwnerUid(null); setTeamRole(null); }} className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-bold transition-all">
-              Continue
+              {t('team.continue_button')}
             </button>
           </div>
         </div>
@@ -11920,6 +12439,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           onClose={() => { setShowWorkspaceModal(false); setEditingWorkspace(null); }}
           plan={userPlan}
           metaAdAccounts={metaConnection?.adAccounts?.map((a: any) => ({ id: a.id, name: a.name })) || []}
+          isTeamMember={teamResolution === 'resolved' && teamOwnerUid != null}
         />
       )}
 

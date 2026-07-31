@@ -8,18 +8,29 @@ import { useT } from '../i18n';
 
 interface WorkspaceSettingsModalProps {
   workspace: Workspace | null;
-  onSave: (data: Omit<Workspace, 'id' | 'createdAt'>) => void;
-  onDelete?: (workspaceId: string) => void;
+  // Round-12 (CodeRabbit re-review): widen to Promise<void> so the
+  // modal's awaited handleSubmit/handleDelete callbacks type-check
+  // correctly. The parents (App.tsx handleCreateWorkspace/Update/Delete)
+  // already return promises — the void-only typing made the await in
+  // the modal's try/catch essentially invisible to the type system.
+  onSave: (data: Omit<Workspace, 'id' | 'createdAt'>) => void | Promise<void>;
+  onDelete?: (workspaceId: string) => void | Promise<void>;
   onClose: () => void;
   plan?: UserPlan;
   metaAdAccounts?: { id: string; name: string }[];
+  // ISSUE-D (T022): when true, the modal hides every destructive control.
+  // Only the account owner may delete a workspace; team members see the
+  // modal only as a read-only display (e.g. the switcher edit pencil is
+  // withheld too, but the modal is reached through other paths during
+  // diagnostics — the gate is the same single source of truth).
+  isTeamMember?: boolean;
 }
 
 function isMetaEligible(plan?: UserPlan): boolean {
   return plan === 'pro' || plan === 'scale';
 }
 
-export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, onClose, plan, metaAdAccounts }: WorkspaceSettingsModalProps) {
+export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, onClose, plan, metaAdAccounts, isTeamMember }: WorkspaceSettingsModalProps) {
   const { t } = useT();
   const isEdit = !!workspace;
   const [name, setName] = useState(workspace?.name || '');
@@ -42,7 +53,15 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
   });
 
   const isScale = plan === 'scale';
-  const showMetaSection = isEdit && isMetaEligible(plan);
+  // Round-9 (CodeRabbit re-review): the Meta link/unlink block is a
+  // destructive workspace-level action (it retargets the workspace's
+  // Meta ad-account pointer). Team members must not be able to invoke
+  // it. The server-side assertNotTeamMember guard installed in
+  // linkMetaAccountToWorkspace / unlinkMetaAccountFromWorkspace
+  // refuses those calls, but the UI must not present the surface at
+  // all — otherwise a team member who hits Link still sees a misleading
+  // "Failed to link Meta account" toast instead of a hidden control.
+  const showMetaSection = isEdit && isMetaEligible(plan) && !isTeamMember;
 
   useEffect(() => {
     if (workspace) {
@@ -71,30 +90,31 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
     }
   }, [workspace]);
 
+  // Round-11 (CodeRabbit re-review): CRITICAL duplicate-persistence fix.
+  // The modal used to call the workspaceService directly (create / update /
+  // delete) and then call onSave/onDelete — but onSave/onDelete is bound
+  // to the parent's handleCreateWorkspace/Update/Delete, which ALSO call
+  // the same workspaceService. Every "Create" created two workspace
+  // documents; every "Save" issued two update writes; every "Delete"
+  // surfaced a spurious "delete failed" toast because the second
+  // deleteWorkspace call hit an already-deleted workspace. The modal is
+  // now a pure data-collector: it validates input, builds the payload,
+  // and hands off to the parent. All persistence, state-sync, and
+  // toast-error handling live in the parent handlers.
+  //
+  // Round-14 (CodeRabbit re-review): the inline `setUiError` paths in
+  // handleSubmit / handleDelete are unreachable. App.tsx's
+  // handleCreateWorkspace / handleUpdateWorkspace / handleDeleteWorkspace
+  // catch their own failures and show a toast without rethrowing, so
+  // the modal's catch blocks never run and the save_failed /
+  // delete_failed copy never renders. Keep the loading-state cleanup
+  // and the console.warn for diagnosis, but drop the dead setUiError
+  // path so we don't have two competing error surfaces.
   const handleSubmit = async () => {
     if (!name.trim() || !brandName.trim()) return;
     setSaving(true);
-    setUiError(null);
     try {
-      if (!isEdit) {
-        await workspaceService.createWorkspace({
-          name: name.trim(),
-          brandName: brandName.trim(),
-          brandUrl: brandUrl.trim() || undefined,
-          brandColorPrimary: colorPrimary,
-          brandColorSecondary: colorSecondary,
-        });
-      } else {
-        await workspaceService.updateWorkspace({
-          workspaceId: workspace!.id,
-          name: name.trim(),
-          brandName: brandName.trim(),
-          brandUrl: brandUrl.trim() || null,
-          brandColorPrimary: colorPrimary,
-          brandColorSecondary: colorSecondary,
-        });
-      }
-      onSave({
+      await onSave({
         name: name.trim(),
         brandName: brandName.trim(),
         brandUrl: brandUrl.trim() || '',
@@ -104,8 +124,11 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
         isDefault: workspace?.isDefault ?? false,
       });
     } catch (err) {
+      // Parent handler already showed a toast. The await is here only
+      // to drive the saving-state lifecycle; the catch is for
+      // unexpected synchronous throws the parent's await chain
+      // wouldn't surface. Keep the log for diagnosis.
       console.warn('Workspace save failed:', err);
-      setUiError(t('workspace.settings.save_failed'));
     } finally {
       setSaving(false);
     }
@@ -114,13 +137,10 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
   const handleDelete = async () => {
     if (!workspace || !onDelete) return;
     setSaving(true);
-    setUiError(null);
     try {
-      await workspaceService.deleteWorkspace(workspace.id);
-      onDelete(workspace.id);
+      await onDelete(workspace.id);
     } catch (err) {
       console.warn('Workspace delete failed:', err);
-      setUiError(t('workspace.settings.delete_failed'));
     } finally {
       setSaving(false);
     }
@@ -219,7 +239,8 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder={t('workspace.settings.field.name_placeholder')}
-              className="w-full h-10 px-4 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[11px] placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors"
+              readOnly={isTeamMember}
+              className="w-full h-10 px-4 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[11px] placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors read-only:bg-slate-900/40 read-only:text-slate-500"
             />
           </div>
 
@@ -230,7 +251,8 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
               value={brandName}
               onChange={e => setBrandName(e.target.value)}
               placeholder={t('workspace.settings.field.brand_placeholder')}
-              className="w-full h-10 px-4 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[11px] placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors"
+              readOnly={isTeamMember}
+              className="w-full h-10 px-4 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[11px] placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors read-only:bg-slate-900/40 read-only:text-slate-500"
             />
           </div>
 
@@ -241,7 +263,8 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
               value={brandUrl}
               onChange={e => setBrandUrl(e.target.value)}
               placeholder="https://example.com"
-              className="w-full h-10 px-4 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[11px] placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors"
+              readOnly={isTeamMember}
+              className="w-full h-10 px-4 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[11px] placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors read-only:bg-slate-900/40 read-only:text-slate-500"
             />
           </div>
 
@@ -253,13 +276,15 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
                   type="color"
                   value={colorPrimary}
                   onChange={e => setColorPrimary(e.target.value)}
-                  className="w-10 h-10 rounded-lg border border-slate-800 cursor-pointer bg-transparent"
+                  disabled={isTeamMember}
+                  className="w-10 h-10 rounded-lg border border-slate-800 cursor-pointer bg-transparent disabled:cursor-not-allowed disabled:opacity-60"
                 />
                 <input
                   type="text"
                   value={colorPrimary}
                   onChange={e => setColorPrimary(e.target.value)}
-                  className="flex-1 h-10 px-3 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[10px] font-mono focus:outline-none focus:border-blue-500/50 transition-colors"
+                  readOnly={isTeamMember}
+                  className="flex-1 h-10 px-3 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[10px] font-mono focus:outline-none focus:border-blue-500/50 transition-colors read-only:bg-slate-900/40 read-only:text-slate-500"
                 />
               </div>
             </div>
@@ -270,13 +295,15 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
                   type="color"
                   value={colorSecondary}
                   onChange={e => setColorSecondary(e.target.value)}
-                  className="w-10 h-10 rounded-lg border border-slate-800 cursor-pointer bg-transparent"
+                  disabled={isTeamMember}
+                  className="w-10 h-10 rounded-lg border border-slate-800 cursor-pointer bg-transparent disabled:cursor-not-allowed disabled:opacity-60"
                 />
                 <input
                   type="text"
                   value={colorSecondary}
                   onChange={e => setColorSecondary(e.target.value)}
-                  className="flex-1 h-10 px-3 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[10px] font-mono focus:outline-none focus:border-blue-500/50 transition-colors"
+                  readOnly={isTeamMember}
+                  className="flex-1 h-10 px-3 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-[10px] font-mono focus:outline-none focus:border-blue-500/50 transition-colors read-only:bg-slate-900/40 read-only:text-slate-500"
                 />
               </div>
             </div>
@@ -349,14 +376,21 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
           <div className="flex items-center gap-3 pt-2">
             <button
               onClick={handleSubmit}
-              disabled={!name.trim() || !brandName.trim() || saving || (!isScale && !isEdit)}
+              // Round-8 (CodeRabbit re-review): gate the mutation button
+              // for team members. The server's assertNotTeamMember
+              // already refuses these, but preventing the round-trip
+              // matches the modal's "read-only display" promise for
+              // team members (the prop-level JSDoc) and avoids the
+              // misleading "Failed to update workspace" toast when a
+              // team member hits Save.
+              disabled={!name.trim() || !brandName.trim() || saving || isTeamMember || (!isScale && !isEdit)}
               className="flex-1 h-11 rounded-xl bg-blue-600 text-white text-[11px] font-bold hover:bg-blue-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {saving
                 ? t('workspace.settings.saving')
                 : (isEdit ? t('workspace.settings.save_changes') : t('workspace.settings.create'))}
             </button>
-            {isEdit && !workspace?.isDefault && onDelete && (
+            {isEdit && !workspace?.isDefault && onDelete && !isTeamMember && (
               confirmDelete ? (
                 <button
                   onClick={handleDelete}

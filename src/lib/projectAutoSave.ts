@@ -1,5 +1,7 @@
 // src/lib/projectAutoSave.ts — debounce + ceiling auto-save scheduler (no React deps)
 
+import type { SavedProject } from "../types";
+
 export type AutoSaveState =
   | { phase: "idle" }
   | { phase: "saving" }
@@ -22,9 +24,9 @@ let pendingSnapshotId = 0;
 let currentInMemoryId = 0;
 let consecutiveFailures = 0;
 
-type SaveFn = (data: any) => Promise<void>;
+type SaveFn = (data: SavedProject) => Promise<void>;
 let saveFn: SaveFn | null = null;
-let pendingData: any = null;
+let pendingData: SavedProject | null = null;
 
 function notify() {
   listeners.forEach((fn) => fn(state));
@@ -61,13 +63,36 @@ function scheduleSave() {
   }
 }
 
-export function queue(data: any) {
+export function queue(data: SavedProject) {
   currentInMemoryId++;
   pendingData = data;
   scheduleSave();
 }
 
-export async function forceFlush() {
+// Public flush result so callers (notably the workspace switch-guard
+// "Save & Switch" path) can distinguish a confirmed successful save
+// from one that the in-memory `state` recorded as transient-error /
+// persistent-failure. The auto-save debounce/ceiling `flush()` callers
+// don't care about the result — the observable `state` is enough for them.
+export type FlushResult = { ok: true } | { ok: false; error: unknown };
+
+export async function forceFlush(): Promise<FlushResult> {
+  if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+  if (ceilingTimer) { clearTimeout(ceilingTimer); ceilingTimer = null; }
+  firstChangeAt = null;
+  if (!pendingData) return { ok: true };
+  // Round-11 (CodeRabbit re-review): doSave now returns an explicit
+  // FlushResult for every path (success, saveFn throw, stale-snapshot
+  // catch, no saveFn). The previous code only updated the in-memory
+  // `state` and returned void; forceFlush's reliance on `state.phase`
+  // could miss the stale-snapshot catch branch (which set phase to
+  // 'saving' after a saveFn throw), letting the workspace switch-guard
+  // silently report success on a real save failure. doSave's return
+  // value is now the source of truth.
+  return await doSave(pendingData);
+}
+
+async function flush(): Promise<void> {
   if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
   if (ceilingTimer) { clearTimeout(ceilingTimer); ceilingTimer = null; }
   firstChangeAt = null;
@@ -75,15 +100,7 @@ export async function forceFlush() {
   await doSave(pendingData);
 }
 
-async function flush() {
-  if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
-  if (ceilingTimer) { clearTimeout(ceilingTimer); ceilingTimer = null; }
-  firstChangeAt = null;
-  if (!pendingData) return;
-  await doSave(pendingData);
-}
-
-async function doSave(data: any) {
+async function doSave(data: SavedProject): Promise<FlushResult> {
   const snapshotId = currentInMemoryId;
   pendingSnapshotId = snapshotId;
   state = { phase: "saving" };
@@ -92,16 +109,30 @@ async function doSave(data: any) {
   if (!saveFn) {
     state = { phase: "idle" };
     notify();
-    return;
+    return { ok: true };
   }
 
   try {
     await saveFn(data);
     consecutiveFailures = 0;
     if (currentInMemoryId !== snapshotId) {
+      // Round-15 (CodeRabbit re-review): a newer queue() call superseded
+      // our snapshot. The saveFn call we just awaited did persist this
+      // snapshot, but pendingData has since been replaced by a newer
+      // edit that has NOT been persisted. For the auto-save path the
+      // next debounce will pick up the newer state; for forceFlush
+      // (called explicitly by the workspace switch-guard "Save &
+      // Switch" path) we must NOT report success here — the user's
+      // intent is "I want a definitive answer about ALL pending work"
+      // and the answer must include the newer queued edit. Report a
+      // distinct 'superseded' failure so the switch-guard keeps the
+      // dialog open and the user can retry after the next debounce
+      // lands. The auto-save's flush() ignores the return value, so
+      // changing the stale-snapshot return here does not affect the
+      // debounce/ceiling flow.
       state = { phase: "saving" };
       notify();
-      return;
+      return { ok: false, error: "superseded" };
     }
     state = { phase: "saved", clearAt: Date.now() + 2000 };
     notify();
@@ -111,14 +142,20 @@ async function doSave(data: any) {
         notify();
       }
     }, 2100);
-  } catch (err: any) {
+    return { ok: true };
+  } catch (err: unknown) {
     consecutiveFailures++;
-    const errMsg = err?.message || String(err);
+    const errMsg = err instanceof Error ? err.message : String(err);
 
     if (currentInMemoryId !== snapshotId) {
+      // Round-11: this branch is reached after saveFn THREW. Even
+      // though a newer edit has superseded the snapshot, the prior
+      // saveFn DID throw — the persisted state is not what was in
+      // memory. Surface the failure to the caller (the workspace
+      // switch-guard relies on this to keep the dialog open).
       state = { phase: "saving" };
       notify();
-      return;
+      return { ok: false, error: err };
     }
 
     if (consecutiveFailures >= PERSISTENT_THRESHOLD) {
@@ -127,6 +164,7 @@ async function doSave(data: any) {
       state = { phase: "transient-error", consecutiveFailures: consecutiveFailures as 1 | 2 };
     }
     notify();
+    return { ok: false, error: err };
   }
 }
 

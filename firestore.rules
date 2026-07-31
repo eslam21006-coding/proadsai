@@ -7,11 +7,38 @@ service cloud.firestore {
                   && (request.auth.uid == userId
                       || (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isTeamMember == true
                           && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamOwnerUid == userId));
+      // Round-16 (CodeRabbit re-review - CRITICAL): freeze isTeamMember
+      // and teamOwnerUid on self-update. Without these constraints, a
+      // signed-in user can self-assign isTeamMember=true and
+      // teamOwnerUid=<victim>, then satisfy every downstream team-member
+      // read rule (this rule, the avatars/projects/workspaces subcollections,
+      // the FR-023 server-side guards) by pointing at a user who never
+      // invited them. Both fields are server-managed: isTeamMember is set
+      // by the workspace owner via a Cloud Function, teamOwnerUid is
+      // set the same way. Only credits and plan are user-modifiable in
+      // the existing rule; the team-membership fields are now locked.
       allow update: if request.auth != null
                     && request.auth.uid == userId
                     && request.resource.data.credits <= resource.data.credits
-                    && request.resource.data.plan == resource.data.plan;
-      allow create: if request.auth != null && request.auth.uid == userId;
+                    && request.resource.data.plan == resource.data.plan
+                    && request.resource.data.isTeamMember == resource.data.isTeamMember
+                    && request.resource.data.teamOwnerUid == resource.data.teamOwnerUid;
+      // Round-17 (CodeRabbit re-review): the prior allow create rule only
+      // verified that the writer is the authed uid. The isTeamMember /
+      // teamOwnerUid update lock from Round-16 prevents the user from
+      // ESCALATING those fields post-create, but a user could still CREATE
+      // the doc with isTeamMember=true and teamOwnerUid=<victim> on day
+      // one. The create rule must require the new doc to start with the
+      // unaffiliated defaults — isTeamMember=false and teamOwnerUid
+      // absent/null. Both fields are server-managed (set by the workspace
+      // owner via a Cloud Function); the client should never be able to
+      // mint either. Together with the Round-16 update lock this closes
+      // both the create-time and update-time self-elevation paths.
+      allow create: if request.auth != null
+                    && request.auth.uid == userId
+                    && request.resource.data.isTeamMember == false
+                    && (request.resource.data.teamOwnerUid == null
+                        || !('teamOwnerUid' in request.resource.data));
 
       // Avatars subcollection — owner + team members
       match /avatars/{avatarId} {
@@ -33,9 +60,27 @@ service cloud.firestore {
 
       // Workspaces subcollection (Multi-Brand — Scale only) — owner + team members.
       // Coarse-grained: team members of the owner can read any active workspace under that owner.
-      // Fine-grained per-member `workspaceAccess` filtering is enforced by the server callables
-      // (`getWorkspaceGenerations`, `setTeamMemberWorkspaceAccess`) and by the frontend switcher —
-      // three-layer defense per plan.md#Phase 1 R7. Soft-deleted workspaces are hidden from reads.
+      //
+      // ISSUE-D (spec 965) removed per-member `workspaceAccess` narrowing. A verified
+      // team member now reaches EVERY active workspace of their owner (FR-004); the
+      // stored per-member array is retained but never consulted for authorization
+      // (FR-021) — it is read only to emit the FR-004b override trace. Do not look
+      // for allowlist enforcement downstream: there is none.
+      //
+      // The three-layer defense is now:
+      //   1. these rules          — membership + owner match + not soft-deleted
+      //   2. server callables     — `getWorkspaceGenerations` resolves the caller's
+      //                             account via `resolveCallerScope` and compares it
+      //                             against the workspace owner, so a stale membership
+      //                             doc under another account grants nothing; all six
+      //                             guarded mutation callables refuse team members
+      //                             outright via `assertNotTeamMember` —
+      //                             createWorkspace, updateWorkspace, deleteWorkspace,
+      //                             restoreWorkspace, linkMetaAccountToWorkspace,
+      //                             unlinkMetaAccountFromWorkspace
+      //   3. the frontend switcher — withholds create / edit / delete controls
+      // Soft-deleted workspaces are hidden from team-member reads; owners
+      // retain direct access below.
       // The Phase 14 adAccounts subtree is declared in a separate match
       // block further down (re-uses `isWorkspaceMember` helper).
       match /workspaces/{workspaceId} {

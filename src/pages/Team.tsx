@@ -1,6 +1,6 @@
 // src/pages/Team.tsx — Team management page (owner management + member read-only view)
 import React, { useState, useEffect, useCallback } from 'react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../firebase';
 import { useT } from '../i18n';
@@ -12,8 +12,12 @@ const fnCreateTeamInvite = httpsCallable(functions, 'createTeamInvite');
 const fnResendTeamInvite = httpsCallable(functions, 'resendTeamInvite');
 const fnRevokeTeamInvite = httpsCallable(functions, 'revokeTeamInvite');
 const fnRemoveTeamMember = httpsCallable(functions, 'removeTeamMember');
-const fnSetTeamMemberWorkspaceAccess = httpsCallable(functions, 'setTeamMemberWorkspaceAccess');
-// NOTE: updateTeamMemberRole must be added to functions/src/index.ts
+// ISSUE-D T023: the `setTeamMemberWorkspaceAccess` callable is no longer
+// referenced from the UI — the access matrix is withdrawn (FR-020).
+// The callable itself stays deployed (FR-021: the stored `workspaceAccess`
+// array is retained unread) so a future restriction feature can adopt
+// it without a data migration. `workspacePurge.ts` still calls it on
+// workspace delete/restore — see research.md D7.
 const fnUpdateTeamMemberRole = httpsCallable(functions, 'updateTeamMemberRole');
 
 interface TeamMember {
@@ -83,12 +87,12 @@ const TeamPage: React.FC<TeamPageProps> = ({
   const [roleOverride, setRoleOverride] = useState<Record<string, string>>({});
   const [processing, setProcessing] = useState(false);
 
-  interface WorkspaceInfo {
-    id: string;
-    name: string;
-  }
-  const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
-  const [wsAccessLoading, setWsAccessLoading] = useState<Record<string, boolean>>({});
+  // ISSUE-D T023: the per-workspace access matrix state is removed.
+  // The previously-tracked `workspaces` list, the `wsAccessLoading`
+  // loader-state, and the workspace-listing effect that fed them
+  // are all gone. A future restriction feature can reintroduce the
+  // data fetch when it ships — until then, no UI offers the control
+  // (FR-020) and the stored data is left untouched (FR-021).
 
   useEffect(() => {
     if (!ownerUid) return;
@@ -103,19 +107,6 @@ const TeamPage: React.FC<TeamPageProps> = ({
     });
     return () => unsub();
   }, [ownerUid]);
-
-  useEffect(() => {
-    if (!ownerUid || !isOwner) return;
-    const wsRef = collection(db, 'users', ownerUid, 'workspaces');
-    const q = query(wsRef, where('deletedAt', '==', null));
-    const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs
-        .filter(d => !d.data()?.deletedAt)
-        .map(d => ({ id: d.id, name: d.data()?.name || d.id }));
-      setWorkspaces(list);
-    });
-    return () => unsub();
-  }, [ownerUid, isOwner]);
 
   const loadInvites = useCallback(async () => {
     if (!isOwner) return;
@@ -238,26 +229,12 @@ const TeamPage: React.FC<TeamPageProps> = ({
     }
   };
 
-  const handleWorkspaceAccessToggle = async (memberId: string, wsId: string, currentlyGranted: boolean) => {
-    const member = members.find(m => m.id === memberId);
-    if (!member) return;
-    const current = member.workspaceAccess || [];
-    const updated = currentlyGranted
-      ? current.filter(id => id !== wsId)
-      : [...current, wsId];
-    setWsAccessLoading(prev => ({ ...prev, [`${memberId}_${wsId}`]: true }));
-    try {
-      await fnSetTeamMemberWorkspaceAccess({ memberDocId: memberId, workspaceAccess: updated });
-      showToast(
-        currentlyGranted ? t('team.ws_access_revoked') : t('team.ws_access_granted'),
-        'success'
-      );
-    } catch {
-      showToast(t('team.ws_access_failed'), 'error');
-    } finally {
-      setWsAccessLoading(prev => ({ ...prev, [`${memberId}_${wsId}`]: false }));
-    }
-  };
+  // ISSUE-D T023: handleWorkspaceAccessToggle is removed. The matrix
+  // and the toggle control it drove are gone; the stored
+  // `workspaceAccess` array is no longer mutated from this surface
+  // (FR-020). The callable that previously backed it is still
+  // deployed and is still called by workspacePurge.ts — see
+  // research.md D7 for the rationale.
 
   const formatDate = (ts?: { seconds: number; nanoseconds: number } | number) => {
     if (!ts) return '—';
@@ -447,60 +424,14 @@ const TeamPage: React.FC<TeamPageProps> = ({
                 </div>
               </section>
 
-              {/* ═══ WORKSPACE ACCESS MATRIX (owner only) ═══ */}
-              {isOwner && workspaces.length > 0 && members.length > 0 && (
-                <section>
-                  <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-4">
-                    <i className="fa-solid fa-building text-[10px]"></i>
-                    {t('team.ws_access_title')}
-                  </h2>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-[11px]">
-                      <thead>
-                        <tr className="border-b border-slate-800">
-                          <th className="text-right rtl:text-left py-2 px-3 text-slate-600 font-bold">{t('team.ws_member_col')}</th>
-                          {workspaces.map(ws => (
-                            <th key={ws.id} className="text-center py-2 px-3 text-slate-500 font-bold min-w-[100px]">
-                              <span className="block truncate max-w-[120px]">{ws.name}</span>
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {members.map(m => (
-                          <tr key={m.id} className="border-b border-slate-800/40 hover:bg-slate-800/20 transition-colors">
-                            <td className="py-2.5 px-3 text-white font-bold truncate max-w-[180px]">{m.name || m.email}</td>
-                            {workspaces.map(ws => {
-                              const granted = (m.workspaceAccess || []).includes(ws.id);
-                              const loading = wsAccessLoading[`${m.id}_${ws.id}`];
-                              return (
-                                <td key={ws.id} className="text-center py-2.5 px-3">
-                                  <button
-                                    onClick={() => handleWorkspaceAccessToggle(m.id, ws.id, granted)}
-                                    disabled={loading}
-                                    className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
-                                      granted
-                                        ? 'bg-emerald-500/15 text-emerald-400 hover:bg-red-500/15 hover:text-red-400'
-                                        : 'bg-slate-800/60 text-slate-600 hover:bg-emerald-500/15 hover:text-emerald-400'
-                                    } disabled:opacity-50`}
-                                    title={granted ? t('team.ws_revoke') : t('team.ws_grant')}
-                                  >
-                                    {loading ? (
-                                      <div className="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full"></div>
-                                    ) : (
-                                      <i className={`fa-solid ${granted ? 'fa-check' : 'fa-plus'} text-[9px]`}></i>
-                                    )}
-                                  </button>
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-              )}
+              {/* ISSUE-D T023: the workspace access matrix has been
+                  removed (FR-020). Under the all-access policy, every
+                  member sees every workspace of the owner, so a
+                  per-workspace grant control would have no effect on
+                  visibility and would misrepresent the account's
+                  access position. The stored per-member `workspaceAccess`
+                  array is retained unread (FR-021) so a future
+                  restriction feature can adopt it without a migration. */}
 
               {/* ═══ WORKSPACE ACCESS AUDIT LOG (owner only) ═══ */}
               {isOwner && ownerUid && (

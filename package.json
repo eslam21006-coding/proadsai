@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "firebase": "^12.9.0",
+    "firebase-admin": "^13.6.1",
     "firebase-tools": "^15.4.0",
     "jszip": "^3.10.1",
     "lucide-react": "^0.563.0",

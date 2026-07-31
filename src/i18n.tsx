@@ -138,6 +138,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'topbar.menu_more': 'Open menu',
         'topbar.menu_bookmarks': 'Saved Renders',
         'topbar.menu_settings': 'Settings',
+        'topbar.menu_team': 'Team',
         'topbar.menu_tour': 'Guided Tour',
         'topbar.menu_tutorial': 'Tutorial (+2 credits)',
         'topbar.menu_dark': 'Switch to dark mode',
@@ -815,12 +816,44 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.switch_guard.title': 'Switch workspace?',
         'workspace.switch_guard.body': 'Switching workspace will start a new project. Save current work?',
         'workspace.switch_guard.save': 'Save & Switch',
+        // ISSUE-D CodeRabbit round 4: shown while the save-before-switch
+        // flush is in flight, and if that flush fails.
+        'workspace.switch_guard.saving': 'Saving…',
+        'workspace.save_before_switch_failed': 'We could not finish saving your work. It is still here on this device — try saving again before you continue.',
         'workspace.switch_guard.discard': 'Discard & Switch',
         'workspace.switch_guard.cancel': 'Cancel',
         'workspace.error.scale_required': 'Creating more than one workspace requires the Scale plan.',
         'workspace.error.limit_reached': "You've reached the 10-workspace limit on the Scale plan.",
         'workspace.error.insufficient_meta_role': "Your Meta role on this ad account doesn't allow publishing. Request Advertiser access in Meta Business Manager to link it.",
-        'workspace.error.no_access': 'No workspace access — ask your team owner to grant you access.',
+        // ISSUE-D T015 / audit F2: `workspace.error.no_access` ("ask your
+        // team owner to grant you access") is DELETED, not merely
+        // unreferenced. Under FR-004 access is automatic and the owner has
+        // no control to grant with, so the string described a step that
+        // does not exist. FR-019a requires it be withdrawn. It is replaced
+        // by two distinct states, both in `en` and `ar`:
+        //   • no_workspaces — the account legitimately has none yet (U3)
+        //   • load_failed   — the list could not be loaded, retry (U5)
+        'workspace.error.no_workspaces': 'This account has no workspace yet. The account owner can create one from the workspace menu.',
+        'workspace.error.no_workspaces_short': 'No workspace yet',
+        'workspace.error.load_failed': 'We could not load the workspace list right now. Check your connection and try again.',
+        'workspace.error.load_failed_short': 'Could not load',
+        'workspace.error.retry': 'Try again',
+        // ISSUE-D T024 / T019: refusal copy for the server-side guards
+        // (create / update / delete / restore). Plain, no technical terms.
+        'workspace.refused.owner_only': 'Only the account owner can add, change, or remove workspaces.',
+        // ISSUE-D T027: a workspace the member was using has been removed
+        // by the owner. Plain notice + the destination's name.
+        'workspace.removed_notice': 'The workspace you were using is no longer available. You have been moved to {name}.',
+        'workspace.removed_notice_no_target': 'The workspace you were using is no longer available.',
+        // ISSUE-D T016: plain-language loading state surfaced while the
+        // write-gate holds back Generate / save project / save audience
+        // profile during the membership resolution window (FR-007a).
+        'workspace.write_gate.loading': 'Just a moment — finishing workspace setup before you continue.',
+        // ISSUE-D T028: the removed-from-team overlay. The body and
+        // continue button were hardcoded English (Constitution V defect
+        // fixed). Both keys exist in en + ar.
+        'team.removed_body': 'You have been removed from the team. You are now operating under your own account.',
+        'team.continue_button': 'Continue',
         'workspace.error.default_undeletable': "The default workspace can't be deleted.",
         // Access audit panel
         'workspace.access_history.button': 'View access history',
@@ -1007,6 +1040,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'topbar.menu_more': 'فتح القائمة',
         'topbar.menu_bookmarks': 'العروض المحفوظة',
         'topbar.menu_settings': 'الإعدادات',
+        'topbar.menu_team': 'الفريق',
         'topbar.menu_tour': 'جولة إرشادية',
         'topbar.menu_tutorial': 'شرح (+٢ رصيد)',
         'topbar.menu_dark': 'التبديل للوضع الداكن',
@@ -1684,12 +1718,27 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'workspace.switch_guard.title': 'تبديل مساحة العمل؟',
         'workspace.switch_guard.body': 'تبديل مساحة العمل سيبدأ مشروعًا جديدًا. احفظ عملك الحالي؟',
         'workspace.switch_guard.save': 'احفظ وبدّل',
+        // ISSUE-D CodeRabbit round 4 (Arabic parallel).
+        'workspace.switch_guard.saving': 'جارٍ الحفظ…',
+        'workspace.save_before_switch_failed': 'تعذّر إكمال حفظ عملك. ما زال موجودًا على هذا الجهاز — حاول الحفظ مرة أخرى قبل أن تتابع.',
         'workspace.switch_guard.discard': 'تجاهل وبدّل',
         'workspace.switch_guard.cancel': 'إلغاء',
         'workspace.error.scale_required': 'إنشاء أكثر من مساحة عمل يتطلّب خطة Scale.',
         'workspace.error.limit_reached': 'وصلت إلى الحد الأقصى 10 مساحات عمل على خطة Scale.',
         'workspace.error.insufficient_meta_role': 'دورك على حساب إعلانات Meta هذا لا يسمح بالنشر. اطلب صلاحية Advertiser من Meta Business Manager لربطه.',
-        'workspace.error.no_access': 'لا توجد صلاحية وصول إلى مساحات عمل — اطلب من مالك الفريق منحك الصلاحية.',
+        // ISSUE-D T015 / audit F2 (Arabic parallel of the English block
+        // above): `workspace.error.no_access` deleted per FR-019a.
+        'workspace.error.no_workspaces': 'لا توجد مساحة عمل لهذا الحساب بعد. يستطيع مالك الحساب إنشاء واحدة من قائمة مساحات العمل.',
+        'workspace.error.no_workspaces_short': 'لا توجد مساحة عمل',
+        'workspace.error.load_failed': 'تعذّر تحميل قائمة مساحات العمل الآن. تحقّق من الاتصال وحاول مرة أخرى.',
+        'workspace.error.load_failed_short': 'تعذّر التحميل',
+        'workspace.error.retry': 'حاول مرة أخرى',
+        'workspace.refused.owner_only': 'مالك الحساب فقط هو الذي يستطيع إضافة مساحات عمل أو تغييرها أو إزالتها.',
+        'workspace.removed_notice': 'لم تعد مساحة العمل التي كنت تستخدمها متاحة. تم نقلك إلى {name}.',
+        'workspace.removed_notice_no_target': 'لم تعد مساحة العمل التي كنت تستخدمها متاحة.',
+        'workspace.write_gate.loading': 'لحظة من فضلك — جارٍ إكمال تجهيز مساحة العمل قبل أن تتابع.',
+        'team.removed_body': 'تمت إزالتك من الفريق. أنت الآن تعمل ضمن حسابك الخاص.',
+        'team.continue_button': 'متابعة',
         'workspace.error.default_undeletable': 'لا يمكن حذف مساحة العمل الافتراضية.',
         // Access audit panel
         'workspace.access_history.button': 'عرض سجل الوصول',
