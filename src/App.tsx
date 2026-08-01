@@ -1668,6 +1668,14 @@ const App: React.FC = () => {
   // effect re-evaluates and would otherwise re-set the flag true. Reset on sign-out
   // (see the onAuthStateChanged sign-out branch) so the next session starts fresh.
   const projectLimitDismissedRef = React.useRef(false);
+  // Tracks the `currentProjectId` of a project the user (or the startup auto-restore)
+  // explicitly loaded from history. Used by the cap-detection effect to distinguish
+  // "user-loaded existing project" (safe to clear stale warnings) from "freshly saved
+  // new project" (warning must stay visible until the user takes a real action).
+  // Autosave silently adding the current project to `projects` does NOT touch this
+  // ref, so a freshly-saved over-cap project keeps its warning visible across the
+  // autosave debounce → cloud-roundtrip → re-evaluation cycle.
+  const projectEstablishedRef = React.useRef<string | null>(null);
   const [currentProjectId, setCurrentProjectId] = useState<string>(() => Date.now().toString());
   const [currentProjectName, setCurrentProjectName] = useState<string>("Untitled Project");
   // --- AUTH STATE ---
@@ -1976,6 +1984,10 @@ const App: React.FC = () => {
         // with a fresh cap evaluation rather than carrying forward the previous
         // account's manual dismissal.
         projectLimitDismissedRef.current = false;
+        // Reset the "project established" ref so the next sign-in starts in the
+        // "not yet loaded from history" state until the startup auto-restore or
+        // an explicit user click repopulates it.
+        projectEstablishedRef.current = null;
       }
       setLoadingAuth(false);
     });
@@ -2268,6 +2280,9 @@ const App: React.FC = () => {
     // branch also resets it; doing it here too keeps the logout cleanup
     // self-contained).
     projectLimitDismissedRef.current = false;
+    // Reset the "project established" ref so the next sign-in starts in the
+    // "not yet loaded from history" state.
+    projectEstablishedRef.current = null;
   };
 
   // Onboarding quiz completion — save to Firestore + trigger welcome
@@ -4087,6 +4102,9 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
         if (savedProjects.length > 0) {
           const mostRecent = savedProjects[0];
           setCurrentProjectId(mostRecent.id);
+          // Mark as user-established — semantically identical to a user click on
+          // history (the auto-restore reopens the user's most recent project).
+          projectEstablishedRef.current = mostRecent.id;
           setCurrentProjectName(mostRecent.name || "Untitled Project");
           // Startup auto-restore runs BEFORE the billing/userPlan effect completes, so we
           // apply only the plan-AGNOSTIC shape migration here (universe remap, style
@@ -4263,9 +4281,19 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     // Dismiss respect: if the user manually dismissed the banner this session, do not
     // re-raise it from a re-evaluation. The server's `overLimit` response (handled in
     // saveCurrentProject) is the only path that can re-set true once dismissed.
+    //
+    // "Established" check (CodeRabbit review): autosave silently adds the current project
+    // to `projects` within the debounce window. The previous check used `projects.some`
+    // to decide "is this a new project" — but autosave membership means a freshly-saved
+    // over-cap project would briefly flip `isNewProject` false on the next re-run and
+    // clear the legitimate warning before the user could read it. Instead, gate on
+    // `projectEstablishedRef`, which is set ONLY by user-initiated paths (`loadProject`
+    // from history, startup auto-restore). Autosave never touches it.
     if (teamResolution === 'resolved') {
-      const isNewProject = !projects.some((p: SavedProject) => p.id === currentProjectId);
-      if (isNewProject) {
+      const isProjectEstablished = projectEstablishedRef.current === currentProjectId;
+      if (!isProjectEstablished) {
+        // Either a brand-new session / freshly-started draft / freshly-saved project.
+        // Check the cap and surface the warning if applicable.
         const maxProjects = getSavedProjectLimit(userPlan);
         if (Number.isFinite(maxProjects) && projects.length >= maxProjects) {
           if (!projectLimitDismissedRef.current) {
@@ -4275,9 +4303,11 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
           setProjectLimitReached(false);
         }
       } else {
-        // Editing an existing project — clear any stale over-limit warning from a
-        // previous session or earlier evaluation. The server's `overLimit` response
-        // still handles the live "this save put you over the cap" case.
+        // User explicitly loaded this project from history (or the startup auto-restore
+        // did so) — it's an established editing session, not a freshly-saved project
+        // that just tripped the cap. Clear any stale warning so the user isn't nagged
+        // about a cap they may have already addressed. The server's `overLimit` response
+        // (line ~4192) still handles the live case if a subsequent save crosses the cap.
         setProjectLimitReached(false);
       }
     }
@@ -4915,6 +4945,9 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
 
   const loadProject = (p: SavedProject, targetPhase?: AppPhase) => {
     setCurrentProjectId(p.id);
+    // Mark the project as user-established so the cap-detection effect treats it as
+    // an existing editing session (not a freshly-saved one) and clears stale warnings.
+    projectEstablishedRef.current = p.id;
     setCurrentProjectName(p.name || "Untitled Project");
     const migratedInputs = migrateProjectInputs(p.inputs);
 
