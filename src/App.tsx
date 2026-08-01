@@ -2131,7 +2131,17 @@ const App: React.FC = () => {
       // hookType, coldHookAngle, brandColor*, etc.) are undefined when unset, so strip
       // undefined keys before writing.
       const cleanAvatar = Object.fromEntries(Object.entries(avatar).filter(([, v]) => v !== undefined));
-      const docRef = await addDoc(avatarsRef, { ...cleanAvatar, createdAt: Date.now() });
+      // ISSUE-A (avatar bleed): defensive scope-to-workspace. The
+      // input form's buildAvatarPayload now stamps workspaceId, but
+      // any caller (future bulk import, a script, a test) that hands
+      // us a payload without workspaceId would otherwise write an
+      // un-scoped avatar and re-trigger the bleed. Coerce from the
+      // active workspace here so the scoping is enforced at the
+      // write layer, not just at the form layer.
+      const scopedAvatar = cleanAvatar.workspaceId == null && activeWorkspaceId
+        ? { ...cleanAvatar, workspaceId: activeWorkspaceId }
+        : cleanAvatar;
+      const docRef = await addDoc(avatarsRef, { ...scopedAvatar, createdAt: Date.now() });
       setAvatars(prev => [{ id: docRef.id, ...avatar, createdAt: Date.now() }, ...prev]);
     } catch (e) {
       console.error('Failed to save avatar:', e);
@@ -2157,7 +2167,13 @@ const App: React.FC = () => {
     try {
       // Same undefined-stripping as handleSaveAvatar — optional fields are undefined when unset.
       const cleanAvatar = Object.fromEntries(Object.entries(avatar).filter(([, v]) => v !== undefined));
-      await setDoc(doc(db, 'users', uid, 'avatars', avatarId), { ...cleanAvatar, createdAt: Date.now() });
+      // ISSUE-A (avatar bleed): same defensive scope-to-workspace as
+      // handleSaveAvatar. An update that strips workspaceId would
+      // re-introduce the bleed.
+      const scopedAvatar = cleanAvatar.workspaceId == null && activeWorkspaceId
+        ? { ...cleanAvatar, workspaceId: activeWorkspaceId }
+        : cleanAvatar;
+      await setDoc(doc(db, 'users', uid, 'avatars', avatarId), { ...scopedAvatar, createdAt: Date.now() });
       setAvatars(prev => prev.map(a => a.id === avatarId ? { ...a, ...avatar, createdAt: Date.now() } : a));
     } catch (e) {
       console.error('Failed to update avatar:', e);
