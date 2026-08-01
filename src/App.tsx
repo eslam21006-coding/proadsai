@@ -2790,7 +2790,17 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       const workspaceId = (result.data as any)?.workspaceId;
       if (workspaceId) {
         const created = { id: workspaceId, ...data, createdAt: Date.now() } as Workspace;
-        setWorkspacesLocal(prev => [created, ...prev]);
+        // Hotfix bundle (duplicate workspace): the live onSnapshot listener
+        // on users/{uid}/workspaces may fire BEFORE this optimistic insert
+        // (callable response vs. Firestore streaming are independent
+        // transports and their ordering is not guaranteed). When the
+        // snapshot wins, prev already contains the new doc — prepending
+        // created unconditionally would add the same id twice, which the
+        // user sees as two identical workspaces ("deleting one deletes
+        // both" because the snapshot overwrite later collapses them).
+        // Dedupe by id; the optimistic insert is purely a UI latency
+        // optimisation, the snapshot is the source of truth.
+        setWorkspacesLocal(prev => prev.some(w => w.id === workspaceId) ? prev : [created, ...prev]);
         setActiveWorkspaceIdLocal(created.id);
       }
       setShowWorkspaceModal(false);
