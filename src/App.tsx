@@ -3624,6 +3624,15 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
   // to false on a successful save (so the next first-run for a new
   // workspace still surfaces) and on a logout/login cycle.
   const [funnelFirstRunDismissed, setFunnelFirstRunDismissed] = useState(false);
+  // Phase 14 batch 01-fix-meta-picker-loop — Dismiss latch for the
+  // MetaAccountPicker auto-open effect. Records the workspace id that the
+  // user just dismissed so the auto-open does NOT re-pop the picker in
+  // the same session. Scoped per workspace: switching to a different
+  // workspace lets the effect fire again for that new workspace, and a
+  // successful selection resets it (the underlying condition resolves
+  // naturally once `metaAdAccountId` is set). Mirrors the
+  // `funnelFirstRunDismissed` pattern above.
+  const metaPickerDismissedForWorkspaceRef = React.useRef<string | null>(null);
   // Mirrors whether getFunnelSettings returned a doc yet for the active
   // workspace-account. Drives the first-run auto-gate (no settings → open
   // the form as a blocking first-run screen).
@@ -3712,6 +3721,9 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       setMetaConnection(prev => prev ? { ...prev, selectedAccountId: accountId } : prev);
       showToast(t('meta.account_selected_toast'), 'success');
       setShowMetaAccountPicker(false);
+      // Phase 14 batch 01-fix-meta-picker-loop — Clear the dismiss latch
+      // so the next unlinked workspace can still trigger auto-open.
+      metaPickerDismissedForWorkspaceRef.current = null;
     } catch (e: unknown) {
       console.warn('Meta account selection failed:', e);
       const failureMessage = t('meta.account_save_failed');
@@ -3762,7 +3774,12 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     // can't bleed into an unrelated open (e.g. the OAuth multi-account
     // fast path that runs after a fresh connect).
     setMetaAccountPickerTitle(null);
-  }, [metaAccountPickerSelecting]);
+    // Phase 14 batch 01-fix-meta-picker-loop — Record which workspace was
+    // dismissed so the auto-open effect does NOT re-pop the picker in the
+    // same session. Scoped per workspace id, so switching workspaces
+    // still re-triggers auto-open for the new one.
+    metaPickerDismissedForWorkspaceRef.current = activeWorkspaceId;
+  }, [metaAccountPickerSelecting, activeWorkspaceId]);
 
   // Phase 14 batch 01 — UI wiring. Opens the Meta OAuth popup, then
   // refreshes the connection state on success.
@@ -3929,6 +3946,13 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     if ((metaConnection.adAccounts ?? []).length === 0) return;
     if (showMetaAccountPicker) return;
     if (metaAccountPickerSelecting) return;
+    // Phase 14 batch 01-fix-meta-picker-loop — If the user already
+    // dismissed the picker for THIS workspace in this session, don't
+    // re-pop it. The latch is keyed on workspace id, so switching to a
+    // different workspace clears it implicitly for that workspace and
+    // the picker can auto-open there. Reset on successful selection in
+    // `handleMetaAccountSelect`.
+    if (metaPickerDismissedForWorkspaceRef.current === activeWorkspace.id) return;
     openMetaAccountPickerForActiveWorkspace();
   }, [
     metaConnection?.connected,
