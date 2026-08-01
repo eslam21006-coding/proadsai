@@ -1663,6 +1663,11 @@ const App: React.FC = () => {
   // (auto-save still succeeds — the backend evicts the oldest draft). Shown as a dismissible
   // banner in the saved-projects panel; never blocks generation, navigation, or auto-save.
   const [projectLimitReached, setProjectLimitReached] = useState(false);
+  // Session-scoped sticky-dismiss flag: if the user manually dismisses the banner,
+  // the warning must stay dismissed for the rest of the session even if the cap
+  // effect re-evaluates and would otherwise re-set the flag true. Reset on sign-out
+  // (see the onAuthStateChanged sign-out branch) so the next session starts fresh.
+  const projectLimitDismissedRef = React.useRef(false);
   const [currentProjectId, setCurrentProjectId] = useState<string>(() => Date.now().toString());
   const [currentProjectName, setCurrentProjectName] = useState<string>("Untitled Project");
   // --- AUTH STATE ---
@@ -1967,6 +1972,10 @@ const App: React.FC = () => {
         setWorkspaceLoadError(false);
         // Allow the project auto-restore to run again for the next sign-in.
         hasRestoredRef.current = false;
+        // Reset the session-scoped banner-dismiss flag so the next sign-in starts
+        // with a fresh cap evaluation rather than carrying forward the previous
+        // account's manual dismissal.
+        projectLimitDismissedRef.current = false;
       }
       setLoadingAuth(false);
     });
@@ -2254,6 +2263,11 @@ const App: React.FC = () => {
     setOnboardingComplete(null);
     setShowWelcome(false);
     setShowSignOut(true);
+    // Reset the session-scoped banner-dismiss flag — same belt-and-suspenders
+    // pattern as the explicit resets above (the onAuthStateChanged sign-out
+    // branch also resets it; doing it here too keeps the logout cleanup
+    // self-contained).
+    projectLimitDismissedRef.current = false;
   };
 
   // Onboarding quiz completion — save to Firestore + trigger welcome
@@ -4234,11 +4248,37 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     // Client-side cap detection — surface a NON-BLOCKING warning, but never stop the auto-save.
     // The server allows the save (evicting the oldest draft to stay within the cap), so the user
     // is never blocked from working. The warning shows as a dismissible banner in the panel.
-    const isNewProject = !projects.some((p: SavedProject) => p.id === currentProjectId);
-    if (isNewProject) {
-      const maxProjects = getSavedProjectLimit(userPlan);
-      if (Number.isFinite(maxProjects) && projects.length >= maxProjects) {
-        setProjectLimitReached(true);
+    //
+    // ISSUE-D fix: gate the check on `teamResolution === 'resolved'`. For an existing team
+    // member, `setUser` fires before the awaited owner-doc lookup flips `userPlan` from its
+    // initial `'none'` to the owner's plan. In that intermediate render `userPlan === 'none'`
+    // → `getSavedProjectLimit('none') === 0` → `projects.length (0) >= 0` is true and the
+    // banner latched true. Mirroring the workspace-effect gate (line ~2550) avoids the race
+    // for both team members and owners whose user doc is unreadable.
+    //
+    // Clearing branch: when the cap is satisfied (finite limit and under the cap) we
+    // explicitly clear the flag. The previous code only ever set it true, so once latched
+    // it could only be cleared by the dismiss button.
+    //
+    // Dismiss respect: if the user manually dismissed the banner this session, do not
+    // re-raise it from a re-evaluation. The server's `overLimit` response (handled in
+    // saveCurrentProject) is the only path that can re-set true once dismissed.
+    if (teamResolution === 'resolved') {
+      const isNewProject = !projects.some((p: SavedProject) => p.id === currentProjectId);
+      if (isNewProject) {
+        const maxProjects = getSavedProjectLimit(userPlan);
+        if (Number.isFinite(maxProjects) && projects.length >= maxProjects) {
+          if (!projectLimitDismissedRef.current) {
+            setProjectLimitReached(true);
+          }
+        } else {
+          setProjectLimitReached(false);
+        }
+      } else {
+        // Editing an existing project — clear any stale over-limit warning from a
+        // previous session or earlier evaluation. The server's `overLimit` response
+        // still handles the live "this save put you over the cap" case.
+        setProjectLimitReached(false);
       }
     }
 
@@ -4301,7 +4341,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     };
 
     autoSaveQueue(currentProject);
-  }, [user, inputs, phase, tovText, conceptsText, selectedTov, selectedConcept, buildPlan, mockupHistory, historyIndex, resolvedUniverse, captionText, batchResults, batchCaptions, batchHookGroups, carouselSlides, currentProjectId, activeWorkspaceId, canUseWorkspaces, autoSaveQueue]);
+  }, [user, inputs, phase, tovText, conceptsText, selectedTov, selectedConcept, buildPlan, mockupHistory, historyIndex, resolvedUniverse, captionText, batchResults, batchCaptions, batchHookGroups, carouselSlides, currentProjectId, activeWorkspaceId, canUseWorkspaces, autoSaveQueue, userPlan, teamResolution]);
 
   // Ranking linkage — stores the latest ranking metadata from generation responses
   // ⚠️ MUST be above all early returns to satisfy React hooks ordering rules
@@ -7953,7 +7993,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   ? `وصلت إلى حد ${capLabel} مشاريع. احذف مشاريع قديمة لحفظ مشاريع جديدة.`
                   : `You've reached your ${capLabel}-project limit. Delete old projects to save new ones.`}
               </p>
-              <button onClick={() => setProjectLimitReached(false)} aria-label={lang === 'ar' ? 'إغلاق' : 'Dismiss'}
+              <button onClick={() => { projectLimitDismissedRef.current = true; setProjectLimitReached(false); }} aria-label={lang === 'ar' ? 'إغلاق' : 'Dismiss'}
                 className="text-amber-400/60 hover:text-amber-300 transition-colors shrink-0">
                 <i className="fa-solid fa-xmark"></i>
               </button>
