@@ -1663,6 +1663,19 @@ const App: React.FC = () => {
   // (auto-save still succeeds — the backend evicts the oldest draft). Shown as a dismissible
   // banner in the saved-projects panel; never blocks generation, navigation, or auto-save.
   const [projectLimitReached, setProjectLimitReached] = useState(false);
+  // Session-scoped sticky-dismiss flag: if the user manually dismisses the banner,
+  // the warning must stay dismissed for the rest of the session even if the cap
+  // effect re-evaluates and would otherwise re-set the flag true. Reset on sign-out
+  // (see the onAuthStateChanged sign-out branch) so the next session starts fresh.
+  const projectLimitDismissedRef = React.useRef(false);
+  // Tracks the `currentProjectId` of a project the user (or the startup auto-restore)
+  // explicitly loaded from history. Used by the cap-detection effect to distinguish
+  // "user-loaded existing project" (safe to clear stale warnings) from "freshly saved
+  // new project" (warning must stay visible until the user takes a real action).
+  // Autosave silently adding the current project to `projects` does NOT touch this
+  // ref, so a freshly-saved over-cap project keeps its warning visible across the
+  // autosave debounce → cloud-roundtrip → re-evaluation cycle.
+  const projectEstablishedRef = React.useRef<string | null>(null);
   const [currentProjectId, setCurrentProjectId] = useState<string>(() => Date.now().toString());
   const [currentProjectName, setCurrentProjectName] = useState<string>("Untitled Project");
   // --- AUTH STATE ---
@@ -1967,6 +1980,19 @@ const App: React.FC = () => {
         setWorkspaceLoadError(false);
         // Allow the project auto-restore to run again for the next sign-in.
         hasRestoredRef.current = false;
+        // Reset the session-scoped banner-dismiss flag so the next sign-in starts
+        // with a fresh cap evaluation rather than carrying forward the previous
+        // account's manual dismissal.
+        projectLimitDismissedRef.current = false;
+        // Reset the "project established" ref so the next sign-in starts in the
+        // "not yet loaded from history" state until the startup auto-restore or
+        // an explicit user click repopulates it.
+        projectEstablishedRef.current = null;
+        // Audit C2: clear the banner state itself, not just the two refs. Without
+        // this the flag survives an account switch made without a page reload —
+        // account A's latched warning would still be set when account B signs in,
+        // until the cap effect re-runs and clears it.
+        setProjectLimitReached(false);
       }
       setLoadingAuth(false);
     });
@@ -2254,6 +2280,17 @@ const App: React.FC = () => {
     setOnboardingComplete(null);
     setShowWelcome(false);
     setShowSignOut(true);
+    // Reset the session-scoped banner-dismiss flag — same belt-and-suspenders
+    // pattern as the explicit resets above (the onAuthStateChanged sign-out
+    // branch also resets it; doing it here too keeps the logout cleanup
+    // self-contained).
+    projectLimitDismissedRef.current = false;
+    // Reset the "project established" ref so the next sign-in starts in the
+    // "not yet loaded from history" state.
+    projectEstablishedRef.current = null;
+    // Audit C2: clear the banner state itself alongside the refs (see the
+    // onAuthStateChanged sign-out branch for the rationale).
+    setProjectLimitReached(false);
   };
 
   // Onboarding quiz completion — save to Firestore + trigger welcome
@@ -4073,6 +4110,9 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
         if (savedProjects.length > 0) {
           const mostRecent = savedProjects[0];
           setCurrentProjectId(mostRecent.id);
+          // Mark as user-established — semantically identical to a user click on
+          // history (the auto-restore reopens the user's most recent project).
+          projectEstablishedRef.current = mostRecent.id;
           setCurrentProjectName(mostRecent.name || "Untitled Project");
           // Startup auto-restore runs BEFORE the billing/userPlan effect completes, so we
           // apply only the plan-AGNOSTIC shape migration here (universe remap, style
@@ -4234,11 +4274,66 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     // Client-side cap detection — surface a NON-BLOCKING warning, but never stop the auto-save.
     // The server allows the save (evicting the oldest draft to stay within the cap), so the user
     // is never blocked from working. The warning shows as a dismissible banner in the panel.
-    const isNewProject = !projects.some((p: SavedProject) => p.id === currentProjectId);
-    if (isNewProject) {
-      const maxProjects = getSavedProjectLimit(userPlan);
-      if (Number.isFinite(maxProjects) && projects.length >= maxProjects) {
-        setProjectLimitReached(true);
+    //
+    // ISSUE-D fix: gate the check on `teamResolution === 'resolved'`. For an existing team
+    // member, `setUser` fires before the awaited owner-doc lookup flips `userPlan` from its
+    // initial `'none'` to the owner's plan. In that intermediate render `userPlan === 'none'`
+    // → `getSavedProjectLimit('none') === 0` → `projects.length (0) >= 0` is true and the
+    // banner latched true. Mirroring the workspace-effect gate (line ~2550) avoids the race
+    // for both team members and owners whose user doc is unreadable.
+    //
+    // Clearing branch: when the cap is satisfied (finite limit and under the cap) we
+    // explicitly clear the flag. The previous code only ever set it true, so once latched
+    // it could only be cleared by the dismiss button.
+    //
+    // Dismiss respect: if the user manually dismissed the banner this session, do not
+    // re-raise it from a re-evaluation. The server's `overLimit` response (handled in
+    // saveCurrentProject) is the only path that can re-set true once dismissed.
+    //
+    // "Established" check (CodeRabbit review): autosave silently adds the current project
+    // to `projects` within the debounce window. The previous check used `projects.some`
+    // to decide "is this a new project" — but autosave membership means a freshly-saved
+    // over-cap project would briefly flip `isNewProject` false on the next re-run and
+    // clear the legitimate warning before the user could read it. Instead, gate on
+    // `projectEstablishedRef`, which is set ONLY by user-initiated paths (`loadProject`
+    // from history, startup auto-restore). Autosave never touches it.
+    //
+    // Audit C1: `teamResolution === 'resolved'` alone is not sufficient on the live
+    // user-doc listener path. There, `setTeamResolution('resolved')` (line ~2046) runs
+    // SYNCHRONOUSLY while the owner-doc `getDoc(...).then(...)` that assigns `userPlan`
+    // (line ~2034) is still pending — unlike the auth-handler path, where `setUserPlan`
+    // and `setTeamResolution` are batched together after an awaited read. So a frame
+    // still exists in which the gate is open while `userPlan` is its initial `'none'`,
+    // which re-creates the original latch condition (`getSavedProjectLimit('none') === 0`).
+    // The clearing branch below recovers from it, but the banner can flash first — and if
+    // the owner-doc read fails outright (the listener's `.catch` swallows it, and the
+    // auth handler's not-exists branch assigns `'none'` explicitly) it never recovers,
+    // leaving a team member staring at "You've reached your 0-project limit".
+    //
+    // Suppress the cap check only for a team member whose owner plan has not resolved:
+    // no cap statement can be truthful in that state. Solo users are unaffected because
+    // `teamOwnerUid` is null for them, so a genuine `'none'`-plan account still sees the
+    // warning exactly as before.
+    if (teamResolution === 'resolved' && !(teamOwnerUid && userPlan === 'none')) {
+      const isProjectEstablished = projectEstablishedRef.current === currentProjectId;
+      if (!isProjectEstablished) {
+        // Either a brand-new session / freshly-started draft / freshly-saved project.
+        // Check the cap and surface the warning if applicable.
+        const maxProjects = getSavedProjectLimit(userPlan);
+        if (Number.isFinite(maxProjects) && projects.length >= maxProjects) {
+          if (!projectLimitDismissedRef.current) {
+            setProjectLimitReached(true);
+          }
+        } else {
+          setProjectLimitReached(false);
+        }
+      } else {
+        // User explicitly loaded this project from history (or the startup auto-restore
+        // did so) — it's an established editing session, not a freshly-saved project
+        // that just tripped the cap. Clear any stale warning so the user isn't nagged
+        // about a cap they may have already addressed. The server's `overLimit` response
+        // (line ~4192) still handles the live case if a subsequent save crosses the cap.
+        setProjectLimitReached(false);
       }
     }
 
@@ -4301,7 +4396,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     };
 
     autoSaveQueue(currentProject);
-  }, [user, inputs, phase, tovText, conceptsText, selectedTov, selectedConcept, buildPlan, mockupHistory, historyIndex, resolvedUniverse, captionText, batchResults, batchCaptions, batchHookGroups, carouselSlides, currentProjectId, activeWorkspaceId, canUseWorkspaces, autoSaveQueue]);
+  }, [user, inputs, phase, tovText, conceptsText, selectedTov, selectedConcept, buildPlan, mockupHistory, historyIndex, resolvedUniverse, captionText, batchResults, batchCaptions, batchHookGroups, carouselSlides, currentProjectId, activeWorkspaceId, canUseWorkspaces, autoSaveQueue, userPlan, teamResolution, teamOwnerUid]);
 
   // Ranking linkage — stores the latest ranking metadata from generation responses
   // ⚠️ MUST be above all early returns to satisfy React hooks ordering rules
@@ -4875,6 +4970,9 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
 
   const loadProject = (p: SavedProject, targetPhase?: AppPhase) => {
     setCurrentProjectId(p.id);
+    // Mark the project as user-established so the cap-detection effect treats it as
+    // an existing editing session (not a freshly-saved one) and clears stale warnings.
+    projectEstablishedRef.current = p.id;
     setCurrentProjectName(p.name || "Untitled Project");
     const migratedInputs = migrateProjectInputs(p.inputs);
 
@@ -7953,7 +8051,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                   ? `وصلت إلى حد ${capLabel} مشاريع. احذف مشاريع قديمة لحفظ مشاريع جديدة.`
                   : `You've reached your ${capLabel}-project limit. Delete old projects to save new ones.`}
               </p>
-              <button onClick={() => setProjectLimitReached(false)} aria-label={lang === 'ar' ? 'إغلاق' : 'Dismiss'}
+              <button onClick={() => { projectLimitDismissedRef.current = true; setProjectLimitReached(false); }} aria-label={lang === 'ar' ? 'إغلاق' : 'Dismiss'}
                 className="text-amber-400/60 hover:text-amber-300 transition-colors shrink-0">
                 <i className="fa-solid fa-xmark"></i>
               </button>
