@@ -1988,6 +1988,11 @@ const App: React.FC = () => {
         // "not yet loaded from history" state until the startup auto-restore or
         // an explicit user click repopulates it.
         projectEstablishedRef.current = null;
+        // Audit C2: clear the banner state itself, not just the two refs. Without
+        // this the flag survives an account switch made without a page reload —
+        // account A's latched warning would still be set when account B signs in,
+        // until the cap effect re-runs and clears it.
+        setProjectLimitReached(false);
       }
       setLoadingAuth(false);
     });
@@ -2283,6 +2288,9 @@ const App: React.FC = () => {
     // Reset the "project established" ref so the next sign-in starts in the
     // "not yet loaded from history" state.
     projectEstablishedRef.current = null;
+    // Audit C2: clear the banner state itself alongside the refs (see the
+    // onAuthStateChanged sign-out branch for the rationale).
+    setProjectLimitReached(false);
   };
 
   // Onboarding quiz completion — save to Firestore + trigger welcome
@@ -4289,7 +4297,24 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     // clear the legitimate warning before the user could read it. Instead, gate on
     // `projectEstablishedRef`, which is set ONLY by user-initiated paths (`loadProject`
     // from history, startup auto-restore). Autosave never touches it.
-    if (teamResolution === 'resolved') {
+    //
+    // Audit C1: `teamResolution === 'resolved'` alone is not sufficient on the live
+    // user-doc listener path. There, `setTeamResolution('resolved')` (line ~2046) runs
+    // SYNCHRONOUSLY while the owner-doc `getDoc(...).then(...)` that assigns `userPlan`
+    // (line ~2034) is still pending — unlike the auth-handler path, where `setUserPlan`
+    // and `setTeamResolution` are batched together after an awaited read. So a frame
+    // still exists in which the gate is open while `userPlan` is its initial `'none'`,
+    // which re-creates the original latch condition (`getSavedProjectLimit('none') === 0`).
+    // The clearing branch below recovers from it, but the banner can flash first — and if
+    // the owner-doc read fails outright (the listener's `.catch` swallows it, and the
+    // auth handler's not-exists branch assigns `'none'` explicitly) it never recovers,
+    // leaving a team member staring at "You've reached your 0-project limit".
+    //
+    // Suppress the cap check only for a team member whose owner plan has not resolved:
+    // no cap statement can be truthful in that state. Solo users are unaffected because
+    // `teamOwnerUid` is null for them, so a genuine `'none'`-plan account still sees the
+    // warning exactly as before.
+    if (teamResolution === 'resolved' && !(teamOwnerUid && userPlan === 'none')) {
       const isProjectEstablished = projectEstablishedRef.current === currentProjectId;
       if (!isProjectEstablished) {
         // Either a brand-new session / freshly-started draft / freshly-saved project.
@@ -4371,7 +4396,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     };
 
     autoSaveQueue(currentProject);
-  }, [user, inputs, phase, tovText, conceptsText, selectedTov, selectedConcept, buildPlan, mockupHistory, historyIndex, resolvedUniverse, captionText, batchResults, batchCaptions, batchHookGroups, carouselSlides, currentProjectId, activeWorkspaceId, canUseWorkspaces, autoSaveQueue, userPlan, teamResolution]);
+  }, [user, inputs, phase, tovText, conceptsText, selectedTov, selectedConcept, buildPlan, mockupHistory, historyIndex, resolvedUniverse, captionText, batchResults, batchCaptions, batchHookGroups, carouselSlides, currentProjectId, activeWorkspaceId, canUseWorkspaces, autoSaveQueue, userPlan, teamResolution, teamOwnerUid]);
 
   // Ranking linkage — stores the latest ranking metadata from generation responses
   // ⚠️ MUST be above all early returns to satisfy React hooks ordering rules
