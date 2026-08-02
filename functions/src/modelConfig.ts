@@ -2,6 +2,13 @@
 
 export const MODEL_PROVIDER: "openai" | "gemini" = "openai";
 
+// Phase 22 — copy scoring gate permanent kill switch (FR-019c, FR-019e).
+// Flipping this to false restores the pre-feature copy behaviour with no
+// code revert and no logic redeploy. The switch is permanent by design:
+// it is also how the gate-disabled baseline for SC-002 / SC-004 / SC-005a
+// / SC-006 is produced after launch (research R7).
+export const COPY_SCORING_ENABLED: boolean = true;
+
 export const OPENAI_VISUAL_MODEL = "gpt-image-2";
 
 export const OPENAI_SIZE_BY_ASPECT: Record<string, string> = {

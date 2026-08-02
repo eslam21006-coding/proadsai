@@ -778,25 +778,35 @@ export const BANNED_CTA_LIST = [
 ] as const;
 
 // ─── COPY SCORING DIMENSIONS (Section 12 — seeded for the later track) ───
+// Phase 22 — Track 2 gate annotation (FR-002a):
+// The gate in this phase scores exactly 9 dimensions (rows 1, 2, 3, 4, 5,
+// 6, 13, 14, 15 — audience specificity, pain/desire relevance, clarity,
+// scroll-stopping tension, wording specificity, offer relevance,
+// non-generic language, reading level, lived-symptom depth). The 6
+// deferred dimensions (rows 7 hook-angle fit, 8 format fit, 9 visual
+// compatibility, 10 CTA strength, 11 proof strength, 12 objection
+// handling) belong to Phase 23, which extends this gate rather than
+// replacing it (LAUNCH_MATRIX task 23.9). The rule text below is the
+// shared source of truth and is NOT rewritten — only annotated.
 
 export const COPY_SCORING_DIMENSIONS = `
 COPY SCORING RUBRIC (1–10 PER DIMENSION)
 
-1. Audience specificity
-2. Pain / desire relevance
-3. Clarity
-4. Scroll-stopping tension
-5. Wording specificity
-6. Offer relevance
-7. Hook-angle fit
-8. Format fit
-9. Visual compatibility
-10. CTA strength (if used)
-11. Proof strength (if used)
-12. Objection handling (if retargeting)
-13. Non-generic language
-14. Reading level ≤ 6th grade — HARD dimension; reject if below 7
-15. Lived-symptom depth — HARD dimension; reject if below 7
+1. Audience specificity — ACTIVE (Phase 22)
+2. Pain / desire relevance — ACTIVE (Phase 22)
+3. Clarity — ACTIVE (Phase 22)
+4. Scroll-stopping tension — ACTIVE (Phase 22)
+5. Wording specificity — ACTIVE (Phase 22)
+6. Offer relevance — ACTIVE (Phase 22)
+7. Hook-angle fit — DEFERRED to Phase 23 (not scored in Phase 22)
+8. Format fit — DEFERRED to Phase 23 (not scored in Phase 22)
+9. Visual compatibility — DEFERRED to Phase 23 (not scored in Phase 22)
+10. CTA strength (if used) — DEFERRED to Phase 23 (not scored in Phase 22)
+11. Proof strength (if used) — DEFERRED to Phase 23 (not scored in Phase 22)
+12. Objection handling (if retargeting) — DEFERRED to Phase 23 (not scored in Phase 22)
+13. Non-generic language — ACTIVE (Phase 22)
+14. Reading level ≤ 6th grade — ACTIVE (Phase 22); HARD dimension; reject if below 7
+15. Lived-symptom depth — ACTIVE (Phase 22); HARD dimension; reject if below 7
 
 PASS CONDITION: average ≥ 8 AND no applicable dimension below 6 AND dimensions 14–15 ≥ 7.
 

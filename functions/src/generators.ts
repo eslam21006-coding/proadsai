@@ -46,6 +46,7 @@ import { fetchWebsiteContext, buildPersonalizationContext } from "./serverUtils.
 import { validateHookResponse, normalizeHookResponse, assertHookSemanticPreservation, type SemanticLock } from "./utils/hookPayload.js";
 import { getRankings, type RankingResult, type RankingInput } from "./rankingEngine.js";
 import type { FailureClass, CostEstimate, LogoPlacement, ClaimFlagEntry, CopyFieldStatuses, ConceptDirectorTraceEntry } from "./types.js";
+import type { CopyScoringTrace } from "./copyScoringGate.js";
 import { resolveBrandColors, type ResolveBrandColorsInput } from "./brandColorResolver.js";
 import { buildCarouselBrandConsistencyBlock, buildBatchBrandConsistencyBlock } from "./brandPromptBlocks.js";
 import { buildConceptEnrichmentBlock, type ConceptBrief, type ConceptDirectorFallback } from "./conceptDirector.js";
@@ -53,7 +54,7 @@ import { loadRAGContextForWorkspace, buildHookPerformanceBlock, buildVisualPerfo
 import type { WinningAd } from "./getTopWinners.js";
 import { checkBrandColorCompliance } from "./brandColorCompliance.js";
 import { GenerationError } from "./types.js";
-import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL, OPENAI_SIZE_BY_ASPECT } from "./modelConfig.js";
+import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL, OPENAI_SIZE_BY_ASPECT, COPY_SCORING_ENABLED } from "./modelConfig.js";
 import { COLD_ANGLES, RETARGETING_ANGLES, buildSlidePlan } from "./slidePlanEngine.js";
 import { drawDimensions, drawOpenings, makeProjectSeed, getRecentFingerprintsForRotation, type AngleFingerprint } from "./copyDiversity.js";
 import { recordAngleFingerprint } from "./creativeMemory.js";
@@ -1901,7 +1902,7 @@ function stripDegradedFieldsFromOwnership(
 }
 
 // Step 2. Generate TOV -> NEEDS GEMINI 3 (Creative)
-export async function generateTOV(inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', previousOutput?: string, globalRefinement?: string, editFeedback?: string, editIndex?: string, editIntent?: 'simplify_terms' | 'shorten' | 'sharpen' | 'formalize' | 'change_angle' | 'change_cta' | 'change_subheadline' | 'change_headline' | 'freeform', rewriteScope?: 'wording_only' | 'cta_only' | 'subheadline_only' | 'hook_only' | 'full', semanticLock?: SemanticLock | null): Promise<{ text: string; rankingGuidance: RankingLinkage | null }> {
+export async function generateTOV(inputs: AdInputs, resolvedUniverse: string, mode: 'initial' | 'refresh' | 'precision' = 'initial', previousOutput?: string, globalRefinement?: string, editFeedback?: string, editIndex?: string, editIntent?: 'simplify_terms' | 'shorten' | 'sharpen' | 'formalize' | 'change_angle' | 'change_cta' | 'change_subheadline' | 'change_headline' | 'freeform', rewriteScope?: 'wording_only' | 'cta_only' | 'subheadline_only' | 'hook_only' | 'full', semanticLock?: SemanticLock | null): Promise<{ text: string; rankingGuidance: RankingLinkage | null; copyScoringTrace: CopyScoringTrace | null }> {
     // FIX 2: strip media payload (presence preserved) — TOV never uses hero photos/logos.
     inputs = stripMediaFromInputs(inputs);
     let _tovRankingLinkage: RankingLinkage | null = null;
@@ -3170,7 +3171,74 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
         console.warn("⚠️ Phase 23 fingerprint recording failed (non-blocking):", e);
     }
 
-    return { text, rankingGuidance: _tovRankingLinkage };
+    // ═══ Phase 22 — copy scoring gate (Contract G1, FR-000, FR-019a).
+    // The gate runs on the raw block AFTER it has been generated but
+    // BEFORE the advertiser reviews it. It is INERT by default — only
+    // active on initial generation (mode === 'initial'). Refresh /
+    // precision / per-field edit paths are explicitly excluded
+    // (FR-019a, Contract G4): a miss here silently overwrites copy
+    // the advertiser deliberately asked for, with no error. SC-005a.
+    //
+    // The trace rides the response (Contract I1, research R1) — never
+    // a module-global survivor.
+    let _copyScoringTrace: CopyScoringTrace | null = null;
+    let _gatedText = text;
+    if (mode === 'initial' && COPY_SCORING_ENABLED) {
+        try {
+            const { gateCopySet, createOpenAIClients, formatGateLogLine } = await import("./copyScoringGate.js");
+            const lang = (inputs as any).adLanguage === "ar_fusha" || (inputs as any).adLanguage === "ar"
+                ? "ar" as const
+                : "en" as const;
+            const untouchable = [
+                inputs?.productName || "",
+                inputs?.offer || "",
+                inputs?.cta || "",
+                inputs?.brandName || "",
+            ].filter((v) => typeof v === "string" && v.length > 0);
+            const clients = openaiKey ? createOpenAIClients(openaiKey) : null;
+            if (clients) {
+                const r = await gateCopySet(
+                    {
+                        step: "hook",
+                        rawBlock: _gatedText,
+                        language: lang,
+                        untouchable,
+                    },
+                    {
+                        score: clients.score,
+                        rewrite: clients.rewrite,
+                        now: () => Date.now(),
+                    },
+                );
+                _gatedText = r.block;
+                _copyScoringTrace = {
+                    ran: true,
+                    steps: [r.trace],
+                };
+            } else {
+                _copyScoringTrace = { ran: false, skipReason: "no_credential" };
+            }
+            // Structured log line per outcome (FR-020a, Contract J1).
+            console.log(formatGateLogLine("hook", _copyScoringTrace));
+        } catch (e: any) {
+            // Total-isolation — gate failures never break the generation.
+            _copyScoringTrace = { ran: false, skipReason: "unreachable" };
+            console.warn("⚠️ copy scoring gate failed (non-blocking):", e?.message || e);
+        }
+    } else if (!COPY_SCORING_ENABLED) {
+        _copyScoringTrace = { ran: false, skipReason: "disabled" };
+        // Even when disabled we emit one structured log line per the
+        // observability contract (FR-020a) — useful for verifying the
+        // switch's effect on the alertable signal.
+        try {
+            const { formatGateLogLine } = await import("./copyScoringGate.js");
+            console.log(formatGateLogLine("hook", _copyScoringTrace));
+        } catch {
+            // Module import failed in tests — non-blocking.
+        }
+    }
+
+    return { text: _gatedText, rankingGuidance: _tovRankingLinkage, copyScoringTrace: _copyScoringTrace };
 }
 
 // 2. Generate Concepts -> USE LOGIC MODEL (Engineer)
@@ -5519,6 +5587,45 @@ export interface ResolutionTrace {
         applied: boolean;
         reason?: string;
     };
+    // Phase 22 — additive copy-scoring sub-object (mirrors types.ts
+    // ResolutionTrace.copyScoring). Records the silent scoring + rewrite
+    // gate outcome. Additive — no existing field is removed, renamed, or
+    // repurposed (FR-021). Legacy generations without this key remain
+    // readable (SC-009).
+    copyScoring?: {
+        ran: boolean;
+        skipReason?:
+            | "disabled"
+            | "no_credential"
+            | "timeout_interaction"
+            | "timeout_copyset"
+            | "timeout_run"
+            | "unreachable"
+            | "malformed_response"
+            | "out_of_range"
+            | "unusable_rewrite";
+        steps?: Array<{
+            step: "hook" | "carouselSlides" | "testimonial";
+            fields: Array<{
+                variationId: string;
+                fieldName: string;
+                scores: Record<string, number>;
+                average: number;
+                passed: boolean;
+            }>;
+            rewrites: Array<{
+                variationId: string;
+                fieldName: string;
+                pass: 1 | 2;
+                diagnosis: string;
+                accepted: boolean;
+                rejectReason?: string;
+            }>;
+            passCount: 0 | 1 | 2;
+            gaveUp: boolean;
+            interactionCount: number;
+        }>;
+    };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -5954,6 +6061,15 @@ export async function generateFinalAd(
     // legacy call sites (e.g. backend self-tests, old reflow path)
     // working without an explicit conceptDirectorTrace.
     conceptDirectorTrace?: ConceptDirectorTraceEntry | null,
+    // Phase 22 — Copy scoring gate trace (research R1, Contract I1).
+    // The trace rides the HTTP boundary from each copy-producing
+    // callable (serverGenerateTOV / serverGenerateCarouselSlideCopies /
+    // serverGenerateTestimonialCarousel) to here, where it is merged
+    // into the persisted ResolutionTrace.copyScoring sub-object.
+    // Module-global survivors are FORBIDDEN — the Phase 20 precedent
+    // (generators.ts:1389-1398) is the documented failure this design
+    // avoids. Opaque passthrough — never rendered on the frontend.
+    copyScoringTrace?: CopyScoringTrace | null,
 ): Promise<{ image: string; failureClass?: "numeric_hallucination"; costEstimate?: CostEstimate } | { image: null; errorCode: string; failureClass?: FailureClass; debug?: FinalAdDebugInfo }> {
     const _brandResolved = resolveBrandColors(buildBrandResolverArgs(inputs));
     resetResolutionTrace();
@@ -5968,6 +6084,42 @@ export async function generateFinalAd(
     // _lastResolutionTrace but intentionally NOT _lastCopyDiversity.
     if (_lastCopyDiversity) {
         _lastResolutionTrace = { ...(_lastResolutionTrace || {}), copyDiversity: _lastCopyDiversity };
+    }
+    // Phase 22 — merge the copy scoring gate trace (research R1, Contract I1).
+    // The trace rides the HTTP boundary from each copy-producing callable
+    // (serverGenerateTOV / serverGenerateCarouselSlideCopies /
+    // serverGenerateTestimonialCarousel) as the `copyScoringTrace` parameter.
+    // Each step's trace is appended into the `steps[]` array — multiple steps
+    // accumulate within a single run (e.g. hook step + carousel slide step).
+    // `undefined` / `null` / malformed input is silently ignored — the merge
+    // is additive only and never replaces an existing copyScoring object.
+    if (copyScoringTrace && typeof copyScoringTrace === "object" && copyScoringTrace.ran === true) {
+        const existingSteps = (_lastResolutionTrace && _lastResolutionTrace.copyScoring && Array.isArray(_lastResolutionTrace.copyScoring.steps))
+            ? _lastResolutionTrace.copyScoring.steps
+            : [];
+        const newSteps = Array.isArray(copyScoringTrace.steps) ? copyScoringTrace.steps : [];
+        _lastResolutionTrace = {
+            ...(_lastResolutionTrace || {}),
+            copyScoring: {
+                ran: true,
+                steps: [...existingSteps, ...newSteps],
+            },
+        };
+    } else if (copyScoringTrace && typeof copyScoringTrace === "object" && copyScoringTrace.ran === false) {
+        // Skip-path / fail-open trace — only write it if no ran:true trace
+        // already exists in the persisted record (FR-020, ran:true wins).
+        const existingSteps = (_lastResolutionTrace && _lastResolutionTrace.copyScoring && Array.isArray(_lastResolutionTrace.copyScoring.steps))
+            ? _lastResolutionTrace.copyScoring.copyScoring?.steps
+            : null;
+        if (!existingSteps || existingSteps.length === 0) {
+            _lastResolutionTrace = {
+                ...(_lastResolutionTrace || {}),
+                copyScoring: {
+                    ran: false,
+                    skipReason: copyScoringTrace.skipReason,
+                },
+            };
+        }
     }
     // Phase 28 — Expression adaptation trace (audit fix #13). Written here
     // (in `generateFinalAd`) so it covers every render path uniformly:
@@ -8727,7 +8879,7 @@ export async function generateCarouselSlideCopies(
     resolvedUniverse: string,
     refinement?: string,
     plan?: StoredPlan
-): Promise<CarouselSlideCopy[]> {
+): Promise<{ copies: CarouselSlideCopy[]; copyScoringTrace: CopyScoringTrace | null }> {
     const carouselDecision = resolveEntitlement({ plan: plan || "none", feature: "carouselSlides", quantity: slideCount });
     if (!carouselDecision.allowed) {
         throw new HttpsError("permission-denied", carouselDecision.reason || "carousel_limit_exceeded");
@@ -8795,7 +8947,7 @@ RETARGETING MODE — CRITICAL CONTEXT
                 benefitText: isLastSlide ? benefitText : null,
             });
         }
-        return testimonialSlides;
+        return { copies: testimonialSlides, copyScoringTrace: null };
     }
 
     const retargetingFullContext = isRetargeting ? `
@@ -9045,7 +9197,80 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
         }
     }
 
-    return copies;
+    // ═══ Phase 22 — copy scoring gate (Contract G2, FR-000d, FR-019).
+    // The carousel slide step is its OWN copy set with its own 5-interaction
+    // ceiling (FR-018) and its own 20-second budget (FR-016). The approved
+    // hook block passed through `approvedTov` is never re-gated here — this
+    // step authors new copy only. The transcribed testimonial content (in the
+    // separate testimonial flow) is also excluded — see generateTestimonialCarousel.
+    let _copyScoringTrace: CopyScoringTrace | null = null;
+    if (COPY_SCORING_ENABLED) {
+        try {
+            const { gateCopySet, createOpenAIClients, formatGateLogLine } = await import("./copyScoringGate.js");
+            const lang = (inputs as any).adLanguage === "ar_fusha" || (inputs as any).adLanguage === "ar"
+                ? "ar" as const
+                : "en" as const;
+            // Build a virtual block the gate understands: each slide is a
+            // "variation" (var ids S1, S2, ...) with a single hookText field.
+            // slideCaption lives on hookText here so the gate's per-field
+            // threshold rules apply. The gate writes the block back as-is.
+            const virtualBlock = copies.map((c, i) =>
+                `HOOK_START_${["A","B","C","D","E","F","G","H","I","J"][i] || "A"}\nHOOK_TEXT: ${c.hookText || ""}\nHOOK_END_${["A","B","C","D","E","F","G","H","I","J"][i] || "A"}`
+            ).join("\n\n");
+            const untouchable = [
+                inputs?.productName || "",
+                inputs?.offer || "",
+                inputs?.cta || "",
+                inputs?.brandName || "",
+            ].filter((v) => typeof v === "string" && v.length > 0);
+            const clients = openaiKey ? createOpenAIClients(openaiKey) : null;
+            if (clients) {
+                const fieldsForScoring = copies.map((c, i) => ({
+                    variationId: ["A","B","C","D","E","F","G","H","I","J"][i] || "A",
+                    fieldName: "slideCaption" as const,
+                    value: c.hookText || "",
+                }));
+                const r = await gateCopySet(
+                    {
+                        step: "carouselSlides",
+                        rawBlock: virtualBlock,
+                        language: lang,
+                        untouchable,
+                    },
+                    {
+                        score: clients.score,
+                        rewrite: clients.rewrite,
+                        now: () => Date.now(),
+                    },
+                );
+                // Apply rewrites back to copies
+                const { parseBlockIntoFieldsForSlides } = await import("./copyScoringGate.js");
+                const updated = parseBlockIntoFieldsForSlides(r.block);
+                for (let i = 0; i < copies.length; i++) {
+                    const varId = ["A","B","C","D","E","F","G","H","I","J"][i] || "A";
+                    const u = updated.get(varId);
+                    if (u && copies[i].hookText !== u) {
+                        copies[i].hookText = u;
+                    }
+                }
+                _copyScoringTrace = { ran: true, steps: [r.trace] };
+            } else {
+                _copyScoringTrace = { ran: false, skipReason: "no_credential" };
+            }
+            console.log(formatGateLogLine("carouselSlides", _copyScoringTrace));
+        } catch (e: any) {
+            _copyScoringTrace = { ran: false, skipReason: "unreachable" };
+            console.warn("⚠️ copy scoring gate failed on carousel slides (non-blocking):", e?.message || e);
+        }
+    } else {
+        _copyScoringTrace = { ran: false, skipReason: "disabled" };
+        try {
+            const { formatGateLogLine } = await import("./copyScoringGate.js");
+            console.log(formatGateLogLine("carouselSlides", _copyScoringTrace));
+        } catch { /* module not available in tests */ }
+    }
+
+    return { copies, copyScoringTrace: _copyScoringTrace };
 }
 
 // 5. Caption -> NEEDS GEMINI 3 (Creative)
@@ -9788,7 +10013,7 @@ export async function generateTestimonialCarousel(
     inputs: AdInputs,
     screenshots: string[],
     maxPlanSlides: number,
-): Promise<TestimonialCarouselResult> {
+): Promise<TestimonialCarouselResult & { copyScoringTrace: CopyScoringTrace | null }> {
     const ctaText = inputs.cta || '';
     const rawStyle = resolveStyleFamily(inputs);
     const visualStyleFamily: VisualStyleFamily = ALLOWED_STYLES.has(rawStyle as VisualStyleFamily)
@@ -9847,11 +10072,75 @@ export async function generateTestimonialCarousel(
         hasCTA: true,
     });
 
+    // ═══ Phase 22 — copy scoring gate (Contract G3, FR-000e, FR-019).
+    // Gate ONLY the authored hook (slide 1) and close (last slide) — the
+    // transcribed testimonial content (the screenshots themselves) is
+    // UNTOUCHABLE (FR-000f, SC-010). Rewriting a real customer's quote
+    // would fabricate a testimonial that was never given.
+    let _copyScoringTrace: CopyScoringTrace | null = null;
+    if (COPY_SCORING_ENABLED && hookResult && closeResult) {
+        try {
+            const { gateCopySet, createOpenAIClients, formatGateLogLine } = await import("./copyScoringGate.js");
+            const lang = (inputs as any).adLanguage === "ar_fusha" || (inputs as any).adLanguage === "ar"
+                ? "ar" as const
+                : "en" as const;
+            const virtualBlock =
+                `HOOK_START_A\nHOOK_TEXT: ${hookResult.hookText}\nHOOK_END_A\n\n` +
+                `HOOK_START_B\nHOOK_TEXT: ${closeResult.closeText}\nHOOK_END_B`;
+            const untouchable = [
+                inputs?.productName || "",
+                inputs?.offer || "",
+                inputs?.cta || "",
+                inputs?.brandName || "",
+            ].filter((v) => typeof v === "string" && v.length > 0);
+            const clients = openaiKey ? createOpenAIClients(openaiKey) : null;
+            if (clients) {
+                const r = await gateCopySet(
+                    {
+                        step: "testimonial",
+                        rawBlock: virtualBlock,
+                        language: lang,
+                        untouchable,
+                    },
+                    {
+                        score: clients.score,
+                        rewrite: clients.rewrite,
+                        now: () => Date.now(),
+                    },
+                );
+                const { parseBlockIntoFieldsForSlides } = await import("./copyScoringGate.js");
+                const updated = parseBlockIntoFieldsForSlides(r.block);
+                const newHook = updated.get("A");
+                const newClose = updated.get("B");
+                if (newHook) {
+                    slides[0].hookText = newHook;
+                }
+                if (newClose) {
+                    slides[slides.length - 1].hookText = newClose;
+                }
+                _copyScoringTrace = { ran: true, steps: [r.trace] };
+            } else {
+                _copyScoringTrace = { ran: false, skipReason: "no_credential" };
+            }
+            console.log(formatGateLogLine("testimonial", _copyScoringTrace));
+        } catch (e: any) {
+            _copyScoringTrace = { ran: false, skipReason: "unreachable" };
+            console.warn("⚠️ copy scoring gate failed on testimonial (non-blocking):", e?.message || e);
+        }
+    } else if (!COPY_SCORING_ENABLED) {
+        _copyScoringTrace = { ran: false, skipReason: "disabled" };
+        try {
+            const { formatGateLogLine } = await import("./copyScoringGate.js");
+            console.log(formatGateLogLine("testimonial", _copyScoringTrace));
+        } catch { /* non-blocking */ }
+    }
+
     return {
         slides,
         detectedPlatforms: platforms,
         totalSlides,
         visualStyleFamily,
+        copyScoringTrace: _copyScoringTrace,
     };
 }
 

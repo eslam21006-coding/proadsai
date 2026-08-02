@@ -1,0 +1,32 @@
+{
+  "$schema": "Reproduction-only input set for Phase 22 sign-off.",
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-02T00:00:00Z",
+  "seed": "phase22-v1",
+  "notes": "This is the schema for sample-inputs.json. The actual inputs MUST be a fixed, committed array of 50+ generations spanning both languages (Arabic + English) and multiple offer types. Per Constitution Principle IX, the inputs are deterministic and reproducible — re-running the harness with the same inputs MUST produce comparable output distributions.",
+  "samples": [
+    {
+      "language": "ar",
+      "offerType": "course",
+      "campaignType": "cold",
+      "adFormat": "single",
+      "payload": {
+        "inputs": {
+          "adLanguage": "ar_fusha",
+          "adMode": "single",
+          "productName": "دورة التسويق الرقمي",
+          "offer": "12 درساً تطبيقياً",
+          "cta": "سجّل الآن",
+          "campaignType": "cold",
+          "coldHookAngle": "shocking_stat",
+          "targetAudience": "رواد الأعمال الجدد في السعودية",
+          "painPoints": "نشر محتوى يومي دون نتائج، صعوبة قياس العائد على الإعلانات.",
+          "preferredOutcomes": "بناء حضور ثابت على السوشيال ميديا خلال 30 يوماً."
+        },
+        "resolvedUniverse": "realistic",
+        "mode": "initial",
+        "activeWorkspaceId": "demo-workspace"
+      }
+    }
+  ]
+}
