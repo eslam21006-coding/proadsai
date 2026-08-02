@@ -888,8 +888,8 @@ async function runTests(): Promise<void> {
     }));
     const serialized = JSON.stringify(r);
     const parsed = JSON.parse(serialized);
-assert(parsed.stepTrace.step === "hook", "I4: serialized trace round-trips");
-        assert(Array.isArray(parsed.stepTrace.fields), "I4: fields array survives serialization");
+    assert(parsed.stepTrace.step === "hook", "I4: serialized trace round-trips");
+    assert(Array.isArray(parsed.stepTrace.fields), "I4: fields array survives serialization");
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -974,17 +974,17 @@ assert(parsed.stepTrace.step === "hook", "I4: serialized trace round-trips");
   // Malformed score response: ran:false with skipReason=malformed_response.
   {
     const r = await gateCopySet(makeInput(), makeDeps({
-      score: async () => ({ fields: [] }) as any, // response that is structurally valid but missing required fields triggers malformed
+      score: async () => ({ fields: [] }) as any, // response with empty fields array — makeInput() requests one hookText; coverage check rejects as malformed
     }));
-    // The validator's coverage check rejects this — every requested
-    // field must appear. Confirm the run result.
-    assert(typeof r.ran === "boolean", "G1: ran is boolean");
-    // The response parses cleanly but the coverage check rejects it
-    // as malformed (see validateScoreResponse coverage rules).
-    if (r.ran === false) {
-      assert(r.skipReason === "malformed_response" || r.skipReason === "out_of_range",
-        `G1: malformed response carries malformed_response or out_of_range (got ${r.skipReason})`);
-    }
+    // The validator's coverage check rejects this unconditionally — every
+    // requested field must appear in the response. Confirm the run result
+    // is deterministic: ran:false, skipReason:"malformed_response", and
+    // the original block is preserved byte-for-byte.
+    assert(r.ran === false, "G1: empty-fields response returns ran:false");
+    assert(r.skipReason === "malformed_response",
+      `G1: empty-fields response carries skipReason=malformed_response (got ${r.skipReason})`);
+    assert(r.block === "HOOK_START_A\nHOOK_TEXT: Headline\nHOOK_END_A",
+      "G1: empty-fields response preserves the original block byte-for-byte");
   }
   // Empty block: ran:true (the gate ran, found nothing to gate).
   {
