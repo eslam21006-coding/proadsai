@@ -76,7 +76,7 @@ async function runTests(): Promise<void> {
 
   console.log("  A: module surface — never throws (A1)");
   {
-    let r: { block: string; trace: any } | null = null;
+    let r: { block: string; stepTrace: any; ran: boolean; skipReason?: string } | null = null;
     let threw = false;
     try {
       r = await gateCopySet(makeInput(), makeDeps({
@@ -90,7 +90,7 @@ async function runTests(): Promise<void> {
     assert(typeof r?.block === "string", "A1: result has a block string");
   }
   {
-    let r: { block: string; trace: any } | null = null;
+    let r: { block: string; stepTrace: any; ran: boolean; skipReason?: string } | null = null;
     let threw = false;
     try {
       r = await gateCopySet(makeInput(), makeDeps({
@@ -104,7 +104,7 @@ async function runTests(): Promise<void> {
     assert(r !== null, "A1: returns a value even when both deps reject");
   }
   {
-    let r: { block: string; trace: any } | null = null;
+    let r: { block: string; stepTrace: any; ran: boolean; skipReason?: string } | null = null;
     let threw = false;
     try {
       r = await gateCopySet(makeInput(), makeDeps({
@@ -167,7 +167,7 @@ async function runTests(): Promise<void> {
       },
     }));
     assert(scoreCalls === 1, "B1: scoring call was made");
-    assert(r.trace.fields.length === 0, "B1: deferred-dimension response → empty fields (fail open)");
+    assert(r.stepTrace.fields.length === 0, "B1: deferred-dimension response → empty fields (fail open)");
   }
 
   // B2: absent optional fields are never scored
@@ -230,7 +230,7 @@ async function runTests(): Promise<void> {
         }],
       }),
     }));
-    assert(r.trace.fields.length === 0, "B4: out-of-range score → empty fields (fail open)");
+    assert(r.stepTrace.fields.length === 0, "B4: out-of-range score → empty fields (fail open)");
   }
   {
     const r = await gateCopySet(makeInput(), makeDeps({
@@ -242,7 +242,7 @@ async function runTests(): Promise<void> {
         }],
       }),
     }));
-    assert(r.trace.fields.length === 0, "B4: non-integer score → empty fields (fail open)");
+    assert(r.stepTrace.fields.length === 0, "B4: non-integer score → empty fields (fail open)");
   }
   {
     const r = await gateCopySet(makeInput(), makeDeps({
@@ -254,7 +254,7 @@ async function runTests(): Promise<void> {
         }],
       }),
     }));
-    assert(r.trace.fields.length === 0, "B4: score below 1 → empty fields (fail open)");
+    assert(r.stepTrace.fields.length === 0, "B4: score below 1 → empty fields (fail open)");
   }
 
   // B5: one scoring interaction covers every present field of every variation
@@ -579,7 +579,7 @@ async function runTests(): Promise<void> {
     // block survives. The decision MUST be recorded (D5 contract), so
     // assert unconditionally rather than guarding on length.
     assert(r.block === block, "D5: lower-scoring rewrite → block is the original");
-    const hookRewrites = r.trace.rewrites.filter((x) => x.fieldName === "hookText");
+    const hookRewrites = r.stepTrace.rewrites.filter((x) => x.fieldName === "hookText");
     assert(hookRewrites.length > 0, "D5: a rewrite decision is recorded for hookText");
     assert(hookRewrites.some((x) => x.rejectReason === "scored_lower" || x.rejectReason === "below_threshold"),
       `D5: lower-scoring rewrite is rejected (got rejectReasons: ${JSON.stringify(hookRewrites.map((x) => x.rejectReason))})`);
@@ -675,7 +675,7 @@ async function runTests(): Promise<void> {
       },
     }));
     assert(scoreCalls === 1, `F1: a passing field makes exactly 1 scoring call (got ${scoreCalls})`);
-    assert(r.trace.interactionCount === 1, "F1: trace.interactionCount === 1 when scoring succeeded");
+    assert(r.stepTrace.interactionCount === 1, "F1: trace.interactionCount === 1 when scoring succeeded");
   }
 
   // F1: ceiling holds even with many failing fields
@@ -716,7 +716,7 @@ async function runTests(): Promise<void> {
       },
     }));
     // 1 initial score + 1 rewrite + (1 re-score per pass) = ≤5 interactions
-    assert(r.trace.interactionCount <= 5, `F1: ≤5 interactions per copy set (got ${r.trace.interactionCount})`);
+    assert(r.stepTrace.interactionCount <= 5, `F1: ≤5 interactions per copy set (got ${r.stepTrace.interactionCount})`);
     assert(rewriteCalls <= 2, `F4: ≤2 rewrite passes (got ${rewriteCalls})`);
   }
 
@@ -738,8 +738,8 @@ async function runTests(): Promise<void> {
     }));
     // The interaction was attempted but the post-check fired fail-open;
     // no fields scored, no rewrites attempted.
-    assert(r.trace.fields.length === 0, "F4: interaction timeout → fields empty");
-    assert(r.trace.rewrites.length === 0, "F4: interaction timeout → rewrites empty");
+    assert(r.stepTrace.fields.length === 0, "F4: interaction timeout → fields empty");
+    assert(r.stepTrace.rewrites.length === 0, "F4: interaction timeout → rewrites empty");
   }
 
   // F4: timeout when now() advances past the copy-set budget
@@ -756,7 +756,7 @@ async function runTests(): Promise<void> {
       },
       now: () => now,
     }));
-    assert(r.trace.fields.length === 0, "F4: copy-set timeout → fields empty");
+    assert(r.stepTrace.fields.length === 0, "F4: copy-set timeout → fields empty");
   }
 
   // F4 / F5: run-budget elapses mid-run → fail open for this step,
@@ -766,8 +766,8 @@ async function runTests(): Promise<void> {
       makeInput(),
       makeDeps({ now: () => 100_000 }), // 100s elapsed since run start
     );
-    assert(r.trace.fields.length === 0, "F4/F5: run-budget elapsed → no fields scored");
-    assert(r.trace.rewrites.length === 0, "F4/F5: run-budget elapsed → no rewrites");
+    assert(r.stepTrace.fields.length === 0, "F4/F5: run-budget elapsed → no fields scored");
+    assert(r.stepTrace.rewrites.length === 0, "F4/F5: run-budget elapsed → no rewrites");
   }
 
   // F6: gate does not consume the callable's own timeout headroom.
@@ -816,12 +816,12 @@ async function runTests(): Promise<void> {
       }] }),
     }));
     // The step trace object contains the canonical fields, no more, no less.
-    assert(typeof r.trace.step === "string", "I: trace has 'step'");
-    assert(Array.isArray(r.trace.fields), "I: trace has 'fields' array");
-    assert(Array.isArray(r.trace.rewrites), "I: trace has 'rewrites' array");
-    assert([0, 1, 2].includes(r.trace.passCount), "I: trace.passCount is 0/1/2");
-    assert(typeof r.trace.gaveUp === "boolean", "I: trace.gaveUp is boolean");
-    assert(typeof r.trace.interactionCount === "number", "I: trace.interactionCount is number");
+    assert(typeof r.stepTrace.step === "string", "I: trace has 'step'");
+    assert(Array.isArray(r.stepTrace.fields), "I: trace has 'fields' array");
+    assert(Array.isArray(r.stepTrace.rewrites), "I: trace has 'rewrites' array");
+    assert([0, 1, 2].includes(r.stepTrace.passCount), "I: trace.passCount is 0/1/2");
+    assert(typeof r.stepTrace.gaveUp === "boolean", "I: trace.gaveUp is boolean");
+    assert(typeof r.stepTrace.interactionCount === "number", "I: trace.interactionCount is number");
   }
 
   // I4: additive — a malformed payload does not break a future merge.
@@ -833,8 +833,8 @@ async function runTests(): Promise<void> {
     }));
     const serialized = JSON.stringify(r);
     const parsed = JSON.parse(serialized);
-    assert(parsed.trace.step === "hook", "I4: serialized trace round-trips");
-    assert(Array.isArray(parsed.trace.fields), "I4: fields array survives serialization");
+assert(parsed.stepTrace.step === "hook", "I4: serialized trace round-trips");
+        assert(Array.isArray(parsed.stepTrace.fields), "I4: fields array survives serialization");
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -881,6 +881,63 @@ async function runTests(): Promise<void> {
       "SC-011: applyCulturalSubstitution('en') passes through");
     assert(typeof applyCulturalSubstitution("أي نص", "ar") === "string",
       "SC-011: applyCulturalSubstitution('ar') returns a string");
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // FR-020 / Contract G1 — gate-level ran/skipReason propagation
+  // ═══════════════════════════════════════════════════════════
+
+  console.log("  GateOutcome propagates ran + skipReason");
+  // Success path: ran:true, no skipReason.
+  {
+    const r = await gateCopySet(makeInput(), makeDeps({
+      score: async () => ({ fields: [{
+        variationId: "A",
+        fieldName: "hookText",
+        scores: allPassingScores(),
+      }] }),
+    }));
+    assert(r.ran === true, "G1: success path returns ran:true");
+    assert(r.skipReason === undefined, "G1: success path returns no skipReason");
+    assert(typeof r.stepTrace === "object", "G1: stepTrace is returned");
+  }
+  // Internal fail-open: ran:false with the canonical skipReason.
+  {
+    let calls = 0;
+    const r = await gateCopySet(makeInput(), makeDeps({
+      score: async () => {
+        calls++;
+        if (calls === 1) throw new Error("simulated upstream error");
+        return { fields: [] };
+      },
+    }));
+    assert(r.ran === false, "G1: internal failure returns ran:false");
+    assert(r.skipReason === "unreachable",
+      `G1: internal failure carries skipReason=unreachable (got ${r.skipReason})`);
+    assert(r.block === makeInput().rawBlock, "G1: fail-open returns the original block byte-for-byte");
+  }
+  // Malformed score response: ran:false with skipReason=malformed_response.
+  {
+    const r = await gateCopySet(makeInput(), makeDeps({
+      score: async () => ({ fields: [] }) as any, // response that is structurally valid but missing required fields triggers malformed
+    }));
+    // The validator's coverage check rejects this — every requested
+    // field must appear. Confirm the run result.
+    assert(typeof r.ran === "boolean", "G1: ran is boolean");
+    // The response parses cleanly but the coverage check rejects it
+    // as malformed (see validateScoreResponse coverage rules).
+    if (r.ran === false) {
+      assert(r.skipReason === "malformed_response" || r.skipReason === "out_of_range",
+        `G1: malformed response carries malformed_response or out_of_range (got ${r.skipReason})`);
+    }
+  }
+  // Empty block: ran:true (the gate ran, found nothing to gate).
+  {
+    const r = await gateCopySet(makeInput({ rawBlock: "" }), makeDeps({
+      score: async () => ({ fields: [] }),
+    }));
+    assert(r.ran === true, "G1: empty block is ran:true (gate ran, no fields to gate)");
+    assert(r.skipReason === undefined, "G1: empty block has no skipReason");
   }
 
   // ═══════════════════════════════════════════════════════════

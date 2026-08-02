@@ -502,15 +502,29 @@ function timeoutReason(ms: number, level: "interaction" | "copyset" | "run"): Sk
       : "timeout_run";
 }
 
+/**
+ * Outcome of a single gate invocation. `ran: false` carries the canonical
+ * `skipReason` so the audit trail records WHY the gate did not run
+ * (timeout, no credential, malformed response, etc.). `ran: true` means
+ * the gate scored and possibly rewrote the block; `stepTrace` carries
+ * the per-step details.
+ */
+export interface GateOutcome {
+  block: string;
+  ran: boolean;
+  skipReason?: SkipReason;
+  stepTrace: CopyScoringStepTrace;
+}
+
 export async function gateCopySet(
   input: GateInput,
   deps: GateDeps,
   runStartMs?: number,
-): Promise<{ block: string; trace: CopyScoringStepTrace }> {
+): Promise<GateOutcome> {
   const copySetStart = deps.now();
   const runStart = typeof runStartMs === "number" ? runStartMs : copySetStart;
 
-  // Total-isolation boundary — every code path resolves to { block, trace }
+  // Total-isolation boundary — every code path resolves to a GateOutcome
   try {
     return await gateCopySetInner(input, deps, copySetStart, runStart);
   } catch (e: unknown) {
@@ -522,7 +536,9 @@ export async function gateCopySet(
     console.warn("⚠️ gateCopySet failed (non-blocking):", msg);
     return {
       block: input.rawBlock,
-      trace: emptyStepTrace(input.step),
+      ran: false,
+      skipReason: "unreachable",
+      stepTrace: emptyStepTrace(input.step),
     };
   }
 }
@@ -543,23 +559,29 @@ async function gateCopySetInner(
   deps: GateDeps,
   copySetStart: number,
   runStart: number,
-): Promise<{ block: string; trace: CopyScoringStepTrace }> {
+): Promise<GateOutcome> {
   // Run-budget exhausted → fail open for this step. Items already gated
   // in this run keep their improved copy (FR-016a).
   if (deps.now() - runStart > GATE_RUN_TIMEOUT_MS) {
     return {
       block: input.rawBlock,
-      trace: { ...emptyStepTrace(input.step) },
+      ran: false,
+      skipReason: "timeout_run",
+      stepTrace: { ...emptyStepTrace(input.step) },
     };
   }
 
   // Parse the raw block into present (variationId, fieldName, value) records.
   const presentFields = parseBlockIntoFields(input.rawBlock);
   if (presentFields.length === 0) {
-    // Nothing to gate — preserve original block.
+    // Nothing to gate — preserve original block. The audit trail records
+    // ran:true with empty fields so the absence is distinguishable from
+    // a fail-open (FR-020, ran:true with zero fields = "no fields to
+    // gate", ran:false with skipReason = "gate did not execute").
     return {
       block: input.rawBlock,
-      trace: { ...emptyStepTrace(input.step), interactionCount: 0 },
+      ran: true,
+      stepTrace: { ...emptyStepTrace(input.step), interactionCount: 0 },
     };
   }
 
@@ -601,7 +623,9 @@ async function gateCopySetInner(
   if (initialScoreOutcome.kind === "fail-open") {
     return {
       block: input.rawBlock,
-      trace: {
+      ran: false,
+      skipReason: initialScoreOutcome.reason,
+      stepTrace: {
         step: input.step,
         fields: scoredFields,
         rewrites,
@@ -617,7 +641,9 @@ async function gateCopySetInner(
     // Malformed / out-of-range / references deferred dimensions → fail open
     return {
       block: input.rawBlock,
-      trace: {
+      ran: false,
+      skipReason: validatedScore.reason ?? "malformed_response",
+      stepTrace: {
         step: input.step,
         fields: scoredFields,
         rewrites,
@@ -689,7 +715,15 @@ async function gateCopySetInner(
     }
 
     const rewritesByField = validateRewriteResponse(rewriteOutcome.value);
-    // Apply each rewrite; keep the best-scoring candidate.
+    // First pass: validate every rewrite candidate locally (length cap,
+    // cultural compliance, untouchable). Record a decision for any
+    // candidate that fails local validation; queue the rest for a
+    // single BATCHED re-score interaction.
+    const candidatesForReScore: Array<{
+      failingField: typeof failing[number];
+      cleaned: string;
+      k: string;
+    }> = [];
     for (const failingField of failing) {
       if (haltPasses) break;
       const k = fieldKey(failingField.variationId, failingField.fieldName);
@@ -714,61 +748,75 @@ async function gateCopySetInner(
         });
         continue;
       }
+      candidatesForReScore.push({
+        failingField,
+        cleaned: validation.cleaned,
+        k,
+      });
+    }
 
-      // Re-score the candidate via the scoring client (one re-score per
-      // pass = 1 interaction per pass for scoring + 1 for rewriting).
+    // Single re-score interaction for the whole batch (FR-018 ceiling
+    // preserved: 1 score + 1 rewrite + 1 re-score + 1 rewrite + 1
+    // re-score = 5 per copy set). Per-field re-scoring would burn N
+    // interactions for N failing fields and breach the ceiling.
+    let reScoresByField: Map<string, Record<CopyDimension, number>> = new Map();
+    if (candidatesForReScore.length > 0 && !haltPasses) {
       const reScoreOutcome = await runInteraction(async () => {
         return deps.score({
           language: input.language,
           step: input.step,
-          fields: [{
-            variationId: failingField.variationId,
-            fieldName: failingField.fieldName,
-            value: validation.cleaned,
-          }],
+          fields: candidatesForReScore.map((c) => ({
+            variationId: c.failingField.variationId,
+            fieldName: c.failingField.fieldName,
+            value: c.cleaned,
+          })),
         });
       }, deps, copySetStart, runStart);
       interactionCount += 1;
       if (reScoreOutcome.kind === "fail-open") {
         gaveUp = true;
         haltPasses = true;
-        break;
+      } else {
+        const reVal = validateScoreResponse(
+          reScoreOutcome.value,
+          candidatesForReScore.map((c) => ({
+            variationId: c.failingField.variationId,
+            fieldName: c.failingField.fieldName,
+            value: c.cleaned,
+          })),
+        );
+        if (reVal.ok) {
+          reScoresByField = reVal.scoresByField;
+        } else {
+          // Mark all candidates as malformed for this pass.
+          for (const c of candidatesForReScore) {
+            rewrites.push({
+              variationId: c.failingField.variationId,
+              fieldName: c.failingField.fieldName,
+              pass: pass as 1 | 2,
+              diagnosis: diagnosisForFailure(c.failingField.failureReasons),
+              accepted: false,
+              rejectReason: "malformed_response",
+            });
+          }
+        }
       }
-      const reVal = validateScoreResponse(
-        reScoreOutcome.value,
-        [{
-          variationId: failingField.variationId,
-          fieldName: failingField.fieldName,
-          value: validation.cleaned,
-        }],
-      );
-      if (!reVal.ok) {
-        rewrites.push({
-          variationId: failingField.variationId,
-          fieldName: failingField.fieldName,
-          pass: pass as 1 | 2,
-          diagnosis: diagnosisForFailure(failingField.failureReasons),
-          accepted: false,
-          rejectReason: "malformed_response",
-        });
-        continue;
-      }
-      const reScores = reVal.scoresByField.get(k);
+    }
+
+    // Second pass: apply best-of decisions using the batched scores.
+    for (const c of candidatesForReScore) {
+      if (haltPasses) break;
+      const { failingField, cleaned, k } = c;
+      const reScores = reScoresByField.get(k);
       if (!reScores) {
-        rewrites.push({
-          variationId: failingField.variationId,
-          fieldName: failingField.fieldName,
-          pass: pass as 1 | 2,
-          diagnosis: diagnosisForFailure(failingField.failureReasons),
-          accepted: false,
-          rejectReason: "malformed_response",
-        });
+        // Already recorded a malformed_response entry above; nothing more
+        // to do.
         continue;
       }
       const reEvald = evaluateThreshold(reScores, failingField.fieldName);
       // Best-of selection across the original AND every prior accepted
-      // rewrite in this copy set (FR-010). Accept the rewrite only if it
-      // (a) meets threshold AND (b) scored strictly higher than the
+      // rewrite in this copy set (FR-010). Accept the rewrite only if
+      // it (a) meets threshold AND (b) scored strictly higher than the
       // currently-recorded average for that field. On acceptance, update
       // the scored entry so subsequent passes compare against the
       // accepted pass-1 result, not the original.
@@ -786,7 +834,7 @@ async function gateCopySetInner(
         // Update working fields + block
         const idx = currentFields.findIndex((x) => fieldKey(x.variationId, x.fieldName) === k);
         if (idx >= 0) {
-          currentFields[idx] = { ...currentFields[idx], value: validation.cleaned };
+          currentFields[idx] = { ...currentFields[idx], value: cleaned };
         }
         scoredFields.push({
           variationId: failingField.variationId,
@@ -804,7 +852,7 @@ async function gateCopySetInner(
         if (scoredIdx >= 0) {
           scored[scoredIdx] = {
             ...scored[scoredIdx],
-            original: validation.cleaned,
+            original: cleaned,
             average: reEvald.average,
             passed: reEvald.passed,
             failureReasons: [],
@@ -868,7 +916,8 @@ async function gateCopySetInner(
 
   return {
     block: workingBlock,
-    trace: {
+    ran: true,
+    stepTrace: {
       step: input.step,
       fields: scoredFields,
       rewrites,

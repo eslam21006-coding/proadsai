@@ -66,6 +66,10 @@ function parseArgs(argv) {
 // Prefer Application Default Credentials (already configured in CI /
 // local emulators). For a fresh checkout, set GOOGLE_APPLICATION_CREDENTIALS
 // or `firebase login` first.
+//
+// Dependency: `google-auth-library` is declared in the root
+// `package.json` devDependencies; run `npm install` from the repo
+// root before invoking this script.
 
 async function getIdToken(targetAudience) {
     const { GoogleAuth } = await import("google-auth-library");

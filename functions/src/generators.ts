@@ -3219,10 +3219,14 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
                     },
                 );
                 _gatedText = r.block;
-                _copyScoringTrace = {
-                    ran: true,
-                    steps: [r.trace],
-                };
+                // Propagate the gate-level outcome directly so the audit
+                // trail records ran:false with the correct skipReason when
+                // the gate failed open internally (timeout, malformed,
+                // unusable rewrite, etc.). r.ran/r.skipReason are part of
+                // the GateOutcome returned by gateCopySet (Contract G1).
+                _copyScoringTrace = r.ran
+                    ? { ran: true, steps: [r.stepTrace] }
+                    : { ran: false, skipReason: r.skipReason, steps: [r.stepTrace] };
             } else {
                 _copyScoringTrace = { ran: false, skipReason: "no_credential" };
             }
@@ -9273,7 +9277,9 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
                         slidesToGate[i].hookText = u;
                     }
                 }
-                _copyScoringTrace = { ran: true, steps: [r.trace] };
+                _copyScoringTrace = r.ran
+                    ? { ran: true, steps: [r.stepTrace] }
+                    : { ran: false, skipReason: r.skipReason, steps: [r.stepTrace] };
             } else {
                 _copyScoringTrace = { ran: false, skipReason: "no_credential" };
             }
@@ -10139,7 +10145,9 @@ export async function generateTestimonialCarousel(
                 if (newClose) {
                     slides[slides.length - 1].hookText = newClose;
                 }
-                _copyScoringTrace = { ran: true, steps: [r.trace] };
+                _copyScoringTrace = r.ran
+                    ? { ran: true, steps: [r.stepTrace] }
+                    : { ran: false, skipReason: r.skipReason, steps: [r.stepTrace] };
             } else {
                 _copyScoringTrace = { ran: false, skipReason: "no_credential" };
             }
