@@ -99,8 +99,9 @@ function aggregate(runs, judgeVerdicts) {
     // Group by gateEnabled × language × fieldName. Each item holds the
     // verdict FOR THAT field, not the whole per-field verdict map — the
     // earlier version pushed the entire `verdict` object into the
-    // bucket and then read verdict.readingLevel6thGradeOrBelow off it,
-    // which always evaluated as truthy for any non-null verdict.
+    // bucket and then read verdict.readingLevel6thGradeOrBelow off it.
+    // That property was undefined on the per-run verdict map, so both
+    // share calculations counted zero.
     const buckets = {};
     for (let i = 0; i < runs.length; i++) {
         const run = runs[i];

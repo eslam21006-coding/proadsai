@@ -596,6 +596,29 @@ async function runTests(): Promise<void> {
     const validation = validateRewriteCandidate("", "en", "original");
     assert(!validation.ok, "D9: empty rewrite candidate rejected");
   }
+  // D9: newline in candidate — would split the variation body and
+  // bypass blockStructurePreserved (the structural check counts markers,
+  // not stray lines). Must be rejected before acceptance.
+  {
+    const validation = validateRewriteCandidate("line1\nline2", "en", "original");
+    assert(!validation.ok, "D9: newline-containing candidate rejected");
+    assert(validation.rejectReason === "multiline_candidate",
+      `D9: multiline rejectReason (got '${validation.rejectReason}')`);
+  }
+  // D9: block-marker injection — same hazard, different vector.
+  {
+    const validation = validateRewriteCandidate("clean HOOK_END_A injected", "en", "original");
+    assert(!validation.ok, "D9: marker-injection candidate rejected");
+    assert(validation.rejectReason === "marker_injection",
+      `D9: marker-injection rejectReason (got '${validation.rejectReason}')`);
+  }
+  // D9: label-form marker (HOOK_TEXT:, CTA_BUTTON:, etc.) — also rejected.
+  {
+    const validation = validateRewriteCandidate("clean CTA_BUTTON: extra", "en", "original");
+    assert(!validation.ok, "D9: label-form marker rejected");
+    assert(validation.rejectReason === "marker_injection",
+      `D9: label-form marker rejectReason (got '${validation.rejectReason}')`);
+  }
 
   // ═══════════════════════════════════════════════════════════
   // E — Block integrity
@@ -718,6 +741,38 @@ async function runTests(): Promise<void> {
     // 1 initial score + 1 rewrite + (1 re-score per pass) = ≤5 interactions
     assert(r.stepTrace.interactionCount <= 5, `F1: ≤5 interactions per copy set (got ${r.stepTrace.interactionCount})`);
     assert(rewriteCalls <= 2, `F4: ≤2 rewrite passes (got ${rewriteCalls})`);
+  }
+
+  // F1: 4 failing fields — the batched re-score is ONE interaction per
+  // pass. Before batching, this case consumed 1 + 1 + 4 + 1 + 4 = 11
+  // interactions and exceeded the ceiling. Confirm the new shape:
+  // 1 (initial score) + 1 (rewrite pass 1) + 1 (batched re-score) + 1
+  // (rewrite pass 2) + 1 (batched re-score) = 5.
+  {
+    const block = "HOOK_START_A\nHOOK_TEXT: bad\nHOOK_END_A\n" +
+      "HOOK_START_B\nHOOK_TEXT: bad\nHOOK_END_B\n" +
+      "HOOK_START_C\nHOOK_TEXT: bad\nHOOK_END_C\n" +
+      "HOOK_START_D\nHOOK_TEXT: bad\nHOOK_END_D";
+    const r = await gateCopySet(makeInput({ rawBlock: block }), makeDeps({
+      score: async (payload) => ({
+        fields: payload.fields.map((f) => ({
+          variationId: f.variationId,
+          fieldName: f.fieldName,
+          // Stay below threshold so the rewrite loop runs.
+          scores: { ...allPassingScores(), readingLevel: 1, livedSymptomDepth: 1 },
+        })),
+      }),
+      rewrite: async (payload) => ({
+        rewrites: payload.failing.map((f) => ({
+          variationId: f.variationId,
+          fieldName: f.fieldName,
+          candidate: `${f.value} BETTER`,
+          claimFlags: [],
+        })),
+      }),
+    }));
+    assert(r.stepTrace.interactionCount <= 5,
+      `F1: 4 failing fields stay under 5-interaction ceiling (got ${r.stepTrace.interactionCount})`);
   }
 
   // F4: timeout when now() advances past the interaction budget

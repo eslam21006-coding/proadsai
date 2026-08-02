@@ -30,22 +30,11 @@
 - C1-C4 (threshold evaluation per field; CTA passing on livedSymptomDepth:2; CTA/benefit average over 8 dimensions)
 - D1-D5, D9 (one rewrite call per pass handling many failing fields; per-field diagnoses; passing fields absent; 2-pass cap; best-of selection; lower-scoring rewrite rejected with rejectReason; length-cap rejection; rewrite candidates rejected) — D6/D7/D8 are open coverage gaps
 - E1, E3, E4 (markers preserved; `$` in value written literally; variation-aware substitution replaces values per-variation, not globally; dropped variation detected; untouchable mutation rejected) — E2 is an open coverage gap
-- F1, F4-F6 (5-interaction-per-copy-set ceiling; run/copy-set/interaction timeouts; run-budget below callable's 120s timeout)
+- F1, F4-F6 (5-interaction-per-copy-set ceiling; run/copy-set/interaction timeouts; run-budget below callable's 120s timeout; batched re-score; ceiling check on re-score)
 - H1 (silence — log line is structured JSON; aggregates passCount / interactionCount / gaveUp across all steps)
-- I1, I4 (additive trace, no fields removed; round-trips through serialization)
+- I1, I4 (additive trace, no fields removed; round-trips through serialization; GateOutcome propagates ran + skipReason)
 - FR-019c (kill switch is boolean, beside MODEL_PROVIDER)
 - SC-011 (cultural substitution still fires on gate output; applyCulturalSubstitution exercises the gate-side wrapper end-to-end)
-- SC-014 (CTA / benefit not rewritten on lived-symptom grounds)
-- A1 (module surface, never throws under throwing/rejecting/undefined stubs)
-- B1-B6 (scoring shape: 9 dimensions; deferred-dimension rejection; absent-fields skipped; untouchable skipped; out-of-range rejection; one interaction covers all variations)
-- C1-C4 (threshold evaluation per field; CTA passing on livedSymptomDepth:2; CTA/benefit average over 8 dimensions)
-- D1-D9 (one rewrite call per pass handling many failing fields; per-field diagnoses; passing fields absent; 2-pass cap; best-of selection; lower-scoring rewrite rejected with rejectReason; length-cap rejection; rewrite candidates rejected)
-- E1-E4 (markers preserved through substitution; variation-aware substitution replaces values per-variation, not globally; dropped variation detected; untouchable mutation rejected)
-- F1, F4-F6 (5-interaction-per-copy-set ceiling; run/copy-set/interaction timeouts; run-budget below callable's 120s timeout)
-- H1 (silence — log line is structured JSON)
-- I1, I4 (additive trace, no fields removed; round-trips through serialization)
-- FR-019c (kill switch is boolean, beside MODEL_PROVIDER)
-- SC-011 (cultural substitution still fires on gate output)
 - SC-014 (CTA / benefit not rewritten on lived-symptom grounds)
 
 **Bug fixes during batch 02**:

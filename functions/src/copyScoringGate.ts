@@ -474,6 +474,24 @@ export function validateRewriteCandidate(
   if (!candidate || candidate.trim().length === 0) {
     return { ok: false, cleaned: original, rejectReason: "empty" };
   }
+  // The candidate is written into a single-line `<LABEL>: value` slot
+  // (the field regex captures `([^\n]*)`). A newline therefore splits
+  // the variation body and inserts a stray unlabelled line that
+  // `blockStructurePreserved` cannot detect (it only counts markers
+  // and labels, neither of which changes). Reject any candidate
+  // containing CR/LF or block markers.
+  if (/[\r\n]/.test(candidate)) {
+    return { ok: false, cleaned: original, rejectReason: "multiline_candidate" };
+  }
+  // Reject any candidate containing a structural block marker
+  // (`HOOK_START_*` / `HOOK_END_*`) or a label keyword (`SUBHEADLINE`,
+  // `CTA_BUTTON`, `BENEFIT`, `HOOK_TEXT`). The regex allows the marker
+  // to be followed by ANY non-letter/digit so `HOOK_END_A` (where
+  // `\b` doesn't match between `D` and `_`) is correctly rejected.
+  const BLOCK_MARKER = /(?:^|\W)(HOOK_(?:START|END)|SUBHEADLINE|CTA_BUTTON|BENEFIT|HOOK_TEXT)/i;
+  if (BLOCK_MARKER.test(candidate)) {
+    return { ok: false, cleaned: original, rejectReason: "marker_injection" };
+  }
   // Cap each rewrite at 2x the original length so the rewrite can never
   // explode into something the rendered zone can't fit.
   if (candidate.length > original.length * 2 + 40) {
@@ -760,7 +778,16 @@ async function gateCopySetInner(
     // re-score = 5 per copy set). Per-field re-scoring would burn N
     // interactions for N failing fields and breach the ceiling.
     let reScoresByField: Map<string, Record<CopyDimension, number>> = new Map();
-    if (candidatesForReScore.length > 0 && !haltPasses) {
+    // Per-copy-set interaction ceiling (FR-018). If the ceiling has
+    // already been reached by the score + rewrite calls above, the
+    // re-score is skipped; the candidates are recorded as below-threshold
+    // so the audit trail reflects the gate gave up rather than silently
+    // exceeding the contract.
+    if (
+      candidatesForReScore.length > 0
+      && !haltPasses
+      && interactionCount < MAX_INTERACTIONS_PER_COPYSET
+    ) {
       const reScoreOutcome = await runInteraction(async () => {
         return deps.score({
           language: input.language,
@@ -801,6 +828,22 @@ async function gateCopySetInner(
           }
         }
       }
+    } else if (candidatesForReScore.length > 0 && interactionCount >= MAX_INTERACTIONS_PER_COPYSET) {
+      // Ceiling reached — record every candidate as below-threshold so
+      // the audit trail reflects the gate gave up rather than silently
+      // exceeding the contract.
+      for (const c of candidatesForReScore) {
+        rewrites.push({
+          variationId: c.failingField.variationId,
+          fieldName: c.failingField.fieldName,
+          pass: pass as 1 | 2,
+          diagnosis: diagnosisForFailure(c.failingField.failureReasons),
+          accepted: false,
+          rejectReason: "below_threshold",
+        });
+      }
+      gaveUp = true;
+      haltPasses = true;
     }
 
     // Second pass: apply best-of decisions using the batched scores.
@@ -1091,8 +1134,10 @@ function validateRewriteResponse(
     const flags: Array<{ text: string; reason: string }> = [];
     if (Array.isArray(e.claimFlags)) {
       for (const f of e.claimFlags) {
-        if (f && typeof f === "object" && typeof (f as any).text === "string" && typeof (f as any).reason === "string") {
-          flags.push({ text: (f as any).text, reason: (f as any).reason });
+        if (!f || typeof f !== "object") continue;
+        const flag = f as { text?: unknown; reason?: unknown };
+        if (typeof flag.text === "string" && typeof flag.reason === "string") {
+          flags.push({ text: flag.text, reason: flag.reason });
         }
       }
     }

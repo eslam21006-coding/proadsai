@@ -76,15 +76,22 @@ async function getIdToken(targetAudience) {
     const auth = new GoogleAuth();
     const client = await auth.getIdTokenClient(targetAudience);
     const headers = client.getRequestHeaders();
-    // google-auth-library returns a Headers instance; convert to a plain
-    // object so it can be spread into fetch's options (some runtimes
-    // don't accept Headers as fetch's `headers` value).
-    if (headers && typeof headers === "object" && typeof (headers).forEach === "function") {
+    // google-auth-library's `getRequestHeaders` return type has changed
+    // across versions: newer (10.x) returns a Web-API `Headers`
+    // instance; older versions return a plain object. Convert to a
+    // plain record either way so the result can be spread into
+    // fetch's `headers` option (which doesn't always accept Headers).
+    if (headers && typeof headers.forEach === "function") {
+        // Web-API Headers / Map-like. forEach receives (value, key, map).
         const out = {};
         headers.forEach((value, key) => { out[key] = value; });
         return out;
     }
-    return { ...(headers || {}) };
+    if (headers && typeof headers === "object") {
+        // Plain object — copy enumerable own properties.
+        return { ...headers };
+    }
+    return {};
 }
 
 // ─── Single-run capture ───────────────────────────────────────────
