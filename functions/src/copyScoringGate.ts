@@ -320,28 +320,28 @@ export function substituteFieldsInBlock(
           : f.fieldName === "ctaName" ? "CTA_BUTTON"
             : f.fieldName === "benefitText" ? "BENEFIT"
               : null;
-if (!label) continue;
-        const varEsc = f.variationId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        // Match the variation body bounded by HOOK_END_<varId>, then
-        // substitute the first `<LABEL>:` value inside that body. The
-        // label group is non-greedy so it captures only up to the next
-        // newline; the body-bound quantifier is greedy up to HOOK_END_<X>.
-        // Note: `String.prototype.replace`'s function replacer does NOT
-        // interpret $-patterns — `$$` would emit a literal `$$` here.
-        // Pass the value through verbatim so currency literals (`$99`)
-        // survive untouched.
-        const re = new RegExp(
-            `HOOK_START_${varEsc}\\b([\\s\\S]*?HOOK_END_${varEsc}\\b)`,
-            "i",
-        );
-        out = out.replace(re, (_body, bodyContent: string) => {
-            const labelRe = new RegExp(`(${label}\\s*:)\\s*([^\\n]*)`, "i");
-            const newBody = bodyContent.replace(labelRe, (_full2, labelPrefix: string) =>
-                `${labelPrefix} ${f.value}`,
-            );
-            return `HOOK_START_${f.variationId}${newBody}`;
-        });
-    }
+    if (!label) continue;
+    const varEsc = f.variationId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Match the variation body bounded by HOOK_END_<varId>, then
+    // substitute the first `<LABEL>:` value inside that body. The
+    // label group is non-greedy so it captures only up to the next
+    // newline; the body-bound quantifier is greedy up to HOOK_END_<X>.
+    // Note: `String.prototype.replace`'s function replacer does NOT
+    // interpret $-patterns — `$$` would emit a literal `$$` here.
+    // Pass the value through verbatim so currency literals (`$99`)
+    // survive untouched.
+    const re = new RegExp(
+      `HOOK_START_${varEsc}\\b([\\s\\S]*?HOOK_END_${varEsc}\\b)`,
+      "i",
+    );
+    out = out.replace(re, (_body, bodyContent: string) => {
+      const labelRe = new RegExp(`(${label}\\s*:)\\s*([^\\n]*)`, "i");
+      const newBody = bodyContent.replace(labelRe, (_full2, labelPrefix: string) =>
+        `${labelPrefix} ${f.value}`,
+      );
+      return `HOOK_START_${f.variationId}${newBody}`;
+    });
+  }
   // Untouched check
   for (const u of untouchable) {
     if (u && u.length > 0 && !out.includes(u)) {
@@ -357,8 +357,10 @@ if (!label) continue;
  * degradation — the gate must keep the original block in that case
  * (FR-000c, SC-006b).
  *
- * Any label the original has MUST be present in the rewritten block;
- * the rewritten block may not introduce new labels the original lacked.
+* No label the original has may be dropped in the rewrite. The current
+  * check allows additional labels to appear in the rewritten block (no
+  // upper-bound check); substituteFieldsInBlock does not introduce new
+  // labels today, so this is a safety net rather than a hard contract.
  */
 export function blockStructurePreserved(
   original: string,
@@ -404,9 +406,11 @@ export function applyCulturalSubstitution(
 ): string {
   if (language !== "ar") return value;
   try {
-    // Lazy import to keep this module side-effect-free (per build order 2 in quickstart.md)
-    const { scanAndReplace, isArabic } = require("./culturalCompliance.js") as typeof import("./culturalCompliance.js");
-    if (!isArabic(language)) return value;
+    // Lazy import to keep this module side-effect-free (per build order 2 in quickstart.md).
+    // The preceding `language !== "ar"` guard makes the redundant
+    // `isArabic(language)` check unnecessary; the Arabic substitution
+    // table is language-agnostic and only fires on the Arabic pass.
+    const { scanAndReplace } = require("./culturalCompliance.js") as typeof import("./culturalCompliance.js");
     const r = scanAndReplace(value, "adCopy");
     return r.cleaned;
   } catch (e: unknown) {
@@ -511,14 +515,6 @@ export const GATE_COPYSET_TIMEOUT_MS = 20_000;
 export const GATE_RUN_TIMEOUT_MS = 60_000;
 export const MAX_REWRITE_PASSES = 2;
 export const MAX_INTERACTIONS_PER_COPYSET = 5;
-
-function timeoutReason(ms: number, level: "interaction" | "copyset" | "run"): SkipReason {
-  return level === "interaction"
-    ? "timeout_interaction"
-    : level === "copyset"
-      ? "timeout_copyset"
-      : "timeout_run";
-}
 
 /**
  * Outcome of a single gate invocation. `ran: false` carries the canonical
@@ -1086,8 +1082,8 @@ function validateScoreResponse(
     }
     const raw = e.scores as Record<string, unknown>;
     // Reject any deferred-dimension key (FR-002a)
-    for (const k of Object.keys(raw)) {
-      if (!(ACTIVE_DIMENSIONS as readonly string[]).includes(k)) {
+    for (const dimKey of Object.keys(raw)) {
+      if (!(ACTIVE_DIMENSIONS as readonly string[]).includes(dimKey)) {
         return {
           ok: false,
           reason: "malformed_response",
@@ -1166,12 +1162,12 @@ export function createOpenAIClients(openaiApiKey: string): Pick<GateDeps, "score
   type OpenAIModule = typeof import("openai");
   const OpenAIMod = require("openai") as OpenAIModule;
   const OpenAI = OpenAIMod.default;
-  // 7s server-side timeout, 1s safety margin under the gate's 8s
-  // per-interaction ceiling (FR-016).
+  // 1s safety margin under the gate's per-interaction ceiling (FR-016),
+  // derived so the two values cannot drift apart if the constant changes.
   const client = new OpenAI({
     apiKey: openaiApiKey,
     maxRetries: 0,
-    timeout: 7_000,
+    timeout: Math.max(1_000, GATE_INTERACTION_TIMEOUT_MS - 1_000),
   });
 
   function safeParse(raw: string, kind: "score" | "rewrite"): unknown {

@@ -20,6 +20,7 @@ import {
   type FieldName,
   type GateDeps,
   type GateInput,
+  type GateOutcome,
   type ScoreResponse,
   type RewriteResponse,
 } from "../copyScoringGate.js";
@@ -76,7 +77,7 @@ async function runTests(): Promise<void> {
 
   console.log("  A: module surface — never throws (A1)");
   {
-    let r: { block: string; stepTrace: any; ran: boolean; skipReason?: string } | null = null;
+    let r: GateOutcome | null = null;
     let threw = false;
     try {
       r = await gateCopySet(makeInput(), makeDeps({
@@ -90,7 +91,7 @@ async function runTests(): Promise<void> {
     assert(typeof r?.block === "string", "A1: result has a block string");
   }
   {
-    let r: { block: string; stepTrace: any; ran: boolean; skipReason?: string } | null = null;
+    let r: GateOutcome | null = null;
     let threw = false;
     try {
       r = await gateCopySet(makeInput(), makeDeps({
@@ -104,7 +105,7 @@ async function runTests(): Promise<void> {
     assert(r !== null, "A1: returns a value even when both deps reject");
   }
   {
-    let r: { block: string; stepTrace: any; ran: boolean; skipReason?: string } | null = null;
+    let r: GateOutcome | null = null;
     let threw = false;
     try {
       r = await gateCopySet(makeInput(), makeDeps({
