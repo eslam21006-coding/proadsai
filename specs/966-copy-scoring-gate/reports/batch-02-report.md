@@ -6,7 +6,7 @@
 - `functions/src/copyScoringGate.ts` — extended (parseBlockIntoFieldsForSlides, validateScoreResponse, validateRewriteResponse, evaluateThreshold, validateRewriteCandidate, applyCulturalSubstitution, full gateCopySetInner with rewrite loop)
 - `functions/src/generators.ts` — `generateTOV` now returns `{ text, rankingGuidance, copyScoringTrace }` with the gate attached at the end (kill-switch gated + edit-path guard + always-fail-open wrapper); `generateCarouselSlideCopies` returns `{ copies, copyScoringTrace }` with a virtual block built from per-slide hookText; `generateTestimonialCarousel` returns the existing object + `copyScoringTrace`; the gate is wired into all three copy-producing steps
 - `functions/src/index.ts` — `serverGenerateTOV` returns `copyScoringTrace`; `serverGenerateCarouselSlideCopies` returns `copyScoringTrace`; `serverGenerateTestimonialCarousel` returns `copyScoringTrace`; `serverGenerateFinalAd` accepts `request.data.copyScoringTrace` and merges it into `_lastResolutionTrace.copyScoring` (additive append into `steps[]`)
-- `functions/src/__tests__/copyScoringGate.test.ts` — extended to 97 assertions covering clauses A/B/C/D/E/F/H/I + SC-014 + FR-019c + SC-011
+- `functions/src/__tests__/copyScoringGate.test.ts` — extended to 105 assertions covering clauses A/B/C/D/E/F/H/I + SC-014 + FR-019c + SC-011 (D6/D7/D8 and E2 are not directly covered by named assertion blocks — open coverage gaps; see T082 future work)
 - `scripts/copyQualitySample.mjs` — paired-run capture harness (T075)
 - `scripts/copyQualityJudge.mjs` — independent Gemini judge (T076)
 - `specs/966-copy-scoring-gate/validation/sample-inputs.json` — fixed input set schema
@@ -24,7 +24,18 @@
 
 **Build result**: `npm run build` in `functions/` PASSES (TypeScript clean).
 
-**Test result**: `npm run test:copyScoringGate` PASSES (98/98 assertions).
+**Test result**: `npm run test:copyScoringGate` PASSES (105/105 assertions).
+- A1 (module surface, never throws under throwing/rejecting/undefined stubs)
+- B1-B6 (scoring shape: 9 dimensions; deferred-dimension rejection; absent-fields skipped; untouchable skipped; out-of-range rejection; one interaction covers all variations; coverage check rejects extra/missing/duplicate fields)
+- C1-C4 (threshold evaluation per field; CTA passing on livedSymptomDepth:2; CTA/benefit average over 8 dimensions)
+- D1-D5, D9 (one rewrite call per pass handling many failing fields; per-field diagnoses; passing fields absent; 2-pass cap; best-of selection; lower-scoring rewrite rejected with rejectReason; length-cap rejection; rewrite candidates rejected) — D6/D7/D8 are open coverage gaps
+- E1, E3, E4 (markers preserved; `$` in value written literally; variation-aware substitution replaces values per-variation, not globally; dropped variation detected; untouchable mutation rejected) — E2 is an open coverage gap
+- F1, F4-F6 (5-interaction-per-copy-set ceiling; run/copy-set/interaction timeouts; run-budget below callable's 120s timeout)
+- H1 (silence — log line is structured JSON; aggregates passCount / interactionCount / gaveUp across all steps)
+- I1, I4 (additive trace, no fields removed; round-trips through serialization)
+- FR-019c (kill switch is boolean, beside MODEL_PROVIDER)
+- SC-011 (cultural substitution still fires on gate output; applyCulturalSubstitution exercises the gate-side wrapper end-to-end)
+- SC-014 (CTA / benefit not rewritten on lived-symptom grounds)
 - A1 (module surface, never throws under throwing/rejecting/undefined stubs)
 - B1-B6 (scoring shape: 9 dimensions; deferred-dimension rejection; absent-fields skipped; untouchable skipped; out-of-range rejection; one interaction covers all variations)
 - C1-C4 (threshold evaluation per field; CTA passing on livedSymptomDepth:2; CTA/benefit average over 8 dimensions)

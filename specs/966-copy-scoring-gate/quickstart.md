@@ -41,14 +41,14 @@ It will pass every test you write locally and write `undefined` in production. U
 
 **New**
 
-```
+```text
 functions/src/copyScoringGate.ts              # gateCopySet + scorer/rewriter clients
 functions/src/__tests__/copyScoringGate.test.ts
 ```
 
 **Modified**
 
-```
+```text
 functions/src/modelConfig.ts        # + COPY_SCORING_ENABLED, beside MODEL_PROVIDER
 functions/src/copywriting_knowledge.ts  # annotate 9 active / 6 deferred (do NOT rewrite rule text)
 functions/src/types.ts              # + ResolutionTrace.copyScoring        (:353)
@@ -87,7 +87,7 @@ src/App.tsx                         # thread trace through state (never rendered
 ## Verify
 
 ```powershell
-cd D:\proads-worktrees\phase-22\functions
+cd .\functions
 npm run build
 npm test
 npm run lint
@@ -96,7 +96,8 @@ npm run lint
 Then the frontend:
 
 ```powershell
-cd D:\proads-worktrees\phase-22
+cd ..
+npm install
 npm run build
 ```
 
@@ -130,4 +131,4 @@ npm run build
 
 ## Reversal
 
-Set `COPY_SCORING_ENABLED = false`. One line, no redeploy of logic, no git revert. The switch is permanent by design (FR-019e) — it is also how the gate-off baseline for SC-002 / SC-004 / SC-005a / SC-006 is produced after launch.
+Set `COPY_SCORING_ENABLED = false` in `functions/src/modelConfig.ts`, then rebuild and deploy the Cloud Functions (the constant is compiled into `lib/`, not read at runtime from the environment). One line, one redeploy, no git revert. The switch is permanent by design (FR-019e) — it is also how the gate-off baseline for SC-002 / SC-004 / SC-005a / SC-006 is produced after launch.

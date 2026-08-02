@@ -3183,7 +3183,15 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
     // a module-global survivor.
     let _copyScoringTrace: CopyScoringTrace | null = null;
     let _gatedText = text;
-    if (mode === 'initial' && COPY_SCORING_ENABLED) {
+    // The permanent switch (COPY_SCORING_ENABLED) is the production gate.
+    // Sign-off tooling (scripts/copyQualitySample.mjs) forwards an
+    // optional `_copyScoringOverrideEnabled` boolean via `inputs` so the
+    // paired-run harness can flip the gate without redeploying. The
+    // override is consulted ONLY when explicitly set (boolean); an
+    // absent value falls through to COPY_SCORING_ENABLED.
+    const _override = (inputs as any)._copyScoringOverrideEnabled;
+    const _gateEnabled = (typeof _override === "boolean") ? _override : COPY_SCORING_ENABLED;
+    if (mode === 'initial' && _gateEnabled) {
         try {
             const { gateCopySet, createOpenAIClients, formatGateLogLine } = await import("./copyScoringGate.js");
             const lang = (inputs as any).adLanguage === "ar_fusha" || (inputs as any).adLanguage === "ar"
@@ -3220,12 +3228,13 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
             }
             // Structured log line per outcome (FR-020a, Contract J1).
             console.log(formatGateLogLine("hook", _copyScoringTrace));
-        } catch (e: any) {
+        } catch (e: unknown) {
             // Total-isolation — gate failures never break the generation.
+            const msg = e instanceof Error ? e.message : String(e);
             _copyScoringTrace = { ran: false, skipReason: "unreachable" };
-            console.warn("⚠️ copy scoring gate failed (non-blocking):", e?.message || e);
+            console.warn("⚠️ copy scoring gate failed (non-blocking):", msg);
         }
-    } else if (!COPY_SCORING_ENABLED) {
+    } else if (!_gateEnabled) {
         _copyScoringTrace = { ran: false, skipReason: "disabled" };
         // Even when disabled we emit one structured log line per the
         // observability contract (FR-020a) — useful for verifying the
@@ -6108,8 +6117,12 @@ export async function generateFinalAd(
     } else if (copyScoringTrace && typeof copyScoringTrace === "object" && copyScoringTrace.ran === false) {
         // Skip-path / fail-open trace — only write it if no ran:true trace
         // already exists in the persisted record (FR-020, ran:true wins).
+        // Read `steps` directly from `_lastResolutionTrace.copyScoring.steps`
+        // (matching the ran:true branch above); the previous typo
+        // `_lastResolutionTrace.copyScoring.copyScoring?.steps` would
+        // always resolve to `undefined` and silently drop the skip trace.
         const existingSteps = (_lastResolutionTrace && _lastResolutionTrace.copyScoring && Array.isArray(_lastResolutionTrace.copyScoring.steps))
-            ? _lastResolutionTrace.copyScoring.copyScoring?.steps
+            ? _lastResolutionTrace.copyScoring.steps
             : null;
         if (!existingSteps || existingSteps.length === 0) {
             _lastResolutionTrace = {
@@ -9211,11 +9224,23 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
                 ? "ar" as const
                 : "en" as const;
             // Build a virtual block the gate understands: each slide is a
-            // "variation" (var ids S1, S2, ...) with a single hookText field.
+            // "variation" (var ids A..J) with a single hookText field.
             // slideCaption lives on hookText here so the gate's per-field
             // threshold rules apply. The gate writes the block back as-is.
-            const virtualBlock = copies.map((c, i) =>
-                `HOOK_START_${["A","B","C","D","E","F","G","H","I","J"][i] || "A"}\nHOOK_TEXT: ${c.hookText || ""}\nHOOK_END_${["A","B","C","D","E","F","G","H","I","J"][i] || "A"}`
+            //
+            // CRITICAL: the first slide (index 0) carries the APPROVED
+            // hook text — the advertiser has already approved it via
+            // `approvedTov`. Gating slide 0 would re-touch approved
+            // copy, which violates FR-000a ("the gate MUST NOT re-run
+            // on copy the advertiser has already approved") and SC-006c
+            // ("the approved hook block is byte-identical before and
+            // after the slide-caption step"). Skip slide 0 from the
+            // scoring/rewriting payload; rewrites are applied to
+            // `copies[i + 1]` so the index alignment is preserved.
+            const slidesToGate = copies.slice(1);
+            const varIds = ["A","B","C","D","E","F","G","H","I","J"] as const;
+            const virtualBlock = slidesToGate.map((c, i) =>
+                `HOOK_START_${varIds[i] || "A"}\nHOOK_TEXT: ${c.hookText || ""}\nHOOK_END_${varIds[i] || "A"}`
             ).join("\n\n");
             const untouchable = [
                 inputs?.productName || "",
@@ -9225,11 +9250,6 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
             ].filter((v) => typeof v === "string" && v.length > 0);
             const clients = openaiKey ? createOpenAIClients(openaiKey) : null;
             if (clients) {
-                const fieldsForScoring = copies.map((c, i) => ({
-                    variationId: ["A","B","C","D","E","F","G","H","I","J"][i] || "A",
-                    fieldName: "slideCaption" as const,
-                    value: c.hookText || "",
-                }));
                 const r = await gateCopySet(
                     {
                         step: "carouselSlides",
@@ -9243,14 +9263,14 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
                         now: () => Date.now(),
                     },
                 );
-                // Apply rewrites back to copies
+                // Apply rewrites back to slides 1..N (NOT slide 0).
                 const { parseBlockIntoFieldsForSlides } = await import("./copyScoringGate.js");
                 const updated = parseBlockIntoFieldsForSlides(r.block);
-                for (let i = 0; i < copies.length; i++) {
-                    const varId = ["A","B","C","D","E","F","G","H","I","J"][i] || "A";
+                for (let i = 0; i < slidesToGate.length; i++) {
+                    const varId = varIds[i] || "A";
                     const u = updated.get(varId);
-                    if (u && copies[i].hookText !== u) {
-                        copies[i].hookText = u;
+                    if (u && slidesToGate[i].hookText !== u) {
+                        slidesToGate[i].hookText = u;
                     }
                 }
                 _copyScoringTrace = { ran: true, steps: [r.trace] };
@@ -9258,9 +9278,10 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
                 _copyScoringTrace = { ran: false, skipReason: "no_credential" };
             }
             console.log(formatGateLogLine("carouselSlides", _copyScoringTrace));
-        } catch (e: any) {
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
             _copyScoringTrace = { ran: false, skipReason: "unreachable" };
-            console.warn("⚠️ copy scoring gate failed on carousel slides (non-blocking):", e?.message || e);
+            console.warn("⚠️ copy scoring gate failed on carousel slides (non-blocking):", msg);
         }
     } else {
         _copyScoringTrace = { ran: false, skipReason: "disabled" };
@@ -10123,9 +10144,10 @@ export async function generateTestimonialCarousel(
                 _copyScoringTrace = { ran: false, skipReason: "no_credential" };
             }
             console.log(formatGateLogLine("testimonial", _copyScoringTrace));
-        } catch (e: any) {
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
             _copyScoringTrace = { ran: false, skipReason: "unreachable" };
-            console.warn("⚠️ copy scoring gate failed on testimonial (non-blocking):", e?.message || e);
+            console.warn("⚠️ copy scoring gate failed on testimonial (non-blocking):", msg);
         }
     } else if (!COPY_SCORING_ENABLED) {
         _copyScoringTrace = { ran: false, skipReason: "disabled" };

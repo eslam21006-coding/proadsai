@@ -25,8 +25,10 @@ import process from "node:process";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Resolve repo root by walking up from this script
-const REPO_ROOT = join(__dirname, "..", "..");
+// Resolve repo root by walking up from this script.
+// `__dirname` for scripts/copyQualitySample.mjs is .../scripts, so the
+// repo root is one parent up (the parent of the scripts directory).
+const REPO_ROOT = join(__dirname, "..");
 const SPEC_DIR = join(REPO_ROOT, "specs", "966-copy-scoring-gate");
 const VALIDATION_DIR = join(SPEC_DIR, "validation");
 const INPUTS_PATH = join(VALIDATION_DIR, "sample-inputs.json");
@@ -35,8 +37,9 @@ const INPUTS_PATH = join(VALIDATION_DIR, "sample-inputs.json");
 
 function parseArgs(argv) {
     const out = {
-        backend: "https://us-central1-pro-ads-pro.cloudfunctions.net", // prod default
-        region: "europe-west1",
+        // No default — the operator must choose an explicit backend
+        // (emulator or a designated non-production project per research R10).
+        backend: null,
         outputs: VALIDATION_DIR,
         sampleSize: 50,
         dryRun: false,
@@ -45,11 +48,15 @@ function parseArgs(argv) {
     for (let i = 2; i < argv.length; i++) {
         const arg = argv[i];
         if (arg === "--backend") out.backend = argv[++i];
-        else if (arg === "--region") out.region = argv[++i];
         else if (arg === "--outputs") out.outputs = argv[++i];
         else if (arg === "--sample-size") out.sampleSize = parseInt(argv[++i], 10);
         else if (arg === "--dry-run") out.dryRun = true;
         else if (arg === "--seed") out.seed = argv[++i];
+    }
+    if (!out.backend) {
+        console.error("❌ --backend is required (e.g. http://127.0.0.1:5001/<project>/europe-west1).");
+        console.error("   The emulator is the recommended target for sign-off (research R10).");
+        process.exit(2);
     }
     return out;
 }
@@ -64,7 +71,16 @@ async function getIdToken(targetAudience) {
     const { GoogleAuth } = await import("google-auth-library");
     const auth = new GoogleAuth();
     const client = await auth.getIdTokenClient(targetAudience);
-    return client.getRequestHeaders();
+    const headers = client.getRequestHeaders();
+    // google-auth-library returns a Headers instance; convert to a plain
+    // object so it can be spread into fetch's options (some runtimes
+    // don't accept Headers as fetch's `headers` value).
+    if (headers && typeof headers === "object" && typeof (headers).forEach === "function") {
+        const out = {};
+        headers.forEach((value, key) => { out[key] = value; });
+        return out;
+    }
+    return { ...(headers || {}) };
 }
 
 // ─── Single-run capture ───────────────────────────────────────────
@@ -99,6 +115,13 @@ async function captureOneRun({ baseUrl, callableName, payload, gateEnabled, samp
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
+                // `copyScoringOverrideEnabled` is forwarded to
+                // serverGenerateTOV which forwards it to the gate via
+                // `inputs._copyScoringOverrideEnabled`. When the override
+                // is honored (paired-run toggle), the gate reads it
+                // before consulting COPY_SCORING_ENABLED. When not
+                // honored, the operator flips the module-level constant
+                // between paired runs.
                 data: { ...payload, copyScoringOverrideEnabled: gateEnabled },
             }),
         });
@@ -107,9 +130,13 @@ async function captureOneRun({ baseUrl, callableName, payload, gateEnabled, samp
             errorCode = `http_${resp.status}`;
         } else {
             const body = await resp.json();
-            responseText = body?.result?.data?.text || null;
-            copyScoringTrace = body?.result?.data?.copyScoringTrace || null;
-            creditCost = body?.result?.data?.costEstimate?.total || null;
+            // Firebase callable responses nest the actual payload under
+            // `result` (not `result.data`); the inner `data` is what we
+            // passed back from the callable's return statement.
+            const inner = body?.result || {};
+            responseText = inner.text || null;
+            copyScoringTrace = inner.copyScoringTrace || null;
+            creditCost = inner.costEstimate?.total ?? null;
         }
         return {
             sampleIndex,
@@ -139,18 +166,29 @@ async function captureOneRun({ baseUrl, callableName, payload, gateEnabled, samp
     }
 }
 
+/**
+ * Parse the raw `text` response from `serverGenerateTOV` into a flat
+ * {hookText, subheadText, ctaName, benefitText} object. The TOV block
+ * contains up to four variations (`HOOK_START_A`..`HOOK_START_D`); the
+ * FIRST occurrence of each label is captured so the record matches
+ * what the advertiser saw at the top of the list (and what most
+ * ad-generation harnesses surface). Subsequent variations are
+ * captured under `extra` so downstream judges can decide whether to
+ * score them too.
+ */
 function parseFieldsFromText(text) {
     if (!text) return null;
-    const out = {};
     const grab = (label) => {
         const re = new RegExp(`${label}\\s*:\\s*([^\\n]*)`, "i");
         const m = text.match(re);
         return m ? m[1].trim() : null;
     };
-    out.hookText = grab("HOOK_TEXT");
-    out.subheadText = grab("SUBHEADLINE");
-    out.ctaName = grab("CTA_BUTTON");
-    out.benefitText = grab("BENEFIT");
+    const out = {
+        hookText: grab("HOOK_TEXT"),
+        subheadText: grab("SUBHEADLINE"),
+        ctaName: grab("CTA_BUTTON"),
+        benefitText: grab("BENEFIT"),
+    };
     return out;
 }
 

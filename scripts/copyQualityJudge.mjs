@@ -28,7 +28,9 @@ import process from "node:process";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const REPO_ROOT = join(__dirname, "..", "..");
+// scripts/copyQualityJudge.mjs lives in .../scripts; one parent up is
+// the repository root.
+const REPO_ROOT = join(__dirname, "..");
 const VALIDATION_DIR = join(REPO_ROOT, "specs", "966-copy-scoring-gate", "validation");
 
 // ─── Judge prompt (DIFFERENT from gate's scorer — SC-002a) ─────────
@@ -94,26 +96,32 @@ async function judgeOne({ text, language, model }) {
 // ─── Aggregation ──────────────────────────────────────────────────
 
 function aggregate(runs, judgeVerdicts) {
-    // Group by gateEnabled × language × fieldName
+    // Group by gateEnabled × language × fieldName. Each item holds the
+    // verdict FOR THAT field, not the whole per-field verdict map — the
+    // earlier version pushed the entire `verdict` object into the
+    // bucket and then read verdict.readingLevel6thGradeOrBelow off it,
+    // which always evaluated as truthy for any non-null verdict.
     const buckets = {};
     for (let i = 0; i < runs.length; i++) {
         const run = runs[i];
-        const verdict = judgeVerdicts[i];
-        if (!run.fields || !verdict) continue;
+        const verdictsForRun = judgeVerdicts[i];
+        if (!run.fields || !verdictsForRun) continue;
         for (const [fieldName, value] of Object.entries(run.fields)) {
             if (typeof value !== "string" || value.length === 0) continue;
+            const v = verdictsForRun[fieldName];
+            if (!v) continue;
             const key = `${run.gateEnabled ? "on" : "off"}|${run.language}|${fieldName}`;
             if (!buckets[key]) {
                 buckets[key] = { gateEnabled: run.gateEnabled, language: run.language, fieldName, items: [] };
             }
-            buckets[key].items.push({ value, verdict });
+            buckets[key].items.push({ value, verdict: v });
         }
     }
     const summary = [];
     for (const b of Object.values(buckets)) {
         const total = b.items.length;
-        const reading = b.items.filter((x) => x.verdict.readingLevel6thGradeOrBelow).length;
-        const lived = b.items.filter((x) => x.verdict.livedSymptomOrConcreteMoment).length;
+        const reading = b.items.filter((x) => x.verdict.readingLevel6thGradeOrBelow === true).length;
+        const lived = b.items.filter((x) => x.verdict.livedSymptomOrConcreteMoment === true).length;
         summary.push({
             gateEnabled: b.gateEnabled,
             language: b.language,
@@ -133,8 +141,6 @@ function parseArgs(argv) {
         samplePath: null,
         outputs: VALIDATION_DIR,
         model: "gemini-2.5-flash-lite",
-        concurrency: 4,
-        spotCheckSize: 10,
         limit: null,
     };
     for (let i = 2; i < argv.length; i++) {
@@ -142,8 +148,6 @@ function parseArgs(argv) {
         if (arg === "--sample") out.samplePath = argv[++i];
         else if (arg === "--outputs") out.outputs = argv[++i];
         else if (arg === "--model") out.model = argv[++i];
-        else if (arg === "--concurrency") out.concurrency = parseInt(argv[++i], 10);
-        else if (arg === "--spot-check-size") out.spotCheckSize = parseInt(argv[++i], 10);
         else if (arg === "--limit") out.limit = parseInt(argv[++i], 10);
     }
     return out;

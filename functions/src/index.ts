@@ -4840,11 +4840,17 @@ export const serverGenerateFinalAd = onCall({
         // drops the payload to `undefined` here (the merge in
         // `generateFinalAd` no-ops on `undefined` / `null`).
         const _sanitizedConceptDirectorTrace = sanitizeConceptDirectorTrace(conceptDirectorTrace) ?? undefined;
+        // Phase 22 — forward the copy-scoring gate trace received from
+        // each copy-producing callable so `generateFinalAd` can merge
+        // it into the persisted `ResolutionTrace.copyScoring` sub-object.
+        // The trace rides the HTTP boundary, not a module global (R1).
+        const _copyScoringTrace = copyScoringTrace ?? undefined;
         const result = await generators.generateFinalAd(
             buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio,
             editInstruction, base64ToEdit, styleReference, textOverride,
             undefined, // reflowInstruction (unchanged)
             _sanitizedConceptDirectorTrace, // Phase 20: forwarded from serverGenerateConcepts
+            _copyScoringTrace, // Phase 22: forwarded from serverGenerateTOV / -CarouselSlideCopies / -TestimonialCarousel
         );
 
         // ═══ CREATIVE MEMORY: Store creative metadata (fire-and-forget) ═══
@@ -5195,6 +5201,10 @@ export const serverGenerateCarouselSlideCopies = onCall({
     });
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    // Phase 22 — the copy-scoring gate's OpenAI client needs the key
+    // (research R2). setOpenAIKey is idempotent and matches the pattern
+    // in serverGenerateTOV / serverGenerateFinalAd.
+    generators.setOpenAIKey(openaiApiKey.value());
     try {
         const result = await generators.generateCarouselSlideCopies(approvedTov, inputs, slideCount, resolvedUniverse, refinement, entitlement.basePlan);
         return {
@@ -5243,6 +5253,10 @@ export const serverGenerateTestimonialCarousel = onCall({
     const maxSlides = entitlement.features.maxCarouselSlides || 5;
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    // Phase 22 — the copy-scoring gate's OpenAI client needs the key
+    // (research R2). setOpenAIKey is idempotent and matches the pattern
+    // in serverGenerateTOV / serverGenerateFinalAd.
+    generators.setOpenAIKey(openaiApiKey.value());
     try {
         const result = await generators.generateTestimonialCarousel(inputs, screenshots, maxSlides);
         return {

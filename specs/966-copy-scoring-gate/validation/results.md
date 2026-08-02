@@ -12,7 +12,7 @@
 |---|---|---|---|
 | Sample capture (gate-on + gate-off paired) | `scripts/copyQualitySample.mjs` | live generation | 50+ samples, both languages, multiple offer types |
 | Reading level + lived-symptom verdict | `scripts/copyQualityJudge.mjs` | Gemini (different model — SC-002a) | prompt shares NOTHING with the gate's scorer |
-| Human spot-check | `validation/spot-check.md` | n/a | 10 fixed samples, both languages; human verdict wins ties |
+| Human spot-check | `validation/spot-check.md` (pending) | n/a | 10 fixed samples, both languages; human verdict wins ties |
 
 The judge and the gate use **different models** (OpenAI vs Gemini) and
 **different prompts** (per SC-002a), so neither source of circularity
@@ -49,6 +49,8 @@ the final figures ship.
 _Pending capture._
 
 ## Spot-check results (T079)
+
+_Pending — `validation/spot-check.md` is created at sign-off with the documented 10-sample bilingual spot-check details. Until then this section is empty and SC-001 / SC-002 measurements must be read as "automated-judge only; human spot-check pending"._
 
 _Pending product-owner review._
 

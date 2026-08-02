@@ -576,13 +576,13 @@ async function runTests(): Promise<void> {
       },
     }));
     // The rewrite scores lower than the original → discarded; original
-    // block survives.
+    // block survives. The decision MUST be recorded (D5 contract), so
+    // assert unconditionally rather than guarding on length.
     assert(r.block === block, "D5: lower-scoring rewrite → block is the original");
     const hookRewrites = r.trace.rewrites.filter((x) => x.fieldName === "hookText");
-    if (hookRewrites.length > 0) {
-      assert(hookRewrites.some((x) => x.rejectReason === "scored_lower" || x.rejectReason === "below_threshold"),
-        `D5: lower-scoring rewrite is rejected (got rejectReasons: ${JSON.stringify(hookRewrites.map((x) => x.rejectReason))})`);
-    }
+    assert(hookRewrites.length > 0, "D5: a rewrite decision is recorded for hookText");
+    assert(hookRewrites.some((x) => x.rejectReason === "scored_lower" || x.rejectReason === "below_threshold"),
+      `D5: lower-scoring rewrite is rejected (got rejectReasons: ${JSON.stringify(hookRewrites.map((x) => x.rejectReason))})`);
   }
 
   // D9: rewrite candidate failing a length cap is rejected
@@ -612,6 +612,20 @@ async function runTests(): Promise<void> {
     assert(sub.newBlock.includes("HOOK_START_A"), "E1: HOOK_START_A preserved");
     assert(sub.newBlock.includes("HOOK_END_A"), "E1: HOOK_END_A preserved");
     assert(sub.newBlock.includes("HOOK_TEXT: New"), "E1: new value injected");
+  }
+  // E1: $ in a value must be written literally (no `$$` doubling). The
+  // function replacer of String.prototype.replace does NOT treat `$`
+  // specially, so escaping is unnecessary AND a no-op escape (like
+  // `$$$$`) would double the character — caught by this test.
+  {
+    const original = "HOOK_START_A\nHOOK_TEXT: Original\nHOOK_END_A";
+    const sub = substituteFieldsInBlock(original, [
+      { variationId: "A", fieldName: "hookText", value: "Save $99 today" },
+    ], []);
+    assert(sub.newBlock.includes("HOOK_TEXT: Save $99 today"),
+      `E1: '$' in a value is written literally (got: ${JSON.stringify(sub.newBlock)})`);
+    assert(!sub.newBlock.includes("$$"),
+      `E1: no '$$' doubling from string-form-replace escaping (got: ${JSON.stringify(sub.newBlock)})`);
   }
 
   // E3: dropped variation → blockStructurePreserved detects it
@@ -844,17 +858,29 @@ async function runTests(): Promise<void> {
 
   console.log("  SC-011: cultural substitution still fires on gate output");
   {
-    // Arabic rewrite containing "wine" → must be substituted by scanAndReplace.
-    // The gate's applyCulturalSubstitution calls scanAndReplace.
-    // We test the helper directly here; integration with the rewrite
-    // path is exercised by the validation harness (T082).
-    const { scanAndReplace, isArabic } = await import("../culturalCompliance.js");
+    // Use an English input containing a known TRIGGER_WORDS entry
+    // ("wine") and assert the cleaned output differs from the
+    // original — this proves the substitution actually fires (not
+    // just returns a string). Also exercise applyCulturalSubstitution
+    // directly so the gate-side function under test is verified.
+    const { scanAndReplace, isArabic, TRIGGER_WORDS } = await import("../culturalCompliance.js");
     assert(isArabic("ar") === true, "SC-011: isArabic('ar') is true");
-    const cleaned = scanAndReplace("نبيذ العنب", "adCopy").cleaned;
-    // The Arabic "نبيذ العنب" contains the wine motif; scanAndReplace
-    // should substitute it. If the exact motif isn't in HARAM_MOTIFS,
-    // we just verify the call doesn't throw and returns a string.
-    assert(typeof cleaned === "string", "SC-011: scanAndReplace returns a string for Arabic input");
+    assert(TRIGGER_WORDS.length > 0, "SC-011: TRIGGER_WORDS is populated");
+    const englishWithTrigger = `Wine tasting with premium cheeses`;
+    const r = scanAndReplace(englishWithTrigger, "adCopy");
+    // scanAndReplace substitutes regardless of language. The
+    // language gate is enforced by the CALLER (applyCulturalSubstitution
+    // short-circuits on `language !== "ar"`). Verify the substitution
+    // itself fires end-to-end.
+    assert(r.cleaned !== englishWithTrigger,
+      `SC-011: trigger-word substitution fires (cleaned=${JSON.stringify(r.cleaned)})`);
+    assert(r.matched.length > 0, `SC-011: matched list populated (matched=${JSON.stringify(r.matched)})`);
+    // Exercise the gate-side wrapper directly.
+    const { applyCulturalSubstitution } = await import("../copyScoringGate.js");
+    assert(applyCulturalSubstitution("passthrough", "en") === "passthrough",
+      "SC-011: applyCulturalSubstitution('en') passes through");
+    assert(typeof applyCulturalSubstitution("أي نص", "ar") === "string",
+      "SC-011: applyCulturalSubstitution('ar') returns a string");
   }
 
   // ═══════════════════════════════════════════════════════════
