@@ -672,13 +672,37 @@ async function runTests(): Promise<void> {
     ], ["UNTOUCHABLE_LITERAL"]);
     assert(sub.ok, "E4: substitution preserves untouchable literal");
   }
+  // D1 fix (audit 2026-08-03): an untouchable string that was NEVER in the
+  // original block cannot be mutated and is not a violation. The
+  // previous (inverted) check discarded every rewrite whose generated
+  // block did not echo the advertiser literal verbatim — the common case
+  // — making the gate a no-op that burns interactions and reports
+  // success. Confirm the fix: substitution accepts and the new block
+  // reflects the rewrite.
   {
-    const original = "HOOK_START_A\nHOOK_TEXT: Original";
+    const original = "HOOK_START_A\nHOOK_TEXT: Original\nHOOK_END_A";
+    const sub = substituteFieldsInBlock(original, [
+      { variationId: "A", fieldName: "hookText", value: "New improved" },
+    ], ["Acme Corp", "SuperWidget"]);
+    assert(sub.ok, "D1: untouchable strings absent from block → ok:true (was bug)");
+    assert(sub.newBlock.includes("HOOK_TEXT: New improved"),
+      "D1: rewrite still applied even though untouchables were absent");
+    assert(!sub.newBlock.includes("Acme Corp"),
+      "D1: untouchable absent from original is not injected by substitution");
+  }
+  // D1 mixed: one untouchable is in the original, the other is not.
+  // Only the one in the original is enforced; the other is ignored.
+  // (Acme Corp is placed outside the substituted field value so the
+  // substitution doesn't trivially remove it — the test isolates the
+  // untouchable-check behavior from the field-replacement behavior.)
+  {
+    const original = "HOOK_START_A\n# Acme Corp\nHOOK_TEXT: Original\nHOOK_END_A";
     const sub = substituteFieldsInBlock(original, [
       { variationId: "A", fieldName: "hookText", value: "New" },
-    ], ["NEVER_APPEARED_IN_BLOCK"]);
-    assert(!sub.ok, "E4: missing untouchable → ok:false");
-    assert(sub.newBlock === original, "E4: ok:false returns the original block");
+    ], ["Acme Corp", "MissingOne"]);
+    assert(sub.ok, "D1: untouchable-in-original preserved; other ignored");
+    assert(sub.newBlock.includes("Acme Corp"),
+      "D1: Acme Corp (in original) is preserved in the rewrite");
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -906,6 +930,94 @@ async function runTests(): Promise<void> {
   }
 
   // ═══════════════════════════════════════════════════════════
+  // D3 — claim flag re-emission (FR-011a/b, Contract D6/D7/D8)
+  // ═══════════════════════════════════════════════════════════
+
+  console.log("  D3: claim flag re-emission on rewrite");
+  // D3 accepted rewrite replaces the original CLAIM_FLAG lines for
+  // the rewritten variation with the rewriter's flags. Untouched
+  // variations' flags survive untouched.
+  {
+    let scoreCalls = 0;
+    const r = await gateCopySet(
+      makeInput({
+        rawBlock: "HOOK_START_A\nHOOK_TEXT: old hook with 9 out of 10 — invented stat\nCLAIM_FLAG: 9 out of 10 — invented statistic\nHOOK_END_A\n" +
+                   "HOOK_START_B\nHOOK_TEXT: kept hook\nHOOK_END_B",
+        untouchable: [],
+      }),
+      makeDeps({
+        score: async (payload) => {
+          scoreCalls++;
+          // Both initial and re-score must mirror the request: only
+          // the requested fields. The coverage check (validateScoreResponse)
+          // rejects responses that score fields never requested.
+          return {
+            fields: payload.fields.map((f) => ({
+              variationId: f.variationId,
+              fieldName: f.fieldName,
+              scores: scoreCalls === 1 && f.variationId === "A"
+                ? { ...allPassingScores(), readingLevel: 1 }
+                : allPassingScores(),
+            })),
+          };
+        },
+        rewrite: async (payload) => ({
+          rewrites: payload.failing.map((f) => ({
+            variationId: f.variationId,
+            fieldName: f.fieldName,
+            candidate: f.variationId === "A" ? "fresh hook with new number" : f.value,
+            claimFlags: f.variationId === "A"
+              ? [{ text: "fresh number", reason: "invented statistic" }]
+              : [],
+          })),
+        }),
+      }),
+    );
+    // Variation A's original "9 out of 10" CLAIM_FLAG line is gone;
+    // the rewriter's flag is in its place. Variation B's flags (none)
+    // are unaffected.
+    assert(!r.block.includes("CLAIM_FLAG: 9 out of 10"),
+      `D3: original stale flag is cleared (got: ${JSON.stringify(r.block)})`);
+    assert(r.block.includes("CLAIM_FLAG: fresh number — invented statistic"),
+      `D3: rewriter's flag is emitted (got: ${JSON.stringify(r.block)})`);
+  }
+
+  // D3 rewrite accepted with empty claimFlags array — original flags
+  // are cleared (no stale claim survives), and no new flag is added.
+  {
+    let scoreCalls = 0;
+    const r = await gateCopySet(
+      makeInput({
+        rawBlock: "HOOK_START_A\nHOOK_TEXT: old with stat\nCLAIM_FLAG: 9 out of 10 — invented statistic\nHOOK_END_A",
+        untouchable: [],
+      }),
+      makeDeps({
+        score: async (payload) => ({
+          fields: payload.fields.map((f) => ({
+            variationId: f.variationId,
+            fieldName: f.fieldName,
+            scores: scoreCalls++ === 0
+              ? { ...allPassingScores(), readingLevel: 1 }
+              : allPassingScores(),
+          })),
+        }),
+        rewrite: async (payload) => ({
+          rewrites: [{
+            variationId: payload.failing[0].variationId,
+            fieldName: payload.failing[0].fieldName,
+            candidate: "new hook no stats",
+            claimFlags: [],
+          }],
+        }),
+      }),
+    );
+    assert(!r.block.includes("CLAIM_FLAG: 9 out of 10"),
+      `D3: empty claimFlags clears original flag (got: ${JSON.stringify(r.block)})`);
+    assert(!r.block.includes("CLAIM_FLAG:"),
+      `D3: no empty CLAIM_FLAG lines remain (got: ${JSON.stringify(r.block)})`);
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // SC-011 — compliance regression: gate-produced Arabic runs through
   // scanAndReplace (FR-012a). The existing substitution tables
   // (HARAM_MOTIFS / TRIGGER_WORDS) still fire on rewrite candidates
@@ -994,6 +1106,63 @@ async function runTests(): Promise<void> {
     }));
     assert(r.ran === true, "G1: empty block is ran:true (gate ran, no fields to gate)");
     assert(r.skipReason === undefined, "G1: empty block has no skipReason");
+  }
+
+  // D1 audit-trail integrity: when the rewriter produces a valid
+  // candidate that PASSES scoring, but the substitution step cannot
+  // apply it (substituteFieldsInBlock returns ok:false because the
+  // rewrite dropped an untouchable that was in the original), the
+  // rewrite decision MUST be marked `accepted: false, rejectReason:
+  // "block_unparseable"` and gaveUp must be true — the audit trail must
+  // never claim success for a feature that did nothing.
+  {
+    let scoreCalls = 0;
+    const r = await gateCopySet(
+      makeInput({
+        // Untouchable "BRAND_X" sits inside the field value being
+        // substituted. The rewrite drops it, so the substitute
+        // step returns ok:false (audit-trail integrity kicks in).
+        rawBlock: "HOOK_START_A\nHOOK_TEXT: original with BRAND_X\nHOOK_END_A",
+        untouchable: ["BRAND_X"],
+      }),
+      makeDeps({
+        score: async () => {
+          scoreCalls++;
+          // Initial call: hookText fails → enters the rewrite path.
+          // Subsequent calls (re-score): the rewrite PASSES so the
+          // candidate is `accepted: true`. Then substitute fails on the
+          // accepted rewrite → audit-trail integrity must record the
+          // failure even though `accepted: true` was set earlier.
+          const isReScore = scoreCalls > 1;
+          return {
+            fields: [{
+              variationId: "A",
+              fieldName: "hookText",
+              scores: isReScore ? allPassingScores() : { ...allPassingScores(), readingLevel: 1 },
+            }],
+          };
+        },
+        rewrite: async () => ({
+          rewrites: [{
+            variationId: "A",
+            fieldName: "hookText",
+            // Rewrite DROPS BRAND_X — substituteFieldsInBlock will
+            // detect the missing untouchable and return ok:false.
+            candidate: "clean rewritten copy",
+            claimFlags: [],
+          }],
+        }),
+      }),
+    );
+    assert(r.block === "HOOK_START_A\nHOOK_TEXT: original with BRAND_X\nHOOK_END_A",
+      "D1 audit trail: substitution failure preserves the original block");
+    const hookRewrites = r.stepTrace.rewrites.filter((x) => x.fieldName === "hookText");
+    assert(hookRewrites.length > 0, "D1 audit trail: rewrite decision is recorded");
+    assert(hookRewrites.every((x) => x.accepted === false),
+      `D1 audit trail: rewrite decision is rejected after substitution failure (got accepted=${JSON.stringify(hookRewrites.map((x) => x.accepted))})`);
+    assert(hookRewrites.every((x) => x.rejectReason === "block_unparseable"),
+      `D1 audit trail: rejectReason is 'block_unparseable' (got ${JSON.stringify(hookRewrites.map((x) => x.rejectReason))})`);
+    assert(r.stepTrace.gaveUp === true, "D1 audit trail: gaveUp is true after substitution failure");
   }
 
   // ═══════════════════════════════════════════════════════════

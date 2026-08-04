@@ -7,7 +7,7 @@ import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVe
 import { doc, getDoc, setDoc, deleteDoc, updateDoc, onSnapshot, collection, addDoc, getDocs, query, orderBy, where, limit, serverTimestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { ref as storageRef, deleteObject } from 'firebase/storage';
-import { gemini, type GenerationResult, type ConceptDirectorTraceEntry } from './services/geminiService';
+import { gemini, type GenerationResult, type ConceptDirectorTraceEntry, type CopyScoringTrace } from './services/geminiService';
 import { resolveCreativeSpec, CREATIVE_MODE_CATALOG, type ResolvedCreativeSpec } from './creativeResolver';
 import { isValidHookPayload, validateCanonicalHooks, normalizeHooksToCanonical, getHookValidationSummary } from './utils/hookPayload';
 import { parseHookVariations, parseHookVariation } from './utils/hookVariationParser';
@@ -3263,6 +3263,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
           initial[i].tweak || undefined,
           undefined, undefined, undefined, undefined, undefined,
           conceptDirectorTrace,
+          copyScoringTrace,
         );
         const img = abResult.image;
         setAbVariations(prev => prev.map((v, idx) => idx === i ? {
@@ -3296,6 +3297,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
         abVariations[index]?.tweak || undefined,
         undefined, undefined, undefined, undefined, undefined,
         conceptDirectorTrace,
+        copyScoringTrace,
       );
       const img = abRetryResult.image;
       setAbVariations(prev => prev.map((v, idx) => idx === index ? {
@@ -3411,6 +3413,12 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
   // backend returns (mirrored in geminiService.ts) so the boundary
   // stays type-safe.
   const [conceptDirectorTrace, setConceptDirectorTrace] = useState<ConceptDirectorTraceEntry | null>(null);
+  // Phase 22 — Copy Scoring Gate trace (audit D2 fix). Mirror of
+  // the concept-director state above. Set on every successful TOV /
+  // carousel-slide / testimonial generation and forwarded unchanged
+  // to the next `serverGenerateFinalAd` call. Opaque passthrough —
+  // never rendered or interpreted.
+  const [copyScoringTrace, setCopyScoringTrace] = useState<CopyScoringTrace | null>(null);
   const [activeEditHookIndex, setActiveEditHookIndex] = useState<string | null>(null);
   const [activeEditConceptIndex, setActiveEditConceptIndex] = useState<string | null>(null);
   const [expandedConcepts, setExpandedConcepts] = useState<Set<number>>(new Set([11, 12, 13, 21, 22, 23, 31, 32, 33, 41, 42, 43]));
@@ -4720,6 +4728,15 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     // `kill-switch-on` reason in the discriminated union, so the doc
     // never lands without a reason when the gate ran.
     setConceptDirectorTrace(result.conceptDirectorTrace ?? null);
+    // Phase 22 — Copy Scoring Gate trace (audit D2 fix). Mirror of
+    // the concept-director passthrough: serverGenerateTOV /
+    // serverGenerateCarouselSlideCopies /
+    // serverGenerateTestimonialCarousel return `result.copyScoringTrace`;
+    // we hold it in opaque state and forward it unchanged to the
+    // next `serverGenerateFinalAd` call. The trace is never
+    // rendered or interpreted. Without this the chain is severed
+    // and `ResolutionTrace.copyScoring` is never written.
+    setCopyScoringTrace(result.copyScoringTrace ?? null);
     return result.text;
   };
 
@@ -6007,6 +6024,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         undefined, undefined, undefined, undefined, undefined,
         undefined, // batchTotal
         conceptDirectorTrace,
+        copyScoringTrace,
       );
       const mockup = mockupResult.image;
       setBuildPlan(conceptRaw);
@@ -6367,6 +6385,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           combo.conceptText, combo.hookText, inputs, resolvedUniverse, primaryRatio,
           undefined, undefined, undefined, undefined, undefined, combos.length * allSizes.length,
           conceptDirectorTrace,
+          copyScoringTrace,
         );
         primaryUrl = genResult.image;
         const primaryStorageUrl = genResult.storageUrl || null;
@@ -6593,6 +6612,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
           item.conceptText, item.hookText || selectedTov, inputs, resolvedUniverse, itemRatio, variationInstruction,
           undefined, undefined, undefined, undefined, undefined,
           conceptDirectorTrace,
+          copyScoringTrace,
         );
         mockup = retryResult.image;
       }
@@ -6714,6 +6734,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         undefined, undefined, styleRef, txOverride,
         undefined, undefined, // activeWorkspaceId, batchTotal
         conceptDirectorTrace,
+        copyScoringTrace,
       );
       const mockup: string | null = slideResult.image;
       // Surface why a slide failed (non-blocking) so carousel render failures are diagnosable.
@@ -6920,6 +6941,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         undefined, undefined, styleRef, txOverride,
         undefined, undefined, // activeWorkspaceId, batchTotal
         conceptDirectorTrace,
+        copyScoringTrace,
       );
       const mockup: string | null = slideResult.image;
       if (mockup) {
@@ -7046,6 +7068,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         combinedInstructions, (currentRawBase64 || currentMockup) || undefined, undefined, carouselTextOverride,
         undefined, undefined, // reflowInstruction, batchTotal
         conceptDirectorTrace,
+        copyScoringTrace,
       );
       const res = editResult.image;
       // Prefer the server-uploaded Storage URL so the bound batch/carousel/A/B

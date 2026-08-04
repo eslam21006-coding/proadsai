@@ -3183,14 +3183,15 @@ Do NOT omit any markers. Do NOT add prose outside of these blocks. Do NOT includ
     // a module-global survivor.
     let _copyScoringTrace: CopyScoringTrace | null = null;
     let _gatedText = text;
-    // The permanent switch (COPY_SCORING_ENABLED) is the production gate.
-    // Sign-off tooling (scripts/copyQualitySample.mjs) forwards an
-    // optional `_copyScoringOverrideEnabled` boolean via `inputs` so the
-    // paired-run harness can flip the gate without redeploying. The
-    // override is consulted ONLY when explicitly set (boolean); an
-    // absent value falls through to COPY_SCORING_ENABLED.
-    const _override = (inputs as any)._copyScoringOverrideEnabled;
-    const _gateEnabled = (typeof _override === "boolean") ? _override : COPY_SCORING_ENABLED;
+    // Audit D4 fix: the gate is governed by a single global switch
+    // (COPY_SCORING_ENABLED) with no per-user, per-plan, or per-workspace
+    // granularity (FR-019c/FR-019d). The previous client-controllable
+    // override `_copyScoringOverrideEnabled` let any authenticated caller
+    // disable the gate for one request — exactly the cohort-split the
+    // spec forbids. The gate-off baseline for SC-002/SC-004/SC-005a/
+    // SC-006 is produced by toggling the module-level constant and
+    // redeploying (research R7, quickstart.md:134).
+    const _gateEnabled = COPY_SCORING_ENABLED;
     if (mode === 'initial' && _gateEnabled) {
         try {
             const { gateCopySet, createOpenAIClients, formatGateLogLine } = await import("./copyScoringGate.js");
@@ -5633,6 +5634,7 @@ export interface ResolutionTrace {
                 diagnosis: string;
                 accepted: boolean;
                 rejectReason?: string;
+                claimFlags?: ReadonlyArray<{ text: string; reason: string }>;
             }>;
             passCount: 0 | 1 | 2;
             gaveUp: boolean;
@@ -9243,6 +9245,12 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
             // `copies[i + 1]` so the index alignment is preserved.
             const slidesToGate = copies.slice(1);
             const varIds = ["A","B","C","D","E","F","G","H","I","J"] as const;
+            // Audit D5 fix: use the proper `slideCaption` field name
+            // (declared in FieldName) instead of `hookText` so the
+            // audit trail correctly distinguishes a slide caption from
+            // a hook (SC-009). The gate's parseBlockIntoFieldsForSlides
+            // reads `HOOK_TEXT:` from the virtual block, but the field
+            // name in the gate's trace is set to `slideCaption`.
             const virtualBlock = slidesToGate.map((c, i) =>
                 `HOOK_START_${varIds[i] || "A"}\nHOOK_TEXT: ${c.hookText || ""}\nHOOK_END_${varIds[i] || "A"}`
             ).join("\n\n");
@@ -9260,6 +9268,12 @@ ${refinement ? `\n═══ USER REFINEMENT REQUEST ═══\nApply these chang
                         rawBlock: virtualBlock,
                         language: lang,
                         untouchable,
+                        // Audit D5 fix: slide captions are not hooks. The
+                        // virtual block uses HOOK_TEXT markers as a
+                        // stable contract, but the field name in the
+                        // audit trace should reflect what the field
+                        // actually represents.
+                        defaultFieldName: "slideCaption",
                     },
                     {
                         score: clients.score,
@@ -10111,6 +10125,9 @@ export async function generateTestimonialCarousel(
             const lang = (inputs as any).adLanguage === "ar_fusha" || (inputs as any).adLanguage === "ar"
                 ? "ar" as const
                 : "en" as const;
+            // Audit D5 fix: the hook and the close are two different
+            // fields; gate each with its own field name so the audit
+            // trace records the right label for each.
             const virtualBlock =
                 `HOOK_START_A\nHOOK_TEXT: ${hookResult.hookText}\nHOOK_END_A\n\n` +
                 `HOOK_START_B\nHOOK_TEXT: ${closeResult.closeText}\nHOOK_END_B`;
@@ -10128,6 +10145,12 @@ export async function generateTestimonialCarousel(
                         rawBlock: virtualBlock,
                         language: lang,
                         untouchable,
+                        // Audit D5 fix: testimonial hook and close are
+                        // both authored, but neither is a "hook" in the
+                        // standard sense. Use `testimonialHook` so the
+                        // audit trace distinguishes them from a real
+                        // hook (SC-009).
+                        defaultFieldName: "testimonialHook",
                     },
                     {
                         score: clients.score,

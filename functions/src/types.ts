@@ -583,6 +583,7 @@ export interface ResolutionTrace {
                 readonly diagnosis: string;
                 readonly accepted: boolean;
                 readonly rejectReason?: string;
+                readonly claimFlags?: ReadonlyArray<{ readonly text: string; readonly reason: string }>;
             }>;
             readonly passCount: 0 | 1 | 2;
             readonly gaveUp: boolean;

@@ -93,6 +93,11 @@ export interface RewriteDecision {
   candidateScore: number;
   accepted: boolean;
   rejectReason: string | null;
+  // Claim flags emitted by the rewriter for this field (FR-011a /
+  // Contract D6). Empty array means the rewriter did not flag anything
+  // new — the downstream claim-flag step will then clear any stale
+  // CLAIM_FLAG lines associated with this variation.
+  claimFlags?: ReadonlyArray<{ text: string; reason: string }>;
 }
 
 export interface CopySet {
@@ -128,6 +133,12 @@ export interface GateInput {
   rawBlock: string;
   language: Language;
   untouchable: string[];
+  // Audit D5 fix: when the caller builds a virtual block where every
+  // `HOOK_TEXT:` line represents a non-hook field (e.g. slide
+  // captions, testimonial hook/close), the field name in the audit
+  // trace should reflect that — not always `hookText`. Defaults to
+  // `hookText` when absent so existing call sites are unchanged.
+  defaultFieldName?: FieldName;
 }
 
 export interface GateDeps {
@@ -161,6 +172,7 @@ export interface CopyScoringStepTrace {
     diagnosis: string;
     accepted: boolean;
     rejectReason?: string;
+    claimFlags?: ReadonlyArray<{ text: string; reason: string }>;
   }>;
   passCount: 0 | 1 | 2;
   gaveUp: boolean;
@@ -228,6 +240,7 @@ export function parseBlockIntoFieldsForSlides(rewrittenBlock: string): Map<strin
 export function parseBlockIntoFields(
   rawBlock: string,
   extraFields?: Array<{ variationId: string; fieldName: FieldName; value: string }>,
+  defaultFieldName: FieldName = "hookText",
 ): Array<{ variationId: string; fieldName: FieldName; value: string }> {
   if (extraFields && extraFields.length > 0) {
     return extraFields.filter((f) => typeof f?.value === "string" && f.value.length > 0);
@@ -248,8 +261,13 @@ export function parseBlockIntoFields(
       const label = fm[1];
       const value = (fm[2] || "").trim();
       if (value.length === 0) continue;
+      // Audit D5 fix: when the caller passed a defaultFieldName
+      // (e.g. "slideCaption" for the carousel step, "testimonialHook"
+      // for the testimonial step), use it for the HOOK_TEXT label.
+      // SUBHEADLINE / CTA_BUTTON / BENEFIT still map to their
+      // dedicated field names — those labels are unambiguous.
       const fieldName: FieldName =
-        label === "HOOK_TEXT" ? "hookText"
+        label === "HOOK_TEXT" ? defaultFieldName
           : label === "SUBHEADLINE" ? "subheadText"
             : label === "CTA_BUTTON" ? "ctaName"
               : "benefitText";
@@ -265,7 +283,7 @@ export function parseBlockIntoFields(
     const value = (fbm[2] || "").trim();
     if (value.length > 0) {
       const fieldName: FieldName =
-        label === "HOOK_TEXT" ? "hookText"
+        label === "HOOK_TEXT" ? defaultFieldName
           : label === "SUBHEADLINE" ? "subheadText"
             : label === "CTA_BUTTON" ? "ctaName"
               : "benefitText";
@@ -342,9 +360,15 @@ export function substituteFieldsInBlock(
       return `HOOK_START_${f.variationId}${newBody}`;
     });
   }
-  // Untouched check
+  // Untouched check (Contract E4): a string the original block DID contain
+  // must still be present in the rewritten block. A string that was never
+  // in the original cannot be mutated, and its absence is not a
+  // violation — without this guard the check would discard every rewrite
+  // whose generated block lacks a brand/offer/cta verbatim string, which
+  // is the common case (advertiser literals are carried separately, not
+  // echoed by the generator). Bug D1 in the audit.
   for (const u of untouchable) {
-    if (u && u.length > 0 && !out.includes(u)) {
+    if (u && u.length > 0 && rawBlock.includes(u) && !out.includes(u)) {
       return { newBlock: rawBlock, ok: false };
     }
   }
@@ -357,11 +381,105 @@ export function substituteFieldsInBlock(
  * degradation — the gate must keep the original block in that case
  * (FR-000c, SC-006b).
  *
-* No label the original has may be dropped in the rewrite. The current
-  * check allows additional labels to appear in the rewritten block (no
-  // upper-bound check); substituteFieldsInBlock does not introduce new
-  // labels today, so this is a safety net rather than a hard contract.
+ * No label the original has may be dropped in the rewrite. The current
+ * check allows additional labels to appear in the rewritten block (no
+ * upper-bound check); substituteFieldsInBlock does not introduce new
+ * labels today, so this is a safety net rather than a hard contract.
  */
+
+// ─── Claim flag re-emission (audit D3, FR-011a/b) ─────────────────────
+//
+// The model emits CLAIM_FLAG lines after each field block to flag
+// fabricated verifiable specifics (named people, exact stats, hard
+// dates). When the gate rewrites a field, those flags become stale:
+// the specific the flag described may no longer be present, and any
+// new fabrication in the rewrite would ship unflagged. Contract D6/D7/D8
+// requires stale flags to be cleared and any rewrite-introduced
+// fabrication to be re-flagged.
+//
+// The rewriter carries claim flags in its response (per the prompt
+// sent to it). On each accepted rewrite pass, collect the flags by
+// field key and substitute them into the rewritten block, scoped to
+// that variation's body.
+
+interface RewriteWithClaim {
+  variationId: string;
+  fieldName: FieldName;
+  pass: 1 | 2;
+  claimFlags?: Array<{ text: string; reason: string }>;
+}
+
+/**
+ * Collect claim flags from accepted rewrites in the given pass. Each
+ * entry maps a (variationId, fieldName) pair to the rewrite's
+ * claim-flag list. Untouched fields have no entry; their CLAIM_FLAG
+ * lines survive untouched.
+ */
+function collectRewriteClaimFlags(
+  rewrites: ReadonlyArray<RewriteWithClaim>,
+  pass: 1 | 2,
+): Map<string, Array<{ text: string; reason: string }>> {
+  const out = new Map<string, Array<{ text: string; reason: string }>>();
+  for (const r of rewrites) {
+    if (r.pass !== pass) continue;
+    // Always include the entry — even with an empty array — so the
+    // claim-flag step clears the original CLAIM_FLAG lines for fields
+    // the rewriter did not flag. Without this, an "accepted: true"
+    // rewrite with no new flags leaves stale flags in the block.
+    if (!r.claimFlags) continue;
+    out.set(fieldKey(r.variationId, r.fieldName), r.claimFlags.slice());
+  }
+  return out;
+}
+
+function formatClaimFlag(f: { text: string; reason: string }): string {
+  return `CLAIM_FLAG: ${f.text} \u2014 ${f.reason}`;
+}
+
+/**
+ * For each rewritten field with claim flags, drop the original
+ * CLAIM_FLAG lines from that variation body and append the rewriter's
+ * flags. The shape mirrors the `extractClaimFlagsFromResponse` parser
+ * (Generators.ts) so downstream parsing continues to work.
+ */
+function applyClaimFlagsToBlock(
+  block: string,
+  flagsByField: Map<string, Array<{ text: string; reason: string }>>,
+): string {
+  if (flagsByField.size === 0) return block;
+  // Match each variation body and clear+append its CLAIM_FLAG lines.
+  // The replacement must reconstruct the full match — including the
+  // \`HOOK_START_<varId>\` prefix — otherwise the result loses the
+  // marker and downstream \`blockStructurePreserved\` rejects the block.
+  const varRe = /HOOK_START_([A-J])\b([\s\S]*?)(?=HOOK_START_[A-J]\b|HOOK_END_[A-J]\b|$)/g;
+  return block.replace(varRe, (match: string, varId: string, body: string) => {
+    // Replace ALL CLAIM_FLAG lines inside the body with the rewriter's
+    // flags for each rewritten field — multiple rewrites in the same
+    // variation concatenate their flags in field order.
+    let updatedBody = body.replace(/^[ \t]*CLAIM_FLAG[^\n]*\n?/gm, "");
+    const newFlagLines: string[] = [];
+    for (const [key, flags] of flagsByField) {
+      const [flagVarId] = key.split("::");
+      if (flagVarId !== varId) continue;
+      for (const f of flags) {
+        newFlagLines.push(formatClaimFlag(f));
+      }
+    }
+    if (newFlagLines.length === 0) {
+      // No flags to emit for this variation; return the original match
+      // (body with stale flags cleared) plus the HOOK_START_<varId>
+      // prefix that the regex consumed.
+      return `${match.split(body)[0]}${updatedBody}`;
+    }
+    // Reconstruct: HOOK_START_<varId> + body-with-stale-flags-cleared +
+    // new flag lines, ensuring the trailing newline structure matches
+    // the original so blockStructurePreserved's label-count check passes.
+    if (updatedBody.endsWith("\n")) {
+      return `${match.split(body)[0]}${updatedBody}${newFlagLines.join("\n")}\n`;
+    }
+    return `${match.split(body)[0]}${updatedBody}\n${newFlagLines.join("\n")}`;
+  });
+}
 export function blockStructurePreserved(
   original: string,
   rewritten: string,
@@ -586,7 +704,7 @@ async function gateCopySetInner(
   }
 
   // Parse the raw block into present (variationId, fieldName, value) records.
-  const presentFields = parseBlockIntoFields(input.rawBlock);
+  const presentFields = parseBlockIntoFields(input.rawBlock, undefined, input.defaultFieldName ?? "hookText");
   if (presentFields.length === 0) {
     // Nothing to gate — preserve original block. The audit trail records
     // ran:true with empty fields so the absence is distinguishable from
@@ -615,6 +733,7 @@ async function gateCopySetInner(
     diagnosis: string;
     accepted: boolean;
     rejectReason?: string;
+    claimFlags?: ReadonlyArray<{ text: string; reason: string }>;
   }> = [];
   let passCount: 0 | 1 | 2 = 0;
   let gaveUp = false;
@@ -869,6 +988,11 @@ async function gateCopySetInner(
           pass: pass as 1 | 2,
           diagnosis: diagnosisForFailure(failingField.failureReasons),
           accepted: true,
+          // Claim flags emitted by the rewriter for this field
+          // (FR-011a / Contract D6). The downstream claim-flag step
+          // (applyClaimFlagsToBlock) replaces the original
+          // CLAIM_FLAG lines for this variation with these flags.
+          claimFlags: rewritesByField.get(k)?.claimFlags,
         });
         // Update working fields + block
         const idx = currentFields.findIndex((x) => fieldKey(x.variationId, x.fieldName) === k);
@@ -920,8 +1044,43 @@ async function gateCopySetInner(
       })),
       input.untouchable,
     );
-    if (sub.ok && blockStructurePreserved(input.rawBlock, sub.newBlock)) {
-      workingBlock = sub.newBlock;
+    // Audit D3 fix: claim flag re-emission. For each accepted rewrite,
+    // replace that variation's CLAIM_FLAG lines with the rewrite's
+    // claim flags. The CLAIM_FLAG lines emitted by the model in the
+    // original block become stale the moment the rewriter changes the
+    // field value (the specific the flag described may no longer be
+    // present, or a new fabrication may have appeared). Per FR-011a/b
+    // (Contract D6/D7/D8): stale flags must not survive a rewrite, and
+    // any fabrication the rewrite introduces must be flagged. The
+    // rewriter is the only actor that knows what it changed, so it
+    // emits claim flags in its response (FR-011a).
+    let blockAfterClaims = sub.newBlock;
+    if (sub.ok) {
+      const claimByField = collectRewriteClaimFlags(rewrites as ReadonlyArray<RewriteWithClaim>, pass as 1 | 2);
+      blockAfterClaims = applyClaimFlagsToBlock(sub.newBlock, claimByField);
+    }
+    const substitutionAccepted = sub.ok && blockStructurePreserved(input.rawBlock, blockAfterClaims);
+    if (substitutionAccepted) {
+      workingBlock = blockAfterClaims;
+    } else {
+      // Audit-trail integrity (audit D1): the audit must never claim a
+      // rewrite was applied when the substitution step rejected it.
+      // Mark EVERY rewrite decision recorded for this pass with a
+      // canonical rejectReason. Whether the re-score step already
+      // recorded `accepted: false` with `below_threshold` / `scored_lower`
+      // (which describes the candidate's quality) OR `accepted: true`
+      // (which describes the candidate's scoring success), the actual
+      // integration into the working block failed — so the audit
+      // needs a reason that accurately reflects what happened.
+      const reason = !sub.ok ? "block_unparseable" : "block_structure_violated";
+      for (const r of rewrites) {
+        if (r.pass === (pass as 1 | 2)) {
+          r.accepted = false;
+          r.rejectReason = reason;
+        }
+      }
+      gaveUp = true;
+      haltPasses = true;
     }
 
     passCount = pass as 0 | 1 | 2;
@@ -1137,6 +1296,11 @@ function validateRewriteResponse(
         }
       }
     }
+    // Always store the entry — even with an empty claimFlags array —
+    // so the downstream step can distinguish "no new flags" (clear
+    // originals) from "no entry at all" (skip the variation). FR-011a/b
+    // requires stale flags to be cleared on a rewrite regardless of
+    // whether the rewriter emitted new ones.
     out.set(k, { candidate: e.candidate, claimFlags: flags });
   }
   return out;
