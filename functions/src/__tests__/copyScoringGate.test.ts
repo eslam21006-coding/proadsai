@@ -12,6 +12,7 @@ import {
   parseBlockIntoFieldsForSlides,
   substituteFieldsInBlock,
   blockStructurePreserved,
+  sanitizeCopyScoringTraceServer,
   applyCulturalSubstitution,
   evaluateThreshold,
   validateRewriteCandidate,
@@ -1186,6 +1187,103 @@ async function runTests(): Promise<void> {
     assert(slides.size === 2, `parseBlockIntoFieldsForSlides: 2 slides extracted (got ${slides.size})`);
     assert(slides.get("A") === "Slide A", "parseBlockIntoFieldsForSlides: var A extracted");
     assert(slides.get("B") === "Slide B", "parseBlockIntoFieldsForSlides: var B extracted");
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Server-side sanitizer (audit round 7)
+  // ═══════════════════════════════════════════════════════════
+
+  console.log("  Server-side copyScoringTrace sanitizer");
+  // Audit round 7: tampered request with extra fields. The sanitizer
+  // must drop extra keys and produce a clean object — without this,
+  // a tampered request would persist arbitrary fields into the
+  // generation doc.
+  {
+    const sanitized = sanitizeCopyScoringTraceServer({
+      ran: true,
+      steps: [
+        {
+          step: "hook",
+          fields: [
+            {
+              variationId: "A",
+              fieldName: "hookText",
+              scores: { readingLevel: 9, livedSymptomDepth: 9 },
+              average: 9,
+              passed: true,
+              attackerField: "persisted",
+            },
+          ],
+          rewrites: [],
+          passCount: 0,
+          gaveUp: false,
+          interactionCount: 1,
+          attackerTopLevel: "persisted",
+        },
+      ],
+    });
+    assert(sanitized !== null, "server-side sanitizer: valid trace returns a sanitized trace");
+    if (sanitized !== null && sanitized.ran === true) {
+      const firstField = sanitized.steps?.[0].fields?.[0] as Record<string, unknown> | undefined;
+      assert(!!firstField && !("attackerField" in firstField),
+        "server-side sanitizer: extra fields in step.fields are dropped");
+      assert(!!firstField && "scores" in firstField,
+        "server-side sanitizer: scores field is preserved");
+      const firstStep = sanitized.steps?.[0] as Record<string, unknown> | undefined;
+      assert(!!firstStep && !("attackerTopLevel" in firstStep),
+        "server-side sanitizer: extra fields in step object are dropped");
+    }
+  }
+  // (Continue with the next test block.)
+  // Audit round 7: closed skipReason enum. An out-of-enum value
+  // causes the sanitizer to return null (no trace persisted).
+  {
+    const sanitized = sanitizeCopyScoringTraceServer({
+      ran: false,
+      skipReason: "not-a-real-reason",
+    });
+    assert(sanitized === null,
+      "server-side sanitizer: unknown skipReason is rejected");
+  }
+  // Audit round 7: closed FieldName enum. Unknown field names in
+  // step.fields are dropped.
+  {
+    const sanitized = sanitizeCopyScoringTraceServer({
+      ran: true,
+      steps: [
+        {
+          step: "hook",
+          fields: [
+            {
+              variationId: "A",
+              fieldName: "evilField",
+              scores: { readingLevel: 9 },
+              average: 9,
+              passed: true,
+            },
+            {
+              variationId: "A",
+              fieldName: "hookText",
+              scores: { readingLevel: 9 },
+              average: 9,
+              passed: true,
+            },
+          ],
+          rewrites: [],
+          passCount: 0,
+          gaveUp: false,
+          interactionCount: 1,
+        },
+      ],
+    });
+    assert(sanitized !== null, "server-side sanitizer: trace with one valid field returns sanitized");
+    if (sanitized && sanitized.ran === true) {
+      const fields = sanitized.steps?.[0].fields ?? [];
+      assert(fields.length === 1,
+        `server-side sanitizer: unknown fieldName is dropped (got ${fields.length} fields)`);
+      assert(fields[0].fieldName === "hookText",
+        "server-side sanitizer: only hookText survives");
+    }
   }
 
   // ═══════════════════════════════════════════════════════════

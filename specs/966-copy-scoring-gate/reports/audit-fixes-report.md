@@ -121,6 +121,37 @@ The trace now records the correct field name for each copy-producing step.
 ## What did not change
 
 - `MODEL_PROVIDER` and `COPY_SCORING_ENABLED` module-level constants (FR-019c, FR-019e — code, not env).
+
+## Round 7 follow-up — backend sanitizer
+
+CodeRabbit round 7 (security review) flagged that the backend
+`generateFinalAd` accepted `request.data.copyScoringTrace` without
+its own validation — the frontend sanitizer was the only defense. A
+tampered request that bypasses the frontend (or replays a captured
+request) could inject arbitrary fields into the persisted
+`ResolutionTrace.copyScoring`.
+
+**Fix**: added `sanitizeCopyScoringTraceServer` in
+`functions/src/copyScoringGate.ts` and applied it inside
+`generateFinalAd` (in `functions/src/generators.ts`) before the
+merge with the existing copyScoring object. The sanitizer:
+
+- Validates the discriminator (`ran` boolean).
+- Confirms `skipReason` is one of the closed enum when `ran:false`.
+- Confirms `step` is one of the closed enum (`hook` / `carouselSlides` / `testimonial`).
+- Confirms each field's `fieldName` is in the closed enum
+  (`hookText` / `subheadText` / `ctaName` / `benefitText` / `slideCaption` / `testimonialHook` / `testimonialClose`).
+- Coerces each score to a finite number within 1..10; drops out-of-range
+  or non-numeric entries.
+- Drops any extra keys a tampered request may have added at any depth
+  (the merge appends sanitized step objects verbatim).
+
+Tests added: `functions/src/__tests__/copyScoringGate.test.ts`:
+
+- Server-side sanitizer: extra fields in `step.fields` are dropped.
+- Server-side sanitizer: extra fields in `step` object are dropped.
+- Server-side sanitizer: unknown `skipReason` is rejected.
+- Server-side sanitizer: unknown `fieldName` is dropped.
 - The 9-dimension scoring rubric and threshold rule (FR-002, FR-006).
 - The 5-interaction / 20-second / 60-second budgets (FR-016).
 - The `conceptDirectorTrace` passthrough (untouched).

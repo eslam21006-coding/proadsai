@@ -6108,36 +6108,51 @@ export async function generateFinalAd(
     // accumulate within a single run (e.g. hook step + carousel slide step).
     // `undefined` / `null` / malformed input is silently ignored — the merge
     // is additive only and never replaces an existing copyScoring object.
-    if (copyScoringTrace && typeof copyScoringTrace === "object" && copyScoringTrace.ran === true) {
-        const existingSteps = (_lastResolutionTrace && _lastResolutionTrace.copyScoring && Array.isArray(_lastResolutionTrace.copyScoring.steps))
-            ? _lastResolutionTrace.copyScoring.steps
-            : [];
-        const newSteps = Array.isArray(copyScoringTrace.steps) ? copyScoringTrace.steps : [];
-        _lastResolutionTrace = {
-            ...(_lastResolutionTrace || {}),
-            copyScoring: {
-                ran: true,
-                steps: [...existingSteps, ...newSteps],
-            },
-        };
-    } else if (copyScoringTrace && typeof copyScoringTrace === "object" && copyScoringTrace.ran === false) {
-        // Skip-path / fail-open trace — only write it if no ran:true trace
-        // already exists in the persisted record (FR-020, ran:true wins).
-        // Read `steps` directly from `_lastResolutionTrace.copyScoring.steps`
-        // (matching the ran:true branch above); the previous typo
-        // `_lastResolutionTrace.copyScoring.copyScoring?.steps` would
-        // always resolve to `undefined` and silently drop the skip trace.
-        const existingSteps = (_lastResolutionTrace && _lastResolutionTrace.copyScoring && Array.isArray(_lastResolutionTrace.copyScoring.steps))
-            ? _lastResolutionTrace.copyScoring.steps
-            : null;
-        if (!existingSteps || existingSteps.length === 0) {
-            _lastResolutionTrace = {
-                ...(_lastResolutionTrace || {}),
-                copyScoring: {
-                    ran: false,
-                    skipReason: copyScoringTrace.skipReason,
-                },
-            };
+    //
+    // Audit round 7 fix: `copyScoringTrace` is now sanitized via
+    // `sanitizeCopyScoringTraceServer` before the merge. The frontend
+    // sanitizer (in `src/services/geminiService.ts`) is the first line of
+    // defense; this server-side sanitizer is the second. Without it, a
+    // tampered request that bypasses the frontend (or replays a captured
+    // request) can inject arbitrary fields into the persisted
+    // `ResolutionTrace.copyScoring`. The merge in this function appends
+    // step objects verbatim, so a tainted `steps[]` would survive into
+    // the generation doc.
+    if (copyScoringTrace && typeof copyScoringTrace === "object") {
+        // Dynamic import to keep the gate module side-effect-free.
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { sanitizeCopyScoringTraceServer } = require("./copyScoringGate.js") as typeof import("./copyScoringGate.js");
+        const sanitized = sanitizeCopyScoringTraceServer(copyScoringTrace);
+        if (sanitized) {
+            if (sanitized.ran === true) {
+                const existingSteps = (_lastResolutionTrace && _lastResolutionTrace.copyScoring && Array.isArray(_lastResolutionTrace.copyScoring.steps))
+                    ? _lastResolutionTrace.copyScoring.steps
+                    : [];
+                const newSteps = sanitized.steps ?? [];
+                _lastResolutionTrace = {
+                    ...(_lastResolutionTrace || {}),
+                    copyScoring: {
+                        ran: true,
+                        steps: [...existingSteps, ...newSteps],
+                    },
+                };
+            } else if (sanitized.ran === false) {
+                // Skip-path / fail-open trace — only write it if no ran:true
+                // trace already exists in the persisted record (FR-020,
+                // ran:true wins).
+                const existingSteps = (_lastResolutionTrace && _lastResolutionTrace.copyScoring && Array.isArray(_lastResolutionTrace.copyScoring.steps))
+                    ? _lastResolutionTrace.copyScoring.steps
+                    : null;
+                if (!existingSteps || existingSteps.length === 0) {
+                    _lastResolutionTrace = {
+                        ...(_lastResolutionTrace || {}),
+                        copyScoring: {
+                            ran: false,
+                            skipReason: sanitized.skipReason,
+                        },
+                    };
+                }
+            }
         }
     }
     // Phase 28 — Expression adaptation trace (audit fix #13). Written here

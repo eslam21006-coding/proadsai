@@ -1422,6 +1422,132 @@ rewrite. Do NOT include any prose. JSON only.`;
  * across every step so the alertable signal reflects the whole run,
  * not just the first step.
  */
+
+// ─── Server-side sanitizer (audit round 7) ────────────────────────────
+//
+// The frontend sanitizer (in `src/services/geminiService.ts`) is the
+// first line of defense. This server-side sanitizer is the second line
+// of defense (mirror of `sanitizeConceptDirectorTrace`): it validates
+// the same closed `skipReason` enum, drops any extra keys a tampered
+// request may have added, and caps each `step.fields[].scores` map to
+// numeric values within 1..10. Without it, a client that bypasses the
+// frontend (or replays a captured request) can inject arbitrary fields
+// into the persisted `ResolutionTrace.copyScoring`. The merge in
+// `generateFinalAd` appends step objects verbatim, so a tainted
+// `steps[]` would survive into the generation doc.
+//
+// Applied in `serverGenerateFinalAd` (functions/src/index.ts) before
+// the value is forwarded to `generateFinalAd`.
+
+const SERVER_SKIP_REASONS = new Set<SkipReason>([
+  "disabled", "no_credential",
+  "timeout_interaction", "timeout_copyset", "timeout_run",
+  "unreachable", "malformed_response", "out_of_range", "unusable_rewrite",
+]);
+
+const SERVER_STEPS = new Set(["hook", "carouselSlides", "testimonial"]);
+const SERVER_FIELD_NAMES = new Set([
+  "hookText", "subheadText", "ctaName", "benefitText",
+  "slideCaption", "testimonialHook", "testimonialClose",
+]);
+
+export function sanitizeCopyScoringTraceServer(
+  v: unknown,
+): CopyScoringTrace | null {
+  if (!v || typeof v !== "object") return null;
+  const t = v as Record<string, unknown>;
+
+  if (t.ran === false) {
+    if (typeof t.skipReason !== "string") return null;
+    if (!SERVER_SKIP_REASONS.has(t.skipReason as SkipReason)) return null;
+    return { ran: false, skipReason: t.skipReason as SkipReason };
+  }
+  if (t.ran !== true) return null;
+  if (!Array.isArray(t.steps)) return null;
+
+  const cleanSteps: CopyScoringTrace["steps"] = [];
+  for (const step of t.steps as unknown[]) {
+    if (!step || typeof step !== "object") continue;
+    const s = step as Record<string, unknown>;
+    if (typeof s.step !== "string" || !SERVER_STEPS.has(s.step)) continue;
+    if (typeof s.passCount !== "number" || ![0, 1, 2].includes(s.passCount)) continue;
+    if (typeof s.gaveUp !== "boolean") continue;
+    if (typeof s.interactionCount !== "number") continue;
+    if (!Array.isArray(s.fields) || !Array.isArray(s.rewrites)) continue;
+
+    const cleanFields: NonNullable<CopyScoringTrace["steps"]>[number]["fields"] = [];
+    for (const f of s.fields as unknown[]) {
+      if (!f || typeof f !== "object") continue;
+      const field = f as Record<string, unknown>;
+      if (typeof field.variationId !== "string") continue;
+      if (typeof field.fieldName !== "string") continue;
+      if (!SERVER_FIELD_NAMES.has(field.fieldName)) continue;
+      if (typeof field.average !== "number") continue;
+      if (typeof field.passed !== "boolean") continue;
+      if (!field.scores || typeof field.scores !== "object") continue;
+      // Coerce each score to a finite number; drop non-numeric entries
+      // and any value outside the 1..10 range.
+      const scores: Record<string, number> = {};
+      for (const [k, val] of Object.entries(field.scores)) {
+        if (typeof val === "number" && Number.isFinite(val) && val >= 1 && val <= 10) {
+          scores[k] = Math.round(val);
+        }
+      }
+      cleanFields.push({
+        variationId: field.variationId,
+        fieldName: field.fieldName as FieldName,
+        scores,
+        average: field.average,
+        passed: field.passed,
+      });
+    }
+
+    const cleanRewrites: NonNullable<CopyScoringTrace["steps"]>[number]["rewrites"] = [];
+    for (const r of s.rewrites as unknown[]) {
+      if (!r || typeof r !== "object") continue;
+      const rw = r as Record<string, unknown>;
+      if (typeof rw.variationId !== "string") continue;
+      if (typeof rw.fieldName !== "string") continue;
+      if (!SERVER_FIELD_NAMES.has(rw.fieldName)) continue;
+      if (rw.pass !== 1 && rw.pass !== 2) continue;
+      if (typeof rw.diagnosis !== "string") continue;
+      if (typeof rw.accepted !== "boolean") continue;
+      const rewrite: typeof cleanRewrites[number] = {
+        variationId: rw.variationId,
+        fieldName: rw.fieldName as FieldName,
+        pass: rw.pass,
+        diagnosis: rw.diagnosis,
+        accepted: rw.accepted,
+      };
+      if (typeof rw.rejectReason === "string") {
+        rewrite.rejectReason = rw.rejectReason;
+      }
+      if (Array.isArray(rw.claimFlags)) {
+        const flags: Array<{ text: string; reason: string }> = [];
+        for (const cf of rw.claimFlags as unknown[]) {
+          if (!cf || typeof cf !== "object") continue;
+          const flag = cf as { text?: unknown; reason?: unknown };
+          if (typeof flag.text === "string" && typeof flag.reason === "string") {
+            flags.push({ text: flag.text, reason: flag.reason });
+          }
+        }
+        if (flags.length > 0) rewrite.claimFlags = flags;
+      }
+      cleanRewrites.push(rewrite);
+    }
+
+    cleanSteps.push({
+      step: s.step as "hook" | "carouselSlides" | "testimonial",
+      fields: cleanFields,
+      rewrites: cleanRewrites,
+      passCount: s.passCount as 0 | 1 | 2,
+      gaveUp: s.gaveUp as boolean,
+      interactionCount: s.interactionCount as number,
+    });
+  }
+  if (cleanSteps.length === 0) return null;
+  return { ran: true, steps: cleanSteps };
+}
 export function formatGateLogLine(
   step: GateStep,
   trace: CopyScoringTrace,
