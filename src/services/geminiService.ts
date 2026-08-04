@@ -230,6 +230,189 @@ export interface GenerationResult {
   // to the generation doc alongside the render-side trace entries
   // via `feedbackService.saveGeneration(..., resolutionTrace)`.
   conceptDirectorTrace?: ConceptDirectorTraceEntry | null;
+  // Phase 22 — Copy Scoring Gate trace (audit D2 fix). The trace
+  // rides the HTTP boundary from `serverGenerateTOV` /
+  // `serverGenerateCarouselSlideCopies` /
+  // `serverGenerateTestimonialCarousel` → frontend state → the next
+  // `serverGenerateFinalAd` request → persisted
+  // `ResolutionTrace.copyScoring`. Opaque passthrough — the frontend
+  // never renders or interprets it; it simply holds the value and
+  // forwards it unchanged. Sanitized before being held or forwarded
+  // (mirror of the concept-director pattern) so a tampered request
+  // cannot inject extra fields.
+  copyScoringTrace?: CopyScoringTrace | null;
+}
+
+// ─── Copy Scoring Trace sanitizer (Phase 22 / audit D2) ───────────────
+//
+// Mirror of the concept-director sanitizer pattern: validate the
+// discriminator (ran boolean), confirm skipReason is one of the
+// closed enum when ran=false, and drop any extra keys. Returns a NEW
+// object with only the allowlisted fields so a tampered request
+// cannot inject arbitrary strings into the persisted trace.
+
+const COPY_SCORING_SKIP_REASONS = [
+  "disabled",
+  "no_credential",
+  "timeout_interaction",
+  "timeout_copyset",
+  "timeout_run",
+  "unreachable",
+  "malformed_response",
+  "out_of_range",
+  "unusable_rewrite",
+] as const;
+
+const COPY_SCORING_STEPS = ["hook", "carouselSlides", "testimonial"] as const;
+const COPY_SCORING_FIELD_NAMES = [
+  "hookText", "subheadText", "ctaName", "benefitText",
+  "slideCaption", "testimonialHook", "testimonialClose",
+] as const;
+const COPY_SCORING_REWRITE_REASONS = ["scored_lower", "below_threshold"] as const;
+
+export function sanitizeCopyScoringTrace(v: unknown): CopyScoringTrace | null {
+  if (typeof v !== "object" || v === null) return null;
+  const t = v as Record<string, unknown>;
+
+  if (t.ran === true) {
+    if (!Array.isArray(t.steps)) return null;
+    const sanitizedSteps = [];
+    for (const step of t.steps as unknown[]) {
+      if (typeof step !== "object" || step === null) continue;
+      const s = step as Record<string, unknown>;
+      if (!COPY_SCORING_STEPS.includes(s.step as typeof COPY_SCORING_STEPS[number])) continue;
+      if (typeof s.passCount !== "number" || ![0, 1, 2].includes(s.passCount)) continue;
+      if (typeof s.gaveUp !== "boolean") continue;
+      if (typeof s.interactionCount !== "number") continue;
+      if (!Array.isArray(s.fields) || !Array.isArray(s.rewrites)) continue;
+      const cleanFields = (s.fields as unknown[]).map((f) => {
+        if (typeof f !== "object" || f === null) return null;
+        const field = f as Record<string, unknown>;
+        if (
+          typeof field.variationId === "string"
+          && typeof field.fieldName === "string"
+          && COPY_SCORING_FIELD_NAMES.includes(field.fieldName as typeof COPY_SCORING_FIELD_NAMES[number])
+          && typeof field.average === "number"
+          && typeof field.passed === "boolean"
+          && field.scores && typeof field.scores === "object"
+        ) {
+          // Coerce score values to numbers; drop non-numeric entries.
+          const scores: Record<string, number> = {};
+          for (const [k, v] of Object.entries(field.scores)) {
+            if (typeof v === "number") scores[k] = v;
+          }
+          return {
+            variationId: field.variationId,
+            fieldName: field.fieldName,
+            scores,
+            average: field.average,
+            passed: field.passed,
+          };
+        }
+        return null;
+      }).filter(Boolean);
+      const cleanRewrites = (s.rewrites as unknown[]).map((r) => {
+        if (typeof r !== "object" || r === null) return null;
+        const rw = r as Record<string, unknown>;
+        if (
+          typeof rw.variationId === "string"
+          && typeof rw.fieldName === "string"
+          && (rw.pass === 1 || rw.pass === 2)
+          && typeof rw.diagnosis === "string"
+          && typeof rw.accepted === "boolean"
+        ) {
+          const rewrite: {
+            variationId: string;
+            fieldName: string;
+            pass: 1 | 2;
+            diagnosis: string;
+            accepted: boolean;
+            rejectReason?: string;
+          } = {
+            variationId: rw.variationId,
+            fieldName: rw.fieldName,
+            pass: rw.pass,
+            diagnosis: rw.diagnosis,
+            accepted: rw.accepted,
+          };
+          if (typeof rw.rejectReason === "string") rewrite.rejectReason = rw.rejectReason;
+          return rewrite;
+        }
+        return null;
+      }).filter(Boolean);
+      sanitizedSteps.push({
+        step: s.step as typeof COPY_SCORING_STEPS[number],
+        fields: cleanFields as Array<{
+          variationId: string;
+          fieldName: string;
+          scores: Record<string, number>;
+          average: number;
+          passed: boolean;
+        }>,
+        rewrites: cleanRewrites as Array<{
+          variationId: string;
+          fieldName: string;
+          pass: 1 | 2;
+          diagnosis: string;
+          accepted: boolean;
+          rejectReason?: string;
+        }>,
+        passCount: s.passCount as 0 | 1 | 2,
+        gaveUp: s.gaveUp as boolean,
+        interactionCount: s.interactionCount as number,
+      });
+    }
+    const out: CopyScoringTrace = { ran: true, steps: sanitizedSteps };
+    return out;
+  }
+  if (t.ran === false) {
+    if (typeof t.skipReason !== "string") return null;
+    if (!COPY_SCORING_SKIP_REASONS.includes(t.skipReason as typeof COPY_SCORING_SKIP_REASONS[number])) {
+      return null;
+    }
+    return { ran: false, skipReason: t.skipReason as CopyScoringTrace["skipReason"] };
+  }
+  return null;
+}
+
+// Phase 22 — Copy Scoring Gate trace shape (mirrored from
+// `functions/src/types.ts` `ResolutionTrace.copyScoring`). Defined here
+// as a minimal local interface so the service boundary stays
+// type-safe (no `any` in the public surface). `ran` is the discriminator
+// matching the server's `CopyScoringTrace` union.
+export interface CopyScoringTrace {
+  ran: boolean;
+  skipReason?:
+    | "disabled"
+    | "no_credential"
+    | "timeout_interaction"
+    | "timeout_copyset"
+    | "timeout_run"
+    | "unreachable"
+    | "malformed_response"
+    | "out_of_range"
+    | "unusable_rewrite";
+  steps?: ReadonlyArray<{
+    step: "hook" | "carouselSlides" | "testimonial";
+    fields: ReadonlyArray<{
+      variationId: string;
+      fieldName: string;
+      scores: Record<string, number>;
+      average: number;
+      passed: boolean;
+    }>;
+    rewrites: ReadonlyArray<{
+      variationId: string;
+      fieldName: string;
+      pass: 1 | 2;
+      diagnosis: string;
+      accepted: boolean;
+      rejectReason?: string;
+    }>;
+    passCount: 0 | 1 | 2;
+    gaveUp: boolean;
+    interactionCount: number;
+  }>;
 }
 
 function parseGenerationResult(data: any): GenerationResult {
@@ -251,6 +434,13 @@ function parseGenerationResult(data: any): GenerationResult {
     // with only the allowlisted fields (audit fix round 9) so extra
     // keys from a tampered request never reach the persisted trace.
     conceptDirectorTrace: sanitizeConceptDirectorTrace(data?.conceptDirectorTrace),
+    // Phase 22 — Copy Scoring Gate trace (audit D2 fix). Mirror of
+    // the concept-director sanitizer pattern. Validated by
+    // `sanitizeCopyScoringTrace`; dropped to `null` on any shape
+    // mismatch so a tampered request cannot inject extra fields into
+    // the persisted trace. The frontend NEVER interprets the trace —
+    // it only holds it in opaque state and forwards it unchanged.
+    copyScoringTrace: sanitizeCopyScoringTrace(data?.copyScoringTrace),
   };
 }
 
@@ -440,6 +630,15 @@ Use this information to better understand the brand's positioning, tone, and tar
     // (legacy / pre-Phase-20 / new flag-off) — the backend just
     // skips the merge.
     conceptDirectorTrace?: ConceptDirectorTraceEntry | null,
+    // Phase 22 — Copy Scoring Gate trace (audit D2 fix). The trace
+    // rides the HTTP boundary from `serverGenerateTOV` /
+    // `serverGenerateCarouselSlideCopies` /
+    // `serverGenerateTestimonialCarousel` → frontend state → the
+    // next `serverGenerateFinalAd` request → persisted
+    // `ResolutionTrace.copyScoring`. Opaque passthrough — never
+    // rendered or interpreted by the frontend. Sanitized before
+    // forwarding so a tampered request cannot inject extra fields.
+    copyScoringTrace?: CopyScoringTrace | null,
   ): Promise<{ image: string | null; storageUrl?: string | null; imageFingerprint?: string | null; errorCode?: string; debug?: unknown; resolutionTrace?: unknown }> {
     const inputsWithPhotos = { ...inputs } as any;
     inputsWithPhotos.personalPhotos = (inputs.personalPhotos || []).slice(0, 5);
@@ -460,6 +659,11 @@ Use this information to better understand the brand's positioning, tone, and tar
       // doesn't pass the discriminated-union guard OR a payload with
       // extra fields a tampered request may have added.
       conceptDirectorTrace: sanitizeConceptDirectorTrace(conceptDirectorTrace) ?? undefined,
+      // Phase 22 — Copy Scoring Gate trace (audit D2 fix). Opaque
+      // passthrough; sanitized before forwarding. Same pattern as
+      // concept-director above. Without this, the chain is severed
+      // and `ResolutionTrace.copyScoring` is never written.
+      copyScoringTrace: sanitizeCopyScoringTrace(copyScoringTrace) ?? undefined,
     });
     const data = result.data as any;
     if (import.meta.env.DEV && data.debug) {
