@@ -814,6 +814,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
 
         // ── Workspace ──
         'workspace.switch_guard.title': 'Switch workspace?',
+        'workspace.switch_guard.eyebrow': 'Workspace switch',
         'workspace.switch_guard.body': 'Switching workspace will start a new project. Save current work?',
         'workspace.switch_guard.save': 'Save & Switch',
         // ISSUE-D CodeRabbit round 4: shown while the save-before-switch
@@ -1716,6 +1717,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
 
         // ── Workspace ──
         'workspace.switch_guard.title': 'تبديل مساحة العمل؟',
+        'workspace.switch_guard.eyebrow': 'تبديل مساحة العمل',
         'workspace.switch_guard.body': 'تبديل مساحة العمل سيبدأ مشروعًا جديدًا. احفظ عملك الحالي؟',
         'workspace.switch_guard.save': 'احفظ وبدّل',
         // ISSUE-D CodeRabbit round 4 (Arabic parallel).

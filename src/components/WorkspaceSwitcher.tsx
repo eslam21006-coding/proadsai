@@ -357,20 +357,52 @@ export default function WorkspaceSwitcher({
         // Escape is now bound at the document level by the useEffect
         // above, and the inner panel takes a ref + tabIndex={-1} so
         // focus lands inside when the guard opens.
+        //
+        // Hotfix bundle — restyled to match the design system of
+        // MetaAccountPickerModal / WorkspaceSettingsModal (rounded-2xl,
+        // blue-tinted gradient header with a border-b, neutral footer
+        // with a border-t, explicit close button, icon + eyebrow above
+        // the title). The previous version was a flat panel with no
+        // header or footer chrome — functional but visually off-brand.
         <div
           role="dialog"
           aria-modal="true"
           aria-labelledby="workspace-switch-guard-title"
-          className="fixed inset-0 z-[300] flex items-center justify-center"
+          className="fixed inset-0 z-[300] flex items-center justify-center p-4"
         >
           {/* Backdrop click is inert while a save is in flight — dismissing the
               dialog mid-flush would switch the workspace out from under it. */}
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={guardSaving ? undefined : handleGuardCancel} />
-          <div ref={guardDialogRef} tabIndex={-1} className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-sm w-full mx-4 p-6 shadow-2xl outline-none">
-            <h3 id="workspace-switch-guard-title" className="text-lg font-bold text-white mb-2">{t('workspace.switch_guard.title')}</h3>
-            <p className="text-sm text-slate-400 mb-6">{t('workspace.switch_guard.body')}</p>
-            <div className="flex gap-3">
+          <div
+            ref={guardDialogRef}
+            tabIndex={-1}
+            className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-sm w-full shadow-2xl overflow-hidden outline-none"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="bg-gradient-to-b from-blue-900/20 to-transparent p-6 pb-5 border-b border-slate-800">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-blue-300/80 mb-1.5">
+                    <i className="fa-solid fa-shuffle text-[8px] me-1.5" aria-hidden="true" />
+                    {t('workspace.switch_guard.eyebrow')}
+                  </p>
+                  <h3 id="workspace-switch-guard-title" className="text-lg font-black text-white">{t('workspace.switch_guard.title')}</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleGuardCancel}
+                  disabled={guardSaving}
+                  aria-label={t('close')}
+                  className="shrink-0 text-slate-500 hover:text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <i className="fa-solid fa-xmark text-lg" aria-hidden="true" />
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">{t('workspace.switch_guard.body')}</p>
+            </div>
+            <div className="px-6 py-5 border-t border-slate-800 flex items-center gap-3">
               <button
+                type="button"
                 onClick={handleGuardSave}
                 disabled={guardSaving}
                 className="flex-1 h-10 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
@@ -378,6 +410,7 @@ export default function WorkspaceSwitcher({
                 {guardSaving ? t('workspace.switch_guard.saving') : t('workspace.switch_guard.save')}
               </button>
               <button
+                type="button"
                 onClick={handleGuardDiscard}
                 disabled={guardSaving}
                 className="flex-1 h-10 rounded-xl bg-white/[0.06] text-slate-300 text-xs font-bold hover:bg-white/[0.1] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
@@ -385,6 +418,7 @@ export default function WorkspaceSwitcher({
                 {t('workspace.switch_guard.discard')}
               </button>
               <button
+                type="button"
                 onClick={handleGuardCancel}
                 disabled={guardSaving}
                 className="flex-1 h-10 rounded-xl bg-white/[0.04] text-slate-500 text-xs font-bold hover:text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"

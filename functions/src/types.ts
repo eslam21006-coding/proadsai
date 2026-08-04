@@ -547,6 +547,49 @@ export interface ResolutionTrace {
             | "text-only-mode"
             | "carousel-non-hook-slide";
     };
+    // Phase 22 — additive copy-scoring sub-object (mirrors generators.ts
+    // ResolutionTrace.copyScoring). Records the silent scoring + rewrite
+    // gate outcome for each copy-producing step (hook, carousel slides,
+    // testimonial). `ran: false` + `skipReason` is the canonical
+    // skip/fail-open sentinel — distinguishable from `ran: true` with
+    // zero rewrites. Field absence on a legacy generation is accepted
+    // as "no gate data" (SC-009). No existing field is removed,
+    // renamed, or repurposed (FR-021).
+    readonly copyScoring?: {
+        readonly ran: boolean;
+        readonly skipReason?:
+            | "disabled"
+            | "no_credential"
+            | "timeout_interaction"
+            | "timeout_copyset"
+            | "timeout_run"
+            | "unreachable"
+            | "malformed_response"
+            | "out_of_range"
+            | "unusable_rewrite";
+        readonly steps?: ReadonlyArray<{
+            readonly step: "hook" | "carouselSlides" | "testimonial";
+            readonly fields: ReadonlyArray<{
+                readonly variationId: string;
+                readonly fieldName: string;
+                readonly scores: Record<string, number>;
+                readonly average: number;
+                readonly passed: boolean;
+            }>;
+            readonly rewrites: ReadonlyArray<{
+                readonly variationId: string;
+                readonly fieldName: string;
+                readonly pass: 1 | 2;
+                readonly diagnosis: string;
+                readonly accepted: boolean;
+                readonly rejectReason?: string;
+                readonly claimFlags?: ReadonlyArray<{ readonly text: string; readonly reason: string }>;
+            }>;
+            readonly passCount: 0 | 1 | 2;
+            readonly gaveUp: boolean;
+            readonly interactionCount: number;
+        }>;
+    };
 }
 
 export interface ModeCompositionTrace {

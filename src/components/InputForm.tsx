@@ -698,6 +698,17 @@ const InputForm: React.FC<Props> = ({ onSubmit, onSaveDraft, showToast, initialV
     statsData: inputs.statsData,
     authoritySignals: inputs.authoritySignals,
     storySeed: inputs.storySeed,
+    // ISSUE-A (avatar bleed): tag the avatar with the workspace it was
+    // authored in. Without this, avatars land in users/{uid}/avatars/
+    // with no workspace attribution and the client-side filter at
+    // App.tsx falls back to `a.workspaceId || defaultWsId`, which makes
+    // every un-tagged avatar visible in the default workspace
+    // regardless of which workspace the user was on when they saved it.
+    // `undefined` matches the optional `workspaceId?: string` shape on
+    // AudienceAvatar; the defensive coercion in App.tsx's
+    // handleSaveAvatar still scopes un-tagged writes via
+    // `cleanAvatar.workspaceId == null`.
+    workspaceId: activeWorkspace?.id,
   });
 
   const loadAvatar = (avatarId: string) => {

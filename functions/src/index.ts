@@ -4203,7 +4203,7 @@ async function enforceModeFormatGate(
 
 export const serverGenerateTOV = onCall({
     region: "europe-west1",
-    secrets: [geminiApiKey],
+    secrets: [geminiApiKey, openaiApiKey],
     timeoutSeconds: 120,
     memory: "1GiB",
     cors: true,
@@ -4227,10 +4227,27 @@ export const serverGenerateTOV = onCall({
     // ═══ ENTITLEMENT: Check retargeting gate on hook generation ═══
     await enforceGenerationEntitlement(request.auth.uid, inputs);
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    // Phase 22 — the copy-scoring gate's OpenAI client needs the key
+    // (research R2). setOpenAIKey is idempotent and matches the pattern
+    // in serverGenerateFinalAd (index.ts:4804).
+    generators.setOpenAIKey(openaiApiKey.value());
     try {
         const result = await generators.generateTOV(inputs, resolvedUniverse, mode, previousOutput, globalRefinement, editFeedback, editIndex, editIntent, rewriteScope, semanticLock);
         const rg = result.rankingGuidance;
-        return { success: true, text: result.text, rankingRequestId: rg?.rankingRequestId || null, rankingRequestFingerprint: rg?.rankingRequestFingerprint || null, rankingAppliedSummary: rg?.rankingAppliedSummary || null, costEstimate: generators.getCostEstimate() };
+        return {
+            success: true,
+            text: result.text,
+            rankingRequestId: rg?.rankingRequestId || null,
+            rankingRequestFingerprint: rg?.rankingRequestFingerprint || null,
+            rankingAppliedSummary: rg?.rankingAppliedSummary || null,
+            costEstimate: generators.getCostEstimate(),
+            // Phase 22 — copy scoring gate trace (research R1, Contract
+            // I1). The trace rides the HTTP boundary to
+            // serverGenerateFinalAd which merges it into the persisted
+            // ResolutionTrace.copyScoring sub-object. Opaque passthrough,
+            // never rendered.
+            copyScoringTrace: result.copyScoringTrace ?? null,
+        };
     } catch (error: any) {
         console.error("generateTOV error:", error);
         const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateTOV", inputs });
@@ -4773,7 +4790,7 @@ export const serverGenerateFinalAd = onCall({
     maxInstances: 30,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId, _batchTotal, conceptDirectorTrace } = request.data;
+    const { buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio, editInstruction, base64ToEdit, styleReference, textOverride, activeWorkspaceId, _batchTotal, conceptDirectorTrace, copyScoringTrace } = request.data;
     void activeWorkspaceId;
     // ═══ MODE-FORMAT GATE (before any credit spend) ═══
     // Always run — even on edit/regen paths. An edit request that arrives with
@@ -4823,11 +4840,17 @@ export const serverGenerateFinalAd = onCall({
         // drops the payload to `undefined` here (the merge in
         // `generateFinalAd` no-ops on `undefined` / `null`).
         const _sanitizedConceptDirectorTrace = sanitizeConceptDirectorTrace(conceptDirectorTrace) ?? undefined;
+        // Phase 22 — forward the copy-scoring gate trace received from
+        // each copy-producing callable so `generateFinalAd` can merge
+        // it into the persisted `ResolutionTrace.copyScoring` sub-object.
+        // The trace rides the HTTP boundary, not a module global (R1).
+        const _copyScoringTrace = copyScoringTrace ?? undefined;
         const result = await generators.generateFinalAd(
             buildPlan, approvedTov, inputs, resolvedUniverse, currentAspectRatio,
             editInstruction, base64ToEdit, styleReference, textOverride,
             undefined, // reflowInstruction (unchanged)
             _sanitizedConceptDirectorTrace, // Phase 20: forwarded from serverGenerateConcepts
+            _copyScoringTrace, // Phase 22: forwarded from serverGenerateTOV / -CarouselSlideCopies / -TestimonialCarousel
         );
 
         // ═══ CREATIVE MEMORY: Store creative metadata (fire-and-forget) ═══
@@ -5161,7 +5184,7 @@ export const serverGenerateCarouselAngles = onCall({
 // ─── GENERATE CAROUSEL SLIDE COPIES ──────────────────────────────────────
 export const serverGenerateCarouselSlideCopies = onCall({
     region: "europe-west1",
-    secrets: [geminiApiKey],
+    secrets: [geminiApiKey, openaiApiKey],
     timeoutSeconds: 120,
     memory: "1GiB",
     cors: true,
@@ -5178,9 +5201,20 @@ export const serverGenerateCarouselSlideCopies = onCall({
     });
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    // Phase 22 — the copy-scoring gate's OpenAI client needs the key
+    // (research R2). setOpenAIKey is idempotent and matches the pattern
+    // in serverGenerateTOV / serverGenerateFinalAd.
+    generators.setOpenAIKey(openaiApiKey.value());
     try {
         const result = await generators.generateCarouselSlideCopies(approvedTov, inputs, slideCount, resolvedUniverse, refinement, entitlement.basePlan);
-        return { success: true, copies: result, costEstimate: generators.getCostEstimate() };
+        return {
+            success: true,
+            copies: result.copies,
+            // Phase 22 — copy scoring gate trace (Contract I1). Carousel
+            // slide-caption generation is its own copy set (FR-000d).
+            copyScoringTrace: result.copyScoringTrace ?? null,
+            costEstimate: generators.getCostEstimate(),
+        };
     } catch (error: any) {
         console.error("generateCarouselSlideCopies error:", error);
         const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateCarouselSlideCopies", inputs });
@@ -5195,7 +5229,7 @@ export const serverGenerateCarouselSlideCopies = onCall({
 // Full pipeline: platform detection → mockup rendering → hook → close → assembly
 export const serverGenerateTestimonialCarousel = onCall({
     region: "europe-west1",
-    secrets: [geminiApiKey],
+    secrets: [geminiApiKey, openaiApiKey],
     timeoutSeconds: 300,
     memory: "2GiB",
     cors: true,
@@ -5219,9 +5253,22 @@ export const serverGenerateTestimonialCarousel = onCall({
     const maxSlides = entitlement.features.maxCarouselSlides || 5;
     generators.setGeminiCaller(createGeminiCaller(geminiApiKey.value()));
     generators.setTestimonialGeminiCaller(createGeminiCaller(geminiApiKey.value()));
+    // Phase 22 — the copy-scoring gate's OpenAI client needs the key
+    // (research R2). setOpenAIKey is idempotent and matches the pattern
+    // in serverGenerateTOV / serverGenerateFinalAd.
+    generators.setOpenAIKey(openaiApiKey.value());
     try {
         const result = await generators.generateTestimonialCarousel(inputs, screenshots, maxSlides);
-        return { success: true, ...result, costEstimate: generators.getCostEstimate() };
+        return {
+            success: true,
+            ...result,
+            // Phase 22 — copy scoring gate trace (Contract I1). The
+            // testimonial carousel authors a hook + close that belong
+            // to the gate; transcribed testimonial screenshots are
+            // untouchable (FR-000f) and are never scored/rewritten.
+            copyScoringTrace: result.copyScoringTrace ?? null,
+            costEstimate: generators.getCostEstimate(),
+        };
     } catch (error: any) {
         console.error("generateTestimonialCarousel error:", error);
         const { failureClass, costEstimate } = await recordGenerationFailure({ uid: request.auth!.uid, error, callableName: "serverGenerateTestimonialCarousel", inputs });
