@@ -3779,16 +3779,10 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     setMetaAccountPickerError(null);
     try {
       const saveFailedMessage = t('meta.account_save_failed_throw');
-      const result = await metaService.selectAccount(accountId);
-      if (!result.success) {
+      const ok = await metaService.selectAccount(accountId);
+      if (!ok) {
         throw new Error(saveFailedMessage);
       }
-      // The backend just fetched /act_{id}/promote_pages for this ad
-      // account and returned the Pages it is permitted to promote.
-      // That list is strictly more correct than the /me/accounts
-      // global list the OAuth callback wrote, so we chain the page
-      // picker off `result.pages` only.
-      const pages = result.pages ?? [];
       if (canUseWorkspaces && activeWorkspaceId) {
         const { workspaceService } = await import('./services/workspaceService');
         await workspaceService.linkMetaAccountToWorkspace({
@@ -3817,20 +3811,18 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
             : w,
         ));
       }
-      // Update the global connection's selectedAccountId locally so the
-      // menu (and any other UI watching metaConnection) reflects the
-      // change without an extra round-trip.
-      setMetaConnection(prev => prev ? { ...prev, selectedAccountId: accountId } : prev);
+      // Phase 14 (App Review) — Re-read the connection from the server
+      // so the page picker sees the OAuth-callback's `pages` array. The
+      // list is global to the user (not ad-account-scoped); the
+      // picker shows 0 → skip, 1 → auto-pick, 2+ → modal.
+      const refreshed = await refreshMetaConnection();
+      const pages = refreshed?.pages ?? [];
       showToast(t('meta.account_selected_toast'), 'success');
       setShowMetaAccountPicker(false);
       // Phase 14 batch 01-fix-meta-picker-loop — Clear the dismiss latch
       // so the next unlinked workspace can still trigger auto-open.
       metaPickerDismissedForWorkspaceRef.current = null;
-      // Phase 14 (App Review) — After the user picks an ad account,
-      // chain into the page picker if the ad account has any promotable
-      // Pages. Auto-pick when there's exactly one Page. Skip-mode users
-      // (single-account fast path during OAuth) see no second modal;
-      // the connect toast already announced the account pick above.
+      // Chain into the page picker.
       if (pages.length >= 1) {
         if (pages.length === 1) {
           await handleMetaPageSelect(pages[0].id, pages[0].name, { skipPicker: true });
@@ -3854,7 +3846,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     } finally {
       if (!options.skipPicker) setMetaAccountPickerSelecting(false);
     }
-  }, [metaConnection, canUseWorkspaces, activeWorkspaceId, t, showToast, handleMetaPageSelect]);
+  }, [metaConnection, canUseWorkspaces, activeWorkspaceId, t, showToast, refreshMetaConnection, handleMetaPageSelect]);
 
   // Phase 14 batch 01 — Account picker. Open on demand from the
   // "Change Account" menu entry. No-ops when Meta isn't connected or
