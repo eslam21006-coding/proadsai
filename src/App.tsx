@@ -30,7 +30,7 @@ interface FavUpdatePrompt {
 import MagicSelector, { type EditRequest } from './components/MagicSelector';
 import ErrorBoundary from './components/ErrorBoundary';
 import { feedbackService, type NegativeFeedbackTag } from './services/feedbackService';
-import { metaService, type MetaConnection, type MetaPage } from './services/metaService';
+import { metaService, type MetaConnection } from './services/metaService';
 import { ASPECT_RATIOS, COLD_HOOK_ANGLES, OFFER_TYPES, getRandomUniverse } from './constants';
 import type { UserPlan } from './planconfig';
 import { PLANS, CREDIT_COSTS, TOPUP_PACKS, TOPUP_PRICES, canUse, requiredPlanFor, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
@@ -3771,7 +3771,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
 
   const handleMetaAccountSelect = useCallback(async (
     accountId: string,
-    options: { skipPicker?: boolean; pages?: MetaPage[] } = {},
+    options: { skipPicker?: boolean } = {},
   ) => {
     const account = metaConnection?.adAccounts?.find(a => a.id === accountId)
       ?? null;
@@ -3811,25 +3811,18 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
             : w,
         ));
       }
-      // Update the global connection's selectedAccountId locally so the
-      // menu (and any other UI watching metaConnection) reflects the
-      // change without an extra round-trip.
-      setMetaConnection(prev => prev ? { ...prev, selectedAccountId: accountId } : prev);
+      // Phase 14 (App Review) — Re-read the connection from the server
+      // so the page picker sees the OAuth-callback's `pages` array. The
+      // list is global to the user (not ad-account-scoped); the picker
+      // shows 0 → skip, 1 → auto-pick, 2+ → modal.
+      const refreshed = await refreshMetaConnection();
+      const pages = refreshed?.pages ?? [];
       showToast(t('meta.account_selected_toast'), 'success');
       setShowMetaAccountPicker(false);
       // Phase 14 batch 01-fix-meta-picker-loop — Clear the dismiss latch
       // so the next unlinked workspace can still trigger auto-open.
       metaPickerDismissedForWorkspaceRef.current = null;
-      // Phase 14 (App Review) — After the user picks an ad account in the
-      // multi-account modal, chain into the page picker if any Pages came
-      // back from /me/accounts. Auto-pick when there's exactly one Page.
-      // Skip-mode users see no second modal; the connect toast already
-      // announced the account pick above.
-      // Prefer Pages handed in by the caller (freshly fetched during
-      // connect) over the render-closure copy, which can be one refresh
-      // behind and would fire this chain twice on the single-account
-      // fast path.
-      const pages = options.pages ?? metaConnection?.pages ?? [];
+      // Chain into the page picker.
       if (pages.length >= 1) {
         if (pages.length === 1) {
           await handleMetaPageSelect(pages[0].id, pages[0].name, { skipPicker: true });
@@ -3853,7 +3846,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     } finally {
       if (!options.skipPicker) setMetaAccountPickerSelecting(false);
     }
-  }, [metaConnection, canUseWorkspaces, activeWorkspaceId, t, showToast, handleMetaPageSelect]);
+  }, [metaConnection, canUseWorkspaces, activeWorkspaceId, t, showToast, refreshMetaConnection, handleMetaPageSelect]);
 
   // Phase 14 batch 01 — Account picker. Open on demand from the
   // "Change Account" menu entry. No-ops when Meta isn't connected or
@@ -3907,14 +3900,14 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     if (connected) {
       const conn = await refreshMetaConnection();
       const accounts = conn?.adAccounts ?? [];
-      const pages = conn?.pages ?? [];
       const acctCount = accounts.length;
       // Phase: pick ad account. Single-account auto-picks via the same
-      // chain that the modal path uses, passing the freshly fetched Pages
-      // explicitly so the page-selection step does not double-fire.
+      // chain that the modal path uses. handleMetaAccountSelect re-reads
+      // the connection internally to pick up the latest pages array,
+      // so we do not pass the pages list down.
       if (acctCount === 1) {
         const only = accounts[0];
-        await handleMetaAccountSelect(only.id, { skipPicker: true, pages });
+        await handleMetaAccountSelect(only.id, { skipPicker: true });
         showToast(
           lang === 'ar' ? 'تم ربط حساب ميتا!' : 'Meta Ads connected!',
           'success',

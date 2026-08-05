@@ -3354,6 +3354,10 @@ export const metaSelectAccount = onCall({
 
     await admin.firestore().collection("metaConnections").doc(uid).update({
         selectedAccountId: accountId,
+        // Clear the prior page pick. The previous Page may not be valid
+        // for the new ad account (or may not even exist anymore).
+        selectedPageId: null,
+        selectedPageName: null,
     });
     return { success: true };
 });
