@@ -12717,7 +12717,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
       <Suspense fallback={null}>
         <MetaPagePickerModal
           open={showMetaPagePicker}
-          pages={(metaConnection?.pages ?? []).map((p) => ({ id: p.id, name: p.name }))}
+          pages={metaConnection?.pages ?? []}
           currentSelectedId={metaConnection?.selectedPageId ?? null}
           selecting={metaPagePickerSelecting}
           errorMessage={metaPagePickerError}

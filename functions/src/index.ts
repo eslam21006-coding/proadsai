@@ -3268,12 +3268,21 @@ export const metaOAuthCallback = onRequest({
 
         // Step 3b: Get user's Facebook Pages (for App Review pages_* scopes).
         // Fail-open: if the call fails, store an empty array and let the
-        // connection complete — the user can reconnect later.
-        let pages: { id: string; name: string }[] = [];
+        // connection complete — the user can reconnect later. The `picture`
+        // field is expanded with `{url}` so we can render profile pictures
+        // in the page picker; `fan_count` and `category` help users tell
+        // pages with similar names apart.
+        let pages: {
+            id: string;
+            name: string;
+            pictureUrl: string | null;
+            fanCount: number;
+            category: string | null;
+        }[] = [];
         try {
             const pagesResponse = await fetch(
                 `https://graph.facebook.com/v22.0/me/accounts?` +
-                `fields=id,name&` +
+                `fields=id,name,picture{url},fan_count,category&` +
                 `access_token=${longLivedToken}`
             );
             const pagesData = await pagesResponse.json() as any;
@@ -3283,6 +3292,9 @@ export const metaOAuthCallback = onRequest({
                 pages = (pagesData.data || []).map((p: any) => ({
                     id: p.id,
                     name: p.name || p.id,
+                    pictureUrl: p.picture?.data?.url || null,
+                    fanCount: p.fan_count || 0,
+                    category: p.category || null,
                 }));
             }
         } catch (pagesErr) {
@@ -3298,7 +3310,11 @@ export const metaOAuthCallback = onRequest({
             encryptedToken,
             expiresAt,
             adAccounts,
-            selectedAccountId: adAccounts.length > 0 ? adAccounts[0].id : null,
+            // Phase 14 (App Review) — Do NOT auto-pick the first ad account.
+            // Auto-selection mixed accounts with workspaces: a user with 3
+            // workspaces and 1 ad account had the same account selected in
+            // all three workspaces silently. Force an explicit pick.
+            selectedAccountId: null,
             pages,
             selectedPageId: null,
             selectedPageName: null,

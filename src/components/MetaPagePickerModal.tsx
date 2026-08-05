@@ -19,14 +19,33 @@
 import { useEffect, useRef } from "react";
 import { useT } from "../i18n";
 
-export interface MetaPagePickerItem {
-  id: string;
-  name: string;
+// Format a follower count for the picker label. < 1K shows the raw
+// number; 1K–999K shows "X.YK" (one decimal); ≥ 1M shows "X.YM".
+function formatFollowerCount(n: number): string {
+  if (n >= 1_000_000) {
+    const s = (n / 1_000_000).toFixed(1);
+    return `${s.endsWith(".0") ? s.slice(0, -2) : s}M`;
+  }
+  if (n >= 1_000) {
+    const s = (n / 1_000).toFixed(1);
+    return `${s.endsWith(".0") ? s.slice(0, -2) : s}K`;
+  }
+  return String(n);
 }
 
 export interface MetaPagePickerModalProps {
   open: boolean;
-  pages: MetaPagePickerItem[];
+  // Phase 14 (App Review) — Pass the full MetaPage (with pictureUrl,
+  // fanCount, category) so the picker can render the page picture,
+  // category, and follower count for each card. Mirrors MetaPage in
+  // src/services/metaService.ts.
+  pages: {
+    id: string;
+    name: string;
+    pictureUrl: string | null;
+    fanCount: number;
+    category: string | null;
+  }[];
   currentSelectedId: string | null;
   selecting: boolean;
   errorMessage?: string | null;
@@ -179,8 +198,15 @@ export default function MetaPagePickerModal({
                       }`}
                       aria-pressed={isCurrent}
                     >
-                      <span className={`shrink-0 w-9 h-9 rounded-lg flex items-center justify-center ${isCurrent ? cardIconActive : cardIcon}`}>
-                        {isCurrent ? (
+                      <span className={`shrink-0 w-9 h-9 rounded-lg flex items-center justify-center overflow-hidden ${isCurrent ? cardIconActive : cardIcon}`}>
+                        {p.pictureUrl ? (
+                          <img
+                            src={p.pictureUrl}
+                            alt=""
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                          />
+                        ) : isCurrent ? (
                           <i className="fa-solid fa-circle-check text-sm" aria-hidden="true" />
                         ) : (
                           <i className="fa-solid fa-flag text-sm" aria-hidden="true" />
@@ -189,7 +215,18 @@ export default function MetaPagePickerModal({
                       <span className="flex-1 min-w-0">
                         <span className={`block text-[12px] font-bold ${cardTitle} truncate`}>{p.name || p.id}</span>
                         <span className={`block text-[9px] ${cardIdText} font-mono truncate`} dir="ltr">{p.id}</span>
+                        {p.category && (
+                          <span className={`block text-[9px] ${cardIdText} truncate mt-0.5`}>{p.category}</span>
+                        )}
                       </span>
+                      {p.fanCount > 0 && (
+                        <span
+                          className={`shrink-0 text-[9px] font-bold ${cardIdText}`}
+                          title={`${p.fanCount.toLocaleString()} followers`}
+                        >
+                          {formatFollowerCount(p.fanCount)} followers
+                        </span>
+                      )}
                       {isCurrent ? (
                         <span className={`shrink-0 flex items-center gap-1 text-[9px] font-bold ${cardActivePill}`}>
                           <i className="fa-solid fa-circle-check text-xs" aria-hidden="true" />
