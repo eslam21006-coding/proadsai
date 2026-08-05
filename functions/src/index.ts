@@ -3280,9 +3280,13 @@ export const metaOAuthCallback = onRequest({
             category: string | null;
         }[] = [];
         try {
+            // `limit=100` so users with more than 25 Pages see the full
+            // list (Meta's default page size is 25). Most advertisers have
+            // < 50 Pages; 100 is a safe single-call cap.
             const pagesResponse = await fetch(
                 `https://graph.facebook.com/v22.0/me/accounts?` +
                 `fields=id,name,picture{url},fan_count,category&` +
+                `limit=100&` +
                 `access_token=${longLivedToken}`
             );
             const pagesData = await pagesResponse.json() as any;
@@ -3368,7 +3372,21 @@ export const metaSelectAccount = onCall({
     const { accountId } = request.data;
     if (!accountId) throw new HttpsError("invalid-argument", "Missing accountId");
 
-    await admin.firestore().collection("metaConnections").doc(uid).update({
+    // CodeRabbit audit — validate the accountId belongs to one of the
+    // accounts returned by the OAuth callback for this user. Without
+    // this check a forged client could write any id (including ids from
+    // another user's ad accounts) into the connection doc.
+    const connRef = admin.firestore().collection("metaConnections").doc(uid);
+    const connDoc = await connRef.get();
+    if (!connDoc.exists) {
+        throw new HttpsError("not-found", "No Meta connection found. Please reconnect.");
+    }
+    const knownAccounts: { id: string }[] = (connDoc.data()?.adAccounts ?? []) as { id: string }[];
+    if (!knownAccounts.some((a) => a.id === accountId)) {
+        throw new HttpsError("invalid-argument", "Account ID not found in connected accounts");
+    }
+
+    await connRef.update({
         selectedAccountId: accountId,
         // Clear the prior page pick. The previous Page may not be valid
         // for the new ad account (or may not even exist anymore).

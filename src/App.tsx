@@ -1125,6 +1125,9 @@ interface MenuSidebarProps {
   onDisconnectMeta: () => void;
   onSyncMeta: () => void;
   onChangeMetaAccount: () => void;
+  // Bug 8 — Forwarded into MenuItems so the "Change Page" entry can
+  // reopen the page picker on demand.
+  onChangeMetaPage: () => void;
   onSelectMetaAccountForWorkspace: () => void;
   onOpenFunnelSettings: () => void;
   onOpenWhatsWorking: () => void;
@@ -1159,6 +1162,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
   onDisconnectMeta,
   onSyncMeta,
   onChangeMetaAccount,
+  onChangeMetaPage,
   onSelectMetaAccountForWorkspace,
   onOpenFunnelSettings,
   onOpenWhatsWorking,
@@ -1222,6 +1226,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
               onDisconnectMeta={onDisconnectMeta}
               onSyncMeta={onSyncMeta}
               onChangeMetaAccount={onChangeMetaAccount}
+              onChangeMetaPage={onChangeMetaPage}
               onSelectMetaAccountForWorkspace={onSelectMetaAccountForWorkspace}
               onOpenFunnelSettings={onOpenFunnelSettings}
               onOpenWhatsWorking={onOpenWhatsWorking}
@@ -1381,6 +1386,9 @@ interface MenuItemsProps {
   onDisconnectMeta: () => void;
   onSyncMeta: () => void;
   onChangeMetaAccount: () => void;
+  /** Bug 8 — On-demand opener for the Meta Page picker so the user can
+      change the selected Page after the initial OAuth-driven auto-pick. */
+  onChangeMetaPage: () => void;
   /** Open the Meta account picker to establish the 1:1 link between this
       workspace and a Meta ad account (FR-026). */
   onSelectMetaAccountForWorkspace: () => void;
@@ -1499,6 +1507,13 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
       ] : [
         { key: 'meta-sync', el: <MenuItem key="meta-sync" icon={metaSyncing ? 'fa-arrows-rotate fa-spin' : 'fa-arrows-rotate'} label={t('topbar.menu_meta_sync')} onClick={props.onSyncMeta} /> },
         { key: 'meta-change-account', el: <MenuItem key="meta-change-account" icon="fa-repeat" label={t('topbar.menu_meta_change_account')} onClick={props.onChangeMetaAccount} /> },
+        // Bug 8 — "Change Page" entry. Only renders when the user has
+        // any Pages to choose from — without this gate the menu would
+        // expose a dead link. Page picker state already exists; this is
+        // purely a trigger.
+        ...((metaConnection.pages ?? []).length > 0 ? [
+          { key: 'meta-change-page', el: <MenuItem key="meta-change-page" icon="fa-flag" label={t('topbar.menu_meta_change_page')} onClick={props.onChangeMetaPage} /> },
+        ] : []),
       ]),
       { key: 'meta-disconnect', el: <MenuItem key="meta-disconnect" icon="fa-link-slash" label={t('topbar.menu_meta_disconnect')} onClick={props.onDisconnectMeta} className="text-red-500 hover:text-red-600" /> },
     ] : []),
@@ -3816,7 +3831,17 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       // list is global to the user (not ad-account-scoped); the picker
       // shows 0 → skip, 1 → auto-pick, 2+ → modal.
       const refreshed = await refreshMetaConnection();
-      const pages = refreshed?.pages ?? [];
+      if (!refreshed) {
+        // CodeRabbit audit — refreshMetaConnection returns null on
+        // failure. Without this guard the success toast + page-picker
+        // chain below would run against a null connection and the
+        // picker would silently see 0 pages. Bail out and surface a
+        // localized error so the user can retry.
+        console.warn('Meta connection refresh failed — page linking skipped');
+        showToast(t('meta.page_save_failed'), 'error');
+        return;
+      }
+      const pages = refreshed.pages ?? [];
       showToast(t('meta.account_selected_toast'), 'success');
       setShowMetaAccountPicker(false);
       // Phase 14 batch 01-fix-meta-picker-loop — Clear the dismiss latch
@@ -3887,6 +3912,19 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     // still re-triggers auto-open for the new one.
     metaPickerDismissedForWorkspaceRef.current = activeWorkspaceId;
   }, [metaAccountPickerSelecting, activeWorkspaceId]);
+
+  // Bug 8 — On-demand opener for the Page picker. Until now the page
+  // picker was only reachable as the second step of the OAuth flow; once
+  // the user had selected a Page there was no path back to the picker to
+  // change it. Mirrors `openMetaAccountPicker` — no-ops when not
+  // connected or when the Pages list is empty so the menu's "Change Page"
+  // entry cannot pop an empty modal.
+  const openMetaPagePicker = useCallback(() => {
+    if (!metaConnection?.connected) return;
+    if ((metaConnection.pages ?? []).length === 0) return;
+    setMetaPagePickerError(null);
+    setShowMetaPagePicker(true);
+  }, [metaConnection]);
 
   // Phase 14 batch 01 — UI wiring. Opens the Meta OAuth popup, then
   // refreshes the connection state on success. The flow now has two
@@ -11265,6 +11303,10 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         onDisconnectMeta={() => { setShowMenuDrawer(false); void handleDisconnectMeta(); }}
         onSyncMeta={() => { setShowMenuDrawer(false); void handleSyncMeta(); }}
         onChangeMetaAccount={() => { setShowMenuDrawer(false); openMetaAccountPicker(); }}
+        // Bug 8 — Reopen the page picker on demand so the user can swap
+        // their selected Facebook Page without disconnecting and
+        // reconnecting Meta entirely.
+        onChangeMetaPage={() => { setShowMenuDrawer(false); openMetaPagePicker(); }}
         onSelectMetaAccountForWorkspace={() => { setShowMenuDrawer(false); openMetaAccountPickerForActiveWorkspace(); }}
         onOpenFunnelSettings={() => { setShowMenuDrawer(false); openFunnelSettings(false); }}
         onOpenWhatsWorking={() => { setShowMenuDrawer(false); setShowWhatsWorking(true); }}
@@ -11385,6 +11427,8 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 onDisconnectMeta={() => { setShowMenuDrawer(false); void handleDisconnectMeta(); }}
                 onSyncMeta={() => { setShowMenuDrawer(false); void handleSyncMeta(); }}
                 onChangeMetaAccount={() => { setShowMenuDrawer(false); openMetaAccountPicker(); }}
+                // Bug 8 — Same hookup as the desktop sidebar.
+                onChangeMetaPage={() => { setShowMenuDrawer(false); openMetaPagePicker(); }}
                 onSelectMetaAccountForWorkspace={() => { setShowMenuDrawer(false); openMetaAccountPickerForActiveWorkspace(); }}
                 onOpenFunnelSettings={() => { setShowMenuDrawer(false); openFunnelSettings(false); }}
                 onOpenWhatsWorking={() => { setShowMenuDrawer(false); setShowWhatsWorking(true); }}
