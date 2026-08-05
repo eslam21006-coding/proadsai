@@ -1,7 +1,7 @@
 {
   "name": "functions",
   "scripts": {
-    "lint": "eslint --ext .js,.ts .",
+    "lint": "eslint .",
     "build": "tsc && shx mkdir -p lib/assets && shx cp -r src/assets/* lib/assets/",
     "test:lang": "npm run build && node lib/languageQuality.test.js",
     "test:workspace": "npm run build && node lib/__tests__/workspace.test.js",

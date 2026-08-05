@@ -3266,6 +3266,29 @@ export const metaOAuthCallback = onRequest({
             timezone: acc.timezone_name,
         }));
 
+        // Step 3b: Get user's Facebook Pages (for App Review pages_* scopes).
+        // Fail-open: if the call fails, store an empty array and let the
+        // connection complete — the user can reconnect later.
+        let pages: { id: string; name: string }[] = [];
+        try {
+            const pagesResponse = await fetch(
+                `https://graph.facebook.com/v22.0/me/accounts?` +
+                `fields=id,name&` +
+                `access_token=${longLivedToken}`
+            );
+            const pagesData = await pagesResponse.json() as any;
+            if (pagesData.error) {
+                console.warn("⚠️ Meta /me/accounts warning:", pagesData.error.message);
+            } else {
+                pages = (pagesData.data || []).map((p: any) => ({
+                    id: p.id,
+                    name: p.name || p.id,
+                }));
+            }
+        } catch (pagesErr) {
+            console.warn("⚠️ Failed to fetch Meta Pages (non-blocking):", pagesErr);
+        }
+
         // Step 4: Encrypt and store token
         const encryptedToken = encryptToken(longLivedToken, appSecret);
         const expiresAt = Date.now() + (expiresIn * 1000);
@@ -3276,12 +3299,15 @@ export const metaOAuthCallback = onRequest({
             expiresAt,
             adAccounts,
             selectedAccountId: adAccounts.length > 0 ? adAccounts[0].id : null,
+            pages,
+            selectedPageId: null,
+            selectedPageName: null,
             connectedAt: admin.firestore.FieldValue.serverTimestamp(),
             lastSyncAt: null,
             status: "active",
         });
 
-        console.log(`✅ Meta connected for user ${state} — ${adAccounts.length} ad accounts found`);
+        console.log(`✅ Meta connected for user ${state} — ${adAccounts.length} ad accounts, ${pages.length} pages found`);
         res.send(`<html><body style="font-family:system-ui;text-align:center;padding:60px"><h2 style="color:#10b981">✅ Connected!</h2><p>${adAccounts.length} ad account(s) found.</p><p style="color:#888">This window will close automatically...</p><script>setTimeout(()=>window.close(),1500)</script></body></html>`);
 
     } catch (err: any) {
@@ -3306,6 +3332,9 @@ export const getMetaConnection = onCall({
         connected: true,
         adAccounts: data.adAccounts || [],
         selectedAccountId: data.selectedAccountId,
+        pages: data.pages || [],
+        selectedPageId: data.selectedPageId || null,
+        selectedPageName: data.selectedPageName || null,
         connectedAt: data.connectedAt,
         lastSyncAt: data.lastSyncAt,
         status: data.status,
@@ -3325,6 +3354,43 @@ export const metaSelectAccount = onCall({
 
     await admin.firestore().collection("metaConnections").doc(uid).update({
         selectedAccountId: accountId,
+    });
+    return { success: true };
+});
+
+// ─── 3b. SELECT FACEBOOK PAGE ───────────────────────────────────────────
+// Stores the user's chosen Page on the metaConnections doc. Page is
+// optional for the current image-upload flow; we record it so future
+// creative-creation steps (/adcreatives) and App Review can demonstrate
+// the pages_* permission flow end-to-end. pageId === null clears it.
+export const metaSelectPage = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+    const uid = request.auth.uid;
+    const { pageId, pageName } = request.data;
+
+    if (pageId !== null && typeof pageId !== "string") {
+        throw new HttpsError("invalid-argument", "pageId must be a string or null");
+    }
+    if (pageName !== undefined && pageName !== null && typeof pageName !== "string") {
+        throw new HttpsError("invalid-argument", "pageName must be a string or null");
+    }
+
+    const connRef = admin.firestore().collection("metaConnections").doc(uid);
+    const connDoc = await connRef.get();
+    if (!connDoc.exists) {
+        throw new HttpsError("not-found", "No Meta connection found. Please reconnect.");
+    }
+    const availablePages = (connDoc.data()?.pages ?? []) as { id: string; name?: string }[];
+    if (pageId && !availablePages.some((p) => p.id === pageId)) {
+        throw new HttpsError("invalid-argument", "pageId is not one of the connected Pages");
+    }
+
+    await connRef.update({
+        selectedPageId: pageId || null,
+        selectedPageName: typeof pageName === "string" ? pageName.slice(0, 200) : null,
     });
     return { success: true };
 });
@@ -3680,6 +3746,11 @@ export const metaPushCreative = onCall({
                 contractTemplateId: contractTemplateId || null,
                 numericFidelity: numericFidelity || null,
                 offerFactsHash: offerFactsHash || null,
+                // Selected Facebook Page (set by MetaPagePickerModal). Stored
+                // for future creative-creation steps (/adcreatives) — we do
+                // NOT call /adcreatives today, so this is metadata only.
+                pageId: conn.selectedPageId || null,
+                pageName: conn.selectedPageName || null,
                 // Meta identifiers (populated later when ad is created in Meta)
                 metaAdId: null,
                 metaCreativeId: null,

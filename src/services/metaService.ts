@@ -9,7 +9,9 @@ import { httpsCallable } from 'firebase/functions';
 
 const META_APP_ID = "1975052683417261";
 const OAUTH_REDIRECT_URI = "https://europe-west1-proadsai-saas.cloudfunctions.net/metaOAuthCallback";
-const OAUTH_SCOPES = "ads_read,ads_management,business_management";
+// Approved or pending approval — these are requested in the OAuth consent.
+// Removed: business_management — /me/adaccounts works with ads_management alone.
+const META_OAUTH_SCOPES = "ads_read,ads_management,pages_show_list,pages_read_engagement";
 
 export interface MetaAdAccount {
     id: string;
@@ -19,10 +21,18 @@ export interface MetaAdAccount {
     timezone: string;
 }
 
+export interface MetaPage {
+    id: string;
+    name: string;
+}
+
 export interface MetaConnection {
     connected: boolean;
     adAccounts: MetaAdAccount[];
     selectedAccountId: string | null;
+    pages: MetaPage[];
+    selectedPageId: string | null;
+    selectedPageName: string | null;
     connectedAt: any;
     lastSyncAt: any;
     status: string;
@@ -39,7 +49,7 @@ class MetaService {
                 `https://www.facebook.com/v22.0/dialog/oauth?` +
                 `client_id=${META_APP_ID}` +
                 `&redirect_uri=${encodeURIComponent(OAUTH_REDIRECT_URI)}` +
-                `&scope=${OAUTH_SCOPES}` +
+                `&scope=${META_OAUTH_SCOPES}` +
                 `&state=${state}` +
                 `&response_type=code`;
 
@@ -78,7 +88,7 @@ class MetaService {
             return result.data as MetaConnection;
         } catch (err) {
             console.error('Failed to get Meta connection:', err);
-            return { connected: false, adAccounts: [], selectedAccountId: null, connectedAt: null, lastSyncAt: null, status: 'error', tokenExpiring: false };
+            return { connected: false, adAccounts: [], selectedAccountId: null, pages: [], selectedPageId: null, selectedPageName: null, connectedAt: null, lastSyncAt: null, status: 'error', tokenExpiring: false };
         }
     }
 
@@ -89,6 +99,17 @@ class MetaService {
             return true;
         } catch (err) {
             console.error('Failed to select account:', err);
+            return false;
+        }
+    }
+
+    async selectPage(pageId: string | null, pageName: string | null): Promise<boolean> {
+        try {
+            const fn = httpsCallable(functions, 'metaSelectPage');
+            await fn({ pageId, pageName });
+            return true;
+        } catch (err) {
+            console.error('Failed to select page:', err);
             return false;
         }
     }
