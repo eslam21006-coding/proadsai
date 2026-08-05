@@ -30,7 +30,7 @@ interface FavUpdatePrompt {
 import MagicSelector, { type EditRequest } from './components/MagicSelector';
 import ErrorBoundary from './components/ErrorBoundary';
 import { feedbackService, type NegativeFeedbackTag } from './services/feedbackService';
-import { metaService, type MetaConnection } from './services/metaService';
+import { metaService, type MetaConnection, type MetaPage } from './services/metaService';
 import { ASPECT_RATIOS, COLD_HOOK_ANGLES, OFFER_TYPES, getRandomUniverse } from './constants';
 import type { UserPlan } from './planconfig';
 import { PLANS, CREDIT_COSTS, TOPUP_PACKS, TOPUP_PRICES, canUse, requiredPlanFor, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
@@ -3732,7 +3732,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     setMetaPagePickerError(null);
     try {
       const ok = await metaService.selectPage(pageId, pageName);
-      if (!ok) throw new Error(t('meta.account_save_failed_throw'));
+      if (!ok) throw new Error(t('meta.page_save_failed_throw'));
       setMetaConnection(prev => prev ? {
         ...prev,
         selectedPageId: pageId,
@@ -3744,7 +3744,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       }
     } catch (e: unknown) {
       console.warn('Meta page selection failed:', e);
-      const failureMessage = t('meta.account_save_failed');
+      const failureMessage = t('meta.page_save_failed');
       if (options.skipPicker) {
         showToast(failureMessage, 'error');
       } else {
@@ -3754,12 +3754,6 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       if (!options.skipPicker) setMetaPagePickerSelecting(false);
     }
   }, [t, showToast]);
-
-  const openMetaPagePicker = useCallback(() => {
-    if (!metaConnection?.connected) return;
-    setMetaPagePickerError(null);
-    setShowMetaPagePicker(true);
-  }, [metaConnection]);
 
   const closeMetaPagePicker = useCallback(() => {
     if (metaPagePickerSelecting) return;
@@ -3777,7 +3771,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
 
   const handleMetaAccountSelect = useCallback(async (
     accountId: string,
-    options: { skipPicker?: boolean } = {},
+    options: { skipPicker?: boolean; pages?: MetaPage[] } = {},
   ) => {
     const account = metaConnection?.adAccounts?.find(a => a.id === accountId)
       ?? null;
@@ -3831,7 +3825,11 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       // back from /me/accounts. Auto-pick when there's exactly one Page.
       // Skip-mode users see no second modal; the connect toast already
       // announced the account pick above.
-      const pages = metaConnection?.pages ?? [];
+      // Prefer Pages handed in by the caller (freshly fetched during
+      // connect) over the render-closure copy, which can be one refresh
+      // behind and would fire this chain twice on the single-account
+      // fast path.
+      const pages = options.pages ?? metaConnection?.pages ?? [];
       if (pages.length >= 1) {
         if (pages.length === 1) {
           await handleMetaPageSelect(pages[0].id, pages[0].name, { skipPicker: true });
@@ -3909,23 +3907,14 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     if (connected) {
       const conn = await refreshMetaConnection();
       const accounts = conn?.adAccounts ?? [];
+      const pages = conn?.pages ?? [];
       const acctCount = accounts.length;
-      // Phase: pick ad account. Single-account auto-picks, multi-account
-      // surfaces the modal. After the account settles, chain into the page
-      // picker if any Pages are available.
+      // Phase: pick ad account. Single-account auto-picks via the same
+      // chain that the modal path uses, passing the freshly fetched Pages
+      // explicitly so the page-selection step does not double-fire.
       if (acctCount === 1) {
         const only = accounts[0];
-        await handleMetaAccountSelect(only.id, { skipPicker: true });
-        const refreshed = await refreshMetaConnection();
-        const pages = refreshed?.pages ?? [];
-        if (pages.length >= 1) {
-          if (pages.length === 1) {
-            await handleMetaPageSelect(pages[0].id, pages[0].name, { skipPicker: true });
-          } else {
-            setMetaPagePickerError(null);
-            setShowMetaPagePicker(true);
-          }
-        }
+        await handleMetaAccountSelect(only.id, { skipPicker: true, pages });
         showToast(
           lang === 'ar' ? 'تم ربط حساب ميتا!' : 'Meta Ads connected!',
           'success',
@@ -3946,7 +3935,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     } else {
       showToast(lang === 'ar' ? 'تعذّر إكمال الربط' : 'Could not complete the connection', 'error');
     }
-  }, [user, lang, t, refreshMetaConnection, showToast, handleMetaAccountSelect, handleMetaPageSelect]);
+  }, [user, lang, t, refreshMetaConnection, showToast, handleMetaAccountSelect]);
 
   // Phase 14 batch 01 — UI wiring. Disconnects the current Meta session and
   // clears local state. The account-level data (perf, baselines, etc.) is

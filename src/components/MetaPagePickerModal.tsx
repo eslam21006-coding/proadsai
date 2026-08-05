@@ -122,6 +122,9 @@ export default function MetaPagePickerModal({
   const footerBtn = dk ? 'bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]' : 'bg-slate-100 text-slate-700 hover:bg-slate-200';
   const footerPrimary = dk ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-indigo-600 hover:bg-indigo-700 text-white';
   const bodyEmpty = dk ? 'text-slate-400' : 'text-slate-500';
+  const errorBox = dk
+    ? 'bg-red-500/10 border-red-500/20 text-red-400'
+    : 'bg-red-50 border-red-200 text-red-700';
 
   return (
     <div className="fixed inset-0 z-[211] flex items-center justify-center p-4" onClick={selecting ? undefined : onClose}>
@@ -203,7 +206,7 @@ export default function MetaPagePickerModal({
           )}
 
           {errorMessage && (
-            <div role="alert" className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-[10px]">
+            <div role="alert" className={`px-3 py-2 rounded-lg border ${errorBox} text-[10px]`}>
               {errorMessage}
             </div>
           )}

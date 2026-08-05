@@ -3278,7 +3278,7 @@ export const metaOAuthCallback = onRequest({
             );
             const pagesData = await pagesResponse.json() as any;
             if (pagesData.error) {
-                console.warn("Meta /me/accounts warning:", pagesData.error.message);
+                console.warn("⚠️ Meta /me/accounts warning:", pagesData.error.message);
             } else {
                 pages = (pagesData.data || []).map((p: any) => ({
                     id: p.id,
@@ -3286,7 +3286,7 @@ export const metaOAuthCallback = onRequest({
                 }));
             }
         } catch (pagesErr) {
-            console.warn("Failed to fetch Meta Pages (non-blocking):", pagesErr);
+            console.warn("⚠️ Failed to fetch Meta Pages (non-blocking):", pagesErr);
         }
 
         // Step 4: Encrypt and store token
@@ -3374,10 +3374,23 @@ export const metaSelectPage = onCall({
     if (pageId !== null && typeof pageId !== "string") {
         throw new HttpsError("invalid-argument", "pageId must be a string or null");
     }
+    if (pageName !== undefined && pageName !== null && typeof pageName !== "string") {
+        throw new HttpsError("invalid-argument", "pageName must be a string or null");
+    }
 
-    await admin.firestore().collection("metaConnections").doc(uid).update({
+    const connRef = admin.firestore().collection("metaConnections").doc(uid);
+    const connDoc = await connRef.get();
+    if (!connDoc.exists) {
+        throw new HttpsError("not-found", "No Meta connection found. Please reconnect.");
+    }
+    const availablePages = (connDoc.data()?.pages ?? []) as { id: string; name?: string }[];
+    if (pageId && !availablePages.some((p) => p.id === pageId)) {
+        throw new HttpsError("invalid-argument", "pageId is not one of the connected Pages");
+    }
+
+    await connRef.update({
         selectedPageId: pageId || null,
-        selectedPageName: pageName || null,
+        selectedPageName: typeof pageName === "string" ? pageName.slice(0, 200) : null,
     });
     return { success: true };
 });

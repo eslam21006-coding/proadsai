@@ -168,7 +168,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'meta.page_picker_skip': 'Skip',
         'meta.page_picker_done': 'Done',
         'meta.page_selected_toast': 'Facebook Page selected.',
-        'meta.page_skipped_toast': 'Skipped Page selection. You can pick one later from the menu.',
+        'meta.page_save_failed': 'Could not save the selected Page. Please try again.',
+        'meta.page_save_failed_throw': 'Could not save the Page selection.',
         'topbar.funnel_first_run_title': 'Set up your funnel',
         'topbar.funnel_first_run_body': 'Complete your funnel settings to start analyzing your ads.',
 
@@ -1078,7 +1079,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'meta.page_picker_skip': 'تخطّي',
         'meta.page_picker_done': 'تم',
         'meta.page_selected_toast': 'تم اختيار صفحة فيسبوك.',
-        'meta.page_skipped_toast': 'تم تخطي اختيار الصفحة. يمكنك اختيارها لاحقا من القائمة.',
+        'meta.page_save_failed': 'تعذّر حفظ الصفحة المختارة. حاول مرة أخرى.',
+        'meta.page_save_failed_throw': 'تعذّر حفظ اختيار الصفحة.',
         'topbar.funnel_first_run_title': 'أكمل إعداد مسار المبيعات',
         'topbar.funnel_first_run_body': 'أكمل إعدادات مسار المبيعات لبدء تحليل إعلاناتك.',
 
