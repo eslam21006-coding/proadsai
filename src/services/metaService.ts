@@ -24,6 +24,9 @@ export interface MetaAdAccount {
 export interface MetaPage {
     id: string;
     name: string;
+    pictureUrl: string | null;
+    fanCount: number;
+    category: string | null;
 }
 
 export interface MetaConnection {

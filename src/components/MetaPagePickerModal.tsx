@@ -18,15 +18,32 @@
 
 import { useEffect, useRef } from "react";
 import { useT } from "../i18n";
+// CR related (CodeRabbit) — Import the shared MetaPage contract from the
+// service that produces it, so the picker's prop type can never drift from
+// the stored connection contract. Type-only import to avoid pulling
+// firebase runtime into this leaf component.
+import type { MetaPage } from "../services/metaService";
 
-export interface MetaPagePickerItem {
-  id: string;
-  name: string;
+// Format a follower count for the picker label. < 1K shows the raw
+// number; 1K–999K shows "X.YK" (one decimal); ≥ 1M shows "X.YM".
+function formatFollowerCount(n: number): string {
+  if (n >= 1_000_000) {
+    const s = (n / 1_000_000).toFixed(1);
+    return `${s.endsWith(".0") ? s.slice(0, -2) : s}M`;
+  }
+  if (n >= 1_000) {
+    const s = (n / 1_000).toFixed(1);
+    return `${s.endsWith(".0") ? s.slice(0, -2) : s}K`;
+  }
+  return String(n);
 }
 
 export interface MetaPagePickerModalProps {
   open: boolean;
-  pages: MetaPagePickerItem[];
+  // Phase 14 (App Review) + CR related (CodeRabbit) — Use the shared
+  // `MetaPage` contract from `src/services/metaService.ts` so the picker's
+  // prop type can never drift from the stored connection contract.
+  pages: MetaPage[];
   currentSelectedId: string | null;
   selecting: boolean;
   errorMessage?: string | null;
@@ -179,8 +196,15 @@ export default function MetaPagePickerModal({
                       }`}
                       aria-pressed={isCurrent}
                     >
-                      <span className={`shrink-0 w-9 h-9 rounded-lg flex items-center justify-center ${isCurrent ? cardIconActive : cardIcon}`}>
-                        {isCurrent ? (
+                      <span className={`shrink-0 w-9 h-9 rounded-lg flex items-center justify-center overflow-hidden ${isCurrent ? cardIconActive : cardIcon}`}>
+                        {p.pictureUrl ? (
+                          <img
+                            src={p.pictureUrl}
+                            alt=""
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                          />
+                        ) : isCurrent ? (
                           <i className="fa-solid fa-circle-check text-sm" aria-hidden="true" />
                         ) : (
                           <i className="fa-solid fa-flag text-sm" aria-hidden="true" />
@@ -189,7 +213,23 @@ export default function MetaPagePickerModal({
                       <span className="flex-1 min-w-0">
                         <span className={`block text-[12px] font-bold ${cardTitle} truncate`}>{p.name || p.id}</span>
                         <span className={`block text-[9px] ${cardIdText} font-mono truncate`} dir="ltr">{p.id}</span>
+                        {p.category && (
+                          <span className={`block text-[9px] ${cardIdText} truncate mt-0.5`}>{p.category}</span>
+                        )}
                       </span>
+                      {p.fanCount > 0 && (
+                        // CR1 (CodeRabbit) — Route the followers label and
+                        // tooltip through useT() so they translate when
+                        // the UI is in Arabic. The number is formatted by
+                        // `formatFollowerCount` (compact K/M form); the
+                        // tooltip uses the raw count for accuracy.
+                        <span
+                          className={`shrink-0 text-[9px] font-bold ${cardIdText}`}
+                          title={t('meta.page_followers_tooltip').replace('{count}', p.fanCount.toLocaleString())}
+                        >
+                          {formatFollowerCount(p.fanCount)} {t('meta.page_followers_unit')}
+                        </span>
+                      )}
                       {isCurrent ? (
                         <span className={`shrink-0 flex items-center gap-1 text-[9px] font-bold ${cardActivePill}`}>
                           <i className="fa-solid fa-circle-check text-xs" aria-hidden="true" />
