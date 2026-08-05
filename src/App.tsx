@@ -30,7 +30,7 @@ interface FavUpdatePrompt {
 import MagicSelector, { type EditRequest } from './components/MagicSelector';
 import ErrorBoundary from './components/ErrorBoundary';
 import { feedbackService, type NegativeFeedbackTag } from './services/feedbackService';
-import { metaService, type MetaConnection } from './services/metaService';
+import { metaService, type MetaConnection, type MetaPage } from './services/metaService';
 import { ASPECT_RATIOS, COLD_HOOK_ANGLES, OFFER_TYPES, getRandomUniverse } from './constants';
 import type { UserPlan } from './planconfig';
 import { PLANS, CREDIT_COSTS, TOPUP_PACKS, TOPUP_PRICES, canUse, requiredPlanFor, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
@@ -70,6 +70,7 @@ import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import WorkspaceSettingsModal from './components/WorkspaceSettingsModal';
 const FunnelSettingsForm = React.lazy(() => import('./components/FunnelSettingsForm'));
 const MetaAccountPickerModal = React.lazy(() => import('./components/MetaAccountPickerModal'));
+const MetaPagePickerModal = React.lazy(() => import('./components/MetaPagePickerModal'));
 const WhatsWorkingDashboard = React.lazy(() => import('./components/WhatsWorkingDashboard'));
 import { ForgotPasswordDialog } from './components/auth/ForgotPasswordDialog';
 import { VerifyEmailScreen } from './components/auth/VerifyEmailScreen';
@@ -3639,6 +3640,12 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
   // explicit close so a stale workspace name can't bleed into the next
   // unrelated open (e.g. from the OAuth multi-account fast path).
   const [metaAccountPickerTitle, setMetaAccountPickerTitle] = useState<string | null>(null);
+  // Meta Page picker (App Review: pages_show_list + pages_read_engagement).
+  // Opens as the second step of the connect flow after ad-account selection.
+  // Optional — the user can skip if they have no Pages or want to decide later.
+  const [showMetaPagePicker, setShowMetaPagePicker] = useState(false);
+  const [metaPagePickerSelecting, setMetaPagePickerSelecting] = useState(false);
+  const [metaPagePickerError, setMetaPagePickerError] = useState<string | null>(null);
   // Phase 14 batch 01 — UI wiring. Modal that mounts the FunnelSettingsForm
   // when the user opens it from the menu (manual edit) or as a first-run gate
   // (auto-trigger when Meta is connected but no settings/current doc exists).
@@ -3707,9 +3714,64 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
   // `handleConnectMeta` because that callback captures this one — and
   // putting a TDZ reference in a `useCallback` deps array would throw
   // at first render.
+
+  // Phase 14 (App Review) — Page picker. Persists the user's chosen Page
+  // to the global connection (`metaSelectPage`). Page selection is
+  // optional for the current image-upload flow, but we persist it so the
+  // screencast and future /adcreatives wiring have a real value to work
+  // with. `pageId === null` clears the selection. The skip path is
+  // handled by `skipMetaPagePicker` — it just closes without writing.
+  // Defined before `handleMetaAccountSelect` because that callback
+  // references it in its deps array.
+  const handleMetaPageSelect = useCallback(async (
+    pageId: string | null,
+    pageName: string | null,
+    options: { skipPicker?: boolean } = {},
+  ) => {
+    if (!options.skipPicker) setMetaPagePickerSelecting(true);
+    setMetaPagePickerError(null);
+    try {
+      const ok = await metaService.selectPage(pageId, pageName);
+      if (!ok) throw new Error(t('meta.page_save_failed_throw'));
+      setMetaConnection(prev => prev ? {
+        ...prev,
+        selectedPageId: pageId,
+        selectedPageName: pageName,
+      } : prev);
+      if (pageId) {
+        showToast(t('meta.page_selected_toast'), 'success');
+        setShowMetaPagePicker(false);
+      }
+    } catch (e: unknown) {
+      console.warn('Meta page selection failed:', e);
+      const failureMessage = t('meta.page_save_failed');
+      if (options.skipPicker) {
+        showToast(failureMessage, 'error');
+      } else {
+        setMetaPagePickerError(failureMessage);
+      }
+    } finally {
+      if (!options.skipPicker) setMetaPagePickerSelecting(false);
+    }
+  }, [t, showToast]);
+
+  const closeMetaPagePicker = useCallback(() => {
+    if (metaPagePickerSelecting) return;
+    setShowMetaPagePicker(false);
+    setMetaPagePickerError(null);
+  }, [metaPagePickerSelecting]);
+
+  // Skip helper: closes the page picker without writing anything. Used by
+  // the "Skip" button in the modal and the post-connect fast path when the
+  // user has zero Pages (the modal would have nothing to show anyway).
+  const skipMetaPagePicker = useCallback(() => {
+    setShowMetaPagePicker(false);
+    setMetaPagePickerError(null);
+  }, []);
+
   const handleMetaAccountSelect = useCallback(async (
     accountId: string,
-    options: { skipPicker?: boolean } = {},
+    options: { skipPicker?: boolean; pages?: MetaPage[] } = {},
   ) => {
     const account = metaConnection?.adAccounts?.find(a => a.id === accountId)
       ?? null;
@@ -3758,6 +3820,24 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       // Phase 14 batch 01-fix-meta-picker-loop — Clear the dismiss latch
       // so the next unlinked workspace can still trigger auto-open.
       metaPickerDismissedForWorkspaceRef.current = null;
+      // Phase 14 (App Review) — After the user picks an ad account in the
+      // multi-account modal, chain into the page picker if any Pages came
+      // back from /me/accounts. Auto-pick when there's exactly one Page.
+      // Skip-mode users see no second modal; the connect toast already
+      // announced the account pick above.
+      // Prefer Pages handed in by the caller (freshly fetched during
+      // connect) over the render-closure copy, which can be one refresh
+      // behind and would fire this chain twice on the single-account
+      // fast path.
+      const pages = options.pages ?? metaConnection?.pages ?? [];
+      if (pages.length >= 1) {
+        if (pages.length === 1) {
+          await handleMetaPageSelect(pages[0].id, pages[0].name, { skipPicker: true });
+        } else {
+          setMetaPagePickerError(null);
+          setShowMetaPagePicker(true);
+        }
+      }
     } catch (e: unknown) {
       console.warn('Meta account selection failed:', e);
       const failureMessage = t('meta.account_save_failed');
@@ -3773,7 +3853,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     } finally {
       if (!options.skipPicker) setMetaAccountPickerSelecting(false);
     }
-  }, [metaConnection, canUseWorkspaces, activeWorkspaceId, t, showToast]);
+  }, [metaConnection, canUseWorkspaces, activeWorkspaceId, t, showToast, handleMetaPageSelect]);
 
   // Phase 14 batch 01 — Account picker. Open on demand from the
   // "Change Account" menu entry. No-ops when Meta isn't connected or
@@ -3816,7 +3896,10 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
   }, [metaAccountPickerSelecting, activeWorkspaceId]);
 
   // Phase 14 batch 01 — UI wiring. Opens the Meta OAuth popup, then
-  // refreshes the connection state on success.
+  // refreshes the connection state on success. The flow now has two
+  // sequential pickers: ad-account (required, with single-account fast
+  // path) then page (optional, surfaces the pages_* permissions for App
+  // Review). After both pickers, the connect toast fires.
   const handleConnectMeta = useCallback(async () => {
     if (!user) return;
     showToast(lang === 'ar' ? 'جاري الربط بحساب ميتا…' : 'Connecting to Meta Ads…', 'info');
@@ -3824,16 +3907,19 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     if (connected) {
       const conn = await refreshMetaConnection();
       const accounts = conn?.adAccounts ?? [];
+      const pages = conn?.pages ?? [];
       const acctCount = accounts.length;
+      // Phase: pick ad account. Single-account auto-picks via the same
+      // chain that the modal path uses, passing the freshly fetched Pages
+      // explicitly so the page-selection step does not double-fire.
       if (acctCount === 1) {
-        // Single-account fast path: auto-pick and persist. Avoids a
-        // pointless "choose the only option" modal that the spec calls
-        // out as wasted clicks.
         const only = accounts[0];
-        await handleMetaAccountSelect(only.id, { skipPicker: true });
+        await handleMetaAccountSelect(only.id, { skipPicker: true, pages });
+        showToast(
+          lang === 'ar' ? 'تم ربط حساب ميتا!' : 'Meta Ads connected!',
+          'success',
+        );
       } else if (acctCount >= 2) {
-        // Multi-account: surface the picker so the user explicitly
-        // establishes the 1:1 workspace→account link required by FR-026.
         setMetaAccountPickerError(null);
         setShowMetaAccountPicker(true);
         showToast(
@@ -3841,8 +3927,6 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
           'success',
         );
       } else {
-        // Degenerate — Meta returned 0 accounts. Just announce the
-        // connection and let the user retry Sync or check Meta Business.
         showToast(
           lang === 'ar' ? 'تم ربط حساب ميتا!' : 'Meta Ads connected!',
           'success',
@@ -3862,7 +3946,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       : 'Disconnect Meta Ads? This removes the connection only.')) return;
     try {
       await metaService.disconnect();
-      setMetaConnection({ connected: false, adAccounts: [], selectedAccountId: null, connectedAt: null, lastSyncAt: null, status: '', tokenExpiring: false });
+      setMetaConnection({ connected: false, adAccounts: [], selectedAccountId: null, pages: [], selectedPageId: null, selectedPageName: null, connectedAt: null, lastSyncAt: null, status: '', tokenExpiring: false });
       showToast(lang === 'ar' ? 'تم فك الربط' : 'Disconnected', 'info');
     } catch {
       showToast(lang === 'ar' ? 'تعذّر فك الربط' : 'Could not disconnect', 'error');
@@ -12633,6 +12717,21 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           titleOverride={metaAccountPickerTitle}
           onSelect={(accountId) => { void handleMetaAccountSelect(accountId); }}
           onClose={closeMetaAccountPicker}
+        />
+      </Suspense>
+
+      {/* META PAGE PICKER (App Review: pages_show_list + pages_read_engagement) */}
+      <Suspense fallback={null}>
+        <MetaPagePickerModal
+          open={showMetaPagePicker}
+          pages={(metaConnection?.pages ?? []).map((p) => ({ id: p.id, name: p.name }))}
+          currentSelectedId={metaConnection?.selectedPageId ?? null}
+          selecting={metaPagePickerSelecting}
+          errorMessage={metaPagePickerError}
+          isDarkMode={isDarkMode}
+          onSelect={(pageId, pageName) => { void handleMetaPageSelect(pageId, pageName); }}
+          onSkip={skipMetaPagePicker}
+          onClose={closeMetaPagePicker}
         />
       </Suspense>
 
