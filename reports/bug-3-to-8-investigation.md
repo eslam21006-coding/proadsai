@@ -31,7 +31,7 @@ Integrations → Remove), Meta POSTs to the app's **Deauthorize Callback
 URL** (`signed_request` with `user_id` and `algorithm`). This callback
 **does not exist** in the codebase:
 
-```
+```bash
 $ grep -r "deauthorize\|deauth" functions/src/
 (no matches)
 ```
@@ -306,7 +306,7 @@ needs a write strategy because the OAuth callback is single-response.
 
 The sidebar Meta block (`src/App.tsx:1444-1504`) renders:
 
-```
+```text
 [M] Meta Ads Connected       <- sub-label: selected account name
     Sync Now
     Change Account
@@ -367,4 +367,13 @@ Total estimated edits: ~6 files, ~120 LOC, 2 new i18n strings (×2 langs).
 
 ---
 
-## STOP — awaiting approval before coding.
+## Status — historical investigation (read-only)
+
+This report documents the investigation performed for bugs 3–8 on
+2026-08-05 prior to the PR #63 implementation pass.
+
+**Implemented in PR #63:** Bugs 1, 2, 5 (verified-only), 7, 8.
+
+**Deferred to a follow-up PR:** Bugs 3, 4, 6 — see the "Summary — Code
+change footprint" table above for the per-bug file list. Bug 5's deploy
+step is the only post-merge action; everything else ships with this PR.

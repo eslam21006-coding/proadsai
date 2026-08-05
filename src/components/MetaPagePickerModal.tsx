@@ -18,6 +18,11 @@
 
 import { useEffect, useRef } from "react";
 import { useT } from "../i18n";
+// CR related (CodeRabbit) — Import the shared MetaPage contract from the
+// service that produces it, so the picker's prop type can never drift from
+// the stored connection contract. Type-only import to avoid pulling
+// firebase runtime into this leaf component.
+import type { MetaPage } from "../services/metaService";
 
 // Format a follower count for the picker label. < 1K shows the raw
 // number; 1K–999K shows "X.YK" (one decimal); ≥ 1M shows "X.YM".
@@ -35,17 +40,10 @@ function formatFollowerCount(n: number): string {
 
 export interface MetaPagePickerModalProps {
   open: boolean;
-  // Phase 14 (App Review) — Pass the full MetaPage (with pictureUrl,
-  // fanCount, category) so the picker can render the page picture,
-  // category, and follower count for each card. Mirrors MetaPage in
-  // src/services/metaService.ts.
-  pages: {
-    id: string;
-    name: string;
-    pictureUrl: string | null;
-    fanCount: number;
-    category: string | null;
-  }[];
+  // Phase 14 (App Review) + CR related (CodeRabbit) — Use the shared
+  // `MetaPage` contract from `src/services/metaService.ts` so the picker's
+  // prop type can never drift from the stored connection contract.
+  pages: MetaPage[];
   currentSelectedId: string | null;
   selecting: boolean;
   errorMessage?: string | null;
@@ -220,11 +218,16 @@ export default function MetaPagePickerModal({
                         )}
                       </span>
                       {p.fanCount > 0 && (
+                        // CR1 (CodeRabbit) — Route the followers label and
+                        // tooltip through useT() so they translate when
+                        // the UI is in Arabic. The number is formatted by
+                        // `formatFollowerCount` (compact K/M form); the
+                        // tooltip uses the raw count for accuracy.
                         <span
                           className={`shrink-0 text-[9px] font-bold ${cardIdText}`}
-                          title={`${p.fanCount.toLocaleString()} followers`}
+                          title={t('meta.page_followers_tooltip').replace('{count}', p.fanCount.toLocaleString())}
                         >
-                          {formatFollowerCount(p.fanCount)} followers
+                          {formatFollowerCount(p.fanCount)} {t('meta.page_followers_unit')}
                         </span>
                       )}
                       {isCurrent ? (

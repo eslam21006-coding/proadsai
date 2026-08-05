@@ -171,6 +171,11 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'meta.page_selected_toast': 'Facebook Page selected.',
         'meta.page_save_failed': 'Could not save the selected Page. Please try again.',
         'meta.page_save_failed_throw': 'Could not save the Page selection.',
+        // CR1 (CodeRabbit) — followers label and tooltip. Pure unit suffix
+        // (no number formatting) so the count string can be assembled by
+        // the picker with `formatFollowerCount(n)` followed by the unit.
+        'meta.page_followers_unit': 'followers',
+        'meta.page_followers_tooltip': '{count} followers',
         'topbar.funnel_first_run_title': 'Set up your funnel',
         'topbar.funnel_first_run_body': 'Complete your funnel settings to start analyzing your ads.',
 
@@ -1083,6 +1088,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'meta.page_selected_toast': 'تم اختيار صفحة فيسبوك.',
         'meta.page_save_failed': 'تعذّر حفظ الصفحة المختارة. حاول مرة أخرى.',
         'meta.page_save_failed_throw': 'تعذّر حفظ اختيار الصفحة.',
+        'meta.page_followers_unit': 'متابعون',
+        'meta.page_followers_tooltip': '{count} متابع',
         'topbar.funnel_first_run_title': 'أكمل إعداد مسار المبيعات',
         'topbar.funnel_first_run_body': 'أكمل إعدادات مسار المبيعات لبدء تحليل إعلاناتك.',
 
