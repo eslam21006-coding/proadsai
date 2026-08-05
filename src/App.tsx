@@ -30,7 +30,7 @@ interface FavUpdatePrompt {
 import MagicSelector, { type EditRequest } from './components/MagicSelector';
 import ErrorBoundary from './components/ErrorBoundary';
 import { feedbackService, type NegativeFeedbackTag } from './services/feedbackService';
-import { metaService, type MetaConnection, type MetaPage } from './services/metaService';
+import { metaService, type MetaConnection } from './services/metaService';
 import { ASPECT_RATIOS, COLD_HOOK_ANGLES, OFFER_TYPES, getRandomUniverse } from './constants';
 import type { UserPlan } from './planconfig';
 import { PLANS, CREDIT_COSTS, TOPUP_PACKS, TOPUP_PRICES, canUse, requiredPlanFor, getMaxSlides, getApproxAdsPerMonth, getFeatureLevel, showBranding, getAudienceAvatarLimit, getSavedProjectLimit } from './planconfig';
@@ -3771,7 +3771,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
 
   const handleMetaAccountSelect = useCallback(async (
     accountId: string,
-    options: { skipPicker?: boolean; pages?: MetaPage[] } = {},
+    options: { skipPicker?: boolean } = {},
   ) => {
     const account = metaConnection?.adAccounts?.find(a => a.id === accountId)
       ?? null;
@@ -3779,10 +3779,16 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     setMetaAccountPickerError(null);
     try {
       const saveFailedMessage = t('meta.account_save_failed_throw');
-      const ok = await metaService.selectAccount(accountId);
-      if (!ok) {
+      const result = await metaService.selectAccount(accountId);
+      if (!result.success) {
         throw new Error(saveFailedMessage);
       }
+      // The backend just fetched /act_{id}/promote_pages for this ad
+      // account and returned the Pages it is permitted to promote.
+      // That list is strictly more correct than the /me/accounts
+      // global list the OAuth callback wrote, so we chain the page
+      // picker off `result.pages` only.
+      const pages = result.pages ?? [];
       if (canUseWorkspaces && activeWorkspaceId) {
         const { workspaceService } = await import('./services/workspaceService');
         await workspaceService.linkMetaAccountToWorkspace({
@@ -3820,16 +3826,11 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       // Phase 14 batch 01-fix-meta-picker-loop — Clear the dismiss latch
       // so the next unlinked workspace can still trigger auto-open.
       metaPickerDismissedForWorkspaceRef.current = null;
-      // Phase 14 (App Review) — After the user picks an ad account in the
-      // multi-account modal, chain into the page picker if any Pages came
-      // back from /me/accounts. Auto-pick when there's exactly one Page.
-      // Skip-mode users see no second modal; the connect toast already
-      // announced the account pick above.
-      // Prefer Pages handed in by the caller (freshly fetched during
-      // connect) over the render-closure copy, which can be one refresh
-      // behind and would fire this chain twice on the single-account
-      // fast path.
-      const pages = options.pages ?? metaConnection?.pages ?? [];
+      // Phase 14 (App Review) — After the user picks an ad account,
+      // chain into the page picker if the ad account has any promotable
+      // Pages. Auto-pick when there's exactly one Page. Skip-mode users
+      // (single-account fast path during OAuth) see no second modal;
+      // the connect toast already announced the account pick above.
       if (pages.length >= 1) {
         if (pages.length === 1) {
           await handleMetaPageSelect(pages[0].id, pages[0].name, { skipPicker: true });
@@ -3907,14 +3908,14 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     if (connected) {
       const conn = await refreshMetaConnection();
       const accounts = conn?.adAccounts ?? [];
-      const pages = conn?.pages ?? [];
       const acctCount = accounts.length;
       // Phase: pick ad account. Single-account auto-picks via the same
-      // chain that the modal path uses, passing the freshly fetched Pages
-      // explicitly so the page-selection step does not double-fire.
+      // chain that the modal path uses. The chain reads the per-ad-account
+      // Pages from the `selectAccount` response, so we no longer need to
+      // pass the OAuth-callback's global list down.
       if (acctCount === 1) {
         const only = accounts[0];
-        await handleMetaAccountSelect(only.id, { skipPicker: true, pages });
+        await handleMetaAccountSelect(only.id, { skipPicker: true });
         showToast(
           lang === 'ar' ? 'تم ربط حساب ميتا!' : 'Meta Ads connected!',
           'success',

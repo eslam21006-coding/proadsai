@@ -92,14 +92,14 @@ class MetaService {
         }
     }
 
-    async selectAccount(accountId: string): Promise<boolean> {
+    async selectAccount(accountId: string): Promise<{ success: boolean; pages?: MetaPage[] }> {
         try {
             const fn = httpsCallable(functions, 'metaSelectAccount');
-            await fn({ accountId });
-            return true;
+            const result = await fn({ accountId });
+            return result.data as { success: boolean; pages?: MetaPage[] };
         } catch (err) {
             console.error('Failed to select account:', err);
-            return false;
+            return { success: false };
         }
     }
 

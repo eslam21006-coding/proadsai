@@ -3343,8 +3343,22 @@ export const getMetaConnection = onCall({
 });
 
 // ─── 3. SELECT AD ACCOUNT ───────────────────────────────────────────────
+// Persists the chosen ad account and fetches the Pages that this ad account
+// is permitted to promote. The /act_{id}/promote_pages endpoint is the
+// authoritative list of Pages that can be associated with creatives run
+// from this account — strictly more correct than the /me/accounts global
+// list that the OAuth callback writes. Per the task spec:
+//   - Always reset selectedPageId/selectedPageName (the previous selection
+//     is for a different ad account and may not be valid here).
+//   - On promote_pages success: overwrite the doc's `pages` with the
+//     account-scoped list, return it to the frontend.
+//   - On promote_pages failure (any reason: 401, 403, 400, network, …):
+//     keep the doc's existing `pages` array untouched (fail-open) and log
+//     a ⚠️ warning. Return an empty `pages` to the frontend so the picker
+//     does not open with stale global Pages.
 export const metaSelectAccount = onCall({
     region: "europe-west1",
+    secrets: [metaAppSecret],
     cors: true,
 }, async (request: CallableRequest) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
@@ -3352,10 +3366,56 @@ export const metaSelectAccount = onCall({
     const { accountId } = request.data;
     if (!accountId) throw new HttpsError("invalid-argument", "Missing accountId");
 
-    await admin.firestore().collection("metaConnections").doc(uid).update({
+    const connRef = admin.firestore().collection("metaConnections").doc(uid);
+    const connDoc = await connRef.get();
+    if (!connDoc.exists) {
+        throw new HttpsError("not-found", "No Meta connection found. Please reconnect.");
+    }
+    const conn = connDoc.data()!;
+
+    // Step 1: persist the new selection and clear the prior page pick.
+    // The previous Page may not be valid for the new ad account, so we
+    // always clear it here regardless of whether promote_pages succeeds.
+    await connRef.update({
         selectedAccountId: accountId,
+        selectedPageId: null,
+        selectedPageName: null,
     });
-    return { success: true };
+
+    // Step 2: fetch the Pages promotable by this ad account. Fail-open:
+    // any error here is logged but does not fail the selection.
+    let pages: { id: string; name: string }[] = [];
+    let promotePagesSucceeded = false;
+    try {
+        const token = decryptToken(conn.encryptedToken, metaAppSecret.value());
+        const pagesResponse = await fetch(
+            `https://graph.facebook.com/v22.0/${accountId}/promote_pages?` +
+            `fields=id,name&` +
+            `access_token=${token}`
+        );
+        const pagesData = await pagesResponse.json() as any;
+        if (pagesData.error) {
+            console.warn("⚠️ Meta /act_{id}/promote_pages warning:", pagesData.error.message);
+        } else {
+            pages = (pagesData.data || []).map((p: any) => ({
+                id: p.id,
+                name: p.name || p.id,
+            }));
+            promotePagesSucceeded = true;
+        }
+    } catch (pagesErr) {
+        console.warn("⚠️ Failed to fetch Meta Pages for ad account (non-blocking):", pagesErr);
+    }
+
+    // Step 3: persist the account-scoped Pages on success. On failure we
+    // leave the doc's existing `pages` array in place so the user does
+    // not lose a previously fetched list — the next getMetaConnection()
+    // will still return it.
+    if (promotePagesSucceeded) {
+        await connRef.update({ pages });
+    }
+
+    return { success: true, pages };
 });
 
 // ─── 3b. SELECT FACEBOOK PAGE ───────────────────────────────────────────
