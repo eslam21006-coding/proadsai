@@ -9,9 +9,15 @@ import { httpsCallable } from 'firebase/functions';
 
 const META_APP_ID = "1975052683417261";
 const OAUTH_REDIRECT_URI = "https://europe-west1-proadsai-saas.cloudfunctions.net/metaOAuthCallback";
-// Approved or pending approval — these are requested in the OAuth consent.
-// Removed: business_management — /me/adaccounts works with ads_management alone.
-const META_OAUTH_SCOPES = "ads_read,ads_management,pages_show_list,pages_read_engagement";
+// All five scopes require Advanced Access via App Review.
+// ads_management — upload images, list ad accounts via /me/adaccounts
+// ads_read — read performance metrics via /insights
+// pages_show_list — list user's Pages (bundled by Meta use case)
+// pages_read_engagement — read Page metadata (bundled by Meta use case)
+// business_management — required for /me/accounts to return
+//   Pages connected via a Business (without it, only personally-
+//   administered Pages appear)
+const META_OAUTH_SCOPES = "ads_read,ads_management,pages_show_list,pages_read_engagement,business_management";
 
 export interface MetaAdAccount {
     id: string;
