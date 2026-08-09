@@ -163,6 +163,11 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'meta.connect_pick_toast': 'Meta Ads connected! Pick an ad account ({count} available).',
         'meta.account_save_failed': 'Could not save the selected account. Please try again.',
         'meta.account_save_failed_throw': 'Could not save the account selection.',
+        // BUG A — `linkMetaAccountToWorkspace` refuses team members by design
+        // (assertNotTeamMember, reason: 'team_member'). Without this key the
+        // refusal surfaced as the generic "could not save" message above, which
+        // told the member nothing and read as a transient failure they should retry.
+        'meta.team_member_cannot_link': "Only the account owner can change a workspace's ad account.",
         'meta.page_picker_title': 'Select Facebook Page',
         'meta.page_picker_subtitle': 'Pick the Facebook Page that will be linked to your ad account. You can skip this for now.',
         'meta.page_picker_empty': 'No Facebook Pages found. You can grant Page access in your Meta Business settings, then reconnect.',
@@ -1080,6 +1085,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'meta.connect_pick_toast': 'تم ربط حساب ميتا! اختر حساب الإعلانات ({count} متاح).',
         'meta.account_save_failed': 'تعذّر حفظ الحساب المختار. حاول مرة أخرى.',
         'meta.account_save_failed_throw': 'تعذّر حفظ اختيار الحساب.',
+        'meta.team_member_cannot_link': 'فقط صاحب الحساب يمكنه تغيير حساب الإعلانات للمساحة.',
         'meta.page_picker_title': 'اختر صفحة فيسبوك',
         'meta.page_picker_subtitle': 'اختر صفحة فيسبوك التي ستُربط بحساب الإعلانات. يمكنك التخطي الآن.',
         'meta.page_picker_empty': 'لا توجد صفحات فيسبوك. امنح إذن الوصول من إعدادات ميتا للأعمال، ثم أعد الربط.',
