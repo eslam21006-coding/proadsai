@@ -94,14 +94,22 @@ export interface FunnelSettingsFormProps {
      * form header. */
     workspaceName?: string;
     isDarkMode?: boolean;
-    /** Workspaces that have a linked Meta ad account. Used to populate the
-     * in-form workspace selector (Issue 4). When the list has more than
-     * one entry, the selector renders as a dropdown. When the list has
-     * exactly one entry, the selector is omitted and the workspace name
-     * is shown as static text — there's no UI noise for single-workspace
-     * users. When the list is empty the form returns the "no workspace"
-     * guard from before. */
+    /** Every active workspace on the account — including ones with no linked
+     * Meta ad account, which render with a "needs Meta link" label (BUG B;
+     * the caller used to pre-filter these out, which made the list look
+     * truncated). Used to populate the in-form workspace selector (Issue 4).
+     * When the list has more than one entry, the selector renders as a
+     * dropdown. When the list has exactly one entry, the selector is omitted
+     * and the workspace name is shown as static text — there's no UI noise
+     * for single-workspace users. When the list is empty the form returns the
+     * "no workspace" guard from before. */
     availableWorkspaces?: Array<{ id: string; name: string; metaAdAccountId?: string | null; metaAdAccountName?: string | null }>;
+    /** True when the signed-in user is a team member rather than the account
+     * owner. Only affects copy: a member cannot link a Meta ad account
+     * themselves (`linkMetaAccountToWorkspace` refuses them server-side), so
+     * the unlinked-workspace guard tells them to ask the owner instead of
+     * pointing at a menu entry they don't have. */
+    isTeamMember?: boolean;
     /** Called after a successful save — parent may close the form or refresh data. */
     onSaved?: (settings: FunnelSettingsDoc) => void;
 }
@@ -266,6 +274,7 @@ export default function FunnelSettingsForm({
     workspaceName,
     isDarkMode = true,
     availableWorkspaces,
+    isTeamMember = false,
     onSaved,
 }: FunnelSettingsFormProps) {
     const dk = isDarkMode;
@@ -380,21 +389,15 @@ export default function FunnelSettingsForm({
         };
     }, [settings]);
 
-    if (!selectedWorkspaceId || !selectedAccountId) {
-        return (
-            <div className={`p-6 rounded-lg border ${cardBg}`}>
-                <p className={txMuted}>يرجى اختيار مساحة عمل وحساب ميتا أولاً.</p>
-            </div>
-        );
-    }
-
-    if (loading && !settings) {
-        return (
-            <div className={`p-6 rounded-lg border ${cardBg}`}>
-                <p className={txMuted}>{L('Loading…', 'جاري التحميل…')}</p>
-            </div>
-        );
-    }
+    // BUG B — the "pick a workspace and a Meta account" guard used to sit
+    // here and `return` outright, ABOVE the workspace selector. The moment a
+    // workspace without a linked ad account was selected, the whole form —
+    // including the dropdown the user had just used — was replaced by a single
+    // line of text, with no control left to switch back; only closing and
+    // reopening the modal recovered. Now it is a flag, and the guard body is
+    // rendered BELOW the selector further down, so the selector always stays
+    // on screen and the state is navigable.
+    const needsMetaLink = !selectedWorkspaceId || !selectedAccountId;
 
     async function handleSave() {
         if (!selectedWorkspaceId || !selectedAccountId) return;
@@ -432,51 +435,109 @@ export default function FunnelSettingsForm({
     // fall back to that.
     const headerWorkspaceName = selectedWorkspace?.name ?? workspaceName ?? workspaceId ?? '';
 
+    // BUG B — header and selector are extracted so every render state (needs
+    // link / loading / full form) shows the SAME two blocks at the top. That
+    // is what keeps the workspace dropdown reachable from the guard state.
+    const headerBlock = (
+        <div>
+            <h2 className={`text-xl font-semibold ${txPrimary}`}>
+                {L('Funnel Settings', 'إعدادات مسار المبيعات')}
+            </h2>
+            <p className={`text-sm ${txMuted}`}>
+                {L('Workspace:', 'مساحة العمل:')} {headerWorkspaceName}
+            </p>
+        </div>
+    );
+
+    // Workspace selector (Issue 4) — rendered whenever the account has more
+    // than one workspace. Single-workspace users see the workspace name as
+    // static text in the header above and skip this block entirely. The
+    // selector is rendered first so it visually anchors the rest of the form
+    // to the chosen workspace-account.
+    // BUG B — the list now includes workspaces with no linked Meta ad
+    // account, so each option states its link status inline.
+    const workspaceSelectorBlock = showWorkspaceSelector && availableWorkspaces ? (
+        <div>
+            <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>
+                {L('Select Workspace', 'اختر مساحة العمل')}
+            </label>
+            <select
+                aria-label={L('Select Workspace', 'اختر مساحة العمل')}
+                className={`w-full p-2 rounded border ${selectBg}`}
+                value={selectedWorkspaceId}
+                onChange={(e) => setSelectedWorkspaceId(e.target.value)}
+            >
+                {availableWorkspaces.map(ws => (
+                    <option key={ws.id} value={ws.id}>
+                        {ws.name}{ws.metaAdAccountName ? ` — ${ws.metaAdAccountName}` : ' — ' + L('needs Meta link', 'يحتاج ربط ميتا')}
+                    </option>
+                ))}
+            </select>
+            {/* Show the linked Meta account name as a muted sub-line
+                below the dropdown so the user always sees which ad
+                account this workspace's settings will save against. */}
+            {selectedWorkspace?.metaAdAccountName && (
+                <p className={`mt-1 text-[10px] ${txMuted}`}>
+                    {L('Linked Meta account:', 'حساب ميتا المربوط:')} {selectedWorkspace.metaAdAccountName}
+                </p>
+            )}
+        </div>
+    ) : null;
+
+    // BUG B — the former early-return guard, now rendered BELOW the selector.
+    // The message names the actual blocker (this workspace has no Meta ad
+    // account) and gives the two ways forward, instead of the old generic
+    // "pick a workspace and a Meta account first".
+    if (needsMetaLink) {
+        return (
+            <div className="space-y-4">
+                {headerBlock}
+                {workspaceSelectorBlock}
+                <div className={`p-6 rounded-lg border ${cardBg}`}>
+                    <p className={txPrimary}>
+                        {L(
+                            'This workspace has no Meta ad account linked yet.',
+                            'لا يوجد حساب إعلانات ميتا مربوط بهذه المساحة.',
+                        )}
+                    </p>
+                    {/* A team member cannot link the account themselves —
+                        `linkMetaAccountToWorkspace` refuses them server-side and
+                        the "Change Account" / "Select ad account" menu entries
+                        are hidden for them — so pointing at the Meta menu would
+                        send them somewhere that does not exist. Name the person
+                        who CAN do it instead. */}
+                    <p className={`mt-2 text-sm ${txMuted}`}>
+                        {isTeamMember
+                            ? L(
+                                'Funnel settings are saved per ad account. Ask the account owner to link a Meta ad account to this workspace — or pick another workspace above.',
+                                'تُحفظ إعدادات المسار لكل حساب إعلانات. اطلب من صاحب الحساب ربط حساب ميتا بهذه المساحة، أو اختر مساحة أخرى من الأعلى.',
+                            )
+                            : L(
+                                'Funnel settings are saved per ad account, so link one from the Meta menu first — or pick another workspace above.',
+                                'تُحفظ إعدادات المسار لكل حساب إعلانات، لذلك اربط حسابا من قائمة ميتا أولا، أو اختر مساحة أخرى من الأعلى.',
+                            )}
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
+    if (loading && !settings) {
+        return (
+            <div className="space-y-4">
+                {headerBlock}
+                {workspaceSelectorBlock}
+                <div className={`p-6 rounded-lg border ${cardBg}`}>
+                    <p className={txMuted}>{L('Loading…', 'جاري التحميل…')}</p>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-4">
-            {/* Header */}
-            <div>
-                <h2 className={`text-xl font-semibold ${txPrimary}`}>
-                    {L('Funnel Settings', 'إعدادات مسار المبيعات')}
-                </h2>
-                <p className={`text-sm ${txMuted}`}>
-                    {L('Workspace:', 'مساحة العمل:')} {headerWorkspaceName}
-                </p>
-            </div>
-
-            {/* Workspace selector (Issue 4) — only when the user has more
-                than one workspace with a linked Meta ad account. Single-
-                workspace users see the workspace name as static text in
-                the header above and skip this block entirely. The selector
-                is rendered first so it visually anchors the rest of the
-                form to the chosen workspace-account. */}
-            {showWorkspaceSelector && availableWorkspaces && (
-                <div>
-                    <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>
-                        {L('Select Workspace', 'اختر مساحة العمل')}
-                    </label>
-                    <select
-                        aria-label={L('Select Workspace', 'اختر مساحة العمل')}
-                        className={`w-full p-2 rounded border ${selectBg}`}
-                        value={selectedWorkspaceId}
-                        onChange={(e) => setSelectedWorkspaceId(e.target.value)}
-                    >
-                        {availableWorkspaces.map(ws => (
-                            <option key={ws.id} value={ws.id}>
-                                {ws.name}{ws.metaAdAccountName ? ` — ${ws.metaAdAccountName}` : ''}
-                            </option>
-                        ))}
-                    </select>
-                    {/* Show the linked Meta account name as a muted sub-line
-                        below the dropdown so the user always sees which ad
-                        account this workspace's settings will save against. */}
-                    {selectedWorkspace?.metaAdAccountName && (
-                        <p className={`mt-1 text-[10px] ${txMuted}`}>
-                            {L('Linked Meta account:', 'حساب ميتا المربوط:')} {selectedWorkspace.metaAdAccountName}
-                        </p>
-                    )}
-                </div>
-            )}
+            {headerBlock}
+            {workspaceSelectorBlock}
 
             {/* Advisory Cards (spec §2.6 — above results, non-blocking) */}
             {advisoryVisible.noHto && (

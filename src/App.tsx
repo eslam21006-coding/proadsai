@@ -1133,6 +1133,14 @@ interface MenuSidebarProps {
   onOpenWhatsWorking: () => void;
   funnelSettingsAvailable: boolean;
   activeWorkspaceNeedsMetaAccount: boolean;
+  /**
+   * BUG A — true when the signed-in user is a team member rather than the
+   * account owner. The server refuses every workspace ad-account mutation
+   * from a member (`assertNotTeamMember` guards both
+   * `linkMetaAccountToWorkspace` and `unlinkMetaAccountFromWorkspace`), so
+   * the menu entries that lead there are hidden rather than left to fail.
+   */
+  isTeamMember: boolean;
 }
 
 const MenuSidebar: React.FC<MenuSidebarProps> = ({
@@ -1168,6 +1176,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
   onOpenWhatsWorking,
   funnelSettingsAvailable,
   activeWorkspaceNeedsMetaAccount,
+  isTeamMember,
 }) => {
   const { t } = useT();
 
@@ -1232,6 +1241,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
               onOpenWhatsWorking={onOpenWhatsWorking}
               funnelSettingsAvailable={funnelSettingsAvailable}
               activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
+              isTeamMember={isTeamMember}
             />
           </div>
         </div>
@@ -1407,6 +1417,14 @@ interface MenuItemsProps {
    * dead-end where the Funnel Settings entry just disappeared).
    */
   activeWorkspaceNeedsMetaAccount: boolean;
+  /**
+   * BUG A — true for a team member (non-owner). Hides the two entries that
+   * lead into `linkMetaAccountToWorkspace`, which the server refuses for
+   * members: the highlighted "Select ad account for this workspace" prompt
+   * and "Change Account". Read-only Meta entries (Sync, Change Page,
+   * Disconnect) are unaffected — they don't touch the workspace link.
+   */
+  isTeamMember: boolean;
 }
 
 /**
@@ -1415,7 +1433,7 @@ interface MenuItemsProps {
  * site) keeps labels, icons, and conditional entries in lockstep.
  */
 const MenuItems: React.FC<MenuItemsProps> = (props) => {
-  const { t, isDarkMode, lang, milestones, phase, metaConnection, metaSyncing, funnelSettingsAvailable, activeWorkspaceNeedsMetaAccount } = props;
+  const { t, isDarkMode, lang, milestones, phase, metaConnection, metaSyncing, funnelSettingsAvailable, activeWorkspaceNeedsMetaAccount, isTeamMember } = props;
   const items: Array<{ key: string; el: React.ReactNode }> = [
     { key: 'new', el: <MenuItem key="new" icon="fa-plus" label={t('history.newProject')} onClick={props.onNewProject} /> },
     { key: 'bookmarks', el: <MenuItem key="bookmarks" icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={props.onSavedRenders} /> },
@@ -1485,7 +1503,12 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
     // never linked to and silently violate FR-026's 1:1 contract.
     ...(metaConnection?.connected ? [
       { key: 'meta-divider', el: <div key="meta-divider" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> },
-      ...(activeWorkspaceNeedsMetaAccount ? [
+      // BUG A — for a team member the "Select ad account for this workspace"
+      // prompt is a dead end: `linkMetaAccountToWorkspace` refuses them
+      // unconditionally. Render nothing in its place rather than an entry
+      // that always errors. The member still sees the Meta connection state
+      // and Disconnect below; only the owner-only path is withheld.
+      ...(activeWorkspaceNeedsMetaAccount ? (isTeamMember ? [] : [
         {
           key: 'meta-pick-for-workspace',
           el: (
@@ -1504,9 +1527,14 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
             </button>
           ),
         },
-      ] : [
+      ]) : [
         { key: 'meta-sync', el: <MenuItem key="meta-sync" icon={metaSyncing ? 'fa-arrows-rotate fa-spin' : 'fa-arrows-rotate'} label={t('topbar.menu_meta_sync')} onClick={props.onSyncMeta} /> },
-        { key: 'meta-change-account', el: <MenuItem key="meta-change-account" icon="fa-repeat" label={t('topbar.menu_meta_change_account')} onClick={props.onChangeMetaAccount} /> },
+        // BUG A — "Change Account" retargets the workspace's ad-account
+        // pointer through `linkMetaAccountToWorkspace`, which the server
+        // refuses for team members. Hidden rather than shown-and-failing.
+        ...(isTeamMember ? [] : [
+          { key: 'meta-change-account', el: <MenuItem key="meta-change-account" icon="fa-repeat" label={t('topbar.menu_meta_change_account')} onClick={props.onChangeMetaAccount} /> },
+        ]),
         // Bug 8 — "Change Page" entry. Only renders when the user has
         // any Pages to choose from — without this gate the menu would
         // expose a dead link. Page picker state already exists; this is
@@ -2557,6 +2585,14 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   // WorkspaceSwitcher; this state carries the cause.
   const [pendingWorkspaceSwitch, setPendingWorkspaceSwitch] = useState<{ fromId: string; toId: string } | null>(null);
   const canUseWorkspaces = canUse(userPlan, 'multiBrandWorkspaces');
+  // BUG A — single derived flag for "the signed-in user is a team member, not
+  // the owner". Every surface that branches on membership reads THIS constant
+  // (menu entries, auto-open picker, WorkspaceSwitcher, WorkspaceSettingsModal,
+  // FunnelSettingsForm) — the expression was previously re-inlined per call
+  // site, which is how two of them could have drifted apart unnoticed.
+  // Gated on `teamResolution === 'resolved'` so we never treat an owner as a
+  // member (or vice versa) during the async owner-doc lookup.
+  const isTeamMemberUser = teamResolution === 'resolved' && teamOwnerUid != null;
   // ISSUE-D T005: derived write-gate. The launch surface holds back every
   // workspace write (Generate, save project, save audience profile) until
   // both the account link has resolved AND a workspace is selected for
@@ -3858,7 +3894,20 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       }
     } catch (e: unknown) {
       console.warn('Meta account selection failed:', e);
-      const failureMessage = t('meta.account_save_failed');
+      // BUG A — this catch wraps THREE server calls (metaSelectAccount,
+      // linkMetaAccountToWorkspace, connectMetaAccount) and used to collapse
+      // all of them into one generic "could not save" message. For a team
+      // member the failure is never transient: `linkMetaAccountToWorkspace`
+      // calls `assertNotTeamMember(uid, 'link_meta')` as its first statement
+      // and throws `permission-denied` with `details.reason === 'team_member'`
+      // (functions/src/workspaces/workspacePolicy.ts). Telling the member to
+      // "try again" sends them into a loop that can never succeed. Reuse the
+      // shared `isTeamMemberRefusal` helper — it keys off the reliable
+      // `code` + `details.reason` signals rather than a loose message match,
+      // so an unrelated permission error still gets the generic copy.
+      const failureMessage = isTeamMemberRefusal(e)
+        ? t('meta.team_member_cannot_link')
+        : t('meta.account_save_failed');
       // In skipPicker mode (single-account auto-pick from the OAuth flow)
       // the modal is never visible, so the inline error would never be
       // shown — surface it as a toast instead so the user still gets
@@ -4084,11 +4133,17 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
   //   6. The picker isn't already mid-selection (avoids stealing focus
   //      mid-save) and isn't already open (avoids stacking duplicate
   //      opens when one debounced effect overlaps another).
+  //   7. BUG A — the user is the account OWNER. A team member cannot link an
+  //      ad account to a workspace at all (`linkMetaAccountToWorkspace` calls
+  //      `assertNotTeamMember` and throws `permission-denied`), so auto-opening
+  //      the picker for them pops a modal on every workspace switch whose only
+  //      possible outcome is an error toast.
   // The auto-open is closeable (not forced) — the user can dismiss it
   // and continue using the app, and the prompt remains visible in the
   // menu so the next opportunity to link is always one tap away.
   useEffect(() => {
     if (!metaConnection?.connected) return;
+    if (isTeamMemberUser) return;
     if (!canUseWorkspaces) return;
     if (!activeWorkspace) return;
     if (activeWorkspace.metaAdAccountId) return;
@@ -4105,6 +4160,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     openMetaAccountPickerForActiveWorkspace();
   }, [
     metaConnection?.connected,
+    isTeamMemberUser,
     canUseWorkspaces,
     activeWorkspace,
     activeWorkspace?.id,
@@ -8015,7 +8071,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 onSwitch={setActiveWorkspaceIdLocal}
                 onCreateNew={() => { setEditingWorkspace(null); setShowWorkspaceModal(true); }}
                 onEditWorkspace={(ws) => { setEditingWorkspace(ws); setShowWorkspaceModal(true); }}
-                isTeamMember={teamResolution === 'resolved' && teamOwnerUid != null}
+                isTeamMember={isTeamMemberUser}
                 loadError={workspaceLoadError}
                 onRetryLoad={() => {
                   // Round-2 #13: bumping the retry trigger recreates the
@@ -11312,6 +11368,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         onOpenWhatsWorking={() => { setShowMenuDrawer(false); setShowWhatsWorking(true); }}
         funnelSettingsAvailable={funnelSettingsAvailable}
         activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
+        isTeamMember={isTeamMemberUser}
       />
 
       </div>
@@ -11434,6 +11491,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 onOpenWhatsWorking={() => { setShowMenuDrawer(false); setShowWhatsWorking(true); }}
         funnelSettingsAvailable={funnelSettingsAvailable}
         activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
+        isTeamMember={isTeamMemberUser}
               />
             </div>
           </aside>
@@ -12603,9 +12661,20 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 accountId={activeMetaAccountId}
                 workspaceName={activeWorkspace?.name}
                 isDarkMode={isDarkMode}
-                availableWorkspaces={workspaces
-                  .filter(w => !w.deletedAt && !!w.metaAdAccountId)
-                  .map(w => ({ id: w.id, name: w.name, metaAdAccountId: w.metaAdAccountId ?? null, metaAdAccountName: w.metaAdAccountName ?? null }))}
+                availableWorkspaces={
+                  // BUG B — pass EVERY active workspace, not just the
+                  // Meta-linked ones. The previous `&& !!w.metaAdAccountId`
+                  // filter silently hid every workspace without a linked ad
+                  // account (on a live account: 6 of 9 active workspaces), so
+                  // the dropdown looked like the workspace list was
+                  // incomplete. FunnelSettingsForm now labels unlinked entries
+                  // "needs Meta link" and keeps the selector on screen when
+                  // one is chosen, so the state is explained instead of hidden.
+                  workspaces
+                    .filter(w => !w.deletedAt)
+                    .map(w => ({ id: w.id, name: w.name, metaAdAccountId: w.metaAdAccountId ?? null, metaAdAccountName: w.metaAdAccountName ?? null }))
+                }
+                isTeamMember={isTeamMemberUser}
                 onSaved={() => {
                   setFunnelSettingsHasDoc(true);
                   setFunnelFirstRunDismissed(false);
@@ -12731,7 +12800,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           onClose={() => { setShowWorkspaceModal(false); setEditingWorkspace(null); }}
           plan={userPlan}
           metaAdAccounts={metaConnection?.adAccounts?.map((a: any) => ({ id: a.id, name: a.name })) || []}
-          isTeamMember={teamResolution === 'resolved' && teamOwnerUid != null}
+          isTeamMember={isTeamMemberUser}
         />
       )}
 
