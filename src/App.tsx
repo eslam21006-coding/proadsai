@@ -2586,8 +2586,10 @@ const [showMenuDrawer, setShowMenuDrawer] = useState(false);
   const [pendingWorkspaceSwitch, setPendingWorkspaceSwitch] = useState<{ fromId: string; toId: string } | null>(null);
   const canUseWorkspaces = canUse(userPlan, 'multiBrandWorkspaces');
   // BUG A — single derived flag for "the signed-in user is a team member, not
-  // the owner". Mirrors the expression already passed to WorkspaceSwitcher and
-  // WorkspaceSettingsModal so all four surfaces agree on the definition.
+  // the owner". Every surface that branches on membership reads THIS constant
+  // (menu entries, auto-open picker, WorkspaceSwitcher, WorkspaceSettingsModal,
+  // FunnelSettingsForm) — the expression was previously re-inlined per call
+  // site, which is how two of them could have drifted apart unnoticed.
   // Gated on `teamResolution === 'resolved'` so we never treat an owner as a
   // member (or vice versa) during the async owner-doc lookup.
   const isTeamMemberUser = teamResolution === 'resolved' && teamOwnerUid != null;
@@ -8069,7 +8071,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 onSwitch={setActiveWorkspaceIdLocal}
                 onCreateNew={() => { setEditingWorkspace(null); setShowWorkspaceModal(true); }}
                 onEditWorkspace={(ws) => { setEditingWorkspace(ws); setShowWorkspaceModal(true); }}
-                isTeamMember={teamResolution === 'resolved' && teamOwnerUid != null}
+                isTeamMember={isTeamMemberUser}
                 loadError={workspaceLoadError}
                 onRetryLoad={() => {
                   // Round-2 #13: bumping the retry trigger recreates the
@@ -12672,6 +12674,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     .filter(w => !w.deletedAt)
                     .map(w => ({ id: w.id, name: w.name, metaAdAccountId: w.metaAdAccountId ?? null, metaAdAccountName: w.metaAdAccountName ?? null }))
                 }
+                isTeamMember={isTeamMemberUser}
                 onSaved={() => {
                   setFunnelSettingsHasDoc(true);
                   setFunnelFirstRunDismissed(false);
@@ -12797,7 +12800,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
           onClose={() => { setShowWorkspaceModal(false); setEditingWorkspace(null); }}
           plan={userPlan}
           metaAdAccounts={metaConnection?.adAccounts?.map((a: any) => ({ id: a.id, name: a.name })) || []}
-          isTeamMember={teamResolution === 'resolved' && teamOwnerUid != null}
+          isTeamMember={isTeamMemberUser}
         />
       )}
 

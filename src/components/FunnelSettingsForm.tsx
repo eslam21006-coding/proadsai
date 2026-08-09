@@ -94,14 +94,22 @@ export interface FunnelSettingsFormProps {
      * form header. */
     workspaceName?: string;
     isDarkMode?: boolean;
-    /** Workspaces that have a linked Meta ad account. Used to populate the
-     * in-form workspace selector (Issue 4). When the list has more than
-     * one entry, the selector renders as a dropdown. When the list has
-     * exactly one entry, the selector is omitted and the workspace name
-     * is shown as static text — there's no UI noise for single-workspace
-     * users. When the list is empty the form returns the "no workspace"
-     * guard from before. */
+    /** Every active workspace on the account — including ones with no linked
+     * Meta ad account, which render with a "needs Meta link" label (BUG B;
+     * the caller used to pre-filter these out, which made the list look
+     * truncated). Used to populate the in-form workspace selector (Issue 4).
+     * When the list has more than one entry, the selector renders as a
+     * dropdown. When the list has exactly one entry, the selector is omitted
+     * and the workspace name is shown as static text — there's no UI noise
+     * for single-workspace users. When the list is empty the form returns the
+     * "no workspace" guard from before. */
     availableWorkspaces?: Array<{ id: string; name: string; metaAdAccountId?: string | null; metaAdAccountName?: string | null }>;
+    /** True when the signed-in user is a team member rather than the account
+     * owner. Only affects copy: a member cannot link a Meta ad account
+     * themselves (`linkMetaAccountToWorkspace` refuses them server-side), so
+     * the unlinked-workspace guard tells them to ask the owner instead of
+     * pointing at a menu entry they don't have. */
+    isTeamMember?: boolean;
     /** Called after a successful save — parent may close the form or refresh data. */
     onSaved?: (settings: FunnelSettingsDoc) => void;
 }
@@ -266,6 +274,7 @@ export default function FunnelSettingsForm({
     workspaceName,
     isDarkMode = true,
     availableWorkspaces,
+    isTeamMember = false,
     onSaved,
 }: FunnelSettingsFormProps) {
     const dk = isDarkMode;
@@ -491,11 +500,22 @@ export default function FunnelSettingsForm({
                             'لا يوجد حساب إعلانات ميتا مربوط بهذه المساحة.',
                         )}
                     </p>
+                    {/* A team member cannot link the account themselves —
+                        `linkMetaAccountToWorkspace` refuses them server-side and
+                        the "Change Account" / "Select ad account" menu entries
+                        are hidden for them — so pointing at the Meta menu would
+                        send them somewhere that does not exist. Name the person
+                        who CAN do it instead. */}
                     <p className={`mt-2 text-sm ${txMuted}`}>
-                        {L(
-                            'Funnel settings are saved per ad account, so link one from the Meta menu first — or pick another workspace above.',
-                            'تُحفظ إعدادات المسار لكل حساب إعلانات، لذلك اربط حسابا من قائمة ميتا أولا، أو اختر مساحة أخرى من الأعلى.',
-                        )}
+                        {isTeamMember
+                            ? L(
+                                'Funnel settings are saved per ad account. Ask the account owner to link a Meta ad account to this workspace — or pick another workspace above.',
+                                'تُحفظ إعدادات المسار لكل حساب إعلانات. اطلب من صاحب الحساب ربط حساب ميتا بهذه المساحة، أو اختر مساحة أخرى من الأعلى.',
+                            )
+                            : L(
+                                'Funnel settings are saved per ad account, so link one from the Meta menu first — or pick another workspace above.',
+                                'تُحفظ إعدادات المسار لكل حساب إعلانات، لذلك اربط حسابا من قائمة ميتا أولا، أو اختر مساحة أخرى من الأعلى.',
+                            )}
                     </p>
                 </div>
             </div>
