@@ -181,6 +181,32 @@ const translations: Record<UILanguage, Record<string, string>> = {
         // the picker with `formatFollowerCount(n)` followed by the unit.
         'meta.page_followers_unit': 'followers',
         'meta.page_followers_tooltip': '{count} followers',
+        // ── Phase 967 — paired en/ar messages (FR-028a–c). Arabic is
+        // simple Fusha: no dialect, no technical terms. Each is the
+        // English string paired with its Arabic counterpart in the
+        // Arabic block below; T018 will enforce that every key added
+        // here is present in both languages at release.
+        // FR-011b — Page cleared when an ad account changes. The notice
+        // names what was cleared and asks the user to choose a new one
+        // before publishing from this workspace.
+        'meta.page_cleared_notice': "This workspace's Facebook Page was cleared. Pick a new one before publishing from this workspace.",
+        // FR-012a — no workspace could be determined for this publish.
+        // Refusal, not a transient failure: the user has nothing else
+        // to do here until an account default exists.
+        'meta.no_workspace_resolved': 'No workspace could be determined for this publish. Please try again or contact support.',
+        // FR-015 — refusing to publish from a workspace with no linked
+        // ad account. Names the workspace and tells the user the next
+        // step. The {name} placeholder is the workspace's display name.
+        'meta.workspace_no_ad_account': '"{name}" has no Meta ad account linked. Link one to publish from it.',
+        // FR-020a — disconnecting removes Meta access for the whole
+        // account and every workspace at once. State the scope before
+        // the user confirms so the destructive intent is explicit.
+        'meta.disconnect_scope_warning': 'Disconnecting removes Meta access for this account and every workspace at once. Anyone using Meta from this account will lose it.',
+        // FR-023 — short label for a workspace that exists but has no
+        // Meta ad account linked. Shown in workspace selectors, never
+        // hidden (the previous behaviour that hid these workspaces is
+        // what US5 fixes).
+        'meta.needs_meta_link_label': 'Needs Meta link',
         'topbar.funnel_first_run_title': 'Set up your funnel',
         'topbar.funnel_first_run_body': 'Complete your funnel settings to start analyzing your ads.',
 
@@ -1096,6 +1122,21 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'meta.page_save_failed_throw': 'تعذّر حفظ اختيار الصفحة.',
         'meta.page_followers_unit': 'متابعون',
         'meta.page_followers_tooltip': '{count} متابع',
+        // ── Phase 967 — Arabic counterparts to the en keys above
+        // (FR-028a). Simple Fusha, no dialect, no technical terms.
+        // FR-011b — Page cleared when an ad account changes.
+        'meta.page_cleared_notice': 'تم مسح صفحة فيسبوك لهذه المساحة. اختر صفحة جديدة قبل النشر من هذه المساحة.',
+        // FR-012a — no workspace could be determined for this publish.
+        'meta.no_workspace_resolved': 'تعذّر تحديد مساحة عمل لهذا النشر. حاول مرة أخرى أو تواصل مع الدعم.',
+        // FR-015 — workspace has no Meta ad account linked. Names the
+        // workspace and tells the user the next step.
+        'meta.workspace_no_ad_account': 'لا يوجد حساب إعلانات ميتا مرتبط بـ "{name}". اربط حساباً للنشر منه.',
+        // FR-020a — disconnecting removes Meta access for the whole
+        // account and every workspace at once. State the scope before
+        // the user confirms.
+        'meta.disconnect_scope_warning': 'فك الربط يلغي وصول ميتا لهذا الحساب وكل مساحات العمل دفعة واحدة. سيفقد الوصول كل من يستخدم ميتا من هذا الحساب.',
+        // FR-023 — short label for a workspace with no Meta link.
+        'meta.needs_meta_link_label': 'يحتاج ربط ميتا',
         'topbar.funnel_first_run_title': 'أكمل إعداد مسار المبيعات',
         'topbar.funnel_first_run_body': 'أكمل إعدادات مسار المبيعات لبدء تحليل إعلاناتك.',
 

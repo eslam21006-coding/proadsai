@@ -1488,7 +1488,17 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
             icon="fa-brands fa-meta"
             label={isConnected ? t('topbar.menu_meta_connected') : t('topbar.menu_meta_connect')}
             subLabel={subLabel || null}
-            onClick={isConnected ? props.onSyncMeta : props.onConnectMeta}
+            // Phase 967 (FR-020b, T075) — when the token is expiring
+            // or a sync returned `needsReauth`, the menu entry opens
+            // the OAuth flow (re-authorise) instead of the sync.
+            // Any member OR the owner can re-authorise — the Phase 5
+            // callback writes to the owner's record regardless of
+            // who initiated it.
+            onClick={
+              isConnected
+                ? (metaConnection?.tokenExpiring ? props.onConnectMeta : props.onSyncMeta)
+                : props.onConnectMeta
+            }
           />
         );
       })(),
@@ -1503,12 +1513,16 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
     // never linked to and silently violate FR-026's 1:1 contract.
     ...(metaConnection?.connected ? [
       { key: 'meta-divider', el: <div key="meta-divider" className="border-t border-slate-100 my-1 mx-3" data-sidebar-divider /> },
-      // BUG A — for a team member the "Select ad account for this workspace"
-      // prompt is a dead end: `linkMetaAccountToWorkspace` refuses them
-      // unconditionally. Render nothing in its place rather than an entry
-      // that always errors. The member still sees the Meta connection state
-      // and Disconnect below; only the owner-only path is withheld.
-      ...(activeWorkspaceNeedsMetaAccount ? (isTeamMember ? [] : [
+      // Phase 967 (FR-017, FR-018, T085) — team members may now link
+      // ad accounts and select Pages on the owner's workspaces. The
+      // server-side `linkMetaAccountToWorkspace` is owner-scoped via
+      // `resolveMetaScope` (Phase 5) and no longer refuses team
+      // members (Phase 6 dropped the `assertNotTeamMember` guard). The
+      // UI surfaces are open to any signed-in user with workspace
+      // access. The destructive workspace actions (create / delete /
+      // restore) remain owner-only via the pre-existing
+      // `isTeamMember` guards on those specific MenuItem blocks below.
+      ...(activeWorkspaceNeedsMetaAccount ? [
         {
           key: 'meta-pick-for-workspace',
           el: (
@@ -1527,18 +1541,17 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
             </button>
           ),
         },
-      ]) : [
+      ] : [
         { key: 'meta-sync', el: <MenuItem key="meta-sync" icon={metaSyncing ? 'fa-arrows-rotate fa-spin' : 'fa-arrows-rotate'} label={t('topbar.menu_meta_sync')} onClick={props.onSyncMeta} /> },
-        // BUG A — "Change Account" retargets the workspace's ad-account
-        // pointer through `linkMetaAccountToWorkspace`, which the server
-        // refuses for team members. Hidden rather than shown-and-failing.
-        ...(isTeamMember ? [] : [
-          { key: 'meta-change-account', el: <MenuItem key="meta-change-account" icon="fa-repeat" label={t('topbar.menu_meta_change_account')} onClick={props.onChangeMetaAccount} /> },
-        ]),
+        // Phase 967 (FR-017, T085) — team members may change the
+        // workspace's ad account (the action is owner-scoped via
+        // `resolveMetaScope`). Render the entry for everyone.
+        { key: 'meta-change-account', el: <MenuItem key="meta-change-account" icon="fa-repeat" label={t('topbar.menu_meta_change_account')} onClick={props.onChangeMetaAccount} /> },
         // Bug 8 — "Change Page" entry. Only renders when the user has
         // any Pages to choose from — without this gate the menu would
         // expose a dead link. Page picker state already exists; this is
-        // purely a trigger.
+        // purely a trigger. Phase 4 made the picker workspace-scoped
+        // (FR-006) so the entry works for team members too.
         ...((metaConnection.pages ?? []).length > 0 ? [
           { key: 'meta-change-page', el: <MenuItem key="meta-change-page" icon="fa-flag" label={t('topbar.menu_meta_change_page')} onClick={props.onChangeMetaPage} /> },
         ] : []),
@@ -3737,10 +3750,17 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
   // --- RENDER GATES (after all hooks) ---
 
   // ─── META: Load connection status on login ─────────────────────
+  // Phase 967 (T051 / C6) — request the workspace-aware Page fields
+  // when a workspace is active so the picker's `currentSelectedId`
+  // and any other UI showing the active Page reflect the workspace's
+  // own record (FR-006), not the account-global legacy value.
   useEffect(() => {
     if (!user) return;
-    metaService.getConnection().then(conn => setMetaConnection(conn)).catch(() => { });
-  }, [user]);
+    const wsId = canUseWorkspaces ? activeWorkspaceId : null;
+    metaService.getConnection({ workspaceId: wsId })
+      .then(conn => setMetaConnection(conn))
+      .catch(() => { });
+  }, [user, canUseWorkspaces, activeWorkspaceId]);
 
   // Phase 14 batch 01 — UI wiring. Refresh helper used after the OAuth
   // popup closes (and on demand) so the menu reflects the latest state.
@@ -3748,7 +3768,9 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
   // value instead of issuing a second `getConnection` round-trip.
   const refreshMetaConnection = useCallback(async (): Promise<MetaConnection | null> => {
     try {
-      const conn = await metaService.getConnection();
+      const conn = await metaService.getConnection(
+        { workspaceId: canUseWorkspaces ? activeWorkspaceId : null },
+      );
       setMetaConnection(conn);
       return conn;
     } catch {
@@ -3782,13 +3804,26 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     if (!options.skipPicker) setMetaPagePickerSelecting(true);
     setMetaPagePickerError(null);
     try {
-      const ok = await metaService.selectPage(pageId, pageName);
+      // Phase 967 (T052) — workspace-scoped Page selection. Send the
+      // active workspace id so the backend records the Page on the
+      // right workspace; omit it on non-workspace plans so the
+      // server resolves the account default (FR-012b).
+      const ok = await metaService.selectPage(
+        pageId,
+        pageName,
+        { workspaceId: canUseWorkspaces ? activeWorkspaceId : null },
+      );
       if (!ok) throw new Error(t('meta.page_save_failed_throw'));
-      setMetaConnection(prev => prev ? {
-        ...prev,
-        selectedPageId: pageId,
-        selectedPageName: pageName,
-      } : prev);
+      // T055 — stop writing global Page state. The workspace record
+      // now holds the Page; the next `getMetaConnection(workspaceId)`
+      // call (T051 / C6) returns the workspace-aware values, and the
+      // picker's `currentSelectedId` is sourced from there.
+      // Refetch the connection so the local cache reflects the new
+      // workspace-scoped Page without keeping a global mirror.
+      const refreshed = await metaService.getConnection(
+        { workspaceId: canUseWorkspaces ? activeWorkspaceId : null },
+      );
+      setMetaConnection(refreshed);
       if (pageId) {
         showToast(t('meta.page_selected_toast'), 'success');
         setShowMetaPagePicker(false);
@@ -3804,7 +3839,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     } finally {
       if (!options.skipPicker) setMetaPagePickerSelecting(false);
     }
-  }, [t, showToast]);
+  }, [t, showToast, canUseWorkspaces, activeWorkspaceId]);
 
   const closeMetaPagePicker = useCallback(() => {
     if (metaPagePickerSelecting) return;
@@ -4020,10 +4055,15 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
   // Phase 14 batch 01 — UI wiring. Disconnects the current Meta session and
   // clears local state. The account-level data (perf, baselines, etc.) is
   // retained server-side per the lifecycle contract.
+  //
+  // Phase 967 (FR-020a, T074) — the disconnect removes Meta access
+  // for the WHOLE account (every workspace) at once, not just the
+  // current user's view. State the scope in the confirmation so the
+  // destructive intent is explicit. Paired en/ar string per
+  // FR-028a / SC-012 — see `meta.disconnect_scope_warning` in
+  // `src/i18n.tsx`.
   const handleDisconnectMeta = useCallback(async () => {
-    if (!window.confirm(lang === 'ar'
-      ? 'هل تريد فك الربط مع ميتا؟ سيتم حذف بيانات الاتصال فقط.'
-      : 'Disconnect Meta Ads? This removes the connection only.')) return;
+    if (!window.confirm(t('meta.disconnect_scope_warning'))) return;
     try {
       await metaService.disconnect();
       setMetaConnection({ connected: false, adAccounts: [], selectedAccountId: null, pages: [], selectedPageId: null, selectedPageName: null, connectedAt: null, lastSyncAt: null, status: '', tokenExpiring: false });
@@ -4031,7 +4071,7 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     } catch {
       showToast(lang === 'ar' ? 'تعذّر فك الربط' : 'Could not disconnect', 'error');
     }
-  }, [lang, showToast]);
+  }, [lang, showToast, t]);
 
   // Phase 14 batch 01 — UI wiring. Triggers a Meta performance sync for the
   // currently active workspace.
@@ -7869,6 +7909,31 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
   };
 
   // ═══ SHARED HELPERS: Deployment metadata + Design favorite ═══
+
+  // Phase 967 (T042) — map a failed publish's structured reason to the
+  // paired en/ar i18n key (FR-028a). Falls back to the raw backend
+  // message when the reason is unknown — that string is the
+  // authoritative English text from the server and stays readable when
+  // no localisation is registered.
+  const metaPublishFailureMessage = (result: {
+    message: string;
+    reason?: string;
+    workspaceName?: string | null;
+  }): string => {
+    switch (result.reason) {
+      case "workspace_no_ad_account":
+        // FR-015 — names the workspace and tells the user what to do.
+        return t("meta.workspace_no_ad_account", {
+          name: result.workspaceName ?? "",
+        });
+      case "no_workspace_resolved":
+        // FR-012a — no workspace could be determined for this publish.
+        return t("meta.no_workspace_resolved");
+      default:
+        return result.message;
+    }
+  };
+
   const buildDeploymentMeta = (extra?: Record<string, any>) => {
     const modes = (inputs as any)?.offerCreativeMode || ['standard_hero'];
     const spec = inputs ? resolveCreativeSpec({ selectedModes: modes, hookAngle: inputs.coldHookAngle }) : null;
@@ -9946,7 +10011,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                             try {
                                               const result = await metaService.pushCreative(item.url!, `${inputs?.productName || 'Ad'}_H${item.hookKey}_C${item.conceptIndex}_${(item.ratio || '1:1').replace(':', 'x')}`, buildDeploymentMeta({ ratio: item.ratio }));
                                               if (result.success) showToast(result.message || 'Pushed to Meta!', 'success');
-                                              else showToast(result.message || 'Push failed', 'error');
+                                              else showToast(metaPublishFailureMessage(result) || 'Push failed', 'error');
                                             } catch { showToast('Push to Meta failed', 'error'); }
                                             setMetaPushing(false);
                                           }}
@@ -10145,7 +10210,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                               } catch (e) { console.warn('Linkage save failed:', e); }
                                             }
                                           }
-                                          else failureMsg = result.message;
+                                          else failureMsg = metaPublishFailureMessage(result);
                                         } catch (e: any) { failureMsg = e?.message || 'Unknown error'; }
                                         if (i < doneItems.length - 1) await new Promise(r => setTimeout(r, 500));
                                       }
@@ -10217,7 +10282,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         <div key={idx} className="shrink-0" style={{ width: currentAspectRatio === '9:16' ? '120px' : '160px' }}>
                           <div onClick={() => setLightboxIndex(idx)} className={`relative rounded-xl overflow-hidden border bg-slate-900 group cursor-pointer ${currentAspectRatio === '9:16' ? 'aspect-[9/16]' : currentAspectRatio === '4:3' ? 'aspect-[4/3]' : 'aspect-square'} ${slide.status === 'done' ? 'border-emerald-500/30' : 'border-slate-800/60'}`}>
                             {slide.status === 'done' && slide.imageUrl && isRenderableImageUrl(slide.imageUrl) ? (
-                              <><img src={slide.imageUrl} className="w-full h-full object-cover cursor-grab active:cursor-grabbing" draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/uri-list', slide.imageUrl!); e.dataTransfer.setData('text/plain', slide.imageUrl!); e.dataTransfer.setData('text/html', `<img src="${slide.imageUrl}" />`); }} /><div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100 pointer-events-none"><div className="flex gap-1 pointer-events-auto" onClick={(e) => e.stopPropagation()}><button onClick={() => { pushMockup(slide.imageUrl!, currentAspectRatio); setBuildPlan(slide.buildPlan); setStudioTweak(''); setEditTarget({ source: 'carousel', index: idx, imageUrl: slide.imageUrl!, label: `Slide ${slide.index}` }); showToast(`Editing Slide ${slide.index} — changes will update this slide`, 'info'); }} className="px-2 py-1 bg-violet-600 text-white rounded text-[7px] font-bold" title="Edit this slide"><i className="fa-solid fa-pen-to-square"></i></button><button onClick={async () => { const url = await applyTrialWatermark(slide.imageUrl!); await downloadImage(url, `slide_${slide.index}.png`); }} className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold"><i className="fa-solid fa-download"></i></button><button onClick={() => handleCarouselSlideRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[7px] font-bold"><i className="fa-solid fa-rotate-right"></i></button>{metaConnection?.connected && (<button onClick={async () => { setMetaPushing(true); showToast('Pushing slide to Meta...', 'info'); try { const result = await metaService.pushCreative(slide.imageUrl!, `${inputs?.productName || 'Ad'}_carousel_slide_${slide.index}`, buildDeploymentMeta({ mode: 'carousel', ratio: currentAspectRatio })); if (result.success) showToast(result.message || 'Slide pushed!', 'success'); else showToast(result.message || 'Push failed', 'error'); } catch { showToast('Push to Meta failed', 'error'); } setMetaPushing(false); }} className="px-2 py-1 bg-blue-500/90 text-white rounded text-[7px] font-bold"><i className="fa-brands fa-meta"></i></button>)}<button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(slide.imageUrl!, currentAspectRatio, '', '', slide.buildPlan); }} className="px-2 py-1 bg-amber-500/90 text-white rounded text-[7px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button></div></div></>
+                              <><img src={slide.imageUrl} className="w-full h-full object-cover cursor-grab active:cursor-grabbing" draggable={true} onDragStart={(e) => { e.dataTransfer.setData('text/uri-list', slide.imageUrl!); e.dataTransfer.setData('text/plain', slide.imageUrl!); e.dataTransfer.setData('text/html', `<img src="${slide.imageUrl}" />`); }} /><div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100 pointer-events-none"><div className="flex gap-1 pointer-events-auto" onClick={(e) => e.stopPropagation()}><button onClick={() => { pushMockup(slide.imageUrl!, currentAspectRatio); setBuildPlan(slide.buildPlan); setStudioTweak(''); setEditTarget({ source: 'carousel', index: idx, imageUrl: slide.imageUrl!, label: `Slide ${slide.index}` }); showToast(`Editing Slide ${slide.index} — changes will update this slide`, 'info'); }} className="px-2 py-1 bg-violet-600 text-white rounded text-[7px] font-bold" title="Edit this slide"><i className="fa-solid fa-pen-to-square"></i></button><button onClick={async () => { const url = await applyTrialWatermark(slide.imageUrl!); await downloadImage(url, `slide_${slide.index}.png`); }} className="px-2 py-1 bg-white/90 text-slate-900 rounded text-[7px] font-bold"><i className="fa-solid fa-download"></i></button><button onClick={() => handleCarouselSlideRetry(idx)} className="px-2 py-1 bg-blue-600 text-white rounded text-[7px] font-bold"><i className="fa-solid fa-rotate-right"></i></button>{metaConnection?.connected && (<button onClick={async () => { setMetaPushing(true); showToast('Pushing slide to Meta...', 'info'); try { const result = await metaService.pushCreative(slide.imageUrl!, `${inputs?.productName || 'Ad'}_carousel_slide_${slide.index}`, buildDeploymentMeta({ mode: 'carousel', ratio: currentAspectRatio })); if (result.success) showToast(result.message || 'Slide pushed!', 'success'); else showToast(metaPublishFailureMessage(result) || 'Push failed', 'error'); } catch { showToast('Push to Meta failed', 'error'); } setMetaPushing(false); }} className="px-2 py-1 bg-blue-500/90 text-white rounded text-[7px] font-bold"><i className="fa-brands fa-meta"></i></button>)}<button onClick={(e) => { e.stopPropagation(); saveDesignFavorite(slide.imageUrl!, currentAspectRatio, '', '', slide.buildPlan); }} className="px-2 py-1 bg-amber-500/90 text-white rounded text-[7px] font-bold" title="Favorite"><i className="fa-solid fa-star"></i></button></div></div></>
                             ) : slide.status === 'rendering' ? (
                               <div className="w-full h-full flex flex-col items-center justify-center gap-1"><div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"></div><span className="text-[7px] text-blue-400 font-bold">Slide {slide.index}</span></div>
                             ) : (slide.status === 'error' || (slide.status === 'done' && !isRenderableImageUrl(slide.imageUrl))) ? (
@@ -10247,7 +10312,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                               } catch { /* individual slide failure */ }
                             }
                             if (successCount > 0) showToast(`${successCount}/${doneSlides.length} slides pushed to Meta!`, 'success');
-                            else showToast('Push to Meta failed', 'error');
+                            else showToast(t('meta.no_workspace_resolved'), 'error');
                             setMetaPushing(false);
                           }}
                             disabled={metaPushing}
@@ -10325,7 +10390,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                       } catch (le) { console.warn('Linkage save failed:', le); }
                                     }
                                   }
-                                  else showToast(result.message || 'Push failed', 'error');
+                                  else showToast(metaPublishFailureMessage(result) || 'Push failed', 'error');
                                 } catch { showToast('Push to Meta failed', 'error'); }
                                 setMetaPushing(false);
                               }}
@@ -12831,7 +12896,16 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         <MetaPagePickerModal
           open={showMetaPagePicker}
           pages={metaConnection?.pages ?? []}
-          currentSelectedId={metaConnection?.selectedPageId ?? null}
+          // T054 — read the active Page from the workspace when one is
+          // resolved, falling back to the legacy global only when the
+          // workspace-aware query is not in play. The picker now shows
+          // the Page the workspace actually targets (FR-006), not the
+          // account-global legacy value.
+          currentSelectedId={
+            metaConnection?.activePageId
+              ?? metaConnection?.selectedPageId
+              ?? null
+          }
           selecting={metaPagePickerSelecting}
           errorMessage={metaPagePickerError}
           isDarkMode={isDarkMode}

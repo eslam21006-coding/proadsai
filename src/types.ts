@@ -416,6 +416,15 @@ export interface Workspace {
   deletedAt?: number | null;
   pendingReassign?: boolean;
   pendingRestore?: boolean;
+  // Phase 967 — per-workspace Facebook Page. New in this phase; absent on
+  // legacy records. FR-005 records the field, FR-007 makes the legacy
+  // account-level Page the fallback for `NEVER_SET` workspaces, and
+  // FR-011a together with `metaPageClearedAt` distinguishes "never
+  // chosen" from "deliberately cleared" so a cleared Page cannot
+  // silently inherit the account-level fallback.
+  metaPageId?: string | null;
+  metaPageName?: string | null;
+  metaPageClearedAt?: number | null;
 }
 
 export interface WorkspaceAccessAuditEntry {

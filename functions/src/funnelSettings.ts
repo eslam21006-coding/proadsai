@@ -44,6 +44,10 @@ import {
     LOW_VALUE_THRESHOLD,
 } from "./cpaEconomics.js";
 import { getDb } from "./firestoreClient.js";
+import {
+  resolveMetaScope,
+  assertWorkspaceAllowed,
+} from "./workspaces/metaCallerScope.js";
 
 // Review cadence — 30 days. Spec FR-006.
 export const REVIEW_CADENCE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -238,6 +242,10 @@ function buildFunnelInputs(req: SaveFunnelSettingsRequest): FunnelInputs {
 }
 
 // ─── saveFunnelSettings ──────────────────────────────────────
+//
+// Phase 967 (FR-001, contract C10) — owner-scoped write. All
+// workspace settings live under the resolved owner; a team member
+// acts on the owner's account (FR-004a all-access policy).
 
 interface SaveFunnelSettingsRequest {
     workspaceId: string;
@@ -260,8 +268,8 @@ interface SaveFunnelSettingsRequest {
 export const saveFunnelSettings = onCall(
     { region: "europe-west1", cors: true },
     async (request) => {
-        if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-        const callerUid = request.auth.uid;
+        // Universal preamble (FR-001, FR-003).
+        const scope = await resolveMetaScope(request);
         const req = request.data as SaveFunnelSettingsRequest;
 
         if (!req || typeof req.workspaceId !== "string" || typeof req.accountId !== "string") {
@@ -271,8 +279,13 @@ export const saveFunnelSettings = onCall(
             throw new HttpsError("invalid-argument", "clientNowMs is required (number).");
         }
 
+        // FR-004 / FR-021 — workspace authorisation first, before any
+        // side effect. `assertWorkspaceAllowed` is a no-op for verified
+        // team members (all-access) and for owners.
+        assertWorkspaceAllowed(scope, req.workspaceId);
+
         // 1:1 enforcement — workspace's connected Meta account must match.
-        const connAccountId = await loadMetaConnectionAccountId(callerUid, req.workspaceId);
+        const connAccountId = await loadMetaConnectionAccountId(scope.ownerUid, req.workspaceId);
         if (!connAccountId) {
             throw new HttpsError("permission-denied", "No Meta account connected for this workspace.");
         }
@@ -324,7 +337,7 @@ export const saveFunnelSettings = onCall(
         // doc inside the transaction and preserve `advisoriesDismissed` +
         // `createdAt` from that snapshot.
         const settingsRef = getDb()
-            .collection("users").doc(callerUid)
+            .collection("users").doc(scope.ownerUid)
             .collection("workspaces").doc(req.workspaceId)
             .collection("adAccounts").doc(req.accountId)
             .collection("settings").doc("current");
@@ -390,21 +403,24 @@ interface GetFunnelSettingsRequest {
 export const getFunnelSettings = onCall(
     { region: "europe-west1", cors: true },
     async (request) => {
-        if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-        const callerUid = request.auth.uid;
+        // Universal preamble (FR-001, FR-003).
+        const scope = await resolveMetaScope(request);
         const req = request.data as GetFunnelSettingsRequest;
 
         if (!req || typeof req.workspaceId !== "string" || typeof req.accountId !== "string") {
             throw new HttpsError("invalid-argument", "workspaceId and accountId are required.");
         }
 
-        const connAccountId = await loadMetaConnectionAccountId(callerUid, req.workspaceId);
+        // FR-004 / FR-021 — workspace authorisation first.
+        assertWorkspaceAllowed(scope, req.workspaceId);
+
+        const connAccountId = await loadMetaConnectionAccountId(scope.ownerUid, req.workspaceId);
         if (connAccountId && connAccountId !== req.accountId) {
             throw new HttpsError("permission-denied", "accountId does not match the workspace's connected Meta account.");
         }
 
         const snap = await getDb()
-            .collection("users").doc(callerUid)
+            .collection("users").doc(scope.ownerUid)
             .collection("workspaces").doc(req.workspaceId)
             .collection("adAccounts").doc(req.accountId)
             .collection("settings").doc("current")
@@ -440,8 +456,8 @@ interface DismissAdvisoryRequest {
 export const dismissAdvisory = onCall(
     { region: "europe-west1", cors: true },
     async (request) => {
-        if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-        const callerUid = request.auth.uid;
+        // Universal preamble (FR-001, FR-003).
+        const scope = await resolveMetaScope(request);
         const req = request.data as DismissAdvisoryRequest;
 
         if (!req || typeof req.workspaceId !== "string" || typeof req.accountId !== "string") {
@@ -454,13 +470,16 @@ export const dismissAdvisory = onCall(
             throw new HttpsError("invalid-argument", "dismissed must be a boolean.");
         }
 
-        const connAccountId = await loadMetaConnectionAccountId(callerUid, req.workspaceId);
+        // FR-004 / FR-021 — workspace authorisation first.
+        assertWorkspaceAllowed(scope, req.workspaceId);
+
+        const connAccountId = await loadMetaConnectionAccountId(scope.ownerUid, req.workspaceId);
         if (!connAccountId || connAccountId !== req.accountId) {
             throw new HttpsError("permission-denied", "accountId does not match the workspace's connected Meta account.");
         }
 
         const settingsRef = getDb()
-            .collection("users").doc(callerUid)
+            .collection("users").doc(scope.ownerUid)
             .collection("workspaces").doc(req.workspaceId)
             .collection("adAccounts").doc(req.accountId)
             .collection("settings").doc("current");

@@ -15,6 +15,10 @@ import { runSyncForAccount, type SyncResult } from "./shared.js";
 import { loadStoredConnection } from "../metaConnection.js";
 import { SYNC_DISPATCH_REGION } from "./dispatcher.js";
 import { metaAppSecret } from "../secrets.js";
+import {
+  resolveMetaScope,
+  assertWorkspaceAllowed,
+} from "../workspaces/metaCallerScope.js";
 
 const COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 
@@ -35,21 +39,26 @@ export const triggerMetaSync = onCall(
         secrets: [metaAppSecret],
     },
     async (request) => {
-        if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-        const uid = request.auth.uid;
+        // Universal preamble (FR-001, FR-003). All paths use
+        // `scope.ownerUid`; a team member's manual sync writes under
+        // the owner's account.
+        const scope = await resolveMetaScope(request);
         const req = request.data as TriggerMetaSyncRequest;
         if (!req || typeof req.workspaceId !== "string") {
             throw new HttpsError("invalid-argument", "workspaceId is required.");
         }
 
-        const conn = await loadStoredConnection(uid, req.workspaceId);
+        // FR-004 / FR-021 — workspace authorisation first.
+        assertWorkspaceAllowed(scope, req.workspaceId);
+
+        const conn = await loadStoredConnection(scope.ownerUid, req.workspaceId);
         if (!conn || !conn.accountId) {
             throw new HttpsError("failed-precondition", "No Meta account connected for this workspace.");
         }
 
         // 1-hour cooldown — measured against lastMetaSyncAt on the connection
         // doc (loadStoredConnection doesn't surface it, so re-fetch below).
-        const lastSyncAt = await readLastSyncAt(uid, req.workspaceId);
+        const lastSyncAt = await readLastSyncAt(scope.ownerUid, req.workspaceId);
         if (typeof lastSyncAt === "number") {
             const elapsed = Date.now() - lastSyncAt;
             if (elapsed < COOLDOWN_MS) {
@@ -62,7 +71,7 @@ export const triggerMetaSync = onCall(
         }
 
         const result: SyncResult = await runSyncForAccount({
-            userId: uid,
+            userId: scope.ownerUid,
             workspaceId: req.workspaceId,
             accountId: conn.accountId,
             trigger: "manual",
@@ -76,6 +85,7 @@ export const triggerMetaSync = onCall(
             );
         }
 
+        console.log(`🔄 Manual sync (owner=${scope.ownerUid}, caller=${scope.callerUid}, workspace=${req.workspaceId})`);
         return {
             ok: result.ok,
             status: result.status,

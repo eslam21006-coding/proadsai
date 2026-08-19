@@ -31,6 +31,10 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getDb } from "./firestoreClient.js";
 import {
+    resolveMetaScope,
+    assertWorkspaceAllowed,
+} from "./workspaces/metaCallerScope.js";
+import {
     parseEnvelope,
 } from "./tokenCrypto.js";
 
@@ -98,6 +102,14 @@ async function findWorkspaceLinkedToAccount(uid: string, accountId: string): Pro
 }
 
 // ─── connectMetaAccount ───────────────────────────────────────
+//
+// Phase 967 (FR-020, contract C11) — owner-scoped connection. The
+// account-level OAuth credential lives at `metaConnections/{ownerUid}`,
+// even when a team member authorised (Phase 5 T070-T072 makes the
+// OAuth callback resolve to the owner). A team member invoking
+// `connectMetaAccount` therefore reads the OWNER's connection record,
+// not their own — exactly the FR-001 path. No team-member block
+// exists anywhere in this flow.
 
 interface ConnectMetaAccountRequest {
     workspaceId: string;
@@ -108,8 +120,10 @@ interface ConnectMetaAccountRequest {
 export const connectMetaAccount = onCall(
     { region: "europe-west1", cors: true },
     async (request) => {
-        if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-        const uid = request.auth.uid;
+        // Universal preamble (FR-001, FR-003). All workspace + connection
+        // paths use `scope.ownerUid`; the caller (a team member) is
+        // recorded in the audit log only.
+        const scope = await resolveMetaScope(request);
         const req = request.data as ConnectMetaAccountRequest;
         if (!req || typeof req.workspaceId !== "string" || typeof req.accountId !== "string") {
             throw new HttpsError("invalid-argument", "workspaceId and accountId are required.");
@@ -118,9 +132,12 @@ export const connectMetaAccount = onCall(
             throw new HttpsError("invalid-argument", "workspaceId and accountId must be non-empty.");
         }
 
+        // FR-004 / FR-021 — workspace authorisation first, before any side effect.
+        assertWorkspaceAllowed(scope, req.workspaceId);
+
         // Verify the workspace exists.
         const wsSnap = await getDb()
-            .collection("users").doc(uid)
+            .collection("users").doc(scope.ownerUid)
             .collection("workspaces").doc(req.workspaceId)
             .get();
         if (!wsSnap.exists) {
@@ -130,7 +147,7 @@ export const connectMetaAccount = onCall(
         // Verify the workspace is currently linked to the same account
         // (this is the path `linkMetaAccountToWorkspace` takes). If not,
         // we still proceed — the connect call also acts as a bind.
-        const wsLink = await loadWorkspaceLink(uid, req.workspaceId);
+        const wsLink = await loadWorkspaceLink(scope.ownerUid, req.workspaceId);
 
         // FIX 6 (Claude audit, FR-026 direction (a)): prevent the user
         // from silently replacing workspace W's account A with account B.
@@ -148,7 +165,7 @@ export const connectMetaAccount = onCall(
         // workspaces owned by the same user.
         if (!wsLink.accountId || wsLink.accountId !== req.accountId) {
             // We're about to (re)bind. Check no OTHER workspace holds it.
-            const otherWs = await findWorkspaceLinkedToAccount(uid, req.accountId);
+            const otherWs = await findWorkspaceLinkedToAccount(scope.ownerUid, req.accountId);
             if (otherWs && otherWs !== req.workspaceId) {
                 throw new HttpsError(
                     "failed-precondition",
@@ -157,30 +174,20 @@ export const connectMetaAccount = onCall(
             }
         }
 
-        // Read the long-lived token from the user-level OAuth doc.
-        const userConn = await loadUserLevelConnection(uid);
+        // Read the long-lived token from the OWNER's user-level OAuth
+        // doc. The OAuth callback writes to `metaConnections/{ownerUid}`
+        // (Phase 5 T070-T072) — a team member's authorisation therefore
+        // lands on the owner's record, and `connectMetaAccount` reads
+        // from the same place. Reading `metaConnections/{callerUid}`
+        // would be empty for a team member and reject every connection
+        // attempt (the bug this phase fixes).
+        const userConn = await loadUserLevelConnection(scope.ownerUid);
         if (!userConn || !userConn.encryptedToken) {
             throw new HttpsError(
                 "failed-precondition",
                 "Connect your Meta account via OAuth before linking it to a workspace.",
             );
         }
-        // The user-level doc stores the token encrypted with the legacy
-        // AES-256-GCM helper. For Phase 14 we re-encrypt via KMS so the
-        // workspace-scoped private doc carries a self-contained ciphertext.
-        // The actual re-encryption of the plaintext requires the legacy
-        // helper to decrypt first — but that helper lives in index.ts.
-        // To keep metaConnection.ts self-contained, we accept the legacy
-        // ciphertext and store it wrapped in a v=1 envelope whose
-        // `ciphertext` field carries the legacy payload (base64). The
-        // worker uses `loadEncryptedTokenForSync()` which understands the
-        // legacy format directly.
-        //
-        // The user-passed token string would be a re-encryption path that
-        // requires the legacy decrypt + KMS encrypt round-trip. For now,
-        // the worker reads the user-level doc (also) and prefers the most
-        // recent of (workspace-private, user-level) — see metaSync/shared.ts.
-        // This avoids coupling the connection flow to the legacy AES path.
 
         // Write the workspace-scoped private doc. `encryptedToken` here
         // carries the legacy ciphertext (which the worker can still
@@ -188,7 +195,7 @@ export const connectMetaAccount = onCall(
         // switch `encryptedToken` to a true KMS envelope.
         const accountName = req.accountName ?? wsLink.accountName ?? "";
         const now = Date.now();
-        const privateRef = privateConnectionRef(uid, req.workspaceId);
+        const privateRef = privateConnectionRef(scope.ownerUid, req.workspaceId);
         const privatePayload = {
             metaConnected: true,
             accountId: req.accountId,
@@ -218,6 +225,7 @@ export const connectMetaAccount = onCall(
         batch.update(wsSnap.ref, workspacePayload);
         await batch.commit();
 
+        console.log(`🔗 Meta account linked to workspace (owner=${scope.ownerUid}, caller=${scope.callerUid}, workspace=${req.workspaceId}, account=${req.accountId})`);
         return {
             ok: true as const,
             metaConnected: true,
@@ -227,6 +235,12 @@ export const connectMetaAccount = onCall(
 );
 
 // ─── disconnectMetaAccount ────────────────────────────────────
+//
+// Phase 967 (FR-001) — owner-scoped workspace disconnect. The OAuth
+// credential stays under `metaConnections/{ownerUid}` (the connect
+// path lands it there); this callable clears the workspace-private
+// mirror and the workspace-link. The actor is recorded in the
+// console line below for audit.
 
 interface DisconnectMetaAccountRequest {
     workspaceId: string;
@@ -235,14 +249,18 @@ interface DisconnectMetaAccountRequest {
 export const disconnectMetaAccount = onCall(
     { region: "europe-west1", cors: true },
     async (request) => {
-        if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-        const uid = request.auth.uid;
+        // Universal preamble (FR-001, FR-003).
+        const scope = await resolveMetaScope(request);
         const req = request.data as DisconnectMetaAccountRequest;
         if (!req || typeof req.workspaceId !== "string") {
             throw new HttpsError("invalid-argument", "workspaceId is required.");
         }
+
+        // FR-004 / FR-021 — workspace authorisation first.
+        assertWorkspaceAllowed(scope, req.workspaceId);
+
         const now = Date.now();
-        const privateRef = privateConnectionRef(uid, req.workspaceId);
+        const privateRef = privateConnectionRef(scope.ownerUid, req.workspaceId);
 
         // Delete the token and mark disconnected, but RETAIN performance
         // data and aggregates (Edge Case 15). The adPerformance /
@@ -259,7 +277,7 @@ export const disconnectMetaAccount = onCall(
 
         // Clear the workspace-doc link too (mirrors `unlinkMetaAccountFromWorkspace`).
         const wsRef = getDb()
-            .collection("users").doc(uid)
+            .collection("users").doc(scope.ownerUid)
             .collection("workspaces").doc(req.workspaceId);
         await wsRef.update({
             metaAdAccountId: null,
@@ -269,7 +287,8 @@ export const disconnectMetaAccount = onCall(
             // Workspace may not exist — non-fatal here.
         });
 
-        return { ok: true as const };
+        console.log(`🔌 Workspace Meta link disconnected (owner=${scope.ownerUid}, caller=${scope.callerUid}, workspace=${req.workspaceId})`);
+        return { ok: true as const, disconnectedByUid: scope.callerUid };
     },
 );
 

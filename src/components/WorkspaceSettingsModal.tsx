@@ -42,6 +42,7 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
   const [selectedMetaAccount, setSelectedMetaAccount] = useState<string>(workspace?.metaAdAccountId || '');
   const [saving, setSaving] = useState(false);
   const [uiError, setUiError] = useState<string | null>(null);
+  const [pageClearedNotice, setPageClearedNotice] = useState(false);
   const [linkedMeta, setLinkedMeta] = useState<{
     id?: string;
     name?: string;
@@ -53,15 +54,17 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
   });
 
   const isScale = plan === 'scale';
-  // Round-9 (CodeRabbit re-review): the Meta link/unlink block is a
-  // destructive workspace-level action (it retargets the workspace's
-  // Meta ad-account pointer). Team members must not be able to invoke
-  // it. The server-side assertNotTeamMember guard installed in
-  // linkMetaAccountToWorkspace / unlinkMetaAccountFromWorkspace
-  // refuses those calls, but the UI must not present the surface at
-  // all — otherwise a team member who hits Link still sees a misleading
-  // "Failed to link Meta account" toast instead of a hidden control.
-  const showMetaSection = isEdit && isMetaEligible(plan) && !isTeamMember;
+  // Phase 967 (FR-017, FR-018, T085) — team members may now link
+  // ad accounts and select Pages (the workspace's Meta identity is
+  // the unit, FR-006, and the link/unlink path is owner-scoped via
+  // `resolveMetaScope` after Phase 5). They still cannot create /
+  // delete / restore workspaces (FR-019) — those destructive
+  // workspace-level actions remain owner-only via the existing
+  // `assertNotTeamMember` guard on the create / update / delete /
+  // restore callables, and the modal's create / delete UI stays
+  // hidden behind the pre-existing `isTeamMember` branch further
+  // down. Reverses PR #65's hiding of the entire Meta section.
+  const showMetaSection = isEdit && isMetaEligible(plan);
 
   useEffect(() => {
     if (workspace) {
@@ -185,6 +188,15 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
         name: account?.name || selectedMetaAccount,
         role,
       });
+      // Phase 967 (FR-011b, T084) — when an ad-account change clears a
+      // previously recorded Page, surface the FR-011b notice. Paired
+      // en/ar via the Phase 1 i18n key `meta.page_cleared_notice`.
+      // `pageCleared` is true only when the workspace had a Page
+      // recorded before the link (SET state); NEVER_SET or already-
+      // CLEARED workspaces don't fire the notice. Rendered inline in
+      // the modal so the message survives navigation away from the
+      // workspace switcher.
+      setPageClearedNotice(result.data?.pageCleared === true);
     } catch (err) {
       console.warn('Meta link failed:', err);
       setUiError(t('workspace.settings.meta_link_failed'));
@@ -195,9 +207,12 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
     if (!workspace) return;
     setUiError(null);
     try {
-      await workspaceService.unlinkMetaAccountFromWorkspace(workspace.id);
+      const result = await workspaceService.unlinkMetaAccountFromWorkspace(workspace.id);
       setSelectedMetaAccount('');
       setLinkedMeta({});
+      // Phase 967 (FR-011b, T084) — unlinking also clears the Page;
+      // surface the same notice when a Page was cleared.
+      setPageClearedNotice(result.data?.pageCleared === true);
     } catch (err) {
       console.warn('Meta unlink failed:', err);
       setUiError(t('workspace.settings.meta_unlink_failed'));
@@ -311,6 +326,21 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
 
           {showMetaSection && (
             <div className="border-t border-white/[0.04] pt-4">
+              {/* Phase 967 (FR-011b, T084) — page-cleared notice banner.
+                  Renders inline so the message survives navigation away
+                  from the workspace switcher; cleared by a fresh link /
+                  unlink (set to false on a new response). Paired en/ar
+                  via the Phase 1 i18n key `meta.page_cleared_notice`. */}
+              {pageClearedNotice && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  data-testid="workspace-page-cleared-notice"
+                  className="mb-3 px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px]"
+                >
+                  {t('meta.page_cleared_notice')}
+                </div>
+              )}
               <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-2">{t('workspace.settings.meta_section_label')}</label>
               {linkedMeta.id ? (
                 <div className="flex items-center gap-3">

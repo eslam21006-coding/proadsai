@@ -4,6 +4,47 @@ import * as admin from "firebase-admin";
 import { HttpsError } from "firebase-functions/v2/https";
 
 /**
+ * Canonical shape of a workspace document under
+ * `users/{ownerUid}/workspaces/{workspaceId}`. Mirrors the field table in
+ * `specs/967-meta-workspace-isolation/data-model.md` §1 and is the only
+ * authoritative list — anything else written to that path is treated as a
+ * defect. Phase 967 (workspace-aware Meta integration) adds the three Page
+ * fields; the rest pre-existed.
+ *
+ * Three fields are NEW in phase 967 and absent from legacy documents:
+ *   - `metaPageId`            — per-workspace Facebook Page id (FR-005)
+ *   - `metaPageName`          — per-workspace Facebook Page name (FR-005)
+ *   - `metaPageClearedAt`     — set when an ad-account change clears the
+ *                               Page, so a cleared Page cannot silently
+ *                               inherit the account-level fallback
+ *                               (FR-011a). Distinguishes NEVER_SET from
+ *                               CLEARED.
+ *
+ * `WorkspaceShape` is a *write* shape — `createdAt` / `deletedAt` /
+ * `pendingReassign` / `pendingRestore` are server-set only and are never
+ * accepted from a caller.
+ */
+export interface WorkspaceShape {
+  name: string;
+  brandName: string;
+  brandUrl?: string | null;
+  brandColorPrimary?: string | null;
+  brandColorSecondary?: string | null;
+  logoUrl?: string | null;
+  isDefault: boolean;
+  createdAt: number;
+  deletedAt: number | null;
+  metaAdAccountId: string | null;
+  metaAdAccountName: string | null;
+  metaRoleAtLinkTime: string | null;
+  metaPageId: string | null;
+  metaPageName: string | null;
+  metaPageClearedAt: number | null;
+  pendingReassign?: boolean;
+  pendingRestore?: boolean;
+}
+
+/**
  * Asserts that the caller's auth context owns the workspace at
  * `users/{auth.uid}/workspaces/{workspaceId}` and returns its Firestore
  * snapshot. Used by write paths that resolve the workspace under the
@@ -109,19 +150,48 @@ export async function assertWorkspaceLimit(uid: string): Promise<void> {
  * concurrent downgrade or concurrent create cannot slip through
  * between a pre-txn entitlement check and the write.
  *
+ * The `isDefault` flag is also decided inside the transaction. The
+ * first workspace on an account — observed by `active.length === 0`
+ * after the same read that drives the limit check — is marked as the
+ * account's default. Any value the caller passed in `newDoc.isDefault`
+ * is overridden with the transaction's verdict; the caller's value is
+ * only a placeholder for the type system.
+ *
+ * Why inside the transaction (FR-026d, quickstart.md "Traps"):
+ * two concurrent creates on a fresh account must NOT both observe zero
+ * active workspaces and both claim the default — the second create's
+ * transaction would see the first's committed doc and produce
+ * `active.length === 1`, so only the first wins. Outside the
+ * transaction, both reads return zero and both writes claim
+ * `isDefault: true`. The transaction is the serialisation point that
+ * makes the decision race-free without needing a separate counter.
+ *
  * @param uid - The user uid that owns the new workspace.
- * @param newDoc - The workspace document fields to persist.
- * @returns The id of the newly created workspace.
+ * @param newDoc - The workspace document fields to persist. The shape
+ *   is validated against `WorkspaceShape` so a missing Page field is
+ *   a TypeScript error, not a runtime gap that reopens the cross-
+ *   client leak the new fields exist to close. `newDoc.isDefault` is
+ *   overwritten with the transaction's verdict — callers may pass
+ *   `false` as a placeholder but it is never trusted.
+ * @returns The id of the newly created workspace and the
+ *   transaction-computed `isDefault` verdict. The verdict is the
+ *   authoritative value; the caller does not need to re-read.
  * @throws {HttpsError} `permission-denied` if the user is not on Scale;
  *   `failed-precondition` if the 10-workspace cap is reached.
  */
 export async function createWorkspaceWithLimit(
   uid: string,
-  newDoc: Record<string, unknown>
-): Promise<string> {
+  newDoc: WorkspaceShape
+): Promise<{ workspaceId: string; isDefault: boolean }> {
   const colRef = admin.firestore().collection(`users/${uid}/workspaces`);
   const userRef = admin.firestore().collection("users").doc(uid);
   const newRef = colRef.doc();
+  // Default-marker decision (FR-026d). The first active workspace on
+  // the account wins. The verdict overrides whatever the caller
+  // passed in newDoc.isDefault — see the doc comment above for why
+  // this must be inside the transaction. T019 + T022 cover this in
+  // the foundational test suite.
+  let isDefault = false;
   await admin.firestore().runTransaction(async (txn) => {
     // All reads first (Firestore txn requirement).
     const userSnap = await txn.get(userRef);
@@ -144,9 +214,15 @@ export async function createWorkspaceWithLimit(
         { reason: "workspace_limit_reached" }
       );
     }
-    txn.create(newRef, newDoc);
+
+    isDefault = active.length === 0;
+    const finalDoc: WorkspaceShape = {
+      ...newDoc,
+      isDefault,
+    };
+    txn.create(newRef, finalDoc);
   });
-  return newRef.id;
+  return { workspaceId: newRef.id, isDefault };
 }
 
 /**
