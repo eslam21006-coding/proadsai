@@ -76,6 +76,17 @@ function bucket(path: string): Map<string, DocData> {
     return stubStore[path];
 }
 
+/**
+ * CR-MAJOR (CodeRabbit review feedback): record every `update()`
+ * payload per doc path so T-09/T-10 can assert the SAME-write contract
+ * (the link/unlink payload must contain both the ad-account change and
+ * the Page-clear fields). The previous stub mutated final state only —
+ * a regression that split the link and the Page clear across two
+ * `update()` calls would still pass.
+ */
+const updateCalls: Array<{ path: string; id: string; patch: DocData }> = [];
+function resetUpdateCalls() { updateCalls.length = 0; }
+
 class StubDocRef {
     constructor(public path: string, public id: string, private store: Map<string, DocData>) {}
     async get() {
@@ -87,8 +98,12 @@ class StubDocRef {
             ref: this,
         };
     }
-    async set(data: DocData) { this.store.set(this.id, data); }
+    async set(data: DocData) {
+        updateCalls.push({ path: `${this.path}/${this.id}`, id: this.id, patch: { __set__: data } });
+        this.store.set(this.id, data);
+    }
     async update(patch: DocData) {
+        updateCalls.push({ path: `${this.path}/${this.id}`, id: this.id, patch });
         const cur = this.store.get(this.id) ?? {};
         const next: DocData = { ...cur };
         for (const [k, v] of Object.entries(patch)) {
@@ -145,6 +160,7 @@ class StubCollection {
 
 function resetStub() {
     for (const k of Object.keys(stubStore)) stubStore[k].clear();
+    resetUpdateCalls();
 }
 
 const stubFirestore = () => ({
@@ -366,6 +382,27 @@ async function main() {
               && ws.metaPageClearedAt <= after,
             "T-09a: metaPageClearedAt stamped in the same write window",
         );
+
+        // CR-MAJOR (CodeRabbit review feedback): assert the SAME-write
+        // contract — exactly ONE workspace-doc update landed, and its
+        // payload contains BOTH the ad-account change AND the Page
+        // clear. A regression that splits them across two `update()`
+        // calls would still leave the final state correct, but would
+        // re-introduce the cross-client leak between the two writes.
+        const wsUpdates = updateCalls.filter(
+            (c) => c.id === "ws-1" && !c.path.includes("private/"),
+        );
+        assert.equal(
+            wsUpdates.length, 1,
+            "T-09a (CR-MAJOR): exactly ONE update to ws-1 (link + Page clear in same write)",
+        );
+        const wsPatch = wsUpdates[0].patch as DocData;
+        assert.ok(
+            "metaAdAccountId" in wsPatch && "metaPageClearedAt" in wsPatch,
+            "T-09a (CR-MAJOR): one update carries BOTH the new ad account AND the Page clear",
+        );
+        assert.equal(wsPatch.metaAdAccountId, "act_WS_A");
+        assert.ok(typeof wsPatch.metaPageClearedAt === "number");
     });
 
     await run("T-09b: link with NEVER_SET Page → no clear, pageCleared=false", async () => {
@@ -452,6 +489,25 @@ async function main() {
               && ws.metaPageClearedAt >= before
               && ws.metaPageClearedAt <= after,
             "T-10: metaPageClearedAt stamped in same write",
+        );
+
+        // CR-MAJOR (CodeRabbit review feedback): same-write contract on
+        // unlink too. Exactly ONE workspace-doc update lands, carrying
+        // BOTH the ad-account field-deletes AND the Page-clear fields.
+        const wsUpdates = updateCalls.filter(
+            (c) => c.id === "ws-1" && !c.path.includes("private/"),
+        );
+        assert.equal(
+            wsUpdates.length, 1,
+            "T-10 (CR-MAJOR): exactly ONE update to ws-1 (unlink + Page clear in same write)",
+        );
+        const wsPatch = wsUpdates[0].patch as DocData;
+        // metaAdAccountId / metaAdAccountName / metaRoleAtLinkTime are
+        // deleted via FieldValue.delete() (a Symbol the stub recognises).
+        assert.ok(
+            "metaPageClearedAt" in wsPatch
+              && typeof wsPatch.metaPageClearedAt === "number",
+            "T-10 (CR-MAJOR): one update carries the Page-clear stamp",
         );
     });
 

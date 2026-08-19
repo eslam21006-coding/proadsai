@@ -318,7 +318,16 @@ function fakeFakeFetchForHappyPath() {
     return fakeFetchForHappyPath();
 }
 
-main().catch((err) => {
-    console.error("metaOAuthCallback.test.ts main() crashed:", err);
-    process.exit(FAILED);
-});
+main()
+    .then(() => {
+        // CR-MAJOR (CodeRabbit review feedback): `run()` catches assertion
+        // failures, but `process.exit()` was only triggered on a
+        // `main()` crash. Without an explicit `summary()` call, a failed
+        // test would leave exit code 0 and CI would pass the file as
+        // green. Call summary() to honour the run() counters.
+        summary();
+    })
+    .catch((err) => {
+        console.error("metaOAuthCallback.test.ts main() crashed:", err);
+        process.exit(FAILED);
+    });

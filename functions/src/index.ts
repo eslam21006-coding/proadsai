@@ -3470,6 +3470,13 @@ export async function getMetaConnectionImpl(
     // names one. We reuse `resolveWorkspacePage` (defined in
     // metaCallerScope.ts) so the same state-machine logic the
     // publish path uses decides the active Page here too.
+    //
+    // CR-MAJOR (CodeRabbit review feedback): the previous code inlined
+    // the SET / CLEARED / NEVER_SET logic, creating a second copy of
+    // the security-relevant rule that the FR-011a legacy-fallback ban
+    // depends on. A change to `resolveWorkspacePage` would have
+    // silently diverged. Delegate to the shared helper so the
+    // CLEARED invariant is centralised in one place.
     const requestedWorkspaceId = requestData?.workspaceId;
     if (requestedWorkspaceId) {
       // Authorisation + active-workspace gate. A verified team
@@ -3481,35 +3488,8 @@ export async function getMetaConnectionImpl(
         .doc(requestedWorkspaceId)
         .get();
       if (wsSnap.exists) {
-        // Mirror resolveWorkspacePage's logic in-place (no extra
-        // dependency on metaCallerScope here — keeps this testable
-        // without that module's import surface). The two paths stay
-        // bit-identical because they share the contract.
-        const wsData = wsSnap.data() ?? {};
-        const wsPageId: string | null = typeof wsData.metaPageId === "string"
-          && wsData.metaPageId.length > 0 ? wsData.metaPageId : null;
-        const wsPageName: string | null = typeof wsData.metaPageName === "string"
-          ? wsData.metaPageName : null;
-        const wsClearedAt: number | null = typeof wsData.metaPageClearedAt === "number"
-          ? wsData.metaPageClearedAt : null;
-        let activePageId: string | null;
-        let activePageName: string | null;
-        let pageSource: "workspace" | "legacy_global" | "none";
-        if (wsPageId) {
-          activePageId = wsPageId;
-          activePageName = wsPageName;
-          pageSource = "workspace";
-        } else if (wsClearedAt != null) {
-          // CLEARED — legacy fallback FORBIDDEN.
-          activePageId = null;
-          activePageName = null;
-          pageSource = "none";
-        } else {
-          // NEVER_SET — legacy fallback applies.
-          activePageId = base.selectedPageId;
-          activePageName = base.selectedPageName;
-          pageSource = activePageId ? "legacy_global" : "none";
-        }
+        const { pageId: activePageId, pageName: activePageName, pageSource } =
+          resolveWorkspacePage(wsSnap, base);
         return {
           ...base,
           activePageId,
@@ -3723,13 +3703,26 @@ export const metaDisconnect = onCall({
     await admin.firestore().collection("metaConnections").doc(scope.ownerUid).delete();
 
     // Delete all performance data (owner-scoped).
+    //
+    // CR-MAJOR (CodeRabbit review feedback): the previous code staged
+    // every matching `adPerformance` doc into a single `WriteBatch`,
+    // which Firestore caps at 500 operations. An owner with more than
+    // 500 perf docs makes the batch throw — and because the connection
+    // doc was already deleted at the line above, the account is left
+    // disconnected with orphaned performance data and the caller
+    // receives an error. Commit in 500-doc chunks.
     const perfDocs = await admin.firestore()
       .collection("adPerformance")
       .where("userId", "==", scope.ownerUid)
       .get();
-    const batch = admin.firestore().batch();
-    perfDocs.docs.forEach(doc => batch.delete(doc.ref));
-    if (perfDocs.size > 0) await batch.commit();
+    const MAX_BATCH = 500;
+    for (let i = 0; i < perfDocs.docs.length; i += MAX_BATCH) {
+      const batch = admin.firestore().batch();
+      for (const doc of perfDocs.docs.slice(i, i + MAX_BATCH)) {
+        batch.delete(doc.ref);
+      }
+      await batch.commit();
+    }
 
     console.log(`🔌 Meta disconnected (owner=${scope.ownerUid}, actor=${scope.callerUid})`);
     return { success: true, disconnectedByUid: scope.callerUid };

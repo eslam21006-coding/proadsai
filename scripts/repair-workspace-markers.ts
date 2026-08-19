@@ -264,20 +264,21 @@ async function applyPass1(
       report.pass1WritesAttempted += updates.length;
     }
 
-    // Build the post-pass-1 snapshot by overlaying the simulated
-    // deletedAt: null on every doc that pass 1 would have repaired.
-    const simulated: QueryDocumentSnapshot[] = state.workspaces.map((docSnap) => {
+    // CR-CRITICAL (CodeRabbit review feedback): the previous code spread
+    // the live `QueryDocumentSnapshot` to overlay `deletedAt: null` on
+    // the post-pass-1 view. Object spread copies only own enumerable
+    // properties — the Firestore prototype accessors `ref` and `id` were
+    // NOT carried, so pass 2's `oldest.ref.update(...)` and
+    // `oldest.ref.path` raised `TypeError: Cannot read properties of
+    // undefined`. Use a plain `RepairCandidate` instead — same fields
+    // pass 2 reads (id, data, ref), no spreading.
+    const simulated: RepairCandidate[] = state.workspaces.map((docSnap) => {
       const data = docSnap.data();
-      if (isMissing(data.deletedAt)) {
-        return {
-          ...docSnap,
-          // Synthesize a snapshot-like object whose .data() returns the
-          // pre-existing fields plus `deletedAt: null`. The downstream
-          // pass 2 only reads .id and .data() — both work on this shape.
-          data: () => ({ ...data, deletedAt: null }),
-        } as unknown as QueryDocumentSnapshot;
-      }
-      return docSnap;
+      return {
+        id: docSnap.id,
+        ref: docSnap.ref,
+        data: isMissing(data.deletedAt) ? { ...data, deletedAt: null } : data,
+      };
     });
     postPass1ByAccount.set(uid, simulated);
   }
@@ -285,25 +286,39 @@ async function applyPass1(
   return postPass1ByAccount;
 }
 
-// ─── Pass 2 — isDefault marker (FR-026d) ────────────────────────────────────
-
-function isAlreadyDefault(snapshot: QueryDocumentSnapshot): boolean {
-  return snapshot.data()?.isDefault === true;
+/**
+ * Plain object shape the repair pass-2 selector reads. Carries only
+ * the fields pass 2 needs (`id`, `data`, `ref`) so the spread-vs-clone
+ * hazard from spreading a live Firestore `QueryDocumentSnapshot` (which
+ * exposes `ref`/`id` as prototype accessors, not own enumerable
+ * properties) cannot leak. Replaces the `QueryDocumentSnapshot[]`
+ * shape that previously crashed on every repaired doc.
+ */
+interface RepairCandidate {
+  id: string;
+  ref: FirebaseFirestore.DocumentReference;
+  data: Record<string, any>;
 }
 
-function isActiveAfterRepair(snapshot: QueryDocumentSnapshot): boolean {
+// ─── Pass 2 — isDefault marker (FR-026d) ────────────────────────────────────
+
+function isAlreadyDefault(candidate: RepairCandidate): boolean {
+  return candidate.data.isDefault === true;
+}
+
+function isActiveAfterRepair(candidate: RepairCandidate): boolean {
   // Post-pass-1 contract: active means deletedAt == null. Both explicit
   // null and a missing key would qualify, but pass 1 has already
   // promoted every missing key to null — so this reduces to a null
   // equality check. The check is written defensively (==) to accept
   // either shape, so a future pass 1 regression doesn't silently flip
   // the default to a soft-deleted workspace (FR-024).
-  const deletedAt = snapshot.data()?.deletedAt;
+  const deletedAt = candidate.data.deletedAt;
   return deletedAt == null;
 }
 
 async function applyPass2(
-  postPass1ByAccount: Map<string, QueryDocumentSnapshot[]>,
+  postPass1ByAccount: Map<string, RepairCandidate[]>,
   report: Report,
   mode: Mode,
 ): Promise<void> {
@@ -329,8 +344,8 @@ async function applyPass2(
     // strictly time-ordered but they are deterministic within an
     // account, which is all pass 2 needs to remain idempotent.
     const sorted = [...active].sort((a, b) => {
-      const aCreated = a.data()?.createdAt;
-      const bCreated = b.data()?.createdAt;
+      const aCreated = a.data.createdAt;
+      const bCreated = b.data.createdAt;
       if (typeof aCreated === "number" && typeof bCreated === "number") {
         return aCreated - bCreated;
       }
