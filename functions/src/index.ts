@@ -3679,9 +3679,18 @@ export async function metaSelectPageImpl(
 
     // Also write the legacy account-level fields so a code-only
     // revert restores current behaviour (FR-030).
+    //
+    // CR-MINOR (CodeRabbit review feedback): normalise `selectedPageName`
+    // to null whenever `pageId` is null. A stale name without an ID
+    // would create an inconsistent legacy selection — the
+    // account-level connection would carry a Page label it cannot
+    // resolve. The new check forces both legacy Page fields to
+    // null on a clear so the legacy surface stays self-consistent.
     await connRef.update({
         selectedPageId: pageId || null,
-        selectedPageName: typeof pageName === "string" ? pageName.slice(0, 200) : null,
+        selectedPageName: pageId
+            ? (typeof pageName === "string" ? pageName.slice(0, 200) : null)
+            : null,
     });
 
     return { ok: true, workspaceId: wsId };
@@ -6223,31 +6232,39 @@ export async function metaPushCreativePackImpl(
             // Record deployment with FR-027 traceability fields — pack
             // version. One record per pack, not per item (the pack is
             // one upload + one creative-pairing call).
+            //
+            // CR-MINOR (CodeRabbit review feedback): the deployment
+            // write is `await`-ed inside a try/catch so the record is
+            // committed before the function returns. The catch preserves
+            // the original "non-blocking on failure" semantics — a
+            // failed write is logged but does not fail the publish.
             const deploymentId = `${scope.ownerUid}_${Date.now()}_pack_${imageHash.substring(0, 8)}`;
-            admin.firestore().collection("creativeDeployments").doc(deploymentId).set({
-                deploymentId,
-                userId: scope.ownerUid,
-                pushedByUid: scope.callerUid,
-                adAccountId: accountId,
-                workspaceId: workspace.id,
-                workspaceIdSource,
-                pack: true,
-                imageHash,
-                adName: adName || '',
-                pageId: resolvedPageId,
-                pageName,
-                pageSource,
-                primaryText,
-                metaAdId: null,
-                metaCreativeId: creativeData?.id ?? null,
-                metaAdSetId: null,
-                metaCampaignId: null,
-                pushedAt: admin.firestore.FieldValue.serverTimestamp(),
-                latestMetrics: null,
-                metricsHistory: [],
-            }).catch((deployErr) => {
+            try {
+                await admin.firestore().collection("creativeDeployments").doc(deploymentId).set({
+                    deploymentId,
+                    userId: scope.ownerUid,
+                    pushedByUid: scope.callerUid,
+                    adAccountId: accountId,
+                    workspaceId: workspace.id,
+                    workspaceIdSource,
+                    pack: true,
+                    imageHash,
+                    adName: adName || '',
+                    pageId: resolvedPageId,
+                    pageName,
+                    pageSource,
+                    primaryText,
+                    metaAdId: null,
+                    metaCreativeId: creativeData?.id ?? null,
+                    metaAdSetId: null,
+                    metaCampaignId: null,
+                    pushedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    latestMetrics: null,
+                    metricsHistory: [],
+                });
+            } catch (deployErr) {
                 console.warn("Failed to store pack deployment record (non-blocking):", deployErr);
-            });
+            }
 
             if (creativeData.error) {
                 // Creative creation failed, but image was uploaded successfully
@@ -6278,31 +6295,38 @@ export async function metaPushCreativePackImpl(
         // No workspace Page — image uploaded but creative pairing
         // cannot proceed (it requires a Page id). FR-027 records
         // `pageSource: 'none'`.
+        //
+        // CR-MINOR (CodeRabbit review feedback): `await`-ed inside
+        // try/catch so the deployment record is committed before the
+        // function returns. A failed write is logged but does not
+        // fail the publish.
         const deploymentId = `${scope.ownerUid}_${Date.now()}_pack_${imageHash.substring(0, 8)}`;
-        admin.firestore().collection("creativeDeployments").doc(deploymentId).set({
-            deploymentId,
-            userId: scope.ownerUid,
-            pushedByUid: scope.callerUid,
-            adAccountId: accountId,
-            workspaceId: workspace.id,
-            workspaceIdSource,
-            pack: true,
-            imageHash,
-            adName: adName || '',
-            pageId: null,
-            pageName,
-            pageSource, // 'none' — see FR-027
-            primaryText,
-            metaAdId: null,
-            metaCreativeId: null,
-            metaAdSetId: null,
-            metaCampaignId: null,
-            pushedAt: admin.firestore.FieldValue.serverTimestamp(),
-            latestMetrics: null,
-            metricsHistory: [],
-        }).catch((deployErr) => {
+        try {
+            await admin.firestore().collection("creativeDeployments").doc(deploymentId).set({
+                deploymentId,
+                userId: scope.ownerUid,
+                pushedByUid: scope.callerUid,
+                adAccountId: accountId,
+                workspaceId: workspace.id,
+                workspaceIdSource,
+                pack: true,
+                imageHash,
+                adName: adName || '',
+                pageId: null,
+                pageName,
+                pageSource, // 'none' — see FR-027
+                primaryText,
+                metaAdId: null,
+                metaCreativeId: null,
+                metaAdSetId: null,
+                metaCampaignId: null,
+                pushedAt: admin.firestore.FieldValue.serverTimestamp(),
+                latestMetrics: null,
+                metricsHistory: [],
+            });
+        } catch (deployErr) {
             console.warn("Failed to store pack deployment record (non-blocking):", deployErr);
-        });
+        }
 
         return {
             success: true,

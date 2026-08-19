@@ -226,7 +226,6 @@ async function applyPass1(
   for (const [uid, state] of accounts) {
     report.accountsEvaluatedPass1++;
     const updates: Array<{ ref: DocumentReference }> = [];
-    const postPass1Docs: QueryDocumentSnapshot[] = [];
 
     for (const docSnap of state.workspaces) {
       const data = docSnap.data();
@@ -235,18 +234,6 @@ async function applyPass1(
       // are both left alone (FR-024, FR-026e).
       if (isMissing(data.deletedAt)) {
         updates.push({ ref: docSnap.ref });
-        // Simulate the post-write shape for pass 2: deletedAt: null
-        // means the workspace is active for the purposes of the default
-        // selection (the same semantics createWorkspaceWithLimit uses).
-        postPass1Docs.push({
-          ...docSnap,
-          // The simulated doc keeps the original read shape except for
-          // the added field. QueryDocumentSnapshot extends DocumentSnapshot;
-          // we only consume `.id` / `.data()` / `.ref` downstream.
-        } as unknown as QueryDocumentSnapshot);
-        // Carry the simulated data via a side-table to keep this cheap.
-      } else {
-        postPass1Docs.push(docSnap);
       }
     }
 
@@ -353,21 +340,30 @@ async function applyPass2(
     });
 
     const oldest = sorted[0];
-    report.pass2DocsMarkedDefault++;
 
     if (mode === "apply") {
       try {
         await oldest.ref.update({ isDefault: true });
+        // CR-MINOR (CodeRabbit review feedback): only count a doc as
+        // marked-default AFTER a successful write. The previous code
+        // incremented pass2DocsMarkedDefault before the write, which
+        // made a failed write look like progress in dry-run reports.
+        report.pass2DocsMarkedDefault++;
         report.pass2WritesAttempted++;
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         report.pass2Errors.push({
           workspacePath: oldest.ref.path,
-          message,
+            message,
         });
         report.pass2WritesAttempted++;
       }
     } else {
+      // Dry-run: count the docs that WOULD be marked. The operator
+      // instructions tell them to re-run until pass2DocsMarkedDefault
+      // reaches zero; counting would-marks here keeps that loop
+      // idempotent.
+      report.pass2DocsMarkedDefault++;
       report.pass2WritesAttempted++;
     }
   }

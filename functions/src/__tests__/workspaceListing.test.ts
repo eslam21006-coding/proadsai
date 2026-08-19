@@ -255,10 +255,17 @@ async function runListingQuery(uid: string) {
     //   `where('deletedAt','==',null) + orderBy('createdAt','desc')`.
     // This is the single source of truth for every workspace listing
     // surface in the codebase.
-    const coll = admin.firestore().collection(`users/${uid}/workspaces`);
-    const filtered = coll.where("deletedAt", "==", null);
-    filtered.orderBy("createdAt", "desc");
-    const snap = await filtered.get();
+    //
+    // CR-MINOR (CodeRabbit review feedback): chain the query builder
+    // calls. The previous code discarded the return value of
+    // `orderBy` — real Firestore query builders are immutable and
+    // return a new `Query`, so the test was validating a shape the
+    // production query builder does not support.
+    const snap = await admin.firestore()
+        .collection(`users/${uid}/workspaces`)
+        .where("deletedAt", "==", null)
+        .orderBy("createdAt", "desc")
+        .get();
     return snap.docs.map((d: any) => ({
         id: d.id,
         ...d.data(),

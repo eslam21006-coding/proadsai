@@ -42,7 +42,13 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
   const [selectedMetaAccount, setSelectedMetaAccount] = useState<string>(workspace?.metaAdAccountId || '');
   const [saving, setSaving] = useState(false);
   const [uiError, setUiError] = useState<string | null>(null);
-  const [pageClearedNotice, setPageClearedNotice] = useState(false);
+  // CR-MINOR (CodeRabbit review feedback): scope the Page-cleared
+  // notice to the workspace that triggered it. If the user clears a
+  // Page for workspace A and then opens workspace B in the same
+  // mounted modal, workspace B would otherwise show the stale notice.
+  // Render the banner only when the stored id matches the active
+  // workspace's id.
+  const [pageClearedWorkspaceId, setPageClearedWorkspaceId] = useState<string | null>(null);
   const [linkedMeta, setLinkedMeta] = useState<{
     id?: string;
     name?: string;
@@ -189,14 +195,16 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
         role,
       });
       // Phase 967 (FR-011b, T084) — when an ad-account change clears a
-      // previously recorded Page, surface the FR-011b notice. Paired
-      // en/ar via the Phase 1 i18n key `meta.page_cleared_notice`.
-      // `pageCleared` is true only when the workspace had a Page
-      // recorded before the link (SET state); NEVER_SET or already-
-      // CLEARED workspaces don't fire the notice. Rendered inline in
-      // the modal so the message survives navigation away from the
-      // workspace switcher.
-      setPageClearedNotice(result.data?.pageCleared === true);
+      // previously recorded Page, surface the FR-011b notice scoped to
+      // the current workspace. Paired en/ar via the Phase 1 i18n key
+      // `meta.page_cleared_notice`. `pageCleared` is true only when
+      // the workspace had a Page recorded before the link (SET state);
+      // NEVER_SET or already-CLEARED workspaces don't fire the notice.
+      // Rendered inline in the modal so the message survives
+      // navigation away from the workspace switcher.
+      setPageClearedWorkspaceId(
+        result.data?.pageCleared === true ? workspace.id : null,
+      );
     } catch (err) {
       console.warn('Meta link failed:', err);
       setUiError(t('workspace.settings.meta_link_failed'));
@@ -211,8 +219,10 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
       setSelectedMetaAccount('');
       setLinkedMeta({});
       // Phase 967 (FR-011b, T084) — unlinking also clears the Page;
-      // surface the same notice when a Page was cleared.
-      setPageClearedNotice(result.data?.pageCleared === true);
+      // surface the same notice scoped to the current workspace.
+      setPageClearedWorkspaceId(
+        result.data?.pageCleared === true ? workspace.id : null,
+      );
     } catch (err) {
       console.warn('Meta unlink failed:', err);
       setUiError(t('workspace.settings.meta_unlink_failed'));
@@ -329,9 +339,13 @@ export default function WorkspaceSettingsModal({ workspace, onSave, onDelete, on
               {/* Phase 967 (FR-011b, T084) — page-cleared notice banner.
                   Renders inline so the message survives navigation away
                   from the workspace switcher; cleared by a fresh link /
-                  unlink (set to false on a new response). Paired en/ar
-                  via the Phase 1 i18n key `meta.page_cleared_notice`. */}
-              {pageClearedNotice && (
+                  unlink (set to null on a new response). Paired en/ar
+                  via the Phase 1 i18n key `meta.page_cleared_notice`.
+                  CR-MINOR (CodeRabbit review feedback): scoped to the
+                  workspace that triggered the clear, so switching to a
+                  different workspace in the same mounted modal hides
+                  the prior notice. */}
+              {pageClearedWorkspaceId === workspace?.id && (
                 <div
                   role="status"
                   aria-live="polite"

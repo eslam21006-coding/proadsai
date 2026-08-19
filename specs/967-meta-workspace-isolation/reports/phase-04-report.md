@@ -92,7 +92,7 @@ resolver, no live Firebase).
 / `selectedPageName`). Workspace-aware Page was unreachable.
 
 **After**: when the request includes `workspaceId`, the response adds
-three fields:
+four fields:
 
 ```
 {

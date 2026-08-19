@@ -47,28 +47,6 @@ function privateConnectionRef(uid: string, workspaceId: string) {
         .collection("private").doc("metaConnection");
 }
 
-interface WorkspaceMetaAccountId {
-    accountId: string | null;
-    accountName: string | null;
-}
-
-async function loadWorkspaceLink(uid: string, workspaceId: string): Promise<WorkspaceMetaAccountId> {
-    const snap = await getDb()
-        .collection("users").doc(uid)
-        .collection("workspaces").doc(workspaceId)
-        .get();
-    if (!snap.exists) return { accountId: null, accountName: null };
-    const data = snap.data() || {};
-    return {
-        accountId: typeof data.metaAdAccountId === "string" && data.metaAdAccountId.length > 0
-            ? data.metaAdAccountId
-            : null,
-        accountName: typeof data.metaAdAccountName === "string"
-            ? data.metaAdAccountName
-            : null,
-    };
-}
-
 interface UserLevelConnection {
     encryptedToken?: string;
     adAccounts?: Array<{ id?: string; name?: string; account_id?: string }>;
@@ -78,27 +56,6 @@ async function loadUserLevelConnection(uid: string): Promise<UserLevelConnection
     const snap = await getDb().collection("metaConnections").doc(uid).get();
     if (!snap.exists) return null;
     return snap.data() as UserLevelConnection;
-}
-
-/**
- * Scan every workspace of the user to see if the same `accountId` is already
- * linked somewhere else. Returns the offending workspace id, or null.
- *
- * We scan one read per workspace — bounded since a user has at most a small
- * number of workspaces (single-digit). For very large workspace counts we'd
- * add an index, but the data-model scope says one ad account per workspace.
- */
-async function findWorkspaceLinkedToAccount(uid: string, accountId: string): Promise<string | null> {
-    const workspacesSnap = await getDb()
-        .collection("users").doc(uid)
-        .collection("workspaces")
-        .get();
-    for (const ws of workspacesSnap.docs) {
-        const data = ws.data() || {};
-        const linked = typeof data.metaAdAccountId === "string" ? data.metaAdAccountId : null;
-        if (linked === accountId) return ws.id;
-    }
-    return null;
 }
 
 // ─── connectMetaAccount ───────────────────────────────────────
@@ -135,45 +92,6 @@ export const connectMetaAccount = onCall(
         // FR-004 / FR-021 — workspace authorisation first, before any side effect.
         assertWorkspaceAllowed(scope, req.workspaceId);
 
-        // Verify the workspace exists.
-        const wsSnap = await getDb()
-            .collection("users").doc(scope.ownerUid)
-            .collection("workspaces").doc(req.workspaceId)
-            .get();
-        if (!wsSnap.exists) {
-            throw new HttpsError("not-found", "Workspace not found.");
-        }
-
-        // Verify the workspace is currently linked to the same account
-        // (this is the path `linkMetaAccountToWorkspace` takes). If not,
-        // we still proceed — the connect call also acts as a bind.
-        const wsLink = await loadWorkspaceLink(scope.ownerUid, req.workspaceId);
-
-        // FIX 6 (Claude audit, FR-026 direction (a)): prevent the user
-        // from silently replacing workspace W's account A with account B.
-        // Without this check, the existing `linkMetaAccountToWorkspace`
-        // would overwrite the link and the 1:1 enforcement would be
-        // bypassed. The user MUST disconnect first.
-        if (wsLink.accountId && wsLink.accountId !== req.accountId) {
-            throw new HttpsError(
-                "failed-precondition",
-                "هذه المساحة مرتبطة بحساب إعلاني آخر. افصله أولاً قبل ربط حساب جديد.",
-            );
-        }
-
-        // 1:1 enforcement — the same ad account cannot be linked to two
-        // workspaces owned by the same user.
-        if (!wsLink.accountId || wsLink.accountId !== req.accountId) {
-            // We're about to (re)bind. Check no OTHER workspace holds it.
-            const otherWs = await findWorkspaceLinkedToAccount(scope.ownerUid, req.accountId);
-            if (otherWs && otherWs !== req.workspaceId) {
-                throw new HttpsError(
-                    "failed-precondition",
-                    "هذا الحساب الإعلاني مربوط بـ workspace آخر بالفعل. افصله أولاً.",
-                );
-            }
-        }
-
         // Read the long-lived token from the OWNER's user-level OAuth
         // doc. The OAuth callback writes to `metaConnections/{ownerUid}`
         // (Phase 5 T070-T072) — a team member's authorisation therefore
@@ -189,12 +107,14 @@ export const connectMetaAccount = onCall(
             );
         }
 
-        // Write the workspace-scoped private doc. `encryptedToken` here
-        // carries the legacy ciphertext (which the worker can still
-        // decrypt via the legacy helper). When KMS migration completes,
-        // switch `encryptedToken` to a true KMS envelope.
-        const accountName = req.accountName ?? wsLink.accountName ?? "";
+        // Build the write payloads outside the transaction so the
+        // transaction body stays small and the failure paths are
+        // explicit (CodeRabbit review feedback).
+        const accountName = req.accountName ?? "";
         const now = Date.now();
+        const wsRef = getDb()
+            .collection("users").doc(scope.ownerUid)
+            .collection("workspaces").doc(req.workspaceId);
         const privateRef = privateConnectionRef(scope.ownerUid, req.workspaceId);
         const privatePayload = {
             metaConnected: true,
@@ -216,14 +136,82 @@ export const connectMetaAccount = onCall(
             metaAdAccountName: accountName,
         };
 
-        // Atomic commit: a single WriteBatch ensures the private connection
-        // doc and the workspace link land together — a half-applied state
-        // would leave the 1:1 scan in `findWorkspaceLinkedToAccount`
-        // reporting inconsistent results.
-        const batch = getDb().batch();
-        batch.set(privateRef, privatePayload, { merge: true });
-        batch.update(wsSnap.ref, workspacePayload);
-        await batch.commit();
+        // CR-CRITICAL: read the workspace + every sibling workspace, then
+        // write both docs (private connection + workspace link) inside a
+        // single Firestore transaction. This closes the 1:1 enforcement
+        // race where two concurrent `connectMetaAccount` calls could both
+        // pass a non-transactional uniqueness check and both commit the
+        // link (CodeRabbit review feedback).
+        //
+        // - The workspace existence check rejects a non-existent
+        //   workspaceId with `not-found` BEFORE any writes.
+        // - The 1:1 check re-runs inside the transaction against every
+        //   sibling workspace, so any concurrent caller that committed
+        //   first causes this transaction to fail with `failed-precondition`.
+        // - Both writes commit atomically — a half-applied state would
+        //   leave the 1:1 scan reporting inconsistent results on the
+        //   next call.
+        try {
+            await getDb().runTransaction(async (tx) => {
+                const wsSnap = await tx.get(wsRef);
+                if (!wsSnap.exists) {
+                    throw new HttpsError("not-found", "Workspace not found.");
+                }
+                const wsData = wsSnap.data() ?? {};
+
+                // FIX 6 (Claude audit, FR-026 direction (a)): prevent
+                // the user from silently replacing workspace W's
+                // account A with account B. Without this check, the
+                // existing `linkMetaAccountToWorkspace` would overwrite
+                // the link and the 1:1 enforcement would be bypassed.
+                // The user MUST disconnect first.
+                const wsAccountId = typeof wsData.metaAdAccountId === "string" && wsData.metaAdAccountId.length > 0
+                    ? wsData.metaAdAccountId
+                    : null;
+                if (wsAccountId && wsAccountId !== req.accountId) {
+                    throw new HttpsError(
+                        "failed-precondition",
+                        "هذه المساحة مرتبطة بحساب إعلاني آخر. افصله أولاً قبل ربط حساب جديد.",
+                    );
+                }
+
+                // 1:1 enforcement — the same ad account cannot be
+                // linked to two workspaces owned by the same user.
+                // Re-check INSIDE the transaction so a concurrent
+                // caller that committed first is observed.
+                const rebind = !wsAccountId || wsAccountId !== req.accountId;
+                if (rebind) {
+                    const siblingsSnap = await tx.get(
+                        getDb().collection("users").doc(scope.ownerUid).collection("workspaces"),
+                    );
+                    for (const sib of siblingsSnap.docs) {
+                        if (sib.id === req.workspaceId) continue;
+                        const sibData = sib.data() ?? {};
+                        const sibAccountId = typeof sibData.metaAdAccountId === "string" && sibData.metaAdAccountId.length > 0
+                            ? sibData.metaAdAccountId
+                            : null;
+                        if (sibAccountId === req.accountId) {
+                            throw new HttpsError(
+                                "failed-precondition",
+                                "هذا الحساب الإعلاني مربوط بـ workspace آخر بالفعل. افصله أولاً.",
+                            );
+                        }
+                    }
+                }
+
+                // Atomic commit inside the same transaction.
+                tx.set(privateRef, privatePayload, { merge: true });
+                tx.update(wsRef, workspacePayload);
+            });
+        } catch (err: unknown) {
+            if (err instanceof HttpsError) throw err;
+            // Transaction-level failures (network, lock timeout, etc.)
+            // surface as `internal` so the client can retry.
+            throw new HttpsError(
+                "internal",
+                `Failed to link the Meta account: ${err instanceof Error ? err.message : String(err)}`,
+            );
+        }
 
         console.log(`🔗 Meta account linked to workspace (owner=${scope.ownerUid}, caller=${scope.callerUid}, workspace=${req.workspaceId}, account=${req.accountId})`);
         return {
@@ -260,32 +248,48 @@ export const disconnectMetaAccount = onCall(
         assertWorkspaceAllowed(scope, req.workspaceId);
 
         const now = Date.now();
-        const privateRef = privateConnectionRef(scope.ownerUid, req.workspaceId);
-
-        // Delete the token and mark disconnected, but RETAIN performance
-        // data and aggregates (Edge Case 15). The adPerformance /
-        // syncSnapshots / aggregates subcollections stay untouched.
-        // Clear BOTH legacy (AES) and KMS envelope token fields so a stale
-        // loadStoredConnection call cannot hydrate a token post-disconnect.
-        await privateRef.set({
-            metaConnected: false,
-            legacyToken: null,
-            encryptedToken: null,
-            needsReauth: false,
-            updatedAt: now,
-        }, { merge: true });
-
-        // Clear the workspace-doc link too (mirrors `unlinkMetaAccountFromWorkspace`).
         const wsRef = getDb()
             .collection("users").doc(scope.ownerUid)
             .collection("workspaces").doc(req.workspaceId);
-        await wsRef.update({
-            metaAdAccountId: null,
-            metaAdAccountName: null,
-            metaRoleAtLinkTime: null,
-        }).catch(() => {
-            // Workspace may not exist — non-fatal here.
-        });
+        const privateRef = privateConnectionRef(scope.ownerUid, req.workspaceId);
+
+        // CR-CRITICAL: validate the workspace exists, then clear both
+        // the private connection doc and the workspace link inside a
+        // single Firestore transaction. A non-existent workspaceId
+        // returns `not-found` BEFORE any writes. A transaction failure
+        // means neither write lands — the function cannot return
+        // `ok: true` after a partial write (CodeRabbit review
+        // feedback).
+        //
+        // Performance data and aggregates stay untouched — the
+        // adPerformance / syncSnapshots / aggregates subcollections
+        // are intentionally retained (Edge Case 15).
+        try {
+            await getDb().runTransaction(async (tx) => {
+                const wsSnap = await tx.get(wsRef);
+                if (!wsSnap.exists) {
+                    throw new HttpsError("not-found", "Workspace not found.");
+                }
+                tx.set(privateRef, {
+                    metaConnected: false,
+                    legacyToken: null,
+                    encryptedToken: null,
+                    needsReauth: false,
+                    updatedAt: now,
+                }, { merge: true });
+                tx.update(wsRef, {
+                    metaAdAccountId: null,
+                    metaAdAccountName: null,
+                    metaRoleAtLinkTime: null,
+                });
+            });
+        } catch (err: unknown) {
+            if (err instanceof HttpsError) throw err;
+            throw new HttpsError(
+                "internal",
+                `Failed to disconnect: ${err instanceof Error ? err.message : String(err)}`,
+            );
+        }
 
         console.log(`🔌 Workspace Meta link disconnected (owner=${scope.ownerUid}, caller=${scope.callerUid}, workspace=${req.workspaceId})`);
         return { ok: true as const, disconnectedByUid: scope.callerUid };

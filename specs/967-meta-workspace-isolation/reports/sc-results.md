@@ -1,4 +1,4 @@
-# Phase 967 — Manual Verification Results (T099)
+﻿# Phase 967 — Manual Verification Results (T099)
 
 **Branch**: `967-meta-workspace-isolation`
 **Date**: 2026-08-19
@@ -10,7 +10,7 @@ This file records the result for every Success Criterion in
 against the hermetic test suite and the operator-gated live runbook.
 **Mode legend**:
 - ✅ Hermetic — closed by an automated contract test in this branch
-- � Hermetic + runbook — closed by automated test + an operator-gated
+- ✅ Hermetic + runbook — closed by automated test + an operator-gated
   live runbook in `evidence-r1.md` (the live numbers are blanks the
   operator pastes in after running)
 

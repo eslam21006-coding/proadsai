@@ -453,6 +453,36 @@ async function main() {
         );
     });
 
+    await run("MSP-2b: clear with a stale pageName normalises BOTH legacy fields to null", async () => {
+        // CR-MINOR (CodeRabbit review feedback): when pageId is null,
+        // a stale pageName would create an inconsistent legacy
+        // selection (a name with no ID). Force both legacy Page fields
+        // to null regardless of the supplied pageName.
+        resetStub();
+        setupConnectionFixture({
+            selectedPageId: "page-old",
+            selectedPageName: "Old Page",
+        });
+        setupWorkspace({
+            id: "ws-1", name: "Workspace 1",
+            metaAdAccountId: "act_1",
+            isDefault: true,
+            metaPageId: "page-A",
+            metaPageName: "Workspace A Page",
+            metaPageClearedAt: null,
+        });
+        await metaSelectPageImpl(
+            ownerScope(),
+            { pageId: null, pageName: "stale", workspaceId: "ws-1" },
+        );
+        const conn = bucket("metaConnections").get("owner-1") as DocData;
+        assert.equal(conn.selectedPageId, null, "MSP-2b: legacy id null");
+        assert.equal(
+            conn.selectedPageName, null,
+            "MSP-2b: legacy name normalised to null on clear",
+        );
+    });
+
     await run("MSP-3: pageName > 200 chars is truncated", async () => {
         resetStub();
         setupConnectionFixture();

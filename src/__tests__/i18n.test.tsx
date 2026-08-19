@@ -16,10 +16,9 @@
 // entry is loud — adding a new Phase 967 i18n key without updating
 // this list fails the test.
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
-import React from "react";
+import { render } from "@testing-library/react";
+import type * as React from "react";
 import { LanguageProvider, useT } from "../i18n";
-import type { UILanguage } from "../i18n";
 
 // ─── The five Phase 967 i18n keys ────────────────────────────────────────────
 //
@@ -38,12 +37,7 @@ const PHASE_967_KEYS = [
 
 // ─── Harness: render LanguageProvider + a child that calls useT() ─────────
 
-interface HarnessProps {
-    lang: UILanguage;
-    keys: readonly string[];
-}
-
-function Probe({ lang, keys }: HarnessProps): React.ReactElement {
+function Probe({ keys }: { keys: readonly string[] }): React.ReactElement {
     // Call useT() inside a child of LanguageProvider so the context
     // is available. Read every requested key in a single render.
     const { t } = useT();
@@ -59,15 +53,16 @@ function Probe({ lang, keys }: HarnessProps): React.ReactElement {
     );
 }
 
-function readKey(lang: UILanguage, key: string): string {
+function readKey(lang: "en" | "ar", key: string): string {
     // Render a fresh provider per lookup so the `lang` state is
     // isolated; the value lands in `data-value` on the matching li.
-    // CSS.escape is a browser API; use a plain attribute selector
-    // for keys that don't contain quotes (none of the Phase 967
-    // keys do).
+    // CR-MINOR (CodeRabbit review feedback): the previous harness
+    // took a `lang` prop but never read it; the `setItem` here is
+    // what actually switches the language for the LanguageProvider.
+    localStorage.setItem("proads_ui_lang", lang);
     const { unmount } = render(
         <LanguageProvider>
-            <Probe lang={lang} keys={[key]} />
+            <Probe keys={[key]} />
         </LanguageProvider>,
     );
     try {
@@ -85,16 +80,12 @@ function readKey(lang: UILanguage, key: string): string {
 describe("Phase 967 i18n parity (T-18 / T092 / FR-028a)", () => {
     for (const key of PHASE_967_KEYS) {
         it(`key "${key}" resolves to a non-key value in English`, () => {
-            // We need to set the language via localStorage; the
-            // LanguageProvider reads it on mount.
-            localStorage.setItem("proads_ui_lang", "en");
             const value = readKey("en", key);
             expect(value).not.toBe("");
             expect(value).not.toBe(key);
         });
 
         it(`key "${key}" resolves to a non-key value in Arabic`, () => {
-            localStorage.setItem("proads_ui_lang", "ar");
             const value = readKey("ar", key);
             expect(value).not.toBe("");
             expect(value).not.toBe(key);
