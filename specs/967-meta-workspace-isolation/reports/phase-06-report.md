@@ -64,8 +64,8 @@ read `users/{request.auth.uid}/workspaces/{wid}` (caller-scoped) and
 | Team-member gate | `assertNotTeamMember` rejected every team member | Removed (FR-017). Replaced with `assertWorkspaceAllowed(scope, workspaceId)` (FR-004 / FR-021) — verified members with all-access pass; members scoped to a subset are refused for unlisted workspaces |
 | Workspace path | `users/{request.auth.uid}/...` | `users/{scope.ownerUid}/...` (FR-001) |
 | Connection path | `metaConnections/{request.auth.uid}` | `metaConnections/{scope.ownerUid}` — the OAuth callback writes there (Phase 5 T070-T072) |
-| Page clear (FR-011) | None | Same write as the link carries `metaPageId: null, metaPageName: null, metaPageClearedAt: <now>` — only when the workspace HAD a Page before the call (SET state). NEVER_SET stays NEVER_SET; CLEARED stays CLEARED. |
-| `pageCleared` (FR-011b) | None | Response carries `pageCleared: boolean` — true only when the prior state was SET, driving the UI notice |
+| Page clear (FR-011) | None | Same write as the link carries `metaPageId: null, metaPageName: null, metaPageClearedAt: <now>` — **unconditionally** on every ad-account change (Claude audit C-1, commit `da509cc`). NEVER_SET → CLEARED; CLEARED → CLEARED (re-stamped). |
+| `pageCleared` (FR-011b) | None | Response carries `pageCleared: boolean` — gated on `hadPage` (was SET) so the user-facing notice does NOT fire when the user never picked a Page. Closure of FR-007 / SC-006 (no regression on untouched workspaces) at the same time as FR-011a (no inheritance of the legacy global Page after a retarget). |
 | Ad-account validation | `conn.adAccounts.some(...)` | Same (preserved) — forged ids still refused |
 | Role probe | `probeMetaRole` (Phase 14 only READS) | Same (preserved), now injected via `deps.probeMetaRoleImpl` for testability |
 
@@ -165,7 +165,7 @@ correctly for team members too.
 | Test | Asserts | Requirement |
 |---|---|---|
 | **T-09a** | Link with prior SET Page → `pageCleared: true`, the SAME write carries the new ad-account fields AND the Page clear (metaPageId: null, metaPageClearedAt: <now>) | FR-011 |
-| **T-09b** | Link with NEVER_SET Page → `pageCleared: false`, metaPageClearedAt stays null (no false promotion to CLEARED) | FR-011 closure (NEVER_SET preservation) |
+| **T-09b** | Link with NEVER_SET Page → `metaPageClearedAt` stamped (NEVER_SET → CLEARED) per FR-011a; `pageCleared: false` (user-facing notice gated on `hadPage`) | FR-011 closure (inverted for Claude audit C-1) |
 | **T-09c** | Link with CLEARED Page → `pageCleared: false` (already cleared → no new notice) | FR-011 closure (CLEARED preservation) |
 | **T-10** | Unlink → `pageCleared: true`, ad-account fields deleted AND Page cleared in the SAME write | FR-011 |
 | **T-13** | Team member (ALL scope) links ad account successfully; the link lands on the OWNER's workspace (FR-001) | FR-017 |
@@ -231,7 +231,7 @@ skipped tests in `workspace.test.ts` are unchanged placeholders.
 | `request.auth.uid` must not appear in Firestore paths | ✅ Both rewritten callables use `scope.ownerUid`. T-13 + metaScope.integration cover. |
 | `conn.selectedAccountId` must not be read by either publish path | ✅ Not relevant here. |
 | Clear the Page in the same write as the ad-account link | ✅ T-09a + T-10 assert the SAME write carries both the new ad-account AND the Page clear. |
-| `metaPageClearedAt` is what makes FR-011a enforceable | ✅ Same-write update stamps `metaPageClearedAt: <now>` for SET workspaces (T-09a), leaves it null for NEVER_SET (T-09b), leaves already-CLEARED alone (T-09c). |
+| `metaPageClearedAt` is what makes FR-011a enforceable | ✅ Same-write update unconditionally stamps `metaPageClearedAt: <now>` for every ad-account change (T-09a SET, T-09b NEVER_SET → CLEARED, T-09c CLEARED → CLEARED re-stamped, T-09d publish-path closure via `pageSource: 'none'`). |
 | Team members cannot write workspace documents directly | ✅ `createWorkspace` / `deleteWorkspace` / `restoreWorkspace` still gated by `assertNotTeamMember`. T-14 verifies. |
 | Do not touch the OAuth `state` parameter | ✅ Not touched. |
 | The repair must not read through the broken query | ✅ Not relevant here. |

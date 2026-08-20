@@ -240,7 +240,12 @@ export const disconnectMetaAccount = onCall(
         // Universal preamble (FR-001, FR-003).
         const scope = await resolveMetaScope(request);
         const req = request.data as DisconnectMetaAccountRequest;
-        if (!req || typeof req.workspaceId !== "string") {
+        // CR-MINOR (CodeRabbit review feedback): `connectMetaAccount`
+        // rejects an empty `workspaceId` at line 88; here the same
+        // shape lets an empty string reach `loadMetaConnectionAccountId`
+        // → `wsRef.update("")` outside the try block, throwing an opaque
+        // `internal` error. Mirror the validation.
+        if (!req || typeof req.workspaceId !== "string" || req.workspaceId.length === 0) {
             throw new HttpsError("invalid-argument", "workspaceId is required.");
         }
 

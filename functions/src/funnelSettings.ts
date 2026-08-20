@@ -415,7 +415,15 @@ export const getFunnelSettings = onCall(
         assertWorkspaceAllowed(scope, req.workspaceId);
 
         const connAccountId = await loadMetaConnectionAccountId(scope.ownerUid, req.workspaceId);
-        if (connAccountId && connAccountId !== req.accountId) {
+        // CR-MAJOR (CodeRabbit review feedback): the previous check
+        // only rejected a *mismatch* — when the workspace has no
+        // linked ad account (`connAccountId` is null after unlink), the
+        // condition was false and the call returned whatever settings
+        // were stored for any prior account. `saveFunnelSettings` and
+        // `dismissAdvisory` already require a current matching
+        // account; `getFunnelSettings` must too — otherwise a stale
+        // read leaks the previous client's settings.
+        if (!connAccountId || connAccountId !== req.accountId) {
             throw new HttpsError("permission-denied", "accountId does not match the workspace's connected Meta account.");
         }
 

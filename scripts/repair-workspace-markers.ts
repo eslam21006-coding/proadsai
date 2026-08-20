@@ -219,11 +219,11 @@ async function applyPass1(
   accounts: Map<string, AccountState>,
   report: Report,
   mode: Mode,
-): Promise<Map<string, QueryDocumentSnapshot[]>> {
+): Promise<Map<string, RepairCandidate[]>> {
   // Returns the *post-pass-1* per-account snapshot so pass 2 sees the
   // settled deletedAt values (data-model.md §5 ordering). In dry-run we
   // simulate the same shape without writing.
-  const postPass1ByAccount = new Map<string, QueryDocumentSnapshot[]>();
+  const postPass1ByAccount = new Map<string, RepairCandidate[]>();
 
   // Group docs by account, then commit per-account batches so the write
   // surface is one commit per account (bounded by MAX_BATCH just in case
@@ -245,6 +245,16 @@ async function applyPass1(
 
     report.pass1DocsMissingDeletedAt += updates.length;
 
+    // Track whether ANY pass-1 batch commit failed for this account.
+    // If pass 1 fails partially, do NOT add the account's simulated
+    // post-pass-1 view to pass 2's input — pass 2 must only evaluate
+    // accounts whose `deletedAt` repair actually settled (CR-MAJOR,
+    // CodeRabbit review feedback). Without this guard pass 2 can mark
+    // the oldest active workspace as `isDefault: true` for an account
+    // that is still mid-repair, leaving the default marker on a doc
+    // whose `deletedAt` is still absent.
+    let pass1AllSucceeded = updates.length === 0;
+
     if (mode === "apply" && updates.length > 0) {
       for (let i = 0; i < updates.length; i += MAX_BATCH) {
         const slice = updates.slice(i, i + MAX_BATCH);
@@ -257,6 +267,7 @@ async function applyPass1(
           report.pass1DocsUpdated += slice.length;
           report.pass1WritesAttempted += slice.length;
         } catch (err: unknown) {
+          pass1AllSucceeded = false;
           const message = err instanceof Error ? err.message : String(err);
           for (const upd of slice) {
             report.pass1Errors.push({ workspacePath: upd.ref.path, message });
@@ -268,6 +279,14 @@ async function applyPass1(
       // Dry-run still counts the writes that *would* happen — that's the
       // evidence T009/T010 record against the nine-workspace account.
       report.pass1WritesAttempted += updates.length;
+    }
+
+    if (!pass1AllSucceeded) {
+      // Skip pass 2 for this account — the doc state is uncertain.
+      // A successful rerun will re-enter pass 2 (the post-pass-1 map
+      // is freshly built and `isDefault` is then computed against
+      // the settled `deletedAt` values).
+      continue;
     }
 
     // CR-CRITICAL (CodeRabbit review feedback): the previous code spread

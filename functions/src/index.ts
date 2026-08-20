@@ -3487,7 +3487,13 @@ export async function getMetaConnectionImpl(
         .collection(`users/${scope.ownerUid}/workspaces`)
         .doc(requestedWorkspaceId)
         .get();
-      if (wsSnap.exists) {
+      // CR-MINOR (CodeRabbit review feedback): gate on the soft-delete
+      // marker. `wsSnap.exists` alone lets a soft-deleted workspace
+      // still supply `activePageId` / `activePageName` / `pageSource`.
+      // `deletedAt == null` covers both an explicit null and a legacy
+      // doc where the key is absent — matching the `active` check every
+      // other workspace-scoped path uses (FR-024 closure for the read).
+      if (wsSnap.exists && wsSnap.data()?.deletedAt == null) {
         const { pageId: activePageId, pageName: activePageName, pageSource } =
           resolveWorkspacePage(wsSnap, base);
         return {
@@ -3604,7 +3610,24 @@ export async function metaSelectPageImpl(
     } else {
         try {
             wsId = await resolveDefaultWorkspaceId(scope.ownerUid);
-        } catch {
+        } catch (err) {
+            // CR-MAJOR (CodeRabbit review feedback): the previous blanket
+            // `catch {}` mapped both "no default marker" and any
+            // Firestore read failure to `no_workspace_resolved`. Per
+            // FR-003, transient failures must stay retryable. Mirror
+            // the narrowing in `resolvePublishWorkspace` and
+            // `metaCallerScope.ts:resolveDefaultWorkspaceId`'s callers:
+            // only the `HttpsError("not-found")` verdict maps to the
+            // permanent precondition failure; anything else re-throws
+            // as `unavailable` so the client can retry.
+            if (!(err instanceof HttpsError) || err.code !== "not-found") {
+                console.warn("⚠️ Default-workspace lookup failed during Page selection:", err);
+                throw new HttpsError(
+                    "unavailable",
+                    "Could not determine your workspace. Please retry.",
+                    { reason: "workspace_lookup_degraded" },
+                );
+            }
             throw new HttpsError(
                 "failed-precondition",
                 "No workspace could be determined for this Page selection.",
