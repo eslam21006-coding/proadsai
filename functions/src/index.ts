@@ -7369,13 +7369,21 @@ export async function linkMetaAccountToWorkspaceImpl(
     // FR-011 — clear the Page in the SAME write as the ad-account
     // link. A split write can leave the workspace holding one
     // client's Page against another's ad account (the cross-client
-    // leak this rule exists to close). The clear is unconditional
-    // for SET workspaces; NEVER_SET workspaces stay NEVER_SET
-    // (no Page ever chosen → nothing to clear), and CLEARED
-    // workspaces stay CLEARED (already deliberately cleared → no
-    // new state change). `pageCleared` reports whether the user-
-    // visible notice should fire — true only when the prior state
-    // was SET.
+    // leak this rule exists to close).
+    //
+    // Phase 967 (Claude audit C-1, 2026-08-20): the previous code
+    // gated the clear on `hadPage`, leaving NEVER_SET workspaces on
+    // the legacy global Page after a retarget — a real live-Meta
+    // cross-client leak for any user who hasn't picked a workspace
+    // Page yet (the default state on day one of FR-010's lazy
+    // migration). FR-011 specifies the clear is unconditional on
+    // ad-account change; FR-011a blocks the legacy fallback once
+    // `metaPageClearedAt` is stamped. Apply that reading: write the
+    // clear fields on every link, regardless of prior state.
+    //
+    // `pageCleared` stays gated on `hadPage` so the user-facing
+    // notice does NOT fire when the user never picked a Page — no
+    // point telling them "your Page was cleared" when none was set.
     const priorWsData = wsSnap.data() ?? {};
     const hadPage = typeof priorWsData.metaPageId === "string"
         && priorWsData.metaPageId.length > 0;
@@ -7383,13 +7391,13 @@ export async function linkMetaAccountToWorkspaceImpl(
         metaAdAccountId,
         metaAdAccountName: metaAdAccountName ?? "",
         metaRoleAtLinkTime: role,
+        // FR-011 + FR-011a — unconditional Page clear on ad-account
+        // change. NEVER_SET → CLEARED moves the workspace OFF the
+        // legacy global Page fallback the moment it is retargeted.
+        metaPageId: null,
+        metaPageName: null,
+        metaPageClearedAt: Date.now(),
     };
-    if (hadPage) {
-        // FR-011 Page clear — only when the workspace had a Page.
-        updatePayload.metaPageId = null;
-        updatePayload.metaPageName = null;
-        updatePayload.metaPageClearedAt = Date.now();
-    }
     await wsRef.update(updatePayload);
 
     return { ok: true, metaRoleAtLinkTime: role, pageCleared: hadPage };
@@ -7448,12 +7456,15 @@ export async function unlinkMetaAccountFromWorkspaceImpl(
     assertWorkspaceActive(wsSnap); // throws not-found if soft-deleted
 
     // FR-011 — Page clear in the same write as the ad-account fields.
-    // Mirror the SET/CLEARED semantics of `metaSelectPage`'s CLEARED
-    // branch (Phase 4 T047-T050): `metaPageId: null`,
-    // `metaPageClearedAt: <now>`. The clear fires only when the
-    // workspace HAD a Page before the unlink (SET state); NEVER_SET
-    // and CLEARED workspaces stay where they were. `pageCleared`
-    // reports whether the user-visible notice should fire.
+    //
+    // Phase 967 (Claude audit C-1, 2026-08-20): the previous code
+    // gated the clear on `hadPage`, leaving NEVER_SET workspaces on
+    // the legacy global Page after an unlink — same cross-client
+    // leak as on the link side. Apply the FR-011 unconditional
+    // reading: write the clear fields on every unlink, regardless
+    // of prior state. `pageCleared` stays gated on `hadPage` so the
+    // user-facing notice does NOT fire when the user never picked a
+    // Page.
     const priorWsData = wsSnap.data() ?? {};
     const hadPage = typeof priorWsData.metaPageId === "string"
         && priorWsData.metaPageId.length > 0;
@@ -7461,12 +7472,11 @@ export async function unlinkMetaAccountFromWorkspaceImpl(
         metaAdAccountId: admin.firestore.FieldValue.delete(),
         metaAdAccountName: admin.firestore.FieldValue.delete(),
         metaRoleAtLinkTime: admin.firestore.FieldValue.delete(),
+        // FR-011 + FR-011a — unconditional Page clear on ad-account change.
+        metaPageId: null,
+        metaPageName: null,
+        metaPageClearedAt: Date.now(),
     };
-    if (hadPage) {
-        updatePayload.metaPageId = null;
-        updatePayload.metaPageName = null;
-        updatePayload.metaPageClearedAt = Date.now();
-    }
     await wsRef.update(updatePayload);
 
     // Keep the What's Working dashboard mirror symmetric with the link.

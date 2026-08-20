@@ -10,6 +10,51 @@ defects fixed by Phase 2's repair pass.
 
 ---
 
+## ⚠️ DEPLOY GATE — Repair Script Required Post-Deploy
+
+The workspace listing fix (Bug 4 / SC-004) is **NOT complete** until
+the repair script runs against production. Merging and deploying
+the code alone does **NOT** fix the 3-of-9 symptom. The repair must
+run **AFTER** deploy and **BEFORE** the phase is considered shipped.
+
+**Steps (operator must perform these in order):**
+
+1. Deploy `functions/` to production.
+2. Run a dry-run to size the operator-side check:
+   ```bash
+   npx tsx scripts/repair-workspace-markers.ts --dry-run
+   ```
+3. Verify the dry-run counts match expectations:
+   - On the 9-workspace account referenced in `sc-results.md`:
+     - `docs missing deletedAt` should equal **6** (the pre-`1f23d5e`
+       legacy docs that lack the `deletedAt` key)
+     - `docs marked default` should equal **1** (the oldest active
+       workspace on an account with no `isDefault: true` marker)
+4. Run the apply pass:
+   ```bash
+   npx tsx scripts/repair-workspace-markers.ts --apply
+   ```
+5. Run a second dry-run to confirm idempotence (FR-026e):
+   ```bash
+   npx tsx scripts/repair-workspace-markers.ts --dry-run
+   ```
+   Both counters must now be **0**. If either is non-zero, the apply
+   pass did not reach every account — investigate before shipping.
+6. Verify all four workspace-listing surfaces show **9 of 9**
+   workspaces:
+   - Funnel Settings switcher
+   - Top-bar workspace switcher
+   - Workspace Settings Modal (open any workspace — the modal must
+     show the full list)
+   - The dashboard / WhatsWorking ad-linking path
+
+**Until all six steps complete and the operator pastes the
+before/after counts into the runbook below, the phase is in
+"code-shipped, data-not-fixed" state. FR-025 / FR-026 evidence is
+incomplete until the live counts replace the `<pending>` placeholders.**
+
+---
+
 ## Defects
 
 | ID | Where | Symptom | Source | Fix |

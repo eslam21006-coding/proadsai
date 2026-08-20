@@ -307,6 +307,15 @@ function memberScope(allowedWorkspaceIds: string[] | "ALL" = "ALL"): {
 
 const FAKE_PROBE_ROLE = async (_token: string, _accountId: string) => "ADMIN";
 
+// Minimal Firestore-DocumentSnapshot stand-in for the helpers in
+// `metaCallerScope.ts` (which read `.id`, `.ref`, `.data()`). The
+// stub's own `StubDocRef` carries full Firestore semantics, but
+// `resolveWorkspacePage` is also exercised from tests that need only
+// the data surface — a lightweight shim is enough.
+function workspaceSnap(doc: DocData, id = "ws-1"): { id: string; data: () => DocData } {
+    return { id, data: () => doc };
+}
+
 async function expectHttpsError(
     fn: () => Promise<unknown>,
     code: string,
@@ -405,7 +414,12 @@ async function main() {
         assert.ok(typeof wsPatch.metaPageClearedAt === "number");
     });
 
-    await run("T-09b: link with NEVER_SET Page → no clear, pageCleared=false", async () => {
+    await run("T-09b: link with NEVER_SET Page → CLEARED stamped, pageCleared=false", async () => {
+        // Claude audit C-1 (2026-08-20): NEVER_SET → CLEARED on every
+        // ad-account change. The legacy global Page fallback is blocked
+        // the moment the workspace is retargeted. The user-facing
+        // notice stays gated on `hadPage` so untouched workspaces
+        // don't produce a confusing "your Page was cleared" message.
         resetStub();
         setupOwnerConnection();
         setupWorkspace({
@@ -416,21 +430,33 @@ async function main() {
             metaPageName: null,
             metaPageClearedAt: null,
         });
+        const before = Date.now();
         const result = await linkMetaAccountToWorkspaceImpl(
             ownerScope(),
             { workspaceId: "ws-1", metaAdAccountId: "act_WS_A", metaAdAccountName: "A" },
             { probeMetaRoleImpl: FAKE_PROBE_ROLE, metaAppSecretValue: TEST_SECRET },
         );
-        assert.equal(result.pageCleared, false, "T-09b: NEVER_SET → pageCleared=false (no new notice)");
-        // NEVER_SET stays NEVER_SET — metaPageClearedAt is NOT
-        // promoted to a timestamp by the link, so the workspace
-        // doesn't appear to have been deliberately cleared.
+        const after = Date.now();
+
+        assert.equal(result.pageCleared, false, "T-09b: NEVER_SET → pageCleared=false (no new notice — user never picked one)");
+        // FR-011a — metaPageClearedAt stamped regardless of prior state.
+        // The workspace moves off the legacy global Page fallback the
+        // moment it is retargeted (Claude audit C-1 closure).
         const ws = bucket("users/owner-1/workspaces").get("ws-1") as any;
         assert.equal(ws.metaPageId, null);
-        assert.equal(ws.metaPageClearedAt, null);
+        assert.equal(ws.metaPageName, null);
+        assert.ok(
+            typeof ws.metaPageClearedAt === "number"
+              && ws.metaPageClearedAt >= before
+              && ws.metaPageClearedAt <= after,
+            "T-09b (Claude audit C-1): NEVER_SET workspace is now CLEARED on link (blocks legacy fallback)",
+        );
     });
 
-    await run("T-09c: link with CLEARED Page → pageCleared=false (already cleared)", async () => {
+    await run("T-09c: link with CLEARED Page → re-stamped, pageCleared=false", async () => {
+        // Claude audit C-1: a fresh ad-account change re-stamps
+        // metaPageClearedAt (already CLEARED → still CLEARED) so the
+        // audit log carries the new event timestamp.
         resetStub();
         setupOwnerConnection();
         setupWorkspace({
@@ -441,17 +467,63 @@ async function main() {
             metaPageName: null,
             metaPageClearedAt: Date.parse("2026-07-15T00:00:00Z"),
         });
+        const before = Date.now();
         const result = await linkMetaAccountToWorkspaceImpl(
             ownerScope(),
             { workspaceId: "ws-1", metaAdAccountId: "act_WS_A", metaAdAccountName: "A" },
             { probeMetaRoleImpl: FAKE_PROBE_ROLE, metaAppSecretValue: TEST_SECRET },
         );
+        const after = Date.now();
+
         assert.equal(result.pageCleared, false, "T-09c: CLEARED → pageCleared=false (no new notice)");
-        // The clear timestamp was refreshed (a re-link is a fresh CLEAR
-        // event per FR-011's semantics), but the user-facing notice
-        // stays quiet because the workspace was already CLEARED.
+        // The clear timestamp was refreshed by the link — re-stamped
+        // because every ad-account change is an explicit FR-011 event.
         const ws = bucket("users/owner-1/workspaces").get("ws-1") as any;
-        assert.ok(typeof ws.metaPageClearedAt === "number");
+        assert.ok(
+            typeof ws.metaPageClearedAt === "number"
+              && ws.metaPageClearedAt >= before
+              && ws.metaPageClearedAt <= after,
+            "T-09c: metaPageClearedAt re-stamped on link",
+        );
+    });
+
+    await run("T-09d: NEVER_SET workspace after link → pageSource 'none', NOT 'legacy_global'", async () => {
+        // Claude audit C-1 closure: after a NEVER_SET workspace is
+        // linked, a pack publish from it must resolve pageSource as
+        // 'none' (not 'legacy_global'). The legacy global Page
+        // fallback is blocked by FR-011a's CLEARED rule. The
+        // metaCallerScope.resolveWorkspacePage helper reads
+        // `metaPageClearedAt != null` and returns 'none' for CLEARED
+        // workspaces — this test confirms the FR-011 + FR-011a contract
+        // from the publish path's perspective.
+        resetStub();
+        setupOwnerConnection();
+        setupWorkspace({
+            id: "ws-1", name: "Brand X",
+            isDefault: true,
+            metaAdAccountId: null,
+            metaPageId: null,
+            metaPageName: null,
+            metaPageClearedAt: null,
+        });
+        await linkMetaAccountToWorkspaceImpl(
+            ownerScope(),
+            { workspaceId: "ws-1", metaAdAccountId: "act_WS_A", metaAdAccountName: "A" },
+            { probeMetaRoleImpl: FAKE_PROBE_ROLE, metaAppSecretValue: TEST_SECRET },
+        );
+        const ws = bucket("users/owner-1/workspaces").get("ws-1") as any;
+        const clearedAt = ws.metaPageClearedAt;
+        assert.ok(typeof clearedAt === "number" && clearedAt > 0, "T-09d setup: metaPageClearedAt stamped");
+
+        // Now resolve the page through the shared helper. It must
+        // classify this workspace as CLEARED → 'none', not NEVER_SET
+        // → 'legacy_global'.
+        const { resolveWorkspacePage } = require("../workspaces/metaCallerScope.js");
+        const conn = bucket("metaConnections").get("owner-1") as any;
+        const page = resolveWorkspacePage(workspaceSnap(ws), conn);
+        assert.equal(page.pageSource, "none", "T-09d (Claude audit C-1): CLEARED workspace after link → pageSource='none', never 'legacy_global'");
+        assert.equal(page.pageId, null);
+        assert.equal(page.pageName, null);
     });
 
     // ─── T-10: unlink clears Page in same write ───
