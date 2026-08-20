@@ -44,7 +44,7 @@ export const triggerMetaSync = onCall(
         // the owner's account.
         const scope = await resolveMetaScope(request);
         const req = request.data as TriggerMetaSyncRequest;
-        if (!req || typeof req.workspaceId !== "string") {
+        if (!req || typeof req.workspaceId !== "string" || req.workspaceId.length === 0) {
             throw new HttpsError("invalid-argument", "workspaceId is required.");
         }
 

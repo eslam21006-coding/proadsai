@@ -3271,7 +3271,7 @@ export async function metaOAuthCallbackImpl(
     const tokenResponse = await fetchImpl(
         `https://graph.facebook.com/v22.0/oauth/access_token?` +
         `client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&client_secret=${appSecret}&code=${code}`
+         `&client_secret=${appSecret}&code=${encodeURIComponent(code)}`
     );
     const tokenData = await tokenResponse.json() as any;
     if (tokenData.error) {

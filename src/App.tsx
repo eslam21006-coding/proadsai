@@ -3757,9 +3757,21 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
   useEffect(() => {
     if (!user) return;
     const wsId = canUseWorkspaces ? activeWorkspaceId : null;
+    // CR-MAJOR (CodeRabbit review feedback): the previous empty-catch
+    // left a stale `metaConnection` from the prior workspace visible
+    // after a workspace switch. Clear it on failure so a refresh error
+    // surfaces as "no connection" rather than misleading the user
+    // with another workspace's state.
     metaService.getConnection({ workspaceId: wsId })
       .then(conn => setMetaConnection(conn))
-      .catch(() => { });
+      .catch((err) => {
+        console.warn("Meta connection refresh failed — clearing stale state:", err);
+        setMetaConnection({
+          connected: false, adAccounts: [], selectedAccountId: null,
+          pages: [], selectedPageId: null, selectedPageName: null,
+          connectedAt: null, lastSyncAt: null, status: "", tokenExpiring: false,
+        });
+      });
   }, [user, canUseWorkspaces, activeWorkspaceId]);
 
   // Phase 14 batch 01 — UI wiring. Refresh helper used after the OAuth

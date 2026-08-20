@@ -133,7 +133,7 @@ Keys are inserted adjacent to the existing `meta.*` block in each
 language so a maintainer looking for "what just got added" sees them
 together, not scattered.
 
-The Phase 8 contract test T-18 (`src/__tests__/i18n.test.ts`) will
+The Phase 8 contract test T-18 (`src/__tests__/i18n.test.tsx`) will
 enumerate these keys against both language tables and fail if any is
 missing in one — that gate is deferred to Phase 8 per `tasks.md`.
 

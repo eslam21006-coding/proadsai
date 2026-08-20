@@ -234,7 +234,24 @@ export async function resolvePublishWorkspace(
     try {
       wsId = await resolveDefaultWorkspaceId(scope.ownerUid);
       workspaceIdSource = "default";
-    } catch {
+    } catch (err) {
+      // CR-MAJOR (CodeRabbit review feedback): `resolveDefaultWorkspaceId`
+      // throws `HttpsError("not-found")` when no default marker
+      // exists AND propagates Firestore read failures. The previous
+      // blanket `catch {}` mapped both to
+      // `failed-precondition / reason: 'no_workspace_resolved'`,
+      // which contradicts FR-003 — a transient read failure must
+      // surface as retryable, not as a permanent precondition.
+      // Re-throw anything that isn't the "no default marker" verdict
+      // so it propagates as `unavailable` (retryable) per the
+      // universal preamble contract.
+      if (!(err instanceof HttpsError) || err.code !== "not-found") {
+        throw new HttpsError(
+          "unavailable",
+          "Could not determine your workspace. Please retry.",
+          { reason: "workspace_lookup_degraded" },
+        );
+      }
       throw new HttpsError(
         "failed-precondition",
         "No workspace could be determined for this publish.",

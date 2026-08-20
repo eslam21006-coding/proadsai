@@ -195,11 +195,17 @@ async function scanAllWorkspaces(): Promise<Page[]> {
 
     if (pageSnap.size < PAGE_SIZE) break;
     if (pages.length >= PAGE_COUNT_CEILING) {
-       
-      console.warn(
-        `repair: hit PAGE_COUNT_CEILING (${PAGE_COUNT_CEILING}); stopping scan. Inspect before re-running.`,
-      );
-      break;
+        // CR-MAJOR (CodeRabbit review feedback): the previous
+        // `console.warn` + `break` let the run exit with code 0 even
+        // when the scan was truncated. A subsequent re-run starts
+        // from page 0 again, so any workspace past the ceiling
+        // never gets repaired. Fail loudly — the operator can raise
+        // PAGE_COUNT_CEILING or split the run rather than ship a
+        // partial repair.
+        throw new Error(
+            `repair: hit PAGE_COUNT_CEILING (${PAGE_COUNT_CEILING}); scan is incomplete. ` +
+            `Raise PAGE_COUNT_CEILING or split the run before re-applying.`,
+        );
     }
     cursor = pageSnap.docs[pageSnap.docs.length - 1];
   }
@@ -297,7 +303,7 @@ async function applyPass1(
 interface RepairCandidate {
   id: string;
   ref: FirebaseFirestore.DocumentReference;
-  data: Record<string, any>;
+  data: Record<string, unknown>;
 }
 
 // ─── Pass 2 — isDefault marker (FR-026d) ────────────────────────────────────
