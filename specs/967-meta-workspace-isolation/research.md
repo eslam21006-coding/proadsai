@@ -65,7 +65,7 @@ The predicate cannot simply be deleted. `firestore.rules:88-92` grants team memb
 
 **Decision**: 19 entry points, matching the count in the original report. They split into two groups by whether an authenticated caller exists.
 
-**Group 1 — has `request.auth.uid`, convert to `resolveCallerScope` (15)**
+**Group 1 — has `request.auth.uid`, convert to `resolveMetaScope(request)` (15)**
 
 | # | Operation | File |
 |---|---|---|

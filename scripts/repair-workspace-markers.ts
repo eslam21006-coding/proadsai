@@ -253,7 +253,14 @@ async function applyPass1(
     // the oldest active workspace as `isDefault: true` for an account
     // that is still mid-repair, leaving the default marker on a doc
     // whose `deletedAt` is still absent.
-    let pass1AllSucceeded = updates.length === 0;
+    //
+    // CR-MAJOR (CodeRabbit review feedback): dry-run performs no
+    // writes so nothing can fail — pass 2 must still evaluate the
+    // simulated post-pass-1 view for that account, otherwise a
+    // dry-run against a legacy account with missing `deletedAt`
+    // keys reports `accountsEvaluatedPass2: 0` while the apply run
+    // silently performs writes the dry-run never predicted.
+    let pass1AllSucceeded = mode === "dry-run" || updates.length === 0;
 
     if (mode === "apply" && updates.length > 0) {
       for (let i = 0; i < updates.length; i += MAX_BATCH) {

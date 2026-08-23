@@ -89,12 +89,20 @@ async function loadMetaConnectionAccountId(
     // implementation read a separate `private/metaConnection` subdoc that
     // was never written by the linker, so every save failed with
     // "No Meta account connected for this workspace."
+    //
+    // CR-MAJOR (CodeRabbit review feedback): also reject soft-deleted
+    // workspaces here. A doc that retains `metaAdAccountId` after
+    // `deletedAt` is set must NOT count as a connected workspace —
+    // otherwise `getFunnelSettings` returns the stale settings of a
+    // deleted workspace and `saveFunnelSettings` / `dismissAdvisory`
+    // write below a deleted marker.
     const snap = await getDb()
         .collection("users").doc(uid)
         .collection("workspaces").doc(workspaceId)
         .get();
     if (!snap.exists) return null;
     const data = snap.data() || {};
+    if (data.deletedAt != null) return null;
     return typeof data.metaAdAccountId === "string" && data.metaAdAccountId.length > 0
         ? data.metaAdAccountId
         : null;

@@ -135,11 +135,13 @@ all four). Scope is bounded to R1; unrelated workspace-listing
 defects are explicitly out of scope and would be tracked as separate
 follow-ups per FR-026a.
 
-**FR-026b closure**: every surface above shows a count equal to the
-number of active workspaces the account actually holds after the
-repair. Verified hermetically by `workspaceListing.test.ts` (see
-T091 below); live verification on the 9-workspace account is
-operator-gated (T090 below).
+**FR-026b closure (server-side evidence)**: `workspaceListing.test.ts`
+proves the underlying `workspaceListing` callable returns the active
+workspace count for both owner and team-member scopes (T091 below).
+The four UI selector surfaces (Funnel Settings selector, top-bar
+switcher, Workspace Settings Modal, dashboard/ad-linking path) are
+runbook-only — no executable frontend test asserts their counts. Live
+verification on the 9-workspace account is operator-gated (T090 below).
 
 ---
 

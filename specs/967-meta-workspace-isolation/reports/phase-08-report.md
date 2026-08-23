@@ -321,4 +321,18 @@ Every SC has an operator-gated live runbook in `evidence-r1.md`.
 - Rollback guarantee analysed and runbooked.
 - Live runbook appended to `evidence-r1.md` for every operator-gated step.
 
-The phase is ready for review and handoff.
+The phase is **review-ready with explicit open audit gates**. The
+August 20, 2026 audit records the following findings that remain open
+and must be resolved before final ship:
+
+- **C-1 (critical)** — Page-clear behavior on ad-account change must be
+  enforced unconditionally across every workspace ad-account write
+  (`connectMetaAccount`, `linkMetaAccountToWorkspaceImpl`,
+  `disconnectMetaAccount`), not only the link path.
+- **H-1 (high)** — CI wiring for the new contract fixtures must be
+  green on the shared runner before handoff.
+- **H-2 (high)** — Live repair evidence for SC-014 (the dry-run,
+  apply, and after-run sequence against the 9-workspace account) must
+  be recorded in `evidence-r1.md`, not left as `<pending>` placeholders.
+
+Handoff is conditional on closing these three gates.

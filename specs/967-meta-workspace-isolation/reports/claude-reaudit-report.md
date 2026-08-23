@@ -226,9 +226,16 @@ conditions:
   workspace then has **no ad account**, so FR-015 refuses any publish
   from it (`index.ts:4035`, `:6149`).
 
-Worth closing for symmetry in a follow-up, since the invariant
-"ad-account field changes ⇒ Page cleared" is currently enforced at two
-of four write sites rather than structurally.
+The invariant "ad-account field changes ⇒ Page cleared" is currently
+enforced at two of four write sites rather than structurally:
+`linkMetaAccountToWorkspaceImpl` and the disconnect transaction clear
+the Page; `connectMetaAccount` and `disconnectMetaAccount` do not. UI
+call ordering happens to cover the user-facing paths because
+`linkMetaAccountToWorkspace` runs first, but a direct callable call or
+retry can leave a stale Page on a workspace whose ad account has
+changed — violating the FR-011 Page state-machine invariant. The
+follow-up must route every workspace ad-account write through the same
+clear logic so retries and direct calls preserve the invariant.
 
 ### O-2 — The clear now fires on every link call, not only on an actual account *change*
 
@@ -239,14 +246,19 @@ account already linked. A NEVER_SET workspace still inheriting the
 legacy global Page therefore loses that inheritance the first time the
 user re-confirms their *existing* account, not only when they retarget.
 
-This is **broader than the audit's recommendation** ("on every
-ad-account change") but errs in the safe direction: the failure mode is
-"user must pick a Page" (pack publish degrades by skipping
-`/adcreatives`; single publish is unaffected — FR-015a), never "ad
-published under the wrong Page". If tighter SC-006 preservation is
-wanted, gate the clear on `priorAccountId !== metaAdAccountId`. I do
-**not** recommend changing it before merge — the current behaviour is
-the conservative one.
+Per `spec.md` clarification (line 160, line 245), the legacy Page must
+remain available until the user explicitly selects a workspace Page —
+re-selecting the same ad account is not Page selection. The current
+behaviour therefore conflicts with that requirement: it can force a
+manual Page selection and can make pack publishing skip creative
+creation even though no Page choice was made. The fix is to gate the
+clear on `priorAccountId !== incomingAccountId` in
+`linkMetaAccountToWorkspaceImpl` so same-account re-selection
+preserves the inherited legacy Page, and to add regression coverage
+that asserts the Page is preserved when the incoming account ID
+matches the stored one. This must ship before merge — the FR-011 /
+FR-015a combination is what protects against cross-client Page
+exposure, and the current code violates it on the most common UI path.
 
 ---
 

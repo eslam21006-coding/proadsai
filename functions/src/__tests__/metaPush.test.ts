@@ -44,10 +44,11 @@ async function run(name: string, fn: () => Promise<void>) {
         await fn();
         passed++;
         console.log(`  ✓ ${name}`);
-    } catch (err: any) {
+    } catch (err: unknown) {
         failed++;
-        failures.push(`${name}: ${err.message}`);
-        console.log(`  ✗ ${name} — ${err.message}`);
+        const message = err instanceof Error ? err.message : String(err);
+        failures.push(`${name}: ${message}`);
+        console.log(`  ✗ ${name} — ${message}`);
     }
 }
 
@@ -104,7 +105,7 @@ class StubCollection {
     // no-op filter (returning every doc).
     private filterFn: ((d: DocData) => boolean) | null = null;
     private limitN: number | null = null;
-    where(field: string, op: string, value: any) {
+    where(field: string, op: string, value: unknown) {
         const prev = this.filterFn;
         this.filterFn = (d) => {
             if (prev && !prev(d)) return false;
@@ -144,9 +145,14 @@ const stubFirestore = () => ({
     // (functions/src/index.ts:88) don't blow up the import.
     settings: () => stubFirestore(),
     collection: (path: string) => new StubCollection(path, bucket(path)),
-    runTransaction: async (fn: (txn: any) => Promise<unknown>) => {
+    runTransaction: async <T>(fn: (txn: {
+        get: (refOrQuery: StubDocRef | StubCollection) => Promise<unknown>;
+        create: (ref: StubDocRef, data: DocData) => Promise<void>;
+        set: (ref: StubDocRef, data: DocData) => Promise<void>;
+        update: (ref: StubDocRef, patch: DocData) => Promise<void>;
+    }) => Promise<T>): Promise<T> => {
         const txn = {
-            get: (refOrQuery: any) => refOrQuery.get(),
+            get: (refOrQuery: StubDocRef | StubCollection) => refOrQuery.get(),
             create: (ref: StubDocRef, data: DocData) => ref.set(data),
             set: (ref: StubDocRef, data: DocData) => ref.set(data),
             update: (ref: StubDocRef, patch: DocData) => ref.update(patch),
@@ -187,14 +193,14 @@ function encryptTestToken(plaintext: string, secret: string): string {
     return `${iv.toString("hex")}:${tag.toString("hex")}:${enc.toString("hex")}`;
 }
 
-function makeFakeFetch(uploadResponse: any): {
+function makeFakeFetch(uploadResponse: unknown): {
     fetch: typeof fetch;
-    calls: { url: string; body: any }[];
+    calls: { url: string; body: unknown }[];
 } {
-    const calls: { url: string; body: any }[] = [];
+    const calls: { url: string; body: unknown }[] = [];
     const fetchImpl: typeof fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === "string" ? input : input.toString();
-        let body: any = null;
+        let body: unknown = null;
         if (init?.body && typeof init.body === "string") {
             try { body = JSON.parse(init.body); } catch { body = init.body; }
         }
@@ -205,6 +211,15 @@ function makeFakeFetch(uploadResponse: any): {
 }
 
 const IMAGE_HASH = "abc123def456789012345678901234567890";
+// CR-MINOR (CodeRabbit review feedback): T-24 previously pushed the
+// same image hash three times in the same tick. The single-creative
+// deploymentId is `${ownerUid}_${Date.now()}_${hash.substring(0,8)}`,
+// so same-tick + same-hash collapsed into one stub document. Distinct
+// hashes give three distinct deploymentIds while still exercising the
+// three workspace-state paths.
+const IMAGE_HASH_A = "aaa111def456789012345678901234567890";
+const IMAGE_HASH_B = "bbb222def456789012345678901234567890";
+const IMAGE_HASH_C = "ccc333def456789012345678901234567890";
 
 function setupOwnerScopeFixture() {
     const usersBucket = bucket("users");
@@ -530,14 +545,18 @@ async function main() {
             metaPageClearedAt: null,
         });
         const { fetch: impl } = makeFakeFetch({
-            images: { "0": { hash: IMAGE_HASH } },
+            images: {
+                "0": { hash: IMAGE_HASH_A },
+                "1": { hash: IMAGE_HASH_B },
+                "2": { hash: IMAGE_HASH_C },
+            },
         });
         const deps = { fetchImpl: impl, metaAppSecretValue: TEST_SECRET };
         // 1) workspaceIdSource = 'request', pageSource = 'workspace'
         await metaPushCreativeImpl(
             ownerScope(),
             {
-                imageBase64: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
+                imageBase64: "data:image/png;base64,iVBORW0KGgoAAAANSUhEUg==",
                 workspaceId: "ws-A",
             },
             deps,
@@ -546,7 +565,7 @@ async function main() {
         await metaPushCreativeImpl(
             ownerScope(),
             {
-                imageBase64: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
+                imageBase64: "data:image/png;base64,iVBORW0KGgoAAAANSUhEUgAA==",
                 workspaceId: "ws-B",
             },
             deps,
@@ -555,7 +574,7 @@ async function main() {
         await metaPushCreativeImpl(
             ownerScope(),
             {
-                imageBase64: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
+                imageBase64: "data:image/png;base64,iVBORW0KGgoAAAANSUhEUgAA//2==",
             },
             deps,
         );

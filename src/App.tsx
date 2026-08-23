@@ -3762,9 +3762,14 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     // after a workspace switch. Clear it on failure so a refresh error
     // surfaces as "no connection" rather than misleading the user
     // with another workspace's state.
+    // CR-MINOR (CodeRabbit review feedback): guard against out-of-order
+    // resolution when the user switches workspaces quickly — a stale
+    // promise must not overwrite the latest `metaConnection`.
+    let cancelled = false;
     metaService.getConnection({ workspaceId: wsId })
-      .then(conn => setMetaConnection(conn))
+      .then(conn => { if (!cancelled) setMetaConnection(conn); })
       .catch((err) => {
+        if (cancelled) return;
         console.warn("Meta connection refresh failed — clearing stale state:", err);
         setMetaConnection({
           connected: false, adAccounts: [], selectedAccountId: null,
@@ -3772,12 +3777,16 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
           connectedAt: null, lastSyncAt: null, status: "", tokenExpiring: false,
         });
       });
+    return () => { cancelled = true; };
   }, [user, canUseWorkspaces, activeWorkspaceId]);
 
   // Phase 14 batch 01 — UI wiring. Refresh helper used after the OAuth
   // popup closes (and on demand) so the menu reflects the latest state.
   // Returns the fetched connection so callers can use the already-loaded
   // value instead of issuing a second `getConnection` round-trip.
+  // CR-MINOR (CodeRabbit review feedback): depend on canUseWorkspaces /
+  // activeWorkspaceId so the closure captures the current workspace scope
+  // instead of the initial-mount values.
   const refreshMetaConnection = useCallback(async (): Promise<MetaConnection | null> => {
     try {
       const conn = await metaService.getConnection(
@@ -3785,11 +3794,16 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
       );
       setMetaConnection(conn);
       return conn;
-    } catch {
-      // Swallow — connection state will simply stay stale until next refresh.
+    } catch (err) {
+      console.warn("Meta connection refresh failed — clearing stale state:", err);
+      setMetaConnection({
+        connected: false, adAccounts: [], selectedAccountId: null,
+        pages: [], selectedPageId: null, selectedPageName: null,
+        connectedAt: null, lastSyncAt: null, status: "", tokenExpiring: false,
+      });
       return null;
     }
-  }, []);
+  }, [canUseWorkspaces, activeWorkspaceId]);
 
   // Phase 14 batch 01 — Account picker. Persists the user's chosen ad
   // account to both the global connection (`metaSelectAccount`) and, on

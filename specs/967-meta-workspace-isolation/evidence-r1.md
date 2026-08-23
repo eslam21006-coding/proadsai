@@ -138,8 +138,12 @@ complete and idempotent.
 
 ### Before evidence (T009)
 
-**Pending live run.** Operator to paste the dry-run output below
-**before** running `--apply`.
+**SC-014 gate — pending live operator run.** SC-014 cannot be marked
+closed until this section, the Apply output below, and the After
+evidence are all filled with the actual script counters. Deployment
+alone does not satisfy SC-014; the listing data is only corrected by
+the documented repair sequence. Operator to paste the dry-run output
+below **before** running `--apply`.
 
 ```
 === repair-workspace-markers summary ===
@@ -176,7 +180,8 @@ should be inspected before proceeding.
 
 ### Apply output
 
-**Pending live run.** Operator to paste the `--apply` output below.
+**SC-014 gate — pending live operator run.** Operator to paste the
+`--apply` output below. SC-014 cannot be closed without this section.
 
 ```
 === repair-workspace-markers summary ===
@@ -203,8 +208,10 @@ should be inspected before proceeding.
 
 ### After evidence (T010)
 
-**Pending live run.** Operator to paste the second `--dry-run` output
-below. Both counters should reach zero.
+**SC-014 gate — pending live operator run.** Operator to paste the
+second `--dry-run` output below. SC-014 acceptance: both
+`docs missing deletedAt` and `docs marked default` reach zero. SC-014
+cannot be closed without this section.
 
 ```
 === repair-workspace-markers summary ===
@@ -263,7 +270,8 @@ record.
 | T010 (after dry-run) | _pending_ | _pending_ | _paste below in "After evidence"_ |
 
 Once all three sections are filled in, SC-014 is satisfied and the
-gate for Phase 3 (US1) opens.
+gate for Phase 3 (US1) opens. Until they are, **SC-014 is open** and
+the phase is not shippable.
 
 ---
 

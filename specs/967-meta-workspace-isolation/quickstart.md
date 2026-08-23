@@ -23,7 +23,7 @@ Sequenced by dependency, not by user-story priority. US5's investigation is alre
 |---|---|---|---|
 | 1 | Run the combined repair (`deletedAt` + `isDefault`) and ship the `createWorkspace` source fix; verify all 9 workspaces list for owner **and** team member | US5 | SC-004, SC-014 |
 | 2 | Verify `resolveDefaultWorkspaceId` resolves on a post-2026-05-21 account | — | Unblocks US1 |
-| 3 | Convert the 15 authenticated operations to `resolveCallerScope` (R2), honouring `readDegraded` | US3 | SC-002, SC-009 |
+| 3 | Convert the 15 authenticated operations to `resolveMetaScope(request)` (R2), honouring `readDegraded`; resolve the OAuth callback identity separately with `resolveCallerScope(state)` | US3 | SC-002, SC-009 |
 | 4 | Resolve the OAuth callback identity to the owner (C7) | US3 | SC-011 |
 | 5 | Add `metaPageId`/`metaPageName`/`metaPageClearedAt`; make Page selection workspace-scoped (C1) | US2 | SC-003 |
 | 6 | Route both publish operations through the workspace (C4, C5) | US1 | SC-001, SC-007 |

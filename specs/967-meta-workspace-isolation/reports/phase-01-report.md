@@ -167,15 +167,15 @@ Phase 1 deliberately touches none of the trap surfaces — no publish
 path, no caller-scope decision, no OAuth callback, no repair script.
 Verified:
 
-- ❌ No `readDegraded` references introduced.
-- ❌ No `request.auth.uid` introduced into a Firestore path. (Three
+- ✅ No `readDegraded` references introduced.
+- ✅ No `request.auth.uid` introduced into a Firestore path. (Three
   pre-existing usages in `metaPushCreative` untouched.)
-- ❌ No `conn.selectedAccountId` read by either publish path
+- ✅ No `conn.selectedAccountId` read by either publish path
   introduced.
-- ❌ No Page write — the new fields are all null on creation.
-- ❌ No OAuth `state` parameter touched.
-- � No Firestore query added.
-- ❌ No security rule changed.
+- ✅ No Page write — the new fields are all null on creation.
+- ✅ No OAuth `state` parameter touched.
+- ✅ No Firestore query added.
+- ✅ No security rule changed.
 
 ---
 

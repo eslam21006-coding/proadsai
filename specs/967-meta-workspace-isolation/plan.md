@@ -9,7 +9,7 @@ Make the workspace the unit of Meta identity, and make team members first-class 
 
 Five connected defects are fixed together: Meta operations act on the caller instead of the account that owns the data; Facebook Page selection is account-global rather than per-workspace; publishing ignores the active workspace and uses the account-global ad account; the workspace selector shows 3 of 9 workspaces; and team members are blocked from linking ad accounts.
 
-**Technical approach.** Route all 15 authenticated Meta entry points through `resolveCallerScope`, honouring its `readDegraded` signal. Add `metaPageId` / `metaPageName` / `metaPageClearedAt` to the workspace document, and resolve both ad account and Page from the workspace server-side, never from `metaConnections`. Resolve the OAuth callback's identity to the owner after reading it, leaving the `state` parameter itself untouched so the deferred state-trust phase stays unblocked. Repair the legacy workspace documents whose missing `deletedAt` field is what actually hides the six workspaces.
+**Technical approach.** Route all 15 authenticated Meta entry points through `resolveMetaScope(request)`, honouring its `readDegraded` signal. Add `metaPageId` / `metaPageName` / `metaPageClearedAt` to the workspace document, and resolve both ad account and Page from the workspace server-side, never from `metaConnections`. Resolve the OAuth callback's identity to the owner after reading it, leaving the `state` parameter itself untouched so the deferred state-trust phase stays unblocked. Repair the legacy workspace documents whose missing `deletedAt` field is what actually hides the six workspaces.
 
 Phase 0 completed the FR-025 root-cause investigation and surfaced a second, undocumented defect that blocks the agreed publish fallback (R4).
 
@@ -110,7 +110,7 @@ src/
 firestore.rules                   :86     # workspaces — members read-only (R6)
 ```
 
-**Structure Decision**: The existing frontend/backend split is used unchanged. No new module is introduced: the caller-scope helper, the workspace policy guards, and the i18n mechanism all already exist, and this phase extends their reach rather than adding a layer. That directly serves FR-029 — a code-only revert restores current behaviour because nothing new has to be unwound.
+**Structure Decision**: The existing frontend/backend split is used unchanged. Phase 2 adds the shared `functions/src/workspaces/metaCallerScope.ts` scope module that the 15 authenticated Meta callables share — no additional architectural layer is introduced beyond that. The caller-scope helper, the workspace policy guards, and the i18n mechanism all already exist, and this phase extends their reach rather than adding a layer. That directly serves FR-029 — a code-only revert restores current behaviour because nothing new has to be unwound.
 
 ## Phase 0 — Research
 

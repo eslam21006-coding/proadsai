@@ -276,7 +276,7 @@ async function main() {
     // The script is a one-off and isn't imported directly; we mirror the
     // selection function here against the in-memory bucket shape.
     // ═══════════════════════════════════════════════════════════════════════
-    function pickRepairDefault(entries: Array<[string, any]>): string | null {
+    function pickRepairDefault(entries: Array<[string, DocData]>): string | null {
         // Mirror of scripts/repair-workspace-markers.ts:isAlreadyDefault +
         // isActiveAfterRepair + sorted[0] logic.
         const active = entries.filter(([, d]) => d.deletedAt == null);
@@ -293,7 +293,7 @@ async function main() {
     }
 
     await run("T-22a: pickRepairDefault → oldest active by createdAt", async () => {
-        const entries: Array<[string, any]> = [
+        const entries: Array<[string, DocData]> = [
             ["ws-newer", { createdAt: 200, deletedAt: null }],
             ["ws-older", { createdAt: 100, deletedAt: null }],
             ["ws-oldest", { createdAt: 50, deletedAt: null }],
@@ -304,7 +304,7 @@ async function main() {
     });
 
     await run("T-22b: pickRepairDefault → returns null when an account already has a default", async () => {
-        const entries: Array<[string, any]> = [
+        const entries: Array<[string, DocData]> = [
             ["ws-1", { createdAt: 100, deletedAt: null, isDefault: true }],
             ["ws-2", { createdAt: 200, deletedAt: null, isDefault: false }],
         ];
@@ -313,7 +313,7 @@ async function main() {
     });
 
     await run("T-22c: pickRepairDefault → null when every workspace is soft-deleted", async () => {
-        const entries: Array<[string, any]> = [
+        const entries: Array<[string, DocData]> = [
             ["ws-1", { createdAt: 100, deletedAt: 999 }],
             ["ws-2", { createdAt: 200, deletedAt: 888 }],
         ];
@@ -322,7 +322,7 @@ async function main() {
     });
 
     await run("T-22d: pickRepairDefault → tiebreak by doc id when createdAt is missing", async () => {
-        const entries: Array<[string, any]> = [
+        const entries: Array<[string, DocData]> = [
             ["ws-b", { deletedAt: null }], // no createdAt
             ["ws-a", { deletedAt: null }], // no createdAt
             ["ws-c", { deletedAt: 999 }], // deleted

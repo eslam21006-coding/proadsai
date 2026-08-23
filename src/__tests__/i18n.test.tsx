@@ -59,6 +59,11 @@ function readKey(lang: "en" | "ar", key: string): string {
     // CR-MINOR (CodeRabbit review feedback): the previous harness
     // took a `lang` prop but never read it; the `setItem` here is
     // what actually switches the language for the LanguageProvider.
+    // CR-MINOR (CodeRabbit review feedback): save and restore the prior
+    // `proads_ui_lang` value so later tests in the same environment
+    // (or a CI run that shares jsdom globalStorage) don't inherit
+    // the last lookup's language.
+    const previousLang = localStorage.getItem("proads_ui_lang");
     localStorage.setItem("proads_ui_lang", lang);
     const { unmount } = render(
         <LanguageProvider>
@@ -72,6 +77,11 @@ function readKey(lang: "en" | "ar", key: string): string {
         return v;
     } finally {
         unmount();
+        if (previousLang === null) {
+            localStorage.removeItem("proads_ui_lang");
+        } else {
+            localStorage.setItem("proads_ui_lang", previousLang);
+        }
     }
 }
 

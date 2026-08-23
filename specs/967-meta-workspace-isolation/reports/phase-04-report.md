@@ -113,7 +113,9 @@ file has no extra import surface for the test stub:
 
 When no `workspaceId` is supplied, the response falls back to the
 account-global fields so existing non-workspace-plan UI keeps
-working (`activePageId = selectedPageId`, `pageSource = "legacy_global"`).
+working. Two outcomes are possible:
+- `selectedPageId` is set → `pageSource = "legacy_global"`, `activePageId = selectedPageId`
+- `selectedPageId` is absent → `pageSource = "none"`, `activePageId = null`
 
 ### Refactor: `getMetaConnectionImpl`
 
@@ -204,15 +206,28 @@ in-step with the active workspace).
 
 The initial-load effect now re-runs on `activeWorkspaceId` change so
 the connection is re-fetched with the new workspace's Page when the
-user switches workspaces:
+user switches workspaces. A failed refresh clears the stale `metaConnection`
+instead of leaving the prior workspace's `activePageId` visible, and a
+per-invocation `cancelled` flag guards against out-of-order resolution
+when the user switches workspaces quickly:
 
 ```ts
 useEffect(() => {
     if (!user) return;
     const wsId = canUseWorkspaces ? activeWorkspaceId : null;
+    let cancelled = false;
     metaService.getConnection({ workspaceId: wsId })
-        .then(conn => setMetaConnection(conn))
-        .catch(() => { });
+        .then(conn => { if (!cancelled) setMetaConnection(conn); })
+        .catch((err) => {
+            if (cancelled) return;
+            console.warn("Meta connection refresh failed — clearing stale state:", err);
+            setMetaConnection({
+                connected: false, adAccounts: [], selectedAccountId: null,
+                pages: [], selectedPageId: null, selectedPageName: null,
+                connectedAt: null, lastSyncAt: null, status: "", tokenExpiring: false,
+            });
+        });
+    return () => { cancelled = true; };
 }, [user, canUseWorkspaces, activeWorkspaceId]);
 ```
 

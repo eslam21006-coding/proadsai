@@ -81,10 +81,15 @@ server-set only).
 `pageSource` is recorded on every deployment so an audit can count
 remaining un-migrated workspaces (FR-028).
 
-The function deliberately does NOT throw on a missing Page (FR-015a):
-publishing is not gated on a Page while no Meta request consumes it.
-A code comment records this as a deferred decision to be reconsidered
-when ad creation lands (FR-015b, Constitution Principle XII).
+The function deliberately does NOT throw on a missing Page for the
+single-creative path (FR-015a): the single-creative publish stores the
+Page as metadata that no Meta request consumes, so a missing Page is
+not a safety concern for that path. The `metaPushCreativePack` path
+still consumes the resolved Page as `page_id` on `/adcreatives`, so a
+missing Page in pack publishing skips creative creation and is reported
+as `pageSource: "none"`. The single-creative decision is a deferred
+choice to be reconsidered when ad creation lands (FR-015b, Constitution
+Principle XII).
 
 ---
 
