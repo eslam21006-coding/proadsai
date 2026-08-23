@@ -523,6 +523,96 @@ async function main() {
         );
     });
 
+    // ─── T-MC11: reconnect a DIFFERENT account after disconnect → no stale name ───
+    await run("T-MC11: disconnect then connect a different account without accountName → both name fields empty", async () => {
+        // CR-MAJOR (CodeRabbit round 12, P2): `disconnectMetaAccountImpl`
+        // clears the workspace link and the tokens but leaves
+        // `accountId` / `accountName` on the private connection doc.
+        // The round-11 name-preservation fallback read that doc
+        // unconditionally, so connect A → disconnect → connect B
+        // (without accountName) resurrected A's name and labelled
+        // account B with it. The fallback is now gated on the stored
+        // `accountId` still matching the incoming account.
+        resetStub();
+        setupOwnerScope();
+        setupWorkspace({ id: "ws-1", metaAdAccountId: null, deletedAt: null });
+
+        // 1. Connect account A WITH a name.
+        await connectMetaAccountImpl(ownerScope(), {
+            workspaceId: "ws-1",
+            accountId: "act_WS_A",
+            accountName: "Account A",
+        });
+        assert.equal(
+            (bucket("users/owner-1/workspaces/ws-1/private").get("metaConnection") as DocData).accountName,
+            "Account A",
+            "T-MC11 precondition: account A name stored on the private doc",
+        );
+
+        // 2. Disconnect — leaves the stale name on the private doc.
+        await disconnectMetaAccountImpl(ownerScope(), { workspaceId: "ws-1" });
+        const privAfterDisconnect = bucket("users/owner-1/workspaces/ws-1/private").get("metaConnection") as DocData;
+        assert.equal(
+            privAfterDisconnect.accountName, "Account A",
+            "T-MC11 precondition: disconnect leaves the private-doc accountName intact",
+        );
+
+        // 3. Connect a DIFFERENT account WITHOUT accountName.
+        await connectMetaAccountImpl(ownerScope(), {
+            workspaceId: "ws-1",
+            accountId: "act_WS_B",
+        });
+
+        const ws = bucket("users/owner-1/workspaces").get("ws-1") as DocData;
+        assert.equal(ws.metaAdAccountId, "act_WS_B", "T-MC11: workspace linked to account B");
+        assert.equal(
+            ws.metaAdAccountName, "",
+            "T-MC11: metaAdAccountName must NOT inherit account A's stale name",
+        );
+        const priv = bucket("users/owner-1/workspaces/ws-1/private").get("metaConnection") as DocData;
+        assert.equal(priv.accountId, "act_WS_B", "T-MC11: private doc records account B");
+        assert.equal(
+            priv.accountName, "",
+            "T-MC11: private connection accountName must NOT inherit account A's stale name",
+        );
+    });
+
+    // ─── T-MC12: reconnect the SAME account after disconnect → name preserved ───
+    await run("T-MC12: disconnect then reconnect the same account without accountName → stored name preserved", async () => {
+        // Positive control for T-MC11: the round-12 gate must reject
+        // only names belonging to a DIFFERENT account. Reconnecting the
+        // same account still recovers the stored name from the private
+        // doc, which is the behaviour T-MC8 protects across the
+        // disconnect boundary (the workspace doc's own name is cleared
+        // by disconnect, so the private doc is the only source left).
+        resetStub();
+        setupOwnerScope();
+        setupWorkspace({ id: "ws-1", metaAdAccountId: null, deletedAt: null });
+
+        await connectMetaAccountImpl(ownerScope(), {
+            workspaceId: "ws-1",
+            accountId: "act_WS_A",
+            accountName: "Account A",
+        });
+        await disconnectMetaAccountImpl(ownerScope(), { workspaceId: "ws-1" });
+        await connectMetaAccountImpl(ownerScope(), {
+            workspaceId: "ws-1",
+            accountId: "act_WS_A",
+        });
+
+        const ws = bucket("users/owner-1/workspaces").get("ws-1") as DocData;
+        assert.equal(ws.metaAdAccountId, "act_WS_A", "T-MC12: workspace re-linked to account A");
+        assert.equal(
+            ws.metaAdAccountName, "Account A",
+            "T-MC12: same-account reconnect recovers the stored name",
+        );
+        const priv = bucket("users/owner-1/workspaces/ws-1/private").get("metaConnection") as DocData;
+        assert.equal(
+            priv.accountName, "Account A",
+            "T-MC12: private connection accountName preserved on same-account reconnect",
+        );
+    });
+
     summary();
 }
 

@@ -217,20 +217,39 @@ export async function connectMetaAccountImpl(
             // overwrite the stored `metaAdAccountName` and private
             // `accountName` with an empty string.
             if (!hasIncomingName) {
-                const storedWsName = typeof wsData.metaAdAccountName === "string" && wsData.metaAdAccountName.length > 0
+                // Only preserve a stored name that actually belongs to
+                // the INCOMING account. The FIX 6 guard below rejects a
+                // workspace already linked to a different account, but
+                // the name is resolved before that throw, so the match
+                // is asserted here rather than assumed.
+                const wsLinkedAccountId = typeof wsData.metaAdAccountId === "string" && wsData.metaAdAccountId.length > 0
+                    ? wsData.metaAdAccountId
+                    : null;
+                const storedWsName = wsLinkedAccountId === req.accountId
+                    && typeof wsData.metaAdAccountName === "string"
+                    && wsData.metaAdAccountName.length > 0
                     ? wsData.metaAdAccountName
                     : "";
-                // CR-MAJOR: if the workspace doc has no name (a
-                // first-time link), fall back to the private-doc
-                // name so a stale value from a prior unlink is
-                // never resurrected. If neither has a name, leave
-                // the empty placeholder — the caller didn't provide
-                // one and we don't have one to preserve.
+                // CR-MAJOR (CodeRabbit round 12, P2): if the workspace
+                // doc has no name (a first-time link), fall back to the
+                // private-doc name — but ONLY when that doc still
+                // records the same `accountId`.
+                // `disconnectMetaAccountImpl` clears the workspace link
+                // and the tokens yet leaves `accountId` / `accountName`
+                // on the private doc, so the sequence
+                //   connect A (name "A") → disconnect → connect B (no name)
+                // would otherwise resurrect A's name and label account B
+                // with it. Gating on the stored `accountId` keeps the
+                // stale value out. If neither doc has a matching name,
+                // leave the empty placeholder — the caller didn't
+                // provide one and we don't have one to preserve.
                 const privateSnap = await tx.get(privateRef);
-                const storedPrivateName = privateSnap.exists
-                    ? (typeof privateSnap.data()?.accountName === "string"
-                        ? privateSnap.data()?.accountName
-                        : "")
+                const privateData = privateSnap.exists ? (privateSnap.data() ?? {}) : {};
+                const privateBelongsToAccount = typeof privateData.accountId === "string"
+                    && privateData.accountId === req.accountId;
+                const storedPrivateName = privateBelongsToAccount
+                    && typeof privateData.accountName === "string"
+                    ? privateData.accountName
                     : "";
                 const resolvedName = storedWsName || storedPrivateName;
                 workspacePayload.metaAdAccountName = resolvedName;
