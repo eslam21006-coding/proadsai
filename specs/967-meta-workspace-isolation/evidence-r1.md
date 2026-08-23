@@ -273,6 +273,20 @@ Once all three sections are filled in, SC-014 is satisfied and the
 gate for Phase 3 (US1) opens. Until they are, **SC-014 is open** and
 the phase is not shippable.
 
+**Round 9 status (2026-08-23)** — SC-014 remains open and operator-gated.
+Code path is correct, hermetic tests pass, and the phase-08 report
+explicitly lists SC-014 as one of the open audit gates (alongside
+C-1, H-1, H-2). The `<pending>` placeholders are NOT a regression —
+they are the literal evidence slots the operator fills with the real
+counters from the live dry-run / apply / after-run sequence. This
+agent cannot produce live evidence against the 9-workspace Firebase
+account from a sandboxed environment; closing SC-014 is a deliberate
+human-in-the-loop step that the runbook above is designed to support.
+The pre-Phase 967 audit gate (C-1) is now closed by the round 7 code
+changes (FR-011 at every workspace ad-account write + same-account
+re-selection preserves Page); SC-014 is the only remaining gate that
+the hermetic suite cannot prove.
+
 ---
 
 ## Phase 3 — Single-workspace-plan regression (T043, FR-012b, SC-010)
