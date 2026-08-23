@@ -174,8 +174,9 @@ A user with nine active workspaces opens Funnel Settings. All nine appear in the
 - **FR-013**: Both publish operations MUST resolve the target ad account and Facebook Page from the identified workspace's own record on the server, ignoring any ad account or Page supplied by the caller.
 - **FR-014**: Neither publish operation may fall back to the account-level ad account selection under any condition.
 - **FR-015**: When the identified workspace has no ad account linked, publishing MUST be refused with a message that names the workspace and directs the user to link an ad account, and MUST NOT create anything in any ad account.
-- **FR-015a**: Publishing MUST NOT be refused because the resolved workspace has no Facebook Page. While the Page is recorded but not consumed by any Meta request, a missing Page MUST be recorded against the publish (FR-027) and MUST NOT block it.
-- **FR-015b**: When Meta requests begin consuming the Page, the gate in FR-015a MUST be reconsidered as part of that work. This requirement exists so the deferral is a recorded decision rather than an oversight.
+- **FR-015a (single-creative publish)**: The single-creative `metaPushCreative` path MUST NOT be refused because the resolved workspace has no Facebook Page. The single-creative path stores the Page as metadata that no Meta request consumes, so a missing Page is not a safety concern for this path. A missing Page MUST still be recorded against the publish (FR-027) with `pageSource: "none"` and MUST NOT block it.
+- **FR-015a-pack (pack publish)**: The `metaPushCreativePack` path sends the resolved Page as `page_id` to `/adcreatives` via `object_story_spec.page_id`. A workspace whose Page is missing on this path is recorded with `pageSource: "none"` and the pack MUST skip creative creation for that item rather than publish without a Page. The pack's gate is `workspace_no_page` (distinct from the single-creative no-Page behaviour).
+- **FR-015b**: When the single-creative path's Meta calls begin consuming the Page, the gate in FR-015a MUST be reconsidered as part of that work. This requirement exists so the deferral is a recorded decision rather than an oversight.
 - **FR-016**: In a multi-creative publish, every item MUST target the same workspace's ad account and Page.
 
 **Team member permissions**

@@ -222,12 +222,17 @@ FR-029 / FR-030 / FR-031 / SC-013 closed.
 - `npm run build` (frontend) — ✅ pass (`tsc -b && vite build`).
 - `cd functions && npm run build` — ✅ pass (`tsc` strict mode +
   asset copy).
-- `npm run lint` — pre-existing baseline errors (1069 from Phase 1
-  baseline + 19 new errors from Phase 967 test files = 1088 errors;
-  the stash-compare shows 1165 vs 1147 pre-Phase 967 = +18 new
-  errors, all from new test files using `any` types / console
-  statements / untyped mocks). All Phase 967 production code passes
-  lint cleanly. **Build gate ✅**.
+- `npm run lint` — **NOT passing as a gate**. The repo-wide lint
+  baseline (`functions/src/__tests__/metaPush.test.ts`,
+  `metaPushPack.test.ts`, `workspace.test.ts`, etc.) emits new errors
+  from the Phase 967 test files (untyped `any` in CommonJS stubs,
+  unused eslint-disable directives, `require()` style imports that
+  the eslint config flags). Phase 967 production code itself passes
+  lint cleanly. **Build gate ✅; lint gate ❌ — explicit waiver
+  required.** T097 must not be marked passed while `npm run lint`
+  exits with errors. The waiver is recorded against this round;
+  shipping requires either fixing the new lint errors or accepting
+  the waiver in writing here.
 - `cd functions && npm test` — ✅ pass. **87 active tests + 13 skipped = 100 backend tests, all passing**.
 - `npm test` (frontend vitest) — ✅ pass. **36 active tests passing** (i18n.test.tsx: 10 + step2OptionalFields.test.tsx: 26).
 

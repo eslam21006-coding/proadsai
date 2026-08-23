@@ -34,7 +34,7 @@ Phase 0 completed the FR-025 root-cause investigation and surfaced a second, und
 | I — Reliability over feature count | Adds no feature surface. Removes an incorrect routing path. | **Pass** |
 | II — The selected mode MUST be obeyed | This is the principle the phase enforces: the selected *workspace* is currently ignored at publish time. FR-013/FR-014 make the selection binding. | **Pass** |
 | III — Launch surface frozen | No new launch combination. Widens one permission by explicit product decision, recorded in the spec's Clarifications. | **Pass** |
-| IV — Behaviour contracts beat judgement | `contracts/callable-contracts.md` defines per-callable inputs, outputs, error reasons, and an 18-row test matrix. | **Pass** |
+| IV — Behaviour contracts beat judgement | `contracts/callable-contracts.md` defines per-callable inputs, outputs, error reasons, and a 24-row test matrix (T-01..T-24). | **Pass** |
 | V — Arabic quality is first-class | FR-028a–c make paired en/ar a release gate, simple Fusha, no dialect or technical terms. SC-012 measures it. | **Pass** |
 | VI — Hidden machine layers auditable | Workspace resolution, Page-source resolution, and caller identity are all traced: `workspaceIdSource`, `pageSource`, `pushedByUid`, `connectedByUid`. | **Pass** |
 | VII — No silent override without rule, signal, trace | The FR-011 Page clear has all three: rule (FR-011), signal (FR-011b notice, `pageCleared` in the C2 response), trace (`metaPageClearedAt`). The legacy Page fallback has rule (FR-007) and trace (`pageSource`). | **Pass** |
@@ -64,7 +64,7 @@ specs/967-meta-workspace-isolation/
 ├── data-model.md                    # Phase 1 — fields, Page state machine
 ├── quickstart.md                    # Phase 1 — sequencing, verification, traps
 ├── contracts/
-│   └── callable-contracts.md        # Phase 1 — C1..C11, tests T-01..T-18
+│   └── callable-contracts.md        # Phase 1 — C1..C11, tests T-01..T-24
 ├── checklists/
 │   └── requirements.md              # Spec quality checklist (16/16)
 └── tasks.md                         # Phase 2 — created by /speckit.tasks

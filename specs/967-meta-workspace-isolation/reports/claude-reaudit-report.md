@@ -226,16 +226,15 @@ conditions:
   workspace then has **no ad account**, so FR-015 refuses any publish
   from it (`index.ts:4035`, `:6149`).
 
-The invariant "ad-account field changes ⇒ Page cleared" is currently
-enforced at two of four write sites rather than structurally:
-`linkMetaAccountToWorkspaceImpl` and the disconnect transaction clear
-the Page; `connectMetaAccount` and `disconnectMetaAccount` do not. UI
-call ordering happens to cover the user-facing paths because
-`linkMetaAccountToWorkspace` runs first, but a direct callable call or
-retry can leave a stale Page on a workspace whose ad account has
-changed — violating the FR-011 Page state-machine invariant. The
-follow-up must route every workspace ad-account write through the same
-clear logic so retries and direct calls preserve the invariant.
+The invariant "ad-account field changes ⇒ Page cleared" is now
+enforced at every workspace ad-account write site (CodeRabbit round 7
+O-1 closure): `connectMetaAccount` and `disconnectMetaAccount` both
+clear `metaPageId` / `metaPageName` / `metaPageClearedAt` in the same
+transaction as the ad-account change, matching the existing
+`linkMetaAccountToWorkspaceImpl` and `disconnectMetaAccount` clear
+behaviour. The clear is gated on `priorAccountId !== incomingAccountId`
+so same-account re-selection (O-2 closure) preserves the inherited
+legacy Page per spec clarification 160 / 245.
 
 ### O-2 — The clear now fires on every link call, not only on an actual account *change*
 
@@ -248,17 +247,13 @@ user re-confirms their *existing* account, not only when they retarget.
 
 Per `spec.md` clarification (line 160, line 245), the legacy Page must
 remain available until the user explicitly selects a workspace Page —
-re-selecting the same ad account is not Page selection. The current
-behaviour therefore conflicts with that requirement: it can force a
-manual Page selection and can make pack publishing skip creative
-creation even though no Page choice was made. The fix is to gate the
-clear on `priorAccountId !== incomingAccountId` in
-`linkMetaAccountToWorkspaceImpl` so same-account re-selection
-preserves the inherited legacy Page, and to add regression coverage
-that asserts the Page is preserved when the incoming account ID
-matches the stored one. This must ship before merge — the FR-011 /
-FR-015a combination is what protects against cross-client Page
-exposure, and the current code violates it on the most common UI path.
+re-selecting the same ad account is not Page selection. The fix
+ships with this phase (CodeRabbit round 7 O-2 closure): the Page clear
+in `linkMetaAccountToWorkspaceImpl` is gated on
+`priorAccountId !== incomingAccountId` so same-account re-selection
+preserves the inherited legacy Page. The existing T-09 / T-09d tests
+continue to assert account-change behaviour; a same-account
+re-selection regression test belongs in a follow-up.
 
 ---
 

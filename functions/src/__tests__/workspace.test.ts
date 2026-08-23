@@ -177,13 +177,35 @@ async function main() {
         await expectHttpsError(() => assertWorkspaceLimit("uid-scale"), "failed-precondition", "10-workspace");
     });
 
+    // CR-MAJOR (CodeRabbit round 7): use a complete `WorkspaceShape`
+    // fixture factory so every `createWorkspaceWithLimit` test stays
+    // in lockstep with the production type — the previous code passed
+    // partial objects that did not satisfy `WorkspaceShape` (the build
+    // only worked because the policy module is `require()`-imported).
+    function makeWorkspaceDoc(overrides: Partial<{
+        name: string;
+        brandName: string;
+        isDefault: boolean;
+        deletedAt: number | null;
+        createdAt: number;
+    }> = {}): any {
+        return {
+            name: "Untitled",
+            brandName: "Untitled Brand",
+            isDefault: false,
+            deletedAt: null,
+            createdAt: Date.now(),
+            ...overrides,
+        };
+    }
+
     await run("T014b: createWorkspaceWithLimit at 10 on Scale → failed-precondition", async () => {
         resetStore();
         bucket("users").set("uid-scale", { billingState: { plan: "scale" } });
         const wsBucket = bucket("users/uid-scale/workspaces");
         for (let i = 0; i < 10; i++) wsBucket.set(`ws-${i}`, { deletedAt: null });
         await expectHttpsError(
-            () => createWorkspaceWithLimit("uid-scale", { name: "11th" }),
+            () => createWorkspaceWithLimit("uid-scale", makeWorkspaceDoc({ name: "11th" })),
             "failed-precondition",
             "10-workspace"
         );
@@ -194,7 +216,7 @@ async function main() {
         bucket("users").set("uid-pro", { billingState: { plan: "pro" } });
         // Even with room for another workspace, a non-Scale plan is rejected inside the txn.
         await expectHttpsError(
-            () => createWorkspaceWithLimit("uid-pro", { name: "Client B" }),
+            () => createWorkspaceWithLimit("uid-pro", makeWorkspaceDoc({ name: "Client B" })),
             "permission-denied",
             "Scale plan"
         );
@@ -205,7 +227,7 @@ async function main() {
         bucket("users").set("uid-scale", { billingState: { plan: "scale" } });
         const wsBucket = bucket("users/uid-scale/workspaces");
         wsBucket.set("default", { isDefault: true, deletedAt: null });
-        const result = await createWorkspaceWithLimit("uid-scale", { name: "Client A", deletedAt: null });
+        const result = await createWorkspaceWithLimit("uid-scale", makeWorkspaceDoc({ name: "Client A", deletedAt: null }));
         assert.ok(result.workspaceId && typeof result.workspaceId === "string", "expected a workspace id");
         assert.equal(typeof result.isDefault, "boolean", "expected isDefault verdict in result");
         assert.equal(result.isDefault, false, "T015: second workspace is NOT the default (a first one already exists)");
@@ -224,9 +246,9 @@ async function main() {
         resetStore();
         bucket("users").set("uid-fresh", { billingState: { plan: "scale" } });
         const wsBucket = bucket("users/uid-fresh/workspaces");
-        const { workspaceId, isDefault } = await createWorkspaceWithLimit("uid-fresh", {
+        const { workspaceId, isDefault } = await createWorkspaceWithLimit("uid-fresh", makeWorkspaceDoc({
             name: "Brand A", isDefault: false, deletedAt: null,
-        });
+        }));
         assert.equal(isDefault, true, "T019a: first workspace is the default");
         const written = wsBucket.get(workspaceId);
         assert.equal(written?.isDefault, true, "T019a: written doc has isDefault=true");
@@ -237,9 +259,9 @@ async function main() {
         bucket("users").set("uid-second", { billingState: { plan: "scale" } });
         const wsBucket = bucket("users/uid-second/workspaces");
         wsBucket.set("first", { isDefault: true, deletedAt: null, createdAt: 1 });
-        const { isDefault } = await createWorkspaceWithLimit("uid-second", {
+        const { isDefault } = await createWorkspaceWithLimit("uid-second", makeWorkspaceDoc({
             name: "Brand B", isDefault: false, deletedAt: null, createdAt: 2,
-        });
+        }));
         assert.equal(isDefault, false, "T019b: second workspace is NOT the default");
     });
 

@@ -7404,23 +7404,46 @@ export async function linkMetaAccountToWorkspaceImpl(
     // `metaPageClearedAt` is stamped. Apply that reading: write the
     // clear fields on every link, regardless of prior state.
     //
+    // CR-MAJOR (CodeRabbit round 7, O-2): the previous unconditional
+    // clear violated `spec.md` clarification 160 / 245 — re-selecting
+    // the already-linked ad account is NOT a Page choice and must
+    // NOT clear the inherited legacy Page. Only clear when the
+    // incoming ad-account ID differs from the stored one. Same-account
+    // re-selection (the dominant UI path: the picker re-fires on every
+    // sidebar selection in `App.tsx:3884-3890`) now preserves the
+    // inherited legacy Page so pack publishing can still use it.
+    //
     // `pageCleared` stays gated on `hadPage` so the user-facing
     // notice does NOT fire when the user never picked a Page — no
     // point telling them "your Page was cleared" when none was set.
     const priorWsData = wsSnap.data() ?? {};
+    const priorAccountId = typeof priorWsData.metaAdAccountId === "string"
+        && priorWsData.metaAdAccountId.length > 0
+        ? priorWsData.metaAdAccountId
+        : null;
     const hadPage = typeof priorWsData.metaPageId === "string"
         && priorWsData.metaPageId.length > 0;
+    // CR-MAJOR (CodeRabbit round 7, O-2): spec clarification 160 /
+    // 245 — re-selecting the same ad account is NOT a Page choice and
+    // must NOT clear the inherited legacy Page. Only clear when the
+    // incoming ad-account ID differs from the stored one (an
+    // account change, including first-time links where prior is null).
+    const isAccountChange = priorAccountId !== metaAdAccountId;
     const updatePayload: Record<string, unknown> = {
         metaAdAccountId,
         metaAdAccountName: metaAdAccountName ?? "",
         metaRoleAtLinkTime: role,
-        // FR-011 + FR-011a — unconditional Page clear on ad-account
-        // change. NEVER_SET → CLEARED moves the workspace OFF the
-        // legacy global Page fallback the moment it is retargeted.
-        metaPageId: null,
-        metaPageName: null,
-        metaPageClearedAt: Date.now(),
     };
+    if (isAccountChange) {
+        // FR-011 + FR-011a — unconditional Page clear on a real
+        // ad-account change. NEVER_SET → CLEARED moves the workspace
+        // OFF the legacy global Page fallback the moment it is
+        // retargeted. Same-account re-selection skips the clear so
+        // the inherited legacy Page is preserved.
+        updatePayload.metaPageId = null;
+        updatePayload.metaPageName = null;
+        updatePayload.metaPageClearedAt = Date.now();
+    }
     await wsRef.update(updatePayload);
 
     return { ok: true, metaRoleAtLinkTime: role, pageCleared: hadPage };

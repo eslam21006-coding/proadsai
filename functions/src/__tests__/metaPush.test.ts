@@ -193,11 +193,18 @@ function encryptTestToken(plaintext: string, secret: string): string {
     return `${iv.toString("hex")}:${tag.toString("hex")}:${enc.toString("hex")}`;
 }
 
-function makeFakeFetch(uploadResponse: unknown): {
+function makeFakeFetch(uploadResponse: unknown | unknown[]): {
     fetch: typeof fetch;
     calls: { url: string; body: unknown }[];
 } {
     const calls: { url: string; body: unknown }[] = [];
+    // CR-MINOR (CodeRabbit round 7): when an array is passed, each call
+    // returns the next response so push tests can supply a distinct
+    // `images[0].hash` per invocation. The previous "always return the
+    // same object" semantics collapsed T-24's three same-tick pushes
+    // into a single deployment record (all three reads landed on the
+    // same `images[0]` hash even though the test wired three).
+    const queue = Array.isArray(uploadResponse) ? [...uploadResponse] : null;
     const fetchImpl: typeof fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === "string" ? input : input.toString();
         let body: unknown = null;
@@ -205,7 +212,8 @@ function makeFakeFetch(uploadResponse: unknown): {
             try { body = JSON.parse(init.body); } catch { body = init.body; }
         }
         calls.push({ url, body });
-        return new Response(JSON.stringify(uploadResponse), { status: 200 });
+        const payload = queue ? (queue.shift() ?? {}) : uploadResponse;
+        return new Response(JSON.stringify(payload), { status: 200 });
     }) as unknown as typeof fetch;
     return { fetch: fetchImpl, calls };
 }
@@ -544,13 +552,11 @@ async function main() {
             metaPageName: null,
             metaPageClearedAt: null,
         });
-        const { fetch: impl } = makeFakeFetch({
-            images: {
-                "0": { hash: IMAGE_HASH_A },
-                "1": { hash: IMAGE_HASH_B },
-                "2": { hash: IMAGE_HASH_C },
-            },
-        });
+        const { fetch: impl } = makeFakeFetch([
+            { images: { "0": { hash: IMAGE_HASH_A } } },
+            { images: { "0": { hash: IMAGE_HASH_B } } },
+            { images: { "0": { hash: IMAGE_HASH_C } } },
+        ]);
         const deps = { fetchImpl: impl, metaAppSecretValue: TEST_SECRET };
         // 1) workspaceIdSource = 'request', pageSource = 'workspace'
         await metaPushCreativeImpl(

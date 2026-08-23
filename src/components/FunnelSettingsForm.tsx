@@ -176,11 +176,26 @@ function useFunnelSettings(workspaceId: string | null, accountId: string | null)
     const [settings, setSettings] = useState<FunnelSettingsDoc | null>(null);
     const [reviewDue, setReviewDue] = useState(false);
 
-    useEffect(() => {
-        if (!workspaceId || !accountId) {
+    // CR-MAJOR (CodeRabbit round 7): apply the adjust-state-during-render
+    // pattern (see lines 349-353 / 379-383 below) to the missing-input
+    // reset. The previous effect called `setSettings(null)` /
+    // `setReviewDue(false)` / `setUnlinked(false)` synchronously from its
+    // body, which trips `react-hooks/set-state-in-effect` and forces a
+    // cascading render. Detect the transition in render and set state
+    // there instead — the effect stays responsible only for the fetch.
+    const inputsMissing = !workspaceId || !accountId;
+    const [prevInputsMissing, setPrevInputsMissing] = useState(inputsMissing);
+    if (inputsMissing !== prevInputsMissing) {
+        setPrevInputsMissing(inputsMissing);
+        if (inputsMissing) {
             setSettings(null);
             setReviewDue(false);
             setUnlinked(false);
+        }
+    }
+
+    useEffect(() => {
+        if (!workspaceId || !accountId) {
             return;
         }
         let cancelled = false;

@@ -131,10 +131,22 @@ export const connectMetaAccount = onCall(
             createdAt: now,
             updatedAt: now,
         };
-        const workspacePayload = {
+        const workspacePayload: Record<string, unknown> = {
             metaAdAccountId: req.accountId,
             metaAdAccountName: accountName,
         };
+        // CR-MAJOR (CodeRabbit round 7, O-1): FR-011 must be enforced at
+        // every workspace ad-account write, not only inside
+        // linkMetaAccountToWorkspaceImpl. A direct call to
+        // `connectMetaAccount` (or a retry that bypasses the link path)
+        // would otherwise leave a workspace holding one client's Page
+        // against another's ad account. Stamp `metaPageClearedAt` in the
+        // SAME transaction so the workspace moves to CLEARED and the
+        // legacy account-level Page cannot fill the gap.
+        //
+        // Gated on a real account change (prior !== incoming) — the
+        // same-account re-selection case is intentionally a no-op for
+        // the Page per spec clarification 160 / 245 (round 7 O-2).
 
         // CR-CRITICAL: read the workspace + every sibling workspace, then
         // write both docs (private connection + workspace link) inside a
@@ -158,6 +170,20 @@ export const connectMetaAccount = onCall(
                     throw new HttpsError("not-found", "Workspace not found.");
                 }
                 const wsData = wsSnap.data() ?? {};
+                // CR-MAJOR (CodeRabbit round 7, O-1): FR-011 — clear the
+                // recorded Page in the SAME transaction on a real
+                // ad-account change. Same-account re-selection
+                // (prior === req.accountId) intentionally skips the
+                // clear per spec clarification 160 / 245 (round 7 O-2)
+                // so the inherited legacy Page is preserved.
+                const priorAccountId = typeof wsData.metaAdAccountId === "string" && wsData.metaAdAccountId.length > 0
+                    ? wsData.metaAdAccountId
+                    : null;
+                if (priorAccountId !== req.accountId) {
+                    workspacePayload.metaPageId = null;
+                    workspacePayload.metaPageName = null;
+                    workspacePayload.metaPageClearedAt = now;
+                }
 
                 // FIX 6 (Claude audit, FR-026 direction (a)): prevent
                 // the user from silently replacing workspace W's

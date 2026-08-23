@@ -80,7 +80,7 @@ Two constraints that are easy to get wrong, repeated here because they fail sile
 - [ ] T018 [P] Contract test T-03 in `functions/src/__tests__/metaCallerScope.test.ts` — workspace outside the permitted set produces `permission-denied`
 - [ ] T019 [P] Contract tests T-19 and T-22 in `functions/src/__tests__/workspace.test.ts` — first workspace on an account is marked default, second is not; repair picks the oldest active workspace
 - [ ] T020 [P] Contract tests T-20 and T-21 in `functions/src/__tests__/workspaceRepair.test.ts` — repair is idempotent on a second run and writes no Page field (FR-026e, FR-026f)
-- [ ] T021 [P] Contract test T-17 in `functions/src/__tests__/workspace.test.ts` — a workspace record lacking `deletedAt` is returned by the listing path after repair
+- [ ] T021 [P] Contract test T-17 in `functions/src/__tests__/workspaceListing.test.ts` — a workspace record lacking `deletedAt` is returned by the listing path after repair (this is the suite that owns workspace listing coverage per the Phase 7 / Phase 8 evidence; `workspace.test.ts` retains the T-017 stub pending an emulator harness but does not own this contract)
 - [ ] T022 [P] Contract test T-23 in `functions/src/__tests__/workspaceRepair.test.ts` — a record whose `deletedAt` holds a non-null timestamp is left **completely untouched** by both repair passes, and is neither re-marked active nor eligible to become the account default (FR-024, FR-026d)
 
 **Checkpoint**: All nine workspaces list for owner and team member; soft-deleted workspaces stay hidden; `resolveDefaultWorkspaceId` resolves on a post-2026-05-21 account. User story work can begin.

@@ -163,10 +163,17 @@ The `L()` helper resolves the paired en/ar i18n key
 
 The label shows for any workspace in the dropdown that does not
 have a linked Meta ad account — exactly the FR-023 requirement.
-**No code change needed.** Verified hermetically by
-`workspaceListing.test.ts:T-089` (every unlinked workspace is
-present in the listing; FunnelSettingsForm applies the label to
-exactly those).
+**No code change needed.** Two layers of evidence:
+
+- **Backend (server-side hermetic)** — `workspaceListing.test.ts:T-089`
+  proves every unlinked workspace is present in the listing payload
+  the selector reads from.
+- **Frontend (UI rendering)** — `FunnelSettingsForm.tsx` applies the
+  label to entries whose backend listing lacks `metaAdAccountId`. No
+  executable frontend test asserts the rendered DOM carries the label,
+  so this layer is covered by the existing `i18n.test.tsx` parity
+  suite for the string itself and by manual verification for the
+  conditional render. A dedicated component test is a follow-up.
 
 ---
 

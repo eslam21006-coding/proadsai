@@ -42,7 +42,7 @@ npm run lint
 cd functions && npm test
 ```
 
-The contract matrix in `contracts/callable-contracts.md` (T-01 … T-18) enumerates what to add. T-04, T-08, and T-11 are the three that would catch a regression of the original bugs.
+The contract matrix in `contracts/callable-contracts.md` (T-01 … T-24) enumerates what to add. T-04, T-08, and T-11 are the three that would catch a regression of the original bugs.
 
 ---
 
@@ -89,4 +89,4 @@ Needs an account with ≥2 workspaces on ≥2 different ad accounts, plus one in
 | `spec.md` | Requirements, 9 recorded clarifications |
 | `research.md` | R1–R8 findings, including the Bug 4 root cause and its evidence |
 | `data-model.md` | Field-level changes, Page state machine |
-| `contracts/callable-contracts.md` | Per-callable contracts C1–C11, test matrix T-01–T-18 |
+| `contracts/callable-contracts.md` | Per-callable contracts C1–C11, test matrix T-01–T-24 |
