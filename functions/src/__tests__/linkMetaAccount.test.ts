@@ -608,6 +608,82 @@ async function main() {
         );
     });
 
+    // ─── T-09f: same-account re-selection with a SET Page → Page preserved, pageCleared=false ───
+    await run("T-09f: same-account re-selection with a SET Page → Page preserved, pageCleared=false", async () => {
+        // CR-MAJOR (CodeRabbit round 10): the previous return value
+        // was `pageCleared: hadPage`, which produced a misleading
+        // `true` for same-account re-selection against a workspace
+        // whose Page was already SET — the Page was preserved (correct)
+        // but the response claimed it had been cleared (wrong, because
+        // no clear actually happened). The return is now
+        // `isAccountChange && hadPage`, so a same-account re-selection
+        // with a SET Page returns `pageCleared: false`.
+        //
+        // T-09e covered the CLEARED case; this T-09f covers the SET
+        // case so both branches of `hadPage × isAccountChange` are
+        // pinned.
+        resetStub();
+        setupOwnerConnection();
+        setupWorkspace({
+            id: "ws-1", name: "Brand X",
+            isDefault: true,
+            metaAdAccountId: "act_WS_A", // already linked
+            metaPageId: "page-A",        // SET — explicitly picked
+            metaPageName: "Page A",
+            metaPageClearedAt: null,
+        });
+
+        const result = await linkMetaAccountToWorkspaceImpl(
+            ownerScope(),
+            { workspaceId: "ws-1", metaAdAccountId: "act_WS_A", metaAdAccountName: "A" },
+            { probeMetaRoleImpl: FAKE_PROBE_ROLE, metaAppSecretValue: TEST_SECRET },
+        );
+        assert.equal(result.ok, true);
+        // The Page was NOT cleared (same-account re-selection), so the
+        // response must NOT claim a clear happened.
+        assert.equal(
+            result.pageCleared, false,
+            "T-09f: pageCleared=false when same-account re-selection preserves a SET Page",
+        );
+
+        const ws = bucket("users/owner-1/workspaces").get("ws-1") as any;
+        // Link fields rewritten:
+        assert.equal(ws.metaAdAccountId, "act_WS_A");
+        assert.equal(ws.metaAdAccountName, "A");
+        // Page fields preserved exactly:
+        assert.equal(ws.metaPageId, "page-A", "T-09f: metaPageId preserved");
+        assert.equal(ws.metaPageName, "Page A", "T-09f: metaPageName preserved");
+        assert.equal(ws.metaPageClearedAt, null, "T-09f: metaPageClearedAt unchanged (still null)");
+
+        // The single update call carried the link fields ONLY — no
+        // Page-clear keys.
+        const wsUpdates = updateCalls.filter(
+            (c) => c.id === "ws-1" && !c.path.includes("private/"),
+        );
+        assert.equal(wsUpdates.length, 1);
+        const wsPatch = wsUpdates[0].patch as DocData;
+        assert.equal(
+            "metaPageId" in wsPatch, false,
+            "T-09f: metaPageId absent from the update patch",
+        );
+        assert.equal(
+            "metaPageClearedAt" in wsPatch, false,
+            "T-09f: metaPageClearedAt absent from the update patch",
+        );
+
+        // Publish-side view: the SET workspace keeps its Page, so
+        // pack publishing still consumes it via page_id on /adcreatives.
+        const { resolveWorkspacePage } = require("../workspaces/metaCallerScope.js");
+        const conn = bucket("metaConnections").get("owner-1") as any;
+        const page = resolveWorkspacePage(workspaceSnap(ws), conn);
+        assert.equal(
+            page.pageSource, "workspace",
+            "T-09f: SET workspace stays SET across same-account re-selection",
+        );
+        assert.equal(page.pageId, "page-A");
+        assert.equal(page.pageName, "Page A");
+    });
+
     // ─── T-10: unlink clears Page in same write ───
     await run("T-10: unlink clears Page in same write, pageCleared=true", async () => {
         resetStub();

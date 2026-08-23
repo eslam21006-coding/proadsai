@@ -7446,7 +7446,15 @@ export async function linkMetaAccountToWorkspaceImpl(
     }
     await wsRef.update(updatePayload);
 
-    return { ok: true, metaRoleAtLinkTime: role, pageCleared: hadPage };
+    // CR-MAJOR (CodeRabbit round 10): the previous return used
+    // `pageCleared: hadPage`, which produced a misleading `true` when
+    // a same-account re-selection ran against a workspace that
+    // already had a Page set — the Page was preserved (correct) but
+    // the response claimed it had been cleared (wrong). `pageCleared`
+    // now reports only what actually happened in this call: a clear
+    // happened iff there was both a Page to clear AND an account
+    // change to clear it on.
+    return { ok: true, metaRoleAtLinkTime: role, pageCleared: isAccountChange && hadPage };
 }
 
 export const linkMetaAccountToWorkspace = onCall({

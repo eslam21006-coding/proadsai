@@ -34,6 +34,7 @@ import {
     resolveMetaScope,
     assertWorkspaceAllowed,
 } from "./workspaces/metaCallerScope.js";
+import { assertWorkspaceActive } from "./workspaces/workspacePolicy.js";
 import {
     parseEnvelope,
 } from "./tokenCrypto.js";
@@ -81,173 +82,195 @@ export const connectMetaAccount = onCall(
         // paths use `scope.ownerUid`; the caller (a team member) is
         // recorded in the audit log only.
         const scope = await resolveMetaScope(request);
-        const req = request.data as ConnectMetaAccountRequest;
-        if (!req || typeof req.workspaceId !== "string" || typeof req.accountId !== "string") {
-            throw new HttpsError("invalid-argument", "workspaceId and accountId are required.");
-        }
-        if (req.workspaceId.length === 0 || req.accountId.length === 0) {
-            throw new HttpsError("invalid-argument", "workspaceId and accountId must be non-empty.");
-        }
-
-        // FR-004 / FR-021 — workspace authorisation first, before any side effect.
-        assertWorkspaceAllowed(scope, req.workspaceId);
-
-        // Read the long-lived token from the OWNER's user-level OAuth
-        // doc. The OAuth callback writes to `metaConnections/{ownerUid}`
-        // (Phase 5 T070-T072) — a team member's authorisation therefore
-        // lands on the owner's record, and `connectMetaAccount` reads
-        // from the same place. Reading `metaConnections/{callerUid}`
-        // would be empty for a team member and reject every connection
-        // attempt (the bug this phase fixes).
-        const userConn = await loadUserLevelConnection(scope.ownerUid);
-        if (!userConn || !userConn.encryptedToken) {
-            throw new HttpsError(
-                "failed-precondition",
-                "Connect your Meta account via OAuth before linking it to a workspace.",
-            );
-        }
-
-        // Build the write payloads outside the transaction so the
-        // transaction body stays small and the failure paths are
-        // explicit (CodeRabbit review feedback).
-        const accountName = req.accountName ?? "";
-        const now = Date.now();
-        const wsRef = getDb()
-            .collection("users").doc(scope.ownerUid)
-            .collection("workspaces").doc(req.workspaceId);
-        const privateRef = privateConnectionRef(scope.ownerUid, req.workspaceId);
-        const privatePayload = {
-            metaConnected: true,
-            accountId: req.accountId,
-            accountName,
-            // Legacy ciphertext retained as a base64 string; the worker
-            // knows how to decrypt it. Storing under `legacyToken` until
-            // KMS migration finishes.
-            legacyToken: userConn.encryptedToken,
-            tokenSource: "legacy_aes_gcm",
-            needsReauth: false,
-            lastMetaSyncAt: null,
-            lastSyncStatus: null,
-            createdAt: now,
-            updatedAt: now,
-        };
-        const workspacePayload: Record<string, unknown> = {
-            metaAdAccountId: req.accountId,
-            metaAdAccountName: accountName,
-        };
-        // CR-MAJOR (CodeRabbit round 7, O-1): FR-011 must be enforced at
-        // every workspace ad-account write, not only inside
-        // linkMetaAccountToWorkspaceImpl. A direct call to
-        // `connectMetaAccount` (or a retry that bypasses the link path)
-        // would otherwise leave a workspace holding one client's Page
-        // against another's ad account. Stamp `metaPageClearedAt` in the
-        // SAME transaction so the workspace moves to CLEARED and the
-        // legacy account-level Page cannot fill the gap.
-        //
-        // Gated on a real account change (prior !== incoming) — the
-        // same-account re-selection case is intentionally a no-op for
-        // the Page per spec clarification 160 / 245 (round 7 O-2).
-
-        // CR-CRITICAL: read the workspace + every sibling workspace, then
-        // write both docs (private connection + workspace link) inside a
-        // single Firestore transaction. This closes the 1:1 enforcement
-        // race where two concurrent `connectMetaAccount` calls could both
-        // pass a non-transactional uniqueness check and both commit the
-        // link (CodeRabbit review feedback).
-        //
-        // - The workspace existence check rejects a non-existent
-        //   workspaceId with `not-found` BEFORE any writes.
-        // - The 1:1 check re-runs inside the transaction against every
-        //   sibling workspace, so any concurrent caller that committed
-        //   first causes this transaction to fail with `failed-precondition`.
-        // - Both writes commit atomically — a half-applied state would
-        //   leave the 1:1 scan reporting inconsistent results on the
-        //   next call.
-        try {
-            await getDb().runTransaction(async (tx) => {
-                const wsSnap = await tx.get(wsRef);
-                if (!wsSnap.exists) {
-                    throw new HttpsError("not-found", "Workspace not found.");
-                }
-                const wsData = wsSnap.data() ?? {};
-                // CR-MAJOR (CodeRabbit round 7, O-1): FR-011 — clear the
-                // recorded Page in the SAME transaction on a real
-                // ad-account change. Same-account re-selection
-                // (prior === req.accountId) intentionally skips the
-                // clear per spec clarification 160 / 245 (round 7 O-2)
-                // so the inherited legacy Page is preserved.
-                const priorAccountId = typeof wsData.metaAdAccountId === "string" && wsData.metaAdAccountId.length > 0
-                    ? wsData.metaAdAccountId
-                    : null;
-                if (priorAccountId !== req.accountId) {
-                    workspacePayload.metaPageId = null;
-                    workspacePayload.metaPageName = null;
-                    workspacePayload.metaPageClearedAt = now;
-                }
-
-                // FIX 6 (Claude audit, FR-026 direction (a)): prevent
-                // the user from silently replacing workspace W's
-                // account A with account B. Without this check, the
-                // existing `linkMetaAccountToWorkspace` would overwrite
-                // the link and the 1:1 enforcement would be bypassed.
-                // The user MUST disconnect first.
-                const wsAccountId = typeof wsData.metaAdAccountId === "string" && wsData.metaAdAccountId.length > 0
-                    ? wsData.metaAdAccountId
-                    : null;
-                if (wsAccountId && wsAccountId !== req.accountId) {
-                    throw new HttpsError(
-                        "failed-precondition",
-                        "هذه المساحة مرتبطة بحساب إعلاني آخر. افصله أولاً قبل ربط حساب جديد.",
-                    );
-                }
-
-                // 1:1 enforcement — the same ad account cannot be
-                // linked to two workspaces owned by the same user.
-                // Re-check INSIDE the transaction so a concurrent
-                // caller that committed first is observed.
-                const rebind = !wsAccountId || wsAccountId !== req.accountId;
-                if (rebind) {
-                    const siblingsSnap = await tx.get(
-                        getDb().collection("users").doc(scope.ownerUid).collection("workspaces"),
-                    );
-                    for (const sib of siblingsSnap.docs) {
-                        if (sib.id === req.workspaceId) continue;
-                        const sibData = sib.data() ?? {};
-                        const sibAccountId = typeof sibData.metaAdAccountId === "string" && sibData.metaAdAccountId.length > 0
-                            ? sibData.metaAdAccountId
-                            : null;
-                        if (sibAccountId === req.accountId) {
-                            throw new HttpsError(
-                                "failed-precondition",
-                                "هذا الحساب الإعلاني مربوط بـ workspace آخر بالفعل. افصله أولاً.",
-                            );
-                        }
-                    }
-                }
-
-                // Atomic commit inside the same transaction.
-                tx.set(privateRef, privatePayload, { merge: true });
-                tx.update(wsRef, workspacePayload);
-            });
-        } catch (err: unknown) {
-            if (err instanceof HttpsError) throw err;
-            // Transaction-level failures (network, lock timeout, etc.)
-            // surface as `internal` so the client can retry. The raw
-            // Firestore message stays server-side — it can contain
-            // document paths, project IDs, and index hints (CR-MINOR
-            // CodeRabbit review feedback).
-            console.error("❌ connectMetaAccount transaction failed:", err);
-            throw new HttpsError("internal", "Failed to link the Meta account.");
-        }
-
-        console.log(`🔗 Meta account linked to workspace (owner=${scope.ownerUid}, caller=${scope.callerUid}, workspace=${req.workspaceId}, account=${req.accountId})`);
-        return {
-            ok: true as const,
-            metaConnected: true,
-            accountId: req.accountId,
-        };
+        return connectMetaAccountImpl(scope, request.data);
     },
 );
+
+// CR-MAJOR (CodeRabbit round 10): extract the inner handler so the
+// contract tests (T-MC1..T-MC3) can call it directly with an in-memory
+// Firestore stub + a fake `scope`. The previous onCall-only shape made
+// the soft-deleted workspace gate (FR-024) untestable in a hermetic
+// suite.
+export async function connectMetaAccountImpl(
+    scope: { ownerUid: string; callerUid: string; allowedWorkspaceIds: string[] | "ALL"; storedWorkspaceAccess: string[] },
+    requestData: unknown,
+): Promise<{ ok: true; metaConnected: true; accountId: string }> {
+    const req = requestData as ConnectMetaAccountRequest;
+    if (!req || typeof req.workspaceId !== "string" || typeof req.accountId !== "string") {
+        throw new HttpsError("invalid-argument", "workspaceId and accountId are required.");
+    }
+    if (req.workspaceId.length === 0 || req.accountId.length === 0) {
+        throw new HttpsError("invalid-argument", "workspaceId and accountId must be non-empty.");
+    }
+
+    // FR-004 / FR-021 — workspace authorisation first, before any side effect.
+    assertWorkspaceAllowed(scope, req.workspaceId);
+
+    // Read the long-lived token from the OWNER's user-level OAuth
+    // doc. The OAuth callback writes to `metaConnections/{ownerUid}`
+    // (Phase 5 T070-T072) — a team member's authorisation therefore
+    // lands on the owner's record, and `connectMetaAccount` reads
+    // from the same place. Reading `metaConnections/{callerUid}`
+    // would be empty for a team member and reject every connection
+    // attempt (the bug this phase fixes).
+    const userConn = await loadUserLevelConnection(scope.ownerUid);
+    if (!userConn || !userConn.encryptedToken) {
+        throw new HttpsError(
+            "failed-precondition",
+            "Connect your Meta account via OAuth before linking it to a workspace.",
+        );
+    }
+
+    // Build the write payloads outside the transaction so the
+    // transaction body stays small and the failure paths are
+    // explicit (CodeRabbit review feedback).
+    const accountName = req.accountName ?? "";
+    const now = Date.now();
+    const wsRef = getDb()
+        .collection("users").doc(scope.ownerUid)
+        .collection("workspaces").doc(req.workspaceId);
+    const privateRef = privateConnectionRef(scope.ownerUid, req.workspaceId);
+    const privatePayload = {
+        metaConnected: true,
+        accountId: req.accountId,
+        accountName,
+        // Legacy ciphertext retained as a base64 string; the worker
+        // knows how to decrypt it. Storing under `legacyToken` until
+        // KMS migration finishes.
+        legacyToken: userConn.encryptedToken,
+        tokenSource: "legacy_aes_gcm",
+        needsReauth: false,
+        lastMetaSyncAt: null,
+        lastSyncStatus: null,
+        createdAt: now,
+        updatedAt: now,
+    };
+    const workspacePayload: Record<string, unknown> = {
+        metaAdAccountId: req.accountId,
+        metaAdAccountName: accountName,
+    };
+    // CR-MAJOR (CodeRabbit round 7, O-1): FR-011 must be enforced at
+    // every workspace ad-account write, not only inside
+    // linkMetaAccountToWorkspaceImpl. A direct call to
+    // `connectMetaAccount` (or a retry that bypasses the link path)
+    // would otherwise leave a workspace holding one client's Page
+    // against another's ad account. Stamp `metaPageClearedAt` in the
+    // SAME transaction so the workspace moves to CLEARED and the
+    // legacy account-level Page cannot fill the gap.
+    //
+    // Gated on a real account change (prior !== incoming) — the
+    // same-account re-selection case is intentionally a no-op for
+    // the Page per spec clarification 160 / 245 (round 7 O-2).
+
+    // CR-CRITICAL: read the workspace + every sibling workspace, then
+    // write both docs (private connection + workspace link) inside a
+    // single Firestore transaction. This closes the 1:1 enforcement
+    // race where two concurrent `connectMetaAccount` calls could both
+    // pass a non-transactional uniqueness check and both commit the
+    // link (CodeRabbit review feedback).
+    //
+    // - The workspace existence check rejects a non-existent
+    //   workspaceId with `not-found` BEFORE any writes.
+    // - The 1:1 check re-runs inside the transaction against every
+    //   sibling workspace, so any concurrent caller that committed
+    //   first causes this transaction to fail with `failed-precondition`.
+    // - Both writes commit atomically — a half-applied state would
+    //   leave the 1:1 scan reporting inconsistent results on the
+    //   next call.
+    try {
+        await getDb().runTransaction(async (tx) => {
+            const wsSnap = await tx.get(wsRef);
+            if (!wsSnap.exists) {
+                throw new HttpsError("not-found", "Workspace not found.");
+            }
+            // CR-MAJOR (CodeRabbit round 10): reject soft-deleted
+            // workspaces here too. The existence check above
+            // admits a doc whose `deletedAt` is a non-null
+            // timestamp — a direct `connectMetaAccount` call could
+            // otherwise re-link an account against a deleted
+            // workspace. The check mirrors `linkMetaAccountToWorkspaceImpl`
+            // and the `assertWorkspaceActive` helper throws
+            // `not-found` so the caller cannot distinguish missing
+            // from soft-deleted (FR-024).
+            assertWorkspaceActive(wsSnap);
+            const wsData = wsSnap.data() ?? {};
+            // CR-MAJOR (CodeRabbit round 7, O-1): FR-011 — clear the
+            // recorded Page in the SAME transaction on a real
+            // ad-account change. Same-account re-selection
+            // (prior === req.accountId) intentionally skips the
+            // clear per spec clarification 160 / 245 (round 7 O-2)
+            // so the inherited legacy Page is preserved.
+            const priorAccountId = typeof wsData.metaAdAccountId === "string" && wsData.metaAdAccountId.length > 0
+                ? wsData.metaAdAccountId
+                : null;
+            if (priorAccountId !== req.accountId) {
+                workspacePayload.metaPageId = null;
+                workspacePayload.metaPageName = null;
+                workspacePayload.metaPageClearedAt = now;
+            }
+
+            // FIX 6 (Claude audit, FR-026 direction (a)): prevent
+            // the user from silently replacing workspace W's
+            // account A with account B. Without this check, the
+            // existing `linkMetaAccountToWorkspace` would overwrite
+            // the link and the 1:1 enforcement would be bypassed.
+            // The user MUST disconnect first.
+            const wsAccountId = typeof wsData.metaAdAccountId === "string" && wsData.metaAdAccountId.length > 0
+                ? wsData.metaAdAccountId
+                : null;
+            if (wsAccountId && wsAccountId !== req.accountId) {
+                throw new HttpsError(
+                    "failed-precondition",
+                    "هذه المساحة مرتبطة بحساب إعلاني آخر. افصله أولاً قبل ربط حساب جديد.",
+                );
+            }
+
+            // 1:1 enforcement — the same ad account cannot be
+            // linked to two workspaces owned by the same user.
+            // Re-check INSIDE the transaction so a concurrent
+            // caller that committed first is observed.
+            const rebind = !wsAccountId || wsAccountId !== req.accountId;
+            if (rebind) {
+                const siblingsSnap = await tx.get(
+                    getDb().collection("users").doc(scope.ownerUid).collection("workspaces"),
+                );
+                for (const sib of siblingsSnap.docs) {
+                    if (sib.id === req.workspaceId) continue;
+                    const sibData = sib.data() ?? {};
+                    const sibAccountId = typeof sibData.metaAdAccountId === "string" && sibData.metaAdAccountId.length > 0
+                        ? sibData.metaAdAccountId
+                        : null;
+                    if (sibAccountId === req.accountId) {
+                        throw new HttpsError(
+                            "failed-precondition",
+                            "هذا الحساب الإعلاني مربوط بـ workspace آخر بالفعل. افصله أولاً.",
+                        );
+                    }
+                }
+            }
+
+            // Atomic commit inside the same transaction.
+            tx.set(privateRef, privatePayload, { merge: true });
+            tx.update(wsRef, workspacePayload);
+        });
+    } catch (err: unknown) {
+        if (err instanceof HttpsError) throw err;
+        // Transaction-level failures (network, lock timeout, etc.)
+        // surface as `internal` so the client can retry. The raw
+        // Firestore message stays server-side — it can contain
+        // document paths, project IDs, and index hints (CR-MINOR
+        // CodeRabbit review feedback).
+        console.error("❌ connectMetaAccount transaction failed:", err);
+        throw new HttpsError("internal", "Failed to link the Meta account.");
+    }
+
+    console.log(`🔗 Meta account linked to workspace (owner=${scope.ownerUid}, caller=${scope.callerUid}, workspace=${req.workspaceId}, account=${req.accountId})`);
+    return {
+        ok: true as const,
+        metaConnected: true,
+        accountId: req.accountId,
+    };
+}
 
 // ─── disconnectMetaAccount ────────────────────────────────────
 //
@@ -266,78 +289,98 @@ export const disconnectMetaAccount = onCall(
     async (request) => {
         // Universal preamble (FR-001, FR-003).
         const scope = await resolveMetaScope(request);
-        const req = request.data as DisconnectMetaAccountRequest;
-        // CR-MINOR (CodeRabbit review feedback): `connectMetaAccount`
-        // rejects an empty `workspaceId` at line 88; here the same
-        // shape lets an empty string reach `loadMetaConnectionAccountId`
-        // → `wsRef.update("")` outside the try block, throwing an opaque
-        // `internal` error. Mirror the validation.
-        if (!req || typeof req.workspaceId !== "string" || req.workspaceId.length === 0) {
-            throw new HttpsError("invalid-argument", "workspaceId is required.");
-        }
-
-        // FR-004 / FR-021 — workspace authorisation first.
-        assertWorkspaceAllowed(scope, req.workspaceId);
-
-        const now = Date.now();
-        const wsRef = getDb()
-            .collection("users").doc(scope.ownerUid)
-            .collection("workspaces").doc(req.workspaceId);
-        const privateRef = privateConnectionRef(scope.ownerUid, req.workspaceId);
-
-        // CR-CRITICAL: validate the workspace exists, then clear both
-        // the private connection doc and the workspace link inside a
-        // single Firestore transaction. A non-existent workspaceId
-        // returns `not-found` BEFORE any writes. A transaction failure
-        // means neither write lands — the function cannot return
-        // `ok: true` after a partial write (CodeRabbit review
-        // feedback).
-        //
-        // Performance data and aggregates stay untouched — the
-        // adPerformance / syncSnapshots / aggregates subcollections
-        // are intentionally retained (Edge Case 15).
-        try {
-            await getDb().runTransaction(async (tx) => {
-                const wsSnap = await tx.get(wsRef);
-                if (!wsSnap.exists) {
-                    throw new HttpsError("not-found", "Workspace not found.");
-                }
-                tx.set(privateRef, {
-                    metaConnected: false,
-                    legacyToken: null,
-                    encryptedToken: null,
-                    needsReauth: false,
-                    updatedAt: now,
-                }, { merge: true });
-                tx.update(wsRef, {
-                    metaAdAccountId: null,
-                    metaAdAccountName: null,
-                    metaRoleAtLinkTime: null,
-                    // CR-MAJOR (CodeRabbit review feedback): FR-011 applies
-                    // to "removing [an ad account] entirely" too — clear
-                    // the recorded Page in the SAME write so a re-link
-                    // can't inherit the previous client's Page via the
-                    // workspace Page field. `metaPageClearedAt` moves
-                    // the workspace to CLEARED so the legacy account-level
-                    // Page cannot fill the gap.
-                    metaPageId: null,
-                    metaPageName: null,
-                    metaPageClearedAt: now,
-                });
-            });
-        } catch (err: unknown) {
-            if (err instanceof HttpsError) throw err;
-            // CR-MINOR (CodeRabbit review feedback): the raw Firestore
-            // message can contain document paths / project IDs / index
-            // hints — keep it server-side, return a fixed message.
-            console.error("❌ disconnectMetaAccount transaction failed:", err);
-            throw new HttpsError("internal", "Failed to disconnect.");
-        }
-
-        console.log(`🔌 Workspace Meta link disconnected (owner=${scope.ownerUid}, caller=${scope.callerUid}, workspace=${req.workspaceId})`);
-        return { ok: true as const, disconnectedByUid: scope.callerUid };
+        return disconnectMetaAccountImpl(scope, request.data);
     },
 );
+
+// CR-MAJOR (CodeRabbit round 10): extract the inner handler so the
+// contract tests (T-MC2, T-MC4) can call it directly with an in-memory
+// Firestore stub + a fake `scope`. The previous onCall-only shape made
+// the soft-deleted workspace gate (FR-024) untestable in a hermetic
+// suite.
+export async function disconnectMetaAccountImpl(
+    scope: { ownerUid: string; callerUid: string; allowedWorkspaceIds: string[] | "ALL"; storedWorkspaceAccess: string[] },
+    requestData: unknown,
+): Promise<{ ok: true; disconnectedByUid: string }> {
+    const req = requestData as DisconnectMetaAccountRequest;
+    // CR-MINOR (CodeRabbit review feedback): `connectMetaAccount`
+    // rejects an empty `workspaceId` at line 88; here the same
+    // shape lets an empty string reach `loadMetaConnectionAccountId`
+    // → `wsRef.update("")` outside the try block, throwing an opaque
+    // `internal` error. Mirror the validation.
+    if (!req || typeof req.workspaceId !== "string" || req.workspaceId.length === 0) {
+        throw new HttpsError("invalid-argument", "workspaceId is required.");
+    }
+
+    // FR-004 / FR-021 — workspace authorisation first.
+    assertWorkspaceAllowed(scope, req.workspaceId);
+
+    const now = Date.now();
+    const wsRef = getDb()
+        .collection("users").doc(scope.ownerUid)
+        .collection("workspaces").doc(req.workspaceId);
+    const privateRef = privateConnectionRef(scope.ownerUid, req.workspaceId);
+
+    // CR-CRITICAL: validate the workspace exists, then clear both
+    // the private connection doc and the workspace link inside a
+    // single Firestore transaction. A non-existent workspaceId
+    // returns `not-found` BEFORE any writes. A transaction failure
+    // means neither write lands — the function cannot return
+    // `ok: true` after a partial write (CodeRabbit review
+    // feedback).
+    //
+    // Performance data and aggregates stay untouched — the
+    // adPerformance / syncSnapshots / aggregates subcollections
+    // are intentionally retained (Edge Case 15).
+    try {
+        await getDb().runTransaction(async (tx) => {
+            const wsSnap = await tx.get(wsRef);
+            if (!wsSnap.exists) {
+                throw new HttpsError("not-found", "Workspace not found.");
+            }
+            // CR-MAJOR (CodeRabbit round 10): reject soft-deleted
+            // workspaces here too. Without this, a direct
+            // `disconnectMetaAccount` call could clear the private
+            // connection doc for a workspace whose `deletedAt` is
+            // set, mutating state below a deleted marker.
+            // Mirrors the same gate in `connectMetaAccount` and
+            // the existing check in `linkMetaAccountToWorkspaceImpl`.
+            assertWorkspaceActive(wsSnap);
+            tx.set(privateRef, {
+                metaConnected: false,
+                legacyToken: null,
+                encryptedToken: null,
+                needsReauth: false,
+                updatedAt: now,
+            }, { merge: true });
+            tx.update(wsRef, {
+                metaAdAccountId: null,
+                metaAdAccountName: null,
+                metaRoleAtLinkTime: null,
+                // CR-MAJOR (CodeRabbit review feedback): FR-011 applies
+                // to "removing [an ad account] entirely" too — clear
+                // the recorded Page in the SAME write so a re-link
+                // can't inherit the previous client's Page via the
+                // workspace Page field. `metaPageClearedAt` moves
+                // the workspace to CLEARED so the legacy account-level
+                // Page cannot fill the gap.
+                metaPageId: null,
+                metaPageName: null,
+                metaPageClearedAt: now,
+            });
+        });
+    } catch (err: unknown) {
+        if (err instanceof HttpsError) throw err;
+        // CR-MINOR (CodeRabbit review feedback): the raw Firestore
+        // message can contain document paths / project IDs / index
+        // hints — keep it server-side, return a fixed message.
+        console.error("❌ disconnectMetaAccount transaction failed:", err);
+        throw new HttpsError("internal", "Failed to disconnect.");
+    }
+
+    console.log(`🔌 Workspace Meta link disconnected (owner=${scope.ownerUid}, caller=${scope.callerUid}, workspace=${req.workspaceId})`);
+    return { ok: true as const, disconnectedByUid: scope.callerUid };
+}
 
 // ─── Encrypted token reader (used by the worker) ──────────────
 
