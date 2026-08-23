@@ -206,11 +206,12 @@ export const connectMetaAccount = onCall(
         } catch (err: unknown) {
             if (err instanceof HttpsError) throw err;
             // Transaction-level failures (network, lock timeout, etc.)
-            // surface as `internal` so the client can retry.
-            throw new HttpsError(
-                "internal",
-                `Failed to link the Meta account: ${err instanceof Error ? err.message : String(err)}`,
-            );
+            // surface as `internal` so the client can retry. The raw
+            // Firestore message stays server-side — it can contain
+            // document paths, project IDs, and index hints (CR-MINOR
+            // CodeRabbit review feedback).
+            console.error("❌ connectMetaAccount transaction failed:", err);
+            throw new HttpsError("internal", "Failed to link the Meta account.");
         }
 
         console.log(`🔗 Meta account linked to workspace (owner=${scope.ownerUid}, caller=${scope.callerUid}, workspace=${req.workspaceId}, account=${req.accountId})`);
@@ -286,14 +287,25 @@ export const disconnectMetaAccount = onCall(
                     metaAdAccountId: null,
                     metaAdAccountName: null,
                     metaRoleAtLinkTime: null,
+                    // CR-MAJOR (CodeRabbit review feedback): FR-011 applies
+                    // to "removing [an ad account] entirely" too — clear
+                    // the recorded Page in the SAME write so a re-link
+                    // can't inherit the previous client's Page via the
+                    // workspace Page field. `metaPageClearedAt` moves
+                    // the workspace to CLEARED so the legacy account-level
+                    // Page cannot fill the gap.
+                    metaPageId: null,
+                    metaPageName: null,
+                    metaPageClearedAt: now,
                 });
             });
         } catch (err: unknown) {
             if (err instanceof HttpsError) throw err;
-            throw new HttpsError(
-                "internal",
-                `Failed to disconnect: ${err instanceof Error ? err.message : String(err)}`,
-            );
+            // CR-MINOR (CodeRabbit review feedback): the raw Firestore
+            // message can contain document paths / project IDs / index
+            // hints — keep it server-side, return a fixed message.
+            console.error("❌ disconnectMetaAccount transaction failed:", err);
+            throw new HttpsError("internal", "Failed to disconnect.");
         }
 
         console.log(`🔌 Workspace Meta link disconnected (owner=${scope.ownerUid}, caller=${scope.callerUid}, workspace=${req.workspaceId})`);
