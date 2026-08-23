@@ -124,16 +124,29 @@ export async function connectMetaAccountImpl(
     // Build the write payloads outside the transaction so the
     // transaction body stays small and the failure paths are
     // explicit (CodeRabbit review feedback).
-    const accountName = req.accountName ?? "";
+    //
+    // CR-MAJOR (CodeRabbit round 11): the previous code set
+    // `accountName = req.accountName ?? ""` outside the transaction,
+    // so a same-account re-selection call that omitted `accountName`
+    // overwrote both `metaAdAccountName` and the private connection
+    // `accountName` with an empty string — silently dropping the
+    // stored name. The fix preserves the existing workspace /
+    // private-doc name when the request omits the field. The
+    // pre-built payloads below carry a placeholder; the transaction
+    // patches them with the resolved name once the existing doc has
+    // been read.
+    const hasIncomingName = typeof req.accountName === "string" && req.accountName.length > 0;
     const now = Date.now();
     const wsRef = getDb()
         .collection("users").doc(scope.ownerUid)
         .collection("workspaces").doc(req.workspaceId);
     const privateRef = privateConnectionRef(scope.ownerUid, req.workspaceId);
-    const privatePayload = {
+    const privatePayload: Record<string, unknown> = {
         metaConnected: true,
         accountId: req.accountId,
-        accountName,
+        // Filled inside the transaction (preserves stored name when
+        // the request omits `accountName`).
+        accountName: hasIncomingName ? req.accountName : "",
         // Legacy ciphertext retained as a base64 string; the worker
         // knows how to decrypt it. Storing under `legacyToken` until
         // KMS migration finishes.
@@ -147,7 +160,9 @@ export async function connectMetaAccountImpl(
     };
     const workspacePayload: Record<string, unknown> = {
         metaAdAccountId: req.accountId,
-        metaAdAccountName: accountName,
+        // Filled inside the transaction (preserves stored name when
+        // the request omits `accountName`).
+        metaAdAccountName: hasIncomingName ? req.accountName : "",
     };
     // CR-MAJOR (CodeRabbit round 7, O-1): FR-011 must be enforced at
     // every workspace ad-account write, not only inside
@@ -194,6 +209,34 @@ export async function connectMetaAccountImpl(
             // from soft-deleted (FR-024).
             assertWorkspaceActive(wsSnap);
             const wsData = wsSnap.data() ?? {};
+
+            // CR-MAJOR (CodeRabbit round 11): preserve the stored
+            // account name when the request omits `accountName`.
+            // Without this, a same-account re-selection call that
+            // passes only `{ workspaceId, accountId }` would
+            // overwrite the stored `metaAdAccountName` and private
+            // `accountName` with an empty string.
+            if (!hasIncomingName) {
+                const storedWsName = typeof wsData.metaAdAccountName === "string" && wsData.metaAdAccountName.length > 0
+                    ? wsData.metaAdAccountName
+                    : "";
+                // CR-MAJOR: if the workspace doc has no name (a
+                // first-time link), fall back to the private-doc
+                // name so a stale value from a prior unlink is
+                // never resurrected. If neither has a name, leave
+                // the empty placeholder — the caller didn't provide
+                // one and we don't have one to preserve.
+                const privateSnap = await tx.get(privateRef);
+                const storedPrivateName = privateSnap.exists
+                    ? (typeof privateSnap.data()?.accountName === "string"
+                        ? privateSnap.data()?.accountName
+                        : "")
+                    : "";
+                const resolvedName = storedWsName || storedPrivateName;
+                workspacePayload.metaAdAccountName = resolvedName;
+                privatePayload.accountName = resolvedName;
+            }
+
             // CR-MAJOR (CodeRabbit round 7, O-1): FR-011 — clear the
             // recorded Page in the SAME transaction on a real
             // ad-account change. Same-account re-selection

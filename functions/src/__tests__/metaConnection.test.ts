@@ -409,6 +409,120 @@ async function main() {
         assert.equal(priv.encryptedToken, null);
     });
 
+    // ─── T-MC8: same-account re-selection without accountName → preserve stored name ───
+    await run("T-MC8: same-account re-selection without accountName → preserve stored name", async () => {
+        // CR-MAJOR (CodeRabbit round 11): the previous code set
+        // `accountName = req.accountName ?? ""` outside the
+        // transaction, so a same-account re-selection call that
+        // omitted `accountName` overwrote the stored name with an
+        // empty string. The fix reads the existing workspace doc
+        // inside the transaction and preserves the name when the
+        // request omits the field.
+        resetStub();
+        setupOwnerScope();
+        setupWorkspace({ id: "ws-1", metaAdAccountId: "act_WS_A", deletedAt: null });
+        // Seed the stored name on both the workspace and the private
+        // connection doc.
+        const wsBucket = bucket("users/owner-1/workspaces");
+        wsBucket.set("ws-1", { ...wsBucket.get("ws-1"), metaAdAccountName: "Stored Account Name" });
+        bucket("users/owner-1/workspaces/ws-1/private").set("metaConnection", {
+            metaConnected: true,
+            accountId: "act_WS_A",
+            accountName: "Stored Account Name",
+            legacyToken: "iv:tag:ciphertext",
+            createdAt: Date.now() - 1000,
+            updatedAt: Date.now() - 1000,
+        });
+
+        // Re-select the SAME account WITHOUT accountName.
+        await connectMetaAccountImpl(ownerScope(), {
+            workspaceId: "ws-1",
+            accountId: "act_WS_A",
+        });
+
+        const ws = bucket("users/owner-1/workspaces").get("ws-1") as DocData;
+        assert.equal(
+            ws.metaAdAccountName, "Stored Account Name",
+            "T-MC8: metaAdAccountName preserved on same-account re-selection without accountName",
+        );
+        const priv = bucket("users/owner-1/workspaces/ws-1/private").get("metaConnection") as DocData;
+        assert.equal(
+            priv.accountName, "Stored Account Name",
+            "T-MC8: private connection accountName preserved on same-account re-selection without accountName",
+        );
+    });
+
+    // ─── T-MC9: first-time link without accountName → stored name stays empty ───
+    await run("T-MC9: first-time link without accountName → empty name is the explicit choice", async () => {
+        // CR-MAJOR (CodeRabbit round 11): the fix preserves the stored
+        // name only when the workspace / private doc already has one.
+        // First-time links with no name supplied land as an empty
+        // string (the caller didn't supply one and there is nothing to
+        // preserve). This pins the explicit "no resurrection of a
+        // stale unlinked-doc name" behaviour.
+        resetStub();
+        setupOwnerScope();
+        setupWorkspace({ id: "ws-1", metaAdAccountId: null, deletedAt: null });
+
+        await connectMetaAccountImpl(ownerScope(), {
+            workspaceId: "ws-1",
+            accountId: "act_WS_A",
+        });
+
+        const ws = bucket("users/owner-1/workspaces").get("ws-1") as DocData;
+        assert.equal(
+            ws.metaAdAccountName, "",
+            "T-MC9: first-time link without accountName → empty metaAdAccountName",
+        );
+        const priv = bucket("users/owner-1/workspaces/ws-1/private").get("metaConnection") as DocData;
+        assert.equal(
+            priv.accountName, "",
+            "T-MC9: first-time link without accountName → empty private accountName",
+        );
+    });
+
+    // ─── T-MC10: same-account re-selection WITH accountName → new name wins ───
+    await run("T-MC10: same-account re-selection WITH accountName → new name written", async () => {
+        // CR-MAJOR (CodeRabbit round 11): when the request DOES
+        // supply accountName, the new name wins (no preservation).
+        // Note: connectMetaAccount enforces the FIX 6 same-account
+        // rule — switching the ad account requires disconnecting
+        // first — so this test re-selects the SAME account and
+        // verifies the explicit name override wins over the stored
+        // name.
+        resetStub();
+        setupOwnerScope();
+        setupWorkspace({ id: "ws-1", metaAdAccountId: "act_WS_A", deletedAt: null });
+        const wsBucket = bucket("users/owner-1/workspaces");
+        wsBucket.set("ws-1", { ...wsBucket.get("ws-1"), metaAdAccountName: "Old Account" });
+        bucket("users/owner-1/workspaces/ws-1/private").set("metaConnection", {
+            metaConnected: true,
+            accountId: "act_WS_A",
+            accountName: "Old Account",
+            legacyToken: "iv:tag:ciphertext",
+            createdAt: Date.now() - 1000,
+            updatedAt: Date.now() - 1000,
+        });
+
+        await connectMetaAccountImpl(ownerScope(), {
+            workspaceId: "ws-1",
+            accountId: "act_WS_A",
+            accountName: "New Account",
+        });
+
+        const ws = bucket("users/owner-1/workspaces").get("ws-1") as DocData;
+        assert.equal(ws.metaAdAccountId, "act_WS_A");
+        assert.equal(
+            ws.metaAdAccountName, "New Account",
+            "T-MC10: explicit accountName wins over stored name on same-account re-selection",
+        );
+        const priv = bucket("users/owner-1/workspaces/ws-1/private").get("metaConnection") as DocData;
+        assert.equal(
+            priv.accountName, "New Account",
+            "T-MC10: explicit accountName wins in private doc",
+        );
+    });
+
     summary();
 }
 
