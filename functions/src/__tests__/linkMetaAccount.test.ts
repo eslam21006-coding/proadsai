@@ -526,6 +526,88 @@ async function main() {
         assert.equal(page.pageName, null);
     });
 
+    // ─── T-09e: same-account re-selection preserves inherited Page (round 7 O-2) ───
+    await run("T-09e: same-account re-selection → Page preserved, metaPageClearedAt NOT restamped", async () => {
+        // CR-MAJOR (CodeRabbit round 7, O-2): the previous unconditional
+        // Page clear violated `spec.md` clarification 160 / 245 —
+        // re-selecting the already-linked ad account is NOT a Page
+        // choice and must NOT clear the inherited legacy Page. The fix
+        // gates the clear on `priorAccountId !== metaAdAccountId`, so
+        // the dominant UI path (`App.tsx:3884-3890` re-fires the link
+        // on every sidebar selection) preserves the inherited legacy
+        // Page so pack publishing can still consume it.
+        //
+        // This regression pins the new behaviour: when a workspace is
+        // already linked to ad account X and the user re-selects X,
+        // the Page fields and metaPageClearedAt stay exactly as they
+        // were. The `updateCalls` log shows only the link fields were
+        // rewritten — Page clear is absent from the patch.
+        resetStub();
+        setupOwnerConnection();
+        const priorClearedAt = Date.parse("2026-07-01T00:00:00Z");
+        setupWorkspace({
+            id: "ws-1", name: "Brand X",
+            isDefault: true,
+            metaAdAccountId: "act_WS_A", // already linked
+            metaPageId: null,            // CLEARED, never explicitly picked
+            metaPageName: null,
+            metaPageClearedAt: priorClearedAt,
+        });
+
+        const result = await linkMetaAccountToWorkspaceImpl(
+            ownerScope(),
+            { workspaceId: "ws-1", metaAdAccountId: "act_WS_A", metaAdAccountName: "A" },
+            { probeMetaRoleImpl: FAKE_PROBE_ROLE, metaAppSecretValue: TEST_SECRET },
+        );
+        assert.equal(result.ok, true);
+        assert.equal(result.pageCleared, false, "T-09e: pageCleared=false on same-account re-selection");
+
+        const ws = bucket("users/owner-1/workspaces").get("ws-1") as any;
+        // Link fields rewritten:
+        assert.equal(ws.metaAdAccountId, "act_WS_A");
+        assert.equal(ws.metaAdAccountName, "A");
+        assert.equal(ws.metaRoleAtLinkTime, "ADMIN");
+        // Page fields unchanged:
+        assert.equal(ws.metaPageId, null, "T-09e: metaPageId preserved on same-account re-selection");
+        assert.equal(ws.metaPageName, null, "T-09e: metaPageName preserved on same-account re-selection");
+        assert.equal(
+            ws.metaPageClearedAt, priorClearedAt,
+            "T-09e: metaPageClearedAt NOT restamped on same-account re-selection",
+        );
+
+        // The single update call carried the link fields ONLY — no
+        // metaPageClearedAt key in the patch.
+        const wsUpdates = updateCalls.filter(
+            (c) => c.id === "ws-1" && !c.path.includes("private/"),
+        );
+        assert.equal(wsUpdates.length, 1, "T-09e: exactly one update to ws-1");
+        const wsPatch = wsUpdates[0].patch as DocData;
+        assert.equal(
+            "metaPageClearedAt" in wsPatch, false,
+            "T-09e: metaPageClearedAt absent from the update patch on same-account re-selection",
+        );
+        assert.equal(
+            "metaPageId" in wsPatch, false,
+            "T-09e: metaPageId absent from the update patch on same-account re-selection",
+        );
+        assert.equal(
+            "metaPageName" in wsPatch, false,
+            "T-09e: metaPageName absent from the update patch on same-account re-selection",
+        );
+
+        // The publish-side view: a CLEARED workspace stays CLEARED
+        // across same-account re-selection, so pack publishing still
+        // skips creative creation rather than inheriting the legacy
+        // global Page.
+        const { resolveWorkspacePage } = require("../workspaces/metaCallerScope.js");
+        const conn = bucket("metaConnections").get("owner-1") as any;
+        const page = resolveWorkspacePage(workspaceSnap(ws), conn);
+        assert.equal(
+            page.pageSource, "none",
+            "T-09e: CLEARED stays CLEARED across same-account re-selection (no Page re-mutation)",
+        );
+    });
+
     // ─── T-10: unlink clears Page in same write ───
     await run("T-10: unlink clears Page in same write, pageCleared=true", async () => {
         resetStub();
