@@ -196,9 +196,21 @@ Team members have **read** access, never write. Since callables run under the Ad
 
 **Decision**: No behavioural change needed beyond routing; the Page gate stays off.
 
-`metaPushCreative` POSTs to `https://graph.facebook.com/v22.0/{accountId}/adimages` (`index.ts:3720-3723`) — the ad account's image library — then writes a `creativeDeployments` record with `metaAdId`, `metaCreativeId`, `metaAdSetId`, `metaCampaignId` all `null` (`index.ts:3792-3795`). The in-code comment is explicit: the Page is *"stored for future creative-creation steps (/adcreatives) — we do NOT call /adcreatives today, so this is metadata only."*
+The two publish paths differ, and the distinction matters for the harm analysis:
 
-Confirms both clarified positions: gate on the ad account (genuinely used by the upload), do not gate on the Page (consumed by nothing), and the mis-targeting harm is confidentiality — a creative landing in another client's media library — not ad spend.
+**Single creative (`metaPushCreative`)** — POSTs to `https://graph.facebook.com/v22.0/{accountId}/adimages` (`index.ts:4103`), the ad account's image library, then writes a `creativeDeployments` record carrying `pageId` / `pageName` / `pageSource` (`index.ts:4183-4185`). No `/adcreatives` call is made on this path, so here the Page genuinely is recorded metadata and is not transmitted to Meta.
+
+**Creative pack (`metaPushCreativePack`)** — uploads to `/adimages` (`index.ts:6208`) and then, when a Page resolves, POSTs to `https://graph.facebook.com/v22.0/{accountId}/adcreatives` with `object_story_spec.page_id` set to the resolved Page (`index.ts:6226-6244`). On this path the Page **is** consumed by Meta. When no Page resolves (`pageSource: 'none'`) the `/adcreatives` step is skipped and the upload still succeeds, which is what keeps FR-015a satisfied without a Page gate.
+
+> **Correction (Phase 967 re-audit, L-2).** An earlier draft of this
+> section generalised the single-creative path's in-code comment — *"we do
+> NOT call /adcreatives today, so this is metadata only"* — to the whole
+> feature. That is not true of the pack path, and the comment itself no
+> longer exists in `index.ts`. The decision below is unchanged, but it now
+> rests on the actual behaviour of both paths rather than on the
+> single-path premise.
+
+Confirms both clarified positions: gate on the ad account (genuinely used by the upload on both paths), do not gate on the Page (the pack path skips `/adcreatives` cleanly when no Page resolves, and the single path never calls it). The mis-targeting harm is confidentiality, not ad spend — a creative landing in another client's media library on the single path, and additionally an ad creative authored against another client's Page on the pack path. Neither creates a live ad or spends budget: `metaAdId` / `metaAdSetId` / `metaCampaignId` are never populated, so nothing is delivered until the user completes the setup in Ads Manager.
 
 ---
 

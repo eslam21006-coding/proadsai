@@ -257,14 +257,23 @@ re-selection regression test belongs in a follow-up.
 
 ---
 
-## Original LOW findings — still open
+## Original LOW findings — closed
 
 | ID | Status | Evidence |
 |---|---|---|
-| **L-1** — `sc-results.md` overstates the test count | ⬜ Open | `sc-results.md:5` still reads *"80 contract tests"*. The nine new suites now total **68** (67 + the new T-09d). Documentation only. |
-| **L-2** — R8's "no `/adcreatives` today" premise | ⬜ Open | `research.md:199` unchanged; still states the Page is *"metadata only"*, which is not true of `metaPushCreativePack` (`index.ts:6205`). Behaviour is correct; the recorded premise is not. Worth correcting so any future FR-015b revisit is not made on a false basis. |
+| **L-1** — `sc-results.md` overstates the test count | ✅ Fixed | `sc-results.md:5` read *"80 contract tests"*, a figure not reproducible from any suite grouping. Now states **93**, with the breakdown recorded inline: 82 across the ten new suites (`metaCallerScope` 7, `workspaceRepair` 9, `metaPush` 8, `metaPushPack` 2, `metaSelectPage` 16, `metaScope.integration` 6, `metaOAuthCallback` 2, `linkMetaAccount` 13, `workspaceListing` 7, `metaConnection` 12) plus 11 Phase 967 cases added to the existing `workspace.test.ts`. Counts taken from a full `npm test` run, not from the specs. |
+| **L-2** — R8's "no `/adcreatives` today" premise | ✅ Fixed | `research.md` R8 generalised the single-creative path's in-code comment to the whole feature. R8 now separates the two paths: `metaPushCreative` (`index.ts:4103`) never calls `/adcreatives`, so the Page is recorded metadata there; `metaPushCreativePack` (`index.ts:6226-6244`) POSTs `object_story_spec.page_id` and therefore **does** transmit the Page to Meta. A correction note records why the earlier premise was wrong, and the harm analysis now names both outcomes. The decision (gate on the ad account, not the Page) is unchanged and now rests on verified behaviour. |
 
-Neither affects shipped behaviour.
+Neither affected shipped behaviour; both are corrected in the same commit
+as the round-12 P2 follow-up.
+
+Note on the counts: the nine-suite total of **68** recorded earlier in
+this report was accurate when the re-audit ran. It has since moved to 82
+across **ten** suites — `linkMetaAccount` gained T-09e and two round-12
+regression cases (10 → 13), and `metaConnection.test.ts` (12) was added
+in round 10 and registered in `functions/package.json`. The per-suite
+figures elsewhere in this document are a snapshot of the re-audit run and
+are superseded by the breakdown above.
 
 ---
 
@@ -283,4 +292,5 @@ Merge conditions carried forward (documentation, not code):
 1. Run `scripts/repair-workspace-markers.ts` against production after
    deploy and replace the `<pending>` counts in `evidence-r1.md` —
    this is what actually closes Bug 4 / SC-004.
-2. L-1 / L-2 doc corrections can ride along in any later commit.
+2. ~~L-1 / L-2 doc corrections can ride along in any later commit.~~
+   ✅ Done — both corrected in the round-12 follow-up commit.

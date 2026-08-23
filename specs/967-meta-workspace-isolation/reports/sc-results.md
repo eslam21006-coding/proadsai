@@ -2,8 +2,17 @@
 
 **Branch**: `967-meta-workspace-isolation`
 **Date**: 2026-08-19
-**Mode**: Hermetic (Phase 967 ships with 80 contract tests; live runs are
+**Mode**: Hermetic (Phase 967 ships with 93 contract tests; live runs are
 operator-gated per `quickstart.md`)
+
+**Test count breakdown** — 82 cases across the ten new suites
+(`metaCallerScope` 7, `workspaceRepair` 9, `metaPush` 8, `metaPushPack` 2,
+`metaSelectPage` 16, `metaScope.integration` 6, `metaOAuthCallback` 2,
+`linkMetaAccount` 13, `workspaceListing` 7, `metaConnection` 12) plus 11
+Phase 967 cases added to the existing `workspace.test.ts` (16 total in
+that file, 5 of which pre-date this phase). All ten new suites are
+registered in `functions/package.json`'s `test` script and run inside
+`npm test`.
 
 This file records the result for every Success Criterion in
 `specs/967-meta-workspace-isolation/spec.md` § "Success Criteria"
