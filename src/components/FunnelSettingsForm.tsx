@@ -134,6 +134,11 @@ function numOrNull(v: string): number | null {
 interface UseFunnelSettingsReturn {
     loading: boolean;
     error: string | null;
+    // CR-MAJOR (CodeRabbit review feedback): when the callable
+    // refuses with `permission-denied / accountId does not match`, the
+    // modal should treat that as an unlinked-workspace state, not a
+    // generic load failure. Carries a structured flag for the guard.
+    unlinked: boolean;
     settings: FunnelSettingsDoc | null;
     reviewDue: boolean;
     save: (req: Omit<SaveFunnelSettingsRequest, 'clientNowMs'> & { clientNowMs?: number }) => Promise<FunnelSettingsDoc>;
@@ -167,18 +172,36 @@ interface SaveFunnelSettingsResponse {
 function useFunnelSettings(workspaceId: string | null, accountId: string | null): UseFunnelSettingsReturn {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [unlinked, setUnlinked] = useState(false);
     const [settings, setSettings] = useState<FunnelSettingsDoc | null>(null);
     const [reviewDue, setReviewDue] = useState(false);
 
-    useEffect(() => {
-        if (!workspaceId || !accountId) {
+    // CR-MAJOR (CodeRabbit round 7): apply the adjust-state-during-render
+    // pattern (see lines 349-353 / 379-383 below) to the missing-input
+    // reset. The previous effect called `setSettings(null)` /
+    // `setReviewDue(false)` / `setUnlinked(false)` synchronously from its
+    // body, which trips `react-hooks/set-state-in-effect` and forces a
+    // cascading render. Detect the transition in render and set state
+    // there instead — the effect stays responsible only for the fetch.
+    const inputsMissing = !workspaceId || !accountId;
+    const [prevInputsMissing, setPrevInputsMissing] = useState(inputsMissing);
+    if (inputsMissing !== prevInputsMissing) {
+        setPrevInputsMissing(inputsMissing);
+        if (inputsMissing) {
             setSettings(null);
             setReviewDue(false);
+            setUnlinked(false);
+        }
+    }
+
+    useEffect(() => {
+        if (!workspaceId || !accountId) {
             return;
         }
         let cancelled = false;
         setLoading(true);
         setError(null);
+        setUnlinked(false);
         const fn = httpsCallable(functions, 'getFunnelSettings');
         fn({ workspaceId, accountId })
             .then((res) => {
@@ -187,9 +210,24 @@ function useFunnelSettings(workspaceId: string | null, accountId: string | null)
                 setSettings(data.settings);
                 setReviewDue(!!data.reviewDue);
             })
-            .catch((e) => {
+            .catch((e: unknown) => {
                 if (cancelled) return;
-                setError(typeof e?.message === 'string' ? e.message : 'Failed to load funnel settings.');
+                // CR-MAJOR (CodeRabbit review feedback): the round-4 fix
+                // on funnelSettings.ts:getFunnelSettings rejects an
+                // unlinked-workspace pair with `permission-denied`. Treat
+                // that specific verdict as the "needs Meta link" state
+                // instead of a generic load failure so the user gets the
+                // actionable message rendered by the existing guard.
+                const code = (e as { code?: string })?.code;
+                if (code === 'functions/permission-denied' || code === 'permission-denied') {
+                    setUnlinked(true);
+                    setSettings(null);
+                    setError(null);
+                    return;
+                }
+                setError(typeof (e as { message?: unknown })?.message === 'string'
+                    ? (e as { message: string }).message
+                    : 'Failed to load funnel settings.');
             })
             .finally(() => { if (!cancelled) setLoading(false); });
         return () => { cancelled = true; };
@@ -250,7 +288,7 @@ function useFunnelSettings(workspaceId: string | null, accountId: string | null)
         }
     };
 
-    return { loading, error, settings, reviewDue, save, dismiss };
+    return { loading, error, unlinked, settings, reviewDue, save, dismiss };
 }
 
 // ─── Form component ──────────────────────────────────────────
@@ -331,7 +369,7 @@ export default function FunnelSettingsForm({
 
     const showWorkspaceSelector = !!availableWorkspaces && availableWorkspaces.length > 1;
 
-    const { loading, error, settings, reviewDue, save, dismiss } = useFunnelSettings(selectedWorkspaceId || null, selectedAccountId);
+    const { loading, error, unlinked, settings, reviewDue, save, dismiss } = useFunnelSettings(selectedWorkspaceId || null, selectedAccountId);
 
     // Form state
     const [funnelType, setFunnelType] = useState<FunnelType>('paid_event');
@@ -397,7 +435,12 @@ export default function FunnelSettingsForm({
     // reopening the modal recovered. Now it is a flag, and the guard body is
     // rendered BELOW the selector further down, so the selector always stays
     // on screen and the state is navigable.
-    const needsMetaLink = !selectedWorkspaceId || !selectedAccountId;
+    //
+    // CR-MAJOR (CodeRabbit review feedback): also include the callable's
+    // `permission-denied` verdict (which the round-4 server fix returns
+    // when the workspace-account link disappears between renders). Without
+    // this OR the stale render shows the raw server error.
+    const needsMetaLink = !selectedWorkspaceId || !selectedAccountId || unlinked;
 
     async function handleSave() {
         if (!selectedWorkspaceId || !selectedAccountId) return;

@@ -42,6 +42,15 @@ export interface MetaConnection {
     pages: MetaPage[];
     selectedPageId: string | null;
     selectedPageName: string | null;
+    // Phase 967 (contract C6) — workspace-aware Page. Present when
+    // `getMetaConnection` is called with a `workspaceId`. `pageSource`
+    // tells the UI whether the Page came from the workspace's own
+    // record (`'workspace'`), the legacy account-level fallback
+    // (`'legacy_global'`), or no Page at all (`'none'`).
+    activePageId?: string | null;
+    activePageName?: string | null;
+    pageSource?: "workspace" | "legacy_global" | "none";
+    isTeamMember?: boolean;
     connectedAt: any;
     lastSyncAt: any;
     status: string;
@@ -90,10 +99,16 @@ class MetaService {
         });
     }
 
-    async getConnection(): Promise<MetaConnection> {
+    async getConnection(opts?: { workspaceId?: string | null }): Promise<MetaConnection> {
         try {
             const fn = httpsCallable(functions, 'getMetaConnection');
-            const result = await fn();
+            // Phase 967 (C6) — pass `workspaceId` when the caller wants
+            // the workspace-aware Page fields. The backend fills in
+            // `activePageId` / `activePageName` / `pageSource` and the
+            // existing fields stay populated for back-compat.
+            const result = await fn(
+                opts?.workspaceId ? { workspaceId: opts.workspaceId } : {},
+            );
             return result.data as MetaConnection;
         } catch (err) {
             console.error('Failed to get Meta connection:', err);
@@ -112,10 +127,22 @@ class MetaService {
         }
     }
 
-    async selectPage(pageId: string | null, pageName: string | null): Promise<boolean> {
+    // Phase 967 (contract C1) — Page selection is workspace-scoped.
+    // The backend records the Page on the workspace and only uses the
+    // account-global `selectedPageId` / `selectedPageName` as the
+    // legacy fallback for `NEVER_SET` workspaces (FR-007).
+    async selectPage(
+        pageId: string | null,
+        pageName: string | null,
+        opts?: { workspaceId?: string | null },
+    ): Promise<boolean> {
         try {
             const fn = httpsCallable(functions, 'metaSelectPage');
-            await fn({ pageId, pageName });
+            await fn({
+                pageId,
+                pageName,
+                workspaceId: opts?.workspaceId ?? null,
+            });
             return true;
         } catch (err) {
             console.error('Failed to select page:', err);
@@ -231,6 +258,11 @@ class MetaService {
 
     // ═══ 6. PUSH CREATIVE TO META AD ACCOUNT ═══
     // Accepts BOTH base64 data URLs and remote URLs (auto-converts)
+    //
+    // Phase 967 — the response shape carries the structured reason and
+    // (where applicable) the workspace name so the call site can look
+    // up the paired en/ar i18n key (FR-028a). The raw `message` is
+    // kept for fall-through / unknown-reason paths.
     async pushCreative(
         imageSource: string,
         adName: string,
@@ -250,7 +282,17 @@ class MetaService {
             offerFactsHash?: string;
             workspaceId?: string | null;
         }
-    ): Promise<{ success: boolean; message: string; imageHash?: string; deploymentId?: string }> {
+    ): Promise<{
+        success: boolean;
+        message: string;
+        imageHash?: string;
+        deploymentId?: string;
+        // Phase 967 — structured failure signal so the call site can
+        // map to a paired en/ar i18n key (FR-028a). Present on the
+        // failure paths the backend raises with `details.reason`.
+        reason?: string;
+        workspaceName?: string | null;
+    }> {
         try {
             let imageBase64 = imageSource;
 
@@ -277,14 +319,49 @@ class MetaService {
                 adName,
                 ...(deploymentMeta || {}),
             });
-            return result.data as { success: boolean; message: string; imageHash?: string; deploymentId?: string };
+            return result.data as {
+                success: boolean;
+                message: string;
+                imageHash?: string;
+                deploymentId?: string;
+                reason?: string;
+                workspaceName?: string | null;
+            };
         } catch (err: any) {
             console.error('Failed to push to Meta:', err);
-            return { success: false, message: err?.message || 'Failed to push creative' };
+            // The Firebase Functions SDK exposes `details` on HttpsError
+            // for the `failed-precondition` class. Surface the structured
+            // `reason` and `workspaceName` so the React call site can
+            // route through the paired en/ar i18n keys (FR-028a).
+            const reason: string | undefined = err?.details?.reason;
+            const workspaceName: string | null | undefined = err?.details?.workspaceName;
+            return {
+                success: false,
+                message: err?.message || 'Failed to push creative',
+                reason,
+                workspaceName: workspaceName ?? undefined,
+            };
         }
     }
     // ═══ 7. PUSH CREATIVE PACK (Image + Copy paired) ═══
-    async pushCreativePack(imageSource: string, adName: string, primaryText: string, pageId?: string, activeWorkspaceId?: string): Promise<{ success: boolean; message: string; imageHash?: string; creativeId?: string }> {
+    //
+    // Phase 967 — `workspaceId` is the canonical parameter; the
+    // backend also accepts `activeWorkspaceId` as an alias for back-
+    // compat with any caller still using the old name.
+    async pushCreativePack(
+        imageSource: string,
+        adName: string,
+        primaryText: string,
+        pageId?: string,
+        workspaceId?: string,
+    ): Promise<{
+        success: boolean;
+        message: string;
+        imageHash?: string;
+        creativeId?: string;
+        reason?: string;
+        workspaceName?: string | null;
+    }> {
         try {
             let imageBase64 = imageSource;
 
@@ -305,11 +382,35 @@ class MetaService {
             }
 
             const fn = httpsCallable(functions, 'metaPushCreativePack');
-            const result = await fn({ imageBase64, adName, primaryText, pageId, activeWorkspaceId });
-            return result.data as { success: boolean; message: string; imageHash?: string; creativeId?: string };
+            // Send both `workspaceId` (canonical) and `activeWorkspaceId`
+            // (legacy alias the backend still accepts). Server-side
+            // `resolvePublishWorkspace` reads `workspaceId` first.
+            const result = await fn({
+                imageBase64,
+                adName,
+                primaryText,
+                pageId,
+                workspaceId,
+                activeWorkspaceId: workspaceId,
+            });
+            return result.data as {
+                success: boolean;
+                message: string;
+                imageHash?: string;
+                creativeId?: string;
+                reason?: string;
+                workspaceName?: string | null;
+            };
         } catch (err: any) {
             console.error('Failed to push creative pack:', err);
-            return { success: false, message: err?.message || 'Failed to push creative pack' };
+            const reason: string | undefined = err?.details?.reason;
+            const workspaceName: string | null | undefined = err?.details?.workspaceName;
+            return {
+                success: false,
+                message: err?.message || 'Failed to push creative pack',
+                reason,
+                workspaceName: workspaceName ?? undefined,
+            };
         }
     }
 }

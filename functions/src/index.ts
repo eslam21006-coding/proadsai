@@ -19,6 +19,25 @@ import {
 import { validateSelector } from "./selectorLimits.js";
 import { writeBillingState } from "./billing/billingState.js";
 import { assertOwner, assertWorkspaceActive, assertNotTeamMember, createWorkspaceWithLimit, resolveCallerScope, resolveDefaultWorkspaceId } from "./workspaces/workspacePolicy.js";
+import {
+  resolveMetaScope,
+  resolvePublishWorkspace,
+  resolveWorkspacePage,
+  assertWorkspaceAllowed,
+  type PageSource,
+} from "./workspaces/metaCallerScope.js";
+
+// OAuth-callback identity resolution helper — wraps `resolveCallerScope`
+// with the Phase 967 onRequest-shaped preamble. The callback has no
+// `request.auth`; it takes the identity from a value carried through
+// the OAuth round-trip (`state`). Resolving that value to the owner
+// AFTER reading it (FR-020a-i) is the closure for team-member
+// authorisation, and the `readDegraded` check (FR-003) is what stops
+// a transient Firestore read failure from writing a connection under
+// the wrong account. The `state` parameter's production /
+// transmission / validation stays untouched (FR-020a-ii) — that's
+// the deferred state-trust work tracked separately in research.md
+// R8 / spec non-goals.
 import { enforceProjectQuota } from "./savedProjects/projectQuota.js";
 import { deriveStatus } from "./savedProjects/projectStatus.js";
 import { isArabic, scanAndReplace } from "./culturalCompliance.js";
@@ -3193,13 +3212,168 @@ function decryptToken(encryptedData: string, secret: string): string {
 }
 
 // ─── 1. META OAUTH: Exchange code for long-lived token ───────────────────
+//
+// Phase 967 (FR-020, FR-020a-i, FR-020a-ii, contract C7) — the
+// callback has no `request.auth`; it takes the identity from a value
+// carried through the OAuth round-trip (`state`). Resolving that
+// value to the OWNER after reading it (FR-020a-i) is the closure for
+// team-member authorisation: a team member's authorisation lands
+// on the owner's record and is immediately usable by every member
+// and the owner themselves.
+//
+// The `state` parameter's production / transmission / validation is
+// intentionally untouched (FR-020a-ii) — that's the deferred
+// state-trust work tracked separately in research.md R8 and in the
+// spec's non-goals. Hardening `state` here would make the deferred
+// phase's diff harder to review. The change is purely the *consumer*
+// of `state` — `metaConnections/{state}` becomes
+// `metaConnections/{ownerUid}` (after `resolveCallerScope` resolves
+// the state to the owner), and a `connectedByUid: state` field is
+// added so the audit log shows the original authoriser.
+//
+// FR-003 — a transient Firestore read failure during the scope
+// resolution degrades to a self-scope that looks like a legitimate
+// owner resolution. We render a retry page and write NOTHING in
+// that case so a team member never silently authorises the wrong
+// account.
+// Phase 967 — extracted OAuth callback body so contract tests can
+// drive the resolution directly with an in-memory Firestore stub.
+// `deps.fetchImpl` and `deps.metaAppIdValue` / `deps.metaAppSecretValue`
+// inject the test surface; production passes none.
+export async function metaOAuthCallbackImpl(
+  state: string,
+  code: string,
+  deps: {
+    fetchImpl?: typeof fetch;
+    metaAppIdValue?: string;
+    metaAppSecretValue?: string;
+  } = {},
+): Promise<
+  | { ok: true; ownerUid: string; connectedByUid: string; adAccountCount: number; pageCount: number }
+  | { ok: false; reason: "missing_code_or_state" | "read_degraded" | "token_exchange_error" | "long_lived_error" }
+> {
+    const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
+    const appId = deps.metaAppIdValue ?? metaAppId.value();
+    const appSecret = deps.metaAppSecretValue ?? metaAppSecret.value();
+
+    // FR-020a-i / FR-003 — resolve the identity BEFORE doing any
+    // side effect. When the read is degraded, write nothing.
+    const oauthScope = await resolveCallerScope(state);
+    if (oauthScope.readDegraded) {
+        return { ok: false, reason: "read_degraded" };
+    }
+    const ownerUid = oauthScope.ownerUid;
+    const connectedByUid = state; // The original caller; may equal ownerUid or a team member uid.
+
+    const redirectUri = `https://europe-west1-proadsai-saas.cloudfunctions.net/metaOAuthCallback`;
+
+    // Step 1: Exchange code for short-lived token
+    const tokenResponse = await fetchImpl(
+        `https://graph.facebook.com/v22.0/oauth/access_token?` +
+        `client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}` +
+         `&client_secret=${appSecret}&code=${encodeURIComponent(code)}`
+    );
+    const tokenData = await tokenResponse.json() as any;
+    if (tokenData.error) {
+        return { ok: false, reason: "token_exchange_error" };
+    }
+    const shortLivedToken = tokenData.access_token;
+
+    // Step 2: Exchange for long-lived token (60 days)
+    const longLivedResponse = await fetchImpl(
+        `https://graph.facebook.com/v22.0/oauth/access_token?` +
+        `grant_type=fb_exchange_token&client_id=${appId}` +
+        `&client_secret=${appSecret}&fb_exchange_token=${shortLivedToken}`
+    );
+    const longLivedData = await longLivedResponse.json() as any;
+    if (longLivedData.error) {
+        return { ok: false, reason: "long_lived_error" };
+    }
+    const longLivedToken = longLivedData.access_token;
+    const expiresIn = longLivedData.expires_in || 5184000;
+
+    // Step 3: Get user's ad accounts
+    const accountsResponse = await fetchImpl(
+        `https://graph.facebook.com/v22.0/me/adaccounts?` +
+        `fields=id,name,account_status,currency,timezone_name&` +
+        `access_token=${longLivedToken}`
+    );
+    const accountsData = await accountsResponse.json() as any;
+    const adAccounts = (accountsData.data || []).map((acc: any) => ({
+        id: acc.id,
+        name: acc.name || acc.id,
+        status: acc.account_status,
+        currency: acc.currency,
+        timezone: acc.timezone_name,
+    }));
+
+    // Step 3b: Get user's Facebook Pages (fail-open).
+    let pages: {
+        id: string;
+        name: string;
+        pictureUrl: string | null;
+        fanCount: number;
+        category: string | null;
+    }[] = [];
+    try {
+        const pagesResponse = await fetchImpl(
+            `https://graph.facebook.com/v22.0/me/accounts?` +
+            `fields=id,name,picture{url},fan_count,category&` +
+            `limit=100&` +
+            `access_token=${longLivedToken}`
+        );
+        const pagesData = await pagesResponse.json() as any;
+        if (pagesData.error) {
+            console.warn("⚠️ Meta /me/accounts warning:", pagesData.error.message);
+        } else {
+            pages = (pagesData.data || []).map((p: any) => ({
+                id: p.id,
+                name: p.name || p.id,
+                pictureUrl: p.picture?.data?.url || null,
+                fanCount: p.fan_count || 0,
+                category: p.category || null,
+            }));
+        }
+    } catch (pagesErr) {
+        console.warn("⚠️ Failed to fetch Meta Pages (non-blocking):", pagesErr);
+    }
+
+    // Step 4: Encrypt and store token — under the OWNER's doc, not
+    // the raw `state` (FR-001 / FR-020a-i).
+    const encryptedToken = encryptToken(longLivedToken, appSecret);
+    const expiresAt = Date.now() + (expiresIn * 1000);
+
+    await admin.firestore().collection("metaConnections").doc(ownerUid).set({
+        userId: ownerUid,
+        connectedByUid,
+        encryptedToken,
+        expiresAt,
+        adAccounts,
+        selectedAccountId: null,
+        pages,
+        selectedPageId: null,
+        selectedPageName: null,
+        connectedAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastSyncAt: null,
+        status: "active",
+    });
+
+    return {
+        ok: true,
+        ownerUid,
+        connectedByUid,
+        adAccountCount: adAccounts.length,
+        pageCount: pages.length,
+    };
+}
+
 export const metaOAuthCallback = onRequest({
     region: "europe-west1",
     secrets: [metaAppId, metaAppSecret],
     cors: true,
 }, async (req, res) => {
     const code = req.query.code as string;
-    const state = req.query.state as string; // Contains userId
+    const state = req.query.state as string; // Contains userId — see FR-020a-ii
     const error = req.query.error as string;
 
     if (error) {
@@ -3213,123 +3387,24 @@ export const metaOAuthCallback = onRequest({
         return;
     }
 
+    // Delegate to the extracted impl for the resolution + write path
+    // (FR-020a-i / FR-003 / FR-001 / FR-020). The HTTP envelope
+    // (success / retry / failure pages) is the only thing the
+    // onRequest wrapper owns.
     try {
-        const appId = metaAppId.value();
-        const appSecret = metaAppSecret.value();
-        const redirectUri = `https://europe-west1-proadsai-saas.cloudfunctions.net/metaOAuthCallback`;
-
-        // Step 1: Exchange code for short-lived token
-        const tokenResponse = await fetch(
-            `https://graph.facebook.com/v22.0/oauth/access_token?` +
-            `client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}` +
-            `&client_secret=${appSecret}&code=${code}`
-        );
-        const tokenData = await tokenResponse.json() as any;
-
-        if (tokenData.error) {
-            console.error("Token exchange error:", tokenData.error);
-            res.send(`<html><body><h2>Connection failed</h2><p>Token exchange error</p><script>setTimeout(()=>window.close(),2000)</script></body></html>`);
-            return;
-        }
-
-        const shortLivedToken = tokenData.access_token;
-
-        // Step 2: Exchange for long-lived token (60 days)
-        const longLivedResponse = await fetch(
-            `https://graph.facebook.com/v22.0/oauth/access_token?` +
-            `grant_type=fb_exchange_token&client_id=${appId}` +
-            `&client_secret=${appSecret}&fb_exchange_token=${shortLivedToken}`
-        );
-        const longLivedData = await longLivedResponse.json() as any;
-
-        if (longLivedData.error) {
-            console.error("Long-lived token error:", longLivedData.error);
-            res.send(`<html><body><h2>Connection failed</h2><p>Token error</p><script>setTimeout(()=>window.close(),2000)</script></body></html>`);
-            return;
-        }
-
-        const longLivedToken = longLivedData.access_token;
-        const expiresIn = longLivedData.expires_in || 5184000; // Default 60 days
-
-        // Step 3: Get user's ad accounts
-        const accountsResponse = await fetch(
-            `https://graph.facebook.com/v22.0/me/adaccounts?` +
-            `fields=id,name,account_status,currency,timezone_name&` +
-            `access_token=${longLivedToken}`
-        );
-        const accountsData = await accountsResponse.json() as any;
-        const adAccounts = (accountsData.data || []).map((acc: any) => ({
-            id: acc.id,
-            name: acc.name || acc.id,
-            status: acc.account_status,
-            currency: acc.currency,
-            timezone: acc.timezone_name,
-        }));
-
-        // Step 3b: Get user's Facebook Pages (for App Review pages_* scopes).
-        // Fail-open: if the call fails, store an empty array and let the
-        // connection complete — the user can reconnect later. The `picture`
-        // field is expanded with `{url}` so we can render profile pictures
-        // in the page picker; `fan_count` and `category` help users tell
-        // pages with similar names apart.
-        let pages: {
-            id: string;
-            name: string;
-            pictureUrl: string | null;
-            fanCount: number;
-            category: string | null;
-        }[] = [];
-        try {
-            // `limit=100` so users with more than 25 Pages see the full
-            // list (Meta's default page size is 25). Most advertisers have
-            // < 50 Pages; 100 is a safe single-call cap.
-            const pagesResponse = await fetch(
-                `https://graph.facebook.com/v22.0/me/accounts?` +
-                `fields=id,name,picture{url},fan_count,category&` +
-                `limit=100&` +
-                `access_token=${longLivedToken}`
-            );
-            const pagesData = await pagesResponse.json() as any;
-            if (pagesData.error) {
-                console.warn("⚠️ Meta /me/accounts warning:", pagesData.error.message);
-            } else {
-                pages = (pagesData.data || []).map((p: any) => ({
-                    id: p.id,
-                    name: p.name || p.id,
-                    pictureUrl: p.picture?.data?.url || null,
-                    fanCount: p.fan_count || 0,
-                    category: p.category || null,
-                }));
+        const result = await metaOAuthCallbackImpl(state, code);
+        if (!result.ok) {
+            if (result.reason === "read_degraded") {
+                console.warn(`⚠️ metaOAuthCallback: readDegraded for state=${state} — writing nothing, render retry page`);
+                res.send(`<html><body style="font-family:system-ui;text-align:center;padding:60px"><h2 style="color:#f59e0b">Temporary verification failure</h2><p>We couldn't verify your account right now. Please close this window and try again in a moment.</p><script>setTimeout(()=>window.close(),5000)</script></body></html>`);
+                return;
             }
-        } catch (pagesErr) {
-            console.warn("⚠️ Failed to fetch Meta Pages (non-blocking):", pagesErr);
+            console.error("Meta OAuth callback failed:", result.reason);
+            res.send(`<html><body><h2>Connection failed</h2><p>Server error</p><script>setTimeout(()=>window.close(),2000)</script></body></html>`);
+            return;
         }
-
-        // Step 4: Encrypt and store token
-        const encryptedToken = encryptToken(longLivedToken, appSecret);
-        const expiresAt = Date.now() + (expiresIn * 1000);
-
-        await admin.firestore().collection("metaConnections").doc(state).set({
-            userId: state,
-            encryptedToken,
-            expiresAt,
-            adAccounts,
-            // Phase 14 (App Review) — Do NOT auto-pick the first ad account.
-            // Auto-selection mixed accounts with workspaces: a user with 3
-            // workspaces and 1 ad account had the same account selected in
-            // all three workspaces silently. Force an explicit pick.
-            selectedAccountId: null,
-            pages,
-            selectedPageId: null,
-            selectedPageName: null,
-            connectedAt: admin.firestore.FieldValue.serverTimestamp(),
-            lastSyncAt: null,
-            status: "active",
-        });
-
-        console.log(`✅ Meta connected for user ${state} — ${adAccounts.length} ad accounts, ${pages.length} pages found`);
-        res.send(`<html><body style="font-family:system-ui;text-align:center;padding:60px"><h2 style="color:#10b981">✅ Connected!</h2><p>${adAccounts.length} ad account(s) found.</p><p style="color:#888">This window will close automatically...</p><script>setTimeout(()=>window.close(),1500)</script></body></html>`);
-
+        console.log(`✅ Meta connected (owner=${result.ownerUid}, connectedByUid=${result.connectedByUid}) — ${result.adAccountCount} ad accounts, ${result.pageCount} pages found`);
+        res.send(`<html><body style="font-family:system-ui;text-align:center;padding:60px"><h2 style="color:#10b981">✅ Connected!</h2><p>${result.adAccountCount} ad account(s) found.</p><p style="color:#888">This window will close automatically...</p><script>setTimeout(()=>window.close(),1500)</script></body></html>`);
     } catch (err: any) {
         console.error("Meta OAuth callback error:", err);
         res.send(`<html><body><h2>Connection failed</h2><p>Server error</p><script>setTimeout(()=>window.close(),2000)</script></body></html>`);
@@ -3337,29 +3412,119 @@ export const metaOAuthCallback = onRequest({
 });
 
 // ─── 2. GET META CONNECTION STATUS ──────────────────────────────────────
+//
+// Phase 967 (contract C6) — owner-scoped (FR-001). When the caller
+// supplies a `workspaceId`, the response carries `activePageId` /
+// `activePageName` / `pageSource` resolved from the workspace (FR-006).
+// The legacy `selectedPageId` / `selectedPageName` are kept in the
+// response for back-compat with the existing frontend; they remain
+// authoritative only for the non-workspace path (FR-009).
+//
+// The body is extracted into `getMetaConnectionImpl` so the contract
+// tests can call it directly with an in-memory Firestore stub — no
+// live emulator. Production wraps it in `onCall`.
+export async function getMetaConnectionImpl(
+  scope: {
+    ownerUid: string;
+    callerUid: string;
+    allowedWorkspaceIds: string[] | "ALL";
+    storedWorkspaceAccess: string[];
+  },
+  requestData: any,
+): Promise<{
+  connected: boolean;
+  adAccounts?: any[];
+  selectedAccountId?: any;
+  pages?: any[];
+  selectedPageId?: string | null;
+  selectedPageName?: string | null;
+  activePageId?: string | null;
+  activePageName?: string | null;
+  pageSource?: "workspace" | "legacy_global" | "none";
+  isTeamMember?: boolean;
+  connectedAt?: any;
+  lastSyncAt?: any;
+  status?: string;
+  tokenExpiring?: boolean;
+}> {
+    const doc = await admin.firestore().collection("metaConnections").doc(scope.ownerUid).get();
+    if (!doc.exists) return { connected: false };
+
+    const data = doc.data()!;
+    const base = {
+        connected: true,
+        adAccounts: data.adAccounts || [],
+        selectedAccountId: data.selectedAccountId ?? null,
+        pages: data.pages || [],
+        selectedPageId: data.selectedPageId ?? null,
+        selectedPageName: data.selectedPageName ?? null,
+        connectedAt: data.connectedAt,
+        lastSyncAt: data.lastSyncAt,
+        status: data.status,
+        // Expires within 7 days — same threshold as pre-967.
+        tokenExpiring: typeof data.expiresAt === "number"
+          && data.expiresAt < Date.now() + (7 * 24 * 60 * 60 * 1000),
+    };
+
+    // Resolve the active Page from the workspace when the caller
+    // names one. We reuse `resolveWorkspacePage` (defined in
+    // metaCallerScope.ts) so the same state-machine logic the
+    // publish path uses decides the active Page here too.
+    //
+    // CR-MAJOR (CodeRabbit review feedback): the previous code inlined
+    // the SET / CLEARED / NEVER_SET logic, creating a second copy of
+    // the security-relevant rule that the FR-011a legacy-fallback ban
+    // depends on. A change to `resolveWorkspacePage` would have
+    // silently diverged. Delegate to the shared helper so the
+    // CLEARED invariant is centralised in one place.
+    const requestedWorkspaceId = requestData?.workspaceId;
+    if (requestedWorkspaceId) {
+      // Authorisation + active-workspace gate. A verified team
+      // member's `allowedWorkspaceIds` is "ALL", so the check is a
+      // no-op for them; for an owner it is also a no-op.
+      assertWorkspaceAllowed(scope, requestedWorkspaceId);
+      const wsSnap = await admin.firestore()
+        .collection(`users/${scope.ownerUid}/workspaces`)
+        .doc(requestedWorkspaceId)
+        .get();
+      // CR-MINOR (CodeRabbit review feedback): gate on the soft-delete
+      // marker. `wsSnap.exists` alone lets a soft-deleted workspace
+      // still supply `activePageId` / `activePageName` / `pageSource`.
+      // `deletedAt == null` covers both an explicit null and a legacy
+      // doc where the key is absent — matching the `active` check every
+      // other workspace-scoped path uses (FR-024 closure for the read).
+      if (wsSnap.exists && wsSnap.data()?.deletedAt == null) {
+        const { pageId: activePageId, pageName: activePageName, pageSource } =
+          resolveWorkspacePage(wsSnap, base);
+        return {
+          ...base,
+          activePageId,
+          activePageName,
+          pageSource,
+          isTeamMember: scope.callerUid !== scope.ownerUid,
+        };
+      }
+      // Workspace absent or soft-deleted → fall through to the base
+      // response (no workspace-aware Page fields).
+    }
+
+    // No workspace supplied, or the named workspace wasn't found.
+    // Return the legacy fields as the active Page for back-compat.
+    return {
+      ...base,
+      activePageId: base.selectedPageId,
+      activePageName: base.selectedPageName,
+      pageSource: base.selectedPageId ? "legacy_global" : "none",
+      isTeamMember: scope.callerUid !== scope.ownerUid,
+    };
+}
+
 export const getMetaConnection = onCall({
     region: "europe-west1",
     cors: true,
 }, async (request: CallableRequest) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const uid = request.auth.uid;
-
-    const doc = await admin.firestore().collection("metaConnections").doc(uid).get();
-    if (!doc.exists) return { connected: false };
-
-    const data = doc.data()!;
-    return {
-        connected: true,
-        adAccounts: data.adAccounts || [],
-        selectedAccountId: data.selectedAccountId,
-        pages: data.pages || [],
-        selectedPageId: data.selectedPageId || null,
-        selectedPageName: data.selectedPageName || null,
-        connectedAt: data.connectedAt,
-        lastSyncAt: data.lastSyncAt,
-        status: data.status,
-        tokenExpiring: data.expiresAt < Date.now() + (7 * 24 * 60 * 60 * 1000), // Expires within 7 days
-    };
+    const scope = await resolveMetaScope(request);
+    return getMetaConnectionImpl(scope, request.data);
 });
 
 // ─── 3. SELECT AD ACCOUNT ───────────────────────────────────────────────
@@ -3367,8 +3532,10 @@ export const metaSelectAccount = onCall({
     region: "europe-west1",
     cors: true,
 }, async (request: CallableRequest) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const uid = request.auth.uid;
+    // Universal preamble (FR-001, FR-003). All Firestore paths use
+    // `scope.ownerUid` — a team member acting on the owner's account
+    // writes to the owner's record.
+    const scope = await resolveMetaScope(request);
     const { accountId } = request.data;
     if (!accountId) throw new HttpsError("invalid-argument", "Missing accountId");
 
@@ -3376,7 +3543,7 @@ export const metaSelectAccount = onCall({
     // accounts returned by the OAuth callback for this user. Without
     // this check a forged client could write any id (including ids from
     // another user's ad accounts) into the connection doc.
-    const connRef = admin.firestore().collection("metaConnections").doc(uid);
+    const connRef = admin.firestore().collection("metaConnections").doc(scope.ownerUid);
     const connDoc = await connRef.get();
     if (!connDoc.exists) {
         throw new HttpsError("not-found", "No Meta connection found. Please reconnect.");
@@ -3390,6 +3557,8 @@ export const metaSelectAccount = onCall({
         selectedAccountId: accountId,
         // Clear the prior page pick. The previous Page may not be valid
         // for the new ad account (or may not even exist anymore).
+        // FR-030 — keep this write so a code-only revert restores the
+        // pre-967 behaviour.
         selectedPageId: null,
         selectedPageName: null,
     });
@@ -3397,17 +3566,33 @@ export const metaSelectAccount = onCall({
 });
 
 // ─── 3b. SELECT FACEBOOK PAGE ───────────────────────────────────────────
-// Stores the user's chosen Page on the metaConnections doc. Page is
-// optional for the current image-upload flow; we record it so future
-// creative-creation steps (/adcreatives) and App Review can demonstrate
-// the pages_* permission flow end-to-end. pageId === null clears it.
-export const metaSelectPage = onCall({
-    region: "europe-west1",
-    cors: true,
-}, async (request: CallableRequest) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const uid = request.auth.uid;
-    const { pageId, pageName } = request.data;
+// Phase 967 — workspace-scoped (contract C1). The Page is now recorded
+// on the workspace, not the account-global connection. The owner-scope
+// + workspace-authorisation checks come first (FR-004 / FR-021), then
+// the Page itself is validated against the connection's `pages[]`
+// (`page_not_available` — FR-005 / data-model.md §1).
+//
+// Page state machine (data-model.md §1):
+//   - SET        (pageId truthy)        → metaPageId=<id>, metaPageName=<name>, metaPageClearedAt=null
+//   - CLEARED    (pageId === null)     → metaPageId=null, metaPageName=null, metaPageClearedAt=<now>
+//   - NEVER_SET  (never chosen yet)   → unchanged (this call wouldn't reach CLEARED)
+//
+// The account-level `selectedPageId` / `selectedPageName` are still
+// written so a code-only revert restores current behaviour (FR-030).
+//
+// The body is extracted into `metaSelectPageImpl` so the contract
+// tests (T-11 / T-12 / `page_not_available`) can call it directly with
+// an in-memory Firestore stub. Production wraps it in `onCall`.
+export async function metaSelectPageImpl(
+  scope: {
+    ownerUid: string;
+    callerUid: string;
+    allowedWorkspaceIds: string[] | "ALL";
+    storedWorkspaceAccess: string[];
+  },
+  requestData: any,
+): Promise<{ ok: true; workspaceId: string }> {
+    const { pageId, pageName, workspaceId: requestedWorkspaceId } = requestData ?? {};
 
     if (pageId !== null && typeof pageId !== "string") {
         throw new HttpsError("invalid-argument", "pageId must be a string or null");
@@ -3416,53 +3601,174 @@ export const metaSelectPage = onCall({
         throw new HttpsError("invalid-argument", "pageName must be a string or null");
     }
 
-    const connRef = admin.firestore().collection("metaConnections").doc(uid);
+    // Resolve the workspace (FR-005 / FR-018 — workspace scope is
+    // optional; default falls back to the account default).
+    let wsId: string;
+    if (requestedWorkspaceId) {
+        assertWorkspaceAllowed(scope, requestedWorkspaceId);
+        wsId = requestedWorkspaceId;
+    } else {
+        try {
+            wsId = await resolveDefaultWorkspaceId(scope.ownerUid);
+        } catch (err) {
+            // CR-MAJOR (CodeRabbit review feedback): the previous blanket
+            // `catch {}` mapped both "no default marker" and any
+            // Firestore read failure to `no_workspace_resolved`. Per
+            // FR-003, transient failures must stay retryable. Mirror
+            // the narrowing in `resolvePublishWorkspace` and
+            // `metaCallerScope.ts:resolveDefaultWorkspaceId`'s callers:
+            // only the `HttpsError("not-found")` verdict maps to the
+            // permanent precondition failure; anything else re-throws
+            // as `unavailable` so the client can retry.
+            if (!(err instanceof HttpsError) || err.code !== "not-found") {
+                console.warn("⚠️ Default-workspace lookup failed during Page selection:", err);
+                throw new HttpsError(
+                    "unavailable",
+                    "Could not determine your workspace. Please retry.",
+                    { reason: "workspace_lookup_degraded" },
+                );
+            }
+            throw new HttpsError(
+                "failed-precondition",
+                "No workspace could be determined for this Page selection.",
+                { reason: "no_workspace_resolved" },
+            );
+        }
+        assertWorkspaceAllowed(scope, wsId);
+    }
+    const wsRef = admin.firestore().collection(`users/${scope.ownerUid}/workspaces`).doc(wsId);
+    const wsDoc = await wsRef.get();
+    if (!wsDoc.exists) {
+        throw new HttpsError("not-found", "Workspace not found.", { reason: "workspace_not_found" });
+    }
+    assertWorkspaceActive(wsDoc); // throws not-found if soft-deleted
+
+    // Load the connection under the owner (FR-001) and validate the
+    // Page against its `pages[]` (FR-005 — a forged client cannot
+    // inject an arbitrary Page id; FR-020 — team members may not
+    // pick Pages outside the owner's authorised list).
+    const connRef = admin.firestore().collection("metaConnections").doc(scope.ownerUid);
     const connDoc = await connRef.get();
     if (!connDoc.exists) {
         throw new HttpsError("not-found", "No Meta connection found. Please reconnect.");
     }
     const availablePages = (connDoc.data()?.pages ?? []) as { id: string; name?: string }[];
     if (pageId && !availablePages.some((p) => p.id === pageId)) {
-        throw new HttpsError("invalid-argument", "pageId is not one of the connected Pages");
+        throw new HttpsError(
+            "failed-precondition",
+            "This Facebook Page is not in your connected Pages.",
+            { reason: "page_not_available" },
+        );
     }
 
+    // Compose the workspace write per the Page state machine.
+    // - SET      → metaPageId=<id>, metaPageName=<name>, metaPageClearedAt=null
+    // - CLEARED  → metaPageId=null, metaPageName=null, metaPageClearedAt=<now>
+    let wsUpdate: Record<string, unknown>;
+    if (pageId) {
+        wsUpdate = {
+            metaPageId: pageId,
+            metaPageName: typeof pageName === "string" ? pageName.slice(0, 200) : null,
+            metaPageClearedAt: null,
+        };
+    } else {
+        wsUpdate = {
+            metaPageId: null,
+            metaPageName: null,
+            metaPageClearedAt: Date.now(),
+        };
+    }
+    await wsRef.update(wsUpdate);
+
+    // Also write the legacy account-level fields so a code-only
+    // revert restores current behaviour (FR-030).
+    //
+    // CR-MINOR (CodeRabbit review feedback): normalise `selectedPageName`
+    // to null whenever `pageId` is null. A stale name without an ID
+    // would create an inconsistent legacy selection — the
+    // account-level connection would carry a Page label it cannot
+    // resolve. The new check forces both legacy Page fields to
+    // null on a clear so the legacy surface stays self-consistent.
     await connRef.update({
         selectedPageId: pageId || null,
-        selectedPageName: typeof pageName === "string" ? pageName.slice(0, 200) : null,
+        selectedPageName: pageId
+            ? (typeof pageName === "string" ? pageName.slice(0, 200) : null)
+            : null,
     });
-    return { success: true };
+
+    return { ok: true, workspaceId: wsId };
+}
+
+export const metaSelectPage = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    // Universal preamble (FR-001, FR-003).
+    const scope = await resolveMetaScope(request);
+    return metaSelectPageImpl(scope, request.data);
 });
 
 // ─── 4. DISCONNECT META ─────────────────────────────────────────────────
+//
+// Phase 967 (FR-020a, contract C8) — owner-scoped disconnect. A team
+// member performing the disconnect removes Meta access for the whole
+// account (every workspace). The scope is announced to the user
+// before they confirm (FR-020a, frontend side T074). The actor is
+// recorded on the disconnect audit log (`disconnectedByUid`).
 export const metaDisconnect = onCall({
     region: "europe-west1",
     cors: true,
 }, async (request: CallableRequest) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const uid = request.auth.uid;
+    // Universal preamble (FR-001, FR-003).
+    const scope = await resolveMetaScope(request);
 
-    // Delete connection
-    await admin.firestore().collection("metaConnections").doc(uid).delete();
+    // Delete connection (owner-scoped).
+    await admin.firestore().collection("metaConnections").doc(scope.ownerUid).delete();
 
-    // Delete all performance data
-    const perfDocs = await admin.firestore().collection("adPerformance").where("userId", "==", uid).get();
-    const batch = admin.firestore().batch();
-    perfDocs.docs.forEach(doc => batch.delete(doc.ref));
-    if (perfDocs.size > 0) await batch.commit();
+    // Delete all performance data (owner-scoped).
+    //
+    // CR-MAJOR (CodeRabbit review feedback): the previous code staged
+    // every matching `adPerformance` doc into a single `WriteBatch`,
+    // which Firestore caps at 500 operations. An owner with more than
+    // 500 perf docs makes the batch throw — and because the connection
+    // doc was already deleted at the line above, the account is left
+    // disconnected with orphaned performance data and the caller
+    // receives an error. Commit in 500-doc chunks.
+    const perfDocs = await admin.firestore()
+      .collection("adPerformance")
+      .where("userId", "==", scope.ownerUid)
+      .get();
+    const MAX_BATCH = 500;
+    for (let i = 0; i < perfDocs.docs.length; i += MAX_BATCH) {
+      const batch = admin.firestore().batch();
+      for (const doc of perfDocs.docs.slice(i, i + MAX_BATCH)) {
+        batch.delete(doc.ref);
+      }
+      await batch.commit();
+    }
 
-    console.log(`🔌 Meta disconnected for user ${uid}`);
-    return { success: true };
+    console.log(`🔌 Meta disconnected (owner=${scope.ownerUid}, actor=${scope.callerUid})`);
+    return { success: true, disconnectedByUid: scope.callerUid };
 });
 
 // ─── 5. SYNC AD PERFORMANCE (Manual trigger) ────────────────────────────
+//
+// Phase 967 (FR-001, contract C9) — owner-scoped sync. The sync pulls
+// every active ad account on the connection and writes performance data
+// to the owner-scoped `adPerformance` collection (FR-009a — performance
+// data stays account-global; making it workspace-scoped is a
+// separate, deferred item per the non-goals). The caller is recorded
+// in the sync audit log via the console line below.
 export const metaSyncPerformance = onCall({
     region: "europe-west1",
     secrets: [metaAppSecret],
     timeoutSeconds: 120,
     cors: true,
 }, async (request: CallableRequest) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const uid = request.auth.uid;
+    // Universal preamble (FR-001, FR-003). All Firestore paths use
+    // `scope.ownerUid` — a team member's sync writes under the
+    // owner's account.
+    const scope = await resolveMetaScope(request);
     const workspaceId = request.data?.workspaceId || null;
 
     // Phase 14 (workspace-account fix) — When the sync is invoked for a
@@ -3475,7 +3781,7 @@ export const metaSyncPerformance = onCall({
     // HttpsError("internal", ...) rather than escaping as a raw exception.
     if (workspaceId) {
         try {
-            const wsRef = admin.firestore().doc(`users/${uid}/workspaces/${workspaceId}`);
+            const wsRef = admin.firestore().doc(`users/${scope.ownerUid}/workspaces/${workspaceId}`);
             const wsSnap = await wsRef.get();
             if (wsSnap.exists) {
                 const wsData = wsSnap.data();
@@ -3493,7 +3799,7 @@ export const metaSyncPerformance = onCall({
         }
     }
 
-    const connDoc = await admin.firestore().collection("metaConnections").doc(uid).get();
+    const connDoc = await admin.firestore().collection("metaConnections").doc(scope.ownerUid).get();
     if (!connDoc.exists) throw new HttpsError("not-found", "No Meta connection found.");
 
     const conn = connDoc.data()!;
@@ -3566,7 +3872,7 @@ export const metaSyncPerformance = onCall({
             };
 
             const perfDoc = {
-                userId: uid,
+                userId: scope.ownerUid,
                 adAccountId: accountId,
                 workspaceId,
                 adId: ad.ad_id,
@@ -3579,11 +3885,11 @@ export const metaSyncPerformance = onCall({
             };
 
             // Store latest performance (for dashboard display)
-            const docId = `${uid}_${ad.ad_id}`;
+            const docId = `${scope.ownerUid}_${ad.ad_id}`;
             batch.set(admin.firestore().collection("adPerformance").doc(docId), perfDoc, { merge: true });
 
             // Store time-aware snapshot (for historical analysis — never overwrites)
-            const snapshotId = `${uid}_${ad.ad_id}_${since}_${until}`;
+            const snapshotId = `${scope.ownerUid}_${ad.ad_id}_${since}_${until}`;
             batch.set(admin.firestore().collection("adPerformanceHistory").doc(snapshotId), {
                 ...perfDoc,
                 snapshotDate: new Date().toISOString().split("T")[0],
@@ -3596,7 +3902,7 @@ export const metaSyncPerformance = onCall({
                 // 1. Try metaAdId first (strongest — direct Meta identity)
                 if (ad.ad_id) {
                     const byAdId = await admin.firestore().collection("creativeDeployments")
-                        .where("userId", "==", uid)
+                        .where("userId", "==", scope.ownerUid)
                         .where("adAccountId", "==", accountId)
                         .where("metaAdId", "==", ad.ad_id)
                         .limit(1)
@@ -3607,7 +3913,7 @@ export const metaSyncPerformance = onCall({
                 // 2. Try imageHash if available on the ad insights
                 if (!deployDoc && (ad as any).image_hash) {
                     const byHash = await admin.firestore().collection("creativeDeployments")
-                        .where("userId", "==", uid)
+                        .where("userId", "==", scope.ownerUid)
                         .where("adAccountId", "==", accountId)
                         .where("imageHash", "==", (ad as any).image_hash)
                         .limit(1)
@@ -3618,7 +3924,7 @@ export const metaSyncPerformance = onCall({
                 // 3. Fallback to adName (weakest — may have duplicates), scoped by account
                 if (!deployDoc && ad.ad_name) {
                     const byName = await admin.firestore().collection("creativeDeployments")
-                        .where("userId", "==", uid)
+                        .where("userId", "==", scope.ownerUid)
                         .where("adAccountId", "==", accountId)
                         .where("adName", "==", ad.ad_name)
                         .limit(1)
@@ -3645,7 +3951,7 @@ export const metaSyncPerformance = onCall({
         } // end for-each account
 
         // Update last sync time (user-level connection doc).
-        await admin.firestore().collection("metaConnections").doc(uid).update({
+        await admin.firestore().collection("metaConnections").doc(scope.ownerUid).update({
             lastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
         });
 
@@ -3665,14 +3971,14 @@ export const metaSyncPerformance = onCall({
         if (workspaceId) {
             try {
                 await admin.firestore()
-                    .doc(`users/${uid}/workspaces/${workspaceId}/private/metaConnection`)
+                    .doc(`users/${scope.ownerUid}/workspaces/${workspaceId}/private/metaConnection`)
                     .set({ lastMetaSyncAt: Date.now() }, { merge: true });
             } catch (err: unknown) {
                 console.warn("⚠️ Non-blocking: failed to stamp workspace lastMetaSyncAt:", err);
             }
         }
 
-        console.log(`📊 Synced ${totalSyncCount} ads across ${activeAccounts.length} accounts for user ${uid}`);
+        console.log(`📊 Synced ${totalSyncCount} ads across ${activeAccounts.length} accounts (owner=${scope.ownerUid}, caller=${scope.callerUid})`);
         return { success: true, adsSynced: totalSyncCount };
 
     } catch (err: any) {
@@ -3683,30 +3989,106 @@ export const metaSyncPerformance = onCall({
 });
 
 // ─── 5b. PUSH CREATIVE TO META AD ACCOUNT ─────────────────────────────
-export const metaPushCreative = onCall({
-    region: "europe-west1",
-    secrets: [metaAppSecret],
-    timeoutSeconds: 60,
-    cors: true,
-    memory: "512MiB",
-    maxInstances: 10,
-}, async (request: CallableRequest) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const uid = request.auth.uid;
-    const { imageBase64, adName } = request.data;
+//
+// Phase 967 — workspace-routed. The publish path resolves the target
+// ad account and Page from the active workspace server-side. Account-
+// level `selectedAccountId` / `selectedPageId` are NOT consulted (FR-013
+// / FR-014). Every record carries the five traceability fields (FR-027,
+// SC-008) so a mis-targeted publish is traceable afterwards.
+//
+// Per FR-012b, single-workspace-plan accounts that publish without a
+// `workspaceId` keep working: `resolvePublishWorkspace` falls back to
+// the account default (FR-026d / T011/T012 guarantee every account has
+// one). The caller never needs to know whether they're on a multi- or
+// single-workspace plan.
+//
+// The body is extracted into `metaPushCreativeImpl` so the contract
+// tests (T-04 / T-05 / T-06 / T-07 / T-08 / T-24) can call it directly
+// with an in-memory Firestore stub and a fake fetch — no live
+// emulator, no live Meta API. Production wraps it in `onCall`.
+export interface MetaPushCreativeDeps {
+  fetchImpl?: typeof fetch;
+  metaAppSecretValue?: string;
+}
+
+export async function metaPushCreativeImpl(
+  scope: {
+    ownerUid: string;
+    callerUid: string;
+    allowedWorkspaceIds: string[] | "ALL";
+    storedWorkspaceAccess: string[];
+  },
+  requestData: any,
+  deps: MetaPushCreativeDeps = {},
+): Promise<{
+  success: boolean;
+  message: string;
+  imageHash?: string;
+  deploymentId?: string;
+  workspaceId?: string;
+  pageSource?: "workspace" | "legacy_global" | "none";
+  workspaceIdSource?: "request" | "default";
+}> {
+    const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
+    const appSecret = deps.metaAppSecretValue ?? metaAppSecret.value();
+
+    const { imageBase64, adName } = requestData ?? {};
+    const { workspaceId: requestedWorkspaceId } = requestData ?? {};
 
     if (!imageBase64) throw new HttpsError("invalid-argument", "Missing image data.");
 
-    // Get user's Meta connection
-    const connDoc = await admin.firestore().collection("metaConnections").doc(uid).get();
-    if (!connDoc.exists) throw new HttpsError("not-found", "No Meta connection found. Please reconnect.");
+    // ─── Workspace resolution (FR-012 / FR-012a) ─────────────────────
+    // Resolves exactly one workspace (named by the caller, or the
+    // account default). Throws `no_workspace_resolved` when no
+    // workspace can be determined at all.
+    const { workspace, workspaceIdSource } = await resolvePublishWorkspace(
+        scope,
+        requestedWorkspaceId,
+    );
+    const wsData = workspace.data() ?? {};
 
+    // ─── Ad-account resolution (FR-013, FR-014, FR-015) ──────────────
+    // The ad account comes from the workspace, NEVER from
+    // `metaConnections/{ownerUid}.selectedAccountId`. Refusal names the
+    // workspace (FR-015) and creates nothing in any ad account.
+    const accountId: string | null = typeof wsData.metaAdAccountId === "string"
+      && wsData.metaAdAccountId.length > 0
+        ? wsData.metaAdAccountId
+        : null;
+    if (!accountId) {
+      throw new HttpsError(
+        "failed-precondition",
+        `"${wsData.name ?? workspace.id}" has no Meta ad account linked. Link one to publish from it.`,
+        {
+          reason: "workspace_no_ad_account",
+          workspaceId: workspace.id,
+          workspaceName: wsData.name ?? null,
+        },
+      );
+    }
+
+    // ─── Meta connection (under the resolved owner) ──────────────────
+    const connDoc = await admin.firestore()
+      .collection("metaConnections")
+      .doc(scope.ownerUid)
+      .get();
+    if (!connDoc.exists) {
+      throw new HttpsError(
+        "not-found",
+        "No Meta connection found. Please reconnect.",
+      );
+    }
     const conn = connDoc.data()!;
-    if (!conn.selectedAccountId) throw new HttpsError("failed-precondition", "No ad account selected.");
+
+    // ─── Page resolution (FR-006 / FR-007 / FR-011a / FR-015a) ────────
+    // Workspace's own Page wins. The account-level legacy Page is the
+    // fallback ONLY for NEVER_SET workspaces (no Page ever chosen).
+    // CLEARED workspaces (Page cleared by an ad-account change) get
+    // `pageSource: 'none'` and the publish still succeeds (FR-015a).
+    const { pageId, pageName, pageSource } = resolveWorkspacePage(workspace, conn);
 
     try {
-        const token = decryptToken(conn.encryptedToken, metaAppSecret.value());
-        const accountId = conn.selectedAccountId;
+        const token = decryptToken(conn.encryptedToken, appSecret);
 
         // Extract raw base64 data (strip data URL prefix if present)
         let rawBase64 = imageBase64;
@@ -3717,7 +4099,7 @@ export const metaPushCreative = onCall({
         // Upload image to Meta's Ad Account image library using bytes parameter
         const fileName = `${(adName || 'proadsai_creative').replace(/[^a-zA-Z0-9_-]/g, '_')}.png`;
 
-        const uploadResponse = await fetch(
+        const uploadResponse = await fetchImpl(
             `https://graph.facebook.com/v22.0/${accountId}/adimages`,
             {
                 method: 'POST',
@@ -3753,19 +4135,28 @@ export const metaPushCreative = onCall({
             throw new HttpsError("internal", "Image uploaded but no hash returned. Response: " + JSON.stringify(uploadData).substring(0, 200));
         }
 
-        console.log(`📸 Creative pushed to Meta for user ${uid}: hash=${imageHash}`);
+        console.log(`📸 Creative pushed to Meta (owner=${scope.ownerUid}, caller=${scope.callerUid}, workspace=${workspace.id}, source=${workspaceIdSource}, pageSource=${pageSource}): hash=${imageHash}`);
 
         // ═══ STORE DURABLE DEPLOYMENT RECORD ═══
         // One record per push event — supports one-to-many attribution
-        // (same design pushed to different campaigns/ad sets)
-        const deploymentId = `${uid}_${Date.now()}_${imageHash.substring(0, 8)}`;
-        const { adName: pushAdName, designId, projectId, hookMetadata, conceptMetadata, copySnapshot, language, mode, ratio, format, selectedModes, contractTemplateId, numericFidelity, offerFactsHash, workspaceId } = request.data;
+        // (same design pushed to different campaigns/ad sets). Every
+        // record carries the five Phase 967 traceability fields (FR-027,
+        // SC-008).
+        const deploymentId = `${scope.ownerUid}_${Date.now()}_${imageHash.substring(0, 8)}`;
+        const { adName: pushAdName, designId, projectId, hookMetadata, conceptMetadata, copySnapshot, language, mode, ratio, format, selectedModes, contractTemplateId, numericFidelity, offerFactsHash } = requestData ?? {};
         try {
             await admin.firestore().collection("creativeDeployments").doc(deploymentId).set({
                 deploymentId,
-                userId: uid,
+                // `userId` is the OWNER (always under the resolved
+                // scope), `pushedByUid` is the ACTUAL caller (audit).
+                // Distinct so a team-member push is attributable to
+                // its actor without losing the owner for billing /
+                // dashboard queries.
+                userId: scope.ownerUid,
+                pushedByUid: scope.callerUid,
                 adAccountId: accountId,
-                workspaceId: workspaceId || null,
+                workspaceId: workspace.id,
+                workspaceIdSource,
                 imageHash,
                 adName: pushAdName || adName || '',
                 // Internal design identity
@@ -3784,11 +4175,14 @@ export const metaPushCreative = onCall({
                 contractTemplateId: contractTemplateId || null,
                 numericFidelity: numericFidelity || null,
                 offerFactsHash: offerFactsHash || null,
-                // Selected Facebook Page (set by MetaPagePickerModal). Stored
-                // for future creative-creation steps (/adcreatives) — we do
-                // NOT call /adcreatives today, so this is metadata only.
-                pageId: conn.selectedPageId || null,
-                pageName: conn.selectedPageName || null,
+                // ─── Page (resolved per workspace, FR-006/007/011a/015a) ───
+                // `pageId` may be null — that is a valid recorded
+                // outcome (FR-027). `pageSource` is the audit signal so
+                // a downstream consumer can count remaining
+                // un-migrated workspaces (FR-028).
+                pageId,
+                pageName,
+                pageSource,
                 // Meta identifiers (populated later when ad is created in Meta)
                 metaAdId: null,
                 metaCreativeId: null,
@@ -3810,6 +4204,9 @@ export const metaPushCreative = onCall({
             message: `Creative uploaded to Meta Ads library!`,
             imageHash,
             deploymentId,
+            workspaceId: workspace.id,
+            pageSource,
+            workspaceIdSource,
         };
 
     } catch (err: any) {
@@ -3817,7 +4214,22 @@ export const metaPushCreative = onCall({
         console.error("Push creative error:", err);
         throw new HttpsError("internal", `Failed to push creative: ${err.message || 'Unknown error'}`);
     }
+}
+
+export const metaPushCreative = onCall({
+    region: "europe-west1",
+    secrets: [metaAppSecret],
+    timeoutSeconds: 60,
+    cors: true,
+    memory: "512MiB",
+    maxInstances: 10,
+}, async (request: CallableRequest) => {
+    // Universal preamble (FR-001, FR-003). Throws unauthenticated /
+    // unavailable — never returns a degraded self-scope.
+    const scope = await resolveMetaScope(request);
+    return metaPushCreativeImpl(scope, request.data);
 });
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SERVER-SIDE AI GENERATION — Full prompt logic on server
@@ -5702,47 +6114,97 @@ export const triggerVaultExtraction = onCall({
 // has also been removed. Re-add both layers together if the gate is reintroduced.
 
 // ─── 5c. PUSH CREATIVE PACK (Image + Copy) TO META ─────────────────────
-export const metaPushCreativePack = onCall({
-    region: "europe-west1",
-    secrets: [metaAppSecret],
-    timeoutSeconds: 120,
-    cors: true,
-    memory: "512MiB",
-    maxInstances: 5,
-}, async (request: CallableRequest) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-    const uid = request.auth.uid;
-    const { imageBase64, adName, primaryText, pageId, activeWorkspaceId } = request.data;
+//
+// Phase 967 — workspace-routed, identical resolution to metaPushCreative
+// (contract C5). The ad account and Page come from the workspace
+// server-side; `metaConnections/{ownerUid}.selectedAccountId` is never
+// consulted (FR-014). `activeWorkspaceId` is accepted as an alias of
+// `workspaceId` for back-compat with the existing frontend signature.
+//
+// Per FR-016, the workspace is resolved ONCE for the whole pack and
+// every item reuses that ad account and Page — no per-item re-resolution.
+//
+// The body is extracted into `metaPushCreativePackImpl` so the pack
+// tests (T-16) can call it directly with an in-memory stub. Production
+// wraps it in `onCall`.
+export async function metaPushCreativePackImpl(
+  scope: {
+    ownerUid: string;
+    callerUid: string;
+    allowedWorkspaceIds: string[] | "ALL";
+    storedWorkspaceAccess: string[];
+  },
+  requestData: any,
+  deps: MetaPushCreativeDeps = {},
+): Promise<{
+  success: boolean;
+  message: string;
+  imageHash?: string;
+  creativeId?: string | null;
+  workspaceId?: string;
+  pageSource?: "workspace" | "legacy_global" | "none";
+  workspaceIdSource?: "request" | "default";
+}> {
+    const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
+    const appSecret = deps.metaAppSecretValue ?? metaAppSecret.value();
+
+    const { imageBase64, adName, primaryText, activeWorkspaceId } = requestData ?? {};
+    // Back-compat: accept `activeWorkspaceId` as an alias of `workspaceId`.
+    const requestedWorkspaceId = requestData?.workspaceId ?? activeWorkspaceId ?? null;
 
     if (!imageBase64) throw new HttpsError("invalid-argument", "Missing image data.");
     if (!primaryText) throw new HttpsError("invalid-argument", "Missing ad copy text.");
 
-    const connDoc = await admin.firestore().collection("metaConnections").doc(uid).get();
-    if (!connDoc.exists) throw new HttpsError("not-found", "No Meta connection found.");
+    // Resolve the workspace ONCE for the whole pack (FR-016).
+    const { workspace, workspaceIdSource } = await resolvePublishWorkspace(
+      scope,
+      requestedWorkspaceId,
+    );
+    const wsData = workspace.data() ?? {};
+
+    // The ad account comes from the workspace, never from the legacy
+    // account-level selection (FR-013, FR-014). Bug 3 — the previous
+    // fallback to `conn.selectedAccountId` — is gone.
+    const accountId: string | null = typeof wsData.metaAdAccountId === "string"
+      && wsData.metaAdAccountId.length > 0
+        ? wsData.metaAdAccountId
+        : null;
+    if (!accountId) {
+      throw new HttpsError(
+        "failed-precondition",
+        `"${wsData.name ?? workspace.id}" has no Meta ad account linked. Link one to publish from it.`,
+        {
+          reason: "workspace_no_ad_account",
+          workspaceId: workspace.id,
+          workspaceName: wsData.name ?? null,
+        },
+      );
+    }
+
+    const connDoc = await admin.firestore()
+      .collection("metaConnections")
+      .doc(scope.ownerUid)
+      .get();
+    if (!connDoc.exists) {
+      throw new HttpsError("not-found", "No Meta connection found.");
+    }
     const conn = connDoc.data()!;
 
-    let accountId: string | null = null;
-    if (activeWorkspaceId) {
-        const wsDoc = await admin.firestore().collection("users").doc(uid).collection("workspaces").doc(activeWorkspaceId).get();
-        if (wsDoc.exists) {
-            const ws = wsDoc.data()!;
-            accountId = ws.metaAdAccountId || null;
-        }
-    }
-    if (!accountId) {
-        accountId = conn.selectedAccountId || null;
-    }
-    if (!accountId) throw new HttpsError("failed-precondition", "No ad account selected.");
+    // Page resolution per workspace. The Page used for /adcreatives
+    // comes from the workspace, not the caller (FR-013 / FR-014).
+    // When the workspace has no Page, the /adcreatives step is
+    // skipped and the response records `pageSource: 'none'`.
+    const { pageId: resolvedPageId, pageName, pageSource } = resolveWorkspacePage(workspace, conn);
 
     try {
-        const token = decryptToken(conn.encryptedToken, metaAppSecret.value());
+        const token = decryptToken(conn.encryptedToken, appSecret);
 
         // Step 1: Upload image
         let rawBase64 = imageBase64;
         if (rawBase64.includes(',')) rawBase64 = rawBase64.split(',')[1];
 
         const fileName = `${(adName || 'proadsai').replace(/[^a-zA-Z0-9_-]/g, '_')}.png`;
-        const uploadResponse = await fetch(
+        const uploadResponse = await fetchImpl(
             `https://graph.facebook.com/v22.0/${accountId}/adimages`,
             {
                 method: 'POST',
@@ -5759,10 +6221,10 @@ export const metaPushCreativePack = onCall({
         const imageHash = Object.values(images as Record<string, any>)[0]?.hash;
         if (!imageHash) throw new HttpsError("internal", "No image hash returned.");
 
-        // Step 2: Create ad creative pairing image + copy
-        // This requires a page_id — if not provided, we just upload the image
-        if (pageId) {
-            const creativeResponse = await fetch(
+        // Step 2: Create ad creative pairing image + copy.
+        // The Page comes from the workspace, not the caller (FR-013).
+        if (resolvedPageId) {
+            const creativeResponse = await fetchImpl(
                 `https://graph.facebook.com/v22.0/${accountId}/adcreatives`,
                 {
                     method: 'POST',
@@ -5770,7 +6232,7 @@ export const metaPushCreativePack = onCall({
                     body: JSON.stringify({
                         name: adName || 'Pro Ads AI Creative',
                         object_story_spec: {
-                            page_id: pageId,
+                            page_id: resolvedPageId,
                             link_data: {
                                 image_hash: imageHash,
                                 message: primaryText,
@@ -5782,6 +6244,44 @@ export const metaPushCreativePack = onCall({
                 }
             );
             const creativeData = await creativeResponse.json() as any;
+
+            // Record deployment with FR-027 traceability fields — pack
+            // version. One record per pack, not per item (the pack is
+            // one upload + one creative-pairing call).
+            //
+            // CR-MINOR (CodeRabbit review feedback): the deployment
+            // write is `await`-ed inside a try/catch so the record is
+            // committed before the function returns. The catch preserves
+            // the original "non-blocking on failure" semantics — a
+            // failed write is logged but does not fail the publish.
+            const deploymentId = `${scope.ownerUid}_${Date.now()}_pack_${imageHash.substring(0, 8)}`;
+            try {
+                await admin.firestore().collection("creativeDeployments").doc(deploymentId).set({
+                    deploymentId,
+                    userId: scope.ownerUid,
+                    pushedByUid: scope.callerUid,
+                    adAccountId: accountId,
+                    workspaceId: workspace.id,
+                    workspaceIdSource,
+                    pack: true,
+                    imageHash,
+                    adName: adName || '',
+                    pageId: resolvedPageId,
+                    pageName,
+                    pageSource,
+                    primaryText,
+                    metaAdId: null,
+                    metaCreativeId: creativeData?.id ?? null,
+                    metaAdSetId: null,
+                    metaCampaignId: null,
+                    pushedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    latestMetrics: null,
+                    metricsHistory: [],
+                });
+            } catch (deployErr) {
+                console.warn("Failed to store pack deployment record (non-blocking):", deployErr);
+            }
+
             if (creativeData.error) {
                 // Creative creation failed, but image was uploaded successfully
                 console.warn("Creative creation failed (image uploaded):", creativeData.error.message);
@@ -5790,30 +6290,88 @@ export const metaPushCreativePack = onCall({
                     message: `Image uploaded (hash: ${imageHash.substring(0, 8)}...). Ad creative couldn't be created: ${creativeData.error.message}. You can pair them manually in Ads Manager.`,
                     imageHash,
                     creativeId: null,
+                    workspaceId: workspace.id,
+                    pageSource,
+                    workspaceIdSource,
                 };
             }
 
-            console.log(`📦 Creative pack pushed for user ${uid}: image=${imageHash}, creative=${creativeData.id}`);
+            console.log(`📦 Creative pack pushed (owner=${scope.ownerUid}, caller=${scope.callerUid}, workspace=${workspace.id}, pageSource=${pageSource}): image=${imageHash}, creative=${creativeData.id}`);
             return {
                 success: true,
                 message: `Creative uploaded and paired with copy!`,
                 imageHash,
                 creativeId: creativeData.id,
+                workspaceId: workspace.id,
+                pageSource,
+                workspaceIdSource,
             };
         }
 
-        // No pageId — just return image hash
+        // No workspace Page — image uploaded but creative pairing
+        // cannot proceed (it requires a Page id). FR-027 records
+        // `pageSource: 'none'`.
+        //
+        // CR-MINOR (CodeRabbit review feedback): `await`-ed inside
+        // try/catch so the deployment record is committed before the
+        // function returns. A failed write is logged but does not
+        // fail the publish.
+        const deploymentId = `${scope.ownerUid}_${Date.now()}_pack_${imageHash.substring(0, 8)}`;
+        try {
+            await admin.firestore().collection("creativeDeployments").doc(deploymentId).set({
+                deploymentId,
+                userId: scope.ownerUid,
+                pushedByUid: scope.callerUid,
+                adAccountId: accountId,
+                workspaceId: workspace.id,
+                workspaceIdSource,
+                pack: true,
+                imageHash,
+                adName: adName || '',
+                pageId: null,
+                pageName,
+                pageSource, // 'none' — see FR-027
+                primaryText,
+                metaAdId: null,
+                metaCreativeId: null,
+                metaAdSetId: null,
+                metaCampaignId: null,
+                pushedAt: admin.firestore.FieldValue.serverTimestamp(),
+                latestMetrics: null,
+                metricsHistory: [],
+            });
+        } catch (deployErr) {
+            console.warn("Failed to store pack deployment record (non-blocking):", deployErr);
+        }
+
         return {
             success: true,
-            message: `Image uploaded to Meta Ads library. Pair with copy in Ads Manager.`,
+            message: `Image uploaded to Meta Ads library. No Page is recorded for this workspace — pair with copy in Ads Manager.`,
             imageHash,
             creativeId: null,
+            workspaceId: workspace.id,
+            pageSource,
+            workspaceIdSource,
         };
     } catch (err: any) {
         if (err instanceof HttpsError) throw err;
         console.error("Push creative pack error:", err);
         throw new HttpsError("internal", `Failed: ${err.message || 'Unknown error'}`);
     }
+}
+
+export const metaPushCreativePack = onCall({
+    region: "europe-west1",
+    secrets: [metaAppSecret],
+    timeoutSeconds: 120,
+    cors: true,
+    memory: "512MiB",
+    maxInstances: 5,
+}, async (request: CallableRequest) => {
+    // Universal preamble (FR-001, FR-003). Throws unauthenticated /
+    // unavailable — never returns a degraded self-scope.
+    const scope = await resolveMetaScope(request);
+    return metaPushCreativePackImpl(scope, request.data);
 });
 
 // ─── 6. LEGACY META SYNC (TEMPORARY) ───────────────────────────────────
@@ -6509,7 +7067,21 @@ export const createWorkspace = onCall({
 
     // Plan check is inside createWorkspaceWithLimit's transaction to avoid a
     // TOCTOU race between entitlement read and workspace create.
-    const workspaceId = await createWorkspaceWithLimit(uid, {
+    // Phase 967 — every workspace is born with all three Page fields
+    // explicitly null and `metaPageClearedAt: null`. The first
+    // selection writes a real value; an ad-account change clears them
+    // and stamps `metaPageClearedAt`. The legacy account-level Page
+    // applies only when `metaPageId == null && metaPageClearedAt ==
+    // null` (the NEVER_SET state — see FR-007 / FR-011a).
+    //
+    // `isDefault: false` below is a TYPE-SYSTEM PLACEHOLDER ONLY —
+    // `createWorkspaceWithLimit` overrides it inside its transaction
+    // with the verdict `active.length === 0` (T011). Two concurrent
+    // creates on a fresh account cannot both win the default: the
+    // second txn sees the first's committed doc and writes
+    // `isDefault: false`. Outside the txn, both reads return zero and
+    // both writes claim `isDefault: true` (the bug Phase 967 fixes).
+    const { workspaceId, isDefault } = await createWorkspaceWithLimit(uid, {
         name,
         brandName,
         brandUrl: data.brandUrl ?? null,
@@ -6522,11 +7094,18 @@ export const createWorkspace = onCall({
         metaAdAccountId: null,
         metaAdAccountName: null,
         metaRoleAtLinkTime: null,
+        metaPageId: null,
+        metaPageName: null,
+        metaPageClearedAt: null,
         pendingReassign: false,
         pendingRestore: false,
     });
 
-    return { workspaceId };
+    // Return the transaction-computed verdict so the client can
+    // reconcile its UI without an extra Firestore read. `isDefault`
+    // is the authoritative value — the server is the source of truth
+    // (Constitution Principle II).
+    return { workspaceId, isDefault };
 });
 
 export const updateWorkspace = onCall({
@@ -6543,7 +7122,25 @@ export const updateWorkspace = onCall({
     const data = asObjectPayload(request.data);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
-    const forbidden = ["isDefault", "createdAt", "deletedAt", "metaAdAccountId", "metaAdAccountName", "metaRoleAtLinkTime", "pendingReassign", "pendingRestore"];
+    // Phase 967 (R7) — `metaPageId` and `metaPageName` are forbidden here
+    // so they cannot be set or changed via a generic `updateWorkspace`
+    // call, which would bypass both:
+    //   - the per-workspace Page validation in `metaSelectPage`
+    //     (`pageId` must exist in `metaConnections/{ownerUid}.pages[]`)
+    //   - the FR-011 clearing rule that fires on every ad-account change
+    //     in `linkMetaAccountToWorkspace` /
+    //     `unlinkMetaAccountFromWorkspace`.
+    // The Page lifecycle goes through `metaSelectPage` (which writes
+    // `metaPageId`, `metaPageName`, `metaPageClearedAt`) and the
+    // `clear` in the same write as the ad-account change. `metaPageClearedAt`
+    // is server-set only and is never accepted from a caller (data-
+    // model.md §1 validation rules).
+    const forbidden = [
+        "isDefault", "createdAt", "deletedAt",
+        "metaAdAccountId", "metaAdAccountName", "metaRoleAtLinkTime",
+        "metaPageId", "metaPageName", "metaPageClearedAt",
+        "pendingReassign", "pendingRestore",
+    ];
     for (const f of forbidden) {
         if (data[f] !== undefined) throw new HttpsError("invalid-argument", `Field ${f} cannot be updated here.`);
     }
@@ -6698,82 +7295,243 @@ export const restoreWorkspace = onCall({
     return { ok: true, pendingRestore: false };
 });
 
+// ─── linkMetaAccountToWorkspace (contract C2) ──────────────────────────────
+//
+// Phase 967 (FR-017) — team members may link a Meta ad account to
+// the owner's workspace, subject to their workspace access. The
+// pre-967 `assertNotTeamMember(uid, "link_meta")` guard is removed;
+// the `assertWorkspaceAllowed` check inside `resolveMetaScope` (via
+// the resolved scope's `allowedWorkspaceIds`) is the new gate.
+//
+// Phase 967 (FR-011, FR-011a) — changing a workspace's linked ad
+// account unconditionally clears that workspace's recorded Page
+// (FR-011). The Page clear is part of the SAME write as the
+// ad-account link — a split write can leave a workspace holding one
+// client's Page against another's ad account. `metaPageClearedAt:
+// <now>` (not null) records that the workspace was deliberately
+// cleared, distinguishing CLEARED from NEVER_SET so the FR-011a
+// legacy-fallback ban works (T-11 / T-12).
+//
+// Phase 967 (FR-011b) — the response carries `pageCleared: boolean`
+// so the UI surfaces the FR-011b notice. The notice is paired
+// en/ar via the Phase 1 i18n key `meta.page_cleared_notice`.
+//
+// The body is extracted into `linkMetaAccountToWorkspaceImpl` so the
+// contract tests (T-09, T-10, T-13) can call it directly with an
+// in-memory Firestore stub + a fake `probeMetaRole` injection.
+export async function linkMetaAccountToWorkspaceImpl(
+  scope: {
+    ownerUid: string;
+    callerUid: string;
+    allowedWorkspaceIds: string[] | "ALL";
+    storedWorkspaceAccess: string[];
+  },
+  requestData: any,
+  deps: {
+    probeMetaRoleImpl?: (token: string, accountId: string) => Promise<string>;
+    metaAppSecretValue?: string;
+  } = {},
+): Promise<{
+  ok: true;
+  metaRoleAtLinkTime: string;
+  pageCleared: boolean;
+}> {
+    // Universal preamble (FR-001, FR-003).
+    const data = asObjectPayload(requestData);
+    const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
+    const metaAdAccountId = requireNonEmptyString(data.metaAdAccountId, "metaAdAccountId");
+    const metaAdAccountName = typeof data.metaAdAccountName === "string" ? data.metaAdAccountName : "";
+
+    // FR-004 / FR-021 — workspace authorisation first. Verified team
+    // members pass (allowedWorkspaceIds: "ALL"); owners pass
+    // implicitly; team members scoped to a subset are refused when
+    // they name a workspace outside their set.
+    assertWorkspaceAllowed(scope, workspaceId);
+
+    // Load the OWNER's workspace (not the caller's) — FR-001.
+    const wsRef = admin.firestore()
+        .collection(`users/${scope.ownerUid}/workspaces`)
+        .doc(workspaceId);
+    const wsSnap = await wsRef.get();
+    if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
+    assertWorkspaceActive(wsSnap); // throws not-found if soft-deleted
+
+    // Load the OWNER's connection — the OAuth callback writes to
+    // `metaConnections/{ownerUid}` (Phase 5 T070-T072), so the link
+    // path reads the same doc regardless of who initiated it.
+    const connDoc = await admin.firestore().collection("metaConnections").doc(scope.ownerUid).get();
+    const conn = connDoc.exists ? connDoc.data() : null;
+    if (!conn?.encryptedToken) {
+        throw new HttpsError("failed-precondition", "Connect your Meta account first.");
+    }
+    const accessToken = decryptToken(
+        conn.encryptedToken,
+        deps.metaAppSecretValue ?? metaAppSecret.value(),
+    );
+
+    const connectedAccounts: any[] = conn.adAccounts ?? [];
+    const isConnected = connectedAccounts.some((a: any) =>
+        a.id === metaAdAccountId
+        || `act_${a.id}` === metaAdAccountId
+        || a.id === metaAdAccountId.replace("act_", ""),
+    );
+    if (!isConnected) {
+        throw new HttpsError(
+            "failed-precondition",
+            "This Meta ad account is not in your connected accounts.",
+        );
+    }
+
+    // Phase 14 only READS ad performance data — never publishes. Any
+    // role (ADMIN / ADVERTISER / ANALYST / INSUFFICIENT) is
+    // acceptable for linking. The publishing flow (`metaPushCreative` /
+    // `metaPushCreativePack`) keeps its own Meta API error handling.
+    const probeFn = deps.probeMetaRoleImpl ?? probeMetaRole;
+    const role = await probeFn(accessToken, metaAdAccountId);
+
+    // FR-011 — clear the Page in the SAME write as the ad-account
+    // link. A split write can leave the workspace holding one
+    // client's Page against another's ad account (the cross-client
+    // leak this rule exists to close).
+    //
+    // Phase 967 (Claude audit C-1, 2026-08-20): the previous code
+    // gated the clear on `hadPage`, leaving NEVER_SET workspaces on
+    // the legacy global Page after a retarget — a real live-Meta
+    // cross-client leak for any user who hasn't picked a workspace
+    // Page yet (the default state on day one of FR-010's lazy
+    // migration). FR-011 specifies the clear is unconditional on
+    // ad-account change; FR-011a blocks the legacy fallback once
+    // `metaPageClearedAt` is stamped. Apply that reading: write the
+    // clear fields on every link, regardless of prior state.
+    //
+    // CR-MAJOR (CodeRabbit round 7, O-2): the previous unconditional
+    // clear violated `spec.md` clarification 160 / 245 — re-selecting
+    // the already-linked ad account is NOT a Page choice and must
+    // NOT clear the inherited legacy Page. Only clear when the
+    // incoming ad-account ID differs from the stored one. Same-account
+    // re-selection (the dominant UI path: the picker re-fires on every
+    // sidebar selection in `App.tsx:3884-3890`) now preserves the
+    // inherited legacy Page so pack publishing can still use it.
+    //
+    // `pageCleared` stays gated on `hadPage` so the user-facing
+    // notice does NOT fire when the user never picked a Page — no
+    // point telling them "your Page was cleared" when none was set.
+    const priorWsData = wsSnap.data() ?? {};
+    const priorAccountId = typeof priorWsData.metaAdAccountId === "string"
+        && priorWsData.metaAdAccountId.length > 0
+        ? priorWsData.metaAdAccountId
+        : null;
+    const hadPage = typeof priorWsData.metaPageId === "string"
+        && priorWsData.metaPageId.length > 0;
+    // CR-MAJOR (CodeRabbit round 7, O-2): spec clarification 160 /
+    // 245 — re-selecting the same ad account is NOT a Page choice and
+    // must NOT clear the inherited legacy Page. Only clear when the
+    // incoming ad-account ID differs from the stored one (an
+    // account change, including first-time links where prior is null).
+    const isAccountChange = priorAccountId !== metaAdAccountId;
+    const updatePayload: Record<string, unknown> = {
+        metaAdAccountId,
+        metaAdAccountName: metaAdAccountName ?? "",
+        metaRoleAtLinkTime: role,
+    };
+    if (isAccountChange) {
+        // FR-011 + FR-011a — unconditional Page clear on a real
+        // ad-account change. NEVER_SET → CLEARED moves the workspace
+        // OFF the legacy global Page fallback the moment it is
+        // retargeted. Same-account re-selection skips the clear so
+        // the inherited legacy Page is preserved.
+        updatePayload.metaPageId = null;
+        updatePayload.metaPageName = null;
+        updatePayload.metaPageClearedAt = Date.now();
+    }
+    await wsRef.update(updatePayload);
+
+    // CR-MAJOR (CodeRabbit round 10): the previous return used
+    // `pageCleared: hadPage`, which produced a misleading `true` when
+    // a same-account re-selection ran against a workspace that
+    // already had a Page set — the Page was preserved (correct) but
+    // the response claimed it had been cleared (wrong). `pageCleared`
+    // now reports only what actually happened in this call: a clear
+    // happened iff there was both a Page to clear AND an account
+    // change to clear it on.
+    return { ok: true, metaRoleAtLinkTime: role, pageCleared: isAccountChange && hadPage };
+}
+
 export const linkMetaAccountToWorkspace = onCall({
     region: "europe-west1",
     secrets: [metaAppId, metaAppSecret],
     cors: true,
 }, async (request: CallableRequest) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
-    const uid = request.auth.uid;
-    // Round-9 (CodeRabbit re-review): team-member guard. Linking a Meta
-    // ad account to a workspace retargets the workspace's ad-account
-    // pointer, which is a destructive workspace-level action. A team
-    // member's own account could have a workspace (e.g. if they were
-    // once an owner) and the per-callable workspaceId lookup under
-    // `users/{uid}/workspaces/{workspaceId}` would succeed for that
-    // own-account workspace — but the same call would have no business
-    // running for a team member. Refuse first, before any side effects.
-    await assertNotTeamMember(uid, "link_meta");
-    const data = asObjectPayload(request.data);
-    const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
-    const metaAdAccountId = requireNonEmptyString(data.metaAdAccountId, "metaAdAccountId");
-    const metaAdAccountName = typeof data.metaAdAccountName === "string" ? data.metaAdAccountName : "";
-
-    const wsSnap = await admin.firestore().collection(`users/${uid}/workspaces`).doc(workspaceId).get();
-    if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
-    assertWorkspaceActive(wsSnap);
-
-    const connDoc = await admin.firestore().collection("metaConnections").doc(uid).get();
-    const conn = connDoc.exists ? connDoc.data() : null;
-    if (!conn?.encryptedToken) {
-        throw new HttpsError("failed-precondition", "Connect your Meta account first.");
-    }
-    const accessToken = decryptToken(conn.encryptedToken, metaAppSecret.value());
-
-    const connectedAccounts: any[] = conn.adAccounts ?? [];
-    const isConnected = connectedAccounts.some((a: any) => a.id === metaAdAccountId || `act_${a.id}` === metaAdAccountId || a.id === metaAdAccountId.replace("act_", ""));
-    if (!isConnected) {
-        throw new HttpsError("failed-precondition", "This Meta ad account is not in your connected accounts.");
-    }
-
-    // Phase 14 only READS ad performance data — never publishes. Any role
-    // (ADMIN / ADVERTISER / ANALYST / INSUFFICIENT) is acceptable for
-    // linking the workspace to the ad account. The publishing flow
-    // (`metaPushCreative` / `metaPushCreativePack`) keeps its own Meta
-    // API error handling, which will reject write attempts at request
-    // time with a permission error from Meta itself.
-    const role = await probeMetaRole(accessToken, metaAdAccountId);
-
-    await wsSnap.ref.update({
-        metaAdAccountId,
-        metaAdAccountName: metaAdAccountName ?? "",
-        metaRoleAtLinkTime: role,
-    });
-
-    return { ok: true, metaRoleAtLinkTime: role };
+    // Universal preamble (FR-001, FR-003). Team-member guards
+    // removed (FR-017); workspace authorisation via
+    // `assertWorkspaceAllowed` is the new gate (FR-004 / FR-021).
+    const scope = await resolveMetaScope(request);
+    return linkMetaAccountToWorkspaceImpl(scope, request.data);
 });
 
-export const unlinkMetaAccountFromWorkspace = onCall({
-    region: "europe-west1",
-    cors: true,
-}, async (request: CallableRequest) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
-    const uid = request.auth.uid;
-    // Round-9 (CodeRabbit re-review): team-member guard. Unlinking is
-    // the mirror of linking — both retarget the workspace's Meta
-    // ad-account pointer. Refuse first before any side effects.
-    await assertNotTeamMember(uid, "unlink_meta");
-    const data = asObjectPayload(request.data);
+// ─── unlinkMetaAccountFromWorkspace (contract C3) ──────────────────────────
+//
+// Phase 967 (FR-011) — same Page clear on removal. Pre-967 only
+// cleared the ad-account pointer; a workspace could end up with no
+// ad account but a Page from the previous client. The new write
+// clears the Page in the SAME `wsRef.update` as the ad-account
+// fields — atomic by Firestore's single-doc write semantics.
+//
+// Phase 967 (FR-017) — team members may unlink too (subject to
+// workspace access). The pre-967 `assertNotTeamMember` guard is
+// removed.
+//
+// The body is extracted into `unlinkMetaAccountFromWorkspaceImpl`
+// for testability (T-10).
+export async function unlinkMetaAccountFromWorkspaceImpl(
+  scope: {
+    ownerUid: string;
+    callerUid: string;
+    allowedWorkspaceIds: string[] | "ALL";
+    storedWorkspaceAccess: string[];
+  },
+  requestData: any,
+): Promise<{
+  ok: true;
+  pageCleared: boolean;
+}> {
+    const data = asObjectPayload(requestData);
     const workspaceId = requireNonEmptyString(data.workspaceId, "workspaceId");
 
-    const wsSnap = await admin.firestore().collection(`users/${uid}/workspaces`).doc(workspaceId).get();
-    if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
+    // FR-004 / FR-021 — workspace authorisation first.
+    assertWorkspaceAllowed(scope, workspaceId);
 
-    await wsSnap.ref.update({
+    // Load the OWNER's workspace — FR-001.
+    const wsRef = admin.firestore()
+        .collection(`users/${scope.ownerUid}/workspaces`)
+        .doc(workspaceId);
+    const wsSnap = await wsRef.get();
+    if (!wsSnap.exists) throw new HttpsError("not-found", "Workspace not found.");
+    assertWorkspaceActive(wsSnap); // throws not-found if soft-deleted
+
+    // FR-011 — Page clear in the same write as the ad-account fields.
+    //
+    // Phase 967 (Claude audit C-1, 2026-08-20): the previous code
+    // gated the clear on `hadPage`, leaving NEVER_SET workspaces on
+    // the legacy global Page after an unlink — same cross-client
+    // leak as on the link side. Apply the FR-011 unconditional
+    // reading: write the clear fields on every unlink, regardless
+    // of prior state. `pageCleared` stays gated on `hadPage` so the
+    // user-facing notice does NOT fire when the user never picked a
+    // Page.
+    const priorWsData = wsSnap.data() ?? {};
+    const hadPage = typeof priorWsData.metaPageId === "string"
+        && priorWsData.metaPageId.length > 0;
+    const updatePayload: Record<string, unknown> = {
         metaAdAccountId: admin.firestore.FieldValue.delete(),
         metaAdAccountName: admin.firestore.FieldValue.delete(),
         metaRoleAtLinkTime: admin.firestore.FieldValue.delete(),
-    });
+        // FR-011 + FR-011a — unconditional Page clear on ad-account change.
+        metaPageId: null,
+        metaPageName: null,
+        metaPageClearedAt: Date.now(),
+    };
+    await wsRef.update(updatePayload);
 
     // Keep the What's Working dashboard mirror symmetric with the link.
     // The dashboard reads connection state from the workspace-private
@@ -6784,13 +7542,23 @@ export const unlinkMetaAccountFromWorkspace = onCall({
     // (the workspace-doc link is the source of truth). Tokens/perf data are
     // intentionally retained — full teardown is `disconnectMetaAccount`'s job.
     await admin.firestore()
-        .doc(`users/${uid}/workspaces/${workspaceId}/private/metaConnection`)
+        .doc(`users/${scope.ownerUid}/workspaces/${workspaceId}/private/metaConnection`)
         .set({ metaConnected: false, updatedAt: Date.now() }, { merge: true })
         .catch((err: unknown) => {
             console.warn("⚠️ Non-blocking: failed to clear workspace metaConnection mirror on unlink:", err);
         });
 
-    return { ok: true };
+    return { ok: true, pageCleared: hadPage };
+}
+
+export const unlinkMetaAccountFromWorkspace = onCall({
+    region: "europe-west1",
+    cors: true,
+}, async (request: CallableRequest) => {
+    // Universal preamble (FR-001, FR-003). Team-member guards
+    // removed (FR-017).
+    const scope = await resolveMetaScope(request);
+    return unlinkMetaAccountFromWorkspaceImpl(scope, request.data);
 });
 
 export const setTeamMemberWorkspaceAccess = onCall({

@@ -78,13 +78,16 @@ export const workspaceService = {
     )({ workspaceId }),
 
   linkMetaAccountToWorkspace: (req: LinkMetaAccountRequest) =>
-    httpsCallable<LinkMetaAccountRequest, { ok: true; metaRoleAtLinkTime: string }>(
+    httpsCallable<
+      LinkMetaAccountRequest,
+      { ok: true; metaRoleAtLinkTime: string; pageCleared: boolean }
+    >(
       functions,
       "linkMetaAccountToWorkspace"
     )(req),
 
   unlinkMetaAccountFromWorkspace: (workspaceId: string) =>
-    httpsCallable<{ workspaceId: string }, { ok: true }>(
+    httpsCallable<{ workspaceId: string }, { ok: true; pageCleared: boolean }>(
       functions,
       "unlinkMetaAccountFromWorkspace"
     )({ workspaceId }),
