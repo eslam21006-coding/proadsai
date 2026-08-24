@@ -2902,7 +2902,27 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
     if (!uid || !editingWorkspace) return;
     try {
       const { workspaceService } = await import('./services/workspaceService');
-      await workspaceService.updateWorkspace({ workspaceId: editingWorkspace.id, ...data } as any);
+      // The modal's onSave payload is a full `Omit<Workspace, 'id' | 'createdAt'>`,
+      // so it carries server-owned fields — `isDefault` always, and on a
+      // re-rendered workspace the `meta*` / `deletedAt` values too.
+      // `updateWorkspace` field-locks all of those (Phase 2 T013) and rejects
+      // the ENTIRE call with "Field isDefault cannot be updated here.", so a
+      // plain name/brand edit could never be saved.
+      //
+      // Send an ALLOW-LIST of the user-editable fields rather than deny-listing
+      // the protected ones: a field added to `Workspace` later cannot leak into
+      // this payload by default. The `as any` is deliberately gone — the
+      // payload now type-checks against `UpdateWorkspaceRequest`, which is what
+      // would have caught this at compile time in the first place.
+      await workspaceService.updateWorkspace({
+        workspaceId: editingWorkspace.id,
+        ...(data.name !== undefined && { name: data.name }),
+        ...(data.brandName !== undefined && { brandName: data.brandName }),
+        ...(data.brandUrl !== undefined && { brandUrl: data.brandUrl }),
+        ...(data.brandColorPrimary !== undefined && { brandColorPrimary: data.brandColorPrimary }),
+        ...(data.brandColorSecondary !== undefined && { brandColorSecondary: data.brandColorSecondary }),
+        ...(data.logoUrl !== undefined && { logoUrl: data.logoUrl }),
+      });
       setWorkspacesLocal(prev => prev.map(w => w.id === editingWorkspace.id ? { ...w, ...data } : w));
       setShowWorkspaceModal(false);
       setEditingWorkspace(null);
