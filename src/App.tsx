@@ -8183,6 +8183,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
                 onCreateNew={() => { setEditingWorkspace(null); setShowWorkspaceModal(true); }}
                 onEditWorkspace={(ws) => { setEditingWorkspace(ws); setShowWorkspaceModal(true); }}
                 isTeamMember={isTeamMemberUser}
+                isDarkMode={isDarkMode}
                 loadError={workspaceLoadError}
                 onRetryLoad={() => {
                   // Round-2 #13: bumping the retry trigger recreates the

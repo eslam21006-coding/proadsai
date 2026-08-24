@@ -24,6 +24,10 @@ interface WorkspaceSwitcherProps {
   // May be async: the parent flushes the pending auto-save before the switch
   // is allowed to proceed, and `handleGuardSave` awaits it.
   onSwitchGuardSave?: (targetId: string) => void | Promise<void>;
+  // Theme flag, same contract as MetaAccountPickerModal / MetaPagePickerModal
+  // (optional, defaults to dark) so the switch guard renders with the same
+  // light/dark palette as the rest of the modal vocabulary.
+  isDarkMode?: boolean;
 }
 
 export default function WorkspaceSwitcher({
@@ -40,6 +44,7 @@ export default function WorkspaceSwitcher({
   onSwitchGuardCancel,
   onSwitchGuardDiscard,
   onSwitchGuardSave,
+  isDarkMode = true,
 }: WorkspaceSwitcherProps) {
   const { t } = useT();
   const [open, setOpen] = useState(false);
@@ -244,6 +249,23 @@ export default function WorkspaceSwitcher({
       : (active?.name || t('workspace.switcher.default_name'));
   const brandColor = active?.brandColorPrimary || '#3b82f6';
 
+  // ─── Modal palette ──────────────────────────────────────────────────
+  // Token values copied verbatim from MetaAccountPickerModal so the guard
+  // cannot drift from the shared modal design system. The guard previously
+  // hard-coded the dark palette (bg-slate-950 / text-white / text-slate-400),
+  // which rendered as a black panel in light mode while every other modal
+  // switched to white.
+  const dk = isDarkMode;
+  const shell = dk ? 'bg-slate-950 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900 shadow-2xl';
+  const headerGradient = dk ? 'bg-gradient-to-b from-blue-900/20 to-transparent border-slate-800' : 'bg-gradient-to-b from-blue-50 to-transparent border-slate-200';
+  const subtitleText = dk ? 'text-slate-400' : 'text-slate-500';
+  const closeBtn = dk ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-900';
+  const footerBorder = dk ? 'border-slate-800' : 'border-slate-200';
+  const footerBtn = dk ? 'bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]' : 'bg-slate-100 text-slate-700 hover:bg-slate-200';
+  const footerBtnMuted = dk ? 'bg-white/[0.04] text-slate-500 hover:text-white' : 'bg-slate-50 text-slate-500 hover:text-slate-900 hover:bg-slate-100';
+  const guardTitle = dk ? 'text-white' : 'text-slate-900';
+  const guardEyebrow = dk ? 'text-blue-300/80' : 'text-blue-700';
+
   return (
     <div className="relative" ref={ref}>
       <button
@@ -376,36 +398,36 @@ export default function WorkspaceSwitcher({
           <div
             ref={guardDialogRef}
             tabIndex={-1}
-            className="relative bg-slate-950 border border-slate-800 rounded-2xl max-w-sm w-full shadow-2xl overflow-hidden outline-none"
+            className={`relative ${shell} border rounded-2xl max-w-sm w-full shadow-2xl overflow-hidden outline-none`}
             onClick={e => e.stopPropagation()}
           >
-            <div className="bg-gradient-to-b from-blue-900/20 to-transparent p-6 pb-5 border-b border-slate-800">
+            <div className={`${headerGradient} p-6 pb-5 border-b`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-[9px] font-black uppercase tracking-widest text-blue-300/80 mb-1.5">
+                  <p className={`text-[9px] font-black uppercase tracking-widest ${guardEyebrow} mb-1.5`}>
                     <i className="fa-solid fa-shuffle text-[8px] me-1.5" aria-hidden="true" />
                     {t('workspace.switch_guard.eyebrow')}
                   </p>
-                  <h3 id="workspace-switch-guard-title" className="text-lg font-black text-white">{t('workspace.switch_guard.title')}</h3>
+                  <h3 id="workspace-switch-guard-title" className={`text-lg font-black ${guardTitle}`}>{t('workspace.switch_guard.title')}</h3>
                 </div>
                 <button
                   type="button"
                   onClick={handleGuardCancel}
                   disabled={guardSaving}
                   aria-label={t('close')}
-                  className="shrink-0 text-slate-500 hover:text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  className={`shrink-0 ${closeBtn} transition-all disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
                   <i className="fa-solid fa-xmark text-lg" aria-hidden="true" />
                 </button>
               </div>
-              <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">{t('workspace.switch_guard.body')}</p>
+              <p className={`text-[11px] ${subtitleText} mt-2 leading-relaxed`}>{t('workspace.switch_guard.body')}</p>
             </div>
-            <div className="px-6 py-5 border-t border-slate-800 flex items-center gap-3">
+            <div className={`px-6 py-5 border-t ${footerBorder} flex items-center gap-3`}>
               <button
                 type="button"
                 onClick={handleGuardSave}
                 disabled={guardSaving}
-                className="flex-1 h-10 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="flex-1 h-11 rounded-xl bg-blue-600 text-white text-[11px] font-bold hover:bg-blue-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {guardSaving ? t('workspace.switch_guard.saving') : t('workspace.switch_guard.save')}
               </button>
@@ -413,7 +435,7 @@ export default function WorkspaceSwitcher({
                 type="button"
                 onClick={handleGuardDiscard}
                 disabled={guardSaving}
-                className="flex-1 h-10 rounded-xl bg-white/[0.06] text-slate-300 text-xs font-bold hover:bg-white/[0.1] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className={`flex-1 h-11 rounded-xl ${footerBtn} text-[10px] font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed`}
               >
                 {t('workspace.switch_guard.discard')}
               </button>
@@ -421,7 +443,7 @@ export default function WorkspaceSwitcher({
                 type="button"
                 onClick={handleGuardCancel}
                 disabled={guardSaving}
-                className="flex-1 h-10 rounded-xl bg-white/[0.04] text-slate-500 text-xs font-bold hover:text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className={`flex-1 h-11 rounded-xl ${footerBtnMuted} text-[10px] font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed`}
               >
                 {t('workspace.switch_guard.cancel')}
               </button>
