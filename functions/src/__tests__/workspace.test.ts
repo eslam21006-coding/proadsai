@@ -168,13 +168,13 @@ async function main() {
     });
 
     // ═══════════════════════════════════════════════════════════════════════
-    // T014: assertWorkspaceLimit rejects the 11th workspace
+    // T014: assertWorkspaceLimit rejects the 51st workspace
     // ═══════════════════════════════════════════════════════════════════════
-    await run("T014: assertWorkspaceLimit at 10 → failed-precondition", async () => {
+    await run("T014: assertWorkspaceLimit at 50 → failed-precondition", async () => {
         resetStore();
         const wsBucket = bucket("users/uid-scale/workspaces");
-        for (let i = 0; i < 10; i++) wsBucket.set(`ws-${i}`, { deletedAt: null });
-        await expectHttpsError(() => assertWorkspaceLimit("uid-scale"), "failed-precondition", "10-workspace");
+        for (let i = 0; i < 50; i++) wsBucket.set(`ws-${i}`, { deletedAt: null });
+        await expectHttpsError(() => assertWorkspaceLimit("uid-scale"), "failed-precondition", "50-workspace");
     });
 
     // CR-MAJOR (CodeRabbit round 7): use a complete `WorkspaceShape`
@@ -199,15 +199,15 @@ async function main() {
         };
     }
 
-    await run("T014b: createWorkspaceWithLimit at 10 on Scale → failed-precondition", async () => {
+    await run("T014b: createWorkspaceWithLimit at 50 on Scale → failed-precondition", async () => {
         resetStore();
         bucket("users").set("uid-scale", { billingState: { plan: "scale" } });
         const wsBucket = bucket("users/uid-scale/workspaces");
-        for (let i = 0; i < 10; i++) wsBucket.set(`ws-${i}`, { deletedAt: null });
+        for (let i = 0; i < 50; i++) wsBucket.set(`ws-${i}`, { deletedAt: null });
         await expectHttpsError(
-            () => createWorkspaceWithLimit("uid-scale", makeWorkspaceDoc({ name: "11th" })),
+            () => createWorkspaceWithLimit("uid-scale", makeWorkspaceDoc({ name: "51st" })),
             "failed-precondition",
-            "10-workspace"
+            "50-workspace"
         );
     });
 

@@ -117,7 +117,7 @@ export function assertWorkspaceActive(
 }
 
 /**
- * Asserts the user is below the 10-workspace cap on the Scale plan.
+ * Asserts the user is below the 50-workspace cap on the Scale plan.
  * Reads all workspaces under the user and counts active (non
  * soft-deleted) entries. Throws `failed-precondition` if the cap is
  * reached.
@@ -135,10 +135,10 @@ export async function assertWorkspaceLimit(uid: string): Promise<void> {
     const deletedAt = d.data().deletedAt;
     return deletedAt == null; // covers both null and undefined
   });
-  if (active.length >= 10) {
+  if (active.length >= 50) {
     throw new HttpsError(
       "failed-precondition",
-      "You've reached the 10-workspace limit on the Scale plan.",
+      "You've reached the 50-workspace limit on the Scale plan.",
       { reason: "workspace_limit_reached" }
     );
   }
@@ -177,7 +177,7 @@ export async function assertWorkspaceLimit(uid: string): Promise<void> {
  *   transaction-computed `isDefault` verdict. The verdict is the
  *   authoritative value; the caller does not need to re-read.
  * @throws {HttpsError} `permission-denied` if the user is not on Scale;
- *   `failed-precondition` if the 10-workspace cap is reached.
+ *   `failed-precondition` if the 50-workspace cap is reached.
  */
 export async function createWorkspaceWithLimit(
   uid: string,
@@ -207,10 +207,10 @@ export async function createWorkspaceWithLimit(
     }
 
     const active = snap.docs.filter((d) => d.data().deletedAt == null);
-    if (active.length >= 10) {
+    if (active.length >= 50) {
       throw new HttpsError(
         "failed-precondition",
-        "You've reached the 10-workspace limit on the Scale plan.",
+        "You've reached the 50-workspace limit on the Scale plan.",
         { reason: "workspace_limit_reached" }
       );
     }

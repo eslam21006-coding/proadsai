@@ -195,7 +195,7 @@ export const PLANS: Record<UserPlan, PlanConfig> = {
     },
     scale: {
         id: 'scale', name: 'Scale', subtitle: 'For high-volume ad testing', monthlyCredits: 6500, trialCredits: 50, priceMonthly: 179, priceAnnualPerMonth: 143.20,
-        savedProjectLimit: Infinity, audienceAvatarLimit: Infinity, carouselMaxSlides: 10, workspaceLimit: 10,
+        savedProjectLimit: Infinity, audienceAvatarLimit: Infinity, carouselMaxSlides: 10, workspaceLimit: 50,
         batchConfig: { maxSizes: 3, maxHooks: 4, maxConcepts: 3, maxAdsPerRun: 36 },
         stripePriceId: { monthly: 'price_1TTyxMKXgskM9FYIlR7h0sru', annual: 'price_1TTyxsKXgskM9FYIkIfqkIr3' },
         features: {
