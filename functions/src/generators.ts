@@ -54,7 +54,7 @@ import { loadRAGContextForWorkspace, buildHookPerformanceBlock, buildVisualPerfo
 import type { WinningAd } from "./getTopWinners.js";
 import { checkBrandColorCompliance } from "./brandColorCompliance.js";
 import { GenerationError } from "./types.js";
-import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL, OPENAI_SIZE_BY_ASPECT, COPY_SCORING_ENABLED } from "./modelConfig.js";
+import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL, OPENAI_SIZE_BY_ASPECT, COPY_SCORING_ENABLED, CREATIVE_MODEL_PRO, CREATIVE_MODEL_LITE, LOGIC_MODEL, VISUAL_MODEL } from "./modelConfig.js";
 import { COLD_ANGLES, RETARGETING_ANGLES, buildSlidePlan } from "./slidePlanEngine.js";
 import { drawDimensions, drawOpenings, makeProjectSeed, getRecentFingerprintsForRotation, type AngleFingerprint } from "./copyDiversity.js";
 import { recordAngleFingerprint } from "./creativeMemory.js";
@@ -1271,18 +1271,10 @@ export interface CarouselSlideCopy {
 }
 
 // --- STRATEGY CONFIGURATION ---
-
-// 1. THE COPYWRITER (High IQ, High Nuance for Arabic Puns)
-// Use this for TOV (Step 2) and Caption (Step 5)
-const CREATIVE_MODEL_PRO = "gemini-3.1-pro-preview"; // First generation (highest quality)
-const CREATIVE_MODEL_LITE = "gemini-3.1-pro-preview"; // Regenerations (fast + cheap)
-
-// 2. THE ENGINEER (High Speed, High Structure, Low Cost)
-// Use this for Concepts (Step 3) and JSON Data. It doesn't need to be poetic.
-const LOGIC_MODEL = "gemini-2.5-flash-lite";
-
-// 3. THE ARTIST (State of the Art Visuals)
-const VISUAL_MODEL = "gemini-3.1-flash-image";
+// Gemini model constants (CREATIVE_MODEL_PRO / CREATIVE_MODEL_LITE /
+// LOGIC_MODEL / VISUAL_MODEL) are imported from ./modelConfig.js — the
+// single source of truth established in SC-021 (see modelConfig.ts for
+// endpoint strings and the revert pattern).
 
 const clean = (val: string): string => {
     if (!val) return "";
