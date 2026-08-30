@@ -634,3 +634,184 @@ callable. `sanitizeInputs` (`:46-54`) shallow-copies the whole object and only c
 
 `npm run build` at the frontend root → **exit 0**, only the pre-existing chunk-size and
 dynamic-import advisories. `cd functions && npm run build` → **exit 0**.
+
+---
+
+## Batch 5 — Final measurement
+
+Same harness, same three fixtures, same method as Batch 0.
+
+### Size — final vs baseline
+
+| Sample | baseline | final | delta |
+|---|---|---|---|
+| 1 — school administrators | 40,834 | **42,082** | +1,248 (+3.1%) |
+| 2 — fitness trainers | 40,920 | **42,167** | +1,247 (+3.0%) |
+| 3 — e-commerce owners | 40,869 | **42,110** | +1,241 (+3.0%) |
+
+The prompt is ~3% longer. That is the net of −1,244 removed in Batch 1, −550 in the
+Batch 3 addendum, +1,309 for AUDIENCE GROUNDING and ~+1,750 for the four-structure
+delivery guide. This refactor was about **order and contradiction**, not length.
+
+### Final block map — Sample 1 (42,082 chars)
+
+| offset | depth | source | block |
+|---|---|---|---|
+| 1 | 0.0% | generators.ts:2394 | `[HOOK ARCHITECT V5.1]` header |
+| 141 | 0.3% | :2397 | ORIGINALITY MANDATE |
+| 527 | 1.3% | :2403 | CAMPAIGN MODE |
+| 2,593 | 6.2% | :2408 | CREATIVE STRATEGY CONTROLS |
+| 4,322 | 10.3% | :2418 | HOW TO COMBINE ANGLE + DELIVERY |
+| 6,205 | 14.7% | :2457 | INPUT ANALYSIS (brief fields) |
+| 6,628 | 15.8% | :2482 | LANGUAGE: MARKETING FUSHA |
+| 6,830 | 16.2% | :2486 | ARABIC QUALITY |
+| 7,442 | 17.7% | :2495 | THE 4 HOOKS |
+| 7,616 | 18.1% | :2565 | CRITICAL ANGLE LOCK |
+| 8,013 | 19.0% | :2572 | ANGLE COMPLIANCE TEST |
+| 8,274 | 19.7% | hookAnglesKnowledge.ts:1579 | **Phase 23 ROTATED DIMENSION FILL** |
+| 10,623 | 25.2% | hookAnglesKnowledge.ts:414 | EMOTIONAL-NATIVE VARIATIONS |
+| 12,716 | 30.2% | hookAnglesKnowledge.ts | Phase 23 rotation metadata |
+| 12,848 | 30.5% | :2597 | DELIVERY FORMAT — now four sentence structures |
+| 15,700 | 37.3% | :2634 | STRUCTURAL VARIATION |
+| 15,883 | 37.7% | :2652 | **Phase 23 rotated dimension table** |
+| 16,757 | 39.8% | :2682 | ANTI-REPETITION RULES |
+| 17,716 | 42.1% | :2706 | SUBHEADLINE RULES |
+| 18,448 | 43.8% | :2724 | CTA BENEFIT RULES |
+| 18,711 | 44.5% | :2731 | BENEFIT HYPER-SPECIFIC |
+| 23,449 | 55.7% | :2769 | COPYWRITING QUALITY RULES |
+| 26,066 | 61.9% | :2809 | OUTPUT FORMAT banner |
+| 26,162 | 62.2% | :2813 | USER SELECTED HOOK ANGLE |
+| 26,362 | 62.6% | :2817 | MANDATORY LAYER CHECK |
+| 26,870 | 63.9% | :2823 | INSTRUCTIONS FOR EACH HOOK |
+| 27,526 | 65.4% | :2829 | OUTPUT FORMAT (fill in the values) |
+| 27,640 | 65.7% | :2831 | `HOOK_START_A` … `HOOK_END_D` |
+| 28,033 | 66.6% | :2890 | FINAL SELF-CHECK |
+| 29,352 | 69.7% | :2906 | FORBIDDEN IN HOOK OUTPUT |
+| 30,212 | 71.8% | injected :2913, built at :2103 | `modeInstruction` (6.5k chars — the largest single block) |
+| **36,753** | **87.3%** | **:2929** | **AUDIENCE GROUNDING** |
+| **37,942** | **90.2%** | copywriting_knowledge.ts:702 | **READING_LEVEL_BLOCK** |
+| **38,800** | **92.2%** | copywriting_knowledge.ts:719 | **LIVED_SYMPTOM_BLOCK** |
+| **39,739** | **94.4%** | copywriting_knowledge.ts:739 | **FABRICATION_POLICY_BLOCK** |
+| **41,639** | **98.9%** | **:2944** | **BANNED_CTA_LIST line** |
+| 41,993 | 99.8% | :2946 | `CRITICAL: Replace ALL placeholders…` (last line) |
+
+**Position confirmed.** The four Phase 22 quality items occupy the final **9.8%** of the
+prompt (were at 62.8–73.3%). AUDIENCE GROUNDING opens that closing run at **87.3%**, so
+grounding + quality rules together are the final **12.7%** and nothing but the one-line
+closer follows them. The prompt now ends on
+`CRITICAL: Replace ALL placeholders with real copy.`
+
+### Removed-block verification — all clear
+
+| Block | Baseline | Final |
+|---|---|---|
+| `Hook A = FINANCIAL/REVENUE dimension…` static override | present at 74.3% | **absent** |
+| `Structure types to rotate (use each ONCE, pick 4)` + 7 openings | present at 75.1% | **absent** |
+| `HOOK QUALITY FLOOR` (`hookQualityBlock`) | present at 98.9% | **absent** |
+| `income, time, status, confidence` delivery dimension list | present at 31.5% | **absent** |
+| `من [before] إلى [after] في [timeframe]` literal template | present 4× | **absent** |
+
+Occurrence counts in the final prompt: READING_LEVEL block **1×** (from 2 source sites
+before), BANNED_CTA line **1×** (from 2 source sites), delivery-format string **1×**
+(was 3×).
+
+### Universality check — PASS
+
+Normalizing only the `GENERATION ID` seed and the four brief values, the three final
+prompts are **byte-identical**. Every audience-specific word in the prompt arrives
+through runtime interpolation of the brief.
+
+A scan for hardcoded industry vocabulary across all three prompts returns exactly one
+hit, and it is **pre-existing and out of scope**:
+
+> `FABRICATION_POLICY_BLOCK` (`copywriting_knowledge.ts:747, 748, 766, 767`) uses
+> `"Ahmed, a Riyadh-based coach, tripled his calls in 30 days."` and
+> `"9 out of 10 coaches leak leads here."` as its examples of *fabricated claims that
+> must be flagged*.
+
+Four occurrences, identical to the baseline count — this task introduced none. They are
+illustrations of a claim **type**, not vocabulary the model is told to draw from, and
+`FABRICATION_POLICY_BLOCK` is a Phase 22 constant this task is forbidden to edit. Logged
+as a follow-up below.
+
+### Builds
+
+| Target | Command | Result |
+|---|---|---|
+| Backend | `cd functions && npm run build` | **exit 0**, zero TypeScript errors |
+| Frontend | `npm run build` (repo root) | **exit 0**; only the pre-existing chunk-size and dynamic-import advisories, unchanged from `main` |
+
+---
+
+## Summary of the whole task
+
+| # | Change | Files |
+|---|---|---|
+| 1 | Deleted static dimension override that beat Phase 23 rotation | `generators.ts:2833` |
+| 2 | Deleted static 7-opening structure list that beat Phase 23 rotation | `generators.ts:2835-2845` |
+| 3 | Deleted `hookQualityBlock` (contradicted Phase 22; was the last thing the model read) | `generators.ts:2991-2997`, call site `:3004-3005` |
+| 4 | Rewrote the one unconditional industry-naming line | `generators.ts:2801` |
+| 5 | Moved the 4 quality items out of both output-format branches to a single emission in the prompt tail | `generators.ts` → `:2941-2944` |
+| 6 | Added AUDIENCE GROUNDING, fully interpolation-driven | `generators.ts:2928-2939` |
+| 7 | `transformation_promise` now prescribes 4 sentence structures instead of 1 template | `hookTypesKnowledge.ts:277-285` |
+| 8 | Removed the static dimension list from that guide | `hookTypesKnowledge.ts:285` |
+| 9 | Removed the literal template from `DELIVERY_FORMATS` | `hookAnglesKnowledge.ts:686` |
+| 10 | `format/style is constant` → style constant, structure varies | `generators.ts:2659`, `:2668` |
+| 11 | Delivery format injected once instead of three times | `hookAnglesKnowledge.ts:734-735` |
+| 12 | Frontend sends `_projectId` at all five hook-generation call sites | `App.tsx:5628, 5635, 5754, 5815, 5976, 8978` |
+
+Phase 23 rotation logic, the text of the Phase 22 constants, `modelConfig.ts`,
+`SYSTEM_TOV`, and the carousel/retargeting prompt surfaces were not modified.
+
+### Follow-up items — deliberately NOT fixed in this task
+
+1. **`hookTypesKnowledge.ts:293` — `threat` static dimension list.**
+   `Each hook warns about a different threat: financial, competitive, time-based,
+   reputation-based.` Same override we deleted twice (`generators.ts:2833`,
+   `hookTypesKnowledge.ts:285`) — these are audience life dimensions and they collide
+   with what Phase 23 rotates.
+
+2. **Literal sentence templates still pinning all 4 hooks to one shape:**
+   `misconception` (`hookTypesKnowledge.ts:274`,
+   `"You think [common belief]? Actually, [surprising truth]"`),
+   `threat` (`:286`, `"If you keep doing [X], [Y consequence] is inevitable"`),
+   `listicle` (`:270`, `"[N] [things/secrets/mistakes/steps] that [promise/consequence]"`).
+   Same failure mode `transformation_promise` had. `misconception` (:678),
+   `storytelling` (:684) and `threat` (:688) also mirror their templates into
+   `hookAnglesKnowledge.ts` `DELIVERY_FORMATS`. `question` (`:239-240`) is the model to
+   copy — it is the only style that already varies sentence type.
+
+3. **Carousel path needs the `_projectId` treatment too.**
+   `generators.ts:9058` reads `_projectId` for `makeProjectSeed` on the carousel
+   surface, but the frontend carousel calls (`App.tsx:5669`, `:5752`, `:5809`, `:8977`
+   via `gemini.generateCarouselAngles`, and `generateTestimonialCarousel` at `:5662`)
+   still do not send it. Batch 4 deliberately stopped at the single-hook path because
+   carousel is a separate prompt surface. Until it is done, carousel rotation is still
+   seeded on user + angle alone. `generators.ts:8582` (batch) is in the same position.
+
+4. **`modeInstruction` is 6.5k chars — the largest single block in the prompt** (15.5%
+   of it), injected at `generators.ts:2913` and built at `:2103`. It sits between the
+   output format and the closing quality run. It was left untouched by design; whether
+   it earns its length is worth a separate look.
+
+5. **`generators.ts:2798-2800` fallback defaults** (`'coaches and consultants'`,
+   `'pricing too low, losing premium clients'`, `'charge premium prices with
+   confidence'`) fire when a brief field is empty. This is an input-validation gap, not
+   a prompt gap.
+
+6. **`FABRICATION_POLICY_BLOCK` niche examples** (`copywriting_knowledge.ts:747, 748,
+   766, 767`) name a coach in Riyadh. Harmless as claim-type illustrations, but they are
+   the only industry vocabulary left in the prompt. Changing them means editing a
+   Phase 22 constant, which needs its own approval.
+
+7. **Nine redundant (not contradictory) instruction groups** remain, catalogued in the
+   Batch 1 section — the heaviest is "delivery format is constant across all 4 hooks",
+   stated 8 times. Consolidating them is a separate piece of work.
+
+### Note on the working tree
+
+Twice during this task the five files in `docs/investigations/` were deleted from the
+worktree by something outside the session — the second time truncating this report,
+which was reassembled from commit `f37b69a`. The append step now aborts if the file is
+missing or missing an earlier batch heading. Worth finding what is clearing that
+directory.
