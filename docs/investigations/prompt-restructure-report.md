@@ -491,3 +491,146 @@ example audience and no sample sentence.
 times. Trimming that triple interpolation is a candidate for a later pass.
 
 Both `npm run build` runs → **exit 0, zero TypeScript errors.**
+
+### Batch 3 addendum — two follow-up changes
+
+#### A. Static dimension list removed from the `transformation_promise` guide
+
+`functions/src/knowledge/hookTypesKnowledge.ts:285` — DELETED:
+
+```
+Each hook promises transformation in a different dimension: income, time, status, confidence.
+```
+
+Same override as the one Batch 1 deleted from `generators.ts:2833`, in a different
+file. Phase 23 owns dimension selection. The guide now ends on the "ingredients may be
+implied by context" line.
+
+#### Other delivery styles carrying a static per-hook list — REPORTED, NOT CHANGED
+
+Only **one** other style enumerates *audience life dimensions* the way the deleted line
+did — the rest enumerate a rhetorical device or technique, which is orthogonal to what
+Phase 23 rotates and does not collide with it.
+
+| Style | Line | Static per-hook list | Collides with Phase 23 dimensions? |
+|---|---|---|---|
+| `threat` | :293 | `Each hook warns about a different threat: financial, competitive, time-based, reputation-based.` | **YES — same failure mode.** These are life dimensions, and `financial` / `time-based` map directly onto Phase 23's rotated set |
+| `shocking_stat` | :259 | `a different kind of number: percentage, dollar amount, ratio, or time metric` | No — number *type*, not audience dimension |
+| `comedic` | :266-267 | `Self-deprecating, Absurd comparison, Ironic truth, Relatable daily scenario` | No — humor technique |
+| `curiosity_gap` | :292 | `hidden knowledge, counterintuitive fact, untold story, forbidden truth` | No — loop type |
+| `personal_story` | :249 | `failure moment, turning point, discovery moment, transformation moment` | No — narrative stage |
+| `listicle` | :271 | `"3 secrets", "5 mistakes", "7 signs", "1 thing"` | No — but it hardcodes four literal example values |
+| `question` :239-240, `controversial` :242/:245, `storytelling` :254, `misconception` :275, `pain_point` :289 | — | none (they say "a different X" without enumerating) | — |
+
+`threat:293` is the one worth deleting in the follow-up task.
+
+#### B. Triple interpolation of `DELIVERY_FORMATS` trimmed to one
+
+`functions/src/knowledge/hookAnglesKnowledge.ts:734-735` in
+`getAnglePlusDeliveryInstruction`.
+
+`${deliveryFormat}` was interpolated three times: **STEP 2**, **THINK LIKE THIS**, and
+**NOT LIKE THIS**. It is now interpolated **once**, at **STEP 2**.
+
+```diff
+-THINK LIKE THIS: "I need [${angleRule}] → now I'll phrase it as [${deliveryFormat}]"
+-NOT LIKE THIS: "I need [${deliveryFormat}] → maybe I'll add the angle's element if I feel like it"
++THINK LIKE THIS: "I need [${angleRule}] → now I'll phrase that in the STEP 2 delivery format"
++NOT LIKE THIS: "I'll write something in the STEP 2 delivery format → maybe I'll add the angle's element if I feel like it"
+```
+
+**Why STEP 2 is the position kept:** it is the only one of the three that is an
+*instruction*. STEP 1 → STEP 2 → RESULT is the operative sequence the model follows, and
+STEP 2 is where the format is first introduced and where it is read in natural order.
+THINK LIKE THIS / NOT LIKE THIS are illustrative reinforcement of *priority ordering*
+(angle first, format second) — that lesson survives intact when they refer back to
+"the STEP 2 delivery format" instead of restating it. Keeping the copy in either of
+those two instead would have put the format's only appearance inside a quoted example,
+below the numbered steps, which is a weaker position for an instruction.
+
+`DELIVERY_FORMATS` text itself was not changed. The trim benefits **every** angle +
+delivery combination, not just `transformation_promise`.
+
+**Verified on a fresh capture:** the delivery-format string now appears exactly **once**
+in the assembled prompt (was 3×), and `income, time, status, confidence` is gone.
+
+#### Size after both follow-ups
+
+| Sample | baseline | after B3 | after B3 addendum | vs baseline |
+|---|---|---|---|---|
+| 1 | 40,834 | 42,633 | **42,083** | +1,249 |
+| 2 | 40,920 | 42,718 | **42,168** | +1,248 |
+| 3 | 40,869 | 42,661 | **42,111** | +1,242 |
+
+−550 chars from the two follow-ups. Universality re-checked: the three normalized
+prompts remain **byte-identical**. `npm run build` in `functions/` → exit 0.
+
+---
+
+## Batch 4 — Send the project id from the frontend
+
+All changes in `src/App.tsx`. `currentProjectId` is declared at `src/App.tsx:1736`.
+
+### Why this matters
+
+Phase 23's rotation seed is `makeProjectSeed(userId, projectId, angle)`. The backend
+reads the project id at four sites as
+`((inputs as any)._projectId as string | undefined) || (inputs as any).projectId`:
+
+| Backend read site (task ref → current) |
+|---|
+| `generators.ts:2382` → **`:2374`** (generateTOV — Phase 23 rotation pre-compute) |
+| `generators.ts:3158` → **`:3137`** (concept director) |
+| `generators.ts:8603` → **`:8582`** (batch) |
+| `generators.ts:9079` → **`:9058`** (carousel) |
+
+The frontend never sent either field, so `projectId` was always `undefined` and the seed
+collapsed to a function of user + angle alone. Every project belonging to one user, on
+one hook angle, drew the **same** dimensions and openings. The field name must be
+exactly `_projectId`.
+
+### 13. The two payloads in `handleStartDesign`
+
+| Site | Change |
+|---|---|
+| `src/App.tsx:5628` | `setInputs({ ...formData, _userId: user?.uid, _projectId: currentProjectId, competitorContext } as any)` |
+| `src/App.tsx:5635` | `const cleanInputs = { ...formData, personalPhotos: [], brandLogos: [], _userId: user?.uid, _projectId: currentProjectId, competitorContext }` |
+
+### 14. Every other hook-generation call site
+
+All four remaining `gemini.generateTOV` call sites pass the `inputs` **state** object
+rather than a freshly built payload. Adding `_projectId` at `:5628` alone would cover
+them *only* when the user walked through `handleStartDesign` in the same session — and
+it would silently fail on the paths that repopulate `inputs` from elsewhere:
+`src/App.tsx:4438` (startup auto-restore), `:5303` (load saved project), `:8435`
+(template load), `:9865` (render-record load) and `:13091`/`:13093` (project restore),
+none of which carry `_projectId`. A user who opens a saved project and clicks
+"refresh hooks" would have gone straight back to the undefined-seed behaviour.
+
+So `_projectId` is now passed **explicitly** at every call site instead of relying on
+state inheritance:
+
+| Site | Function | Verdict before | Change |
+|---|---|---|---|
+| `src/App.tsx:5674` | `handleStartDesign` — single mode | covered via `cleanInputs` (:5635) | none needed |
+| `src/App.tsx:5754` | `handleRefreshHooks` (universe switch) | **missing** | `{ ...inputs, _projectId: currentProjectId } as any` |
+| `src/App.tsx:5815` | `handleGlobalHookRefinement` | **missing** | `{ ...inputs, _projectId: currentProjectId } as any` |
+| `src/App.tsx:5976` | precision single-hook edit | **missing** | `{ ...inputs, _projectId: currentProjectId } as any` |
+| `src/App.tsx:8978` | "more like this" in-card variation | **missing** | `{ ...inputs, _projectId: currentProjectId } as any` |
+
+Six edits in total. Carousel and batch paths (`generateCarouselAngles`,
+`generateTestimonialCarousel`) were **not** touched — they are separate prompt surfaces
+and out of scope for this task, though `generators.ts:9058` shows the carousel path
+reads `_projectId` too and would benefit from the same treatment later.
+
+### Transport verified
+
+`src/services/geminiService.ts:568-582` forwards `sanitizeInputs(inputs)` to the
+callable. `sanitizeInputs` (`:46-54`) shallow-copies the whole object and only clears
+`personalPhotos` / truncates `brandLogos`, so `_projectId` survives — the same route
+`_userId` already takes today.
+
+### Build
+
+`npm run build` at the frontend root → **exit 0**, only the pre-existing chunk-size and
+dynamic-import advisories. `cd functions && npm run build` → **exit 0**.

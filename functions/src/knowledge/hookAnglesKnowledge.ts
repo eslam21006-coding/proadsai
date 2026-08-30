@@ -731,8 +731,8 @@ RESULT: A ${deliveryId}-formatted hook that CONTAINS ${angleRule}
 
 ${example ? `INSPIRATION (do NOT copy verbatim — create ORIGINAL hooks in this spirit):
 "${example}"
-↑ Notice how it satisfies BOTH the angle's hard rule AND the delivery's format.\n` : ''}THINK LIKE THIS: "I need [${angleRule}] → now I'll phrase it as [${deliveryFormat}]"
-NOT LIKE THIS: "I need [${deliveryFormat}] → maybe I'll add the angle's element if I feel like it"
+↑ Notice how it satisfies BOTH the angle's hard rule AND the delivery's format.\n` : ''}THINK LIKE THIS: "I need [${angleRule}] → now I'll phrase that in the STEP 2 delivery format"
+NOT LIKE THIS: "I'll write something in the STEP 2 delivery format → maybe I'll add the angle's element if I feel like it"
 `;
 };
 

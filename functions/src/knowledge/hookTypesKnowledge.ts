@@ -282,8 +282,7 @@ Use each of these four sentence structures exactly once:
 - Hook C — TIMEFRAME FIRST: open on the timeframe, then the transformation that fits inside it.
 - Hook D — IMPERATIVE FORM: a direct command to make the change, with the after-state and timeframe attached.
 ⚠️ All 4 hooks must express a transformation with a timeframe. NO TWO hooks may use the same sentence structure. If two hooks end up with the same shape, rewrite one of them.
-⚠️ Any of the three ingredients may be implied by context instead of stated in a fixed slot, as long as the reader still feels the before → after change and the time it takes.
-Each hook promises transformation in a different dimension: income, time, status, confidence.`,
+⚠️ Any of the three ingredients may be implied by context instead of stated in a fixed slot, as long as the reader still feels the before → after change and the time it takes.`,
 
     pain_point: `FORMAT GUIDE: Present all 4 hooks pressing on a different SPECIFIC PAIN POINT.
 Structure: [Vivid pain scenario that feels personal and current]
