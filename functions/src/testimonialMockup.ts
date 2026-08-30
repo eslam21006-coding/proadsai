@@ -1,6 +1,7 @@
 // testimonialMockup.ts — Platform detection and mockup rendering for testimonial carousels
 
 import type { PlatformType, VisualStyleFamily } from "./types.js";
+import { VISUAL_MODEL } from "./modelConfig.js";
 
 type GeminiCaller = (params: { model: string; contents: any; config?: any }) => Promise<any>;
 let callGemini: GeminiCaller;
@@ -8,8 +9,6 @@ let callGemini: GeminiCaller;
 export function setTestimonialGeminiCaller(fn: GeminiCaller) {
     callGemini = fn;
 }
-
-const VISUAL_MODEL = "gemini-3.1-flash-image-preview";
 
 const PLATFORM_PROMPT = `You are a messaging platform identifier. Look at this screenshot and determine which messaging platform it comes from.
 

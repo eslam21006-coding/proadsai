@@ -1,4 +1,30 @@
 // functions/src/modelConfig.ts — provider selector + OpenAI visual model constants
+// + Gemini model constants (single source of truth — see SC-021).
+
+// ─── GEMINI MODEL CONSTANTS (single source of truth) ─────────────────────
+// Phase 22 (SC-021) consolidated these from functions/src/index.ts and
+// functions/src/generators.ts. This is now the ONLY place these are defined.
+// Reverting the creative endpoints to "gemini-3.1-pro-preview" requires
+// editing ONLY these two lines.
+//
+//   CREATIVE_MODEL_PRO  — First-pass copy/caption generation (highest quality)
+//   CREATIVE_MODEL_LITE — Regenerations (currently same string; reserved so
+//                         PRO/LITE tuning can diverge later without touching
+//                         call sites)
+//   LOGIC_MODEL         — Cheap text-only calls (translation, structure,
+//                         Arabic QA, concept critique, structured JSON repair)
+//   VISUAL_MODEL        — Hero-image generation and region edits
+//                         (gemini-3.1-flash-image; -preview endpoint that
+//                         testimonialMockup.ts used historically is gone —
+//                         drift fixed during SC-021 consolidation)
+
+// REVERT (SC-021): preview copy endpoint used before consolidation.
+// export const CREATIVE_MODEL_PRO: string = "gemini-3.1-pro-preview";
+// export const CREATIVE_MODEL_LITE: string = "gemini-3.1-pro-preview";
+export const CREATIVE_MODEL_PRO: string = "gemini-3.7-flash"; // GA copy endpoint (SC-021)
+export const CREATIVE_MODEL_LITE: string = "gemini-3.7-flash"; // GA copy endpoint (SC-021)
+export const LOGIC_MODEL: string = "gemini-2.5-flash-lite";
+export const VISUAL_MODEL: string = "gemini-3.1-flash-image";
 
 export const MODEL_PROVIDER: "openai" | "gemini" = "openai";
 
