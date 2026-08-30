@@ -354,3 +354,140 @@ chars removed in Batch 1. The prompt is the same size as it was at baseline, but
 contradictions are gone and the quality rules now sit last.
 
 `cd functions && npm run build` → **exit 0, zero TypeScript errors.**
+
+---
+
+## Batch 3 — Vary sentence structure within the delivery style
+
+The delivery style is **not** removed. It now varies within itself.
+
+### 9. `transformation_promise` FORMAT GUIDE rewritten
+
+`functions/src/knowledge/hookTypesKnowledge.ts:277-279` → **`:277-285`**
+
+Before (one literal template, Arabic-only word order, applied to all 4 hooks):
+
+```
+transformation_promise: `FORMAT GUIDE: Present all 4 hooks as SPECIFIC TRANSFORMATION promises with timeline.
+Structure: "من [before] إلى [after] في [timeframe]"
+Each hook promises transformation in a different dimension: income, time, status, confidence.`,
+```
+
+After:
+
+```
+transformation_promise: `FORMAT GUIDE: Present all 4 hooks as SPECIFIC TRANSFORMATION promises with a timeframe.
+CONCEPT — NOT A TEMPLATE: every hook must carry the same three ingredients — a before-state, an after-state, and a timeframe. There is NO fixed word order. HOW those ingredients are arranged into a sentence MUST be different for every hook.
+Use each of these four sentence structures exactly once:
+- Hook A — QUESTION FORM: pose the transformation as a question the reader answers in their own head.
+- Hook B — AFTER-STATE FIRST: open on the after-state, then reveal what it replaced and how long it took.
+- Hook C — TIMEFRAME FIRST: open on the timeframe, then the transformation that fits inside it.
+- Hook D — IMPERATIVE FORM: a direct command to make the change, with the after-state and timeframe attached.
+⚠️ All 4 hooks must express a transformation with a timeframe. NO TWO hooks may use the same sentence structure. If two hooks end up with the same shape, rewrite one of them.
+⚠️ Any of the three ingredients may be implied by context instead of stated in a fixed slot, as long as the reader still feels the before → after change and the time it takes.
+Each hook promises transformation in a different dimension: income, time, status, confidence.`,
+```
+
+The before → after → timeframe semantic content is preserved; only the prescribed
+*syntax* changed from one shape to four. The guidance describes sentence structure
+only — no example sentences, no industry vocabulary, and the Arabic-specific
+`من X إلى Y في Z` word order is gone, so the guide now works for English briefs too.
+
+The final line (`income, time, status, confidence`) was **left byte-identical** — see
+the open question below.
+
+### 10. Other sites that restated the literal template
+
+Line numbers are current (post-Batch-2). The task cited pre-Batch-1 numbers; the
+mapping is given.
+
+| Site (task ref → current) | Restates the literal template? | Action |
+|---|---|---|
+| `generators.ts:2607` → **`:2599`** | No. This is the injection point `${getDeliveryStyleFormatOverride(...)}` — it carries no template of its own. | none |
+| `generators.ts:2611-2613` → **`:2603-2605`** | No. "REMEMBER THE LAYERS" states that the angle's hard rule outranks the delivery format. No sentence shape. | none |
+| `generators.ts:2667` → **`:2659` and `:2668`** | **Yes — re-pins the structure.** `⚠️ ALL hooks must be delivered as TRANSFORMATION_PROMISE — the format/style is constant.` "format is constant" directly contradicts "no two hooks may share a sentence structure". | **CHANGED** |
+| `hookAnglesKnowledge.ts:686` | **Yes — the strongest re-pin in the prompt.** `DELIVERY_FORMATS.transformation_promise` was `'a specific transformation + timeline (من X إلى Y في Z)'`, and `getAnglePlusDeliveryInstruction` interpolates that string **three times** (STEP 2, THINK LIKE THIS, NOT LIKE THIS), so the literal template reached the model three more times per prompt. | **CHANGED** |
+
+**Change at `generators.ts:2659` and `:2668`** (both branches of the Phase 23
+conditional — the rotated branch and the fallback branch — carried the identical line):
+
+```diff
+-⚠️ ALL hooks must be delivered as ${inputs.hookType.toUpperCase()} — the format/style is constant.
++⚠️ ALL hooks must be delivered as ${inputs.hookType.toUpperCase()} — the delivery STYLE is constant across all 4. The SENTENCE STRUCTURE inside that style must still be different for every hook.
+```
+
+This line is emitted for *every* delivery style, not just `transformation_promise`.
+The change is consistent with the rest of the catalogue — `question` already says
+"Vary question types", `listicle` "a different number and framing", `comedic` "each
+hook uses different humor" — so structural variation inside a constant style was
+always the intent; the old wording contradicted it.
+
+**Change at `hookAnglesKnowledge.ts:686`:**
+
+```diff
+-    transformation_promise: 'a specific transformation + timeline (من X إلى Y في Z)',
++    transformation_promise: 'a specific transformation with a timeframe — a before-state, an after-state and how long it takes, arranged in a DIFFERENT sentence structure for each of the 4 hooks (question form / after-state first / timeframe first / imperative form) with no fixed word order',
+```
+
+Both `getDeliveryStyleFormatOverride` and `getAnglePlusDeliveryInstruction` are consumed
+**only** by the `generateTOV` cold-hook prompt (`generators.ts:2599` and `:2601`). No
+carousel or retargeting surface reads them, so neither was touched.
+
+**Verified on a fresh capture:** the literal template no longer appears anywhere in the
+assembled prompt.
+
+### 11. Other delivery styles that pin all 4 hooks to one sentence shape — REPORTED ONLY, NOT CHANGED
+
+All in `hookTypesKnowledge.ts` `getDeliveryStyleFormatOverride`. None were modified.
+
+| Style | Line | Pinning `Structure:` line | Severity |
+|---|---|---|---|
+| `misconception` | :274 | `"You think [common belief]? Actually, [surprising truth]"` | **Strong** — a literal quoted sentence, same as `transformation_promise` was |
+| `threat` | :286 | `"If you keep doing [X], [Y consequence] is inevitable"` | **Strong** — literal quoted sentence |
+| `listicle` | :270 | `"[N] [things/secrets/mistakes/steps] that [promise/consequence]"` | **Strong** — literal quoted sentence |
+| `controversial` | :243 | `[Everyone believes X] + [But actually the opposite is true]` | Moderate — bracket schema; only the belief varies |
+| `personal_story` | :248 | `[Specific moment in time] + [What happened] + [Emotional impact]` | Moderate — the four "chapters" vary the content, not the shape |
+| `storytelling` | :253 | `[Character] + [Situation] + [Unexpected turn]` | Moderate |
+| `curiosity_gap` | :291 | `[Unexpected claim] + [Implied secret that is NOT revealed]` | Moderate |
+| `shocking_stat` | :258 | `[Jaw-dropping number] + [What it means for the reader]` | Mild — varies the *kind* of number, not the sentence |
+| `comedic` | :265 | `[Funny observation] → [Punchline that reveals truth]` | Mild — four humor types, one 2-beat shape |
+| `pain_point` | :282 | `[Vivid pain scenario that feels personal and current]` | Mild — a single loose beat, barely a template |
+| `question` | :239-240 | — | **None.** The only style that already varies sentence type ("Yes/No question, 'Why' question, 'What if' question, Rhetorical challenge") |
+
+The same literal templates are mirrored in `hookAnglesKnowledge.ts` `DELIVERY_FORMATS`
+for `misconception` (:678), `storytelling` (:684) and `threat` (:688), so each of those
+also reaches the model three extra times through `getAnglePlusDeliveryInstruction`.
+
+Applying the Batch 3 treatment to `misconception`, `threat` and `listicle` would be the
+highest-value follow-up; `question` is the model to copy.
+
+### Open question for the product owner
+
+The last line of the rewritten `transformation_promise` guide —
+`Each hook promises transformation in a different dimension: income, time, status, confidence.` —
+is a **static four-dimension list**, functionally the same kind of override that Batch 1
+deleted from `generators.ts:2833`. It reaches the model at ~31% depth, between the
+Phase 23 rotated dimensions at 20% and the rotated dimension table at 36%. It was left
+byte-identical because Batch 3's approved scope was sentence structure, not dimensions.
+The same static list appears in several other delivery styles. Deleting it would let
+Phase 23 own dimension selection outright — awaiting a decision.
+
+### Universality check — PASS
+
+Normalizing only the `GENERATION ID` seed and the four brief values, the three
+post-Batch-3 prompts are **byte-identical**. The new guidance names no industry, no
+example audience and no sample sentence.
+
+### Size
+
+| Sample | baseline | after B2 | after B3 | vs baseline |
+|---|---|---|---|---|
+| 1 | 40,834 | 40,899 | **42,633** | +1,799 |
+| 2 | 40,920 | 40,984 | **42,718** | +1,798 |
+| 3 | 40,869 | 40,927 | **42,661** | +1,792 |
+
+~900 chars come from the expanded FORMAT GUIDE (one emission) and ~850 from the longer
+`DELIVERY_FORMATS` string, which `getAnglePlusDeliveryInstruction` interpolates three
+times. Trimming that triple interpolation is a candidate for a later pass.
+
+Both `npm run build` runs → **exit 0, zero TypeScript errors.**

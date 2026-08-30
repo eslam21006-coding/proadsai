@@ -274,8 +274,15 @@ Each hook uses a different number and framing: "3 secrets", "5 mistakes", "7 sig
 Structure: "You think [common belief]? Actually, [surprising truth]"
 Each hook demolishes a different wrong assumption. Be specific — name the misconception clearly.`,
 
-    transformation_promise: `FORMAT GUIDE: Present all 4 hooks as SPECIFIC TRANSFORMATION promises with timeline.
-Structure: "من [before] إلى [after] في [timeframe]"
+    transformation_promise: `FORMAT GUIDE: Present all 4 hooks as SPECIFIC TRANSFORMATION promises with a timeframe.
+CONCEPT — NOT A TEMPLATE: every hook must carry the same three ingredients — a before-state, an after-state, and a timeframe. There is NO fixed word order. HOW those ingredients are arranged into a sentence MUST be different for every hook.
+Use each of these four sentence structures exactly once:
+- Hook A — QUESTION FORM: pose the transformation as a question the reader answers in their own head.
+- Hook B — AFTER-STATE FIRST: open on the after-state, then reveal what it replaced and how long it took.
+- Hook C — TIMEFRAME FIRST: open on the timeframe, then the transformation that fits inside it.
+- Hook D — IMPERATIVE FORM: a direct command to make the change, with the after-state and timeframe attached.
+⚠️ All 4 hooks must express a transformation with a timeframe. NO TWO hooks may use the same sentence structure. If two hooks end up with the same shape, rewrite one of them.
+⚠️ Any of the three ingredients may be implied by context instead of stated in a fixed slot, as long as the reader still feels the before → after change and the time it takes.
 Each hook promises transformation in a different dimension: income, time, status, confidence.`,
 
     pain_point: `FORMAT GUIDE: Present all 4 hooks pressing on a different SPECIFIC PAIN POINT.

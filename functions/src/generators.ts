@@ -2656,7 +2656,7 @@ ${_phase23DrawnDimensions.map((d, i) => {
 }).join('\n')}
 
 ⚠️ The ANGLE stays the same. The DIMENSION SET rotates per project (deterministic seed, memory-biased). Do NOT drift to a different angle.
-${inputs.hookType ? `⚠️ ALL hooks must be delivered as ${inputs.hookType.toUpperCase()} — the format/style is constant.` : ''}`
+${inputs.hookType ? `⚠️ ALL hooks must be delivered as ${inputs.hookType.toUpperCase()} — the delivery STYLE is constant across all 4. The SENTENCE STRUCTURE inside that style must still be different for every hook.` : ''}`
         : `| Hook | Dimension | What varies |
 |------|-----------|------------|
 | A | Financial/Revenue | How the angle applies to money/income |
@@ -2665,7 +2665,7 @@ ${inputs.hookType ? `⚠️ ALL hooks must be delivered as ${inputs.hookType.toU
 | D | Skill/Confidence | How the angle applies to their abilities and certainty |
 
 ⚠️ The ANGLE stays the same. The DIMENSION changes. Do NOT drift to a different angle.
-${inputs.hookType ? `⚠️ ALL hooks must be delivered as ${inputs.hookType.toUpperCase()} — the format/style is constant.` : ''}`
+${inputs.hookType ? `⚠️ ALL hooks must be delivered as ${inputs.hookType.toUpperCase()} — the delivery STYLE is constant across all 4. The SENTENCE STRUCTURE inside that style must still be different for every hook.` : ''}`
 }
 ` : `
 Beyond headline TYPE, each hook should use a different EMOTIONAL angle:
