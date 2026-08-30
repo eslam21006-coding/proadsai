@@ -33,7 +33,11 @@ export const MODEL_PROVIDER: "openai" | "gemini" = "openai";
 // code revert and no logic redeploy. The switch is permanent by design:
 // it is also how the gate-disabled baseline for SC-002 / SC-004 / SC-005a
 // / SC-006 is produced after launch (research R7).
-export const COPY_SCORING_ENABLED: boolean = true;
+// 2026-08-30: Disabled — the scoring gate rewrites Arabic copy through
+// gpt-4o-mini with no Arabic grammar/quality rules, degrading output.
+// REVERT: set back to true only after the gate's rewriter prompt
+// includes full Arabic copy-quality rules from copywriting_knowledge.ts.
+export const COPY_SCORING_ENABLED: boolean = false;
 
 export const OPENAI_VISUAL_MODEL = "gpt-image-2";
 
