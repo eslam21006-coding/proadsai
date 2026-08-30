@@ -2798,7 +2798,7 @@ PRODUCT LINKAGE (CRITICAL):
 - Target audience: "${inputs.targetAudience || 'coaches and consultants'}"  
 - Their core pain: "${inputs.challenges || 'pricing too low, losing premium clients'}"
 - The transformation: "${inputs.transformation || 'charge premium prices with confidence'}"
-- If the subheadline could work for a restaurant, a gym, or a tech startup — it's TOO GENERIC. Rewrite it.
+- If the subheadline could work for a completely different business in a different industry without changing a word — it's TOO GENERIC. Rewrite it.
 
 LANGUAGE:
 - ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'Conversational Arabic. Write like a sharp business mentor speaks face-to-face — not a textbook, not a newspaper, not a Friday sermon.' : 'Conversational English. Write like a sharp mentor talks — not corporate, not academic.'}
@@ -2820,15 +2820,10 @@ ${inputs.hookType ? `2. DELIVERY (${inputs.hookType}) — PACKAGING: Is the angl
 ${(inputs as any).copywritingStrategy ? `3. STRATEGY (${(inputs as any).copywritingStrategy}) — ENERGY: Does the tone/pacing reflect this strategy? (Priority 3 — flavors the output)` : ''}
 If ANY layer is missing from ANY hook, REWRITE it. The angle's hard rule is the FIRST thing to verify — if it fails, the hook fails regardless of delivery or strategy.
 
-${READING_LEVEL_BLOCK}
-${LIVED_SYMPTOM_BLOCK}
-${FABRICATION_POLICY_BLOCK}
-
 INSTRUCTIONS FOR EACH HOOK (do NOT include these instructions in your output):
 - HOOK_TEXT = the headline. Max 8 words. Write in ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'Arabic' : 'the project language'}. Must be punchy direct-response copy.
 - SUBHEADLINE = the supporting line. Max ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? '12' : '8'} words. Must be a COMPLETE sentence that ends naturally. Never end on a conjunction.
 - CTA_BUTTON = the call-to-action button text, followed by ||| then a CONNECTOR + short benefit line (2-5 words). The benefit MUST start with a natural connector word (و/ل/عشان/وابدأ/وحقق). Example: "${inputs.cta} ||| وابدأ تحقق دخل يليق بخبرتك" or "${inputs.cta} ||| وتوقف عن ملاحقة العملاء".
-- BANNED CTAs (do NOT author any of these as the CTA_BUTTON — the user's literal CTA is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs in this form: a specific verb, the offer, an arrow, then a payoff tied to the audience's pain or desired outcome.
 - Each hook explores a DIFFERENT dimension of the ${inputs.coldHookAngle} angle.
 
 OUTPUT FORMAT (fill in the values after each colon — do NOT output instructions, brackets, or dimension labels):
@@ -2858,14 +2853,10 @@ CTA_BUTTON: ${inputs.cta} |||
 HOOK_END_D
 ` : `
 ${(inputs as any).copywritingStrategy ? `⚠️ COPYWRITING STRATEGY: ${(inputs as any).copywritingStrategy}\nEvery hook must reflect this strategy in its approach. If a hook doesn't clearly use this framework, REWRITE it.\n` : ''}
-${READING_LEVEL_BLOCK}
-${LIVED_SYMPTOM_BLOCK}
-${FABRICATION_POLICY_BLOCK}
 INSTRUCTIONS FOR EACH HOOK (do NOT include these instructions in your output):
 - HOOK_TEXT = the headline. Max 8 words. Write in ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'Arabic' : 'the project language'}. Must be punchy direct-response copy.
 - SUBHEADLINE = the supporting line. Max ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? '12' : '8'} words. Must be a COMPLETE sentence that ends naturally. Never end on a conjunction.
 - CTA_BUTTON = the call-to-action button text, followed by ||| then a CONNECTOR + short benefit line (2-5 words). The benefit MUST start with a natural connector word (و/ل/عشان/وابدأ/وحقق). Example: "${inputs.cta} ||| وابدأ تحقق دخل يليق بخبرتك" or "${inputs.cta} ||| وتوقف عن ملاحقة العملاء".
-- BANNED CTAs (do NOT author any of these as the CTA_BUTTON — the user's literal CTA is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs in this form: a specific verb, the offer, an arrow, then a payoff tied to the audience's pain or desired outcome.
 - Hook A = Direct/How-To type, Greed angle. Hook B = Question/Challenge type, Fear angle. Hook C = News/Testimonial type, Proof angle. Hook D = Command/Reason-Why type, Curiosity angle.
 
 OUTPUT FORMAT (fill in the values after each colon — do NOT output instructions, brackets, or dimension labels):
@@ -2933,6 +2924,24 @@ So make each hook ESPECIALLY strong as an opening that creates curiosity to swip
 - The subheadline should tease what comes next without resolving the tension
 ═══════════════════════════════════════════════════════════════════════════════
 ` : ''}
+
+═══════════════════════════════════════════════════════════════════════════════
+AUDIENCE GROUNDING (MANDATORY — every hook must pass this test)
+═══════════════════════════════════════════════════════════════════════════════
+
+The target audience is: ${inputs.targetAudience}
+Their daily pain is: ${inputs.challenges}
+The transformation they want: ${inputs.transformation}
+
+1. Every hook MUST contain at least one word or phrase that only someone in this specific audience would instantly recognize. Draw that vocabulary from the audience and daily pain fields above. Abstract words that could apply to any business — chaos, stability, success, system, growth, transformation — FAIL this test on their own.
+2. Before writing each hook, ask: could this exact hook be shown to a completely different audience in a different industry without changing a single word? If yes, it is too vague. Rewrite it using the specifics above.
+3. The subheadline must name the mechanism or product that delivers the transformation. It must NOT restate the hook in different words.
+4. Do not invent details about the audience that are not present in the fields above. If the audience field is broad, ground the hook in the daily pain field instead.
+
+${READING_LEVEL_BLOCK}
+${LIVED_SYMPTOM_BLOCK}
+${FABRICATION_POLICY_BLOCK}
+- BANNED CTAs (do NOT author any of these as the CTA_BUTTON — the user's literal CTA is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs in this form: a specific verb, the offer, an arrow, then a payoff tied to the audience's pain or desired outcome.
 
 CRITICAL: Replace ALL placeholders with real copy. Never output placeholder text.
 
