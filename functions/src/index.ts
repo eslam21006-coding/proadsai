@@ -56,7 +56,7 @@ import { notifyGHL, URL_BY_EVENT_TEMPLATE } from "./billing/ghlBillingSync.js";
 import type { GHLEventType } from "./billing/ghlBillingSync.js";
 import { STRIPE_PRICE_TO_PLAN } from "./stripe/stripeClient.js";
 import { createOpenAIImageCaller } from "./openAIImageCaller.js";
-import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL } from "./modelConfig.js";
+import { MODEL_PROVIDER, OPENAI_VISUAL_MODEL, CREATIVE_MODEL_PRO, CREATIVE_MODEL_LITE, LOGIC_MODEL, VISUAL_MODEL } from "./modelConfig.js";
 import {
     directConcept,
     type ConceptBrief,
@@ -189,12 +189,6 @@ const ACTION_FEATURE_MAP: Record<string, string> = {
     generateSizeVariant: "visualPolishes",
     editRegion: "regionEditing",
 };
-
-// ─── MODEL CONSTANTS (single source of truth) ───────────────────────────
-const CREATIVE_MODEL_PRO = "gemini-3.1-pro-preview"; // First generation
-const CREATIVE_MODEL_LITE = "gemini-3.1-pro-preview"; // Regenerations
-const LOGIC_MODEL = "gemini-2.5-flash-lite";
-const VISUAL_MODEL = "gemini-3.1-flash-image";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 2. THE AI GENERATOR (Don't lose this!)

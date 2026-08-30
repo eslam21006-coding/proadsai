@@ -8,42 +8,8 @@ Guidance for agentic coding agents operating in this repository.
 
 These rules encode hard-won lessons. Violating them causes production bugs, wasted credits, or broken output.
 
-### 1. FIREBASE LIB SYNC
-After **any** change to `functions/src/*.ts`, always rebuild before deploying.
-Required sequence (PowerShell):
-```powershell
-Remove-Item -Recurse -Force functions/lib
-cd functions && npm run build
-firebase deploy --only functions
-```
-Never deploy with stale `lib/` files. The `lib/` directory is the compiled output — it does not auto-update.
-
-### 2. GEMINI PROMPTS
-Simpler and more literal prompts always outperform complex ones.
-- **Never use brackets `[]` or `{}` in prompt text** — Gemini copies them verbatim into generated output.
-- Prefer plain declarative sentences over structured templates with placeholders.
-- When in doubt, cut prompt length — shorter prompts produce more predictable results.
-
-### 3. ARABIC VALIDATION
-Unicode character ratio checks must count **Arabic script characters only** (U+0600–U+06FF range), not total character count.
-The threshold is **≥ 70% Arabic script characters**. Counting punctuation, spaces, or digits in the denominator produces false failures.
-
-### 4. VALIDATION NON-BLOCKING
-Never hard-reject in a way that wastes generation credits.
-- Convert hard validation blocks into **warnings** that return the best available result.
-- The caller should decide whether to surface the warning or silently accept the output.
-- Hard `throw` in validation is only acceptable for structural/schema errors caught before any generation begins.
-
-### 5. SUB-STYLE SYSTEM
-- All 11 sub-styles carry **FORMAT definitions** (canvas dimensions + typography constraints), not just visual aesthetics.
-- Art direction applies to **all carousel slides** and **all batch designs** — not just slide 1.
-- All 20 visual styles are available to **all plans** — do not add plan gating to visual style selection.
-
-### 6. SERVER AUTHORITY
-Credit deduction, billing state, and plan checks are **always server-side**.
-- Never decrement credits or mutate plan state from the client.
-- `planconfig.ts` is the frontend source of truth for UI gating only; `functions/src/entitlements.ts` is the enforcement layer.
-- All Firestore credit transactions must use atomic transactions inside Cloud Functions.
+### 0. ALWAYS WRITE A LOCAL REPORT
+At the end of every multi-step task (investigations, refactors, batched migrations, model swaps, billing changes, anything with discrete numbered batches), write a Markdown report to `docs/investigations/` with a descriptive filename (e.g. `model-config-consolidation-batch1-report.md`, `stripe-migration-batch2-report.md`). Commit it. The chat output is ephemeral; the local file is the durable record of what was done, why, and what risks remain.
 
 ---
 

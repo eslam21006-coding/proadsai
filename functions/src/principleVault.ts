@@ -6,6 +6,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import * as admin from "firebase-admin";
+import { LOGIC_MODEL } from "./modelConfig.js";
 
 function getDb() { return admin.firestore(); }
 
@@ -57,8 +58,6 @@ interface StructuralTraits {
 }
 
 type GeminiCaller = (params: { model: string; contents: any; config?: any }) => Promise<any>;
-
-const LOGIC_MODEL = "gemini-2.5-flash-lite";
 
 // Phase-to-type relevance mapping
 const PHASE_TYPES: Record<string, string[]> = {
