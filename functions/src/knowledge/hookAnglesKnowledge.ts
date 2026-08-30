@@ -683,7 +683,7 @@ export const DELIVERY_FORMATS: Record<string, string> = {
     comedic: 'humor, irony, or a relatable funny scenario',
     storytelling: 'a compressed narrative arc ([character] + [situation] + [twist])',
     curiosity_gap: 'an information gap the reader cannot resist closing',
-    transformation_promise: 'a specific transformation + timeline (من X إلى Y في Z)',
+    transformation_promise: 'a specific transformation with a timeframe — a before-state, an after-state and how long it takes, arranged in a DIFFERENT sentence structure for each of the 4 hooks (question form / after-state first / timeframe first / imperative form) with no fixed word order',
     pain_point: 'a vivid specific pain scenario that feels personal',
     threat: 'a warning about consequences (if you keep doing X, then Y)',
 };
@@ -731,8 +731,8 @@ RESULT: A ${deliveryId}-formatted hook that CONTAINS ${angleRule}
 
 ${example ? `INSPIRATION (do NOT copy verbatim — create ORIGINAL hooks in this spirit):
 "${example}"
-↑ Notice how it satisfies BOTH the angle's hard rule AND the delivery's format.\n` : ''}THINK LIKE THIS: "I need [${angleRule}] → now I'll phrase it as [${deliveryFormat}]"
-NOT LIKE THIS: "I need [${deliveryFormat}] → maybe I'll add the angle's element if I feel like it"
+↑ Notice how it satisfies BOTH the angle's hard rule AND the delivery's format.\n` : ''}THINK LIKE THIS: "I need [${angleRule}] → now I'll phrase that in the STEP 2 delivery format"
+NOT LIKE THIS: "I'll write something in the STEP 2 delivery format → maybe I'll add the angle's element if I feel like it"
 `;
 };
 
