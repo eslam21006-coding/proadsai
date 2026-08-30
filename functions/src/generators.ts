@@ -2830,19 +2830,6 @@ INSTRUCTIONS FOR EACH HOOK (do NOT include these instructions in your output):
 - CTA_BUTTON = the call-to-action button text, followed by ||| then a CONNECTOR + short benefit line (2-5 words). The benefit MUST start with a natural connector word (و/ل/عشان/وابدأ/وحقق). Example: "${inputs.cta} ||| وابدأ تحقق دخل يليق بخبرتك" or "${inputs.cta} ||| وتوقف عن ملاحقة العملاء".
 - BANNED CTAs (do NOT author any of these as the CTA_BUTTON — the user's literal CTA is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs in this form: a specific verb, the offer, an arrow, then a payoff tied to the audience's pain or desired outcome.
 - Each hook explores a DIFFERENT dimension of the ${inputs.coldHookAngle} angle.
-- Hook A = FINANCIAL/REVENUE dimension. Hook B = TIME/LIFESTYLE dimension. Hook C = STATUS/IDENTITY dimension. Hook D = SKILL/CONFIDENCE dimension.
-
-⚠️ DIVERSITY RULE (CRITICAL — READ BEFORE WRITING):
-Each hook MUST use a COMPLETELY DIFFERENT sentence structure. Vary the opening word, sentence pattern, and emotional trigger.
-Structure types to rotate (use each ONCE, pick 4):
-- [percentage] + [audience] + [consequence]
-- [question word] + [specific loss or pain]
-- [imperative verb] + [action to stop/start]
-- [ratio] + [surprising fact]
-- [conditional "لو/إذا"] + [relatable scenario]
-- [direct address "أنت"] + [identity challenge]
-- [time reference] + [cost of delay]
-FORBIDDEN: Two hooks starting the same way. Generate 100% ORIGINAL text — do NOT reuse phrases from any examples in this prompt.
 
 OUTPUT FORMAT (fill in the values after each colon — do NOT output instructions, brackets, or dimension labels):
 
@@ -2988,21 +2975,12 @@ THIS IS NOT A SUGGESTION. THIS IS A MANDATORY REWRITE COMMAND.
 ` : ''}
 `;
 
-        const hookQualityBlock = `
-HOOK QUALITY FLOOR:
-- Professional direct-response quality. Specific to "${inputs.productName || 'this offer'}" for "${inputs.targetAudience || 'this audience'}".
-- Subheadlines must be complete sentences that end naturally.
-- Numbers/stats are powerful but NOT mandatory — a strong emotional hook without numbers is fine.
-- ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'Arabic: conversational business tone. Use action verbs that create urgency.' : 'English: sharp mentor tone, not corporate.'}
-- ORIGINALITY: Generate fresh copy. Do NOT reuse phrases from examples in this prompt.`;
-
         // Using Lite model with Retry logic
         // Use higher temperature when regenerating (previousOutput exists) to maximize diversity
         const isRegeneration = !!(previousOutput && previousOutput.trim().length > 20);
         const response = await retry(() => callGemini({
             model: isRegeneration ? CREATIVE_MODEL_LITE : CREATIVE_MODEL_PRO, // <--- HIGH IQ MODEL (PRO for first gen, LITE for regen)
-            contents: { parts: [{ text: `${prompt}
-${hookQualityBlock}` }] },
+            contents: { parts: [{ text: prompt }] },
             config: {
                 systemInstruction: SYSTEM_TOV,
                 temperature: isRegeneration ? 1.2 : 1.0 // Higher temp for regenerations to force diversity
