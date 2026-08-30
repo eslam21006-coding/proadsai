@@ -2656,7 +2656,7 @@ ${_phase23DrawnDimensions.map((d, i) => {
 }).join('\n')}
 
 ⚠️ The ANGLE stays the same. The DIMENSION SET rotates per project (deterministic seed, memory-biased). Do NOT drift to a different angle.
-${inputs.hookType ? `⚠️ ALL hooks must be delivered as ${inputs.hookType.toUpperCase()} — the format/style is constant.` : ''}`
+${inputs.hookType ? `⚠️ ALL hooks must be delivered as ${inputs.hookType.toUpperCase()} — the delivery STYLE is constant across all 4. The SENTENCE STRUCTURE inside that style must still be different for every hook.` : ''}`
         : `| Hook | Dimension | What varies |
 |------|-----------|------------|
 | A | Financial/Revenue | How the angle applies to money/income |
@@ -2665,7 +2665,7 @@ ${inputs.hookType ? `⚠️ ALL hooks must be delivered as ${inputs.hookType.toU
 | D | Skill/Confidence | How the angle applies to their abilities and certainty |
 
 ⚠️ The ANGLE stays the same. The DIMENSION changes. Do NOT drift to a different angle.
-${inputs.hookType ? `⚠️ ALL hooks must be delivered as ${inputs.hookType.toUpperCase()} — the format/style is constant.` : ''}`
+${inputs.hookType ? `⚠️ ALL hooks must be delivered as ${inputs.hookType.toUpperCase()} — the delivery STYLE is constant across all 4. The SENTENCE STRUCTURE inside that style must still be different for every hook.` : ''}`
 }
 ` : `
 Beyond headline TYPE, each hook should use a different EMOTIONAL angle:
@@ -2798,7 +2798,7 @@ PRODUCT LINKAGE (CRITICAL):
 - Target audience: "${inputs.targetAudience || 'coaches and consultants'}"  
 - Their core pain: "${inputs.challenges || 'pricing too low, losing premium clients'}"
 - The transformation: "${inputs.transformation || 'charge premium prices with confidence'}"
-- If the subheadline could work for a restaurant, a gym, or a tech startup — it's TOO GENERIC. Rewrite it.
+- If the subheadline could work for a completely different business in a different industry without changing a word — it's TOO GENERIC. Rewrite it.
 
 LANGUAGE:
 - ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'Conversational Arabic. Write like a sharp business mentor speaks face-to-face — not a textbook, not a newspaper, not a Friday sermon.' : 'Conversational English. Write like a sharp mentor talks — not corporate, not academic.'}
@@ -2820,29 +2820,11 @@ ${inputs.hookType ? `2. DELIVERY (${inputs.hookType}) — PACKAGING: Is the angl
 ${(inputs as any).copywritingStrategy ? `3. STRATEGY (${(inputs as any).copywritingStrategy}) — ENERGY: Does the tone/pacing reflect this strategy? (Priority 3 — flavors the output)` : ''}
 If ANY layer is missing from ANY hook, REWRITE it. The angle's hard rule is the FIRST thing to verify — if it fails, the hook fails regardless of delivery or strategy.
 
-${READING_LEVEL_BLOCK}
-${LIVED_SYMPTOM_BLOCK}
-${FABRICATION_POLICY_BLOCK}
-
 INSTRUCTIONS FOR EACH HOOK (do NOT include these instructions in your output):
 - HOOK_TEXT = the headline. Max 8 words. Write in ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'Arabic' : 'the project language'}. Must be punchy direct-response copy.
 - SUBHEADLINE = the supporting line. Max ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? '12' : '8'} words. Must be a COMPLETE sentence that ends naturally. Never end on a conjunction.
 - CTA_BUTTON = the call-to-action button text, followed by ||| then a CONNECTOR + short benefit line (2-5 words). The benefit MUST start with a natural connector word (و/ل/عشان/وابدأ/وحقق). Example: "${inputs.cta} ||| وابدأ تحقق دخل يليق بخبرتك" or "${inputs.cta} ||| وتوقف عن ملاحقة العملاء".
-- BANNED CTAs (do NOT author any of these as the CTA_BUTTON — the user's literal CTA is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs in this form: a specific verb, the offer, an arrow, then a payoff tied to the audience's pain or desired outcome.
 - Each hook explores a DIFFERENT dimension of the ${inputs.coldHookAngle} angle.
-- Hook A = FINANCIAL/REVENUE dimension. Hook B = TIME/LIFESTYLE dimension. Hook C = STATUS/IDENTITY dimension. Hook D = SKILL/CONFIDENCE dimension.
-
-⚠️ DIVERSITY RULE (CRITICAL — READ BEFORE WRITING):
-Each hook MUST use a COMPLETELY DIFFERENT sentence structure. Vary the opening word, sentence pattern, and emotional trigger.
-Structure types to rotate (use each ONCE, pick 4):
-- [percentage] + [audience] + [consequence]
-- [question word] + [specific loss or pain]
-- [imperative verb] + [action to stop/start]
-- [ratio] + [surprising fact]
-- [conditional "لو/إذا"] + [relatable scenario]
-- [direct address "أنت"] + [identity challenge]
-- [time reference] + [cost of delay]
-FORBIDDEN: Two hooks starting the same way. Generate 100% ORIGINAL text — do NOT reuse phrases from any examples in this prompt.
 
 OUTPUT FORMAT (fill in the values after each colon — do NOT output instructions, brackets, or dimension labels):
 
@@ -2871,14 +2853,10 @@ CTA_BUTTON: ${inputs.cta} |||
 HOOK_END_D
 ` : `
 ${(inputs as any).copywritingStrategy ? `⚠️ COPYWRITING STRATEGY: ${(inputs as any).copywritingStrategy}\nEvery hook must reflect this strategy in its approach. If a hook doesn't clearly use this framework, REWRITE it.\n` : ''}
-${READING_LEVEL_BLOCK}
-${LIVED_SYMPTOM_BLOCK}
-${FABRICATION_POLICY_BLOCK}
 INSTRUCTIONS FOR EACH HOOK (do NOT include these instructions in your output):
 - HOOK_TEXT = the headline. Max 8 words. Write in ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'Arabic' : 'the project language'}. Must be punchy direct-response copy.
 - SUBHEADLINE = the supporting line. Max ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? '12' : '8'} words. Must be a COMPLETE sentence that ends naturally. Never end on a conjunction.
 - CTA_BUTTON = the call-to-action button text, followed by ||| then a CONNECTOR + short benefit line (2-5 words). The benefit MUST start with a natural connector word (و/ل/عشان/وابدأ/وحقق). Example: "${inputs.cta} ||| وابدأ تحقق دخل يليق بخبرتك" or "${inputs.cta} ||| وتوقف عن ملاحقة العملاء".
-- BANNED CTAs (do NOT author any of these as the CTA_BUTTON — the user's literal CTA is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs in this form: a specific verb, the offer, an arrow, then a payoff tied to the audience's pain or desired outcome.
 - Hook A = Direct/How-To type, Greed angle. Hook B = Question/Challenge type, Fear angle. Hook C = News/Testimonial type, Proof angle. Hook D = Command/Reason-Why type, Curiosity angle.
 
 OUTPUT FORMAT (fill in the values after each colon — do NOT output instructions, brackets, or dimension labels):
@@ -2947,6 +2925,24 @@ So make each hook ESPECIALLY strong as an opening that creates curiosity to swip
 ═══════════════════════════════════════════════════════════════════════════════
 ` : ''}
 
+═══════════════════════════════════════════════════════════════════════════════
+AUDIENCE GROUNDING (MANDATORY — every hook must pass this test)
+═══════════════════════════════════════════════════════════════════════════════
+
+The target audience is: ${inputs.targetAudience}
+Their daily pain is: ${inputs.challenges}
+The transformation they want: ${inputs.transformation}
+
+1. Every hook MUST contain at least one word or phrase that only someone in this specific audience would instantly recognize. Draw that vocabulary from the audience and daily pain fields above. Abstract words that could apply to any business — chaos, stability, success, system, growth, transformation — FAIL this test on their own.
+2. Before writing each hook, ask: could this exact hook be shown to a completely different audience in a different industry without changing a single word? If yes, it is too vague. Rewrite it using the specifics above.
+3. The subheadline must name the mechanism or product that delivers the transformation. It must NOT restate the hook in different words.
+4. Do not invent details about the audience that are not present in the fields above. If the audience field is broad, ground the hook in the daily pain field instead.
+
+${READING_LEVEL_BLOCK}
+${LIVED_SYMPTOM_BLOCK}
+${FABRICATION_POLICY_BLOCK}
+- BANNED CTAs (do NOT author any of these as the CTA_BUTTON — the user's literal CTA is preserved verbatim, but YOUR connector/benefit line must not be one of these): ${BANNED_CTA_LIST.join(', ')}. Write CTAs in this form: a specific verb, the offer, an arrow, then a payoff tied to the audience's pain or desired outcome.
+
 CRITICAL: Replace ALL placeholders with real copy. Never output placeholder text.
 
 ${personalizationContext ? `
@@ -2988,21 +2984,12 @@ THIS IS NOT A SUGGESTION. THIS IS A MANDATORY REWRITE COMMAND.
 ` : ''}
 `;
 
-        const hookQualityBlock = `
-HOOK QUALITY FLOOR:
-- Professional direct-response quality. Specific to "${inputs.productName || 'this offer'}" for "${inputs.targetAudience || 'this audience'}".
-- Subheadlines must be complete sentences that end naturally.
-- Numbers/stats are powerful but NOT mandatory — a strong emotional hook without numbers is fine.
-- ${(inputs.adLanguage || 'ar_fusha').startsWith('ar') ? 'Arabic: conversational business tone. Use action verbs that create urgency.' : 'English: sharp mentor tone, not corporate.'}
-- ORIGINALITY: Generate fresh copy. Do NOT reuse phrases from examples in this prompt.`;
-
         // Using Lite model with Retry logic
         // Use higher temperature when regenerating (previousOutput exists) to maximize diversity
         const isRegeneration = !!(previousOutput && previousOutput.trim().length > 20);
         const response = await retry(() => callGemini({
             model: isRegeneration ? CREATIVE_MODEL_LITE : CREATIVE_MODEL_PRO, // <--- HIGH IQ MODEL (PRO for first gen, LITE for regen)
-            contents: { parts: [{ text: `${prompt}
-${hookQualityBlock}` }] },
+            contents: { parts: [{ text: prompt }] },
             config: {
                 systemInstruction: SYSTEM_TOV,
                 temperature: isRegeneration ? 1.2 : 1.0 // Higher temp for regenerations to force diversity

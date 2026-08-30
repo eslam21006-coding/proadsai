@@ -5565,11 +5565,15 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
 
     if (!deductCredits('generateHooks')) return;
 
-    // AUTO-NEW PROJECT: If current project already has hook/concept data, 
+    // AUTO-NEW PROJECT: If current project already has hook/concept data,
     // create a new project so we don't overwrite the previous one.
+    // Capture the new id into a local so subsequent reads in this same tick
+    // (before React commits the setState) use the freshly allocated id and
+    // not the stale currentProjectId captured by closure.
+    let effectiveProjectId = currentProjectId;
     if (tovText || conceptsText || buildPlan) {
-      const newId = Date.now().toString();
-      setCurrentProjectId(newId);
+      effectiveProjectId = Date.now().toString();
+      setCurrentProjectId(effectiveProjectId);
       setCurrentProjectName("Untitled Project");
     }
 
@@ -5625,14 +5629,14 @@ ${compHooks}
 DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highlight what makes this offer unique. Do NOT copy competitor messaging — position AGAINST them.`.trim();
     }
 
-    setInputs({ ...formData, _userId: user?.uid, competitorContext } as any); // Keep images in React State for later
+    setInputs({ ...formData, _userId: user?.uid, _projectId: effectiveProjectId, competitorContext } as any); // Keep images in React State for later
     const isMinimalProject = (formData.visualStyleFamily ?? formData.universeMode) === 'minimal';
     setCurrentProjectName(isMinimalProject ? `${formData.productName}_minimal` : `${formData.productName}_${universe}`);
     setCurrentAspectRatio(formData.aspectRatio);
     startLoad(isMinimalProject ? 'Starting Design Engine...' : `Rendering Universe [${universe}]...`);
 
     // SANITIZATION: Create a lightweight copy for the AI
-    const cleanInputs = { ...formData, personalPhotos: [], brandLogos: [], _userId: user?.uid, competitorContext };
+    const cleanInputs = { ...formData, personalPhotos: [], brandLogos: [], _userId: user?.uid, _projectId: effectiveProjectId, competitorContext };
 
     try {
       // ═══ TESTIMONIAL MODE: Extract text from screenshots before generation ═══
@@ -5751,7 +5755,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       if (inputs.adMode === 'carousel' && (inputs.slideCount || 1) > 1) {
         res = (await gemini.generateCarouselAngles(inputs, newUniverse, inputs.slideCount || 5, globalRefinement)).text;
       } else {
-        res = unwrapGen(await gemini.generateTOV(inputs, newUniverse, 'initial', '', globalRefinement));
+        res = unwrapGen(await gemini.generateTOV({ ...inputs, _projectId: currentProjectId } as any, newUniverse, 'initial', '', globalRefinement));
       }
 
       // Validate before accepting
@@ -5812,7 +5816,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
         // ALWAYS pass previous hooks so the model can explicitly avoid repeating them
         const hasRefinement = refinement && refinement.trim().length > 0;
         res = unwrapGen(await gemini.generateTOV(
-          inputs, resolvedUniverse,
+          { ...inputs, _projectId: currentProjectId } as any, resolvedUniverse,
           hasRefinement ? 'refresh' : 'initial',
           tovText || undefined,
           hasRefinement ? refinement : undefined
@@ -5973,7 +5977,7 @@ DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highl
       const editIntent = isRegenerate ? 'change_angle' as TovEditIntent : classifiedIntent;
       const semanticLock = isRegenerate ? undefined : deriveSemanticLockFromHook(currentHookText, inputs);
 
-      const res = unwrapGen(await gemini.generateTOV(inputs, resolvedUniverse, 'precision', currentHookText, '', instruction, index, editIntent, rewriteScope, semanticLock));
+      const res = unwrapGen(await gemini.generateTOV({ ...inputs, _projectId: currentProjectId } as any, resolvedUniverse, 'precision', currentHookText, '', instruction, index, editIntent, rewriteScope, semanticLock));
 
       if (res) {
         // Find the new hook in the response
@@ -8975,7 +8979,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                                 const isCarousel = inputs.adMode === 'carousel' && (inputs.slideCount || 1) > 1;
                                 const res = isCarousel
                                   ? (await gemini.generateCarouselAngles(inputs, resolvedUniverse, inputs.slideCount || 5, likeThisPrompt)).text
-                                  : unwrapGen(await gemini.generateTOV(inputs, resolvedUniverse, 'refresh', tovText, likeThisPrompt));
+                                  : unwrapGen(await gemini.generateTOV({ ...inputs, _projectId: currentProjectId } as any, resolvedUniverse, 'refresh', tovText, likeThisPrompt));
                                 if (res) {
                                   const newHookValidation = validateCanonicalHooks(res);
                                   if (newHookValidation.count >= 1) {
