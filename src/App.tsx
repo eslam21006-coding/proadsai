@@ -5565,11 +5565,15 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
 
     if (!deductCredits('generateHooks')) return;
 
-    // AUTO-NEW PROJECT: If current project already has hook/concept data, 
+    // AUTO-NEW PROJECT: If current project already has hook/concept data,
     // create a new project so we don't overwrite the previous one.
+    // Capture the new id into a local so subsequent reads in this same tick
+    // (before React commits the setState) use the freshly allocated id and
+    // not the stale currentProjectId captured by closure.
+    let effectiveProjectId = currentProjectId;
     if (tovText || conceptsText || buildPlan) {
-      const newId = Date.now().toString();
-      setCurrentProjectId(newId);
+      effectiveProjectId = Date.now().toString();
+      setCurrentProjectId(effectiveProjectId);
       setCurrentProjectName("Untitled Project");
     }
 
@@ -5625,14 +5629,14 @@ ${compHooks}
 DIRECTIVE: Use this intelligence to make the ad DISTINCT from competitors. Highlight what makes this offer unique. Do NOT copy competitor messaging — position AGAINST them.`.trim();
     }
 
-    setInputs({ ...formData, _userId: user?.uid, _projectId: currentProjectId, competitorContext } as any); // Keep images in React State for later
+    setInputs({ ...formData, _userId: user?.uid, _projectId: effectiveProjectId, competitorContext } as any); // Keep images in React State for later
     const isMinimalProject = (formData.visualStyleFamily ?? formData.universeMode) === 'minimal';
     setCurrentProjectName(isMinimalProject ? `${formData.productName}_minimal` : `${formData.productName}_${universe}`);
     setCurrentAspectRatio(formData.aspectRatio);
     startLoad(isMinimalProject ? 'Starting Design Engine...' : `Rendering Universe [${universe}]...`);
 
     // SANITIZATION: Create a lightweight copy for the AI
-    const cleanInputs = { ...formData, personalPhotos: [], brandLogos: [], _userId: user?.uid, _projectId: currentProjectId, competitorContext };
+    const cleanInputs = { ...formData, personalPhotos: [], brandLogos: [], _userId: user?.uid, _projectId: effectiveProjectId, competitorContext };
 
     try {
       // ═══ TESTIMONIAL MODE: Extract text from screenshots before generation ═══

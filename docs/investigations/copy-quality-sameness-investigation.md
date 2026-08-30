@@ -1,6 +1,7 @@
 # Investigation — Phase 23 Anti-Sameness & Phase 22 Copy Quality (+ Gender/Wardrobe)
 
 **Date:** 2026-08-30
+**Baseline commit:** `9d45d2c` (PR #67 base — `main` immediately before PR #68's `prompt-restructure` branch).
 **Scope:** Read-only diagnosis. No source file was modified.
 **Repo:** `D:\Pro Ads AI - SaaS - FAL` — backend `functions/src/`
 **Method:** static reading + **execution of the compiled production code** (`functions/lib/`) to
@@ -40,7 +41,7 @@ It is an *execution dimension inside one locked hook angle* — e.g. for `emotio
 
 **Pool sizes — verified by execution** (all eleven registry keys):
 
-```
+```text
 urgency 6   scarcity 6   social_proof 6   logic 6   emotional 6   pain 6
 curiosity 6 statistics 6 logical_authority 6 future_based 6
 fear_of_missing_out 6   (alias -> POOL_SCARCITY, hookAnglesKnowledge.ts:1356)
@@ -56,12 +57,12 @@ per angle**, and any two draws for the same angle necessarily share at least 2 o
 
 1. `pool = ANGLE_DIMENSION_POOLS[angleKey] || []` (`:1452`) — empty pool ⇒ `[]` (`:1453`).
 2. Recency map built from `memory.flatMap(m => m.dimensionIds)` (`:1457-1461`).
-3. RNG is `makeRng(stringHash32(\`${angleKey}|${seed}\`))` (`:1462`) — Mulberry32, `makeRng` at `:1417-1426`.
+3. RNG is ``makeRng(stringHash32(`${angleKey}|${seed}`))`` (`:1462`) — Mulberry32, `makeRng` at `:1417-1426`.
 4. Gumbel-max weighted sample: `weight = 1/(1+r)`, `key = -log(u)/weight`, ascending sort, take `target` (`:1469-1480`).
 5. Angle-lock guard drops entries whose `angleKey` mismatches (`:1487-1496`); defensive fallback returns `pool.slice(0, target)` (`:1497-1501`).
 
 `drawOpenings` (`:1510-1542`) is the same algorithm over the fixed 7-form `OPENING_STRUCTURES`,
-seeded with `stringHash32(\`openings|${seed}\`)` (`:1526`).
+seeded with ``stringHash32(`openings|${seed}`)`` (`:1526`).
 
 **External state dependency.** Two inputs, both external:
 
@@ -122,7 +123,7 @@ client-side (`src/App.tsx:1736` `currentProjectId`) and *is* sent to other calla
 **No — and worse, it does not change between DIFFERENT projects either.** Executed against the
 compiled production code:
 
-```
+```text
 SEED(uid='UID123456789', projectId=undefined, angle='emotional') = 1262303019
 SEED again                                                       = 1262303019   identical: true
 DIMS      : emotional_relief, emotional_pride, emotional_belonging, emotional_fear
@@ -186,7 +187,7 @@ distinguishing "no history" from "history exists but fell outside the 40-doc win
 **Feedback-loop behaviour (executed, `p23sim.js`).** Replaying the exact read/filter/draw/write
 loop for 8 consecutive generations, memory bias present:
 
-```
+```text
 ### angle=emotional  seed=1262303019  pool=6
 gen1 dims=[relief,pride,belonging,fear]       openings=[percentage,time_reference,conditional,ratio]
 gen2 dims=[fear,belonging,frustration,relief] openings=[percentage,imperative,direct_address,conditional]
@@ -215,7 +216,7 @@ seed cannot produce set-level variety.
 ## 1.4 — WIRING INTO THE HOOK GENERATION PROMPT
 
 **Which function assembles the hook prompt:** `generateTOV` — `functions/src/generators.ts:1905`.
-The prompt literal is `const prompt = \`` at `generators.ts:2401`, closing at `generators.ts:2997`;
+The prompt literal is ``const prompt = ` `` at `generators.ts:2401`, closing at `generators.ts:2997`;
 `hookQualityBlock` (`:2999-3005`) is concatenated at the call
 (`generators.ts:3010-3018`, `model: CREATIVE_MODEL_PRO` = `gemini-3.1-pro-preview`
 (`generators.ts:1277`), `systemInstruction: SYSTEM_TOV`, `temperature: 1.0`).
@@ -243,7 +244,7 @@ gate on the Phase 23 rotation. `functions/src/modelConfig.ts` (37 lines) contain
 Produced by executing the compiled `getAngleVariationBlueprintRotated` with the real
 `makeProjectSeed` / `drawDimensions` / `drawOpenings` output (seed `1262303019`, memory `[]`):
 
-```
+```text
 【EMOTIONAL — ROTATED DIMENSION FILL — same locked angle, rotated dimension set】
 This is project-to-project anti-sameness. The user's angle is unchanged.
 The 4 dimensions below were drawn (deterministic seed) from the angle's
@@ -495,7 +496,7 @@ provider, plan, or campaign type.
 **Before or after the main instruction block?** **After the strategy blocks, and crucially BEFORE
 the last hard-coded overrides.** Ordered offsets from the captured prompt:
 
-```
+```text
 26,277  READING_LEVEL_BLOCK
 27,135  LIVED_SYMPTOM_BLOCK
 28,074  FABRICATION_POLICY_BLOCK
@@ -549,13 +550,19 @@ words (`generators.ts:3000-3005`) without referencing 6th-grade level or lived s
 |---|---|
 | Policy prose + output contract | `functions/src/copywriting_knowledge.ts:739-768`, contract at `:762-763` |
 | Duplicate prose in system prompt | `functions/src/promptConstants.ts:22` |
-| Parser | `functions/src/generators.ts:815-838` — regex `claimRe` at `:827`: `/^\s*CLAIM_FLAG\s*:\s*(.+?)\s+(?:\u2014|\u2013|-|:)\s+(.+?)\s*$/i` |
+| Parser | `functions/src/generators.ts:815-838` — `claimRe` defined at `:827` (literal moved below) |
 | Field extractor wrapper | `generators.ts:856-871` |
 | Trace write | `generators.ts:6388-6394` → `_lastResolutionTrace.claimFlags` |
 | Type | `src/types.ts:730-744` (`ClaimFlagEntry`), backend `functions/src/types.ts` import at `generators.ts:48` |
 | Strip-from-copy call sites | `generators.ts:753`, `:857`, `:3287` |
 | Gate-side re-emit | `copyScoringGate.ts:418-481`, `:1273-1304`, `:1392-1397`, `:1525-1534` |
 | Frontend parser | `src/utils/hookVariationParser.ts:12-13, 35-36, 63-90, 151-173` |
+
+`claimRe` literal (moved out of the table because the alternation pipes confuse Markdown table parsing):
+
+```regex
+/^\s*CLAIM_FLAG\s*:\s*(.+?)\s+(?:—|–|-|:)\s+(.+?)\s*$/i
+```
 
 **What triggers it.** **Nothing in code triggers it.** There is no detector, no heuristic, no
 regex over the generated copy that classifies a claim as fabricated. The flag is **entirely
@@ -700,7 +707,7 @@ forbids inference:
 
 - `generators.ts:3662-3669`
 
-  ```
+  ```text
   ⚠️ CRITICAL GENDER RULE - MANDATORY:
   - You DO NOT know the gender of the person in Box A. The photos are processed separately.
   - ALWAYS use gender-neutral language: "The Hero", "They", "Their", "Them"
@@ -728,7 +735,7 @@ prompt was authored by a model that could not.
 
 **Definition:** `functions/src/culturalCompliance.ts:155-157`
 
-```
+```text
 ARABIC MARKET WARDROBE RULES:
 - Everyone dressed conservatively and modestly. Female: shoulders covered, no cleavage, hem below
   knee or trousers; hijab ONLY if present in Box A — never add or remove it. Male: no tank tops,
@@ -800,7 +807,7 @@ So the model is told, in order: (1) you cannot see the photo, (2) never mention 
 
 Ordered by impact on the two reported symptoms.
 
-### RC-1 — The rotation seed is frozen: `projectId` is never sent, so it degenerates to `(user, angle, UTC-day)`
+## RC-1 — The rotation seed is frozen: `projectId` is never sent, so it degenerates to `(user, angle, UTC-day)`
 
 *Impact: highest. Primary cause of "hooks are template-locked".*
 
@@ -814,7 +821,7 @@ user creates on a given day**. Verified by execution: repeat calls return the sa
 (`1262303019`) and the same ordered dimension list. "Project-to-project anti-sameness"
 (`hookAnglesKnowledge.ts:1580`) cannot exist when the seed has no project term.
 
-### RC-2 — Later hard-coded instructions override the rotation inside the same prompt
+## RC-2 — Later hard-coded instructions override the rotation inside the same prompt
 
 *Impact: highest. Independent of RC-1 — even a perfect draw would be discarded.*
 
@@ -829,7 +836,7 @@ self-cancelling: `getAngleVariationBlueprintRotated` **prepends** to
 appended directly beneath the rotated one, and the rotated openings are explicitly demoted to
 *"SOFT GUIDANCE"* (`hookAnglesKnowledge.ts:1584`).
 
-### RC-3 — The reported `"من X للY بـ[timeframe]"` template is a delivery-style feature, not a Phase 23 failure
+## RC-3 — The reported `"من X للY بـ[timeframe]"` template is a delivery-style feature, not a Phase 23 failure
 
 *Impact: high. It is the literal shape the user is seeing.*
 
@@ -841,7 +848,7 @@ appended directly beneath the rotated one, and the rotated openings are explicit
 rotate sentence structure**, so selecting this delivery style pins every hook to one template no
 matter what the rotation draws.
 
-### RC-4 — Pool arithmetic makes set-level variety impossible even when everything works
+## RC-4 — Pool arithmetic makes set-level variety impossible even when everything works
 
 *Impact: high.*
 
@@ -852,7 +859,7 @@ The in-code comment promising a *"6–8 dimension pool"* (`hookAnglesKnowledge.t
 The simulated 8-generation feedback loop shows two dimensions appearing in 8/8 draws per angle and
 the urgency set converging back to its gen-1 value.
 
-### RC-5 — The memory read fails silently to a fixed draw, not to randomness, and its window is angle-blind
+## RC-5 — The memory read fails silently to a fixed draw, not to randomness, and its window is angle-blind
 
 *Impact: high — this is the "inconsistent, then locked" amplifier.*
 
@@ -866,7 +873,7 @@ bias for the current angle. Nothing distinguishes "no history" from "read failed
 outside the window": `memoryBiasApplied` is `false` in all three
 (`generators.ts:2387`, `:3166`).
 
-### RC-6 — The Phase 22 quality blocks sit at 63–75% depth, with 10,453 chars of contradicting instruction after them
+## RC-6 — The Phase 22 quality blocks sit at 63–75% depth, with 10,453 chars of contradicting instruction after them
 
 *Impact: high. Primary cause of "copy quality has degraded".*
 
@@ -878,7 +885,7 @@ that re-states quality in different words, omits all three rules, and explicitly
 (*"Numbers/stats are powerful but NOT mandatory"*, `:3003`). Only the carousel surface
 (`generators.ts:9135-9138`) places the blocks last, where they carry weight.
 
-### RC-7 — The fabrication policy has no detector, no enforcement, and no user-visible surface — and the prompt tells the model to fabricate
+## RC-7 — The fabrication policy has no detector, no enforcement, and no user-visible surface — and the prompt tells the model to fabricate
 
 *Impact: high. Direct cause of "fabricated statistics getting through".*
 
@@ -894,7 +901,7 @@ the long-form caption, only under `value_stack` / `offer_card`, and only over cu
 "honest-degradation rules" are **NOT FOUND** as code. `"85% يخشون الاستقالات"` therefore passes
 every layer untouched.
 
-### RC-8 — The copy scoring gate rewrites Arabic with `gpt-4o-mini` under a prompt containing no language or grammar rules
+## RC-8 — The copy scoring gate rewrites Arabic with `gpt-4o-mini` under a prompt containing no language or grammar rules
 
 *Impact: high. Most likely cause of "sentences that don't parse".*
 
@@ -909,7 +916,7 @@ and the only post-checks are structural: length ≤ 2× (`:619`), no newline (`:
 marker (`:613`), marker-count preservation (`:483-513`). `validateHookResponse` ran **before** the
 gate (`generators.ts:3117` vs `:3195`), so nothing re-validates the rewritten Arabic afterwards.
 
-### RC-9 — Language gating is inconsistent: dialect Arabic is classified as English by the gate; `SYSTEM_TOV` hard-codes Fusha for every language
+## RC-9 — Language gating is inconsistent: dialect Arabic is classified as English by the gate; `SYSTEM_TOV` hard-codes Fusha for every language
 
 *Impact: medium.*
 
@@ -923,7 +930,7 @@ is judging English. This diverges from the canonical predicate `isArabic()`
 English, French, and dialect ads alike. Note the demo template at `src/App.tsx:8435` ships
 `adLanguage: 'ar_egyptian'` — the dialect path is a default, not an edge case.
 
-### RC-10 — Two of the six Phase 22 constants are dead, and the "shared source of truth" is not shared
+## RC-10 — Two of the six Phase 22 constants are dead, and the "shared source of truth" is not shared
 
 *Impact: medium (drift risk, not an active regression).*
 
@@ -937,7 +944,7 @@ without any test failing. `BANNED_CTA_LIST` is likewise duplicated by hand in
 (`RETARGETING_RULES` is imported at `generators.ts:13` and never referenced), so the wiring landed
 in ad-hoc inline positions instead.
 
-### RC-11 — The retargeting surface gets the quality blocks at the top of the prompt; the cold surface does not get them there at all
+## RC-11 — The retargeting surface gets the quality blocks at the top of the prompt; the cold surface does not get them there at all
 
 *Impact: medium. Explains why cold ads degrade more than retargeting ads.*
 
@@ -946,7 +953,7 @@ in ad-hoc inline positions instead.
 strongest position in the prompt. The **cold** branch (`generators.ts:2064-2073`) receives none of
 them there; cold ads first meet the blocks ~25,750 characters later at `generators.ts:2831`.
 
-### RC-12 — Hero gender is never captured, and the Arabic prompt defaults to masculine while simultaneously banning gender assumptions
+## RC-12 — Hero gender is never captured, and the Arabic prompt defaults to masculine while simultaneously banning gender assumptions
 
 *Impact: medium (the Part 3 defect).*
 
