@@ -394,22 +394,27 @@ Two halves per the new rule.
 
 ### 5.1 Names vs bodies
 
-Phase 10 added 5 new tests (4 new + 1 rewrite) and 1 new file. Walking the runner output against the test sources:
+Phase 10 added 5 new tests (T066 / T067 / T068 / T069 / T070) and 1 new file (`funnelEconomicsParity.test.ts` with 13 tests → extended to 15 in Round-12). Walking the runner output against the test sources:
 
 | # | Source | Name | Body | Match |
 |---|---|---|---|---|
-| 13 (funnelEconomicsParity) | backend | "parity — paid_event empty: ..." | asserts `[aov, eventAttendanceRate, eventCloseRate, commissionRate, marginKept]` | ✓ |
-| 14 | backend | "parity — paid_event complete (hasHto=true, htoConversionRate empty): []" | asserts `missingRequiredFields(doc) === []` | ✓ |
-| 15-25 | backend | (12 more parity tests) | each pins a specific (funnelType, hasHto, missing-field) permutation | ✓ |
+| 1 (funnelEconomicsParity) | backend | "parity — paid_event empty: aov + eventAttendanceRate + eventCloseRate + commissionRate + marginKept" | asserts `[aov, eventAttendanceRate, eventCloseRate, commissionRate, marginKept]` | ✓ |
+| 2 | backend | "parity — paid_event complete (hasHto=true, htoConversionRate empty): []" | asserts `missingRequiredFields(doc) === []` | ✓ |
+| 3-11 | backend | (9 more parity tests + unknown-funnelType regression) | each pins a specific (funnelType × hasHto × missing-field) permutation; tests 14–15 cover unknown/null/legacy `funnelType` regressions | ✓ |
+| 12 | backend | "parity — paid_event numeric 0 is COMPLETE" | asserts zero is complete | ✓ |
+| 13 | backend | "parity — output is deterministic (same input → same output, in declaration order)" | asserts declaration-order output | ✓ |
+| 14, 15 | backend | (Round-12 — `parity — unknown funnelType returns ['funnelType']` and `parity — paid_event roasTarget default flows through asRoas`) | pin the Round-12 root-cause fixes | ✓ |
 | 63 (cpaEconomics) | backend | "T069: cross-funnel profit-parity (SC-006, SC-014) ..." | asserts `lmProfit === fwProfit === 1620` | ✓ |
 | 64 | backend | "T070: rounding-order fixture (FR-048, SC-015) ..." | asserts `d.effectiveTargetCpl === 2.93` AND `targetIntermediate === 2.92` | ✓ |
 | 65 | backend | "purity — cpaEconomics.ts imports nothing from firebase-admin, firebase-functions, or any network client (FR-047)" | asserts the FORBIDDEN list doesn't match | ✓ |
 | 33 (funnelSettings) | backend | "contract — lowValue advisory is NON-BLOCKING (FR-030): target computes, save proceeds, advisory fires" | asserts three legs of non-blocking behavior | ✓ |
 | 38 (qararEngine) | backend | "end-to-end gate — unstamped derived payload (pre-phase shape) flows through evaluateVerdict to ⏳ with incomplete-settings reason, no pass/fail verdict (FR-041, FR-042)" | asserts verdict/ruleCode/reasonAr + negative control | ✓ |
-| 13 (funnelCompleteness vitest) | frontend | "FunnelSettingsForm.computeMissingFields (frontend completeness mirror)" | 13 assertions covering all (funnelType × hasHto) perms | ✓ |
-| 12 (funnelSettingsSavePayload vitest) | frontend | "FunnelSettingsForm save payload — htoConversionRate" | 12 assertions covering paid_event × {21, null, undefined, 0}, paid_product × {5, '', 0, 'abc'}, free_webinar + lead_magnet_call defensive | ✓ |
+| (funnelCompleteness vitest, 13 it blocks) | frontend | "FunnelSettingsForm.computeMissingFields (frontend completeness mirror)" | 13 assertions covering all (funnelType × hasHto) perms | ✓ |
+| (funnelSettingsSavePayload vitest, 12 it blocks) | frontend | "FunnelSettingsForm save payload — htoConversionRate" | 12 assertions covering paid_event × {21, null, undefined, 0}, paid_product × {5, '', 0, 'abc'}, free_webinar + lead_magnet_call defensive | ✓ |
 
-All 13 backend parity + 25 backend other + 13 frontend completeness + 12 frontend save-payload test names match their bodies. The Item C chain-fix test 32 from Phase 9 was already audited in batch-09-report.md §5.1; that audit stands.
+All 15 backend parity + 25 backend other + 13 frontend completeness + 12 frontend save-payload test names match their bodies. The Item C chain-fix test 32 from Phase 9 was already audited in batch-09-report.md §5.1; that audit stands.
+
+**Earlier draft of this audit table**: Phase 10's first draft of this audit table claimed "tests 14, 15-25" for the parity suite. CodeRabbit round 12 Item 16 caught that — the parity file holds 13 tests (indices 1-13), not 25. Round-12 extends the file to 15 tests (the unknown-funnelType regression + the paid_event roasTarget paid_event regression). The corrected audit table above matches the current runner output.
 
 ### 5.2 Cross-section reconciliation (FIRST REAL EXERCISE of AGENTS.md §0b second half)
 

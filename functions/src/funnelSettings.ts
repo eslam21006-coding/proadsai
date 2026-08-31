@@ -76,6 +76,24 @@ export interface FunnelSettingsDoc {
      * null verbatim across saves — see `resolveHtoConversionRateForStorage`.
      */
     htoConversionRate: number | null;
+    /**
+     * Phase 968 — T045 (US3). paid_event only. Event-attendance rate
+     * (percent, 0–100). The corrected formula reads
+     * `eventAttendanceRate × eventCloseRate` on the HTO term (FR-011..FR-014).
+     * Required for `paid_event` completeness when `hasHto === true`.
+     * Round-12 (CodeRabbit round 12 Items 3+5): this field was missing
+     * from the doc shape AND was never written by `saveFunnelSettings`,
+     * so a reloaded paid_event record lost both rates and was reported
+     * as incomplete. Persisted on `paid_event` only — `0` on every
+     * other funnel type for the additive-storage compatibility of the
+     * legacy fields.
+     */
+    eventAttendanceRate: number;
+    /**
+     * Phase 968 — T045 (US3). paid_event only. Event-close rate
+     * (percent, 0–100). See `eventAttendanceRate` above.
+     */
+    eventCloseRate: number;
     roasTarget: 1.0 | 0.65 | 0.5;
     offerPrice: number | null;
     attendanceRate: number | null;
@@ -164,6 +182,26 @@ function asRoas(v: unknown): 1.0 | 0.65 | 0.5 {
 function asFunnelType(v: unknown): FunnelInputs["funnelType"] {
     if (v === "paid_event" || v === "paid_product" || v === "free_webinar" || v === "lead_magnet_call") return v;
     throw new Error(`saveFunnelSettings: funnelType must be one of paid_event|paid_product|free_webinar|lead_magnet_call; got ${v}`);
+}
+
+/**
+ * Non-throwing variant of `asFunnelType`. Returns the literal type
+ * value when it matches, or `null` when the input is missing or
+ * unrecognized.
+ *
+ * Round-12 (CodeRabbit round 12 Items 7+8): `missingRequiredFields` calls
+ * `asFunnelType(doc.funnelType)` indirectly via the doc-construction
+ * path, and the call sites in `getFunnelSettings` (line 711) and
+ * `metaSync/shared.ts` (line 615) feed it raw Firestore data. A legacy or
+ * partially-written doc with `funnelType: null` or a value outside the
+ * four literals would throw at the predicate — turning `getFunnelSettings`
+ * into an exception (no response at all) and adding "load funnel settings
+ * failed" to the sync error log. The root-cause fix treats an unknown
+ * funnelType as `incomplete` rather than letting the throw escape.
+ */
+function asFunnelTypeOrNull(v: unknown): FunnelInputs["funnelType"] | null {
+    if (v === "paid_event" || v === "paid_product" || v === "free_webinar" || v === "lead_magnet_call") return v;
+    return null;
 }
 
 /**
@@ -322,7 +360,21 @@ function requiredFieldsForDoc(funnelType: FunnelInputs["funnelType"], hasHto: bo
  * observability log (T037) can both consult the same definition.
  */
 export function missingRequiredFields(doc: FunnelSettingsLike): ReadonlyArray<string> {
-    const funnelType = asFunnelType(doc.funnelType);
+    // Round-12 (CodeRabbit round 12 Items 7+8): a raw doc read from
+    // Firestore can have an unrecognized or missing `funnelType` (legacy
+    // doc, partially-saved doc, future schema bump). The previous code
+    // threw via `asFunnelType`, which propagated up through
+    // `getFunnelSettings` (line 711) and `metaSync/shared.ts` (line 615)
+    // and surfaced as a sync failure. Treat an unknown funnelType as
+    // incomplete: returning `["funnelType"]` forces
+    // `isSettingsComplete` to `false` via its length check, while leaving
+    // the doc's other fields alone (they're still typed correctly by
+    // Firestore). The single-field return keeps the audit-log line in
+    // `metaSync/shared.ts` sensible.
+    const funnelType = asFunnelTypeOrNull(doc.funnelType);
+    if (funnelType === null) {
+        return ["funnelType"];
+    }
     const hasHto = doc.hasHto === true;
     const fields = requiredFieldsForDoc(funnelType, hasHto);
     const missing: string[] = [];
@@ -420,8 +472,18 @@ function buildFunnelInputs(req: SaveFunnelSettingsRequest): FunnelInputs {
                 // to 0.5 (controlled front-end loss posture) when the
                 // request omits it. paid_product keeps the existing
                 // explicit-required behaviour.
+                //
+                // Round-12 (CodeRabbit round 12 Item 6): the prior code
+                // used `(req.roasTarget ?? DEFAULT_PAID_EVENT_ROAS_TARGET)`
+                // which skipped `asRoas()`'s runtime validation — an
+                // arbitrary string or number from the untyped request
+                // body would land in `deriveTargetCpa` and alter the
+                // computed target. Run the default through `asRoas` so the
+                // closed enum invariant holds regardless of what the
+                // client sent. The non-paid_event branch already used
+                // `asRoas`, so this preserves parity between both arms.
                 roasTarget: req.funnelType === "paid_event"
-                    ? (req.roasTarget ?? DEFAULT_PAID_EVENT_ROAS_TARGET)
+                    ? asRoas(req.roasTarget ?? DEFAULT_PAID_EVENT_ROAS_TARGET)
                     : asRoas(req.roasTarget),
             } satisfies PaidFunnelInputs;
         }
@@ -607,6 +669,17 @@ export const saveFunnelSettings = onCall(
                 // null on every other funnel type per data-model.md §1.
                 bookingRate: inputs.funnelType === "lead_magnet_call" ? inputs.bookingRate : null,
                 showUpRate: inputs.funnelType === "lead_magnet_call" ? inputs.showUpRate : null,
+                // Phase 968 — T045 (US3). paid_event event rates must be
+                // persisted on the doc so a reloaded record stays
+                // complete. Round-12 (CodeRabbit round 12 Items 3+5):
+                // the prior construction omitted both fields, so a
+                // reloaded paid_event document lost both rates, the
+                // backend's `missingRequiredFields` listed them as
+                // missing, and the form re-substituted 75/7.5 on
+                // hydration. Persist the derivation's coerced values
+                // (the request payload has been validated above).
+                eventAttendanceRate: inputs.funnelType === "paid_event" ? inputs.eventAttendanceRate : 0,
+                eventCloseRate: inputs.funnelType === "paid_event" ? inputs.eventCloseRate : 0,
                 // Phase 968 — T027. commissionRate + marginKept apply to all
                 // four funnel types per FR-023/FR-024/OQ-1.
                 commissionRate: inputs.commissionRate,

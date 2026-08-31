@@ -1463,7 +1463,14 @@ interface MenuItemsProps {
  * site) keeps labels, icons, and conditional entries in lockstep.
  */
 const MenuItems: React.FC<MenuItemsProps> = (props) => {
-  const { t, isDarkMode, lang, milestones, phase, metaConnection, metaSyncing, funnelSettingsAvailable, funnelSettingsComplete, activeWorkspaceNeedsMetaAccount, isTeamMember } = props;
+  // Round-12 (CodeRabbit round 12 Item 18): `isTeamMember` was destructured
+  // here but never referenced in this MenuItems body. The comment at the
+  // top of the Meta block references guards on "those specific MenuItem
+  // blocks below" — those guards use `userData.isTeamMember` and
+  // `data.isTeamMember` (variables bound elsewhere, not the destructure
+  // here). Drop the unused destructure to satisfy
+  // `@typescript-eslint/no-unused-vars`.
+  const { t, isDarkMode, lang, milestones, phase, metaConnection, metaSyncing, funnelSettingsAvailable, funnelSettingsComplete, activeWorkspaceNeedsMetaAccount } = props;
   const items: Array<{ key: string; el: React.ReactNode }> = [
     { key: 'new', el: <MenuItem key="new" icon="fa-plus" label={t('history.newProject')} onClick={props.onNewProject} /> },
     { key: 'bookmarks', el: <MenuItem key="bookmarks" icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={props.onSavedRenders} /> },
@@ -4347,7 +4354,19 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
         // `complete === undefined` means the backend hasn't been
         // redeployed yet (pre-Phase-5) — fall back to "no record ⇒
         // not incomplete" so the badge stays silent during rollout.
-        setFunnelSettingsComplete(data?.settings != null && data.complete === true);
+        //
+        // Round-12 (CodeRabbit round 12 Item 13): the previous expression
+        // `data?.settings != null && data.complete === true` evaluated to
+        // `false` whenever `data.complete` was `undefined` AND a settings
+        // record existed — turning the badge ON instead of leaving it
+        // silent. `data?.complete !== false` inverts the rollout fallback:
+        // it's `true` when complete is `true` OR `undefined`, and `false`
+        // only when complete is explicitly `false`. Records the three
+        // documented cases:
+        //   complete === true      → complete (badge silent)
+        //   complete === false     → incomplete (badge visible)
+        //   complete === undefined → silent during rollout
+        setFunnelSettingsComplete(data?.complete !== false);
       } catch {
         if (!cancelled) setFunnelSettingsHasDoc(null);
       }
@@ -12860,7 +12879,17 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     .map(w => ({ id: w.id, name: w.name, metaAdAccountId: w.metaAdAccountId ?? null, metaAdAccountName: w.metaAdAccountName ?? null }))
                 }
                 isTeamMember={isTeamMemberUser}
-                onSaved={() => {
+                onSaved={(saved) => {
+                  // Phase 968 — T057 / Item C (CodeRabbit round 12):
+                  // The badge must clear after the user completes the record.
+                  // `saveFunnelSettings` rejects incomplete saves with
+                  // `invalid-argument`, so if `saved` is a doc, the record is
+                  // complete by definition. Re-running the full probe is a
+                  // candidate alternative, but `setFunnelSettingsComplete(true)`
+                  // here is the user-explicit signal we want — the probe
+                  // depends on stale state that survives across renders in
+                  // edge cases.
+                  if (saved) setFunnelSettingsComplete(true);
                   setFunnelSettingsHasDoc(true);
                   setFunnelFirstRunDismissed(false);
                   if (funnelSettingsFirstRun) closeFunnelSettings();

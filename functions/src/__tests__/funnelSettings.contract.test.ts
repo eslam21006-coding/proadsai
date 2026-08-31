@@ -458,6 +458,12 @@ test("contract — FunnelSettingsDoc schemaVersion is the literal 1 (not a code-
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
+        // Phase 968 — T045. paid_event event rates. Round-12 fix:
+        // these are now required fields on the doc shape AND are
+        // written by `saveFunnelSettings`. The test fixture must
+        // include them to satisfy the public type.
+        eventAttendanceRate: 0,
+        eventCloseRate: 0,
         roasTarget: 1.0,
         offerPrice: null,
         attendanceRate: null,

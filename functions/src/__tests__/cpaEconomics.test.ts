@@ -178,14 +178,22 @@ test("paid_product: netFactor on HTO term only — OQ-1 override (FR-019)", () =
     assert.equal(d.capApplied, true);
 });
 
-test("paid: equality raw == max → NO warn (FR-003)", () => {
-    // raw === max is the boundary the contract pins. Choose inputs where
-    // raw equals max exactly so the strict-inequality rule holds:
-    //   raw = aov/1.0 = aov; max = aov × spendShare. Equality requires
-    //   spendShare = 1, i.e. marginKept = 0 — which is outside the closed
-    //   enum. So the strict boundary is unreachable through the closed
-    //   marginKept set; assert the rule symbolically: if raw ≤ max,
-    //   capApplied = false.
+test("paid: capApplied uses strict `>` — equality boundary unreachable under the closed marginKept enum (FR-003)", () => {
+    // Round-12 (CodeRabbit round 12 Item 19): the previous name was
+    // "paid: equality raw == max → NO warn (FR-003)" but the body
+    // asserts `capApplied === true` (the opposite direction). The
+    // boundary itself is unreachable through the closed marginKept
+    // enum: equality raw == max would require
+    //   aov / roasTarget = aov × spendShare
+    //   ⇒ roasTarget = 1 / spendShare
+    // and spendShare ∈ {0.30, 0.40, 0.50} yields roasTarget ∈
+    // {10/3, 5/2, 2} — none of which are in {1.0, 0.65, 0.5}.
+    // Pin the strict `>` rule from the other side: a setup where the
+    // inputs force raw > max, and the body confirms `capApplied =
+    // true`. The equality boundary itself is enforced by the `>`
+    // operator at the call site and is exercised in the companion
+    // tests below (raw == max would need marginKept = 0 which the
+    // FunnelInputs contract rejects).
     const inp: PaidFunnelInputs = {
         funnelType: "paid_event",
         aov: 1_000_000, // huge aov so fullBuyerValue >> raw
@@ -200,11 +208,28 @@ test("paid: equality raw == max → NO warn (FR-003)", () => {
     };
     const d = deriveTargetCpa(inp);
     // max = aov × 0.30 = 300_000; raw = 1_000_000; raw > max ⇒ capApplied = true.
-    // The "no warn on equality" rule is enforced by the strict `>` test
-    // (capApplied = raw > max), proven here by the test type at compile
-    // time. The boundary itself is asserted at FR-003's level: when
-    // raw ≤ max, capApplied is false.
     assert.equal(d.capApplied, true);
+
+    // Companion negative test: choose inputs where raw ≤ max
+    // (huge HTO term + non-zero spendShare widens fullBuyerValue
+    // beyond raw). capApplied must be false. This is the half of
+    // FR-003 the renamed body above cannot reach.
+    const wideBackEnd: PaidFunnelInputs = {
+        funnelType: "paid_event",
+        aov: 100,
+        hasHto: true,
+        htoPrice: 1000,
+        htoConversionRate: 10, // unused on paid_event, kept for type completeness
+        eventAttendanceRate: 100,
+        eventCloseRate: 100,
+        commissionRate: 10,
+        marginKept: 70, // spendShare = 0.30
+        roasTarget: 1.0, // raw = 100
+    };
+    const d2 = deriveTargetCpa(wideBackEnd);
+    // fullBuyerValue = 100 + 1000 × 0.9 × 1 × 1 = 1000
+    // max = 1000 × 0.30 = 300; raw = 100; raw ≤ max ⇒ capApplied = false.
+    assert.equal(d2.capApplied, false);
 });
 
 // ─── Lead magnet call ────────────────────────────────────────
