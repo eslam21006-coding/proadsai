@@ -371,6 +371,9 @@ test("contract — FunnelSettingsDoc schemaVersion is the literal 1 (not a code-
         attendanceRate: null,
         buyRateFromAttendees: null,
         leadToCloseRate: null,
+        // Phase 968 — T022. paid_event ⇒ both null.
+        bookingRate: null,
+        showUpRate: null,
         derived: {
             economicsVersion: 2,
             paid: { rawTargetCpa: 100, fullBuyerValue: 100, maxCpa: 50, effectiveTargetCpa: 50, capApplied: true },

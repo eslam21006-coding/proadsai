@@ -215,10 +215,36 @@ test("paid: equality raw == max → NO warn (FR-003)", () => {
 
 // ─── Lead magnet call ────────────────────────────────────────
 
-test("lead_magnet_call: $3000 × 7.5% × 70% × 22.5% × 0.90 netFactor × 0.40 spendShare → target $12.76 (FR-005)", () => {
-    // Report §6.1 — Phase 3 (T020) ships the full leadValue=31.89 and
-    // three-margin row assertions. Phase 2 establishes the formula's
-    // landing at the default marginKept=60.
+// Report §6.1 — three-margin row fixture. Inputs:
+//   offerPrice 3000, bookingRate 7.5, showUpRate 70, leadToCloseRate 22.5,
+//   commissionRate 10.
+// leadValue = 3000 × 0.9 × 0.075 × 0.70 × 0.225 = 31.89375 → 31.89
+// Then effectiveTargetCpl = leadValue × spendShare at each margin row:
+//   marginKept 50 ⇒ spendShare 0.50 ⇒ 31.89375 × 0.50 = 15.946875 → 15.95
+//   marginKept 60 ⇒ spendShare 0.40 ⇒ 31.89375 × 0.40 = 12.757500 → 12.76
+//   marginKept 70 ⇒ spendShare 0.30 ⇒ 31.89375 × 0.30 =  9.568125 →  9.57
+//
+// Note A-2: report §6.1 prints `15.94` for the 50 row. Rounding once at
+// the end gives `15.95`; the 60 and 70 rows match the report exactly.
+// The fixture asserts `15.95`.
+
+test("lead_magnet_call report §6.1: marginKept 50 ⇒ $15.95", () => {
+    const inp: LeadMagnetCallInputs = {
+        funnelType: "lead_magnet_call",
+        offerPrice: 3000,
+        bookingRate: 7.5,
+        showUpRate: 70,
+        leadToCloseRate: 22.5,
+        commissionRate: 10,
+        marginKept: 50,
+    };
+    const d = deriveTargetCplLeadMagnetCall(inp);
+    assert.equal(d.leadValue, 31.89);
+    assert.equal(d.economicCeilingCpl, 15.95);
+    assert.equal(d.effectiveTargetCpl, 15.95);
+});
+
+test("lead_magnet_call report §6.1: marginKept 60 (default) ⇒ $12.76", () => {
     const inp: LeadMagnetCallInputs = {
         funnelType: "lead_magnet_call",
         offerPrice: 3000,
@@ -229,10 +255,51 @@ test("lead_magnet_call: $3000 × 7.5% × 70% × 22.5% × 0.90 netFactor × 0.40 
         marginKept: 60,
     };
     const d = deriveTargetCplLeadMagnetCall(inp);
-    // leadValue = 3000 × 0.9 × 0.075 × 0.70 × 0.225 = 31.89375 → 31.89
     assert.equal(d.leadValue, 31.89);
-    // economicCeilingCpl = 31.89375 × 0.4 = 12.7575 → 12.76
     assert.equal(d.economicCeilingCpl, 12.76);
+    assert.equal(d.effectiveTargetCpl, 12.76);
+});
+
+test("lead_magnet_call report §6.1: marginKept 70 ⇒ $9.57", () => {
+    const inp: LeadMagnetCallInputs = {
+        funnelType: "lead_magnet_call",
+        offerPrice: 3000,
+        bookingRate: 7.5,
+        showUpRate: 70,
+        leadToCloseRate: 22.5,
+        commissionRate: 10,
+        marginKept: 70,
+    };
+    const d = deriveTargetCplLeadMagnetCall(inp);
+    assert.equal(d.leadValue, 31.89);
+    assert.equal(d.economicCeilingCpl, 9.57);
+    assert.equal(d.effectiveTargetCpl, 9.57);
+});
+
+// T021 — Regression anchor (constitution IX — before/after evidence).
+// The pre-phase formula produced $630 for the same $3,000 lead-magnet
+// funnel. That value is gone. The corrected formula yields $12.76 at
+// margin 60. This fixture asserts the old value is no longer produced.
+
+test("lead_magnet_call regression anchor: pre-phase $630 target is gone (T021, constitution IX)", () => {
+    // Inputs that, under the pre-phase `effectiveTargetCpl = offerPrice ×
+    // (leadToCloseRate / 100)` formula, yielded $630 for the
+    // lead-magnet-to-call funnel at $3,000 / 21% (a representative
+    // production doc). The pre-phase formula has been removed; the
+    // corrected chain yields a value that cannot equal $630.
+    const inp: LeadMagnetCallInputs = {
+        funnelType: "lead_magnet_call",
+        offerPrice: 3000,
+        bookingRate: 7.5,
+        showUpRate: 70,
+        leadToCloseRate: 22.5,
+        commissionRate: 10,
+        marginKept: 60,
+    };
+    const d = deriveTargetCplLeadMagnetCall(inp);
+    assert.notEqual(d.effectiveTargetCpl, 630,
+        "pre-phase target of $630 must not reappear under the corrected formula");
+    // And the corrected target lands at the §6.1 default row.
     assert.equal(d.effectiveTargetCpl, 12.76);
 });
 
@@ -534,14 +601,24 @@ test("computeAdvisories — paid + aov=$5 → lowValue fires only via computed t
     assert.equal(a.lowValue, false);
 });
 
-test("computeAdvisories — paid no-HTO + aov=$5 + tight margin → lowValue TRUE (computed target < 0.50)", () => {
-    // Drive the target below 0.50: aov 5, margin 70 ⇒ spendShare 0.30
-    // ⇒ maxCpa = 1.50. raw = 5 ⇒ effective = 1.50 ⇒ not below. With
-    // marginKept 90 (out of range — but for test rig we use the
-    // highest valid margin: 70). Hmm, with 70 the maxCpa is still
-    // 1.50. To push the target below 0.50 we need an extreme input —
-    // e.g. an offerPrice-driven free funnel. See free_webinar lowValue
-    // test below.
+test("computeAdvisories — paid no-HTO + aov=$5 + tight margin → lowValue FALSE (computed target $1.50 ≥ $0.50)", () => {
+    // With aov=5, hasHto=false (so the HTO term collapses to 0),
+    // eventAttendanceRate/eventCloseRate=0 (so the HTO term stays 0
+    // even if hasHto were true), commissionRate=10, marginKept=70,
+    // roasTarget=1.0:
+    //   rawTargetCpa   = 5 / 1.0                = 5
+    //   fullBuyerValue = 5 + 0                  = 5
+    //   spendShare     = (100-70)/100           = 0.30
+    //   maxCpa         = 5 × 0.30               = 1.50
+    //   effective      = min(5, 1.50)           = 1.50
+    //   round2(1.50)                            = 1.50
+    //   1.50 < 0.50                              ⇒ FALSE ⇒ lowValue = false.
+    // This is the boundary case the contract §5 pins: with no HTO, the
+    // target is bounded by aov × spendShare. The tightest valid
+    // margin (70) yields aov × 0.30 = 1.50, which still exceeds the
+    // 0.50 threshold. To drive a paid target below 0.50 requires
+    // aov < 0.50 × (1/spendShare) ≈ 1.67 at margin 70 — i.e. aov < $2
+    // — see test 30b below for the discriminating fixture.
     const inp: PaidFunnelInputs = {
         funnelType: "paid_event",
         aov: 5,
@@ -555,10 +632,40 @@ test("computeAdvisories — paid no-HTO + aov=$5 + tight margin → lowValue TRU
         roasTarget: 1.0,
     };
     const d = deriveAll(inp, Date.now());
+    // Arithmetic anchors:
+    assert.equal(d.paid?.rawTargetCpa, 5);
+    assert.equal(d.paid?.fullBuyerValue, 5);
+    assert.equal(d.paid?.maxCpa, 1.5);
+    assert.equal(d.paid?.effectiveTargetCpa, 1.5);
     const a = computeAdvisories(inp, d);
     assert.equal(a.noHto, true);
-    // effectiveTargetCpa = 5 × 0.30 = 1.50 ⇒ not below 0.50.
     assert.equal(a.lowValue, false);
+});
+
+test("computeAdvisories — paid no-HTO + aov=$1 + tight margin → lowValue TRUE (computed target < 0.50)", () => {
+    // Discriminating fixture: with aov=1 and margin 70, maxCpa = 0.30
+    // ⇒ effective = 0.30 ⇒ 0.30 < 0.50 ⇒ lowValue fires.
+    const inp: PaidFunnelInputs = {
+        funnelType: "paid_event",
+        aov: 1,
+        hasHto: false,
+        htoPrice: 0,
+        htoConversionRate: 0,
+        eventAttendanceRate: 0,
+        eventCloseRate: 0,
+        commissionRate: 10,
+        marginKept: 70,
+        roasTarget: 1.0,
+    };
+    const d = deriveAll(inp, Date.now());
+    // Arithmetic anchors:
+    assert.equal(d.paid?.rawTargetCpa, 1);
+    assert.equal(d.paid?.fullBuyerValue, 1);
+    assert.equal(d.paid?.maxCpa, 0.3);
+    assert.equal(d.paid?.effectiveTargetCpa, 0.3);
+    const a = computeAdvisories(inp, d);
+    assert.equal(a.noHto, true);
+    assert.equal(a.lowValue, true);
 });
 
 test("computeAdvisories — free_webinar + tiny offerPrice → lowValue=true, noHto=false", () => {

@@ -75,6 +75,9 @@ export interface FunnelSettingsDoc {
     attendanceRate: number | null;
     buyRateFromAttendees: number | null;
     leadToCloseRate: number | null;
+    // Phase 968 — T022. lead_magnet_call only.
+    bookingRate: number | null;
+    showUpRate: number | null;
     derived: DerivedTargets;
     advisories: Advisories;
     advisoriesDismissed: { noHto: boolean; lowValue: boolean };
@@ -158,6 +161,11 @@ interface SaveFunnelSettingsRequest {
     attendanceRate?: number | null;
     buyRateFromAttendees?: number | null;
     leadToCloseRate?: number | null;
+    // Phase 968 — T022. Sent only for lead_magnet_call; backend
+    // validator (assertRequiredFieldPresent) accepts null on every
+    // other funnel type.
+    bookingRate?: number | null;
+    showUpRate?: number | null;
     clientNowMs: number;
 }
 
@@ -255,6 +263,10 @@ function useFunnelSettings(workspaceId: string | null, accountId: string | null)
                 attendanceRate: req.attendanceRate ?? null,
                 buyRateFromAttendees: req.buyRateFromAttendees ?? null,
                 leadToCloseRate: req.leadToCloseRate ?? null,
+                // Phase 968 — T022. Mirror backend: null on every funnel
+                // type except lead_magnet_call.
+                bookingRate: req.funnelType === 'lead_magnet_call' ? (req.bookingRate ?? null) : null,
+                showUpRate: req.funnelType === 'lead_magnet_call' ? (req.showUpRate ?? null) : null,
                 derived: data.derived,
                 advisories: data.advisories,
                 advisoriesDismissed: settings?.advisoriesDismissed ?? { noHto: false, lowValue: false },
@@ -382,6 +394,9 @@ export default function FunnelSettingsForm({
     const [attendanceRate, setAttendanceRate] = useState<string>('');
     const [buyRateFromAttendees, setBuyRateFromAttendees] = useState<string>('');
     const [leadToCloseRate, setLeadToCloseRate] = useState<string>('');
+    // Phase 968 — T022. lead_magnet_call only.
+    const [bookingRate, setBookingRate] = useState<string>('');
+    const [showUpRate, setShowUpRate] = useState<string>('');
 
     // Local dismiss state for the monthly-review prompt. Resets when
     // `reviewDue` flips back to true on a fresh save (the save function
@@ -415,6 +430,11 @@ export default function FunnelSettingsForm({
         setAttendanceRate(settings.attendanceRate != null ? String(settings.attendanceRate) : '');
         setBuyRateFromAttendees(settings.buyRateFromAttendees != null ? String(settings.buyRateFromAttendees) : '');
         setLeadToCloseRate(settings.leadToCloseRate != null ? String(settings.leadToCloseRate) : '');
+        // Phase 968 — T022. lead_magnet_call only. Pre-phase docs have
+        // `null` here; the form starts blank and Phase 5's completeness
+        // gate will mark these as required.
+        setBookingRate(settings.bookingRate != null ? String(settings.bookingRate) : '');
+        setShowUpRate(settings.showUpRate != null ? String(settings.showUpRate) : '');
     }, [settings]);
 
     const advisoryVisible = useMemo(() => {
@@ -449,6 +469,9 @@ export default function FunnelSettingsForm({
         const attendanceN = funnelType === 'free_webinar' ? numOrNull(attendanceRate) : null;
         const buyN = funnelType === 'free_webinar' ? numOrNull(buyRateFromAttendees) : null;
         const leadN = funnelType === 'lead_magnet_call' ? numOrNull(leadToCloseRate) : null;
+        // Phase 968 — T022. Sent only for lead_magnet_call.
+        const bookingN = funnelType === 'lead_magnet_call' ? numOrNull(bookingRate) : null;
+        const showUpN = funnelType === 'lead_magnet_call' ? numOrNull(showUpRate) : null;
         const req = {
             workspaceId: selectedWorkspaceId,
             accountId: selectedAccountId,
@@ -462,6 +485,8 @@ export default function FunnelSettingsForm({
             attendanceRate: attendanceN,
             buyRateFromAttendees: buyN,
             leadToCloseRate: leadN,
+            bookingRate: bookingN,
+            showUpRate: showUpN,
         };
         // Save returns the persisted doc (avoiding the stale-settings
         // closure trap where `onSaved` would receive the pre-save snapshot,
@@ -703,7 +728,15 @@ export default function FunnelSettingsForm({
             {funnelType === 'lead_magnet_call' && (
                 <div className="space-y-3">
                     <NumberField label={L('Final offer price ($)', 'سعر العرض النهائي (دولار)')} value={offerPrice} onChange={setOfferPrice} isDarkMode={dk} />
-                    <NumberField label={L('Close rate on call (%)', 'نسبة الإغلاق على المكالمة (%)')} value={leadToCloseRate} onChange={setLeadToCloseRate} isDarkMode={dk} />
+                    {/* Phase 968 — T023. Booking rate + show-up rate are the
+                        two new lead-magnet inputs (FR-004, FR-007). The
+                        close-rate label is also relabelled per
+                        contracts/uiCopy.md #5: "Close rate on calls that
+                        happened (%)" / "نسبة الإغلاق في المكالمات التي تمت (%)".
+                        The benchmark hint copy (#2, #4, #6) lands in T054. */}
+                    <NumberField label={L('Booking rate (%)', 'نسبة حجز المكالمات من العملاء المحتملين (%)')} value={bookingRate} onChange={setBookingRate} isDarkMode={dk} />
+                    <NumberField label={L('Show-up rate (%)', 'نسبة الحضور للمكالمات المحجوزة (%)')} value={showUpRate} onChange={setShowUpRate} isDarkMode={dk} />
+                    <NumberField label={L('Close rate on calls that happened (%)', 'نسبة الإغلاق في المكالمات التي تمت (%)')} value={leadToCloseRate} onChange={setLeadToCloseRate} isDarkMode={dk} />
                 </div>
             )}
 

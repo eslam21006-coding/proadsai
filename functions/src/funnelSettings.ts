@@ -70,6 +70,18 @@ export interface FunnelSettingsDoc {
     attendanceRate: number | null;
     buyRateFromAttendees: number | null;
     leadToCloseRate: number | null;
+    /**
+     * Phase 968 — lead_magnet_call only. Lead → booked call (percent, 0–100).
+     * data-model.md §1. Required for `lead_magnet_call` completeness
+     * (FR-039). Stored as `null` on non-lead-magnet-call docs.
+     */
+    bookingRate: number | null;
+    /**
+     * Phase 968 — lead_magnet_call only. Booked → attended (percent, 0–100).
+     * Required for `lead_magnet_call` completeness. Stored as `null`
+     * on non-lead-magnet-call docs.
+     */
+    showUpRate: number | null;
     derived: DerivedTargets;
     advisories: Advisories;
     advisoriesDismissed: { noHto: boolean; lowValue: boolean };
@@ -443,6 +455,10 @@ export const saveFunnelSettings = onCall(
                 attendanceRate: inputs.funnelType === "free_webinar" ? inputs.attendanceRate : null,
                 buyRateFromAttendees: inputs.funnelType === "free_webinar" ? inputs.buyRateFromAttendees : null,
                 leadToCloseRate: inputs.funnelType === "lead_magnet_call" ? inputs.leadToCloseRate : null,
+                // Phase 968 — T022. Persisted only for lead_magnet_call;
+                // null on every other funnel type per data-model.md §1.
+                bookingRate: inputs.funnelType === "lead_magnet_call" ? inputs.bookingRate : null,
+                showUpRate: inputs.funnelType === "lead_magnet_call" ? inputs.showUpRate : null,
                 derived,
                 advisories,
                 advisoriesDismissed: {
