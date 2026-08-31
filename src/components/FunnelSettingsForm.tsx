@@ -1177,20 +1177,19 @@ export default function FunnelSettingsForm({
                                     version rendered `opt.subEn` twice —
                                     once in the main label (above) and
                                     once in the muted sub-line below. The
-                                    English branch already concatenates the
-                                    value + subEn on the main label, so
-                                    showing subEn again below is duplicated
-                                    copy. The Arabic branch was unaffected
-                                    because it omits subEn on the main
-                                    label. Replace the unconditional
-                                    `opt.subEn` with a value that hides the
-                                    sub-line entirely on the English side —
-                                    the English main label already carries it. */}
-                                {!(lang !== 'ar') && (
-                                    <div className={`text-sm ${txMuted}`}>
-                                        {opt.subEn}
-                                    </div>
-                                )}
+                                    The English main label already concatenates
+                                    value + subEn, so showing subEn again as a
+                                    sub-line is duplicated copy (CodeRabbit
+                                    round-13). Round-14 fix: keep only the
+                                    Arabic subtitle path here — `opt.subAr`
+                                    renders exclusively for Arabic users
+                                    (the English sub-line would be a duplicate
+                                    of the main label, and the previous
+                                    `!(lang !== 'ar') &&` guard
+                                    was a logic bug because `!(lang !== 'ar')`
+                                    === `lang === 'ar'`, so the English branch
+                                    actually rendered for Arabic users
+                                    and showed opt.subEn twice). */}
                                 {lang === 'ar' && (
                                     <div className={`text-sm ${txMuted}`}>
                                         {opt.subAr}
