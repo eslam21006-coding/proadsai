@@ -580,6 +580,71 @@ test("funnel settings with no derived targets: returns ⏳", () => {
     assert.equal(r.verdict, "⏳");
 });
 
+// Phase 10 T068 (FR-041, FR-042) — end-to-end gate test. An
+// unstamped derived payload (the pre-phase production shape) must
+// flow through `evaluateVerdict` to ⏳ with the incomplete-settings
+// reason, NOT to a pass/fail verdict. The chain under test:
+//
+//   1. `evaluateVerdict` calls `getEffectiveTarget(settings.derived)`.
+//   2. `getEffectiveTarget` returns `null` for an unstamped payload
+//      (the FR-041 / R-1 mechanism; absence of `economicsVersion: 2`
+//      is the signal — see cpaEconomics.ts:402 and T018 row 2).
+//   3. `evaluateVerdict` sees the null target and returns ⏳ with the
+//      "incomplete settings" data-gate reason.
+//   4. No pass/fail verdict is written — the sync emits no verdicts
+//      for this ad (verified structurally: the engine never reaches
+//      the cost-vs-target comparison when the gate fires).
+//
+// This is the load-bearing property that protects pre-phase records
+// from being re-judged against the corrected math (R-1's blocking
+// finding — without the version stamp, the corrected math would
+// re-judge historical ads and flood the learning aggregates).
+test("end-to-end gate — unstamped derived payload (pre-phase shape) flows through evaluateVerdict to ⏳ with incomplete-settings reason, no pass/fail verdict (FR-041, FR-042)", () => {
+    const ad = makeAd();
+
+    // The pre-phase shape: `derived.paid.effectiveTargetCpa` exists
+    // with a value, but `derived.economicsVersion` is absent. The
+    // version stamp is the signal; without it the engine must
+    // treat the payload as if the record were incomplete.
+    const unstamped = {
+        derived: {
+            // NOTE: deliberately no `economicsVersion: 2` here — the
+            // absence is the signal under test. The cast bypasses
+            // the type check (which requires the stamp); the
+            // runtime's `getEffectiveTarget` is what we're pinning.
+            paid: {
+                rawTargetCpa: 48,
+                fullBuyerValue: 175.875,
+                maxCpa: 70.35,
+                effectiveTargetCpa: 48,
+                capApplied: false,
+            },
+            computedAt: 0,
+        },
+    } as unknown as FunnelSettingsForVerdict;
+
+    // The engine sees the unstamped payload, calls
+    // `getEffectiveTarget` which returns null (FR-041 / R-1), and
+    // falls into the `if (!settings || getEffectiveTarget(...) ===
+    // null)` branch at qararEngine.ts:224. Returns ⏳ with the
+    // data-gate reason.
+    const r = evaluateVerdict(ad, unstamped, "conversion", DEFAULT_BASELINES);
+    assert.equal(r.verdict, "⏳");
+    assert.equal(r.ruleCode, "data_gate");
+    // The reasonAr is the standard "incomplete settings" copy —
+    // Simple Fusha, no technical terms (matches the rest of the
+    // qarar-rulebook's data-gate strings).
+    assert.match(r.reasonAr, /(إعدادات|إكتمال|ناقص)/);
+
+    // Negative control: a stamped payload with the same effective
+    // target value produces a real verdict (not ⏳). This pins that
+    // the gate fires specifically because of the absent stamp — not
+    // because of the target value or the ad performance.
+    const stamped = makePaidFunnel(48);
+    const r2 = evaluateVerdict(ad, stamped, "conversion", DEFAULT_BASELINES);
+    assert.notEqual(r2.verdict, "⏳");
+});
+
 test("null baselines: returns ⏳ with 'بيانات الأداء التاريخية غير متوفرة' (no fake 1.0 fallback)", () => {
     // CodeRabbit fix: when baseline loading fails the engine MUST NOT
     // evaluate against fabricated 1.0 placeholders — those would let

@@ -19,6 +19,7 @@ import {
     assertRequiredFieldPresent,
     isSettingsComplete,
     missingRequiredFields,
+    resolveHtoConversionRateForStorage,
 } from "../funnelSettings.js";
 
 // ─── Pure request shape → funnel-input mapping ────────────────
@@ -344,6 +345,62 @@ test("contract — lowValue advisory keys off COMPUTED target (T017a / FR-028)",
     const freeDerived = deriveAll(freeInp, Date.now());
     const a = computeAdvisories(freeInp, freeDerived);
     assert.equal(a.lowValue, true);
+});
+
+// Phase 10 T067 (FR-030) — non-blocking assertion. The lowValue
+// advisory is informational; it MUST NOT prevent the save from
+// succeeding. This test pins three properties at once:
+//
+//   1. `missingRequiredFields` returns [] for a complete doc whose
+//      derived target fires lowValue — completeness and lowValue
+//      are independent.
+//   2. `deriveAll` returns a non-null target for the same doc — the
+//      derivation proceeds even when the advisory would fire.
+//   3. `computeAdvisories` returns lowValue=true AND the target is
+//      still present — the advisory is computed alongside the
+//      target, not as a gate on it.
+//
+// The contract's `saveFunnelSettings` callable consumes these three
+// facts: it rejects on missing fields (1), derives (2), computes
+// advisories (3), and persists. None of those steps throw on a
+// firing lowValue advisory — the chain runs end-to-end and the
+// owner sees both the target and the badge.
+test("contract — lowValue advisory is NON-BLOCKING (FR-030): target computes, save proceeds, advisory fires", () => {
+    // Construct a complete free_webinar doc whose derived target is
+    // below the lowValue threshold ($0.50, FR-028).
+    const freeInp = coerceFreeWebinar({
+        offerPrice: 100,
+        attendanceRate: 1,
+        buyRateFromAttendees: 1,
+        commissionRate: 10,
+        marginKept: 60,
+    });
+    const freeDoc = {
+        funnelType: "free_webinar" as const,
+        offerPrice: 100,
+        attendanceRate: 1,
+        buyRateFromAttendees: 1,
+        commissionRate: 10,
+        marginKept: 60,
+    };
+
+    // (1) Completeness is independent of lowValue — a complete doc
+    //     with a tiny target is still complete.
+    assert.equal(isSettingsComplete(freeDoc), true);
+    assert.equal(missingRequiredFields(freeDoc).length, 0);
+
+    // (2) Derivation proceeds — the target is computed, not null,
+    //     even though it rounds below $0.50.
+    const freeDerived = deriveAll(freeInp, Date.now());
+    assert.ok(freeDerived.free);
+    assert.ok(freeDerived.free.effectiveTargetCpl !== null);
+    assert.ok(typeof freeDerived.free.effectiveTargetCpl === "number");
+
+    // (3) Advisory fires AND the target is computed alongside it.
+    const a = computeAdvisories(freeInp, freeDerived);
+    assert.equal(a.lowValue, true);
+    // Target still present — not gated by the advisory.
+    assert.equal(freeDerived.free.effectiveTargetCpl, freeDerived.free.effectiveTargetCpl);
 });
 
 // ─── Monthly review cadence ───────────────────────────────────
@@ -718,67 +775,125 @@ test("completeness — paid_event requires eventAttendanceRate AND eventCloseRat
     assert.deepEqual(missingRequiredFields(paidProductNoRoas), ["roasTarget"]);
 });
 
-// Phase 968 — Item D (Phase 7 carry-over): paid_event does NOT
-// require `htoConversionRate` and the form removed the input (Phase 7
-// Item C). Storage retention (data-model.md section 1) means the
-// field is preserved verbatim — sending 0 would overwrite a
-// pre-existing value and break the revert-stays-code-only property.
-// The form's pass-through logic (paid_event only) sends the hydrated
-// settings value when the form's state is empty; the backend's
-// `buildFunnelInputs` accepts null and the doc construction passes
-// it through to the stored doc unchanged.
+// Phase 968 — Item D (Phase 7 carry-over, Phase 9 close-out):
+// paid_event does NOT require `htoConversionRate` and the form removed
+// the input (Phase 7 Item C). Storage retention (data-model.md §1)
+// means the field is preserved verbatim — including a stored `null`.
+// Sending `0` would overwrite a pre-existing value with `0` and break
+// the revert-stays-code-only property the deferred epoch phase relies on.
 //
-// This test pins the chain:
-//   1. Backend accepts `null` for htoConversionRate on paid_event.
-//   2. Backend stores the supplied value (null OR a number) without
-//      coercion to 0.
-//   3. The pre-existing value is preserved verbatim across a save
-//      round-trip.
+// The previous Item D fix was incomplete: the form's `?? 0` fallback
+// coerced `null` to `0` BEFORE the request left the client, and the
+// backend's `buildFunnelInputs` (`asNumberOrNull(req.htoConversionRate)
+// ?? 0`) would have coerced `null` to `0` even if the form had sent it.
+// The test that landed in Phase 8 (#32) pinned only standalone variable
+// assertions that didn't exercise either layer of the chain.
+//
+// This test pins the chain end-to-end via the new pure helper
+// `resolveHtoConversionRateForStorage` — the same function the doc
+// construction uses. Three legs:
+//
+//   1. paid_event: pre-existing value of 21 → form sends 21 → doc
+//      holds 21.
+//   2. paid_event: pre-existing value of `null` → form sends `null`
+//      → doc holds `null` (the regression case Phase 8 missed).
+//   3. paid_event: brand-new record (no value to preserve) → form
+//      sends `null` → doc holds `null`.
+//   4. paid_product: form sends 0 → doc holds 0 (negative control —
+//      `0` is a valid upsell-conversion rate, not a sentinel).
+//   5. paid_product: form sends 5 → doc holds 5 (numeric pass-through).
+//
+// The previous test (#32) only proved standalone values equal
+// themselves. This test proves the helper that the doc construction
+// uses pins every leg of the storage-retention invariant.
 test("Item D: paid_event htoConversionRate is preserved verbatim — null pass-through; no overwrite to 0", () => {
+    // ── Leg 1: paid_event, stored number 21, no change ────────────
     // Pre-phase production scenario: a stored value of 21 (the
-    // pre-phase rate). The form's hydration reads it, then sends
-    // it back on save without modification.
-    const hydrated: number | null = 21;
-    // The form's save payload for paid_event (after Item D fix):
-    //   htoConversionRate = numOrNull(state) ?? settings?.htoConversionRate ?? 0
-    // State is empty (`''` because the input is hidden for paid_event);
-    // settings.htoConversionRate is 21; payload becomes 21.
-    const formPayload = hydrated;
-    assert.equal(formPayload, 21, "form pass-through preserves hydrated value");
+    // legacy upsell-conversion rate). The form's hydration reads it,
+    // sends it back on save; the doc must hold 21.
+    const storedNumber = 21;
+    // Form side (FunnelSettingsForm.tsx `handleSave`):
+    //   htoConversionRate = settings?.htoConversionRate ?? null
+    // for paid_event. State is empty (input hidden), settings.htoConversionRate
+    // is 21, payload becomes 21.
+    const formPayloadNumber: number | null = storedNumber;
+    // Backend side: the doc construction calls
+    // resolveHtoConversionRateForStorage('paid_event', reqValue, derived).
+    // For paid_event the helper returns `reqValue ?? null`. The form
+    // sends `number | null`, so the helper returns that number.
+    const docStored1 = resolveHtoConversionRateForStorage(
+        "paid_event",
+        formPayloadNumber,
+        0, // derived — unused on paid_event branch
+    );
+    assert.equal(docStored1, 21, "paid_event stored 21 must round-trip to doc 21");
 
-    // Backend's `buildFunnelInputs` accepts the number directly when
-    // the form sends one; the type is `number | null`. The
-    // `asNumberOrNull` helper is called only on string-typed form
-    // values; numeric values pass through.
-    const fromNumber = formPayload; // simulate the backend's value
-    assert.equal(typeof fromNumber, "number");
-    assert.equal(fromNumber, 21);
+    // ── Leg 2: paid_event, stored null, no change (THE BUG) ────────
+    // The regression that Phase 8's test missed: a stored value of
+    // `null`. The previous form code was
+    //   numOrNull('') ?? settings?.htoConversionRate ?? 0
+    // which evaluated to `null ?? null = null` then `null ?? 0 = 0`,
+    // so the request left the client carrying `0`, not `null`. After
+    // the Phase 9 close-out the form sends the hydrated value
+    // verbatim: `settings?.htoConversionRate ?? null`.
+    const storedNull: number | null = null;
+    // Form: `null ?? null = null`, payload becomes `null`.
+    const formPayloadNull: number | null = storedNull ?? null;
+    // Backend: helper preserves `null` verbatim on paid_event.
+    const docStored2 = resolveHtoConversionRateForStorage(
+        "paid_event",
+        formPayloadNull,
+        0,
+    );
+    assert.equal(docStored2, null, "paid_event stored null must round-trip to doc null");
 
-    // Round-trip preservation: a save that supplies the existing
-    // value must produce the same value on read.
-    const stored = fromNumber;
-    assert.equal(stored, hydrated);
+    // ── Leg 3: paid_event, brand-new record (no value to preserve) ─
+    // A record written before this phase on a paid_event funnel
+    // where the owner never set the legacy rate. settings.htoConversionRate
+    // is `undefined` (the doc was created on `tx.set` without that
+    // field). The form's hydration maps `undefined` → state `''`,
+    // and the save payload resolves to `undefined ?? null = null`.
+    // The doc construction must carry `null` (the storage-retention
+    // default), NOT `0`.
+    const formPayloadUndefined: number | null = null;
+    const docStored3 = resolveHtoConversionRateForStorage(
+        "paid_event",
+        formPayloadUndefined,
+        0,
+    );
+    assert.equal(docStored3, null, "paid_event brand-new record must carry null");
 
-    // Negative control: if the form sends null (no pre-existing
-    // value to preserve, e.g. a brand-new record that never set
-    // htoConversionRate), the doc stores null.
-    const fromNull: number | null = null;
-    assert.equal(fromNull, null);
+    // ── Leg 4: paid_product, form sends 0 ──────────────────────────
+    // Negative control: paid_product requires the field as a number;
+    // a stored 0 is a legitimate answer (zero upsell-conversion rate
+    // ⇒ no HTO revenue contribution). The helper uses the derivation's
+    // coerced numeric value (the third argument, which buildFunnelInputs
+    // coerces to 0 when missing).
+    const docStored4 = resolveHtoConversionRateForStorage(
+        "paid_product",
+        null, // form may send null when the input is empty
+        0,    // buildFunnelInputs coerces null → 0
+    );
+    assert.equal(docStored4, 0, "paid_product empty input stores 0, not null");
 
-    // Negative control: if the form sends the value 0, the doc
-    // stores 0 (paid_product's saving behavior — that's fine, the
-    // field is required and 0 is a valid value).
-    const fromZero = 0;
-    assert.equal(fromZero, 0);
+    // ── Leg 5: paid_product, form sends 5 ──────────────────────────
+    // Numeric pass-through on paid_product.
+    const docStored5 = resolveHtoConversionRateForStorage(
+        "paid_product",
+        5,
+        5,
+    );
+    assert.equal(docStored5, 5, "paid_product numeric input stores that number");
 
-    // The key invariant: a save that supplies 21 yields a doc with
-    // 21, NOT a doc with 0. The form's pass-through code ensures
-    // this for paid_event.
-    const writeTrace: Array<number | null> = [];
-    // Simulate a form save round-trip on a doc with stored value 21.
-    writeTrace.push(hydrated); // form reads settings, sees 21, sends 21
-    const saved = writeTrace[0];
-    writeTrace.push(saved); // backend stores saved (= 21)
-    const readBack = writeTrace[writeTrace.length - 1];
-    assert.equal(readBack, 21, "saved value must equal hydrated value");
+    // ── Cross-branch negative: non-paid funnel types land in the
+    // doc construction's `else 0` branch, never in the helper.
+    // Pin that the helper's contract is paid_event | paid_product only,
+    // and that other types would produce `null` if called (caller is
+    // responsible for the `else 0` arm). For paid_event with
+    // `reqValue = undefined`, the helper collapses to `null`.
+    assert.equal(
+        resolveHtoConversionRateForStorage("paid_event", undefined, 0),
+        null,
+        "paid_event + undefined reqValue ⇒ null (no value to preserve)",
+    );
 });

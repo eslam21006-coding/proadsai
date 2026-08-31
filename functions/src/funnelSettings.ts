@@ -64,7 +64,18 @@ export interface FunnelSettingsDoc {
     aov: number | null;
     hasHto: boolean;
     htoPrice: number;
-    htoConversionRate: number;
+    /**
+     * Phase 968 — Item D (Phase 7 carry-over, Phase 9 close-out):
+     * `paid_product` reads this for derivation (FR-019, OQ-1 override);
+     * the value is always a number. `paid_event` does NOT read this
+     * (FR-011..FR-014 — it reads `eventAttendanceRate × eventCloseRate`
+     * on the HTO term instead). The field is retained on paid_event for
+     * additive storage compatibility (data-model.md §1) and may carry
+     * `null` when the record is brand-new or when the owner never set
+     * the legacy upsell-conversion rate. Storage retention preserves
+     * null verbatim across saves — see `resolveHtoConversionRateForStorage`.
+     */
+    htoConversionRate: number | null;
     roasTarget: 1.0 | 0.65 | 0.5;
     offerPrice: number | null;
     attendanceRate: number | null;
@@ -333,6 +344,52 @@ export function isSettingsComplete(doc: FunnelSettingsLike): boolean {
     return missingRequiredFields(doc).length === 0;
 }
 
+// ─── Storage retention — paid_event htoConversionRate ─────────
+//
+// Phase 968 — Item D (Phase 7 carry-over, Phase 9 close-out).
+// `paid_event` retains `htoConversionRate` on the doc for additive
+// storage compatibility (data-model.md §1) but never reads it (the
+// corrected formula reads `eventAttendanceRate × eventCloseRate`).
+// `paid_product` reads `htoConversionRate` for derivation (FR-019).
+//
+// Storage retention (data-model.md §1) requires the field to be
+// preserved verbatim across a save round-trip — including a stored
+// `null`. Sending `0` instead of `null` would overwrite a pre-existing
+// value with `0`, breaking the revert-stays-code-only property
+// (data-model.md §1: "nothing is written to any existing document";
+// the deferred epoch phase will touch the same document again).
+//
+// This helper resolves which value lands in the persisted doc for a
+// given save. Pure: takes the funnel type, the request's supplied
+// value (number / null / undefined), and the derivation's coerced
+// numeric value, and returns what the doc should hold.
+//
+// Behaviour:
+//   paid_event:  preserve `reqValue` verbatim — `null` stays `null`,
+//                a number stays a number, `undefined` collapses to
+//                `null` (no value to preserve ⇒ doc carries null).
+//   paid_product: the derivation's coerced numeric value wins. The
+//                 form has validated that this is a number; the
+//                 coercion in `buildFunnelInputs` defaults missing
+//                 fields to `0`, which is a legitimate answer for
+//                 paid_product (a zero upsell-conversion rate ⇒ no
+////                  HTO revenue contribution).
+//
+// Exported for the same test that the callable uses — keeps the contract
+// pinned against drift (constitution XI).
+export function resolveHtoConversionRateForStorage(
+    funnelType: FunnelInputs["funnelType"],
+    reqValue: number | null | undefined,
+    derived: number,
+): number | null {
+    if (funnelType === "paid_event") {
+        return reqValue ?? null;
+    }
+    // paid_product (other funnel types land here too but never store
+    // the field on non-paid docs — the doc construction handles that).
+    return derived;
+}
+
 /**
  * Build a typed `FunnelInputs` from the SAVE request payload. Coerces /
  * forces HTO=0 when hasHto=false. Pre-condition: callers MUST have
@@ -404,7 +461,13 @@ interface SaveFunnelSettingsRequest {
     aov?: number | null;
     hasHto?: boolean;
     htoPrice?: number;
-    htoConversionRate?: number;
+    /**
+     * Phase 968 — Item D (Phase 9 close-out): accepts `null` for
+     * `paid_event` so the form can pass through a stored `null`
+     * verbatim (storage retention — data-model.md §1). For `paid_product`
+     * the field is required and the form sends a number.
+     */
+    htoConversionRate?: number | null;
     eventAttendanceRate?: number | null;
     eventCloseRate?: number | null;
     roasTarget?: 1.0 | 0.65 | 0.5;
@@ -519,7 +582,22 @@ export const saveFunnelSettings = onCall(
                 aov: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product" ? inputs.aov : null,
                 hasHto: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product" ? inputs.hasHto : false,
                 htoPrice: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product" ? inputs.htoPrice : 0,
-                htoConversionRate: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product" ? inputs.htoConversionRate : 0,
+                // Phase 968 — Item D (Phase 9 close-out): the doc's
+                // `htoConversionRate` is preserved verbatim from the
+                // request on paid_event, including `null`. The previous
+                // implementation coerced null → 0 through `inputs`,
+                // which broke storage retention. `paid_product` uses
+                // the derivation's coerced numeric value (the form has
+                // validated that the field is a number). Non-paid funnel
+                // types carry `0` for the additive-storage compatibility
+                // of legacy fields.
+                htoConversionRate: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product"
+                    ? resolveHtoConversionRateForStorage(
+                        inputs.funnelType,
+                        req.htoConversionRate,
+                        inputs.htoConversionRate,
+                    )
+                    : 0,
                 roasTarget: inputs.funnelType === "paid_event" || inputs.funnelType === "paid_product" ? inputs.roasTarget : 1.0,
                 offerPrice: inputs.funnelType === "free_webinar" || inputs.funnelType === "lead_magnet_call" ? inputs.offerPrice : null,
                 attendanceRate: inputs.funnelType === "free_webinar" ? inputs.attendanceRate : null,

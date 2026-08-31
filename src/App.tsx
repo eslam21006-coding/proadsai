@@ -1598,9 +1598,11 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
       key: 'funnel',
       // Phase 968 — T035 (FR-051): passive dot when the stored settings
       // are incomplete. No modal, no redirect — the click behaviour is
-      // unchanged. T057 (Phase 9) moves the badge label into i18n.tsx
-      // as `funnel.needs_attention`; until then the inline string is
-      // the same in both languages per contracts/uiCopy.md §4.
+      // unchanged. Phase 9 (T057) moved the badge label into i18n.tsx
+      // as `funnel.needs_attention` per contracts/uiCopy.md §4 so both
+      // languages share a single source of truth (FR-035a — no copy
+      // relocates here to escape the guard; this string was the one
+      // deliberate exception the contract allows).
       el: (
         <MenuItem
           key="funnel"
@@ -1608,7 +1610,7 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
           label={t('topbar.menu_funnel_settings')}
           onClick={props.onOpenFunnelSettings}
           badge={!funnelSettingsComplete}
-          badgeLabel="Your funnel settings need updating"
+          badgeLabel={t('funnel.needs_attention')}
         />
       ),
     }] : []),

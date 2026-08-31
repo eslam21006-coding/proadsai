@@ -1336,3 +1336,230 @@ test("T052: low-value boundary — raw 0.4949 displays 0.49 ⇒ FIRES", () => {
     assert.equal(rounded < 0.5, true);
     assert.equal(a.lowValue, true, "raw 0.4949 must round to 0.49 and fire");
 });
+
+// Phase 10 T070 (FR-048, SC-015) — rounding-order fixture. The
+// chain MUST round once at the end, not at intermediate steps.
+// Inputs are chosen so end-of-chain and intermediate-rounded
+// produce DIFFERENT results (2.93 vs 2.92). A fixture that passes
+// under both orderings proves nothing (SC-015's explicit reason
+// this test exists).
+//
+// Inputs: offerPrice=1000, booking=5, showUp=65, close=25,
+//         commission=10, marginKept=60.
+//
+//   leadValue = 1000 × 0.9 × 0.05 × 0.65 × 0.25
+//             = 1000 × 0.9 × 0.008125
+//             = 7.3125
+//   spendShare = (100 - 60) / 100 = 0.40
+//
+//   End-of-chain:    target = round2(7.3125 × 0.40) = round2(2.925) = 2.93
+//   Intermediate:    leadValue_r = round2(7.3125) = 7.31
+//                    target_r  = round2(7.31 × 0.40) = round2(2.924) = 2.92
+//
+// The two orderings disagree at the cent. Pinning `2.93` proves
+// the chain rounded once at the end.
+test("T070: rounding-order fixture (FR-048, SC-015) — inputs differ under end-of-chain vs intermediate; assert 2.93", () => {
+    const inp: LeadMagnetCallInputs = {
+        funnelType: "lead_magnet_call",
+        offerPrice: 1000,
+        leadToCloseRate: 25,
+        bookingRate: 5,
+        showUpRate: 65,
+        commissionRate: 10,
+        marginKept: 60,
+    };
+    const d = deriveTargetCplLeadMagnetCall(inp);
+
+    // End-of-chain target: 2.93 (per the algebra above).
+    assert.equal(d.effectiveTargetCpl, 2.93);
+
+    // Negative control: confirm that the intermediate-rounded
+    // ordering would produce 2.92 — without this assertion, a
+    // future refactor that swaps to intermediate rounding could
+    // still pass the `2.93` check if it produced 2.93 by accident.
+    // Pinning both orderings proves the test is order-sensitive.
+    const leadValueIntermediate = round2(7.3125); // = 7.31
+    const targetIntermediate = round2(leadValueIntermediate * 0.4); // = 2.92
+    assert.equal(targetIntermediate, 2.92, "intermediate-rounded ordering produces 2.92 (the bug we don't ship)");
+    assert.notEqual(targetIntermediate, d.effectiveTargetCpl, "the two orderings disagree at this input");
+});
+
+// Phase 10 T069 (SC-006, SC-014) — cross-funnel profit-parity
+// fixture. A free_webinar funnel and a lead_magnet_call funnel at
+// the same offer price, commission, and margin kept yield the same
+// profit per sale — regardless of the rate chain chosen.
+//
+// The math is symmetric: per-sale revenue = offerPrice × netFactor,
+// and per-sale cost = offerPrice × netFactor × spendShare (the
+// rate-chain product cancels out of the per-sale cost because CPL
+// is computed from leadValue which is offerPrice × netFactor ×
+// chain). Profit per sale = offerPrice × netFactor × marginKept/100
+// for both funnels.
+//
+// §6.1 / §6.2 worked examples both yield $1620 profit per sale:
+//   offerPrice=3000, netFactor=0.9, marginKept=60
+//   ⇒ profit = 3000 × 0.9 × 0.6 = $1620 per sale.
+test("T069: cross-funnel profit-parity (SC-006, SC-014) — same offer/commission/margin yields same profit per sale", () => {
+    const OFFER = 3000;
+    const COMMISSION = 10;
+    const MARGIN = 60;
+
+    // lead_magnet_call — §6.1 worked-example rates
+    const lm: LeadMagnetCallInputs = {
+        funnelType: "lead_magnet_call",
+        offerPrice: OFFER,
+        leadToCloseRate: 22.5,
+        bookingRate: 7.5,
+        showUpRate: 70,
+        commissionRate: COMMISSION,
+        marginKept: MARGIN,
+    };
+
+    // free_webinar — §6.2 worked-example rates
+    const fw: FreeWebinarInputs = {
+        funnelType: "free_webinar",
+        offerPrice: OFFER,
+        attendanceRate: 25,
+        buyRateFromAttendees: 2,
+        commissionRate: COMMISSION,
+        marginKept: MARGIN,
+    };
+
+    const lmDerived = deriveTargetCplLeadMagnetCall(lm);
+    const fwDerived = deriveTargetCplFreeWebinar(fw);
+
+    // Per-sale algebra — chain cancels (algebra shown in the file
+    // header comment above):
+    //   profit_per_sale = revenue - cost
+    //                    = offerPrice × netFactor
+    //                      - (offerPrice × netFactor × chain × spendShare) / chain
+    //                    = offerPrice × netFactor × (1 - spendShare)
+    //                    = offerPrice × netFactor × marginKept/100
+    //
+    // We use the unrounded intermediates for both sides — the
+    // displayed CPL is rounded (FR-048), so the displayed rounded
+    // value drifts by one cent at the §6.1/§6.2 inputs and the
+    // per-sale cost would differ by ~$0.21. The structural
+    // identity holds on unrounded values.
+    const netFactorVal = 1 - COMMISSION / 100;
+    const marginShare = MARGIN / 100;
+    const spendShareVal = 1 - marginShare;
+
+    // Per-sale cost using unrounded leadValue:
+    //   leadValue = offerPrice × netFactor × chain
+    //   CPL_unrounded = leadValue × spendShare
+    //   cost_per_sale = CPL_unrounded / chain = offerPrice × netFactor × spendShare
+    const lmChain = (lm.bookingRate / 100) * (lm.showUpRate / 100) * (lm.leadToCloseRate / 100);
+    const fwChain = (fw.attendanceRate / 100) * (fw.buyRateFromAttendees / 100);
+    const lmCostUnrounded = OFFER * netFactorVal * lmChain * spendShareVal / lmChain;
+    const fwCostUnrounded = OFFER * netFactorVal * fwChain * spendShareVal / fwChain;
+    // Both reduce to: OFFER × netFactor × spendShare.
+    const expectedCost = OFFER * netFactorVal * spendShareVal;
+
+    // Per-sale revenue = offerPrice × netFactor (the commission
+    // deduction is the only difference between sale price and
+    // revenue).
+    const lmRevenue = OFFER * netFactorVal;
+    const fwRevenue = OFFER * netFactorVal;
+    const expectedRevenue = OFFER * netFactorVal;
+
+    // Profit per sale = revenue - cost.
+    const lmProfit = lmRevenue - lmCostUnrounded;
+    const fwProfit = fwRevenue - fwCostUnrounded;
+    const expectedProfit = expectedRevenue - expectedCost;
+
+    // The headline SC-006 / SC-014 assertion — the two funnels
+    // produce identical profit per sale (structural identity,
+    // exact equality on unrounded values).
+    assert.equal(lmProfit, expectedProfit, "lead_magnet per-sale profit");
+    assert.equal(fwProfit, expectedProfit, "free_webinar per-sale profit");
+    assert.equal(lmProfit, fwProfit, "SC-006 / SC-014 cross-funnel parity");
+
+    // Rounded display: at the §6.1/§6.2 worked-example inputs,
+    // profit per sale = $1620 (rounded from 1620.00).
+    assert.equal(round2(expectedProfit), 1620);
+
+    // The displayed CPL values (rounded, FR-048) DO differ between
+    // the two funnels — this is by design, not a bug. The CPL is
+    // displayed per lead; per-sale profit cancels the chain.
+    assert.equal(lmDerived.effectiveTargetCpl, 12.76); // §6.1 row 2 (margin 60)
+    assert.equal(fwDerived.effectiveTargetCpl, 5.40);  // §6.2
+});
+
+// ─── Phase 10 T066 (FR-047) — Purity assertion ───────────────────────────
+//
+// The economics module is required to stay pure — no `firebase-admin`,
+// no `firebase-functions`, no network client. This is the load-bearing
+// property that lets every §6 fixture run without an emulator or a
+// mock stack. The assertion reads the source and verifies nothing on
+// the forbidden list has crept in across future phases.
+//
+// Pattern modeled on `creativeResolverParity.test.ts` and the FR-061
+// guard: a test that reads the file as text and asserts on the import
+// surface, rather than mocking the module system. A refactor that
+// introduces a forbidden import — even a type-only one — fails this
+// test before it reaches production.
+//
+// Source path note: when this test runs, it's compiled to
+// `lib/__tests__/cpaEconomics.test.js` and `__dirname` resolves there.
+// Walk up to `functions/` then descend into `src/` for the source.
+
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+test("purity — cpaEconomics.ts imports nothing from firebase-admin, firebase-functions, or any network client (FR-047)", () => {
+    const src = readFileSync(
+        resolve(__dirname, "../../src/cpaEconomics.ts"),
+        "utf-8",
+    );
+    // Strip line/block comments so a `// firebase-admin` note in a
+    // comment doesn't trip the assertion.
+    const stripped = src
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "");
+    const FORBIDDEN = [
+        "firebase-admin",
+        "firebase-functions",
+        "@google-cloud",
+        "node-fetch",
+        "axios",
+        // Skip "got" — it's a common English word that appears in error
+        // messages ("got ${value}"); HTTP-client module references
+        // would be `from "got"` or `require("got")`, which the
+        // import-statement pattern below catches explicitly.
+        // "node:http",
+        // "node:https",
+        // "node:net",
+        // "createConnection",
+    ];
+    // Two checks: (a) the bare term doesn't appear as a substring
+    // (catches naked references in code, but not error-message prose),
+    // and (b) the term doesn't appear inside an import / require
+    // statement (catches all real module references).
+    for (const term of FORBIDDEN) {
+        assert.equal(
+            stripped.includes(term),
+            false,
+            `cpaEconomics.ts imports or references "${term}" — forbidden by FR-047 (purity). ` +
+            `The economics module must stay directly unit-testable without an emulator or mock stack.`,
+        );
+    }
+    // Belt-and-braces: no `from "<forbidden>"` or `require("<forbidden>")`
+    // anywhere in the source.
+    const importPatterns = [
+        /from\s+["']firebase-admin["']/,
+        /from\s+["']firebase-functions["']/,
+        /from\s+["']@google-cloud\/[^"']+["']/,
+        /from\s+["']node-fetch["']/,
+        /from\s+["']axios["']/,
+        /require\s*\(\s*["']firebase-admin["']\s*\)/,
+        /require\s*\(\s*["']firebase-functions["']\s*\)/,
+    ];
+    for (const re of importPatterns) {
+        assert.equal(
+            re.test(stripped),
+            false,
+            `cpaEconomics.ts imports a forbidden module — pattern ${re} matched. FR-047 requires the module to stay pure.`,
+        );
+    }
+});

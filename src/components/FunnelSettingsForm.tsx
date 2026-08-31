@@ -36,6 +36,7 @@ import { useEffect, useState, useMemo, useRef } from 'react';
 import { functions } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 import { useT } from '../i18n';
+import { resolveHtoConversionRateForSave } from '../utils/funnelSettingsSavePayload';
 
 // ─── Types (mirror functions/src/funnelSettings.ts contract) ─
 
@@ -141,6 +142,102 @@ function numOrNull(v: string): number | null {
     if (v === '') return null;
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
+}
+
+// ─── Completeness predicate (Phase 10 T058) ──────────────────
+//
+// Extracted from the `missingFields` useMemo so the parity test can
+// pin agreement with the backend's `missingRequiredFields`
+// (`functions/src/funnelSettings.ts` — single canonical definition
+// per FR-050). Both sides encode `data-model.md §3`:
+//
+//   - `null` / missing → incomplete
+//   - `0` → COMPLETE (a zero commission or zero rate is legitimate)
+//   - hasHto === false drops the HTO fields from the required set
+//   - stored-but-unread fields are not part of the rule (Item A:
+//     paid_event does not require `htoConversionRate` even when
+//     hasHto=true)
+//
+// Two implementations exist today (this function on the frontend,
+// `missingRequiredFields` on the backend). Constitution XI forbids
+// drift; the parity test at
+// `functions/src/__tests__/funnelEconomicsParity.test.ts` asserts
+// the two produce the same missing-field list for every (funnelType,
+// hasHto, missing-field) permutation. The cleanest end-state would
+// be a single shared module — that's a separate refactor outside
+// T058's scope; this function is named and exported so the parity
+// test can import it from the frontend vitest suite today.
+//
+// Returns a sorted, deduplicated array so callers can compare with
+// deep-equal without ordering surprises.
+export interface ComputeMissingFieldsInput {
+    funnelType: FunnelType;
+    hasHto: boolean;
+    aov: string;
+    roasTarget: number | null;
+    htoPrice: string;
+    htoConversionRate: string;
+    eventAttendanceRate: string;
+    eventCloseRate: string;
+    offerPrice: string;
+    attendanceRate: string;
+    buyRateFromAttendees: string;
+    leadToCloseRate: string;
+    bookingRate: string;
+    showUpRate: string;
+    commissionRate: string;
+    marginKept: 50 | 60 | 70 | null;
+}
+
+export function computeMissingFields(input: ComputeMissingFieldsInput): ReadonlyArray<string> {
+    const isEmptyString = (v: string | null | undefined) => v === undefined || v === null || v === '';
+    // ROAS is a closed enum (1.0/0.65/0.5) — `roasTarget` is a
+    // number, not a string. `null`/`undefined` is incomplete.
+    const isEmptyNumber = (v: number | null | undefined) => v === undefined || v === null;
+    const missing = new Set<string>();
+    if (input.funnelType === 'paid_event' || input.funnelType === 'paid_product') {
+        if (isEmptyString(input.aov)) missing.add('aov');
+        // Phase 968 — T041 mirror (FR-016). roasTarget is OPTIONAL
+        // on paid_event — the form defaults to 0.5 and the backend
+        // fills it if absent. paid_product still requires an explicit
+        // choice.
+        if (input.funnelType === 'paid_product' && isEmptyNumber(input.roasTarget)) missing.add('roasTarget');
+        if (input.hasHto) {
+            if (isEmptyString(input.htoPrice)) missing.add('htoPrice');
+            if (input.funnelType === 'paid_product' && isEmptyString(input.htoConversionRate)) missing.add('htoConversionRate');
+        }
+    }
+    // Phase 968 — T045 (US3). paid_event event rates — the frontend
+    // mirror of the backend's completeness rule (FR-011..FR-014):
+    // paid_event reads these on the HTO term, both required;
+    // htoConversionRate is NOT required on paid_event (Item A
+    // asymmetry).
+    if (input.funnelType === 'paid_event') {
+        if (isEmptyString(input.eventAttendanceRate)) missing.add('eventAttendanceRate');
+        if (isEmptyString(input.eventCloseRate)) missing.add('eventCloseRate');
+    }
+    if (input.funnelType === 'free_webinar') {
+        if (isEmptyString(input.offerPrice)) missing.add('offerPrice');
+        if (isEmptyString(input.attendanceRate)) missing.add('attendanceRate');
+        if (isEmptyString(input.buyRateFromAttendees)) missing.add('buyRateFromAttendees');
+    }
+    if (input.funnelType === 'lead_magnet_call') {
+        if (isEmptyString(input.offerPrice)) missing.add('offerPrice');
+        if (isEmptyString(input.leadToCloseRate)) missing.add('leadToCloseRate');
+        if (isEmptyString(input.bookingRate)) missing.add('bookingRate');
+        if (isEmptyString(input.showUpRate)) missing.add('showUpRate');
+    }
+    if (isEmptyString(input.commissionRate)) missing.add('commissionRate');
+    if (isEmptyNumber(input.marginKept)) missing.add('marginKept');
+    // Set semantics with declaration-order iteration: the order
+    // matches the backend's `missingRequiredFields` (which iterates
+    // `requiredFieldsForDoc` in declaration order). The two outputs
+    // agree byte-for-byte on the same input — T058's parity test
+    // compares them directly without sorting. Pre-extraction the
+    // useMemo pushed fields in declaration order; preserving that
+    // order here keeps the form's rendered text identical for
+    // owners (no visible reorder).
+    return [...missing];
 }
 
 // ─── Hook: load + save + dismiss ─────────────────────────────
@@ -279,14 +376,14 @@ function useFunnelSettings(workspaceId: string | null, accountId: string | null)
                 aov: req.aov ?? null,
                 hasHto: req.hasHto === true,
                 htoPrice: req.hasHto ? (req.htoPrice ?? 0) : 0,
-                // Phase 968 — Item D (Phase 7 carry-over): on paid_event
-                // the form removed the htoConversionRate input (Phase 7
-                // Item C) but the saved value is preserved verbatim. The
-                // save request carries the form's pass-through value
-                // (req.htoConversionRate, which for paid_event equals
-                // settings?.htoConversionRate); the optimistic merge
-                // mirrors it. paid_product continues to read the form's
-                // input.
+                // Phase 968 — Item D (Phase 7 carry-over, Phase 9 close-out):
+                // on paid_event the form removed the htoConversionRate
+                // input (Phase 7 Item C) and the saved value is preserved
+                // verbatim — including a stored `null`. The save request
+                // carries the form's pass-through value (req.htoConversionRate,
+                // which for paid_event equals `settings?.htoConversionRate
+                // ?? null`); the optimistic merge mirrors it. paid_product
+                // continues to read the form's input.
                 htoConversionRate: req.funnelType === 'paid_event'
                     ? (req.htoConversionRate ?? null)
                     : req.hasHto ? (req.htoConversionRate ?? 0) : 0,
@@ -496,49 +593,30 @@ export default function FunnelSettingsForm({
     // incomplete, `0` is complete, hasHto=false drops the HTO fields
     // from the required set, and htoConversionRate is NOT required on
     // paid_event (Item A decision in batch-05-report.md).
-    const missingFields = useMemo<ReadonlyArray<string>>(() => {
-        const isEmptyString = (v: string | null | undefined) => v === undefined || v === null || v === '';
-        // ROAS is a closed enum (1.0/0.65/0.5) — `roasTarget` is a
-        // number, not a string. `null`/`undefined` is incomplete.
-        const isEmptyNumber = (v: number | null | undefined) => v === undefined || v === null;
-        // marginKept is the closed enum 50|60|70; same rule.
-        const missing: string[] = [];
-        if (funnelType === 'paid_event' || funnelType === 'paid_product') {
-            if (isEmptyString(aov)) missing.push('aov');
-            // Phase 968 — T041 mirror (FR-016). roasTarget is OPTIONAL
-            // on paid_event — the form defaults to 0.5 and the
-            // backend fills it if absent. paid_product still
-            // requires an explicit choice.
-            if (funnelType === 'paid_product' && isEmptyNumber(roasTarget)) missing.push('roasTarget');
-            if (hasHto) {
-                if (isEmptyString(htoPrice)) missing.push('htoPrice');
-                if (funnelType === 'paid_product' && isEmptyString(htoConversionRate)) missing.push('htoConversionRate');
-            }
-        }
-        // Phase 968 — T045 (US3). paid_event event rates — the
-        // frontend mirror of the backend's completeness rule. The
-        // rule (FR-011..FR-014): paid_event reads these on the HTO
-        // term, both required when hasHto=true; htoConversionRate is
-        // NOT required on paid_event (Item A asymmetry).
-        if (funnelType === 'paid_event') {
-            if (isEmptyString(eventAttendanceRate)) missing.push('eventAttendanceRate');
-            if (isEmptyString(eventCloseRate)) missing.push('eventCloseRate');
-        }
-        if (funnelType === 'free_webinar') {
-            if (isEmptyString(offerPrice)) missing.push('offerPrice');
-            if (isEmptyString(attendanceRate)) missing.push('attendanceRate');
-            if (isEmptyString(buyRateFromAttendees)) missing.push('buyRateFromAttendees');
-        }
-        if (funnelType === 'lead_magnet_call') {
-            if (isEmptyString(offerPrice)) missing.push('offerPrice');
-            if (isEmptyString(leadToCloseRate)) missing.push('leadToCloseRate');
-            if (isEmptyString(bookingRate)) missing.push('bookingRate');
-            if (isEmptyString(showUpRate)) missing.push('showUpRate');
-        }
-        if (isEmptyString(commissionRate)) missing.push('commissionRate');
-        if (isEmptyNumber(marginKept)) missing.push('marginKept');
-        return missing;
-    }, [funnelType, hasHto, aov, roasTarget, htoPrice, htoConversionRate, eventAttendanceRate, eventCloseRate, offerPrice, attendanceRate, buyRateFromAttendees, leadToCloseRate, bookingRate, showUpRate, commissionRate, marginKept]);
+    //
+    // Phase 10 T058: the body is extracted into a named exported
+    // function so the parity test can pin agreement with the backend
+    // (`functions/src/__tests__/funnelEconomicsParity.test.ts`) and
+    // future regressions surface as a test failure rather than as
+    // drift between two implementations.
+    const missingFields = useMemo<ReadonlyArray<string>>(() => computeMissingFields({
+        funnelType,
+        hasHto,
+        aov,
+        roasTarget,
+        htoPrice,
+        htoConversionRate,
+        eventAttendanceRate,
+        eventCloseRate,
+        offerPrice,
+        attendanceRate,
+        buyRateFromAttendees,
+        leadToCloseRate,
+        bookingRate,
+        showUpRate,
+        commissionRate,
+        marginKept,
+    }), [funnelType, hasHto, aov, roasTarget, htoPrice, htoConversionRate, eventAttendanceRate, eventCloseRate, offerPrice, attendanceRate, buyRateFromAttendees, leadToCloseRate, bookingRate, showUpRate, commissionRate, marginKept]);
 
     // Local dismiss state for the monthly-review prompt. Resets when
     // `reviewDue` flips back to true on a fresh save (the save function
@@ -638,24 +716,25 @@ export default function FunnelSettingsForm({
             aov: aovN,
             hasHto,
             htoPrice: numOrNull(htoPrice) ?? 0,
-            // Phase 968 — Item D (Phase 7 carry-over): paid_event does
-            // NOT read `htoConversionRate` (FR-011..FR-014). The form
-            // removed the input (Phase 7 Item C). Storage retention
-            // (data-model.md §1) means the field is preserved verbatim
-            // — sending 0 here would overwrite a pre-existing value
-            // and break the revert-stays-code-only property.
+            // Phase 968 — Item D (Phase 7 carry-over, Phase 9 close-out):
+            // paid_event does NOT read `htoConversionRate` (FR-011..FR-014).
+            // The form removed the input (Phase 7 Item C). Storage
+            // retention (data-model.md §1) means the field is preserved
+            // verbatim — including a stored `null`. The previous
+            // implementation sent `0` when the stored value was `null`,
+            // which would overwrite a pre-existing `null` with `0` and
+            // break the revert-stays-code-only property the deferred
+            // epoch phase relies on.
             //
-            // For paid_event, fall back to the hydrated settings value
-            // when the form's state is empty (the input is hidden, so
-            // state is `''` after hydration completes OR when the user
-            // opens a record that never had the field stored). The
-            // backend persists whatever the request supplies, so this
-            // pass-through keeps the pre-existing value verbatim.
-            //
-            // paid_product continues to send the form's value.
-            htoConversionRate: funnelType === 'paid_event'
-                ? numOrNull(htoConversionRate) ?? settings?.htoConversionRate ?? 0
-                : numOrNull(htoConversionRate) ?? 0,
+            // Phase 10 Item D: the resolution logic is extracted into
+            // `src/utils/funnelSettingsSavePayload.ts` so the chain is
+            // unit-testable end-to-end at the form layer (mirrors the
+            // backend's `resolveHtoConversionRateForStorage` helper).
+            htoConversionRate: resolveHtoConversionRateForSave(
+                funnelType,
+                htoConversionRate,
+                settings?.htoConversionRate,
+            ),
             roasTarget,
             offerPrice: offerN,
             attendanceRate: attendanceN,
@@ -794,7 +873,22 @@ export default function FunnelSettingsForm({
                         <div>
                             <h3 className={`font-semibold ${txPrimary}`}>{L('Important note about your funnel', 'ملاحظة مهمة عن مسار المبيعات الخاص بك')}</h3>
                             <p className={`mt-1 text-sm ${txSecondary}`}>
-                                {L('You don\u2019t have a high-ticket upsell configured. This limits the funnel\u2019s ability to absorb the higher ad spend needed to reach customers who pay large amounts.', 'لا يوجد لديك عرض ترويجي عالي القيمة (HTO) في إعداداتك. هذا يحد من قدرة المسار على استيعاب تكاليف الإعلانات الأعلى التي تحتاجها للوصول إلى عملاء يدفعون مبالغ كبيرة.')}
+                                {/* Phase 10 — Item B (Phase 9 rule breach): the
+                                    previous body shipped `(HTO)` as a
+                                    parenthetical English acronym inside
+                                    user-facing Arabic. The acronym is a
+                                    technical term and belongs in internal
+                                    code + comments only (FR-019 spirit —
+                                    user-facing Arabic is plain Fusha with
+                                    no English-transliterated technical
+                                    terms). Strip the acronym and align the
+                                    wording to `uiCopy.md` #15's
+                                    "high-ticket offer" / "عرض عالي القيمة"
+                                    rename so the question and the body use
+                                    the same Fusha noun. See
+                                    `contracts/uiCopy.md` #15a for the
+                                    canonical pair. */}
+                                {L('You don\u2019t have a high-ticket offer configured. This limits the funnel\u2019s ability to absorb the higher ad spend needed to reach customers who pay large amounts.', 'لا يوجد لديك عرض عالي القيمة في إعداداتك. هذا يحد من قدرة المسار على استيعاب تكاليف الإعلانات الأعلى التي تحتاجها للوصول إلى عملاء يدفعون مبالغ كبيرة.')}
                             </p>
                         </div>
                         <button
@@ -894,9 +988,33 @@ export default function FunnelSettingsForm({
             {/* Conditional fields per funnel-type */}
             {(funnelType === 'paid_event' || funnelType === 'paid_product') && (
                 <div className="space-y-3">
-                    <NumberField label={L('Average order value ($)', 'قيمة الطلب (دولار)')} value={aov} onChange={setAov} isDarkMode={dk} required={missingFields.includes('aov')} lang={lang} />
+                    <NumberField
+                        label={L('Average order value ($)', 'قيمة الطلب (دولار)')}
+                        value={aov}
+                        onChange={setAov}
+                        isDarkMode={dk}
+                        required={missingFields.includes('aov')}
+                        lang={lang}
+                        // Phase 968 — T055 (FR-036). The order-value field
+                        // carries a plain-language explanation identifying
+                        // it as the average a single customer pays (so an
+                        // owner with an order bump does not enter their
+                        // bare ticket price). Arabic wording is the Fusha
+                        // form per contracts/uiCopy.md #16 + A-10.
+                        //
+                        // A-10 cites the policy provenance (the guard
+                        // header at scripts/sc11Guard.mjs:11 + 84:
+                        // "متوسط is INTERNAL-ONLY (not in src/**). It is
+                        // NOT in the pattern set here. The user-facing
+                        // equivalent in stats labels is المعدل or
+                        // appropriate Fusha."). The policy is deliberately
+                        // absent from the regex set, so a violation would
+                        // ship silently — see also research.md:127-133 for
+                        // the Phase 0 decision that produced this wording.
+                        hint={L('The amount one customer usually pays you', 'المبلغ الذي يدفعه العميل الواحد عادة')}
+                    />
                     <div>
-                        <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>{L('Do you have a high-ticket upsell?', 'هل لديك عرض ترويجي عالي القيمة؟')}</label>
+                        <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>{L('Do you have a high-ticket offer?', 'هل لديك عرض عالي القيمة؟')}</label>
                         <div className="flex gap-2">
                             <button type="button" onClick={() => setHasHto(true)} className={`px-3 py-2 rounded ${hasHto ? 'bg-indigo-600 text-white' : dk ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700'}`}>{L('Yes', 'نعم')}</button>
                             <button type="button" onClick={() => setHasHto(false)} className={`px-3 py-2 rounded ${!hasHto ? 'bg-indigo-600 text-white' : dk ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700'}`}>{L('No', 'لا')}</button>
@@ -904,7 +1022,7 @@ export default function FunnelSettingsForm({
                     </div>
                     {hasHto && (
                         <>
-                            <NumberField label={L('Upsell price ($)', 'سعر العرض الترويجي (دولار)')} value={htoPrice} onChange={setHtoPrice} isDarkMode={dk} required={missingFields.includes('htoPrice')} lang={lang} />
+                            <NumberField label={L('High ticket price ($)', 'سعر العرض عالي القيمة (دولار)')} value={htoPrice} onChange={setHtoPrice} isDarkMode={dk} required={missingFields.includes('htoPrice')} lang={lang} />
                             {/* Phase 968 — T045 follow-up (Item C of Phase 6
                                 review): paid_event does NOT render
                                 htoConversionRate. The corrected formula
@@ -919,7 +1037,7 @@ export default function FunnelSettingsForm({
                                 (default 0) for additive-storage compatibility,
                                 but the form does not prompt for it. */}
                             {funnelType === 'paid_product' && (
-                                <NumberField label={L('Upsell conversion rate (%)', 'نسبة تحويل العرض الترويجي (%)')} value={htoConversionRate} onChange={setHtoConversionRate} isDarkMode={dk} required={missingFields.includes('htoConversionRate')} lang={lang} />
+                                <NumberField label={L('High ticket conversion rate (%)', 'نسبة تحويل العرض عالي القيمة (%)')} value={htoConversionRate} onChange={setHtoConversionRate} isDarkMode={dk} required={missingFields.includes('htoConversionRate')} lang={lang} />
                             )}
                         </>
                     )}
@@ -938,6 +1056,7 @@ export default function FunnelSettingsForm({
                         isDarkMode={dk}
                         required={missingFields.includes('eventAttendanceRate')}
                         lang={lang}
+                        hint={L('Typical range: 70–80%', 'المعتاد: ٧٠ – ٨٠٪')} // sc11-allow:PERCENT_SIGN reason="benchmark range for an input hint; owner guidance, not a reported performance metric"
                     />
                     <NumberField
                         label={L('High ticket close from attendees (%)', 'نسبة إغلاق العرض عالي القيمة من الحضور (%)')}
@@ -946,6 +1065,7 @@ export default function FunnelSettingsForm({
                         isDarkMode={dk}
                         required={missingFields.includes('eventCloseRate')}
                         lang={lang}
+                        hint={L('Typical range: 5–10%', 'المعتاد: ٥ – ١٠٪')} // sc11-allow:PERCENT_SIGN reason="benchmark range for an input hint; owner guidance, not a reported performance metric"
                     />
                     <div>
                         <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>{L('Target ROAS', 'هدف العائد على الإنفاق الإعلاني')}</label>
@@ -971,8 +1091,8 @@ export default function FunnelSettingsForm({
             {funnelType === 'free_webinar' && (
                 <div className="space-y-3">
                     <NumberField label={L('Final offer price ($)', 'سعر العرض النهائي (دولار)')} value={offerPrice} onChange={setOfferPrice} isDarkMode={dk} required={missingFields.includes('offerPrice')} lang={lang} />
-                    <NumberField label={L('Attendance rate (%)', 'نسبة الحضور من المسجلين (%)')} value={attendanceRate} onChange={setAttendanceRate} isDarkMode={dk} required={missingFields.includes('attendanceRate')} lang={lang} />
-                    <NumberField label={L('Purchase rate from attendees (%)', 'نسبة الشراء من الحضور (%)')} value={buyRateFromAttendees} onChange={setBuyRateFromAttendees} isDarkMode={dk} required={missingFields.includes('buyRateFromAttendees')} lang={lang} />
+                    <NumberField label={L('Attendance rate (%)', 'نسبة الحضور من المسجلين (%)')} value={attendanceRate} onChange={setAttendanceRate} isDarkMode={dk} required={missingFields.includes('attendanceRate')} lang={lang} hint={L('Typical range: 20–30%', 'المعتاد: ٢٠ – ٣٠٪')} /* sc11-allow:PERCENT_SIGN reason="benchmark range for an input hint; owner guidance, not a reported performance metric" */ />
+                    <NumberField label={L('Purchase rate from attendees (%)', 'نسبة الشراء من الحضور (%)')} value={buyRateFromAttendees} onChange={setBuyRateFromAttendees} isDarkMode={dk} required={missingFields.includes('buyRateFromAttendees')} lang={lang} hint={L('Typical range: 1–3%', 'المعتاد: ١ – ٣٪')} /* sc11-allow:PERCENT_SIGN reason="benchmark range for an input hint; owner guidance, not a reported performance metric" */ />
                 </div>
             )}
 
@@ -985,9 +1105,9 @@ export default function FunnelSettingsForm({
                         contracts/uiCopy.md #5: "Close rate on calls that
                         happened (%)" / "نسبة الإغلاق في المكالمات التي تمت (%)".
                         The benchmark hint copy (#2, #4, #6) lands in T054. */}
-                    <NumberField label={L('Booking rate (%)', 'نسبة حجز المكالمات من العملاء المحتملين (%)')} value={bookingRate} onChange={setBookingRate} isDarkMode={dk} required={missingFields.includes('bookingRate')} lang={lang} />
-                    <NumberField label={L('Show-up rate (%)', 'نسبة الحضور للمكالمات المحجوزة (%)')} value={showUpRate} onChange={setShowUpRate} isDarkMode={dk} required={missingFields.includes('showUpRate')} lang={lang} />
-                    <NumberField label={L('Close rate on calls that happened (%)', 'نسبة الإغلاق في المكالمات التي تمت (%)')} value={leadToCloseRate} onChange={setLeadToCloseRate} isDarkMode={dk} required={missingFields.includes('leadToCloseRate')} lang={lang} />
+<NumberField label={L('Booking rate (%)', 'نسبة حجز المكالمات من العملاء المحتملين (%)')} value={bookingRate} onChange={setBookingRate} isDarkMode={dk} required={missingFields.includes('bookingRate')} lang={lang} hint={L('Typical range: 5–10%', 'المعتاد: ٥ – ١٠٪')} /* sc11-allow:PERCENT_SIGN reason="benchmark range for an input hint; owner guidance, not a reported performance metric" */ />
+                    <NumberField label={L('Show-up rate (%)', 'نسبة الحضور لل مكالامات المحجوزة (%)')} value={showUpRate} onChange={setShowUpRate} isDarkMode={dk} required={missingFields.includes('showUpRate')} lang={lang} hint={L('Typical range: above 65%', 'المعتاد: أكثر من ٦٥٪')} /* sc11-allow:PERCENT_SIGN reason="benchmark range for an input hint; owner guidance, not a reported performance metric" */ />
+                    <NumberField label={L('Close rate on calls that happened (%)', 'نسبة الإغلاق في المكالمات التي تمت (%)')} value={leadToCloseRate} onChange={setLeadToCloseRate} isDarkMode={dk} required={missingFields.includes('leadToCloseRate')} lang={lang} hint={L('Typical range: 20–25%', 'المعتاد: ٢٠ – ٢٥٪')} /* sc11-allow:PERCENT_SIGN reason="benchmark range for an input hint; owner guidance, not a reported performance metric" */ />
                 </div>
             )}
 
@@ -1004,6 +1124,7 @@ export default function FunnelSettingsForm({
                     isDarkMode={dk}
                     required={missingFields.includes('commissionRate')}
                     lang={lang}
+                    hint={L('Typical: 10%', 'المعتاد: ١٠٪')} // sc11-allow:PERCENT_SIGN reason="benchmark range for an input hint; owner guidance, not a reported performance metric"
                 />
                 <div>
                     <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>
@@ -1157,6 +1278,7 @@ function NumberField({
     isDarkMode,
     required,
     lang,
+    hint,
 }: {
     label: string;
     value: string;
@@ -1173,11 +1295,24 @@ function NumberField({
         The previous version keyed this off `isDarkMode`, which is a
         theme flag, not a language flag. */
     lang: string;
+    /** Phase 968 — T053 (US6, FR-034). Optional muted text rendered
+        below the input, NOT as a placeholder. The hint survives the
+        owner beginning to type (placeholders disappear at the exact
+        moment the owner needs them — FR-034's explicit rationale).
+        Owner guidance copy (typical range, plain-language meaning)
+        flows through here. */
+    hint?: string;
 }) {
     const inputCls = isDarkMode
         ? 'bg-slate-800 border-slate-700 text-white'
         : 'bg-white border-slate-300 text-slate-900';
     const labelCls = isDarkMode ? 'text-slate-300' : 'text-slate-700';
+    // Phase 968 — T053 (FR-034). Hint text uses the same muted tone
+    // already used elsewhere in the form (results-card sub-lines,
+    // paired-meta sub-labels) so the guidance reads as form copy, not
+    // as a new visual element. `txMuted` was passed in via the
+    // parent at `:404` and inherits the theme there.
+    const hintCls = isDarkMode ? 'text-slate-400' : 'text-slate-500';
     // Language-driven: 'ar' → Arabic, otherwise English. Phase 9
     // (T057) moves the string into i18n.tsx as a catalogued key;
     // until then this inline ternary is the source of truth.
@@ -1203,6 +1338,14 @@ function NumberField({
                 onChange={(e) => onChange(e.target.value)}
                 className={`w-full p-2 rounded border ${inputCls}`}
             />
+            {hint ? (
+                <p
+                    className={`mt-1 text-xs ${hintCls}`}
+                    data-form-field-hint
+                >
+                    {hint}
+                </p>
+            ) : null}
         </div>
     );
 }

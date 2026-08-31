@@ -125,21 +125,21 @@ Both pass the second argument. **No call site was missed by T017a.** T050 satisf
 
 ### T051 — Report §6.4 fixtures (3 tests)
 
-**Test 56**: `T051: free_webinar report §6.4 — offerPrice=3000 ⇒ 5.40 (silent)`. Inputs: offerPrice=3000, attendanceRate=25, buyRateFromAttendees=2, commissionRate=10, marginKept=60. Asserts `effectiveTargetCpl === 5.40` and `lowValue === false`.
+**Test 57**: `T051: free_webinar report §6.4 — offerPrice=3000 ⇒ 5.40 (silent)`. Inputs: offerPrice=3000, attendanceRate=25, buyRateFromAttendees=2, commissionRate=10, marginKept=60. Asserts `effectiveTargetCpl === 5.40` and `lowValue === false`.
 
-**Test 57**: `T051: free_webinar report §6.4 — offerPrice=500 ⇒ 0.90 (silent)`. leadValue = 2.25, target = 0.90. Asserts `effectiveTargetCpl === 0.90` and `lowValue === false`.
+**Test 58**: `T051: free_webinar report §6.4 — offerPrice=500 ⇒ 0.90 (silent)`. leadValue = 2.25, target = 0.90. Asserts `effectiveTargetCpl === 0.90` and `lowValue === false`.
 
-**Test 58**: `T051: free_webinar report §6.4 — offerPrice=200 ⇒ 0.36 (FIRES)`. leadValue = 0.90, target = 0.36. Asserts `effectiveTargetCpl === 0.36` and `lowValue === true`.
+**Test 59**: `T051: free_webinar report §6.4 — offerPrice=200 ⇒ 0.36 (FIRES)`. leadValue = 0.90, target = 0.36. Asserts `effectiveTargetCpl === 0.36` and `lowValue === true`.
 
 All three reconcile with contracts/cpaEconomics.md §4.5.
 
 ### T052 — Boundary fixtures (3 tests, FR-028a)
 
-**Test 59**: `T052: low-value boundary — raw 0.4999 displays 0.50 ⇒ silent`. Pins that `round2(0.4999) === 0.50` and `0.50 < 0.50 === false` ⇒ silent.
+**Test 60**: `T052: low-value boundary — raw 0.4999 displays 0.50 ⇒ silent`. Pins that `round2(0.4999) === 0.50` and `0.50 < 0.50 === false` ⇒ silent.
 
-**Test 60**: `T052: low-value boundary — exactly 0.50 ⇒ silent (strict inequality)`. Pins that equality does not fire (the comparison is `roundedTarget < LOW_VALUE_TARGET_THRESHOLD`, strict).
+**Test 61**: `T052: low-value boundary — exactly 0.50 ⇒ silent (strict inequality)`. Pins that equality does not fire (the comparison is `roundedTarget < LOW_VALUE_TARGET_THRESHOLD`, strict).
 
-**Test 61**: `T052: low-value boundary — raw 0.4949 displays 0.49 ⇒ FIRES`. Pins that `round2(0.4949) === 0.49` and `0.49 < 0.50 === true` ⇒ fires.
+**Test 62**: `T052: low-value boundary — raw 0.4949 displays 0.49 ⇒ FIRES`. Pins that `round2(0.4949) === 0.49` and `0.49 < 0.50 === true` ⇒ fires.
 
 All three tests construct a `DerivedTargets` shape directly (no funnel inputs needed — the module is pure) and assert the advisory result. The pair (silent / fires) brackets the boundary.
 
