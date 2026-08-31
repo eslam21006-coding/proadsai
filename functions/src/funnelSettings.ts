@@ -41,6 +41,9 @@ import {
     type LeadMagnetCallInputs,
     type Advisories,
     type DerivedTargets,
+    type MarginKept,
+    DEFAULT_COMMISSION_RATE,
+    DEFAULT_MARGIN_KEPT,
     LOW_VALUE_THRESHOLD,
 } from "./cpaEconomics.js";
 import { getDb } from "./firestoreClient.js";
@@ -149,12 +152,29 @@ export function assertRequiredFieldPresent(
     const isMissing = (v: unknown) => v === undefined || v === null;
     switch (funnelType) {
         case "paid_event":
+            if (
+                fieldName === "aov"
+                || fieldName === "roasTarget"
+                || fieldName === "htoPrice"
+                || fieldName === "htoConversionRate"
+                || fieldName === "eventAttendanceRate"
+                || fieldName === "eventCloseRate"
+                || fieldName === "commissionRate"
+                || fieldName === "marginKept"
+            ) {
+                if (isMissing(value)) {
+                    throw new Error(`${fieldName} is required for ${funnelType}`);
+                }
+            }
+            return;
         case "paid_product":
             if (
                 fieldName === "aov"
                 || fieldName === "roasTarget"
                 || fieldName === "htoPrice"
                 || fieldName === "htoConversionRate"
+                || fieldName === "commissionRate"
+                || fieldName === "marginKept"
             ) {
                 if (isMissing(value)) {
                     throw new Error(`${fieldName} is required for ${funnelType}`);
@@ -162,14 +182,27 @@ export function assertRequiredFieldPresent(
             }
             return;
         case "free_webinar":
-            if (fieldName === "offerPrice" || fieldName === "attendanceRate" || fieldName === "buyRateFromAttendees") {
+            if (
+                fieldName === "offerPrice"
+                || fieldName === "attendanceRate"
+                || fieldName === "buyRateFromAttendees"
+                || fieldName === "commissionRate"
+                || fieldName === "marginKept"
+            ) {
                 if (isMissing(value)) {
                     throw new Error(`${fieldName} is required for free_webinar`);
                 }
             }
             return;
         case "lead_magnet_call":
-            if (fieldName === "offerPrice" || fieldName === "leadToCloseRate") {
+            if (
+                fieldName === "offerPrice"
+                || fieldName === "leadToCloseRate"
+                || fieldName === "bookingRate"
+                || fieldName === "showUpRate"
+                || fieldName === "commissionRate"
+                || fieldName === "marginKept"
+            ) {
                 if (isMissing(value)) {
                     throw new Error(`${fieldName} is required for lead_magnet_call`);
                 }
@@ -180,6 +213,12 @@ export function assertRequiredFieldPresent(
 
 function buildFunnelInputsFromDoc(d: Record<string, unknown>): FunnelInputs {
     const funnelType = asFunnelType(d.funnelType);
+    // Defaults for fields that were added in Phase 968 and so are absent
+    // from every pre-phase stored doc. Phase 5 (T031) deletes this helper
+    // entirely in favour of the typed `derived` snapshot, so these
+    // defaults are temporary scaffolding only.
+    const commissionRate = asNumberOrNull(d.commissionRate) ?? DEFAULT_COMMISSION_RATE;
+    const marginKept = (asNumberOrNull(d.marginKept) ?? DEFAULT_MARGIN_KEPT) as MarginKept;
     switch (funnelType) {
         case "paid_event":
         case "paid_product": {
@@ -191,6 +230,10 @@ function buildFunnelInputsFromDoc(d: Record<string, unknown>): FunnelInputs {
                 hasHto,
                 htoPrice: hasHto ? (asNumberOrNull(d.htoPrice) ?? 0) : 0,
                 htoConversionRate: hasHto ? (asNumberOrNull(d.htoConversionRate) ?? 0) : 0,
+                eventAttendanceRate: asNumberOrNull(d.eventAttendanceRate) ?? 0,
+                eventCloseRate: asNumberOrNull(d.eventCloseRate) ?? 0,
+                commissionRate,
+                marginKept,
                 roasTarget: asRoas(d.roasTarget),
             };
         }
@@ -200,12 +243,18 @@ function buildFunnelInputsFromDoc(d: Record<string, unknown>): FunnelInputs {
                 offerPrice: asNumberOrNull(d.offerPrice) ?? 0,
                 attendanceRate: asNumberOrNull(d.attendanceRate) ?? 0,
                 buyRateFromAttendees: asNumberOrNull(d.buyRateFromAttendees) ?? 0,
+                commissionRate,
+                marginKept,
             };
         case "lead_magnet_call":
             return {
                 funnelType,
                 offerPrice: asNumberOrNull(d.offerPrice) ?? 0,
                 leadToCloseRate: asNumberOrNull(d.leadToCloseRate) ?? 0,
+                bookingRate: asNumberOrNull(d.bookingRate) ?? 0,
+                showUpRate: asNumberOrNull(d.showUpRate) ?? 0,
+                commissionRate,
+                marginKept,
             };
     }
 }
@@ -220,6 +269,8 @@ function buildFunnelInputsFromDoc(d: Record<string, unknown>): FunnelInputs {
  */
 function buildFunnelInputs(req: SaveFunnelSettingsRequest): FunnelInputs {
     const funnelType = asFunnelType(req.funnelType);
+    const commissionRate = asNumberOrNull(req.commissionRate) ?? DEFAULT_COMMISSION_RATE;
+    const marginKept = (asNumberOrNull(req.marginKept) ?? DEFAULT_MARGIN_KEPT) as MarginKept;
     switch (funnelType) {
         case "paid_event":
         case "paid_product": {
@@ -230,6 +281,10 @@ function buildFunnelInputs(req: SaveFunnelSettingsRequest): FunnelInputs {
                 hasHto,
                 htoPrice: hasHto ? (asNumberOrNull(req.htoPrice) ?? 0) : 0,
                 htoConversionRate: hasHto ? (asNumberOrNull(req.htoConversionRate) ?? 0) : 0,
+                eventAttendanceRate: asNumberOrNull(req.eventAttendanceRate) ?? 0,
+                eventCloseRate: asNumberOrNull(req.eventCloseRate) ?? 0,
+                commissionRate,
+                marginKept,
                 roasTarget: asRoas(req.roasTarget),
             } satisfies PaidFunnelInputs;
         }
@@ -239,12 +294,18 @@ function buildFunnelInputs(req: SaveFunnelSettingsRequest): FunnelInputs {
                 offerPrice: asNumberOrNull(req.offerPrice) ?? 0,
                 attendanceRate: asNumberOrNull(req.attendanceRate) ?? 0,
                 buyRateFromAttendees: asNumberOrNull(req.buyRateFromAttendees) ?? 0,
+                commissionRate,
+                marginKept,
             } satisfies FreeWebinarInputs;
         case "lead_magnet_call":
             return {
                 funnelType,
                 offerPrice: asNumberOrNull(req.offerPrice) ?? 0,
                 leadToCloseRate: asNumberOrNull(req.leadToCloseRate) ?? 0,
+                bookingRate: asNumberOrNull(req.bookingRate) ?? 0,
+                showUpRate: asNumberOrNull(req.showUpRate) ?? 0,
+                commissionRate,
+                marginKept,
             } satisfies LeadMagnetCallInputs;
     }
 }
@@ -264,12 +325,19 @@ interface SaveFunnelSettingsRequest {
     hasHto?: boolean;
     htoPrice?: number;
     htoConversionRate?: number;
+    eventAttendanceRate?: number | null;
+    eventCloseRate?: number | null;
     roasTarget?: 1.0 | 0.65 | 0.5;
     // Free
     offerPrice?: number | null;
     attendanceRate?: number | null;
     buyRateFromAttendees?: number | null;
     leadToCloseRate?: number | null;
+    bookingRate?: number | null;
+    showUpRate?: number | null;
+    // Shared Phase 968 inputs (FR-026, FR-027)
+    commissionRate?: number | null;
+    marginKept?: 50 | 60 | 70 | null;
     clientNowMs: number;
 }
 
@@ -322,23 +390,33 @@ export const saveFunnelSettings = onCall(
                 assertRequiredFieldPresent(req.funnelType, "htoPrice", req.htoPrice);
                 assertRequiredFieldPresent(req.funnelType, "htoConversionRate", req.htoConversionRate);
             }
+            assertRequiredFieldPresent(req.funnelType, "eventAttendanceRate", req.eventAttendanceRate);
+            assertRequiredFieldPresent(req.funnelType, "eventCloseRate", req.eventCloseRate);
+            assertRequiredFieldPresent(req.funnelType, "bookingRate", req.bookingRate);
+            assertRequiredFieldPresent(req.funnelType, "showUpRate", req.showUpRate);
             assertRequiredFieldPresent(req.funnelType, "offerPrice", req.offerPrice);
             assertRequiredFieldPresent(req.funnelType, "attendanceRate", req.attendanceRate);
             assertRequiredFieldPresent(req.funnelType, "buyRateFromAttendees", req.buyRateFromAttendees);
             assertRequiredFieldPresent(req.funnelType, "leadToCloseRate", req.leadToCloseRate);
+            // Phase 968 shared inputs (FR-026, FR-027).
+            assertRequiredFieldPresent(req.funnelType, "commissionRate", req.commissionRate);
+            assertRequiredFieldPresent(req.funnelType, "marginKept", req.marginKept);
 
             inputs = buildFunnelInputs(req);
             // Sanity-check the coerced inputs against the derivation engine.
-            deriveAll(inputs, req.clientNowMs);
-            computeAdvisories(inputs);
+            const probeDerived = deriveAll(inputs, req.clientNowMs);
+            computeAdvisories(inputs, probeDerived);
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e);
             throw new HttpsError("invalid-argument", msg);
         }
 
         // Recompute derived + advisories server-side (post-validation).
+        // T017a: computeAdvisories now takes the derived targets as its
+        // second argument because the low-value advisory keys off the
+        // computed target (FR-028), not the entered price.
         const derived = deriveAll(inputs, req.clientNowMs);
-        const advisories = computeAdvisories(inputs);
+        const advisories = computeAdvisories(inputs, derived);
 
         // Persist atomically so a concurrent `dismissAdvisory` write cannot
         // be clobbered by our read-then-overwrite. We snapshot the existing

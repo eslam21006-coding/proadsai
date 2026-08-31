@@ -33,6 +33,7 @@ import {
 function makePaidFunnel(targetCpa: number): FunnelSettingsForVerdict {
     return {
         derived: {
+            economicsVersion: 2,
             paid: {
                 rawTargetCpa: targetCpa * 1.2,
                 fullBuyerValue: targetCpa * 2,
@@ -48,6 +49,7 @@ function makePaidFunnel(targetCpa: number): FunnelSettingsForVerdict {
 function makeFreeFunnel(targetCpl: number): FunnelSettingsForVerdict {
     return {
         derived: {
+            economicsVersion: 2,
             free: {
                 leadValue: targetCpl / 0.7,
                 economicCeilingCpl: targetCpl,
@@ -574,7 +576,7 @@ test("missing funnel settings: returns ⏳ with 'إعدادات مسار الم�
 
 test("funnel settings with no derived targets: returns ⏳", () => {
     const ad = makeAd();
-    const r = evaluateVerdict(ad, { derived: { computedAt: 0 } }, "conversion", DEFAULT_BASELINES);
+    const r = evaluateVerdict(ad, { derived: { economicsVersion: 2, computedAt: 0 } }, "conversion", DEFAULT_BASELINES);
     assert.equal(r.verdict, "⏳");
 });
 

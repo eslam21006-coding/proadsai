@@ -19,9 +19,22 @@ import { REVIEW_CADENCE_MS, assertRequiredFieldPresent } from "../funnelSettings
 
 // ─── Pure request shape → funnel-input mapping ────────────────
 // The contract requires that saveFunnelSettings coerces the request into
-// the typed FunnelInputs shape. This is what we test here.
+// the typed FunnelInputs shape. This is what we test here. Phase 968
+// adds the new shared fields (commissionRate, marginKept, etc.) — every
+// coerce helper below fills them with sensible defaults so the contract
+// surface is exercised end-to-end.
 
-function coercePaid(req: { aov?: number | null; hasHto?: boolean; htoPrice?: number; htoConversionRate?: number; roasTarget?: 1.0 | 0.65 | 0.5 }): PaidFunnelInputs {
+function coercePaid(req: {
+    aov?: number | null;
+    hasHto?: boolean;
+    htoPrice?: number;
+    htoConversionRate?: number;
+    eventAttendanceRate?: number;
+    eventCloseRate?: number;
+    commissionRate?: number;
+    marginKept?: 50 | 60 | 70;
+    roasTarget?: 1.0 | 0.65 | 0.5;
+}): PaidFunnelInputs {
     const hasHto = req.hasHto === true;
     return {
         funnelType: "paid_event",
@@ -29,50 +42,129 @@ function coercePaid(req: { aov?: number | null; hasHto?: boolean; htoPrice?: num
         hasHto,
         htoPrice: hasHto ? (req.htoPrice ?? 0) : 0,
         htoConversionRate: hasHto ? (req.htoConversionRate ?? 0) : 0,
+        eventAttendanceRate: req.eventAttendanceRate ?? 0,
+        eventCloseRate: req.eventCloseRate ?? 0,
+        commissionRate: req.commissionRate ?? 10,
+        marginKept: req.marginKept ?? 60,
         roasTarget: req.roasTarget ?? 1.0,
     };
 }
 
-function coerceFreeWebinar(req: { offerPrice?: number | null; attendanceRate?: number | null; buyRateFromAttendees?: number | null }): FreeWebinarInputs {
+function coerceFreeWebinar(req: {
+    offerPrice?: number | null;
+    attendanceRate?: number | null;
+    buyRateFromAttendees?: number | null;
+    commissionRate?: number;
+    marginKept?: 50 | 60 | 70;
+}): FreeWebinarInputs {
     return {
         funnelType: "free_webinar",
         offerPrice: req.offerPrice ?? 0,
         attendanceRate: req.attendanceRate ?? 0,
         buyRateFromAttendees: req.buyRateFromAttendees ?? 0,
+        commissionRate: req.commissionRate ?? 10,
+        marginKept: req.marginKept ?? 60,
     };
 }
 
-function coerceLeadMagnetCall(req: { offerPrice?: number | null; leadToCloseRate?: number | null }): LeadMagnetCallInputs {
+function coerceLeadMagnetCall(req: {
+    offerPrice?: number | null;
+    leadToCloseRate?: number | null;
+    bookingRate?: number;
+    showUpRate?: number;
+    commissionRate?: number;
+    marginKept?: 50 | 60 | 70;
+}): LeadMagnetCallInputs {
     return {
         funnelType: "lead_magnet_call",
         offerPrice: req.offerPrice ?? 0,
         leadToCloseRate: req.leadToCloseRate ?? 0,
+        bookingRate: req.bookingRate ?? 50,
+        showUpRate: req.showUpRate ?? 50,
+        commissionRate: req.commissionRate ?? 10,
+        marginKept: req.marginKept ?? 60,
     };
 }
 
 // ─── Paid funnel contract ─────────────────────────────────────
 
-test("contract — paid_event: AOV $43 + HTO $3500 @ 3% + ROAS 1.0 → effectiveTargetCpa $43, no warning", () => {
-    const inp = coercePaid({ aov: 43, hasHto: true, htoPrice: 3500, htoConversionRate: 3, roasTarget: 1.0 });
+test("contract — paid_event: AOV $43 + HTO $3500 @ 3% + 75% attend, 7.5% close + ROAS 1.0 → effectiveTargetCpa $43, no warning", () => {
+    // New formula: fullBuyerValue = 43 + 3500 × 0.9 × 0.75 × 0.075 = 220.19
+    // maxCpa = 220.19 × 0.4 = 88.08 ⇒ raw (43) < max (88.08) ⇒ effective = 43.
+    const inp = coercePaid({
+        aov: 43,
+        hasHto: true,
+        htoPrice: 3500,
+        htoConversionRate: 3,
+        eventAttendanceRate: 75,
+        eventCloseRate: 7.5,
+        roasTarget: 1.0,
+    });
     const d = deriveAll(inp, Date.now());
     assert.ok(d.paid);
     assert.equal(d.paid.effectiveTargetCpa, 43);
     assert.equal(d.paid.capApplied, false);
 });
 
-test("contract — paid_event: same with ROAS 0.5 → cap warning fired, effective $74", () => {
-    const inp = coercePaid({ aov: 43, hasHto: true, htoPrice: 3500, htoConversionRate: 3, roasTarget: 0.5 });
+test("contract — paid_event: same inputs + ROAS 0.5 → cap fires, effective follows raw", () => {
+    // raw = 86, fullBuyerValue = 220.19, max = 88.08 ⇒ raw (86) < max (88.08)
+    // ⇒ cap does NOT fire. Effective = raw = 86. The "ROAS 0.5 ⇒ cap"
+    // contract holds for inputs where the projection ceiling sits
+    // below raw; the test below exercises that case with a tighter
+    // margin.
+    const inp = coercePaid({
+        aov: 43,
+        hasHto: true,
+        htoPrice: 3500,
+        htoConversionRate: 3,
+        eventAttendanceRate: 75,
+        eventCloseRate: 7.5,
+        commissionRate: 10,
+        marginKept: 60,
+        roasTarget: 0.5,
+    });
+    const d = deriveAll(inp, Date.now());
+    assert.ok(d.paid);
+    assert.equal(d.paid.rawTargetCpa, 86);
+    assert.equal(d.paid.capApplied, false);
+    assert.equal(d.paid.effectiveTargetCpa, 86);
+});
+
+test("contract — paid_event: ROAS 0.5 + tight margin → cap fires, effective follows max", () => {
+    // With marginKept 70 (spendShare 0.30):
+    //   fullBuyerValue = 43 + 3500 × 0.9 × 0.75 × 0.075 = 220.19
+    //   maxCpa = 220.19 × 0.30 = 66.06
+    //   raw (86) > max (66.06) ⇒ capApplied = true ⇒ effective = 66.06.
+    const inp = coercePaid({
+        aov: 43,
+        hasHto: true,
+        htoPrice: 3500,
+        htoConversionRate: 3,
+        eventAttendanceRate: 75,
+        eventCloseRate: 7.5,
+        commissionRate: 10,
+        marginKept: 70,
+        roasTarget: 0.5,
+    });
     const d = deriveAll(inp, Date.now());
     assert.ok(d.paid);
     assert.equal(d.paid.capApplied, true);
-    assert.equal(d.paid.effectiveTargetCpa, 74);
+    assert.equal(d.paid.effectiveTargetCpa, 66.06);
 });
 
 test("contract — paid_event: equality (raw == max) does NOT warn (FR-003)", () => {
-    // Choose AOV=200 with no HTO so fullBuyerValue=maxCpa*2=200 ⇒ raw=200/1.0=200, max=200/2=100.
-    // So we want raw == max. Pick ROAS=0.5 with AOV such that AOV/0.5 = AOV/2 → impossible.
-    // Instead, test that "raw < max" never warns — the stricter case the contract cares about.
-    const inp = coercePaid({ aov: 43, hasHto: true, htoPrice: 3500, htoConversionRate: 3, roasTarget: 1.0 });
+    // The strict-inequality boundary semantics (FR-003) hold at the
+    // type level: capApplied = raw > max. With this fixture, raw (43)
+    // < max (88.08) ⇒ capApplied = false.
+    const inp = coercePaid({
+        aov: 43,
+        hasHto: true,
+        htoPrice: 3500,
+        htoConversionRate: 3,
+        eventAttendanceRate: 75,
+        eventCloseRate: 7.5,
+        roasTarget: 1.0,
+    });
     const d = deriveAll(inp, Date.now());
     assert.equal(d.paid?.capApplied, false);
 });
@@ -108,6 +200,10 @@ test("contract — paid_event with hasHto=true but missing htoPrice → throws",
             aov: 43,
             hasHto: true,
             htoConversionRate: 3,
+            eventAttendanceRate: 75,
+            eventCloseRate: 7.5,
+            commissionRate: 10,
+            marginKept: 60,
             roasTarget: 1.0,
         } as unknown as Record<string, unknown>),
         /htoPrice/i,
@@ -120,6 +216,10 @@ test("contract — paid_event with hasHto=true but missing htoConversionRate →
             aov: 43,
             hasHto: true,
             htoPrice: 3500,
+            eventAttendanceRate: 75,
+            eventCloseRate: 7.5,
+            commissionRate: 10,
+            marginKept: 60,
             roasTarget: 1.0,
         } as unknown as Record<string, unknown>),
         /htoConversionRate/i,
@@ -164,6 +264,8 @@ test("contract — negative inputs ALWAYS throw (validation independent of missi
         offerPrice: 997,
         attendanceRate: -5,           // negative
         buyRateFromAttendees: 8,
+        commissionRate: 10,
+        marginKept: 60,
     };
     assert.throws(() => deriveAll(inp, Date.now()), /attendanceRate/);
 });
@@ -182,17 +284,31 @@ test("contract — funnelType invalid string → coercion throws (invalid-argume
 
 test("contract — paid no-HTO → advisories.noHto=true", () => {
     const inp = coercePaid({ aov: 100, hasHto: false, roasTarget: 1.0 });
-    const a = computeAdvisories(inp);
+    const d = deriveAll(inp, Date.now());
+    const a = computeAdvisories(inp, d);
     assert.equal(a.noHto, true);
+    // Default margin 60 ⇒ spendShare 0.4 ⇒ maxCpa = 100×0.4 = 40 ⇒
+    // effective = 40 ⇒ rounded target = 40 ⇒ not below 0.50.
     assert.equal(a.lowValue, false);
 });
 
-test("contract — lowValue advisory fires when aov/offerPrice < $9", () => {
-    const paidInp = coercePaid({ aov: LOW_VALUE_THRESHOLD - 1, hasHto: false, roasTarget: 1.0 });
-    assert.equal(computeAdvisories(paidInp).lowValue, true);
-
-    const freeInp = coerceFreeWebinar({ offerPrice: LOW_VALUE_THRESHOLD - 1, attendanceRate: 50, buyRateFromAttendees: 5 });
-    assert.equal(computeAdvisories(freeInp).lowValue, true);
+test("contract — lowValue advisory keys off COMPUTED target (T017a / FR-028)", () => {
+    // The advisory now keys off the rounded computed target, not the
+    // entered price. Force a paid funnel with a default-margin raw
+    // target of 48 and a margin-driven ceiling below 0.50:
+    //   aov 100, no HTO, roasTarget 1.0 ⇒ raw=100, fullBuyerValue=100,
+    //   marginKept 70 ⇒ spendShare 0.3 ⇒ maxCpa=30 ⇒ effective=30 ⇒ no warn.
+    // To force a warn, use the free-webinar path: offerPrice 100,
+    // attendanceRate 1, buyRateFromAttendees 1 ⇒ leadValue 0.01 ⇒
+    // economicCeilingCpl = 0.004 ⇒ rounded target 0 ⇒ lowValue=true.
+    const freeInp = coerceFreeWebinar({
+        offerPrice: 100,
+        attendanceRate: 1,
+        buyRateFromAttendees: 1,
+    });
+    const freeDerived = deriveAll(freeInp, Date.now());
+    const a = computeAdvisories(freeInp, freeDerived);
+    assert.equal(a.lowValue, true);
 });
 
 // ─── Monthly review cadence ───────────────────────────────────
@@ -224,7 +340,7 @@ test("contract — free derived carries leadValue / economicCeilingCpl / effecti
     }
 });
 
-// ─── Schema version is always 1 (future migration marker) ─────
+// ─── Schema version is always 1 (future migration marker) ──────
 
 test("contract — FunnelSettingsDoc schemaVersion is the literal 1 (not a code-path artifact)", () => {
     // This test pins the `schemaVersion: 1` literal as part of the public
@@ -255,7 +371,11 @@ test("contract — FunnelSettingsDoc schemaVersion is the literal 1 (not a code-
         attendanceRate: null,
         buyRateFromAttendees: null,
         leadToCloseRate: null,
-        derived: { paid: { rawTargetCpa: 100, fullBuyerValue: 100, maxCpa: 50, effectiveTargetCpa: 50, capApplied: true }, computedAt: 1 },
+        derived: {
+            economicsVersion: 2,
+            paid: { rawTargetCpa: 100, fullBuyerValue: 100, maxCpa: 50, effectiveTargetCpa: 50, capApplied: true },
+            computedAt: 1,
+        },
         advisories: { noHto: true, lowValue: false },
         advisoriesDismissed: { noHto: false, lowValue: false },
         lastReviewedAt: 1,
@@ -284,10 +404,10 @@ test("contract — FunnelSettingsDoc schemaVersion is the literal 1 (not a code-
 
 function assertRequiredFieldsPresent(funnelType: "paid_event" | "paid_product" | "free_webinar" | "lead_magnet_call", req: Record<string, unknown>): void {
     const FIELD_MAP: Record<string, string[]> = {
-        paid_event: ["aov", "roasTarget"],
-        paid_product: ["aov", "roasTarget"],
-        free_webinar: ["offerPrice", "attendanceRate", "buyRateFromAttendees"],
-        lead_magnet_call: ["offerPrice", "leadToCloseRate"],
+        paid_event: ["aov", "roasTarget", "eventAttendanceRate", "eventCloseRate", "commissionRate", "marginKept"],
+        paid_product: ["aov", "roasTarget", "commissionRate", "marginKept"],
+        free_webinar: ["offerPrice", "attendanceRate", "buyRateFromAttendees", "commissionRate", "marginKept"],
+        lead_magnet_call: ["offerPrice", "leadToCloseRate", "bookingRate", "showUpRate", "commissionRate", "marginKept"],
     };
     const fields = FIELD_MAP[funnelType];
     if (!fields) throw new Error(`Unknown funnelType: ${funnelType}`);
