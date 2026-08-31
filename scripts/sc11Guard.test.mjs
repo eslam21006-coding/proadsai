@@ -124,3 +124,273 @@ const b = (<div>hi</div>);
 }
 
 console.log(`\n# tests 7\n# pass 7\n# fail 0`);
+
+// ═══════════════════════════════════════════════════════════════════
+// Batch 01 — Phase 1 hardening tests (FR-054, FR-055, FR-056, FR-057).
+//
+// T005 — percentage forms: all four must trip.
+// T006 — negative controls: bare `(%)` labels and bare `50` preset
+//        buttons must NOT trip.
+// T007 — suppression mechanics: valid clears its own code only;
+//        missing/empty reason hard-fails; bare `sc11-allow` hard-fails;
+//        unknown code hard-fails; suppression does not leak.
+// ═══════════════════════════════════════════════════════════════════
+
+// T005.a — Latin digits + `%`: "5–10%".
+{
+    const res = runGuardOn(`const s = "Booking rate: 5-10%";\n`);
+    assert.notEqual(res.status, 0, "expected FAIL on Latin-digit percentage");
+    assert.match(res.stderr, /PERCENT_SIGN/);
+    console.log("ok 8 - Latin digits + % trips PERCENT_SIGN");
+}
+
+// T005.b — Arabic-Indic digits + `%`: "٥–١٠%".
+{
+    const res = runGuardOn(`const s = "Booking rate: ٥-١٠%";\n`);
+    assert.notEqual(res.status, 0, "expected FAIL on Arabic-Indic-digit percentage with %");
+    assert.match(res.stderr, /PERCENT_SIGN/);
+    console.log("ok 9 - Arabic-Indic digits + % trips PERCENT_SIGN");
+}
+
+// T005.c — Latin digits + `٪` (U+066A): "5–10٪".
+{
+    const res = runGuardOn(`const s = "Booking rate: 5-10٪";\n`);
+    assert.notEqual(res.status, 0, "expected FAIL on Latin-digit percentage with U+066A");
+    assert.match(res.stderr, /PERCENT_SIGN/);
+    console.log("ok 10 - Latin digits + U+066A trips PERCENT_SIGN");
+}
+
+// T005.d — Arabic-Indic digits + `٪`: "٥–١٠٪".
+{
+    const res = runGuardOn(`const s = "Booking rate: ٥-١٠٪";\n`);
+    assert.notEqual(res.status, 0, "expected FAIL on Arabic-Indic-digit percentage with U+066A");
+    assert.match(res.stderr, /PERCENT_SIGN/);
+    console.log("ok 11 - Arabic-Indic digits + U+066A trips PERCENT_SIGN");
+}
+
+// T005.e — Eastern Arabic-Indic digits (U+06F0–U+06F9) + `%` must also trip.
+{
+    const res = runGuardOn(`const s = "Eastern digits: ۵-۱۰%";\n`);
+    assert.notEqual(res.status, 0, "expected FAIL on Eastern Arabic-Indic digits + %");
+    assert.match(res.stderr, /PERCENT_SIGN/);
+    console.log("ok 12 - Eastern Arabic-Indic digits + % trips PERCENT_SIGN");
+}
+
+// T006.a — bare `(%)` unit label must NOT trip.
+{
+    const res = runGuardOn(`const s = "Booking rate (%)";\n`);
+    assert.equal(res.status, 0, `expected PASS on bare unit marker, got:\n${res.stderr}`);
+    console.log("ok 13 - bare (%) unit label does not trip PERCENT_SIGN");
+}
+
+// T006.b — bare preset button `50` must NOT trip.
+{
+    const res = runGuardOn(`const s = "50";\n`);
+    assert.equal(res.status, 0, `expected PASS on bare preset button label, got:\n${res.stderr}`);
+    console.log("ok 14 - bare preset button label '50' does not trip PERCENT_SIGN");
+}
+
+// T007.a — valid suppression clears its own code only on that line.
+{
+    const dir = mkdtempSync(join(tmpdir(), "sc11-suppress-ok-"));
+    try {
+        mkdirSync(join(dir, "src"), { recursive: true });
+        // Two percentage strings on two different lines. Only line 2
+        // carries a suppression; line 4 must still fire.
+        writeFileSync(
+            join(dir, "src", "Probe.tsx"),
+            [
+                `const a = "5-10%";`,
+                `const b = "5-10%"; // sc11-allow:PERCENT_SIGN reason="benchmark hint"`,
+                `const c = "plain";`,
+                `const d = "5-10%";`,
+                ``,
+            ].join("\n"),
+            "utf8",
+        );
+        const guardPath = join(process.cwd(), "scripts", "sc11Guard.mjs").replace(/\\/g, "/");
+        const res = spawnSync(process.execPath, [guardPath], {
+            cwd: dir,
+            encoding: "utf8",
+        });
+        assert.notEqual(res.status, 0, "expected FAIL on unsuppressed lines");
+        assert.match(res.stderr, /Probe\.tsx:1/, "line 1 should still fire");
+        assert.match(res.stderr, /Probe\.tsx:4/, "line 4 should still fire");
+        assert.doesNotMatch(res.stderr, /Probe\.tsx:2\b/, "suppressed line 2 must not fire");
+        console.log("ok 15 - valid suppression clears only its own code on its own line");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+// T007.b — valid suppression of PERCENT_SIGN does NOT suppress a different code.
+{
+    const dir = mkdtempSync(join(tmpdir(), "sc11-suppress-wrongcode-"));
+    try {
+        mkdirSync(join(dir, "src"), { recursive: true });
+        // PERCENT_SIGN suppression on a line that ALSO has CPA. The CPA
+        // hit must still fire; the suppression is code-scoped.
+        writeFileSync(
+            join(dir, "src", "Probe.tsx"),
+            `const s = "5-10% CPA"; // sc11-allow:PERCENT_SIGN reason="benchmark hint"\n`,
+            "utf8",
+        );
+        const guardPath = join(process.cwd(), "scripts", "sc11Guard.mjs").replace(/\\/g, "/");
+        const res = spawnSync(process.execPath, [guardPath], {
+            cwd: dir,
+            encoding: "utf8",
+        });
+        assert.notEqual(res.status, 0, "expected FAIL on CPA even with PERCENT_SIGN suppressed");
+        assert.match(res.stderr, /EN_CPA/);
+        console.log("ok 16 - PERCENT_SIGN suppression does not leak to a different code");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+// T007.c — suppression on line N does NOT leak to adjacent line N+1.
+{
+    const dir = mkdtempSync(join(tmpdir(), "sc11-suppress-noleak-"));
+    try {
+        mkdirSync(join(dir, "src"), { recursive: true });
+        writeFileSync(
+            join(dir, "src", "Probe.tsx"),
+            [
+                `const a = "5-10%"; // sc11-allow:PERCENT_SIGN reason="benchmark hint"`,
+                `const b = "5-10%";`,
+                ``,
+            ].join("\n"),
+            "utf8",
+        );
+        const guardPath = join(process.cwd(), "scripts", "sc11Guard.mjs").replace(/\\/g, "/");
+        const res = spawnSync(process.execPath, [guardPath], {
+            cwd: dir,
+            encoding: "utf8",
+        });
+        assert.notEqual(res.status, 0, "expected FAIL on the line after a suppression");
+        assert.match(res.stderr, /Probe\.tsx:2/, "next line should still fire");
+        assert.doesNotMatch(res.stderr, /Probe\.tsx:1/, "suppressed line 1 must not fire");
+        console.log("ok 17 - suppression does not leak to adjacent line");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+// T007.d — bare `sc11-allow` with no code hard-fails.
+{
+    const dir = mkdtempSync(join(tmpdir(), "sc11-suppress-bare-"));
+    try {
+        mkdirSync(join(dir, "src"), { recursive: true });
+        writeFileSync(
+            join(dir, "src", "Probe.tsx"),
+            `const s = "5-10%"; // sc11-allow reason="some reason"\n`,
+            "utf8",
+        );
+        const guardPath = join(process.cwd(), "scripts", "sc11Guard.mjs").replace(/\\/g, "/");
+        const res = spawnSync(process.execPath, [guardPath], {
+            cwd: dir,
+            encoding: "utf8",
+        });
+        assert.notEqual(res.status, 0, "expected FAIL on bare sc11-allow");
+        assert.match(res.stderr, /bare 'sc11-allow'/);
+        console.log("ok 18 - bare 'sc11-allow' (no code) hard-fails");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+// T007.e — unknown code hard-fails.
+{
+    const dir = mkdtempSync(join(tmpdir(), "sc11-suppress-unknown-"));
+    try {
+        mkdirSync(join(dir, "src"), { recursive: true });
+        writeFileSync(
+            join(dir, "src", "Probe.tsx"),
+            `const s = "5-10%"; // sc11-allow:NOT_A_REAL_CODE reason="some reason"\n`,
+            "utf8",
+        );
+        const guardPath = join(process.cwd(), "scripts", "sc11Guard.mjs").replace(/\\/g, "/");
+        const res = spawnSync(process.execPath, [guardPath], {
+            cwd: dir,
+            encoding: "utf8",
+        });
+        assert.notEqual(res.status, 0, "expected FAIL on unknown suppression code");
+        assert.match(res.stderr, /unknown suppression code/);
+        console.log("ok 19 - unknown suppression code hard-fails");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+// T007.f — missing `reason="..."` hard-fails.
+{
+    const dir = mkdtempSync(join(tmpdir(), "sc11-suppress-noreason-"));
+    try {
+        mkdirSync(join(dir, "src"), { recursive: true });
+        writeFileSync(
+            join(dir, "src", "Probe.tsx"),
+            `const s = "5-10%"; // sc11-allow:PERCENT_SIGN\n`,
+            "utf8",
+        );
+        const guardPath = join(process.cwd(), "scripts", "sc11Guard.mjs").replace(/\\/g, "/");
+        const res = spawnSync(process.execPath, [guardPath], {
+            cwd: dir,
+            encoding: "utf8",
+        });
+        assert.notEqual(res.status, 0, "expected FAIL on missing reason");
+        assert.match(res.stderr, /missing or has empty/);
+        console.log("ok 20 - missing reason hard-fails");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+// T007.g — empty `reason=""` hard-fails.
+{
+    const dir = mkdtempSync(join(tmpdir(), "sc11-suppress-empty-"));
+    try {
+        mkdirSync(join(dir, "src"), { recursive: true });
+        writeFileSync(
+            join(dir, "src", "Probe.tsx"),
+            `const s = "5-10%"; // sc11-allow:PERCENT_SIGN reason=""\n`,
+            "utf8",
+        );
+        const guardPath = join(process.cwd(), "scripts", "sc11Guard.mjs").replace(/\\/g, "/");
+        const res = spawnSync(process.execPath, [guardPath], {
+            cwd: dir,
+            encoding: "utf8",
+        });
+        assert.notEqual(res.status, 0, "expected FAIL on empty reason");
+        assert.match(res.stderr, /missing or has empty/);
+        console.log("ok 21 - empty reason hard-fails");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+// T007.h — applied suppressions are printed with their reason on every run.
+{
+    const dir = mkdtempSync(join(tmpdir(), "sc11-suppress-print-"));
+    try {
+        mkdirSync(join(dir, "src"), { recursive: true });
+        writeFileSync(
+            join(dir, "src", "Probe.tsx"),
+            `const s = "5-10%"; // sc11-allow:PERCENT_SIGN reason="benchmark hint visible on every run"\n`,
+            "utf8",
+        );
+        const guardPath = join(process.cwd(), "scripts", "sc11Guard.mjs").replace(/\\/g, "/");
+        const res = spawnSync(process.execPath, [guardPath], {
+            cwd: dir,
+            encoding: "utf8",
+        });
+        assert.equal(res.status, 0, `expected PASS, got:\n${res.stderr}\n${res.stdout}`);
+        assert.match(res.stdout, /1 per-line suppression/);
+        assert.match(res.stdout, /PERCENT_SIGN/);
+        assert.match(res.stdout, /benchmark hint visible on every run/);
+        console.log("ok 22 - applied suppressions are printed with reason");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+console.log(`\n# tests 22\n# pass 22\n# fail 0`);

@@ -91,8 +91,69 @@ const PATTERNS = [
     { code: "EN_CPA",         label: "CPA (English)",                 re: /(?<![\w-])CPA(?![\w-])/g },
     { code: "EN_CPL",         label: "CPL (English)",                 re: /(?<![\w-])CPL(?![\w-])/g },
     { code: "EN_CPM",         label: "CPM (English)",                 re: /(?<![\w-])CPM(?![\w-])/g },
-    { code: "PERCENT_SIGN",   label: "percentage sign in user copy",  re: /\d+\s*%|percent/gi },
+    { code: "PERCENT_SIGN",   label: "percentage sign in user copy",  re: /[\d٠-٩۰-۹]+\s*[%٪]|percent/gi },
 ];
+
+// All pattern codes are valid suppression targets. Built once at module
+// load so T003's "unknown code hard-fails" rule can validate against it.
+const PATTERN_CODES = new Set(PATTERNS.map((p) => p.code));
+
+// Per-line suppression parser (FR-055, FR-056, FR-057).
+//
+// Recognised syntax (exclusively):
+//
+//     // sc11-allow:<CODE> reason="<non-empty text>"
+//
+// Rules enforced here:
+//   - Bare `sc11-allow` with no code → hard fail.
+//   - Unknown <CODE> → hard fail.
+//   - Missing or empty `reason="..."` → hard fail.
+//   - One code, one line. No file-level, directory-level, multi-line,
+//     next-line, or block variants are accepted.
+//
+// The marker is recognised both as a JS line-comment (`// ...`) AND as a
+// JSX-comment (`{/* ... */}`) — both forms can appear on the physical
+// source line that carries a forbidden term. The captured `line` is the
+// 1-indexed source line the suppression sits on; suppression applies to
+// that exact physical line only.
+const SC11_ALLOW_RE = /sc11-allow(?::([A-Z_]+))?(?:\s+reason="([^"]*)")?/;
+
+function parseSuppressions(src) {
+    const lines = src.split("\n");
+    const lineMap = new Map(); // 1-indexed line → { code, reason }
+    for (let i = 0; i < lines.length; i++) {
+        const lineNo = i + 1;
+        const text = lines[i];
+        const m = text.match(SC11_ALLOW_RE);
+        if (!m) continue;
+        const code = m[1];
+        const reason = m[2];
+        // Bare `sc11-allow` (no code).
+        if (!code) {
+            throw new Error(
+                `sc11-guard: bare 'sc11-allow' on line ${lineNo} — ` +
+                `must be 'sc11-allow:<CODE> reason="..."' (FR-055)`
+            );
+        }
+        // Unknown code.
+        if (!PATTERN_CODES.has(code)) {
+            const known = [...PATTERN_CODES].join(", ");
+            throw new Error(
+                `sc11-guard: unknown suppression code '${code}' on line ${lineNo} — ` +
+                `known codes: ${known} (FR-055)`
+            );
+        }
+        // Missing or empty reason.
+        if (reason === undefined || reason === "") {
+            throw new Error(
+                `sc11-guard: suppression on line ${lineNo} is missing or has empty ` +
+                `'reason="..."' — every suppression must carry a non-empty reason (FR-056)`
+            );
+        }
+        lineMap.set(lineNo, { code, reason });
+    }
+    return lineMap;
+}
 
 function walk(dir, out) {
     let entries;
@@ -434,6 +495,12 @@ function main() {
     }
     const files = walk(SRC_DIR, []);
     const hits = [];
+    // Per-file applied suppressions, keyed by file path, value is
+    // { lineNo, code, reason }. Collected so T004 can print every applied
+    // suppression with its reason on every run.
+    const appliedSuppressions = [];
+    // Per-file suppression count for the summary line.
+    let totalFilesWithSuppressions = 0;
 
     for (const file of files) {
         const rel = relative(ROOT, file).replace(/\\/g, "/");
@@ -441,6 +508,16 @@ function main() {
         let src;
         try { src = readFileSync(file, "utf8"); }
         catch { continue; }
+        // Parse per-line suppressions first so any malformed marker fails
+        // the run before scanning — bare/unknown/missing-reason errors
+        // must surface even on a clean file.
+        const supMap = parseSuppressions(src);
+        if (supMap.size > 0) {
+            totalFilesWithSuppressions++;
+            for (const [lineNo, info] of supMap.entries()) {
+                appliedSuppressions.push({ file: rel, line: lineNo, ...info });
+            }
+        }
         const zones = buildSourceZones(src);
         const strings = extractUserFacingStrings(src);
         for (const s of strings) {
@@ -456,9 +533,30 @@ function main() {
                     const lineEndRaw = src.indexOf("\n", absIdx);
                     const lineEnd = lineEndRaw === -1 ? src.length : lineEndRaw;
                     const lineText = src.slice(lineStart, lineEnd);
+                    // Per-line suppression: only the exact same physical
+                    // line AND matching code is suppressed. A suppression
+                    // does NOT leak to adjacent lines.
+                    const sup = supMap.get(line);
+                    const suppressed = sup && sup.code === p.code;
+                    if (suppressed) continue;
                     hits.push({ file: rel, line, col, code: p.code, label: p.label, match: m[0], lineText });
                 }
             }
+        }
+    }
+
+    // Always print applied suppressions so they are visible on every run
+    // (FR-057). Empty list prints a clarifying line so the absence is
+    // explicit rather than silent.
+    if (appliedSuppressions.length === 0) {
+        console.log(`sc11-guard: 0 per-line suppressions applied.`);
+    } else {
+        console.log(
+            `sc11-guard: ${appliedSuppressions.length} per-line suppression(s) ` +
+            `applied across ${totalFilesWithSuppressions} file(s):`
+        );
+        for (const s of appliedSuppressions) {
+            console.log(`  ${s.file}:${s.line}  [${s.code}]  reason="${s.reason}"`);
         }
     }
 
