@@ -443,7 +443,10 @@ export default function FunnelSettingsForm({
     const [hasHto, setHasHto] = useState<boolean>(false);
     const [htoPrice, setHtoPrice] = useState<string>('');
     const [htoConversionRate, setHtoConversionRate] = useState<string>('');
-    const [roasTarget, setRoasTarget] = useState<RoasTarget>(1.0);
+    // Phase 968 — T041 (FR-016): paid_event defaults roasTarget to 0.5
+    // (controlled front-end loss). All other paid types default to 1.0
+    // (break-even). The user's choice is persisted on save.
+    const [roasTarget, setRoasTarget] = useState<RoasTarget>(0.5);
     const [offerPrice, setOfferPrice] = useState<string>('');
     const [attendanceRate, setAttendanceRate] = useState<string>('');
     const [buyRateFromAttendees, setBuyRateFromAttendees] = useState<string>('');
@@ -485,7 +488,11 @@ export default function FunnelSettingsForm({
         const missing: string[] = [];
         if (funnelType === 'paid_event' || funnelType === 'paid_product') {
             if (isEmptyString(aov)) missing.push('aov');
-            if (isEmptyNumber(roasTarget)) missing.push('roasTarget');
+            // Phase 968 — T041 mirror (FR-016). roasTarget is OPTIONAL
+            // on paid_event — the form defaults to 0.5 and the
+            // backend fills it if absent. paid_product still
+            // requires an explicit choice.
+            if (funnelType === 'paid_product' && isEmptyNumber(roasTarget)) missing.push('roasTarget');
             if (hasHto) {
                 if (isEmptyString(htoPrice)) missing.push('htoPrice');
                 if (funnelType === 'paid_product' && isEmptyString(htoConversionRate)) missing.push('htoConversionRate');
@@ -810,7 +817,16 @@ export default function FunnelSettingsForm({
                 <select
                     className={`w-full p-2 rounded border ${dk ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
                     value={funnelType}
-                    onChange={(e) => setFunnelType(e.target.value as FunnelType)}
+                    onChange={(e) => {
+                        const newType = e.target.value as FunnelType;
+                        setFunnelType(newType);
+                        // Phase 968 — T041 (FR-016): paid_event preselects
+                        // 0.5 (controlled front-end loss); all other paid
+                        // types preselect 1.0 (break-even). The user can
+                        // override; the persistance round-trip stores
+                        // whatever they choose.
+                        setRoasTarget(newType === 'paid_event' ? 0.5 : 1.0);
+                    }}
                 >
                     {(Object.keys(FUNNEL_LABELS) as FunnelType[]).map((ft) => (
                         <option key={ft} value={ft}>{lang === 'ar' ? FUNNEL_LABELS[ft].ar : FUNNEL_LABELS[ft].en}</option>
@@ -855,7 +871,22 @@ export default function FunnelSettingsForm({
                     {hasHto && (
                         <>
                             <NumberField label={L('Upsell price ($)', 'سعر العرض الترويجي (دولار)')} value={htoPrice} onChange={setHtoPrice} isDarkMode={dk} required={missingFields.includes('htoPrice')} lang={lang} />
-                            <NumberField label={L('Upsell conversion rate (%)', 'نسبة تحويل العرض الترويجي (%)')} value={htoConversionRate} onChange={setHtoConversionRate} isDarkMode={dk} required={missingFields.includes('htoConversionRate')} lang={lang} />
+                            {/* Phase 968 — T045 follow-up (Item C of Phase 6
+                                review): paid_event does NOT render
+                                htoConversionRate. The corrected formula
+                                (FR-011..FR-014) reads eventAttendanceRate
+                                × eventCloseRate, not htoConversionRate.
+                                Rendering the field invites the owner to
+                                fill a value that changes nothing — exactly
+                                the harm Item A of Phase 5's review
+                                rejected. Storage retention (data-model.md
+                                §1) means stored and unread, not rendered.
+                                The field is still sent on the save payload
+                                (default 0) for additive-storage compatibility,
+                                but the form does not prompt for it. */}
+                            {funnelType === 'paid_product' && (
+                                <NumberField label={L('Upsell conversion rate (%)', 'نسبة تحويل العرض الترويجي (%)')} value={htoConversionRate} onChange={setHtoConversionRate} isDarkMode={dk} required={missingFields.includes('htoConversionRate')} lang={lang} />
+                            )}
                         </>
                     )}
                     {/* Phase 968 — T045 (US3). paid_event event rates
@@ -977,10 +1008,55 @@ export default function FunnelSettingsForm({
                 {loading ? L('Saving…', 'جاري الحفظ…') : L('Save settings', 'حفظ الإعدادات')}
             </button>
 
-            {/* Results card — single number, plain Arabic. SC-11: no
-                acronyms (CPA/CPL) appear in user-facing copy. The cap
-                warning reuses the same plain-Arabic phrasing pattern. */}
-            {paidDerived && (
+            {/* Phase 968 — T046/T048: paid_event dual-path results card.
+                Shows BOTH rawTargetCpa (ticket revenue path) and
+                maxCpa (projection path) plus the active-path
+                explainer. Suppressed when the record is
+                incomplete (missingFields.length > 0) so the
+                paused-targets notice is the only thing the owner
+                sees. paid_product, lead_magnet_call, free_webinar
+                use the single-figure card below (T047). */}
+            {paidDerived && settings?.funnelType === 'paid_event' && missingFields.length === 0 && (
+                <div className={`p-4 rounded-lg border ${cardBg}`} data-results-card-paid-event>
+                    <h3 className={`font-semibold mb-2 ${txPrimary}`}>{L('Results', 'النتائج')}</h3>
+                    <p className={`text-base ${txPrimary}`}>
+                        {L('Maximum cost per customer:', 'أقصى تكلفة للعميل:')} ${paidDerived.effectiveTargetCpa.toFixed(2)}
+                    </p>
+                    <p className={`mt-3 text-sm ${txSecondary}`}>
+                        {L('Based on ticket revenue:', 'محسوب على إيراد التذاكر:')} ${paidDerived.rawTargetCpa.toFixed(2)}
+                    </p>
+                    <p className={`mt-1 text-sm ${txSecondary}`}>
+                        {L('Based on projected event value:', 'محسوب على القيمة المتوقعة للفعالية:')} ${paidDerived.maxCpa.toFixed(2)}
+                    </p>
+                    <p className={`mt-3 text-sm ${txMuted}`} data-results-active-path>
+                        {paidDerived.capApplied
+                            ? L(
+                                'Your target follows projected event value, because your back-end economics (event attendance × high-ticket close) are now the binding constraint.',
+                                'هدفك محسوب على القيمة المتوقعة للفعالية، لأن اقتصاديات الـ back-end (نسبة الحضور × نسبة الإغلاق) هي القيد الفعّال.',
+                            )
+                            : L(
+                                'Your target follows ticket revenue, because the later value of your event is not proven yet.',
+                                'هدفك محسوب على إيراد التذاكر، لأن قيمة العرض التالي في فعاليتك لم تثبت بعد.',
+                            )}
+                    </p>
+                    {paidDerived.capApplied && (
+                        <div className={`mt-3 p-3 rounded border-2 border-yellow-500 ${dk ? 'bg-yellow-950/40' : 'bg-yellow-50'}`}>
+                            <p className={`text-sm ${txPrimary}`}>
+                                {L(
+                                    'Reminder: your funnel economics are very tight. Re-check your numbers or talk to us.',
+                                    'تذكير: أرقام مسارك الاقتصادي ضيقة جداً. راجع الأرقام أو تواصل معنا.',
+                                )}
+                            </p>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Single-figure results card for paid_product, free_webinar,
+                and lead_magnet_call (T047). Suppressed when incomplete
+                (T048) so the paused-targets notice is the only thing
+                the owner sees. */}
+            {paidDerived && settings?.funnelType !== 'paid_event' && missingFields.length === 0 && (
                 <div className={`p-4 rounded-lg border ${cardBg}`}>
                     <h3 className={`font-semibold mb-2 ${txPrimary}`}>{L('Results', 'النتائج')}</h3>
                     <p className={`text-base ${txPrimary}`}>
@@ -1005,7 +1081,7 @@ export default function FunnelSettingsForm({
                 </div>
             )}
 
-            {freeDerived && (
+            {freeDerived && missingFields.length === 0 && (
                 <div className={`p-4 rounded-lg border ${cardBg}`}>
                     <h3 className={`font-semibold mb-2 ${txPrimary}`}>{L('Results', 'النتائج')}</h3>
                     <p className={`text-base ${txPrimary}`}>

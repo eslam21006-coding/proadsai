@@ -689,4 +689,32 @@ test("completeness — paid_event requires eventAttendanceRate AND eventCloseRat
     const halfDoc = { ...incompleteDoc, eventAttendanceRate: 75 };
     assert.equal(isSettingsComplete(halfDoc), false);
     assert.deepEqual(missingRequiredFields(halfDoc), ["eventCloseRate"]);
+
+    // Phase 968 — T041 mirror (FR-016): roasTarget is OPTIONAL on
+    // paid_event — the form defaults to 0.5 and the backend fills it
+    // if absent. paid_product still requires an explicit choice.
+    const noRoasTarget = {
+        funnelType: "paid_event" as const,
+        aov: 24,
+        // roasTarget intentionally omitted.
+        eventAttendanceRate: 75,
+        eventCloseRate: 7.5,
+        commissionRate: 10,
+        marginKept: 60,
+    };
+    assert.equal(isSettingsComplete(noRoasTarget), true);
+    assert.equal(missingRequiredFields(noRoasTarget).length, 0);
+
+    // paid_product: roasTarget IS required.
+    const paidProductNoRoas = {
+        funnelType: "paid_product" as const,
+        aov: 100,
+        htoPrice: 3000,
+        htoConversionRate: 5,
+        commissionRate: 10,
+        marginKept: 60,
+        // roasTarget intentionally omitted.
+    };
+    assert.equal(isSettingsComplete(paidProductNoRoas), false);
+    assert.deepEqual(missingRequiredFields(paidProductNoRoas), ["roasTarget"]);
 });
