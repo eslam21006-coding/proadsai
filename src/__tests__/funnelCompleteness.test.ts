@@ -355,3 +355,57 @@ describe("FunnelSettingsForm.computeMissingFields (frontend completeness mirror)
         expect(a).toEqual(b);
     });
 });
+
+// Phase 968 — Round-13 (CodeRabbit #3897474305): the paused-targets
+// notice now renders the missing-field names through
+// `localizeMissingFieldName(key, lang)`, which maps internal keys
+// ("aov", "eventAttendanceRate") to user-facing labels in both
+// languages. This regression test pins the translation table — a
+// missing translation (key returned unchanged) would surface as a
+// leaked internal key in the UI. The form's paused notice lives in
+// the same component but the test exercises the pure helper
+// extracted alongside the table.
+import { MISSING_FIELD_LABELS } from "../components/FunnelSettingsForm";
+
+describe("MISSING_FIELD_LABELS (paused-notice translation table)", () => {
+    it("every key listed in MISSING_FIELD_LABELS is a known missing-field key", () => {
+        // Sanity check: the table must not contain stale keys that
+        // aren't part of the missing-field predicate.
+        for (const key of Object.keys(MISSING_FIELD_LABELS)) {
+            expect(["aov", "roasTarget", "htoPrice", "htoConversionRate",
+                    "eventAttendanceRate", "eventCloseRate", "offerPrice",
+                    "attendanceRate", "buyRateFromAttendees", "leadToCloseRate",
+                    "bookingRate", "showUpRate", "commissionRate", "marginKept"])
+                .toContain(key);
+        }
+    });
+
+    it("every entry has both English and Arabic labels", () => {
+        // Round-13 #3897474305 fix pins bilingual coverage. The English
+        // label is the same one the form renders next to the input;
+        // the Arabic label is the form's plain-Fusha copy.
+        for (const [, label] of Object.entries(MISSING_FIELD_LABELS)) {
+            expect(typeof label.en).toBe("string");
+            expect(label.en.length).toBeGreaterThan(0);
+            expect(typeof label.ar).toBe("string");
+            expect(label.ar.length).toBeGreaterThan(0);
+        }
+    });
+
+    it("Arabic labels do not contain the internal field key", () => {
+        // Internal keys like "aov" must NOT appear in user-facing
+        // Arabic (the SC-11 user-facing rule). The keys are ASCII
+        // and would leak the technical identifier if they slipped
+        // into the translation.
+        const internalKeys = ["aov", "roasTarget", "htoPrice", "htoConversionRate",
+            "eventAttendanceRate", "eventCloseRate", "offerPrice",
+            "attendanceRate", "buyRateFromAttendees", "leadToCloseRate",
+            "bookingRate", "showUpRate", "commissionRate", "marginKept"];
+        for (const [key, label] of Object.entries(MISSING_FIELD_LABELS)) {
+            for (const ik of internalKeys) {
+                if (ik === key) continue;
+                expect(label.ar.includes(ik)).toBe(false);
+            }
+        }
+    });
+});

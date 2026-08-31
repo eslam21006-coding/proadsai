@@ -227,6 +227,8 @@ export function computeAdvisories(input: FunnelInputs, derived: DerivedTargets):
 export function getEffectiveTarget(derived: DerivedTargets): number | null;                    // BEHAVIOUR CHANGED
 export function getCostMetric(derived: DerivedTargets): "CPA" | "CPL" | null;                  // unchanged
 export function round2(n: number): number;                                                     // unchanged
+export function spendShare(marginKept: 50 | 60 | 70): number;                                  // Phase 2 helper (FR-001)
+export function netFactor(commissionRate: number): number;                                     // Phase 2 helper (FR-003)
 ```
 
 **Two breaking changes to note for callers:**

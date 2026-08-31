@@ -144,6 +144,36 @@ function numOrNull(v: string): number | null {
     return Number.isFinite(n) ? n : null;
 }
 
+// ─── Missing-field name localization ─────────────────────────────────────
+//
+// Phase 10 round-13 (CodeRabbit): the paused-targets notice was rendering
+// raw internal field keys ("aov", "eventAttendanceRate") in both
+// languages. The keys are not user-facing copy — they bypass the SC-11
+// guard's user-facing-string policy. Map each key to the same label the
+// owner sees next to its input, so the notice reads in plain language.
+export const MISSING_FIELD_LABELS: Record<string, { en: string; ar: string }> = {
+    aov: { en: 'Average order value', ar: 'قيمة الطلب' },
+    roasTarget: { en: 'Target ROAS', ar: 'هدف العائد على الإنفاق الإعلاني' },
+    htoPrice: { en: 'High ticket price', ar: 'سعر العرض عالي القيمة' },
+    htoConversionRate: { en: 'High ticket conversion rate', ar: 'نسبة تحويل العرض عالي القيمة' },
+    eventAttendanceRate: { en: 'Attendance from ticket buyers', ar: 'نسبة الحضور من مشتري التذاكر' },
+    eventCloseRate: { en: 'High ticket close from attendees', ar: 'نسبة إغلاق العرض عالي القيمة من الحضور' },
+    offerPrice: { en: 'Final offer price', ar: 'سعر العرض النهائي' },
+    attendanceRate: { en: 'Attendance rate', ar: 'نسبة الحضور من المسجلين' },
+    buyRateFromAttendees: { en: 'Purchase rate from attendees', ar: 'نسبة الشراء من الحضور' },
+    leadToCloseRate: { en: 'Close rate on calls that happened', ar: 'نسبة الإغلاق في المكالمات التي تمت' },
+    bookingRate: { en: 'Booking rate', ar: 'نسبة حجز المكالمات من العملاء المحتملين' },
+    showUpRate: { en: 'Show-up rate', ar: 'نسبة الحضور للمكالمات المحجوزة' },
+    commissionRate: { en: 'Sales commission', ar: 'عمولة المبيعات' },
+    marginKept: { en: 'Margin you want to keep', ar: 'نسبة الربح التي تريد الاحتفاظ بها' },
+};
+
+function localizeMissingFieldName(key: string, lang: string): string {
+    const label = MISSING_FIELD_LABELS[key];
+    if (!label) return key;
+    return label[lang === 'ar' ? 'ar' : 'en'];
+}
+
 // ─── Completeness predicate (Phase 10 T058) ──────────────────
 //
 // Extracted from the `missingFields` useMemo so the parity test can
@@ -978,8 +1008,8 @@ export default function FunnelSettingsForm({
                     </h3>
                     <p className={`mt-1 text-sm ${txSecondary}`}>
                         {L(
-                            `Missing ${missingFields.length} field${missingFields.length === 1 ? '' : 's'}: ${missingFields.join(', ')}.`,
-                            `${missingFields.length === 1 ? 'حقل ناقص' : 'حقول ناقصة'}: ${missingFields.join('، ')}.`,
+                            `Missing ${missingFields.length} field${missingFields.length === 1 ? '' : 's'}: ${missingFields.map((k) => localizeMissingFieldName(k, lang)).join(', ')}.`,
+                            `${missingFields.length === 1 ? 'حقل ناقص' : 'حقول ناقصة'}: ${missingFields.map((k) => localizeMissingFieldName(k, lang)).join('، ')}.`,
                         )}
                     </p>
                 </div>
@@ -1143,9 +1173,29 @@ export default function FunnelSettingsForm({
                                         ? opt.labelAr
                                         : String(opt.value) + ' — ' + opt.subEn}
                                 </div>
-                                <div className={`text-sm ${txMuted}`}>
-                                    {lang === 'ar' ? opt.subAr : opt.subEn}
-                                </div>
+                                {/* Round-13 (CodeRabbit): the previous
+                                    version rendered `opt.subEn` twice —
+                                    once in the main label (above) and
+                                    once in the muted sub-line below. The
+                                    English branch already concatenates the
+                                    value + subEn on the main label, so
+                                    showing subEn again below is duplicated
+                                    copy. The Arabic branch was unaffected
+                                    because it omits subEn on the main
+                                    label. Replace the unconditional
+                                    `opt.subEn` with a value that hides the
+                                    sub-line entirely on the English side —
+                                    the English main label already carries it. */}
+                                {!(lang !== 'ar') && (
+                                    <div className={`text-sm ${txMuted}`}>
+                                        {opt.subEn}
+                                    </div>
+                                )}
+                                {lang === 'ar' && (
+                                    <div className={`text-sm ${txMuted}`}>
+                                        {opt.subAr}
+                                    </div>
+                                )}
                             </button>
                         ))}
                     </div>

@@ -4368,7 +4368,18 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
         //   complete === undefined → silent during rollout
         setFunnelSettingsComplete(data?.complete !== false);
       } catch {
-        if (!cancelled) setFunnelSettingsHasDoc(null);
+        // Round-13 (CodeRabbit): the prior catch only reset
+        // `funnelSettingsHasDoc`. A thrown probe (network error,
+        // permission-denied for an account the owner no longer owns,
+        // etc.) should also reset `funnelSettingsComplete` so the badge
+        // reflects "unknown" rather than retaining a stale value
+        // from a previous render. Reset both to mirror the success
+        // path ("no record ⇒ not incomplete" per the rollout fallback
+        // comment above).
+        if (!cancelled) {
+          setFunnelSettingsHasDoc(null);
+          setFunnelSettingsComplete(true);
+        }
       }
     }
     probe();

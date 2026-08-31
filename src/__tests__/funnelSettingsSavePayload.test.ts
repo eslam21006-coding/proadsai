@@ -94,7 +94,10 @@ describe("FunnelSettingsForm save payload — htoConversionRate", () => {
     });
 
     describe("non-paid funnel types (defensive)", () => {
-        it("free_webinar: state 0 → 0 (defensive default; field is not on the save payload)", () => {
+        // Round-13 (CodeRabbit): the previous name said "state 0" but
+        // the test passed an empty string. Rename so the description
+        // matches the assertion.
+        it("free_webinar: empty form state → 0 (defensive default; field is not on the save payload)", () => {
             expect(
                 resolveHtoConversionRateForSave("free_webinar", "", null),
             ).toBe(0);

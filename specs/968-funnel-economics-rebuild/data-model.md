@@ -82,7 +82,7 @@ A record is **complete** when every field its funnel type requires is present an
 |---|---|
 | `lead_magnet_call` | `offerPrice`, `leadToCloseRate`, `bookingRate`, `showUpRate`, `commissionRate`, `marginKept` |
 | `free_webinar` | `offerPrice`, `attendanceRate`, `buyRateFromAttendees`, `commissionRate`, `marginKept` |
-| `paid_event` | `aov`, `roasTarget`, `eventAttendanceRate`, `eventCloseRate`, `commissionRate`, `marginKept`, plus `htoPrice` when `hasHto` |
+| `paid_event` | `aov`, `eventAttendanceRate`, `eventCloseRate`, `commissionRate`, `marginKept`, plus `htoPrice` when `hasHto`. `roasTarget` is **optional** — defaults to `0.5` (FR-016 controlled-loss posture) when omitted. |
 | `paid_product` | `aov`, `roasTarget`, `commissionRate`, `marginKept`, plus `htoPrice` and `htoConversionRate` when `hasHto` |
 
 Notes:

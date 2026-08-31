@@ -288,7 +288,7 @@ export function assertRequiredFieldPresent(
                 || fieldName === "marginKept"
             ) {
                 if (isMissing(value)) {
-                    throw new Error(`${fieldName} is required for lead_magnet_call}`);
+                    throw new Error(`${fieldName} is required for lead_magnet_call`);
                 }
             }
             return;

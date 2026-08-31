@@ -104,19 +104,21 @@ The most natural implementation of "this record is incomplete" — returning `se
 
 ## R-4 — The terminology guard blocks benchmark copy, and the escape route is evasion
 
-**Status**: Verified against `scripts/sc11Guard.mjs`. Resolved.
+**Status**: Superseded by Phase 1 hardening + Phase 9 T055. See note below.
 
 The guard's percentage pattern is `/\d+\s*%|percent/gi` — it requires a **digit** immediately before `%`. This explains why existing labels like `'Attendance rate (%)'` pass unexempted while `"typical: 5–10%"` would not. The English word `percent` is banned case-insensitively.
 
 `scripts/.sc11-allowlist` contains `src/i18n.tsx` and `src/App.tsx` as whole-file entries; `src/components/FunnelSettingsForm.tsx` is **not** on it.
 
-**Decision**: omit the percent symbol from all new form copy and carry the unit in the field or group label. Do not add the form to the allowlist. Do not relocate copy into an allowlisted file.
+**Decision (originally)**: omit the percent symbol from all new form copy and carry the unit in the field or group label. Do not add the form to the allowlist. Do not relocate copy into an allowlisted file.
 
 **Rationale**: routing user-facing copy into a file the guard cannot scan would satisfy the linter while defeating the rule's purpose. All 30 new string pairs were machine-checked against the live patterns (0 violations), with negative controls (`"Keep 50%"`, `"Typical range: 5–10%"`, `"Typical: 5 - 10 %"`, `"Keep 50 percent"`) confirmed to trip, proving the check is not vacuously passing.
 
 **Trap noted**: the `marginKept` preset buttons are the likeliest accidental violation. `"Keep 50%"` trips; `"50"` under a group label reading `"Margin you want to keep (%)"` does not. Fixed by FR-025a.
 
 **Alternatives considered**: a scoped inline-marker exemption in `sc11Guard.mjs` — rejected because no exemption turned out to be necessary, and it would have pulled `scripts/` into scope.
+
+**Superseded by Phase 1 + Phase 9** (Round-13 documentation update, CodeRabbit #3897474276): the percentage rule was strengthened to `/[\d٠-٩۰-۹]+\s*[%٪]|percent/gi` in `scripts/sc11Guard.mjs:11` (FR-054), which closes the Arabic-Indic + Eastern Arabic-Indic + `٪` loopholes. Phase 9 T055 added benchmark hints that legitimately carry the symbol with a per-line `sc11-allow:PERCENT_SIGN reason="..."` suppression (FR-055/FR-056). The original "omit the symbol" decision is no longer the only path; hints carry it with a deliberate suppression per the new contract. The "no form on allowlist" and "no relocation" sub-decisions remain in force — Phase 9 did not weaken those.
 
 ---
 

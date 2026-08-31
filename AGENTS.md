@@ -11,6 +11,15 @@ These rules encode hard-won lessons. Violating them causes production bugs, wast
 ### 0. ALWAYS WRITE A LOCAL REPORT
 At the end of every multi-step task (investigations, refactors, batched migrations, model swaps, billing changes, anything with discrete numbered batches), write a Markdown report to `docs/investigations/` with a descriptive filename (e.g. `model-config-consolidation-batch1-report.md`, `stripe-migration-batch2-report.md`). Commit it. The chat output is ephemeral; the local file is the durable record of what was done, why, and what risks remain.
 
+> **Round-13 (CodeRabbit):** some features opt to consolidate per-batch
+> reports under `specs/{feature}/reports/batch-NN-report.md` (Rule 0a)
+> rather than the per-batch `docs/investigations/<topic>.md` path
+> above. When Rule 0a applies, treat the per-feature batch directory as
+> the rule 0 surface for that feature; the broader docs/investigations/
+> discipline is owned at the project level outside a feature's working
+> specs tree. Both modes must still be raw-output, durable, and committed
+> alongside the code.
+
 ### 0a. Batch reports
 Every batch writes `specs/{feature}/reports/batch-NN-report.md` before reporting
 in chat. Raw command output verbatim in fenced code blocks, never summarised.

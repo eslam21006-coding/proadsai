@@ -42,13 +42,18 @@ Resolved before drafting (product owner decisions, no markers carried into the s
    the original list only to serve item 11. Preserving aggregates became a
    regression invariant (FR-041) rather than a migration step.
 2. **Terminology-guard route** — verified against `scripts/sc11Guard.mjs` BEFORE
-   writing copy, as the hard constraint required. The percentage rule is
-   `/\d+\s*%|percent/gi`: it needs a **digit** immediately before `%`, which is
-   why today's `'Attendance rate (%)'` labels pass unexempted. Benchmark text
-   such as `5–10%` WOULD trip it. Resolution: express ranges as bare numbers with
-   the unit carried by the field label (FR-035). No exemption is added and the
-   guard is not weakened — satisfying the constraint without pulling
-   `scripts/sc11Guard.mjs` into scope. Note for planning: `src/i18n.tsx` already
+   writing copy, as the hard constraint required. Phase 1 strengthened the
+   percentage rule to `/[\d٠-٩۰-۹]+\s*[%٪]|percent/gi` (Latin + Arabic-Indic +
+   Eastern Arabic-Indic digits + both `%` and `٪`) per FR-054 — this checklist
+   originally documented the pre-Phase-1 expression, which is now superseded.
+   The strengthened pattern needs a **digit** immediately before `%` or
+   `٪`, which is why today's `'Attendance rate (%)'` labels pass unexempted.
+   Benchmark text such as `5–10%` or `٥–١٠٪` WOULD trip it. Resolution:
+   per FR-035, benchmark hints carry the symbol with a per-line suppression
+   naming `PERCENT_SIGN` and a non-empty reason; bare-number ranges without
+   the symbol need no suppression. The strengthened pattern + suppression
+   mechanism is documented at `scripts/sc11Guard.mjs:11 + 84` and the
+   per-line contract is `FR-055/FR-056`. Note for planning: `src/i18n.tsx` already
    sits on `scripts/.sc11-allowlist` as a whole-file entry, so copy placed there
    would not be scanned; the spec deliberately does not rely on that.
 3. **OQ-1 override placement** — commission applies to the high-ticket term only
