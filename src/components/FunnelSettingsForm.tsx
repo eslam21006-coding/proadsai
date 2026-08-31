@@ -69,7 +69,10 @@ export interface FunnelSettingsDoc {
     aov: number | null;
     hasHto: boolean;
     htoPrice: number;
-    htoConversionRate: number;
+    // Phase 968 — Item D (Phase 7 carry-over): null for paid_event
+    // when the field has never been set (the form removed the input).
+    // For paid_product the value is always a number.
+    htoConversionRate: number | null;
     roasTarget: RoasTarget;
     offerPrice: number | null;
     attendanceRate: number | null;
@@ -163,7 +166,11 @@ interface SaveFunnelSettingsRequest {
     aov?: number | null;
     hasHto?: boolean;
     htoPrice?: number;
-    htoConversionRate?: number;
+    // Phase 968 — Item D (Phase 7 carry-over): paid_event sends null
+    // so the doc retains its stored value verbatim (no overwrite
+    // with 0). The backend treats null on paid_event as "do not
+    // touch the stored value" and on paid_product as "no value".
+    htoConversionRate?: number | null;
     roasTarget?: RoasTarget;
     offerPrice?: number | null;
     attendanceRate?: number | null;
@@ -272,7 +279,17 @@ function useFunnelSettings(workspaceId: string | null, accountId: string | null)
                 aov: req.aov ?? null,
                 hasHto: req.hasHto === true,
                 htoPrice: req.hasHto ? (req.htoPrice ?? 0) : 0,
-                htoConversionRate: req.hasHto ? (req.htoConversionRate ?? 0) : 0,
+                // Phase 968 — Item D (Phase 7 carry-over): on paid_event
+                // the form removed the htoConversionRate input (Phase 7
+                // Item C) but the saved value is preserved verbatim. The
+                // save request carries the form's pass-through value
+                // (req.htoConversionRate, which for paid_event equals
+                // settings?.htoConversionRate); the optimistic merge
+                // mirrors it. paid_product continues to read the form's
+                // input.
+                htoConversionRate: req.funnelType === 'paid_event'
+                    ? (req.htoConversionRate ?? null)
+                    : req.hasHto ? (req.htoConversionRate ?? 0) : 0,
                 roasTarget: req.roasTarget ?? 1.0,
                 offerPrice: req.offerPrice ?? null,
                 attendanceRate: req.attendanceRate ?? null,
@@ -621,7 +638,24 @@ export default function FunnelSettingsForm({
             aov: aovN,
             hasHto,
             htoPrice: numOrNull(htoPrice) ?? 0,
-            htoConversionRate: numOrNull(htoConversionRate) ?? 0,
+            // Phase 968 — Item D (Phase 7 carry-over): paid_event does
+            // NOT read `htoConversionRate` (FR-011..FR-014). The form
+            // removed the input (Phase 7 Item C). Storage retention
+            // (data-model.md §1) means the field is preserved verbatim
+            // — sending 0 here would overwrite a pre-existing value
+            // and break the revert-stays-code-only property.
+            //
+            // For paid_event, fall back to the hydrated settings value
+            // when the form's state is empty (the input is hidden, so
+            // state is `''` after hydration completes OR when the user
+            // opens a record that never had the field stored). The
+            // backend persists whatever the request supplies, so this
+            // pass-through keeps the pre-existing value verbatim.
+            //
+            // paid_product continues to send the form's value.
+            htoConversionRate: funnelType === 'paid_event'
+                ? numOrNull(htoConversionRate) ?? settings?.htoConversionRate ?? 0
+                : numOrNull(htoConversionRate) ?? 0,
             roasTarget,
             offerPrice: offerN,
             attendanceRate: attendanceN,

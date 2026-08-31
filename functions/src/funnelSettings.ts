@@ -45,7 +45,6 @@ import {
     DEFAULT_COMMISSION_RATE,
     DEFAULT_MARGIN_KEPT,
     DEFAULT_PAID_EVENT_ROAS_TARGET,
-    LOW_VALUE_THRESHOLD,
 } from "./cpaEconomics.js";
 import { getDb } from "./firestoreClient.js";
 import {

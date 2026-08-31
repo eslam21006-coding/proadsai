@@ -16,7 +16,6 @@ import {
     getCostMetric,
     ECONOMICS_VERSION,
     LOW_VALUE_TARGET_THRESHOLD,
-    LOW_VALUE_THRESHOLD,
     spendShare,
     netFactor,
     round2,
@@ -33,12 +32,6 @@ test("constants — ECONOMICS_VERSION = 2 (R-1, FR-041)", () => {
 
 test("constants — LOW_VALUE_TARGET_THRESHOLD = 0.50 (FR-028)", () => {
     assert.equal(LOW_VALUE_TARGET_THRESHOLD, 0.50);
-});
-
-test("constants — LOW_VALUE_THRESHOLD = 9 (legacy price-based — removed in Phase 8 T049)", () => {
-    // The legacy `LOW_VALUE_THRESHOLD` is intentionally retained until
-    // T049 strips it. It is no longer used by `computeAdvisories`.
-    assert.equal(LOW_VALUE_THRESHOLD, 9);
 });
 
 // ─── Shared factors (T012) ───────────────────────────────────
@@ -590,6 +583,53 @@ test("T042: paid_event report §6.3 — 100-buyer sanity check (totals to $17,58
     assert.equal(backEndNet, 15187.5);
     assert.equal(totalNet, 17587.5);
     assert.equal(profit, 12787.5);
+});
+
+// Phase 968 — Item B (Phase 7 carry-over): a realistic paid_event
+// configuration that pins capApplied=TRUE — the projection path is
+// binding. Inputs: aov=50, htoPrice=3000, eventAttendanceRate=75,
+// eventCloseRate=7.5, commissionRate=10, marginKept=60, ROAS=0.5.
+// This is the only paid_event fixture with realistic inputs that
+// surfaces capApplied=TRUE; every other paid_event test in this file
+// uses aov=24 (or aov=$5 etc.) where ticket-revenue wins.
+//
+// raw = aov / roasTarget = 50 / 0.5 = 100
+// fullBuyerValue = 50 + 3000 × 0.9 × 0.75 × 0.075 = 50 + 151.875 = 201.875 → 201.88
+// maxCpa = 201.875 × 0.40 = 80.75
+// effective = min(100, 80.75) = 80.75
+// capApplied = (100 > 80.75) = TRUE → projection path binds.
+//
+// Algebraically (from the §6.3 backend formula), the projection path
+// binds when (aov + htoPrice × 0.050625) × 0.40 < aov / roasTarget.
+// For aov=24, this means htoPrice < 1,896 (projection binds on a
+// very small upsell). For htoPrice=3000, this means aov > ~$38
+// (the projection binds when the ticket price is high enough that
+// the projected back-end value no longer constrains the target).
+// The test pins both halves of the boundary in one fixture.
+test("Item B: paid_event capApplied=TRUE — aov=$50 / htoPrice=$3000 / 75% / 7.5% / ROAS=0.5 ⇒ effective $80.75, capApplied TRUE (projection path binds)", () => {
+    const inp: PaidFunnelInputs = {
+        funnelType: "paid_event",
+        aov: 50,
+        hasHto: true,
+        htoPrice: 3000,
+        htoConversionRate: 5, // legacy additive storage; unused on paid_event
+        eventAttendanceRate: 75,
+        eventCloseRate: 7.5,
+        commissionRate: 10,
+        marginKept: 60,
+        roasTarget: 0.5,
+    };
+    const d = deriveTargetCpa(inp);
+    // raw pinned at $100 across all three margin rows.
+    assert.equal(d.rawTargetCpa, 100);
+    // fullBuyerValue = 201.88 (raw 201.875).
+    assert.equal(d.fullBuyerValue, 201.88);
+    // maxCpa pinned at $80.75 (raw 80.75).
+    assert.equal(d.maxCpa, 80.75);
+    // effective = min(100, 80.75) = 80.75 → projection path binds.
+    assert.equal(d.effectiveTargetCpa, 80.75);
+    // capApplied = (100 > 80.75) = TRUE.
+    assert.equal(d.capApplied, true);
 });
 
 // T021 — Regression anchor (constitution IX — before/after evidence).
@@ -1173,4 +1213,126 @@ test("getEffectiveTarget — every deriveAll path stamps economicsVersion: 2 (T0
         // current-state inputs.
         assert.notEqual(getEffectiveTarget(d), null);
     }
+});
+
+// Phase 968 — T051 (report §6.4 fixtures, contracts/cpaEconomics.md
+// section 4.5). Free webinar at attendanceRate 25, buyRateFromAttendees
+// 2, commissionRate 10, marginKept 60. Three rows: 3000 → 5.40 silent,
+// 500 → 0.90 silent, 200 → 0.36 fires. The advisory keys off the
+// rounded computed target (FR-028, FR-029).
+test("T051: free_webinar report §6.4 — offerPrice=3000 ⇒ 5.40 (silent)", () => {
+    const inp: FreeWebinarInputs = {
+        funnelType: "free_webinar",
+        offerPrice: 3000,
+        attendanceRate: 25,
+        buyRateFromAttendees: 2,
+        commissionRate: 10,
+        marginKept: 60,
+    };
+    const d = deriveAll(inp, Date.now());
+    assert.equal(d.free?.leadValue, 13.5);
+    assert.equal(d.free?.effectiveTargetCpl, 5.4);
+    const a = computeAdvisories(inp, d);
+    assert.equal(a.lowValue, false);
+});
+
+test("T051: free_webinar report §6.4 — offerPrice=500 ⇒ 0.90 (silent)", () => {
+    const inp: FreeWebinarInputs = {
+        funnelType: "free_webinar",
+        offerPrice: 500,
+        attendanceRate: 25,
+        buyRateFromAttendees: 2,
+        commissionRate: 10,
+        marginKept: 60,
+    };
+    const d = deriveAll(inp, Date.now());
+    // leadValue = 500 × 0.9 × 0.25 × 0.02 = 2.25; target = 2.25 × 0.4 = 0.90
+    assert.equal(d.free?.effectiveTargetCpl, 0.9);
+    const a = computeAdvisories(inp, d);
+    assert.equal(a.lowValue, false);
+});
+
+test("T051: free_webinar report §6.4 — offerPrice=200 ⇒ 0.36 (FIRES)", () => {
+    const inp: FreeWebinarInputs = {
+        funnelType: "free_webinar",
+        offerPrice: 200,
+        attendanceRate: 25,
+        buyRateFromAttendees: 2,
+        commissionRate: 10,
+        marginKept: 60,
+    };
+    const d = deriveAll(inp, Date.now());
+    // leadValue = 200 × 0.9 × 0.25 × 0.02 = 0.90; target = 0.90 × 0.4 = 0.36
+    assert.equal(d.free?.effectiveTargetCpl, 0.36);
+    const a = computeAdvisories(inp, d);
+    assert.equal(a.lowValue, true);
+});
+
+// Phase 968 — T052 (boundary fixtures, contracts/cpaEconomics.md
+// section 4.6, FR-028a). The advisory keys off the ROUNDED target
+// (per FR-028), so:
+//   raw 0.4999 → round2(0.4999) = 0.50 → silent (boundary inclusive)
+//   raw 0.50   → round2(0.50)   = 0.50 → silent (strict inequality)
+//   raw 0.4949 → round2(0.4949) = 0.49 → fires
+// These pin the displayed-value boundary, not the raw-value boundary.
+test("T052: low-value boundary — raw 0.4999 displays 0.50 ⇒ silent", () => {
+    // Build a free-webinar-derived shape with the exact raw target.
+    const derived = {
+        economicsVersion: 2 as const,
+        free: {
+            leadValue: 0.4999 / 0.4,  // back-compute leadValue
+            economicCeilingCpl: 0.4999,
+            effectiveTargetCpl: 0.4999,
+        },
+        computedAt: 1,
+    };
+    // round2(0.4999) — banker's rounding rounds 0.4999 to 0.50
+    // (round-half-to-even; 0.4999 → 0.50 since the half-position
+    // digit is 0, the preceding digit is even after the carry).
+    // Either way, 0.4999 must round to 0.50 (round-half-up) and
+    // the boundary is inclusive at 0.50.
+    const inp: FreeWebinarInputs = {
+        funnelType: "free_webinar", offerPrice: 100,
+        attendanceRate: 100, buyRateFromAttendees: 100,
+        commissionRate: 0, marginKept: 60,
+    };
+    const a = computeAdvisories(inp, derived);
+    // Verify the boundary: at 0.50 (rounded), strict < 0.50 is false ⇒ silent.
+    const rounded = round2(0.4999);
+    assert.equal(rounded, 0.5);
+    assert.equal(rounded < 0.5, false);
+    assert.equal(a.lowValue, false, "raw 0.4999 must round to 0.50 and stay silent");
+});
+
+test("T052: low-value boundary — exactly 0.50 ⇒ silent (strict inequality)", () => {
+    const derived = {
+        economicsVersion: 2 as const,
+        free: { leadValue: 1.25, economicCeilingCpl: 0.50, effectiveTargetCpl: 0.50 },
+        computedAt: 1,
+    };
+    const inp: FreeWebinarInputs = {
+        funnelType: "free_webinar", offerPrice: 100,
+        attendanceRate: 100, buyRateFromAttendees: 100,
+        commissionRate: 0, marginKept: 60,
+    };
+    const a = computeAdvisories(inp, derived);
+    assert.equal(a.lowValue, false, "exactly 0.50 must not fire");
+});
+
+test("T052: low-value boundary — raw 0.4949 displays 0.49 ⇒ FIRES", () => {
+    const derived = {
+        economicsVersion: 2 as const,
+        free: { leadValue: 1.23725, economicCeilingCpl: 0.4949, effectiveTargetCpl: 0.4949 },
+        computedAt: 1,
+    };
+    const inp: FreeWebinarInputs = {
+        funnelType: "free_webinar", offerPrice: 100,
+        attendanceRate: 100, buyRateFromAttendees: 100,
+        commissionRate: 0, marginKept: 60,
+    };
+    const a = computeAdvisories(inp, derived);
+    const rounded = round2(0.4949);
+    assert.equal(rounded, 0.49);
+    assert.equal(rounded < 0.5, true);
+    assert.equal(a.lowValue, true, "raw 0.4949 must round to 0.49 and fire");
 });

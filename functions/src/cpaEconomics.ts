@@ -113,11 +113,6 @@ export const DEFAULT_PAID_EVENT_ROAS_TARGET = 0.5;
 
 export type MarginKept = 50 | 60 | 70;
 
-// Legacy price-based advisory threshold — kept until T049 (Phase 8)
-// removes it for good. Do not use for new logic; the new advisory
-// boundary is LOW_VALUE_TARGET_THRESHOLD above.
-export const LOW_VALUE_THRESHOLD = 9;
-
 // ─── Inputs ──────────────────────────────────────────────────
 
 export interface PaidFunnelInputs {
