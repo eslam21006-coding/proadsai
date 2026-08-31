@@ -623,3 +623,70 @@ test("completeness — multiple missing fields reported in one error (FR-040a)",
         "marginKept",
     ]);
 });
+
+// Item A follow-up (Phase 6 entry criterion): the paid_event save
+// requires BOTH eventAttendanceRate AND eventCloseRate (FR-011..FR-014).
+// The Phase 5 form does not render these fields yet (T045 lands them).
+// This contract test pins that, until T045 ships, no paid_event owner
+// can save a record through the form even with every other field
+// filled — the server rejects, the completeness predicate reports
+// incomplete, and `getFunnelSettings.complete === false`. Until the
+// form renders these two inputs, the branch is NOT safely deployable
+// for paid_event owners (Item A follow-up).
+test("completeness — paid_event requires eventAttendanceRate AND eventCloseRate (T045 prerequisite)", () => {
+    // Every other required field present, but the two event-rate
+    // fields absent — record is incomplete. The save path throws
+    // (the underlying validator throws on the FIRST missing field;
+    // the wrapper at saveFunnelSettings line 446 collects ALL
+    // missing via `missingRequiredFields` and throws once with the
+    // full list per FR-040a). This test pins BOTH ends:
+    //   1. The per-field validator throws on each missing field
+    //      (so `assertRequiredFieldsPresent` throws here).
+    //   2. The canonical predicate returns BOTH fields together
+    //      so the save wrapper would surface them in one error.
+    const req: Record<string, unknown> = {
+        aov: 24,
+        roasTarget: 0.5,
+        commissionRate: 10,
+        marginKept: 60,
+        // eventAttendanceRate + eventCloseRate intentionally omitted.
+    };
+    // Per-field validator throws on the first missing field. The
+    // first missing field is eventAttendanceRate (FIELD_MAP order).
+    assert.throws(
+        () => assertRequiredFieldsPresent("paid_event", req),
+        /eventAttendanceRate is required for paid_event/,
+    );
+
+    // The canonical predicate returns both fields in field order:
+    const incompleteDoc = {
+        funnelType: "paid_event" as const,
+        aov: 24,
+        roasTarget: 0.5,
+        commissionRate: 10,
+        marginKept: 60,
+    };
+    const missing = missingRequiredFields(incompleteDoc);
+    assert.equal(missing.length, 2);
+    assert.deepEqual(missing, ["eventAttendanceRate", "eventCloseRate"]);
+
+    // isSettingsComplete agrees: returns false.
+    assert.equal(isSettingsComplete(incompleteDoc), false);
+
+    // Adding both event-rate fields makes the record complete. This
+    // is the state T045 needs to land before paid_event is fully
+    // functional end-to-end (form + doc + backend).
+    const completeDoc = {
+        ...incompleteDoc,
+        eventAttendanceRate: 75,
+        eventCloseRate: 7.5,
+    };
+    assert.equal(isSettingsComplete(completeDoc), true);
+    assert.equal(missingRequiredFields(completeDoc).length, 0);
+
+    // Negative control: only ONE event-rate field present is still
+    // incomplete (both are required, neither is a substitute).
+    const halfDoc = { ...incompleteDoc, eventAttendanceRate: 75 };
+    assert.equal(isSettingsComplete(halfDoc), false);
+    assert.deepEqual(missingRequiredFields(halfDoc), ["eventCloseRate"]);
+});

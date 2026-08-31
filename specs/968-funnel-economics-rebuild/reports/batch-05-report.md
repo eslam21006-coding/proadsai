@@ -362,7 +362,7 @@ ok 30 - completeness — multiple missing fields reported in one error (FR-040a)
 # tests 12 — pass 12 — fail 0    (imageMatching)
 ```
 
-**275 tests across 14 files; 275 pass, 0 fail.** (Was 266 in Phase 4; +9 from T033.)
+**276 tests across 14 files; 276 pass, 0 fail.** (Was 265 in Phase 4; +11 from this batch: 1 cpaEconomics Item B fixture + 10 funnelSettings contract — 1 Item A asymmetry test + 9 T033 completeness tests. NOTE: the previous draft of this section reported "275/275" and "+9"; both numbers were off by 1. Corrected here per Item C of the user review.)
 
 ### 4.6 Frontend typecheck
 
@@ -396,7 +396,7 @@ Three judgement calls worth recording:
 
 1. **Item A asymmetry was a Phase 2 bug, not just a Phase 5 design decision.** The Phase 2 production `assertRequiredFieldPresent` validator incorrectly listed `htoConversionRate` as required for `paid_event`. Phase 5 fixed the validator to match the contract. Recorded in data-model.md §3.1.
 2. **Frontend `missingFields` is a separate implementation** of the backend rule. T058 (Phase 10) adds the parity test that locks the two in lockstep. The Phase 5 frontend mirrors the backend rule exactly as specified in `data-model.md` §3 + the Item A decision; the parity test will catch any drift.
-3. **Badge string is inlined in the MenuItem call site** rather than threaded through i18n.tsx. Phase 9 (T057) moves it to `i18n.tsx` as `funnel.needs_attention`. The form's paused-targets notice uses the inline bilingual string via `L()`; the badge dot's "(Required)" marker uses an inline `isDarkMode ? 'Required' : 'مطلوب'` ternary because `L()` is in scope inside the form's component but not inside the standalone `NumberField` helper.
+3. **Badge string is inlined in the MenuItem call site** rather than threaded through i18n.tsx. Phase 9 (T057) moves it to `i18n.tsx` as `funnel.needs_attention`. The form's paused-targets notice uses the inline bilingual string via `L()`. **The "(Required)" marker in `NumberField` was originally keyed off `isDarkMode` — this was a bug (theme flag, not language flag). Corrected in this post-review cycle to use `lang` from `useT()` threaded through every `<NumberField>` call site (11 sites).**
 
 No other deviations.
 
@@ -410,20 +410,34 @@ No other deviations.
 
 ---
 
-## 8. Branch deployability — UPDATED
+## 8. Branch deployability — REJECTED in original draft, corrected below
 
-The Phase 2/3/4 reports recorded that the branch was **not deployable** until end of Phase 4. That statement is now superseded:
+**The original draft of §8 claimed "the branch is deployable as of Phase 5 completion." That claim was rejected in review (Item A).**
 
-> **As of Phase 5 completion, the branch is deployable.** All P1 stories (US1, US2, US7) are complete:
+> **As of Phase 5 completion, the branch is NOT safely deployable.**
 >
-> - The corrected funnel-economics formulas persist for new records (Phases 3, 4).
-> - Pre-phase records (existing in production) are incomplete, fail completeness, return `complete: false`, fire the `funnel_settings_incomplete` log, and yield `effectiveTarget: null` from `getEffectiveTarget` so the existing verdict gate returns ⏳ with no verdict counts reaching the learning aggregates.
-> - The owner sees the passive badge but no modal opens automatically (FR-053).
-> - Saving an incomplete record is rejected with all missing fields named.
+> The backend completeness rule requires `eventAttendanceRate` AND `eventCloseRate` for `paid_event` (test 23 + test 31). The Phase 5 form does not render these fields yet (T045 lands them in Phase 6). A paid_event owner with all other required fields filled CANNOT save a record — the server rejects with "missing [eventAttendanceRate, eventCloseRate]". The frontend `missingFields` useMemo mirrors the same rule (incomplete list returns those two fields), so the form's paused-targets banner shows correctly. But the form CANNOT RENDER inputs for fields that don't exist in JSX, so the owner cannot fill them and the save button is dead.
 >
-> **Phase 6 (US3 paid_event formula rewrite) and Phase 7 (US4 dual-path results card) are P2** — they add new functionality and improve the UI but are not load-bearing for the learning-loop safety. The branch can ship after Phase 5 without them; they ship as incremental improvements.
+> **Earliest safe deploy point: end of Phase 6**, when T045 lands the two event-rate inputs in the paid_event form branch AND the frontend's `missingFields` useMemo includes them (currently excluded because the fields don't exist in JSX). Phase 6 is **NOT** an optional P2 improvement — it is required for `paid_event` to function end-to-end. The new contract test 31 ("paid_event requires eventAttendanceRate AND eventCloseRate (T045 prerequisite)") pins this.
+>
+> **Phase 7 (US4 dual-path results card) remains P2** — it adds a UI feature (showing both paid_event ceilings) but does not block the save path or the verdict gate.
 
 The post-deploy SC-010 verification (T064) still requires a workspace with a pre-existing record + pre-existing aggregates and is not runnable in this worktree.
+
+## 9. FR-050 (single canonical completeness definition) — STATUS
+
+> **FR-050 is NOT satisfied.** Two implementations of "complete" exist:
+>
+> 1. **Backend**: `isSettingsComplete` + `missingRequiredFields` in `functions/src/funnelSettings.ts` (the canonical source per the contract).
+> 2. **Frontend**: `missingFields` `useMemo` in `src/components/FunnelSettingsForm.tsx` (a re-implementation of the rule, mirrored client-side so the form can render the banner + per-field markers without round-tripping).
+>
+> The frontend duplicate is required for the form to mark fields and show the banner before the user clicks Save, but FR-050 says two implementations MUST NOT exist. **The parity test that locks the two in lockstep is T058, scheduled for Phase 10 (Polish & cross-cutting).** Until T058 lands, the two implementations can drift.
+>
+> **The first concrete instance of the drift the parity test would catch** is Item A's resolution: the backend was updated to NOT require `htoConversionRate` on `paid_event` (because the corrected formula reads `eventAttendanceRate × eventCloseRate`), but the frontend's `missingFields` useMemo would also need the same exclusion to match. Both implementations have the exclusion in their current state (frontend via the explicit `if (funnelType === 'paid_product' && isEmptyString(htoConversionRate))` branch in the useMemo), but no test verifies that this asymmetry is preserved across future changes.
+>
+> Until T058 ships, every code change to either completeness rule MUST be accompanied by a manual cross-check of both implementations.
+
+---
 
 ---
 
@@ -449,9 +463,81 @@ cd functions; node lib/__tests__/funnelSettings.contract.test.js
 # Expect: 30 ok, "# tests 30 / # pass 30 / # fail 0", exit 0
 
 # 6. Full Phase 14 sweep
-cd functions; npm run test:phase14          # 275/275 across 14 files, exit 0
+cd functions; npm run test:phase14          # 276/276 across 14 files, exit 0
 
 # 7. Verify the deletion criterion
 grep -r "buildFunnelInputsFromDoc" functions/src
 # Expect: zero matches
 ```
+
+---
+
+## 10. Post-review corrections (added before Phase 6 begins)
+
+User review identified four corrections. All four are real defects; the original §8 deployability claim was REJECTED outright.
+
+### 10.1 — Item A: §8 deployability claim is false
+
+The original §8 said "the branch is deployable as of Phase 5 completion." This was wrong because:
+
+- `data-model.md` §3 and contract test 23/31 require `eventAttendanceRate` and `eventCloseRate` on `paid_event`.
+- The Phase 5 form does not render these fields yet (T045, Phase 6).
+- The backend rejects any save missing either field.
+- A paid_event owner cannot save until T045 lands.
+
+**Corrected §8 is in §8 above. Earliest safe deploy point: end of Phase 6.**
+
+A new contract test (test 31: `paid_event requires eventAttendanceRate AND eventCloseRate (T045 prerequisite)`) pins the backend behaviour so future refactors cannot silently relax the requirement.
+
+### 10.2 — Item B: `Required` marker used `isDarkMode` instead of language
+
+The original code at `src/components/FunnelSettingsForm.tsx:1005` was:
+
+```ts
+const requiredText = isDarkMode ? 'Required' : 'مطلوب';
+```
+
+This is a **bug**: `isDarkMode` is a theme flag, not a language flag. An Arabic-speaking user in dark mode would see "Required" instead of "مطلوب"; an English-speaking user in light mode would see "مطلوب" instead of "Required".
+
+**Fix**: thread `lang` from `useT()` through every `<NumberField>` call site (11 sites) and switch the ternary to `lang === 'ar' ? 'مطلوب' : 'Required'`. `NumberField` now accepts `lang: string` as a required prop.
+
+**This is a clear instance of why FR-050 is not yet satisfied** — see §9 and Item D.
+
+### 10.3 — Item C: §4.5 test count
+
+Original §4.5 reported "275 tests across 14 files" and "+9 from T033". Both numbers were off by 1. Correct counts:
+
+| Phase | cpaEconomics | funnelSettings.contract | Total (this batch's two files) | Phase sweep total |
+|---|---:|---:|---:|---:|
+| Phase 2 end | 40 | 20 | 60 | 252 |
+| Phase 3 end | 44 | 20 | 64 | 256 |
+| Phase 4 end | 53 | 20 | 73 | **265** |
+| Phase 5 end | 54 | 30 | 84 | **276** |
+
+Phase 5 added **11 tests**, not 9: 1 cpaEconomics (Item B fixture) + 10 funnelSettings (1 Item A asymmetry test + 9 T033 completeness tests). The previous batch-04 report's claim of "+9 from T026 fixtures" was correct; the previous batch-05 claim of "+9 from T033 fixtures" understated by 1 (it should have been "+11 from this batch").
+
+The audit by counting is exact: `git show HEAD~1:functions/src/__tests__/funnelSettings.contract.test.ts | grep -c "test("` returns `20`; `git show HEAD:functions/src/__tests__/funnelSettings.contract.test.ts | grep -c "test("` returns `30` (10 added); `git show HEAD:functions/src/__tests__/cpaEconomics.test.ts | grep -c "test("` returns `54` (1 added).
+
+### 10.4 — Item D: FR-050 NOT satisfied
+
+The original §3 said "two independent implementations of complete MUST NOT exist" (FR-050) and Deviation 2 (now §6.2) recorded the frontend duplicate. The report did not reconcile this contradiction.
+
+**Plain statement**: FR-050 is not satisfied. Two implementations exist (backend `isSettingsComplete` + frontend `missingFields` useMemo). They are **not verified to agree** — that verification is T058 (Phase 10). Until T058 lands, every change to either completeness rule must be accompanied by a manual cross-check.
+
+The first concrete instance of the two possibly disagreeing was Item A: the backend was updated to NOT require `htoConversionRate` on `paid_event`, and the frontend was updated to match (the explicit `if (funnelType === 'paid_product' && isEmptyString(htoConversionRate))` branch). But no test pins this agreement. T058 will. **Until then, the two are unverified.**
+
+### 10.5 — Test 31 (new): `paid_event requires eventAttendanceRate AND eventCloseRate (T045 prerequisite)`
+
+The new contract test added in this review cycle asserts:
+
+1. The per-field validator throws on the first missing event-rate field (so `assertRequiredFieldsPresent` throws here).
+2. The canonical predicate `missingRequiredFields` returns BOTH fields in field order: `["eventAttendanceRate", "eventCloseRate"]`.
+3. `isSettingsComplete` returns `false` for the half-filled doc.
+4. Adding both event-rate fields makes the record complete (`isSettingsComplete` returns `true`).
+5. Negative control: only ONE event-rate field present is still incomplete (the other is required, neither is a substitute).
+
+This test is the gate Item A asked for. Until T045 lands, this test passes (the backend rejects); once T045 lands the form inputs, the frontend parity test (T058) will verify the frontend's `missingFields` useMemo matches.
+
+### 10.6 — Audit per AGENTS.md 0b (LAST, after every test the batch adds)
+
+85 names walked (54 cpaEconomics + 31 funnelSettings). Each name's directional claim matched the assertion(s). No contradictions.

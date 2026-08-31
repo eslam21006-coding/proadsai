@@ -806,7 +806,7 @@ export default function FunnelSettingsForm({
             {/* Conditional fields per funnel-type */}
             {(funnelType === 'paid_event' || funnelType === 'paid_product') && (
                 <div className="space-y-3">
-                    <NumberField label={L('Average order value ($)', 'قيمة الطلب (دولار)')} value={aov} onChange={setAov} isDarkMode={dk} required={missingFields.includes('aov')} />
+                    <NumberField label={L('Average order value ($)', 'قيمة الطلب (دولار)')} value={aov} onChange={setAov} isDarkMode={dk} required={missingFields.includes('aov')} lang={lang} />
                     <div>
                         <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>{L('Do you have a high-ticket upsell?', 'هل لديك عرض ترويجي عالي القيمة؟')}</label>
                         <div className="flex gap-2">
@@ -816,8 +816,8 @@ export default function FunnelSettingsForm({
                     </div>
                     {hasHto && (
                         <>
-                            <NumberField label={L('Upsell price ($)', 'سعر العرض الترويجي (دولار)')} value={htoPrice} onChange={setHtoPrice} isDarkMode={dk} required={missingFields.includes('htoPrice')} />
-                            <NumberField label={L('Upsell conversion rate (%)', 'نسبة تحويل العرض الترويجي (%)')} value={htoConversionRate} onChange={setHtoConversionRate} isDarkMode={dk} required={missingFields.includes('htoConversionRate')} />
+                            <NumberField label={L('Upsell price ($)', 'سعر العرض الترويجي (دولار)')} value={htoPrice} onChange={setHtoPrice} isDarkMode={dk} required={missingFields.includes('htoPrice')} lang={lang} />
+                            <NumberField label={L('Upsell conversion rate (%)', 'نسبة تحويل العرض الترويجي (%)')} value={htoConversionRate} onChange={setHtoConversionRate} isDarkMode={dk} required={missingFields.includes('htoConversionRate')} lang={lang} />
                         </>
                     )}
                     <div>
@@ -843,24 +843,24 @@ export default function FunnelSettingsForm({
 
             {funnelType === 'free_webinar' && (
                 <div className="space-y-3">
-                    <NumberField label={L('Final offer price ($)', 'سعر العرض النهائي (دولار)')} value={offerPrice} onChange={setOfferPrice} isDarkMode={dk} required={missingFields.includes('offerPrice')} />
-                    <NumberField label={L('Attendance rate (%)', 'نسبة الحضور من المسجلين (%)')} value={attendanceRate} onChange={setAttendanceRate} isDarkMode={dk} required={missingFields.includes('attendanceRate')} />
-                    <NumberField label={L('Purchase rate from attendees (%)', 'نسبة الشراء من الحضور (%)')} value={buyRateFromAttendees} onChange={setBuyRateFromAttendees} isDarkMode={dk} required={missingFields.includes('buyRateFromAttendees')} />
+                    <NumberField label={L('Final offer price ($)', 'سعر العرض النهائي (دولار)')} value={offerPrice} onChange={setOfferPrice} isDarkMode={dk} required={missingFields.includes('offerPrice')} lang={lang} />
+                    <NumberField label={L('Attendance rate (%)', 'نسبة الحضور من المسجلين (%)')} value={attendanceRate} onChange={setAttendanceRate} isDarkMode={dk} required={missingFields.includes('attendanceRate')} lang={lang} />
+                    <NumberField label={L('Purchase rate from attendees (%)', 'نسبة الشراء من الحضور (%)')} value={buyRateFromAttendees} onChange={setBuyRateFromAttendees} isDarkMode={dk} required={missingFields.includes('buyRateFromAttendees')} lang={lang} />
                 </div>
             )}
 
             {funnelType === 'lead_magnet_call' && (
                 <div className="space-y-3">
-                    <NumberField label={L('Final offer price ($)', 'سعر العرض النهائي (دولار)')} value={offerPrice} onChange={setOfferPrice} isDarkMode={dk} required={missingFields.includes('offerPrice')} />
+                    <NumberField label={L('Final offer price ($)', 'سعر العرض النهائي (دولار)')} value={offerPrice} onChange={setOfferPrice} isDarkMode={dk} required={missingFields.includes('offerPrice')} lang={lang} />
                     {/* Phase 968 — T023. Booking rate + show-up rate are the
                         two new lead-magnet inputs (FR-004, FR-007). The
                         close-rate label is also relabelled per
                         contracts/uiCopy.md #5: "Close rate on calls that
                         happened (%)" / "نسبة الإغلاق في المكالمات التي تمت (%)".
                         The benchmark hint copy (#2, #4, #6) lands in T054. */}
-                    <NumberField label={L('Booking rate (%)', 'نسبة حجز المكالمات من العملاء المحتملين (%)')} value={bookingRate} onChange={setBookingRate} isDarkMode={dk} required={missingFields.includes('bookingRate')} />
-                    <NumberField label={L('Show-up rate (%)', 'نسبة الحضور للمكالمات المحجوزة (%)')} value={showUpRate} onChange={setShowUpRate} isDarkMode={dk} required={missingFields.includes('showUpRate')} />
-                    <NumberField label={L('Close rate on calls that happened (%)', 'نسبة الإغلاق في المكالمات التي تمت (%)')} value={leadToCloseRate} onChange={setLeadToCloseRate} isDarkMode={dk} required={missingFields.includes('leadToCloseRate')} />
+                    <NumberField label={L('Booking rate (%)', 'نسبة حجز المكالمات من العملاء المحتملين (%)')} value={bookingRate} onChange={setBookingRate} isDarkMode={dk} required={missingFields.includes('bookingRate')} lang={lang} />
+                    <NumberField label={L('Show-up rate (%)', 'نسبة الحضور للمكالمات المحجوزة (%)')} value={showUpRate} onChange={setShowUpRate} isDarkMode={dk} required={missingFields.includes('showUpRate')} lang={lang} />
+                    <NumberField label={L('Close rate on calls that happened (%)', 'نسبة الإغلاق في المكالمات التي تمت (%)')} value={leadToCloseRate} onChange={setLeadToCloseRate} isDarkMode={dk} required={missingFields.includes('leadToCloseRate')} lang={lang} />
                 </div>
             )}
 
@@ -876,6 +876,7 @@ export default function FunnelSettingsForm({
                     onChange={setCommissionRate}
                     isDarkMode={dk}
                     required={missingFields.includes('commissionRate')}
+                    lang={lang}
                 />
                 <div>
                     <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>
@@ -983,6 +984,7 @@ function NumberField({
     onChange,
     isDarkMode,
     required,
+    lang,
 }: {
     label: string;
     value: string;
@@ -992,17 +994,22 @@ function NumberField({
         marker next to the label so the owner can tell which inputs
         block the save. */
     required?: boolean;
+    /** Phase 968 — Item B fix (carried from batch-05 review). The
+        Required marker is bilingual — driven by language, NOT theme.
+        Arabic-speaking users in dark mode should see `مطلوب`,
+        English-speaking users in light mode should see `Required`.
+        The previous version keyed this off `isDarkMode`, which is a
+        theme flag, not a language flag. */
+    lang: string;
 }) {
     const inputCls = isDarkMode
         ? 'bg-slate-800 border-slate-700 text-white'
         : 'bg-white border-slate-300 text-slate-900';
     const labelCls = isDarkMode ? 'text-slate-300' : 'text-slate-700';
-    // Phase 968 — T038. The `Required` marker is a single, bilingual
-    // word, so we inline the translation here rather than threading the
-    // form's `L` closure through a prop. Phase 9 (T057) moves the
-    // string into i18n.tsx as `funnel.needs_attention` alongside the
-    // badge label.
-    const requiredText = isDarkMode ? 'Required' : 'مطلوب';
+    // Language-driven: 'ar' → Arabic, otherwise English. Phase 9
+    // (T057) moves the string into i18n.tsx as a catalogued key;
+    // until then this inline ternary is the source of truth.
+    const requiredText = lang === 'ar' ? 'مطلوب' : 'Required';
     return (
         <div>
             <label className={`block text-sm font-medium mb-1 ${labelCls}`}>
