@@ -519,6 +519,79 @@ test("Item B: paid_event realistic ($24/$3000/75%/7.5%/ROAS 0.5) — effectiveTa
     assert.equal(d70.fullBuyerValue, 175.88);
 });
 
+// T042 — Report §6.3 fixture (contract §4.3, FR-011..FR-014, FR-016).
+// Inputs: aov=24, htoPrice=3000, eventAttendanceRate=75,
+// eventCloseRate=7.5, commissionRate=10, marginKept=60, roasTarget=0.5.
+// The $24 paid event targets $48 (a controlled front-end loss at
+// ROAS 0.5) instead of being forced to break even.
+//
+// raw = 24 / 0.5 = 48
+// fullBuyerValue = 24 + 3000 × 0.9 × 0.75 × 0.075 = 175.875 → 175.88
+// maxCpa = 175.875 × 0.40 = 70.35
+// effective = min(48, 70.35) = 48
+// capApplied = false (raw 48 < max 70.35).
+test("T042: paid_event report §6.3 — aov $24 / htoPrice $3000 / 75% / 7.5% / ROAS 0.5 ⇒ effective $48.00, capApplied false", () => {
+    const inp: PaidFunnelInputs = {
+        funnelType: "paid_event",
+        aov: 24,
+        hasHto: true,
+        htoPrice: 3000,
+        htoConversionRate: 5, // legacy additive storage; unused on paid_event
+        eventAttendanceRate: 75,
+        eventCloseRate: 7.5,
+        commissionRate: 10,
+        marginKept: 60,
+        roasTarget: 0.5,
+    };
+    const d = deriveTargetCpa(inp);
+    assert.equal(d.rawTargetCpa, 48);
+    assert.equal(d.fullBuyerValue, 175.88);   // 175.875 rounded
+    assert.equal(d.maxCpa, 70.35);
+    assert.equal(d.effectiveTargetCpa, 48);
+    assert.equal(d.capApplied, false);
+});
+
+// T042 supplement — 100-buyer sanity check (report §6.3).
+// 100 buyers × $24 ticket = $2,400 ticket revenue.
+// Back-end sales = 100 × 0.75 × 0.075 = 5.625 attendees who buy HTO.
+// Back-end gross = 5.625 × $3,000 = $16,875.
+// Net of commission = 16,875 × 0.9 = $15,187.50.
+// Total net = 2,400 + 15,187.50 = $17,587.50.
+// Profit = 17,587.50 − (100 × 48) spend = 17,587.50 − 4,800 = $12,787.50.
+// This is the working example from contracts/cpaEconomics.md §4.3.
+test("T042: paid_event report §6.3 — 100-buyer sanity check (totals to $17,587.50 net / $12,787.50 profit)", () => {
+    const inp: PaidFunnelInputs = {
+        funnelType: "paid_event",
+        aov: 24,
+        hasHto: true,
+        htoPrice: 3000,
+        htoConversionRate: 5,
+        eventAttendanceRate: 75,
+        eventCloseRate: 7.5,
+        commissionRate: 10,
+        marginKept: 60,
+        roasTarget: 0.5,
+    };
+    const N = 100;
+    const d = deriveTargetCpa(inp);
+    const ticketRevenue = N * inp.aov;
+    // expectedTarget spend per buyer = $48, so total spend = N × 48 = 4,800.
+    const spend = N * d.effectiveTargetCpa;
+    // 100 ticket buyers × 75% attendance × 7.5% close = 5.625 HTO buyers.
+    const htoBuyers = N * (inp.eventAttendanceRate / 100) * (inp.eventCloseRate / 100);
+    const backEndGross = htoBuyers * inp.htoPrice;
+    // Net of 10% commission.
+    const backEndNet = backEndGross * (1 - inp.commissionRate / 100);
+    const totalNet = ticketRevenue + backEndNet;
+    const profit = totalNet - spend;
+    assert.equal(spend, 4800);
+    assert.equal(ticketRevenue, 2400);
+    assert.equal(backEndGross, 16875);
+    assert.equal(backEndNet, 15187.5);
+    assert.equal(totalNet, 17587.5);
+    assert.equal(profit, 12787.5);
+});
+
 // T021 — Regression anchor (constitution IX — before/after evidence).
 // The pre-phase formula produced $630 for the same $3,000 lead-magnet
 // funnel. That value is gone. The corrected formula yields $12.76 at

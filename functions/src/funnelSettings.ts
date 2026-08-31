@@ -44,6 +44,7 @@ import {
     type MarginKept,
     DEFAULT_COMMISSION_RATE,
     DEFAULT_MARGIN_KEPT,
+    DEFAULT_PAID_EVENT_ROAS_TARGET,
     LOW_VALUE_THRESHOLD,
 } from "./cpaEconomics.js";
 import { getDb } from "./firestoreClient.js";
@@ -284,9 +285,13 @@ function requiredFieldsForDoc(funnelType: FunnelInputs["funnelType"], hasHto: bo
         case "paid_event":
             // FR-011..FR-014 — paid_event reads eventAttendanceRate and
             // eventCloseRate; it does NOT read htoConversionRate.
+            // Phase 968 — T041 (FR-016): roasTarget is OPTIONAL for
+            // paid_event — the save defaults to 0.5 (the
+            // controlled front-end loss posture). paid_product
+            // still requires an explicit choice.
             return hasHto
-                ? ["aov", "roasTarget", "htoPrice", "eventAttendanceRate", "eventCloseRate", "commissionRate", "marginKept"]
-                : ["aov", "roasTarget", "eventAttendanceRate", "eventCloseRate", "commissionRate", "marginKept"];
+                ? ["aov", "htoPrice", "eventAttendanceRate", "eventCloseRate", "commissionRate", "marginKept"]
+                : ["aov", "eventAttendanceRate", "eventCloseRate", "commissionRate", "marginKept"];
         case "paid_product":
             // FR-019 — paid_product reads htoConversionRate directly.
             return hasHto
@@ -355,7 +360,13 @@ function buildFunnelInputs(req: SaveFunnelSettingsRequest): FunnelInputs {
                 eventCloseRate: asNumberOrNull(req.eventCloseRate) ?? 0,
                 commissionRate,
                 marginKept,
-                roasTarget: asRoas(req.roasTarget),
+                // Phase 968 — T041 (FR-016): paid_event defaults roasTarget
+                // to 0.5 (controlled front-end loss posture) when the
+                // request omits it. paid_product keeps the existing
+                // explicit-required behaviour.
+                roasTarget: req.funnelType === "paid_event"
+                    ? (req.roasTarget ?? DEFAULT_PAID_EVENT_ROAS_TARGET)
+                    : asRoas(req.roasTarget),
             } satisfies PaidFunnelInputs;
         }
         case "free_webinar":

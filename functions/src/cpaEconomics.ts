@@ -96,6 +96,14 @@ export const ALL_MARGIN_KEPT: ReadonlyArray<50 | 60 | 70> = [50, 60, 70];
 export const DEFAULT_MARGIN_KEPT: 50 | 60 | 70 = 60;
 export const DEFAULT_COMMISSION_RATE = 10;
 
+// Phase 968 — T041 (FR-016, FR-021): `paid_event` defaults to a
+// front-end-loss posture (ROAS 0.5) — the owner accepts a controlled
+// 50% loss on the front-end in exchange for back-end ticket sales.
+// `paid_product` stays at the existing default of 1.0 (no loss).
+// The asymmetry is enforced by `saveFunnelSettings` when the request
+// omits `roasTarget`.
+export const DEFAULT_PAID_EVENT_ROAS_TARGET = 0.5;
+
 // ─── Deprecated constants (FR-002) ──────────────────────────
 //
 // ECONOMIC_CEILING_MULTIPLIER (was 0.70) — replaced by `spendShare`,

@@ -78,6 +78,11 @@ export interface FunnelSettingsDoc {
     // Phase 968 — T022. lead_magnet_call only.
     bookingRate: number | null;
     showUpRate: number | null;
+    // Phase 968 — T045 (US3). paid_event only. The corrected formula
+    // reads eventAttendanceRate × eventCloseRate on the HTO term
+    // (FR-011..FR-014). Null on every other funnel type.
+    eventAttendanceRate: number | null;
+    eventCloseRate: number | null;
     // Phase 968 — T027. Shared fields, all four funnel types.
     commissionRate: number | null;
     marginKept: 50 | 60 | 70 | null;
@@ -169,6 +174,10 @@ interface SaveFunnelSettingsRequest {
     // other funnel type.
     bookingRate?: number | null;
     showUpRate?: number | null;
+    // Phase 968 — T045 (US3). paid_event only; backend validator
+    // accepts null on every other funnel type.
+    eventAttendanceRate?: number | null;
+    eventCloseRate?: number | null;
     // Phase 968 — T027. Shared fields, all four funnel types.
     commissionRate?: number | null;
     marginKept?: 50 | 60 | 70 | null;
@@ -273,6 +282,10 @@ function useFunnelSettings(workspaceId: string | null, accountId: string | null)
                 // type except lead_magnet_call.
                 bookingRate: req.funnelType === 'lead_magnet_call' ? (req.bookingRate ?? null) : null,
                 showUpRate: req.funnelType === 'lead_magnet_call' ? (req.showUpRate ?? null) : null,
+                // Phase 968 — T045 (US3). Mirror backend: null on every
+                // funnel type except paid_event.
+                eventAttendanceRate: req.funnelType === 'paid_event' ? (req.eventAttendanceRate ?? null) : null,
+                eventCloseRate: req.funnelType === 'paid_event' ? (req.eventCloseRate ?? null) : null,
                 // Phase 968 — T027. Shared fields.
                 commissionRate: req.commissionRate ?? null,
                 marginKept: req.marginKept ?? null,
@@ -438,6 +451,13 @@ export default function FunnelSettingsForm({
     // Phase 968 — T022. lead_magnet_call only.
     const [bookingRate, setBookingRate] = useState<string>('');
     const [showUpRate, setShowUpRate] = useState<string>('');
+    // Phase 968 — T045 (US3): paid_event event rates. The corrected
+    // formula reads eventAttendanceRate × eventCloseRate on the HTO
+    // term (FR-011..FR-014). These replace the (legacy, unread)
+    // htoConversionRate for paid_event. Defaults: 75 / 7.5 per the
+    // §6.3 worked example.
+    const [eventAttendanceRate, setEventAttendanceRate] = useState<string>('75');
+    const [eventCloseRate, setEventCloseRate] = useState<string>('7.5');
     // Phase 968 — T027. Shared fields, all four funnel types.
     // Default to the spec-defined new-record values (DEFAULT_COMMISSION_RATE=10,
     // DEFAULT_MARGIN_KEPT=60) so a brand-new form starts in a valid state
@@ -471,8 +491,15 @@ export default function FunnelSettingsForm({
                 if (funnelType === 'paid_product' && isEmptyString(htoConversionRate)) missing.push('htoConversionRate');
             }
         }
-        // paid_event event-rate fields land in Phase 6 (T045). When
-        // added to the form, include them here.
+        // Phase 968 — T045 (US3). paid_event event rates — the
+        // frontend mirror of the backend's completeness rule. The
+        // rule (FR-011..FR-014): paid_event reads these on the HTO
+        // term, both required when hasHto=true; htoConversionRate is
+        // NOT required on paid_event (Item A asymmetry).
+        if (funnelType === 'paid_event') {
+            if (isEmptyString(eventAttendanceRate)) missing.push('eventAttendanceRate');
+            if (isEmptyString(eventCloseRate)) missing.push('eventCloseRate');
+        }
         if (funnelType === 'free_webinar') {
             if (isEmptyString(offerPrice)) missing.push('offerPrice');
             if (isEmptyString(attendanceRate)) missing.push('attendanceRate');
@@ -487,7 +514,7 @@ export default function FunnelSettingsForm({
         if (isEmptyString(commissionRate)) missing.push('commissionRate');
         if (isEmptyNumber(marginKept)) missing.push('marginKept');
         return missing;
-    }, [funnelType, hasHto, aov, roasTarget, htoPrice, htoConversionRate, offerPrice, attendanceRate, buyRateFromAttendees, leadToCloseRate, bookingRate, showUpRate, commissionRate, marginKept]);
+    }, [funnelType, hasHto, aov, roasTarget, htoPrice, htoConversionRate, eventAttendanceRate, eventCloseRate, offerPrice, attendanceRate, buyRateFromAttendees, leadToCloseRate, bookingRate, showUpRate, commissionRate, marginKept]);
 
     // Local dismiss state for the monthly-review prompt. Resets when
     // `reviewDue` flips back to true on a fresh save (the save function
@@ -526,6 +553,10 @@ export default function FunnelSettingsForm({
         // gate will mark these as required.
         setBookingRate(settings.bookingRate != null ? String(settings.bookingRate) : '');
         setShowUpRate(settings.showUpRate != null ? String(settings.showUpRate) : '');
+        // Phase 968 — T045 (US3). paid_event event rates. Pre-phase docs
+        // have null here; fall back to the §6.3 worked-example defaults.
+        setEventAttendanceRate(settings.eventAttendanceRate != null ? String(settings.eventAttendanceRate) : '75');
+        setEventCloseRate(settings.eventCloseRate != null ? String(settings.eventCloseRate) : '7.5');
         // Phase 968 — T027. Shared fields. Pre-phase docs have `null`;
         // fall back to the new-record defaults so the form renders in
         // a valid initial state.
@@ -568,6 +599,11 @@ export default function FunnelSettingsForm({
         // Phase 968 — T022. Sent only for lead_magnet_call.
         const bookingN = funnelType === 'lead_magnet_call' ? numOrNull(bookingRate) : null;
         const showUpN = funnelType === 'lead_magnet_call' ? numOrNull(showUpRate) : null;
+        // Phase 968 — T045 (US3). paid_event event rates. The backend
+        // ignores them on every other funnel type (FR-011..FR-014
+        // scope paid_event only).
+        const eventAttendanceN = funnelType === 'paid_event' ? numOrNull(eventAttendanceRate) : null;
+        const eventCloseN = funnelType === 'paid_event' ? numOrNull(eventCloseRate) : null;
         // Phase 968 — T027. commissionRate + marginKept apply to all four
         // funnel types per FR-023/FR-024/OQ-1 override.
         const commissionN = numOrNull(commissionRate);
@@ -586,6 +622,8 @@ export default function FunnelSettingsForm({
             leadToCloseRate: leadN,
             bookingRate: bookingN,
             showUpRate: showUpN,
+            eventAttendanceRate: eventAttendanceN,
+            eventCloseRate: eventCloseN,
             commissionRate: commissionN,
             marginKept,
         };
@@ -820,6 +858,30 @@ export default function FunnelSettingsForm({
                             <NumberField label={L('Upsell conversion rate (%)', 'نسبة تحويل العرض الترويجي (%)')} value={htoConversionRate} onChange={setHtoConversionRate} isDarkMode={dk} required={missingFields.includes('htoConversionRate')} lang={lang} />
                         </>
                     )}
+                    {/* Phase 968 — T045 (US3). paid_event event rates
+                        (FR-011..FR-014). The corrected formula reads
+                        eventAttendanceRate × eventCloseRate on the HTO
+                        term. Both fields are required on paid_event
+                        regardless of hasHto (when hasHto is false the
+                        HTO term collapses to 0, but the fields must
+                        still be present per the contract). Benchmark
+                        hint copy lands in T054 (Phase 9). */}
+                    <NumberField
+                        label={L('Attendance from ticket buyers (%)', 'نسبة الحضور من مشتري التذاكر (%)')}
+                        value={eventAttendanceRate}
+                        onChange={setEventAttendanceRate}
+                        isDarkMode={dk}
+                        required={missingFields.includes('eventAttendanceRate')}
+                        lang={lang}
+                    />
+                    <NumberField
+                        label={L('High ticket close from attendees (%)', 'نسبة إغلاق العرض عالي القيمة من الحضور (%)')}
+                        value={eventCloseRate}
+                        onChange={setEventCloseRate}
+                        isDarkMode={dk}
+                        required={missingFields.includes('eventCloseRate')}
+                        lang={lang}
+                    />
                     <div>
                         <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>{L('Target ROAS', 'هدف العائد على الإنفاق الإعلاني')}</label>
                         <div className="space-y-2">
