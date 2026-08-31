@@ -19,6 +19,7 @@ import {
     LOW_VALUE_THRESHOLD,
     spendShare,
     netFactor,
+    round2,
     type PaidFunnelInputs,
     type FreeWebinarInputs,
     type LeadMagnetCallInputs,
@@ -274,6 +275,186 @@ test("lead_magnet_call report §6.1: marginKept 70 ⇒ $9.57", () => {
     assert.equal(d.leadValue, 31.89);
     assert.equal(d.economicCeilingCpl, 9.57);
     assert.equal(d.effectiveTargetCpl, 9.57);
+});
+
+// T026 — Margin-scaling fixtures (contracts/cpaEconomics.md §4.8, SC-005).
+// At fixed inputs, moving marginKept 60 → 50 multiplies the margin-driven
+// ceiling by exactly 1.25; 60 → 70 by exactly 0.75. Assert on both free
+// types and on maxCpa for both paid types. Where a paid funnel's
+// effectiveTargetCpa is set by rawTargetCpa (the ROAS path), it must
+// NOT move — ticket revenue is independent of retained margin.
+
+// Helper: build a lead_magnet_call input with all rates fixed; vary only marginKept.
+function leadMagnetCallInputs(marginKept: 50 | 60 | 70): LeadMagnetCallInputs {
+    return {
+        funnelType: "lead_magnet_call",
+        offerPrice: 3000,
+        bookingRate: 7.5,
+        showUpRate: 70,
+        leadToCloseRate: 22.5,
+        commissionRate: 10,
+        marginKept,
+    };
+}
+
+test("T026: lead_magnet_call marginKept 60→50 ⇒ effectiveTargetCpl × 1.25 (SC-005)", () => {
+    const d50 = deriveTargetCplLeadMagnetCall(leadMagnetCallInputs(50));
+    const d60 = deriveTargetCplLeadMagnetCall(leadMagnetCallInputs(60));
+    // 12.76 × 1.25 = 15.95 ⇒ exact contract §6.1 row.
+    assert.equal(d60.effectiveTargetCpl, 12.76);
+    assert.equal(d50.effectiveTargetCpl, 15.95);
+    assert.equal(d50.effectiveTargetCpl, round2(d60.effectiveTargetCpl * 1.25));
+});
+
+test("T026: lead_magnet_call marginKept 60→70 ⇒ effectiveTargetCpl × 0.75 (SC-005)", () => {
+    const d60 = deriveTargetCplLeadMagnetCall(leadMagnetCallInputs(60));
+    const d70 = deriveTargetCplLeadMagnetCall(leadMagnetCallInputs(70));
+    assert.equal(d60.effectiveTargetCpl, 12.76);
+    assert.equal(d70.effectiveTargetCpl, 9.57);
+    assert.equal(d70.effectiveTargetCpl, round2(d60.effectiveTargetCpl * 0.75));
+});
+
+// Helper: build a free_webinar input; vary only marginKept.
+function freeWebinarInputs(marginKept: 50 | 60 | 70): FreeWebinarInputs {
+    return {
+        funnelType: "free_webinar",
+        offerPrice: 3000,
+        attendanceRate: 25,
+        buyRateFromAttendees: 2,
+        commissionRate: 10,
+        marginKept,
+    };
+}
+
+test("T026: free_webinar marginKept 60→50 ⇒ effectiveTargetCpl × 1.25 (SC-005)", () => {
+    const d50 = deriveTargetCplFreeWebinar(freeWebinarInputs(50));
+    const d60 = deriveTargetCplFreeWebinar(freeWebinarInputs(60));
+    assert.equal(d60.effectiveTargetCpl, 5.40);
+    assert.equal(d50.effectiveTargetCpl, 6.75); // 5.40 × 1.25 = 6.75
+    assert.equal(d50.effectiveTargetCpl, round2(d60.effectiveTargetCpl * 1.25));
+});
+
+test("T026: free_webinar marginKept 60→70 ⇒ effectiveTargetCpl × 0.75 (SC-005)", () => {
+    const d60 = deriveTargetCplFreeWebinar(freeWebinarInputs(60));
+    const d70 = deriveTargetCplFreeWebinar(freeWebinarInputs(70));
+    assert.equal(d60.effectiveTargetCpl, 5.40);
+    assert.equal(d70.effectiveTargetCpl, 4.05); // 5.40 × 0.75 = 4.05
+    assert.equal(d70.effectiveTargetCpl, round2(d60.effectiveTargetCpl * 0.75));
+});
+
+// Helper: build a paid_event input; vary only marginKept.
+function paidEventInputs(marginKept: 50 | 60 | 70): PaidFunnelInputs {
+    return {
+        funnelType: "paid_event",
+        aov: 24,
+        hasHto: true,
+        htoPrice: 3000,
+        htoConversionRate: 5,
+        eventAttendanceRate: 75,
+        eventCloseRate: 7.5,
+        commissionRate: 10,
+        marginKept,
+        roasTarget: 0.5,
+    };
+}
+
+test("T026: paid_event maxCpa marginKept 60→50 ⇒ × 1.25 (SC-005)", () => {
+    // fullBuyerValue = 24 + 3000 × 0.9 × 0.75 × 0.075 = 24 + 151.875 = 175.875
+    //   spendShare(60) = 0.40 ⇒ maxCpa = 175.875 × 0.40 = 70.35
+    //   spendShare(50) = 0.50 ⇒ maxCpa = 175.875 × 0.50 = 87.9375 → 87.94
+    //   70.35 × 1.25 = 87.9375 → 87.94 ✓
+    const d50 = deriveTargetCpa(paidEventInputs(50));
+    const d60 = deriveTargetCpa(paidEventInputs(60));
+    assert.equal(d60.maxCpa, 70.35);
+    assert.equal(d50.maxCpa, 87.94);
+    assert.equal(d50.maxCpa, round2(d60.maxCpa * 1.25));
+});
+
+test("T026: paid_event maxCpa marginKept 60→70 ⇒ × 0.75 (SC-005)", () => {
+    //   spendShare(70) = 0.30 ⇒ maxCpa = 175.875 × 0.30 = 52.7625 → 52.76
+    //   70.35 × 0.75 = 52.7625 → 52.76 ✓
+    const d60 = deriveTargetCpa(paidEventInputs(60));
+    const d70 = deriveTargetCpa(paidEventInputs(70));
+    assert.equal(d70.maxCpa, 52.76);
+    assert.equal(d70.maxCpa, round2(d60.maxCpa * 0.75));
+});
+
+// Helper: build a paid_product input; vary only marginKept.
+function paidProductInputs(marginKept: 50 | 60 | 70): PaidFunnelInputs {
+    return {
+        funnelType: "paid_product",
+        aov: 100,
+        hasHto: true,
+        htoPrice: 3000,
+        htoConversionRate: 5,
+        eventAttendanceRate: 0,
+        eventCloseRate: 0,
+        commissionRate: 10,
+        marginKept,
+        roasTarget: 1.0,
+    };
+}
+
+test("T026: paid_product maxCpa marginKept 60→50 ⇒ × 1.25 (SC-005)", () => {
+    const d50 = deriveTargetCpa(paidProductInputs(50));
+    const d60 = deriveTargetCpa(paidProductInputs(60));
+    // d60.fullBuyerValue = 235, d60.maxCpa = 94.00 (FR-019 discriminator)
+    // d50.maxCpa = 235 × 0.50 = 117.50 ⇒ 94 × 1.25 = 117.5 ✓
+    assert.equal(d60.maxCpa, 94);
+    assert.equal(d50.maxCpa, 117.5);
+    assert.equal(d50.maxCpa, round2(d60.maxCpa * 1.25));
+});
+
+test("T026: paid_product maxCpa marginKept 60→70 ⇒ × 0.75 (SC-005)", () => {
+    const d60 = deriveTargetCpa(paidProductInputs(60));
+    const d70 = deriveTargetCpa(paidProductInputs(70));
+    assert.equal(d70.maxCpa, 70.5); // 94 × 0.75 = 70.5
+    assert.equal(d70.maxCpa, round2(d60.maxCpa * 0.75));
+});
+
+// ROAS-path-driven paid target does NOT move when marginKept changes
+// (ticket revenue is independent of retained margin; FR-009 + SC-005).
+//
+// For ROAS path to win at every margin row, we need
+//   rawTargetCpa < maxCpa(margin) for margin ∈ {50, 60, 70}.
+// maxCpa is smallest at margin 70 (spendShare = 0.30), so the
+// constraint tightens there:
+//   aov / roasTarget  <  fullBuyerValue × 0.30
+// With fullBuyerValue boosted by a large HTO term, the ROAS path
+// wins uniformly. The example below uses
+//   aov=100, hasHto=true, htoPrice=1000, attendance=100%, close=100%,
+//   commissionRate=10, roasTarget=1.0
+// ⇒ raw = 100, fbv = 100 + 1000 × 0.9 × 1.0 × 1.0 = 1000,
+// ⇒ max(50) = 500, max(60) = 400, max(70) = 300, all > 100.
+// Effective = raw = 100 at every margin row — independent of marginKept.
+test("T026: paid_event ROAS-path-driven effectiveTargetCpa does NOT move with marginKept (SC-005)", () => {
+    const fixed: Omit<PaidFunnelInputs, "marginKept"> = {
+        funnelType: "paid_event",
+        aov: 100,
+        hasHto: true,
+        htoPrice: 1000,
+        htoConversionRate: 5, // legacy additive storage; unused on paid_event
+        eventAttendanceRate: 100,
+        eventCloseRate: 100,
+        commissionRate: 10,
+        roasTarget: 1.0,
+    };
+    const d50 = deriveTargetCpa({ ...fixed, marginKept: 50 });
+    const d60 = deriveTargetCpa({ ...fixed, marginKept: 60 });
+    const d70 = deriveTargetCpa({ ...fixed, marginKept: 70 });
+    // ROAS path wins uniformly.
+    assert.equal(d50.effectiveTargetCpa, 100);
+    assert.equal(d60.effectiveTargetCpa, 100);
+    assert.equal(d70.effectiveTargetCpa, 100);
+    // maxCpa path is active: max varies with margin but effective doesn't.
+    assert.equal(d50.maxCpa, 500);
+    assert.equal(d60.maxCpa, 400);
+    assert.equal(d70.maxCpa, 300);
+    assert.notEqual(d50.maxCpa, d70.maxCpa);
+    // capApplied is false at every margin because raw (100) < max.
+    assert.equal(d50.capApplied, false);
+    assert.equal(d60.capApplied, false);
+    assert.equal(d70.capApplied, false);
 });
 
 // T021 — Regression anchor (constitution IX — before/after evidence).
@@ -578,11 +759,16 @@ test("computeAdvisories — paid + hasHto=false → noHto=true", () => {
     assert.equal(a.lowValue, false);
 });
 
-test("computeAdvisories — paid + aov=$5 → lowValue fires only via computed target, NOT aov (FR-028)", () => {
+test("computeAdvisories — paid + aov=$5 → lowValue silent (keys off computed target, NOT aov) (FR-028)", () => {
     // The legacy price-based advisory (aov < 9) is removed. The new
     // advisory keys off the rounded computed target. With aov $5, ROAS
     // 1.0, no HTO: raw = 5, maxCpa = 5 × 0.4 = 2.0 ⇒ effective = 2.0 ⇒
     // not below 0.50 ⇒ lowValue is FALSE.
+    //
+    // The pre-phase contract would have fired this advisory on `aov < 9`;
+    // the new contract correctly does not fire because the computed
+    // target ($2.00) is above the $0.50 boundary. This test pins the
+    // contract direction change, not a fire-on-this-input assertion.
     const inp: PaidFunnelInputs = {
         funnelType: "paid_product",
         aov: 5,

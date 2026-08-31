@@ -71,17 +71,30 @@ export interface FunnelSettingsDoc {
     buyRateFromAttendees: number | null;
     leadToCloseRate: number | null;
     /**
-     * Phase 968 — lead_magnet_call only. Lead → booked call (percent, 0–100).
+     * Phase 968 — T022. lead_magnet_call only. Lead → booked call (percent, 0–100).
      * data-model.md §1. Required for `lead_magnet_call` completeness
      * (FR-039). Stored as `null` on non-lead-magnet-call docs.
      */
     bookingRate: number | null;
     /**
-     * Phase 968 — lead_magnet_call only. Booked → attended (percent, 0–100).
+     * Phase 968 — T022. lead_magnet_call only. Booked → attended (percent, 0–100).
      * Required for `lead_magnet_call` completeness. Stored as `null`
      * on non-lead-magnet-call docs.
      */
     showUpRate: number | null;
+    /**
+     * Phase 968 — T027. Sales commission (percent, 0–100, FR-027). Required
+     * for completeness on every funnel type (data-model.md §3, FR-023).
+     * 10 is the new-record default (DEFAULT_COMMISSION_RATE).
+     */
+    commissionRate: number | null;
+    /**
+     * Phase 968 — T027. Retained margin (closed enum 50 | 60 | 70,
+     * FR-026). Required for completeness on every funnel type
+     * (data-model.md §3, FR-024). 60 is the new-record default
+     * (DEFAULT_MARGIN_KEPT).
+     */
+    marginKept: 50 | 60 | 70 | null;
     derived: DerivedTargets;
     advisories: Advisories;
     advisoriesDismissed: { noHto: boolean; lowValue: boolean };
@@ -459,6 +472,10 @@ export const saveFunnelSettings = onCall(
                 // null on every other funnel type per data-model.md §1.
                 bookingRate: inputs.funnelType === "lead_magnet_call" ? inputs.bookingRate : null,
                 showUpRate: inputs.funnelType === "lead_magnet_call" ? inputs.showUpRate : null,
+                // Phase 968 — T027. commissionRate + marginKept apply to all
+                // four funnel types per FR-023/FR-024/OQ-1.
+                commissionRate: inputs.commissionRate,
+                marginKept: inputs.marginKept,
                 derived,
                 advisories,
                 advisoriesDismissed: {

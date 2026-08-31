@@ -88,14 +88,19 @@ function coerceLeadMagnetCall(req: {
 
 // ─── Paid funnel contract ─────────────────────────────────────
 
-test("contract — paid_event: AOV $43 + HTO $3500 @ 3% + 75% attend, 7.5% close + ROAS 1.0 → effectiveTargetCpa $43, no warning", () => {
+test("contract — paid_event: AOV $43 + HTO $3500 + 75% attend, 7.5% close + ROAS 1.0 → effectiveTargetCpa $43, no warning", () => {
+    // Inputs: aov $43, hasHto true (htoPrice $3500), eventAttendanceRate
+    // 75%, eventCloseRate 7.5%, commissionRate 10 (default), marginKept 60
+    // (default), ROAS 1.0. The `htoConversionRate: 3` below is the legacy
+    // additive-storage field that paid_event no longer reads (kept only
+    // for storage compatibility, data-model.md §1).
     // New formula: fullBuyerValue = 43 + 3500 × 0.9 × 0.75 × 0.075 = 220.19
     // maxCpa = 220.19 × 0.4 = 88.08 ⇒ raw (43) < max (88.08) ⇒ effective = 43.
     const inp = coercePaid({
         aov: 43,
         hasHto: true,
         htoPrice: 3500,
-        htoConversionRate: 3,
+        htoConversionRate: 3, // legacy additive-storage field; unused on paid_event
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
         roasTarget: 1.0,
@@ -106,12 +111,13 @@ test("contract — paid_event: AOV $43 + HTO $3500 @ 3% + 75% attend, 7.5% close
     assert.equal(d.paid.capApplied, false);
 });
 
-test("contract — paid_event: same inputs + ROAS 0.5 → cap fires, effective follows raw", () => {
-    // raw = 86, fullBuyerValue = 220.19, max = 88.08 ⇒ raw (86) < max (88.08)
-    // ⇒ cap does NOT fire. Effective = raw = 86. The "ROAS 0.5 ⇒ cap"
-    // contract holds for inputs where the projection ceiling sits
-    // below raw; the test below exercises that case with a tighter
-    // margin.
+test("contract — paid_event: same inputs + ROAS 0.5 → cap silent, effective follows raw", () => {
+    // With the inputs above and ROAS 0.5:
+    //   raw = 86, fullBuyerValue = 220.19, max = 88.08.
+    //   raw (86) < max (88.08) ⇒ cap does NOT fire ⇒ effective = raw = 86.
+    // The "ROAS 0.5 ⇒ cap" contract holds only when the projection
+    // ceiling sits below raw; the test below exercises that case with
+    // a tighter marginKept=70.
     const inp = coercePaid({
         aov: 43,
         hasHto: true,
@@ -374,6 +380,9 @@ test("contract — FunnelSettingsDoc schemaVersion is the literal 1 (not a code-
         // Phase 968 — T022. paid_event ⇒ both null.
         bookingRate: null,
         showUpRate: null,
+        // Phase 968 — T027. Shared fields, populated for completeness.
+        commissionRate: 10,
+        marginKept: 60,
         derived: {
             economicsVersion: 2,
             paid: { rawTargetCpa: 100, fullBuyerValue: 100, maxCpa: 50, effectiveTargetCpa: 50, capApplied: true },

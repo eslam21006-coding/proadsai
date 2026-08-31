@@ -67,7 +67,7 @@ For each: pre-phase expected value → new expected value → formula correction
 | 8 | `cpaEconomics.test.ts : 111` (same — `rawTargetCpa`) | `47` | `47` | Unchanged. |
 | 9 | `cpaEconomics.test.ts : 112` (same — `effectiveTargetCpa`) | `23.5` | `18.8` | Same as #7. |
 | 10 | `cpaEconomics.test.ts : 113` (same — `capApplied`) | `true` | `true` | Unchanged. |
-| 11 | `cpaEconomics.test.ts : 124` (lead_magnet_call offer $3000 @ 5% — `leadValue`) | `150` (`= 3000 × 0.05`) | `31.89` (`= 3000 × 0.9 × 0.075 × 0.70 × 0.225`, FR-005/FR-006) | The full chain (booking × showUp × close × netFactor × spendShare) replaces `× leadToCloseRate`. **Discriminator:** the new formula has 5 multiplications and 2 subtractions where the old formula had 1. |
+| 11 | `cpaEconomics.test.ts : 124` (lead_magnet_call offer $3000 @ 5% — `leadValue`) | `150` (`= 3000 × 0.05`) | `31.89` (`= 3000 × 0.9 × 0.075 × 0.70 × 0.225`, FR-005/FR-006) | **Not a like-for-like before/after:** the pre-phase test used `leadToCloseRate=5` only; the new test uses `bookingRate=7.5, showUpRate=70, leadToCloseRate=22.5` — three inputs vs one. The conclusion stands (formula correction, not regression) because the *formula structure* is what changed: the old chain had `× leadToCloseRate`, the new chain has `× bookingRate × showUpRate × leadToCloseRate × netFactor × spendShare`. **Discriminator:** the new formula has 5 multiplications and 2 subtractions where the old formula had 1; a hand-tuned $150 could not accidentally reproduce a 5-multiply chain with `bookingRate=7.5, showUpRate=70, leadToCloseRate=22.5` at margin 60. |
 | 12 | `cpaEconomics.test.ts : 125` (same — `economicCeilingCpl`) | `105` (`= 150 × 0.70` via removed `ECONOMIC_CEILING_MULTIPLIER`) | `12.76` (`= 31.89375 × 0.40` via spendShare) | FR-002 + FR-005. |
 | 13 | `cpaEconomics.test.ts : 126` (same — `effectiveTargetCpl`) | `105` | `12.76` | Same as #12. |
 | 14 | `cpaEconomics.test.ts : 138` (free_webinar $997 × 40% × 8% — `leadValue`) | `31.9` (`= 997 × 0.4 × 0.08`) | `28.71` (`= 997 × 0.9 × 0.4 × 0.08`) | netFactor applied (FR-008). |
@@ -77,7 +77,7 @@ For each: pre-phase expected value → new expected value → formula correction
 | 18 | `cpaEconomics.test.ts : 304` (computeAdvisories "target STILL calculated when an advisory fires" — `effectiveTargetCpa`) | `2.5` (`= 5 / 2.0`) | `2` (`= min(5, 5 × 0.40) = min(5, 2)`) | Same FR-002 path. |
 | 19 | `cpaEconomics.test.ts : 323` (`getEffectiveTarget — paid → CPA`) | `50` (`= min(100, 100 / 2)`) | `40` (`= min(100, 100 × 0.40)`) | Same FR-002 path. |
 | 20 | `cpaEconomics.test.ts : 332` (`getEffectiveTarget — free → CPL`) | `70` (`= 1000 × 0.10 × 0.70`) | `9` (`= 1000 × 0.9 × 0.5 × 0.5 × 0.10 × 0.40`) | Same as #17. |
-| 21 | `funnelSettings.contract.test.ts : 59` (`contract — paid_event: AOV $43 + HTO $3500 @ 3% + ROAS 1.0`) | `effectiveTargetCpa: 43` (kept) | `effectiveTargetCpl: 43` (kept) | This assertion survived unchanged. The test's other assertions (`capApplied`, `effectiveTargetCpa`) survived; the contract shape is preserved. |
+| 21 | `funnelSettings.contract.test.ts : 59` (`contract — paid_event: AOV $43 + HTO $3500 @ 3% + ROAS 1.0`) | `effectiveTargetCpa: 43` (kept) | `effectiveTargetCpa: 43` (kept) | **Report typo:** the right-hand column was originally written as `effectiveTargetCpl: 43` — that was a copy/paste artefact in the report, not a real field change. Paid funnels produce CPA, not CPL. The actual source code in this branch is `assert.equal(d.paid.effectiveTargetCpa, 43)` and has always been. The assertion survived unchanged. The test's other assertions (`capApplied`, `effectiveTargetCpa`) also survived; the contract shape is preserved. |
 | 22 | `funnelSettings.contract.test.ts : 67` (`contract — paid_event: same with ROAS 0.5 → cap warning fired, effective $74`) | `capApplied: true; effective: 74` | `capApplied: false; effective: 86` (raw path wins) | Inputs that produced `74` under the old formula produce `86` under the new formula — `capApplied` flips because raw no longer exceeds max. **Discriminator:** `capApplied: false` is the new contract for this input set. |
 | 23 | `funnelSettings.contract.test.ts : 75` (`contract — paid_event: equality (raw == max) does NOT warn`) | `capApplied: false` (no change) | `capApplied: false` (no change) | Same — assertion survived. |
 
@@ -114,7 +114,7 @@ functions/src/funnelSettings.ts:264:     * stored doc — that's `buildFunnelInp
 
 **Phase 5 acceptance criterion (proposed — to be enforced by T033 contract tests):**
 
-> At Phase 5 completion: `grep -r "buildFunnelInputsFromDoc" functions/src` returns **only** the function definition and its doc comment. Zero callers anywhere in `functions/src`. The helper body is either removed (preferred) or its DEFAULT_* defaults are stripped and replaced with `throw new Error(...)` on missing fields.
+> At Phase 5 completion: `buildFunnelInputsFromDoc` is **deleted outright**. The function definition and its doc comment are both removed. `grep -r "buildFunnelInputsFromDoc" functions/src` returns **zero matches**. There is no "throws on missing fields" alternative — a dead helper that throws is still a dead helper that can be wired up later by a future change that doesn't know about the safety property.
 
 This is the load-bearing safety property the user asked for. I will not write the Phase 5 implementation here, but the exit check is now part of Phase 5's acceptance and T033's contract test surface.
 
@@ -477,3 +477,51 @@ cd functions; node lib/__tests__/funnelSettings.contract.test.js
 # 6. Full Phase 14 sweep
 cd functions; npm run test:phase14          # 256/256 across 14 files, exit 0
 ```
+
+---
+
+## 10. Post-review corrections (added 2026-08-31, before Phase 4 begins)
+
+User review identified four corrections. All four are report/code fixes — no semantic change to the formula or the gate.
+
+### 10.1 — Test names (item 1, user-found)
+
+Two more inaccurate test names, same class as the test 30 issue. Fixed:
+
+| Test (file : old line) | Old name | Issue | New name |
+|---|---|---|---|
+| `funnelSettings.contract.test.ts : 91` (now 91) | `AOV $43 + HTO $3500 @ 3% + 75% attend, 7.5% close + ROAS 1.0` | `@ 3%` refers to `htoConversionRate`, which paid_event no longer reads (paid_event uses `eventAttendanceRate × eventCloseRate`). Stale reference. | `AOV $43 + HTO $3500 + 75% attend, 7.5% close + ROAS 1.0`. The legacy `htoConversionRate: 3` field remains in the test fixture as additive storage per data-model.md §1; a comment notes it's unused on paid_event. |
+| `funnelSettings.contract.test.ts : 109` (now 109) | `same inputs + ROAS 0.5 → cap fires, effective follows raw` | Self-contradictory: "cap fires" AND "effective follows raw" cannot both be true. Body asserts `capApplied: false; effectiveTargetCpa: 86`. The test was exercising the path where ROAS 0.5 raises raw to 86 but the new ceiling (88.08) still exceeds raw — so the cap does NOT fire. | `same inputs + ROAS 0.5 → cap silent, effective follows raw`. |
+
+The contract test now reads:
+
+```
+ok 1 - contract — paid_event: AOV $43 + HTO $3500 + 75% attend, 7.5% close + ROAS 1.0 → effectiveTargetCpa $43, no warning
+ok 2 - contract — paid_event: same inputs + ROAS 0.5 → cap silent, effective follows raw
+```
+
+20/20 still pass.
+
+### 10.2 — Future-batch check (item 1, convention)
+
+Every future batch must, before reporting:
+
+1. Walk the `ok N - <description>` lines emitted by the runner.
+2. For every line, assert the description is consistent with the assertion(s) in the corresponding test source — same direction (TRUE/FALSE), same value, same branch.
+3. Any contradiction is fixed in code, not papered over with a comment.
+
+This is added to `AGENTS.md` as a batch-report convention.
+
+### 10.3 — Row 21 typo (item 2)
+
+The pre-vs-new cell on row 21 was originally written `effectiveTargetCpa: 43 (kept) → effectiveTargetCpl: 43 (kept)`. The right-hand cell was a copy/paste artefact — the actual source has always been `assert.equal(d.paid.effectiveTargetCpa, 43)`. **Report typo, not a real field change.** The right-hand column is corrected to `effectiveTargetCpa: 43 (kept)`. Paid funnels produce CPA; free funnels produce CPL.
+
+### 10.4 — Phase 5 deletion-only (item 3)
+
+The original Phase 5 criterion offered two alternatives: "removed (preferred) or its DEFAULT_* defaults are stripped and replaced with `throw new Error(...)` on missing fields." The "or throw" alternative is removed. **Deletion only.** A dead helper that throws is still a dead helper that can be wired up later by a future change that doesn't know about the safety property. The criterion now reads:
+
+> At Phase 5 completion: `buildFunnelInputsFromDoc` is **deleted outright**. The function definition and its doc comment are both removed. `grep -r "buildFunnelInputsFromDoc" functions/src` returns **zero matches**.
+
+### 10.5 — Row 11 framing (item 4)
+
+Row 11 in the §1.2 table compared two different inputs: pre-phase `leadToCloseRate=5` vs new `bookingRate=7.5, showUpRate=70, leadToCloseRate=22.5`. The conclusion stands (formula correction, not regression) because the formula structure is what changed, but the framing overstated it as a like-for-like before/after. The row's discriminator column now notes explicitly that the inputs differ and explains why the comparison still discriminates.

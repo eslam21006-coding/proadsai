@@ -78,6 +78,9 @@ export interface FunnelSettingsDoc {
     // Phase 968 — T022. lead_magnet_call only.
     bookingRate: number | null;
     showUpRate: number | null;
+    // Phase 968 — T027. Shared fields, all four funnel types.
+    commissionRate: number | null;
+    marginKept: 50 | 60 | 70 | null;
     derived: DerivedTargets;
     advisories: Advisories;
     advisoriesDismissed: { noHto: boolean; lowValue: boolean };
@@ -166,6 +169,9 @@ interface SaveFunnelSettingsRequest {
     // other funnel type.
     bookingRate?: number | null;
     showUpRate?: number | null;
+    // Phase 968 — T027. Shared fields, all four funnel types.
+    commissionRate?: number | null;
+    marginKept?: 50 | 60 | 70 | null;
     clientNowMs: number;
 }
 
@@ -267,6 +273,9 @@ function useFunnelSettings(workspaceId: string | null, accountId: string | null)
                 // type except lead_magnet_call.
                 bookingRate: req.funnelType === 'lead_magnet_call' ? (req.bookingRate ?? null) : null,
                 showUpRate: req.funnelType === 'lead_magnet_call' ? (req.showUpRate ?? null) : null,
+                // Phase 968 — T027. Shared fields.
+                commissionRate: req.commissionRate ?? null,
+                marginKept: req.marginKept ?? null,
                 derived: data.derived,
                 advisories: data.advisories,
                 advisoriesDismissed: settings?.advisoriesDismissed ?? { noHto: false, lowValue: false },
@@ -316,6 +325,38 @@ const ROAS_OPTIONS: Array<{ value: RoasTarget; label: string; sub: string }> = [
     { value: 1.0, label: '1.0 — توازن', sub: 'استرداد التكلفة فقط' },
     { value: 0.65, label: '0.65 — استثمار معتدل', sub: 'تقبل خسارة بسيطة مقابل بيانات' },
     { value: 0.5, label: '0.5 — استثمار أعلى', sub: 'تقبل خسارة أكبر مقابل بيانات أكثر' },
+];
+
+// Phase 968 — T029. marginKept three-button preset. Bare numbers per
+// contracts/uiCopy.md #20 (50 · 60 · 70). The sub-label is the trade-off
+// explanation — "More room to spend" / "Balanced" / "More profit kept" —
+// and is the same in both languages because it's a single phrase
+// describing a trade-off axis, not user-facing copy. Labels follow the
+// ROAS_OPTIONS pattern above. FR-024, FR-025, FR-025a.
+const MARGIN_OPTIONS: Array<{
+    value: 50 | 60 | 70;
+    labelAr: string;
+    subAr: string;
+    subEn: string;
+}> = [
+    {
+        value: 50,
+        labelAr: '٥٠ — مساحة أكبر للإنفاق',
+        subAr: 'تنفق أكثر مقابل ربح أقل',
+        subEn: 'Spend more, keep less',
+    },
+    {
+        value: 60,
+        labelAr: '٦٠ — متوازن',
+        subAr: 'توازن بين الإنفاق والربح',
+        subEn: 'Balanced',
+    },
+    {
+        value: 70,
+        labelAr: '٧٠ — ربح أكبر محتفظ به',
+        subAr: 'تنفق أقل مقابل ربح أكبر',
+        subEn: 'Keep more, spend less',
+    },
 ];
 
 export default function FunnelSettingsForm({
@@ -397,6 +438,12 @@ export default function FunnelSettingsForm({
     // Phase 968 — T022. lead_magnet_call only.
     const [bookingRate, setBookingRate] = useState<string>('');
     const [showUpRate, setShowUpRate] = useState<string>('');
+    // Phase 968 — T027. Shared fields, all four funnel types.
+    // Default to the spec-defined new-record values (DEFAULT_COMMISSION_RATE=10,
+    // DEFAULT_MARGIN_KEPT=60) so a brand-new form starts in a valid state
+    // without requiring the owner to touch them first.
+    const [commissionRate, setCommissionRate] = useState<string>('10');
+    const [marginKept, setMarginKept] = useState<50 | 60 | 70>(60);
 
     // Local dismiss state for the monthly-review prompt. Resets when
     // `reviewDue` flips back to true on a fresh save (the save function
@@ -435,6 +482,11 @@ export default function FunnelSettingsForm({
         // gate will mark these as required.
         setBookingRate(settings.bookingRate != null ? String(settings.bookingRate) : '');
         setShowUpRate(settings.showUpRate != null ? String(settings.showUpRate) : '');
+        // Phase 968 — T027. Shared fields. Pre-phase docs have `null`;
+        // fall back to the new-record defaults so the form renders in
+        // a valid initial state.
+        setCommissionRate(settings.commissionRate != null ? String(settings.commissionRate) : '10');
+        setMarginKept(settings.marginKept != null ? settings.marginKept : 60);
     }, [settings]);
 
     const advisoryVisible = useMemo(() => {
@@ -472,6 +524,9 @@ export default function FunnelSettingsForm({
         // Phase 968 — T022. Sent only for lead_magnet_call.
         const bookingN = funnelType === 'lead_magnet_call' ? numOrNull(bookingRate) : null;
         const showUpN = funnelType === 'lead_magnet_call' ? numOrNull(showUpRate) : null;
+        // Phase 968 — T027. commissionRate + marginKept apply to all four
+        // funnel types per FR-023/FR-024/OQ-1 override.
+        const commissionN = numOrNull(commissionRate);
         const req = {
             workspaceId: selectedWorkspaceId,
             accountId: selectedAccountId,
@@ -487,6 +542,8 @@ export default function FunnelSettingsForm({
             leadToCloseRate: leadN,
             bookingRate: bookingN,
             showUpRate: showUpN,
+            commissionRate: commissionN,
+            marginKept,
         };
         // Save returns the persisted doc (avoiding the stale-settings
         // closure trap where `onSaved` would receive the pre-save snapshot,
@@ -739,6 +796,44 @@ export default function FunnelSettingsForm({
                     <NumberField label={L('Close rate on calls that happened (%)', 'نسبة الإغلاق في المكالمات التي تمت (%)')} value={leadToCloseRate} onChange={setLeadToCloseRate} isDarkMode={dk} />
                 </div>
             )}
+
+            {/* Phase 968 — T028 + T029. Sales-commission field + marginKept
+                three-button preset. Apply to every funnel branch (FR-023,
+                FR-024, FR-025, FR-025a, FR-018 OQ-1 override). The preset
+                follows the ROAS_OPTIONS pattern (lines 315-319 / 720-740);
+                60 is preselected for a new record (DEFAULT_MARGIN_KEPT). */}
+            <div className="space-y-3">
+                <NumberField
+                    label={L('Sales commission (%)', 'عمولة المبيعات (%)')}
+                    value={commissionRate}
+                    onChange={setCommissionRate}
+                    isDarkMode={dk}
+                />
+                <div>
+                    <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>
+                        {L('Margin you want to keep (%)', 'نسبة الربح التي تريد الاحتفاظ بها (%)')}
+                    </label>
+                    <div className="space-y-2">
+                        {MARGIN_OPTIONS.map((opt) => (
+                            <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => setMarginKept(opt.value)}
+                                className={`block w-full text-right p-3 rounded border ${marginKept === opt.value ? 'border-indigo-500 bg-indigo-900/40' : dk ? 'border-slate-700 bg-slate-800' : 'border-slate-300 bg-slate-50'}`}
+                            >
+                                <div className={`font-semibold ${txPrimary}`}>
+                                    {lang === 'ar'
+                                        ? opt.labelAr
+                                        : String(opt.value) + ' — ' + opt.subEn}
+                                </div>
+                                <div className={`text-sm ${txMuted}`}>
+                                    {lang === 'ar' ? opt.subAr : opt.subEn}
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            </div>
 
             {error && <p className="text-red-400 text-sm">{error}</p>}
 
