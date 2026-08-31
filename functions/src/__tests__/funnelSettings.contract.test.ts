@@ -15,7 +15,12 @@ import {
     type LeadMagnetCallInputs,
     LOW_VALUE_THRESHOLD,
 } from "../cpaEconomics.js";
-import { REVIEW_CADENCE_MS, assertRequiredFieldPresent } from "../funnelSettings.js";
+import {
+    REVIEW_CADENCE_MS,
+    assertRequiredFieldPresent,
+    isSettingsComplete,
+    missingRequiredFields,
+} from "../funnelSettings.js";
 
 // ─── Pure request shape → funnel-input mapping ────────────────
 // The contract requires that saveFunnelSettings coerces the request into
@@ -216,8 +221,16 @@ test("contract — paid_event with hasHto=true but missing htoPrice → throws",
     );
 });
 
-test("contract — paid_event with hasHto=true but missing htoConversionRate → throws", () => {
-    assert.throws(
+test("contract — paid_event with hasHto=true and missing htoConversionRate → does NOT throw (FR-011..FR-014, data-model.md §3)", () => {
+    // Phase 968 — Item A decision. paid_event reads
+    // eventAttendanceRate × eventCloseRate; it does NOT read
+    // htoConversionRate. The field is retained on paid_event for
+    // additive storage compatibility (data-model.md §1) but is NOT
+    // part of the completeness rule (data-model.md §3). Requiring it
+    // would force the owner to fill a field that changes nothing and
+    // would keep the attention badge lit until they do — even though
+    // their record is otherwise complete (FR-039, FR-049).
+    assert.doesNotThrow(
         () => assertRequiredFieldsPresent("paid_event", {
             aov: 43,
             hasHto: true,
@@ -227,6 +240,23 @@ test("contract — paid_event with hasHto=true but missing htoConversionRate →
             commissionRate: 10,
             marginKept: 60,
             roasTarget: 1.0,
+            // htoConversionRate intentionally omitted.
+        } as unknown as Record<string, unknown>),
+    );
+});
+
+test("contract — paid_product with hasHto=true and missing htoConversionRate → throws (FR-019)", () => {
+    // paid_product reads htoConversionRate directly (FR-019). It IS
+    // part of the completeness rule on paid_product.
+    assert.throws(
+        () => assertRequiredFieldsPresent("paid_product", {
+            aov: 100,
+            hasHto: true,
+            htoPrice: 3000,
+            commissionRate: 10,
+            marginKept: 60,
+            roasTarget: 1.0,
+            // htoConversionRate intentionally omitted.
         } as unknown as Record<string, unknown>),
         /htoConversionRate/i,
     );
@@ -426,9 +456,170 @@ function assertRequiredFieldsPresent(funnelType: "paid_event" | "paid_product" |
     for (const field of fields) {
         assertRequiredFieldPresent(funnelType, field, req[field]);
     }
-    // Mirror the callables: when hasHto=true, both HTO fields are required.
+    // Mirror the callables: when hasHto=true, htoPrice is required on
+    // every paid funnel type. htoConversionRate is required only on
+    // paid_product — paid_event reads eventAttendanceRate × eventCloseRate
+    // instead (FR-011..FR-014; data-model.md §1, §3; Item A decision
+    // in batch-05-report.md).
     if ((funnelType === "paid_event" || funnelType === "paid_product") && req.hasHto === true) {
         assertRequiredFieldPresent(funnelType, "htoPrice", req.htoPrice);
-        assertRequiredFieldPresent(funnelType, "htoConversionRate", req.htoConversionRate);
+        if (funnelType === "paid_product") {
+            assertRequiredFieldPresent(funnelType, "htoConversionRate", req.htoConversionRate);
+        }
     }
 }
+
+// ─── Completeness predicate (T030, FR-039, FR-050) ───────────────────
+//
+// Single canonical definition (FR-050). Every consumer — `getFunnelSettings`,
+// the parity test, the structured observability log — must use this exact
+// helper. `null`/missing is incomplete; `0` is complete; `hasHto === false`
+// drops the high-ticket fields from the required set.
+
+test("completeness — paid_event with all required fields present ⇒ isSettingsComplete=true", () => {
+    const doc = {
+        funnelType: "paid_event",
+        aov: 24,
+        hasHto: true,
+        htoPrice: 3000,
+        // htoConversionRate intentionally absent — paid_event doesn't read it.
+        roasTarget: 0.5,
+        eventAttendanceRate: 75,
+        eventCloseRate: 7.5,
+        commissionRate: 10,
+        marginKept: 60,
+    };
+    assert.equal(isSettingsComplete(doc), true);
+    assert.deepEqual(missingRequiredFields(doc), []);
+});
+
+test("completeness — paid_event missing eventAttendanceRate ⇒ incomplete, lists the field", () => {
+    const doc = {
+        funnelType: "paid_event",
+        aov: 24,
+        hasHto: false,
+        htoPrice: 0,
+        roasTarget: 0.5,
+        // eventAttendanceRate intentionally null
+        eventAttendanceRate: null,
+        eventCloseRate: 7.5,
+        commissionRate: 10,
+        marginKept: 60,
+    };
+    assert.equal(isSettingsComplete(doc), false);
+    assert.deepEqual(missingRequiredFields(doc), ["eventAttendanceRate"]);
+});
+
+test("completeness — paid_event with hasHto=false ⇒ htoPrice drops from required set", () => {
+    // Existing behaviour: hasHto=false forces htoPrice/htoConversionRate to 0
+    // and removes them from the required set (data-model.md §3).
+    const doc = {
+        funnelType: "paid_event",
+        aov: 100,
+        hasHto: false,
+        htoPrice: 0, // would-be missing if hasHto=true; with false, dropped
+        roasTarget: 1.0,
+        eventAttendanceRate: 75,
+        eventCloseRate: 7.5,
+        commissionRate: 10,
+        marginKept: 60,
+    };
+    assert.equal(isSettingsComplete(doc), true);
+});
+
+test("completeness — paid_product requires htoConversionRate when hasHto=true (FR-019)", () => {
+    const withoutHtoConv = {
+        funnelType: "paid_product",
+        aov: 100,
+        hasHto: true,
+        htoPrice: 3000,
+        // htoConversionRate missing
+        roasTarget: 1.0,
+        commissionRate: 10,
+        marginKept: 60,
+    };
+    assert.equal(isSettingsComplete(withoutHtoConv), false);
+    assert.deepEqual(missingRequiredFields(withoutHtoConv), ["htoConversionRate"]);
+
+    const withHtoConv = { ...withoutHtoConv, htoConversionRate: 5 };
+    assert.equal(isSettingsComplete(withHtoConv), true);
+});
+
+test("completeness — paid_event does NOT require htoConversionRate even when hasHto=true (Item A decision)", () => {
+    // The field is stored-but-unread on paid_event. Requiring it would
+    // force owners to fill a field that changes nothing.
+    const doc = {
+        funnelType: "paid_event",
+        aov: 24,
+        hasHto: true,
+        htoPrice: 3000,
+        // htoConversionRate intentionally null/absent — paid_event ignores it.
+        roasTarget: 0.5,
+        eventAttendanceRate: 75,
+        eventCloseRate: 7.5,
+        commissionRate: 10,
+        marginKept: 60,
+    };
+    assert.equal(isSettingsComplete(doc), true);
+    assert.equal(missingRequiredFields(doc).includes("htoConversionRate"), false);
+});
+
+test("completeness — numeric 0 is COMPLETE, not missing (data-model.md §3)", () => {
+    const doc = {
+        funnelType: "free_webinar",
+        offerPrice: 100,
+        attendanceRate: 0,    // 0 is valid; only null/missing is incomplete
+        buyRateFromAttendees: 0,
+        commissionRate: 0,    // 0 commission is legitimate
+        marginKept: 60,
+    };
+    assert.equal(isSettingsComplete(doc), true);
+    assert.deepEqual(missingRequiredFields(doc), []);
+});
+
+test("completeness — free_webinar missing offerPrice ⇒ incomplete", () => {
+    const doc = {
+        funnelType: "free_webinar",
+        offerPrice: null,
+        attendanceRate: 25,
+        buyRateFromAttendees: 2,
+        commissionRate: 10,
+        marginKept: 60,
+    };
+    assert.equal(isSettingsComplete(doc), false);
+    assert.deepEqual(missingRequiredFields(doc), ["offerPrice"]);
+});
+
+test("completeness — lead_magnet_call missing bookingRate ⇒ incomplete", () => {
+    const doc = {
+        funnelType: "lead_magnet_call",
+        offerPrice: 3000,
+        leadToCloseRate: 22.5,
+        bookingRate: null,    // missing
+        showUpRate: 70,
+        commissionRate: 10,
+        marginKept: 60,
+    };
+    assert.equal(isSettingsComplete(doc), false);
+    assert.deepEqual(missingRequiredFields(doc), ["bookingRate"]);
+});
+
+test("completeness — multiple missing fields reported in one error (FR-040a)", () => {
+    // Save-path (T032) collects ALL missing fields and reports them
+    // together. The predicate returns the array in field order; the
+    // order matters because the save error names them in this order.
+    const doc = {
+        funnelType: "lead_magnet_call",
+        offerPrice: 3000,
+        // leadToCloseRate, bookingRate, showUpRate, commissionRate, marginKept all missing
+    };
+    const missing = missingRequiredFields(doc);
+    assert.equal(missing.length, 5);
+    assert.deepEqual(missing, [
+        "leadToCloseRate",
+        "bookingRate",
+        "showUpRate",
+        "commissionRate",
+        "marginKept",
+    ]);
+});

@@ -19,11 +19,16 @@ being asked.
 
 ### 0b. Test name vs assertion check
 Before reporting a batch, walk the `ok N - <description>` lines emitted by the
-runner. For every line, assert the description is consistent with the
-assertion(s) in the corresponding test source — same direction (TRUE/FALSE),
-same value, same branch. Any contradiction is fixed in code, not papered over
-with a comment. This rule exists because inaccurate test names are a class
-of failure mode the runner cannot detect: the test passes, the name lies, and
+runner. The check runs LAST, after every test the batch adds — re-run the
+full sweep, then walk the FINAL list of names against the FINAL list of test
+sources. Partial-state walks miss names added after the audit runs and miss
+the contradiction they encode (Phase 5 Item C: the 64 vs 73 vs 75 drift).
+
+For every line, assert the description is consistent with the assertion(s)
+in the corresponding test source — same direction (TRUE/FALSE), same value,
+same branch. Any contradiction is fixed in code, not papered over with a
+comment. This rule exists because inaccurate test names are a class of
+failure mode the runner cannot detect: the test passes, the name lies, and
 the next reader trusts the name.
 
 ---

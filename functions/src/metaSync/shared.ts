@@ -74,6 +74,10 @@ import {
 } from "../qararEngine.js";
 import { getEffectiveTarget } from "../cpaEconomics.js";
 import {
+    isSettingsComplete,
+    missingRequiredFields,
+} from "../funnelSettings.js";
+import {
     updateHookAggregates,
     updateVisualAggregates,
     computePatternKey,
@@ -580,7 +584,15 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
     // (effectiveTargetCPA for paid funnels, effectiveTargetCPL for free). If
     // the settings doc is missing or has no derived targets, the engine
     // returns ⏳ with reason "إعدادات مسار المبيعات غير مكتملة".
+    //
+    // Phase 968 — T037 (FR-042, contracts/funnelSettings.md §6): when the
+    // doc exists but is incomplete, emit ONE structured log line per
+    // account per sync naming workspace, account, funnel type, and
+    // missing fields. Constitution VI/VII: the gate must be auditable.
+    // One line per account (NOT per ad) — keeps this from becoming log
+    // spam across a large sync.
     let funnelSettings: FunnelSettingsForVerdict | null = null;
+    let settingsIncompleteLogged = false;
     try {
         const settingsRef = getDb()
             .collection("users").doc(userId)
@@ -589,9 +601,41 @@ export async function runSyncForAccount(params: SyncParams): Promise<SyncResult>
             .collection("settings").doc("current");
         const settingsSnap = await settingsRef.get();
         if (settingsSnap.exists) {
-            const data = settingsSnap.data() as { derived?: unknown };
+            const data = settingsSnap.data() as Record<string, unknown>;
             if (data && typeof data.derived === "object" && data.derived !== null) {
                 funnelSettings = { derived: data.derived as FunnelSettingsForVerdict["derived"] };
+
+                // FR-042 / FR-049: emit the gate log when the stored
+                // settings doc is incomplete. Single canonical
+                // completeness predicate from funnelSettings.ts —
+                // FR-050. Includes pre-phase docs (which are
+                // incomplete by definition) and partially-saved new
+                // records. The owner sees the badge in the UI; the
+                // operator sees this line in the logs.
+                const missing = missingRequiredFields(data);
+                if (missing.length > 0) {
+                    const funnelType = typeof data.funnelType === "string" ? data.funnelType : "unknown";
+                    console.warn(
+                        `funnel_settings_incomplete  workspaceId=${workspaceId} accountId=${accountId} funnelType=${funnelType} missing=[${missing.join(",")}]`,
+                    );
+                    settingsIncompleteLogged = true;
+                }
+                // Settings may also be incomplete even when the doc
+                // carries every required field — for instance, a stale
+                // doc persisted before the commissionRate/marginKept
+                // fields existed. The `complete` flag from
+                // `getFunnelSettings` is the authoritative signal; for
+                // the sync path, `isSettingsComplete` covers both
+                // cases (missing field OR null value).
+                if (!isSettingsComplete(data) && !settingsIncompleteLogged) {
+                    // Defensive — should be unreachable given the
+                    // `missing.length > 0` check above, but kept so
+                    // future drift doesn't silently drop the log.
+                    const funnelType = typeof data.funnelType === "string" ? data.funnelType : "unknown";
+                    console.warn(
+                        `funnel_settings_incomplete  workspaceId=${workspaceId} accountId=${accountId} funnelType=${funnelType} missing=[unknown]`,
+                    );
+                }
             }
         }
     } catch (e: unknown) {

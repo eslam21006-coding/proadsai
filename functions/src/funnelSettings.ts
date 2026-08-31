@@ -177,11 +177,19 @@ export function assertRequiredFieldPresent(
     const isMissing = (v: unknown) => v === undefined || v === null;
     switch (funnelType) {
         case "paid_event":
+            // FR-011..FR-014 — paid_event reads `eventAttendanceRate` and
+            // `eventCloseRate`, NOT `htoConversionRate`. The latter is
+            // retained on paid_event for additive storage compatibility
+            // (data-model.md §1, §3) but is NOT part of the completeness
+            // rule — requiring it would force owners to fill a field
+            // that changes nothing. The attention badge would stay lit
+            // until they do, even though their record is otherwise
+            // complete (FR-039, FR-049). See Item A decision in
+            // batch-05-report.md.
             if (
                 fieldName === "aov"
                 || fieldName === "roasTarget"
                 || fieldName === "htoPrice"
-                || fieldName === "htoConversionRate"
                 || fieldName === "eventAttendanceRate"
                 || fieldName === "eventCloseRate"
                 || fieldName === "commissionRate"
@@ -193,6 +201,8 @@ export function assertRequiredFieldPresent(
             }
             return;
         case "paid_product":
+            // FR-019 — paid_product reads `htoConversionRate` directly.
+            // It IS part of the completeness rule on paid_product.
             if (
                 fieldName === "aov"
                 || fieldName === "roasTarget"
@@ -229,67 +239,102 @@ export function assertRequiredFieldPresent(
                 || fieldName === "marginKept"
             ) {
                 if (isMissing(value)) {
-                    throw new Error(`${fieldName} is required for lead_magnet_call`);
+                    throw new Error(`${fieldName} is required for lead_magnet_call}`);
                 }
             }
             return;
     }
 }
 
-function buildFunnelInputsFromDoc(d: Record<string, unknown>): FunnelInputs {
-    const funnelType = asFunnelType(d.funnelType);
-    // Defaults for fields that were added in Phase 968 and so are absent
-    // from every pre-phase stored doc. Phase 5 (T031) deletes this helper
-    // entirely in favour of the typed `derived` snapshot, so these
-    // defaults are temporary scaffolding only.
-    const commissionRate = asNumberOrNull(d.commissionRate) ?? DEFAULT_COMMISSION_RATE;
-    const marginKept = (asNumberOrNull(d.marginKept) ?? DEFAULT_MARGIN_KEPT) as MarginKept;
+// ─── Completeness predicate (FR-039, FR-049, FR-050, data-model.md §3) ─────
+//
+// Single canonical definition of "is this settings doc complete?" — the
+// retrieval response, the target derivation, and the interface all
+// consult the same definition. Two independent implementations of
+// "complete" MUST NOT exist.
+//
+// Rules:
+//   - null / missing ⇒ incomplete (data-model.md §1)
+//   - 0 ⇒ COMPLETE (a zero commission or zero rate is a legitimate answer)
+//   - hasHto === false drops the high-ticket fields from the required set
+//   - stored-but-unread fields are not part of the rule (Item A decision:
+//     paid_event does not require `htoConversionRate` even when hasHto=true)
+
+type FunnelSettingsLike = {
+    funnelType?: unknown;
+    aov?: number | null;
+    htoPrice?: number | null;
+    htoConversionRate?: number | null;
+    hasHto?: boolean | null;
+    roasTarget?: number | null;
+    eventAttendanceRate?: number | null;
+    eventCloseRate?: number | null;
+    offerPrice?: number | null;
+    attendanceRate?: number | null;
+    buyRateFromAttendees?: number | null;
+    leadToCloseRate?: number | null;
+    bookingRate?: number | null;
+    showUpRate?: number | null;
+    commissionRate?: number | null;
+    marginKept?: number | null;
+};
+
+function requiredFieldsForDoc(funnelType: FunnelInputs["funnelType"], hasHto: boolean): ReadonlyArray<keyof FunnelSettingsLike> {
     switch (funnelType) {
         case "paid_event":
-        case "paid_product": {
-            const hasHto = d.hasHto === true;
-            // Force htoPrice/htoConversionRate=0 when hasHto=false (contract).
-            return {
-                funnelType,
-                aov: asNumberOrNull(d.aov) ?? 0,
-                hasHto,
-                htoPrice: hasHto ? (asNumberOrNull(d.htoPrice) ?? 0) : 0,
-                htoConversionRate: hasHto ? (asNumberOrNull(d.htoConversionRate) ?? 0) : 0,
-                eventAttendanceRate: asNumberOrNull(d.eventAttendanceRate) ?? 0,
-                eventCloseRate: asNumberOrNull(d.eventCloseRate) ?? 0,
-                commissionRate,
-                marginKept,
-                roasTarget: asRoas(d.roasTarget),
-            };
-        }
+            // FR-011..FR-014 — paid_event reads eventAttendanceRate and
+            // eventCloseRate; it does NOT read htoConversionRate.
+            return hasHto
+                ? ["aov", "roasTarget", "htoPrice", "eventAttendanceRate", "eventCloseRate", "commissionRate", "marginKept"]
+                : ["aov", "roasTarget", "eventAttendanceRate", "eventCloseRate", "commissionRate", "marginKept"];
+        case "paid_product":
+            // FR-019 — paid_product reads htoConversionRate directly.
+            return hasHto
+                ? ["aov", "roasTarget", "htoPrice", "htoConversionRate", "commissionRate", "marginKept"]
+                : ["aov", "roasTarget", "commissionRate", "marginKept"];
         case "free_webinar":
-            return {
-                funnelType,
-                offerPrice: asNumberOrNull(d.offerPrice) ?? 0,
-                attendanceRate: asNumberOrNull(d.attendanceRate) ?? 0,
-                buyRateFromAttendees: asNumberOrNull(d.buyRateFromAttendees) ?? 0,
-                commissionRate,
-                marginKept,
-            };
+            return ["offerPrice", "attendanceRate", "buyRateFromAttendees", "commissionRate", "marginKept"];
         case "lead_magnet_call":
-            return {
-                funnelType,
-                offerPrice: asNumberOrNull(d.offerPrice) ?? 0,
-                leadToCloseRate: asNumberOrNull(d.leadToCloseRate) ?? 0,
-                bookingRate: asNumberOrNull(d.bookingRate) ?? 0,
-                showUpRate: asNumberOrNull(d.showUpRate) ?? 0,
-                commissionRate,
-                marginKept,
-            };
+            return ["offerPrice", "leadToCloseRate", "bookingRate", "showUpRate", "commissionRate", "marginKept"];
     }
 }
 
 /**
- * Build a typed `FunnelInputs` from the SAVE request payload (NOT from a
- * stored doc — that's `buildFunnelInputsFromDoc`). Coerces / forces HTO=0
- * when hasHto=false. Pre-condition: callers MUST have validated required
- * inputs via `assertRequiredFieldPresent` BEFORE calling this — the
- * coercion here defaults missing fields to 0 and would otherwise swallow
+ * Returns the list of field names that are required but missing/null on
+ * this doc. The empty list means the doc is complete.
+ *
+ * Exported so the frontend parity test (T058) and the structured
+ * observability log (T037) can both consult the same definition.
+ */
+export function missingRequiredFields(doc: FunnelSettingsLike): ReadonlyArray<string> {
+    const funnelType = asFunnelType(doc.funnelType);
+    const hasHto = doc.hasHto === true;
+    const fields = requiredFieldsForDoc(funnelType, hasHto);
+    const missing: string[] = [];
+    for (const f of fields) {
+        const v = doc[f];
+        if (v === undefined || v === null) {
+            missing.push(String(f));
+        }
+    }
+    return missing;
+}
+
+/**
+ * Single canonical completeness predicate (FR-039, FR-050).
+ * Returns true iff every required field for the doc's funnel type is
+ * present and non-null. `0` is a valid complete value.
+ */
+export function isSettingsComplete(doc: FunnelSettingsLike): boolean {
+    return missingRequiredFields(doc).length === 0;
+}
+
+/**
+ * Build a typed `FunnelInputs` from the SAVE request payload. Coerces /
+ * forces HTO=0 when hasHto=false. Pre-condition: callers MUST have
+ * validated required inputs via `assertRequiredFieldPresent` BEFORE
+ * calling this — the coercion here defaults missing fields to 0 and
+ * would otherwise swallow
  * the missing-field error.
  */
 function buildFunnelInputs(req: SaveFunnelSettingsRequest): FunnelInputs {
@@ -402,30 +447,32 @@ export const saveFunnelSettings = onCall(
         // failure surfaces as `invalid-argument` per the contract.
         let inputs: FunnelInputs;
         try {
-            // Required-input validation BEFORE coercion (coercion defaults to
-            // 0 and would silently swallow a missing field). Only funnel-
-            // type-relevant fields are required; irrelevant fields are
-            // ignored.
-            assertRequiredFieldPresent(req.funnelType, "aov", req.aov);
-            assertRequiredFieldPresent(req.funnelType, "roasTarget", req.roasTarget);
-            // When the user opts into HTO, BOTH HTO fields are required —
-            // buildFunnelInputs would otherwise default them to 0 and the
-            // server would silently treat the ad as having no HTO at all.
-            if (req.hasHto === true) {
-                assertRequiredFieldPresent(req.funnelType, "htoPrice", req.htoPrice);
-                assertRequiredFieldPresent(req.funnelType, "htoConversionRate", req.htoConversionRate);
+            // FR-040a — reject incomplete saves, naming EVERY missing field.
+            // The save payload and the persisted doc share the same field
+            // shape, so the canonical completeness predicate from T030 is
+            // reused here (FR-050 — single source of truth). This replaces
+            // the per-field asserts below which threw on the first miss.
+            const missing = missingRequiredFields({
+                funnelType: req.funnelType,
+                aov: req.aov,
+                htoPrice: req.htoPrice,
+                htoConversionRate: req.htoConversionRate,
+                hasHto: req.hasHto,
+                roasTarget: req.roasTarget,
+                eventAttendanceRate: req.eventAttendanceRate,
+                eventCloseRate: req.eventCloseRate,
+                offerPrice: req.offerPrice,
+                attendanceRate: req.attendanceRate,
+                buyRateFromAttendees: req.buyRateFromAttendees,
+                leadToCloseRate: req.leadToCloseRate,
+                bookingRate: req.bookingRate,
+                showUpRate: req.showUpRate,
+                commissionRate: req.commissionRate,
+                marginKept: req.marginKept,
+            });
+            if (missing.length > 0) {
+                throw new Error(`incomplete save for ${req.funnelType}: missing [${missing.join(", ")}]`);
             }
-            assertRequiredFieldPresent(req.funnelType, "eventAttendanceRate", req.eventAttendanceRate);
-            assertRequiredFieldPresent(req.funnelType, "eventCloseRate", req.eventCloseRate);
-            assertRequiredFieldPresent(req.funnelType, "bookingRate", req.bookingRate);
-            assertRequiredFieldPresent(req.funnelType, "showUpRate", req.showUpRate);
-            assertRequiredFieldPresent(req.funnelType, "offerPrice", req.offerPrice);
-            assertRequiredFieldPresent(req.funnelType, "attendanceRate", req.attendanceRate);
-            assertRequiredFieldPresent(req.funnelType, "buyRateFromAttendees", req.buyRateFromAttendees);
-            assertRequiredFieldPresent(req.funnelType, "leadToCloseRate", req.leadToCloseRate);
-            // Phase 968 shared inputs (FR-026, FR-027).
-            assertRequiredFieldPresent(req.funnelType, "commissionRate", req.commissionRate);
-            assertRequiredFieldPresent(req.funnelType, "marginKept", req.marginKept);
 
             inputs = buildFunnelInputs(req);
             // Sanity-check the coerced inputs against the derivation engine.
@@ -554,16 +601,31 @@ export const getFunnelSettings = onCall(
             .get();
 
         if (!snap.exists) {
-            return { ok: true as const, settings: null, reviewDue: false };
+            // No record yet — the doc is by definition incomplete (FR-049,
+            // FR-043). Returning `settings: null` is correct here: the
+            // record does not exist. The flag distinguishes absence from
+            // incompleteness (FR-049) so the interface never auto-pushes
+            // (FR-044, R-3): with no record, the user has not yet
+            // committed anything to lose.
+            return { ok: true as const, settings: null, complete: false, reviewDue: false };
         }
 
         const doc = snap.data() as Record<string, unknown>;
         const reviewDueAt = Number(doc.reviewDueAt) || 0;
         const reviewDue = Date.now() >= reviewDueAt;
 
+        // FR-043, FR-049: an incomplete record is ALWAYS returned when
+        // it exists, with `complete: false` next to it. Returning
+        // `settings: null` here would trip the first-run auto-open
+        // effect (`App.tsx:4283`), pushing every existing owner into
+        // the form on their next load (R-3). Existence and completeness
+        // are orthogonal signals (contracts/funnelSettings.md).
+        const complete = isSettingsComplete(doc);
+
         return {
             ok: true as const,
             settings: doc as unknown as FunnelSettingsDoc,
+            complete,
             reviewDue,
         };
     },

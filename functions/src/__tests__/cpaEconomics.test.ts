@@ -457,6 +457,68 @@ test("T026: paid_event ROAS-path-driven effectiveTargetCpa does NOT move with ma
     assert.equal(d70.capApplied, false);
 });
 
+// Item B (Phase 5) — realistic paid_event fixture pinning target
+// stability across margins at a typical $24 / $3000 / 75%/7.5% /
+// ROAS 0.5 configuration. The carry-forward into Phase 9 is that
+// the results-card explainer must tell a paid_event owner which
+// path is active and why their margin choice is not moving the
+// number when the ROAS path wins uniformly.
+//
+// Arithmetic:
+//   raw = aov / roasTarget = 24 / 0.5 = 48     (independent of marginKept)
+//   fullBuyerValue = 24 + 3000 × 0.9 × 0.75 × 0.075 = 175.875
+//   spendShare(50) = 0.50 ⇒ maxCpa = 87.94 ⇒ min(48, 87.94) = 48
+//   spendShare(60) = 0.40 ⇒ maxCpa = 70.35 ⇒ min(48, 70.35) = 48
+//   spendShare(70) = 0.30 ⇒ maxCpa = 52.76 ⇒ min(48, 52.76) = 48
+// ⇒ effectiveTargetCpa = 48 at every margin row.
+//
+// Note: the min() logic is NOT changed. The contract is that for this
+// input class the ROAS path wins uniformly and the margin selector
+// does not move the paid_event target. Phase 9's results-card
+// explainer carries the user-facing consequence.
+test("Item B: paid_event realistic ($24/$3000/75%/7.5%/ROAS 0.5) — effectiveTargetCpa = $48 at every margin row", () => {
+    const fixed: Omit<PaidFunnelInputs, "marginKept"> = {
+        funnelType: "paid_event",
+        aov: 24,
+        hasHto: true,
+        htoPrice: 3000,
+        htoConversionRate: 5, // legacy additive storage; unused on paid_event
+        eventAttendanceRate: 75,
+        eventCloseRate: 7.5,
+        commissionRate: 10,
+        roasTarget: 0.5,
+    };
+    const d50 = deriveTargetCpa({ ...fixed, marginKept: 50 });
+    const d60 = deriveTargetCpa({ ...fixed, marginKept: 60 });
+    const d70 = deriveTargetCpa({ ...fixed, marginKept: 70 });
+
+    // raw pinned at $48 across all three margin rows.
+    assert.equal(d50.rawTargetCpa, 48);
+    assert.equal(d60.rawTargetCpa, 48);
+    assert.equal(d70.rawTargetCpa, 48);
+
+    // maxCpa varies with margin (the projection-path ceiling moves).
+    assert.equal(d50.maxCpa, 87.94);
+    assert.equal(d60.maxCpa, 70.35);
+    assert.equal(d70.maxCpa, 52.76);
+
+    // Effective is the ROAS path's $48 at every row.
+    assert.equal(d50.effectiveTargetCpa, 48);
+    assert.equal(d60.effectiveTargetCpa, 48);
+    assert.equal(d70.effectiveTargetCpa, 48);
+
+    // capApplied is false at every row because raw (48) < max.
+    assert.equal(d50.capApplied, false);
+    assert.equal(d60.capApplied, false);
+    assert.equal(d70.capApplied, false);
+
+    // The active path is the ROAS path at every row (the user's margin
+    // selector does not move the number on this input class).
+    assert.equal(d50.fullBuyerValue, 175.88); // 175.875 rounded
+    assert.equal(d60.fullBuyerValue, 175.88);
+    assert.equal(d70.fullBuyerValue, 175.88);
+});
+
 // T021 — Regression anchor (constitution IX — before/after evidence).
 // The pre-phase formula produced $630 for the same $3,000 lead-magnet
 // funnel. That value is gone. The corrected formula yields $12.76 at

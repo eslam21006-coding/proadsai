@@ -445,6 +445,50 @@ export default function FunnelSettingsForm({
     const [commissionRate, setCommissionRate] = useState<string>('10');
     const [marginKept, setMarginKept] = useState<50 | 60 | 70>(60);
 
+    // Phase 968 — T038 (FR-052): compute the missing-fields set against
+    // the canonical completeness rule (single source of truth in
+    // functions/src/funnelSettings.ts; T058 parity test locks the two
+    // in lockstep). Used to render the paused-targets notice + per-
+    // field `Required` markers so the owner sees which inputs block
+    // the save and the target.
+    //
+    // Mirrors the backend rule (data-model.md §3) — `null`/missing is
+    // incomplete, `0` is complete, hasHto=false drops the HTO fields
+    // from the required set, and htoConversionRate is NOT required on
+    // paid_event (Item A decision in batch-05-report.md).
+    const missingFields = useMemo<ReadonlyArray<string>>(() => {
+        const isEmptyString = (v: string | null | undefined) => v === undefined || v === null || v === '';
+        // ROAS is a closed enum (1.0/0.65/0.5) — `roasTarget` is a
+        // number, not a string. `null`/`undefined` is incomplete.
+        const isEmptyNumber = (v: number | null | undefined) => v === undefined || v === null;
+        // marginKept is the closed enum 50|60|70; same rule.
+        const missing: string[] = [];
+        if (funnelType === 'paid_event' || funnelType === 'paid_product') {
+            if (isEmptyString(aov)) missing.push('aov');
+            if (isEmptyNumber(roasTarget)) missing.push('roasTarget');
+            if (hasHto) {
+                if (isEmptyString(htoPrice)) missing.push('htoPrice');
+                if (funnelType === 'paid_product' && isEmptyString(htoConversionRate)) missing.push('htoConversionRate');
+            }
+        }
+        // paid_event event-rate fields land in Phase 6 (T045). When
+        // added to the form, include them here.
+        if (funnelType === 'free_webinar') {
+            if (isEmptyString(offerPrice)) missing.push('offerPrice');
+            if (isEmptyString(attendanceRate)) missing.push('attendanceRate');
+            if (isEmptyString(buyRateFromAttendees)) missing.push('buyRateFromAttendees');
+        }
+        if (funnelType === 'lead_magnet_call') {
+            if (isEmptyString(offerPrice)) missing.push('offerPrice');
+            if (isEmptyString(leadToCloseRate)) missing.push('leadToCloseRate');
+            if (isEmptyString(bookingRate)) missing.push('bookingRate');
+            if (isEmptyString(showUpRate)) missing.push('showUpRate');
+        }
+        if (isEmptyString(commissionRate)) missing.push('commissionRate');
+        if (isEmptyNumber(marginKept)) missing.push('marginKept');
+        return missing;
+    }, [funnelType, hasHto, aov, roasTarget, htoPrice, htoConversionRate, offerPrice, attendanceRate, buyRateFromAttendees, leadToCloseRate, bookingRate, showUpRate, commissionRate, marginKept]);
+
     // Local dismiss state for the monthly-review prompt. Resets when
     // `reviewDue` flips back to true on a fresh save (the save function
     // calls setReviewDue(false), so the card hides itself naturally on
@@ -736,10 +780,33 @@ export default function FunnelSettingsForm({
                 </select>
             </div>
 
+            {/* Phase 968 — T038 (FR-052). Paused-targets notice.
+                Shown when at least one required field is missing — the
+                owner sees the pause message above the inputs and the
+                missing fields are tagged with the `Required` indicator
+                in their labels. The notice is removed automatically when
+                every required field is filled. */}
+            {missingFields.length > 0 && (
+                <div
+                    className={`p-4 rounded-lg border-2 border-amber-500 ${dk ? 'bg-amber-950/40' : 'bg-amber-50'}`}
+                    data-form-paused-notice
+                >
+                    <h3 className={`font-semibold ${txPrimary}`}>
+                        {L('Targets are paused until you fill the fields below.', 'الأهداف متوقفة حتى تكمل الحقول التالية.')}
+                    </h3>
+                    <p className={`mt-1 text-sm ${txSecondary}`}>
+                        {L(
+                            `Missing ${missingFields.length} field${missingFields.length === 1 ? '' : 's'}: ${missingFields.join(', ')}.`,
+                            `${missingFields.length === 1 ? 'حقل ناقص' : 'حقول ناقصة'}: ${missingFields.join('، ')}.`,
+                        )}
+                    </p>
+                </div>
+            )}
+
             {/* Conditional fields per funnel-type */}
             {(funnelType === 'paid_event' || funnelType === 'paid_product') && (
                 <div className="space-y-3">
-                    <NumberField label={L('Average order value ($)', 'قيمة الطلب (دولار)')} value={aov} onChange={setAov} isDarkMode={dk} />
+                    <NumberField label={L('Average order value ($)', 'قيمة الطلب (دولار)')} value={aov} onChange={setAov} isDarkMode={dk} required={missingFields.includes('aov')} />
                     <div>
                         <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>{L('Do you have a high-ticket upsell?', 'هل لديك عرض ترويجي عالي القيمة؟')}</label>
                         <div className="flex gap-2">
@@ -749,8 +816,8 @@ export default function FunnelSettingsForm({
                     </div>
                     {hasHto && (
                         <>
-                            <NumberField label={L('Upsell price ($)', 'سعر العرض الترويجي (دولار)')} value={htoPrice} onChange={setHtoPrice} isDarkMode={dk} />
-                            <NumberField label={L('Upsell conversion rate (%)', 'نسبة تحويل العرض الترويجي (%)')} value={htoConversionRate} onChange={setHtoConversionRate} isDarkMode={dk} />
+                            <NumberField label={L('Upsell price ($)', 'سعر العرض الترويجي (دولار)')} value={htoPrice} onChange={setHtoPrice} isDarkMode={dk} required={missingFields.includes('htoPrice')} />
+                            <NumberField label={L('Upsell conversion rate (%)', 'نسبة تحويل العرض الترويجي (%)')} value={htoConversionRate} onChange={setHtoConversionRate} isDarkMode={dk} required={missingFields.includes('htoConversionRate')} />
                         </>
                     )}
                     <div>
@@ -776,24 +843,24 @@ export default function FunnelSettingsForm({
 
             {funnelType === 'free_webinar' && (
                 <div className="space-y-3">
-                    <NumberField label={L('Final offer price ($)', 'سعر العرض النهائي (دولار)')} value={offerPrice} onChange={setOfferPrice} isDarkMode={dk} />
-                    <NumberField label={L('Attendance rate (%)', 'نسبة الحضور من المسجلين (%)')} value={attendanceRate} onChange={setAttendanceRate} isDarkMode={dk} />
-                    <NumberField label={L('Purchase rate from attendees (%)', 'نسبة الشراء من الحضور (%)')} value={buyRateFromAttendees} onChange={setBuyRateFromAttendees} isDarkMode={dk} />
+                    <NumberField label={L('Final offer price ($)', 'سعر العرض النهائي (دولار)')} value={offerPrice} onChange={setOfferPrice} isDarkMode={dk} required={missingFields.includes('offerPrice')} />
+                    <NumberField label={L('Attendance rate (%)', 'نسبة الحضور من المسجلين (%)')} value={attendanceRate} onChange={setAttendanceRate} isDarkMode={dk} required={missingFields.includes('attendanceRate')} />
+                    <NumberField label={L('Purchase rate from attendees (%)', 'نسبة الشراء من الحضور (%)')} value={buyRateFromAttendees} onChange={setBuyRateFromAttendees} isDarkMode={dk} required={missingFields.includes('buyRateFromAttendees')} />
                 </div>
             )}
 
             {funnelType === 'lead_magnet_call' && (
                 <div className="space-y-3">
-                    <NumberField label={L('Final offer price ($)', 'سعر العرض النهائي (دولار)')} value={offerPrice} onChange={setOfferPrice} isDarkMode={dk} />
+                    <NumberField label={L('Final offer price ($)', 'سعر العرض النهائي (دولار)')} value={offerPrice} onChange={setOfferPrice} isDarkMode={dk} required={missingFields.includes('offerPrice')} />
                     {/* Phase 968 — T023. Booking rate + show-up rate are the
                         two new lead-magnet inputs (FR-004, FR-007). The
                         close-rate label is also relabelled per
                         contracts/uiCopy.md #5: "Close rate on calls that
                         happened (%)" / "نسبة الإغلاق في المكالمات التي تمت (%)".
                         The benchmark hint copy (#2, #4, #6) lands in T054. */}
-                    <NumberField label={L('Booking rate (%)', 'نسبة حجز المكالمات من العملاء المحتملين (%)')} value={bookingRate} onChange={setBookingRate} isDarkMode={dk} />
-                    <NumberField label={L('Show-up rate (%)', 'نسبة الحضور للمكالمات المحجوزة (%)')} value={showUpRate} onChange={setShowUpRate} isDarkMode={dk} />
-                    <NumberField label={L('Close rate on calls that happened (%)', 'نسبة الإغلاق في المكالمات التي تمت (%)')} value={leadToCloseRate} onChange={setLeadToCloseRate} isDarkMode={dk} />
+                    <NumberField label={L('Booking rate (%)', 'نسبة حجز المكالمات من العملاء المحتملين (%)')} value={bookingRate} onChange={setBookingRate} isDarkMode={dk} required={missingFields.includes('bookingRate')} />
+                    <NumberField label={L('Show-up rate (%)', 'نسبة الحضور للمكالمات المحجوزة (%)')} value={showUpRate} onChange={setShowUpRate} isDarkMode={dk} required={missingFields.includes('showUpRate')} />
+                    <NumberField label={L('Close rate on calls that happened (%)', 'نسبة الإغلاق في المكالمات التي تمت (%)')} value={leadToCloseRate} onChange={setLeadToCloseRate} isDarkMode={dk} required={missingFields.includes('leadToCloseRate')} />
                 </div>
             )}
 
@@ -808,6 +875,7 @@ export default function FunnelSettingsForm({
                     value={commissionRate}
                     onChange={setCommissionRate}
                     isDarkMode={dk}
+                    required={missingFields.includes('commissionRate')}
                 />
                 <div>
                     <label className={`block text-sm font-medium mb-1 ${txSecondary}`}>
@@ -909,13 +977,45 @@ export default function FunnelSettingsForm({
 
 // ─── Small helper component ─────────────────────────────────
 
-function NumberField({ label, value, onChange, isDarkMode }: { label: string; value: string; onChange: (v: string) => void; isDarkMode: boolean }) {
+function NumberField({
+    label,
+    value,
+    onChange,
+    isDarkMode,
+    required,
+}: {
+    label: string;
+    value: string;
+    onChange: (v: string) => void;
+    isDarkMode: boolean;
+    /** Phase 968 — T038 (FR-052). When true, render a `Required`
+        marker next to the label so the owner can tell which inputs
+        block the save. */
+    required?: boolean;
+}) {
     const inputCls = isDarkMode
         ? 'bg-slate-800 border-slate-700 text-white'
         : 'bg-white border-slate-300 text-slate-900';
+    const labelCls = isDarkMode ? 'text-slate-300' : 'text-slate-700';
+    // Phase 968 — T038. The `Required` marker is a single, bilingual
+    // word, so we inline the translation here rather than threading the
+    // form's `L` closure through a prop. Phase 9 (T057) moves the
+    // string into i18n.tsx as `funnel.needs_attention` alongside the
+    // badge label.
+    const requiredText = isDarkMode ? 'Required' : 'مطلوب';
     return (
         <div>
-            <label className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{label}</label>
+            <label className={`block text-sm font-medium mb-1 ${labelCls}`}>
+                {label}
+                {required ? (
+                    <span
+                        className={`ms-2 text-xs font-semibold ${isDarkMode ? 'text-amber-400' : 'text-amber-600'}`}
+                        data-form-required-marker
+                    >
+                        {`(${requiredText})`}
+                    </span>
+                ) : null}
+            </label>
             <input
                 type="number"
                 inputMode="decimal"
