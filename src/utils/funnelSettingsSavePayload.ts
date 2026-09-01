@@ -17,17 +17,23 @@
 //     pre-existing value with `0` and break the revert-stays-code-
 //     only property the deferred epoch phase relies on.
 //
-//   - paid_product: the form reads the input directly; an empty
-//     string coerces to `0` (paid_product requires the field as a
-//     number — `0` is a legitimate answer: zero upsell-conversion
-//     rate ⇒ no HTO revenue contribution).
+//   - paid_product:  Phase 11 — paid_product no longer reads
+//     `htoConversionRate` (the chain replaces it). The form removed
+//     the input (no rendered field ⇒ state is always ''). The save
+//     payload still carries the hydrated settings value verbatim for
+//     storage retention (the doc slot stays populated so a future
+//     phase that re-introduces the field doesn't lose historical
+//     data). Coercion rules are identical to paid_event: number
+//     passes through, null stays null, undefined collapses to null.
 //
 // Other funnel types (free_webinar / lead_magnet_call) do not carry
-// the field on the save payload; the form omits it entirely. This
-// helper's `else` branch defaults to `0` as a defensive default for
-// any future paid-type funnel that might be added without updating
-// this helper, matching the existing `buildFunnelInputs` fallback
-// at `functions/src/funnelSettings.ts`.
+// the field on the save payload; the form omits it entirely. The
+// helper's defensive `else` branch (paid_product's old "numeric
+// coercion" path) is retained because callers still invoke it for
+// paid_product today (the form removes the input but the state slot
+// is preserved in case a future refactor restores a paid_product
+// numeric input — matches the existing `buildFunnelInputs` fallback
+// at `functions/src/funnelSettings.ts`).
 //
 // Pure: takes the funnel type, the form's state (string-typed), and
 // the hydrated settings value, and returns what the save payload
@@ -49,11 +55,21 @@ export function resolveHtoConversionRateForSave(
         // and reintroduce the Item D bug.
         return settingsValue ?? null;
     }
-    // paid_product: numeric input. Empty string coerces to 0 (the
-    // existing form behavior — paid_product requires the field as
-    // a number, so we apply the `0` default rather than rejecting
-    // the save). Defensive for any other paid-type funnel: same
-    // shape, same default.
+    if (funnelType === 'paid_product') {
+        // Phase 11 — paid_product's input is also removed (the
+        // chain replaces it). Same null pass-through as paid_event:
+        // the doc slot is preserved verbatim for storage retention
+        // (data-model.md §1) — the form's state is always '' because
+        // there is no input. Hydrated value passes through; null
+        // stays null; undefined collapses to null.
+        return settingsValue ?? null;
+    }
+    // Non-paid funnel types land here defensively. The form omits the
+    // field entirely on free_webinar / lead_magnet_call (the chain
+    // carries the close-rate signal for lead_magnet_call; free_webinar
+    // uses buyRateFromAttendees). Match the existing buildFunnelInputs
+    // `?? 0` fallback so a future paid-type funnel that lands here
+    // doesn't silently null out the doc slot.
     if (stateValue === '') return 0;
     const n = Number(stateValue);
     return Number.isFinite(n) ? n : 0;

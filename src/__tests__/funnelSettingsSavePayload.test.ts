@@ -57,39 +57,52 @@ describe("FunnelSettingsForm save payload — htoConversionRate", () => {
         });
     });
 
-    describe("paid_product (input rendered, form reads the field)", () => {
-        it("form value 5 passes through as 5", () => {
+    describe("paid_product (input removed in Phase 11; chain replaces htoConversionRate)", () => {
+        // Phase 11 — paid_product no longer renders the
+        // `htoConversionRate` input (the chain bookingRate × showUpRate
+        // × leadToCloseRate replaces it, the way lead_magnet_call
+        // replaced free_webinar's close rate with explicit stages). The
+        // form's state for this slot is therefore always '' — the
+        // input is hidden. The save payload still carries the doc
+        // slot for storage retention (data-model.md §1); the helper
+        // passes the hydrated settings value verbatim, identical to
+        // paid_event's null pass-through.
+
+        it("stored number 21 passes through (storage retention — doc slot persists)", () => {
             expect(
-                resolveHtoConversionRateForSave("paid_product", "5", null),
-            ).toBe(5);
+                resolveHtoConversionRateForSave("paid_product", "", 21),
+            ).toBe(21);
         });
 
-        it("empty form falls back to 0 (paid_product requires the field as a number)", () => {
+        it("stored null stays null — null pass-through; no overwrite to 0 (THE BUG)", () => {
             expect(
                 resolveHtoConversionRateForSave("paid_product", "", null),
+            ).toBe(null);
+        });
+
+        it("stored undefined collapses to null (brand-new record; storage-retention default)", () => {
+            expect(
+                resolveHtoConversionRateForSave("paid_product", "", undefined),
+            ).toBe(null);
+        });
+
+        it("stored 0 is preserved as 0 (zero is a legitimate stored value)", () => {
+            expect(
+                resolveHtoConversionRateForSave("paid_product", "", 0),
             ).toBe(0);
         });
 
-        it("form value 0 is preserved as 0 (zero upsell-conversion rate is legitimate)", () => {
+        it("form state is irrelevant on paid_product (input is hidden, state is always '')", () => {
+            // Defensive — even if state somehow held a non-empty string,
+            // the helper uses the hydrated settings value. Mirrors
+            // paid_event's invariant: the input never renders, so the
+            // hydrated value is the source.
             expect(
-                resolveHtoConversionRateForSave("paid_product", "0", null),
-            ).toBe(0);
-        });
-
-        it("non-numeric form value falls back to 0 (defensive; backend rejects NaN at validation)", () => {
+                resolveHtoConversionRateForSave("paid_product", "5", null),
+            ).toBe(null);
             expect(
-                resolveHtoConversionRateForSave("paid_product", "abc", null),
-            ).toBe(0);
-        });
-
-        it("settings value is irrelevant on paid_product (form is the source of truth)", () => {
-            // The form's input wins on paid_product; the helper ignores
-            // the hydrated settings value. This mirrors the existing
-            // Phase 8 logic — the form's input was always the source on
-            // paid_product, even pre-Phase-9.
-            expect(
-                resolveHtoConversionRateForSave("paid_product", "5", 21),
-            ).toBe(5);
+                resolveHtoConversionRateForSave("paid_product", "0", 21),
+            ).toBe(21);
         });
     });
 

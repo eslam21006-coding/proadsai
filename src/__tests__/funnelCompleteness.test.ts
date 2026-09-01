@@ -94,15 +94,21 @@ const COMPLETE_PAID_PRODUCT = {
     aov: "100",
     roasTarget: 1.0,
     htoPrice: "3000",
-    htoConversionRate: "5",
+    // Phase 11 production-bug fix: paid_product no longer reads
+    // htoConversionRate — the chain (bookingRate × showUpRate ×
+    // leadToCloseRate) replaces it. The field stays in the fixture for
+    // data-model.md §1 storage retention (the doc slot persists) but
+    // it is NOT part of the completeness rule.
+    htoConversionRate: "",
     eventAttendanceRate: "",
     eventCloseRate: "",
     offerPrice: "",
     attendanceRate: "",
     buyRateFromAttendees: "",
-    leadToCloseRate: "",
-    bookingRate: "",
-    showUpRate: "",
+    // Chain fields — REQUIRED on paid_product + hasHto (Phase 11).
+    leadToCloseRate: "22.5",
+    bookingRate: "7.5",
+    showUpRate: "70",
     commissionRate: "10",
     marginKept: 60 as const,
 };
@@ -206,20 +212,26 @@ const PAID_EVENT_HAS_HTO_MISSING_PRICE = {
     marginKept: 60 as const,
 };
 
-// paid_product hasHto=true but missing htoConversionRate:
-// htoConversionRate IS required on paid_product (FR-019).
+// paid_product hasHto=true but missing the chain (booking / show-up
+// / close). The chain IS required on paid_product + hasHto (Phase 11).
+// htoConversionRate is NOT required (it is the legacy single-rate field
+// the chain replaced). Mirrors the lead_magnet_call "missing chain"
+// pattern at COMPLETE_LEAD_MAGNET above — same shape, different
+// funnel-type semantics on the rates (buyer → call vs lead → call).
 const PAID_PRODUCT_HAS_HTO_MISSING_CONVERSION = {
     funnelType: "paid_product" as const,
     hasHto: true,
     aov: "100",
     roasTarget: 1.0,
     htoPrice: "3000",
-    htoConversionRate: "", // missing — required because paid_product + hasHto
+    htoConversionRate: "", // NOT required (Phase 11)
     eventAttendanceRate: "",
     eventCloseRate: "",
     offerPrice: "",
     attendanceRate: "",
     buyRateFromAttendees: "",
+    // All three chain fields intentionally empty — the test asserts
+    // the missing-field set lists them all.
     leadToCloseRate: "",
     bookingRate: "",
     showUpRate: "",
@@ -283,24 +295,51 @@ describe("FunnelSettingsForm.computeMissingFields (frontend completeness mirror)
         expect(computeMissingFields(COMPLETE_PAID_PRODUCT)).toEqual([]);
     });
 
-    it("paid_product hasHto=true missing htoConversionRate: lists htoConversionRate (FR-019)", () => {
+    it("paid_product hasHto=true missing chain: lists bookingRate + showUpRate + leadToCloseRate (Phase 11)", () => {
+        // The chain (booking × show-up × close) replaces the legacy
+        // htoConversionRate on paid_product. All three rates are
+        // required when hasHto=true. htoConversionRate is NOT listed
+        // (the field is dead at read time — see data-model.md §1
+        // storage retention rationale).
         expect(computeMissingFields(PAID_PRODUCT_HAS_HTO_MISSING_CONVERSION)).toEqual([
-            "htoConversionRate",
+            "bookingRate",
+            "showUpRate",
+            "leadToCloseRate",
         ]);
     });
 
-    it("paid_product hasHto=true missing htoPrice: lists htoPrice + htoConversionRate", () => {
+    it("paid_product hasHto=true missing htoPrice: lists htoPrice + bookingRate + showUpRate + leadToCloseRate", () => {
         const fixture: ComputeMissingFieldsInput = {
             ...PAID_PRODUCT_HAS_HTO_MISSING_CONVERSION,
             htoPrice: "",
         };
-        // Declaration order: htoPrice comes before htoConversionRate
-        // in the form's useMemo body, matching the backend's
-        // requiredFieldsForDoc for paid_product + hasHto.
+        // Declaration order matches the backend's requiredFieldsForDoc
+        // for paid_product + hasHto: htoPrice is the first paid HTO
+        // field, then the three chain rates. htoConversionRate is no
+        // longer in the list (Phase 11).
         expect(computeMissingFields(fixture)).toEqual([
             "htoPrice",
-            "htoConversionRate",
+            "bookingRate",
+            "showUpRate",
+            "leadToCloseRate",
         ]);
+    });
+
+    it("paid_product does NOT require htoConversionRate (Phase 11 — chain replaces it)", () => {
+        // The legacy single-rate field is required on NO funnel type
+        // now: paid_event dropped it in Phase 7 Item C; paid_product
+        // drops it in Phase 11 (this test). A future regression that
+        // re-adds it to paid_product's completeness rule fails here.
+        const fixture: ComputeMissingFieldsInput = {
+            ...PAID_PRODUCT_HAS_HTO_MISSING_CONVERSION,
+            bookingRate: "7.5",
+            showUpRate: "70",
+            leadToCloseRate: "22.5",
+            // htoConversionRate intentionally empty.
+        };
+        const missing = computeMissingFields(fixture);
+        expect(missing).not.toContain("htoConversionRate");
+        expect(missing).toEqual([]);
     });
 
     it("free_webinar empty: lists offerPrice + attendanceRate + buyRateFromAttendees + commissionRate + marginKept", () => {

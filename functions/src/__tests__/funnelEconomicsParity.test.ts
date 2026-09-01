@@ -164,50 +164,64 @@ test("parity — paid_product empty: aov + roasTarget + commissionRate + marginK
 });
 
 test("parity — paid_product complete (hasHto=true): []", () => {
+    // Phase 11 — completeness requires the chain
+    // bookingRate × showUpRate × leadToCloseRate on paid_product +
+    // hasHto. htoConversionRate is no longer required (it was the
+    // legacy single-rate field the chain replaced).
     const doc = fixture({
         funnelType: "paid_product",
         hasHto: true,
         aov: 100,
         roasTarget: 1.0,
         htoPrice: 3000,
-        htoConversionRate: 5,
+        // Chain — REQUIRED.
+        bookingRate: 7.5,
+        showUpRate: 70,
+        leadToCloseRate: 22.5,
+        // htoConversionRate intentionally omitted — no longer required.
         commissionRate: 10,
         marginKept: 60,
     });
     assert.deepEqual(missingRequiredFields(doc), []);
 });
 
-test("parity — paid_product hasHto=true missing htoConversionRate: lists htoConversionRate (FR-019)", () => {
+test("parity — paid_product hasHto=true missing chain: lists bookingRate + showUpRate + leadToCloseRate (Phase 11)", () => {
+    // The legacy test for htoConversionRate-on-paid_product (FR-019)
+    // is replaced here: the chain replaces the single rate. All three
+    // are missing — the predicate returns all three in declaration
+    // order.
     const doc = fixture({
         funnelType: "paid_product",
         hasHto: true,
         aov: 100,
         roasTarget: 1.0,
         htoPrice: 3000,
-        htoConversionRate: null,
+        // bookingRate / showUpRate / leadToCloseRate intentionally null.
+        // htoConversionRate also null — no longer required.
         commissionRate: 10,
         marginKept: 60,
     });
     assert.deepEqual(
         ([...missingRequiredFields(doc)]).sort(),
-        ["htoConversionRate"].sort(),
+        ["bookingRate", "leadToCloseRate", "showUpRate"].sort(),
     );
 });
 
-test("parity — paid_product hasHto=true missing htoPrice: lists htoPrice + htoConversionRate", () => {
+test("parity — paid_product hasHto=true missing htoPrice: lists htoPrice + chain (Phase 11)", () => {
     const doc = fixture({
         funnelType: "paid_product",
         hasHto: true,
         aov: 100,
         roasTarget: 1.0,
         htoPrice: null,
-        htoConversionRate: null,
+        // bookingRate / showUpRate / leadToCloseRate intentionally null.
+        // htoConversionRate also null — no longer required.
         commissionRate: 10,
         marginKept: 60,
     });
     assert.deepEqual(
         ([...missingRequiredFields(doc)]).sort(),
-        ["htoConversionRate", "htoPrice"].sort(),
+        ["bookingRate", "htoPrice", "leadToCloseRate", "showUpRate"].sort(),
     );
 });
 
