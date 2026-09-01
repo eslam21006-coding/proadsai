@@ -6,8 +6,14 @@
 **Base:** `main`
 **Diff:** 39 files, +11,200 / −311
 
-**Verdict: 14 PASS · 1 FAIL · 1 PASS-WITH-EXCEPTIONS.**
-One blocking-quality defect (Item 6, Arabic copy) and two non-blocking findings (Item 16, Item 17).
+**Audit snapshot refreshed 2026-09-01 against `6473958`** — the round-15 commit that
+resolved Item 6. Every §-level finding below was taken at `87fa4b3`; where the tree
+has since moved, the section carries a **RESOLVED** note naming the fixing commit.
+Item 6 is the only such section.
+
+**Verdict (as of `6473958`): 15 PASS · 1 PASS-WITH-EXCEPTIONS · 1 FAIL (non-blocking, Item 17).**
+*(Verdict at `87fa4b3`, when the audit was taken: 14 PASS · 1 FAIL · 1 PASS-WITH-EXCEPTIONS.)*
+Item 6 (Arabic copy) is fixed in `6473958`; two non-blocking findings remain (Item 16, Item 17).
 Nothing in the economics, the version gate, the completeness rule, or the guard is wrong.
 
 | # | Item | Result |
@@ -17,7 +23,7 @@ Nothing in the economics, the version gate, the completeness rule, or the guard 
 | 3 | Completeness rule | **PASS** |
 | 4 | Completeness badge | **PASS** |
 | 5 | SC-11 guard | **PASS** |
-| 6 | Arabic copy | **FAIL** |
+| 6 | Arabic copy | **RESOLVED in `6473958`** (FAIL at `87fa4b3`) |
 | 7 | No epoch fragments | **PASS** |
 | 8 | Paid-event ROAS default | **PASS** |
 | 9 | `htoConversionRate` retention | **PASS** |
@@ -284,7 +290,17 @@ malformed suppressions hard-fail). FR-060 satisfied.
 
 ---
 
-## 6. ARABIC COPY — **FAIL**
+## 6. ARABIC COPY — **RESOLVED in `6473958`** (FAIL at `87fa4b3`)
+
+> **Status.** The defect described below was real at `87fa4b3` and is **fixed** by
+> commit `6473958` ("round-15 — replace projection-active explainer (Item 6)").
+> `FunnelSettingsForm.tsx` no longer contains «الـ back-end» in any user-facing
+> string — the only remaining `back-end` occurrences in that file are two
+> explanatory code comments (`:1241`, `:1244`) recording why the wording was
+> replaced. The corrected pair is pinned as **row 26a** in
+> `contracts/uiCopy.md:137`, with the mutual-exclusivity note at `:139`. The
+> record below is kept for the durable audit trail; it does **not** describe the
+> current tree.
 
 Every `L()` pair added or modified on this branch was enumerated from the diff,
 plus both new `i18n.tsx` keys.
@@ -302,9 +318,9 @@ wording. The label «قيمة الطلب» is used unchanged. **Correct.**
 Arabic or English. `getCostMetric`'s `"CPA"`/`"CPL"` returns are server-side only
 (`cpaEconomics.ts:413`) and never rendered.
 
-### The defect
+### The defect (as found at `87fa4b3` — fixed in `6473958`)
 
-`src/components/FunnelSettingsForm.tsx:1239` — the paid-event
+At `87fa4b3`, `src/components/FunnelSettingsForm.tsx:1239` — the paid-event
 projection-path-active explainer:
 
 ```
@@ -339,19 +355,25 @@ under ≈$1,900 at the §6.3 inputs, contradicting the earlier claim that it was
 
 **Suggested wording**, matching the register of the already-approved string 26:
 
-| | Current | Suggested |
+| | Then-current (`87fa4b3`) | Suggested |
 |---|---|---|
 | EN | …because your back-end economics (event attendance × high-ticket close) are now the binding constraint. | …because the later value of your event is now the lower of the two. |
 | AR | …لأن اقتصاديات الـ back-end (نسبة الحضور × نسبة الإغلاق) هي القيد الفعّال. | …لأن قيمة العرض التالي في فعاليتك أصبحت هي الأقل بين الرقمين. |
 
-**Does it block merge?** It is a **one-line copy fix in a user-facing string, with
-no logic, schema, or test impact.** It does not endanger data, learning, or the
-corrected math. My recommendation: **fix before merge** — it is cheap, and it is
-precisely the class of defect (untranslated jargon reaching an Arabic-first
-owner) that the phase's own SC-011/SC-016 review gate exists to catch. Shipping
-it would mean the recorded Arabic review passed a string it should have failed.
-Add the corrected pair as row 26a in `contracts/uiCopy.md` so the variant is
-pinned and cannot drift again.
+**What actually landed in `6473958`** (pinned as row 26a in `contracts/uiCopy.md:137`):
+
+| | Shipped |
+|---|---|
+| EN | Your target follows the later value of your event, because it is now the lower of the two. |
+| AR | هدفك محسوب على قيمة العرض التالي في فعاليتك، لأنها أصبحت الأقل بين الرقمين. |
+
+**Did it block merge?** It was a **one-line copy fix in a user-facing string, with
+no logic, schema, or test impact.** It did not endanger data, learning, or the
+corrected math. The recommendation was **fix before merge** — cheap, and precisely
+the class of defect (untranslated jargon reaching an Arabic-first owner) that the
+phase's own SC-011/SC-016 review gate exists to catch. **That fix has landed**, and
+the corrected pair is pinned as row 26a in `contracts/uiCopy.md` so the variant
+cannot drift again.
 
 ---
 
@@ -835,13 +857,14 @@ The two new test files lint clean (0 errors), as does
 
 ## Merge recommendation
 
-**Merge after one fix.**
+**Merge.** The one blocking fix this audit asked for has landed.
 
-**Fix before merge (1):**
+**Fixed since the audit was taken (1):**
 
-- **Item 6** — replace «الـ back-end» at `FunnelSettingsForm.tsx:1239` and realign
-  the English at `:1238`. Add the pair to `contracts/uiCopy.md` as row 26a so the
-  projection-active variant is pinned. One-line change, no logic impact.
+- **Item 6** — «الـ back-end» replaced in the projection-active explainer, English
+  at `:1238` realigned, pair pinned as row 26a in `contracts/uiCopy.md`. Landed in
+  `6473958`. No logic impact; the commit records `tsc -b` clean, 64 frontend /
+  306 backend tests green, and the SC-11 guard still at exactly 8 suppressions.
 
 **Do before merge (hygiene, 2):**
 
