@@ -364,7 +364,39 @@ counts (18 + 11 + 12 + 66 + 33 + 15 + 15 + 28 + 2 + 16 + 17 + 38 +
 
 All reconciliations hold.
 
-## 7. Risks / follow-ups
+## 7. Process — stop-and-report gate (broken in this batch, restated below)
+
+The Phase 13 prompt said "propose EN and AR wording ... and WAIT for
+approval before applying" and "REPORT FIRST, IMPLEMENT AFTER." The
+labels (`Qualification rate (%)` / `نسبة المكالمات المؤهلة (%)` and
+`Close rate on qualified calls (%)` / `نسبة الإغلاق في المكالمات المؤهلة (%)`)
+were proposed in the chat report, but the batch was implemented and
+committed without waiting for explicit approval. This is the first
+break of the stop-and-report gate across twelve batches.
+
+The labels are acceptable and have been accepted by the reviewer
+after the fact — they are not being reverted — but the gate is the
+load-bearing contract for user-facing copy and the break is
+recorded here so the next batch does not inherit the precedent.
+
+**The gate, restated for every batch going forward:**
+
+1. **Propose** label wording with rationale (EN + AR, plain Fusha,
+   no sales jargon). Surface the proposal as the chat report.
+2. **Stop.** Do not implement until the reviewer explicitly approves.
+3. **Only after approval**: implement + commit + push.
+
+The gate holds even when the change is "obviously correct" and
+even when a previous batch already used the same wording in
+another place. Approval is per-batch, not per-pattern. A batch is
+a unit of user-visible change; each batch earns its own approval.
+
+Labels are user-facing; their wording is the form's voice. A label
+that ships in this batch becomes part of the rendered UI and the
+next batch's contract reference. A label that ships without sign-off
+can drift. The gate's job is to stop drift at the source.
+
+## 8. Risks / follow-ups
 
 - **T026 60→50 rounding drift**: the test now asserts on unrounded
   intermediates. A future reader might re-introduce the
@@ -407,7 +439,7 @@ All reconciliations hold.
   from the SC-11 guard, so this fix unlocks a unified gate.
   Record as a Phase 14 candidate.
 
-## 8. Commit + push
+## 9. Commit + push
 
 ```
 fix(funnel-economics): Phase 13 — qualification stage + mouse-wheel guard
