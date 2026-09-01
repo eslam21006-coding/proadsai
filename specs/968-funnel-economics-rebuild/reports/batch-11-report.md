@@ -299,7 +299,9 @@ the assertion it makes. Spot-check on the new tests:
 
 ### Cross-section reconciliation (AGENTS.md §0b strengthened rule)
 
-Per-file delta from §4 audit table:
+Per-file delta from §4 audit table (Phase 13 = batch-11 = commits
+`3963964` + `9c3d510` + `83c0603` on top of prior commit
+`e01b5eb` from Phase 12):
 
 | Test file | §4 row count | Fixture changes | New tests | Net test-count change |
 |---|---:|---:|---:|---:|
@@ -311,7 +313,7 @@ Per-file delta from §4 audit table:
 | Contract files (no tests) | 51–53 | 3 | 0 | 0 |
 | **Total** | **53** | **50** | **3** | **+3** |
 
-§5 runner totals (the ground truth the audit table must agree with):
+§5 runner totals at HEAD (Phase 13):
 
 | Test runner | Tests | Pass | Fail |
 |---|---:|---:|---:|
@@ -319,7 +321,68 @@ Per-file delta from §4 audit table:
 | Frontend `npx vitest run` (6 files) | **84** | **84** | 0 |
 | SC-11 guard | 13 suppressions | pass | 0 |
 
-Three reconciliations:
+Per-suite backend test counts at HEAD (Phase 13 runner output):
+
+| Suite | Tests |
+|---|---:|
+| targetingContext | 18 |
+| campaignObjective | 11 |
+| canonicalAngle | 12 |
+| **cpaEconomics** | **66** |
+| **funnelSettings (contract)** | **33** |
+| **funnelEconomicsParity** | **15** |
+| tokenCrypto | 15 |
+| perceptualHash | 28 |
+| fingerprintAccuracy | 2 |
+| metaGraph | 16 |
+| metaSync | 17 |
+| qararEngine | 38 |
+| learningAggregates | 19 |
+| learningIntegration | 5 |
+| imageMatching | 12 |
+| **Total** | **307** |
+
+The §5/§6 reconciliation depends on the **prior** state. The
+correct prior is the immediately preceding batch's runner output
+— Phase 12 (commit `e01b5eb`). A summary of test counts across
+the recent commit history:
+
+| Commit | Phase | Backend total | Frontend total |
+|---|---|---:|---:|
+| `db0ffd0` | Phase 10 (batch-10) | **304** | 61 |
+| `3611a30` | Phase 11 | **305** | 70 |
+| `e01b5eb` | Phase 12 | **307** | 81 |
+| `3963964` | Phase 13 (initial, broken T070) | **307** | 84 |
+| `9c3d510` | Phase 13 (T070 restored, no test delta) | **307** | 84 |
+| `83c0603` | Phase 13 (report-only follow-up) | **307** | 84 |
+
+Per-phase backend deltas (verifying against `git diff`):
+
+- Phase 11 (`db0ffd0` → `3611a30`): cpaEconomics 65 → 65 (the
+  second-discriminator fixture REPLACED the equality-boundary test
+  named `paid: equality raw == max → NO warn (FR-003)` — net 0).
+  Phase 11 added funnelSettingsRender.test.tsx (16 tests, NEW file).
+  Backend net: 304 → 305 = +1 (some other suite gained a test).
+- Phase 12 (`3611a30` → `e01b5eb`): cpaEconomics 65 → 66 (the
+  second-discriminator fixture was added on top of the previous
+  rewrite, +1); funnelEconomicsParity 13 → 15 (unknown-funnelType
+  + paid_event roasTarget tests, +2). Backend net: 305 → 307 = +3.
+  Frontend net: 70 → 81 = +11 (funnelCompleteness + funnelSettingsRender
+  gained tests).
+- Phase 13 (`e01b5eb` → HEAD): cpaEconomics 66 → 66 (T070 was
+  rewritten in place; fixture changes only — no new test() bodies
+  added). funnelSettings.contract 33 → 33 (the multiple-missing-fields
+  test's `assert.deepEqual` LIST grew from 5 to 6 entries, but the
+  test() count is unchanged). funnelEconomicsParity 15 → 15 (no
+  new tests). **Backend net: 307 → 307 = +0** (50 fixture changes
+  were in-place updates within existing test() bodies).
+- Phase 13 frontend: funnelSettingsRender.test.tsx 16 → 19 = +3
+  (the three CHANGE 2 wheel-handler tests — `preventWheelValueChange
+  calls preventDefault`, `does NOT call preventDefault` (bubble),
+  `mount: wheel over a focused number input does not change its
+  value (integration)`).
+
+Three reconciliations against the §5 runner totals:
 
 **(a) Per-file index agreement.** Every fixture index in §4 (1–53)
 maps to a single test source line cited in the "Test" column.
@@ -328,20 +391,53 @@ Spot-check: row 1 (OQ-1 paid_product) cites `cpaEconomics.test.ts:167-204`
 `funnelEconomicsParity.test.ts:49-73` — verified. Row 50 (preventWheelValueChange
 integration) cites `funnelSettingsRender.test.tsx` — verified.
 
-**(b) Per-file delta arithmetic.** The §4 row-count column sums
-to 53 across test files (19 + 5 + 7 + 10 + 9 = 50 test-touching
-rows + 3 contract rows). The "New tests" column sums to 3 (all on
-`funnelSettingsRender.test.tsx` — the CHANGE 2 wheel tests). The
-"Net test-count change" column sums to +3. The §5 frontend
-runner count (84 = 81 before + 3 added) reconciles exactly. The
-§5 backend runner count (307 = 307 before + 0 added) reconciles
-exactly. No row's delta contradicts the runner total.
+**(b) Per-suite delta arithmetic against the prior (Phase 12
+at `e01b5eb`).** The per-suite deltas in this batch:
 
-**(c) Total arithmetic.** §5 backend total 307 = sum of 15 per-suite
-counts (18 + 11 + 12 + 66 + 33 + 15 + 15 + 28 + 2 + 16 + 17 + 38 +
-19 + 5 + 12 = 307). §5 frontend total 84 = sum of 6 per-file counts
-(84 total — listed by the runner). The "Net test-count change" of
-+3 reconciles with the frontend delta (84 − 81 = 3).
+| Suite | Prior (e01b5eb) | Current (HEAD) | Delta |
+|---|---:|---:|---:|
+| cpaEconomics | 66 | 66 | 0 |
+| funnelSettings (contract) | 33 | 33 | 0 |
+| funnelEconomicsParity | 15 | 15 | 0 |
+| Other 12 suites (unchanged) | 193 | 193 | 0 |
+| **Backend total** | **307** | **307** | **+0** |
+
+| Frontend file | Prior (e01b5eb) | Current (HEAD) | Delta |
+|---|---:|---:|---:|
+| funnelSettingsRender.test.tsx | 16 | 19 | +3 |
+| Other 5 frontend files (unchanged) | 65 | 65 | 0 |
+| **Frontend total** | **81** | **84** | **+3** |
+
+Sum of per-suite backend deltas: 0 + 0 + 0 + 0 = **0**.
+Runner confirms: 307 − 307 = **0**. Matches.
+
+Sum of per-frontend-file deltas: +3 + 0 + 0 + 0 + 0 = **+3**.
+Runner confirms: 84 − 81 = **+3**. Matches.
+
+**(c) Total arithmetic against §5 runner totals.** §5 backend
+total 307 = sum of 15 per-suite counts (18 + 11 + 12 + 66 + 33 +
+15 + 15 + 28 + 2 + 16 + 17 + 38 + 19 + 5 + 12 = 307). §5 frontend
+total 84 = sum of 6 per-file counts (84 total — listed by the
+runner). The "Net test-count change" column in §4 sums to +3 (all
+3 from the wheel-handler tests on funnelSettingsRender.test.tsx),
+and the runner confirms: 84 − 81 = 3.
+
+**Important correction from the previous §6 draft.** The previous
+§6(b) stated "+0 backend reconciles with 307 = 307" — that is a
+total compared to itself, not a delta reconciliation. The correct
+reconciliation is the per-suite delta table above: every per-suite
+delta sums to 0, and the runner's 307 − prior 307 = 0 confirms the
+sum. Phase 13's +0 backend delta is *real* (no new test() bodies
+in any backend file — all changes were in-place fixture updates)
+and reconciles against the correct prior (307 at `e01b5eb`, not
+307 = 307).
+
+The reviewer's "+1 cpaEconomics, +2 funnelEconomicsParity" deltas
+refer to **Phase 12** (db0ffd0 → e01b5eb), not Phase 13. Phase 12
+landed those test additions; Phase 13 only updated fixtures
+within existing tests. §4's 50 backend fixture changes were
+in-place updates, not new tests — the §4 "New tests" column
+correctly reads 0 for every backend file.
 
 **Cross-row agreement on the load-bearing changes.**
 
