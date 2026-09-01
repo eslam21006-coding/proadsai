@@ -136,16 +136,20 @@ function makeSettingsDoc(
         attendanceRate: funnelType === "free_webinar" ? 25 : null,
         buyRateFromAttendees: funnelType === "free_webinar" ? 2 : null,
         // Chain rates — lead_magnet_call uses the unprefixed slots
-        // (`bookingRate` / `showUpRate` / `leadToCloseRate`); paid_product
-        // uses the dedicated `product*`-prefixed slots (Phase 12 — the
-        // buyer-side rates are scoped distinctly from the lead-side
-        // rates). On paid_event / free_webinar both sets carry `null`.
-        leadToCloseRate: funnelType === "lead_magnet_call" ? 22.5 : null,
+        // (`bookingRate` / `showUpRate` / `qualificationRate` /
+        // `leadToCloseRate`); paid_product uses the dedicated
+        // `product*`-prefixed slots (Phase 12 — the buyer-side rates
+        // are scoped distinctly from the lead-side rates). Phase 13
+        // added the qualification stage to both chains. On
+        // paid_event / free_webinar all six carry `null`.
+        leadToCloseRate: funnelType === "lead_magnet_call" ? 25 : null,
         bookingRate: funnelType === "lead_magnet_call" ? 7.5 : null,
-        showUpRate: funnelType === "lead_magnet_call" ? 70 : null,
-        productCloseRate: funnelType === "paid_product" ? 22.5 : null,
-        productBookingRate: funnelType === "paid_product" ? 7.5 : null,
-        productShowUpRate: funnelType === "paid_product" ? 70 : null,
+        showUpRate: funnelType === "lead_magnet_call" ? 60 : null,
+        qualificationRate: funnelType === "lead_magnet_call" ? 50 : null,
+        productCloseRate: funnelType === "paid_product" ? 25 : null,
+        productBookingRate: funnelType === "paid_product" ? 20 : null,
+        productShowUpRate: funnelType === "paid_product" ? 60 : null,
+        productQualificationRate: funnelType === "paid_product" ? 50 : null,
         commissionRate: 10,
         marginKept: 60,
         derived: {
@@ -308,12 +312,14 @@ describe("paid_event — rendered field set", () => {
         expect(isLabelRendered("High ticket price ($)")).toBe(true);
     });
 
-    it("NEGATIVE: must NOT render paid_product's chain (booking rate, attendance rate, high ticket close rate) or free_webinar / lead_magnet_call fields", async () => {
+    it("NEGATIVE: must NOT render paid_product's chain (booking rate, attendance rate, qualification rate, close rate on qualified calls) or free_webinar / lead_magnet_call fields", async () => {
         await renderFormFor(makeSettingsDoc("paid_event"));
         // paid_product chain — must not appear on paid_event.
         expect(isLabelRendered("Booking rate (%)")).toBe(false);
         expect(isLabelRendered("Attendance rate (%)")).toBe(false);
+        expect(isLabelRendered("Qualification rate (%)")).toBe(false);
         expect(isLabelRendered("High ticket close rate (%)")).toBe(false);
+        expect(isLabelRendered("Close rate on qualified calls (%)")).toBe(false);
         // free_webinar fields.
         expect(isLabelRendered("Final offer price ($)")).toBe(false);
         // lead_magnet_call fields.
@@ -328,14 +334,20 @@ describe("paid_event — rendered field set", () => {
 // ─── paid_product ───────────────────────────────────────────────────────────
 
 describe("paid_product — rendered field set", () => {
-    it("POSITIVE: renders AOV, hasHto toggle, htoPrice (after toggle), booking rate, attendance rate, high ticket close rate, ROAS, commission, margin", async () => {
+    it("POSITIVE: renders AOV, hasHto toggle, htoPrice (after toggle), booking rate, attendance rate, qualification rate, close rate on qualified calls, ROAS, commission, margin", async () => {
+        // Phase 13 — qualification rate added between attendance and
+        // close; close rate label updated to "Close rate on qualified
+        // calls (%)" (was "High ticket close rate (%)") — the 25%
+        // benchmark now applies to QUALIFIED attended calls, not all
+        // attended calls.
         await renderFormFor(makeSettingsDoc("paid_product"));
         expect(isLabelRendered("Average order value ($)")).toBe(true);
         expect(isLabelRendered("Do you have a high-ticket offer?")).toBe(true);
         // htoPrice is gated by hasHto; default hasHto=false ⇒ not yet.
         expect(isLabelRendered("Booking rate (%)")).toBe(true);
         expect(isLabelRendered("Attendance rate (%)")).toBe(true);
-        expect(isLabelRendered("High ticket close rate (%)")).toBe(true);
+        expect(isLabelRendered("Qualification rate (%)")).toBe(true);
+        expect(isLabelRendered("Close rate on qualified calls (%)")).toBe(true);
         expect(isLabelRendered("Target ROAS")).toBe(true);
         expect(isLabelRendered("Sales commission (%)")).toBe(true);
         expect(isLabelRendered("Margin you want to keep (%)")).toBe(true);
@@ -359,11 +371,14 @@ describe("paid_product — rendered field set", () => {
     });
 
     it("NEGATIVE: must NOT render free_webinar / lead_magnet_call fields", async () => {
+        // Phase 13 — old close-rate labels (lead-side and paid-side)
+        // both must be absent on paid_product.
         await renderFormFor(makeSettingsDoc("paid_product"));
         expect(isLabelRendered("Final offer price ($)")).toBe(false);
         expect(isLabelRendered("Purchase rate from attendees (%)")).toBe(false);
         expect(isLabelRendered("Show-up rate (%)")).toBe(false);
         expect(isLabelRendered("Close rate on calls that happened (%)")).toBe(false);
+        expect(isLabelRendered("High ticket close rate (%)")).toBe(false);
     });
 
     it("NEGATIVE: must NOT render the legacy htoConversionRate field (the chain replaces it)", async () => {
@@ -390,6 +405,8 @@ describe("free_webinar — rendered field set", () => {
     });
 
     it("NEGATIVE: must NOT render paid fields or lead_magnet_call fields", async () => {
+        // Phase 13 — old close-rate labels (lead-side and paid-side)
+        // both must be absent on free_webinar.
         await renderFormFor(makeSettingsDoc("free_webinar"));
         expect(isLabelRendered("Average order value ($)")).toBe(false);
         expect(isLabelRendered("Do you have a high-ticket offer?")).toBe(false);
@@ -398,32 +415,39 @@ describe("free_webinar — rendered field set", () => {
         expect(isLabelRendered("Show-up rate (%)")).toBe(false);
         expect(isLabelRendered("Close rate on calls that happened (%)")).toBe(false);
         expect(isLabelRendered("High ticket close rate (%)")).toBe(false);
+        expect(isLabelRendered("Close rate on qualified calls (%)")).toBe(false);
     });
 });
 
 // ─── lead_magnet_call ───────────────────────────────────────────────────────
 
 describe("lead_magnet_call — rendered field set", () => {
-    it("POSITIVE: renders final offer price, booking rate, show-up rate, close rate on calls that happened, commission, margin", async () => {
+    it("POSITIVE: renders final offer price, booking rate, show-up rate, qualification rate, close rate on qualified calls, commission, margin", async () => {
+        // Phase 13 — qualification rate added between show-up and
+        // close; close rate label updated to "Close rate on qualified
+        // calls (%)" (was "Close rate on calls that happened (%)") —
+        // the 25% benchmark now applies to QUALIFIED attended calls,
+        // not all attended calls.
         await renderFormFor(makeSettingsDoc("lead_magnet_call"));
         expect(isLabelRendered("Final offer price ($)")).toBe(true);
         expect(isLabelRendered("Booking rate (%)")).toBe(true);
         expect(isLabelRendered("Show-up rate (%)")).toBe(true);
-        expect(isLabelRendered("Close rate on calls that happened (%)")).toBe(true);
+        expect(isLabelRendered("Qualification rate (%)")).toBe(true);
+        expect(isLabelRendered("Close rate on qualified calls (%)")).toBe(true);
         expect(isLabelRendered("Sales commission (%)")).toBe(true);
         expect(isLabelRendered("Margin you want to keep (%)")).toBe(true);
     });
 
     it("NEGATIVE: must NOT render paid fields or free_webinar fields", async () => {
+        // Phase 13 — old close-rate labels (lead-side and paid-side)
+        // both must be absent on lead_magnet_call.
         await renderFormFor(makeSettingsDoc("lead_magnet_call"));
         expect(isLabelRendered("Average order value ($)")).toBe(false);
         expect(isLabelRendered("Do you have a high-ticket offer?")).toBe(false);
         expect(isLabelRendered("Target ROAS")).toBe(false);
         expect(isLabelRendered("Attendance rate (%)")).toBe(false);
         expect(isLabelRendered("Purchase rate from attendees (%)")).toBe(false);
-        // The paid_product chain must not appear on lead_magnet_call
-        // (the labels overlap with lead_magnet_call's existing labels,
-        // but the HTO close rate is distinct — it must be absent).
+        expect(isLabelRendered("Close rate on calls that happened (%)")).toBe(false);
         expect(isLabelRendered("High ticket close rate (%)")).toBe(false);
         // Paid-event fields must not appear on lead_magnet_call.
         expect(isLabelRendered("Attendance from ticket buyers (%)")).toBe(false);
@@ -441,4 +465,70 @@ describe("every funnel type — commission + margin always rendered", () => {
             expect(isLabelRendered("Margin you want to keep (%)")).toBe(true);
         });
     }
+});
+
+// ─── CHANGE 2 — wheel scroll does not change number-input values ────────────
+//
+// The browser default for a focused `<input type="number">` is to
+// increment or decrement the value when the user scrolls. On the
+// funnel form this lets a coach silently alter their targets by
+// scrolling the page. `preventWheelValueChange` is the handler wired
+// onto every number input via the `NumberField` component (it lives
+// in `src/components/FunnelSettingsForm.tsx`).
+
+import { preventWheelValueChange } from "../components/FunnelSettingsForm";
+
+describe("NumberField — wheel scroll does not change value (CHANGE 2)", () => {
+    it("preventWheelValueChange calls preventDefault when wheel target is the focused input", () => {
+        // Positive — direct wheel-on-focused-input is suppressed.
+        const preventDefault = vi.fn();
+        const sentinel = {} as EventTarget;
+        const evt = {
+            target: sentinel,
+            currentTarget: sentinel,
+            preventDefault,
+        };
+        preventWheelValueChange(evt);
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+    });
+
+    it("preventWheelValueChange does NOT call preventDefault when target !== currentTarget (bubble case)", () => {
+        // Negative — a wheel event that bubbled UP from a child
+        // element is not suppressed. Only direct wheel on the
+        // focused input is blocked.
+        const preventDefault = vi.fn();
+        preventWheelValueChange({
+            target: {} as EventTarget,
+            currentTarget: {} as EventTarget,
+            preventDefault,
+        });
+        expect(preventDefault).not.toHaveBeenCalled();
+    });
+
+    it("mount: wheel over a focused number input does not change its value (integration)", async () => {
+        // Integration — verifies the handler is wired up on the
+        // real DOM the form renders. jsdom does not simulate the
+        // browser's value-mutation-on-wheel behavior, so we can't
+        // observe the bug directly. We verify the contract: a wheel
+        // dispatched on a focused number input triggers our handler
+        // (preventDefault called), and the value is unchanged.
+        const settings = makeSettingsDoc("lead_magnet_call");
+        await renderFormFor(settings);
+        const input = document.querySelector(
+            'input[type="number"]',
+        ) as HTMLInputElement;
+        expect(input).not.toBeNull();
+        // Pin the starting value.
+        const before = input.value;
+        input.focus();
+        const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true });
+        const preventDefaultSpy = vi.spyOn(wheel, "preventDefault");
+        input.dispatchEvent(wheel);
+        expect(preventDefaultSpy).toHaveBeenCalledTimes(1);
+        // Value unchanged. jsdom doesn't simulate the browser's
+        // default behavior, so the assertion is "unchanged AND
+        // handler called preventDefault" — together they pin the
+        // contract end-to-end.
+        expect(input.value).toBe(before);
+    });
 });

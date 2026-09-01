@@ -61,12 +61,16 @@ interface FSL {
     leadToCloseRate?: number | null;
     bookingRate?: number | null;
     showUpRate?: number | null;
+    // Phase 13 — `lead_magnet_call`'s qualification stage.
+    qualificationRate?: number | null;
     // Phase 12 — paid_product only. SCOPED to paid_product to keep
     // buyer-side rates distinct from lead-side rates; null on every
     // other funnel type. See FunnelSettingsDoc's docstring for
     // productBookingRate for the full rationale.
     productBookingRate?: number | null;
     productShowUpRate?: number | null;
+    // Phase 13 — paid_product's qualification stage.
+    productQualificationRate?: number | null;
     productCloseRate?: number | null;
     commissionRate?: number | null;
     marginKept?: number | null;
@@ -88,10 +92,14 @@ function fixture(overrides: Partial<FSL>): FSL {
         leadToCloseRate: null,
         bookingRate: null,
         showUpRate: null,
-        // Phase 12 — paid_product only (null on this default
-        // `paid_event` fixture, per the doc shape).
+        // Phase 13 — qualification stage (null on this default
+        // `paid_event` fixture).
+        qualificationRate: null,
+        // Phase 12 + Phase 13 — paid_product only (null on this
+        // default `paid_event` fixture, per the doc shape).
         productBookingRate: null,
         productShowUpRate: null,
+        productQualificationRate: null,
         productCloseRate: null,
         commissionRate: null,
         marginKept: null,
@@ -176,13 +184,14 @@ test("parity — paid_product empty: aov + roasTarget + commissionRate + marginK
 });
 
 test("parity — paid_product complete (hasHto=true): []", () => {
-    // Phase 11 + Phase 12 — completeness requires the chain
-    // productBookingRate × productShowUpRate × productCloseRate on
-    // paid_product + hasHto. Phase 12 renamed the storage slots
-    // from the overloaded bookingRate/showUpRate/leadToCloseRate
-    // (which lead_magnet_call still owns) to the `product*` prefix.
-    // htoConversionRate is no longer required (it was the legacy
-    // single-rate field the chain replaced).
+    // Phase 11 + Phase 12 + Phase 13 — completeness requires the chain
+    // productBookingRate × productShowUpRate × productQualificationRate
+    // × productCloseRate on paid_product + hasHto. Phase 12 renamed
+    // the storage slots from the overloaded
+    // bookingRate/showUpRate/leadToCloseRate (which lead_magnet_call
+    // still owns) to the `product*` prefix. Phase 13 added the
+    // qualification stage. htoConversionRate is no longer required
+    // (it was the legacy single-rate field the chain replaced).
     const doc = fixture({
         funnelType: "paid_product",
         hasHto: true,
@@ -191,8 +200,9 @@ test("parity — paid_product complete (hasHto=true): []", () => {
         htoPrice: 3000,
         // Chain — REQUIRED.
         productBookingRate: 7.5,
-        productShowUpRate: 70,
-        productCloseRate: 22.5,
+        productShowUpRate: 60,
+        productQualificationRate: 50,
+        productCloseRate: 25,
         // htoConversionRate intentionally omitted — no longer required.
         commissionRate: 10,
         marginKept: 60,
@@ -200,45 +210,46 @@ test("parity — paid_product complete (hasHto=true): []", () => {
     assert.deepEqual(missingRequiredFields(doc), []);
 });
 
-test("parity — paid_product hasHto=true missing chain: lists productBookingRate + productShowUpRate + productCloseRate (Phase 11)", () => {
+test("parity — paid_product hasHto=true missing chain: lists productBookingRate + productShowUpRate + productQualificationRate + productCloseRate (Phase 13)", () => {
     // The legacy test for htoConversionRate-on-paid_product (FR-019)
-    // is replaced here: the chain replaces the single rate. All three
-    // are missing — the predicate returns all three in declaration
-    // order. Phase 12 renamed the storage slots to `product*`.
+    // is replaced here: the chain replaces the single rate. All four
+    // are missing — the predicate returns all four in declaration
+    // order. Phase 12 renamed the storage slots to `product*`;
+    // Phase 13 added the qualification stage.
     const doc = fixture({
         funnelType: "paid_product",
         hasHto: true,
         aov: 100,
         roasTarget: 1.0,
         htoPrice: 3000,
-        // productBookingRate / productShowUpRate / productCloseRate
-        // intentionally null. htoConversionRate also null — no longer
-        // required.
+        // productBookingRate / productShowUpRate /
+        // productQualificationRate / productCloseRate intentionally
+        // null. htoConversionRate also null — no longer required.
         commissionRate: 10,
         marginKept: 60,
     });
     assert.deepEqual(
         ([...missingRequiredFields(doc)]).sort(),
-        ["productBookingRate", "productCloseRate", "productShowUpRate"].sort(),
+        ["productBookingRate", "productCloseRate", "productQualificationRate", "productShowUpRate"].sort(),
     );
 });
 
-test("parity — paid_product hasHto=true missing htoPrice: lists htoPrice + chain (Phase 11)", () => {
+test("parity — paid_product hasHto=true missing htoPrice: lists htoPrice + chain (Phase 13)", () => {
     const doc = fixture({
         funnelType: "paid_product",
         hasHto: true,
         aov: 100,
         roasTarget: 1.0,
         htoPrice: null,
-        // productBookingRate / productShowUpRate / productCloseRate
-        // intentionally null. htoConversionRate also null — no longer
-        // required.
+        // productBookingRate / productShowUpRate /
+        // productQualificationRate / productCloseRate intentionally
+        // null. htoConversionRate also null — no longer required.
         commissionRate: 10,
         marginKept: 60,
     });
     assert.deepEqual(
         ([...missingRequiredFields(doc)]).sort(),
-        ["productBookingRate", "htoPrice", "productCloseRate", "productShowUpRate"].sort(),
+        ["productBookingRate", "htoPrice", "productCloseRate", "productQualificationRate", "productShowUpRate"].sort(),
     );
 });
 
@@ -268,7 +279,9 @@ test("parity — free_webinar complete: []", () => {
     assert.deepEqual(missingRequiredFields(doc), []);
 });
 
-test("parity — lead_magnet_call empty: offerPrice + leadToCloseRate + bookingRate + showUpRate + commissionRate + marginKept", () => {
+test("parity — lead_magnet_call empty: offerPrice + leadToCloseRate + bookingRate + showUpRate + qualificationRate + commissionRate + marginKept", () => {
+    // Phase 13 — qualification stage added to the lead-side chain.
+    // Same completeness rule shape as paid_product's product* chain.
     const doc = fixture({ funnelType: "lead_magnet_call" });
     assert.deepEqual(
         ([...missingRequiredFields(doc)]).sort(),
@@ -278,18 +291,22 @@ test("parity — lead_magnet_call empty: offerPrice + leadToCloseRate + bookingR
             "leadToCloseRate",
             "marginKept",
             "offerPrice",
+            "qualificationRate",
             "showUpRate",
         ].sort(),
     );
 });
 
 test("parity — lead_magnet_call complete: []", () => {
+    // Phase 13 — qualification stage added to the lead-side chain.
+    // Benchmarks revised: 7.5 / 60 / 50 / 25.
     const doc = fixture({
         funnelType: "lead_magnet_call",
         offerPrice: 3000,
-        leadToCloseRate: 22.5,
+        leadToCloseRate: 25,
         bookingRate: 7.5,
-        showUpRate: 70,
+        showUpRate: 60,
+        qualificationRate: 50,
         commissionRate: 10,
         marginKept: 60,
     });

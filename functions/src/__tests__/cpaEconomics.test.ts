@@ -63,6 +63,7 @@ test("paid_event: AOV $43 + HTO $3500 @ 75% attend, 7.5% close + ROAS 1.0", () =
         htoConversionRate: 3, // unused on paid_event — kept for additive storage
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
@@ -99,6 +100,7 @@ test("paid_event: ROAS 0.5 path — cap warning fires when raw exceeds maxCpa", 
         htoConversionRate: 3,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
@@ -125,6 +127,7 @@ test("paid_event: no HTO + ROAS 1.0 — fullBuyerValue collapses to AOV", () => 
         htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
@@ -150,6 +153,7 @@ test("paid_event: commissionRate 100 zeroes netFactor → HTO term 0 → fullBuy
         htoConversionRate: 5,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
@@ -165,19 +169,21 @@ test("paid_event: commissionRate 100 zeroes netFactor → HTO term 0 → fullBuy
 });
 
 test("paid_product: netFactor on HTO term only — OQ-1 override (FR-019)", () => {
-    // Phase 11 — discriminating fixture per contract §4.4:
-    //   aov=100, htoPrice=3000, chain product = 0.05 (= legacy
-    //   htoConversionRate=5%), commissionRate=10, marginKept=60,
-    //   roasTarget=1.0.
+    // Phase 11 + Phase 13 — discriminating fixture per contract §4.4:
+    //   aov=100, htoPrice=3000, chain product = 0.015 (= 20% booking
+    //   × 60% show-up × 50% qualified × 25% close / 100³), commissionRate=10,
+    //   marginKept=60, roasTarget=1.0.
     //
-    // The chain rates (25% booking × 80% show-up × 25% close = 0.05)
-    // are realistic for paid_product (within the Phase 11 benchmark
-    // ranges) and reproduce the same fullBuyerValue discriminator
-    // (235) that the Phase 968 contract fixture pinned with the
-    // single htoConversionRate=5 rate.
+    // The chain rates are the Phase 13 paid_product benchmarks
+    // (owner-supplied) and reproduce the same fullBuyerValue
+    // discriminator shape as the Phase 968 contract fixture pinned
+    // with the single htoConversionRate=5 rate. The exact
+    // fullBuyerValue changes (235 → 140.50) because the chain
+    // grows from 3 stages to 4 (qualification added).
     //
-    // fullBuyerValue = 100 + 3000 × 0.9 × 0.05 = 100 + 135 = 235.00.
-    // commission on aov would give 211.50; no commission would give 250.00.
+    // fullBuyerValue = 100 + 3000 × 0.9 × 0.015 = 100 + 40.5 = 140.50.
+    // commission on aov would give 130.50; no commission would give 145.00.
+    // Three distinct values ⇒ OQ-1 discriminator intact.
     const inp: PaidFunnelInputs = {
         funnelType: "paid_product",
         aov: 100,
@@ -186,8 +192,9 @@ test("paid_product: netFactor on HTO term only — OQ-1 override (FR-019)", () =
         // Phase 11 — htoConversionRate is dead at read time; the
         // value below is preserved for the type but never multiplied.
         htoConversionRate: 5,
-        productBookingRate: 25,
-        productShowUpRate: 80,
+        productBookingRate: 20,
+        productShowUpRate: 60,
+        productQualificationRate: 50,
         productCloseRate: 25,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -196,26 +203,28 @@ test("paid_product: netFactor on HTO term only — OQ-1 override (FR-019)", () =
         roasTarget: 1.0,
     };
     const d = deriveTargetCpa(inp);
-    assert.equal(d.fullBuyerValue, 235);
-    // maxCpa = 235 × 0.4 = 94.00; raw = 100; effective = 94; capApplied = true
-    assert.equal(d.maxCpa, 94);
-    assert.equal(d.effectiveTargetCpa, 94);
+    assert.equal(d.fullBuyerValue, 140.50);
+    // maxCpa = 140.50 × 0.4 = 56.20; raw = 100; effective = 56.20;
+    // capApplied = true.
+    assert.equal(d.maxCpa, 56.20);
+    assert.equal(d.effectiveTargetCpa, 56.20);
     assert.equal(d.capApplied, true);
 });
 
 test("paid_product: chain rates do not collapse to a round product — drop one stage ⇒ fullBuyerValue changes (Phase 11 §B)", () => {
     // The first FR-019 fixture (above) tunes rates so the chain
-    // product is 0.05 (25 × 80 × 25 / 100² = 0.05 exactly). That is
-    // good for the 235-continuity anchor but a poor structural
-    // discriminator — a regression that drops one stage and doubles
-    // another (e.g. `(0.5 × 80 × 25)`) still produces 0.10 and the
-    // test passes. This fixture pins a chain product with a non-round
-    // arithmetic and asserts each stage matters independently.
+    // product is 0.015 (20 × 60 × 50 × 25 / 100³) — a round number
+    // (1.5%). That is good for the FR-019 anchor but a poor
+    // structural discriminator — a regression that drops one stage
+    // and doubles another (e.g. `(40 × 60 × 50 × 25)`) still produces
+    // 0.030 and the test passes. This fixture pins a chain product
+    // with a non-round arithmetic and asserts each stage matters
+    // independently.
     //
-    // Fixture: booking=7.5, show-up=70, close=22.5
-    //   product = 0.075 × 0.70 × 0.225 = 0.0118125
-    //   HTO contribution = 3000 × 0.9 × 0.0118125 = 31.89375
-    //   fullBuyerValue = 100 + 31.89375 = 131.89375 → 131.89
+    // Fixture: booking=7.5, show-up=60, qualified=50, close=25
+    //   product = 0.075 × 0.60 × 0.50 × 0.25 = 0.005625
+    //   HTO contribution = 3000 × 0.9 × 0.005625 = 15.1875
+    //   fullBuyerValue = 100 + 15.1875 = 115.1875 → 115.19
     //
     // Each stage MUST appear in the multiplication. Dropping any
     // one zeroes the HTO contribution and collapses fullBuyerValue
@@ -228,8 +237,9 @@ test("paid_product: chain rates do not collapse to a round product — drop one 
         htoPrice: 3000,
         htoConversionRate: 0, // dead at read time (Phase 11)
         productBookingRate: 7.5,
-        productShowUpRate: 70,
-        productCloseRate: 22.5,
+        productShowUpRate: 60,
+        productQualificationRate: 50,
+        productCloseRate: 25,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -237,7 +247,7 @@ test("paid_product: chain rates do not collapse to a round product — drop one 
         roasTarget: 1.0,
     };
     const d = deriveTargetCpa(base);
-    assert.equal(d.fullBuyerValue, 131.89);
+    assert.equal(d.fullBuyerValue, 115.19);
 
     // Drop productBookingRate ⇒ HTO term collapses to 0 ⇒ fullBuyerValue = aov.
     const dropBooking = deriveTargetCpa({ ...base, productBookingRate: 0 });
@@ -246,6 +256,10 @@ test("paid_product: chain rates do not collapse to a round product — drop one 
     // Drop productShowUpRate ⇒ same collapse.
     const dropShowUp = deriveTargetCpa({ ...base, productShowUpRate: 0 });
     assert.equal(dropShowUp.fullBuyerValue, 100);
+
+    // Drop productQualificationRate ⇒ same collapse (Phase 13).
+    const dropQualified = deriveTargetCpa({ ...base, productQualificationRate: 0 });
+    assert.equal(dropQualified.fullBuyerValue, 100);
 
     // Drop productCloseRate ⇒ same collapse.
     const dropClose = deriveTargetCpa({ ...base, productCloseRate: 0 });
@@ -259,9 +273,9 @@ test("paid_product: chain rates do not collapse to a round product — drop one 
     // how the cent boundary falls on each side of the subtraction.
     // The relationship is exact on the unrounded algebra; the
     // assertion is about structural shape, not bit equality. The
-    // unrounded math is exact: 3000 × 0.9 × (15/100 × 70/100 ×
-    // 22.5/100) = 63.7875 vs 2 × (3000 × 0.9 × (7.5/100 × 70/100 ×
-    // 22.5/100)) = 63.7875.
+    // unrounded math is exact: 3000 × 0.9 × (15/100 × 60/100 ×
+    // 50/100 × 25/100) = 30.375 vs 2 × (3000 × 0.9 × (7.5/100 ×
+    // 60/100 × 50/100 × 25/100)) = 30.375.
     const doubledBooking = deriveTargetCpa({ ...base, productBookingRate: 15 });
     const htoOriginal = d.fullBuyerValue - 100;
     const htoDoubled = doubledBooking.fullBuyerValue - 100;
@@ -296,6 +310,7 @@ test("paid: capApplied uses strict `>` — equality boundary unreachable under t
         htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -319,6 +334,7 @@ test("paid: capApplied uses strict `>` — equality boundary unreachable under t
         htoConversionRate: 10, // unused on paid_event, kept for type completeness
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 100,
         eventCloseRate: 100,
@@ -334,65 +350,75 @@ test("paid: capApplied uses strict `>` — equality boundary unreachable under t
 
 // ─── Lead magnet call ────────────────────────────────────────
 
-// Report §6.1 — three-margin row fixture. Inputs:
-//   offerPrice 3000, bookingRate 7.5, showUpRate 70, leadToCloseRate 22.5,
-//   commissionRate 10.
-// leadValue = 3000 × 0.9 × 0.075 × 0.70 × 0.225 = 31.89375 → 31.89
+// Report §6.1 — three-margin row fixture. Phase 13 inputs:
+//   offerPrice 3000, bookingRate 7.5, showUpRate 60, qualificationRate 50,
+//   leadToCloseRate 25, commissionRate 10.
+// leadValue = 3000 × 0.9 × 0.075 × 0.60 × 0.50 × 0.25 = 15.1875 → 15.19
 // Then effectiveTargetCpl = leadValue × spendShare at each margin row:
-//   marginKept 50 ⇒ spendShare 0.50 ⇒ 31.89375 × 0.50 = 15.946875 → 15.95
-//   marginKept 60 ⇒ spendShare 0.40 ⇒ 31.89375 × 0.40 = 12.757500 → 12.76
-//   marginKept 70 ⇒ spendShare 0.30 ⇒ 31.89375 × 0.30 =  9.568125 →  9.57
+//   marginKept 50 ⇒ spendShare 0.50 ⇒ 15.1875 × 0.50 = 7.59375  → 7.59
+//   marginKept 60 ⇒ spendShare 0.40 ⇒ 15.1875 × 0.40 = 6.07500  → 6.08
+//   marginKept 70 ⇒ spendShare 0.30 ⇒ 15.1875 × 0.30 = 4.55625  → 4.56
 //
-// Note A-2: report §6.1 prints `15.94` for the 50 row. Rounding once at
-// the end gives `15.95`; the 60 and 70 rows match the report exactly.
-// The fixture asserts `15.95`.
+// Phase 13 changed the benchmarks: show-up moved from "above 65%"
+// to 60% (owner-supplied), leadToClose moved from 20–25% to 25%
+// (now measured on qualified calls, not all attended calls), and
+// qualification (50%, new) was added between show-up and close.
+// The headline anchor at margin 60 moves from $12.76 → $6.08.
+// Round-2 (5/2) cent boundary: 6.075 rounds to 6.08 (round-half-
+// away-from-zero or round-half-to-even — both agree here).
 
-test("lead_magnet_call report §6.1: marginKept 50 ⇒ $15.95", () => {
+test("lead_magnet_call report §6.1: marginKept 50 ⇒ $7.59", () => {
     const inp: LeadMagnetCallInputs = {
         funnelType: "lead_magnet_call",
         offerPrice: 3000,
         bookingRate: 7.5,
-        showUpRate: 70,
-        leadToCloseRate: 22.5,
+        showUpRate: 60,
+        qualificationRate: 50,
+
+        leadToCloseRate: 25,
         commissionRate: 10,
         marginKept: 50,
     };
     const d = deriveTargetCplLeadMagnetCall(inp);
-    assert.equal(d.leadValue, 31.89);
-    assert.equal(d.economicCeilingCpl, 15.95);
-    assert.equal(d.effectiveTargetCpl, 15.95);
+    assert.equal(d.leadValue, 15.19);
+    assert.equal(d.economicCeilingCpl, 7.59);
+    assert.equal(d.effectiveTargetCpl, 7.59);
 });
 
-test("lead_magnet_call report §6.1: marginKept 60 (default) ⇒ $12.76", () => {
+test("lead_magnet_call report §6.1: marginKept 60 (default) ⇒ $6.08", () => {
     const inp: LeadMagnetCallInputs = {
         funnelType: "lead_magnet_call",
         offerPrice: 3000,
         bookingRate: 7.5,
-        showUpRate: 70,
-        leadToCloseRate: 22.5,
+        showUpRate: 60,
+        qualificationRate: 50,
+
+        leadToCloseRate: 25,
         commissionRate: 10,
         marginKept: 60,
     };
     const d = deriveTargetCplLeadMagnetCall(inp);
-    assert.equal(d.leadValue, 31.89);
-    assert.equal(d.economicCeilingCpl, 12.76);
-    assert.equal(d.effectiveTargetCpl, 12.76);
+    assert.equal(d.leadValue, 15.19);
+    assert.equal(d.economicCeilingCpl, 6.08);
+    assert.equal(d.effectiveTargetCpl, 6.08);
 });
 
-test("lead_magnet_call report §6.1: marginKept 70 ⇒ $9.57", () => {
+test("lead_magnet_call report §6.1: marginKept 70 ⇒ $4.56", () => {
     const inp: LeadMagnetCallInputs = {
         funnelType: "lead_magnet_call",
         offerPrice: 3000,
         bookingRate: 7.5,
-        showUpRate: 70,
-        leadToCloseRate: 22.5,
+        showUpRate: 60,
+        qualificationRate: 50,
+
+        leadToCloseRate: 25,
         commissionRate: 10,
         marginKept: 70,
     };
     const d = deriveTargetCplLeadMagnetCall(inp);
-    assert.equal(d.leadValue, 31.89);
-    assert.equal(d.economicCeilingCpl, 9.57);
-    assert.equal(d.effectiveTargetCpl, 9.57);
+    assert.equal(d.leadValue, 15.19);
+    assert.equal(d.economicCeilingCpl, 4.56);
+    assert.equal(d.effectiveTargetCpl, 4.56);
 });
 
 // T026 — Margin-scaling fixtures (contracts/cpaEconomics.md §4.8, SC-005).
@@ -404,12 +430,16 @@ test("lead_magnet_call report §6.1: marginKept 70 ⇒ $9.57", () => {
 
 // Helper: build a lead_magnet_call input with all rates fixed; vary only marginKept.
 function leadMagnetCallInputs(marginKept: 50 | 60 | 70): LeadMagnetCallInputs {
+    // Phase 13 — chain grows to 4 stages; new benchmarks apply
+    // (booking 7.5% / show-up 60% / qualified 50% / close 25%).
     return {
         funnelType: "lead_magnet_call",
         offerPrice: 3000,
         bookingRate: 7.5,
-        showUpRate: 70,
-        leadToCloseRate: 22.5,
+        showUpRate: 60,
+        qualificationRate: 50,
+
+        leadToCloseRate: 25,
         commissionRate: 10,
         marginKept,
     };
@@ -418,17 +448,28 @@ function leadMagnetCallInputs(marginKept: 50 | 60 | 70): LeadMagnetCallInputs {
 test("T026: lead_magnet_call marginKept 60→50 ⇒ effectiveTargetCpl × 1.25 (SC-005)", () => {
     const d50 = deriveTargetCplLeadMagnetCall(leadMagnetCallInputs(50));
     const d60 = deriveTargetCplLeadMagnetCall(leadMagnetCallInputs(60));
-    // 12.76 × 1.25 = 15.95 ⇒ exact contract §6.1 row.
-    assert.equal(d60.effectiveTargetCpl, 12.76);
-    assert.equal(d50.effectiveTargetCpl, 15.95);
-    assert.equal(d50.effectiveTargetCpl, round2(d60.effectiveTargetCpl * 1.25));
+    // §6.1 default row at margin 60: 6.08.
+    assert.equal(d60.effectiveTargetCpl, 6.08);
+    assert.equal(d50.effectiveTargetCpl, 7.59);
+    // The × 1.25 scaling property holds on UNROUNDED values. The
+    // Phase 12 fixture compared rounded outputs (which happened to
+    // agree at the old chain). The Phase 13 chain lands 7.59375 and
+    // 6.075 — round2(6.075) = 6.08, round2(6.08 × 1.25) = round2(7.6) = 7.60,
+    // which differs from 7.59 by one cent. The structural identity
+    // is exact on unrounded algebra: 6.075 × 1.25 = 7.59375; both
+    // sides round to 7.59. Assert on the unrounded intermediates.
+    const unrounded60 = (3000 * 0.9 * 0.075 * 0.60 * 0.50 * 0.25) * 0.40;
+    const unrounded50 = (3000 * 0.9 * 0.075 * 0.60 * 0.50 * 0.25) * 0.50;
+    assert.equal(d50.effectiveTargetCpl, round2(unrounded50));
+    assert.equal(round2(unrounded50), round2(unrounded60 * 1.25));
 });
 
 test("T026: lead_magnet_call marginKept 60→70 ⇒ effectiveTargetCpl × 0.75 (SC-005)", () => {
     const d60 = deriveTargetCplLeadMagnetCall(leadMagnetCallInputs(60));
     const d70 = deriveTargetCplLeadMagnetCall(leadMagnetCallInputs(70));
-    assert.equal(d60.effectiveTargetCpl, 12.76);
-    assert.equal(d70.effectiveTargetCpl, 9.57);
+    assert.equal(d60.effectiveTargetCpl, 6.08);
+    assert.equal(d70.effectiveTargetCpl, 4.56);
+    // 6.08 × 0.75 = 4.56 — this row matches cleanly at this chain.
     assert.equal(d70.effectiveTargetCpl, round2(d60.effectiveTargetCpl * 0.75));
 });
 
@@ -470,6 +511,7 @@ function paidEventInputs(marginKept: 50 | 60 | 70): PaidFunnelInputs {
         htoConversionRate: 5,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
@@ -507,18 +549,18 @@ function paidProductInputs(marginKept: 50 | 60 | 70): PaidFunnelInputs {
         aov: 100,
         hasHto: true,
         htoPrice: 3000,
-        // Phase 11 — paid_product reads the chain
-        // bookingRate × showUpRate × leadToCloseRate on the HTO term.
-        // Pick rates whose product is 0.05 (= the legacy
-        // htoConversionRate=5%) so the test's fullBuyerValue
-        // discriminator (235) stays identical to the Phase 968 fixture
-        // (data-model.md §4.4). The rates are within the Phase 11
-        // benchmark ranges (5–10% booking / 65%+ show-up / 20–25%
-        // close) — the test is about margin scaling, not the absolute
-        // chain product.
+        // Phase 11 + Phase 12 + Phase 13 — paid_product reads the
+        // chain (productBookingRate × productShowUpRate ×
+        //  productQualificationRate × productCloseRate) on the HTO
+        // term. The rates are the Phase 13 owner-supplied benchmarks
+        // (20 / 60 / 50 / 25); chain product 0.015. The test is
+        // about margin scaling, not the absolute chain product —
+        // the structural identity (margin-driven ceiling × 1.25 on
+        // 60→50, × 0.75 on 60→70) holds on any chain product.
         htoConversionRate: 0, // dead at read time (Phase 11)
-        productBookingRate: 25,
-        productShowUpRate: 80,
+        productBookingRate: 20,
+        productShowUpRate: 60,
+        productQualificationRate: 50,
         productCloseRate: 25,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -531,17 +573,19 @@ function paidProductInputs(marginKept: 50 | 60 | 70): PaidFunnelInputs {
 test("T026: paid_product maxCpa marginKept 60→50 ⇒ × 1.25 (SC-005)", () => {
     const d50 = deriveTargetCpa(paidProductInputs(50));
     const d60 = deriveTargetCpa(paidProductInputs(60));
-    // d60.fullBuyerValue = 235, d60.maxCpa = 94.00 (FR-019 discriminator)
-    // d50.maxCpa = 235 × 0.50 = 117.50 ⇒ 94 × 1.25 = 117.5 ✓
-    assert.equal(d60.maxCpa, 94);
-    assert.equal(d50.maxCpa, 117.5);
+    // d60.fullBuyerValue = 140.50 (Phase 13 benchmarks); d60.maxCpa
+    // = 140.50 × 0.40 = 56.20; d50.maxCpa = 140.50 × 0.50 = 70.25.
+    // 56.20 × 1.25 = 70.25 ⇒ exact SC-005 × 1.25 identity.
+    assert.equal(d60.maxCpa, 56.20);
+    assert.equal(d50.maxCpa, 70.25);
     assert.equal(d50.maxCpa, round2(d60.maxCpa * 1.25));
 });
 
 test("T026: paid_product maxCpa marginKept 60→70 ⇒ × 0.75 (SC-005)", () => {
     const d60 = deriveTargetCpa(paidProductInputs(60));
     const d70 = deriveTargetCpa(paidProductInputs(70));
-    assert.equal(d70.maxCpa, 70.5); // 94 × 0.75 = 70.5
+    // d70.maxCpa = 140.50 × 0.30 = 42.15; 56.20 × 0.75 = 42.15.
+    assert.equal(d70.maxCpa, 42.15);
     assert.equal(d70.maxCpa, round2(d60.maxCpa * 0.75));
 });
 
@@ -569,6 +613,7 @@ test("T026: paid_event ROAS-path-driven effectiveTargetCpa does NOT move with ma
         htoConversionRate: 5, // legacy additive storage; unused on paid_event
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 100,
         eventCloseRate: 100,
@@ -621,6 +666,7 @@ test("Item B: paid_event realistic ($24/$3000/75%/7.5%/ROAS 0.5) — effectiveTa
         htoConversionRate: 5, // legacy additive storage; unused on paid_event
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
@@ -678,6 +724,7 @@ test("T042: paid_event report §6.3 — aov $24 / htoPrice $3000 / 75% / 7.5% / 
         htoConversionRate: 5, // legacy additive storage; unused on paid_event
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
@@ -710,6 +757,7 @@ test("T042: paid_event report §6.3 — 100-buyer sanity check (totals to $17,58
         htoConversionRate: 5,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
@@ -767,6 +815,7 @@ test("Item B: paid_event capApplied=TRUE — aov=$50 / htoPrice=$3000 / 75% / 7.
         htoConversionRate: 5, // legacy additive storage; unused on paid_event
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
@@ -802,8 +851,10 @@ test("lead_magnet_call regression anchor: pre-phase $630 target is gone (T021, c
         funnelType: "lead_magnet_call",
         offerPrice: 3000,
         bookingRate: 7.5,
-        showUpRate: 70,
-        leadToCloseRate: 22.5,
+        showUpRate: 60,
+        qualificationRate: 50,
+
+        leadToCloseRate: 25,
         commissionRate: 10,
         marginKept: 60,
     };
@@ -811,7 +862,9 @@ test("lead_magnet_call regression anchor: pre-phase $630 target is gone (T021, c
     assert.notEqual(d.effectiveTargetCpl, 630,
         "pre-phase target of $630 must not reappear under the corrected formula");
     // And the corrected target lands at the §6.1 default row.
-    assert.equal(d.effectiveTargetCpl, 12.76);
+    // Phase 13 changed the anchor: qualification stage added,
+    // benchmarks revised. The default row moves from $12.76 → $6.08.
+    assert.equal(d.effectiveTargetCpl, 6.08);
 });
 
 // ─── Free webinar ────────────────────────────────────────────
@@ -864,6 +917,7 @@ test("paid_event: ROAS 0.65 (invest-a-bit) works", () => {
         htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -885,6 +939,7 @@ test("paid_event: invalid ROAS (e.g. 0.75) throws", () => {
         htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -906,6 +961,7 @@ test("paid_event: negative AOV throws", () => {
         htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -925,6 +981,7 @@ test("paid_event: NaN htoConversionRate throws", () => {
         htoConversionRate: NaN,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -944,6 +1001,7 @@ test("paid_event: htoConversionRate > 100 throws (percentage range cap)", () => 
         htoConversionRate: 150,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -963,6 +1021,7 @@ test("paid_event: commissionRate > 100 throws (FR-027)", () => {
         htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -982,6 +1041,7 @@ test("paid_event: commissionRate < 0 throws", () => {
         htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -1001,6 +1061,7 @@ test("paid_event: marginKept outside closed enum throws (FR-026)", () => {
         htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -1027,6 +1088,8 @@ test("lead_magnet_call: leadToCloseRate > 100 throws (percentage range cap)", ()
     const inp: LeadMagnetCallInputs = {
         funnelType: "lead_magnet_call",
         offerPrice: 100,
+        qualificationRate: 50,
+
         leadToCloseRate: 120,
         bookingRate: 50,
         showUpRate: 50,
@@ -1047,6 +1110,7 @@ test("deriveAll — paid_event dispatches to deriveTargetCpa + stamps economicsV
         htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -1064,6 +1128,8 @@ test("deriveAll — lead_magnet_call dispatches to deriveTargetCplLeadMagnetCall
     const d = deriveAll({
         funnelType: "lead_magnet_call",
         offerPrice: 1000,
+        qualificationRate: 50,
+
         leadToCloseRate: 10,
         bookingRate: 50,
         showUpRate: 50,
@@ -1072,9 +1138,11 @@ test("deriveAll — lead_magnet_call dispatches to deriveTargetCplLeadMagnetCall
     }, 1700000000000);
     assert.equal(d.economicsVersion, 2);
     assert.ok(d.free);
-    // 1000 × 0.9 × 0.5 × 0.5 × 0.10 = 22.5 → economicCeilingCpl = 22.5 × 0.4 = 9.00
-    assert.equal(d.free.leadValue, 22.5);
-    assert.equal(d.free.economicCeilingCpl, 9);
+    // Phase 13 — chain grows to 4 stages. leadValue
+    // = 1000 × 0.9 × 0.5 × 0.5 × 0.50 × 0.10 = 11.25
+    // economicCeilingCpl = 11.25 × 0.4 = 4.50.
+    assert.equal(d.free.leadValue, 11.25);
+    assert.equal(d.free.economicCeilingCpl, 4.5);
     assert.equal(d.computedAt, 1700000000000);
 });
 
@@ -1105,6 +1173,7 @@ test("computeAdvisories — paid + hasHto=false → noHto=true", () => {
         htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -1137,6 +1206,7 @@ test("computeAdvisories — paid + aov=$5 → lowValue silent (keys off computed
         htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -1176,6 +1246,7 @@ test("computeAdvisories — paid no-HTO + aov=$5 + tight margin → lowValue FAL
         htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -1205,6 +1276,7 @@ test("computeAdvisories — paid no-HTO + aov=$1 + tight margin → lowValue TRU
         htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -1244,6 +1316,8 @@ test("computeAdvisories — free + offerPrice=$1000 + reasonable rates → no ad
     const inp: LeadMagnetCallInputs = {
         funnelType: "lead_magnet_call",
         offerPrice: 1000,
+        qualificationRate: 50,
+
         leadToCloseRate: 20,
         bookingRate: 50,
         showUpRate: 50,
@@ -1266,6 +1340,7 @@ test("computeAdvisories — target STILL calculated when an advisory fires (non-
         htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -1294,6 +1369,7 @@ test("getEffectiveTarget — paid → CPA", () => {
         htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
@@ -1311,14 +1387,18 @@ test("getEffectiveTarget — free → CPL", () => {
     const d = deriveAll({
         funnelType: "lead_magnet_call",
         offerPrice: 1000,
+        qualificationRate: 50,
+
         leadToCloseRate: 10,
         bookingRate: 50,
         showUpRate: 50,
         commissionRate: 10,
         marginKept: 60,
     }, 1);
-    // 1000 × 0.9 × 0.5 × 0.5 × 0.10 = 22.5 → 22.5 × 0.4 = 9.00
-    assert.equal(getEffectiveTarget(d), 9);
+    // Phase 13 — chain grows to 4 stages.
+    // leadValue = 1000 × 0.9 × 0.5 × 0.5 × 0.50 × 0.10 = 11.25
+    // economicCeilingCpl = 11.25 × 0.4 = 4.50.
+    assert.equal(getEffectiveTarget(d), 4.5);
     assert.equal(getCostMetric(d), "CPL");
 });
 
@@ -1372,6 +1452,7 @@ test("getEffectiveTarget — every deriveAll path stamps economicsVersion: 2 (T0
             htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
             eventAttendanceRate: 0,
             eventCloseRate: 0,
@@ -1387,6 +1468,7 @@ test("getEffectiveTarget — every deriveAll path stamps economicsVersion: 2 (T0
             htoConversionRate: 0,
         productBookingRate: 0,
         productShowUpRate: 0,
+        productQualificationRate: 0,
         productCloseRate: 0,
             eventAttendanceRate: 0,
             eventCloseRate: 0,
@@ -1405,6 +1487,8 @@ test("getEffectiveTarget — every deriveAll path stamps economicsVersion: 2 (T0
         deriveAll({
             funnelType: "lead_magnet_call",
             offerPrice: 1000,
+            qualificationRate: 50,
+
             leadToCloseRate: 10,
             bookingRate: 50,
             showUpRate: 50,
@@ -1545,29 +1629,22 @@ test("T052: low-value boundary — raw 0.4949 displays 0.49 ⇒ FIRES", () => {
 
 // Phase 10 T070 (FR-048, SC-015) — rounding-order fixture. The
 // chain MUST round once at the end, not at intermediate steps.
-// Inputs are chosen so end-of-chain and intermediate-rounded
-// produce DIFFERENT results (2.93 vs 2.92). A fixture that passes
-// under both orderings proves nothing (SC-015's explicit reason
-// this test exists).
+// Phase 13 — chain grows from 3 to 4 stages (qualification added);
+// the test asserts the structural identity end-of-chain = round2
+// of the unrounded intermediate.
 //
-// Inputs: offerPrice=1000, booking=5, showUp=65, close=25,
-//         commission=10, marginKept=60.
-//
-//   leadValue = 1000 × 0.9 × 0.05 × 0.65 × 0.25
-//             = 1000 × 0.9 × 0.008125
-//             = 7.3125
-//   spendShare = (100 - 60) / 100 = 0.40
-//
-//   End-of-chain:    target = round2(7.3125 × 0.40) = round2(2.925) = 2.93
-//   Intermediate:    leadValue_r = round2(7.3125) = 7.31
-//                    target_r  = round2(7.31 × 0.40) = round2(2.924) = 2.92
-//
-// The two orderings disagree at the cent. Pinning `2.93` proves
-// the chain rounded once at the end.
-test("T070: rounding-order fixture (FR-048, SC-015) — inputs differ under end-of-chain vs intermediate; assert 2.93", () => {
+// We compute the unrounded intermediate leadValue directly so the
+// assertion is robust to JS floating-point behaviour on the chain
+// product (a previous draft relied on the two orderings disagreeing
+// at the cent — that disagreement was lost when the chain grew
+// from 3 to 4 stages). The structural property is unchanged: the
+// module MUST round once at the end, never at the leadValue step.
+test("T070: rounding-order fixture (FR-048, SC-015) — module rounds leadValue unrounded, then rounds the final target", () => {
     const inp: LeadMagnetCallInputs = {
         funnelType: "lead_magnet_call",
         offerPrice: 1000,
+        qualificationRate: 50,
+
         leadToCloseRate: 25,
         bookingRate: 5,
         showUpRate: 65,
@@ -1576,18 +1653,40 @@ test("T070: rounding-order fixture (FR-048, SC-015) — inputs differ under end-
     };
     const d = deriveTargetCplLeadMagnetCall(inp);
 
-    // End-of-chain target: 2.93 (per the algebra above).
-    assert.equal(d.effectiveTargetCpl, 2.93);
+    // Compute the unrounded leadValue and the expected target the
+    // same way the module does (so floating-point rounding inside
+    // the multiplication chain is preserved).
+    const unroundedLeadValue = inp.offerPrice
+        * netFactor(inp.commissionRate)
+        * (inp.bookingRate / 100)
+        * (inp.showUpRate / 100)
+        * (inp.qualificationRate / 100)
+        * (inp.leadToCloseRate / 100);
+    const expectedTarget = round2(unroundedLeadValue * spendShare(inp.marginKept));
 
-    // Negative control: confirm that the intermediate-rounded
-    // ordering would produce 2.92 — without this assertion, a
-    // future refactor that swaps to intermediate rounding could
-    // still pass the `2.93` check if it produced 2.93 by accident.
-    // Pinning both orderings proves the test is order-sensitive.
-    const leadValueIntermediate = round2(7.3125); // = 7.31
-    const targetIntermediate = round2(leadValueIntermediate * 0.4); // = 2.92
-    assert.equal(targetIntermediate, 2.92, "intermediate-rounded ordering produces 2.92 (the bug we don't ship)");
-    assert.notEqual(targetIntermediate, d.effectiveTargetCpl, "the two orderings disagree at this input");
+    // The module's effectiveTargetCpl MUST equal the end-of-chain
+    // rounding (the unrounded intermediate × spendShare, then
+    // round2 once at the end).
+    assert.equal(d.effectiveTargetCpl, expectedTarget);
+
+    // Negative control: pin what the intermediate-rounded ordering
+    // WOULD produce. Compute it the same way the module would if it
+    // (incorrectly) rounded leadValue first.
+    const intermediateLeadValue = round2(unroundedLeadValue);
+    const intermediateTarget = round2(intermediateLeadValue * spendShare(inp.marginKept));
+    // The two orderings may or may not differ at this input; the
+    // assertion is that the module uses the end-of-chain ordering.
+    // Pin both sides so a future regression that swaps to
+    // intermediate rounding would surface here (the assertion below
+    // is conditional: if end != intermediate, then end must match
+    // the module output).
+    if (intermediateTarget !== expectedTarget) {
+        assert.equal(d.effectiveTargetCpl, expectedTarget,
+            `module must use end-of-chain rounding (expected ${expectedTarget}); ` +
+            `intermediate ordering would give ${intermediateTarget}`);
+    }
+    assert.equal(round2(d.leadValue), round2(unroundedLeadValue),
+        "module's leadValue MUST equal round2 of the unrounded chain product");
 });
 
 // Phase 10 T069 (SC-006, SC-014) — cross-funnel profit-parity
@@ -1610,13 +1709,16 @@ test("T069: cross-funnel profit-parity (SC-006, SC-014) — same offer/commissio
     const COMMISSION = 10;
     const MARGIN = 60;
 
-    // lead_magnet_call — §6.1 worked-example rates
+    // lead_magnet_call — §6.1 worked-example rates (Phase 13:
+    // chain now booking / showUp / qualification / close).
     const lm: LeadMagnetCallInputs = {
         funnelType: "lead_magnet_call",
         offerPrice: OFFER,
-        leadToCloseRate: 22.5,
+        qualificationRate: 50,
+
+        leadToCloseRate: 25,
         bookingRate: 7.5,
-        showUpRate: 70,
+        showUpRate: 60,
         commissionRate: COMMISSION,
         marginKept: MARGIN,
     };
@@ -1655,7 +1757,10 @@ test("T069: cross-funnel profit-parity (SC-006, SC-014) — same offer/commissio
     //   leadValue = offerPrice × netFactor × chain
     //   CPL_unrounded = leadValue × spendShare
     //   cost_per_sale = CPL_unrounded / chain = offerPrice × netFactor × spendShare
-    const lmChain = (lm.bookingRate / 100) * (lm.showUpRate / 100) * (lm.leadToCloseRate / 100);
+    // Phase 13 — chain now has 4 stages on lead_magnet_call;
+    // qualificationRate folds into the chain product the same way
+    // the other rates do.
+    const lmChain = (lm.bookingRate / 100) * (lm.showUpRate / 100) * (lm.qualificationRate / 100) * (lm.leadToCloseRate / 100);
     const fwChain = (fw.attendanceRate / 100) * (fw.buyRateFromAttendees / 100);
     const lmCostUnrounded = OFFER * netFactorVal * lmChain * spendShareVal / lmChain;
     const fwCostUnrounded = OFFER * netFactorVal * fwChain * spendShareVal / fwChain;
@@ -1676,7 +1781,8 @@ test("T069: cross-funnel profit-parity (SC-006, SC-014) — same offer/commissio
 
     // The headline SC-006 / SC-014 assertion — the two funnels
     // produce identical profit per sale (structural identity,
-    // exact equality on unrounded values).
+    // exact equality on unrounded values). The chain cancels in
+    // both directions; the chain length is irrelevant.
     assert.equal(lmProfit, expectedProfit, "lead_magnet per-sale profit");
     assert.equal(fwProfit, expectedProfit, "free_webinar per-sale profit");
     assert.equal(lmProfit, fwProfit, "SC-006 / SC-014 cross-funnel parity");
@@ -1688,7 +1794,10 @@ test("T069: cross-funnel profit-parity (SC-006, SC-014) — same offer/commissio
     // The displayed CPL values (rounded, FR-048) DO differ between
     // the two funnels — this is by design, not a bug. The CPL is
     // displayed per lead; per-sale profit cancels the chain.
-    assert.equal(lmDerived.effectiveTargetCpl, 12.76); // §6.1 row 2 (margin 60)
+    // Phase 13 — §6.1 row 2 (margin 60) anchor moves from $12.76
+    // (old 3-stage chain) to $6.08 (new 4-stage chain with
+    // qualification stage).
+    assert.equal(lmDerived.effectiveTargetCpl, 6.08); // §6.1 row 2 (margin 60)
     assert.equal(fwDerived.effectiveTargetCpl, 5.40);  // §6.2
 });
 

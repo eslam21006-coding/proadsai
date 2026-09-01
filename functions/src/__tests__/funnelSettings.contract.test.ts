@@ -34,17 +34,20 @@ function coercePaid(req: {
     hasHto?: boolean;
     htoPrice?: number;
     htoConversionRate?: number;
-    // Phase 11 + Phase 12 — paid_product chain. Phase 12 renamed the
-    // storage slots from the overloaded `bookingRate` / `showUpRate`
-    // / `leadToCloseRate` to `productBookingRate` / `productShowUpRate`
-    // / `productCloseRate` (the `product*` prefix mirrors the `event*`
-    // prefix used by paid_event's chain — same convention, scoped per
-    // funnel type). The fields are accepted on the contract test's
-    // request shape but default to 0 for paid_event-shaped fixtures.
-    // paid_event ignores these; paid_product reads them (verified by
-    // the dedicated Phase 11 tests in cpaEconomics.test.ts).
+    // Phase 11 + Phase 12 + Phase 13 — paid_product chain. Phase 12
+    // renamed the storage slots from the overloaded `bookingRate` /
+    // `showUpRate` / `leadToCloseRate` to `productBookingRate` /
+    // `productShowUpRate` / `productCloseRate` (the `product*`
+    // prefix mirrors the `event*` prefix used by paid_event's
+    // chain — same convention, scoped per funnel type). Phase 13
+    // added `productQualificationRate` (the qualification stage).
+    // The fields are accepted on the contract test's request shape
+    // but default to 0 for paid_event-shaped fixtures. paid_event
+    // ignores these; paid_product reads them (verified by the
+    // dedicated Phase 13 tests in cpaEconomics.test.ts).
     productBookingRate?: number;
     productShowUpRate?: number;
+    productQualificationRate?: number;
     productCloseRate?: number;
     eventAttendanceRate?: number;
     eventCloseRate?: number;
@@ -59,16 +62,18 @@ function coercePaid(req: {
         hasHto,
         htoPrice: hasHto ? (req.htoPrice ?? 0) : 0,
         htoConversionRate: hasHto ? (req.htoConversionRate ?? 0) : 0,
-        // Phase 11 + Phase 12 — paid_product chain rates. The
-        // `coercePaid` helper is paid_event-shaped for the contract
-        // test; the chain is supplied as defaults (0) so the
-        // derivation never sees an `undefined`. paid_event's
+        // Phase 11 + Phase 12 + Phase 13 — paid_product chain rates.
+        // The `coercePaid` helper is paid_event-shaped for the
+        // contract test; the chain is supplied as defaults (0) so
+        // the derivation never sees an `undefined`. paid_event's
         // derivation ignores these fields. Phase 12 renamed the
         // chain to `product*` to scope buyer-side rates distinctly
-        // from lead-side rates — `coercePaid` accepts the new names
-        // and the helper below mirrors that.
+        // from lead-side rates; Phase 13 added the qualification
+        // stage. `coercePaid` accepts the new names and the helper
+        // below mirrors that.
         productBookingRate: req.productBookingRate ?? 0,
         productShowUpRate: req.productShowUpRate ?? 0,
+        productQualificationRate: req.productQualificationRate ?? 0,
         productCloseRate: req.productCloseRate ?? 0,
         eventAttendanceRate: req.eventAttendanceRate ?? 0,
         eventCloseRate: req.eventCloseRate ?? 0,
@@ -100,6 +105,11 @@ function coerceLeadMagnetCall(req: {
     leadToCloseRate?: number | null;
     bookingRate?: number;
     showUpRate?: number;
+    // Phase 13 — qualification stage on the lead-side chain. The
+    // helper default is 50 (the Phase 13 owner-supplied benchmark);
+    // existing tests that don't pass this field still get a valid
+    // chain input.
+    qualificationRate?: number;
     commissionRate?: number;
     marginKept?: 50 | 60 | 70;
 }): LeadMagnetCallInputs {
@@ -109,6 +119,7 @@ function coerceLeadMagnetCall(req: {
         leadToCloseRate: req.leadToCloseRate ?? 0,
         bookingRate: req.bookingRate ?? 50,
         showUpRate: req.showUpRate ?? 50,
+        qualificationRate: req.qualificationRate ?? 50,
         commissionRate: req.commissionRate ?? 10,
         marginKept: req.marginKept ?? 60,
     };
@@ -518,12 +529,18 @@ type FunnelSettingsDoc = import("../funnelSettings.js").FunnelSettingsDoc;
         leadToCloseRate: null,
         bookingRate: null,
         showUpRate: null,
+        // Phase 13 — lead_magnet_call only. qualification stage on the
+        // lead-side chain; null on every other funnel type.
+        qualificationRate: null,
         // Phase 12 — paid_product only. SCOPED to paid_product to
         // keep buyer-side rates distinct from lead-side rates; null
         // on every other funnel type (paid_event ⇒ all null).
         productCloseRate: null,
         productBookingRate: null,
         productShowUpRate: null,
+        // Phase 13 — paid_product only. qualification stage on the
+        // buyer-side chain; null on every other funnel type.
+        productQualificationRate: null,
         // Phase 968 — T027. Shared fields, populated for completeness.
         commissionRate: 10,
         marginKept: 60,
@@ -563,7 +580,10 @@ function assertRequiredFieldsPresent(funnelType: "paid_event" | "paid_product" |
         paid_event: ["aov", "roasTarget", "eventAttendanceRate", "eventCloseRate", "commissionRate", "marginKept"],
         paid_product: ["aov", "roasTarget", "commissionRate", "marginKept"],
         free_webinar: ["offerPrice", "attendanceRate", "buyRateFromAttendees", "commissionRate", "marginKept"],
-        lead_magnet_call: ["offerPrice", "leadToCloseRate", "bookingRate", "showUpRate", "commissionRate", "marginKept"],
+        // Phase 13 — qualification stage added to the lead-side
+        // chain. Same completeness rule shape as paid_product's
+        // product* chain (booking / showUp / qualification / close).
+        lead_magnet_call: ["offerPrice", "leadToCloseRate", "bookingRate", "showUpRate", "qualificationRate", "commissionRate", "marginKept"],
     };
     const fields = FIELD_MAP[funnelType];
     if (!fields) throw new Error(`Unknown funnelType: ${funnelType}`);
@@ -571,17 +591,19 @@ function assertRequiredFieldsPresent(funnelType: "paid_event" | "paid_product" |
         assertRequiredFieldPresent(funnelType, field, req[field]);
     }
     // Mirror the callables: when hasHto=true, htoPrice is required on
-    // every paid funnel type. Phase 11 + Phase 12 — paid_product's
-    // HTO term reads the chain
-    // (productBookingRate × productShowUpRate × productCloseRate),
-    // all three required when hasHto=true. htoConversionRate is no
-    // longer required on any funnel type (Phase 7 Item C dropped it
-    // from paid_event; Phase 11 dropped it from paid_product).
+    // every paid funnel type. Phase 11 + Phase 12 + Phase 13 —
+    // paid_product's HTO term reads the chain
+    // (productBookingRate × productShowUpRate ×
+    //  productQualificationRate × productCloseRate), all four
+    // required when hasHto=true. htoConversionRate is no longer
+    // required on any funnel type (Phase 7 Item C dropped it from
+    // paid_event; Phase 11 dropped it from paid_product).
     if ((funnelType === "paid_event" || funnelType === "paid_product") && req.hasHto === true) {
         assertRequiredFieldPresent(funnelType, "htoPrice", req.htoPrice);
         if (funnelType === "paid_product") {
             assertRequiredFieldPresent(funnelType, "productBookingRate", req.productBookingRate);
             assertRequiredFieldPresent(funnelType, "productShowUpRate", req.productShowUpRate);
+            assertRequiredFieldPresent(funnelType, "productQualificationRate", req.productQualificationRate);
             assertRequiredFieldPresent(funnelType, "productCloseRate", req.productCloseRate);
         }
     }
@@ -645,21 +667,22 @@ test("completeness — paid_event with hasHto=false ⇒ htoPrice drops from requ
     assert.equal(isSettingsComplete(doc), true);
 });
 
-test("completeness — paid_product requires the chain (booking/show-up/close) when hasHto=true (Phase 11)", () => {
-    // Phase 11 + Phase 12 — paid_product's completeness rule requires
-    // the three chain rates (Phase 12: `productBookingRate` /
-    // `productShowUpRate` / `productCloseRate` — the `product*`
-    // prefix scopes buyer-side rates distinctly from lead-side rates).
-    // All three are listed in declaration order (matches the
-    // backend's requiredFieldsForDoc for paid_product + hasHto).
+test("completeness — paid_product requires the chain (booking/show-up/qualified/close) when hasHto=true (Phase 13)", () => {
+    // Phase 11 + Phase 12 + Phase 13 — paid_product's completeness
+    // rule requires the four chain rates (Phase 12: `product*`
+    // prefix scopes buyer-side rates distinctly from lead-side
+    // rates; Phase 13 added `productQualificationRate`). All four
+    // are listed in declaration order (matches the backend's
+    // requiredFieldsForDoc for paid_product + hasHto).
     const withoutChain = {
         funnelType: "paid_product",
         aov: 100,
         hasHto: true,
         htoPrice: 3000,
-        // productBookingRate / productShowUpRate / productCloseRate
-        // missing. htoConversionRate intentionally absent too — no
-        // longer required (Phase 11).
+        // productBookingRate / productShowUpRate /
+        // productQualificationRate / productCloseRate missing.
+        // htoConversionRate intentionally absent too — no longer
+        // required (Phase 11).
         roasTarget: 1.0,
         commissionRate: 10,
         marginKept: 60,
@@ -668,14 +691,16 @@ test("completeness — paid_product requires the chain (booking/show-up/close) w
     assert.deepEqual(missingRequiredFields(withoutChain), [
         "productBookingRate",
         "productShowUpRate",
+        "productQualificationRate",
         "productCloseRate",
     ]);
 
     const withChain = {
         ...withoutChain,
         productBookingRate: 7.5,
-        productShowUpRate: 70,
-        productCloseRate: 22.5,
+        productShowUpRate: 60,
+        productQualificationRate: 50,
+        productCloseRate: 25,
     };
     assert.equal(isSettingsComplete(withChain), true);
 });
@@ -726,12 +751,14 @@ test("completeness — free_webinar missing offerPrice ⇒ incomplete", () => {
 });
 
 test("completeness — lead_magnet_call missing bookingRate ⇒ incomplete", () => {
+    // Phase 13 — qualification stage added to the chain.
     const doc = {
         funnelType: "lead_magnet_call",
         offerPrice: 3000,
-        leadToCloseRate: 22.5,
+        leadToCloseRate: 25,
         bookingRate: null,    // missing
-        showUpRate: 70,
+        showUpRate: 60,
+        qualificationRate: 50,
         commissionRate: 10,
         marginKept: 60,
     };
@@ -743,17 +770,20 @@ test("completeness — multiple missing fields reported in one error (FR-040a)",
     // Save-path (T032) collects ALL missing fields and reports them
     // together. The predicate returns the array in field order; the
     // order matters because the save error names them in this order.
+    // Phase 13 — qualificationRate joins the missing list.
     const doc = {
         funnelType: "lead_magnet_call",
         offerPrice: 3000,
-        // leadToCloseRate, bookingRate, showUpRate, commissionRate, marginKept all missing
+        // leadToCloseRate, bookingRate, showUpRate, qualificationRate,
+        // commissionRate, marginKept all missing.
     };
     const missing = missingRequiredFields(doc);
-    assert.equal(missing.length, 5);
+    assert.equal(missing.length, 6);
     assert.deepEqual(missing, [
         "leadToCloseRate",
         "bookingRate",
         "showUpRate",
+        "qualificationRate",
         "commissionRate",
         "marginKept",
     ]);

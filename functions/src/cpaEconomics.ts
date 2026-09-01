@@ -19,29 +19,40 @@
 //   spendShare = (100 - marginKept)    / 100
 //   netFactor  = (100 - commissionRate) / 100
 //
-// PAID BRANCH (CPA) — FR-008..FR-014, FR-019, Phase 12:
+// PAID BRANCH (CPA) — FR-008..FR-014, FR-019, Phase 12 + Phase 13:
 //   rawTargetCpa       = AOV / roasTarget
 //   fullBuyerValue     = AOV + htoPrice × netFactor × (chain/100)
 //                        (paid_event:   eventAttendanceRate × eventCloseRate
 //                         paid_product: productBookingRate × productShowUpRate
+//                                      × productQualificationRate
 //                                      × productCloseRate — Phase 11 replaced
-//                                      htoConversionRate with this chain; the
-//                                      storage slot was renamed from the
-//                                      overloaded bookingRate/showUpRate/
-//                                      leadToCloseRate in Phase 12 because
-//                                      paid_product's chain measures buyers
-//                                      → close while lead_magnet_call's chain
-//                                      measures leads → close — different
-//                                      denominators, same field name was
-//                                      a cross-funnel aggregate hazard)
+//                                      htoConversionRate with a 3-stage chain;
+//                                      Phase 13 added the qualification stage
+//                                      because some booked calls that happen
+//                                      turn out to be unqualified, and folding
+//                                      that drop-off into close rate would
+//                                      conflate two different rates. The
+//                                      storage slots are `product*`-prefixed
+//                                      because the chain is buyer-side —
+//                                      different denominator from
+//                                      lead_magnet_call's lead-side chain.
+//                                      Phase 12 separated the two prefix
+//                                      conventions; Phase 13 added the
+//                                      qualification stage to both.)
 //   maxCpa             = fullBuyerValue × spendShare
 //   effectiveTargetCpa = min(rawTargetCpa, maxCpa)
 //   capApplied         = rawTargetCpa > maxCpa  (strict; FR-003)
 //
-// FREE BRANCH (CPL) — FR-005..FR-007, FR-008..FR-009:
-//   leadValue          = offerPrice × netFactor × (rate1/100) × (rate2/100)
-//                        free_webinar:      attendanceRate × buyRateFromAttendees
-//                        lead_magnet_call:  bookingRate × showUpRate × leadToCloseRate
+// FREE BRANCH (CPL) — FR-005..FR-007, FR-008..FR-009, Phase 13:
+//   leadValue          = offerPrice × netFactor × (chain/100)
+//                        free_webinar:     attendanceRate × buyRateFromAttendees
+//                        lead_magnet_call: bookingRate × showUpRate
+//                                          × qualificationRate × leadToCloseRate
+//                        (Phase 13 added qualificationRate to
+//                        lead_magnet_call's chain — same rationale as
+//                        paid_product above. lead_magnet_call keeps the
+//                        unprefixed slot name, matching its sibling
+//                        bookingRate/showUpRate/leadToCloseRate.)
 //   economicCeilingCpl = leadValue × spendShare
 //   effectiveTargetCpl = economicCeilingCpl
 //
@@ -164,9 +175,13 @@ export interface PaidFunnelInputs {
     // convention for funnel-scoped chain fields.
     //
     // 0 when not applicable. `0` is a legitimate value — zero
-    // booking / show-up / close collapses the chain to 0.
+    // booking / show-up / qualification / close collapses the chain to 0.
     productBookingRate: number;
     productShowUpRate: number;
+    // Phase 13 — added qualification stage. See the doc-comment at the
+    // top of this file (PAID BRANCH) for the rationale. `0` is a
+    // legitimate value — zero qualification collapses the chain.
+    productQualificationRate: number;
     productCloseRate: number;
     /** 0–100 inclusive (FR-027). 100 zeroes leadValue; 0 leaves it intact. */
     commissionRate: number;
@@ -190,6 +205,16 @@ export interface LeadMagnetCallInputs {
     leadToCloseRate: number;
     bookingRate: number;
     showUpRate: number;
+    // Phase 13 — added qualification stage. Some booked calls that
+    // happen turn out to be unqualified; folding that drop-off into
+    // close rate would conflate two different rates (the close rate
+    // measures qualified attended calls that buy; qualification rate
+    // measures attended calls that turn out to be qualified). The
+    // field is unprefixed because lead_magnet_call owns the
+    // unprefixed chain slots (bookingRate / showUpRate /
+    // leadToCloseRate siblings). 0 is a legitimate value — zero
+    // qualification collapses the chain.
+    qualificationRate: number;
     commissionRate: number;
     marginKept: MarginKept;
 }
@@ -287,17 +312,21 @@ export function deriveTargetCpa(input: PaidFunnelInputs): PaidDerived {
                 (input.eventAttendanceRate / 100) *
                 (input.eventCloseRate / 100);
     } else {
-        // Phase 11 / Phase 12 — paid_product reads the chain
-        // (productBookingRate × productShowUpRate × productCloseRate)
-        // on the HTO term. FR-019 / OQ-1 override: commission on HTO
-        // term only — netFactor multiplies the HTO term, never the
-        // AOV term.
+        // Phase 11 / Phase 12 / Phase 13 — paid_product reads the chain
+        // (productBookingRate × productShowUpRate ×
+        //  productQualificationRate × productCloseRate)
+        // on the HTO term. Phase 13 added the qualification stage
+        // because some booked calls that happen turn out to be
+        // unqualified. FR-019 / OQ-1 override: commission on HTO term
+        // only — netFactor multiplies the HTO term, never the AOV
+        // term.
         fullBuyerValue =
             aov +
             (hasHto ? input.htoPrice : 0) *
                 nf *
                 (input.productBookingRate / 100) *
                 (input.productShowUpRate / 100) *
+                (input.productQualificationRate / 100) *
                 (input.productCloseRate / 100);
     }
 
@@ -342,7 +371,9 @@ export function deriveTargetCplFreeWebinar(input: FreeWebinarInputs): FreeDerive
 /**
  * Derived target CPL for the lead-magnet-call branch.
  *
- *   leadValue          = offerPrice × netFactor × (bookingRate/100) × (showUpRate/100) × (leadToCloseRate/100)
+ *   leadValue          = offerPrice × netFactor × (bookingRate/100)
+ *                        × (showUpRate/100) × (qualificationRate/100)
+ *                        × (leadToCloseRate/100)
  *   economicCeilingCpl = leadValue × spendShare
  *   effectiveTargetCpl = economicCeilingCpl
  *
@@ -356,6 +387,7 @@ export function deriveTargetCplLeadMagnetCall(input: LeadMagnetCallInputs): Free
         netFactor(input.commissionRate) *
         (input.bookingRate / 100) *
         (input.showUpRate / 100) *
+        (input.qualificationRate / 100) *
         (input.leadToCloseRate / 100);
     const economicCeilingCpl = leadValue * spendShare(input.marginKept);
     return {
@@ -510,15 +542,17 @@ function assertPaidInput(input: PaidFunnelInputs): void {
         assertPercentage("eventCloseRate", input.eventCloseRate);
     }
     if (input.funnelType === "paid_product") {
-        // Phase 11 / Phase 12 — paid_product reads the chain
-        // (productBookingRate × productShowUpRate × productCloseRate)
-        // on the HTO term. The fields are validated even when
-        // hasHto=false (the derivation collapses the HTO term to 0
-        // but the inputs must still be in range — otherwise a unit
-        // test or a future code path that reads them on the no-HTO
-        // branch would fail opaquely).
+        // Phase 11 / Phase 12 / Phase 13 — paid_product reads the
+        // chain (productBookingRate × productShowUpRate ×
+        //  productQualificationRate × productCloseRate) on the HTO
+        // term. The fields are validated even when hasHto=false (the
+        // derivation collapses the HTO term to 0 but the inputs must
+        // still be in range — otherwise a unit test or a future code
+        // path that reads them on the no-HTO branch would fail
+        // opaquely).
         assertPercentage("productBookingRate", input.productBookingRate);
         assertPercentage("productShowUpRate", input.productShowUpRate);
+        assertPercentage("productQualificationRate", input.productQualificationRate);
         assertPercentage("productCloseRate", input.productCloseRate);
     }
     if (!ALL_ROAS_TARGETS.includes(input.roasTarget)) {
@@ -542,6 +576,9 @@ function assertLeadMagnetCallInput(input: LeadMagnetCallInputs): void {
     assertPercentage("leadToCloseRate", input.leadToCloseRate);
     assertPercentage("bookingRate", input.bookingRate);
     assertPercentage("showUpRate", input.showUpRate);
+    // Phase 13 — added qualification stage. See the doc-comment on
+    // LeadMagnetCallInputs.qualificationRate for the rationale.
+    assertPercentage("qualificationRate", input.qualificationRate);
     assertCommissionRate(input.commissionRate);
     assertMarginKept(input.marginKept);
 }

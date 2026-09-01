@@ -2,16 +2,16 @@
 
 **Feature**: `968-funnel-economics-rebuild`
 
-All 30 pairs below were machine-checked against the **strengthened** Batch 1 patterns.
+All 35 pairs below were machine-checked against the **strengthened** Batch 1 patterns.
 
 | Result | Count |
 |---|---|
 | Pairs clean with no suppression needed | **22** |
-| Pairs requiring a reasoned per-line suppression | **8** — the benchmark hints (#2, 4, 6, 7, 8, 10, 12, 18) |
+| Pairs requiring a reasoned per-line suppression | **13** — the benchmark hints (#2, 4, 6, 7, 8, 10, 12, 18, 29, 30, 31, 32, 33) |
 | Hits on any non-percentage pattern (CTR/CPA/CPL/CPM/ميديان) | **0** |
 | «متوسط» policy flags | **0** |
 
-The 8 suppressions are deliberate and visible. Every other string passes on its own merits.
+The 13 suppressions are deliberate and visible. Every other string passes on its own merits.
 
 ---
 
@@ -54,6 +54,8 @@ hint: L('Typical range: 5–10%', 'المعتاد: ٥–١٠٪'), // sc11-allow:
 
 The exception is now visible in the source, printed by the guard on every run, and auditable — which is what constitution VI and VII actually require. A rewording would have hidden it.
 
+**Phase 12 — paid_product hints.** Phase 11 reused the lead_magnet_call chain slots for paid_product (different denominator, same field name). Phase 12 renamed the storage slots to `product*`; the form hints were originally carried over with the slot identity and shipped the lead-side benchmarks (5–10% / >65% / 20–25%) on a buyer-side field. The product owner has confirmed distinct paid_product benchmarks (#29–31) and the lead-side numbers are now dead. The `Typical range` copy for paid_product states a number; the qualifier that distinguishes "buyer who booked → attended → bought" from "any lead who booked → attended → closed" lives on the LABEL, not the hint (see #29's pending label work below).
+
 **Still genuinely fine, not a dodge**: `(%)` as a bare unit marker on a label. It carries no value, and it is the file's pre-existing convention (`FunnelSettingsForm.tsx:698` ships `'Attendance rate (%)'` today). Bare `50` / `60` / `70` preset buttons are likewise fine — the group label carries the unit and the buttons carry no percentage.
 
 Additionally, «متوسط» is banned by the guard's **documented policy** (see `scripts/sc11Guard.mjs:11` and `:84` — "متوسط is INTERNAL-ONLY (not in src/**). It is NOT in the pattern set here. The user-facing equivalent in stats labels is المعدل or appropriate Fusha") but is deliberately absent from its regex set — so a violation would ship silently. Avoid it in all new Arabic copy. The Phase 0 decision that produced this policy is recorded at `specs/968-funnel-economics-rebuild/research.md:127-133` and the spec's A-10 assumption at `specs/968-funnel-economics-rebuild/spec.md:368` ties this contract to it.
@@ -67,9 +69,19 @@ Additionally, «متوسط» is banned by the guard's **documented policy** (see
 | 1 | Booking rate (%) | نسبة حجز المكالمات من العملاء المحتملين (%) |
 | 2 | Typical range: 5–10% | المعتاد: ٥ – ١٠٪ |
 | 3 | Show-up rate (%) | نسبة الحضور للمكالمات المحجوزة (%) |
-| 4 | Typical range: above 65% | المعتاد: أكثر من ٦٥٪ |
-| 5 | Close rate on calls that happened (%) | نسبة الإغلاق في المكالمات التي تمت (%) |
-| 6 | Typical range: 20–25% | المعتاد: ٢٠ – ٢٥٪ |
+| 4 | Typical range: 60% | المعتاد: ٦٠٪ |
+| 5 | Close rate on qualified calls (%) | نسبة الإغلاق في المكالمات المؤهلة (%) |
+| 6 | Typical range: 25% | المعتاد: ٢٥٪ |
+
+**Phase 13 — qualification stage added to the lead-side chain.**
+The close rate label (#5) now conveys "qualified attended calls that
+buy" (was "calls that happened" — omitted the qualifier that makes
+the 25% benchmark meaningful). The show-up hint (#4) moved from
+"above 65%" to "60%" (Phase 13 owner-supplied benchmark). The close
+hint (#6) moved from "20–25%" to "25%" because the qualifier on the
+label moved that range onto the qualification stage (50%, new pair
+#32 below). Suppression lines remain attached to the same lines;
+the hint copy itself swapped.
 
 ### Free webinar
 
@@ -145,6 +157,58 @@ String 26 is the active-path explainer for the ticket-revenue case (the common c
 | 27 | Targets are paused until you fill the fields below. | الأهداف متوقفة حتى تكمل الحقول التالية. |
 | 28 | Required | مطلوب |
 
+### Low price offer (Phase 11 + Phase 13)
+
+The labels below render on the paid_product branch of the form. The hints are the four benchmark ranges confirmed by the product owner (Phase 11 + Phase 13). The lead_magnet_call benchmarks (#2, #4, #6) were briefly shipped here by Phase 11's storage-slot overload and have been removed.
+
+| # | English | Arabic |
+|---|---|---|
+| 29 | Typical range: 20% | المعتاد: ٢٠٪ |
+| 30 | Typical range: 60% | المعتاد: ٦٠٪ |
+| 31 | Typical range: 25% | المعتاد: ٢٥٪ |
+
+**Phase 13 — close rate benchmark revised.** The 25% figure on #31 is
+the close rate on QUALIFIED attended calls (buyer attended + buyer
+is qualified to buy) — was "20–25%" on all attended calls. The
+qualifier now lives on the LABEL wording (the close rate label
+reads "Close rate on qualified calls (%)" / "نسبة الإغلاق في
+المكالمات المؤهلة (%)"; see FunnelSettingsForm.tsx and
+MISSING_FIELD_LABELS for the localized surface). Suppression lines
+remain attached to the same lines; the hint copy itself swapped.
+
+### Qualification stage (Phase 13 — added to both call-based funnels)
+
+The hints below render on the new `Qualification rate (%)` input —
+one per funnel type, same wording.
+
+| # | English | Arabic |
+|---|---|---|
+| 32 | Typical range: 50% | المعتاد: ٥٠٪ |
+| 33 | Typical range: 50% | المعتاد: ٥٠٪ |
+
+The LABEL is the same on both funnels (`Qualification rate (%)` /
+`نسبة المكالمات المؤهلة (%)`); the underlying storage fields differ
+(`qualificationRate` for `lead_magnet_call`, `productQualificationRate`
+for `paid_product`) per the funnel-scoping convention established in
+Phase 12. Each row above carries the same
+`sc11-allow:PERCENT_SIGN reason="benchmark range for an input hint;
+owner guidance, not a reported performance metric"` as #2 / #4 / #6
+/ #7 / #8 / #10 / #12 / #18 / #29 / #30 / #31.
+
+### Mouse-wheel guard (Phase 13 CHANGE 2)
+
+The number inputs on this form (`<input type="number">` rendered
+through the shared `NumberField` component in
+`src/components/FunnelSettingsForm.tsx`) install an `onWheel`
+handler that calls `preventDefault` when the wheel target is the
+focused input. This prevents the browser's default behavior of
+incrementing or decrementing the focused number input on scroll —
+which would let a coach silently alter their targets by scrolling
+the page. The handler is exported as `preventWheelValueChange` so
+the integration test can pin the wiring without re-deriving it from
+JSX. See `src/__tests__/funnelSettingsRender.test.tsx` for the
+unit + integration tests.
+
 ---
 
 ## 4. Strings — `src/i18n.tsx` (catalogue keys)
@@ -164,8 +228,8 @@ Rendered as a passive marker on the existing Funnel Settings menu entry (`App.ts
 Before implementation is considered complete:
 
 1. Re-run the enumeration — extract every new string destined for `FunnelSettingsForm.tsx` and match each against all seven strengthened patterns plus the «متوسط» policy check.
-2. Confirm **exactly 8** suppressions exist in the form, one per benchmark hint, each naming `PERCENT_SIGN` and carrying a non-empty reason.
-3. Confirm no suppression was added to any string outside those 8.
+2. Confirm **exactly 13** suppressions exist in the form, one per benchmark hint, each naming `PERCENT_SIGN` and carrying a non-empty reason. (13 line-level suppressions cover 3 lead_magnet_call hints — #2, #4, #6 — 2 paid_event hints — #10, #12 — 2 free_webinar hints — #7, #8 — 1 commission hint — #18 — 3 paid_product hints — #29, #30, #31 — and 2 qualification hints — #32, #33. Total 13. Phase 12 had 11; Phase 13 added the qualification hints #32 / #33 — net +2. The lead_magnet_call close hint #6 and the paid_product close hint #31 are wording swaps on existing suppressions, not new entries.)
+3. Confirm no suppression was added to any string outside those 13.
 4. Confirm the negative controls still trip: `"Keep 50%"` as a button label, and a suppression with a missing or empty reason (must hard-fail).
 
 `npm run lint` passing is necessary but **not sufficient** on three counts: it would also pass if the copy had been moved into an allowlisted file; it passes identically with a broken strengthened pattern (the dry run showed 0 hit-count change either way); and it cannot tell a justified suppression from a lazy one. Steps 1–4 are the real check.

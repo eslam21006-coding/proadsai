@@ -52,9 +52,16 @@ netFactor  = (100 - commissionRate) / 100
 ### `lead_magnet_call`
 
 ```
-leadValue = offerPrice × netFactor × (bookingRate/100) × (showUpRate/100) × (leadToCloseRate/100)
+leadValue = offerPrice × netFactor × (bookingRate/100) × (showUpRate/100)
+            × (qualificationRate/100) × (leadToCloseRate/100)
 targetCpl = leadValue × spendShare
 ```
+
+The qualification stage (Phase 13) separates attended calls that turn
+out to be qualified from calls that buy — folding that drop-off into
+the close rate would conflate two different rates. See
+`docs/investigations/funnel-economics-paid-product-form-bug.md` §13
+for the rationale.
 
 ### `free_webinar`
 
@@ -77,11 +84,20 @@ capApplied      = rawTargetCpa > ceilingCpa                              // stri
 
 ```
 rawTargetCpa   = aov / roasTarget                                        // default roasTarget 1.0 (unchanged)
-fullBuyerValue = aov + htoPrice × netFactor × (htoConversionRate/100)
+fullBuyerValue = aov + htoPrice × netFactor
+                × (productBookingRate/100) × (productShowUpRate/100)
+                × (productQualificationRate/100) × (productCloseRate/100)
 ceilingCpa     = fullBuyerValue × spendShare
 effectiveTarget = min(rawTargetCpa, ceilingCpa)
 capApplied      = rawTargetCpa > ceilingCpa
 ```
+
+Phase 13 added `productQualificationRate` to the buyer-side chain
+(matching the new `qualificationRate` on lead_magnet_call's
+lead-side chain above). The `htoConversionRate` slot is dead at read
+time on every funnel type as of Phase 11; storage retention
+(data-model.md §1) keeps the field on the doc but it never enters
+the derivation.
 
 **Commission placement (FR-003, FR-017, FR-019)**: `netFactor` multiplies the **high-ticket term only**, on both paid types. `aov` is self-serve checkout revenue and is never reduced by commission.
 
@@ -93,17 +109,19 @@ capApplied      = rawTargetCpa > ceilingCpa
 
 ### 4.1 Lead magnet → call — report §6.1
 
-Inputs: `offerPrice 3000`, `bookingRate 7.5`, `showUpRate 70`, `leadToCloseRate 22.5`, `commissionRate 10`.
+Phase 13 inputs: `offerPrice 3000`, `bookingRate 7.5`, `showUpRate 60`, `qualificationRate 50`, `leadToCloseRate 25`, `commissionRate 10`.
 
-`leadValue` = 3000 × 0.90 × 0.075 × 0.70 × 0.225 = **31.89375 → `31.89`**
+`leadValue` = 3000 × 0.90 × 0.075 × 0.60 × 0.50 × 0.25 = **15.1875 → `15.19`**
 
 | `marginKept` | Unrounded target | Expected `effectiveTargetCpl` |
 |---|---|---|
-| 50 | 15.946875 | **`15.95`** |
-| **60 (default)** | 12.7575 | **`12.76`** |
-| 70 | 9.568125 | **`9.57`** |
+| 50 | 7.59375 | **`7.59`** |
+| **60 (default)** | 6.075 | **`6.08`** |
+| 70 | 4.55625 | **`4.56`** |
 
 > **A-2**: report §6.1 prints `15.94` for the 50 row. Rounding once at the end gives `15.95`; the 60 and 70 rows match the report exactly. The fixture asserts `15.95`.
+>
+> Phase 13 — show-up benchmark moved from `>65%` to `60%`, the qualification stage (50%) was added, and the close rate now measures QUALIFIED attended calls at 25% (was 20–25% on all attended calls). The default-row anchor moves from $12.76 → $6.08.
 
 **Regression anchor**: the same inputs under the pre-phase formula produced `630`. A test asserting the old value is gone is worth keeping (constitution IX — before/after evidence).
 
@@ -129,23 +147,37 @@ Sanity check over 100 ticket buyers: spend `4800`, ticket revenue `2400`, back-e
 
 ### 4.4 Paid product — OQ-1 override
 
-Inputs: `aov 100`, `htoPrice 3000`, `htoConversionRate 5`, `commissionRate 10`, `marginKept 60`, `roasTarget 1.0`.
+Phase 13 inputs: `aov 100`, `htoPrice 3000`, `productBookingRate 20`, `productShowUpRate 60`, `productQualificationRate 50`, `productCloseRate 25`, `commissionRate 10`, `marginKept 60`, `roasTarget 1.0`.
 
 | Output | Expected |
 |---|---|
 | `rawTargetCpa` | `100.00` |
-| `fullBuyerValue` | **`235.00`** |
-| `maxCpa` | `94.00` |
-| `effectiveTargetCpa` | **`94.00`** |
+| `fullBuyerValue` | **`140.50`** |
+| `maxCpa` | `56.20` |
+| `effectiveTargetCpa` | **`56.20`** |
 | `capApplied` | `true` |
 
 **This fixture discriminates the OQ-1 placement.** Three implementations give three different `fullBuyerValue`s:
 
 | Implementation | `fullBuyerValue` | Verdict |
 |---|---|---|
-| Commission on high-ticket term only | **`235.00`** | ✅ correct (FR-019) |
-| Commission on `aov` too | `211.50` | ❌ violates FR-003 |
-| No commission (report's original §5) | `250.00` | ❌ violates the OQ-1 override |
+| Commission on high-ticket term only | **`140.50`** | ✅ correct (FR-019) |
+| Commission on `aov` too | `130.50` | ❌ violates FR-003 |
+| No commission (report's original §5) | `145.00` | ❌ violates the OQ-1 override |
+
+### 4.4a Paid product — second-discriminator fixture (Phase 11 §B)
+
+Discriminator against accidental chain-collapse or stage-drop regressions. Inputs chosen so the chain product is non-round (0.005625), so dropping one stage zeroes the HTO term and a regression that halves one stage still fails:
+
+`aov 100`, `htoPrice 3000`, `productBookingRate 7.5`, `productShowUpRate 60`, `productQualificationRate 50`, `productCloseRate 25`, `commissionRate 10`, `marginKept 60`, `roasTarget 1.0`.
+
+| Output | Expected |
+|---|---|
+| Chain product | `0.075 × 0.60 × 0.50 × 0.25 = 0.005625` |
+| HTO contribution | `3000 × 0.9 × 0.005625 = 15.1875` |
+| `fullBuyerValue` | **`115.19`** |
+
+Dropping any stage (`productBookingRate=0`, `productShowUpRate=0`, `productQualificationRate=0`, or `productCloseRate=0`) zeroes the HTO term and collapses `fullBuyerValue` to `aov = 100`. Doubling `productBookingRate` from `7.5` to `15` doubles the HTO contribution (multiplicative, not additive).
 
 ### 4.5 Advisory — report §6.4
 
