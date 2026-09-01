@@ -61,6 +61,13 @@ interface FSL {
     leadToCloseRate?: number | null;
     bookingRate?: number | null;
     showUpRate?: number | null;
+    // Phase 12 — paid_product only. SCOPED to paid_product to keep
+    // buyer-side rates distinct from lead-side rates; null on every
+    // other funnel type. See FunnelSettingsDoc's docstring for
+    // productBookingRate for the full rationale.
+    productBookingRate?: number | null;
+    productShowUpRate?: number | null;
+    productCloseRate?: number | null;
     commissionRate?: number | null;
     marginKept?: number | null;
 }
@@ -81,6 +88,11 @@ function fixture(overrides: Partial<FSL>): FSL {
         leadToCloseRate: null,
         bookingRate: null,
         showUpRate: null,
+        // Phase 12 — paid_product only (null on this default
+        // `paid_event` fixture, per the doc shape).
+        productBookingRate: null,
+        productShowUpRate: null,
+        productCloseRate: null,
         commissionRate: null,
         marginKept: null,
         ...overrides,
@@ -164,10 +176,13 @@ test("parity — paid_product empty: aov + roasTarget + commissionRate + marginK
 });
 
 test("parity — paid_product complete (hasHto=true): []", () => {
-    // Phase 11 — completeness requires the chain
-    // bookingRate × showUpRate × leadToCloseRate on paid_product +
-    // hasHto. htoConversionRate is no longer required (it was the
-    // legacy single-rate field the chain replaced).
+    // Phase 11 + Phase 12 — completeness requires the chain
+    // productBookingRate × productShowUpRate × productCloseRate on
+    // paid_product + hasHto. Phase 12 renamed the storage slots
+    // from the overloaded bookingRate/showUpRate/leadToCloseRate
+    // (which lead_magnet_call still owns) to the `product*` prefix.
+    // htoConversionRate is no longer required (it was the legacy
+    // single-rate field the chain replaced).
     const doc = fixture({
         funnelType: "paid_product",
         hasHto: true,
@@ -175,9 +190,9 @@ test("parity — paid_product complete (hasHto=true): []", () => {
         roasTarget: 1.0,
         htoPrice: 3000,
         // Chain — REQUIRED.
-        bookingRate: 7.5,
-        showUpRate: 70,
-        leadToCloseRate: 22.5,
+        productBookingRate: 7.5,
+        productShowUpRate: 70,
+        productCloseRate: 22.5,
         // htoConversionRate intentionally omitted — no longer required.
         commissionRate: 10,
         marginKept: 60,
@@ -185,25 +200,26 @@ test("parity — paid_product complete (hasHto=true): []", () => {
     assert.deepEqual(missingRequiredFields(doc), []);
 });
 
-test("parity — paid_product hasHto=true missing chain: lists bookingRate + showUpRate + leadToCloseRate (Phase 11)", () => {
+test("parity — paid_product hasHto=true missing chain: lists productBookingRate + productShowUpRate + productCloseRate (Phase 11)", () => {
     // The legacy test for htoConversionRate-on-paid_product (FR-019)
     // is replaced here: the chain replaces the single rate. All three
     // are missing — the predicate returns all three in declaration
-    // order.
+    // order. Phase 12 renamed the storage slots to `product*`.
     const doc = fixture({
         funnelType: "paid_product",
         hasHto: true,
         aov: 100,
         roasTarget: 1.0,
         htoPrice: 3000,
-        // bookingRate / showUpRate / leadToCloseRate intentionally null.
-        // htoConversionRate also null — no longer required.
+        // productBookingRate / productShowUpRate / productCloseRate
+        // intentionally null. htoConversionRate also null — no longer
+        // required.
         commissionRate: 10,
         marginKept: 60,
     });
     assert.deepEqual(
         ([...missingRequiredFields(doc)]).sort(),
-        ["bookingRate", "leadToCloseRate", "showUpRate"].sort(),
+        ["productBookingRate", "productCloseRate", "productShowUpRate"].sort(),
     );
 });
 
@@ -214,14 +230,15 @@ test("parity — paid_product hasHto=true missing htoPrice: lists htoPrice + cha
         aov: 100,
         roasTarget: 1.0,
         htoPrice: null,
-        // bookingRate / showUpRate / leadToCloseRate intentionally null.
-        // htoConversionRate also null — no longer required.
+        // productBookingRate / productShowUpRate / productCloseRate
+        // intentionally null. htoConversionRate also null — no longer
+        // required.
         commissionRate: 10,
         marginKept: 60,
     });
     assert.deepEqual(
         ([...missingRequiredFields(doc)]).sort(),
-        ["bookingRate", "htoPrice", "leadToCloseRate", "showUpRate"].sort(),
+        ["productBookingRate", "htoPrice", "productCloseRate", "productShowUpRate"].sort(),
     );
 });
 

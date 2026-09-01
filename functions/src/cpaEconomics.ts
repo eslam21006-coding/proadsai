@@ -8,25 +8,32 @@
 // FOUR FUNNEL TYPES (closed enum — drives which conditional fields apply):
 //   - paid_event         → paid CPA branch (AOV, optional HTO, ROAS target)
 //   - paid_product       → paid CPA branch (AOV, optional HTO, ROAS target,
-//                          value chain booking × show-up × close on the
-//                          HTO term — Phase 11 production-bug fix)
+//                          value chain productBookingRate × productShowUpRate
+//                          × productCloseRate on the HTO term — Phase 12
+//                          production-bug fix)
 //   - free_webinar       → two-anchor CPL (leadValue via attendance × buy)
-//   - lead_magnet_call   → two-anchor CPL (leadValue via booking × showUp × close)
+//   - lead_magnet_call   → two-anchor CPL (leadValue via bookingRate × showUpRate
+//                          × leadToCloseRate)
 //
 // SHARED FACTORS (FR-001, FR-003):
 //   spendShare = (100 - marginKept)    / 100
 //   netFactor  = (100 - commissionRate) / 100
 //
-// PAID BRANCH (CPA) — FR-008..FR-014, FR-019:
+// PAID BRANCH (CPA) — FR-008..FR-014, FR-019, Phase 12:
 //   rawTargetCpa       = AOV / roasTarget
 //   fullBuyerValue     = AOV + htoPrice × netFactor × (chain/100)
 //                        (paid_event:   eventAttendanceRate × eventCloseRate
-//                         paid_product: bookingRate × showUpRate × leadToCloseRate
-//                                      — Phase 11 replaces the legacy
-//                                      htoConversionRate with the chain, the
-//                                      way lead_magnet_call replaced
-//                                      free_webinar's close rate with
-//                                      explicit stages)
+//                         paid_product: productBookingRate × productShowUpRate
+//                                      × productCloseRate — Phase 11 replaced
+//                                      htoConversionRate with this chain; the
+//                                      storage slot was renamed from the
+//                                      overloaded bookingRate/showUpRate/
+//                                      leadToCloseRate in Phase 12 because
+//                                      paid_product's chain measures buyers
+//                                      → close while lead_magnet_call's chain
+//                                      measures leads → close — different
+//                                      denominators, same field name was
+//                                      a cross-funnel aggregate hazard)
 //   maxCpa             = fullBuyerValue × spendShare
 //   effectiveTargetCpa = min(rawTargetCpa, maxCpa)
 //   capApplied         = rawTargetCpa > maxCpa  (strict; FR-003)
@@ -130,27 +137,37 @@ export interface PaidFunnelInputs {
     htoPrice: number;
     /**
      * Phase 11 — DEAD at read time on every funnel type. The chain
-     * (bookingRate × showUpRate × leadToCloseRate) replaces it on
-     * `paid_product`; `paid_event` never read it after Phase 7 Item C.
-     * The field stays in the type for additive storage compatibility
-     * (data-model.md §1) but the derivation never multiplies by it.
-     * Coerced to `0` when not supplied (callers may pass any number —
-     * the derivation ignores the value).
+     * (productBookingRate × productShowUpRate × productCloseRate)
+     * replaces it on `paid_product`; `paid_event` never read it after
+     * Phase 7 Item C. The field stays in the type for additive
+     * storage compatibility (data-model.md §1) but the derivation
+     * never multiplies by it. Coerced to `0` when not supplied
+     * (callers may pass any number — the derivation ignores the
+     * value).
      */
     htoConversionRate: number;
     /** Event-attendance rate for `paid_event` (0–100, percent). 0 otherwise. */
     eventAttendanceRate: number;
     /** Event-close rate for `paid_event` (0–100, percent). 0 otherwise. */
     eventCloseRate: number;
-    // Phase 11 — paid_product's chain. On paid_product, the corrected
-    // formula reads bookingRate × showUpRate × leadToCloseRate on the
-    // HTO term (the same chain lead_magnet_call uses, applied to
-    // buyers instead of leads). 0 when not applicable. `0` is a
-    // legitimate value for any of the three — zero booking / show-up /
-    // close collapses the chain to 0.
-    bookingRate: number;
-    showUpRate: number;
-    leadToCloseRate: number;
+    // Phase 12 — paid_product's chain. The fields are SCOPED to
+    // `paid_product` and measure buyers → close. They are NOT shared
+    // with `lead_magnet_call`, whose `bookingRate` / `showUpRate` /
+    // `leadToCloseRate` slots measure leads → close. The Phase 11
+    // implementation overloaded the same storage slots, which was
+    // a cross-funnel aggregate hazard: any consumer that reads
+    // `bookingRate` without carrying `funnelType` alongside would
+    // silently average incompatible denominators (paying-customer
+    // bookings vs free-lead bookings differ by roughly an order of
+    // magnitude). The `product*` prefix mirrors the `event*` prefix
+    // already used by `paid_event` — the codebase's existing
+    // convention for funnel-scoped chain fields.
+    //
+    // 0 when not applicable. `0` is a legitimate value — zero
+    // booking / show-up / close collapses the chain to 0.
+    productBookingRate: number;
+    productShowUpRate: number;
+    productCloseRate: number;
     /** 0–100 inclusive (FR-027). 100 zeroes leadValue; 0 leaves it intact. */
     commissionRate: number;
     /** Closed enum (50 | 60 | 70) (FR-026). */
@@ -240,12 +257,8 @@ export function round2(n: number): number {
  *   rawTargetCpa       = AOV / roasTarget
  *   fullBuyerValue     = AOV + htoPrice × netFactor × (chain/100)
  *                        (paid_event:   eventAttendanceRate × eventCloseRate
- *                         paid_product: bookingRate × showUpRate × leadToCloseRate
- *                                      — Phase 11 replaces the legacy
- *                                      htoConversionRate with the chain,
- *                                      the way lead_magnet_call replaced
- *                                      free_webinar's close rate with
- *                                      explicit stages)
+ *                         paid_product: productBookingRate × productShowUpRate
+ *                                      × productCloseRate)
  *   maxCpa             = fullBuyerValue × spendShare
  *   effectiveTargetCpa = min(rawTargetCpa, maxCpa)
  *   capApplied         = rawTargetCpa > maxCpa   (strict; FR-003)
@@ -274,21 +287,18 @@ export function deriveTargetCpa(input: PaidFunnelInputs): PaidDerived {
                 (input.eventAttendanceRate / 100) *
                 (input.eventCloseRate / 100);
     } else {
-        // Phase 11 — paid_product reads the chain
-        // (booking × show-up × close) on the HTO term. The chain is
-        // the same one lead_magnet_call uses on its leadValue term,
-        // applied to buyers instead of leads (data-model.md §3, Item A
-        // symmetry: a stored-but-unread field is never required by
-        // the completeness rule, and the form must not prompt for it).
-        // FR-019 / OQ-1 override: commission on HTO term only —
-        // netFactor multiplies the HTO term, never the AOV term.
+        // Phase 11 / Phase 12 — paid_product reads the chain
+        // (productBookingRate × productShowUpRate × productCloseRate)
+        // on the HTO term. FR-019 / OQ-1 override: commission on HTO
+        // term only — netFactor multiplies the HTO term, never the
+        // AOV term.
         fullBuyerValue =
             aov +
             (hasHto ? input.htoPrice : 0) *
                 nf *
-                (input.bookingRate / 100) *
-                (input.showUpRate / 100) *
-                (input.leadToCloseRate / 100);
+                (input.productBookingRate / 100) *
+                (input.productShowUpRate / 100) *
+                (input.productCloseRate / 100);
     }
 
     const maxCpa = fullBuyerValue * ss;
@@ -500,15 +510,16 @@ function assertPaidInput(input: PaidFunnelInputs): void {
         assertPercentage("eventCloseRate", input.eventCloseRate);
     }
     if (input.funnelType === "paid_product") {
-        // Phase 11 — paid_product reads the chain
-        // (booking × show-up × close) on the HTO term. The fields
-        // are validated even when hasHto=false (the derivation
-        // collapses the HTO term to 0 but the inputs must still be
-        // in range — otherwise a unit test or a future code path
-        // that reads them on the no-HTO branch would fail opaquely).
-        assertPercentage("bookingRate", input.bookingRate);
-        assertPercentage("showUpRate", input.showUpRate);
-        assertPercentage("leadToCloseRate", input.leadToCloseRate);
+        // Phase 11 / Phase 12 — paid_product reads the chain
+        // (productBookingRate × productShowUpRate × productCloseRate)
+        // on the HTO term. The fields are validated even when
+        // hasHto=false (the derivation collapses the HTO term to 0
+        // but the inputs must still be in range — otherwise a unit
+        // test or a future code path that reads them on the no-HTO
+        // branch would fail opaquely).
+        assertPercentage("productBookingRate", input.productBookingRate);
+        assertPercentage("productShowUpRate", input.productShowUpRate);
+        assertPercentage("productCloseRate", input.productCloseRate);
     }
     if (!ALL_ROAS_TARGETS.includes(input.roasTarget)) {
         throw new Error(
@@ -534,3 +545,4 @@ function assertLeadMagnetCallInput(input: LeadMagnetCallInputs): void {
     assertCommissionRate(input.commissionRate);
     assertMarginKept(input.marginKept);
 }
+

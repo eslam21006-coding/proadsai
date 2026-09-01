@@ -196,8 +196,211 @@ After the fix: 16/16 pass.
 | `functions/src/__tests__/cpaEconomics.test.ts` | Fixture migration (30 sites) + FR-019 discriminator rewrite |
 | `functions/src/__tests__/funnelSettings.contract.test.ts` | Fixture migration (7 sites) + chain contract test |
 | `functions/src/__tests__/funnelEconomicsParity.test.ts` | paid_product parity fixtures |
-| `scripts/patch-paid-funnels.mjs` | **NEW** — idempotent migration tool for test fixtures (run once; idempotent for future re-runs) |
 
-The bug is closed. The regression test guards against re-introducing it.
+---
+
+## 11. Phase 12 review (B + C)
+
+### Item C — patch script (deleted)
+
+`scripts/patch-paid-funnels.mjs` was the one-off migration tool that batch-applied
+`bookingRate: 0, showUpRate: 0, leadToCloseRate: 0,` to every `PaidFunnelInputs`
+literal in `cpaEconomics.test.ts` (30 sites) and `funnelSettings.contract.test.ts`
+(7 sites) when the `PaidFunnelInputs` type gained those three fields. It was a
+regex-based insertion script — find `htoConversionRate: \d+,` and append the chain
+fields on the next line.
+
+**Status: deleted** (commit `3611a30` reverted the file; this report records what
+it did so the migration is documented without leaving a foot-gun in the repo).
+Reasons:
+
+- The script is not idempotent against current state — it would re-append
+  `bookingRate: 0, ...` to fixtures that have since been manually adjusted
+  with intentional non-zero values (the FR-019 discriminator on line 173
+  uses `bookingRate: 25`; the second-discriminator fixture on line 207 uses
+  `bookingRate: 7.5`). Re-running it would produce a TypeScript error on
+  duplicate-property literal types.
+- The migration is one-shot. There is no recurring batch of test fixtures to
+  update against this type. A committed script that rewrites test fixtures
+  against a stale view of those fixtures is a trap — a future engineer who
+  sees it and runs it will silently corrupt the assertions.
+- The patch was mechanical and trivially reproducible by hand — see the diff
+  in commit `3611a30` for the exact insertions.
+
+If a similar migration is needed in the future (e.g. Item A below adds three
+new fields to `PaidFunnelInputs`), write a new script, run it once, and
+delete it in the same commit.
+
+### Item B — second FR-019 discriminator
+
+The first FR-019 fixture tunes the chain rates so the product is exactly 0.05
+(25 × 80 × 25 / 100² = 0.05) — useful for the 235-continuity anchor with the
+Phase 968 contract, but a poor structural discriminator. A regression that
+dropped one stage and doubled another (e.g. `(0.5 × 80 × 25)` → product 0.10)
+would still produce a different-but-coincidentally-acceptable `fullBuyerValue`.
+
+`functions/src/__tests__/cpaEconomics.test.ts:206` (new test) pins a chain
+product with a non-round arithmetic and asserts each stage matters
+independently:
+
+- base rates: `7.5 × 70 × 22.5` → product 0.0118125 → `fullBuyerValue = 131.89`
+- drop `bookingRate` → `0` → `fullBuyerValue = 100` (aov alone; chain collapses)
+- drop `showUpRate` → `0` → same collapse
+- drop `leadToCloseRate` → `0` → same collapse
+- double `bookingRate` (15 × 70 × 22.5) → HTO contribution ≈ 2× original
+  (tolerance 0.02 to absorb the FR-048 cent-level rounding)
+
+A regression that removed any chain stage fails the corresponding drop-line
+assertion. A regression that changed the formula to additive or squared fails
+the doubling assertion.
+
+### Item A — storage-slot overload (cost report, awaiting go-ahead)
+
+**Problem.** Phase 11 reused the `bookingRate` / `showUpRate` / `leadToCloseRate`
+storage slots on both `lead_magnet_call` and `paid_product`. Same field name,
+different semantic — and the denominators are different populations:
+
+- `lead_magnet_call.bookingRate` = "leads who book a call" — denominator is
+  free opt-ins (the "lead" pool). Magnitude typically 5–10% per the Phase 968
+  benchmark.
+- `paid_product.bookingRate` = "buyers who book a call" — denominator is
+  paying customers (the "buyer" pool). Magnitudes may differ significantly
+  from lead-side rates because the population has already self-selected for
+  purchase intent.
+
+Any consumer that reads these fields without carrying `funnelType` alongside
+will silently average incompatible rates. The deferred epoch work
+(report §11 item 11) and the learning aggregates (`learningAggregates.ts`,
+`learningIntegration.ts`) both read the funnel settings doc. An aggregate
+that groups by `bookingRate` without first filtering by `funnelType` produces
+a meaningless average that goes into the next-day verdict and the
+retrospective aggregate in lockstep.
+
+The "additive storage" rule (data-model.md §1: "nothing is written to any
+existing document") forbids overloading by repurpose, but it allows adding
+new slots. The fix is to give `paid_product` its own three slots, leaving
+`lead_magnet_call`'s slots untouched.
+
+**Proposed rename.** Distinct fields for `paid_product`, prefix-named after
+the funnel-type literal so the storage slot reads cleanly with its semantic:
+
+**Naming choice (revised after review).** Reviewer selected
+`productBookingRate` / `productShowUpRate` / `productCloseRate` —
+matching the `eventAttendanceRate` / `eventCloseRate` convention
+already used by `paid_event`. The codebase's convention for
+funnel-scoped chain fields is `<funnel-prefix><Stage>Rate` — `paid_event`
+uses `event*`, so `paid_product` uses `product*`. Same shape, same
+problem, same solution.
+
+Reviewer's correction to my earlier claim: I wrote that `hto` would
+"introduce an abbreviation convention the codebase doesn't already use".
+That is false — `htoPrice`, `htoConversionRate`, and `hasHto` are all live
+fields. The actual reason `hto` is wrong is that `paid_event`'s chain
+also feeds the high-ticket offer (via `eventAttendanceRate ×
+eventCloseRate` on the HTO term), so giving the `paid_product` chain an
+`hto*` prefix would put two different prefixes on the same concept. The
+`product*` prefix sidesteps that — same pattern as `event*`, no overlap
+with the existing `hto*` fields (which describe the HTO offer itself,
+not the chain that leads to it).
+
+The original proposal (`pp`) is rejected for the same reason the
+reviewer gave: cryptic, no precedent. `lowPrice` is rejected for
+verbosity. `product*` wins on both readability and precedent.
+
+**Deployment status — Phase 11 has NOT been deployed.** Verified via
+`git ls-remote origin`:
+
+```
+refs/heads/main                            → 1ec5821 (funnel-economics investigation commit)
+refs/heads/funnel-economics-rebuild        → 1ec5821 (same)
+refs/heads/968-funnel-economics-rebuild    → 3611a30 (Phase 11 fix)
+```
+
+`main` and the legacy `funnel-economics-rebuild` branch both point at
+`1ec5821` — the original Phase 968 investigation report, with no
+Phase 968 (and therefore no Phase 11) code. The Phase 968 chain code
+(including `bookingRate` / `showUpRate` / `leadToCloseRate` for
+`lead_magnet_call`) lives entirely on the feature branch and has never
+been merged or deployed.
+
+Cross-check on `main`'s `paid_product` shape: `funnelSettings.ts` on
+`main` knows only `htoConversionRate` on `paid_product` — the legacy
+single-rate field. There are no `bookingRate` / `showUpRate` /
+`leadToCloseRate` slots on `main` for any funnel type. A paid_product
+record in production therefore can carry at most a value in the
+`htoConversionRate` slot, which is being renamed off of by Phase 11
+itself (the field becomes dead at read time). No record in production
+carries buyer-semantic values in the `bookingRate` slot — that slot
+was never written by production code.
+
+**Conclusion: clean rename, no defensive read-side fallback needed.**
+The Phase 11 build has not been deployed to production; no production
+record can carry buyer-semantic values in any of the slots being
+renamed. The rename is purely additive (the new slots start as `null`
+on every doc; old slot values, if any existed, are abandoned).
+
+If the situation changes — Phase 11 ships to production before this
+rename merges — the same-day defensive fallback is:
+
+```ts
+const productBookingRate = doc.productBookingRate ?? doc.bookingRate ?? null;
+const productShowUpRate   = doc.productShowUpRate   ?? doc.showUpRate   ?? null;
+const productCloseRate    = doc.productCloseRate    ?? doc.leadToCloseRate ?? null;
+```
+
+at the read site (`getFunnelSettings`); a `saveFunnelSettings` then
+backfills the new slots and clears the old ones. Marked for removal
+after one release cycle. Not implementing now because the precondition
+(deployment) doesn't hold.
+
+**Cost (revised, confirmed unchanged).**
+
+| File | Change | Approx lines |
+|---|---|---|
+| `functions/src/cpaEconomics.ts` | Replace `bookingRate` / `showUpRate` / `leadToCloseRate` on `PaidFunnelInputs` with `productBookingRate` / `productShowUpRate` / `productCloseRate`; update derivation; update validation. | ~30 |
+| `functions/src/funnelSettings.ts` | Rename on `FunnelSettingsDoc`, `SaveFunnelSettingsRequest`, `assertRequiredFieldPresent`, `requiredFieldsForDoc`, `missingRequiredFields`, `buildFunnelInputs`, and doc construction. Set `product*` fields on `paid_product` docs only; `null` everywhere else. The `lead_magnet_call` arm stays verbatim — it does not read or write the new `product*` fields. | ~100 |
+| `src/components/FunnelSettingsForm.tsx` | Rename the three `useState` hooks; update hydration, save payload, `computeMissingFields`, `MISSING_FIELD_LABELS`. Label copy unchanged ("Booking rate (%)" / "Attendance rate (%)" / "High ticket close rate (%)"). | ~150 |
+| `functions/src/__tests__/cpaEconomics.test.ts` | Rename on `paidProductInputs` helper + FR-019 fixtures + second-discriminator fixtures + new `PaidFunnelInputs` literals. | ~40 |
+| `functions/src/__tests__/funnelEconomicsParity.test.ts` | Rename on `paid_product` parity fixtures + `FSL` shape. | ~25 |
+| `functions/src/__tests__/funnelSettings.contract.test.ts` | Rename on `coercePaid` request shape + `assertRequiredFieldsPresent` FIELD_MAP + doc-shape fixture. | ~25 |
+| `src/__tests__/funnelCompleteness.test.ts` | Rename on `PAID_PRODUCT_HAS_HTO_MISSING_CONVERSION` + `COMPLETE_PAID_PRODUCT` fixtures + assertions. | ~30 |
+| `src/__tests__/funnelSettingsSavePayload.test.ts` | Rename on `paid_product` section. | ~30 |
+
+**Total: ~430 lines across 7 files. ~30–45 minutes focused.**
+
+**What does not change.** `src/__tests__/funnelSettingsRender.test.tsx` (the
+mount-based rendered-field-set test) needs no change — it asserts on label
+copy ("Booking rate (%)" etc.), which is unchanged; only the storage name
+moves. The SC-11 terminology guard continues to pass (the new field names
+are internal; no user-facing strings change).
+
+**Status: implemented and verified.** All three blockers cleared: prefix
+choice (`product*` — matches the `event*` convention used by paid_event),
+naming rationale (no overlap with existing `hto*` fields on the HTO offer
+itself), deployment status (Phase 11 undeployed ⇒ clean rename, no
+defensive read-side fallback). The implementation landed across:
+
+| File | Change |
+|---|---|
+| `functions/src/cpaEconomics.ts` | `PaidFunnelInputs` gained `productBookingRate` / `productShowUpRate` / `productCloseRate`; the `paid_product` branch of `deriveTargetCpa` now multiplies by the new chain; `assertPaidInput` validates the new fields on paid_product. |
+| `functions/src/funnelSettings.ts` | `FunnelSettingsDoc` gained the three `product*` slots (scoped to paid_product, `null` everywhere else); `assertRequiredFieldPresent`, `requiredFieldsForDoc`, `missingRequiredFields`, `buildFunnelInputs`, and the doc construction all carry the new names; the lead-side `bookingRate` / `showUpRate` / `leadToCloseRate` slots are unchanged on lead_magnet_call. |
+| `src/components/FunnelSettingsForm.tsx` | Three new `useState` hooks, three new hydration entries, three new save-payload entries, three new `NumberField` inputs on the paid_product branch with the user-visible labels "Booking rate (%)" / "Attendance rate (%)" / "High ticket close rate (%)"; `computeMissingFields` checks the new fields on paid_product + hasHto; `MISSING_FIELD_LABELS` adds the three new keys; the optimistic merge writes the new slots on paid_product docs only. |
+| Backend tests | `cpaEconomics.test.ts` (33 sites updated), `funnelEconomicsParity.test.ts` (`FSL` interface + fixtures), `funnelSettings.contract.test.ts` (`coercePaid` request shape + `FIELD_MAP` + FunnelSettingsDoc fixture). |
+| Frontend tests | `funnelCompleteness.test.ts` (fixtures + assertion keys), `funnelSettingsRender.test.tsx` (`makeSettingsDoc` factory). |
+| `scripts/patch-paid-product-fields.mjs` | **Deleted.** The migration is complete; the script would re-apply against an already-migrated state if it stayed in the repo. |
+
+**Verification.**
+
+| Suite | Tests | Pass | |
+ |---|---|---|---|
+| `vitest` (frontend) | 81 | 81 | All 16 funnelSettingsRender assertions pass; the new `product*` keys appear on paid_product only; the `lead_magnet_call` branch keeps its unprefixed chain slots. |
+| `npm run test:phase14` (backend) | 14 suites | 14 / 0 | All contract + parity + cpaEconomics tests pass; the new `product*` keys appear on paid_product only; lead_magnet_call tests are unchanged. |
+| SC-11 guard | 85 files scanned | pass | 11 PERCENT_SIGN suppressions (the benchmark hints — `product*` adds 3 to the previous 8; the count went 8 → 11 across the paid_product + lead_magnet_call hint pairs). |
+
+The bug is closed. The regression test (`funnelSettingsRender.test.tsx`)
+guards against re-introducing the wrong-field-set on paid_product.
+The storage overload is closed: the `event*` / `product*` / lead-side
+unprefixed convention is now the codebase's storage pattern for
+funnel-scoped chain fields.
 
 — Phase 11 (production-bug batch)

@@ -105,23 +105,48 @@ export interface FunnelSettingsDoc {
     buyRateFromAttendees: number | null;
     leadToCloseRate: number | null;
     /**
-     * Phase 968 — T022 + Phase 11. SHARED — `lead_magnet_call` AND
-     * `paid_product + hasHto`. On `lead_magnet_call` the chain starts
-     * at "lead → booked call" (percent, 0–100); on `paid_product` it
-     * starts at "buyer → booked call". The funnelType discriminator
-     * on the doc makes the semantics explicit. Required for
-     * completeness on both. `null` on every other funnel type.
-     * data-model.md §1. Required for `lead_magnet_call` and
-     * `paid_product + hasHto` completeness (FR-039).
+     * Phase 968 — T022. `lead_magnet_call` only. Lead → booked call
+     * (percent, 0–100). data-model.md §1. Required for `lead_magnet_call`
+     * completeness (FR-039). Stored as `null` on non-lead-magnet-call
+     * docs.
      */
     bookingRate: number | null;
     /**
-     * Phase 968 — T022 + Phase 11. SHARED — `lead_magnet_call` AND
-     * `paid_product + hasHto`. Booked → attended (percent, 0–100) —
-     * the meaning is independent of whether the chain starts from a
-     * lead or a buyer. Required for completeness on both funnel types.
+     * Phase 968 — T022. `lead_magnet_call` only. Booked → attended
+     * (percent, 0–100). Required for `lead_magnet_call` completeness.
+     * Stored as `null` on non-lead-magnet-call docs.
      */
     showUpRate: number | null;
+    /**
+     * Phase 12 — `paid_product` only. SCOPED to paid_product to keep
+     * buyer-side rates separate from lead-side rates. Phase 11
+     * overloaded the `bookingRate` / `showUpRate` / `leadToCloseRate`
+     * slots with `paid_product` — same field name, different
+     * denominator (paying-customer bookings vs free-lead bookings
+     * differ by roughly an order of magnitude). Any consumer that
+     * reads these fields without carrying `funnelType` alongside
+     * would silently average incompatible rates; the deferred epoch
+     * work and the learning aggregates both read this document.
+     * The `product*` prefix mirrors the `event*` prefix already used
+     * by `paid_event` — the codebase's existing convention for
+     * funnel-scoped chain fields. Required for `paid_product +
+     * hasHto` completeness (FR-039). Stored as `null` on every other
+     * funnel type.
+     */
+    productBookingRate: number | null;
+    /**
+     * Phase 12 — `paid_product` only. Booked calls that happen
+     * (percent, 0–100). See `productBookingRate` for the rationale.
+     * Required for `paid_product + hasHto` completeness.
+     */
+    productShowUpRate: number | null;
+    /**
+     * Phase 12 — `paid_product` only. Attended calls that buy the
+     * high-ticket offer (percent, 0–100). See `productBookingRate`
+     * for the rationale. Required for `paid_product + hasHto`
+     * completeness.
+     */
+    productCloseRate: number | null;
     /**
      * Phase 968 — T027. Sales commission (percent, 0–100, FR-027). Required
      * for completeness on every funnel type (data-model.md §3, FR-023).
@@ -260,16 +285,18 @@ export function assertRequiredFieldPresent(
                 }
             }
             return;
-        case "paid_product":
-            // Phase 11 production-bug fix — paid_product no longer
-            // reads `htoConversionRate`. The chain
-            // (bookingRate × showUpRate × leadToCloseRate) replaces
-            // it (the same way lead_magnet_call replaced free_webinar's
-            // close rate with explicit stages). The new chain rates
-            // are required when hasHto=true (matches lead_magnet_call's
-            // completeness rule). htoConversionRate is NOT required on
-            // any funnel type now (paid_event dropped it in Phase 7
-            // Item C; paid_product drops it here).
+case "paid_product":
+            // Phase 11 + Phase 12 — paid_product no longer reads
+            // `htoConversionRate`. The chain
+            // (productBookingRate × productShowUpRate × productCloseRate)
+            // replaces it (Phase 11) and uses dedicated
+            // `product*`-prefixed slots to keep buyer-side rates
+            // separate from lead-side rates (Phase 12). The chain
+            // rates are required when hasHto=true (matches
+            // lead_magnet_call's completeness rule shape). htoConversionRate
+            // is NOT required on any funnel type now (paid_event
+            // dropped it in Phase 7 Item C; paid_product drops it
+            // here).
             //
             // The per-field validator throws on the FIRST missing
             // field; the canonical `missingRequiredFields` predicate
@@ -280,9 +307,9 @@ export function assertRequiredFieldPresent(
                 fieldName === "aov"
                 || fieldName === "roasTarget"
                 || fieldName === "htoPrice"
-                || fieldName === "bookingRate"
-                || fieldName === "showUpRate"
-                || fieldName === "leadToCloseRate"
+                || fieldName === "productBookingRate"
+                || fieldName === "productShowUpRate"
+                || fieldName === "productCloseRate"
                 || fieldName === "commissionRate"
                 || fieldName === "marginKept"
             ) {
@@ -350,6 +377,15 @@ type FunnelSettingsLike = {
     leadToCloseRate?: number | null;
     bookingRate?: number | null;
     showUpRate?: number | null;
+    // Phase 12 — paid_product's buyer-side chain. SCOPED to
+    // paid_product; null on every other funnel type. See the
+    // FunnelSettingsDoc docstring for `productBookingRate` for the
+    // rationale (Phase 11 overloaded these slots with
+    // lead_magnet_call's lead-side chain — different denominators,
+    // same field name was a cross-funnel aggregate hazard).
+    productBookingRate?: number | null;
+    productShowUpRate?: number | null;
+    productCloseRate?: number | null;
     commissionRate?: number | null;
     marginKept?: number | null;
 };
@@ -367,13 +403,16 @@ function requiredFieldsForDoc(funnelType: FunnelInputs["funnelType"], hasHto: bo
                 ? ["aov", "htoPrice", "eventAttendanceRate", "eventCloseRate", "commissionRate", "marginKept"]
                 : ["aov", "eventAttendanceRate", "eventCloseRate", "commissionRate", "marginKept"];
         case "paid_product":
-            // Phase 11 production-bug fix — the chain
-            // (bookingRate × showUpRate × leadToCloseRate) replaces
-            // the legacy htoConversionRate on paid_product. All three
-            // chain rates are required when hasHto=true (matches
-            // lead_magnet_call's completeness rule).
+            // Phase 11 + Phase 12 — the chain
+            // (productBookingRate × productShowUpRate × productCloseRate)
+            // replaces the legacy htoConversionRate on paid_product.
+            // All three chain rates are required when hasHto=true
+            // (matches lead_magnet_call's completeness rule shape).
+            // The fields use the `product*` prefix (Phase 12) to keep
+            // buyer-side rates separate from lead-side rates — see
+            // the FunnelSettingsDoc docstring for `productBookingRate`.
             return hasHto
-                ? ["aov", "roasTarget", "htoPrice", "bookingRate", "showUpRate", "leadToCloseRate", "commissionRate", "marginKept"]
+                ? ["aov", "roasTarget", "htoPrice", "productBookingRate", "productShowUpRate", "productCloseRate", "commissionRate", "marginKept"]
                 : ["aov", "roasTarget", "commissionRate", "marginKept"];
         case "free_webinar":
             return ["offerPrice", "attendanceRate", "buyRateFromAttendees", "commissionRate", "marginKept"];
@@ -488,18 +527,20 @@ function buildFunnelInputs(req: SaveFunnelSettingsRequest): FunnelInputs {
         case "paid_event":
         case "paid_product": {
             const hasHto = req.hasHto === true;
-            // Phase 11 — paid_product reads the chain
-            // (bookingRate × showUpRate × leadToCloseRate) on the HTO
-            // term. The fields are accepted on the request payload for
-            // both paid types; the validator at line 230+ ignores them
-            // on paid_event (they're stored-but-unread there) and
-            // requires them on paid_product + hasHto. paid_event passes
-            // them through at 0 to satisfy the derivation engine's
-            // range assertions; the chain is multiplied on paid_product
-            // only.
-            const chainBookingN = asNumberOrNull(req.bookingRate) ?? 0;
-            const chainShowUpN = asNumberOrNull(req.showUpRate) ?? 0;
-            const chainCloseN = asNumberOrNull(req.leadToCloseRate) ?? 0;
+            // Phase 11 + Phase 12 — paid_product reads the chain
+            // (productBookingRate × productShowUpRate × productCloseRate)
+            // on the HTO term. The fields are accepted on the request
+            // payload for both paid types; the validator at line 230+
+            // ignores them on paid_event (they're stored-but-unread
+            // there) and requires them on paid_product + hasHto.
+            // paid_event passes them through at 0 to satisfy the
+            // derivation engine's range assertions; the chain is
+            // multiplied on paid_product only. The `product*` prefix
+            // is for the same-scoped reason as `event*` — keep
+            // buyer-side rates distinct from lead-side rates.
+            const productBookingN = asNumberOrNull(req.productBookingRate) ?? 0;
+            const productShowUpN = asNumberOrNull(req.productShowUpRate) ?? 0;
+            const productCloseN = asNumberOrNull(req.productCloseRate) ?? 0;
             return {
                 funnelType,
                 aov: asNumberOrNull(req.aov) ?? 0,
@@ -513,9 +554,9 @@ function buildFunnelInputs(req: SaveFunnelSettingsRequest): FunnelInputs {
                 htoConversionRate: asNumberOrNull(req.htoConversionRate) ?? 0,
                 eventAttendanceRate: asNumberOrNull(req.eventAttendanceRate) ?? 0,
                 eventCloseRate: asNumberOrNull(req.eventCloseRate) ?? 0,
-                bookingRate: chainBookingN,
-                showUpRate: chainShowUpN,
-                leadToCloseRate: chainCloseN,
+                productBookingRate: productBookingN,
+                productShowUpRate: productShowUpN,
+                productCloseRate: productCloseN,
                 commissionRate,
                 marginKept,
                 // Phase 968 — T041 (FR-016): paid_event defaults roasTarget
@@ -588,8 +629,18 @@ interface SaveFunnelSettingsRequest {
     attendanceRate?: number | null;
     buyRateFromAttendees?: number | null;
     leadToCloseRate?: number | null;
+    // Phase 968 — T022. Sent for `lead_magnet_call` only (lead-side
+    // chain). Backend validator accepts null on every other funnel
+    // type.
     bookingRate?: number | null;
     showUpRate?: number | null;
+    // Phase 12 — `paid_product` only (buyer-side chain). See the
+    // FunnelSettingsDoc docstring for `productBookingRate` for the
+    // rationale. Sent for `paid_product + hasHto`; ignored on every
+    // other funnel type.
+    productBookingRate?: number | null;
+    productShowUpRate?: number | null;
+    productCloseRate?: number | null;
     // Shared Phase 968 inputs (FR-026, FR-027)
     commissionRate?: number | null;
     marginKept?: 50 | 60 | 70 | null;
@@ -652,6 +703,12 @@ export const saveFunnelSettings = onCall(
                 leadToCloseRate: req.leadToCloseRate,
                 bookingRate: req.bookingRate,
                 showUpRate: req.showUpRate,
+                // Phase 12 — paid_product's chain. Carried through to
+                // the completeness predicate so `paid_product +
+                // hasHto` requires all three `product*` fields.
+                productBookingRate: req.productBookingRate,
+                productShowUpRate: req.productShowUpRate,
+                productCloseRate: req.productCloseRate,
                 commissionRate: req.commissionRate,
                 marginKept: req.marginKept,
             });
@@ -714,18 +771,32 @@ export const saveFunnelSettings = onCall(
                 offerPrice: inputs.funnelType === "free_webinar" || inputs.funnelType === "lead_magnet_call" ? inputs.offerPrice : null,
                 attendanceRate: inputs.funnelType === "free_webinar" ? inputs.attendanceRate : null,
                 buyRateFromAttendees: inputs.funnelType === "free_webinar" ? inputs.buyRateFromAttendees : null,
-                // Phase 968 — T022 + Phase 11. The chain rates are now
-                // shared between lead_magnet_call AND paid_product.
-                // The funnelType discriminator handles the per-funnel
-                // semantics (lead → close vs buyer → close).
-                leadToCloseRate: (inputs.funnelType === "lead_magnet_call" || inputs.funnelType === "paid_product")
+                // Phase 968 — T022. The lead-side chain lives on
+                // `lead_magnet_call` only. The `lead_magnet_call` slots
+                // measure leads → close. Phase 12 separates them from
+                // paid_product's buyer-side chain (which lives on the
+                // dedicated `product*` slots below).
+                leadToCloseRate: inputs.funnelType === "lead_magnet_call"
                     ? inputs.leadToCloseRate
                     : null,
-                bookingRate: (inputs.funnelType === "lead_magnet_call" || inputs.funnelType === "paid_product")
+                bookingRate: inputs.funnelType === "lead_magnet_call"
                     ? inputs.bookingRate
                     : null,
-                showUpRate: (inputs.funnelType === "lead_magnet_call" || inputs.funnelType === "paid_product")
+                showUpRate: inputs.funnelType === "lead_magnet_call"
                     ? inputs.showUpRate
+                    : null,
+                // Phase 12 — paid_product's buyer-side chain. SCOPED
+                // to paid_product to keep buyer-side rates distinct
+                // from lead-side rates (see the FunnelSettingsDoc
+                // docstring for `productBookingRate`).
+                productBookingRate: inputs.funnelType === "paid_product"
+                    ? inputs.productBookingRate
+                    : null,
+                productShowUpRate: inputs.funnelType === "paid_product"
+                    ? inputs.productShowUpRate
+                    : null,
+                productCloseRate: inputs.funnelType === "paid_product"
+                    ? inputs.productCloseRate
                     : null,
                 // Phase 968 — T045 (US3). paid_event event rates must be
                 // persisted on the doc so a reloaded record stays

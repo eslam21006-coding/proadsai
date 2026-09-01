@@ -135,13 +135,17 @@ function makeSettingsDoc(
         offerPrice: isFree ? 997 : null,
         attendanceRate: funnelType === "free_webinar" ? 25 : null,
         buyRateFromAttendees: funnelType === "free_webinar" ? 2 : null,
-        // Chain rates — present on both lead_magnet_call and
-        // paid_product. The funnel-type discriminator handles the
-        // semantics (lead vs buyer as the chain start). On
-        // paid_event / free_webinar the doc carries `null`.
-        leadToCloseRate: funnelType === "lead_magnet_call" || funnelType === "paid_product" ? 22.5 : null,
-        bookingRate: funnelType === "lead_magnet_call" || funnelType === "paid_product" ? 7.5 : null,
-        showUpRate: funnelType === "lead_magnet_call" || funnelType === "paid_product" ? 70 : null,
+        // Chain rates — lead_magnet_call uses the unprefixed slots
+        // (`bookingRate` / `showUpRate` / `leadToCloseRate`); paid_product
+        // uses the dedicated `product*`-prefixed slots (Phase 12 — the
+        // buyer-side rates are scoped distinctly from the lead-side
+        // rates). On paid_event / free_webinar both sets carry `null`.
+        leadToCloseRate: funnelType === "lead_magnet_call" ? 22.5 : null,
+        bookingRate: funnelType === "lead_magnet_call" ? 7.5 : null,
+        showUpRate: funnelType === "lead_magnet_call" ? 70 : null,
+        productCloseRate: funnelType === "paid_product" ? 22.5 : null,
+        productBookingRate: funnelType === "paid_product" ? 7.5 : null,
+        productShowUpRate: funnelType === "paid_product" ? 70 : null,
         commissionRate: 10,
         marginKept: 60,
         derived: {

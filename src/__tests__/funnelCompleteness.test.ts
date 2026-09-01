@@ -40,9 +40,9 @@ const EMPTY_PAID_EVENT = {
     offerPrice: "",
     attendanceRate: "",
     buyRateFromAttendees: "",
-    leadToCloseRate: "",
-    bookingRate: "",
-    showUpRate: "",
+    productCloseRate: "",
+    productBookingRate: "",
+    productShowUpRate: "",
     commissionRate: "",
     marginKept: null,
 };
@@ -62,9 +62,9 @@ const COMPLETE_PAID_EVENT = {
     offerPrice: "",
     attendanceRate: "",
     buyRateFromAttendees: "",
-    leadToCloseRate: "",
-    bookingRate: "",
-    showUpRate: "",
+    productCloseRate: "",
+    productBookingRate: "",
+    productShowUpRate: "",
     commissionRate: "10",
     marginKept: 60 as const,
 };
@@ -81,9 +81,9 @@ const EMPTY_PAID_PRODUCT = {
     offerPrice: "",
     attendanceRate: "",
     buyRateFromAttendees: "",
-    leadToCloseRate: "",
-    bookingRate: "",
-    showUpRate: "",
+    productCloseRate: "",
+    productBookingRate: "",
+    productShowUpRate: "",
     commissionRate: "",
     marginKept: null,
 };
@@ -106,9 +106,9 @@ const COMPLETE_PAID_PRODUCT = {
     attendanceRate: "",
     buyRateFromAttendees: "",
     // Chain fields — REQUIRED on paid_product + hasHto (Phase 11).
-    leadToCloseRate: "22.5",
-    bookingRate: "7.5",
-    showUpRate: "70",
+    productCloseRate: "22.5",
+    productBookingRate: "7.5",
+    productShowUpRate: "70",
     commissionRate: "10",
     marginKept: 60 as const,
 };
@@ -125,9 +125,9 @@ const EMPTY_FREE_WEBINAR = {
     offerPrice: "",
     attendanceRate: "",
     buyRateFromAttendees: "",
-    leadToCloseRate: "",
-    bookingRate: "",
-    showUpRate: "",
+    productCloseRate: "",
+    productBookingRate: "",
+    productShowUpRate: "",
     commissionRate: "",
     marginKept: null,
 };
@@ -144,9 +144,9 @@ const COMPLETE_FREE_WEBINAR = {
     offerPrice: "997",
     attendanceRate: "40",
     buyRateFromAttendees: "8",
-    leadToCloseRate: "",
-    bookingRate: "",
-    showUpRate: "",
+    productCloseRate: "",
+    productBookingRate: "",
+    productShowUpRate: "",
     commissionRate: "10",
     marginKept: 60 as const,
 };
@@ -163,9 +163,15 @@ const EMPTY_LEAD_MAGNET = {
     offerPrice: "",
     attendanceRate: "",
     buyRateFromAttendees: "",
+    // Phase 968 — T022. lead_magnet_call's chain (lead → close).
     leadToCloseRate: "",
     bookingRate: "",
     showUpRate: "",
+    // Phase 12 — paid_product's chain. Null on lead_magnet_call
+    // docs; the slot is part of the doc shape but unused.
+    productCloseRate: "",
+    productBookingRate: "",
+    productShowUpRate: "",
     commissionRate: "",
     marginKept: null,
 };
@@ -182,9 +188,15 @@ const COMPLETE_LEAD_MAGNET = {
     offerPrice: "3000",
     attendanceRate: "",
     buyRateFromAttendees: "",
+    // Phase 968 — T022. lead_magnet_call's chain (lead → close).
     leadToCloseRate: "22.5",
     bookingRate: "7.5",
     showUpRate: "70",
+    // Phase 12 — paid_product's chain. Null on lead_magnet_call
+    // docs; the slot is part of the doc shape but unused.
+    productCloseRate: "",
+    productBookingRate: "",
+    productShowUpRate: "",
     commissionRate: "10",
     marginKept: 60 as const,
 };
@@ -205,9 +217,9 @@ const PAID_EVENT_HAS_HTO_MISSING_PRICE = {
     offerPrice: "",
     attendanceRate: "",
     buyRateFromAttendees: "",
-    leadToCloseRate: "",
-    bookingRate: "",
-    showUpRate: "",
+    productCloseRate: "",
+    productBookingRate: "",
+    productShowUpRate: "",
     commissionRate: "10",
     marginKept: 60 as const,
 };
@@ -232,9 +244,9 @@ const PAID_PRODUCT_HAS_HTO_MISSING_CONVERSION = {
     buyRateFromAttendees: "",
     // All three chain fields intentionally empty — the test asserts
     // the missing-field set lists them all.
-    leadToCloseRate: "",
-    bookingRate: "",
-    showUpRate: "",
+    productCloseRate: "",
+    productBookingRate: "",
+    productShowUpRate: "",
     commissionRate: "10",
     marginKept: 60 as const,
 };
@@ -295,33 +307,38 @@ describe("FunnelSettingsForm.computeMissingFields (frontend completeness mirror)
         expect(computeMissingFields(COMPLETE_PAID_PRODUCT)).toEqual([]);
     });
 
-    it("paid_product hasHto=true missing chain: lists bookingRate + showUpRate + leadToCloseRate (Phase 11)", () => {
-        // The chain (booking × show-up × close) replaces the legacy
-        // htoConversionRate on paid_product. All three rates are
-        // required when hasHto=true. htoConversionRate is NOT listed
-        // (the field is dead at read time — see data-model.md §1
-        // storage retention rationale).
+    it("paid_product hasHto=true missing chain: lists productBookingRate + productShowUpRate + productCloseRate (Phase 11 + Phase 12)", () => {
+        // The chain (productBookingRate × productShowUpRate ×
+        // productCloseRate) replaces the legacy htoConversionRate on
+        // paid_product. All three rates are required when hasHto=true.
+        // htoConversionRate is NOT listed (the field is dead at read
+        // time — see data-model.md §1 storage retention rationale).
+        // Phase 12 renamed the storage slots from the overloaded
+        // bookingRate/showUpRate/leadToCloseRate to the `product*`
+        // prefix to scope buyer-side rates distinctly from lead-side
+        // rates.
         expect(computeMissingFields(PAID_PRODUCT_HAS_HTO_MISSING_CONVERSION)).toEqual([
-            "bookingRate",
-            "showUpRate",
-            "leadToCloseRate",
+            "productBookingRate",
+            "productShowUpRate",
+            "productCloseRate",
         ]);
     });
 
-    it("paid_product hasHto=true missing htoPrice: lists htoPrice + bookingRate + showUpRate + leadToCloseRate", () => {
+    it("paid_product hasHto=true missing htoPrice: lists htoPrice + productBookingRate + productShowUpRate + productCloseRate", () => {
         const fixture: ComputeMissingFieldsInput = {
             ...PAID_PRODUCT_HAS_HTO_MISSING_CONVERSION,
             htoPrice: "",
         };
         // Declaration order matches the backend's requiredFieldsForDoc
         // for paid_product + hasHto: htoPrice is the first paid HTO
-        // field, then the three chain rates. htoConversionRate is no
-        // longer in the list (Phase 11).
+        // field, then the three chain rates (product* prefix per
+        // Phase 12). htoConversionRate is no longer in the list
+        // (Phase 11).
         expect(computeMissingFields(fixture)).toEqual([
             "htoPrice",
-            "bookingRate",
-            "showUpRate",
-            "leadToCloseRate",
+            "productBookingRate",
+            "productShowUpRate",
+            "productCloseRate",
         ]);
     });
 
@@ -332,9 +349,9 @@ describe("FunnelSettingsForm.computeMissingFields (frontend completeness mirror)
         // re-adds it to paid_product's completeness rule fails here.
         const fixture: ComputeMissingFieldsInput = {
             ...PAID_PRODUCT_HAS_HTO_MISSING_CONVERSION,
-            bookingRate: "7.5",
-            showUpRate: "70",
-            leadToCloseRate: "22.5",
+            productBookingRate: "7.5",
+            productShowUpRate: "70",
+            productCloseRate: "22.5",
             // htoConversionRate intentionally empty.
         };
         const missing = computeMissingFields(fixture);
@@ -414,7 +431,10 @@ describe("MISSING_FIELD_LABELS (paused-notice translation table)", () => {
             expect(["aov", "roasTarget", "htoPrice", "htoConversionRate",
                     "eventAttendanceRate", "eventCloseRate", "offerPrice",
                     "attendanceRate", "buyRateFromAttendees", "leadToCloseRate",
-                    "bookingRate", "showUpRate", "commissionRate", "marginKept"])
+                    "bookingRate", "showUpRate",
+                    // Phase 12 — paid_product-only chain rates.
+                    "productBookingRate", "productShowUpRate", "productCloseRate",
+                    "commissionRate", "marginKept"])
                 .toContain(key);
         }
     });
@@ -439,7 +459,10 @@ describe("MISSING_FIELD_LABELS (paused-notice translation table)", () => {
         const internalKeys = ["aov", "roasTarget", "htoPrice", "htoConversionRate",
             "eventAttendanceRate", "eventCloseRate", "offerPrice",
             "attendanceRate", "buyRateFromAttendees", "leadToCloseRate",
-            "bookingRate", "showUpRate", "commissionRate", "marginKept"];
+            "bookingRate", "showUpRate",
+            // Phase 12 — paid_product-only chain rates.
+            "productBookingRate", "productShowUpRate", "productCloseRate",
+            "commissionRate", "marginKept"];
         for (const [key, label] of Object.entries(MISSING_FIELD_LABELS)) {
             for (const ik of internalKeys) {
                 if (ik === key) continue;

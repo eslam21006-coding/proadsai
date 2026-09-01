@@ -34,14 +34,18 @@ function coercePaid(req: {
     hasHto?: boolean;
     htoPrice?: number;
     htoConversionRate?: number;
-    // Phase 11 — paid_product chain (Phase 11 production-bug fix).
-    // The fields are accepted on the contract test's request shape
-    // but default to 0 for paid_event-shaped fixtures. paid_event
-    // ignores these; paid_product reads them (verified by the
-    // dedicated Phase 11 tests in cpaEconomics.test.ts).
-    bookingRate?: number;
-    showUpRate?: number;
-    leadToCloseRate?: number;
+    // Phase 11 + Phase 12 — paid_product chain. Phase 12 renamed the
+    // storage slots from the overloaded `bookingRate` / `showUpRate`
+    // / `leadToCloseRate` to `productBookingRate` / `productShowUpRate`
+    // / `productCloseRate` (the `product*` prefix mirrors the `event*`
+    // prefix used by paid_event's chain — same convention, scoped per
+    // funnel type). The fields are accepted on the contract test's
+    // request shape but default to 0 for paid_event-shaped fixtures.
+    // paid_event ignores these; paid_product reads them (verified by
+    // the dedicated Phase 11 tests in cpaEconomics.test.ts).
+    productBookingRate?: number;
+    productShowUpRate?: number;
+    productCloseRate?: number;
     eventAttendanceRate?: number;
     eventCloseRate?: number;
     commissionRate?: number;
@@ -55,14 +59,17 @@ function coercePaid(req: {
         hasHto,
         htoPrice: hasHto ? (req.htoPrice ?? 0) : 0,
         htoConversionRate: hasHto ? (req.htoConversionRate ?? 0) : 0,
-        // Phase 11 — paid_product chain rates. The `coercePaid`
-        // helper is paid_event-shaped for the contract test; the
-        // chain is supplied as defaults (0) so the derivation never
-        // sees an `undefined`. paid_event's derivation ignores
-        // these fields.
-        bookingRate: req.bookingRate ?? 0,
-        showUpRate: req.showUpRate ?? 0,
-        leadToCloseRate: req.leadToCloseRate ?? 0,
+        // Phase 11 + Phase 12 — paid_product chain rates. The
+        // `coercePaid` helper is paid_event-shaped for the contract
+        // test; the chain is supplied as defaults (0) so the
+        // derivation never sees an `undefined`. paid_event's
+        // derivation ignores these fields. Phase 12 renamed the
+        // chain to `product*` to scope buyer-side rates distinctly
+        // from lead-side rates — `coercePaid` accepts the new names
+        // and the helper below mirrors that.
+        productBookingRate: req.productBookingRate ?? 0,
+        productShowUpRate: req.productShowUpRate ?? 0,
+        productCloseRate: req.productCloseRate ?? 0,
         eventAttendanceRate: req.eventAttendanceRate ?? 0,
         eventCloseRate: req.eventCloseRate ?? 0,
         commissionRate: req.commissionRate ?? 10,
@@ -122,9 +129,9 @@ test("contract — paid_event: AOV $43 + HTO $3500 + 75% attend, 7.5% close + RO
         hasHto: true,
         htoPrice: 3500,
         htoConversionRate: 3, // legacy additive-storage field; unused on paid_event
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
         roasTarget: 1.0,
@@ -147,9 +154,9 @@ test("contract — paid_event: same inputs + ROAS 0.5 → cap silent, effective 
         hasHto: true,
         htoPrice: 3500,
         htoConversionRate: 3,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
         commissionRate: 10,
@@ -173,9 +180,9 @@ test("contract — paid_event: ROAS 0.5 + tight margin → cap fires, effective 
         hasHto: true,
         htoPrice: 3500,
         htoConversionRate: 3,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
         commissionRate: 10,
@@ -197,9 +204,9 @@ test("contract — paid_event: equality (raw == max) does NOT warn (FR-003)", ()
         hasHto: true,
         htoPrice: 3500,
         htoConversionRate: 3,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
         roasTarget: 1.0,
@@ -239,9 +246,9 @@ test("contract — paid_event with hasHto=true but missing htoPrice → throws",
             aov: 43,
             hasHto: true,
             htoConversionRate: 3,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
             eventAttendanceRate: 75,
             eventCloseRate: 7.5,
             commissionRate: 10,
@@ -277,13 +284,13 @@ test("contract — paid_event with hasHto=true and missing htoConversionRate →
 });
 
 test("contract — paid_product with hasHto=true and missing chain (booking/show-up/close) → throws (Phase 11)", () => {
-    // Phase 11 — paid_product reads the chain
-    // bookingRate × showUpRate × leadToCloseRate on the HTO term. All
-    // three are required when hasHto=true. htoConversionRate is NOT
-    // required (it was replaced by the chain). The validator throws on
-    // the FIRST missing field (per-field validator), and the canonical
-    // predicate `missingRequiredFields` lists ALL three in declaration
-    // order.
+    // Phase 11 + Phase 12 — paid_product reads the chain
+    // productBookingRate × productShowUpRate × productCloseRate on
+    // the HTO term. All three are required when hasHto=true.
+    // htoConversionRate is NOT required (it was replaced by the
+    // chain). The validator throws on the FIRST missing field
+    // (per-field validator), and the canonical predicate
+    // `missingRequiredFields` lists ALL three in declaration order.
     assert.throws(
         () => assertRequiredFieldsPresent("paid_product", {
             aov: 100,
@@ -292,11 +299,11 @@ test("contract — paid_product with hasHto=true and missing chain (booking/show
             commissionRate: 10,
             marginKept: 60,
             roasTarget: 1.0,
-            // bookingRate + showUpRate + leadToCloseRate intentionally
-            // omitted. htoConversionRate also omitted — no longer
-            // required.
+            // productBookingRate + productShowUpRate + productCloseRate
+            // intentionally omitted. htoConversionRate also omitted
+            // — no longer required.
         } as unknown as Record<string, unknown>),
-        /bookingRate/i,
+        /productBookingRate/i,
     );
 });
 
@@ -506,12 +513,17 @@ type FunnelSettingsDoc = import("../funnelSettings.js").FunnelSettingsDoc;
         offerPrice: null,
         attendanceRate: null,
         buyRateFromAttendees: null,
-        // Phase 968 — T022 + Phase 11. lead_magnet_call AND
-        // paid_product both persist these on the doc shape; null
-        // on every other funnel type. paid_event ⇒ all null.
+        // Phase 968 — T022. lead_magnet_call only. Lead → booked call;
+        // persisted on the doc shape; null on every other funnel type.
         leadToCloseRate: null,
         bookingRate: null,
         showUpRate: null,
+        // Phase 12 — paid_product only. SCOPED to paid_product to
+        // keep buyer-side rates distinct from lead-side rates; null
+        // on every other funnel type (paid_event ⇒ all null).
+        productCloseRate: null,
+        productBookingRate: null,
+        productShowUpRate: null,
         // Phase 968 — T027. Shared fields, populated for completeness.
         commissionRate: 10,
         marginKept: 60,
@@ -559,17 +571,18 @@ function assertRequiredFieldsPresent(funnelType: "paid_event" | "paid_product" |
         assertRequiredFieldPresent(funnelType, field, req[field]);
     }
     // Mirror the callables: when hasHto=true, htoPrice is required on
-    // every paid funnel type. Phase 11 — paid_product's HTO term
-    // reads the chain (bookingRate × showUpRate × leadToCloseRate),
+    // every paid funnel type. Phase 11 + Phase 12 — paid_product's
+    // HTO term reads the chain
+    // (productBookingRate × productShowUpRate × productCloseRate),
     // all three required when hasHto=true. htoConversionRate is no
     // longer required on any funnel type (Phase 7 Item C dropped it
     // from paid_event; Phase 11 dropped it from paid_product).
     if ((funnelType === "paid_event" || funnelType === "paid_product") && req.hasHto === true) {
         assertRequiredFieldPresent(funnelType, "htoPrice", req.htoPrice);
         if (funnelType === "paid_product") {
-            assertRequiredFieldPresent(funnelType, "bookingRate", req.bookingRate);
-            assertRequiredFieldPresent(funnelType, "showUpRate", req.showUpRate);
-            assertRequiredFieldPresent(funnelType, "leadToCloseRate", req.leadToCloseRate);
+            assertRequiredFieldPresent(funnelType, "productBookingRate", req.productBookingRate);
+            assertRequiredFieldPresent(funnelType, "productShowUpRate", req.productShowUpRate);
+            assertRequiredFieldPresent(funnelType, "productCloseRate", req.productCloseRate);
         }
     }
 }
@@ -633,8 +646,10 @@ test("completeness — paid_event with hasHto=false ⇒ htoPrice drops from requ
 });
 
 test("completeness — paid_product requires the chain (booking/show-up/close) when hasHto=true (Phase 11)", () => {
-    // Phase 11 — paid_product's completeness rule now requires the
-    // three chain rates instead of the legacy htoConversionRate.
+    // Phase 11 + Phase 12 — paid_product's completeness rule requires
+    // the three chain rates (Phase 12: `productBookingRate` /
+    // `productShowUpRate` / `productCloseRate` — the `product*`
+    // prefix scopes buyer-side rates distinctly from lead-side rates).
     // All three are listed in declaration order (matches the
     // backend's requiredFieldsForDoc for paid_product + hasHto).
     const withoutChain = {
@@ -642,25 +657,25 @@ test("completeness — paid_product requires the chain (booking/show-up/close) w
         aov: 100,
         hasHto: true,
         htoPrice: 3000,
-        // bookingRate / showUpRate / leadToCloseRate missing.
-        // htoConversionRate intentionally absent too — no longer
-        // required (Phase 11).
+        // productBookingRate / productShowUpRate / productCloseRate
+        // missing. htoConversionRate intentionally absent too — no
+        // longer required (Phase 11).
         roasTarget: 1.0,
         commissionRate: 10,
         marginKept: 60,
     };
     assert.equal(isSettingsComplete(withoutChain), false);
     assert.deepEqual(missingRequiredFields(withoutChain), [
-        "bookingRate",
-        "showUpRate",
-        "leadToCloseRate",
+        "productBookingRate",
+        "productShowUpRate",
+        "productCloseRate",
     ]);
 
     const withChain = {
         ...withoutChain,
-        bookingRate: 7.5,
-        showUpRate: 70,
-        leadToCloseRate: 22.5,
+        productBookingRate: 7.5,
+        productShowUpRate: 70,
+        productCloseRate: 22.5,
     };
     assert.equal(isSettingsComplete(withChain), true);
 });
@@ -831,9 +846,9 @@ test("completeness — paid_event requires eventAttendanceRate AND eventCloseRat
         aov: 100,
         htoPrice: 3000,
         htoConversionRate: 5,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         commissionRate: 10,
         marginKept: 60,
         // roasTarget intentionally omitted.

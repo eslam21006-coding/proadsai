@@ -61,9 +61,9 @@ test("paid_event: AOV $43 + HTO $3500 @ 75% attend, 7.5% close + ROAS 1.0", () =
         hasHto: true,
         htoPrice: 3500,
         htoConversionRate: 3, // unused on paid_event — kept for additive storage
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
         commissionRate: 10,
@@ -97,9 +97,9 @@ test("paid_event: ROAS 0.5 path — cap warning fires when raw exceeds maxCpa", 
         hasHto: true,
         htoPrice: 350,
         htoConversionRate: 3,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
         commissionRate: 10,
@@ -123,9 +123,9 @@ test("paid_event: no HTO + ROAS 1.0 — fullBuyerValue collapses to AOV", () => 
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
         commissionRate: 10,
@@ -148,9 +148,9 @@ test("paid_event: commissionRate 100 zeroes netFactor → HTO term 0 → fullBuy
         hasHto: true,
         htoPrice: 3000,
         htoConversionRate: 5,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
         commissionRate: 100,
@@ -186,9 +186,9 @@ test("paid_product: netFactor on HTO term only — OQ-1 override (FR-019)", () =
         // Phase 11 — htoConversionRate is dead at read time; the
         // value below is preserved for the type but never multiplied.
         htoConversionRate: 5,
-        bookingRate: 25,
-        showUpRate: 80,
-        leadToCloseRate: 25,
+        productBookingRate: 25,
+        productShowUpRate: 80,
+        productCloseRate: 25,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -201,6 +201,75 @@ test("paid_product: netFactor on HTO term only — OQ-1 override (FR-019)", () =
     assert.equal(d.maxCpa, 94);
     assert.equal(d.effectiveTargetCpa, 94);
     assert.equal(d.capApplied, true);
+});
+
+test("paid_product: chain rates do not collapse to a round product — drop one stage ⇒ fullBuyerValue changes (Phase 11 §B)", () => {
+    // The first FR-019 fixture (above) tunes rates so the chain
+    // product is 0.05 (25 × 80 × 25 / 100² = 0.05 exactly). That is
+    // good for the 235-continuity anchor but a poor structural
+    // discriminator — a regression that drops one stage and doubles
+    // another (e.g. `(0.5 × 80 × 25)`) still produces 0.10 and the
+    // test passes. This fixture pins a chain product with a non-round
+    // arithmetic and asserts each stage matters independently.
+    //
+    // Fixture: booking=7.5, show-up=70, close=22.5
+    //   product = 0.075 × 0.70 × 0.225 = 0.0118125
+    //   HTO contribution = 3000 × 0.9 × 0.0118125 = 31.89375
+    //   fullBuyerValue = 100 + 31.89375 = 131.89375 → 131.89
+    //
+    // Each stage MUST appear in the multiplication. Dropping any
+    // one zeroes the HTO contribution and collapses fullBuyerValue
+    // to aov (100). Duplicating one would not match the literal
+    // either (the chain is multiplicative, not additive).
+    const base: PaidFunnelInputs = {
+        funnelType: "paid_product",
+        aov: 100,
+        hasHto: true,
+        htoPrice: 3000,
+        htoConversionRate: 0, // dead at read time (Phase 11)
+        productBookingRate: 7.5,
+        productShowUpRate: 70,
+        productCloseRate: 22.5,
+        eventAttendanceRate: 0,
+        eventCloseRate: 0,
+        commissionRate: 10,
+        marginKept: 60,
+        roasTarget: 1.0,
+    };
+    const d = deriveTargetCpa(base);
+    assert.equal(d.fullBuyerValue, 131.89);
+
+    // Drop productBookingRate ⇒ HTO term collapses to 0 ⇒ fullBuyerValue = aov.
+    const dropBooking = deriveTargetCpa({ ...base, productBookingRate: 0 });
+    assert.equal(dropBooking.fullBuyerValue, 100);
+
+    // Drop productShowUpRate ⇒ same collapse.
+    const dropShowUp = deriveTargetCpa({ ...base, productShowUpRate: 0 });
+    assert.equal(dropShowUp.fullBuyerValue, 100);
+
+    // Drop productCloseRate ⇒ same collapse.
+    const dropClose = deriveTargetCpa({ ...base, productCloseRate: 0 });
+    assert.equal(dropClose.fullBuyerValue, 100);
+
+    // The chain is multiplicative, not additive. Doubling
+    // productBookingRate doubles the HTO contribution (not the
+    // fullBuyerValue); the test asserts the relationship. Tolerance
+    // is 0.02 — the FR-048 round2-at-end-of-chain rule means a
+    // doubling can land within one cent of "exactly 2×" depending on
+    // how the cent boundary falls on each side of the subtraction.
+    // The relationship is exact on the unrounded algebra; the
+    // assertion is about structural shape, not bit equality. The
+    // unrounded math is exact: 3000 × 0.9 × (15/100 × 70/100 ×
+    // 22.5/100) = 63.7875 vs 2 × (3000 × 0.9 × (7.5/100 × 70/100 ×
+    // 22.5/100)) = 63.7875.
+    const doubledBooking = deriveTargetCpa({ ...base, productBookingRate: 15 });
+    const htoOriginal = d.fullBuyerValue - 100;
+    const htoDoubled = doubledBooking.fullBuyerValue - 100;
+    assert.ok(
+        Math.abs(htoDoubled - htoOriginal * 2) < 0.02,
+        `doubling bookingRate doubles the HTO contribution (multiplicative, not additive); ` +
+        `original=${htoOriginal}, doubled=${htoDoubled}, expected≈${htoOriginal * 2}`,
+    );
 });
 
 test("paid: capApplied uses strict `>` — equality boundary unreachable under the closed marginKept enum (FR-003)", () => {
@@ -225,9 +294,9 @@ test("paid: capApplied uses strict `>` — equality boundary unreachable under t
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -248,9 +317,9 @@ test("paid: capApplied uses strict `>` — equality boundary unreachable under t
         hasHto: true,
         htoPrice: 1000,
         htoConversionRate: 10, // unused on paid_event, kept for type completeness
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 100,
         eventCloseRate: 100,
         commissionRate: 10,
@@ -399,9 +468,9 @@ function paidEventInputs(marginKept: 50 | 60 | 70): PaidFunnelInputs {
         hasHto: true,
         htoPrice: 3000,
         htoConversionRate: 5,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
         commissionRate: 10,
@@ -448,9 +517,9 @@ function paidProductInputs(marginKept: 50 | 60 | 70): PaidFunnelInputs {
         // close) — the test is about margin scaling, not the absolute
         // chain product.
         htoConversionRate: 0, // dead at read time (Phase 11)
-        bookingRate: 25,
-        showUpRate: 80,
-        leadToCloseRate: 25,
+        productBookingRate: 25,
+        productShowUpRate: 80,
+        productCloseRate: 25,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -498,9 +567,9 @@ test("T026: paid_event ROAS-path-driven effectiveTargetCpa does NOT move with ma
         hasHto: true,
         htoPrice: 1000,
         htoConversionRate: 5, // legacy additive storage; unused on paid_event
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 100,
         eventCloseRate: 100,
         commissionRate: 10,
@@ -550,9 +619,9 @@ test("Item B: paid_event realistic ($24/$3000/75%/7.5%/ROAS 0.5) — effectiveTa
         hasHto: true,
         htoPrice: 3000,
         htoConversionRate: 5, // legacy additive storage; unused on paid_event
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
         commissionRate: 10,
@@ -607,9 +676,9 @@ test("T042: paid_event report §6.3 — aov $24 / htoPrice $3000 / 75% / 7.5% / 
         hasHto: true,
         htoPrice: 3000,
         htoConversionRate: 5, // legacy additive storage; unused on paid_event
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
         commissionRate: 10,
@@ -639,9 +708,9 @@ test("T042: paid_event report §6.3 — 100-buyer sanity check (totals to $17,58
         hasHto: true,
         htoPrice: 3000,
         htoConversionRate: 5,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
         commissionRate: 10,
@@ -696,9 +765,9 @@ test("Item B: paid_event capApplied=TRUE — aov=$50 / htoPrice=$3000 / 75% / 7.
         hasHto: true,
         htoPrice: 3000,
         htoConversionRate: 5, // legacy additive storage; unused on paid_event
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 75,
         eventCloseRate: 7.5,
         commissionRate: 10,
@@ -793,9 +862,9 @@ test("paid_event: ROAS 0.65 (invest-a-bit) works", () => {
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -814,9 +883,9 @@ test("paid_event: invalid ROAS (e.g. 0.75) throws", () => {
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -835,9 +904,9 @@ test("paid_event: negative AOV throws", () => {
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -854,9 +923,9 @@ test("paid_event: NaN htoConversionRate throws", () => {
         hasHto: true,
         htoPrice: 100,
         htoConversionRate: NaN,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -873,9 +942,9 @@ test("paid_event: htoConversionRate > 100 throws (percentage range cap)", () => 
         hasHto: true,
         htoPrice: 100,
         htoConversionRate: 150,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -892,9 +961,9 @@ test("paid_event: commissionRate > 100 throws (FR-027)", () => {
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 150,
@@ -911,9 +980,9 @@ test("paid_event: commissionRate < 0 throws", () => {
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: -5,
@@ -930,9 +999,9 @@ test("paid_event: marginKept outside closed enum throws (FR-026)", () => {
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -976,9 +1045,9 @@ test("deriveAll — paid_event dispatches to deriveTargetCpa + stamps economicsV
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -1034,9 +1103,9 @@ test("computeAdvisories — paid + hasHto=false → noHto=true", () => {
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -1066,9 +1135,9 @@ test("computeAdvisories — paid + aov=$5 → lowValue silent (keys off computed
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -1105,9 +1174,9 @@ test("computeAdvisories — paid no-HTO + aov=$5 + tight margin → lowValue FAL
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -1134,9 +1203,9 @@ test("computeAdvisories — paid no-HTO + aov=$1 + tight margin → lowValue TRU
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -1195,9 +1264,9 @@ test("computeAdvisories — target STILL calculated when an advisory fires (non-
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -1223,9 +1292,9 @@ test("getEffectiveTarget — paid → CPA", () => {
         hasHto: false,
         htoPrice: 0,
         htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
         eventAttendanceRate: 0,
         eventCloseRate: 0,
         commissionRate: 10,
@@ -1301,9 +1370,9 @@ test("getEffectiveTarget — every deriveAll path stamps economicsVersion: 2 (T0
             hasHto: false,
             htoPrice: 0,
             htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
             eventAttendanceRate: 0,
             eventCloseRate: 0,
             commissionRate: 10,
@@ -1316,9 +1385,9 @@ test("getEffectiveTarget — every deriveAll path stamps economicsVersion: 2 (T0
             hasHto: false,
             htoPrice: 0,
             htoConversionRate: 0,
-        bookingRate: 0,
-        showUpRate: 0,
-        leadToCloseRate: 0,
+        productBookingRate: 0,
+        productShowUpRate: 0,
+        productCloseRate: 0,
             eventAttendanceRate: 0,
             eventCloseRate: 0,
             commissionRate: 10,
