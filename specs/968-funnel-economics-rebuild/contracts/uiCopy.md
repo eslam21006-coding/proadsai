@@ -134,8 +134,9 @@ Buttons follow the existing `ROAS_OPTIONS` visual pattern (`FunnelSettingsForm.t
 | 24 | Based on ticket revenue | محسوب على إيراد التذاكر |
 | 25 | Based on projected event value | محسوب على القيمة المتوقعة للفعالية |
 | 26 | Your target follows ticket revenue, because the later value of your event is not proven yet. | هدفك محسوب على إيراد التذاكر، لأن قيمة العرض التالي في فعاليتك لم تثبت بعد. |
+| 26a | Your target follows the later value of your event, because it is now the lower of the two. | هدفك محسوب على قيمة العرض التالي في فعاليتك، لأنها أصبحت الأقل بين الرقمين. |
 
-String 26 is the active-path explainer for the common case. When the projection path wins, name that one instead.
+String 26 is the active-path explainer for the ticket-revenue case (the common case). String 26a is the active-path explainer for the projection-active case (when `capApplied === true`). The two strings render mutually exclusively — see `FunnelSettingsForm.tsx:1237`. Phase 968 round-15 (#3897474... Item 6) replaced a previous version that shipped Latin "back-end" jargon inside the user-facing Arabic copy (same family of breach as the `(HTO)` parenthetical fixed in Phase 10). The replacement is Fusha on both sides and pinned here alongside #26 so future batches see both branches.
 
 ### Incomplete record (FR-052)
 

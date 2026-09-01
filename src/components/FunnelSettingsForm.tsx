@@ -1235,8 +1235,19 @@ export default function FunnelSettingsForm({
                     <p className={`mt-3 text-sm ${txMuted}`} data-results-active-path>
                         {paidDerived.capApplied
                             ? L(
-                                'Your target follows projected event value, because your back-end economics (event attendance × high-ticket close) are now the binding constraint.',
-                                'هدفك محسوب على القيمة المتوقعة للفعالية، لأن اقتصاديات الـ back-end (نسبة الحضور × نسبة الإغلاق) هي القيد الفعّال.',
+                                // Phase 968 — Round-15 (#3897474... Item 6):
+                                // replace the previous projection-active
+                                // explainer. The prior Arabic shipped Latin
+                                // "back-end" jargon (same family of breach as
+                                // the (HTO) case fixed in Phase 10), and the
+                                // English phrasing carried technical
+                                // compound "back-end economics" jargon. The
+                                // new pair reads in simple Fusha on both
+                                // sides: "the later value of your event,
+                                // because it is now the lower of the two."
+                                // Pinned in `contracts/uiCopy.md` #26a.
+                                'Your target follows the later value of your event, because it is now the lower of the two.',
+                                'هدفك محسوب على قيمة العرض التالي في فعاليتك، لأنها أصبحت الأقل بين الرقمين.',
                             )
                             : L(
                                 'Your target follows ticket revenue, because the later value of your event is not proven yet.',
