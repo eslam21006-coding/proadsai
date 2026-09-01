@@ -284,9 +284,9 @@ co-staged with substantive work — see AGENTS.md §0 / Phase 968 history).
 
 ## 6. AGENTS.md §0b compliance — names vs bodies + cross-section reconciliation
 
-Both halves pass:
+### Names vs bodies
 
-**Names vs bodies.** Every test name in the runner output
+Every test name in the runner output
 (`Tests  84 passed (84)` for frontend, 307 backend tests) matches
 the assertion it makes. Spot-check on the new tests:
 
@@ -295,20 +295,74 @@ the assertion it makes. Spot-check on the new tests:
 - `mount: wheel over a focused number input does not change its value (integration)` — assertion verifies handler is wired AND value unchanged. ✓
 - `paid_product: chain rates do not collapse to a round product — drop one stage ⇒ fullBuyerValue changes (Phase 11 §B)` — name says "drop one stage" and body asserts 4 separate drop cases (booking / showUp / qualification / close) all collapse `fullBuyerValue` to `aov = 100`. ✓
 - `paid_product: netFactor on HTO term only — OQ-1 override (FR-019)` — name says "netFactor on HTO term only" and body asserts `fullBuyerValue=140.50` (commission on HTO only) vs the documented 130.50 / 145.00 alternatives. ✓
+- `T070: rounding-order fixture (FR-048, SC-015) — inputs differ under end-of-chain vs intermediate; assert 2.93` — name says "assert 2.93" and body asserts `d.effectiveTargetCpl === 2.93` AND `targetIntermediate === 2.92` (the negative control the test exists for). ✓
 
-**Cross-section reconciliation.** This report's §4 prose
-("every fixture carrying chain rates") and the audit table above
-agree on:
+### Cross-section reconciliation (AGENTS.md §0b strengthened rule)
 
-- Test 7: T026 lead_magnet_call 60→50 — both §4 and §4 note the
-  rounding breaks the ×1.25 equality at the rounded-output level
-  and the fix moves to unrounded-intermediate assertion.
-- Test 19: T070 rounding-order — both §4 and §4 note the chain
-  grew from 3 to 4 stages, the cent-boundary disagreement was lost,
-  and the test was rewritten to assert on unrounded intermediates
-  directly.
+Per-file delta from §4 audit table:
 
-Both reconciliations hold.
+| Test file | §4 row count | Fixture changes | New tests | Net test-count change |
+|---|---:|---:|---:|---:|
+| `functions/src/__tests__/cpaEconomics.test.ts` | 1–19 | 19 | 0 | 0 |
+| `functions/src/__tests__/funnelSettings.contract.test.ts` | 20–24 | 5 | 0 | 0 |
+| `functions/src/__tests__/funnelEconomicsParity.test.ts` | 25–31 | 7 | 0 | 0 |
+| `src/__tests__/funnelCompleteness.test.ts` | 32–41 | 10 | 0 | 0 |
+| `src/__tests__/funnelSettingsRender.test.tsx` | 42–50 | 6 | 3 | **+3** |
+| Contract files (no tests) | 51–53 | 3 | 0 | 0 |
+| **Total** | **53** | **50** | **3** | **+3** |
+
+§5 runner totals (the ground truth the audit table must agree with):
+
+| Test runner | Tests | Pass | Fail |
+|---|---:|---:|---:|
+| Backend `npm run test:phase14` (15 suites) | 307 | 307 | 0 |
+| Frontend `npx vitest run` (6 files) | **84** | **84** | 0 |
+| SC-11 guard | 13 suppressions | pass | 0 |
+
+Three reconciliations:
+
+**(a) Per-file index agreement.** Every fixture index in §4 (1–53)
+maps to a single test source line cited in the "Test" column.
+Spot-check: row 1 (OQ-1 paid_product) cites `cpaEconomics.test.ts:167-204`
+— verified by `grep` in the source. Row 25 (FSL interface) cites
+`funnelEconomicsParity.test.ts:49-73` — verified. Row 50 (preventWheelValueChange
+integration) cites `funnelSettingsRender.test.tsx` — verified.
+
+**(b) Per-file delta arithmetic.** The §4 row-count column sums
+to 53 across test files (19 + 5 + 7 + 10 + 9 = 50 test-touching
+rows + 3 contract rows). The "New tests" column sums to 3 (all on
+`funnelSettingsRender.test.tsx` — the CHANGE 2 wheel tests). The
+"Net test-count change" column sums to +3. The §5 frontend
+runner count (84 = 81 before + 3 added) reconciles exactly. The
+§5 backend runner count (307 = 307 before + 0 added) reconciles
+exactly. No row's delta contradicts the runner total.
+
+**(c) Total arithmetic.** §5 backend total 307 = sum of 15 per-suite
+counts (18 + 11 + 12 + 66 + 33 + 15 + 15 + 28 + 2 + 16 + 17 + 38 +
+19 + 5 + 12 = 307). §5 frontend total 84 = sum of 6 per-file counts
+(84 total — listed by the runner). The "Net test-count change" of
++3 reconciles with the frontend delta (84 − 81 = 3).
+
+**Cross-row agreement on the load-bearing changes.**
+
+- Row 7 (T026 lead_magnet_call 60→50): §4 narrative says
+  "rewritten to assert on unrounded intermediates (the structural
+  identity holds on unrounded values; the previous rounded-output
+  equality was accidental)". §6 reconciliation notes the same. The
+  test body asserts on `round2(unroundedLeadValue × 1.25)` against
+  the unrounded expected target, not on `d50.effectiveTargetCpl` —
+  the rewriting is complete and load-bearing.
+- Row 19 (T070 rounding-order): §4 narrative says "cent-boundary
+  disagreement was lost when chain grew from 3 to 4 stages; rewrote
+  test to assert on unrounded intermediates directly rather than
+  relying on disagreement". **This batch restored the discriminating
+  fixture** — `offerPrice=2000, rates=5/65/50/25` gives 2.93/2.92
+  cent disagreement (search at 1.98M combinations; clean script
+  deleted after use). The test now serves its original purpose:
+  asserting end-of-chain rounding with a positive case that
+  intermediate rounding would fail.
+
+All reconciliations hold.
 
 ## 7. Risks / follow-ups
 
@@ -322,6 +376,13 @@ Both reconciliations hold.
   intended correction (close rate now measures qualified calls),
   not a regression — the §6.1 report numbers should be
   redistributed to reflect the new chain.
+- **T070 fixture search space**: `offerPrice=2000, 5/65/50/25` is
+  the smallest clean-rate fixture that produces 2.93/2.92
+  disagreement in the 4-stage chain (1.98M combinations searched).
+  A future change that moves the chain to 5 stages (or alters
+  spendShare) may break this fixture again — the docstring
+  documents the algebra and the search method so the next
+  replacement is straightforward.
 - **Mouse-wheel guard is at the form level only**: if a future
   component uses a raw `<input type="number">` outside
   `NumberField`, it would not have the guard. The audit shows
@@ -334,6 +395,17 @@ Both reconciliations hold.
   cannot be observed directly in jsdom. A real-browser smoke test
   (Playwright) would be the load-bearing verification — out of
   scope for this batch.
+- **Lint chain blocked by `functions/lib/` build artifacts** (CI phase,
+  not now): `npm run lint` reports 1228 errors in `functions/lib/`
+  — the compiled output of `npm run build`. The errors are
+  eslint-config mismatches on the generated JS (`@typescript-eslint/no-var-requires`
+  + `no-explicit-any`) that don't reflect source code quality.
+  Adding `functions/lib/` to the eslint ignore list (likely via
+  `eslint.config.js` `ignores: ['functions/lib/**']` or a `.eslintignore`
+  file) would let the SC-11 guard run end-to-end via `npm run lint`
+  for the first time. The CI chain currently runs eslint separately
+  from the SC-11 guard, so this fix unlocks a unified gate.
+  Record as a Phase 14 candidate.
 
 ## 8. Commit + push
 

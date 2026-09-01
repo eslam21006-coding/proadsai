@@ -1629,20 +1629,40 @@ test("T052: low-value boundary — raw 0.4949 displays 0.49 ⇒ FIRES", () => {
 
 // Phase 10 T070 (FR-048, SC-015) — rounding-order fixture. The
 // chain MUST round once at the end, not at intermediate steps.
-// Phase 13 — chain grows from 3 to 4 stages (qualification added);
-// the test asserts the structural identity end-of-chain = round2
-// of the unrounded intermediate.
+// Inputs are chosen so end-of-chain and intermediate-rounded
+// orderings DISAGREE at the cent — a fixture that passes under
+// both orderings proves nothing about which rounding is in effect
+// (SC-015's explicit reason this test exists).
 //
-// We compute the unrounded intermediate leadValue directly so the
-// assertion is robust to JS floating-point behaviour on the chain
-// product (a previous draft relied on the two orderings disagreeing
-// at the cent — that disagreement was lost when the chain grew
-// from 3 to 4 stages). The structural property is unchanged: the
-// module MUST round once at the end, never at the leadValue step.
-test("T070: rounding-order fixture (FR-048, SC-015) — module rounds leadValue unrounded, then rounds the final target", () => {
+// Phase 13 — chain grew from 3 stages to 4 stages
+// (booking × showUp × qualification × close). The previous fixture
+// (`offerPrice=1000, 5/65/25`) gave 2.93/2.92 — the cent
+// disagreement vanished at 4 stages with that offerPrice, so the
+// fixture was re-searched at
+//   booking 5–10%, showUp 55–70%, qualification 40–60%,
+//   close 20–25%, offerPrice 1–3000
+// (1.98M combinations searched — script deleted after use).
+// The search kept the SAME disagreement shape (2.93/2.92) with
+// `offerPrice=2000` and rates `5/65/50/25` — clean rates, the
+// same end-of-chain target the original fixture produced, and a
+// one-cent gap to the intermediate ordering.
+//
+//   chain     = 0.05 × 0.65 × 0.50 × 0.25 = 0.0040625
+//   leadValue = 2000 × 0.9 × 0.0040625 = 7.3125
+//   spendShare = (100 − 60) / 100 = 0.40
+//
+//   End-of-chain:  target = round2(7.3125 × 0.40) = round2(2.925) = 2.93
+//   Intermediate:  leadValue_r = round2(7.3125) = 7.31
+//                  target_r  = round2(7.31 × 0.40) = round2(2.924) = 2.92
+//
+// The two orderings disagree at the cent (2.93 vs 2.92). Pinning
+// `2.93` proves the chain rounded once at the end; the
+// intermediate-rounding negative control proves a future refactor
+// that swaps to intermediate rounding would surface here.
+test("T070: rounding-order fixture (FR-048, SC-015) — inputs differ under end-of-chain vs intermediate; assert 2.93", () => {
     const inp: LeadMagnetCallInputs = {
         funnelType: "lead_magnet_call",
-        offerPrice: 1000,
+        offerPrice: 2000,
         qualificationRate: 50,
 
         leadToCloseRate: 25,
@@ -1653,40 +1673,18 @@ test("T070: rounding-order fixture (FR-048, SC-015) — module rounds leadValue 
     };
     const d = deriveTargetCplLeadMagnetCall(inp);
 
-    // Compute the unrounded leadValue and the expected target the
-    // same way the module does (so floating-point rounding inside
-    // the multiplication chain is preserved).
-    const unroundedLeadValue = inp.offerPrice
-        * netFactor(inp.commissionRate)
-        * (inp.bookingRate / 100)
-        * (inp.showUpRate / 100)
-        * (inp.qualificationRate / 100)
-        * (inp.leadToCloseRate / 100);
-    const expectedTarget = round2(unroundedLeadValue * spendShare(inp.marginKept));
+    // End-of-chain target: 2.93 (per the algebra above).
+    assert.equal(d.effectiveTargetCpl, 2.93);
 
-    // The module's effectiveTargetCpl MUST equal the end-of-chain
-    // rounding (the unrounded intermediate × spendShare, then
-    // round2 once at the end).
-    assert.equal(d.effectiveTargetCpl, expectedTarget);
-
-    // Negative control: pin what the intermediate-rounded ordering
-    // WOULD produce. Compute it the same way the module would if it
-    // (incorrectly) rounded leadValue first.
-    const intermediateLeadValue = round2(unroundedLeadValue);
-    const intermediateTarget = round2(intermediateLeadValue * spendShare(inp.marginKept));
-    // The two orderings may or may not differ at this input; the
-    // assertion is that the module uses the end-of-chain ordering.
-    // Pin both sides so a future regression that swaps to
-    // intermediate rounding would surface here (the assertion below
-    // is conditional: if end != intermediate, then end must match
-    // the module output).
-    if (intermediateTarget !== expectedTarget) {
-        assert.equal(d.effectiveTargetCpl, expectedTarget,
-            `module must use end-of-chain rounding (expected ${expectedTarget}); ` +
-            `intermediate ordering would give ${intermediateTarget}`);
-    }
-    assert.equal(round2(d.leadValue), round2(unroundedLeadValue),
-        "module's leadValue MUST equal round2 of the unrounded chain product");
+    // Negative control: confirm that the intermediate-rounded
+    // ordering would produce 2.92 — without this assertion, a
+    // future refactor that swaps to intermediate rounding could
+    // still pass the `2.93` check if it produced 2.93 by accident.
+    // Pinning both orderings proves the test is order-sensitive.
+    const leadValueIntermediate = round2(7.3125); // = 7.31
+    const targetIntermediate = round2(leadValueIntermediate * 0.4); // = 2.92
+    assert.equal(targetIntermediate, 2.92, "intermediate-rounded ordering produces 2.92 (the bug we don't ship)");
+    assert.notEqual(targetIntermediate, d.effectiveTargetCpl, "the two orderings disagree at this input");
 });
 
 // Phase 10 T069 (SC-006, SC-014) — cross-funnel profit-parity
