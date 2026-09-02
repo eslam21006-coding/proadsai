@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint . && node scripts/sc11Guard.mjs",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "node scripts/sc11Guard.test.mjs && vitest run",
+    "test:guard": "node scripts/sc11Guard.test.mjs"
   },
   "dependencies": {
     "firebase": "^12.9.0",

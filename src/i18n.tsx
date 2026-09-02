@@ -153,6 +153,17 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'topbar.menu_meta_change_page': 'Change Page',
         'topbar.menu_meta_select_for_workspace': 'Select ad account for this workspace',
         'topbar.menu_funnel_settings': 'Funnel Settings',
+        // Phase 968 — T057 (US6, FR-035a). Accessible label for the
+        // passive attention badge rendered on the Funnel Settings menu
+        // entry when the saved record is incomplete (FR-051). The badge
+        // is passive — no modal, no redirect, no click behaviour change
+        // (App.tsx:1605). The previous implementation inlined the
+        // English string in App.tsx and skipped Arabic; Phase 9 relocates
+        // it here so both languages share a single source of truth and
+        // the form's copy lives in the same dictionary as the rest of
+        // the menu. Per contracts/uiCopy.md §4 + FR-035a — badge string
+        // only, no other copy relocated to i18n.tsx (form stays inline).
+        'funnel.needs_attention': 'Your funnel settings need updating',
         'meta.picker_title': 'Choose your ad account',
         'meta.picker_title_with_workspace': 'Choose ad account for {name}',
         'meta.picker_subtitle': 'Select which Meta ad account this workspace should use.',
@@ -1101,6 +1112,12 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'topbar.menu_meta_change_page': 'تغيير الصفحة',
         'topbar.menu_meta_select_for_workspace': 'اختر حساب إعلاني لهذه المساحة',
         'topbar.menu_funnel_settings': 'إعدادات مسار المبيعات',
+        // Phase 968 — T057 (US6, FR-035a). Accessible label for the
+        // passive attention badge rendered on the Funnel Settings menu
+        // entry when the saved record is incomplete (FR-051). Simple
+        // Fusha per FR-035b and the existing menu entries' tone. See
+        // the English counterpart above; mirrored here for symmetry.
+        'funnel.needs_attention': 'إعدادات مسار المبيعات تحتاج تحديثاً',
         'meta.picker_title': 'اختر حساب الإعلانات',
         'meta.picker_title_with_workspace': 'اختر حساب الإعلانات لـ {name}',
         'meta.picker_subtitle': 'اختر حساب ميتا للإعلانات الذي ستستخدمه مساحة العمل هذه.',

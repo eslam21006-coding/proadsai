@@ -1132,6 +1132,11 @@ interface MenuSidebarProps {
   onOpenFunnelSettings: () => void;
   onOpenWhatsWorking: () => void;
   funnelSettingsAvailable: boolean;
+  // Phase 968 — T035: passive badge flag. Drives the dot on the
+  // Funnel Settings menu entry (FR-051). The flag is set from the
+  // `complete` field returned by getFunnelSettings (T031) — the
+  // badge is passive, no modal, no redirect.
+  funnelSettingsComplete: boolean;
   activeWorkspaceNeedsMetaAccount: boolean;
   /**
    * BUG A — true when the signed-in user is a team member rather than the
@@ -1175,6 +1180,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
   onOpenFunnelSettings,
   onOpenWhatsWorking,
   funnelSettingsAvailable,
+  funnelSettingsComplete,
   activeWorkspaceNeedsMetaAccount,
   isTeamMember,
 }) => {
@@ -1240,6 +1246,7 @@ const MenuSidebar: React.FC<MenuSidebarProps> = ({
               onOpenFunnelSettings={onOpenFunnelSettings}
               onOpenWhatsWorking={onOpenWhatsWorking}
               funnelSettingsAvailable={funnelSettingsAvailable}
+              funnelSettingsComplete={funnelSettingsComplete}
               activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
               isTeamMember={isTeamMember}
             />
@@ -1343,12 +1350,22 @@ interface MenuItemProps {
    * the main label.
    */
   subLabel?: string | null;
+  /**
+   * Phase 968 — T035. When true, render a small dot to the right of
+   * the label with an accessible label. The dot is passive — it does
+   * not change the click target, the destination, or any auto-open
+   * behaviour (FR-051, FR-044). Used to surface "this section needs
+   * attention" without pushing the user anywhere.
+   */
+  badge?: boolean;
+  /** Accessible label for the badge (e.g. "needs updating"). */
+  badgeLabel?: string;
 }
 
 // Single menu item row — icon + label, full-width pill inside the
 // expanded panel. Mirrors the visual rhythm of the rest of the app:
 // slate text on white, hover lifts to slate-50 with darker text.
-const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onClick, className, subLabel }) => (
+const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onClick, className, subLabel, badge, badgeLabel }) => (
   <button
     type="button"
     onClick={onClick}
@@ -1363,6 +1380,14 @@ const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onClick, className, su
         <span className="block truncate text-[10px] text-slate-400 font-normal" data-sidebar-sublabel>{subLabel}</span>
       ) : null}
     </span>
+    {badge ? (
+      <span
+        aria-label={badgeLabel ?? 'needs attention'}
+        title={badgeLabel ?? 'needs attention'}
+        data-sidebar-badge
+        className="ml-2 inline-block w-2 h-2 rounded-full bg-amber-500 shrink-0"
+      />
+    ) : null}
   </button>
 );
 
@@ -1409,6 +1434,11 @@ interface MenuItemsProps {
       is per-workspace-account, not per-user). Only then do we expose
       the Funnel Settings entry. */
   funnelSettingsAvailable: boolean;
+  /** Phase 968 — T035. Distinct from `funnelSettingsAvailable`:
+      whether the stored settings record is COMPLETE per the canonical
+      predicate. A pre-phase record exists but is incomplete until the
+      owner fills the new fields; this flag drives the passive badge. */
+  funnelSettingsComplete: boolean;
   /**
    * True when the active workspace belongs to a workspace plan AND its
    * `metaAdAccountId` is missing. Drives the highlighted "Select ad
@@ -1433,7 +1463,14 @@ interface MenuItemsProps {
  * site) keeps labels, icons, and conditional entries in lockstep.
  */
 const MenuItems: React.FC<MenuItemsProps> = (props) => {
-  const { t, isDarkMode, lang, milestones, phase, metaConnection, metaSyncing, funnelSettingsAvailable, activeWorkspaceNeedsMetaAccount, isTeamMember } = props;
+  // Round-12 (CodeRabbit round 12 Item 18): `isTeamMember` was destructured
+  // here but never referenced in this MenuItems body. The comment at the
+  // top of the Meta block references guards on "those specific MenuItem
+  // blocks below" — those guards use `userData.isTeamMember` and
+  // `data.isTeamMember` (variables bound elsewhere, not the destructure
+  // here). Drop the unused destructure to satisfy
+  // `@typescript-eslint/no-unused-vars`.
+  const { t, isDarkMode, lang, milestones, phase, metaConnection, metaSyncing, funnelSettingsAvailable, funnelSettingsComplete, activeWorkspaceNeedsMetaAccount } = props;
   const items: Array<{ key: string; el: React.ReactNode }> = [
     { key: 'new', el: <MenuItem key="new" icon="fa-plus" label={t('history.newProject')} onClick={props.onNewProject} /> },
     { key: 'bookmarks', el: <MenuItem key="bookmarks" icon="fa-bookmark" label={t('topbar.menu_bookmarks')} onClick={props.onSavedRenders} /> },
@@ -1566,7 +1603,23 @@ const MenuItems: React.FC<MenuItemsProps> = (props) => {
     // is kept explicit so the intent is clear without re-deriving the gate.
     ...(funnelSettingsAvailable ? [{
       key: 'funnel',
-      el: <MenuItem key="funnel" icon="fa-sliders" label={t('topbar.menu_funnel_settings')} onClick={props.onOpenFunnelSettings} />,
+      // Phase 968 — T035 (FR-051): passive dot when the stored settings
+      // are incomplete. No modal, no redirect — the click behaviour is
+      // unchanged. Phase 9 (T057) moved the badge label into i18n.tsx
+      // as `funnel.needs_attention` per contracts/uiCopy.md §4 so both
+      // languages share a single source of truth (FR-035a — no copy
+      // relocates here to escape the guard; this string was the one
+      // deliberate exception the contract allows).
+      el: (
+        <MenuItem
+          key="funnel"
+          icon="fa-sliders"
+          label={t('topbar.menu_funnel_settings')}
+          onClick={props.onOpenFunnelSettings}
+          badge={!funnelSettingsComplete}
+          badgeLabel={t('funnel.needs_attention')}
+        />
+      ),
     }] : []),
     // Phase 14 batch 04 — What's Working dashboard entry. Same gate as
     // funnel settings: requires Meta connection + linked ad account +
@@ -3762,6 +3815,13 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
   // workspace-account. Drives the first-run auto-gate (no settings → open
   // the form as a blocking first-run screen).
   const [funnelSettingsHasDoc, setFunnelSettingsHasDoc] = useState<boolean | null>(null);
+  // Phase 968 — T034: the completeness flag from getFunnelSettings (FR-049).
+  // Distinct from funnelSettingsHasDoc — existence and completeness are
+  // orthogonal signals (contracts/funnelSettings.md). A pre-phase record
+  // exists (hasDoc=true) but is incomplete (complete=false) until the
+  // owner fills the new fields. The flag drives the badge (T035) and
+  // is NOT wired into the auto-open or reviewDue paths (T036).
+  const [funnelSettingsComplete, setFunnelSettingsComplete] = useState<boolean>(true);
   // ─── MULTI-SIZE SELECTION (Step 3 → Step 4) ─────────────────────
   const [selectedSizes, setSelectedSizes] = useState<Set<AspectRatio>>(new Set(['1:1'] as AspectRatio[]));
   const [singleSelectedConcepts, setSingleSelectedConcepts] = useState<Set<number>>(new Set());
@@ -4278,11 +4338,48 @@ const handleCreateWorkspace = async (data: Omit<Workspace, 'id' | 'createdAt'>) 
         const { functions } = await import('./firebase');
         const fn = httpsCallable(functions, 'getFunnelSettings');
         const res = await fn({ workspaceId: activeWorkspaceId, accountId: activeMetaAccountId });
-        const data = res.data as { ok: true; settings: { id: string } | null; reviewDue: boolean };
+        // Phase 968 — T034: also read `complete` (FR-049). The flag is
+        // the source of truth for the passive attention marker (T035)
+        // and is NOT wired into the auto-open or reviewDue paths (T036).
+        const data = res.data as {
+          ok: true;
+          settings: { id: string } | null;
+          complete?: boolean;
+          reviewDue: boolean;
+        };
         if (cancelled) return;
         setFunnelSettingsHasDoc(!!data?.settings);
+        // `complete === true` (explicit) means stored AND complete.
+        // `complete === false` means stored but incomplete OR no record.
+        // `complete === undefined` means the backend hasn't been
+        // redeployed yet (pre-Phase-5) — fall back to "no record ⇒
+        // not incomplete" so the badge stays silent during rollout.
+        //
+        // Round-12 (CodeRabbit round 12 Item 13): the previous expression
+        // `data?.settings != null && data.complete === true` evaluated to
+        // `false` whenever `data.complete` was `undefined` AND a settings
+        // record existed — turning the badge ON instead of leaving it
+        // silent. `data?.complete !== false` inverts the rollout fallback:
+        // it's `true` when complete is `true` OR `undefined`, and `false`
+        // only when complete is explicitly `false`. Records the three
+        // documented cases:
+        //   complete === true      → complete (badge silent)
+        //   complete === false     → incomplete (badge visible)
+        //   complete === undefined → silent during rollout
+        setFunnelSettingsComplete(data?.complete !== false);
       } catch {
-        if (!cancelled) setFunnelSettingsHasDoc(null);
+        // Round-13 (CodeRabbit): the prior catch only reset
+        // `funnelSettingsHasDoc`. A thrown probe (network error,
+        // permission-denied for an account the owner no longer owns,
+        // etc.) should also reset `funnelSettingsComplete` so the badge
+        // reflects "unknown" rather than retaining a stale value
+        // from a previous render. Reset both to mirror the success
+        // path ("no record ⇒ not incomplete" per the rollout fallback
+        // comment above).
+        if (!cancelled) {
+          setFunnelSettingsHasDoc(null);
+          setFunnelSettingsComplete(true);
+        }
       }
     }
     probe();
@@ -11483,6 +11580,7 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
         onOpenFunnelSettings={() => { setShowMenuDrawer(false); openFunnelSettings(false); }}
         onOpenWhatsWorking={() => { setShowMenuDrawer(false); setShowWhatsWorking(true); }}
         funnelSettingsAvailable={funnelSettingsAvailable}
+        funnelSettingsComplete={funnelSettingsComplete}
         activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
         isTeamMember={isTeamMemberUser}
       />
@@ -11604,8 +11702,9 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                 onChangeMetaPage={() => { setShowMenuDrawer(false); openMetaPagePicker(); }}
                 onSelectMetaAccountForWorkspace={() => { setShowMenuDrawer(false); openMetaAccountPickerForActiveWorkspace(); }}
                 onOpenFunnelSettings={() => { setShowMenuDrawer(false); openFunnelSettings(false); }}
-                onOpenWhatsWorking={() => { setShowMenuDrawer(false); setShowWhatsWorking(true); }}
+        onOpenWhatsWorking={() => { setShowMenuDrawer(false); setShowWhatsWorking(true); }}
         funnelSettingsAvailable={funnelSettingsAvailable}
+        funnelSettingsComplete={funnelSettingsComplete}
         activeWorkspaceNeedsMetaAccount={activeWorkspaceNeedsMetaAccount}
         isTeamMember={isTeamMemberUser}
               />
@@ -12791,7 +12890,17 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                     .map(w => ({ id: w.id, name: w.name, metaAdAccountId: w.metaAdAccountId ?? null, metaAdAccountName: w.metaAdAccountName ?? null }))
                 }
                 isTeamMember={isTeamMemberUser}
-                onSaved={() => {
+                onSaved={(saved) => {
+                  // Phase 968 — T057 / Item C (CodeRabbit round 12):
+                  // The badge must clear after the user completes the record.
+                  // `saveFunnelSettings` rejects incomplete saves with
+                  // `invalid-argument`, so if `saved` is a doc, the record is
+                  // complete by definition. Re-running the full probe is a
+                  // candidate alternative, but `setFunnelSettingsComplete(true)`
+                  // here is the user-explicit signal we want — the probe
+                  // depends on stale state that survives across renders in
+                  // edge cases.
+                  if (saved) setFunnelSettingsComplete(true);
                   setFunnelSettingsHasDoc(true);
                   setFunnelFirstRunDismissed(false);
                   if (funnelSettingsFirstRun) closeFunnelSettings();

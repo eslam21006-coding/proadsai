@@ -11,6 +11,77 @@ These rules encode hard-won lessons. Violating them causes production bugs, wast
 ### 0. ALWAYS WRITE A LOCAL REPORT
 At the end of every multi-step task (investigations, refactors, batched migrations, model swaps, billing changes, anything with discrete numbered batches), write a Markdown report to `docs/investigations/` with a descriptive filename (e.g. `model-config-consolidation-batch1-report.md`, `stripe-migration-batch2-report.md`). Commit it. The chat output is ephemeral; the local file is the durable record of what was done, why, and what risks remain.
 
+> **Round-13 (CodeRabbit):** some features opt to consolidate per-batch
+> reports under `specs/{feature}/reports/batch-NN-report.md` (Rule 0a)
+> rather than the per-batch `docs/investigations/<topic>.md` path
+> above. When Rule 0a applies, treat the per-feature batch directory as
+> the rule 0 surface for that feature; the broader docs/investigations/
+> discipline is owned at the project level outside a feature's working
+> specs tree. Both modes must still be raw-output, durable, and committed
+> alongside the code.
+
+### 0a. Batch reports
+Every batch writes `specs/{feature}/reports/batch-NN-report.md` before reporting
+in chat. Raw command output verbatim in fenced code blocks, never summarised.
+Report committed alongside the batch code. This applies to every batch without
+being asked.
+
+### 0b. Test name vs assertion check
+Before reporting a batch, walk the `ok N - <description>` lines emitted by the
+runner. The check runs LAST, after every test the batch adds — re-run the
+full sweep, then walk the FINAL list of names against the FINAL list of test
+sources. Partial-state walks miss names added after the audit runs and miss
+the contradiction they encode (Phase 5 Item C: the 64 vs 73 vs 75 drift;
+Phase 8 Item B: the §3 vs §4.7 numbering drift in the same report).
+
+The audit has two halves. **Both must pass.**
+
+1. **Names vs bodies.** For every line, assert the description is consistent
+   with the assertion(s) in the corresponding test source — same direction
+   (TRUE/FALSE), same value, same branch. Any contradiction is fixed in code,
+   not papered over with a comment. This rule exists because inaccurate test
+   names are a class of failure mode the runner cannot detect: the test
+   passes, the name lies, and the next reader trusts the name.
+
+2. **Cross-section reconciliation.** The report frequently numbers the same
+   fixture twice — once in the prose narrative (§3 / §4 / §5), once in the
+   final audit table (§4.7-style). Both must agree on the index the runner
+   actually emitted. When they disagree, the prose is wrong (the runner is
+   ground truth — it is what the next reader will reproduce); fix the prose,
+   not the table. A report claiming "zero contradictions" while its own §3
+   and §4.7 disagree on test numbers is itself a contradiction, and the
+   "zero contradictions" line must move with the fix.
+
+   The reconciliation has three legs. **All three must pass.**
+
+   (a) **Per-fixture index agreement.** The prose narrative and the
+       runner output name the same fixtures at the same indices.
+   (b) **Per-file delta arithmetic.** When the report claims a total
+       test-count delta across files (e.g. "+18 across 4 files"), the
+       per-file deltas must sum to the stated total. This is the
+       failure mode Phase 10 Item A exposed: the §3 T062 breakdown
+       summed to 20 (or 306, depending on the misprint) when the
+       runner output was 304 — the per-file numbers add to a value
+       other than the headline delta, and the report's "no
+       contradictions" claim was silent about it.
+   (c) **Total arithmetic.** The headline total equals the runner's
+       total. The runner output is ground truth.
+
+   Leg (b) is the new leg Phase 10 added. Without it, the
+   cross-section rule passes when the report claims "+3 qararEngine"
+   and the runner says "+1 qararEngine" — both numbers are internally
+   consistent (the report's claim is internally consistent; the
+   runner's count is internally consistent), but the cross-section
+   check is silent about whether they agree. Phase 10 §4.7's
+   reconciliation row now verifies all three legs.
+
+Both halves apply to every batch. "I walked the names" without "I reconciled
+the sections" leaves the second failure mode undetected — and that mode is
+precisely the one Phase 8 Item B exposed. Phase 10 Item A extended the
+sections half with leg (b) because the first real exercise of the rule
+missed a per-file delta contradiction that the original two legs would
+not have caught.
+
 ---
 
 ## Project Overview

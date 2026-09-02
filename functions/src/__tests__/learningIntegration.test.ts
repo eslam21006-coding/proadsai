@@ -26,6 +26,7 @@ import {
 function makePaidFunnel(targetCpa: number): FunnelSettingsForVerdict {
     return {
         derived: {
+            economicsVersion: 2,
             paid: {
                 rawTargetCpa: targetCpa * 1.2,
                 fullBuyerValue: targetCpa * 2,
