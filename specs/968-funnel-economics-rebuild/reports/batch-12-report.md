@@ -236,7 +236,7 @@ Sum of per-file deltas: 1 + 0 + 0 + 0 + 0 + 0 = **+1**. Runner confirms:
 
 ### (b) Backend unchanged
 
-Per-suite backend counts at HEAD (`e01b5eb`) vs batch-12:
+Per-suite backend counts at prior HEAD (`72e3f9f`) vs batch-12:
 
 | Suite | Prior | After | Delta |
 |---|---:|---:|---:|
@@ -311,29 +311,228 @@ The stop-and-report gate from batch-11 held for this batch:
 
 ## §8 — Commit + push (planned)
 
-After this report is committed, the batch-12 changes will be committed
-and pushed.
+After this report is committed, the batch-12 changes were committed
+(`f3dde84`) and pushed. The push succeeded: `72e3f9f..f3dde84 968-funnel-
+economics-rebuild -> 968-funnel-economics-rebuild`.
 
 ---
 
 ## §9 — Commit details
 
-(TBD — fill in after commit.)
+**Commit `f3dde84`** — `fix(funnel-economics): batch-12 — blur on wheel + survey link`
+
+7 files changed, 1712 insertions(+), 102 deletions(-):
+
+- `docs/investigations/wheel-handler-passive-listener-report.md` (created)
+- `docs/investigations/blur-side-effect-audit-report.md` (created)
+- `specs/968-funnel-economics-rebuild/reports/batch-12-report.md` (created)
+- `specs/968-funnel-economics-rebuild/reports/batch-11-report.md` (modified — §6 addendum)
+- `specs/968-funnel-economics-rebuild/contracts/uiCopy.md` (modified)
+- `src/__tests__/funnelSettingsRender.test.tsx` (modified)
+- `src/components/FunnelSettingsForm.tsx` (modified)
+
+Pushed: `72e3f9f..f3dde84 968-funnel-economics-rebuild -> 968-funnel-economics-rebuild`.
+
+---
+
+## §10 — Follow-up: batch-13 ITEM A + ITEM B (post-batch-12 review fixes)
+
+This section is appended after the batch-12 commit landed. The owner's
+review of `f3dde84` surfaced three corrections that warrant a follow-up
+commit rather than another amend.
+
+### §10.1 — ITEM A: rename `SURVEY_URL` → `BOOKING_URL` + URL swap
+
+`SURVEY_URL` was a placeholder (`https://example.com/survey`) that
+described a survey. The actual production destination is a booking
+calendar (`https://link.funnelfast.co/widget/booking/UWSuEnmRM24LOusgK2m6`).
+The constant was renamed and the URL was swapped at every reference.
+
+**Files touched:**
+
+- `src/components/FunnelSettingsForm.tsx` — constant renamed, URL
+  swapped, comment block rewritten to describe the booking calendar
+  (not a survey).
+- `src/__tests__/funnelSettingsRender.test.tsx` — `SURVEY_URL` const
+  renamed to `BOOKING_URL`, describe block title updated, all three
+  test names updated, `href*=` selector updated from
+  `example.com/survey` to `funnelfast.co/widget/booking`.
+- `specs/968-funnel-economics-rebuild/contracts/uiCopy.md` — section
+  renamed from "Survey link on tight-economics advisory" to "Booking
+  link on tight-economics advisory", URL constant + JSX pattern +
+  test list updated, plus a "pending owner approval" note about the
+  link text (see §10.2 below).
+- `specs/968-funnel-economics-rebuild/reports/batch-12-report.md` —
+  §10 (this section) added. Earlier sections left intact as historical
+  record of batch-12 (the `SURVEY_URL` name was correct at that
+  point in time).
+
+The historical references in `specs/968-funnel-economics-rebuild/reports/
+batch-11-report.md` §6 addendum (which describes what batch-12
+contained) are left untouched — they describe the state at the time of
+batch-12, not the current state.
+
+**Test delta:** zero — the rename does not change test counts.
+
+### §10.2 — ITEM A: link text (pending owner approval)
+
+The destination is a booking calendar. The current copy is:
+
+- **English:** "talk to us" (inside the advisory: "Re-check your numbers or **talk to us**.")
+- **Arabic:** "تواصل معنا"
+
+"Talk to us" does not strictly imply a form or an email — it could be
+read as a generic invitation to conversation. But the destination is a
+scheduler, not a chat or email channel. The owner is reviewing whether
+plainer wording (e.g., "Book a call" / "احجز مكالمة") would better
+match the destination. **The copy is unchanged in this commit pending
+that decision.**
+
+If the owner approves plainer wording, a follow-up commit will:
+
+1. Update `L('talk to us', 'تواصل معنا')` to the new wording (e.g.,
+   `L('Book a call', 'احجز مكالمة')`) at both advisory locations in
+   `FunnelSettingsForm.tsx`.
+2. Update the three corresponding test assertions in
+   `funnelSettingsRender.test.tsx`.
+3. Update the contract section in `uiCopy.md`.
+
+### §10.3 — ITEM B-A: full vitest output in Appendix A
+
+The original §A contained `(... all 85 tests pass ...)`, which is an
+elision. AGENTS.md §0a requires raw output verbatim. Appendix A is
+now the full `--reporter=verbose` output (every test name, 85 lines
+plus header / footer), captured at the post-batch-13-ITEM-A state of
+HEAD. The captured run shows `BOOKING_URL` (not `SURVEY_URL`) in the
+three booking-link test names — the names match the constant in
+the source at capture time.
+
+### §10.4 — ITEM B-B: §5(b) baseline label fix
+
+Original §5(b) read "Per-suite backend counts at HEAD (`e01b5eb`) vs
+batch-12". `e01b5eb` is the Phase 12 baseline, not the prior to
+batch-12. The prior to batch-12 was `72e3f9f` (the §6 reconciliation
+fix commit). The label was corrected to "Per-suite backend counts at
+prior HEAD (`72e3f9f`) vs batch-12". The per-suite numbers are
+unchanged (307 at both `72e3f9f` and the post-batch-12 HEAD) — only
+the commit label was wrong.
+
+### §10.5 — Reconciliation (batch-13 net)
+
+| Source | Frontend total | Backend total |
+|---|---:|---:|
+| Prior (HEAD `f3dde84`, post-batch-12) | 85 | 307 |
+| ITEM A rename + URL swap | 0 | 0 |
+| ITEM B-A vitest output elision fix | 0 | 0 |
+| ITEM B-B §5(b) label fix | 0 | 0 |
+| **Expected current** | **85** | **307** |
+| **Runner reports** | **85 ✓** | **307 ✓** |
+
+No code change to test files beyond the constant rename + selector
+update in `funnelSettingsRender.test.tsx`. The three booking-link
+tests still pass — their `it()` count and assertion coverage are
+identical, only the constant name and selector substring changed.
 
 ---
 
 ## Appendix A — Raw runner output (verbatim)
 
-### `npx vitest run`
+### `npx vitest run --reporter=verbose`
 
 ```
-$ npx vitest run
+$ npx vitest run --reporter=verbose
  RUN  v4.1.4 D:/proads-worktrees/funnel-economics-rebuild
 
-(... all 85 tests pass ...)
+ ✓ src/__tests__/funnelSettingsSavePayload.test.ts > FunnelSettingsForm save payload — htoConversionRate > paid_event (input hidden, state always empty) > stored number 21 passes through to the save payload 2ms
+ ✓ src/__tests__/funnelSettingsSavePayload.test.ts > FunnelSettingsForm save payload — htoConversionRate > paid_event (input hidden, state always empty) > stored null stays null — null pass-through; no overwrite to 0 (THE BUG) 0ms
+ ✓ src/__tests__/funnelSettingsSavePayload.test.ts > FunnelSettingsForm save payload — htoConversionRate > paid_event (input hidden, state always empty) > stored undefined collapses to null (brand-new record; storage-retention default) 0ms
+ ✓ src/__tests__/funnelSettingsSavePayload.test.ts > FunnelSettingsForm save payload — htoConversionRate > paid_event (input hidden, state always empty) > stored 0 is preserved as 0 (zero is a legitimate stored value) 0ms
+ ✓ src/__tests__/funnelSettingsSavePayload.test.ts > FunnelSettingsForm save payload — htoConversionRate > paid_event (input hidden, state always empty) > form state is irrelevant on paid_event (input is hidden, state is always '') 0ms
+ ✓ src/__tests__/funnelSettingsSavePayload.test.ts > FunnelSettingsForm save payload — htoConversionRate > paid_product (input removed in Phase 11; chain replaces htoConversionRate) > stored number 21 passes through (storage retention — doc slot persists) 0ms
+ ✓ src/__tests__/funnelSettingsSavePayload.test.ts > FunnelSettingsForm save payload — htoConversionRate > paid_product (input removed in Phase 11; chain replaces htoConversionRate) > stored null stays null — null pass-through; no overwrite to 0 (THE BUG) 0ms
+ ✓ src/__tests__/funnelSettingsSavePayload.test.ts > FunnelSettingsForm save payload — htoConversionRate > paid_product (input removed in Phase 11; chain replaces htoConversionRate) > stored undefined collapses to null (brand-new record; storage-retention default) 0ms
+ ✓ src/__tests__/funnelSettingsSavePayload.test.ts > FunnelSettingsForm save payload — htoConversionRate > paid_product (input removed in Phase 11; chain replaces htoConversionRate) > stored 0 is preserved as 0 (zero is a legitimate stored value) 0ms
+ ✓ src/__tests__/funnelSettingsSavePayload.test.ts > FunnelSettingsForm save payload — htoConversionRate > paid_product (input removed in Phase 11; chain replaces htoConversionRate) > form state is irrelevant on paid_product (input is hidden, state is always '') 0ms
+ ✓ src/__tests__/funnelSettingsSavePayload.test.ts > FunnelSettingsForm save payload — htoConversionRate > non-paid funnel types (defensive) > free_webinar: empty form state → 0 (defensive default; field is not on the save payload) 0ms
+ ✓ src/__tests__/funnelSettingsSavePayload.test.ts > FunnelSettingsForm save payload — htoConversionRate > non-paid funnel types (defensive) > lead_magnet_call: state 5 → 5 (defensive; field is not on the save payload) 0ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U2 — headline-only hook renders only the headline > renders the headline node and NO subhead/CTA/benefit nodes 29ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U3 — ctaName absent renders headline + subhead only > renders headline + subhead but no CTA panel / CTA text / benefit 5ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U3 — ctaName absent renders headline + subhead only > renders CTA only (no benefit line) when ctaName present but benefitText null 4ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U4 — absent field's regenerate button is NOT in the DOM > the headline regen button still renders (hookText is never absent) 3ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U4 — absent field's regenerate button is NOT in the DOM > subhead regen button absent when subheadText is null 3ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U4 — absent field's regenerate button is NOT in the DOM > CTA regen button absent when ctaName is null 2ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U5 — present field's regenerate button IS in the DOM > all three regen buttons render when all optional fields are present 3ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U5 — present field's regenerate button IS in the DOM > subhead regen button renders when subheadText present 4ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U6 — Arabic RTL preserved for present fields > subhead div has dir='rtl' when subheadText is present 4ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U6 — Arabic RTL preserved for present fields > no RTL leakage: when an Arabic block has subheadText=null, no subhead div is in the DOM 2ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U8 — every carousel position parses cleanly with mixed field counts > position 0 (reference) and position 1 (variation) both parse with mixed fields 2ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U8 — every carousel position parses cleanly with mixed field counts > a 1-field variation renders with no empty nodes in the harness 5ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U10 — inline editor save normalizes cleared optional fields to null > clearing subhead in the editor saves null, not '' 1ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U10 — inline editor save normalizes cleared optional fields to null > clearing cta in the editor saves null for ctaName AND benefitText 1ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U10 — inline editor save normalizes cleared optional fields to null > clearing benefit only (CTA stays) saves benefitText = null, ctaName preserved 0ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U10 — inline editor save normalizes cleared optional fields to null > clearing all three optional fields saves null for all three 0ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U10 — inline editor save normalizes cleared optional fields to null > the serialized block does NOT contain empty SUBHEADLINE: / CTA_BUTTON: lines 1ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > U10 — inline editor save normalizes cleared optional fields to null > carousel mode preserves STORY_ARC verbatim while still nulling optional fields 0ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > T025 / T029 — Approve + variation-carousel raw-block pass-through is null-safe > a raw block with all three optional fields absent round-trips without crashing 0ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > T025 / T029 — Approve + variation-carousel raw-block pass-through is null-safe > a raw block with mixed absent + present optional fields round-trips 0ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > T025 / T029 — Approve + variation-carousel raw-block pass-through is null-safe > a carousel-shaped raw block (ANGLE_START/END + STORY_ARC) round-trips 0ms
+ ✓ src/__tests__/step2OptionalFields.test.tsx > T028 — Batch handler per-variation extraction is null-safe across mixed field sets > a batch of three variations with three different field sets all parse cleanly 1ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > FunnelSettingsForm.computeMissingFields (frontend completeness mirror) > paid_event empty: lists aov + eventAttendanceRate + eventCloseRate + commissionRate + marginKept 4ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > FunnelSettingsForm.computeMissingFields (frontend completeness mirror) > paid_event complete (hasHto=true): returns [] 0ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > FunnelSettingsForm.computeMissingFields (frontend completeness mirror) > paid_event hasHto=true missing htoPrice: lists htoPrice; NOT htoConversionRate (Item A asymmetry) 0ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > FunnelSettingsForm.computeMissingFields (frontend completeness mirror) > paid_event numeric 0 is COMPLETE (aov=0 with no hto is valid) 0ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > FunnelSettingsForm.computeMissingFields (frontend completeness mirror) > paid_product empty: lists aov + roasTarget + commissionRate + marginKept 0ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > FunnelSettingsForm.computeMissingFields (frontend completeness mirror) > paid_product complete (hasHto=true): returns [] 0ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > FunnelSettingsForm.computeMissingFields (frontend completeness mirror) > paid_product hasHto=true missing chain: lists productBookingRate + productShowUpRate + productQualificationRate + productCloseRate (Phase 11 + Phase 12 + Phase 13) 0ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > FunnelSettingsForm.computeMissingFields (frontend completeness mirror) > paid_product hasHto=true missing htoPrice: lists htoPrice + productBookingRate + productShowUpRate + productQualificationRate + productCloseRate 0ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > FunnelSettingsForm.computeMissingFields (frontend completeness mirror) > paid_product does NOT require htoConversionRate (Phase 11 — chain replaces it) 2ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > FunnelSettingsForm.computeMissingFields (frontend completeness mirror) > free_webinar empty: lists offerPrice + attendanceRate + buyRateFromAttendees + commissionRate + marginKept 0ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > FunnelSettingsForm.computeMissingFields (frontend completeness mirror) > free_webinar complete: returns [] 0ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > FunnelSettingsForm.computeMissingFields (frontend completeness mirror) > lead_magnet_call empty: lists offerPrice + leadToCloseRate + bookingRate + showUpRate + qualificationRate + commissionRate + marginKept 0ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > FunnelSettingsForm.computeMissingFields (frontend completeness mirror) > lead_magnet_call complete: returns [] 0ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > FunnelSettingsForm.computeMissingFields (frontend completeness mirror) > output is in declaration order (matches backend requiredFieldsForDoc) 0ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > MISSING_FIELD_LABELS (paused-notice translation table) > every key listed in MISSING_FIELD_LABELS is a known missing-field key 1ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > MISSING_FIELD_LABELS (paused-notice translation table) > every entry has both English and Arabic labels 2ms
+ ✓ src/__tests__/funnelCompleteness.test.ts > MISSING_FIELD_LABELS (paused-notice translation table) > Arabic labels do not contain the internal field key 6ms
+ ✓ src/__tests__/i18n.test.tsx > Phase 967 i18n parity (T-18 / T092 / FR-028a) > key "meta.page_cleared_notice" resolves to a non-key value in English 30ms
+ ✓ src/__tests__/i18n.test.tsx > Phase 967 i18n parity (T-18 / T092 / FR-028a) > key "meta.page_cleared_notice" resolves to a non-key value in Arabic 5ms
+ ✓ src/__tests__/i18n.test.tsx > Phase 967 i18n parity (T-18 / T092 / FR-028a) > key "meta.no_workspace_resolved" resolves to a non-key value in English 6ms
+ ✓ src/__tests__/i18n.test.tsx > Phase 967 i18n parity (T-18 / T092 / FR-028a) > key "meta.no_workspace_resolved" resolves to a non-key value in Arabic 3ms
+ ✓ src/__tests__/i18n.test.tsx > Phase 967 i18n parity (T-18 / T092 / FR-028a) > key "meta.workspace_no_ad_account" resolves to a non-key value in English 4ms
+ ✓ src/__tests__/i18n.test.tsx > Phase 967 i18n parity (T-18 / T092 / FR-028a) > key "meta.workspace_no_ad_account" resolves to a non-key value in Arabic 5ms
+ ✓ src/__tests__/i18n.test.tsx > Phase 967 i18n parity (T-18 / T092 / FR-028a) > key "meta.disconnect_scope_warning" resolves to a non-key value in English 3ms
+ ✓ src/__tests__/i18n.test.tsx > Phase 967 i18n parity (T-18 / T092 / FR-028a) > key "meta.disconnect_scope_warning" resolves to a non-key value in Arabic 4ms
+ ✓ src/__tests__/i18n.test.tsx > Phase 967 i18n parity (T-18 / T092 / FR-028a) > key "meta.needs_meta_link_label" resolves to a non-key value in English 7ms
+ ✓ src/__tests__/i18n.test.tsx > Phase 967 i18n parity (T-18 / T092 / FR-028a) > key "meta.needs_meta_link_label" resolves to a non-key value in Arabic 6ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > paid_event — rendered field set > POSITIVE: renders AOV, hasHto toggle, htoPrice (after toggle), eventAttendanceRate, eventCloseRate, ROAS, commission, margin 110ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > paid_event — rendered field set > POSITIVE (hasHto=true): renders htoPrice input 40ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > paid_event — rendered field set > NEGATIVE: must NOT render paid_product's chain (booking rate, attendance rate, qualification rate, close rate on qualified calls) or free_webinar / lead_magnet_call fields 48ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > paid_product — rendered field set > POSITIVE: renders AOV, hasHto toggle, htoPrice (after toggle), booking rate, attendance rate, qualification rate, close rate on qualified calls, ROAS, commission, margin 47ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > paid_product — rendered field set > POSITIVE (hasHto=true): renders htoPrice input 41ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > paid_product — rendered field set > NEGATIVE: must NOT render paid_event's eventAttendanceRate / eventCloseRate (the production defect) 31ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > paid_product — rendered field set > NEGATIVE: must NOT render free_webinar / lead_magnet_call fields 32ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > paid_product — rendered field set > NEGATIVE: must NOT render the legacy htoConversionRate field (the chain replaces it) 107ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > free_webinar — rendered field set > POSITIVE: renders final offer price, attendance rate, purchase rate from attendees, commission, margin 30ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > free_webinar — rendered field set > NEGATIVE: must NOT render paid fields or lead_magnet_call fields 35ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > lead_magnet_call — rendered field set > POSITIVE: renders final offer price, booking rate, show-up rate, qualification rate, close rate on qualified calls, commission, margin 50ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > lead_magnet_call — rendered field set > NEGATIVE: must NOT render paid fields or free_webinar fields 52ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > every funnel type — commission + margin always rendered > paid_event: commission + margin are present 22ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > every funnel type — commission + margin always rendered > paid_product: commission + margin are present 29ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > every funnel type — commission + margin always rendered > free_webinar: commission + margin are present 32ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > every funnel type — commission + margin always rendered > lead_magnet_call: commission + margin are present 28ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > NumberField — wheel handler blurs the focused input > wheel on a focused number input blurs it (activeElement is no longer the input) 36ms
+ ✓ src/components/__tests__/FavoritesPanel.a11y.test.tsx > FavoritesPanel a11y > has no critical/serious violations — empty state 248ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > Tight-economics advisory — booking link (BOOKING_URL) > paid_event: renders a 'talk to us' link to BOOKING_URL with target=_blank and rel=noopener-noreferrer 23ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > Tight-economics advisory — booking link (BOOKING_URL) > paid_product: renders a 'talk to us' link to BOOKING_URL with target=_blank and rel=noopener-noreferrer 50ms
+ ✓ src/__tests__/funnelSettingsRender.test.tsx > Tight-economics advisory — booking link (BOOKING_URL) > Arabic language: link text is 'تواصل معنا' 22ms
+ ✓ src/components/__tests__/FavoritesPanel.a11y.test.tsx > FavoritesPanel a11y > has no critical/serious violations — 3 items 128ms
+ ✓ src/components/__tests__/FavoritesPanel.a11y.test.tsx > FavoritesPanel a11y > has no critical/serious violations — 100 items with hasMore=true 1905ms
+ ✓ src/components/__tests__/FavoritesPanel.a11y.test.tsx > FavoritesPanel a11y > has no critical/serious violations — connectionState stale with 3 items 44ms
 
  Test Files  6 passed (6)
       Tests  85 passed (85)
+   Start at  11:57:36
+   Duration  5.71s (transform 991ms, setup 1.28s, import 2.57s, tests 3.38s, environment 11.79s)
 ```
 
 ### `npx tsc -b`

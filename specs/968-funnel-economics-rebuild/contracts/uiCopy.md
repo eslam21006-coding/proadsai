@@ -205,24 +205,24 @@ Trade-off: the input loses focus on wheel scroll. The user can re-click to resum
 
 **Test coverage (batch-12):** the three original jsdom tests are deleted. One jsdom test remains in `src/__tests__/funnelSettingsRender.test.tsx` and asserts only the cheap invariant — after a wheel event on a focused number input, `document.activeElement !== input`. The user-visible invariant — "value is unchanged in a real browser" — is verified manually by the owner (click into a field, scroll, confirm the value holds). jsdom cannot simulate value-mutation-on-wheel, so a jsdom value-invariance assertion would pass whether the fix works or not.
 
-### Survey link on tight-economics advisory (batch-12 ITEM 2)
+### Booking link on tight-economics advisory (batch-12 ITEM 2 + batch-13 ITEM A)
 
-The tight-economics advisory reads "Re-check your numbers or **talk to us**." on both paid_event and paid_product/free_webinar/lead_magnet_call results cards when `derived.paid.capApplied` is true. The phrase "talk to us" / "تواصل معنا" is a link to `SURVEY_URL`.
+The tight-economics advisory reads "Re-check your numbers or **talk to us**." on both paid_event and paid_product/free_webinar/lead_magnet_call results cards when `derived.paid.capApplied` is true. The phrase "talk to us" / "تواصل معنا" is a link to `BOOKING_URL`.
 
 **URL constant (single source of truth):**
 
 ```ts
-const SURVEY_URL = 'https://example.com/survey';
+const BOOKING_URL = 'https://link.funnelfast.co/widget/booking/UWSuEnmRM24LOusgK2m6';
 ```
 
-Defined in `src/components/FunnelSettingsForm.tsx:194-198` next to the existing `TEAM_DISCOVERY_URL`. Both advisory call sites render the same `<a>` so the link stays in sync if `SURVEY_URL` is swapped.
+Defined in `src/components/FunnelSettingsForm.tsx:194-198` next to the existing `TEAM_DISCOVERY_URL`. Both advisory call sites render the same `<a>` so the link stays in sync if `BOOKING_URL` is swapped. **The destination is a booking calendar (not a form or email)** — the link opens the funnel-discovery scheduler in a new tab.
 
 **Rendered JSX pattern (applied at both advisory locations):**
 
 ```tsx
 {L('Reminder: your funnel economics are very tight. Re-check your numbers or ', 'تذكير: أرقام مسارك الاقتصادي ضيقة جداً. راجع الأرقام أو ')}
 <a
-    href={SURVEY_URL}
+    href={BOOKING_URL}
     target="_blank"
     rel="noopener noreferrer"
     className="underline font-semibold hover:opacity-80"
@@ -234,20 +234,22 @@ Defined in `src/components/FunnelSettingsForm.tsx:194-198` next to the existing 
 
 **Accessibility / security:**
 
-- `<a href={SURVEY_URL}>` is keyboard-accessible by default (Tab to focus, Enter to activate).
-- `target="_blank"` opens in a new tab — keeps the funnel form open while the survey loads.
+- `<a href={BOOKING_URL}>` is keyboard-accessible by default (Tab to focus, Enter to activate).
+- `target="_blank"` opens in a new tab — keeps the funnel form open while the booking calendar loads.
 - `rel="noopener noreferrer"` prevents the new tab from accessing `window.opener` (security) and prevents referrer leakage (privacy). Required when `target="_blank"` is used.
 - Underlined and bold-styled (`underline font-semibold`) so the link is visually distinct from the surrounding advisory text. The hover state (`hover:opacity-80`) gives keyboard / pointer affordance.
 
-**Test coverage (batch-12):** three new tests in `src/__tests__/funnelSettingsRender.test.tsx` (one describe block: `Tight-economics advisory — survey link (SURVEY_URL)`):
+**Test coverage (batch-12 + batch-13):** three new tests in `src/__tests__/funnelSettingsRender.test.tsx` (one describe block: `Tight-economics advisory — booking link (BOOKING_URL)`):
 
-1. `paid_event: renders a 'talk to us' link to SURVEY_URL with target=_blank and rel=noopener-noreferrer` — pins the EN link on the paid_event card.
-2. `paid_product: renders a 'talk to us' link to SURVEY_URL with target=_blank and rel=noopener-noreferrer` — pins the EN link on the paid_product card.
+1. `paid_event: renders a 'talk to us' link to BOOKING_URL with target=_blank and rel=noopener-noreferrer` — pins the EN link on the paid_event card.
+2. `paid_product: renders a 'talk to us' link to BOOKING_URL with target=_blank and rel=noopener-noreferrer` — pins the EN link on the paid_product card.
 3. `Arabic language: link text is 'تواصل معنا'` — pins the AR link.
 
 The test harness `renderFormFor` was extended with an optional `lang` parameter (`"en" | "ar"`) that overrides the default `localStorage.proads_ui_lang` setting. The `LanguageProvider` reads this on mount via a lazy `useState` initializer.
 
 The advisory copy itself is unchanged: prefix + link + suffix split preserves the bilingual structure (`L(...)` helpers around each segment). No new strings enter `src/i18n.tsx`; the segments stay inline as Phase 9 (T057) cataloguing is still pending.
+
+**Note on link text (batch-13 ITEM A — pending owner approval):** the destination is a booking calendar. "Talk to us" / "تواصل معنا" does not strictly imply a form or email, but it is generic. The owner is reviewing whether plainer wording (e.g., "Book a call" / "احجز مكالمة") better matches the destination. Until then, the existing copy stands.
 
 ---
 

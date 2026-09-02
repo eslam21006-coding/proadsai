@@ -521,19 +521,19 @@ describe("NumberField — wheel handler blurs the focused input", () => {
     });
 });
 
-// ─── Tight-economics advisory — survey link (batch-12, ITEM 2) ───────────────
+// ─── Tight-economics advisory — booking link (batch-12 ITEM 2 + batch-13) ──
 //
 // The advisory copy reads "Re-check your numbers or talk to us." The
-// "talk to us" phrase is a link to `SURVEY_URL` so owners can route
-// around the funnel form to give feedback. `SURVEY_URL` is a
-// placeholder constant defined in FunnelSettingsForm.tsx; it can be
-// swapped without changing the JSX or test fixtures.
+// "talk to us" phrase is a link to `BOOKING_URL` so owners whose
+// funnel economics are very tight can route around the form to book
+// a discovery call. `BOOKING_URL` is a single source-of-truth
+// constant defined in FunnelSettingsForm.tsx; it can be swapped
+// without changing the JSX or test fixtures.
 //
 // Contract pinned by these tests:
 //   1. The link is present on both paid_event and paid_product
 //      results cards when `derived.paid.capApplied` is true.
-//   2. The link's `href` matches `SURVEY_URL` (placeholder for now;
-//      swap target — assertion must move with it).
+//   2. The link's `href` matches `BOOKING_URL`.
 //   3. The link opens in a new tab (`target="_blank"` +
 //      `rel="noopener noreferrer"`).
 //   4. The link's text content is the localized "talk to us" /
@@ -542,7 +542,8 @@ describe("NumberField — wheel handler blurs the focused input", () => {
 //      accessible by default (Enter to activate, Tab to focus). jsdom
 //      supports this; no additional ARIA needed.
 
-const SURVEY_URL = "https://example.com/survey";
+const BOOKING_URL =
+    "https://link.funnelfast.co/widget/booking/UWSuEnmRM24LOusgK2m6";
 
 function makeSettingsWithCapApplied(
     funnelType: "paid_event" | "paid_product",
@@ -562,8 +563,8 @@ function makeSettingsWithCapApplied(
     });
 }
 
-describe("Tight-economics advisory — survey link (SURVEY_URL)", () => {
-    it("paid_event: renders a 'talk to us' link to SURVEY_URL with target=_blank and rel=noopener-noreferrer", async () => {
+describe("Tight-economics advisory — booking link (BOOKING_URL)", () => {
+    it("paid_event: renders a 'talk to us' link to BOOKING_URL with target=_blank and rel=noopener-noreferrer", async () => {
         // Wait for the AOV label to confirm hydration completed —
         // the results card (and the advisory inside it) only renders
         // when missingFields.length === 0, which requires hydration.
@@ -571,11 +572,11 @@ describe("Tight-economics advisory — survey link (SURVEY_URL)", () => {
             waitFor: "Average order value ($)",
         });
         const links = Array.from(
-            document.querySelectorAll('a[href*="example.com/survey"]'),
+            document.querySelectorAll('a[href*="funnelfast.co/widget/booking"]'),
         );
         expect(links.length).toBeGreaterThanOrEqual(1);
         const link = links[0] as HTMLAnchorElement;
-        expect(link.href).toBe(SURVEY_URL);
+        expect(link.href).toBe(BOOKING_URL);
         expect(link.target).toBe("_blank");
         expect(link.rel).toContain("noopener");
         expect(link.rel).toContain("noreferrer");
@@ -583,16 +584,16 @@ describe("Tight-economics advisory — survey link (SURVEY_URL)", () => {
         expect(link.textContent).toBe("talk to us");
     });
 
-    it("paid_product: renders a 'talk to us' link to SURVEY_URL with target=_blank and rel=noopener-noreferrer", async () => {
+    it("paid_product: renders a 'talk to us' link to BOOKING_URL with target=_blank and rel=noopener-noreferrer", async () => {
         await renderFormFor(makeSettingsWithCapApplied("paid_product"), {
             waitFor: "Average order value ($)",
         });
         const links = Array.from(
-            document.querySelectorAll('a[href*="example.com/survey"]'),
+            document.querySelectorAll('a[href*="funnelfast.co/widget/booking"]'),
         );
         expect(links.length).toBeGreaterThanOrEqual(1);
         const link = links[0] as HTMLAnchorElement;
-        expect(link.href).toBe(SURVEY_URL);
+        expect(link.href).toBe(BOOKING_URL);
         expect(link.target).toBe("_blank");
         expect(link.rel).toContain("noopener");
         expect(link.rel).toContain("noreferrer");
@@ -608,13 +609,13 @@ describe("Tight-economics advisory — survey link (SURVEY_URL)", () => {
             waitFor: "قيمة الطلب (دولار)",
         });
         const links = Array.from(
-            document.querySelectorAll('a[href*="example.com/survey"]'),
+            document.querySelectorAll('a[href*="funnelfast.co/widget/booking"]'),
         );
         expect(links.length).toBeGreaterThanOrEqual(1);
         const link = links[0] as HTMLAnchorElement;
         expect(link.textContent).toBe("تواصل معنا");
         // href / target / rel unchanged across languages.
-        expect(link.href).toBe(SURVEY_URL);
+        expect(link.href).toBe(BOOKING_URL);
         expect(link.target).toBe("_blank");
     });
 });

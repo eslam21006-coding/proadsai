@@ -191,10 +191,11 @@ export interface FunnelSettingsFormProps {
 
 const TEAM_DISCOVERY_URL = 'https://eslamsalah.com/team-discovery-call';
 
-// Survey link on the tight-economics advisory. Placeholder URL —
-// swap in production when the survey instrument is finalized.
+// Booking calendar link on the tight-economics advisory. Opens the
+// funnel-discovery scheduler in a new tab so owners whose funnel
+// economics are very tight can route around the form to book a call.
 // Defined in one place so both advisory call sites stay in sync.
-const SURVEY_URL = 'https://example.com/survey';
+const BOOKING_URL = 'https://link.funnelfast.co/widget/booking/UWSuEnmRM24LOusgK2m6';
 
 // ─── Wheel-value-change guard ──────────────────────────────────────
 //
@@ -1652,7 +1653,7 @@ required={missingFields.includes('productShowUpRate')}
                             <p className={`text-sm ${txPrimary}`}>
                                 {L('Reminder: your funnel economics are very tight. Re-check your numbers or ', 'تذكير: أرقام مسارك الاقتصادي ضيقة جداً. راجع الأرقام أو ')}
                                 <a
-                                    href={SURVEY_URL}
+                                    href={BOOKING_URL}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="underline font-semibold hover:opacity-80"
@@ -1687,7 +1688,7 @@ required={missingFields.includes('productShowUpRate')}
                             <p className={`text-sm ${txPrimary}`}>
                                 {L('Reminder: your funnel economics are very tight. Re-check your numbers or ', 'تذكير: أرقام مسارك الاقتصادي ضيقة جداً. راجع الأرقام أو ')}
                                 <a
-                                    href={SURVEY_URL}
+                                    href={BOOKING_URL}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="underline font-semibold hover:opacity-80"
