@@ -460,6 +460,105 @@ correctly reads 0 for every backend file.
 
 All reconciliations hold.
 
+### Addendum (batch-12, applied after this report was written)
+
+batch-12 contains two distinct changes: ITEM 1 (wheel-handler fix) and
+ITEM 2 (survey link on the tight-economics advisory). Both touch
+`funnelSettingsRender.test.tsx`; their test-count deltas must be
+reconciled separately before they sum to the batch-12 total.
+
+**ITEM 1 — wheel-handler fix (delta on `funnelSettingsRender.test.tsx`):**
+
+The broken `preventWheelValueChange` handler was replaced with
+`onWheel={(e) => e.currentTarget.blur()}`. The three tests in the
+`NumberField — wheel scroll does not change value (CHANGE 2)` describe
+block (which pinned the wrong invariant — method invocation, not
+`defaultPrevented`) were deleted and replaced with **one** jsdom test
+that pins the cheap invariant: blur happens on wheel.
+
+| State | Tests on file |
+|---|---:|
+| Phase 13 baseline (e01b5eb) | 16 |
+| After batch-11 initial commit (3963964) | 19 (+3 wheel tests) |
+| After batch-11 fixes (9c3d510 + 83c0603) | 19 (no change) |
+| **After batch-12 ITEM 1** | **17 (−2 net: −3 deleted + 1 added)** |
+
+The owner explicitly corrected the earlier arithmetic on this line:
+"net −2, not −3" (Step 6 removed three, Step 7 added one; net is −2).
+
+**ITEM 2 — survey link on tight-economics advisory (delta on
+`funnelSettingsRender.test.tsx`):**
+
+`SURVEY_URL = 'https://example.com/survey'` is added as a single
+source-of-truth constant near `TEAM_DISCOVERY_URL` in
+`FunnelSettingsForm.tsx:194-198`. The two advisory call sites
+(paid_event results card and paid_product/free_webinar/
+lead_magnet_call results card) replace their inline bilingual
+strings with prefix + `<a href={SURVEY_URL} target="_blank"
+rel="noopener noreferrer">{L('talk to us', 'تواصل معنا')}</a>` +
+suffix.
+
+Three new tests pin the contract:
+
+- `paid_event: renders a 'talk to us' link to SURVEY_URL with
+  target=_blank and rel=noopener-noreferrer`
+- `paid_product: renders a 'talk to us' link to SURVEY_URL with
+  target=_blank and rel=noopener-noreferrer`
+- `Arabic language: link text is 'تواصل معنا'`
+
+`renderFormFor` was extended with an optional `lang` parameter so
+the Arabic test can flip the i18n provider to `'ar'` (the form
+reads `lang` from `useT()`, which reads from
+`localStorage.proads_ui_lang`). Each test passes a `waitFor` label
+to confirm form hydration completed (the results card only renders
+when `missingFields.length === 0`).
+
+| State | Tests on file |
+|---|---:|
+| After batch-12 ITEM 1 | 17 |
+| **After batch-12 ITEM 2** | **20 (+3)** |
+
+**Runner total reconciliation (full batch-12):**
+
+| State | Frontend total |
+|---|---:|
+| Phase 12 (e01b5eb) | 81 |
+| After batch-11 (HEAD `83c0603`) | 84 |
+| After §6 fix (72e3f9f) | 84 |
+| After batch-12 ITEM 1 (wheel handler) | 82 (−2) |
+| **After batch-12 ITEM 2 (survey link)** | **85 (+3)** |
+| **Batch-12 net** | **+1** |
+
+Sum of per-file deltas for the full batch-12: −2 (ITEM 1) + 3
+(ITEM 2) + 0 (other 5 frontend files unchanged) = **+1**. Runner
+confirms: 85 − 84 = **+1**. Matches.
+
+The earlier reviewer's "+1 cpaEconomics, +2 funnelEconomicsParity"
+Phase 12 deltas (and the batch-11 +3 / +0 split) are unaffected by
+batch-12. Backend runner total unchanged at 307 — no backend
+fixtures touched by either ITEM.
+
+**Reconciliation table for batch-12 (ITEM 1 + ITEM 2 combined):**
+
+| Source | Frontend total |
+|---|---:|
+| Prior (HEAD `72e3f9f` after §6 fix) | 84 |
+| ITEM 1: −3 deleted + 1 added | −2 |
+| ITEM 2: +3 added | +3 |
+| Other 5 files (unchanged) | 0 |
+| **Expected current** | **85** |
+| **Runner reports** | **85 ✓** |
+
+All reconciliations hold.
+
+The broken preventDefault handler is documented in
+`docs/investigations/wheel-handler-passive-listener-report.md` (root
+cause analysis) and `docs/investigations/blur-side-effect-audit-report.md`
+(pre-implementation blur side-effect audit). The new uiCopy.md section
+records both the original (broken) implementation and the batch-12
+replacement. The ITEM 2 survey-link changes are recorded in the
+batch-12 report (per AGENTS.md §0a).
+
 ## 7. Process — stop-and-report gate (broken in this batch, restated below)
 
 The Phase 13 prompt said "propose EN and AR wording ... and WAIT for

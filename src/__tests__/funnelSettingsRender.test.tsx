@@ -183,7 +183,7 @@ const baseProps = {
 
 async function renderFormFor(
     settings: FunnelSettingsDoc | null,
-    options: { waitFor?: string } = {},
+    options: { waitFor?: string; lang?: "en" | "ar" } = {},
 ) {
     mockGetFunnelSettings.mockResolvedValue({
         data: {
@@ -201,9 +201,9 @@ async function renderFormFor(
     // Force English so labels are stable. The form reads `lang` from
     // useT(); the i18n provider stores the language in localStorage
     // under `proads_ui_lang` (see i18n.tsx). The default is Arabic,
-    // so we set it explicitly.
+    // so we set it explicitly. Tests can override via `options.lang`.
     const previousLang = localStorage.getItem("proads_ui_lang");
-    localStorage.setItem("proads_ui_lang", "en");
+    localStorage.setItem("proads_ui_lang", options.lang ?? "en");
 
     let result!: ReturnType<typeof render>;
     try {
@@ -467,68 +467,154 @@ describe("every funnel type — commission + margin always rendered", () => {
     }
 });
 
-// ─── CHANGE 2 — wheel scroll does not change number-input values ────────────
+// ─── Wheel handler — blur on wheel (Phase 13 CHANGE 2, batch-12) ───────────
 //
 // The browser default for a focused `<input type="number">` is to
 // increment or decrement the value when the user scrolls. On the
 // funnel form this lets a coach silently alter their targets by
-// scrolling the page. `preventWheelValueChange` is the handler wired
-// onto every number input via the `NumberField` component (it lives
-// in `src/components/FunnelSettingsForm.tsx`).
+// scrolling the page. The fix is `onWheel={(e) => e.currentTarget.blur()}`
+// on the `<input>` inside `NumberField` — blurring the input removes
+// focus, which gates the browser's value-mutation-on-wheel behavior.
+//
+// IMPORTANT — what this jsdom test covers, and what it does NOT cover:
+//
+// This test pins the cheap invariant: after a wheel event on a focused
+// number input, the input is no longer the document's active element.
+// jsdom handles focus/blur correctly, so this is a real assertion.
+//
+// The user-visible invariant — "value is unchanged after a wheel scroll
+// on a focused number input in a real browser" — is NOT covered by any
+// jsdom test. jsdom does not simulate the browser's value-mutation-on-
+// wheel behavior; a jsdom assertion that the value is unchanged would
+// pass whether the fix works or not (which is exactly how the original
+// three tests in this describe block passed on a broken implementation
+// that called `preventDefault` inside React 19's passive wheel
+// listener, where the call is silently ignored by the browser).
+//
+// That user-visible invariant is verified manually by the owner:
+// click into a number field, scroll, confirm the value holds. See
+// `docs/investigations/wheel-handler-passive-listener-report.md` for
+// the full root-cause analysis.
 
-import { preventWheelValueChange } from "../components/FunnelSettingsForm";
-
-describe("NumberField — wheel scroll does not change value (CHANGE 2)", () => {
-    it("preventWheelValueChange calls preventDefault when wheel target is the focused input", () => {
-        // Positive — direct wheel-on-focused-input is suppressed.
-        const preventDefault = vi.fn();
-        const sentinel = {} as EventTarget;
-        const evt = {
-            target: sentinel,
-            currentTarget: sentinel,
-            preventDefault,
-        };
-        preventWheelValueChange(evt);
-        expect(preventDefault).toHaveBeenCalledTimes(1);
-    });
-
-    it("preventWheelValueChange does NOT call preventDefault when target !== currentTarget (bubble case)", () => {
-        // Negative — a wheel event that bubbled UP from a child
-        // element is not suppressed. Only direct wheel on the
-        // focused input is blocked.
-        const preventDefault = vi.fn();
-        preventWheelValueChange({
-            target: {} as EventTarget,
-            currentTarget: {} as EventTarget,
-            preventDefault,
-        });
-        expect(preventDefault).not.toHaveBeenCalled();
-    });
-
-    it("mount: wheel over a focused number input does not change its value (integration)", async () => {
-        // Integration — verifies the handler is wired up on the
-        // real DOM the form renders. jsdom does not simulate the
-        // browser's value-mutation-on-wheel behavior, so we can't
-        // observe the bug directly. We verify the contract: a wheel
-        // dispatched on a focused number input triggers our handler
-        // (preventDefault called), and the value is unchanged.
+describe("NumberField — wheel handler blurs the focused input", () => {
+    it("wheel on a focused number input blurs it (activeElement is no longer the input)", async () => {
         const settings = makeSettingsDoc("lead_magnet_call");
         await renderFormFor(settings);
         const input = document.querySelector(
             'input[type="number"]',
         ) as HTMLInputElement;
         expect(input).not.toBeNull();
-        // Pin the starting value.
-        const before = input.value;
         input.focus();
-        const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true });
-        const preventDefaultSpy = vi.spyOn(wheel, "preventDefault");
+        // Sanity — the input was focused before the wheel.
+        expect(document.activeElement).toBe(input);
+        const wheel = new WheelEvent("wheel", {
+            bubbles: true,
+            cancelable: true,
+        });
         input.dispatchEvent(wheel);
-        expect(preventDefaultSpy).toHaveBeenCalledTimes(1);
-        // Value unchanged. jsdom doesn't simulate the browser's
-        // default behavior, so the assertion is "unchanged AND
-        // handler called preventDefault" — together they pin the
-        // contract end-to-end.
-        expect(input.value).toBe(before);
+        // The fix: blur() on wheel removes focus from the input.
+        // This is the mechanism that gates the browser's
+        // value-mutation-on-wheel behavior in production.
+        expect(document.activeElement).not.toBe(input);
+        // The user-visible invariant (value unchanged) is verified
+        // manually by the owner — see the comment block above.
+    });
+});
+
+// ─── Tight-economics advisory — survey link (batch-12, ITEM 2) ───────────────
+//
+// The advisory copy reads "Re-check your numbers or talk to us." The
+// "talk to us" phrase is a link to `SURVEY_URL` so owners can route
+// around the funnel form to give feedback. `SURVEY_URL` is a
+// placeholder constant defined in FunnelSettingsForm.tsx; it can be
+// swapped without changing the JSX or test fixtures.
+//
+// Contract pinned by these tests:
+//   1. The link is present on both paid_event and paid_product
+//      results cards when `derived.paid.capApplied` is true.
+//   2. The link's `href` matches `SURVEY_URL` (placeholder for now;
+//      swap target — assertion must move with it).
+//   3. The link opens in a new tab (`target="_blank"` +
+//      `rel="noopener noreferrer"`).
+//   4. The link's text content is the localized "talk to us" /
+//      "تواصل معنا" phrase.
+//   5. Keyboard accessibility: an `<a>` with `href` is keyboard-
+//      accessible by default (Enter to activate, Tab to focus). jsdom
+//      supports this; no additional ARIA needed.
+
+const SURVEY_URL = "https://example.com/survey";
+
+function makeSettingsWithCapApplied(
+    funnelType: "paid_event" | "paid_product",
+): FunnelSettingsDoc {
+    return makeSettingsDoc(funnelType, {
+        derived: {
+            economicsVersion: 2 as const,
+            computedAt: 1,
+            paid: {
+                rawTargetCpa: 100,
+                fullBuyerValue: 100,
+                maxCpa: 40,
+                effectiveTargetCpa: 40,
+                capApplied: true,
+            },
+        },
+    });
+}
+
+describe("Tight-economics advisory — survey link (SURVEY_URL)", () => {
+    it("paid_event: renders a 'talk to us' link to SURVEY_URL with target=_blank and rel=noopener-noreferrer", async () => {
+        // Wait for the AOV label to confirm hydration completed —
+        // the results card (and the advisory inside it) only renders
+        // when missingFields.length === 0, which requires hydration.
+        await renderFormFor(makeSettingsWithCapApplied("paid_event"), {
+            waitFor: "Average order value ($)",
+        });
+        const links = Array.from(
+            document.querySelectorAll('a[href*="example.com/survey"]'),
+        );
+        expect(links.length).toBeGreaterThanOrEqual(1);
+        const link = links[0] as HTMLAnchorElement;
+        expect(link.href).toBe(SURVEY_URL);
+        expect(link.target).toBe("_blank");
+        expect(link.rel).toContain("noopener");
+        expect(link.rel).toContain("noreferrer");
+        // English text by default (lang prop defaults to 'en' in tests).
+        expect(link.textContent).toBe("talk to us");
+    });
+
+    it("paid_product: renders a 'talk to us' link to SURVEY_URL with target=_blank and rel=noopener-noreferrer", async () => {
+        await renderFormFor(makeSettingsWithCapApplied("paid_product"), {
+            waitFor: "Average order value ($)",
+        });
+        const links = Array.from(
+            document.querySelectorAll('a[href*="example.com/survey"]'),
+        );
+        expect(links.length).toBeGreaterThanOrEqual(1);
+        const link = links[0] as HTMLAnchorElement;
+        expect(link.href).toBe(SURVEY_URL);
+        expect(link.target).toBe("_blank");
+        expect(link.rel).toContain("noopener");
+        expect(link.rel).toContain("noreferrer");
+        expect(link.textContent).toBe("talk to us");
+    });
+
+    it("Arabic language: link text is 'تواصل معنا'", async () => {
+        // The form reads `lang` from `useT()` which reads from
+        // `localStorage.proads_ui_lang`. The renderFormFor harness
+        // accepts a `lang` option to override the default 'en'.
+        await renderFormFor(makeSettingsWithCapApplied("paid_event"), {
+            lang: "ar",
+            waitFor: "قيمة الطلب (دولار)",
+        });
+        const links = Array.from(
+            document.querySelectorAll('a[href*="example.com/survey"]'),
+        );
+        expect(links.length).toBeGreaterThanOrEqual(1);
+        const link = links[0] as HTMLAnchorElement;
+        expect(link.textContent).toBe("تواصل معنا");
+        // href / target / rel unchanged across languages.
+        expect(link.href).toBe(SURVEY_URL);
+        expect(link.target).toBe("_blank");
     });
 });

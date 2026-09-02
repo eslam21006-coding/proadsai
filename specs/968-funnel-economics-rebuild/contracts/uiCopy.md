@@ -195,19 +195,59 @@ Phase 12. Each row above carries the same
 owner guidance, not a reported performance metric"` as #2 / #4 / #6
 / #7 / #8 / #10 / #12 / #18 / #29 / #30 / #31.
 
-### Mouse-wheel guard (Phase 13 CHANGE 2)
+### Mouse-wheel guard (Phase 13 CHANGE 2 — replaced by blur on wheel in batch-12)
 
-The number inputs on this form (`<input type="number">` rendered
-through the shared `NumberField` component in
-`src/components/FunnelSettingsForm.tsx`) install an `onWheel`
-handler that calls `preventDefault` when the wheel target is the
-focused input. This prevents the browser's default behavior of
-incrementing or decrementing the focused number input on scroll —
-which would let a coach silently alter their targets by scrolling
-the page. The handler is exported as `preventWheelValueChange` so
-the integration test can pin the wiring without re-deriving it from
-JSX. See `src/__tests__/funnelSettingsRender.test.tsx` for the
-unit + integration tests.
+**Original implementation (Phase 13 commit `3963964`):** `onWheel={preventWheelValueChange}` — a handler that calls `preventDefault` when the wheel target is the focused input. **This implementation was broken in production** because React 19 attaches delegated `wheel` listeners with `{ passive: true }` (see `node_modules/react-dom/cjs/react-dom-client.development.js:19251-19255`), which means `preventDefault()` is silently ignored by the browser even though the JS function runs. The original jsdom tests passed because they asserted on method invocation (spy called once), not on the browser-level `defaultPrevented` flag — they pinned the wrong invariant. See `docs/investigations/wheel-handler-passive-listener-report.md` for the full root-cause analysis.
+
+**Replacement (batch-12, replaces the broken preventDefault handler):** `onWheel={(e) => e.currentTarget.blur()}`. Blurring the input removes focus, which gates the browser's value-mutation-on-wheel behavior because that behavior is conditional on focus. The fix does not depend on `preventDefault()` being honored.
+
+Trade-off: the input loses focus on wheel scroll. The user can re-click to resume editing. The page still scrolls (focus loss does not stop wheel-driven page scroll). No blur listeners exist anywhere in this codebase (verified by a frontend-wide grep before applying the fix — see `docs/investigations/blur-side-effect-audit-report.md`), so this fires no React side effects.
+
+**Test coverage (batch-12):** the three original jsdom tests are deleted. One jsdom test remains in `src/__tests__/funnelSettingsRender.test.tsx` and asserts only the cheap invariant — after a wheel event on a focused number input, `document.activeElement !== input`. The user-visible invariant — "value is unchanged in a real browser" — is verified manually by the owner (click into a field, scroll, confirm the value holds). jsdom cannot simulate value-mutation-on-wheel, so a jsdom value-invariance assertion would pass whether the fix works or not.
+
+### Survey link on tight-economics advisory (batch-12 ITEM 2)
+
+The tight-economics advisory reads "Re-check your numbers or **talk to us**." on both paid_event and paid_product/free_webinar/lead_magnet_call results cards when `derived.paid.capApplied` is true. The phrase "talk to us" / "تواصل معنا" is a link to `SURVEY_URL`.
+
+**URL constant (single source of truth):**
+
+```ts
+const SURVEY_URL = 'https://example.com/survey';
+```
+
+Defined in `src/components/FunnelSettingsForm.tsx:194-198` next to the existing `TEAM_DISCOVERY_URL`. Both advisory call sites render the same `<a>` so the link stays in sync if `SURVEY_URL` is swapped.
+
+**Rendered JSX pattern (applied at both advisory locations):**
+
+```tsx
+{L('Reminder: your funnel economics are very tight. Re-check your numbers or ', 'تذكير: أرقام مسارك الاقتصادي ضيقة جداً. راجع الأرقام أو ')}
+<a
+    href={SURVEY_URL}
+    target="_blank"
+    rel="noopener noreferrer"
+    className="underline font-semibold hover:opacity-80"
+>
+    {L('talk to us', 'تواصل معنا')}
+</a>
+{L('.', '.')}
+```
+
+**Accessibility / security:**
+
+- `<a href={SURVEY_URL}>` is keyboard-accessible by default (Tab to focus, Enter to activate).
+- `target="_blank"` opens in a new tab — keeps the funnel form open while the survey loads.
+- `rel="noopener noreferrer"` prevents the new tab from accessing `window.opener` (security) and prevents referrer leakage (privacy). Required when `target="_blank"` is used.
+- Underlined and bold-styled (`underline font-semibold`) so the link is visually distinct from the surrounding advisory text. The hover state (`hover:opacity-80`) gives keyboard / pointer affordance.
+
+**Test coverage (batch-12):** three new tests in `src/__tests__/funnelSettingsRender.test.tsx` (one describe block: `Tight-economics advisory — survey link (SURVEY_URL)`):
+
+1. `paid_event: renders a 'talk to us' link to SURVEY_URL with target=_blank and rel=noopener-noreferrer` — pins the EN link on the paid_event card.
+2. `paid_product: renders a 'talk to us' link to SURVEY_URL with target=_blank and rel=noopener-noreferrer` — pins the EN link on the paid_product card.
+3. `Arabic language: link text is 'تواصل معنا'` — pins the AR link.
+
+The test harness `renderFormFor` was extended with an optional `lang` parameter (`"en" | "ar"`) that overrides the default `localStorage.proads_ui_lang` setting. The `LanguageProvider` reads this on mount via a lazy `useState` initializer.
+
+The advisory copy itself is unchanged: prefix + link + suffix split preserves the bilingual structure (`L(...)` helpers around each segment). No new strings enter `src/i18n.tsx`; the segments stay inline as Phase 9 (T057) cataloguing is still pending.
 
 ---
 

@@ -191,29 +191,42 @@ export interface FunnelSettingsFormProps {
 
 const TEAM_DISCOVERY_URL = 'https://eslamsalah.com/team-discovery-call';
 
-// ─── Wheel-value-change guard (Phase 13 CHANGE 2) ──────────────────────────
+// Survey link on the tight-economics advisory. Placeholder URL —
+// swap in production when the survey instrument is finalized.
+// Defined in one place so both advisory call sites stay in sync.
+const SURVEY_URL = 'https://example.com/survey';
+
+// ─── Wheel-value-change guard ──────────────────────────────────────
 //
-// Browser default: scrolling while a number input is focused
+// Browser default: scrolling while a `<input type="number">` is focused
 // increments or decrements its value (via the wheel). On the funnel
 // form this means a coach can silently alter their targets without
-// noticing. The guard calls `preventDefault` on wheel events that
-// originate on a number input the handler is attached to. The
-// `target === currentTarget` guard prevents blocking wheel events
-// that bubble UP from child elements (a nested icon, etc.) — we
-// only suppress wheel events DIRECTLY on the input the handler is
-// attached to.
+// noticing.
 //
-// Exported so the integration test (which mounts the form and
-// dispatches wheel events on real DOM nodes) can pin the wiring
-// without re-deriving the contract from JSX. Pure: takes the event
-// shape, calls preventDefault conditionally.
-export function preventWheelValueChange(e: {
-    target: EventTarget | null;
-    currentTarget: EventTarget | null;
-    preventDefault: () => void;
-}): void {
-    if (e.target === e.currentTarget) e.preventDefault();
-}
+// The fix is to blur the input on wheel. The browser's value-mutation-on-
+// wheel behavior is gated on focus — once focus is removed, the value
+// holds. We use `e.currentTarget.blur()` directly rather than calling
+// `preventDefault` because React 19 attaches delegated `wheel` listeners
+// with `{ passive: true }` (see node_modules/react-dom/cjs/react-dom-
+// client.development.js:19251-19255), which means `preventDefault()` is
+// silently ignored by the browser even though the JS function runs and
+// even though `defaultPrevented` would be set true if a passive listener
+// were honored. Blurring the input does not depend on `preventDefault`
+// being honored.
+//
+// Trade-off: the input loses focus on wheel scroll. The user can re-click
+// to resume editing. The page still scrolls (focus loss does not stop
+// wheel-driven page scroll). No blur listeners exist anywhere in this
+// codebase (verified by a frontend-wide grep), so this fires no React
+// side effects.
+//
+// The user-visible invariant — "value is unchanged in a real browser
+// after a wheel scroll on a focused number input" — is verified manually
+// by the owner (click into a number field, scroll, confirm the value
+// holds). jsdom cannot simulate the browser's value-mutation-on-wheel
+// behavior, so a jsdom test of value invariance would pass whether the
+// fix works or not. The jsdom test in funnelSettingsRender.test.tsx
+// pins the cheap invariant: blur happens on wheel.
 
 // ─── numOrNull helper ─────────────────────────────────────────
 //
@@ -1637,10 +1650,16 @@ required={missingFields.includes('productShowUpRate')}
                     {paidDerived.capApplied && (
                         <div className={`mt-3 p-3 rounded border-2 border-yellow-500 ${dk ? 'bg-yellow-950/40' : 'bg-yellow-50'}`}>
                             <p className={`text-sm ${txPrimary}`}>
-                                {L(
-                                    'Reminder: your funnel economics are very tight. Re-check your numbers or talk to us.',
-                                    'تذكير: أرقام مسارك الاقتصادي ضيقة جداً. راجع الأرقام أو تواصل معنا.',
-                                )}
+                                {L('Reminder: your funnel economics are very tight. Re-check your numbers or ', 'تذكير: أرقام مسارك الاقتصادي ضيقة جداً. راجع الأرقام أو ')}
+                                <a
+                                    href={SURVEY_URL}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="underline font-semibold hover:opacity-80"
+                                >
+                                    {L('talk to us', 'تواصل معنا')}
+                                </a>
+                                {L('.', '.')}
                             </p>
                         </div>
                     )}
@@ -1666,10 +1685,16 @@ required={missingFields.includes('productShowUpRate')}
                     {paidDerived.capApplied && (
                         <div className={`mt-3 p-3 rounded border-2 border-yellow-500 ${dk ? 'bg-yellow-950/40' : 'bg-yellow-50'}`}>
                             <p className={`text-sm ${txPrimary}`}>
-                                {L(
-                                    'Reminder: your funnel economics are very tight. Re-check your numbers or talk to us.',
-                                    'تذكير: أرقام مسارك الاقتصادي ضيقة جداً. راجع الأرقام أو تواصل معنا.',
-                                )}
+                                {L('Reminder: your funnel economics are very tight. Re-check your numbers or ', 'تذكير: أرقام مسارك الاقتصادي ضيقة جداً. راجع الأرقام أو ')}
+                                <a
+                                    href={SURVEY_URL}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="underline font-semibold hover:opacity-80"
+                                >
+                                    {L('talk to us', 'تواصل معنا')}
+                                </a>
+                                {L('.', '.')}
                             </p>
                         </div>
                     )}
@@ -1776,15 +1801,11 @@ function NumberField({
                 step="0.01"
                 value={value}
                 onChange={(e) => onChange(e.target.value)}
-                // Phase 13 — CHANGE 2 — Prevent the browser from
-                // mutating the value when the user scrolls while
-                // focused. The handler is exported as
-                // `preventWheelValueChange` so the integration test
-                // can verify the wiring without re-deriving it from
-                // JSX. The guard's `target === currentTarget` check
-                // only suppresses wheel on the focused input — a
-                // nested icon's wheel bubbles UP and is left alone.
-                onWheel={preventWheelValueChange}
+                // Blur on wheel — see the `Wheel-value-change guard`
+                // comment block above for why `preventDefault` does
+                // not work here and why blurring the input is the
+                // correct mechanism.
+                onWheel={(e) => e.currentTarget.blur()}
                 className={`w-full p-2 rounded border ${inputCls}`}
             />
             {hint ? (
