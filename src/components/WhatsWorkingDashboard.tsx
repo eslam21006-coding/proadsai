@@ -400,9 +400,15 @@ export function WhatsWorkingDashboard(props: WhatsWorkingDashboardProps): React.
             const res = await fn({ workspaceId: props.workspaceId, accountId: props.accountId });
             setData(res.data as DashboardData);
         } catch (e) {
-            // Don't surface raw error to the user; show a generic
-            // plain-Arabic message via the i18n layer.
-            void e;
+            // The user still sees a plain-language message (never the raw
+            // error), but the error MUST reach the console — discarding it
+            // with `void e` is what hid a 404 caller-scope failure behind a
+            // message indistinguishable from "no data yet".
+            console.error(
+                "[WhatsWorkingDashboard] getWhatsWorkingDashboard failed",
+                { workspaceId: props.workspaceId, accountId: props.accountId },
+                e,
+            );
             setError(t("whats_loading.error"));
         } finally {
             setLoading(false);
@@ -431,7 +437,10 @@ export function WhatsWorkingDashboard(props: WhatsWorkingDashboardProps): React.
     }
 
     if (!data) {
-        return <div className="text-slate-400 text-sm p-6">{t("whats_loading.error")}</div>;
+        // Distinct from the error branch above: the call SUCCEEDED and
+        // simply carried no data. Same string for both is what made a
+        // hard failure look like an empty account.
+        return <div className="text-slate-400 text-sm p-6">{t("whats_loading.empty")}</div>;
     }
 
     return (

@@ -527,7 +527,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'whats_working.recent.relative_hours': '{n} hours ago',
         'whats_working.recent.relative_days': '{n} days ago',
         'whats_loading.loading': 'Loading your dashboard...',
-        'whats_loading.error': 'Could not load the dashboard.',
+        'whats_loading.error': 'Something went wrong while loading your dashboard. Please try again.',
+        'whats_loading.empty': 'No results yet. Results appear here after your ads run and you sync.',
 
         // ── Hook-angle performance icons (Step 1 / Step 2) ──
         'hook_icon.tooltip.strongest': 'Your strongest angle',
@@ -1463,7 +1464,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'whats_working.recent.relative_hours': 'منذ {n} ساعة',
         'whats_working.recent.relative_days': 'منذ {n} يوم',
         'whats_loading.loading': 'جاري تحميل لوحة الأداء...',
-        'whats_loading.error': 'تعذر تحميل لوحة الأداء.',
+        'whats_loading.error': 'حدث خطأ أثناء تحميل لوحة الأداء. حاول مرة أخرى.',
+        'whats_loading.empty': 'لا توجد نتائج بعد. ستظهر النتائج هنا بعد تشغيل إعلاناتك والمزامنة.',
 
         // ── Hook-angle performance icons (Step 1 / Step 2) ──
         'hook_icon.tooltip.strongest': 'أقوى زاوية في حسابك',

@@ -20,6 +20,17 @@ import { HttpsError } from "firebase-functions/v2/https";
 import { onCall } from "firebase-functions/v2/https";
 import { getDb } from "./firestoreClient.js";
 import { getKnownHookAngleIds } from "./gazeMap.js";
+// Phase 967 — the single shared caller-scope guard. Both callables in
+// this file were missed by the original Phase 967 conversion and read
+// `request.auth.uid` directly, so a team member resolved to their OWN
+// (empty) user document and every call threw `not-found`. Same resolver
+// as funnelSettings.ts / metaConnection.ts / metaSync/trigger.ts — NOT a
+// reimplementation.
+import {
+    resolveMetaScope,
+    assertWorkspaceAllowed,
+    type ResolvedMetaScope,
+} from "./workspaces/metaCallerScope.js";
 
 // ─── Constants (Fusha-only strings, mirror contract) ─────────
 
@@ -271,12 +282,12 @@ export function pickHotAngle(
 // ─── Auth helpers ───────────────────────────────────────────
 
 async function assertWorkspaceAccess(
-    uid: string,
+    ownerUid: string,
     workspaceId: string,
     accountId: string,
 ): Promise<void> {
     const wsDoc = await getDb()
-        .collection("users").doc(uid)
+        .collection("users").doc(ownerUid)
         .collection("workspaces").doc(workspaceId)
         .get();
     if (!wsDoc.exists) {
@@ -299,17 +310,35 @@ async function assertWorkspaceAccess(
 export const getWhatsWorkingDashboard = onCall(
     { region: "europe-west1", cors: true },
     async (request) => {
-        if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-        const uid = request.auth.uid;
-        const req = request.data as DashboardRequest;
+        // Universal Phase 967 preamble (FR-001, FR-003). `resolveMetaScope`
+        // rejects unauthenticated callers itself, so the old inline
+        // `request.auth` check is redundant and has been removed.
+        const scope = await resolveMetaScope(request);
+        return getWhatsWorkingDashboardImpl(scope, request.data);
+    },
+);
+
+// Extracted so the caller-scope contract test can drive it directly with
+// a fake `scope` + an in-memory Firestore stub — the same shape as
+// `connectMetaAccountImpl` in metaConnection.ts.
+export async function getWhatsWorkingDashboardImpl(
+    scope: ResolvedMetaScope,
+    requestData: unknown,
+): Promise<DashboardResponse> {
+        const req = requestData as DashboardRequest;
         if (!req || typeof req.workspaceId !== "string" || typeof req.accountId !== "string") {
             throw new HttpsError("invalid-argument", "workspaceId and accountId are required.");
         }
 
-        await assertWorkspaceAccess(uid, req.workspaceId, req.accountId);
+        // FR-004 / FR-021 — workspace authorisation before any read.
+        assertWorkspaceAllowed(scope, req.workspaceId);
+        // Every Firestore path below is the OWNER's. `scope.callerUid` is
+        // the audit signal only and MUST NOT appear in a path.
+        const ownerUid = scope.ownerUid;
+        await assertWorkspaceAccess(ownerUid, req.workspaceId, req.accountId);
 
         const db = getDb();
-        const wsPath = `users/${uid}/workspaces/${req.workspaceId}`;
+        const wsPath = `users/${ownerUid}/workspaces/${req.workspaceId}`;
         const adAccountPath = `${wsPath}/adAccounts/${req.accountId}`;
 
         // ─── Sync status (Section A) ────────────────────────
@@ -731,8 +760,7 @@ export const getWhatsWorkingDashboard = onCall(
         void AR_S_ATTRIBUTION_BANNER;
 
         return response;
-    },
-);
+}
 
 // ─── getHookAnglePerformance (T047) ────────────────────────
 
@@ -744,17 +772,31 @@ interface HookPerformanceRequest {
 export const getHookAnglePerformance = onCall(
     { region: "europe-west1", cors: true },
     async (request) => {
-        if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
-        const uid = request.auth.uid;
-        const req = request.data as HookPerformanceRequest;
+        // Universal Phase 967 preamble — see getWhatsWorkingDashboard.
+        const scope = await resolveMetaScope(request);
+        return getHookAnglePerformanceImpl(scope, request.data);
+    },
+);
+
+// Extracted for the caller-scope contract test — see
+// `getWhatsWorkingDashboardImpl`.
+export async function getHookAnglePerformanceImpl(
+    scope: ResolvedMetaScope,
+    requestData: unknown,
+): Promise<HookAnglePerformanceResponse> {
+        const req = requestData as HookPerformanceRequest;
         if (!req || typeof req.workspaceId !== "string" || typeof req.accountId !== "string") {
             throw new HttpsError("invalid-argument", "workspaceId and accountId are required.");
         }
 
-        await assertWorkspaceAccess(uid, req.workspaceId, req.accountId);
+        // FR-004 / FR-021 — workspace authorisation before any read.
+        assertWorkspaceAllowed(scope, req.workspaceId);
+        // Owner paths only; `scope.callerUid` is audit-only.
+        const ownerUid = scope.ownerUid;
+        await assertWorkspaceAccess(ownerUid, req.workspaceId, req.accountId);
 
         const db = getDb();
-        const wsPath = `users/${uid}/workspaces/${req.workspaceId}`;
+        const wsPath = `users/${ownerUid}/workspaces/${req.workspaceId}`;
         const adAccountPath = `${wsPath}/adAccounts/${req.accountId}`;
 
         const [hookAggsSnap, baselinesSnap] = await Promise.all([
@@ -871,5 +913,4 @@ export const getHookAnglePerformance = onCall(
             bestAngles,
         };
         return response;
-    },
-);
+}
