@@ -145,15 +145,26 @@ test("acquireLease — fresh acquire succeeds and writes the lease doc", async (
     assert.equal(doc.expiresAtMs, FIXED_NOW + LEASE_TTL_MS);
 });
 
-test("acquireLease — same caller re-acquiring extends the TTL (idempotent)", async () => {
+test("acquireLease — same caller re-acquiring is refused with busy (no overlap)", async () => {
+    // PHASE 970 (bug 2026-09-03) — the previous behaviour of
+    // extending the TTL for the same caller let two browser tabs
+    // both run runFullSync for the same owner at the same time.
+    // The fix returns the busy result so the dashboard surfaces
+    // "a sync is already running" instead of a silently overlapping
+    // second sync.
     resetStub();
     const db: any = stubFirestore();
     await acquireLease(db, OWNER, CALLER, FIXED_NOW);
     const second = await acquireLease(db, OWNER, CALLER, FIXED_NOW + 60_000);
-    assert.deepEqual(second, { ok: true });
+    assert.equal(second.ok, false, "same-caller re-acquire must refuse");
+    if (second.ok === false) {
+        assert.equal(second.holderUid, CALLER, "holderUid is reported as the busy holder");
+        assert.equal(second.expiresAtMs, FIXED_NOW + LEASE_TTL_MS, "expiresAtMs points at the existing lease");
+    }
+    // The original lease is untouched — no TTL extension.
     const doc = bucket(leaseBucketPath()).get(leaseDocKey(OWNER))!;
     assert.equal(doc.holderUid, CALLER, "holder unchanged");
-    assert.equal(doc.expiresAtMs, FIXED_NOW + 60_000 + LEASE_TTL_MS, "TTL extended");
+    assert.equal(doc.expiresAtMs, FIXED_NOW + LEASE_TTL_MS, "original TTL NOT extended");
 });
 
 test("acquireLease — contended (held by another caller, not stale) returns ok:false with holder info", async () => {

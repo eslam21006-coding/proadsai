@@ -62,6 +62,25 @@ export const triggerMetaSync = onCall(
                 nowMs: Date.now(),
             });
 
+            // PHASE 970 (bug 2026-09-03) — if the requested
+            // workspace has no Meta connection, the inline run is
+            // null and runLegacySyncForOwner returned ok=false.
+            // Returning ok=true with queued=0 would report a
+            // successful no-op press to the dashboard, which the
+            // user sees as "Sync Now pressed successfully" for a
+            // press that did nothing. Throw failed-precondition so
+            // the dashboard surfaces the real reason. (The legacy
+            // LEG-A error is already in result.legacy.errors; the
+            // message below is the dashboard's toast, not a
+            // duplication of the ledger.)
+            if (!result.workspace.inline && !result.ok) {
+                const legacyErr =
+                    result.legacy.errors.length > 0
+                        ? result.legacy.errors[0]
+                        : "No Meta account connected for this workspace.";
+                throw new HttpsError("failed-precondition", legacyErr);
+            }
+
             console.log(
                 `🔄 Manual sync (owner=${scope.ownerUid}, caller=${scope.callerUid}, ` +
                 `workspace=${req.workspaceId}, legacyAds=${result.legacy.adsSynced}, ` +

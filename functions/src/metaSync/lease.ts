@@ -130,11 +130,21 @@ export async function acquireLease(
             return { ok: true } as AcquireResult;
         }
 
-        // Same holder re-pressing: extend (TTLs refresh).
-        if (current.holderUid === callerUid) {
-            txn.update(ref, { expiresAtMs: nowMs + ttlMs });
-            return { ok: true } as AcquireResult;
-        }
+        // PHASE 970 (bug 2026-09-03) — refuse a second concurrent
+    // press even when the holder is the same caller. The previous
+    // "renew the TTL" behaviour let two browser tabs both run
+    // runFullSync for the same owner at the same time, doubling
+    // Meta Graph pressure exactly when the in-flight guard was
+    // supposed to suppress that. Return the busy result so the
+    // dashboard surfaces "a sync is already running" instead of a
+    // silently overlapping second sync.
+    if (current.holderUid === callerUid) {
+        return {
+            ok: false,
+            holderUid: current.holderUid,
+            expiresAtMs: current.expiresAtMs,
+        } as AcquireResult;
+    }
 
         // Held by somebody else — refuse.
         return {

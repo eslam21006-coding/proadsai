@@ -95,8 +95,12 @@ export interface FullSyncOptions {
     /**
      * Forwarded to LEG A's `runLegacySyncForOwner`. Test seam — production
      * omits and falls back to `decryptLegacyToken` from `legacyToken.ts`.
+     * The optional `secret` parameter mirrors the production call
+     * signature so test stubs can be simpler (ignoring it) without a
+     * TypeScript union-intersection compile error at the call site
+     * (`runLegacySyncForOwner` passes both args).
      */
-    decryptLegacyTokenOverride?: (encryptedData: string) => Promise<string>;
+    decryptLegacyTokenOverride?: (encryptedData: string, secret?: string) => Promise<string>;
     /**
      * Test seam for the lease helpers. Production omits and the in-file
      * `runWithLease` wrapper calls `acquireLease` / `releaseLease` from
@@ -136,6 +140,16 @@ export interface FullSyncResult {
         inline: InlineSyncResult | null;
         queued: number;
         rateLimited: string[];
+        /**
+         * PHASE 970 (bug 2026-09-03) — non-rate-limit Cloud Tasks
+         * enqueue failures. Distinct from `rateLimited` (which is the
+         * Meta-side throttling case). The dashboard and the runbook
+         * rely on this so a partial fan-out is observable — if the
+         * Cloud Tasks queue itself rejects a message, the user
+         * should know, and the runbook's "first-real-run" query
+         * should not miss it.
+         */
+        errors: string[];
     };
     needsReauth: boolean;
     lastMetaSyncAt: number;
@@ -227,9 +241,10 @@ export interface LegacySyncOptions {
      * Test seam for the token decryption step. Production omits this
      * and the orchestrator calls `decryptLegacyToken` from
      * `legacyToken.ts`. Tests inject a stub that returns a fixed
-     * plaintext token.
+     * plaintext token. The optional `secret` parameter mirrors the
+     * production call site so test stubs are simpler.
      */
-    decryptLegacyTokenOverride?: (encryptedData: string) => Promise<string>;
+    decryptLegacyTokenOverride?: (encryptedData: string, secret?: string) => Promise<string>;
 }
 
 /**
@@ -601,7 +616,16 @@ async function fanOutPhase14(opts: {
                 rateLimited.push(ws.accountId);
                 continue;
             }
+            // PHASE 970 (bug 2026-09-03) — surface the non-rate-limit
+            // failure both in the result (so the dashboard / runbook
+            // can react) and in a structured log line (so on-call
+            // operators see the failure even when the run was
+            // observably successful in the dashboard).
             errors.push(`enqueue failed for ${ws.workspaceId}/${ws.accountId}: ${(e as Error).message}`);
+            console.warn(
+                `⚠️ metaSync fan-out enqueue failed: workspace=${ws.workspaceId} ` +
+                `account=${ws.accountId} error=${(e as Error).message}`,
+            );
         }
     }
     return { queued: queued.length, rateLimited, errors };
@@ -669,7 +693,7 @@ export async function runFullSync(opts: FullSyncOptions): Promise<FullSyncResult
         : [];
 
     const result: FullSyncResult = {
-        ok: legacy.ok && (inline ? inline.status !== "failed" : true),
+        ok: legacy.ok && (inline ? inline.status !== "failed" : true) && fanOut.errors.length === 0,
         legacy: {
             accountsSynced: legacy.accountsSynced,
             adsSynced: legacy.adsSynced,
@@ -688,6 +712,7 @@ export async function runFullSync(opts: FullSyncOptions): Promise<FullSyncResult
                 : null,
             queued: fanOut.queued,
             rateLimited: [...fanOut.rateLimited, ...inlineRateLimited],
+            errors: fanOut.errors,
         },
         needsReauth: inline ? inline.errors.some((e) => /needsReauth/i.test(e)) : false,
         lastMetaSyncAt: nowMs,

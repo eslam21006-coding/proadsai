@@ -3818,11 +3818,16 @@ export const metaSyncPerformance = onCall({
         // Preserve the legacy response shape for old clients
         // (`{ success: true, adsSynced }`). The new fields are
         // best-effort additions that today's frontend ignores.
+        // PHASE 970 (bug 2026-09-03) — surface `errors` so the
+        // client can explain the failure (the dashboard reads it
+        // for the failed toast). Without this field the dashboard
+        // shows a generic failure with no reason.
         return {
             success: result.ok,
             adsSynced: result.legacy.adsSynced,
             accountsSynced: result.legacy.accountsSynced,
             rateLimited: result.legacy.rateLimited,
+            errors: result.legacy.errors,
             workspaceQueued: result.workspace.queued,
             workspaceInline: result.workspace.inline
                 ? {
