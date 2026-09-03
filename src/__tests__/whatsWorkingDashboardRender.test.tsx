@@ -121,7 +121,7 @@ async function renderDashboard(): Promise<RenderHandle> {
                 />
             </LanguageProvider>,
         );
-        await screen.findByRole("button", { name: /sync now/i }, undefined, { timeout: 3000 });
+        await screen.findByRole("button", { name: /sync now/i }, { timeout: 3000 });
     } catch (e) {
         if (previousLang === null) {
             localStorage.removeItem("proads_ui_lang");
