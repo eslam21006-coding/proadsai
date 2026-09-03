@@ -494,7 +494,7 @@ const ToastNotification: React.FC<{ toast: Toast | null; onClose: () => void }> 
 
   const bg = toast.type === 'error' ? 'bg-red-600' : toast.type === 'success' ? 'bg-green-600' : 'bg-blue-600';
   return (
-    <div className={`fixed bottom-10 left-1/2 -translate-x-1/2 ${bg} text-white px-8 py-4 rounded-2xl shadow-2xl z-[200] animate-in slide-in-from-bottom-4 flex items-center space-x-3`}>
+    <div className={`fixed bottom-10 left-1/2 -translate-x-1/2 ${bg} text-white px-8 py-4 rounded-2xl shadow-2xl z-[400] animate-in slide-in-from-bottom-4 flex items-center space-x-3`}>
       <i className={`fa-solid ${toast.type === 'error' ? 'fa-circle-exclamation' : 'fa-circle-check'}`}></i>
       <span className="text-xs font-black uppercase tracking-widest">{toast.message}</span>
     </div>
@@ -12958,28 +12958,45 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                   // deployed. The sidebar keeps its own `handleSyncMeta`
                   // (metaSyncPerformance) path — different, user-level paths.
                   onSyncNow={async () => {
-                    if (!activeWorkspaceId) return;
+                    if (!activeWorkspaceId) {
+                      // Defensive — should not happen, the modal is
+                      // gated on activeWorkspaceId upstream. Surface a
+                      // failed result rather than a void.
+                      return {
+                        ok: false,
+                        busy: false,
+                        ads: 0,
+                        matched: 0,
+                        ambiguous: 0,
+                        unmatched: 0,
+                        legacyRateLimited: [],
+                        workspaceQueued: 0,
+                        workspaceRateLimited: [],
+                        needsReauth: false as const,
+                        resultKey: 'sync.result.failed' as const,
+                      };
+                    }
                     setMetaSyncing(true);
                     showToast(lang === 'ar' ? 'جاري مزامنة الإعلانات…' : 'Syncing ad performance…', 'info');
                     try {
                       const result = await metaService.triggerWorkspaceSync(activeWorkspaceId);
-                      // PHASE 970 (BATCH 5) — wire the four new i18n
-                      // result strings (sync.result.{done,partial,
-                      // more_coming,failed}) to the toast. The mapping
-                      // matches investigation report §8.6:
-                      //   - failed          → result.ok === false
-                      //   - partial         → at least one account was
-                      //                       rate-limited (legacy or
-                      //                       workspace fan-out)
-                      //   - more_coming     → at least one workspace
-                      //                       task was queued
-                      //   - done            → everything OK
+                      // PHASE 970 (BATCH 5) — wire the result strings
+                      // (sync.result.{done,partial,more_coming,failed})
+                      // to the toast. The mapping matches investigation
+                      // report §8.6:
+                      //   - failed   → result.ok === false
+                      //   - partial  → at least one account was
+                      //               rate-limited (legacy or workspace
+                      //               fan-out)
+                      //   - more_coming → at least one workspace task
+                      //               was queued
+                      //   - done     → everything OK
                       // partial and more_coming can both apply
-                      // simultaneously (some throttled, some
-                      // queued); partial takes precedence because
-                      // the user pressed once and some ads failed —
-                      // the "more coming" tail is less useful than
-                      // the "partial" headline.
+                      // simultaneously (some throttled, some queued);
+                      // partial takes precedence because the user
+                      // pressed once and some ads failed — the "more
+                      // coming" tail is less useful than the "partial"
+                      // headline.
                       const anyLegacyLimited = (result.legacyRateLimited?.length ?? 0) > 0;
                       const anyQueuedLimited = (result.workspaceRateLimited?.length ?? 0) > 0;
                       const anyQueued = (result.workspaceQueued ?? 0) > 0;
@@ -13023,19 +13040,55 @@ Each new hook must feel FRESH and UNIQUE — like a different copywriter wrote i
                         showToast(t(resultKey), 'success');
                       }
                       invalidateHookAngleIconsCache();
+                      // PHASE 970 (bug 2026-09-03) — return the
+                      // DashboardResultPayload so the dashboard's
+                      // in-modal banner can render. The shape is
+                      // compatible with the run-time toast that was
+                      // already emitted above.
+                      return {
+                        ok: result.ok,
+                        busy: false,
+                        ads: counts?.ads ?? 0,
+                        matched: counts?.matched ?? 0,
+                        ambiguous: counts?.ambiguous ?? 0,
+                        unmatched: counts?.unmatched ?? 0,
+                        legacyRateLimited: result.legacyRateLimited ?? [],
+                        workspaceQueued: result.workspaceQueued ?? 0,
+                        workspaceRateLimited: result.workspaceRateLimited ?? [],
+                        needsReauth: result.needsReauth ?? false,
+                        resultKey,
+                      };
                     } catch (err: any) {
                       // PHASE 970 (BATCH 4) — the cooldown path is gone.
                       // A second-press collision arrives as
                       // `failed-precondition` (in-flight lease at the
-                      // orchestrator layer) and renders the
-                      // `sync.result.failed` localised string instead
-                      // of the old generic "Sync failed" path. This
-                      // is the Batch-5 wiring of the new i18n keys.
-                      if (err?.code === 'functions/failed-precondition' || err?.code === 'failed-precondition') {
-                        showToast(t('sync.result.failed'), 'error');
+                      // orchestrator layer). PHASE 970 (bug 2026-09-03) —
+                      // distinguish this from a real failure: the
+                      // dashboard banner and the sidebar toast both
+                      // render the `sync.result.busy` localised string
+                      // instead of the `failed` one, and the runbook
+                      // Cloud Logging query no longer reports a false
+                      // failure for what was actually a state, not a
+                      // wait.
+                      const isBusy = err?.code === 'functions/failed-precondition' || err?.code === 'failed-precondition';
+                      if (isBusy) {
+                        showToast(t('sync.result.busy'), 'info');
                       } else {
                         showToast(t('sync.result.failed'), 'error');
                       }
+                      return {
+                        ok: false,
+                        busy: isBusy,
+                        ads: 0,
+                        matched: 0,
+                        ambiguous: 0,
+                        unmatched: 0,
+                        legacyRateLimited: [],
+                        workspaceQueued: 0,
+                        workspaceRateLimited: [],
+                        needsReauth: false as const,
+                        resultKey: isBusy ? 'sync.result.busy' as const : 'sync.result.failed' as const,
+                      };
                     } finally {
                       setMetaSyncing(false);
                     }

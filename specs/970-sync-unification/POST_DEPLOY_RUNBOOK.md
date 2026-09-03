@@ -125,8 +125,20 @@ When a press is rate-limited:
   - `sync.result.done` — no rate-limits, no queued workspaces
   - `sync.result.partial` — at least one account was rate-limited
   - `sync.result.more_coming` — at least one workspace was fanned
-    out via Cloud Tasks
+      out via Cloud Tasks
   - `sync.result.failed` — `result.ok === false`
+  - `sync.result.busy` — `result.busy === true` (PHASE 970 bug
+    2026-09-03; PHASE 970 Batch 6 fix). Distinct from `failed`: a
+    second concurrent press hits the in-flight lease and is
+    reported as a state (a state, not a wait and not a failure).
+    The dashboard's in-modal banner and the sidebar toast both
+    surface this case. Cloud Logging records it separately:
+    `resultKey: "sync.result.busy"` in the inline-leg log AND
+    a distinct busy-line log emitted by the wrapper. The busy
+    case does NOT mean the press failed; the underlying sync is
+    still in flight on another caller, and this press correctly
+    bailed to avoid a double-lease collision.
+
 
 ---
 
@@ -304,10 +316,27 @@ textPayload=~"AlreadyRunningError"
 ```
 
 A press that hit the lease throws `AlreadyRunningError` → the
-wrappers catch it and translate to `HttpsError("failed-precondition", ...)`. The user sees the `sync.result.failed`
-toast. The other press is the one that's still running; wait for it
-to finish (≤10 min via the lease TTL safety net if the running
-press crashed).
+  wrappers catch it and translate to `HttpsError("failed-precondition", ...)`. PHASE 970 bug
+  2026-09-03 (Batch 6 fix) — the user-visible banner and the
+  sidebar toast are now keyed off `result.busy` so the busy case
+  surfaces `sync.result.busy` rather than `sync.result.failed`.
+  A Cloud Logging query for the busy case specifically:
+
+  ```
+  resource.type="cloud_function"
+  resource.labels.function_name=~"metaSyncPerformance|triggerMetaSync"
+  textPayload=~"First-successful-Phase-14-run evidence"
+  textPayload=~"resultKey"
+  textPayload=~"busy"
+  ```
+
+  A busy entry has `"resultKey": "sync.result.busy"` and
+  `"busyHolderUid": "<uid>"`. A failed entry has
+  `"resultKey": "sync.result.failed"` and `"ok": false`. The two
+  are distinct Cloud Logging observations; the runbook rate-limit
+  watch does NOT alert on busy. The other press is the one that's
+  still running; wait for it to finish (≤10 min via the lease TTL
+  safety net if the running press crashed).
 
 ---
 

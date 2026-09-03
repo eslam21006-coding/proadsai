@@ -159,6 +159,13 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'sync.result.partial': 'Some accounts were busy — they will update shortly',
         'sync.result.more_coming': 'The rest of your workspaces are updating now',
         'sync.result.failed': 'Could not update the ads',
+        // PHASE 970 (bug 2026-09-03) — distinct from `failed`. A
+        // second concurrent press hits the in-flight lease and is
+        // reported as a state (not a wait and not a failure). Without
+        // this key, runbook Cloud Logging queries would flag a busy
+        // press as `resultKey: 'sync.result.failed'`, producing a
+        // false alarm in the rate-limit watch.
+        'sync.result.busy': 'A sync is already running. Please wait a moment and try again.',
         'topbar.menu_meta_change_account': 'Change Account',
         'topbar.menu_meta_change_page': 'Change Page',
         'topbar.menu_meta_select_for_workspace': 'Select ad account for this workspace',
@@ -504,6 +511,13 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'whats_working.sync.last_days_ago': 'Synced {n} days ago',
         'whats_working.sync.never': 'No sync yet',
         'whats_working.sync.cta': 'Sync Now',
+        // PHASE 970 (bug 2026-09-03) — pending-state label for the
+        // dashboard's SYNC NOW button while a press is in flight.
+        'whats_working.sync.syncing': 'Syncing...',
+        // Lease-collision message — state, not a wait. Used inside
+        // the modal so the user sees feedback even if the toast is
+        // occluded. Mirrors the in-modal banner.
+        'whats_working.sync.busy': 'A sync is already running. Please wait a moment and try again.',
         // PHASE 970 (BATCH 4) — removed `whats_working.sync.cooldown`
         // (cooldown gate deleted in Batch 4) and
         // `whats_working.sync.next_run` (not rendered, wait-state
@@ -1130,6 +1144,8 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'sync.result.partial': 'بعض الحسابات كانت مشغولة — سيتم تحديثها قريباً',
         'sync.result.more_coming': 'باقي مساحات العمل يتم تحديثها الآن',
         'sync.result.failed': 'تعذّر تحديث الإعلانات',
+        // PHASE 970 (bug 2026-09-03) — distinct from `failed`.
+        'sync.result.busy': 'المزامنة قيد التشغيل بالفعل. يرجى الانتظار لحظة والمحاولة مرة أخرى.',
         'topbar.menu_meta_change_account': 'تغيير الحساب',
         'topbar.menu_meta_change_page': 'تغيير الصفحة',
         'topbar.menu_meta_select_for_workspace': 'اختر حساب إعلاني لهذه المساحة',
@@ -1452,6 +1468,10 @@ const translations: Record<UILanguage, Record<string, string>> = {
         'whats_working.sync.last_days_ago': 'تمت المزامنة منذ {n} يوم',
         'whats_working.sync.never': 'لم تتم مزامنة بعد',
         'whats_working.sync.cta': 'مزامنة الآن',
+        // PHASE 970 (bug 2026-09-03) — pending-state label.
+        'whats_working.sync.syncing': 'جاري المزامنة...',
+        // Lease-collision message.
+        'whats_working.sync.busy': 'المزامنة قيد التشغيل بالفعل. يرجى الانتظار لحظة والمحاولة مرة أخرى.',
         // PHASE 970 (BATCH 4) — removed `whats_working.sync.cooldown`
         // (cooldown gate deleted in Batch 4) and
         // `whats_working.sync.next_run` (not rendered, wait-state

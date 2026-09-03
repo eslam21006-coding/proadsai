@@ -7,6 +7,30 @@
 import { functions } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 
+// PHASE 970 (bug 2026-09-03) — typed result for the dashboard's
+// SYNC NOW press. Exported so WhatsWorkingDashboard can render the
+// in-modal banner from a single source of truth. The `busy` field
+// short-circuits the lease-collision path so the dashboard can
+// render the busy string instead of falling through to `failed`.
+// (Source: specs/970-sync-unification/reports/bug-2026-09-03-dashboard-no-feedback.md)
+export interface DashboardSyncResult {
+    ok: boolean;
+    busy: boolean;
+    lastMetaSyncAt: number | null;
+    counts?: {
+        campaigns?: number;
+        adSets?: number;
+        ads?: number;
+        matched?: number;
+        unmatched?: number;
+        ambiguous?: number;
+    };
+    legacyRateLimited?: string[];
+    workspaceQueued?: number;
+    workspaceRateLimited?: string[];
+    needsReauth?: boolean;
+}
+
 const META_APP_ID = "1975052683417261";
 const OAUTH_REDIRECT_URI = "https://europe-west1-proadsai-saas.cloudfunctions.net/metaOAuthCallback";
 // All five scopes require Advanced Access via App Review.
@@ -201,49 +225,11 @@ class MetaService {
     // orchestrator layer. The sidebar's "Sync Now" continues to use
     // `syncPerformance` / `metaSyncPerformance` — that path feeds the
     // legacy PerformanceDashboard and is intentionally untouched.
-    async triggerWorkspaceSync(workspaceId: string): Promise<{
-        ok: boolean;
-        lastMetaSyncAt: number | null;
-        counts?: {
-            campaigns?: number;
-            adSets?: number;
-            ads?: number;
-            matched?: number;
-            unmatched?: number;
-            ambiguous?: number;
-        };
-        // PHASE 970 (BATCH 5) — surface the rate-limit + fan-out
-        // counts that drive the result-toast selection in App.tsx.
-        // `legacyRateLimited` is a list of accountIds that LEG A
-        // (the legacy /adPerformance + /adPerformanceHistory path)
-        // could not write because Meta returned code 4 / 17.
-        // `workspaceQueued` is the number of LEG B tasks the
-        // orchestrator fanned out via Cloud Tasks. The first
-        // successful Phase 14 run will report nonzero numbers here.
-        legacyRateLimited?: string[];
-        workspaceQueued?: number;
-        workspaceRateLimited?: string[];
-        needsReauth?: boolean;
-    }> {
+    async triggerWorkspaceSync(workspaceId: string): Promise<DashboardSyncResult> {
         try {
             const fn = httpsCallable(functions, 'triggerMetaSync');
             const result = await fn({ workspaceId });
-            return result.data as {
-                ok: boolean;
-                lastMetaSyncAt: number | null;
-                counts?: {
-                    campaigns?: number;
-                    adSets?: number;
-                    ads?: number;
-                    matched?: number;
-                    unmatched?: number;
-                    ambiguous?: number;
-                };
-                legacyRateLimited?: string[];
-                workspaceQueued?: number;
-                workspaceRateLimited?: string[];
-                needsReauth?: boolean;
-            };
+            return result.data as DashboardSyncResult;
         } catch (err: any) {
             console.warn('triggerMetaSync failed:', err);
             // PHASE 970 (BATCH 4) — the cooldown swallow is removed.

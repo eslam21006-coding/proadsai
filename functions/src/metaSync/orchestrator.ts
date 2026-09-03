@@ -797,6 +797,25 @@ export async function runFullSyncWithLease(
 
     const acquire = await acquireImpl(ownerUid, callerUid, nowMs, 10 * 60 * 1000);
     if (!acquire.ok) {
+        // PHASE 970 (bug 2026-09-03) — distinct server-side log for
+        // the busy case. The earlier inline `runFullSync` summary
+        // line (which fires only on the success path) would have
+        // recorded a busy press as `resultKey: 'sync.result.failed'`
+        // and surfaced it in the runbook Cloud Logging query as a
+        // false-alarm failure. This line is the audit-trail
+        // counterpart to the dashboard banner / sidebar toast: a
+        // busy press is a state, not a failure, and the log
+        // surface must say so.
+        console.log(
+            "📊 [Batch 6] metaSync busy — second concurrent press refused:",
+            JSON.stringify({
+                ownerUid,
+                callerUid,
+                busyHolderUid: acquire.holderUid,
+                busyExpiresAtMs: acquire.expiresAtMs,
+                resultKey: "sync.result.busy",
+            }),
+        );
         // Translate the domain-class refusal into the typed error
         // the wrappers catch. The wrappers MUST NOT translate this
         // silently; they decide whether to render as HttpsError
